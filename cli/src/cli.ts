@@ -177,7 +177,8 @@ async function getTools() {
         }),
 
         listChats: tool({
-            description: 'Get a list of available chat sessions',
+            description:
+                'Get a list of available chat sessions sorted by most recent',
             inputSchema: z.object({}),
             execute: async () => {
                 const sessions = await client.session.list()
@@ -186,7 +187,24 @@ async function getTools() {
                     return { success: false, error: 'No sessions found' }
                 }
 
-                const sessionList = sessions.data.map(async (session) => {
+                // Sort sessions by updated time in descending order (most recent first)
+                const sortedSessions = [...sessions.data].sort((a, b) => {
+                    // Get completed values for a and b
+                    const aCompleted = ('completed' in a.time) ? a.time.completed : null
+                    const bCompleted = ('completed' in b.time) ? b.time.completed : null
+
+                    // Put sessions with completed === null first
+                    if (aCompleted === null && bCompleted !== null) {
+                        return -1
+                    }
+                    if (aCompleted !== null && bCompleted === null) {
+                        return 1
+                    }
+                    // Otherwise, sort by updated time descending
+                    return b.time.updated - a.time.updated
+                }).slice(0, 20)
+
+                const sessionList = sortedSessions.map(async (session) => {
                     const finishedAt = session.time.updated
                     const status = await (async () => {
                         if (session.revert) return 'error'
@@ -379,8 +397,7 @@ cli.command('', 'Spawn Kimaki to orchestrate code agents').action(
                         parts: [
                             {
                                 text: dedent`
-
-                                You are Kimaki, an AI similar to Jarvis: you help your user (an engineer) controlling his coding agent, just like Jarvis controls Ironman armor and machines.
+                                You are Kimaki, an AI similar to Jarvis: you help your user (an engineer) controlling his coding agent, just like Jarvis controls Ironman armor and machines. Speak fast.
 
                                 Your job is to manage many opencode agent chat instances. Opencode is the agent used to write the code, it is similar to Claude Code.
 
