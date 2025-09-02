@@ -11,6 +11,7 @@ export const MyPlugin: Plugin = async ({
 }) => {
     let sessionId = ''
 
+
     logger.log('plugin function called')
     return {
         async event({ event }) {

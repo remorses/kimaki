@@ -11,7 +11,8 @@
         "save-plugin": "bun build ./src/plugin.ts --outfile ~/.config/opencode/plugin/kimaki.js --target bun --format esm",
         "kimaki": "tsx bin.js",
         "play": "tsx src/bin.ts",
-        "watch": "tsc -w"
+        "watch": "tsc -w",
+        "test": "vitest"
     },
     "bin": "./bin.js",
     "files": [
@@ -32,6 +33,7 @@
         "cli-table3": "^0.6.5",
         "globby": "^14.1.0",
         "liveapi": "workspace:*",
+        "luxon": "^3.7.1",
         "mime-types": "^3.0.1",
         "node-web-audio-api": "^1.0.4",
         "picocolors": "^1.1.1",

@@ -59,6 +59,9 @@ importers:
       liveapi:
         specifier: workspace:*
         version: link:../liveapi
+      luxon:
+        specifier: ^3.7.1
+        version: 3.7.1
       mime-types:
         specifier: ^3.0.1
         version: 3.0.1
@@ -1023,6 +1026,10 @@ packages:
 
   loupe@3.2.1:
     resolution: {integrity: sha512-CdzqowRJCeLU72bHvWqwRBBlLcMEtIvGrlvef74kMnV2AolS9Y8xUv1I0U/MNAWMhBlKIoyuEgoJ0t/bbwHbLQ==}
+
+  luxon@3.7.1:
+    resolution: {integrity: sha512-RkRWjA926cTvz5rAb1BqyWkKbbjzCGchDUIKMCUvNi17j6f6j8uHGDV82Aqcqtzd+icoYpELmG3ksgGiFNNcNg==}
+    engines: {node: '>=12'}
 
   magic-string@0.30.18:
     resolution: {integrity: sha512-yi8swmWbO17qHhwIBNeeZxTceJMeBvWJaId6dyvTSOwTipqeHhMhOrz6513r1sOKnpvQ7zkhlG8tPrpilwTxHQ==}
@@ -2426,6 +2433,8 @@ snapshots:
   lodash@4.17.21: {}
 
   loupe@3.2.1: {}
+
+  luxon@3.7.1: {}
 
   magic-string@0.30.18:
     dependencies:
