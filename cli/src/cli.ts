@@ -4,67 +4,132 @@ import dedent from 'string-dedent'
 import { mediaDevices } from 'node-web-audio-api'
 import { MediaResolution, Modality } from '@google/genai'
 import * as webAudioApi from 'node-web-audio-api'
-import pc from 'picocolors'
-import { getTools } from './tools'
+import fs from 'node:fs'
+import path from 'node:path'
+import WaveFile from 'wavefile'
 
 export const cli = cac('kimaki')
 
 cli.help()
 
 // Check if running in TTY environment
-const isTTY = process.stdout.isTTY && process.stdin.isTTY
+cli
+  .command('', 'Spawn Kimaki to orchestrate code agents')
+  .action(async (options) => {
+    try {
+      const token = process.env.TOKEN
 
-cli.command('', 'Spawn Kimaki to orchestrate code agents').action(
-    async (options) => {
+      Object.assign(globalThis, webAudioApi)
+      // @ts-expect-error still not typed https://github.com/ircam-ismm/node-web-audio-api/issues/73
+      navigator.mediaDevices = mediaDevices
+
+      const { LiveAPIClient, callableToolsFromObject } = await import(
+        'liveapi/src/index'
+      )
+
+      let liveApiClient: InstanceType<typeof LiveAPIClient> | null = null
+      let audioChunks: ArrayBuffer[] = []
+      let isModelSpeaking = false
+
+      const tools = await getTools({
+        onMessageCompleted: (params) => {
+          if (!liveApiClient) return
+
+          const text = params.error
+            ? `<systemMessage>\nChat message failed for session ${params.sessionId}. Error: ${params.error?.message || String(params.error)}\n</systemMessage>`
+            : `<systemMessage>\nChat message completed for session ${params.sessionId}.\n\nAssistant response:\n${params.markdown}\n</systemMessage>`
+
+          liveApiClient.sendText(text)
+        },
+      })
+
+      const saveUserAudio = () => {
+        if (audioChunks.length === 0) return
+
         try {
-            const token = process.env.TOKEN
+          const timestamp = Date.now()
+          const dir = 'useraudio'
 
-            Object.assign(globalThis, webAudioApi)
-            // @ts-expect-error still not typed https://github.com/ircam-ismm/node-web-audio-api/issues/73
-            navigator.mediaDevices = mediaDevices
+          if (!fs.existsSync(dir)) {
+            fs.mkdirSync(dir, { recursive: true })
+          }
 
-            const { LiveAPIClient, callableToolsFromObject } = await import(
-                'liveapi/src/index'
-            )
+          // Combine all ArrayBuffer chunks
+          const totalLength = audioChunks.reduce(
+            (acc, chunk) => acc + chunk.byteLength,
+            0,
+          )
+          const combinedBuffer = new ArrayBuffer(totalLength)
+          const combinedView = new Int16Array(combinedBuffer)
 
-            let liveApiClient: InstanceType<typeof LiveAPIClient> | null = null
+          let offset = 0
+          for (const chunk of audioChunks) {
+            const chunkView = new Int16Array(chunk)
+            combinedView.set(chunkView, offset)
+            offset += chunkView.length
+          }
 
-            const tools = await getTools({
-                onMessageCompleted: (params) => {
-                    if (!liveApiClient) return
+          // Create WAV file
+          const wav = new WaveFile.WaveFile()
+          wav.fromScratch(1, 16000, '16', Array.from(combinedView))
 
-                    const text = params.error
-                        ? `<systemMessage>\nChat message failed for session ${params.sessionId}. Error: ${params.error?.message || String(params.error)}\n</systemMessage>`
-                        : `<systemMessage>\nChat message completed for session ${params.sessionId}.\n\nAssistant response:\n${params.markdown}\n</systemMessage>`
+          const filename = path.join(dir, `${timestamp}.wav`)
+          fs.writeFileSync(filename, Buffer.from(wav.toBuffer()))
+          console.log(
+            `Saved user audio to ${filename} (${audioChunks.length} chunks)`,
+          )
 
-                    liveApiClient.sendText(text)
-                },
-            })
+          // Clear chunks after saving
+          audioChunks = []
+        } catch (error) {
+          console.error('Failed to save audio file:', error)
+        }
+      }
 
-            const newClient = new LiveAPIClient({
-                apiKey: token!,
-                model: 'models/gemini-2.5-flash-preview-native-audio-dialog',
-                saveUserAudio: true,
-                config: {
-                    tools: callableToolsFromObject(tools),
-                    responseModalities: [Modality.AUDIO],
-                    speechConfig: {
-                        voiceConfig: {
-                            prebuiltVoiceConfig: {
-                                voiceName: 'Sadachbia',
-                            },
-                        },
-                    },
-                    mediaResolution: MediaResolution.MEDIA_RESOLUTION_MEDIUM,
+      const newClient = new LiveAPIClient({
+        apiKey: token!,
+        model: 'models/gemini-2.5-flash-preview-native-audio-dialog',
+        onUserAudioChunk: (chunk) => {
+          // Collect chunks while user is speaking
+          if (!isModelSpeaking) {
+            audioChunks.push(chunk)
+          }
+        },
+        onMessage: (message) => {
+          // When model starts responding, save the user's audio
+          if (
 
-                    contextWindowCompression: {
-                        triggerTokens: '25600',
-                        slidingWindow: { targetTokens: '12800' },
-                    },
-                    systemInstruction: {
-                        parts: [
-                            {
-                                text: dedent`
+            message.serverContent?.turnComplete &&
+            audioChunks.length > 0
+          ) {
+            isModelSpeaking = true
+            saveUserAudio()
+          }
+          // Reset when turn is complete
+          if (message.serverContent?.turnComplete) {
+            isModelSpeaking = false
+          }
+        },
+        config: {
+          tools: callableToolsFromObject(tools),
+          responseModalities: [Modality.AUDIO],
+          speechConfig: {
+            voiceConfig: {
+              prebuiltVoiceConfig: {
+                voiceName: 'Sadachbia',
+              },
+            },
+          },
+          mediaResolution: MediaResolution.MEDIA_RESOLUTION_MEDIUM,
+
+          contextWindowCompression: {
+            triggerTokens: '25600',
+            slidingWindow: { targetTokens: '12800' },
+          },
+          systemInstruction: {
+            parts: [
+              {
+                text: dedent`
                                 You are Kimaki, an AI similar to Jarvis: you help your user (an engineer) controlling his coding agent, just like Jarvis controls Ironman armor and machines. Speak fast.
 
                                 You should talk like Jarvis, British accent, satirical, joking and calm. Be short and concise and never ask for confirmation of what to do. Speak fast.
@@ -93,23 +158,20 @@ cli.command('', 'Spawn Kimaki to orchestrate code agents').action(
                                 - never read session ids or other ids
 
                                 You
+              },
+            ],
+          },
+        },
+        onStateChange: (state) => {},
+      })
 
-                                `,
-                            },
-                        ],
-                    },
-                },
-                onStateChange: (state) => {},
-            })
+      liveApiClient = newClient
 
-            liveApiClient = newClient
-
-            // Connect to the API
-            const connected = await newClient.connect()
-        } catch (error) {
-            console.error(pc.red('\nError initializing project:'))
-            console.error(pc.red(error))
-            process.exit(1)
-        }
-    },
-)
+      // Connect to the API
+      const connected = await newClient.connect()
+    } catch (error) {
+      console.error(pc.red('\nError initializing project:'))
+      console.error(pc.red(error))
+      process.exit(1)
+    }
+  })

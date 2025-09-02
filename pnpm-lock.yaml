@@ -90,8 +90,9 @@ importers:
         specifier: ^3.0.2
         version: 3.0.2
       tiny-jsonc:
-        specifier: ^1.0.2
-        version: 1.0.2
+      wavefile:
+        specifier: ^11.0.0
+        version: 11.0.0
       ws:
         specifier: ^8.18.3
         version: 8.18.3
@@ -1494,7 +1495,10 @@ packages:
       happy-dom:
         optional: true
       jsdom:
-        optional: true
+  wavefile@11.0.0:
+    resolution: {integrity: sha512-/OBiAALgWU24IG7sC84cDO/KfFuvajWc5Uec0oV2zrpOOZZDgGdOwHwgEzOrwh8jkubBk7PtZfQBIcI1OaE5Ng==}
+    engines: {node: '>=8'}
+    hasBin: true
 
   web-streams-polyfill@3.3.3:
     resolution: {integrity: sha512-d2JWLCivmZYTSIoge9MsgFCZrt571BikcWGYkjC1khllbTeDlGqZ2D8vD8E/lJa8WGWbb7Plm8/XJYV7IJHZZw==}
@@ -2851,7 +2855,7 @@ snapshots:
       - supports-color
       - terser
       - tsx
-      - yaml
+  wavefile@11.0.0: {}
 
   web-streams-polyfill@3.3.3: {}
 

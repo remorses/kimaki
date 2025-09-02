@@ -27,8 +27,7 @@ export interface LiveAPIState {
 
 export interface LiveAPIClientOptions extends LiveClientOptions {
   model?: string
-  onStateChange?: (state: LiveAPIState) => void
-  onMessage?: (message: LiveServerMessage) => void
+  onUserAudioChunk?: (chunk: ArrayBuffer) => void
   enableGoogleSearch?: boolean
   config?: Partial<LiveConnectConfig> & {
     tools?: Array<CallableTool & { name: string }>
@@ -59,17 +58,24 @@ export class LiveAPIClient {
     },
   }
 
-  private onStateChange?: (state: LiveAPIState) => void
-  private onMessageCallback?: (message: LiveServerMessage) => void
+  private onUserAudioChunk?: (chunk: ArrayBuffer) => void
 
   private tools: Array<CallableTool & { name: string }> = []
 
   constructor(options: LiveAPIClientOptions) {
-    const { model, onStateChange, onMessage, config, ...clientOptions } = options
+    const {
+      model,
+      onStateChange,
+      onMessage,
+      onUserAudioChunk,
+      config,
+      ...clientOptions
+    } = options
     this.model = model ?? 'models/gemini-2.5-flash-preview-native-audio-dialog'
     this.client = new GoogleGenAI(clientOptions)
     this.onStateChange = onStateChange
     this.onMessageCallback = onMessage
+    this.onUserAudioChunk = onUserAudioChunk
     this.tools = config?.tools || []
 
     if (options.enableGoogleSearch) {
@@ -111,18 +117,23 @@ export class LiveAPIClient {
   }
 
   private setupAudioRecorder() {
-    if (!this.audioRecorder) return
-
-    this.audioRecorder.on('data', (base64: string) => {
-      if (this.state.connected && !this.state.muted) {
-        this.sendRealtimeInput([
-          {
-            mimeType: 'audio/pcm;rate=16000',
-            data: base64,
-          },
-        ])
-      }
-    })
+    this.audioRecorder.on(
+      'data',
+      (base64: string, arrayBuffer?: ArrayBuffer) => {
+        if (this.state.connected && !this.state.muted) {
+          this.sendRealtimeInput([
+            {
+              mimeType: 'audio/pcm;rate=16000',
+              data: base64,
+            },
+          ])
+          // Call the callback with the raw audio chunk if available
+          if (this.onUserAudioChunk && arrayBuffer) {
+            this.onUserAudioChunk(arrayBuffer.slice(0))
+          }
+        }
+      },
+    )
 
     this.audioRecorder.on('volume', (volume: number) => {
       this.updateState({ inVolume: volume })
