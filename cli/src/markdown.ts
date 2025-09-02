@@ -1,5 +1,6 @@
 import type { OpencodeClient } from '@opencode-ai/sdk'
 import { DateTime } from 'luxon'
+import * as yaml from 'js-yaml'
 
 export class ShareMarkdown {
     constructor(private client: OpencodeClient) {}
@@ -169,7 +170,7 @@ export class ShareMarkdown {
                     ) {
                         lines.push('**Input:**')
                         lines.push('```yaml')
-                        lines.push(this.toYaml(part.state.input))
+                        lines.push(yaml.dump(part.state.input, { lineWidth: -1 }))
                         lines.push('```')
                         lines.push('')
                     }
@@ -213,68 +214,6 @@ export class ShareMarkdown {
         }
 
         return lines
-    }
-
-    private toYaml(obj: any, indent: number = 0): string {
-        const lines: string[] = []
-        const indentStr = ' '.repeat(indent)
-
-        for (const [key, value] of Object.entries(obj)) {
-            if (value === null || value === undefined) {
-                lines.push(`${indentStr}${key}: null`)
-            } else if (typeof value === 'string') {
-                // Handle multiline strings
-                if (value.includes('\n')) {
-                    lines.push(`${indentStr}${key}: |`)
-                    value.split('\n').forEach((line) => {
-                        lines.push(`${indentStr}  ${line}`)
-                    })
-                } else {
-                    // Quote strings that might be interpreted as other types
-                    const needsQuotes =
-                        /^(true|false|null|undefined|\d+\.?\d*|-)/.test(
-                            value,
-                        ) || value.includes(': ')
-                    lines.push(
-                        `${indentStr}${key}: ${needsQuotes ? `"${value}"` : value}`,
-                    )
-                }
-            } else if (
-                typeof value === 'number' ||
-                typeof value === 'boolean'
-            ) {
-                lines.push(`${indentStr}${key}: ${value}`)
-            } else if (Array.isArray(value)) {
-                if (value.length === 0) {
-                    lines.push(`${indentStr}${key}: []`)
-                } else {
-                    lines.push(`${indentStr}${key}:`)
-                    value.forEach((item) => {
-                        if (typeof item === 'object' && item !== null) {
-                            lines.push(`${indentStr}- `)
-                            const subLines = this.toYaml(
-                                item,
-                                indent + 2,
-                            ).split('\n')
-                            subLines.forEach((line, i) => {
-                                if (i === 0) {
-                                    lines[lines.length - 1] += line.trim()
-                                } else {
-                                    lines.push(`${indentStr}  ${line}`)
-                                }
-                            })
-                        } else {
-                            lines.push(`${indentStr}- ${item}`)
-                        }
-                    })
-                }
-            } else if (typeof value === 'object') {
-                lines.push(`${indentStr}${key}:`)
-                lines.push(this.toYaml(value, indent + 2))
-            }
-        }
-
-        return lines.join('\n').trimEnd()
     }
 
     private formatDuration(ms: number): string {
