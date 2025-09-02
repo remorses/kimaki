@@ -8,6 +8,7 @@
         "skipLibCheck": true,
         "types": ["vite/client", "node"],
         "outDir": "dist",
+
         "resolveJsonModule": true,
         "jsx": "react-jsx"
     },

@@ -12,8 +12,10 @@
             "es2017",
             "es7",
             "es6"
-            // "dom"
+            "dom"
         ],
+        "resolveJsonModule": true,
+        "allowImportingTsExtensions": true,
         "declaration": true,
         "declarationMap": true,
         "strict": true,
