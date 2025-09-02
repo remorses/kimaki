@@ -9,18 +9,14 @@ for f in \
   core.md \
   typescript.md \
   pnpm.md \
-  react.md \
   sentry.md \
   vitest.md \
+  gitchamber.md \
   changelog.md \
   docs-writing.md \
-  doppler.md \
   cac.md \
-  prisma.md \
-  react-router.md \
   shadcn.md \
   tailwind.md \
-  lucide.md \
   spiceflow.md \
   vercel-ai-sdk.md \
   playwright.md \
