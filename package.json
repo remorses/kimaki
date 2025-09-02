@@ -1,27 +1,28 @@
 {
-    "name": "root",
-    "private": true,
-    "scripts": {
-        "test": "NODE_ENV=test vitest",
-        "watch": "pnpm -r watch",
-        "build": "pnpm -r build",
-        "play": "pnpm --filter kimaki play",
-        "release": "pnpm build && changeset"
-    },
-    "devDependencies": {
-        "@changesets/cli": "^2.29.6",
-        "prettier": "^3.6.2",
-        "tsx": "^4.20.5",
-        "typescript": "^5.9.2",
-        "vite": "^7.1.4",
-        "vitest": "^3.2.4"
-    },
-    "pnpm": {
-      "overrides": {
-        "@opencode-ai/sdk": "0.6.3"
-      }
-    },
-    "repository": "https://github.com/remorses/",
-    "author": "remorses <beats.by.morse@gmail.com>",
-    "license": ""
+  "name": "root",
+  "private": true,
+  "scripts": {
+    "test": "NODE_ENV=test vitest",
+    "watch": "pnpm -r watch",
+    "build": "pnpm -r build",
+    "play": "pnpm --filter kimaki play",
+    "release": "pnpm build && changeset",
+    "format": "prettier --write ."
+  },
+  "devDependencies": {
+    "@changesets/cli": "^2.29.6",
+    "prettier": "^3.6.2",
+    "tsx": "^4.20.5",
+    "typescript": "^5.9.2",
+    "vite": "^7.1.4",
+    "vitest": "^3.2.4"
+  },
+  "pnpm": {
+    "overrides": {
+      "@opencode-ai/sdk": "0.6.3"
+    }
+  },
+  "repository": "https://github.com/remorses/",
+  "author": "remorses <beats.by.morse@gmail.com>",
+  "license": ""
 }

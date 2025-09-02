@@ -14,6 +14,7 @@ import { LiveClientOptions } from './types.js'
 import { AudioRecorder } from './audio-recorder.js'
 import { AudioStreamer } from './audio-streamer.js'
 import { audioContext, base64ToArrayBuffer } from './utils.js'
+import { downSampleAudioBuffer } from './audio-resampler.js'
 import VolMeterWorket from './worklets/vol-meter.js'
 
 export interface LiveAPIState {
@@ -29,6 +30,7 @@ export interface LiveAPIClientOptions extends LiveClientOptions {
   model?: string
   onUserAudioChunk?: (chunk: ArrayBuffer) => void
   enableGoogleSearch?: boolean
+  recordingSampleRate?: number
   config?: Partial<LiveConnectConfig> & {
     tools?: Array<CallableTool & { name: string }>
   }
@@ -40,6 +42,7 @@ export class LiveAPIClient {
   private audioStreamer: AudioStreamer | null = null
   private audioRecorder: AudioRecorder | null = null
   private model: string
+  private recordingSampleRate: number
 
   private state: LiveAPIState = {
     connected: false,
@@ -68,19 +71,35 @@ export class LiveAPIClient {
       onStateChange,
       onMessage,
       onUserAudioChunk,
+      apiKey,
+      enableGoogleSearch,
+      recordingSampleRate = 16000,
       config,
-      ...clientOptions
     } = options
-    this.model = model ?? 'models/gemini-2.5-flash-preview-native-audio-dialog'
-    this.client = new GoogleGenAI(clientOptions)
-    this.onStateChange = onStateChange
-    this.onMessageCallback = onMessage
-    this.onUserAudioChunk = onUserAudioChunk
-    this.tools = config?.tools || []
 
-    if (options.enableGoogleSearch) {
+    if (!apiKey) {
+      throw new Error('API key is required')
+    }
+
+    this.client = new GoogleGenAI(apiKey)
+    this.model = model || 'models/gemini-2.0-flash-exp'
+    this.onStateChange = onStateChange
+    this.onMessage = onMessage
+    this.onUserAudioChunk = onUserAudioChunk
+    this.recordingSampleRate = recordingSampleRate
+
+    if (enableGoogleSearch) {
       this.tools.push({ googleSearch: {} } as any)
     }
+
+    // Merge provided config with defaults
+    if (config) {
+      this.state.config = { ...this.state.config, ...config }
+    }
+
+    this.audioRecorder = new AudioRecorder(recordingSampleRate)
+    this.setupAudioRecorder()
+  }
 
     // Merge provided config with defaults
     if (config) {

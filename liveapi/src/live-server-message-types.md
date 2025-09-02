@@ -1,6 +1,7 @@
 # LiveServerMessage Type Documentation
 
 ## Overview
+
 `LiveServerMessage` is the main type for messages sent from the Google GenAI server to the client over WebSocket connection. It represents various types of server responses including model content, tool calls, and metadata.
 
 ## Type Structure
@@ -8,155 +9,161 @@
 ```typescript
 class LiveServerMessage {
   // Server setup confirmation
-  setupComplete?: LiveServerSetupComplete;
-  
+  setupComplete?: LiveServerSetupComplete
+
   // Generated content from the model
-  serverContent?: LiveServerContent;
-  
+  serverContent?: LiveServerContent
+
   // Tool/function call requests
-  toolCall?: LiveServerToolCall;
-  
+  toolCall?: LiveServerToolCall
+
   // Tool call cancellation notifications
-  toolCallCancellation?: LiveServerToolCallCancellation;
-  
+  toolCallCancellation?: LiveServerToolCallCancellation
+
   // Usage statistics and metadata
-  usageMetadata?: UsageMetadata;
-  
+  usageMetadata?: UsageMetadata
+
   // Connection termination warning
-  goAway?: LiveServerGoAway;
-  
+  goAway?: LiveServerGoAway
+
   // Session resumption state updates
-  sessionResumptionUpdate?: LiveServerSessionResumptionUpdate;
-  
+  sessionResumptionUpdate?: LiveServerSessionResumptionUpdate
+
   // Computed properties
-  get text(): string | undefined;  // Concatenated text parts
-  get data(): string | undefined;  // Concatenated inline data parts
+  get text(): string | undefined // Concatenated text parts
+  get data(): string | undefined // Concatenated inline data parts
 }
 ```
 
 ## Key Sub-Types
 
 ### LiveServerContent
+
 Contains the model's generated content and transcriptions:
 
 ```typescript
 interface LiveServerContent {
   // Model's generated content with parts
-  modelTurn?: Content;
-  
+  modelTurn?: Content
+
   // Indicates model finished generating current turn
-  turnComplete?: boolean;
-  
+  turnComplete?: boolean
+
   // Indicates client interrupted generation
-  interrupted?: boolean;
-  
+  interrupted?: boolean
+
   // Grounding metadata if enabled
-  groundingMetadata?: GroundingMetadata;
-  
+  groundingMetadata?: GroundingMetadata
+
   // Model finished all generation
-  generationComplete?: boolean;
-  
+  generationComplete?: boolean
+
   // User's audio input transcription
   inputTranscription?: {
-    text: string;
-    finished?: boolean;
-  };
-  
+    text: string
+    finished?: boolean
+  }
+
   // Model's audio output transcription
   outputTranscription?: {
-    text: string;
-    finished?: boolean;
-  };
+    text: string
+    finished?: boolean
+  }
 }
 ```
 
 ### Content
+
 The content structure containing parts:
 
 ```typescript
 interface Content {
-  role?: string;  // 'user', 'model', 'system'
-  parts: Part[];
+  role?: string // 'user', 'model', 'system'
+  parts: Part[]
 }
 ```
 
 ### Part
+
 Individual content parts that can be of various types:
 
 ```typescript
 interface Part {
   // Text content
-  text?: string;
-  
+  text?: string
+
   // Inline binary data (audio, images, etc.)
   inlineData?: {
-    mimeType: string;
-    data: string;  // Base64 encoded
-  };
-  
+    mimeType: string
+    data: string // Base64 encoded
+  }
+
   // File reference
   fileData?: {
-    fileUri: string;
-    mimeType?: string;
-  };
-  
+    fileUri: string
+    mimeType?: string
+  }
+
   // Function call from model
-  functionCall?: FunctionCall;
-  
+  functionCall?: FunctionCall
+
   // Function response from client
-  functionResponse?: FunctionResponse;
-  
+  functionResponse?: FunctionResponse
+
   // Code to execute
   executableCode?: {
-    language: string;
-    code: string;
-  };
-  
+    language: string
+    code: string
+  }
+
   // Code execution result
   codeExecutionResult?: {
-    outcome: string;  // 'OUTCOME_OK', 'OUTCOME_ERROR', etc.
-    output?: string;
-  };
-  
+    outcome: string // 'OUTCOME_OK', 'OUTCOME_ERROR', etc.
+    output?: string
+  }
+
   // Thinking/reasoning indicator
-  thought?: boolean;
-  
+  thought?: boolean
+
   // Video metadata
-  videoMetadata?: VideoMetadata;
+  videoMetadata?: VideoMetadata
 }
 ```
 
 ### LiveServerToolCall
+
 Requests the client to execute function calls:
 
 ```typescript
 interface LiveServerToolCall {
-  functionCalls?: FunctionCall[];
+  functionCalls?: FunctionCall[]
 }
 
 interface FunctionCall {
-  id?: string;           // Unique identifier for tracking
-  name?: string;         // Function name to call
-  args?: Record<string, unknown>;  // Function arguments
+  id?: string // Unique identifier for tracking
+  name?: string // Function name to call
+  args?: Record<string, unknown> // Function arguments
 }
 ```
 
 ### FunctionResponse
+
 Response from executed function (appears in Part):
 
 ```typescript
 class FunctionResponse {
-  id?: string;           // Matches FunctionCall.id
-  name?: string;         // Function name
-  response?: Record<string, unknown>;  // Result or error
-  willContinue?: boolean;  // For streaming responses
-  scheduling?: FunctionResponseScheduling;
+  id?: string // Matches FunctionCall.id
+  name?: string // Function name
+  response?: Record<string, unknown> // Result or error
+  willContinue?: boolean // For streaming responses
+  scheduling?: FunctionResponseScheduling
 }
 ```
 
 ## Common Message Patterns
 
 ### 1. Function Call Request
+
 ```json
 {
   "toolCall": {
@@ -172,6 +179,7 @@ class FunctionResponse {
 ```
 
 ### 2. Function Response (in modelTurn)
+
 ```json
 {
   "serverContent": {
@@ -191,6 +199,7 @@ class FunctionResponse {
 ```
 
 ### 3. Text Generation
+
 ```json
 {
   "serverContent": {
@@ -206,6 +215,7 @@ class FunctionResponse {
 ```
 
 ### 4. Audio Streaming
+
 ```json
 {
   "serverContent": {
@@ -224,6 +234,7 @@ class FunctionResponse {
 ```
 
 ### 5. Transcriptions
+
 ```json
 {
   "serverContent": {
@@ -240,6 +251,7 @@ class FunctionResponse {
 ```
 
 ### 6. Code Execution
+
 ```json
 {
   "serverContent": {
@@ -264,6 +276,7 @@ class FunctionResponse {
 ```
 
 ### 7. Turn Completion
+
 ```json
 {
   "serverContent": {
@@ -283,7 +296,8 @@ class FunctionResponse {
 
 2. **Part Types**: A single `modelTurn` can contain multiple parts of different types (text, audio, function calls, etc.)
 
-3. **Function Flow**: 
+3. **Function Flow**:
+
    - Server sends `toolCall` with `functionCalls`
    - Client executes and responds
    - Server may include `functionResponse` in subsequent `modelTurn.parts`

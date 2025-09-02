@@ -21,7 +21,7 @@ import type {
   DataUIPart,
   UIDataTypes,
   UITools,
-  UIMessageChunk
+  UIMessageChunk,
 } from 'ai'
 
 import { createIdGenerator } from 'ai'
@@ -56,10 +56,12 @@ export class LiveMessageAssembler {
 
   constructor(options: LiveMessageAssemblerOptions = {}) {
     // Use provided idGenerator or create a default one
-    this.idGenerator = options.idGenerator ?? createIdGenerator({
-      prefix: 'msg',
-      size: 24
-    })
+    this.idGenerator =
+      options.idGenerator ??
+      createIdGenerator({
+        prefix: 'msg',
+        size: 24,
+      })
   }
 
   /**
@@ -93,10 +95,12 @@ export class LiveMessageAssembler {
       allMessages.push(this.createMessage('user', this.currentUserParts))
     }
     if (this.currentAssistantParts.length > 0) {
-      allMessages.push(this.createMessage('assistant', this.currentAssistantParts))
+      allMessages.push(
+        this.createMessage('assistant', this.currentAssistantParts),
+      )
     }
 
-    return (allMessages).map(mergeConsecutiveTextParts)
+    return allMessages.map(mergeConsecutiveTextParts)
   }
 
   /**
@@ -151,7 +155,6 @@ export class LiveMessageAssembler {
         part: {
           type: 'text',
           text: message.serverContent.inputTranscription.text,
-
         } as TextUIPart,
         role: 'user',
         isFinal: message.serverContent.inputTranscription.finished || false,
@@ -164,7 +167,6 @@ export class LiveMessageAssembler {
         part: {
           type: 'text',
           text: message.serverContent.outputTranscription.text,
-
         } as TextUIPart,
         role: 'assistant',
         isFinal: message.serverContent.outputTranscription.finished || false,
@@ -258,7 +260,7 @@ export class LiveMessageAssembler {
       // Skip empty marker parts
       if (
         update.part.type === 'text' &&
-        (update.part).text === '' &&
+        update.part.text === '' &&
         update.isFinal
       ) {
         // This is just a turn completion marker
@@ -392,8 +394,10 @@ export class LiveMessageAssembler {
       for (const chunk of input.mediaChunks) {
         if (chunk && typeof chunk === 'object' && chunk.mimeType) {
           // Skip audio and video chunks
-          if (chunk.mimeType?.startsWith('audio/') ||
-              chunk.mimeType?.startsWith('video/')) {
+          if (
+            chunk.mimeType?.startsWith('audio/') ||
+            chunk.mimeType?.startsWith('video/')
+          ) {
             continue
           }
 
@@ -426,7 +430,7 @@ export class LiveMessageAssembler {
     }
 
     // Handle text parts
-    if ( part.text) {
+    if (part.text) {
       return {
         type: 'text',
         text: part.text,
@@ -439,8 +443,10 @@ export class LiveMessageAssembler {
     // Handle inline data - skip audio/video to avoid large data URLs
     if (part.inlineData) {
       // Skip audio and video data
-      if (part.inlineData.mimeType?.startsWith('audio/') ||
-          part.inlineData.mimeType?.startsWith('video/')) {
+      if (
+        part.inlineData.mimeType?.startsWith('audio/') ||
+        part.inlineData.mimeType?.startsWith('video/')
+      ) {
         return null
       }
 
@@ -480,7 +486,10 @@ export class LiveMessageAssembler {
         type: 'tool-result',
         toolCallId: this.idGenerator(),
         toolName: 'executableCode',
-        state: part.codeExecutionResult.outcome === 'OUTCOME_OK' ? 'output-available' : 'output-error',
+        state:
+          part.codeExecutionResult.outcome === 'OUTCOME_OK'
+            ? 'output-available'
+            : 'output-error',
         input: {},
         output: part.codeExecutionResult.output || '',
       } as ToolUIPart<UITools>
@@ -575,55 +584,50 @@ export class LiveMessageAssembler {
   }
 }
 
-
 /**
  * Merge consecutive text parts in a UIMessage
  * Uses reduce to combine adjacent text parts into single parts
  */
 export function mergeConsecutiveTextParts(message: UIMessage): UIMessage {
-  const mergedParts = message.parts.reduce<UIMessagePart<UIDataTypes, UITools>[]>(
-    (acc, part) => {
-      const lastPart = acc[acc.length - 1]
+  const mergedParts = message.parts.reduce<
+    UIMessagePart<UIDataTypes, UITools>[]
+  >((acc, part) => {
+    const lastPart = acc[acc.length - 1]
 
-      // Check if both current and last parts are text parts
-      if (
-        part.type === 'text' &&
-        lastPart?.type === 'text'
-      ) {
-        // Merge the text content
-        const mergedTextPart: TextUIPart = {
-          type: 'text',
-          text: (lastPart as TextUIPart).text + (part as TextUIPart).text,
-        }
-
-        // Preserve state if it exists (use the latest state)
-        const currentTextPart = part as TextUIPart
-        if (currentTextPart.state) {
-          mergedTextPart.state = currentTextPart.state
-        } else if ((lastPart as TextUIPart).state) {
-          mergedTextPart.state = (lastPart as TextUIPart).state
-        }
-
-        // Merge provider metadata if both have it
-        const lastTextPart = lastPart as TextUIPart
-        if (lastTextPart.providerMetadata || currentTextPart.providerMetadata) {
-          mergedTextPart.providerMetadata = {
-            ...lastTextPart.providerMetadata,
-            ...currentTextPart.providerMetadata,
-          }
-        }
-
-        // Replace the last part with the merged part
-        acc[acc.length - 1] = mergedTextPart
-      } else {
-        // Not consecutive text parts, just add the current part
-        acc.push(part)
+    // Check if both current and last parts are text parts
+    if (part.type === 'text' && lastPart?.type === 'text') {
+      // Merge the text content
+      const mergedTextPart: TextUIPart = {
+        type: 'text',
+        text: (lastPart as TextUIPart).text + (part as TextUIPart).text,
       }
 
-      return acc
-    },
-    []
-  )
+      // Preserve state if it exists (use the latest state)
+      const currentTextPart = part as TextUIPart
+      if (currentTextPart.state) {
+        mergedTextPart.state = currentTextPart.state
+      } else if ((lastPart as TextUIPart).state) {
+        mergedTextPart.state = (lastPart as TextUIPart).state
+      }
+
+      // Merge provider metadata if both have it
+      const lastTextPart = lastPart as TextUIPart
+      if (lastTextPart.providerMetadata || currentTextPart.providerMetadata) {
+        mergedTextPart.providerMetadata = {
+          ...lastTextPart.providerMetadata,
+          ...currentTextPart.providerMetadata,
+        }
+      }
+
+      // Replace the last part with the merged part
+      acc[acc.length - 1] = mergedTextPart
+    } else {
+      // Not consecutive text parts, just add the current part
+      acc.push(part)
+    }
+
+    return acc
+  }, [])
 
   return {
     ...message,

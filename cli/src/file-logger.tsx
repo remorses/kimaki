@@ -11,7 +11,12 @@ if (!fs.existsSync(logFilePath)) {
 export const logger = {
   log(...args: any[]) {
     const timestamp = new Date().toISOString()
-    const payload = { timestamp, messages: args.map((arg) => (typeof arg === 'object' ? arg : String(arg))) }
+    const payload = {
+      timestamp,
+      messages: args.map((arg) =>
+        typeof arg === 'object' ? arg : String(arg),
+      ),
+    }
     const yaml = dump(payload)
     fs.appendFileSync(logFilePath, `---\n${yaml}\n`)
   },

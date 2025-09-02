@@ -60,6 +60,6 @@ const VolMeterWorket = `
 
       return true
     }
-  }`;
+  }`
 
-export default VolMeterWorket;
+export default VolMeterWorket

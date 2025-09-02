@@ -2,12 +2,12 @@ import { describe, test, expect } from 'vitest'
 import { getTools } from './tools'
 
 describe('tools', () => {
-    test('listChats returns sessions sorted by most recent', async () => {
-        const tools = await getTools({})
+  test('listChats returns sessions sorted by most recent', async () => {
+    const tools = await getTools({})
 
-        const result = await tools.listChats.execute!({}, {} as any)
+    const result = await tools.listChats.execute!({}, {} as any)
 
-        expect(result).toMatchInlineSnapshot(`
+    expect(result).toMatchInlineSnapshot(`
           {
             "sessions": [
               {
@@ -174,20 +174,20 @@ describe('tools', () => {
             "success": true,
           }
         `)
-    })
+  })
 
-    test('createNewChat creates session and sends initial message', async () => {
-        const tools = await getTools({})
+  test('createNewChat creates session and sends initial message', async () => {
+    const tools = await getTools({})
 
-        const result = await tools.createNewChat.execute!(
-            {
-                message: 'What model are you?',
-                title: 'Model Check',
-            },
-            {} as any,
-        )
+    const result = await tools.createNewChat.execute!(
+      {
+        message: 'What model are you?',
+        title: 'Model Check',
+      },
+      {} as any,
+    )
 
-        expect(result).toMatchInlineSnapshot(`
+    expect(result).toMatchInlineSnapshot(`
           {
             "messageId": "jhUGOP2ciTAFCVgK",
             "sessionId": "ses_6f4c82bb6ffePj9YPVSleXVGZR",
@@ -195,5 +195,5 @@ describe('tools', () => {
             "title": "Model Check",
           }
         `)
-    })
+  })
 })

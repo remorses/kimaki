@@ -15,63 +15,63 @@
  */
 
 export type GetAudioContextOptions = AudioContextOptions & {
-  id?: string;
-};
+  id?: string
+}
 
-const map: Map<string, AudioContext> = new Map();
+const map: Map<string, AudioContext> = new Map()
 
 export const audioContext: (
-  options?: GetAudioContextOptions
+  options?: GetAudioContextOptions,
 ) => Promise<AudioContext> = (() => {
   const didInteract = new Promise<any>((res) => {
     if (typeof window === 'undefined') {
       res(true)
     }
-    addEventListener("pointerdown", res, { once: true });
-    addEventListener("keydown", res, { once: true });
-  });
+    addEventListener('pointerdown', res, { once: true })
+    addEventListener('keydown', res, { once: true })
+  })
 
   return async (options?: GetAudioContextOptions) => {
     try {
-      const a = new Audio();
+      const a = new Audio()
       a.src =
-        "data:audio/wav;base64,UklGRigAAABXQVZFZm10IBIAAAABAAEARKwAAIhYAQACABAAAABkYXRhAgAAAAEA";
-      await a.play();
+        'data:audio/wav;base64,UklGRigAAABXQVZFZm10IBIAAAABAAEARKwAAIhYAQACABAAAABkYXRhAgAAAAEA'
+      await a.play()
       if (options?.id && map.has(options.id)) {
-        const ctx = map.get(options.id);
+        const ctx = map.get(options.id)
         if (ctx) {
-          return ctx;
+          return ctx
         }
       }
-      const ctx = new AudioContext(options);
+      const ctx = new AudioContext(options)
       // await ctx.resume()
       if (options?.id) {
-        map.set(options.id, ctx);
+        map.set(options.id, ctx)
       }
-      return ctx;
+      return ctx
     } catch (e) {
-      await didInteract;
+      await didInteract
       if (options?.id && map.has(options.id)) {
-        const ctx = map.get(options.id);
+        const ctx = map.get(options.id)
         if (ctx) {
-          return ctx;
+          return ctx
         }
       }
-      const ctx = new AudioContext(options);
+      const ctx = new AudioContext(options)
       // await ctx.resume()
       if (options?.id) {
-        map.set(options.id, ctx);
+        map.set(options.id, ctx)
       }
-      return ctx;
+      return ctx
     }
-  };
-})();
+  }
+})()
 
 export function base64ToArrayBuffer(base64: string) {
-  var binaryString = atob(base64);
-  var bytes = new Uint8Array(binaryString.length);
+  var binaryString = atob(base64)
+  var bytes = new Uint8Array(binaryString.length)
   for (let i = 0; i < binaryString.length; i++) {
-    bytes[i] = binaryString.charCodeAt(i);
+    bytes[i] = binaryString.charCodeAt(i)
   }
-  return bytes.buffer;
+  return bytes.buffer
 }

@@ -5,7 +5,6 @@ import { Type } from '@google/genai'
 import type { FunctionDeclaration, FunctionCall } from '@google/genai'
 import {
   aiToolToGenAIFunction,
-
   aiToolToCallableTool,
   extractSchemaFromTool,
 } from './ai-tool-to-genai.js'
@@ -117,7 +116,6 @@ describe('AI Tool to GenAI Conversion', () => {
       }
     `)
   })
-
 
   it('should extract schema from tool', () => {
     const testTool = tool({

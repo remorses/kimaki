@@ -23,7 +23,7 @@ cli
       // @ts-expect-error still not typed https://github.com/ircam-ismm/node-web-audio-api/issues/73
       navigator.mediaDevices = mediaDevices
 
-      const { LiveAPIClient, callableToolsFromObject } = await import(
+      const { LiveAPIClient, callableToolsFromObject, downSampleAudioBuffer } = await import(
         'liveapi/src/index'
       )
 
@@ -89,10 +89,26 @@ cli
       const newClient = new LiveAPIClient({
         apiKey: token!,
         model: 'models/gemini-2.5-flash-preview-native-audio-dialog',
+        recordingSampleRate: 44100,
         onUserAudioChunk: (chunk) => {
-          // Collect chunks while user is speaking
+          // Downsample from 44.1k to 16k before collecting
+          const int16Array = new Int16Array(chunk)
+          const float32Array = new Float32Array(int16Array.length)
+          for (let i = 0; i < int16Array.length; i++) {
+            float32Array[i] = int16Array[i] / 32768.0
+          }
+          
+          const downsampled = downSampleAudioBuffer(float32Array, 44100, 16000)
+          
+          // Convert back to Int16Array
+          const downsampledInt16 = new Int16Array(downsampled.length)
+          for (let i = 0; i < downsampled.length; i++) {
+            downsampledInt16[i] = Math.max(-32768, Math.min(32767, Math.floor(downsampled[i] * 32768)))
+          }
+          
+          // Collect downsampled chunks while user is speaking
           if (!isModelSpeaking) {
-            audioChunks.push(chunk)
+            audioChunks.push(downsampledInt16.buffer)
           }
         },
         onMessage: (message) => {

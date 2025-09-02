@@ -9,14 +9,14 @@ describe('genai-to-ui-stream', () => {
   it('should process example.json events into UIMessageChunks', () => {
     // Cast the example events to LiveServerMessage[]
     const messages = exampleEvents as LiveServerMessage[]
-    
+
     // Process messages to extract UIMessageChunks (only function calls)
     const chunks = processLiveServerMessages(messages)
-    
+
     // Save as snapshot file
     const snapshotPath = join(__dirname, 'snapshots', 'example-ui-chunks.json')
     writeFileSync(snapshotPath, JSON.stringify(chunks, null, 2))
-    
+
     // Verify we extracted the function calls
     expect(chunks).toMatchInlineSnapshot(`
       [
@@ -65,56 +65,56 @@ describe('genai-to-ui-stream', () => {
       ]
     `)
   })
-  
+
   it('should return empty array when no function calls are present', () => {
     const messagesWithoutFunctionCalls = [
       {
         serverContent: {
           outputTranscription: {
-            text: "Hello, how can I help you today?"
-          }
-        }
+            text: 'Hello, how can I help you today?',
+          },
+        },
       },
       {
         serverContent: {
           modelTurn: {
             parts: [
               {
-                text: "This is a text response"
-              }
-            ]
-          }
-        }
-      }
+                text: 'This is a text response',
+              },
+            ],
+          },
+        },
+      },
     ] as any as LiveServerMessage[]
-    
+
     const chunks = processLiveServerMessages(messagesWithoutFunctionCalls)
-    
+
     expect(chunks).toMatchInlineSnapshot(`[]`)
   })
-  
+
   it('should handle messages with multiple function calls', () => {
     const messagesWithMultipleCalls = [
       {
         toolCall: {
           functionCalls: [
             {
-              id: "call-1",
-              name: "search",
-              args: { query: "test" }
+              id: 'call-1',
+              name: 'search',
+              args: { query: 'test' },
             },
             {
-              id: "call-2", 
-              name: "calculate",
-              args: { expression: "2+2" }
-            }
-          ]
-        }
-      }
+              id: 'call-2',
+              name: 'calculate',
+              args: { expression: '2+2' },
+            },
+          ],
+        },
+      },
     ] as any as LiveServerMessage[]
-    
+
     const chunks = processLiveServerMessages(messagesWithMultipleCalls)
-    
+
     expect(chunks).toMatchInlineSnapshot(`
       [
         {
@@ -147,18 +147,18 @@ describe('genai-to-ui-stream', () => {
             parts: [
               {
                 codeExecutionResult: {
-                  outcome: "OUTCOME_OK",
-                  output: "{'output': {'success': True}}\n"
-                }
-              }
-            ]
-          }
-        }
-      }
+                  outcome: 'OUTCOME_OK',
+                  output: "{'output': {'success': True}}\n",
+                },
+              },
+            ],
+          },
+        },
+      },
     ] as any as LiveServerMessage[]
-    
+
     const chunks = processLiveServerMessages(messagesWithOutputs)
-    
+
     expect(chunks).toMatchInlineSnapshot(`[]`)
   })
 })

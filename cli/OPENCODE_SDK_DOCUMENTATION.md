@@ -2,28 +2,28 @@
 title: OpenCode SDK API Documentation
 description: Complete reference for all methods and return types in the @opencode-ai/sdk package
 prompt: |
-    read the .d.ts for the opencode sdk inside node_modules. see package.json 
-    for cli first. and create a document that describes all the actions it can 
-    do and the types of the returned data from the methods. in the document 
-    frontmatter put the prompt used to generate the document so that if run 
-    again it will update it with latest sdk types
+  read the .d.ts for the opencode sdk inside node_modules. see package.json 
+  for cli first. and create a document that describes all the actions it can 
+  do and the types of the returned data from the methods. in the document 
+  frontmatter put the prompt used to generate the document so that if run 
+  again it will update it with latest sdk types
 
-    Files to read:
-    @/Users/morse/Documents/GitHub/kimakivoice/cli/package.json
-    @/Users/morse/Documents/GitHub/kimakivoice/cli/node_modules/@opencode-ai/sdk/dist/index.d.ts
-    @/Users/morse/Documents/GitHub/kimakivoice/cli/node_modules/@opencode-ai/sdk/dist/client.d.ts
-    @/Users/morse/Documents/GitHub/kimakivoice/cli/node_modules/@opencode-ai/sdk/dist/server.d.ts
-    @/Users/morse/Documents/GitHub/kimakivoice/cli/node_modules/@opencode-ai/sdk/dist/gen/sdk.gen.d.ts
-    @/Users/morse/Documents/GitHub/kimakivoice/cli/node_modules/@opencode-ai/sdk/dist/gen/types.gen.d.ts
+  Files to read:
+  @/Users/morse/Documents/GitHub/kimakivoice/cli/package.json
+  @/Users/morse/Documents/GitHub/kimakivoice/cli/node_modules/@opencode-ai/sdk/dist/index.d.ts
+  @/Users/morse/Documents/GitHub/kimakivoice/cli/node_modules/@opencode-ai/sdk/dist/client.d.ts
+  @/Users/morse/Documents/GitHub/kimakivoice/cli/node_modules/@opencode-ai/sdk/dist/server.d.ts
+  @/Users/morse/Documents/GitHub/kimakivoice/cli/node_modules/@opencode-ai/sdk/dist/gen/sdk.gen.d.ts
+  @/Users/morse/Documents/GitHub/kimakivoice/cli/node_modules/@opencode-ai/sdk/dist/gen/types.gen.d.ts
 
-    The document should include:
-    - All available methods from OpencodeClient class
-    - Parameters required for each method
-    - Return types with full type definitions
-    - Event types and their structures
-    - Part types for messages
-    - Error handling information
-    - Usage examples
+  The document should include:
+  - All available methods from OpencodeClient class
+  - Parameters required for each method
+  - Return types with full type definitions
+  - Event types and their structures
+  - Part types for messages
+  - Error handling information
+  - Usage examples
 ---
 
 # OpenCode SDK API Documentation
@@ -85,13 +85,13 @@ Lists all available projects.
 
 ```typescript
 type Project = {
-    id: string
-    worktree: string
-    vcs?: 'git'
-    time: {
-        created: number
-        initialized?: number
-    }
+  id: string
+  worktree: string
+  vcs?: 'git'
+  time: {
+    created: number
+    initialized?: number
+  }
 }
 ```
 
@@ -136,28 +136,28 @@ Gets the current configuration.
 
 ```typescript
 type Config = {
-    $schema?: string
-    theme?: string
-    keybinds?: KeybindsConfig
-    tui?: { scroll_speed: number }
-    command?: { [key: string]: CommandConfig }
-    plugin?: Array<string>
-    snapshot?: boolean
-    share?: 'manual' | 'auto' | 'disabled'
-    autoupdate?: boolean
-    disabled_providers?: Array<string>
-    model?: string
-    small_model?: string
-    username?: string
-    agent?: { [key: string]: AgentConfig }
-    provider?: { [key: string]: ProviderConfig }
-    mcp?: { [key: string]: McpConfig }
-    formatter?: { [key: string]: FormatterConfig }
-    lsp?: { [key: string]: LspConfig }
-    instructions?: Array<string>
-    permission?: PermissionConfig
-    tools?: { [key: string]: boolean }
-    experimental?: ExperimentalConfig
+  $schema?: string
+  theme?: string
+  keybinds?: KeybindsConfig
+  tui?: { scroll_speed: number }
+  command?: { [key: string]: CommandConfig }
+  plugin?: Array<string>
+  snapshot?: boolean
+  share?: 'manual' | 'auto' | 'disabled'
+  autoupdate?: boolean
+  disabled_providers?: Array<string>
+  model?: string
+  small_model?: string
+  username?: string
+  agent?: { [key: string]: AgentConfig }
+  provider?: { [key: string]: ProviderConfig }
+  mcp?: { [key: string]: McpConfig }
+  formatter?: { [key: string]: FormatterConfig }
+  lsp?: { [key: string]: LspConfig }
+  instructions?: Array<string>
+  permission?: PermissionConfig
+  tools?: { [key: string]: boolean }
+  experimental?: ExperimentalConfig
 }
 ```
 
@@ -169,12 +169,12 @@ Lists all available providers.
 
 ```typescript
 type Provider = {
-    api?: string
-    name: string
-    env: Array<string>
-    id: string
-    npm?: string
-    models: { [key: string]: Model }
+  api?: string
+  name: string
+  env: Array<string>
+  id: string
+  npm?: string
+  models: { [key: string]: Model }
 }
 ```
 
@@ -188,10 +188,10 @@ Gets path information.
 
 ```typescript
 type Path = {
-    state: string
-    config: string
-    worktree: string
-    directory: string
+  state: string
+  config: string
+  worktree: string
+  directory: string
 }
 ```
 
@@ -205,23 +205,23 @@ Lists all sessions.
 
 ```typescript
 type Session = {
-    id: string
-    projectID: string
-    directory: string
-    parentID?: string
-    share?: { url: string }
-    title: string
-    version: string
-    time: {
-        created: number
-        updated: number
-    }
-    revert?: {
-        messageID: string
-        partID?: string
-        snapshot?: string
-        diff?: string
-    }
+  id: string
+  projectID: string
+  directory: string
+  parentID?: string
+  share?: { url: string }
+  title: string
+  version: string
+  time: {
+    created: number
+    updated: number
+  }
+  revert?: {
+    messageID: string
+    partID?: string
+    snapshot?: string
+    diff?: string
+  }
 }
 ```
 
@@ -346,34 +346,34 @@ Lists messages for a session.
 type Message = UserMessage | AssistantMessage
 
 type UserMessage = {
-    id: string
-    sessionID: string
-    role: 'user'
-    time: { created: number }
+  id: string
+  sessionID: string
+  role: 'user'
+  time: { created: number }
 }
 
 type AssistantMessage = {
-    id: string
-    sessionID: string
-    role: 'assistant'
-    time: {
-        created: number
-        completed?: number
-    }
-    error?: Error
-    system: Array<string>
-    modelID: string
-    providerID: string
-    mode: string
-    path: { cwd: string; root: string }
-    summary?: boolean
-    cost: number
-    tokens: {
-        input: number
-        output: number
-        reasoning: number
-        cache: { read: number; write: number }
-    }
+  id: string
+  sessionID: string
+  role: 'assistant'
+  time: {
+    created: number
+    completed?: number
+  }
+  error?: Error
+  system: Array<string>
+  modelID: string
+  providerID: string
+  mode: string
+  path: { cwd: string; root: string }
+  summary?: boolean
+  cost: number
+  tokens: {
+    input: number
+    output: number
+    reasoning: number
+    cache: { read: number; write: number }
+  }
 }
 ```
 
@@ -465,11 +465,11 @@ Lists all available commands.
 
 ```typescript
 type Command = {
-    name: string
-    description?: string
-    agent?: string
-    model?: string
-    template: string
+  name: string
+  description?: string
+  agent?: string
+  model?: string
+  template: string
 }
 ```
 
@@ -514,12 +514,12 @@ Finds workspace symbols.
 
 ```typescript
 type Symbol = {
-    name: string
-    kind: number
-    location: {
-        uri: string
-        range: Range
-    }
+  name: string
+  kind: number
+  location: {
+    uri: string
+    range: Range
+  }
 }
 ```
 
@@ -537,10 +537,10 @@ Lists files and directories.
 
 ```typescript
 type FileNode = {
-    name: string
-    path: string
-    type: 'file' | 'directory'
-    ignored: boolean
+  name: string
+  path: string
+  type: 'file' | 'directory'
+  ignored: boolean
 }
 ```
 
@@ -564,10 +564,10 @@ Gets file status.
 
 ```typescript
 type File = {
-    path: string
-    added: number
-    removed: number
-    status: 'added' | 'deleted' | 'modified'
+  path: string
+  added: number
+  removed: number
+  status: 'added' | 'deleted' | 'modified'
 }
 ```
 
@@ -592,21 +592,21 @@ Lists all agents.
 
 ```typescript
 type Agent = {
-    name: string
-    description?: string
-    mode: 'subagent' | 'primary' | 'all'
-    builtIn: boolean
-    topP?: number
-    temperature?: number
-    permission: {
-        edit: 'ask' | 'allow' | 'deny'
-        bash: { [key: string]: 'ask' | 'allow' | 'deny' }
-        webfetch?: 'ask' | 'allow' | 'deny'
-    }
-    model?: { modelID: string; providerID: string }
-    prompt?: string
-    tools: { [key: string]: boolean }
-    options: { [key: string]: unknown }
+  name: string
+  description?: string
+  mode: 'subagent' | 'primary' | 'all'
+  builtIn: boolean
+  topP?: number
+  temperature?: number
+  permission: {
+    edit: 'ask' | 'allow' | 'deny'
+    bash: { [key: string]: 'ask' | 'allow' | 'deny' }
+    webfetch?: 'ask' | 'allow' | 'deny'
+  }
+  model?: { modelID: string; providerID: string }
+  prompt?: string
+  tools: { [key: string]: boolean }
+  options: { [key: string]: unknown }
 }
 ```
 
@@ -693,21 +693,21 @@ Sets authentication credentials.
 
 ```typescript
 type OAuth = {
-    type: 'oauth'
-    refresh: string
-    access: string
-    expires: number
+  type: 'oauth'
+  refresh: string
+  access: string
+  expires: number
 }
 
 type ApiAuth = {
-    type: 'api'
-    key: string
+  type: 'api'
+  key: string
 }
 
 type WellKnownAuth = {
-    type: 'wellknown'
-    key: string
-    token: string
+  type: 'wellknown'
+  key: string
+  token: string
 }
 ```
 
@@ -717,71 +717,71 @@ Message parts represent different types of content within messages:
 
 ```typescript
 type Part =
-    | TextPart
-    | ReasoningPart
-    | FilePart
-    | ToolPart
-    | StepStartPart
-    | StepFinishPart
-    | SnapshotPart
-    | PatchPart
-    | AgentPart
+  | TextPart
+  | ReasoningPart
+  | FilePart
+  | ToolPart
+  | StepStartPart
+  | StepFinishPart
+  | SnapshotPart
+  | PatchPart
+  | AgentPart
 
 type TextPart = {
-    id: string
-    sessionID: string
-    messageID: string
-    type: 'text'
-    text: string
-    synthetic?: boolean
-    time?: { start: number; end?: number }
+  id: string
+  sessionID: string
+  messageID: string
+  type: 'text'
+  text: string
+  synthetic?: boolean
+  time?: { start: number; end?: number }
 }
 
 type FilePart = {
-    id: string
-    sessionID: string
-    messageID: string
-    type: 'file'
-    mime: string
-    filename?: string
-    url: string
-    source?: FilePartSource
+  id: string
+  sessionID: string
+  messageID: string
+  type: 'file'
+  mime: string
+  filename?: string
+  url: string
+  source?: FilePartSource
 }
 
 type ToolPart = {
-    id: string
-    sessionID: string
-    messageID: string
-    type: 'tool'
-    callID: string
-    tool: string
-    state: ToolState
+  id: string
+  sessionID: string
+  messageID: string
+  type: 'tool'
+  callID: string
+  tool: string
+  state: ToolState
 }
 
 type ToolState =
-    | { status: 'pending' }
-    | {
-          status: 'running'
-          input?: unknown
-          title?: string
-          metadata?: any
-          time: { start: number }
-      }
-    | {
-          status: 'completed'
-          input: any
-          output: string
-          title: string
-          metadata: any
-          time: { start: number; end: number }
-      }
-    | {
-          status: 'error'
-          input: any
-          error: string
-          metadata?: any
-          time: { start: number; end: number }
-      }
+  | { status: 'pending' }
+  | {
+      status: 'running'
+      input?: unknown
+      title?: string
+      metadata?: any
+      time: { start: number }
+    }
+  | {
+      status: 'completed'
+      input: any
+      output: string
+      title: string
+      metadata: any
+      time: { start: number; end: number }
+    }
+  | {
+      status: 'error'
+      input: any
+      error: string
+      metadata?: any
+      time: { start: number; end: number }
+    }
 ```
 
 ## Error Handling
@@ -790,9 +790,9 @@ All methods can throw errors with the following structure:
 
 ```typescript
 type Error = {
-    data: {
-        [key: string]: unknown
-    }
+  data: {
+    [key: string]: unknown
+  }
 }
 ```
 
@@ -815,15 +815,15 @@ const sessions = await client.session.list()
 
 // Create a new session
 const newSession = await client.session.create({
-    body: { title: 'My New Session' },
+  body: { title: 'My New Session' },
 })
 
 // Send a prompt
 const response = await client.session.prompt({
-    path: { id: newSession.id },
-    body: {
-        parts: [{ type: 'text', text: 'Hello, can you help me?' }],
-    },
+  path: { id: newSession.id },
+  body: {
+    parts: [{ type: 'text', text: 'Hello, can you help me?' }],
+  },
 })
 
 // Subscribe to events

@@ -68,6 +68,6 @@ class AudioProcessingWorklet extends AudioWorkletProcessor {
     }
   }
 }
-`;
+`
 
-export default AudioRecordingWorklet;
+export default AudioRecordingWorklet

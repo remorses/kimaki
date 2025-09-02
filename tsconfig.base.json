@@ -1,26 +1,26 @@
 {
-    "compilerOptions": {
-        "target": "ES2022",
-        "module": "ESNext",
-        "moduleResolution": "bundler",
-        "allowJs": false,
-        "composite": true,
-        "outDir": "${configDir}/dist",
-        "rootDir": "${configDir}/src",
+  "compilerOptions": {
+    "target": "ES2022",
+    "module": "ESNext",
+    "moduleResolution": "bundler",
+    "allowJs": false,
+    "composite": true,
+    "outDir": "${configDir}/dist",
+    "rootDir": "${configDir}/src",
 
-        "lib": ["es2022", "es2017", "es7", "es6", "dom"],
-        "resolveJsonModule": true,
+    "lib": ["es2022", "es2017", "es7", "es6", "dom"],
+    "resolveJsonModule": true,
 
-        "declaration": true,
-        "declarationMap": true,
-        "strict": true,
-        "downlevelIteration": true,
-        "esModuleInterop": true,
-        "noImplicitAny": false,
-        "useUnknownInCatchVariables": false,
-        "sourceMap": true,
-        "jsx": "react-jsx",
-        "skipLibCheck": true
-    },
-    "exclude": ["**/node_modules", "**/.*/"]
+    "declaration": true,
+    "declarationMap": true,
+    "strict": true,
+    "downlevelIteration": true,
+    "esModuleInterop": true,
+    "noImplicitAny": false,
+    "useUnknownInCatchVariables": false,
+    "sourceMap": true,
+    "jsx": "react-jsx",
+    "skipLibCheck": true
+  },
+  "exclude": ["**/node_modules", "**/.*/"]
 }

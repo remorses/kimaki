@@ -1,4 +1,3 @@
-
 # Project Coding Guidelines
 
 NOTICE: This file is generated using AGENTS.sh and should NEVER be manually updated.
@@ -6,7 +5,6 @@ NOTICE: This file is generated using AGENTS.sh and should NEVER be manually upda
 This file contains all coding guidelines and standards for this project.
 
 ---
-
 
 when summarizing changes at the end of the message, be super short, a few words and in bullet points, use bold text to highlight important keywords. use markdown.
 
@@ -64,30 +62,30 @@ always use kebab case for new filenames. never use uppercase letters in filename
 // BAD. DO NOT DO THIS
 let favicon: string | undefined
 if (docsConfig?.favicon) {
-    if (typeof docsConfig.favicon === 'string') {
-        favicon = docsConfig.favicon
-    } else if (docsConfig.favicon?.light) {
-        // Use light favicon as default, could be enhanced with theme detection
-        favicon = docsConfig.favicon.light
-    }
+  if (typeof docsConfig.favicon === 'string') {
+    favicon = docsConfig.favicon
+  } else if (docsConfig.favicon?.light) {
+    // Use light favicon as default, could be enhanced with theme detection
+    favicon = docsConfig.favicon.light
+  }
 }
 // DO THIS. use an iife. Immediately Invoked Function Expression
 const favicon: string = (() => {
-    if (!docsConfig?.favicon) {
-        return ''
-    }
-    if (typeof docsConfig.favicon === 'string') {
-        return docsConfig.favicon
-    }
-    if (docsConfig.favicon?.light) {
-        // Use light favicon as default, could be enhanced with theme detection
-        return docsConfig.favicon.light
-    }
+  if (!docsConfig?.favicon) {
     return ''
+  }
+  if (typeof docsConfig.favicon === 'string') {
+    return docsConfig.favicon
+  }
+  if (docsConfig.favicon?.light) {
+    // Use light favicon as default, could be enhanced with theme detection
+    return docsConfig.favicon.light
+  }
+  return ''
 })()
 // if you already know the type use it:
 const favicon: string = () => {
-    // ...
+  // ...
 }
 ```
 
@@ -260,38 +258,38 @@ notice that
 - use the sentries npm package, this handles correctly every environment like Bun, Node, Browser, etc
 
 ```tsx
-import { captureException, flush, init } from "sentries";
+import { captureException, flush, init } from 'sentries'
 
 init({
-  dsn: "https://e702f9c3dff49fd1aa16500c6056d0f7@o4509638447005696.ingest.de.sentry.io/4509638454476880",
+  dsn: 'https://e702f9c3dff49fd1aa16500c6056d0f7@o4509638447005696.ingest.de.sentry.io/4509638454476880',
   integrations: [],
   tracesSampleRate: 0.01,
   profilesSampleRate: 0.01,
   beforeSend(event) {
-    if (process.env.NODE_ENV === "development") {
-      return null;
+    if (process.env.NODE_ENV === 'development') {
+      return null
     }
     if (process.env.BYTECODE_RUN) {
-      return null;
+      return null
     }
-    if (event?.["name"] === "AbortError") {
-      return null;
+    if (event?.['name'] === 'AbortError') {
+      return null
     }
 
-    return event;
+    return event
   },
-});
+})
 
 export async function notifyError(error: any, msg?: string) {
-  console.error(msg, error);
-  captureException(error, { extra: { msg } });
-  await flush(1000);
+  console.error(msg, error)
+  captureException(error, { extra: { msg } })
+  await flush(1000)
 }
 
 export class AppError extends Error {
   constructor(message: string) {
-    super(message);
-    this.name = "AppError";
+    super(message)
+    this.name = 'AppError'
   }
 }
 ```
@@ -301,7 +299,6 @@ export class AppError extends Error {
 every time you throw a user-readable error you should use AppError instead of Error
 
 AppError messages will be forwarded to the user as is. normal Error instances instead could have their messages obfuscated
-
 
 ---
 
@@ -496,3 +493,4 @@ when you need to create a complex type that comes from a prisma table, do not cr
 
 ---
 
+```

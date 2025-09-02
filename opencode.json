@@ -1,14 +1,14 @@
 {
-    "$schema": "https://opencode.ai/config.json",
+  "$schema": "https://opencode.ai/config.json",
 
-    "lsp": {
-        "typescript": {
-            "disabled": true
-        }
-    },
-    // "formatter": {
-    //     "prettier": {
-    //         "disabled": true
-    //     }
-    // }
+  "lsp": {
+    "typescript": {
+      "disabled": true
+    }
+  }
+  // "formatter": {
+  //     "prettier": {
+  //         "disabled": true
+  //     }
+  // }
 }

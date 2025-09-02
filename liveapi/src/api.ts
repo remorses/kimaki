@@ -24,7 +24,6 @@ export interface ToolExecutionRequest {
   input: any
 }
 
-
 export function createAudioChatAPI(options: CreateAudioChatAPIOptions) {
   const { geminiApiKey, tools, onRequest } = options
 
@@ -46,8 +45,9 @@ export function createAudioChatAPI(options: CreateAudioChatAPIOptions) {
       if (method === 'GET') {
         // Get model from query parameters
         const url = new URL(request.url)
-        const model = url.searchParams.get('model') || 'gemini-2.0-flash-live-001'
-        
+        const model =
+          url.searchParams.get('model') || 'gemini-2.0-flash-live-001'
+
         // Generate ephemeral token
         let token: string
         try {
@@ -55,7 +55,9 @@ export function createAudioChatAPI(options: CreateAudioChatAPIOptions) {
             config: {
               uses: 1, // Single session only
               expireTime: new Date(Date.now() + 30 * 60 * 1000).toISOString(), // 30 minutes
-              newSessionExpireTime: new Date(Date.now() + 60 * 1000).toISOString(), // Must start within 1 minute
+              newSessionExpireTime: new Date(
+                Date.now() + 60 * 1000,
+              ).toISOString(), // Must start within 1 minute
               liveConnectConstraints: {
                 model,
                 config: {
@@ -64,9 +66,7 @@ export function createAudioChatAPI(options: CreateAudioChatAPIOptions) {
                   temperature: 0.7,
                 },
               },
-              
             },
-            
           })
           token = authToken.name || ''
         } catch (error) {
@@ -78,17 +78,17 @@ export function createAudioChatAPI(options: CreateAudioChatAPIOptions) {
               headers: {
                 'Content-Type': 'application/json',
               },
-            }
+            },
           )
         }
-        
+
         // Return tools metadata along with token
         const toolDefinitions: ToolDefinition[] = Object.entries(tools).map(
           ([name, tool]) => ({
             name,
             description: tool.description || `Tool: ${name}`,
             inputSchema: extractSchemaFromTool(tool),
-          })
+          }),
         )
 
         const response: ToolsAndTokenResponse = {
@@ -112,15 +112,12 @@ export function createAudioChatAPI(options: CreateAudioChatAPIOptions) {
         const { tool: toolName, input } = toolRequest
 
         if (!toolName) {
-          return new Response(
-            JSON.stringify({ error: 'Missing tool name' }),
-            {
-              status: 400,
-              headers: {
-                'Content-Type': 'application/json',
-              },
-            }
-          )
+          return new Response(JSON.stringify({ error: 'Missing tool name' }), {
+            status: 400,
+            headers: {
+              'Content-Type': 'application/json',
+            },
+          })
         }
 
         const tool = tools[toolName]
@@ -133,19 +130,21 @@ export function createAudioChatAPI(options: CreateAudioChatAPIOptions) {
               headers: {
                 'Content-Type': 'application/json',
               },
-            }
+            },
           )
         }
 
         if (!tool.execute) {
           return new Response(
-            JSON.stringify({ error: `Tool ${toolName} has no execute function` }),
+            JSON.stringify({
+              error: `Tool ${toolName} has no execute function`,
+            }),
             {
               status: 400,
               headers: {
                 'Content-Type': 'application/json',
               },
-            }
+            },
           )
         }
 
@@ -166,53 +165,54 @@ export function createAudioChatAPI(options: CreateAudioChatAPIOptions) {
           console.error(`Error executing tool ${toolName}:`, error)
           return new Response(
             JSON.stringify({
-              error: error instanceof Error ? error.message : 'Tool execution failed',
+              error:
+                error instanceof Error
+                  ? error.message
+                  : 'Tool execution failed',
             }),
             {
               status: 500,
               headers: {
                 'Content-Type': 'application/json',
               },
-            }
+            },
           )
         }
       }
 
-      return new Response(
-        JSON.stringify({ error: 'Method not allowed' }),
-        {
-          status: 405,
-          headers: {
-            'Content-Type': 'application/json',
-          },
-        }
-      )
+      return new Response(JSON.stringify({ error: 'Method not allowed' }), {
+        status: 405,
+        headers: {
+          'Content-Type': 'application/json',
+        },
+      })
     } catch (error) {
       console.error('API handler error:', error)
 
       // If onRequest threw an error (e.g., unauthorized), return appropriate response
-      if (error instanceof Error && error.message.toLowerCase().includes('unauthorized')) {
-        return new Response(
-          JSON.stringify({ error: 'Unauthorized' }),
-          {
-            status: 401,
-            headers: {
-              'Content-Type': 'application/json',
-            },
-          }
-        )
+      if (
+        error instanceof Error &&
+        error.message.toLowerCase().includes('unauthorized')
+      ) {
+        return new Response(JSON.stringify({ error: 'Unauthorized' }), {
+          status: 401,
+          headers: {
+            'Content-Type': 'application/json',
+          },
+        })
       }
 
       return new Response(
         JSON.stringify({
-          error: error instanceof Error ? error.message : 'Internal server error',
+          error:
+            error instanceof Error ? error.message : 'Internal server error',
         }),
         {
           status: 500,
           headers: {
             'Content-Type': 'application/json',
           },
-        }
+        },
       )
     }
   }

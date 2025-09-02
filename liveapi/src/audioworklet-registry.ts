@@ -19,14 +19,14 @@
  * any module using `audioContext.audioWorklet.addModule(` should register the worklet here
  */
 export type WorkletGraph = {
-  node?: AudioWorkletNode;
-  handlers: Array<(this: MessagePort, ev: MessageEvent) => any>;
-};
+  node?: AudioWorkletNode
+  handlers: Array<(this: MessagePort, ev: MessageEvent) => any>
+}
 
 export const registeredWorklets: Map<
   AudioContext,
   Record<string, WorkletGraph>
-> = new Map();
+> = new Map()
 
 export const createWorketFromSrc = (
   workletName: string,
@@ -35,9 +35,9 @@ export const createWorketFromSrc = (
   const script = new Blob(
     [`registerProcessor("${workletName}", ${workletSrc})`],
     {
-      type: "application/javascript",
+      type: 'application/javascript',
     },
-  );
+  )
 
-  return URL.createObjectURL(script);
-};
+  return URL.createObjectURL(script)
+}
