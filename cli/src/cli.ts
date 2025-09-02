@@ -22,25 +22,18 @@ const tools = {
             message: z.string().describe('The message text to send'),
         }),
         execute: async ({ sessionId, message }) => {
-            try {
-                const response = await client.session.prompt({
-                    path: { id: sessionId },
-                    body: {
-                        parts: [{ type: 'text', text: message }],
-                    },
-                })
-                return {
-                    success: true,
-                    messageId: response.data?.info.id,
-                    status: response.data?.info.time.completed
-                        ? 'completed'
-                        : 'in_progress',
-                }
-            } catch (error: any) {
-                return {
-                    success: false,
-                    error: error.message || 'Failed to submit message',
-                }
+            const response = await client.session.prompt({
+                path: { id: sessionId },
+                body: {
+                    parts: [{ type: 'text', text: message }],
+                },
+            })
+            return {
+                success: true,
+                messageId: response.data?.info.id,
+                status: response.data?.info.time.completed
+                    ? 'completed'
+                    : 'in_progress',
             }
         },
     }),
@@ -57,35 +50,28 @@ const tools = {
                 .describe('Optional title for the session'),
         }),
         execute: async ({ message, title }) => {
-            try {
-                const session = await client.session.create({
-                    body: {
-                        title: title || message.slice(0, 50),
-                    },
-                })
+            const session = await client.session.create({
+                body: {
+                    title: title || message.slice(0, 50),
+                },
+            })
 
-                if (!session.data) {
-                    throw new Error('Failed to create session')
-                }
+            if (!session.data) {
+                throw new Error('Failed to create session')
+            }
 
-                const response = await client.session.prompt({
-                    path: { id: session.data.id },
-                    body: {
-                        parts: [{ type: 'text', text: message }],
-                    },
-                })
+            const response = await client.session.prompt({
+                path: { id: session.data.id },
+                body: {
+                    parts: [{ type: 'text', text: message }],
+                },
+            })
 
-                return {
-                    success: true,
-                    sessionId: session.data.id,
-                    messageId: response.data?.info.id,
-                    title: session.data.title,
-                }
-            } catch (error: any) {
-                return {
-                    success: false,
-                    error: error.message || 'Failed to create new chat',
-                }
+            return {
+                success: true,
+                sessionId: session.data.id,
+                messageId: response.data?.info.id,
+                title: session.data.title,
             }
         },
     }),
@@ -94,54 +80,47 @@ const tools = {
         description: 'Get a list of available chat sessions',
         inputSchema: z.object({}),
         execute: async () => {
-            try {
-                const sessions = await client.session.list()
+            const sessions = await client.session.list()
 
-                if (!sessions.data) {
-                    return { success: false, error: 'No sessions found' }
-                }
+            if (!sessions.data) {
+                return { success: false, error: 'No sessions found' }
+            }
 
-                const sessionList = sessions.data.map(async (session) => {
-                    const finishedAt = session.time.updated
-                    const status = await (async () => {
-                        if (session.revert) return 'error'
-                        const messagesResponse = await client.session.messages({
-                            path: { id: session.id },
-                        })
-                        const messages = messagesResponse.data || []
-                        const lastMessage = messages[messages.length - 1]
-                        if (
-                            lastMessage?.info.role === 'assistant' &&
-                            !lastMessage.info.time.completed
-                        ) {
-                            return 'in_progress'
-                        }
-                        return 'finished'
-                    })()
-
-                    return {
-                        id: session.id,
-                        folder: session.directory,
-                        status,
-                        finishedAt: formatDistanceToNow(new Date(finishedAt), {
-                            addSuffix: true,
-                        }),
-                        title: session.title,
-                        prompt: session.title,
+            const sessionList = sessions.data.map(async (session) => {
+                const finishedAt = session.time.updated
+                const status = await (async () => {
+                    if (session.revert) return 'error'
+                    const messagesResponse = await client.session.messages({
+                        path: { id: session.id },
+                    })
+                    const messages = messagesResponse.data || []
+                    const lastMessage = messages[messages.length - 1]
+                    if (
+                        lastMessage?.info.role === 'assistant' &&
+                        !lastMessage.info.time.completed
+                    ) {
+                        return 'in_progress'
                     }
-                })
-
-                const resolvedList = await Promise.all(sessionList)
+                    return 'finished'
+                })()
 
                 return {
-                    success: true,
-                    sessions: resolvedList,
+                    id: session.id,
+                    folder: session.directory,
+                    status,
+                    finishedAt: formatDistanceToNow(new Date(finishedAt), {
+                        addSuffix: true,
+                    }),
+                    title: session.title,
+                    prompt: session.title,
                 }
-            } catch (error: any) {
-                return {
-                    success: false,
-                    error: error.message || 'Failed to list chats',
-                }
+            })
+
+            const resolvedList = await Promise.all(sessionList)
+
+            return {
+                success: true,
+                sessions: resolvedList,
             }
         },
     }),
@@ -153,23 +132,16 @@ const tools = {
             query: z.string().describe('The search query for files'),
         }),
         execute: async ({ folder, query }) => {
-            try {
-                const results = await client.find.files({
-                    query: {
-                        query,
-                        directory: folder,
-                    },
-                })
+            const results = await client.find.files({
+                query: {
+                    query,
+                    directory: folder,
+                },
+            })
 
-                return {
-                    success: true,
-                    files: results.data || [],
-                }
-            } catch (error: any) {
-                return {
-                    success: false,
-                    error: error.message || 'Failed to search files',
-                }
+            return {
+                success: true,
+                files: results.data || [],
             }
         },
     }),
@@ -186,75 +158,66 @@ const tools = {
                 .describe('Only read the last assistant message'),
         }),
         execute: async ({ sessionId, lastAssistantOnly = false }) => {
-            try {
-                if (lastAssistantOnly) {
-                    const messages = await client.session.messages({
-                        path: { id: sessionId },
-                    })
+            if (lastAssistantOnly) {
+                const messages = await client.session.messages({
+                    path: { id: sessionId },
+                })
 
-                    if (!messages.data) {
-                        return { success: false, error: 'No messages found' }
-                    }
+                if (!messages.data) {
+                    return { success: false, error: 'No messages found' }
+                }
 
-                    const assistantMessages = messages.data.filter(
-                        (m) => m.info.role === 'assistant',
-                    )
+                const assistantMessages = messages.data.filter(
+                    (m) => m.info.role === 'assistant',
+                )
 
-                    if (assistantMessages.length === 0) {
-                        return {
-                            success: false,
-                            error: 'No assistant messages found',
-                        }
-                    }
-
-                    const lastMessage =
-                        assistantMessages[assistantMessages.length - 1]
-                    const status =
-                        'completed' in lastMessage.info.time &&
-                        lastMessage.info.time.completed
-                            ? 'completed'
-                            : 'in_progress'
-
-                    const markdown = await markdownRenderer.generate(sessionId)
-                    const lines = markdown.split('\n')
-                    const lastAssistantIndex =
-                        lines.lastIndexOf('### 🤖 Assistant')
-                    const lastAssistantContent =
-                        lastAssistantIndex >= 0
-                            ? lines.slice(lastAssistantIndex).join('\n')
-                            : ''
-
+                if (assistantMessages.length === 0) {
                     return {
-                        success: true,
-                        markdown: lastAssistantContent,
-                        status,
-                    }
-                } else {
-                    const markdown = await markdownRenderer.generate(sessionId)
-
-                    const messages = await client.session.messages({
-                        path: { id: sessionId },
-                    })
-                    const lastMessage =
-                        messages.data?.[messages.data.length - 1]
-                    const status =
-                        lastMessage?.info.role === 'assistant' &&
-                        lastMessage?.info.time &&
-                        'completed' in lastMessage.info.time &&
-                        !lastMessage.info.time.completed
-                            ? 'in_progress'
-                            : 'completed'
-
-                    return {
-                        success: true,
-                        markdown,
-                        status,
+                        success: false,
+                        error: 'No assistant messages found',
                     }
                 }
-            } catch (error: any) {
+
+                const lastMessage =
+                    assistantMessages[assistantMessages.length - 1]
+                const status =
+                    'completed' in lastMessage.info.time &&
+                    lastMessage.info.time.completed
+                        ? 'completed'
+                        : 'in_progress'
+
+                const markdown = await markdownRenderer.generate(sessionId)
+                const lines = markdown.split('\n')
+                const lastAssistantIndex = lines.lastIndexOf('### 🤖 Assistant')
+                const lastAssistantContent =
+                    lastAssistantIndex >= 0
+                        ? lines.slice(lastAssistantIndex).join('\n')
+                        : ''
+
                 return {
-                    success: false,
-                    error: error.message || 'Failed to read messages',
+                    success: true,
+                    markdown: lastAssistantContent,
+                    status,
+                }
+            } else {
+                const markdown = await markdownRenderer.generate(sessionId)
+
+                const messages = await client.session.messages({
+                    path: { id: sessionId },
+                })
+                const lastMessage = messages.data?.[messages.data.length - 1]
+                const status =
+                    lastMessage?.info.role === 'assistant' &&
+                    lastMessage?.info.time &&
+                    'completed' in lastMessage.info.time &&
+                    !lastMessage.info.time.completed
+                        ? 'in_progress'
+                        : 'completed'
+
+                return {
+                    success: true,
+                    markdown,
+                    status,
                 }
             }
         },
