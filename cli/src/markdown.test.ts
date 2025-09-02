@@ -106,12 +106,14 @@ test('generate markdown from first available session', async () => {
     }
 
     // Filter sessions with 'kimaki' in their directory
-    const kimakiSessions = sessionsResponse.data.filter(session => 
-        session.directory.toLowerCase().includes('kimaki')
+    const kimakiSessions = sessionsResponse.data.filter((session) =>
+        session.directory.toLowerCase().includes('kimaki'),
     )
 
     if (kimakiSessions.length === 0) {
-        console.warn('No sessions with "kimaki" in directory found, skipping test')
+        console.warn(
+            'No sessions with "kimaki" in directory found, skipping test',
+        )
         expect(true).toBe(true)
         return
     }
@@ -127,7 +129,8 @@ test('generate markdown from first available session', async () => {
     const exporter = new ShareMarkdown(client)
 
     // Generate markdown with system info
-    const markdown = await exporter.generate(sessionID, {
+    const markdown = await exporter.generate({
+        sessionID,
         includeSystemInfo: true,
     })
 
@@ -155,12 +158,14 @@ test('generate markdown without system info', async () => {
     }
 
     // Filter sessions with 'kimaki' in their directory
-    const kimakiSessions = sessionsResponse.data.filter(session => 
-        session.directory.toLowerCase().includes('kimaki')
+    const kimakiSessions = sessionsResponse.data.filter((session) =>
+        session.directory.toLowerCase().includes('kimaki'),
     )
 
     if (kimakiSessions.length === 0) {
-        console.warn('No sessions with "kimaki" in directory found, skipping test')
+        console.warn(
+            'No sessions with "kimaki" in directory found, skipping test',
+        )
         expect(true).toBe(true)
         return
     }
@@ -171,7 +176,8 @@ test('generate markdown without system info', async () => {
     const exporter = new ShareMarkdown(client)
 
     // Generate without system info
-    const markdown = await exporter.generate(sessionID, {
+    const markdown = await exporter.generate({
+        sessionID,
         includeSystemInfo: false,
     })
 
@@ -199,12 +205,14 @@ test('generate markdown from session with tools', async () => {
     }
 
     // Filter sessions with 'kimaki' in their directory
-    const kimakiSessions = sessionsResponse.data.filter(session => 
-        session.directory.toLowerCase().includes('kimaki')
+    const kimakiSessions = sessionsResponse.data.filter((session) =>
+        session.directory.toLowerCase().includes('kimaki'),
     )
 
     if (kimakiSessions.length === 0) {
-        console.warn('No sessions with "kimaki" in directory found, skipping test')
+        console.warn(
+            'No sessions with "kimaki" in directory found, skipping test',
+        )
         expect(true).toBe(true)
         return
     }
@@ -233,12 +241,16 @@ test('generate markdown from session with tools', async () => {
     }
 
     if (!sessionWithTools) {
-        console.warn('No kimaki session with tool usage found, using first kimaki session')
+        console.warn(
+            'No kimaki session with tool usage found, using first kimaki session',
+        )
         sessionWithTools = kimakiSessions[0]
     }
 
     const exporter = new ShareMarkdown(client)
-    const markdown = await exporter.generate(sessionWithTools.id)
+    const markdown = await exporter.generate({
+        sessionID: sessionWithTools.id,
+    })
 
     expect(markdown).toBeTruthy()
     await expect(markdown).toMatchFileSnapshot(
@@ -251,9 +263,11 @@ test('error handling for non-existent session', async () => {
     const exporter = new ShareMarkdown(client)
 
     // Should throw error for non-existent session
-    await expect(exporter.generate(sessionID)).rejects.toThrow(
-        `Session ${sessionID} not found`,
-    )
+    await expect(
+        exporter.generate({
+            sessionID,
+        }),
+    ).rejects.toThrow(`Session ${sessionID} not found`)
 })
 
 test('generate markdown from multiple sessions', async () => {
@@ -266,17 +280,21 @@ test('generate markdown from multiple sessions', async () => {
     }
 
     // Filter sessions with 'kimaki' in their directory
-    const kimakiSessions = sessionsResponse.data.filter(session => 
-        session.directory.toLowerCase().includes('kimaki')
+    const kimakiSessions = sessionsResponse.data.filter((session) =>
+        session.directory.toLowerCase().includes('kimaki'),
     )
 
     if (kimakiSessions.length === 0) {
-        console.warn('No sessions with "kimaki" in directory found, skipping test')
+        console.warn(
+            'No sessions with "kimaki" in directory found, skipping test',
+        )
         expect(true).toBe(true)
         return
     }
 
-    console.log(`Found ${kimakiSessions.length} kimaki sessions out of ${sessionsResponse.data.length} total sessions`)
+    console.log(
+        `Found ${kimakiSessions.length} kimaki sessions out of ${sessionsResponse.data.length} total sessions`,
+    )
 
     const exporter = new ShareMarkdown(client)
 
@@ -290,7 +308,9 @@ test('generate markdown from multiple sessions', async () => {
         )
 
         try {
-            const markdown = await exporter.generate(session.id)
+            const markdown = await exporter.generate({
+                sessionID: session.id,
+            })
 
             expect(markdown).toBeTruthy()
             await expect(markdown).toMatchFileSnapshot(

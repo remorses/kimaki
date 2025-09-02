@@ -5,5 +5,10 @@
         "typescript": {
             "disabled": true
         }
-    }
+    },
+    // "formatter": {
+    //     "prettier": {
+    //         "disabled": true
+    //     }
+    // }
 }

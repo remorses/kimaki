@@ -7,16 +7,16 @@ export class ShareMarkdown {
 
     /**
      * Generate a markdown representation of a session
-     * @param sessionID The session ID to export
-     * @param options Optional configuration
+     * @param options Configuration options
      * @returns Markdown string representation of the session
      */
-    async generate(
-        sessionID: string,
-        options?: {
-            includeSystemInfo?: boolean
-        },
-    ): Promise<string> {
+    async generate(options: {
+        sessionID: string
+        includeSystemInfo?: boolean
+        lastAssistantOnly?: boolean
+    }): Promise<string> {
+        const { sessionID, includeSystemInfo, lastAssistantOnly } = options
+
         // Get session info
         const sessionResponse = await this.client.session.get({
             path: { id: sessionID },
@@ -35,34 +35,49 @@ export class ShareMarkdown {
         }
         const messages = messagesResponse.data
 
+        // If lastAssistantOnly, filter to only the last assistant message
+        const messagesToRender = lastAssistantOnly
+            ? (() => {
+                  const assistantMessages = messages.filter(
+                      (m) => m.info.role === 'assistant',
+                  )
+                  return assistantMessages.length > 0
+                      ? [assistantMessages[assistantMessages.length - 1]]
+                      : []
+              })()
+            : messages
+
         // Build markdown
         const lines: string[] = []
 
-        // Header
-        lines.push(`# ${session.title || 'Untitled Session'}`)
-        lines.push('')
-
-        // Session metadata
-        if (options?.includeSystemInfo === true) {
-            lines.push('## Session Information')
+        // Only include header and session info if not lastAssistantOnly
+        if (!lastAssistantOnly) {
+            // Header
+            lines.push(`# ${session.title || 'Untitled Session'}`)
             lines.push('')
-            lines.push(
-                `- **Created**: ${DateTime.fromMillis(session.time.created).toLocaleString(DateTime.DATETIME_MED)}`,
-            )
-            lines.push(
-                `- **Updated**: ${DateTime.fromMillis(session.time.updated).toLocaleString(DateTime.DATETIME_MED)}`,
-            )
-            if (session.version) {
-                lines.push(`- **OpenCode Version**: v${session.version}`)
+
+            // Session metadata
+            if (includeSystemInfo === true) {
+                lines.push('## Session Information')
+                lines.push('')
+                lines.push(
+                    `- **Created**: ${DateTime.fromMillis(session.time.created).toLocaleString(DateTime.DATETIME_MED)}`,
+                )
+                lines.push(
+                    `- **Updated**: ${DateTime.fromMillis(session.time.updated).toLocaleString(DateTime.DATETIME_MED)}`,
+                )
+                if (session.version) {
+                    lines.push(`- **OpenCode Version**: v${session.version}`)
+                }
+                lines.push('')
             }
+
+            // Process messages
+            lines.push('## Conversation')
             lines.push('')
         }
 
-        // Process messages
-        lines.push('## Conversation')
-        lines.push('')
-
-        for (const message of messages) {
+        for (const message of messagesToRender) {
             const messageLines = this.renderMessage(message.info, message.parts)
             lines.push(...messageLines)
             lines.push('')
@@ -170,7 +185,9 @@ export class ShareMarkdown {
                     ) {
                         lines.push('**Input:**')
                         lines.push('```yaml')
-                        lines.push(yaml.dump(part.state.input, { lineWidth: -1 }))
+                        lines.push(
+                            yaml.dump(part.state.input, { lineWidth: -1 }),
+                        )
                         lines.push('```')
                         lines.push('')
                     }
