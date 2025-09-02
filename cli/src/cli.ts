@@ -34,8 +34,8 @@ cli.command('', 'Spawn Kimaki to orchestrate code agents').action(
                     if (!liveApiClient) return
 
                     const text = params.data
-                        ? `Chat message completed for session ${params.sessionId}.\n\nAssistant response:\n${params.markdown}`
-                        : `Chat message failed for session ${params.sessionId}. Error: ${params.error?.message || 'Unknown error'}`
+                        ? `<systemMessage>\nChat message completed for session ${params.sessionId}.\n\nAssistant response:\n${params.markdown}\n</systemMessage>`
+                        : `<systemMessage>\nChat message failed for session ${params.sessionId}. Error: ${params.error?.message || 'Unknown error'}\n</systemMessage>`
 
                     liveApiClient.sendText(text)
                 },
