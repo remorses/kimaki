@@ -8,6 +8,7 @@
         "build": "tsc ",
         "typecheck": "tsc",
         "prepublishOnly": "tsc",
+        "save-plugin": "bun build ./src/plugin.ts --outfile ~/.config/opencode/plugin/kimaki.js --target bun --format esm",
         "kimaki": "tsx bin.js",
         "play": "tsx src/bin.ts",
         "watch": "tsc -w"
