@@ -5,6 +5,7 @@
         "test": "NODE_ENV=test vitest",
         "watch": "pnpm -r watch",
         "build": "pnpm -r build",
+        "play": "pnpm --filter kimaki play",
         "release": "pnpm build && changeset"
     },
     "devDependencies": {
