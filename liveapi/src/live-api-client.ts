@@ -10,11 +10,11 @@ import {
   Session,
 } from '@google/genai'
 
-import { LiveClientOptions } from './types.ts'
-import { AudioRecorder } from './audio-recorder.ts'
-import { AudioStreamer } from './audio-streamer.ts'
-import { audioContext, base64ToArrayBuffer } from './utils.ts'
-import VolMeterWorket from './worklets/vol-meter.ts'
+import { LiveClientOptions } from './types.js'
+import { AudioRecorder } from './audio-recorder.js'
+import { AudioStreamer } from './audio-streamer.js'
+import { audioContext, base64ToArrayBuffer } from './utils.js'
+import VolMeterWorket from './worklets/vol-meter.js'
 
 export interface LiveAPIState {
   connected: boolean

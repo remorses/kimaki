@@ -8,7 +8,8 @@
         "build": "tsc ",
         "typecheck": "tsc",
         "prepublishOnly": "tsc",
-        "holocron": "node bin.js",
+        "kimaki": "tsx bin.js",
+        "play": "tsx src/bin.ts",
         "watch": "tsc -w"
     },
     "bin": "./bin.js",
@@ -21,15 +22,18 @@
     "author": "Tommaso De Rossi, morse <beats.by.morse@gmail.com>",
     "license": "",
     "dependencies": {
+        "@google/genai": "^1.16.0",
         "cac": "^6.7.14",
         "chokidar": "^4.0.3",
         "cli-table3": "^0.6.5",
         "globby": "^14.1.0",
         "mime-types": "^2.1.35",
+        "node-web-audio-api": "^1.0.4",
         "picocolors": "^1.1.1",
         "prompts": "^2.4.2",
         "sema4": "^0.1.3",
         "tiny-jsonc": "^1.0.2",
+        "liveapi": "workspace:*",
         "ws": "^8.18.2"
     },
     "devDependencies": {
