@@ -77,6 +77,7 @@ I'll use pnpm since this is a workspace project and install Prisma with the bett
 ```yaml
 command: cd cli && pnpm add prisma @prisma/client @prisma/adapter-better-sqlite3 better-sqlite3
 description: Install Prisma with better-sqlite3 adapter
+
 ```
 
 **Output:**
@@ -139,22 +140,23 @@ I'll create the Prisma schema with the configuration you specified.
 **Input:**
 ```yaml
 todos:
-- content: Initialize Prisma in cli package
+  - content: Initialize Prisma in cli package
     status: completed
     priority: high
-    id: "1"
-- content: Create Prisma schema with Chat model
+    id: '1'
+  - content: Create Prisma schema with Chat model
     status: in_progress
     priority: high
-    id: "2"
-- content: Generate Prisma client
+    id: '2'
+  - content: Generate Prisma client
     status: pending
     priority: high
-    id: "3"
-- content: Import and configure Prisma in plugin.ts
+    id: '3'
+  - content: Import and configure Prisma in plugin.ts
     status: pending
     priority: high
-    id: "4"
+    id: '4'
+
 ```
 
 **Output:**
@@ -193,6 +195,7 @@ todos:
 ```yaml
 command: mkdir -p cli/prisma
 description: Create prisma directory
+
 ```
 
 #### 🛠️ Tool: write
@@ -200,19 +203,19 @@ description: Create prisma directory
 **Input:**
 ```yaml
 filePath: /Users/morse/Documents/GitHub/kimakivoice/cli/prisma/schema.prisma
-content: |
+content: |-
   // This is your Prisma schema file,
   // learn more about it in the docs: https://pris.ly/d/prisma-schema
-  
+
   generator client {
     provider = "prisma-client-js"
   }
-  
+
   datasource db {
     provider = "sqlite"
     url      = "file:~/kimaki.db"
   }
-  
+
   model Chat {
     id        String   @id @default(cuid())
     markdown  String
@@ -220,6 +223,7 @@ content: |
     createdAt DateTime @default(now())
     updatedAt DateTime @updatedAt
   }
+
 ```
 
 **Output:**
@@ -242,22 +246,23 @@ HINT [28:23] 'messages' is declared but its value is never read.
 **Input:**
 ```yaml
 todos:
-- content: Initialize Prisma in cli package
+  - content: Initialize Prisma in cli package
     status: completed
     priority: high
-    id: "1"
-- content: Create Prisma schema with Chat model
+    id: '1'
+  - content: Create Prisma schema with Chat model
     status: completed
     priority: high
-    id: "2"
-- content: Generate Prisma client
+    id: '2'
+  - content: Generate Prisma client
     status: in_progress
     priority: high
-    id: "3"
-- content: Import and configure Prisma in plugin.ts
+    id: '3'
+  - content: Import and configure Prisma in plugin.ts
     status: pending
     priority: high
-    id: "4"
+    id: '4'
+
 ```
 
 **Output:**
@@ -296,6 +301,7 @@ todos:
 ```yaml
 command: cd cli && npx prisma generate
 description: Generate Prisma client
+
 ```
 
 **Output:**
@@ -316,22 +322,23 @@ Tip: Interested in query caching in just a few lines of code? Try Accelerate tod
 **Input:**
 ```yaml
 todos:
-- content: Initialize Prisma in cli package
+  - content: Initialize Prisma in cli package
     status: completed
     priority: high
-    id: "1"
-- content: Create Prisma schema with Chat model
+    id: '1'
+  - content: Create Prisma schema with Chat model
     status: completed
     priority: high
-    id: "2"
-- content: Generate Prisma client
+    id: '2'
+  - content: Generate Prisma client
     status: completed
     priority: high
-    id: "3"
-- content: Import and configure Prisma in plugin.ts
+    id: '3'
+  - content: Import and configure Prisma in plugin.ts
     status: in_progress
     priority: high
-    id: "4"
+    id: '4'
+
 ```
 
 **Output:**
@@ -369,10 +376,10 @@ todos:
 **Input:**
 ```yaml
 filePath: /Users/morse/Documents/GitHub/kimakivoice/cli/src/plugin.ts
-oldString: |
+oldString: |-
   import type { Plugin } from '@opencode-ai/plugin'
   import { logger } from './file-logger.js'
-newString: |
+newString: |-
   import type { Plugin } from '@opencode-ai/plugin'
   import { logger } from './file-logger.js'
   import { PrismaClient } from '@prisma/client'
@@ -380,6 +387,7 @@ newString: |
   import { PrismaBetterSqlite } from '@prisma/adapter-better-sqlite3'
   import { homedir } from 'os'
   import { join } from 'path'
+
 ```
 
 **Output:**
@@ -413,6 +421,7 @@ Let me fix the typo and install the missing types.
 ```yaml
 command: cd cli && pnpm add -D @types/better-sqlite3
 description: Install better-sqlite3 types
+
 ```
 
 **Output:**
@@ -439,7 +448,7 @@ Done in 3.4s using pnpm v10.14.0
 **Input:**
 ```yaml
 filePath: /Users/morse/Documents/GitHub/kimakivoice/cli/src/plugin.ts
-oldString: |
+oldString: |-
   import type { Plugin } from '@opencode-ai/plugin'
   import { logger } from './file-logger.js'
   import { PrismaClient } from '@prisma/client'
@@ -447,7 +456,7 @@ oldString: |
   import { PrismaBetterSqlite } from '@prisma/adapter-better-sqlite3'
   import { homedir } from 'os'
   import { join } from 'path'
-newString: |
+newString: |-
   import type { Plugin } from '@opencode-ai/plugin'
   import { logger } from './file-logger.js'
   import { PrismaClient } from '@prisma/client'
@@ -455,6 +464,7 @@ newString: |
   import { PrismaBetterSQLite3 } from '@prisma/adapter-better-sqlite3'
   import { homedir } from 'os'
   import { join } from 'path'
+
 ```
 
 **Output:**
@@ -484,35 +494,36 @@ Now I'll set up the Prisma client with the proper database path.
 **Input:**
 ```yaml
 filePath: /Users/morse/Documents/GitHub/kimakivoice/cli/src/plugin.ts
-oldString: |
+oldString: |-
   export const MyPlugin: Plugin = async ({
       project,
       client,
       $,
-  
+
       directory,
       worktree,
   }) => {
       let sessionId = ''
-  
+
       logger.log('plugin function called')
-newString: |
+newString: |-
   const dbPath = join(homedir(), 'kimaki.db')
   const sqlite = new BetterSqlite3(dbPath)
   const adapter = new PrismaBetterSQLite3(sqlite)
   const prisma = new PrismaClient({ adapter })
-  
+
   export const MyPlugin: Plugin = async ({
       project,
       client,
       $,
-  
+
       directory,
       worktree,
   }) => {
       let sessionId = ''
-  
+
       logger.log('plugin function called')
+
 ```
 
 **Output:**
@@ -539,14 +550,15 @@ It seems the PrismaClient needs to be constructed differently. Let me check the 
 **Input:**
 ```yaml
 filePath: /Users/morse/Documents/GitHub/kimakivoice/cli/src/plugin.ts
-oldString: |
+oldString: |-
   const dbPath = join(homedir(), 'kimaki.db')
   const sqlite = new BetterSqlite3(dbPath)
   const adapter = new PrismaBetterSQLite3(sqlite)
   const prisma = new PrismaClient({ adapter })
-newString: |
+newString: |-
   // Initialize Prisma client with better-sqlite3 adapter
   let prisma: PrismaClient
+
 ```
 
 **Output:**
@@ -576,40 +588,41 @@ Let me initialize the Prisma client inside the plugin function and use it proper
 **Input:**
 ```yaml
 filePath: /Users/morse/Documents/GitHub/kimakivoice/cli/src/plugin.ts
-oldString: |
+oldString: |-
   // Initialize Prisma client with better-sqlite3 adapter
   let prisma: PrismaClient
-  
+
   export const MyPlugin: Plugin = async ({
       project,
       client,
       $,
-  
+
       directory,
       worktree,
   }) => {
       let sessionId = ''
-  
+
       logger.log('plugin function called')
-newString: |
+newString: |-
   export const MyPlugin: Plugin = async ({
       project,
       client,
       $,
-  
+
       directory,
       worktree,
   }) => {
       let sessionId = ''
-  
+
       // Initialize Prisma client with better-sqlite3 adapter
       const dbPath = join(homedir(), 'kimaki.db')
       const sqlite = new BetterSqlite3(dbPath)
       const adapter = new PrismaBetterSQLite3(sqlite)
       const prisma = new PrismaClient({ adapter })
-  
+
       logger.log('plugin function called')
       logger.log(`Database initialized at: ${dbPath}`)
+
 ```
 
 **Output:**
@@ -637,6 +650,7 @@ It seems like there's an issue with the adapter configuration. Let me update the
 ```yaml
 command: echo $HOME
 description: Get home directory path
+
 ```
 
 **Output:**
@@ -650,16 +664,17 @@ description: Get home directory path
 **Input:**
 ```yaml
 filePath: /Users/morse/Documents/GitHub/kimakivoice/cli/prisma/schema.prisma
-oldString: |
+oldString: |-
   datasource db {
     provider = "sqlite"
     url      = "file:~/kimaki.db"
   }
-newString: |
+newString: |-
   datasource db {
     provider = "sqlite"
     url      = "file:/Users/morse/kimaki.db"
   }
+
 ```
 
 **Output:**
@@ -678,6 +693,7 @@ ERROR [23:39] Object literal may only specify known properties, and 'adapter' do
 ```yaml
 command: cd cli && npx prisma generate
 description: Regenerate Prisma client
+
 ```
 
 **Output:**
@@ -700,7 +716,7 @@ Now let me update the plugin.ts to use standard Prisma client without the adapte
 **Input:**
 ```yaml
 filePath: /Users/morse/Documents/GitHub/kimakivoice/cli/src/plugin.ts
-oldString: |
+oldString: |-
   import type { Plugin } from '@opencode-ai/plugin'
   import { logger } from './file-logger.js'
   import { PrismaClient } from '@prisma/client'
@@ -708,10 +724,11 @@ oldString: |
   import { PrismaBetterSQLite3 } from '@prisma/adapter-better-sqlite3'
   import { homedir } from 'os'
   import { join } from 'path'
-newString: |
+newString: |-
   import type { Plugin } from '@opencode-ai/plugin'
   import { logger } from './file-logger.js'
   import { PrismaClient } from '@prisma/client'
+
 ```
 
 **Output:**
@@ -740,25 +757,26 @@ HINT [36:23] 'messages' is declared but its value is never read.
 **Input:**
 ```yaml
 filePath: /Users/morse/Documents/GitHub/kimakivoice/cli/src/plugin.ts
-oldString: |
+oldString: |2-
       let sessionId = ''
-  
+
       // Initialize Prisma client with better-sqlite3 adapter
       const dbPath = join(homedir(), 'kimaki.db')
       const sqlite = new BetterSqlite3(dbPath)
       const adapter = new PrismaBetterSQLite3(sqlite)
       const prisma = new PrismaClient({ adapter })
-  
+
       logger.log('plugin function called')
       logger.log(`Database initialized at: ${dbPath}`)
-newString: |
+newString: |2-
       let sessionId = ''
-  
+
       // Initialize Prisma client
       const prisma = new PrismaClient()
-  
+
       logger.log('plugin function called')
       logger.log('Database initialized at: /Users/morse/kimaki.db')
+
 ```
 
 **Output:**
@@ -785,6 +803,7 @@ Let me create the database:
 ```yaml
 command: cd cli && npx prisma db push
 description: Create the SQLite database and tables
+
 ```
 
 **Output:**
@@ -810,22 +829,23 @@ pescript@5.9.2/node_modules/@prisma/client in 31ms
 **Input:**
 ```yaml
 todos:
-- content: Initialize Prisma in cli package
+  - content: Initialize Prisma in cli package
     status: completed
     priority: high
-    id: "1"
-- content: Create Prisma schema with Chat model
+    id: '1'
+  - content: Create Prisma schema with Chat model
     status: completed
     priority: high
-    id: "2"
-- content: Generate Prisma client
+    id: '2'
+  - content: Generate Prisma client
     status: completed
     priority: high
-    id: "3"
-- content: Import and configure Prisma in plugin.ts
+    id: '3'
+  - content: Import and configure Prisma in plugin.ts
     status: completed
     priority: high
-    id: "4"
+    id: '4'
+
 ```
 
 **Output:**
@@ -896,22 +916,23 @@ I'll create the Prisma schema with the configuration you specified.
 **Input:**
 ```yaml
 todos:
-- content: Initialize Prisma in cli package
+  - content: Initialize Prisma in cli package
     status: completed
     priority: high
-    id: "1"
-- content: Create Prisma schema with Chat model
+    id: '1'
+  - content: Create Prisma schema with Chat model
     status: in_progress
     priority: high
-    id: "2"
-- content: Generate Prisma client
+    id: '2'
+  - content: Generate Prisma client
     status: pending
     priority: high
-    id: "3"
-- content: Import and configure Prisma in plugin.ts
+    id: '3'
+  - content: Import and configure Prisma in plugin.ts
     status: pending
     priority: high
-    id: "4"
+    id: '4'
+
 ```
 
 **Output:**
@@ -950,6 +971,7 @@ todos:
 ```yaml
 command: mkdir -p cli/prisma
 description: Create prisma directory
+
 ```
 
 #### 🛠️ Tool: write
@@ -957,19 +979,19 @@ description: Create prisma directory
 **Input:**
 ```yaml
 filePath: /Users/morse/Documents/GitHub/kimakivoice/cli/prisma/schema.prisma
-content: |
+content: |-
   // This is your Prisma schema file,
   // learn more about it in the docs: https://pris.ly/d/prisma-schema
-  
+
   generator client {
     provider = "prisma-client-js"
   }
-  
+
   datasource db {
     provider = "sqlite"
     url      = "file:~/kimaki.db"
   }
-  
+
   model Chat {
     id        String   @id @default(cuid())
     markdown  String
@@ -977,6 +999,7 @@ content: |
     createdAt DateTime @default(now())
     updatedAt DateTime @updatedAt
   }
+
 ```
 
 **Output:**
@@ -999,22 +1022,23 @@ HINT [28:23] 'messages' is declared but its value is never read.
 **Input:**
 ```yaml
 todos:
-- content: Initialize Prisma in cli package
+  - content: Initialize Prisma in cli package
     status: completed
     priority: high
-    id: "1"
-- content: Create Prisma schema with Chat model
+    id: '1'
+  - content: Create Prisma schema with Chat model
     status: completed
     priority: high
-    id: "2"
-- content: Generate Prisma client
+    id: '2'
+  - content: Generate Prisma client
     status: in_progress
     priority: high
-    id: "3"
-- content: Import and configure Prisma in plugin.ts
+    id: '3'
+  - content: Import and configure Prisma in plugin.ts
     status: pending
     priority: high
-    id: "4"
+    id: '4'
+
 ```
 
 **Output:**
@@ -1053,6 +1077,7 @@ todos:
 ```yaml
 command: cd cli && npx prisma generate
 description: Generate Prisma client
+
 ```
 
 **Output:**
@@ -1073,22 +1098,23 @@ Tip: Interested in query caching in just a few lines of code? Try Accelerate tod
 **Input:**
 ```yaml
 todos:
-- content: Initialize Prisma in cli package
+  - content: Initialize Prisma in cli package
     status: completed
     priority: high
-    id: "1"
-- content: Create Prisma schema with Chat model
+    id: '1'
+  - content: Create Prisma schema with Chat model
     status: completed
     priority: high
-    id: "2"
-- content: Generate Prisma client
+    id: '2'
+  - content: Generate Prisma client
     status: completed
     priority: high
-    id: "3"
-- content: Import and configure Prisma in plugin.ts
+    id: '3'
+  - content: Import and configure Prisma in plugin.ts
     status: in_progress
     priority: high
-    id: "4"
+    id: '4'
+
 ```
 
 **Output:**
@@ -1126,10 +1152,10 @@ todos:
 **Input:**
 ```yaml
 filePath: /Users/morse/Documents/GitHub/kimakivoice/cli/src/plugin.ts
-oldString: |
+oldString: |-
   import type { Plugin } from '@opencode-ai/plugin'
   import { logger } from './file-logger.js'
-newString: |
+newString: |-
   import type { Plugin } from '@opencode-ai/plugin'
   import { logger } from './file-logger.js'
   import { PrismaClient } from '@prisma/client'
@@ -1137,6 +1163,7 @@ newString: |
   import { PrismaBetterSqlite } from '@prisma/adapter-better-sqlite3'
   import { homedir } from 'os'
   import { join } from 'path'
+
 ```
 
 **Output:**
@@ -1170,6 +1197,7 @@ Let me fix the typo and install the missing types.
 ```yaml
 command: cd cli && pnpm add -D @types/better-sqlite3
 description: Install better-sqlite3 types
+
 ```
 
 **Output:**
@@ -1196,7 +1224,7 @@ Done in 3.4s using pnpm v10.14.0
 **Input:**
 ```yaml
 filePath: /Users/morse/Documents/GitHub/kimakivoice/cli/src/plugin.ts
-oldString: |
+oldString: |-
   import type { Plugin } from '@opencode-ai/plugin'
   import { logger } from './file-logger.js'
   import { PrismaClient } from '@prisma/client'
@@ -1204,7 +1232,7 @@ oldString: |
   import { PrismaBetterSqlite } from '@prisma/adapter-better-sqlite3'
   import { homedir } from 'os'
   import { join } from 'path'
-newString: |
+newString: |-
   import type { Plugin } from '@opencode-ai/plugin'
   import { logger } from './file-logger.js'
   import { PrismaClient } from '@prisma/client'
@@ -1212,6 +1240,7 @@ newString: |
   import { PrismaBetterSQLite3 } from '@prisma/adapter-better-sqlite3'
   import { homedir } from 'os'
   import { join } from 'path'
+
 ```
 
 **Output:**
@@ -1241,35 +1270,36 @@ Now I'll set up the Prisma client with the proper database path.
 **Input:**
 ```yaml
 filePath: /Users/morse/Documents/GitHub/kimakivoice/cli/src/plugin.ts
-oldString: |
+oldString: |-
   export const MyPlugin: Plugin = async ({
       project,
       client,
       $,
-  
+
       directory,
       worktree,
   }) => {
       let sessionId = ''
-  
+
       logger.log('plugin function called')
-newString: |
+newString: |-
   const dbPath = join(homedir(), 'kimaki.db')
   const sqlite = new BetterSqlite3(dbPath)
   const adapter = new PrismaBetterSQLite3(sqlite)
   const prisma = new PrismaClient({ adapter })
-  
+
   export const MyPlugin: Plugin = async ({
       project,
       client,
       $,
-  
+
       directory,
       worktree,
   }) => {
       let sessionId = ''
-  
+
       logger.log('plugin function called')
+
 ```
 
 **Output:**
@@ -1296,14 +1326,15 @@ It seems the PrismaClient needs to be constructed differently. Let me check the 
 **Input:**
 ```yaml
 filePath: /Users/morse/Documents/GitHub/kimakivoice/cli/src/plugin.ts
-oldString: |
+oldString: |-
   const dbPath = join(homedir(), 'kimaki.db')
   const sqlite = new BetterSqlite3(dbPath)
   const adapter = new PrismaBetterSQLite3(sqlite)
   const prisma = new PrismaClient({ adapter })
-newString: |
+newString: |-
   // Initialize Prisma client with better-sqlite3 adapter
   let prisma: PrismaClient
+
 ```
 
 **Output:**
@@ -1333,40 +1364,41 @@ Let me initialize the Prisma client inside the plugin function and use it proper
 **Input:**
 ```yaml
 filePath: /Users/morse/Documents/GitHub/kimakivoice/cli/src/plugin.ts
-oldString: |
+oldString: |-
   // Initialize Prisma client with better-sqlite3 adapter
   let prisma: PrismaClient
-  
+
   export const MyPlugin: Plugin = async ({
       project,
       client,
       $,
-  
+
       directory,
       worktree,
   }) => {
       let sessionId = ''
-  
+
       logger.log('plugin function called')
-newString: |
+newString: |-
   export const MyPlugin: Plugin = async ({
       project,
       client,
       $,
-  
+
       directory,
       worktree,
   }) => {
       let sessionId = ''
-  
+
       // Initialize Prisma client with better-sqlite3 adapter
       const dbPath = join(homedir(), 'kimaki.db')
       const sqlite = new BetterSqlite3(dbPath)
       const adapter = new PrismaBetterSQLite3(sqlite)
       const prisma = new PrismaClient({ adapter })
-  
+
       logger.log('plugin function called')
       logger.log(`Database initialized at: ${dbPath}`)
+
 ```
 
 **Output:**
@@ -1394,6 +1426,7 @@ It seems like there's an issue with the adapter configuration. Let me update the
 ```yaml
 command: echo $HOME
 description: Get home directory path
+
 ```
 
 **Output:**
@@ -1407,16 +1440,17 @@ description: Get home directory path
 **Input:**
 ```yaml
 filePath: /Users/morse/Documents/GitHub/kimakivoice/cli/prisma/schema.prisma
-oldString: |
+oldString: |-
   datasource db {
     provider = "sqlite"
     url      = "file:~/kimaki.db"
   }
-newString: |
+newString: |-
   datasource db {
     provider = "sqlite"
     url      = "file:/Users/morse/kimaki.db"
   }
+
 ```
 
 **Output:**
@@ -1435,6 +1469,7 @@ ERROR [23:39] Object literal may only specify known properties, and 'adapter' do
 ```yaml
 command: cd cli && npx prisma generate
 description: Regenerate Prisma client
+
 ```
 
 **Output:**
@@ -1457,7 +1492,7 @@ Now let me update the plugin.ts to use standard Prisma client without the adapte
 **Input:**
 ```yaml
 filePath: /Users/morse/Documents/GitHub/kimakivoice/cli/src/plugin.ts
-oldString: |
+oldString: |-
   import type { Plugin } from '@opencode-ai/plugin'
   import { logger } from './file-logger.js'
   import { PrismaClient } from '@prisma/client'
@@ -1465,10 +1500,11 @@ oldString: |
   import { PrismaBetterSQLite3 } from '@prisma/adapter-better-sqlite3'
   import { homedir } from 'os'
   import { join } from 'path'
-newString: |
+newString: |-
   import type { Plugin } from '@opencode-ai/plugin'
   import { logger } from './file-logger.js'
   import { PrismaClient } from '@prisma/client'
+
 ```
 
 **Output:**
@@ -1497,25 +1533,26 @@ HINT [36:23] 'messages' is declared but its value is never read.
 **Input:**
 ```yaml
 filePath: /Users/morse/Documents/GitHub/kimakivoice/cli/src/plugin.ts
-oldString: |
+oldString: |2-
       let sessionId = ''
-  
+
       // Initialize Prisma client with better-sqlite3 adapter
       const dbPath = join(homedir(), 'kimaki.db')
       const sqlite = new BetterSqlite3(dbPath)
       const adapter = new PrismaBetterSQLite3(sqlite)
       const prisma = new PrismaClient({ adapter })
-  
+
       logger.log('plugin function called')
       logger.log(`Database initialized at: ${dbPath}`)
-newString: |
+newString: |2-
       let sessionId = ''
-  
+
       // Initialize Prisma client
       const prisma = new PrismaClient()
-  
+
       logger.log('plugin function called')
       logger.log('Database initialized at: /Users/morse/kimaki.db')
+
 ```
 
 **Output:**
@@ -1542,6 +1579,7 @@ Let me create the database:
 ```yaml
 command: cd cli && npx prisma db push
 description: Create the SQLite database and tables
+
 ```
 
 **Output:**
@@ -1567,22 +1605,23 @@ pescript@5.9.2/node_modules/@prisma/client in 31ms
 **Input:**
 ```yaml
 todos:
-- content: Initialize Prisma in cli package
+  - content: Initialize Prisma in cli package
     status: completed
     priority: high
-    id: "1"
-- content: Create Prisma schema with Chat model
+    id: '1'
+  - content: Create Prisma schema with Chat model
     status: completed
     priority: high
-    id: "2"
-- content: Generate Prisma client
+    id: '2'
+  - content: Generate Prisma client
     status: completed
     priority: high
-    id: "3"
-- content: Import and configure Prisma in plugin.ts
+    id: '3'
+  - content: Import and configure Prisma in plugin.ts
     status: completed
     priority: high
-    id: "4"
+    id: '4'
+
 ```
 
 **Output:**
@@ -1658,16 +1697,17 @@ I'll update the Prisma schema to use an environment variable for the database UR
 **Input:**
 ```yaml
 filePath: /Users/morse/Documents/GitHub/kimakivoice/cli/prisma/schema.prisma
-oldString: |
+oldString: |-
   datasource db {
     provider = "sqlite"
     url      = "file:/Users/morse/kimaki.db"
   }
-newString: |
+newString: |-
   datasource db {
     provider = "sqlite"
     url      = env("DATABASE_URL")
   }
+
 ```
 
 **Output:**
@@ -1685,16 +1725,17 @@ newString: |
 **Input:**
 ```yaml
 filePath: /Users/morse/Documents/GitHub/kimakivoice/cli/src/plugin.ts
-oldString: |
+oldString: |-
   import type { Plugin } from '@opencode-ai/plugin'
   import { logger } from './file-logger.js'
   import { PrismaClient } from '@prisma/client'
-newString: |
+newString: |-
   import type { Plugin } from '@opencode-ai/plugin'
   import { logger } from './file-logger.js'
   import { PrismaClient } from '@prisma/client'
   import { homedir } from 'os'
   import { join } from 'path'
+
 ```
 
 **Output:**
@@ -1720,25 +1761,26 @@ HINT [35:23] 'messages' is declared but its value is never read.
 **Input:**
 ```yaml
 filePath: /Users/morse/Documents/GitHub/kimakivoice/cli/src/plugin.ts
-oldString: |
+oldString: |2-
       let sessionId = ''
-  
+
       // Initialize Prisma client
       const prisma = new PrismaClient()
-  
+
       logger.log('plugin function called')
       logger.log('Database initialized at: /Users/morse/kimaki.db')
-newString: |
+newString: |2-
       let sessionId = ''
-  
+
       // Initialize Prisma client with dynamic database path
       const dbPath = join(homedir(), 'kimaki.db')
       process.env.DATABASE_URL = `file:${dbPath}`
       
       const prisma = new PrismaClient()
-  
+
       logger.log('plugin function called')
       logger.log(`Database initialized at: ${dbPath}`)
+
 ```
 
 **Output:**
@@ -1765,6 +1807,7 @@ Now let's regenerate the Prisma client and push the database changes:
 ```yaml
 command: cd cli && DATABASE_URL="file:$HOME/kimaki.db" npx prisma generate
 description: Generate Prisma client with environment variable
+
 ```
 
 **Output:**
@@ -1786,6 +1829,7 @@ Tip: Interested in query caching in just a few lines of code? Try Accelerate tod
 ```yaml
 command: cd cli && DATABASE_URL="file:$HOME/kimaki.db" npx prisma db push
 description: Push database schema with environment variable
+
 ```
 
 **Output:**
@@ -1837,15 +1881,16 @@ I'll update the code to use the driver adapter as specified.
 **Input:**
 ```yaml
 filePath: /Users/morse/Documents/GitHub/kimakivoice/cli/prisma/schema.prisma
-oldString: |
+oldString: |-
   generator client {
     provider = "prisma-client-js"
   }
-newString: |
+newString: |-
   generator client {
     provider        = "prisma-client-js"
     previewFeatures = ["driverAdapters"]
   }
+
 ```
 
 **Output:**
@@ -1863,13 +1908,13 @@ newString: |
 **Input:**
 ```yaml
 filePath: /Users/morse/Documents/GitHub/kimakivoice/cli/src/plugin.ts
-oldString: |
+oldString: |-
   import type { Plugin } from '@opencode-ai/plugin'
   import { logger } from './file-logger.js'
   import { PrismaClient } from '@prisma/client'
   import { homedir } from 'os'
   import { join } from 'path'
-newString: |
+newString: |-
   import type { Plugin } from '@opencode-ai/plugin'
   import { logger } from './file-logger.js'
   import { PrismaClient } from '@prisma/client'
@@ -1877,6 +1922,7 @@ newString: |
   import Database from 'better-sqlite3'
   import { homedir } from 'os'
   import { join } from 'path'
+
 ```
 
 **Output:**
@@ -1902,28 +1948,29 @@ HINT [40:23] 'messages' is declared but its value is never read.
 **Input:**
 ```yaml
 filePath: /Users/morse/Documents/GitHub/kimakivoice/cli/src/plugin.ts
-oldString: |
+oldString: |2-
       let sessionId = ''
-  
+
       // Initialize Prisma client with dynamic database path
       const dbPath = join(homedir(), 'kimaki.db')
       process.env.DATABASE_URL = `file:${dbPath}`
       
       const prisma = new PrismaClient()
-  
+
       logger.log('plugin function called')
       logger.log(`Database initialized at: ${dbPath}`)
-newString: |
+newString: |2-
       let sessionId = ''
-  
+
       // Initialize Prisma client with better-sqlite3 adapter
       const dbPath = join(homedir(), 'kimaki.db')
       const sqlite = new Database(dbPath)
       const adapter = new PrismaBetterSQLite3(sqlite)
       const prisma = new PrismaClient({ adapter })
-  
+
       logger.log('plugin function called')
       logger.log(`Database initialized at: ${dbPath}`)
+
 ```
 
 **Output:**
@@ -1951,6 +1998,7 @@ Let me regenerate the Prisma client with the preview feature enabled:
 ```yaml
 command: cd cli && DATABASE_URL="file:$HOME/kimaki.db" npx prisma generate
 description: Generate Prisma client with driverAdapters preview feature
+
 ```
 
 **Output:**
@@ -1974,6 +2022,7 @@ The error persists. Let me check if we need to use a different import or configu
 ```yaml
 command: cd cli && npm list @prisma/client prisma
 description: Check Prisma versions
+
 ```
 
 **Output:**
@@ -1993,11 +2042,12 @@ Let me try adding the adapter import after regenerating with all necessary previ
 **Input:**
 ```yaml
 filePath: /Users/morse/Documents/GitHub/kimakivoice/cli/src/plugin.ts
-oldString:     const prisma = new PrismaClient({ adapter })
-newString: |
+oldString: '    const prisma = new PrismaClient({ adapter })'
+newString: |2-
       const prisma = new PrismaClient({ 
           adapter 
       } as any)
+
 ```
 
 **Output:**
@@ -2024,6 +2074,7 @@ Good, the TypeScript error is gone. Now let's run the database push command to e
 ```yaml
 command: cd cli && DATABASE_URL="file:$HOME/kimaki.db" npx prisma db push
 description: Push database changes
+
 ```
 
 **Output:**
@@ -2074,6 +2125,7 @@ I'll reset the changes and implement using Bun's SQLite instead.
 ```yaml
 command: cd cli && git status
 description: Check current git status
+
 ```
 
 **Output:**
@@ -2104,6 +2156,7 @@ no changes added to commit (use "git add" and/or "git commit -a")
 ```yaml
 command: cd cli && git checkout -- package.json src/plugin.ts ../pnpm-lock.yaml && rm -rf prisma/
 description: Reset changes and remove prisma directory
+
 ```
 
 Now let's install Bun types:
@@ -2114,6 +2167,7 @@ Now let's install Bun types:
 ```yaml
 command: cd cli && pnpm add -D @types/bun
 description: Install Bun types
+
 ```
 
 **Output:**
@@ -2141,6 +2195,7 @@ Now let's update the plugin.ts to use Bun's SQLite:
 **Input:**
 ```yaml
 filePath: /Users/morse/Documents/GitHub/kimakivoice/cli/src/plugin.ts
+
 ```
 
 **Output:**
@@ -2189,16 +2244,17 @@ filePath: /Users/morse/Documents/GitHub/kimakivoice/cli/src/plugin.ts
 **Input:**
 ```yaml
 filePath: /Users/morse/Documents/GitHub/kimakivoice/cli/src/plugin.ts
-oldString: |
+oldString: |-
   import type { Plugin } from '@opencode-ai/plugin'
   import { logger } from './file-logger.js'
-newString: |
+newString: |-
   import type { Plugin } from '@opencode-ai/plugin'
   import { logger } from './file-logger.js'
   import { Database } from 'bun:sqlite'
   import { homedir } from 'os'
   import { join } from 'path'
   import { existsSync } from 'fs'
+
 ```
 
 **Output:**
@@ -2227,22 +2283,23 @@ The Bun SQLite import needs to be handled differently in TypeScript. Let me upda
 **Input:**
 ```yaml
 filePath: /Users/morse/Documents/GitHub/kimakivoice/cli/src/plugin.ts
-oldString: |
+oldString: |-
   import type { Plugin } from '@opencode-ai/plugin'
   import { logger } from './file-logger.js'
   import { Database } from 'bun:sqlite'
   import { homedir } from 'os'
   import { join } from 'path'
   import { existsSync } from 'fs'
-newString: |
+newString: |-
   import type { Plugin } from '@opencode-ai/plugin'
   import { logger } from './file-logger.js'
   import { homedir } from 'os'
   import { join } from 'path'
   import { existsSync } from 'fs'
-  
+
   // @ts-ignore - Bun SQLite import
   import { Database } from 'bun:sqlite'
+
 ```
 
 **Output:**
@@ -2270,34 +2327,34 @@ Good, now let's implement the database initialization with migration:
 **Input:**
 ```yaml
 filePath: /Users/morse/Documents/GitHub/kimakivoice/cli/src/plugin.ts
-oldString: |
+oldString: |-
   export const MyPlugin: Plugin = async ({
       project,
       client,
       $,
-  
+
       directory,
       worktree,
   }) => {
       let sessionId = ''
-  
+
       logger.log('plugin function called')
-newString: |
+newString: |-
   export const MyPlugin: Plugin = async ({
       project,
       client,
       $,
-  
+
       directory,
       worktree,
   }) => {
       let sessionId = ''
-  
+
       // Initialize database
       const dbPath = join(homedir(), 'kimaki.db')
       const dbExists = existsSync(dbPath)
       const db = new Database(dbPath)
-  
+
       // Create table if database is new
       if (!dbExists) {
           const createTableSQL = `
@@ -2308,7 +2365,7 @@ newString: |
                   createdAt DATETIME DEFAULT CURRENT_TIMESTAMP,
                   updatedAt DATETIME DEFAULT CURRENT_TIMESTAMP
               );
-  
+
               CREATE TRIGGER update_chat_updated_at
               AFTER UPDATE ON Chat
               BEGIN
@@ -2320,8 +2377,9 @@ newString: |
       } else {
           logger.log(`Database loaded from: ${dbPath}`)
       }
-  
+
       logger.log('plugin function called')
+
 ```
 
 **Output:**
@@ -2345,7 +2403,7 @@ Now let's add a type declaration for the Database since TypeScript can't find th
 **Input:**
 ```yaml
 filePath: /Users/morse/Documents/GitHub/kimakivoice/cli/src/bun-sqlite.d.ts
-content: |
+content: |-
   declare module 'bun:sqlite' {
       export class Database {
           constructor(filename: string, options?: { create?: boolean; readonly?: boolean; readwrite?: boolean });
@@ -2354,7 +2412,7 @@ content: |
           query(sql: string): Statement;
           close(): void;
       }
-  
+
       export interface Statement {
           run(...params: any[]): void;
           get(...params: any[]): any;
@@ -2363,6 +2421,7 @@ content: |
           finalize(): void;
       }
   }
+
 ```
 
 **Output:**
@@ -2388,19 +2447,20 @@ Let's also add some example usage in the plugin to demonstrate how to use the da
 **Input:**
 ```yaml
 filePath: /Users/morse/Documents/GitHub/kimakivoice/cli/src/plugin.ts
-oldString: |
+oldString: |2-
       logger.log('plugin function called')
       return {
           async event({ event }) {
-newString: |
+newString: |2-
       logger.log('plugin function called')
-  
+
       // Prepare statements for database operations
       const insertChat = db.prepare('INSERT INTO Chat (markdown, sessionId) VALUES (?, ?)')
       const getChatsBySession = db.prepare('SELECT * FROM Chat WHERE sessionId = ?')
-  
+
       return {
           async event({ event }) {
+
 ```
 
 **Output:**
@@ -2427,6 +2487,7 @@ Let's check if Bun is available in the runtime:
 ```yaml
 command: which bun
 description: Check if Bun is installed
+
 ```
 
 **Output:**
@@ -2442,12 +2503,12 @@ Great! Bun is installed. Let's also add the removed event handler back and demon
 **Input:**
 ```yaml
 filePath: /Users/morse/Documents/GitHub/kimakivoice/cli/src/plugin.ts
-oldString: |
+oldString: |2-
                   const messages = await client.session.messages({
                       path: { id: part.messageID },
                   })
               }
-newString: |
+newString: |2-
                   const messages = await client.session.messages({
                       path: { id: part.messageID },
                   })
@@ -2472,6 +2533,7 @@ newString: |
                       }
                   }
               }
+
 ```
 
 **Output:**
@@ -2500,7 +2562,7 @@ Let me fix the type errors:
 **Input:**
 ```yaml
 filePath: /Users/morse/Documents/GitHub/kimakivoice/cli/src/plugin.ts
-oldString: |
+oldString: |2-
                   // Example: Save message to database
                   if (sessionId && messages.data?.contents) {
                       const markdown = messages.data.contents
@@ -2513,13 +2575,14 @@ oldString: |
                           logger.log(`Saved chat to database for session: ${sessionId}`)
                       }
                   }
-newString: |
+newString: |2-
                   // Example: Save message to database
                   if (sessionId && messages.data?.length > 0) {
                       // You can process the messages here if needed
                       // For now, just log that we have messages
                       logger.log(`Message updated in session: ${sessionId}`)
                   }
+
 ```
 
 **Output:**
@@ -2565,6 +2628,7 @@ I see there's a syntax error. Let me read the file to see the current state:
 filePath: /Users/morse/Documents/GitHub/kimakivoice/cli/src/plugin.ts
 offset: 70
 limit: 100
+
 ```
 
 **Output:**
@@ -2603,7 +2667,7 @@ I see the issue - there's an extra closing brace. Let me fix it:
 **Input:**
 ```yaml
 filePath: /Users/morse/Documents/GitHub/kimakivoice/cli/src/plugin.ts
-oldString: |
+oldString: |2-
                   // Example: Save message to database
                   if (sessionId && messages.data?.length > 0) {
                       // You can process the messages here if needed
@@ -2612,7 +2676,7 @@ oldString: |
                   }
                   }
               }
-newString: |
+newString: |2-
                   // Example: Save message to database
                   if (sessionId && messages.data?.length > 0) {
                       // You can process the messages here if needed
@@ -2620,6 +2684,7 @@ newString: |
                       logger.log(`Message updated in session: ${sessionId}`)
                   }
               }
+
 ```
 
 **Output:**
@@ -2646,8 +2711,9 @@ Let me fix the type error:
 **Input:**
 ```yaml
 filePath: /Users/morse/Documents/GitHub/kimakivoice/cli/src/plugin.ts
-oldString:                 if (sessionId && messages.data?.length > 0) {
-newString:                 if (sessionId && messages.data && messages.data.length > 0) {
+oldString: '                if (sessionId && messages.data?.length > 0) {'
+newString: '                if (sessionId && messages.data && messages.data.length > 0) {'
+
 ```
 
 **Output:**
@@ -2703,6 +2769,7 @@ I'll reset all the changes we made.
 ```yaml
 command: cd /Users/morse/Documents/GitHub/kimakivoice && git status
 description: Check git status from root directory
+
 ```
 
 **Output:**
@@ -2733,6 +2800,7 @@ no changes added to commit (use "git add" and/or "git commit -a")
 ```yaml
 command: cd /Users/morse/Documents/GitHub/kimakivoice && git checkout -- cli/package.json cli/src/plugin.ts pnpm-lock.yaml && rm -f cli/src/bun-sqlite.d.ts
 description: Reset all changes and remove created files
+
 ```
 
 #### 🛠️ Tool: bash
@@ -2741,6 +2809,7 @@ description: Reset all changes and remove created files
 ```yaml
 command: cd /Users/morse/Documents/GitHub/kimakivoice && git status
 description: Verify reset was successful
+
 ```
 
 **Output:**

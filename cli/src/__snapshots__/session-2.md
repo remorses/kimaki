@@ -19,6 +19,7 @@ I'll help you understand the opencode SDK and plugin SDK by reading their TypeSc
 ```yaml
 command: find . -name "*.d.ts" -type f | grep -E "(sdk|plugin)" | head -20
 description: Search for .d.ts files related to SDK or plugin
+
 ```
 
 **Output:**
@@ -53,6 +54,7 @@ Let me read the opencode SDK and plugin SDK definition files:
 **Input:**
 ```yaml
 filePath: /Users/morse/Documents/GitHub/kimakivoice/node_modules/.pnpm/@opencode-ai+sdk@0.5.28_typescript@5.9.2/node_modules/@opencode-ai/sdk/dist/gen/sdk.gen.d.ts
+
 ```
 
 **Output:**
@@ -286,6 +288,7 @@ filePath: /Users/morse/Documents/GitHub/kimakivoice/node_modules/.pnpm/@opencode
 **Input:**
 ```yaml
 filePath: /Users/morse/Documents/GitHub/kimakivoice/node_modules/.pnpm/@opencode-ai+plugin@0.6.3_typescript@5.9.2/node_modules/@opencode-ai/plugin/dist/index.d.ts
+
 ```
 
 **Output:**
@@ -395,6 +398,7 @@ filePath: /Users/morse/Documents/GitHub/kimakivoice/node_modules/.pnpm/@opencode
 **Input:**
 ```yaml
 filePath: /Users/morse/Documents/GitHub/kimakivoice/node_modules/.pnpm/@opencode-ai+sdk@0.5.28_typescript@5.9.2/node_modules/@opencode-ai/sdk/dist/server.d.ts
+
 ```
 
 **Output:**
@@ -422,6 +426,7 @@ Let me also check for any type definitions related to events to get a complete p
 ```yaml
 command: find ./node_modules/.pnpm/@opencode-ai+sdk*/node_modules/@opencode-ai/sdk -name "*.d.ts" | xargs grep -l "Event\|event" | head -10
 description: Search for event-related type definitions in SDK
+
 ```
 
 **Output:**
@@ -445,6 +450,7 @@ description: Search for event-related type definitions in SDK
 ```yaml
 filePath: /Users/morse/Documents/GitHub/kimakivoice/node_modules/.pnpm/@opencode-ai+sdk@0.5.28_typescript@5.9.2/node_modules/@opencode-ai/sdk/dist/gen/types.gen.d.ts
 limit: 500
+
 ```
 
 **Output:**
