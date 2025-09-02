@@ -11,10 +11,11 @@
             "es2022",
             "es2017",
             "es7",
-            "es6"
+            "es6",
             "dom"
         ],
         "resolveJsonModule": true,
+
         "allowImportingTsExtensions": true,
         "declaration": true,
         "declarationMap": true,
