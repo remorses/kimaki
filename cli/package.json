@@ -32,6 +32,7 @@
         "cac": "^6.7.14",
         "chokidar": "^4.0.3",
         "cli-table3": "^0.6.5",
+        "date-fns": "^4.1.0",
         "globby": "^14.1.0",
         "js-yaml": "^4.1.0",
         "liveapi": "workspace:*",
