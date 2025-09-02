@@ -12,29 +12,7 @@ const tools = {
     startChat: tool({
         description: '',
         inputSchema: z.object({
-            path: z
-                .string()
-                .describe(
-                    'The file path (e.g., App.tsx, Button.tsx, utils.ts). App.tsx is the main entry point.',
-                ),
-            content: z
-                .string()
-                .optional()
-                .describe(
-                    'Full content for creating new file or replacing existing file entirely',
-                ),
-            oldString: z
-                .string()
-                .optional()
-                .describe(
-                    'String to find and replace. Pass empty string "" to replace entire file content with newString',
-                ),
-            newString: z
-                .string()
-                .optional()
-                .describe(
-                    'String to replace with. When oldString is empty "", this becomes the entire file content',
-                ),
+
         }),
         execute: async ({ path, content, oldString, newString }) => {},
     }),
