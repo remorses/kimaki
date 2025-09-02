@@ -1,0 +1,30 @@
+{
+    "name": "liveapi",
+    "version": "0.0.0",
+    "description": "",
+    "repository": "https://github.com/remorses/kimaki",
+    "scripts": {
+        "build": "tsc",
+        "watch": "tsc -w"
+    },
+    "files": [
+        "dist",
+        "src",
+        "esm"
+    ],
+    "keywords": [],
+    "author": "Tommaso De Rossi, morse <beats.by.morse@gmail.com>",
+    "license": "",
+    "type": "module",
+    "dependencies": {
+        "@ai-sdk/openai": "^2.0.8",
+        "ai": "^5.0.9",
+        "eventemitter3": "^5.0.1",
+        "zod": "^4.0.17"
+    },
+    "devDependencies": {
+        "vitest": "^3.2.4",
+        "@google/genai": "^1.14.0",
+        "@types/node": "^24.2.1"
+    }
+}
