@@ -12,9 +12,9 @@ const tools = {
     startChat: tool({
         description: '',
         inputSchema: z.object({
-
+            chatId: z.string(),
         }),
-        execute: async ({ path, content, oldString, newString }) => {},
+        execute: async ({ chatId }) => {},
     }),
 }
 
