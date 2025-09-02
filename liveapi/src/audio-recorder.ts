@@ -98,7 +98,7 @@ export class AudioRecorder extends EventEmitter.EventEmitter {
     const handleStop = () => {
       console.log('stopping', this.stream)
       this.source?.disconnect();
-      this.stream?.getTracks().forEach((track) => track.stop());
+      this.stream?.getTracks?.()?.forEach((track) => track.stop());
       this.stream = undefined;
       this.recordingWorklet = undefined;
       this.vuWorklet = undefined;

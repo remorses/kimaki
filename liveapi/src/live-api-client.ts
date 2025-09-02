@@ -336,7 +336,7 @@ export class LiveAPIClient {
       if (hasVideo) return 'video'
       return 'unknown'
     })()
-    this.log('client-realtimeInput: ' + JSON.stringify({ mediaType }))
+    // this.log('client-realtimeInput: ' + JSON.stringify({ mediaType }))
   }
 
   private async handleToolCalls(functionCalls: FunctionCall[]) {
