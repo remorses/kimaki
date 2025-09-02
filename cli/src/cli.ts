@@ -35,7 +35,7 @@ cli.command('', 'Spawn Kimaki to orchestrate code agents').action(
             navigator.mediaDevices = mediaDevices
 
             const { LiveAPIClient, callableToolsFromObject } = await import(
-                'liveapi/src'
+                'liveapi/src/index'
             )
 
             const newClient = new LiveAPIClient({

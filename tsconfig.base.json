@@ -1,12 +1,13 @@
 {
     "compilerOptions": {
         "target": "ES2022",
-        "module": "nodenext",
+        "module": "ESNext",
+        "moduleResolution": "bundler",
         "allowJs": false,
         "composite": true,
         "outDir": "${configDir}/dist",
         "rootDir": "${configDir}/src",
-        "moduleResolution": "nodenext",
+
         "lib": ["es2022", "es2017", "es7", "es6", "dom"],
         "resolveJsonModule": true,
 
