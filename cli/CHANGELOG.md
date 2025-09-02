@@ -1,0 +1,1 @@
+# Changelog\n\n## 2025-09-02\n\n- Added React component `HelloWorld` at `src/components/hello-world.tsx`\n

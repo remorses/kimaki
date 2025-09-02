@@ -379,7 +379,7 @@ type AssistantMessage = {
 
 #### `session.prompt(options)`
 
-Creates and sends a new message to a session.
+Creates and sends a new message to a session. This method waits for the LLM to complete its response before returning.
 
 **Parameters:**
 
@@ -392,6 +392,8 @@ Creates and sends a new message to a session.
 - `parts: Array<TextPartInput | FilePartInput | AgentPartInput>`
 
 **Returns:** `{ info: AssistantMessage, parts: Array<Part> }`
+
+**Note:** This method is synchronous and will wait for the complete LLM response before returning. If you need to send a message without waiting for the response, you can call this method without awaiting it.
 
 #### `session.message(options)`
 
