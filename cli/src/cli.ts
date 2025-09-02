@@ -44,6 +44,7 @@ cli.command('', 'Spawn Kimaki to orchestrate code agents').action(
             const newClient = new LiveAPIClient({
                 apiKey: token!,
                 model: 'models/gemini-2.5-flash-preview-native-audio-dialog',
+                saveUserAudio: true,
                 config: {
                     tools: callableToolsFromObject(tools),
                     responseModalities: [Modality.AUDIO],
