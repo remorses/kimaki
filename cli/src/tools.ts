@@ -85,15 +85,15 @@ export async function startOpencodeServer(port: number): Promise<ChildProcess> {
         console.error(pc.red('Failed to start OpenCode server:'), error)
     })
 
-    serverProcess.on('exit', (code, signal) => {
-        if (code !== 0) {
-            console.error(
-                pc.red(
-                    `OpenCode server exited with code ${code}, signal ${signal}`,
-                ),
-            )
-        }
-    })
+    // serverProcess.on('exit', (code, signal) => {
+    //     if (code !== 0) {
+    //         console.error(
+    //             pc.red(
+    //                 `OpenCode server exited with code ${code}, signal ${signal}`,
+    //             ),
+    //         )
+    //     }
+    // })
 
     await waitForServer(port)
     return serverProcess
