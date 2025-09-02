@@ -1,0 +1,16 @@
+{
+    "extends": "../tsconfig.base.json",
+    "compilerOptions": {
+        "rootDir": "src",
+        "allowJs": true,
+
+        "lib": ["esnext", "es2015", "dom"],
+        "skipLibCheck": true,
+        "types": ["vite/client", "node"],
+        "outDir": "dist",
+        "resolveJsonModule": true,
+        "jsx": "react-jsx"
+    },
+    "include": ["src"],
+    "exclude": ["node_modules", "**/node_modules/**"]
+}

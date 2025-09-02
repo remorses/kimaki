@@ -1,12 +1,12 @@
 {
     "compilerOptions": {
         "target": "ES2022",
-        "module": "commonjs",
+        "module": "nodenext",
         "allowJs": false,
         "composite": true,
         "outDir": "${configDir}/dist",
         "rootDir": "${configDir}/src",
-        "moduleResolution": "Bundler",
+        "moduleResolution": "nodenext",
         "lib": [
             "es2022",
             "es2017",
