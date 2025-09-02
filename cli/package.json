@@ -23,18 +23,21 @@
     "license": "",
     "dependencies": {
         "@google/genai": "^1.16.0",
+        "ai": "^5.0.29",
         "cac": "^6.7.14",
         "chokidar": "^4.0.3",
         "cli-table3": "^0.6.5",
         "globby": "^14.1.0",
+        "liveapi": "workspace:*",
         "mime-types": "^2.1.35",
         "node-web-audio-api": "^1.0.4",
         "picocolors": "^1.1.1",
         "prompts": "^2.4.2",
         "sema4": "^0.1.3",
+        "string-dedent": "^3.0.2",
         "tiny-jsonc": "^1.0.2",
-        "liveapi": "workspace:*",
-        "ws": "^8.18.2"
+        "ws": "^8.18.2",
+        "zod": "^4.1.5"
     },
     "devDependencies": {
         "@types/mime-types": "^2.1.4",
