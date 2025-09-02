@@ -2,7 +2,11 @@ import { tool } from 'ai'
 import { z } from 'zod'
 import { spawn, type ChildProcess } from 'node:child_process'
 import net from 'node:net'
-import { createOpencodeClient, type OpencodeClient } from '@opencode-ai/sdk'
+import {
+    createOpencodeClient,
+    type OpencodeClient,
+    type AssistantMessage,
+} from '@opencode-ai/sdk'
 import { formatDistanceToNow } from 'date-fns'
 import { ShareMarkdown } from './markdown'
 import pc from 'picocolors'
@@ -25,7 +29,10 @@ export async function getOpenPort(): Promise<number> {
     })
 }
 
-export async function waitForServer(port: number, maxAttempts = 30): Promise<boolean> {
+export async function waitForServer(
+    port: number,
+    maxAttempts = 30,
+): Promise<boolean> {
     for (let i = 0; i < maxAttempts; i++) {
         try {
             const endpoints = [
@@ -99,10 +106,42 @@ export async function startOpencodeServer(port: number): Promise<ChildProcess> {
     return serverProcess
 }
 
-export function createTools(
-    client: OpencodeClient,
-    markdownRenderer: ShareMarkdown,
-) {
+export async function getTools({
+    onMessageCompleted,
+}: {
+    onMessageCompleted?: (params: {
+        sessionId: string
+        messageId: string
+        data?: { info: AssistantMessage }
+        error?: any
+        markdown?: string
+    }) => void
+} = {}) {
+    const port = await getOpenPort()
+    const serverProcess = await startOpencodeServer(port)
+
+    const client = createOpencodeClient({ baseUrl: `http://localhost:${port}` })
+    const markdownRenderer = new ShareMarkdown(client)
+
+    process.on('exit', () => {
+        if (serverProcess && !serverProcess.killed) {
+            serverProcess.kill('SIGTERM')
+        }
+    })
+
+    process.on('SIGINT', () => {
+        if (serverProcess && !serverProcess.killed) {
+            serverProcess.kill('SIGTERM')
+        }
+        process.exit(0)
+    })
+
+    process.on('SIGTERM', () => {
+        if (serverProcess && !serverProcess.killed) {
+            serverProcess.kill('SIGTERM')
+        }
+        process.exit(0)
+    })
     return {
         submitMessage: tool({
             description:
@@ -116,14 +155,34 @@ export function createTools(
             execute: async ({ sessionId, message }) => {
                 const messageId = randomId()
                 // do not await
-                client.session.prompt({
-                    path: { id: sessionId },
+                client.session
+                    .prompt({
+                        path: { id: sessionId },
 
-                    body: {
-                        messageID: messageId,
-                        parts: [{ type: 'text', text: message }],
-                    },
-                })
+                        body: {
+                            messageID: messageId,
+                            parts: [{ type: 'text', text: message }],
+                        },
+                    })
+                    .then(async (response) => {
+                        const markdown = await markdownRenderer.generate({
+                            sessionID: sessionId,
+                            lastAssistantOnly: true,
+                        })
+                        onMessageCompleted?.({
+                            sessionId,
+                            messageId,
+                            data: response.data,
+                            markdown,
+                        })
+                    })
+                    .catch((error) => {
+                        onMessageCompleted?.({
+                            sessionId,
+                            messageId,
+                            error,
+                        })
+                    })
                 return {
                     success: true,
                     sessionId,
@@ -160,22 +219,40 @@ export function createTools(
                     throw new Error('Failed to create session')
                 }
 
+                const messageId = randomId()
                 // do not await
                 client.session
                     .prompt({
                         path: { id: session.data.id },
                         body: {
+                            messageID: messageId,
                             parts: [{ type: 'text', text: message }],
                         },
                     })
-                    .then((x) => {
-                        x.data
+                    .then(async (response) => {
+                        const markdown = await markdownRenderer.generate({
+                            sessionID: session.data.id,
+                            lastAssistantOnly: true,
+                        })
+                        onMessageCompleted?.({
+                            sessionId: session.data.id,
+                            messageId,
+                            data: response.data,
+                            markdown,
+                        })
+                    })
+                    .catch((error) => {
+                        onMessageCompleted?.({
+                            sessionId: session.data.id,
+                            messageId,
+                            error,
+                        })
                     })
 
                 return {
                     success: true,
                     sessionId: session.data.id,
-                    messageId: 'pending',
+                    messageId,
                     title: session.data.title,
                 }
             },
@@ -335,38 +412,7 @@ export function createTools(
             },
         }),
     }
-}
 
-export async function getTools() {
-    const port = await getOpenPort()
-    const serverProcess = await startOpencodeServer(port)
-
-    const client = createOpencodeClient({ baseUrl: `http://localhost:${port}` })
-    const markdownRenderer = new ShareMarkdown(client)
-
-    const tools = createTools(client, markdownRenderer)
-
-    process.on('exit', () => {
-        if (serverProcess && !serverProcess.killed) {
-            serverProcess.kill('SIGTERM')
-        }
-    })
-
-    process.on('SIGINT', () => {
-        if (serverProcess && !serverProcess.killed) {
-            serverProcess.kill('SIGTERM')
-        }
-        process.exit(0)
-    })
-
-    process.on('SIGTERM', () => {
-        if (serverProcess && !serverProcess.killed) {
-            serverProcess.kill('SIGTERM')
-        }
-        process.exit(0)
-    })
-
-    return tools
 }
 
 function randomId(length = 16): string {

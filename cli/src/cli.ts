@@ -27,7 +27,19 @@ cli.command('', 'Spawn Kimaki to orchestrate code agents').action(
                 'liveapi/src/index'
             )
 
-            const tools = await getTools()
+            let liveApiClient: InstanceType<typeof LiveAPIClient> | null = null
+
+            const tools = await getTools({
+                onMessageCompleted: (params) => {
+                    if (!liveApiClient) return
+
+                    const text = params.data
+                        ? `Chat message completed for session ${params.sessionId}.\n\nAssistant response:\n${params.markdown}`
+                        : `Chat message failed for session ${params.sessionId}. Error: ${params.error?.message || 'Unknown error'}`
+
+                    liveApiClient.sendText(text)
+                },
+            })
 
             const newClient = new LiveAPIClient({
                 apiKey: token!,
@@ -88,6 +100,8 @@ cli.command('', 'Spawn Kimaki to orchestrate code agents').action(
                 },
                 onStateChange: (state) => {},
             })
+
+            liveApiClient = newClient
 
             // Connect to the API
             const connected = await newClient.connect()
