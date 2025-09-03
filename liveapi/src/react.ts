@@ -6,6 +6,7 @@ import {
   CallableTool,
 } from '@google/genai'
 import type { ToolsAndTokenResponse } from './api.js'
+import { LiveAPIClient } from './live-api-client.js'
 
 interface ToolCall {
   toolCallId: string

@@ -255,6 +255,7 @@ export async function getTools({
         'Get a list of available chat sessions sorted by most recent',
       inputSchema: z.object({}),
       execute: async () => {
+        console.log(`listing opencode sessions`)
         const sessions = await client.session.list()
 
         if (!sessions.data) {

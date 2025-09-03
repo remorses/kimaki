@@ -159,6 +159,7 @@ cli
                 - never read session ids or other ids
 
                 Your voice is calm and monotone, NEVER excited and goofy.
+                You speak like you knew something other don't. You are cool and cold.
                 `,
               },
             ],

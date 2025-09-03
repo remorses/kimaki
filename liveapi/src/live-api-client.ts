@@ -89,6 +89,7 @@ export class LiveAPIClient {
     this.onMessage = onMessage
     this.onUserAudioChunk = onUserAudioChunk
 
+    this.tools = config?.tools || []
     if (enableGoogleSearch) {
       this.tools.push({ googleSearch: {} } as any)
     }
@@ -251,9 +252,9 @@ export class LiveAPIClient {
     if (message.toolCall) {
       this.log('toolcall: ' + JSON.stringify(message.toolCall))
 
-      // Manually handle tool calls
-      if (message.toolCall.functionCalls && this.tools.length > 0) {
-        this.handleToolCalls(message.toolCall.functionCalls)
+      // Handle tool calls
+      if (message.toolCall.functionCalls) {
+        await this.handleToolCalls(message.toolCall.functionCalls)
       }
       return
     }
@@ -365,11 +366,19 @@ export class LiveAPIClient {
   }
 
   private async handleToolCalls(functionCalls: FunctionCall[]) {
-    if (!this.session || !this.tools.length) return
+    if (!this.session) {
+      console.log('No session active in handleToolCalls')
+      return
+    }
+    if (!this.tools.length) {
+      console.log('No tools registered in handleToolCalls')
+      return
+    }
 
     try {
       for (const tool of this.tools) {
         if (!functionCalls.some((x) => x.name === tool.name)) {
+          console.log(`no tool found for ${functionCalls}`)
           continue
         }
         const parts = await tool.callTool(functionCalls)
