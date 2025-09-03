@@ -100,11 +100,11 @@ cli
           }
         },
         onMessage: (message) => {
-          console.log(message)
+          process.env.DEBUG && console.log(message)
           // When model starts responding, save the user's audio
           if (message.serverContent?.turnComplete && audioChunks.length > 0) {
             isModelSpeaking = true
-            saveUserAudio()
+            process.env.DEBUG && saveUserAudio()
           }
           // Reset when turn is complete
           if (message.serverContent?.turnComplete) {
