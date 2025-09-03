@@ -1,4 +1,5 @@
 import { useState, useCallback, useRef, useEffect } from 'react'
+import {
   LiveServerMessage,
   FunctionCall,
   Part,
@@ -170,7 +171,7 @@ export function useAudioChat(options: UseAudioChatOptions): UseAudioChatResult {
 
       // Create the LiveAPIClient with ephemeral token
       const newClient = new LiveAPIClient({
-        apiKey: token, // Use ephemeral token as API key
+        apiKey: token!, // Use ephemeral token as API key
         config: {
           tools: callableTools,
         },

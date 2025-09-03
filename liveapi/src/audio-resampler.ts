@@ -31,3 +31,38 @@ export function downSampleAudioBuffer(
 
   return result
 }
+
+export function downSampleInt16Buffer(
+  buffer: ArrayBuffer,
+  inputSampleRate: number,
+  outputSampleRate: number,
+): ArrayBuffer {
+  if (outputSampleRate >= inputSampleRate) {
+    throw new Error('Output sample rate must be less than input sample rate.')
+  }
+
+  // Convert Int16Array to Float32Array
+  const int16Array = new Int16Array(buffer)
+  const float32Array = new Float32Array(int16Array.length)
+  for (let i = 0; i < int16Array.length; i++) {
+    float32Array[i] = int16Array[i] / 32768.0
+  }
+
+  // Downsample
+  const downsampled = downSampleAudioBuffer(
+    float32Array,
+    inputSampleRate,
+    outputSampleRate,
+  )
+
+  // Convert back to Int16Array
+  const downsampledInt16 = new Int16Array(downsampled.length)
+  for (let i = 0; i < downsampled.length; i++) {
+    downsampledInt16[i] = Math.max(
+      -32768,
+      Math.min(32767, Math.floor(downsampled[i] * 32768)),
+    )
+  }
+
+  return downsampledInt16.buffer
+}

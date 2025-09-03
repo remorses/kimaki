@@ -7,6 +7,8 @@ import * as webAudioApi from 'node-web-audio-api'
 import fs from 'node:fs'
 import path from 'node:path'
 import WaveFile from 'wavefile'
+import pc from 'picocolors'
+import { getTools } from './tools.js'
 
 export const cli = cac('kimaki')
 
@@ -17,13 +19,13 @@ cli
   .command('', 'Spawn Kimaki to orchestrate code agents')
   .action(async (options) => {
     try {
-      const token = process.env.TOKEN
+      const token = process.env.GEMINI_API_KEY
 
       Object.assign(globalThis, webAudioApi)
       // @ts-expect-error still not typed https://github.com/ircam-ismm/node-web-audio-api/issues/73
       navigator.mediaDevices = mediaDevices
 
-      const { LiveAPIClient, callableToolsFromObject, downSampleAudioBuffer } = await import(
+      const { LiveAPIClient, callableToolsFromObject } = await import(
         'liveapi/src/index'
       )
 
@@ -43,7 +45,8 @@ cli
         },
       })
 
-      const saveUserAudio = () => {
+      const saveUserAudio = async () => {
+        console.log('saveUserAudio', audioChunks.length)
         if (audioChunks.length === 0) return
 
         try {
@@ -74,7 +77,7 @@ cli
           wav.fromScratch(1, 16000, '16', Array.from(combinedView))
 
           const filename = path.join(dir, `${timestamp}.wav`)
-          fs.writeFileSync(filename, Buffer.from(wav.toBuffer()))
+          await fs.promises.writeFile(filename, Buffer.from(wav.toBuffer()))
           console.log(
             `Saved user audio to ${filename} (${audioChunks.length} chunks)`,
           )
@@ -91,33 +94,15 @@ cli
         model: 'models/gemini-2.5-flash-preview-native-audio-dialog',
         recordingSampleRate: 44100,
         onUserAudioChunk: (chunk) => {
-          // Downsample from 44.1k to 16k before collecting
-          const int16Array = new Int16Array(chunk)
-          const float32Array = new Float32Array(int16Array.length)
-          for (let i = 0; i < int16Array.length; i++) {
-            float32Array[i] = int16Array[i] / 32768.0
-          }
-          
-          const downsampled = downSampleAudioBuffer(float32Array, 44100, 16000)
-          
-          // Convert back to Int16Array
-          const downsampledInt16 = new Int16Array(downsampled.length)
-          for (let i = 0; i < downsampled.length; i++) {
-            downsampledInt16[i] = Math.max(-32768, Math.min(32767, Math.floor(downsampled[i] * 32768)))
-          }
-          
-          // Collect downsampled chunks while user is speaking
+          // Collect chunks while user is speaking
           if (!isModelSpeaking) {
-            audioChunks.push(downsampledInt16.buffer)
+            audioChunks.push(chunk)
           }
         },
         onMessage: (message) => {
+          console.log(message)
           // When model starts responding, save the user's audio
-          if (
-
-            message.serverContent?.turnComplete &&
-            audioChunks.length > 0
-          ) {
+          if (message.serverContent?.turnComplete && audioChunks.length > 0) {
             isModelSpeaking = true
             saveUserAudio()
           }
@@ -172,8 +157,7 @@ cli
                                 Rules
                                 - never spell files by mentioning dots, letters, etc. instead give a brief description of the filename
                                 - never read session ids or other ids
-
-                                You
+                                `,
               },
             ],
           },

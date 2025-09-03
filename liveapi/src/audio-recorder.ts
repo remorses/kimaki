@@ -12,22 +12,14 @@
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
  * See the License for the specific language governing permissions and
  * limitations under the License.
+ */
 import { audioContext } from './utils.js'
 import AudioRecordingWorklet from './worklets/audio-processing.js'
 import VolMeterWorket from './worklets/vol-meter.js'
+import { downSampleInt16Buffer } from './audio-resampler.js'
 
 import { createWorketFromSrc } from './audioworklet-registry.js'
 import EventEmitter from 'eventemitter3'
-
-function arrayBufferToBase64(buffer: ArrayBuffer) {
-  var binary = ''
-  var bytes = new Uint8Array(buffer)
-  var len = bytes.byteLength
-  for (var i = 0; i < len; i++) {
-    binary += String.fromCharCode(bytes[i])
-  }
-  return btoa(binary)
-}
 
 export class AudioRecorder extends EventEmitter.EventEmitter {
   stream: MediaStream | undefined
@@ -67,9 +59,17 @@ export class AudioRecorder extends EventEmitter.EventEmitter {
         const arrayBuffer = ev.data.data.int16arrayBuffer
 
         if (arrayBuffer) {
-          // Emit both the raw buffer and base64 string
-          const arrayBufferString = arrayBufferToBase64(arrayBuffer)
-          this.emit('data', arrayBufferString, arrayBuffer)
+          // Downsample to 16k if needed
+          let outputBuffer = arrayBuffer
+          if (this.sampleRate > 16000) {
+            outputBuffer = downSampleInt16Buffer(
+              arrayBuffer,
+              this.sampleRate,
+              16000,
+            )
+          }
+          // Emit only the binary buffer
+          this.emit('data', outputBuffer)
         }
       }
       this.source.connect(this.recordingWorklet)
@@ -94,6 +94,7 @@ export class AudioRecorder extends EventEmitter.EventEmitter {
   stop() {
     // its plausible that stop would be called before start completes
     // such as if the websocket immediately hangs up
+    const handleStop = () => {
       this.source?.disconnect()
       this.stream?.getTracks?.()?.forEach((track) => track.stop())
       this.stream = undefined

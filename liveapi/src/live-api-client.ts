@@ -14,7 +14,6 @@ import { LiveClientOptions } from './types.js'
 import { AudioRecorder } from './audio-recorder.js'
 import { AudioStreamer } from './audio-streamer.js'
 import { audioContext, base64ToArrayBuffer } from './utils.js'
-import { downSampleAudioBuffer } from './audio-resampler.js'
 import VolMeterWorket from './worklets/vol-meter.js'
 
 export interface LiveAPIState {
@@ -29,6 +28,8 @@ export interface LiveAPIState {
 export interface LiveAPIClientOptions extends LiveClientOptions {
   model?: string
   onUserAudioChunk?: (chunk: ArrayBuffer) => void
+  onStateChange?: (state: LiveAPIState) => void
+  onMessage?: (message: LiveServerMessage) => void
   enableGoogleSearch?: boolean
   recordingSampleRate?: number
   config?: Partial<LiveConnectConfig> & {
@@ -42,7 +43,8 @@ export class LiveAPIClient {
   private audioStreamer: AudioStreamer | null = null
   private audioRecorder: AudioRecorder | null = null
   private model: string
-  private recordingSampleRate: number
+  private onStateChange?: (state: LiveAPIState) => void
+  private onMessage?: (message: LiveServerMessage) => void
 
   private state: LiveAPIState = {
     connected: false,
@@ -81,12 +83,11 @@ export class LiveAPIClient {
       throw new Error('API key is required')
     }
 
-    this.client = new GoogleGenAI(apiKey)
+    this.client = new GoogleGenAI({ apiKey })
     this.model = model || 'models/gemini-2.0-flash-exp'
     this.onStateChange = onStateChange
     this.onMessage = onMessage
     this.onUserAudioChunk = onUserAudioChunk
-    this.recordingSampleRate = recordingSampleRate
 
     if (enableGoogleSearch) {
       this.tools.push({ googleSearch: {} } as any)
@@ -98,15 +99,6 @@ export class LiveAPIClient {
     }
 
     this.audioRecorder = new AudioRecorder(recordingSampleRate)
-    this.setupAudioRecorder()
-  }
-
-    // Merge provided config with defaults
-    if (config) {
-      this.state.config = { ...this.state.config, ...config }
-    }
-
-    this.audioRecorder = new AudioRecorder(16000)
     this.setupAudioRecorder()
   }
 
@@ -136,23 +128,26 @@ export class LiveAPIClient {
   }
 
   private setupAudioRecorder() {
-    this.audioRecorder.on(
-      'data',
-      (base64: string, arrayBuffer?: ArrayBuffer) => {
-        if (this.state.connected && !this.state.muted) {
-          this.sendRealtimeInput([
-            {
-              mimeType: 'audio/pcm;rate=16000',
-              data: base64,
-            },
-          ])
-          // Call the callback with the raw audio chunk if available
-          if (this.onUserAudioChunk && arrayBuffer) {
-            this.onUserAudioChunk(arrayBuffer.slice(0))
-          }
+    if (!this.audioRecorder) return
+    this.audioRecorder.on('data', (arrayBuffer: ArrayBuffer) => {
+      if (this.state.connected && !this.state.muted) {
+        // Convert to base64 for sending to API
+        const binary = String.fromCharCode(...new Uint8Array(arrayBuffer))
+        const base64 = btoa(binary)
+
+        this.sendRealtimeInput([
+          {
+            mimeType: 'audio/pcm;rate=16000',
+            data: base64,
+          },
+        ])
+
+        // Call the callback with the audio chunk (already at 16k)
+        if (this.onUserAudioChunk) {
+          this.onUserAudioChunk(arrayBuffer.slice(0))
         }
-      },
-    )
+      }
+    })
 
     this.audioRecorder.on('volume', (volume: number) => {
       this.updateState({ inVolume: volume })
@@ -179,7 +174,7 @@ export class LiveAPIClient {
 
     const callbacks: LiveCallbacks = {
       onopen: this.onOpen.bind(this),
-      onmessage: this.onMessage.bind(this),
+      onmessage: this.handleMessage.bind(this),
       onerror: this.onError.bind(this),
       onclose: this.onClose.bind(this),
     }
@@ -241,12 +236,12 @@ export class LiveAPIClient {
     this.log('close: ' + JSON.stringify({ reason: e.reason, code: e.code }))
   }
 
-  private async onMessage(message: LiveServerMessage) {
+  private async handleMessage(message: LiveServerMessage) {
     // Clone the message to avoid reference issues
     const clonedMessage = JSON.parse(JSON.stringify(message))
 
     // Call the external callback if provided
-    this.onMessageCallback?.(clonedMessage)
+    this.onMessage?.(clonedMessage)
 
     if (message.setupComplete) {
       this.log('setupcomplete')
@@ -297,9 +292,9 @@ export class LiveAPIClient {
           if (b64) {
             const data = base64ToArrayBuffer(b64)
             this.audioStreamer?.addPCM16(new Uint8Array(data))
-            this.log(
-              'audio: ' + JSON.stringify({ byteLength: data.byteLength }),
-            )
+            // this.log(
+            //   'audio: ' + JSON.stringify({ byteLength: data.byteLength }),
+            // )
           }
         })
 
