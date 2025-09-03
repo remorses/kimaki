@@ -149,14 +149,12 @@ export async function getTools({
         message: z.string().describe('The message text to send'),
       }),
       execute: async ({ sessionId, message }) => {
-        const messageId = randomId()
         // do not await
         client.session
           .prompt({
             path: { id: sessionId },
 
             body: {
-              messageID: messageId,
               parts: [{ type: 'text', text: message }],
             },
           })
@@ -167,7 +165,7 @@ export async function getTools({
             })
             onMessageCompleted?.({
               sessionId,
-              messageId,
+              messageId: '',
               data: response.data,
               markdown,
             })
@@ -175,14 +173,13 @@ export async function getTools({
           .catch((error) => {
             onMessageCompleted?.({
               sessionId,
-              messageId,
+              messageId: '',
               error,
             })
           })
         return {
           success: true,
           sessionId,
-          messageId,
           directive: 'Tell user that message has been sent successfully',
         }
       },
@@ -211,13 +208,11 @@ export async function getTools({
           throw new Error('Failed to create session')
         }
 
-        const messageId = randomId()
         // do not await
         client.session
           .prompt({
             path: { id: session.data.id },
             body: {
-              messageID: messageId,
               parts: [{ type: 'text', text: message }],
             },
           })
@@ -228,7 +223,7 @@ export async function getTools({
             })
             onMessageCompleted?.({
               sessionId: session.data.id,
-              messageId,
+              messageId: '',
               data: response.data,
               markdown,
             })
@@ -236,7 +231,7 @@ export async function getTools({
           .catch((error) => {
             onMessageCompleted?.({
               sessionId: session.data.id,
-              messageId,
+              messageId: '',
               error,
             })
           })
@@ -244,7 +239,6 @@ export async function getTools({
         return {
           success: true,
           sessionId: session.data.id,
-          messageId,
           title: session.data.title,
         }
       },
