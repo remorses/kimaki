@@ -304,10 +304,11 @@ export async function getTools({
     searchFiles: tool({
       description: 'Search for files in a folder',
       inputSchema: z.object({
-        folder: z.string().describe('The folder path to search in'),
+        folder: z.string().optional().describe('The folder path to search in, optional. only use if user specifically asks for it'),
         query: z.string().describe('The search query for files'),
       }),
       execute: async ({ folder, query }) => {
+
         const results = await client.find.files({
           query: {
             query,
