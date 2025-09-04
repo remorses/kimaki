@@ -9,7 +9,11 @@
     "typecheck": "tsc",
     "watch": "tsc -w",
     "test": "vitest",
-    "realtime": "tsx src/openai-realtime.ts"
+    "realtime": "tsx src/openai-realtime.ts",
+    "realtime:audio": "tsx src/realtime-audio.ts --audio",
+    "realtime:text": "tsx src/realtime-audio.ts",
+    "realtime:tools": "tsx src/realtime-with-tools.ts",
+    "audio": "tsx src/realtime-complete.ts"
   },
   "files": [
     "dist",
