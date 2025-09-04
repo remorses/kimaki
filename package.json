@@ -24,5 +24,9 @@
   },
   "repository": "https://github.com/remorses/",
   "author": "remorses <beats.by.morse@gmail.com>",
-  "license": ""
+  "license": "",
+  "dependencies": {
+    "string-dedent": "^3.0.2",
+    "tiny-jsonc": "^1.0.2"
+  }
 }

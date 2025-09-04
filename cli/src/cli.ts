@@ -88,10 +88,11 @@ cli
           console.error('Failed to save audio file:', error)
         }
       }
+      const model = 'models/gemini-2.5-flash-live-preview'
 
       const newClient = new LiveAPIClient({
         apiKey: token!,
-        model: 'models/gemini-2.5-flash-preview-native-audio-dialog',
+        model,
         recordingSampleRate: 44100,
         onUserAudioChunk: (chunk) => {
           // Collect chunks while user is speaking
@@ -117,7 +118,7 @@ cli
           speechConfig: {
             voiceConfig: {
               prebuiltVoiceConfig: {
-                voiceName: 'Sadachbia',
+                // voiceName: 'Sadachbia',
               },
             },
           },
@@ -175,8 +176,8 @@ cli
 
       // Connect to the API
       const connected = await newClient.connect()
-      await new Promise(res => setTimeout(res, 1000))
-      liveApiClient.sendText(`<systemMessage>\nsay "Hello boss, how we doing today?"\n</systemMessage>`)
+      await new Promise((res) => setTimeout(res, 1000))
+      // liveApiClient.sendText(`<systemMessage>\nsay "Hello boss, how we doing today?"\n</systemMessage>`)
     } catch (error) {
       console.error(pc.red('\nError initializing project:'))
       console.error(pc.red(error))

@@ -104,6 +104,10 @@ export async function startOpencodeServer(port: number): Promise<ChildProcess> {
   return serverProcess
 }
 
+async function selectModelProvider(client: OpencodeClient) {
+  return { providerID: 'anthropic', modelID: 'claude-opus-4-20250514' }
+}
+
 export async function getTools({
   onMessageCompleted,
 }: {
@@ -149,6 +153,8 @@ export async function getTools({
         message: z.string().describe('The message text to send'),
       }),
       execute: async ({ sessionId, message }) => {
+        const { providerID, modelID } = await selectModelProvider(client)
+
         // do not await
         client.session
           .prompt({
@@ -156,6 +162,7 @@ export async function getTools({
 
             body: {
               parts: [{ type: 'text', text: message }],
+              model: modelID && providerID ? { modelID, providerID } : undefined,
             },
           })
           .then(async (response) => {
@@ -198,6 +205,7 @@ export async function getTools({
         if (!message.trim()) {
           throw new Error(`message must be a non empty string`)
         }
+        const { providerID, modelID } = await selectModelProvider(client)
         const session = await client.session.create({
           body: {
             title: title || message.slice(0, 50),
@@ -214,6 +222,7 @@ export async function getTools({
             path: { id: session.data.id },
             body: {
               parts: [{ type: 'text', text: message }],
+              model: modelID && providerID ? { modelID, providerID } : undefined,
             },
           })
           .then(async (response) => {
@@ -304,11 +313,15 @@ export async function getTools({
     searchFiles: tool({
       description: 'Search for files in a folder',
       inputSchema: z.object({
-        folder: z.string().optional().describe('The folder path to search in, optional. only use if user specifically asks for it'),
+        folder: z
+          .string()
+          .optional()
+          .describe(
+            'The folder path to search in, optional. only use if user specifically asks for it',
+          ),
         query: z.string().describe('The search query for files'),
       }),
       execute: async ({ folder, query }) => {
-
         const results = await client.find.files({
           query: {
             query,
@@ -391,6 +404,38 @@ export async function getTools({
             success: true,
             markdown,
             status,
+          }
+        }
+      },
+    }),
+
+    abortChat: tool({
+      description: 'Abort/stop an in-progress chat session',
+      inputSchema: z.object({
+        sessionId: z.string().describe('The session ID to abort'),
+      }),
+      execute: async ({ sessionId }) => {
+        try {
+          const result = await client.session.abort({
+            path: { id: sessionId },
+          })
+
+          if (!result.data) {
+            return {
+              success: false,
+              error: 'Failed to abort session',
+            }
+          }
+
+          return {
+            success: true,
+            sessionId,
+            message: 'Session aborted successfully',
+          }
+        } catch (error) {
+          return {
+            success: false,
+            error: error instanceof Error ? error.message : 'Unknown error occurred',
           }
         }
       },

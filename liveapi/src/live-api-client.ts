@@ -378,7 +378,7 @@ export class LiveAPIClient {
     try {
       for (const tool of this.tools) {
         if (!functionCalls.some((x) => x.name === tool.name)) {
-          console.log(`no tool found for ${functionCalls}`)
+          console.log(`no tool found for ${functionCalls.map(x => x.name)}`)
           continue
         }
         const parts = await tool.callTool(functionCalls)
