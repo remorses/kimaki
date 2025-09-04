@@ -9,7 +9,7 @@ import path from 'node:path'
 import WaveFile from 'wavefile'
 import pc from 'picocolors'
 import { getTools } from './tools.js'
-import { render, Box, Text } from 'ink'
+import { render, Box, Text, useStdout } from 'ink'
 import React, { useState, useEffect } from 'react'
 
 export const cli = cac('kimaki')
@@ -21,6 +21,7 @@ function AsciiVideoPlayer() {
   const [frameIndex, setFrameIndex] = useState(0)
   const [asciiFrame, setAsciiFrame] = useState('Loading frames...')
   const [frames, setFrames] = useState<string[]>([])
+  const { stdout } = useStdout()
 
   useEffect(() => {
     // Load all frame paths
@@ -45,10 +46,11 @@ function AsciiVideoPlayer() {
     // Convert current frame to ASCII
     const loadFrame = async () => {
       const { convertImageToAscii } = await import('./video-to-ascii.js')
+      // Use fixed dimensions that work well in terminal
       const ascii = await convertImageToAscii({
         imagePath: frames[frameIndex],
         cols: 80,
-        rows: 30,
+        rows: 22, // 24 terminal rows - 2 for status
         colored: true,
         keepAspectRatio: false,
       })
