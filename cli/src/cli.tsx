@@ -16,6 +16,65 @@ export const cli = cac('kimaki')
 
 cli.help()
 
+// ASCII Video Player Component
+function AsciiVideoPlayer() {
+  const [frameIndex, setFrameIndex] = useState(0)
+  const [asciiFrame, setAsciiFrame] = useState('Loading frames...')
+  const [frames, setFrames] = useState<string[]>([])
+
+  useEffect(() => {
+    // Load all frame paths
+    const framesDir = path.join(
+      path.dirname(new URL(import.meta.url).pathname),
+      '../assets/frames',
+    )
+    try {
+      const files = fs
+        .readdirSync(framesDir)
+        .filter((f) => f.endsWith('.png'))
+        .sort()
+      setFrames(files.map((f) => path.join(framesDir, f)))
+    } catch (error) {
+      setAsciiFrame('Error: Could not find frames directory')
+    }
+  }, [])
+
+  useEffect(() => {
+    if (frames.length === 0) return
+
+    // Convert current frame to ASCII
+    const loadFrame = async () => {
+      const { convertImageToAscii } = await import('./video-to-ascii.js')
+      const ascii = await convertImageToAscii({
+        imagePath: frames[frameIndex],
+        cols: 80,
+        rows: 30,
+        colored: true,
+        keepAspectRatio: false,
+      })
+      setAsciiFrame(ascii)
+    }
+
+    loadFrame()
+
+    // Advance to next frame
+    const timer = setTimeout(() => {
+      setFrameIndex((prev) => (prev + 1) % frames.length)
+    }, 50) // 20 FPS = 50ms per frame
+
+    return () => clearTimeout(timer)
+  }, [frameIndex, frames])
+
+  return (
+    <Box flexDirection='column'>
+      <Text>{asciiFrame}</Text>
+      <Text dimColor>
+        Press Ctrl+C to exit • Frame {frameIndex + 1}/{frames.length}
+      </Text>
+    </Box>
+  )
+}
+
 // KimakiTUI Component
 function KimakiTUI({
   messages,
@@ -300,3 +359,7 @@ cli
       process.exit(1)
     }
   })
+
+cli.command('ascii', 'Play ASCII video').action(async () => {
+  render(<AsciiVideoPlayer />)
+})
