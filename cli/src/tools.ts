@@ -107,17 +107,23 @@ export async function startOpencodeServer(port: number): Promise<ChildProcess> {
 }
 
 
-async function selectModelProvider(client: OpencodeClient, providedModel?: { providerId: string; modelId: string }) {
+async function selectModelProvider(providedModel?: { providerId: string; modelId: string }) {
   if (providedModel) {
-    return { providerID: providedModel.providerId, modelID: providedModel.modelId }
+    return {
+      providerID: providedModel.providerId,
+      modelID: providedModel.modelId
+    }
   }
-  
+
   const config = await readConfig()
   if (config.preferredModel) {
-    return { providerID: config.preferredModel.providerId, modelID: config.preferredModel.modelId }
+    return {
+      providerID: config.preferredModel.providerId,
+      modelID: config.preferredModel.modelId
+    }
   }
-  
-  return { providerID: 'anthropic', modelID: 'claude-opus-4-20250514' }
+
+  throw new Error('No model specified and no preferred model set. Please call getModels to see available models and ask user to choose one. Do not spell model names exactly, give rough names like Sonnet or GPT5. Prefer latest versions')
 }
 
 export async function getTools({
@@ -136,10 +142,10 @@ export async function getTools({
 
   const client = createOpencodeClient({ baseUrl: `http://localhost:${port}` })
   const markdownRenderer = new ShareMarkdown(client)
-  
+
   const providersResponse = await client.config.providers({})
   const providers: Provider[] = providersResponse.data?.providers || []
-  
+
   const config = await readConfig()
   const preferredModel = config.preferredModel
 
@@ -162,6 +168,25 @@ export async function getTools({
     }
     process.exit(0)
   })
+  // Helper: get last assistant model for a session (non-summary)
+  const getSessionModel = async (
+    sessionId: string,
+  ): Promise<{ providerID: string; modelID: string } | undefined> => {
+    const res = await client.session.messages({ path: { id: sessionId } })
+    const data = res.data
+    if (!data || data.length === 0) return undefined
+    for (let i = data.length - 1; i >= 0; i--) {
+      const info = data[i].info
+      if (info.role === 'assistant') {
+        const ai = info as AssistantMessage
+        if (!ai.summary && ai.providerID && ai.modelID) {
+          return { providerID: ai.providerID, modelID: ai.modelID }
+        }
+      }
+    }
+    return undefined
+  }
+
   const tools = {
     submitMessage: tool({
       description:
@@ -171,7 +196,7 @@ export async function getTools({
         message: z.string().describe('The message text to send'),
       }),
       execute: async ({ sessionId, message }) => {
-        const { providerID, modelID } = await selectModelProvider(client)
+        const sessionModel = await getSessionModel(sessionId)
 
         // do not await
         client.session
@@ -180,7 +205,7 @@ export async function getTools({
 
             body: {
               parts: [{ type: 'text', text: message }],
-              model: modelID && providerID ? { modelID, providerID } : undefined,
+              model: sessionModel,
             },
           })
           .then(async (response) => {
@@ -227,17 +252,19 @@ export async function getTools({
         if (!message.trim()) {
           throw new Error(`message must be a non empty string`)
         }
-        const { providerID, modelID } = await selectModelProvider(client, model)
-        
-        if (model) {
-          await updateConfig({ 
-            preferredModel: { 
-              providerId: model.providerId, 
-              modelId: model.modelId 
-            } 
-          })
-        }
-        
+
+        try {
+          const { providerID, modelID } = await selectModelProvider(model)
+
+          if (model) {
+            await updateConfig({
+              preferredModel: {
+                providerId: model.providerId,
+                modelId: model.modelId
+              }
+            })
+          }
+
         const session = await client.session.create({
           body: {
             title: title || message.slice(0, 50),
@@ -277,10 +304,16 @@ export async function getTools({
             })
           })
 
-        return {
-          success: true,
-          sessionId: session.data.id,
-          title: session.data.title,
+          return {
+            success: true,
+            sessionId: session.data.id,
+            title: session.data.title,
+          }
+        } catch (error) {
+          return {
+            success: false,
+            error: error instanceof Error ? error.message : 'Failed to create chat session'
+          }
         }
       },
     }),
@@ -480,9 +513,9 @@ export async function getTools({
         try {
           const providersResponse = await client.config.providers({})
           const providers: Provider[] = providersResponse.data?.providers || []
-          
+
           const models: Array<{ providerId: string; modelId: string }> = []
-          
+
           providers.forEach((provider) => {
             if (provider.models && typeof provider.models === 'object') {
               Object.entries(provider.models).forEach(([modelId, model]) => {
@@ -493,7 +526,7 @@ export async function getTools({
               })
             }
           })
-          
+
           return {
             success: true,
             models,
@@ -509,7 +542,7 @@ export async function getTools({
       },
     }),
   }
-  
+
   return {
     tools,
     providers,
