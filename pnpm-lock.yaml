@@ -7,11 +7,6 @@ settings:
 overrides:
   '@opencode-ai/sdk': 0.6.3
 
-patchedDependencies:
-  node-web-audio-api@1.0.4:
-    hash: f8299b44ea181689f54b37904deef9f6d9826fccf7c628d75c33af9898a233d3
-    path: patches/node-web-audio-api@1.0.4.patch
-
 importers:
 
   .:
@@ -62,6 +57,9 @@ importers:
       cac:
         specifier: ^6.7.14
         version: 6.7.14
+      chalk:
+        specifier: ^5.6.0
+        version: 5.6.0
       chokidar:
         specifier: ^4.0.3
         version: 4.0.3
@@ -91,7 +89,7 @@ importers:
         version: 3.0.1
       node-web-audio-api:
         specifier: ^1.0.4
-        version: 1.0.4(patch_hash=f8299b44ea181689f54b37904deef9f6d9826fccf7c628d75c33af9898a233d3)
+        version: 1.0.4
       picocolors:
         specifier: ^1.1.1
         version: 1.1.1
@@ -107,6 +105,9 @@ importers:
       sharp:
         specifier: ^0.34.3
         version: 0.34.3
+      strip-ansi:
+        specifier: ^7.1.0
+        version: 7.1.0
       wavefile:
         specifier: ^11.0.0
         version: 11.0.0
@@ -3056,7 +3057,7 @@ snapshots:
       fetch-blob: 3.2.0
       formdata-polyfill: 4.0.10
 
-  node-web-audio-api@1.0.4(patch_hash=f8299b44ea181689f54b37904deef9f6d9826fccf7c628d75c33af9898a233d3):
+  node-web-audio-api@1.0.4:
     dependencies:
       caller: 1.1.0
       node-fetch: 3.3.2

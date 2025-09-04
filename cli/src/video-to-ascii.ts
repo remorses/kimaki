@@ -2,6 +2,7 @@ import fs from 'node:fs'
 import sharp from 'sharp'
 import { exec } from 'node:child_process'
 import { promisify } from 'node:util'
+import chalk from 'chalk'
 
 const execAsync = promisify(exec)
 
@@ -37,11 +38,13 @@ export async function convertImageToAscii({
   cols,
   rows,
   keepAspectRatio = true,
+  colored = false,
 }: {
   imagePath: string
   cols: number
   rows: number
   keepAspectRatio?: boolean
+  colored?: boolean
 }) {
   try {
     const metadata = await sharp(imagePath).metadata()
