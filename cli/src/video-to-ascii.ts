@@ -2,15 +2,17 @@ import fs from 'node:fs'
 import sharp from 'sharp'
 import { exec } from 'node:child_process'
 import { promisify } from 'node:util'
-import chalk from 'chalk'
-import stripAnsi from 'strip-ansi'
 
-// Force color output even in non-TTY environments
-chalk.level = 3 // Full color support
+// Function to strip ANSI codes for length calculation
+function stripAnsi(str: string): string {
+  return str.replace(/\x1b\[[0-9;]*m/g, '')
+}
 
 const execAsync = promisify(exec)
 
-const ASCII_CHARS = " .'-:!><+*#%&@"
+// Better ASCII character progression from darkest to brightest
+const ASCII_CHARS =
+  ' .\'`^",:;Il!i><~+_-?][}{1)(|/tfjrxnuvczXYUJCLQ0OZmwqpdbkhao*#MW&8%B@$'
 
 export async function extractFrames({
   videoPath,
@@ -121,8 +123,18 @@ export async function convertImageToAscii({
           )
           const char = ASCII_CHARS[charIndex] || ' '
 
-          // Apply color using chalk
-          row += chalk.rgb(r, g, b)(char)
+          // Apply brightness scaling to the color
+          // Use different brightness ranges for better effect
+          const brightnessFactor = brightness / 255
+
+          // Scale RGB values based on brightness
+          // Lower brightness = darker colors
+          const adjustedR = Math.floor(r * brightnessFactor * 0.8) // Reduce overall brightness
+          const adjustedG = Math.floor(g * brightnessFactor * 0.8)
+          const adjustedB = Math.floor(b * brightnessFactor * 0.8)
+
+          // Use ANSI escape codes directly for better color control
+          row += `\x1b[38;2;${adjustedR};${adjustedG};${adjustedB}m${char}\x1b[0m`
         }
 
         // Pad row to requested width if needed (for colored output, count visible chars)
