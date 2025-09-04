@@ -6,6 +6,7 @@ const FPS = 20
 const ASCII_COLS = 160
 const ASCII_ROWS = 50
 const KEEP_ASPECT_RATIO = false
+const COLORED = true
 
 const videoPath =
   '/Users/morse/Documents/GitHub/kimakivoice/cli/assets/video.mp4'
@@ -45,6 +46,7 @@ async function main() {
         cols: ASCII_COLS,
         rows: ASCII_ROWS,
         keepAspectRatio: KEEP_ASPECT_RATIO,
+        colored: COLORED,
       })
 
       const outputPath = path.join(outputDir, `frame_${frameNumber}.txt`)
@@ -56,6 +58,7 @@ async function main() {
     console.log(`Frame rate: ${FPS} fps`)
     console.log(`ASCII dimensions: ${ASCII_COLS}x${ASCII_ROWS}`)
     console.log(`Aspect ratio preserved: ${KEEP_ASPECT_RATIO}`)
+    console.log(`Colored output: ${COLORED}`)
   } catch (error: any) {
     console.error('Error in main process:', error.message)
     process.exit(1)

@@ -2,9 +2,11 @@ import fs from 'node:fs'
 import sharp from 'sharp'
 import { exec } from 'node:child_process'
 import { promisify } from 'node:util'
-import chalk from 'chalk'
+import { Chalk } from 'chalk'
 
 const execAsync = promisify(exec)
+// Force color output even in non-TTY environments
+const chalk = new Chalk({ level: 3 })
 
 const ASCII_CHARS = " .'-:!><+*#%&@"
 
@@ -90,29 +92,72 @@ export async function convertImageToAscii({
       finalRows = rows
     }
 
-    const resized = await sharp(imagePath)
-      .resize(finalCols, finalRows, resizeOptions)
-      .greyscale()
-      .raw()
-      .toBuffer()
+    if (colored) {
+      // Get RGB data for colored output
+      const { data, info } = await sharp(imagePath)
+        .resize(finalCols, finalRows, resizeOptions)
+        .raw()
+        .toBuffer({ resolveWithObject: true })
 
-    const asciiArt: string[] = []
+      const asciiArt: string[] = []
+      const channels = info.channels
 
-    for (let y = 0; y < finalRows; y++) {
-      let row = ''
-      for (let x = 0; x < finalCols; x++) {
-        const pixelIndex = y * finalCols + x
-        const brightness = resized[pixelIndex]
+      for (let y = 0; y < finalRows; y++) {
+        let row = ''
+        for (let x = 0; x < finalCols; x++) {
+          const pixelIndex = (y * finalCols + x) * channels
+          const r = data[pixelIndex] || 0
+          const g = data[pixelIndex + 1] || 0
+          const b = data[pixelIndex + 2] || 0
 
-        const charIndex = Math.floor(
-          (brightness / 255) * (ASCII_CHARS.length - 1),
-        )
-        row += ASCII_CHARS[charIndex]
+          // Calculate brightness from RGB
+          const brightness = r * 0.299 + g * 0.587 + b * 0.114
+          const charIndex = Math.floor(
+            (brightness / 255) * (ASCII_CHARS.length - 1),
+          )
+          const char = ASCII_CHARS[charIndex] || ' '
+
+          // Apply color using chalk
+          row += chalk.rgb(r, g, b)(char)
+        }
+        asciiArt.push(row)
       }
-      asciiArt.push(row)
-    }
 
-    return asciiArt.join('\n')
+      return asciiArt.join('\n')
+    } else {
+      // Grayscale output (original implementation)
+      const resized = await sharp(imagePath)
+        .resize(finalCols, finalRows, resizeOptions)
+        .greyscale()
+        .raw()
+        .toBuffer()
+
+      const asciiArt: string[] = []
+
+      for (let y = 0; y < finalRows; y++) {
+        let row = ''
+        for (let x = 0; x < finalCols; x++) {
+          const pixelIndex = y * finalCols + x
+          const brightness = resized[pixelIndex]
+
+          if (brightness === undefined) {
+            console.error(
+              `Pixel out of bounds at (${x}, ${y}), index: ${pixelIndex}, buffer size: ${resized.length}`,
+            )
+            row += ' '
+            continue
+          }
+
+          const charIndex = Math.floor(
+            (brightness / 255) * (ASCII_CHARS.length - 1),
+          )
+          row += ASCII_CHARS[charIndex] || ' '
+        }
+        asciiArt.push(row)
+      }
+
+      return asciiArt.join('\n')
+    }
   } catch (error: any) {
     console.error(`Error converting ${imagePath}:`, error.message)
     throw error
