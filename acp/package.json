@@ -1,0 +1,27 @@
+{
+  "name": "acp",
+  "version": "0.0.0",
+  "description": "",
+  "repository": "https://github.com/remorses/kimaki",
+  "type": "module",
+  "main": "./dist/index.js",
+  "scripts": {
+    "build": "tsc",
+    "typecheck": "tsc",
+    "watch": "tsc -w",
+    "test": "vitest"
+  },
+  "files": [
+    "dist",
+    "src"
+  ],
+  "keywords": [],
+  "author": "Tommaso De Rossi, morse <beats.by.morse@gmail.com>",
+  "license": "",
+  "dependencies": {
+    "@zed-industries/agent-client-protocol": "^0.1.2"
+  },
+  "devDependencies": {
+    "@types/node": "^24.3.0"
+  }
+}
