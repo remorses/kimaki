@@ -25,6 +25,7 @@ export interface LiveAPIState {
   outVolume: number
   logs: string[]
   config: LiveConnectConfig
+  isAssistantSpeaking: boolean
 }
 
 export interface LiveAPIClientOptions extends LiveClientOptions {
@@ -41,6 +42,8 @@ export interface LiveAPIClientOptions extends LiveClientOptions {
   autoReconnect?: boolean
   /** Maximum number of reconnection attempts (default: 5) */
   maxReconnectAttempts?: number
+  /** Automatically mute microphone when assistant is speaking (default: true) */
+  autoMuteOnAssistantSpeaking?: boolean
 }
 
 export class LiveAPIClient {
@@ -67,6 +70,7 @@ export class LiveAPIClient {
         slidingWindow: { targetTokens: '12800' },
       },
     },
+    isAssistantSpeaking: false,
   }
 
   private onUserAudioChunk?: (chunk: ArrayBuffer) => void
@@ -79,6 +83,8 @@ export class LiveAPIClient {
   public readonly maxReconnectAttempts: number
   private reconnectTimeout: NodeJS.Timeout | null = null
   public readonly autoReconnect: boolean
+  private readonly autoMuteOnAssistantSpeaking: boolean
+  private userMutedState: boolean = false
 
   constructor(options: LiveAPIClientOptions) {
     const {
@@ -92,6 +98,7 @@ export class LiveAPIClient {
       config,
       autoReconnect = true,
       maxReconnectAttempts = 5,
+      autoMuteOnAssistantSpeaking = true,
     } = options
 
     if (!apiKey) {
@@ -105,6 +112,7 @@ export class LiveAPIClient {
     this.onUserAudioChunk = onUserAudioChunk
     this.autoReconnect = autoReconnect
     this.maxReconnectAttempts = maxReconnectAttempts
+    this.autoMuteOnAssistantSpeaking = autoMuteOnAssistantSpeaking
 
     this.tools = config?.tools || []
     if (enableGoogleSearch) {
@@ -115,8 +123,6 @@ export class LiveAPIClient {
     if (config) {
       this.state.config = { ...this.state.config, ...config }
     }
-
-
 
     this.audioRecorder = new AudioRecorder(recordingSampleRate)
     this.setupAudioRecorder()
@@ -144,6 +150,11 @@ export class LiveAPIClient {
           this.updateState({ outVolume: ev.data.volume })
         },
       )
+
+      // Set up callback for when audio playback completes
+      this.audioStreamer.onComplete = () => {
+        this.onAssistantStopSpeaking()
+      }
     }
   }
 
@@ -254,6 +265,7 @@ export class LiveAPIClient {
 
     this.audioRecorder?.stop()
     this.audioStreamer?.stop()
+    this.onAssistantStopSpeaking()
 
     // Clear session handle on explicit disconnect
     this.sessionHandle = null
@@ -397,6 +409,7 @@ export class LiveAPIClient {
       if (serverContent.interrupted) {
         this.log('interrupted')
         this.audioStreamer?.stop()
+        this.onAssistantStopSpeaking()
         return
       }
 
@@ -414,8 +427,13 @@ export class LiveAPIClient {
         )
         const base64s = audioParts.map((p) => p.inlineData?.data)
 
-        base64s.forEach((b64) => {
+        base64s.forEach((b64, index) => {
           if (b64) {
+            // Mark assistant as speaking when we receive the first audio chunk
+            if (index === 0 && !this.state.isAssistantSpeaking) {
+              this.onAssistantStartSpeaking()
+            }
+
             const data = base64ToArrayBuffer(b64)
             this.audioStreamer?.addPCM16(new Uint8Array(data))
             // this.log(
@@ -447,11 +465,44 @@ export class LiveAPIClient {
   }
 
   setMuted(muted: boolean) {
+    this.userMutedState = muted
     this.updateState({ muted })
     if (this.state.connected) {
       if (muted) {
         this.audioRecorder?.stop()
       } else {
+        this.audioRecorder?.start()
+      }
+    }
+  }
+
+  private onAssistantStartSpeaking() {
+    this.updateState({ isAssistantSpeaking: true })
+
+    // Auto-mute microphone if enabled and not already muted by user
+    if (
+      this.autoMuteOnAssistantSpeaking &&
+      !this.userMutedState &&
+      !this.state.muted
+    ) {
+      this.updateState({ muted: true })
+      if (this.state.connected) {
+        this.audioRecorder?.stop()
+      }
+    }
+  }
+
+  private onAssistantStopSpeaking() {
+    this.updateState({ isAssistantSpeaking: false })
+
+    // Unmute microphone if it was auto-muted (not if user manually muted)
+    if (
+      this.autoMuteOnAssistantSpeaking &&
+      !this.userMutedState &&
+      this.state.muted
+    ) {
+      this.updateState({ muted: false })
+      if (this.state.connected) {
         this.audioRecorder?.start()
       }
     }
@@ -573,6 +624,7 @@ export class LiveAPIClient {
     this.disconnect()
     this.audioRecorder?.stop()
     this.audioStreamer?.stop()
+    this.onAssistantStopSpeaking()
     this.tools = []
     this.sessionHandle = null
     this.reconnectAttempts = 0

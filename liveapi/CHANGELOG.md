@@ -1,5 +1,28 @@
 # Changelog
 
+## 2025-01-24 12:00
+
+### Automatic Microphone Muting During Assistant Speech
+
+- **Auto-mute microphone** when assistant starts speaking to prevent feedback
+- **Auto-unmute microphone** when assistant stops speaking
+- **Preserve user mute state** - only auto-unmute if user didn't manually mute
+- **Track assistant speaking state** in LiveAPIState for UI feedback
+- **Configurable behavior** via `autoMuteOnAssistantSpeaking` option
+
+#### New Configuration Options:
+
+```typescript
+const client = new LiveAPIClient({
+  apiKey: 'YOUR_API_KEY',
+  autoMuteOnAssistantSpeaking: true, // Auto-mute mic during assistant speech (default: true)
+})
+```
+
+#### New State Properties:
+
+- `isAssistantSpeaking: boolean` - Indicates if assistant is currently speaking
+
 ## 2025-01-24 11:30
 
 ### Automatic Session Reconnection Support
@@ -18,8 +41,7 @@ const client = new LiveAPIClient({
   autoReconnect: true, // Enable auto-reconnect (default: true)
   maxReconnectAttempts: 5, // Max reconnection attempts (default: 5)
   config: {
-    sessionResumption: {
-    },
+    sessionResumption: {},
   },
 })
 ```

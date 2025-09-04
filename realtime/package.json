@@ -1,0 +1,29 @@
+{
+  "name": "realtime",
+  "version": "0.0.0",
+  "description": "",
+  "type": "module",
+  "repository": "https://github.com/remorses/kimaki",
+  "scripts": {
+    "build": "tsc",
+    "typecheck": "tsc",
+    "watch": "tsc -w",
+    "test": "vitest",
+    "realtime": "tsx src/openai-realtime.ts"
+  },
+  "files": [
+    "dist",
+    "src"
+  ],
+  "keywords": [],
+  "author": "Tommaso De Rossi, morse <beats.by.morse@gmail.com>",
+  "license": "",
+  "devDependencies": {
+    "@types/node": "^24.3.0",
+    "tsx": "^4.20.5",
+    "vitest": "^3.2.4"
+  },
+  "dependencies": {
+    "@roamhq/wrtc": "^0.9.0"
+  }
+}

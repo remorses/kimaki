@@ -161,6 +161,22 @@ importers:
 
   new-package-template: {}
 
+  realtime:
+    dependencies:
+      '@roamhq/wrtc':
+        specifier: ^0.9.0
+        version: 0.9.0
+    devDependencies:
+      '@types/node':
+        specifier: ^24.3.0
+        version: 24.3.0
+      tsx:
+        specifier: ^4.20.5
+        version: 4.20.5
+      vitest:
+        specifier: ^3.2.4
+        version: 3.2.4(@types/node@24.3.0)(jiti@2.5.1)(tsx@4.20.5)
+
 packages:
 
   '@ai-sdk/gateway@1.0.15':
@@ -596,6 +612,34 @@ packages:
     resolution: {integrity: sha512-3giAOQvZiH5F9bMlMiv8+GSPMeqg0dbaeo58/0SlA9sxSqZhnUtxzX9/2FzyhS9sWQf5S0GJE0AKBrFqjpeYcg==}
     engines: {node: '>=8.0.0'}
 
+  '@roamhq/wrtc-darwin-arm64@0.9.0':
+    resolution: {integrity: sha512-bVbyI3Xm3ZlTPYnKz7gnLkxt1kZ8ZMW5QBwJpF/kS227O71pqUhicX/V5RRGqUmaER3JtXt0naR86ZPDfgTQBg==}
+    cpu: [arm64]
+    os: [darwin]
+
+  '@roamhq/wrtc-darwin-x64@0.9.0':
+    resolution: {integrity: sha512-99FFbFcIIqRR+H4ylkQgbgM8L5dx72hP5/GeJHB2h2f62Mb51bi30KokyOeBKH3X5R8bNi8LKnf7tV8d4kaGlA==}
+    cpu: [x64]
+    os: [darwin]
+
+  '@roamhq/wrtc-linux-arm64@0.9.0':
+    resolution: {integrity: sha512-JUtrPFGvp+/5YWz9L5eW9e4XPQ5lRFQR5/BlGQJQOutrkBYqvME8NvAHKhyNWm+b3Sgk0w6yZ1g1nSttPHFY6g==}
+    cpu: [arm64]
+    os: [linux]
+
+  '@roamhq/wrtc-linux-x64@0.9.0':
+    resolution: {integrity: sha512-ve6pIqeadUn6Jypb73A76041zdvGg/Bl0JU+T2+K8Zjw4aASebBFF4NX213dAS5viWUcNULzKV/s2PcpLDCyXQ==}
+    cpu: [x64]
+    os: [linux]
+
+  '@roamhq/wrtc-win32-x64@0.9.0':
+    resolution: {integrity: sha512-QoVe5KKP1IjIRGDZfMUJV0OgTCK3noc79P2uuLeR5iJqf+bLcgyNr818ljB7frxPMSZNwWC5eVQTGmclrIIOIg==}
+    cpu: [x64]
+    os: [win32]
+
+  '@roamhq/wrtc@0.9.0':
+    resolution: {integrity: sha512-b61ld6g0hHDh/K1y0Lckxg5HBunaESNW6N23ewviW5IvwBfZiIYPUxQFWxqprMTr/6ODHmw5B2xvqvLyuAL5Xw==}
+
   '@rollup/rollup-android-arm-eabi@4.50.0':
     resolution: {integrity: sha512-lVgpeQyy4fWN5QYebtW4buT/4kn4p4IJ+kDNB4uYNT5b8c8DLJDg6titg20NIg7E8RWwdWZORW6vUFfrLyG3KQ==}
     cpu: [arm]
@@ -995,6 +1039,11 @@ packages:
   dir-glob@3.0.1:
     resolution: {integrity: sha512-WkrWp9GR4KXfKGYzOLmTuGVi1UWFfws377n9cc55/tb6DuqyF6pcQ5AbiHEshaDpY9v6oaSr2XCDidGmMwdzIA==}
     engines: {node: '>=8'}
+
+  domexception@4.0.0:
+    resolution: {integrity: sha512-A2is4PLG+eeSfoTMA95/s4pvAoSo2mKtiM5jlHkAVewmiO8ISFTFKZjH7UAM1Atli/OT/7JHOrJRJiMKUZKYBw==}
+    engines: {node: '>=12'}
+    deprecated: Use your platform's native DOMException instead
 
   dotenv@16.6.1:
     resolution: {integrity: sha512-uBq4egWHTcTt33a72vpSG0z3HnPuIl6NqYcTrKEg2azoEyl2hpW0zqlxysq2pK9HlDIHyHyakeYaYnSAwd8bow==}
@@ -2322,6 +2371,30 @@ snapshots:
 
   '@opentelemetry/api@1.9.0': {}
 
+  '@roamhq/wrtc-darwin-arm64@0.9.0':
+    optional: true
+
+  '@roamhq/wrtc-darwin-x64@0.9.0':
+    optional: true
+
+  '@roamhq/wrtc-linux-arm64@0.9.0':
+    optional: true
+
+  '@roamhq/wrtc-linux-x64@0.9.0':
+    optional: true
+
+  '@roamhq/wrtc-win32-x64@0.9.0':
+    optional: true
+
+  '@roamhq/wrtc@0.9.0':
+    optionalDependencies:
+      '@roamhq/wrtc-darwin-arm64': 0.9.0
+      '@roamhq/wrtc-darwin-x64': 0.9.0
+      '@roamhq/wrtc-linux-arm64': 0.9.0
+      '@roamhq/wrtc-linux-x64': 0.9.0
+      '@roamhq/wrtc-win32-x64': 0.9.0
+      domexception: 4.0.0
+
   '@rollup/rollup-android-arm-eabi@4.50.0':
     optional: true
 
@@ -2644,6 +2717,11 @@ snapshots:
   dir-glob@3.0.1:
     dependencies:
       path-type: 4.0.0
+
+  domexception@4.0.0:
+    dependencies:
+      webidl-conversions: 7.0.0
+    optional: true
 
   dotenv@16.6.1: {}
 
