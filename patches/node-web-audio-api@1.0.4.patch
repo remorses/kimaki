@@ -1,0 +1,34 @@
+diff --git a/js/AudioWorkletGlobalScope.js b/js/AudioWorkletGlobalScope.js
+index c77b1d7b0f1b15f1b85ad8021cf6531b58cca359..f5f5725c5e56ba8f6deb6265bd6f3211c5c92582 100644
+--- a/js/AudioWorkletGlobalScope.js
++++ b/js/AudioWorkletGlobalScope.js
+@@ -1,7 +1,6 @@
+ const {
+   parentPort,
+   workerData,
+-  markAsUntransferable,
+ } = require('node:worker_threads');
+ 
+ const conversions = require('webidl-conversions');
+@@ -51,11 +50,7 @@ class BufferPool {
+ 
+   #allocate() {
+     const float32 = new Float32Array(this.#bufferSize);
+-    markAsUntransferable(float32);
+-    // Mark underlying buffer as untransfrable too, this will fail one of
+-    // the task in `audioworkletprocessor-process-frozen-array.https.html`
+-    // but prevent segmentation fault
+-    markAsUntransferable(float32.buffer);
++    // Removed markAsUntransferable calls
+ 
+     return float32;
+   }
+@@ -85,7 +80,7 @@ globalThis[kWorkletGetBuffer] = () => pool128.get();
+ globalThis[kWorkletRecycleBuffer] = buffer => pool128.recycle(buffer);
+ globalThis[kWorkletRecycleBuffer1] = buffer => pool1.recycle(buffer);
+ globalThis[kWorkletMarkAsUntransferable] = obj => {
+-  markAsUntransferable(obj);
++  // Removed markAsUntransferable call
+   return obj;
+ };
+ 

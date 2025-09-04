@@ -1,3 +1,3 @@
-import { cli } from './cli.js'
+import { cli } from './cli.jsx'
 
 cli.parse()

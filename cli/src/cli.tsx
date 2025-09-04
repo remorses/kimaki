@@ -9,10 +9,75 @@ import path from 'node:path'
 import WaveFile from 'wavefile'
 import pc from 'picocolors'
 import { getTools } from './tools.js'
+import { render, Box, Text } from 'ink'
+import React, { useState, useEffect } from 'react'
 
 export const cli = cac('kimaki')
 
 cli.help()
+
+// KimakiTUI Component
+function KimakiTUI({
+  messages,
+  isConnected,
+}: {
+  messages: any[]
+  isConnected: boolean
+}) {
+  const formatMessage = (msg: any) => {
+    const data = msg.data
+    if (data.serverContent?.modelTurn?.parts?.[0]?.text) {
+      return `🤖 ${data.serverContent.modelTurn.parts[0].text.slice(0, 80)}...`
+    }
+    if (data.serverContent?.turnComplete) {
+      return '✅ Turn completed'
+    }
+    if (data.toolCall) {
+      return `🔧 Tool: ${data.toolCall.name}`
+    }
+    if (data.toolResponse) {
+      return `📦 Tool response received`
+    }
+    if (data.interrupted) {
+      return '⚠️ Interrupted'
+    }
+    if (data.setupComplete) {
+      return '🚀 Setup complete'
+    }
+    return JSON.stringify(data).slice(0, 80)
+  }
+
+  return (
+    <Box flexDirection='column' paddingX={1}>
+      <Box borderStyle='single' paddingX={1} marginBottom={1}>
+        <Text color={isConnected ? 'green' : 'yellow'}>
+          Kimaki Voice Assistant -{' '}
+          {isConnected ? '● Connected to Gemini Live API' : '⏳ Connecting...'}
+        </Text>
+      </Box>
+
+      <Box borderStyle='single' paddingX={1} flexDirection='column'>
+        <Text color='white' bold>
+          Debug Messages:
+        </Text>
+        <Box flexDirection='column' marginTop={1}>
+          {messages.length === 0 ? (
+            <Text dimColor>No messages yet...</Text>
+          ) : (
+            messages.slice(-15).map((msg, index) => (
+              <Box key={index} marginBottom={0}>
+                <Text color='cyan'>
+                  [{new Date(msg.timestamp).toLocaleTimeString()}]{' '}
+                </Text>
+                <Text color='white'>{formatMessage(msg)}</Text>
+              </Box>
+            ))
+          )}
+        </Box>
+      </Box>
+    </Box>
+  )
+}
 
 // Check if running in TTY environment
 cli
@@ -32,6 +97,10 @@ cli
       let liveApiClient: InstanceType<typeof LiveAPIClient> | null = null
       let audioChunks: ArrayBuffer[] = []
       let isModelSpeaking = false
+      let debugMessages: any[] = []
+      let isConnected = false
+      let updateUI: ((messages: any[], connected: boolean) => void) | null =
+        null
 
       const { tools, providers, preferredModel } = await getTools({
         onMessageCompleted: (params) => {
@@ -101,6 +170,22 @@ cli
           }
         },
         onMessage: (message) => {
+          // Add message to debug array
+          debugMessages.push({
+            timestamp: Date.now(),
+            data: message,
+          })
+
+          // Keep only last 50 messages
+          if (debugMessages.length > 50) {
+            debugMessages = debugMessages.slice(-50)
+          }
+
+          // Update UI
+          if (updateUI) {
+            updateUI([...debugMessages], isConnected)
+          }
+
           process.env.DEBUG && console.log(message)
           // When model starts responding, save the user's audio
           if (message.serverContent?.turnComplete && audioChunks.length > 0) {
@@ -118,7 +203,7 @@ cli
           speechConfig: {
             voiceConfig: {
               prebuiltVoiceConfig: {
-                voiceName: 'Charon', // Orus also not bad, there is also
+                voiceName: 'Charon', // Orus also not bad
               },
             },
           },
@@ -174,9 +259,40 @@ cli
 
       liveApiClient = newClient
 
-      // Connect to the API
+      // Connect to the API first
       const connected = await newClient.connect()
-      await new Promise((res) => setTimeout(res, 1000))
+      isConnected = true
+
+      // Wait a moment for connection to stabilize
+      await new Promise((res) => setTimeout(res, 500))
+
+      // Render the TUI after everything is ready
+      const App = () => {
+        const [messages, setMessages] = useState<any[]>([])
+        const [connectionStatus, setConnectionStatus] = useState(isConnected)
+
+        useEffect(() => {
+          updateUI = (msgs, connected) => {
+            setMessages(msgs)
+            setConnectionStatus(connected)
+          }
+
+          // Set initial state
+          setMessages([...debugMessages])
+          setConnectionStatus(isConnected)
+
+          // Return cleanup function
+          return () => {
+            updateUI = null
+          }
+        }, [])
+
+        return <KimakiTUI messages={messages} isConnected={connectionStatus} />
+      }
+
+      render(<App />)
+
+      // Send initial greeting if needed
       // liveApiClient.sendText(`<systemMessage>\nsay "Hello boss, how we doing today?"\n</systemMessage>`)
     } catch (error) {
       console.error(pc.red('\nError initializing project:'))

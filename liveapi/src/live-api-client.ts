@@ -555,6 +555,7 @@ export class LiveAPIClient {
     if (config.tools) {
       this.tools = config.tools as any
     }
+
     this.updateState({ config })
   }
 
