@@ -2,11 +2,13 @@ import fs from 'node:fs'
 import sharp from 'sharp'
 import { exec } from 'node:child_process'
 import { promisify } from 'node:util'
-import { Chalk } from 'chalk'
+import chalk from 'chalk'
+import stripAnsi from 'strip-ansi'
+
+// Force color output even in non-TTY environments
+chalk.level = 3 // Full color support
 
 const execAsync = promisify(exec)
-// Force color output even in non-TTY environments
-const chalk = new Chalk({ level: 3 })
 
 const ASCII_CHARS = " .'-:!><+*#%&@"
 
@@ -101,11 +103,13 @@ export async function convertImageToAscii({
 
       const asciiArt: string[] = []
       const channels = info.channels
+      const actualCols = info.width
+      const actualRows = info.height
 
-      for (let y = 0; y < finalRows; y++) {
+      for (let y = 0; y < actualRows; y++) {
         let row = ''
-        for (let x = 0; x < finalCols; x++) {
-          const pixelIndex = (y * finalCols + x) * channels
+        for (let x = 0; x < actualCols; x++) {
+          const pixelIndex = (y * actualCols + x) * channels
           const r = data[pixelIndex] || 0
           const g = data[pixelIndex + 1] || 0
           const b = data[pixelIndex + 2] || 0
@@ -120,40 +124,68 @@ export async function convertImageToAscii({
           // Apply color using chalk
           row += chalk.rgb(r, g, b)(char)
         }
+
+        // Pad row to requested width if needed (for colored output, count visible chars)
+        if (!keepAspectRatio) {
+          const visibleLength = stripAnsi(row).length
+          if (visibleLength < cols) {
+            row += ' '.repeat(cols - visibleLength)
+          }
+        }
+
         asciiArt.push(row)
+      }
+
+      // Pad to requested height if needed
+      if (!keepAspectRatio) {
+        while (asciiArt.length < rows) {
+          asciiArt.push(' '.repeat(cols))
+        }
       }
 
       return asciiArt.join('\n')
     } else {
       // Grayscale output (original implementation)
-      const resized = await sharp(imagePath)
+      const { data: resized, info } = await sharp(imagePath)
         .resize(finalCols, finalRows, resizeOptions)
         .greyscale()
         .raw()
-        .toBuffer()
+        .toBuffer({ resolveWithObject: true })
+
+      // Use actual dimensions from the resized image
+      const actualCols = info.width
+      const actualRows = info.height
 
       const asciiArt: string[] = []
 
-      for (let y = 0; y < finalRows; y++) {
+      for (let y = 0; y < actualRows; y++) {
         let row = ''
-        for (let x = 0; x < finalCols; x++) {
-          const pixelIndex = y * finalCols + x
-          const brightness = resized[pixelIndex]
-
-          if (brightness === undefined) {
-            console.error(
-              `Pixel out of bounds at (${x}, ${y}), index: ${pixelIndex}, buffer size: ${resized.length}`,
-            )
-            row += ' '
-            continue
-          }
+        for (let x = 0; x < actualCols; x++) {
+          const pixelIndex = y * actualCols + x
+          const brightness = resized[pixelIndex] || 0
 
           const charIndex = Math.floor(
             (brightness / 255) * (ASCII_CHARS.length - 1),
           )
           row += ASCII_CHARS[charIndex] || ' '
         }
+
+        // Pad row to requested width if needed (for colored output, count visible chars)
+        if (!keepAspectRatio) {
+          const visibleLength = stripAnsi(row).length
+          if (visibleLength < cols) {
+            row += ' '.repeat(cols - visibleLength)
+          }
+        }
+
         asciiArt.push(row)
+      }
+
+      // Pad to requested height if needed
+      if (!keepAspectRatio) {
+        while (asciiArt.length < rows) {
+          asciiArt.push(' '.repeat(cols))
+        }
       }
 
       return asciiArt.join('\n')
