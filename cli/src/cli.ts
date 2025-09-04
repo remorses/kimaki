@@ -33,7 +33,7 @@ cli
       let audioChunks: ArrayBuffer[] = []
       let isModelSpeaking = false
 
-      const tools = await getTools({
+      const { tools, providers, preferredModel } = await getTools({
         onMessageCompleted: (params) => {
           if (!liveApiClient) return
 
@@ -137,6 +137,31 @@ cli
                 You should talk like Jarvis, British accent, satirical, joking and calm. Be short and concise. Speak fast.
 
                 After tool calls give a super short summary of the assistant message, you should say what the assistant message writes.
+
+                ${(() => {
+                  const modelInfo: string[] = []
+                  
+                  if (preferredModel) {
+                    modelInfo.push(`Current preferred model: ${preferredModel.modelId} from ${preferredModel.providerId}`)
+                  }
+                  
+                  if (providers && providers.length > 0) {
+                    modelInfo.push('\nAvailable models:')
+                    providers.forEach((provider) => {
+                      if (provider.models && typeof provider.models === 'object') {
+                        const modelIds = Object.keys(provider.models)
+                        if (modelIds.length > 0) {
+                          modelInfo.push(`\n${provider.id}:`)
+                          modelIds.forEach((modelId) => {
+                            modelInfo.push(`  - ${modelId}`)
+                          })
+                        }
+                      }
+                    })
+                  }
+                  
+                  return modelInfo.length > 0 ? '\n\n' + modelInfo.join('\n') : ''
+                })()}
 
                 Before starting a new session ask for confirmation if it is not clear if the user finished describing it. ask "message ready, send?"
 

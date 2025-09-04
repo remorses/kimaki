@@ -3,7 +3,7 @@ import { getTools } from './tools'
 
 describe('tools', () => {
   test('listChats returns sessions sorted by most recent', async () => {
-    const tools = await getTools({})
+    const { tools } = await getTools({})
 
     const result = await tools.listChats.execute!({}, {} as any)
 
@@ -177,7 +177,7 @@ describe('tools', () => {
   })
 
   test('createNewChat creates session and sends initial message', async () => {
-    const tools = await getTools({})
+    const { tools } = await getTools({})
 
     const result = await tools.createNewChat.execute!(
       {
@@ -195,5 +195,220 @@ describe('tools', () => {
             "title": "Model Check",
           }
         `)
+  })
+
+  test('getModels returns available models from all providers', async () => {
+    const { tools } = await getTools({})
+
+    const result = await tools.getModels.execute!({}, {} as any)
+
+    expect(result).toMatchInlineSnapshot(`
+      {
+        "models": [
+          {
+            "modelId": "gpt-5-nano",
+            "providerId": "openai",
+          },
+          {
+            "modelId": "o3-pro",
+            "providerId": "openai",
+          },
+          {
+            "modelId": "codex-mini-latest",
+            "providerId": "openai",
+          },
+          {
+            "modelId": "gpt-4.1",
+            "providerId": "openai",
+          },
+          {
+            "modelId": "gpt-4-turbo",
+            "providerId": "openai",
+          },
+          {
+            "modelId": "o1",
+            "providerId": "openai",
+          },
+          {
+            "modelId": "o3-deep-research",
+            "providerId": "openai",
+          },
+          {
+            "modelId": "gpt-5",
+            "providerId": "openai",
+          },
+          {
+            "modelId": "o1-pro",
+            "providerId": "openai",
+          },
+          {
+            "modelId": "o3",
+            "providerId": "openai",
+          },
+          {
+            "modelId": "gpt-5-mini",
+            "providerId": "openai",
+          },
+          {
+            "modelId": "o1-preview",
+            "providerId": "openai",
+          },
+          {
+            "modelId": "o4-mini-deep-research",
+            "providerId": "openai",
+          },
+          {
+            "modelId": "gpt-4o-mini",
+            "providerId": "openai",
+          },
+          {
+            "modelId": "gpt-4.1-nano",
+            "providerId": "openai",
+          },
+          {
+            "modelId": "gpt-4.1-mini",
+            "providerId": "openai",
+          },
+          {
+            "modelId": "o1-mini",
+            "providerId": "openai",
+          },
+          {
+            "modelId": "gpt-4o",
+            "providerId": "openai",
+          },
+          {
+            "modelId": "gpt-4",
+            "providerId": "openai",
+          },
+          {
+            "modelId": "gpt-3.5-turbo",
+            "providerId": "openai",
+          },
+          {
+            "modelId": "o4-mini",
+            "providerId": "openai",
+          },
+          {
+            "modelId": "o3-mini",
+            "providerId": "openai",
+          },
+          {
+            "modelId": "llama-3.1-8b-instant",
+            "providerId": "groq",
+          },
+          {
+            "modelId": "qwen-qwq-32b",
+            "providerId": "groq",
+          },
+          {
+            "modelId": "llama3-70b-8192",
+            "providerId": "groq",
+          },
+          {
+            "modelId": "deepseek-r1-distill-llama-70b",
+            "providerId": "groq",
+          },
+          {
+            "modelId": "llama3-8b-8192",
+            "providerId": "groq",
+          },
+          {
+            "modelId": "gemma2-9b-it",
+            "providerId": "groq",
+          },
+          {
+            "modelId": "llama-3.3-70b-versatile",
+            "providerId": "groq",
+          },
+          {
+            "modelId": "mistral-saba-24b",
+            "providerId": "groq",
+          },
+          {
+            "modelId": "llama-guard-3-8b",
+            "providerId": "groq",
+          },
+          {
+            "modelId": "openai/gpt-oss-20b",
+            "providerId": "groq",
+          },
+          {
+            "modelId": "openai/gpt-oss-120b",
+            "providerId": "groq",
+          },
+          {
+            "modelId": "meta-llama/llama-guard-4-12b",
+            "providerId": "groq",
+          },
+          {
+            "modelId": "meta-llama/llama-4-maverick-17b-128e-instruct",
+            "providerId": "groq",
+          },
+          {
+            "modelId": "meta-llama/llama-4-scout-17b-16e-instruct",
+            "providerId": "groq",
+          },
+          {
+            "modelId": "qwen/qwen3-32b",
+            "providerId": "groq",
+          },
+          {
+            "modelId": "moonshotai/kimi-k2-instruct",
+            "providerId": "groq",
+          },
+          {
+            "modelId": "grok-code",
+            "providerId": "opencode",
+          },
+          {
+            "modelId": "qwen/qwen3-coder",
+            "providerId": "opencode",
+          },
+          {
+            "modelId": "claude-3-7-sonnet-20250219",
+            "providerId": "anthropic",
+          },
+          {
+            "modelId": "claude-opus-4-1-20250805",
+            "providerId": "anthropic",
+          },
+          {
+            "modelId": "claude-3-haiku-20240307",
+            "providerId": "anthropic",
+          },
+          {
+            "modelId": "claude-3-5-haiku-20241022",
+            "providerId": "anthropic",
+          },
+          {
+            "modelId": "claude-opus-4-20250514",
+            "providerId": "anthropic",
+          },
+          {
+            "modelId": "claude-3-5-sonnet-20241022",
+            "providerId": "anthropic",
+          },
+          {
+            "modelId": "claude-3-5-sonnet-20240620",
+            "providerId": "anthropic",
+          },
+          {
+            "modelId": "claude-3-sonnet-20240229",
+            "providerId": "anthropic",
+          },
+          {
+            "modelId": "claude-sonnet-4-20250514",
+            "providerId": "anthropic",
+          },
+          {
+            "modelId": "claude-3-opus-20240229",
+            "providerId": "anthropic",
+          },
+        ],
+        "success": true,
+        "totalCount": 50,
+      }
+    `)
   })
 })

@@ -6,8 +6,10 @@ import {
   createOpencodeClient,
   type OpencodeClient,
   type AssistantMessage,
+  type Provider,
 } from '@opencode-ai/sdk'
 import { formatDistanceToNow } from 'date-fns'
+import { readConfig, updateConfig } from './config'
 import { ShareMarkdown } from './markdown'
 import pc from 'picocolors'
 
@@ -104,7 +106,17 @@ export async function startOpencodeServer(port: number): Promise<ChildProcess> {
   return serverProcess
 }
 
-async function selectModelProvider(client: OpencodeClient) {
+
+async function selectModelProvider(client: OpencodeClient, providedModel?: { providerId: string; modelId: string }) {
+  if (providedModel) {
+    return { providerID: providedModel.providerId, modelID: providedModel.modelId }
+  }
+  
+  const config = await readConfig()
+  if (config.preferredModel) {
+    return { providerID: config.preferredModel.providerId, modelID: config.preferredModel.modelId }
+  }
+  
   return { providerID: 'anthropic', modelID: 'claude-opus-4-20250514' }
 }
 
@@ -124,6 +136,12 @@ export async function getTools({
 
   const client = createOpencodeClient({ baseUrl: `http://localhost:${port}` })
   const markdownRenderer = new ShareMarkdown(client)
+  
+  const providersResponse = await client.config.providers({})
+  const providers: Provider[] = providersResponse.data?.providers || []
+  
+  const config = await readConfig()
+  const preferredModel = config.preferredModel
 
   process.on('exit', () => {
     if (serverProcess && !serverProcess.killed) {
@@ -144,7 +162,7 @@ export async function getTools({
     }
     process.exit(0)
   })
-  return {
+  const tools = {
     submitMessage: tool({
       description:
         'Submit a message to an existing chat session. Does not wait for the message to complete',
@@ -200,12 +218,26 @@ export async function getTools({
           .string()
           .describe('The initial message to start the chat with'),
         title: z.string().optional().describe('Optional title for the session'),
+        model: z.object({
+          providerId: z.string().describe('The provider ID (e.g., "anthropic", "openai")'),
+          modelId: z.string().describe('The model ID (e.g., "claude-opus-4-20250514", "gpt-5")'),
+        }).optional().describe('Optional model to use for this session'),
       }),
-      execute: async ({ message, title }) => {
+      execute: async ({ message, title, model }) => {
         if (!message.trim()) {
           throw new Error(`message must be a non empty string`)
         }
-        const { providerID, modelID } = await selectModelProvider(client)
+        const { providerID, modelID } = await selectModelProvider(client, model)
+        
+        if (model) {
+          await updateConfig({ 
+            preferredModel: { 
+              providerId: model.providerId, 
+              modelId: model.modelId 
+            } 
+          })
+        }
+        
         const session = await client.session.create({
           body: {
             title: title || message.slice(0, 50),
@@ -440,6 +472,48 @@ export async function getTools({
         }
       },
     }),
+
+    getModels: tool({
+      description: 'Get all available AI models from all providers',
+      inputSchema: z.object({}),
+      execute: async () => {
+        try {
+          const providersResponse = await client.config.providers({})
+          const providers: Provider[] = providersResponse.data?.providers || []
+          
+          const models: Array<{ providerId: string; modelId: string }> = []
+          
+          providers.forEach((provider) => {
+            if (provider.models && typeof provider.models === 'object') {
+              Object.entries(provider.models).forEach(([modelId, model]) => {
+                models.push({
+                  providerId: provider.id,
+                  modelId: modelId,
+                })
+              })
+            }
+          })
+          
+          return {
+            success: true,
+            models,
+            totalCount: models.length,
+          }
+        } catch (error) {
+          return {
+            success: false,
+            error: error instanceof Error ? error.message : 'Failed to fetch models',
+            models: [],
+          }
+        }
+      },
+    }),
+  }
+  
+  return {
+    tools,
+    providers,
+    preferredModel,
   }
 }
 
