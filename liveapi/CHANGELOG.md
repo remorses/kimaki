@@ -19,7 +19,6 @@ const client = new LiveAPIClient({
   maxReconnectAttempts: 5, // Max reconnection attempts (default: 5)
   config: {
     sessionResumption: {
-      transparent: true, // Enable transparent session resumption
     },
   },
 })

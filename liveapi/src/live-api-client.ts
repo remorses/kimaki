@@ -116,12 +116,7 @@ export class LiveAPIClient {
       this.state.config = { ...this.state.config, ...config }
     }
 
-    // Enable session resumption by default for transparent reconnection when auto-reconnect is enabled
-    if (this.autoReconnect && !this.state.config.sessionResumption) {
-      this.state.config.sessionResumption = {
-        transparent: true,
-      }
-    }
+
 
     this.audioRecorder = new AudioRecorder(recordingSampleRate)
     this.setupAudioRecorder()
@@ -303,6 +298,7 @@ export class LiveAPIClient {
   }
 
   private async attemptReconnect() {
+    console.log(`attempting to reconnect`)
     if (this.reconnectAttempts >= this.maxReconnectAttempts) {
       this.log('error: Max reconnection attempts reached, giving up')
       this.sessionHandle = null
@@ -507,7 +503,7 @@ export class LiveAPIClient {
     try {
       for (const tool of this.tools) {
         if (!functionCalls.some((x) => x.name === tool.name)) {
-          console.log(`no tool found for ${functionCalls.map((x) => x.name)}`)
+          // console.log(`no tool found for ${functionCalls.map((x) => x.name)}`)
           continue
         }
         const parts = await tool.callTool(functionCalls)
@@ -567,6 +563,7 @@ export class LiveAPIClient {
   }
 
   destroy() {
+    console.log(`calling destroy()`)
     this.isExplicitDisconnect = true
     if (this.reconnectTimeout) {
       clearTimeout(this.reconnectTimeout)
