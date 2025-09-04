@@ -3,7 +3,7 @@
 PREFIX="
 # Project Coding Guidelines
 
-NOTICE: This file is generated using AGENTS.sh and should NEVER be manually updated.
+NOTICE: AGENTS.md is generated using AGENTS.sh and should NEVER be manually updated.
 
 This file contains all coding guidelines and standards for this project.
 

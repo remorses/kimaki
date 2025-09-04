@@ -8,6 +8,8 @@ import {
   MediaResolution,
   Part,
   Session,
+  SessionResumptionConfig,
+  LiveServerSessionResumptionUpdate,
 } from '@google/genai'
 
 import { LiveClientOptions } from './types.js'
@@ -35,6 +37,10 @@ export interface LiveAPIClientOptions extends LiveClientOptions {
   config?: Partial<LiveConnectConfig> & {
     tools?: Array<CallableTool & { name: string }>
   }
+  /** Enable automatic reconnection when connection is lost unexpectedly (default: true) */
+  autoReconnect?: boolean
+  /** Maximum number of reconnection attempts (default: 5) */
+  maxReconnectAttempts?: number
 }
 
 export class LiveAPIClient {
@@ -67,6 +73,13 @@ export class LiveAPIClient {
 
   private tools: Array<CallableTool & { name: string }> = []
 
+  public sessionHandle: string | null = null
+  private isExplicitDisconnect: boolean = false
+  private reconnectAttempts: number = 0
+  public readonly maxReconnectAttempts: number
+  private reconnectTimeout: NodeJS.Timeout | null = null
+  public readonly autoReconnect: boolean
+
   constructor(options: LiveAPIClientOptions) {
     const {
       model,
@@ -77,6 +90,8 @@ export class LiveAPIClient {
       enableGoogleSearch,
       recordingSampleRate = 16000,
       config,
+      autoReconnect = true,
+      maxReconnectAttempts = 5,
     } = options
 
     if (!apiKey) {
@@ -88,6 +103,8 @@ export class LiveAPIClient {
     this.onStateChange = onStateChange
     this.onMessage = onMessage
     this.onUserAudioChunk = onUserAudioChunk
+    this.autoReconnect = autoReconnect
+    this.maxReconnectAttempts = maxReconnectAttempts
 
     this.tools = config?.tools || []
     if (enableGoogleSearch) {
@@ -97,6 +114,13 @@ export class LiveAPIClient {
     // Merge provided config with defaults
     if (config) {
       this.state.config = { ...this.state.config, ...config }
+    }
+
+    // Enable session resumption by default for transparent reconnection when auto-reconnect is enabled
+    if (this.autoReconnect && !this.state.config.sessionResumption) {
+      this.state.config.sessionResumption = {
+        transparent: true,
+      }
     }
 
     this.audioRecorder = new AudioRecorder(recordingSampleRate)
@@ -171,6 +195,14 @@ export class LiveAPIClient {
       return false
     }
 
+    // Clear reconnect state when manually connecting
+    this.isExplicitDisconnect = false
+    this.reconnectAttempts = 0
+    if (this.reconnectTimeout) {
+      clearTimeout(this.reconnectTimeout)
+      this.reconnectTimeout = null
+    }
+
     await this.initAudioStreamer()
 
     const callbacks: LiveCallbacks = {
@@ -180,10 +212,20 @@ export class LiveAPIClient {
       onclose: this.onClose.bind(this),
     }
 
+    // Prepare config with session resumption if we have a handle
+    const connectConfig = { ...this.state.config }
+    if (this.sessionHandle && connectConfig.sessionResumption) {
+      connectConfig.sessionResumption = {
+        ...connectConfig.sessionResumption,
+        handle: this.sessionHandle,
+      }
+      this.log('connect: Attempting to resume session with handle')
+    }
+
     try {
       this.session = await this.client.live.connect({
         model: this.model,
-        config: this.state.config,
+        config: connectConfig,
         callbacks,
       })
     } catch (e) {
@@ -202,12 +244,25 @@ export class LiveAPIClient {
       return false
     }
 
+    // Mark this as an explicit disconnect to prevent auto-reconnect
+    this.isExplicitDisconnect = true
+
+    // Clear reconnect timeout if any
+    if (this.reconnectTimeout) {
+      clearTimeout(this.reconnectTimeout)
+      this.reconnectTimeout = null
+    }
+
     this.session?.close()
     this.session = null
     this.setConnected(false)
 
     this.audioRecorder?.stop()
     this.audioStreamer?.stop()
+
+    // Clear session handle on explicit disconnect
+    this.sessionHandle = null
+    this.reconnectAttempts = 0
 
     this.log('close: ' + JSON.stringify({ reason: 'User disconnected' }))
     return true
@@ -232,9 +287,58 @@ export class LiveAPIClient {
     this.log('error: ' + JSON.stringify({ message: e.message, error: e }))
   }
 
-  private onClose(e: CloseEvent) {
+  private async onClose(e: CloseEvent) {
     this.setConnected(false)
     this.log('close: ' + JSON.stringify({ reason: e.reason, code: e.code }))
+
+    // Attempt to reconnect if auto-reconnect is enabled, this wasn't an explicit disconnect,
+    // and we have a session handle to resume
+    if (
+      this.autoReconnect &&
+      !this.isExplicitDisconnect &&
+      this.sessionHandle
+    ) {
+      await this.attemptReconnect()
+    }
+  }
+
+  private async attemptReconnect() {
+    if (this.reconnectAttempts >= this.maxReconnectAttempts) {
+      this.log('error: Max reconnection attempts reached, giving up')
+      this.sessionHandle = null
+      this.reconnectAttempts = 0
+      return
+    }
+
+    this.reconnectAttempts++
+    const delay = Math.min(
+      1000 * Math.pow(2, this.reconnectAttempts - 1),
+      10000,
+    ) // Exponential backoff with max 10s
+
+    this.log(
+      `reconnect: Attempting reconnection ${this.reconnectAttempts}/${this.maxReconnectAttempts} in ${delay}ms`,
+    )
+
+    this.reconnectTimeout = setTimeout(async () => {
+      this.reconnectTimeout = null
+
+      try {
+        const success = await this.connect()
+        if (success) {
+          this.log('reconnect: Successfully reconnected to session')
+          this.reconnectAttempts = 0
+        } else {
+          // Connect failed, will trigger another reconnect attempt via onClose
+          this.log('reconnect: Failed to reconnect, will retry')
+        }
+      } catch (error) {
+        this.log(
+          'reconnect: Error during reconnection: ' + JSON.stringify(error),
+        )
+        // Will trigger another attempt via onClose if we still have attempts left
+      }
+    }, delay)
   }
 
   private async handleMessage(message: LiveServerMessage) {
@@ -246,6 +350,31 @@ export class LiveAPIClient {
 
     if (message.setupComplete) {
       this.log('setupcomplete')
+      return
+    }
+
+    // Handle session resumption updates
+    if (message.sessionResumptionUpdate) {
+      const update = message.sessionResumptionUpdate
+      if (update.resumable && update.newHandle) {
+        this.sessionHandle = update.newHandle
+        this.log(
+          'sessionResumption: Updated handle for resumption ' +
+            update.newHandle,
+        )
+      } else if (!update.resumable) {
+        // Session is not resumable at this point
+        this.sessionHandle = null
+        this.log('sessionResumption: Session not resumable at this point')
+      }
+      return
+    }
+
+    // Handle GoAway message - server will disconnect soon
+    if (message.goAway) {
+      this.log('goAway: Server will disconnect, preparing for reconnection')
+      // The server will close the connection, which will trigger onClose
+      // and our automatic reconnection logic if we have a session handle
       return
     }
 
@@ -378,7 +507,7 @@ export class LiveAPIClient {
     try {
       for (const tool of this.tools) {
         if (!functionCalls.some((x) => x.name === tool.name)) {
-          console.log(`no tool found for ${functionCalls.map(x => x.name)}`)
+          console.log(`no tool found for ${functionCalls.map((x) => x.name)}`)
           continue
         }
         const parts = await tool.callTool(functionCalls)
@@ -438,10 +567,17 @@ export class LiveAPIClient {
   }
 
   destroy() {
+    this.isExplicitDisconnect = true
+    if (this.reconnectTimeout) {
+      clearTimeout(this.reconnectTimeout)
+      this.reconnectTimeout = null
+    }
     this.disconnect()
     this.audioRecorder?.stop()
     this.audioStreamer?.stop()
     this.tools = []
+    this.sessionHandle = null
+    this.reconnectAttempts = 0
   }
 }
 
