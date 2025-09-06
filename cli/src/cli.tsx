@@ -223,6 +223,7 @@ cli
         apiKey: token!,
         model,
         recordingSampleRate: 44100,
+        autoMuteOnAssistantSpeaking: false, // Allow interruptions while model is speaking
         onUserAudioChunk: (chunk) => {
           // Always collect user audio chunks to allow interruptions
           audioChunks.push(chunk)
