@@ -157,6 +157,7 @@ cli
 
       let liveApiClient: InstanceType<typeof LiveAPIClient> | null = null
       let audioChunks: ArrayBuffer[] = []
+      let isModelSpeaking = false
       let debugMessages: any[] = []
       let isConnected = false
       let updateUI: ((messages: any[], connected: boolean) => void) | null =
@@ -225,8 +226,10 @@ cli
         recordingSampleRate: 44100,
         autoMuteOnAssistantSpeaking: false, // Allow interruptions while model is speaking
         onUserAudioChunk: (chunk) => {
-          // Always collect user audio chunks to allow interruptions
-          audioChunks.push(chunk)
+          // Collect chunks while user is speaking
+          if (!isModelSpeaking) {
+            audioChunks.push(chunk)
+          }
         },
         onMessage: (message) => {
           // Add message to debug array
@@ -246,9 +249,14 @@ cli
           }
 
           process.env.DEBUG && console.log(message)
-          // Save user audio when turn completes (if debug mode)
+          // When model starts responding, save the user's audio
           if (message.serverContent?.turnComplete && audioChunks.length > 0) {
+            isModelSpeaking = true
             process.env.DEBUG && saveUserAudio()
+          }
+          // Reset when turn is complete
+          if (message.serverContent?.turnComplete) {
+            isModelSpeaking = false
           }
         },
         config: {
