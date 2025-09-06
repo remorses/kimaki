@@ -18,5 +18,5 @@ curl -fsSL https://opencode.ai/install | bash
 Then run kimaki (requires headphones):
 
 ```bash
-npx kimaki
+GEMINi_API_KEY=... npx -y kimaki
 ```
