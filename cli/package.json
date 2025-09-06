@@ -1,11 +1,14 @@
 {
   "name": "kimaki",
-  "version": "0.0.0",
-  "description": "",
+  "version": "0.0.2",
+  "description": "AI voice assistant for controlling coding agents",
   "type": "module",
   "repository": "https://github.com/remorses/kimaki",
+  "publishConfig": {
+    "access": "public"
+  },
   "scripts": {
-    "build": "bun build ./src/bin.ts --outfile ./dist/bundle.js --target node --format esm --external @google/genai --external @opencode-ai/plugin --external @opencode-ai/sdk --external ai --external cac --external chalk --external chokidar --external cli-table3 --external date-fns --external globby --external ink --external js-yaml --external luxon --external mime-types --external node-web-audio-api --external picocolors --external prompts --external react --external sema4 --external sharp --external strip-ansi --external wavefile --external ws --external xdg-basedir --external zod",
+    "build": "bun build ./src/bin.ts --outfile ./dist/bundle.js --target node --format esm --external @google/genai --external @opencode-ai/plugin --external @opencode-ai/sdk --external ai --external cac --external chalk --external chokidar --external cli-table3 --external date-fns --external globby --external ink --external js-yaml --external luxon --external mime-types --external node-web-audio-api --external picocolors --external prompts --external react --external sema4 --external sharp --external strip-ansi --external wavefile --external ws --external xdg-basedir --external zod --external eventemitter3 --external @ai-sdk/openai",
     "typecheck": "tsc",
     "prepublishOnly": "pnpm build",
     "save-plugin": "bun build ./src/plugin.ts --outfile ~/.config/opencode/plugin/kimaki.js --target bun --format esm",
@@ -13,16 +16,26 @@
     "play": "tsx src/bin.ts",
     "play:prod": "node bin.js",
     "watch": "tsc -w",
-    "test": "vitest"
+    "test": "vitest",
+    "changeset": "changeset",
+    "version": "changeset version",
+    "release": "changeset publish"
   },
   "bin": "./bin.js",
   "files": [
     "dist",
     "bin.js"
   ],
-  "keywords": [],
+  "keywords": [
+    "ai",
+    "voice",
+    "assistant",
+    "opencode",
+    "coding",
+    "agent"
+  ],
   "author": "Tommaso De Rossi, morse <beats.by.morse@gmail.com>",
-  "license": "",
+  "license": "MIT",
   "dependencies": {
     "@google/genai": "^1.16.0",
     "@opencode-ai/plugin": "^0.6.3",
@@ -37,7 +50,8 @@
     "globby": "^14.1.0",
     "ink": "^6.2.3",
     "js-yaml": "^4.1.0",
-    "liveapi": "workspace:*",
+    "@ai-sdk/openai": "^2.0.23",
+    "eventemitter3": "^5.0.1",
     "luxon": "^3.7.1",
     "mime-types": "^3.0.1",
     "node-web-audio-api": "^1.0.4",

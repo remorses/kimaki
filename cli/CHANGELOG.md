@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.0.2
+
+### Patch Changes
+
+- Initial release of Kimaki - AI voice assistant for controlling coding agents
+
 ## 2025-09-02
 
 - Added React component `HelloWorld` at `src/components/hello-world.tsx`
