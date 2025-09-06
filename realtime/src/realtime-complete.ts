@@ -6,7 +6,7 @@ import { spawn, ChildProcess } from 'node:child_process'
  * OpenAI Realtime API - Single file implementation
  */
 
-const SAMPLE_RATE = 24000
+const SAMPLE_RATE = 24000 // Default sample rate (OpenAI might use 24kHz)
 const CHANNELS = 1
 
 // Hardcoded weather data
@@ -57,6 +57,7 @@ async function main() {
   let audioBuffer: Buffer[] = []
   let playProcess: ChildProcess | null = null
   let isPlaying = false
+  let detectedSampleRate = SAMPLE_RATE
 
   // Handle incoming audio
   pc.ontrack = (e: any) => {
@@ -64,8 +65,18 @@ async function main() {
 
     if (e.track.kind === 'audio') {
       const audioSink = new webrtc.nonstandard.RTCAudioSink(e.track)
+      let firstData = true
 
       audioSink.ondata = (data: any) => {
+        // Log the actual sample rate from the data
+        if (firstData) {
+          detectedSampleRate = data.sampleRate
+          console.log(`🎵 Audio sample rate: ${detectedSampleRate}Hz`)
+          console.log(`   Channels: ${data.channelCount || 1}`)
+          console.log(`   Bits per sample: ${data.bitsPerSample || 16}`)
+          firstData = false
+        }
+
         // Collect audio data
         const buffer = Buffer.from(data.samples.buffer)
         audioBuffer.push(buffer)
@@ -83,21 +94,21 @@ async function main() {
     if (isPlaying || audioBuffer.length === 0) return
     isPlaying = true
 
-    console.log('🔊 Playing audio...')
+    console.log(`🔊 Playing audio at ${detectedSampleRate}Hz...`)
 
     const audioData = Buffer.concat(audioBuffer)
     audioBuffer = []
 
     const isMac = process.platform === 'darwin'
 
-    // Use play command on mac, aplay on linux
+    // Use play command on mac, aplay on linux - with detected sample rate
     playProcess = spawn(isMac ? 'play' : 'aplay', [
       ...(isMac
         ? [
             '-t',
             'raw',
             '-r',
-            '24000',
+            detectedSampleRate.toString(), // Use detected sample rate
             '-e',
             'signed-integer',
             '-b',
@@ -107,7 +118,18 @@ async function main() {
             '-q',
             '-',
           ]
-        : ['-f', 'S16_LE', '-r', '24000', '-c', '1', '-q', '-t', 'raw', '-']),
+        : [
+            '-f',
+            'S16_LE',
+            '-r',
+            detectedSampleRate.toString(),
+            '-c',
+            '1',
+            '-q',
+            '-t',
+            'raw',
+            '-',
+          ]),
     ])
 
     playProcess.on('close', () => {
@@ -123,8 +145,25 @@ async function main() {
       isPlaying = false
     })
 
-    playProcess.stdin?.write(audioData)
-    playProcess.stdin?.end()
+    // Handle EPIPE errors properly
+    playProcess.stdin?.on('error', (err: any) => {
+      if (err.code !== 'EPIPE') {
+        console.error('Stdin error:', err.message)
+      }
+    })
+
+    // Write data more carefully
+    try {
+      if (playProcess.stdin?.writable) {
+        playProcess.stdin.write(audioData)
+        playProcess.stdin.end()
+      }
+    } catch (err: any) {
+      if (err.code !== 'EPIPE') {
+        console.error('Write error:', err.message)
+      }
+      isPlaying = false
+    }
   }
 
   // Create data channel
