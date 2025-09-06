@@ -6,3 +6,17 @@
     <br/>
     <br/>
 </div>
+
+## Usage
+
+First, install [opencode](https://github.com/sst/opencode):
+
+```bash
+curl -fsSL https://opencode.ai/install | bash
+```
+
+Then run kimaki (requires headphones):
+
+```bash
+npx kimaki
+```
