@@ -50,6 +50,7 @@
     "globby": "^14.1.0",
     "ink": "^6.2.3",
     "js-yaml": "^4.1.0",
+    "@xmorse/liveapi": "workspace:*",
     "@ai-sdk/openai": "^2.0.23",
     "eventemitter3": "^5.0.1",
     "luxon": "^3.7.1",

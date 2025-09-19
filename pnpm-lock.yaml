@@ -57,6 +57,9 @@ importers:
       '@types/js-yaml':
         specifier: ^4.0.9
         version: 4.0.9
+      '@xmorse/liveapi':
+        specifier: workspace:*
+        version: link:../liveapi
       ai:
         specifier: ^5.0.29
         version: 5.0.29(zod@4.1.5)

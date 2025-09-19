@@ -1,5 +1,5 @@
 {
-  "name": "liveapi",
+  "name": "@xmorse/liveapi",
   "version": "0.0.2",
   "description": "Google live api wrapper implementation using web audio api",
   "main": "dist/index.js",

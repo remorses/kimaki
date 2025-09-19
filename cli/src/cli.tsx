@@ -152,7 +152,7 @@ cli
       navigator.mediaDevices = mediaDevices
 
       const { LiveAPIClient, callableToolsFromObject } = await import(
-        'liveapi/src/index'
+        '@xmorse/liveapi/src/index'
       )
 
       let liveApiClient: InstanceType<typeof LiveAPIClient> | null = null
