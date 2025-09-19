@@ -2,9 +2,12 @@
   "name": "liveapi",
   "version": "0.0.0",
   "description": "",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
   "repository": "https://github.com/remorses/kimaki",
   "scripts": {
     "build": "tsc",
+    "prepublishonly": "tsc",
     "watch": "tsc -w"
   },
   "files": [
