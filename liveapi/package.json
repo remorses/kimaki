@@ -1,7 +1,7 @@
 {
   "name": "liveapi",
   "version": "0.0.0",
-  "description": "",
+  "description": "Google live api wrapper implementation using web audio api",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
   "repository": "https://github.com/remorses/kimaki",
