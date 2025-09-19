@@ -2,6 +2,7 @@
   "name": "new-package-template",
   "version": "0.0.0",
   "description": "",
+  "private": true,
   "main": "dist/index.js",
   "module": "esm/index.js",
   "types": "dist/index.d.ts",

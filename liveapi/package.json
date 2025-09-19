@@ -1,6 +1,6 @@
 {
   "name": "liveapi",
-  "version": "0.0.0",
+  "version": "0.0.1",
   "description": "Google live api wrapper implementation using web audio api",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",

@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.0.1
+
+### Patch Changes
+
+- initial release
+
 ## 2025-01-24 12:00
 
 ### Automatic Microphone Muting During Assistant Speech
