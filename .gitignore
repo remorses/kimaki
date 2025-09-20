@@ -6,3 +6,4 @@ esm
 .ultra.cache.json
 coverage
 useraudio
+.env
