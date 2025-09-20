@@ -2,7 +2,7 @@ import type { Part } from "@opencode-ai/sdk";
 import { AttachmentBuilder, EmbedBuilder } from "discord.js";
 
 function truncate(text: string, max = 1800): string {
-  if (!text) return "";
+  if (!text) return " ";
   return text.length > max ? text.slice(0, max - 1) + "…" : text;
 }
 
@@ -36,7 +36,7 @@ function renderToolPart(embed: EmbedBuilder, part: Part) {
   if (part.type === "tool") {
     embed.setColor("Orange");
     embed.setTitle(truncate(`Tool: ${part.tool}`, 256));
-    
+
     if (part.state.status === "pending") {
       embed.setDescription("Pending...");
     } else if (part.state.status === "running") {
@@ -78,7 +78,7 @@ export function messageToEmbed(parts: Part[]): EmbedBuilder[] {
 
   for (const part of parts) {
     const embed = new EmbedBuilder();
-    
+
     switch (part.type) {
       case "text":
         renderTextPart(embed, part);
@@ -105,7 +105,7 @@ export function messageToEmbed(parts: Part[]): EmbedBuilder[] {
         break;
     }
   }
-  
+
   return embeds;
 }
 

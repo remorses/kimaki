@@ -4,7 +4,7 @@
   "type": "module",
   "private": true,
   "scripts": {
-    "dev": "bun run index.ts",
+    "dev": "bun run --watch index.ts",
     "test": "bun run scripts/test-opencode.ts",
     "watch": "bun run scripts/watch-session.ts"
   },

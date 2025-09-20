@@ -112,6 +112,7 @@ export async function startDiscordBot({ token, channelId }: StartOptions) {
 
   client.on(Events.MessageCreate, async (message: Message) => {
     try {
+      // console.log(message)
       if (message.author?.bot) return;
       if (message.partial) {
         try {
@@ -187,14 +188,14 @@ export async function startDiscordBot({ token, channelId }: StartOptions) {
   });
 
   await client.login(token);
-  
+
   // Cleanup on shutdown
   process.on("SIGINT", () => {
     stopOpencode();
     client.destroy();
     process.exit(0);
   });
-  
+
   process.on("SIGTERM", () => {
     stopOpencode();
     client.destroy();
