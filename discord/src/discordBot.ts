@@ -10,7 +10,15 @@ import {
 } from "discord.js";
 import { spawn, type ChildProcess } from "node:child_process";
 import net from "node:net";
-import { createOpencodeClient, type OpencodeClient, type Part } from "@opencode-ai/sdk";
+import { 
+  createOpencodeClient, 
+  type OpencodeClient, 
+  type Part,
+  type Event,
+  type EventMessagePartUpdated,
+  type EventMessageUpdated,
+  type EventSessionError 
+} from "@opencode-ai/sdk";
 
 type StartOptions = {
   token: string;
@@ -173,17 +181,33 @@ async function handleOpencodeSession(
 
   const eventHandler = (async () => {
     try {
+      let assistantMessageId: string | undefined;
+      
       for await (const event of events) {
-        if ('properties' in event && 'sessionID' in event.properties) {
-          const eventSessionID = (event.properties as { sessionID?: string }).sessionID;
-          if (eventSessionID !== session.id) continue;
-        }
-
-        if (event.type === "message.part.updated") {
-          const partEvent = event as any;
+        if (event.type === "message.updated") {
+          const msgEvent = event as EventMessageUpdated;
+          const message = msgEvent.properties.info;
+          
+          if (message.sessionID !== session.id) continue;
+          
+          // Track assistant message ID
+          if (message.role === "assistant") {
+            assistantMessageId = message.id;
+            
+            if (message.time?.completed) {
+              // Final update when message completes
+              await updateMessage();
+              break;
+            }
+          }
+        } else if (event.type === "message.part.updated") {
+          const partEvent = event as EventMessagePartUpdated;
           const part = partEvent.properties.part;
           
           if (part.sessionID !== session.id) continue;
+          
+          // Only process parts from assistant messages
+          if (part.messageID !== assistantMessageId) continue;
           
           const existingIndex = currentParts.findIndex((p: Part) => p.id === part.id);
           if (existingIndex >= 0) {
@@ -193,9 +217,22 @@ async function handleOpencodeSession(
           }
 
           // Only update when parts complete (not on every streaming update)
-          if (part.state?.status === "completed" || part.type === "text" || part.type === "reasoning") {
+          if (part.type === "tool" && part.state?.status === "completed") {
             const now = Date.now();
-            if (now - lastUpdateTime > 100) { // Throttle updates
+            if (now - lastUpdateTime > 100) {
+              if (!currentMessage) {
+                const initialContent = formatPart(part);
+                if (initialContent) {
+                  currentMessage = await thread.send(initialContent.slice(0, 2000));
+                }
+              } else {
+                await updateMessage();
+              }
+              lastUpdateTime = now;
+            }
+          } else if (part.type === "text" || part.type === "reasoning") {
+            const now = Date.now();
+            if (now - lastUpdateTime > 100) {
               if (!currentMessage) {
                 const initialContent = formatPart(part);
                 if (initialContent) {
@@ -207,21 +244,11 @@ async function handleOpencodeSession(
               lastUpdateTime = now;
             }
           }
-        } else if (event.type === "message.updated") {
-          const msgEvent = event as any;
-          const message = msgEvent.properties.info;
-          
-          if (message.sessionID !== session.id) continue;
-          
-          if (message.role === "assistant" && message.time?.completed) {
-            // Final update when message completes
-            await updateMessage();
-            break;
-          }
         } else if (event.type === "session.error") {
-          const errorEvent = event as any;
+          const errorEvent = event as EventSessionError;
           if (errorEvent.properties.sessionID === session.id) {
-            const errorMessage = errorEvent.properties.error?.data?.message || "Unknown error";
+            const errorData = errorEvent.properties.error;
+            const errorMessage = errorData?.data?.message || "Unknown error";
             await thread.send(`❌ Error: ${errorMessage}`);
           }
           break;
@@ -294,16 +321,13 @@ export async function startDiscordBot({ token, channelId }: StartOptions) {
       }
 
       const channel = message.channel;
-      const isThreadChannel =
-        ("isThread" in channel &&
-          typeof channel.isThread === "function" &&
-          channel.isThread()) ||
+      const isThreadChannel = 
         channel.type === ChannelType.PublicThread ||
         channel.type === ChannelType.PrivateThread ||
         channel.type === ChannelType.AnnouncementThread;
 
       if (isThreadChannel) {
-        const thread = channel;
+        const thread = channel as ThreadChannel;
         const existing = threadToSession.get(thread.id);
         if (!existing) return;
 
@@ -314,16 +338,8 @@ export async function startDiscordBot({ token, channelId }: StartOptions) {
     } catch (error) {
       console.error("Discord handler error:", error);
       try {
-        const where =
-          message.channel && "send" in message.channel
-            ? (message.channel as any)
-            : undefined;
         const errMsg = error instanceof Error ? error.message : String(error);
-        if (where?.send) {
-          await where.send(`Error: ${errMsg}`);
-        } else {
-          console.error("Discord handler error:", error);
-        }
+        await message.reply(`Error: ${errMsg}`);
       } catch {
         console.error("Discord handler error (fallback):", error);
       }
