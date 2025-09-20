@@ -1,7 +1,7 @@
 #!/usr/bin/env bun
 
-import { runOpencode, stopOpencode } from "./src/opencode";
-import type { OpencodeMessage } from "./src/opencode";
+import { runOpencode, stopOpencode } from "../src/opencode";
+import type { OpencodeMessage } from "../src/opencode";
 import type { Part } from "@opencode-ai/sdk";
 
 // Color codes for terminal output

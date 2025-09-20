@@ -25,6 +25,9 @@ async function opencodeToDiscord(
   threadToSession: Map<string, string>
 ) {
   const existing = threadToSession.get(thread.id);
+  let lastMessage: Message | undefined;
+  let accumulatedParts: any[] = [];
+  
   await runOpencode({
     prompt,
     sessionID: existing,
@@ -34,10 +37,14 @@ async function opencodeToDiscord(
         thinkingMessage.delete();
         thinkingMessage = undefined;
       }
+      
       let embeds: EmbedBuilder[] = [];
       let files: AttachmentBuilder[] = [];
+      let shouldCreateNewMessage = false;
+      
       switch (message.type) {
         case "system":
+          shouldCreateNewMessage = true;
           const embed = new EmbedBuilder();
           embed.setColor("Grey");
           embed.setAuthor({ name: "System" });
@@ -47,33 +54,53 @@ async function opencodeToDiscord(
           embeds.push(embed);
           break;
         case "assistant":
-          const assistantEmbeds = messageToEmbed(message.parts || []);
-          embeds.push(...assistantEmbeds);
+          // Accumulate assistant parts and update the same message
+          if (message.parts) {
+            accumulatedParts = message.parts;
+            const assistantEmbeds = messageToEmbed(accumulatedParts);
+            embeds.push(...assistantEmbeds);
+          }
           break;
         case "user":
+          shouldCreateNewMessage = true;
+          accumulatedParts = [];
           const payload = userContentToDiscord(message.content || message.parts || []);
           embeds.push(...payload.embeds);
           files.push(...payload.files);
           break;
         case "result":
+          shouldCreateNewMessage = true;
+          accumulatedParts = [];
           const resultEmbed = new EmbedBuilder();
           resultEmbed.setColor("Green");
           resultEmbed.setDescription(message.content || "Complete");
           embeds.push(resultEmbed);
           break;
         case "error":
+          shouldCreateNewMessage = true;
+          accumulatedParts = [];
           const errorEmbed = new EmbedBuilder();
           errorEmbed.setColor("Red");
           errorEmbed.setDescription(`Error: ${message.error}`);
           embeds.push(errorEmbed);
           break;
       }
+      
       if (embeds.length > 0) {
         try {
-          await thread.send({
-            embeds,
-            files: files.length ? files : undefined,
-          });
+          if (shouldCreateNewMessage || !lastMessage) {
+            // Send a new message for system, user, result, error, or first assistant message
+            lastMessage = await thread.send({
+              embeds,
+              files: files.length ? files : undefined,
+            });
+          } else if (lastMessage && message.type === "assistant") {
+            // Update the existing message for assistant streaming
+            await lastMessage.edit({
+              embeds,
+              files: files.length ? files : undefined,
+            });
+          }
         } catch (error) {
           const errorEmbed = new EmbedBuilder();
           errorEmbed.setColor("Red");
