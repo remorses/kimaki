@@ -10,7 +10,7 @@ import {
   type Message,
   type ThreadChannel,
 } from "discord.js";
-import { runClaude } from "./sandbox";
+import { runOpencode, stopOpencode } from "./opencode";
 import { messageToEmbed, userContentToDiscord } from "./utils";
 
 type StartOptions = {
@@ -18,22 +18,18 @@ type StartOptions = {
   channelId: string;
 };
 
-async function claudeToDiscord(
+async function opencodeToDiscord(
   prompt: string,
   thinkingMessage: Message | undefined,
   thread: ThreadChannel,
-  threadToSession: Map<string, { sessionId: string; sandboxId: string }>
+  threadToSession: Map<string, string>
 ) {
   const existing = threadToSession.get(thread.id);
-  await runClaude({
+  await runOpencode({
     prompt,
-    resume: existing?.sessionId,
-    sandboxId: existing?.sandboxId,
-    async onMessage(message, { sandboxId }) {
-      threadToSession.set(thread.id, {
-        sessionId: message.session_id,
-        sandboxId,
-      });
+    sessionID: existing,
+    async onMessage(message) {
+      threadToSession.set(thread.id, message.sessionID);
       if (thinkingMessage) {
         thinkingMessage.delete();
         thinkingMessage = undefined;
@@ -46,25 +42,30 @@ async function claudeToDiscord(
           embed.setColor("Grey");
           embed.setAuthor({ name: "System" });
           embed.setFooter({
-            text: `Model: ${message.model}\nTools: ${message.tools.join(", ")}`,
+            text: `Model: ${message.model}\nTools: ${message.tools?.join(", ") || ""}`,
           });
           embeds.push(embed);
           break;
         case "assistant":
-          const assistantEmbeds = messageToEmbed(message.message);
+          const assistantEmbeds = messageToEmbed(message.parts || []);
           embeds.push(...assistantEmbeds);
           break;
         case "user":
-          const { content } = message.message;
-          const payload = userContentToDiscord(content);
+          const payload = userContentToDiscord(message.content || message.parts || []);
           embeds.push(...payload.embeds);
           files.push(...payload.files);
           break;
         case "result":
           const resultEmbed = new EmbedBuilder();
           resultEmbed.setColor("Green");
-          resultEmbed.setDescription("Complete");
+          resultEmbed.setDescription(message.content || "Complete");
           embeds.push(resultEmbed);
+          break;
+        case "error":
+          const errorEmbed = new EmbedBuilder();
+          errorEmbed.setColor("Red");
+          errorEmbed.setDescription(`Error: ${message.error}`);
+          embeds.push(errorEmbed);
           break;
       }
       if (embeds.length > 0) {
@@ -102,14 +103,8 @@ export async function startDiscordBot({ token, channelId }: StartOptions) {
     ],
   });
 
-  // threadId -> claude session id
-  const threadToSession = new Map<
-    string,
-    {
-      sessionId: string;
-      sandboxId: string;
-    }
-  >();
+  // threadId -> opencode session id
+  const threadToSession = new Map<string, string>();
 
   client.once(Events.ClientReady, (c) => {
     console.log(`Discord bot logged in as ${c.user.tag}`);
@@ -137,9 +132,9 @@ export async function startDiscordBot({ token, channelId }: StartOptions) {
           reason: "Start Claude session",
         });
 
-        await thread.send("Starting Claude session…");
+        await thread.send("Starting OpenCode session…");
 
-        await claudeToDiscord(
+        await opencodeToDiscord(
           message.content || "",
           undefined,
           thread,
@@ -165,7 +160,7 @@ export async function startDiscordBot({ token, channelId }: StartOptions) {
         if (!existing) return; // Not a managed thread
 
         const thinkingMessage = await thread.send("Thinking…");
-        await claudeToDiscord(
+        await opencodeToDiscord(
           message.content || "",
           thinkingMessage,
           thread,
@@ -192,4 +187,17 @@ export async function startDiscordBot({ token, channelId }: StartOptions) {
   });
 
   await client.login(token);
+  
+  // Cleanup on shutdown
+  process.on("SIGINT", () => {
+    stopOpencode();
+    client.destroy();
+    process.exit(0);
+  });
+  
+  process.on("SIGTERM", () => {
+    stopOpencode();
+    client.destroy();
+    process.exit(0);
+  });
 }
