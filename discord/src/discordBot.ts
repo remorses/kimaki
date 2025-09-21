@@ -224,6 +224,20 @@ async function processVoiceAttachment(
       `[VOICE MESSAGE] Transcription successful: "${transcription.slice(0, 50)}${transcription.length > 50 ? '...' : ''}"`,
     )
 
+    // Update thread name with transcribed content
+    const threadName = transcription.replace(/\s+/g, ' ').trim().slice(0, 80)
+    if (threadName) {
+      try {
+        await Promise.race([
+          thread.setName(threadName),
+          new Promise((resolve) => setTimeout(resolve, 2000))
+        ])
+        console.log(`[THREAD] Updated thread name to: "${threadName}"`)
+      } catch (e) {
+        console.log(`[THREAD] Could not update thread name:`, e)
+      }
+    }
+
     await sendThreadMessage(
       thread,
       `📝 **Transcribed message:** ${transcription}`,

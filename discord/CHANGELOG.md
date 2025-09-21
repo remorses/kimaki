@@ -6,6 +6,7 @@
 - Extract voice transcription logic into `processVoiceAttachment` helper function
 - Simplify project directory extraction and validation
 - Remove unnecessary conditional branches and streamline control flow
+- Update thread name with transcribed content after voice message transcription completes
 
 ## 2025-01-25 00:30
 
