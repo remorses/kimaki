@@ -88,7 +88,10 @@ async function getOpenPort(): Promise<number> {
  * @param content - The content to send (can be longer than 2000 chars)
  * @returns The first message sent
  */
-async function sendThreadMessage(thread: ThreadChannel, content: string): Promise<Message> {
+async function sendThreadMessage(
+  thread: ThreadChannel,
+  content: string,
+): Promise<Message> {
   const MAX_LENGTH = 2000
 
   // Simple case: content fits in one message
@@ -144,7 +147,9 @@ async function sendThreadMessage(thread: ThreadChannel, content: string): Promis
   }
 
   // Send all chunks
-  console.log(`[THREAD MESSAGE] Splitting ${content.length} chars into ${chunks.length} messages`)
+  console.log(
+    `[THREAD MESSAGE] Splitting ${content.length} chars into ${chunks.length} messages`,
+  )
 
   let firstMessage: Message | undefined
   for (let i = 0; i < chunks.length; i++) {
@@ -156,8 +161,6 @@ async function sendThreadMessage(thread: ThreadChannel, content: string): Promis
 
   return firstMessage!
 }
-
-
 
 async function waitForServer(port: number, maxAttempts = 30): Promise<boolean> {
   for (let i = 0; i < maxAttempts; i++) {
@@ -421,7 +424,9 @@ async function handleOpencodeSession(
   // Cancel any existing request for this session
   const existingController = activeRequests.get(session.id)
   if (existingController) {
-    console.log(`[ABORT] Cancelling existing request for session: ${session.id}`)
+    console.log(
+      `[ABORT] Cancelling existing request for session: ${session.id}`,
+    )
     existingController.abort('New request started')
   }
 
@@ -482,7 +487,9 @@ async function handleOpencodeSession(
 
       const firstMessage = await sendThreadMessage(thread, content)
       partIdToMessage.set(part.id, firstMessage)
-      console.log(`[SEND SUCCESS] Part ${part.id} sent as message ${firstMessage.id}`)
+      console.log(
+        `[SEND SUCCESS] Part ${part.id} sent as message ${firstMessage.id}`,
+      )
 
       // Store part-message mapping in database
       db.prepare(
@@ -495,25 +502,41 @@ async function handleOpencodeSession(
 
   const eventHandler = async () => {
     // Local typing function for this session
+    // Outer-scoped interval for typing notifications. Only one at a time.
+    let typingInterval: NodeJS.Timeout | null = null
+
     function startTyping(thread: ThreadChannel): () => void {
       console.log(`[TYPING] Starting typing for thread ${thread.id}`)
+
+      // Clear any previous typing interval
+      if (typingInterval) {
+        clearInterval(typingInterval)
+        typingInterval = null
+        console.log(`[TYPING] Cleared previous typing interval`)
+      }
 
       // Send initial typing
       thread.sendTyping().catch((e) => {
         console.log(`[TYPING] Failed to send initial typing: ${e}`)
       })
 
-      // Set up interval to send typing every 9 seconds
-      const interval = setInterval(() => {
+      // Set up interval to send typing every 8 seconds
+      typingInterval = setInterval(() => {
         thread.sendTyping().catch((e) => {
           console.log(`[TYPING] Failed to send periodic typing: ${e}`)
         })
       }, 8000)
+      abortController.signal.addEventListener('abort', () => {
+        clearInterval(typingInterval!)
+      })
 
       // Return stop function
       return () => {
-        clearInterval(interval)
-        console.log(`[TYPING] Stopped typing for thread ${thread.id}`)
+        if (typingInterval) {
+          clearInterval(typingInterval)
+          typingInterval = null
+          console.log(`[TYPING] Stopped typing for thread ${thread.id}`)
+        }
       }
     }
 
@@ -573,7 +596,7 @@ async function handleOpencodeSession(
           )
 
           // Start typing on step-start
-          if (part.type === 'step-start' && !stopTyping) {
+          if (part.type === 'step-start') {
             stopTyping = startTyping(thread)
           }
 
@@ -605,7 +628,9 @@ async function handleOpencodeSession(
               try {
                 await originalMessage.reactions.removeAll()
                 await originalMessage.react('❌')
-                console.log(`[REACTION] Added error reaction due to session error`)
+                console.log(
+                  `[REACTION] Added error reaction due to session error`,
+                )
               } catch (e) {
                 console.log(`[REACTION] Could not update reaction:`, e)
               }
@@ -645,7 +670,10 @@ async function handleOpencodeSession(
           try {
             await sendPartMessage(part)
           } catch (error) {
-            console.log(`[CLEANUP] Failed to send part ${part.id} during cleanup:`, error)
+            console.log(
+              `[CLEANUP] Failed to send part ${part.id} during cleanup:`,
+              error,
+            )
           }
         }
       }
@@ -679,7 +707,6 @@ async function handleOpencodeSession(
       },
     })
     abortController.abort('finished')
-
 
     console.log(`[PROMPT] Successfully sent prompt, got response`)
     // Remove the controller after successful completion
