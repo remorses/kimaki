@@ -45,25 +45,41 @@ const opencodeServers = new Map<
 // Map of session ID to current AbortController
 const activeRequests = new Map<string, AbortController>()
 
-const db = new Database('discord-sessions.db')
+let db: Database | null = null
 
-// Initialize tables
-db.exec(`
-  CREATE TABLE IF NOT EXISTS thread_sessions (
-    thread_id TEXT PRIMARY KEY,
-    session_id TEXT NOT NULL,
-    created_at DATETIME DEFAULT CURRENT_TIMESTAMP
-  )
-`)
+export function getDatabase(): Database {
+  if (!db) {
+    db = new Database('discord-sessions.db')
+    
+    // Initialize tables
+    db.exec(`
+      CREATE TABLE IF NOT EXISTS thread_sessions (
+        thread_id TEXT PRIMARY KEY,
+        session_id TEXT NOT NULL,
+        created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+      )
+    `)
 
-db.exec(`
-  CREATE TABLE IF NOT EXISTS part_messages (
-    part_id TEXT PRIMARY KEY,
-    message_id TEXT NOT NULL,
-    thread_id TEXT NOT NULL,
-    created_at DATETIME DEFAULT CURRENT_TIMESTAMP
-  )
-`)
+    db.exec(`
+      CREATE TABLE IF NOT EXISTS part_messages (
+        part_id TEXT PRIMARY KEY,
+        message_id TEXT NOT NULL,
+        thread_id TEXT NOT NULL,
+        created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+      )
+    `)
+
+    db.exec(`
+      CREATE TABLE IF NOT EXISTS bot_tokens (
+        app_id TEXT PRIMARY KEY,
+        token TEXT NOT NULL,
+        created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+      )
+    `)
+  }
+  
+  return db
+}
 
 async function getOpenPort(): Promise<number> {
   return new Promise((resolve, reject) => {
@@ -283,7 +299,7 @@ async function processVoiceAttachment({
   }
 }
 
-async function initializeOpencodeForDirectory(
+export async function initializeOpencodeForDirectory(
   directory: string,
 ): Promise<OpencodeClient> {
   console.log(`[OPENCODE] Initializing for directory: ${directory}`)
@@ -445,6 +461,22 @@ function formatPart(part: Part): string {
   }
 }
 
+export async function createDiscordClient() {
+  return new Client({
+    intents: [
+      GatewayIntentBits.Guilds,
+      GatewayIntentBits.GuildMessages,
+      GatewayIntentBits.MessageContent,
+    ],
+    partials: [
+      Partials.Channel,
+      Partials.Message,
+      Partials.User,
+      Partials.ThreadMember,
+    ],
+  })
+}
+
 async function handleOpencodeSession(
   prompt: string,
   thread: ThreadChannel,
@@ -474,7 +506,7 @@ async function handleOpencodeSession(
   const client = await initializeOpencodeForDirectory(directory)
 
   // Get session ID from database
-  const row = db
+  const row = getDatabase()
     .prepare('SELECT session_id FROM thread_sessions WHERE thread_id = ?')
     .get(thread.id) as { session_id: string } | undefined
   let sessionId = row?.session_id
@@ -511,7 +543,7 @@ async function handleOpencodeSession(
   }
 
   // Store session ID in database
-  db.prepare(
+  getDatabase().prepare(
     'INSERT OR REPLACE INTO thread_sessions (thread_id, session_id) VALUES (?, ?)',
   ).run(thread.id, session.id)
   console.log(`[DATABASE] Stored session ${session.id} for thread ${thread.id}`)
@@ -537,7 +569,7 @@ async function handleOpencodeSession(
 
   // Load existing part-message mappings from database
   const partIdToMessage = new Map<string, Message>()
-  const existingParts = db
+  const existingParts = getDatabase()
     .prepare(
       'SELECT part_id, message_id FROM part_messages WHERE thread_id = ?',
     )
@@ -587,7 +619,7 @@ async function handleOpencodeSession(
       )
 
       // Store part-message mapping in database
-      db.prepare(
+      getDatabase().prepare(
         'INSERT OR REPLACE INTO part_messages (part_id, message_id, thread_id) VALUES (?, ?, ?)',
       ).run(part.id, firstMessage.id, thread.id)
     } catch (error) {
@@ -908,20 +940,10 @@ export async function getChannelsWithDescriptions(
   return channels
 }
 
-export async function startDiscordBot({ token }: StartOptions) {
-  const discordClient = new Client({
-    intents: [
-      GatewayIntentBits.Guilds,
-      GatewayIntentBits.GuildMessages,
-      GatewayIntentBits.MessageContent,
-    ],
-    partials: [
-      Partials.Channel,
-      Partials.Message,
-      Partials.User,
-      Partials.ThreadMember,
-    ],
-  })
+export async function startDiscordBot({ token, discordClient }: StartOptions & { discordClient?: Client }) {
+  if (!discordClient) {
+    discordClient = await createDiscordClient()
+  }
 
   discordClient.once(Events.ClientReady, async (c) => {
     console.log(`[READY] Discord bot logged in as ${c.user.tag}`)
@@ -1003,7 +1025,7 @@ export async function startDiscordBot({ token }: StartOptions) {
         const thread = channel as ThreadChannel
         console.log(`[THREAD] Message in thread ${thread.name} (${thread.id})`)
 
-        const row = db
+        const row = getDatabase()
           .prepare('SELECT session_id FROM thread_sessions WHERE thread_id = ?')
           .get(thread.id) as { session_id: string } | undefined
 
@@ -1165,7 +1187,7 @@ export async function startDiscordBot({ token }: StartOptions) {
         server.process.kill('SIGTERM')
       }
     }
-    db.close()
+    getDatabase().close()
     discordClient.destroy()
     process.exit(0)
   })
@@ -1180,7 +1202,7 @@ export async function startDiscordBot({ token }: StartOptions) {
         server.process.kill('SIGTERM')
       }
     }
-    db.close()
+    getDatabase().close()
     discordClient.destroy()
     process.exit(0)
   })

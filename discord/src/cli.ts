@@ -1,6 +1,46 @@
 #!/usr/bin/env node
-import { intro, outro, text, password, note, cancel, isCancel } from '@clack/prompts'
+import {
+  intro,
+  outro,
+  text,
+  password,
+  note,
+  cancel,
+  isCancel,
+  multiselect,
+  spinner,
+} from '@clack/prompts'
 import { generateBotInstallUrl } from './utils'
+import {
+  getChannelsWithDescriptions,
+  createDiscordClient,
+  getDatabase,
+  startDiscordBot,
+  initializeOpencodeForDirectory,
+  type ChannelWithTags,
+} from './discordBot'
+import type { OpencodeClient } from '@opencode-ai/sdk'
+import {
+  Client,
+  Events,
+  GatewayIntentBits,
+  Partials,
+  ChannelType,
+  type TextChannel,
+  type Guild,
+} from 'discord.js'
+import path from 'node:path'
+import fs from 'node:fs'
+
+type Project = {
+  id: string
+  worktree: string
+  vcs?: string
+  time: {
+    created: number
+    initialized?: number
+  }
+}
 
 async function main() {
   console.log()
@@ -8,10 +48,10 @@ async function main() {
 
   note(
     '1. Go to https://discord.com/developers/applications\n' +
-    '2. Click "New Application"\n' +
-    '3. Give your application a name\n' +
-    '4. Copy the Application ID from the "General Information" section',
-    'Step 1: Create Discord Application'
+      '2. Click "New Application"\n' +
+      '3. Give your application a name\n' +
+      '4. Copy the Application ID from the "General Information" section',
+    'Step 1: Create Discord Application',
   )
 
   const appId = await text({
@@ -19,7 +59,8 @@ async function main() {
     placeholder: 'e.g., 1234567890123456789',
     validate(value) {
       if (!value) return 'Application ID is required'
-      if (!/^\d{17,20}$/.test(value)) return 'Invalid Application ID format (should be 17-20 digits)'
+      if (!/^\d{17,20}$/.test(value))
+        return 'Invalid Application ID format (should be 17-20 digits)'
     },
   })
 
@@ -30,9 +71,9 @@ async function main() {
 
   note(
     '1. Go to the "Bot" section in the left sidebar\n' +
-    '2. Click "Reset Token" to generate a new bot token\n' +
-    '3. Copy the token (you won\'t be able to see it again!)',
-    'Step 2: Get Bot Token'
+      '2. Click "Reset Token" to generate a new bot token\n' +
+      "3. Copy the token (you won't be able to see it again!)",
+    'Step 2: Get Bot Token',
   )
 
   const token = await password({
@@ -48,16 +89,263 @@ async function main() {
     process.exit(0)
   }
 
+  // Save token to database
+  const db = getDatabase()
+  db.prepare(
+    'INSERT OR REPLACE INTO bot_tokens (app_id, token) VALUES (?, ?)',
+  ).run(appId, token)
+
+  console.log()
+  note('Token saved to database', 'Credentials Stored')
+
+  // Show install URL and WAIT for installation
   console.log()
   note(
-    `Application ID: ${appId}\n` +
-    `Token: ${token.slice(0, 20)}...${token.slice(-5)} (hidden)\n\n` +
-    'Bot invite URL:\n' +
-    generateBotInstallUrl({ clientId: appId }),
-    'Bot Configuration'
+    `Bot install URL:\n${generateBotInstallUrl({ clientId: appId })}\n\nYou MUST install the bot in your Discord server before continuing.`,
+    'Step 3: Install Bot to Server'
   )
 
-  outro('✅ Setup complete! You can now use these credentials to run your bot.')
+  const installed = await text({
+    message: 'Press Enter AFTER you have installed the bot in your server:',
+    placeholder: 'Press Enter to continue',
+    validate() {
+      return undefined
+    },
+  })
+
+  if (isCancel(installed)) {
+    cancel('Setup cancelled')
+    process.exit(0)
+  }
+
+  // NOW create Discord client and connect
+  const s = spinner()
+  s.start('Creating Discord client and connecting...')
+
+  const discordClient = await createDiscordClient()
+
+  let guilds: Guild[] = []
+  let kimakiChannels: { guild: Guild; channels: ChannelWithTags[] }[] = []
+  let createdChannels: { name: string; id: string; guildId: string }[] = []
+
+  try {
+    await new Promise((resolve, reject) => {
+      discordClient.once(Events.ClientReady, async (c) => {
+        guilds = Array.from(c.guilds.cache.values())
+
+        for (const guild of guilds) {
+          const channels = await getChannelsWithDescriptions(guild)
+          const kimakiChans = channels.filter((ch) => ch.kimakiDirectory)
+
+          if (kimakiChans.length > 0) {
+            kimakiChannels.push({ guild, channels: kimakiChans })
+          }
+        }
+
+        resolve(null)
+      })
+
+      discordClient.once(Events.Error, reject)
+
+      discordClient.login(token).catch(reject)
+    })
+
+    s.stop('Connected to Discord!')
+  } catch (error) {
+    s.stop('Failed to connect to Discord')
+    console.error(
+      'Error:',
+      error instanceof Error ? error.message : String(error),
+    )
+    process.exit(1)
+  }
+
+  // Show existing kimaki channels
+  if (kimakiChannels.length > 0) {
+    const channelList = kimakiChannels
+      .flatMap(({ guild, channels }) =>
+        channels.map(
+          (ch) => `#${ch.name} in ${guild.name}: ${ch.kimakiDirectory}`,
+        ),
+      )
+      .join('\n')
+
+    note(channelList, 'Existing Kimaki Channels')
+  }
+
+  // Initialize OpenCode in current directory
+  s.start('Starting OpenCode server...')
+
+  let client: OpencodeClient
+
+  try {
+    const currentDir = process.cwd()
+    client = await initializeOpencodeForDirectory(currentDir)
+    s.stop('OpenCode server started!')
+  } catch (error) {
+    s.stop('Failed to start OpenCode')
+    console.error(
+      'Error:',
+      error instanceof Error ? error.message : String(error),
+    )
+    discordClient.destroy()
+    process.exit(1)
+  }
+
+  // Get projects
+  s.start('Fetching OpenCode projects...')
+
+  let projects: Project[] = []
+
+  try {
+    const projectsResponse = await client.project.list()
+    if (!projectsResponse.data) {
+      throw new Error('Failed to fetch projects')
+    }
+    projects = projectsResponse.data
+    s.stop(`Found ${projects.length} OpenCode project(s)`)
+  } catch (error) {
+    s.stop('Failed to fetch projects')
+    console.error(
+      'Error:',
+      error instanceof Error ? error.message : String(error),
+    )
+    discordClient.destroy()
+    process.exit(1)
+  }
+
+  // Filter out projects that already have channels
+  const existingDirs = kimakiChannels.flatMap(({ channels }) =>
+    channels.map((ch) => ch.kimakiDirectory).filter(Boolean),
+  )
+
+  const availableProjects = projects.filter(
+    (project) => !existingDirs.includes(project.worktree),
+  )
+
+  if (availableProjects.length === 0) {
+    note(
+      'All OpenCode projects already have Discord channels',
+      'No New Projects',
+    )
+  } else {
+
+    // Let user select projects
+    const selectedProjects = await multiselect({
+      message: 'Select projects to create Discord channels for:',
+      options: availableProjects.map((project) => ({
+        value: project.id,
+        label: `${path.basename(project.worktree)} (${project.worktree})`,
+      })),
+      required: false,
+    })
+
+    if (!isCancel(selectedProjects) && selectedProjects.length > 0) {
+      // Select guild if multiple
+      let targetGuild: Guild
+      if (guilds.length === 0) {
+        console.error('No Discord servers found! The bot must be installed in at least one server.')
+        process.exit(1)
+      } else if (guilds.length === 1) {
+        targetGuild = guilds[0]!
+      } else {
+        const guildId = await text({
+          message: 'Enter the Discord server ID to create channels in:',
+          placeholder: guilds[0]?.id,
+          validate(value) {
+            if (!value) return 'Server ID is required'
+            if (!guilds.find((g) => g.id === value)) return 'Invalid server ID'
+          },
+        })
+
+        if (isCancel(guildId)) {
+          cancel('Setup cancelled')
+          process.exit(0)
+        }
+
+        targetGuild = guilds.find((g) => g.id === guildId)!
+      }
+
+      // Create channels
+      s.start('Creating Discord channels...')
+
+      for (const projectId of selectedProjects) {
+        const project = projects.find((p) => p.id === projectId)
+        if (!project) continue
+
+        const baseName = path.basename(project.worktree)
+        const channelName = `kimaki-${baseName}`
+          .toLowerCase()
+          .replace(/[^a-z0-9-]/g, '-')
+          .slice(0, 100)
+
+        try {
+          const channel = (await targetGuild.channels.create({
+            name: channelName,
+            type: ChannelType.GuildText,
+            topic: `OpenCode project channel\n<kimaki.directory>${project.worktree}</kimaki.directory>`,
+          })) as TextChannel
+
+          createdChannels.push({ 
+            name: channel.name, 
+            id: channel.id,
+            guildId: targetGuild.id 
+          })
+        } catch (error) {
+          console.error(`Failed to create channel for ${baseName}:`, error)
+        }
+      }
+
+      s.stop(`Created ${createdChannels.length} channel(s)`)
+
+      if (createdChannels.length > 0) {
+        note(
+          createdChannels.map(ch => `#${ch.name}`).join('\n'), 
+          'Created Channels'
+        )
+      }
+    }
+  }
+
+  // Start the bot at the very end
+  console.log()
+  s.start('Starting Discord bot...')
+  await startDiscordBot({ token, discordClient })
+  s.stop('Discord bot is running!')
+
+  // Show channel links if any were created or exist
+  const allChannels: { name: string; id: string; guildId: string; directory?: string }[] = []
+  
+  // Add newly created channels
+  allChannels.push(...createdChannels)
+  
+  // Add existing kimaki channels
+  kimakiChannels.forEach(({ guild, channels }) => {
+    channels.forEach(ch => {
+      allChannels.push({
+        name: ch.name,
+        id: ch.id,
+        guildId: guild.id,
+        directory: ch.kimakiDirectory
+      })
+    })
+  })
+
+  if (allChannels.length > 0) {
+    console.log()
+    const channelLinks = allChannels.map(ch => 
+      `• #${ch.name}: https://discord.com/channels/${ch.guildId}/${ch.id}`
+    ).join('\n')
+    
+    note(
+      `Your kimaki channels are ready! Click any link below to open in Discord:\n\n${channelLinks}\n\nSend a message in any channel to start using OpenCode!`,
+      '🚀 Ready to Use'
+    )
+  }
+
+  outro(
+    '✨ Setup complete!',
+  )
 }
 
 main().catch(console.error)

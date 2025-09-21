@@ -12,6 +12,7 @@ export function generateBotInstallUrl({
   clientId,
   permissions = [
     PermissionsBitField.Flags.ViewChannel,
+    PermissionsBitField.Flags.ManageChannels,
     PermissionsBitField.Flags.SendMessages,
     PermissionsBitField.Flags.SendMessagesInThreads,
     PermissionsBitField.Flags.CreatePublicThreads,
@@ -48,6 +49,7 @@ export function generateBotInstallUrl({
 function getRequiredBotPermissions(): bigint[] {
   return [
     PermissionsBitField.Flags.ViewChannel,
+    PermissionsBitField.Flags.ManageChannels,
     PermissionsBitField.Flags.SendMessages,
     PermissionsBitField.Flags.SendMessagesInThreads,
     PermissionsBitField.Flags.CreatePublicThreads,
