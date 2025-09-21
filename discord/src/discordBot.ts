@@ -31,7 +31,6 @@ type StartOptions = {
   token: string
 }
 
-const EMPTY_MESSAGE = '\u200B'
 
 // Map of project directory to OpenCode server process and client
 const opencodeServers = new Map<
@@ -222,13 +221,13 @@ async function processVoiceAttachment({
 
     // Get project file tree for context if directory is provided
     let transcriptionPrompt = 'Discord voice message transcription'
-    
+
     if (projectDirectory) {
       try {
         console.log(`[VOICE MESSAGE] Getting project file tree from ${projectDirectory}`)
         // Use git ls-files to get tracked files, then pipe to tree
         const result = await $`cd ${projectDirectory} && git ls-files | tree --fromfile -a`.text()
-        
+
         if (result) {
           transcriptionPrompt = `Discord voice message transcription. Project file structure:\n${result}\n\nPlease transcribe file names and paths accurately based on this context.`
           console.log(`[VOICE MESSAGE] Added project context to transcription prompt`)

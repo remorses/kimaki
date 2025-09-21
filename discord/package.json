@@ -22,6 +22,7 @@
   },
   "dependencies": {
     "@ai-sdk/openai": "^2.0.23",
+    "@clack/prompts": "^0.11.0",
     "ai": "^5.0.29",
     "discord.js": "^14.16.3",
     "domhandler": "^5.0.3",
