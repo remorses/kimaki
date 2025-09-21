@@ -7,43 +7,44 @@ import {
   ThreadAutoArchiveDuration,
   type Message,
   type ThreadChannel,
-} from "discord.js";
-import { spawn, type ChildProcess } from "node:child_process";
-import net from "node:net";
-import { 
-  createOpencodeClient, 
-  type OpencodeClient, 
+} from 'discord.js'
+import { spawn, type ChildProcess } from 'node:child_process'
+import net from 'node:net'
+import {
+  createOpencodeClient,
+  type OpencodeClient,
   type Part,
   type Event,
   type EventMessagePartUpdated,
   type EventMessageUpdated,
-  type EventSessionError 
-} from "@opencode-ai/sdk";
+  type EventSessionError,
+} from '@opencode-ai/sdk'
+import dedent from 'string-dedent'
 
 type StartOptions = {
-  token: string;
-  channelId: string;
-};
+  token: string
+  channelId: string
+}
 
-let serverProcess: ChildProcess | null = null;
-let client: OpencodeClient | null = null;
+let serverProcess: ChildProcess | null = null
+let client: OpencodeClient | null = null
 
 async function getOpenPort(): Promise<number> {
   return new Promise((resolve, reject) => {
-    const server = net.createServer();
+    const server = net.createServer()
     server.listen(0, () => {
-      const address = server.address();
-      if (address && typeof address === "object") {
-        const port = address.port;
+      const address = server.address()
+      if (address && typeof address === 'object') {
+        const port = address.port
         server.close(() => {
-          resolve(port);
-        });
+          resolve(port)
+        })
       } else {
-        reject(new Error("Failed to get port"));
+        reject(new Error('Failed to get port'))
       }
-    });
-    server.on("error", reject);
-  });
+    })
+    server.on('error', reject)
+  })
 }
 
 async function waitForServer(port: number, maxAttempts = 30): Promise<boolean> {
@@ -53,223 +54,291 @@ async function waitForServer(port: number, maxAttempts = 30): Promise<boolean> {
         `http://localhost:${port}/api/health`,
         `http://localhost:${port}/`,
         `http://localhost:${port}/api`,
-      ];
+      ]
 
       for (const endpoint of endpoints) {
         try {
-          const response = await fetch(endpoint);
+          const response = await fetch(endpoint)
           if (response.status < 500) {
-            console.log(`OpenCode server ready on port ${port}`);
-            return true;
+            console.log(`OpenCode server ready on port ${port}`)
+            return true
           }
         } catch (e) {}
       }
     } catch (e) {}
-    await new Promise((resolve) => setTimeout(resolve, 1000));
+    await new Promise((resolve) => setTimeout(resolve, 1000))
   }
-  throw new Error(`Server did not start on port ${port} after ${maxAttempts} seconds`);
+  throw new Error(
+    `Server did not start on port ${port} after ${maxAttempts} seconds`,
+  )
 }
 
 async function initializeOpencode() {
   if (!serverProcess || serverProcess.killed) {
-    const port = await getOpenPort();
-    console.log(`Starting OpenCode server on port ${port}...`);
+    const port = await getOpenPort()
+    console.log(`Starting OpenCode server on port ${port}...`)
 
-    serverProcess = spawn("opencode", ["serve", "--port", port.toString()], {
-      stdio: "pipe",
+    serverProcess = spawn('opencode', ['serve', '--port', port.toString()], {
+      stdio: 'pipe',
       detached: false,
       env: {
         ...process.env,
         OPENCODE_PORT: port.toString(),
       },
-    });
+    })
 
-    serverProcess.stdout?.on("data", (data) => {
-      console.log(`[OpenCode] ${data.toString().trim()}`);
-    });
+    serverProcess.stdout?.on('data', (data) => {
+      console.log(`[OpenCode] ${data.toString().trim()}`)
+    })
 
-    serverProcess.stderr?.on("data", (data) => {
-      console.error(`[OpenCode Error] ${data.toString().trim()}`);
-    });
+    serverProcess.stderr?.on('data', (data) => {
+      console.error(`[OpenCode Error] ${data.toString().trim()}`)
+    })
 
-    serverProcess.on("error", (error) => {
-      console.error("Failed to start OpenCode server:", error);
-    });
+    serverProcess.on('error', (error) => {
+      console.error('Failed to start OpenCode server:', error)
+    })
 
-    await waitForServer(port);
-    client = createOpencodeClient({ baseUrl: `http://localhost:${port}` });
+    await waitForServer(port)
+    client = createOpencodeClient({ baseUrl: `http://localhost:${port}` })
   }
 
-  return client!;
+  return client!
 }
 
 function formatPart(part: Part): string {
   switch (part.type) {
-    case "text":
-      return part.text || "";
-    case "reasoning":
-      return `💭 ${part.text || ""}`;
-    case "tool":
-      if (part.state.status === "completed") {
-        const output = part.state.output || "";
-        const truncated = output.length > 500 ? output.slice(0, 497) + "..." : output;
-        return `🔧 ${part.tool}: ${truncated}`;
+    case 'text':
+      return part.text || ''
+    case 'reasoning':
+      return `💭 ${part.text || ''}`
+    case 'tool':
+      if (part.state.status === 'completed') {
+        const output = part.state.output || ''
+        // console.log(part)
+        // Escape triple backticks so Discord does not break code blocks
+        let outputToDisplay = output.replace(/```/g, '\\`\\`\\`')
+        const truncated =
+          outputToDisplay.length > 500
+            ? outputToDisplay.slice(0, 497) + `…`
+            : outputToDisplay
+        return dedent`
+        🔧 ${part.tool}
+
+
+        `
       }
-      return "";
-    case "file":
-      return `📄 ${part.filename || "File"}`;
+      return ''
+    case 'file':
+      return `📄 ${part.filename || 'File'}`
+    case 'step-start':
+    case 'step-finish':
+      return ''
     default:
-      return "";
+      console.log('Unknown part type:', part)
+      return ''
   }
 }
 
 async function handleOpencodeSession(
   prompt: string,
   thread: ThreadChannel,
-  threadToSession: Map<string, string>
+  threadToSession: Map<string, string>,
 ) {
-  const client = await initializeOpencode();
-  
-  let sessionId = threadToSession.get(thread.id);
-  let session;
+  const client = await initializeOpencode()
+
+  let sessionId = threadToSession.get(thread.id)
+  let session
 
   if (sessionId) {
     try {
-      const sessionResponse = await client.session.get({ path: { id: sessionId } });
-      session = sessionResponse.data;
+      const sessionResponse = await client.session.get({
+        path: { id: sessionId },
+      })
+      session = sessionResponse.data
     } catch (error) {
-      console.log("Session not found, creating new one");
+      console.log('Session not found, creating new one')
     }
   }
 
   if (!session) {
     const sessionResponse = await client.session.create({
       body: { title: prompt.slice(0, 80) },
-    });
-    session = sessionResponse.data;
+    })
+    session = sessionResponse.data
   }
 
   if (!session) {
-    throw new Error("Failed to create or get session");
+    throw new Error('Failed to create or get session')
   }
 
-  threadToSession.set(thread.id, session.id);
+  threadToSession.set(thread.id, session.id)
 
-  const eventsResult = await client.event.subscribe();
-  const events = eventsResult.stream;
+  const eventsResult = await client.event.subscribe()
+  const events = eventsResult.stream
 
-  let currentMessage: Message | undefined;
-  let currentParts: Part[] = [];
-  let lastUpdateTime = 0;
+  let currentMessage: Message | undefined
+  let currentParts: Part[] = []
+  let lastUpdateTime = 0
+  let updateTimeout: NodeJS.Timeout | undefined
 
   const updateMessage = async () => {
-    if (!currentMessage || currentParts.length === 0) return;
-    
+    if (!currentMessage) {
+      console.log('not updating the message because there is no currentMessage')
+      return
+    }
+    if (currentParts.length === 0) {
+      console.log('not updating the message because there are no currentParts')
+      return
+    }
+
+    // Clear any pending update
+    if (updateTimeout) {
+      clearTimeout(updateTimeout)
+      updateTimeout = undefined
+    }
+
     const content = currentParts
       .map(formatPart)
-      .filter(text => text.length > 0)
-      .join("\n\n");
-    
+      .filter((text) => text.length > 0)
+      .join('\n\n')
+
     if (content.length > 0) {
       try {
-        await currentMessage.edit(content.slice(0, 2000));
+        await currentMessage.edit(content.slice(0, 2000))
+        lastUpdateTime = Date.now()
       } catch (error) {
-        console.error("Failed to update message:", error);
+        console.error('Failed to update message:', error)
       }
     }
-  };
+  }
+
+  const scheduleUpdate = () => {
+    if (updateTimeout) return // Already scheduled
+
+    const timeSinceLastUpdate = Date.now() - lastUpdateTime
+    const delay = Math.max(0, 500 - timeSinceLastUpdate) // Wait at least 500ms between updates
+
+    updateTimeout = setTimeout(() => {
+      updateTimeout = undefined
+      updateMessage()
+    }, delay)
+  }
 
   const eventHandler = (async () => {
     try {
-      let assistantMessageId: string | undefined;
-      
+      let assistantMessageId: string | undefined
+
       for await (const event of events) {
-        if (event.type === "message.updated") {
-          const msgEvent = event as EventMessageUpdated;
-          const message = msgEvent.properties.info;
-          
-          if (message.sessionID !== session.id) continue;
-          
+        if (event.type === 'message.updated') {
+          const msgEvent = event as EventMessageUpdated
+          const msg = msgEvent.properties.info
+
+          if (msg.sessionID !== session.id) {
+            console.log(`ignoring message from another session`, msg)
+            continue
+          }
+
           // Track assistant message ID
-          if (message.role === "assistant") {
-            assistantMessageId = message.id;
-            
-            if (message.time?.completed) {
-              // Final update when message completes
-              await updateMessage();
-              break;
+          if (msg.role === 'assistant') {
+            assistantMessageId = msg.id
+
+            if (msg.time?.completed) {
+              const message = await client.session.message({
+                path: { id: msg.sessionID, messageID: msg.id },
+              })
+
+              currentParts = message.data?.parts || []
+              console.log(currentParts)
+              await updateMessage()
+              break
             }
           }
-        } else if (event.type === "message.part.updated") {
-          const partEvent = event as EventMessagePartUpdated;
-          const part = partEvent.properties.part;
-          
-          if (part.sessionID !== session.id) continue;
-          
+        } else if (event.type === 'message.part.updated') {
+          const partEvent = event as EventMessagePartUpdated
+          const part = partEvent.properties.part
+
+          if (part.sessionID !== session.id) {
+            console.log(`ignoring different session part`, part)
+            continue
+          }
+
           // Only process parts from assistant messages
-          if (part.messageID !== assistantMessageId) continue;
-          
-          const existingIndex = currentParts.findIndex((p: Part) => p.id === part.id);
+          if (part.messageID !== assistantMessageId) {
+            console.log(`ignoring non assistant part`, part)
+            continue
+          }
+
+          const existingIndex = currentParts.findIndex(
+            (p: Part) => p.id === part.id,
+          )
           if (existingIndex >= 0) {
-            currentParts[existingIndex] = part;
+            currentParts[existingIndex] = part
           } else {
-            currentParts.push(part);
+            currentParts.push(part)
           }
 
           // Only update when parts complete (not on every streaming update)
-          if (part.type === "tool" && part.state?.status === "completed") {
-            const now = Date.now();
-            if (now - lastUpdateTime > 100) {
-              if (!currentMessage) {
-                const initialContent = formatPart(part);
-                if (initialContent) {
-                  currentMessage = await thread.send(initialContent.slice(0, 2000));
-                }
-              } else {
-                await updateMessage();
+          if (part.type === 'tool' && part.state?.status === 'completed') {
+            if (!currentMessage) {
+              const initialContent = formatPart(part)
+              if (initialContent) {
+                currentMessage = await thread.send(
+                  initialContent.slice(0, 2000),
+                )
+                lastUpdateTime = Date.now()
               }
-              lastUpdateTime = now;
+            } else {
+              scheduleUpdate()
             }
-          } else if (part.type === "text" || part.type === "reasoning") {
-            const now = Date.now();
-            if (now - lastUpdateTime > 100) {
-              if (!currentMessage) {
-                const initialContent = formatPart(part);
-                if (initialContent) {
-                  currentMessage = await thread.send(initialContent.slice(0, 2000));
-                }
-              } else {
-                await updateMessage();
+          } else if (part.type === 'text' || part.type === 'reasoning') {
+            if (!currentMessage) {
+              const initialContent = formatPart(part)
+              if (initialContent) {
+                currentMessage = await thread.send(
+                  initialContent.slice(0, 2000),
+                )
+                lastUpdateTime = Date.now()
               }
-              lastUpdateTime = now;
+            } else {
+              scheduleUpdate()
             }
           }
-        } else if (event.type === "session.error") {
-          const errorEvent = event as EventSessionError;
+        } else if (event.type === 'session.error') {
+          const errorEvent = event as EventSessionError
+          console.error('session error')
           if (errorEvent.properties.sessionID === session.id) {
-            const errorData = errorEvent.properties.error;
-            const errorMessage = errorData?.data?.message || "Unknown error";
-            await thread.send(`❌ Error: ${errorMessage}`);
+            const errorData = errorEvent.properties.error
+            const errorMessage = errorData?.data?.message || 'Unknown error'
+            await thread.send(`❌ Error: ${errorMessage}`)
           }
-          break;
+          break
+        } else if (event.type === 'file.edited') {
         }
       }
-    } finally {}
-  })();
+    } catch (e) {
+      console.error(`unexpected error in event handling code`, e)
+      throw e
+    } finally {
+      // Always do a final update when stream ends
+      await updateMessage()
+    }
+  })()
 
   try {
     const response = await client.session.prompt({
       path: { id: session.id },
       body: {
-        parts: [{ type: "text", text: prompt }],
+        parts: [{ type: 'text', text: prompt }],
       },
-    });
+    })
 
-    await eventHandler;
-    return { sessionID: session.id, result: response.data };
+    return { sessionID: session.id, result: response.data }
   } catch (error) {
-    await thread.send(`❌ Error: ${error instanceof Error ? error.message : String(error)}`);
-    throw error;
+    await thread.send(
+      `❌ Error: ${error instanceof Error ? error.message : String(error)}`,
+    )
+    throw error
   }
 }
 
@@ -286,81 +355,89 @@ export async function startDiscordBot({ token, channelId }: StartOptions) {
       Partials.User,
       Partials.ThreadMember,
     ],
-  });
+  })
 
-  const threadToSession = new Map<string, string>();
+  const threadToSession = new Map<string, string>()
 
   discordClient.once(Events.ClientReady, (c) => {
-    console.log(`Discord bot logged in as ${c.user.tag}`);
-  });
+    console.log(`Discord bot logged in as ${c.user.tag}`)
+  })
 
   discordClient.on(Events.MessageCreate, async (message: Message) => {
     try {
-      if (message.author?.bot) return;
+      if (message.author?.bot) return
       if (message.partial) {
         try {
-          await message.fetch();
+          await message.fetch()
         } catch {
-          return;
+          return
         }
       }
 
       if (message.channelId === channelId) {
-        const baseName = message.content.replace(/\s+/g, " ").trim();
-        const name = (baseName || "Claude Thread").slice(0, 80);
+        const baseName = message.content.replace(/\s+/g, ' ').trim()
+        const name = (baseName || 'Claude Thread').slice(0, 80)
 
         const thread = await message.startThread({
-          name: name.length > 0 ? name : "Claude Thread",
+          name: name.length > 0 ? name : 'Claude Thread',
           autoArchiveDuration: ThreadAutoArchiveDuration.OneDay,
-          reason: "Start Claude session",
-        });
+          reason: 'Start Claude session',
+        })
 
-        await thread.send("Starting OpenCode session…");
-        await handleOpencodeSession(message.content || "", thread, threadToSession);
-        return;
+        // await thread.send('thinking…')
+        await handleOpencodeSession(
+          message.content || '',
+          thread,
+          threadToSession,
+        )
+        return
       }
 
-      const channel = message.channel;
-      const isThreadChannel = 
+      const channel = message.channel
+      const isThreadChannel =
         channel.type === ChannelType.PublicThread ||
         channel.type === ChannelType.PrivateThread ||
-        channel.type === ChannelType.AnnouncementThread;
+        channel.type === ChannelType.AnnouncementThread
 
       if (isThreadChannel) {
-        const thread = channel as ThreadChannel;
-        const existing = threadToSession.get(thread.id);
-        if (!existing) return;
+        const thread = channel as ThreadChannel
+        const existing = threadToSession.get(thread.id)
+        if (!existing) return
 
-        const thinkingMessage = await thread.send("Thinking…");
-        await handleOpencodeSession(message.content || "", thread, threadToSession);
-        await thinkingMessage.delete();
+        const thinkingMessage = await thread.send('Thinking…')
+        await handleOpencodeSession(
+          message.content || '',
+          thread,
+          threadToSession,
+        )
+        await thinkingMessage.delete()
       }
     } catch (error) {
-      console.error("Discord handler error:", error);
+      console.error('Discord handler error:', error)
       try {
-        const errMsg = error instanceof Error ? error.message : String(error);
-        await message.reply(`Error: ${errMsg}`);
+        const errMsg = error instanceof Error ? error.message : String(error)
+        await message.reply(`Error: ${errMsg}`)
       } catch {
-        console.error("Discord handler error (fallback):", error);
+        console.error('Discord handler error (fallback):', error)
       }
     }
-  });
+  })
 
-  await discordClient.login(token);
+  await discordClient.login(token)
 
-  process.on("SIGINT", () => {
+  process.on('SIGINT', () => {
     if (serverProcess && !serverProcess.killed) {
-      serverProcess.kill("SIGTERM");
+      serverProcess.kill('SIGTERM')
     }
-    discordClient.destroy();
-    process.exit(0);
-  });
+    discordClient.destroy()
+    process.exit(0)
+  })
 
-  process.on("SIGTERM", () => {
+  process.on('SIGTERM', () => {
     if (serverProcess && !serverProcess.killed) {
-      serverProcess.kill("SIGTERM");
+      serverProcess.kill('SIGTERM')
     }
-    discordClient.destroy();
-    process.exit(0);
-  });
+    discordClient.destroy()
+    process.exit(0)
+  })
 }
