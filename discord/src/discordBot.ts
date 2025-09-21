@@ -38,7 +38,7 @@ const opencodeServers = new Map<
   }
 >()
 
-const db = new Database(':memory:')
+const db = new Database('discord-sessions.db')
 
 // Initialize tables
 db.exec(`
@@ -317,7 +317,10 @@ async function handleOpencodeSession(
   ).run(thread.id, session.id)
   console.log(`[DATABASE] Stored session ${session.id} for thread ${thread.id}`)
 
-  const eventsResult = await client.event.subscribe()
+  const abortController = new AbortController()
+  const eventsResult = await client.event.subscribe({
+    signal: abortController.signal,
+  })
   const events = eventsResult.stream
   console.log(`[EVENTS] Subscribed to OpenCode events`)
 
@@ -470,6 +473,11 @@ async function handleOpencodeSession(
         }
       }
     } catch (e) {
+      if (e instanceof Error && e.name === 'AbortError') {
+        // Ignore abort controller errors as requested
+        console.log('AbortController aborted event handling (normal exit)')
+        return
+      }
       console.error(`unexpected error in event handling code`, e)
       throw e
     } finally {
@@ -505,6 +513,7 @@ async function handleOpencodeSession(
         parts: [{ type: 'text', text: prompt }],
       },
     })
+    abortController.abort('finished')
 
     console.log(`[PROMPT] Successfully sent prompt, got response`)
     return { sessionID: session.id, result: response.data }
