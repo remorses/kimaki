@@ -167,8 +167,9 @@ function formatPart(part: Part): string {
             : outputToDisplay
         outputToDisplay = outputToDisplay.replace(/```/g, '\\`\\`\\`')
 
-        const toolTitle =
+        let toolTitle =
           part.state.status === 'completed' ? part.state.title || '' : 'error'
+        if (toolTitle) toolTitle = `\`${toolTitle}\``
         const icon =
           part.state.status === 'completed'
             ? '◼︎'
@@ -323,6 +324,10 @@ async function handleOpencodeSession(
             currentParts.push(part)
           }
 
+          console.log(
+            `Part update: id=${part.id}, type=${part.type}, text=${'text' in part && typeof part.text === 'string' ? part.text.slice(0, 50) : ''}`,
+          )
+
           // Update messages for different part types
           if (part.type === 'tool' && part.state?.status === 'completed') {
             console.log(part.tool)
@@ -349,9 +354,14 @@ async function handleOpencodeSession(
       for (const timeout of updateTimeouts.values()) {
         clearTimeout(timeout)
       }
-      // Update all remaining parts
+      // Don't update parts that already have messages
       for (const part of currentParts) {
-        await updatePartMessage(part)
+        if (!partIdToMessage.has(part.id)) {
+          console.log(
+            `Final update for part without message: id=${part.id}, type=${part.type}`,
+          )
+          await updatePartMessage(part)
+        }
       }
     }
   })()
