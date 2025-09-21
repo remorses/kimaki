@@ -892,7 +892,7 @@ export type ChannelWithTags = {
   name: string
   description: string | null
   kimakiDirectory?: string
-  otherTags: Record<string, string[]>
+  kimakiApp?: string
 }
 
 export async function getChannelsWithDescriptions(
@@ -907,25 +907,16 @@ export async function getChannelsWithDescriptions(
       const description = textChannel.topic || null
 
       let kimakiDirectory: string | undefined
-      let otherTags: Record<string, string[]> = {}
+      let kimakiApp: string | undefined
 
       if (description) {
         const extracted = extractTagsArrays({
           xml: description,
-          tags: ['kimaki.directory'],
+          tags: ['kimaki.directory', 'kimaki.app'],
         })
 
         kimakiDirectory = extracted['kimaki.directory']?.[0]?.trim()
-
-        // Store any other extracted tags
-        const extractedKeys = Object.keys(
-          extracted,
-        ) as (keyof typeof extracted)[]
-        extractedKeys.forEach((key) => {
-          if (key !== 'kimaki.directory' && key !== 'others') {
-            otherTags[key] = extracted[key]
-          }
-        })
+        kimakiApp = extracted['kimaki.app']?.[0]?.trim()
       }
 
       channels.push({
@@ -933,7 +924,7 @@ export async function getChannelsWithDescriptions(
         name: textChannel.name,
         description,
         kimakiDirectory,
-        otherTags,
+        kimakiApp,
       })
     })
 
@@ -945,9 +936,16 @@ export async function startDiscordBot({ token, discordClient }: StartOptions & {
     discordClient = await createDiscordClient()
   }
 
+  // Get the app ID for this bot instance
+  let currentAppId: string | undefined
+
   discordClient.once(Events.ClientReady, async (c) => {
     console.log(`[READY] Discord bot logged in as ${c.user.tag}`)
     console.log(`[READY] Connected to ${c.guilds.cache.size} guild(s)`)
+    
+    // Store the current app ID
+    currentAppId = c.user.id
+    console.log(`[READY] Bot Application ID: ${currentAppId}`)
 
     // List all guilds and channels with kimaki.directory tags
     for (const guild of c.guilds.cache.values()) {
@@ -1038,14 +1036,26 @@ export async function startDiscordBot({ token, discordClient }: StartOptions & {
           `[SESSION] Found session ${row.session_id} for thread ${thread.id}`,
         )
 
-        // Get project directory from parent channel
+        // Get project directory and app ID from parent channel
         const parent = thread.parent as TextChannel | null
-        const projectDirectory = parent?.topic
-          ? extractTagsArrays({
-              xml: parent.topic,
-              tags: ['kimaki.directory'],
-            })['kimaki.directory']?.[0]?.trim()
-          : undefined
+        let projectDirectory: string | undefined
+        let channelAppId: string | undefined
+        
+        if (parent?.topic) {
+          const extracted = extractTagsArrays({
+            xml: parent.topic,
+            tags: ['kimaki.directory', 'kimaki.app'],
+          })
+
+          projectDirectory = extracted['kimaki.directory']?.[0]?.trim()
+          channelAppId = extracted['kimaki.app']?.[0]?.trim()
+        }
+        
+        // Check if this channel belongs to current bot instance
+        if (channelAppId && channelAppId !== currentAppId) {
+          console.log(`[IGNORED] Thread belongs to different bot app (expected: ${currentAppId}, got: ${channelAppId})`)
+          return
+        }
 
         if (projectDirectory && !fs.existsSync(projectDirectory)) {
           console.log(`[ERROR] Directory does not exist: ${projectDirectory}`)
@@ -1100,10 +1110,13 @@ export async function startDiscordBot({ token, discordClient }: StartOptions & {
           return
         }
 
-        const projectDirectory = extractTagsArrays({
+        const extracted = extractTagsArrays({
           xml: textChannel.topic,
-          tags: ['kimaki.directory'],
-        })['kimaki.directory']?.[0]?.trim()
+          tags: ['kimaki.directory', 'kimaki.app'],
+        })
+
+        const projectDirectory = extracted['kimaki.directory']?.[0]?.trim()
+        const channelAppId = extracted['kimaki.app']?.[0]?.trim()
 
         if (!projectDirectory) {
           console.log(
@@ -1111,8 +1124,17 @@ export async function startDiscordBot({ token, discordClient }: StartOptions & {
           )
           return
         }
+        
+        // Check if this channel belongs to current bot instance
+        if (channelAppId && channelAppId !== currentAppId) {
+          console.log(`[IGNORED] Channel belongs to different bot app (expected: ${currentAppId}, got: ${channelAppId})`)
+          return
+        }
 
         console.log(`[DIRECTORY] Found kimaki.directory: ${projectDirectory}`)
+        if (channelAppId) {
+          console.log(`[APP] Channel app ID: ${channelAppId}`)
+        }
 
         if (!fs.existsSync(projectDirectory)) {
           console.log(`[ERROR] Directory does not exist: ${projectDirectory}`)

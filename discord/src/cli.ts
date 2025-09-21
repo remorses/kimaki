@@ -135,7 +135,8 @@ async function main() {
 
         for (const guild of guilds) {
           const channels = await getChannelsWithDescriptions(guild)
-          const kimakiChans = channels.filter((ch) => ch.kimakiDirectory)
+          // Filter channels that have kimaki directory and optionally match current app
+          const kimakiChans = channels.filter((ch) => ch.kimakiDirectory && (!ch.kimakiApp || ch.kimakiApp === appId))
 
           if (kimakiChans.length > 0) {
             kimakiChannels.push({ guild, channels: kimakiChans })
@@ -164,9 +165,10 @@ async function main() {
   if (kimakiChannels.length > 0) {
     const channelList = kimakiChannels
       .flatMap(({ guild, channels }) =>
-        channels.map(
-          (ch) => `#${ch.name} in ${guild.name}: ${ch.kimakiDirectory}`,
-        ),
+        channels.map((ch) => {
+          const appInfo = ch.kimakiApp === appId ? ' (this bot)' : ch.kimakiApp ? ` (app: ${ch.kimakiApp})` : ''
+          return `#${ch.name} in ${guild.name}: ${ch.kimakiDirectory}${appInfo}`
+        }),
       )
       .join('\n')
 
@@ -283,7 +285,7 @@ async function main() {
           const channel = (await targetGuild.channels.create({
             name: channelName,
             type: ChannelType.GuildText,
-            topic: `OpenCode project channel\n<kimaki.directory>${project.worktree}</kimaki.directory>`,
+            topic: `<kimaki><directory>${project.worktree}</directory><app>${appId}</app></kimaki>`,
           })) as TextChannel
 
           createdChannels.push({ 
