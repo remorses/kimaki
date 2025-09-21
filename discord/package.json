@@ -6,7 +6,9 @@
   "scripts": {
     "dev": "bun run --watch index.ts",
     "test": "bun run scripts/test-opencode.ts",
-    "watch": "bun run scripts/watch-session.ts"
+    "watch": "bun run scripts/watch-session.ts",
+    "test:events": "tsx test-events.ts",
+    "test:send": "tsx send-test-message.ts"
   },
   "devDependencies": {
     "@types/bun": "latest",

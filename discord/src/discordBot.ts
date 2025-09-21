@@ -98,6 +98,9 @@ async function initializeOpencode() {
     serverProcess.on('error', (error) => {
       console.error('Failed to start OpenCode server:', error)
     })
+    serverProcess.on('exit', (error) => {
+      console.error('OpenCode server exited:', error)
+    })
 
     await waitForServer(port)
     client = createOpencodeClient({ baseUrl: `http://localhost:${port}` })
