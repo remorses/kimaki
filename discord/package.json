@@ -24,6 +24,7 @@
     "discord.js": "^14.16.3",
     "domhandler": "^5.0.3",
     "htmlparser2": "^10.0.0",
+    "marked": "^16.3.0",
     "string-dedent": "^3.0.2",
     "zod": "^4.0.17"
   }

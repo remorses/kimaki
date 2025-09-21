@@ -23,6 +23,7 @@ import dedent from 'string-dedent'
 import { Database } from 'bun:sqlite'
 import { extractTagsArrays } from './xml'
 import { $ } from 'bun'
+import { Lexer } from 'marked'
 
 type StartOptions = {
   token: string
@@ -37,6 +38,9 @@ const opencodeServers = new Map<
     port: number
   }
 >()
+
+// Map of project directory to current AbortController
+const activeRequests = new Map<string, AbortController>()
 
 const db = new Database('discord-sessions.db')
 
@@ -90,27 +94,51 @@ async function sendThreadMessage(thread: ThreadChannel, content: string): Promis
     return await thread.send(content)
   }
 
-  // Split long content into chunks
+  // Use marked's lexer to tokenize markdown content
+  const lexer = new Lexer()
+  const tokens = lexer.lex(content)
+  
   const chunks: string[] = []
-  let remaining = content
-
-  while (remaining.length > 0) {
-    if (remaining.length <= MAX_LENGTH) {
-      chunks.push(remaining)
-      break
+  let currentChunk = ''
+  
+  // Process each token and add to chunks
+  for (const token of tokens) {
+    const tokenText = token.raw || ''
+    
+    // If adding this token would exceed limit and we have content, flush current chunk
+    if (currentChunk && currentChunk.length + tokenText.length > MAX_LENGTH) {
+      chunks.push(currentChunk)
+      currentChunk = ''
     }
-
-    // Find a good place to split (prefer newline)
-    let splitIndex = MAX_LENGTH
-    const newlineIndex = remaining.lastIndexOf('\n', MAX_LENGTH - 1)
-
-    // Use newline if it's reasonably close to the max
-    if (newlineIndex > MAX_LENGTH * 0.7) {
-      splitIndex = newlineIndex + 1
+    
+    // If this single token is longer than MAX_LENGTH, split it
+    if (tokenText.length > MAX_LENGTH) {
+      if (currentChunk) {
+        chunks.push(currentChunk)
+        currentChunk = ''
+      }
+      
+      let remainingText = tokenText
+      while (remainingText.length > MAX_LENGTH) {
+        // Try to split at a newline if possible
+        let splitIndex = MAX_LENGTH
+        const newlineIndex = remainingText.lastIndexOf('\n', MAX_LENGTH - 1)
+        if (newlineIndex > MAX_LENGTH * 0.7) {
+          splitIndex = newlineIndex + 1
+        }
+        
+        chunks.push(remainingText.slice(0, splitIndex))
+        remainingText = remainingText.slice(splitIndex)
+      }
+      currentChunk = remainingText
+    } else {
+      currentChunk += tokenText
     }
-
-    chunks.push(remaining.slice(0, splitIndex))
-    remaining = remaining.slice(splitIndex)
+  }
+  
+  // Add any remaining content
+  if (currentChunk) {
+    chunks.push(currentChunk)
   }
 
   // Send all chunks
@@ -127,62 +155,7 @@ async function sendThreadMessage(thread: ThreadChannel, content: string): Promis
   return firstMessage!
 }
 
-/**
- * Reply to a message, automatically splitting long replies
- * @param message - The message to reply to
- * @param content - The content to send (can be longer than 2000 chars)
- * @returns The first reply message sent
- */
-async function replyMessage(message: Message, content: string): Promise<Message> {
-  const MAX_LENGTH = 2000
 
-  // Simple case: content fits in one message
-  if (content.length <= MAX_LENGTH) {
-    return await message.reply(content)
-  }
-
-  // Split long content into chunks
-  const chunks: string[] = []
-  let remaining = content
-
-  while (remaining.length > 0) {
-    if (remaining.length <= MAX_LENGTH) {
-      chunks.push(remaining)
-      break
-    }
-
-    // Find a good place to split (prefer newline)
-    let splitIndex = MAX_LENGTH
-    const newlineIndex = remaining.lastIndexOf('\n', MAX_LENGTH - 1)
-
-    // Use newline if it's reasonably close to the max
-    if (newlineIndex > MAX_LENGTH * 0.7) {
-      splitIndex = newlineIndex + 1
-    }
-
-    chunks.push(remaining.slice(0, splitIndex))
-    remaining = remaining.slice(splitIndex)
-  }
-
-  // Send all chunks (only first as reply, rest as regular messages)
-  console.log(`[REPLY MESSAGE] Splitting ${content.length} chars into ${chunks.length} messages`)
-
-  const firstChunk = chunks[0]
-  if (!firstChunk) throw new Error('No chunks to send')
-
-  const firstMessage = await message.reply(firstChunk)
-
-  // Send remaining chunks as regular messages in the same channel (if it's a text channel)
-
-  for (let i = 1; i < chunks.length; i++) {
-    const chunk = chunks[i]
-    if (!chunk) continue
-    await message.channel.send(chunk)
-  }
-
-
-  return firstMessage
-}
 
 async function waitForServer(port: number, maxAttempts = 30): Promise<boolean> {
   for (let i = 0; i < maxAttempts; i++) {
@@ -380,6 +353,13 @@ async function handleOpencodeSession(
   const directory = projectDirectory || process.cwd()
   console.log(`[OPENCODE SESSION] Using directory: ${directory}`)
 
+  // Cancel any existing request for this directory
+  const existingController = activeRequests.get(directory)
+  if (existingController) {
+    console.log(`[ABORT] Cancelling existing request for directory: ${directory}`)
+    existingController.abort('New request started')
+  }
+
   const client = await initializeOpencodeForDirectory(directory)
 
   // Get session ID from database
@@ -426,6 +406,9 @@ async function handleOpencodeSession(
   console.log(`[DATABASE] Stored session ${session.id} for thread ${thread.id}`)
 
   const abortController = new AbortController()
+  // Store this controller for this directory
+  activeRequests.set(directory, abortController)
+  
   const eventsResult = await client.event.subscribe({
     signal: abortController.signal,
   })
@@ -623,13 +606,21 @@ async function handleOpencodeSession(
     abortController.abort('finished')
 
     console.log(`[PROMPT] Successfully sent prompt, got response`)
+    // Remove the controller after successful completion
+    activeRequests.delete(directory)
     return { sessionID: session.id, result: response.data }
   } catch (error) {
     console.error(`[PROMPT ERROR] Failed to send prompt:`, error)
-    await sendThreadMessage(
-      thread,
-      `❌ Error: ${error instanceof Error ? error.message : String(error)}`,
-    )
+    // Remove the controller on error
+    activeRequests.delete(directory)
+    
+    // Only show error message if not aborted by a new request
+    if (!(error instanceof Error && error.name === 'AbortError')) {
+      await sendThreadMessage(
+        thread,
+        `❌ Error: ${error instanceof Error ? error.message : String(error)}`,
+      )
+    }
     throw error
   }
 }
@@ -815,12 +806,21 @@ export async function startDiscordBot({ token }: StartOptions) {
         }
 
         const thinkingMessage = await sendThreadMessage(thread, 'Thinking…')
-        await handleOpencodeSession(
-          message.content || '',
-          thread,
-          projectDirectory,
-        )
-        await thinkingMessage.delete()
+        try {
+          await handleOpencodeSession(
+            message.content || '',
+            thread,
+            projectDirectory,
+          )
+          await thinkingMessage.delete()
+        } catch (error) {
+          // Delete thinking message even on error
+          await thinkingMessage.delete()
+          // Only re-throw if not an abort error
+          if (!(error instanceof Error && error.name === 'AbortError')) {
+            throw error
+          }
+        }
         return
       }
 
@@ -864,8 +864,7 @@ export async function startDiscordBot({ token }: StartOptions) {
         // Check if directory exists
         if (!fs.existsSync(projectDirectory)) {
           console.log(`[ERROR] Directory does not exist: ${projectDirectory}`)
-          await replyMessage(
-            message,
+          await message.reply(
             `❌ Directory does not exist: ${JSON.stringify(projectDirectory)}`,
           )
           return
@@ -899,7 +898,7 @@ export async function startDiscordBot({ token }: StartOptions) {
       console.error('Discord handler error:', error)
       try {
         const errMsg = error instanceof Error ? error.message : String(error)
-        await replyMessage(message, `Error: ${errMsg}`)
+        await message.reply(`Error: ${errMsg}`)
       } catch {
         console.error('Discord handler error (fallback):', error)
       }
