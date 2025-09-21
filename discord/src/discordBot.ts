@@ -30,6 +30,7 @@ type StartOptions = {
 }
 
 const THINKING_MESSAGE = 'thinking…'
+const EMPTY_MESSAGE = '\u200B'
 
 // Map of project directory to OpenCode server process and client
 const opencodeServers = new Map<
@@ -472,11 +473,11 @@ async function handleOpencodeSession(
     }
 
     try {
-      // Edit the current thinking message to a newline before sending the part
+      // Edit the current thinking message to empty before sending the part
       if (thinkingMessage) {
         try {
-          await thinkingMessage.edit('\n')
-          console.log(`[THINKING] Edited thinking message to newline before sending part`)
+          await thinkingMessage.edit(EMPTY_MESSAGE)
+          console.log(`[THINKING] Edited thinking message to empty before sending part`)
         } catch (e) {
           console.log(`[THINKING] Could not edit thinking message:`, e)
         }
@@ -638,11 +639,11 @@ async function handleOpencodeSession(
         console.log(`[CLEANUP] Sent ${unsentCount} previously unsent parts`)
       }
 
-      // Edit the final thinking message to a newline
+      // Edit the final thinking message to empty
       if (thinkingMessage) {
         try {
-          await thinkingMessage.edit('\n')
-          console.log(`[THINKING] Edited final thinking message to newline`)
+          await thinkingMessage.edit(EMPTY_MESSAGE)
+          console.log(`[THINKING] Edited final thinking message to empty`)
         } catch (e) {
           console.log(`[THINKING] Could not edit final thinking message:`, e)
         }
@@ -900,9 +901,9 @@ export async function startDiscordBot({ token }: StartOptions) {
             message,
           )
         } catch (error) {
-          // Edit thinking message to newline even on error
+          // Edit thinking message to empty even on error
           try {
-            await thinkingMessage.edit('\n')
+            await thinkingMessage.edit(EMPTY_MESSAGE)
           } catch {}
           // Only re-throw if not an abort error
           if (!(error instanceof Error && error.name === 'AbortError')) {
