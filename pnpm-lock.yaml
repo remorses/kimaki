@@ -5,7 +5,7 @@ settings:
   excludeLinksFromLockfile: false
 
 overrides:
-  '@opencode-ai/sdk': 0.6.3
+  '@opencode-ai/sdk': ^0.11.0
 
 importers:
 
@@ -52,8 +52,8 @@ importers:
         specifier: ^0.6.3
         version: 0.6.3(typescript@5.9.2)
       '@opencode-ai/sdk':
-        specifier: 0.6.3
-        version: 0.6.3(typescript@5.9.2)
+        specifier: ^0.11.0
+        version: 0.11.0(typescript@5.9.2)
       '@types/js-yaml':
         specifier: ^4.0.9
         version: 4.0.9
@@ -146,8 +146,8 @@ importers:
   discord:
     dependencies:
       '@opencode-ai/sdk':
-        specifier: 0.6.3
-        version: 0.6.3(typescript@5.9.2)
+        specifier: ^0.11.0
+        version: 0.11.0(typescript@5.9.2)
       discord.js:
         specifier: ^14.16.3
         version: 14.22.1
@@ -685,8 +685,8 @@ packages:
   '@opencode-ai/plugin@0.6.3':
     resolution: {integrity: sha512-33Qxon1z9gz8VRaiiWzFAr0zWzz6iTk8X2Kz1Qe25Yxk79pfen5Q8PX8DWAddRaW3FoDHGa3oxGQ4CG7DP4sVA==}
 
-  '@opencode-ai/sdk@0.6.3':
-    resolution: {integrity: sha512-U+vtNvlwFzNFJOiH4CcPyyRTdbY0cRBuP1EGM9AV16MTqObWNBFHnNSA6Nigx+FUmEXaO1vaN89E8aPGBaTqSQ==}
+  '@opencode-ai/sdk@0.11.0':
+    resolution: {integrity: sha512-9R4TbN7qF5VhgAWVP3e7VQJ/ubR0CDi3wlOI+0zQY1fCtdQYh4EWHmv5WRpHqYl1zZYkqWAy3wz0M4wy2hKTcw==}
 
   '@opentelemetry/api@1.9.0':
     resolution: {integrity: sha512-3giAOQvZiH5F9bMlMiv8+GSPMeqg0dbaeo58/0SlA9sxSqZhnUtxzX9/2FzyhS9sWQf5S0GJE0AKBrFqjpeYcg==}
@@ -2577,12 +2577,12 @@ snapshots:
 
   '@opencode-ai/plugin@0.6.3(typescript@5.9.2)':
     dependencies:
-      '@opencode-ai/sdk': 0.6.3(typescript@5.9.2)
+      '@opencode-ai/sdk': 0.11.0(typescript@5.9.2)
     transitivePeerDependencies:
       - magicast
       - typescript
 
-  '@opencode-ai/sdk@0.6.3(typescript@5.9.2)':
+  '@opencode-ai/sdk@0.11.0(typescript@5.9.2)':
     dependencies:
       '@hey-api/openapi-ts': 0.81.0(typescript@5.9.2)
     transitivePeerDependencies:

@@ -125,7 +125,9 @@ function formatPart(part: Part): string {
         return dedent`
         🔧 ${part.tool}
 
-
+        \`\`\`
+        ${truncated}
+        \`\`\`
         `
       }
       return ''
@@ -230,6 +232,7 @@ async function handleOpencodeSession(
       let assistantMessageId: string | undefined
 
       for await (const event of events) {
+        console.log(event.type)
         if (event.type === 'message.updated') {
           const msgEvent = event as EventMessageUpdated
           const msg = msgEvent.properties.info
@@ -249,14 +252,12 @@ async function handleOpencodeSession(
               })
 
               currentParts = message.data?.parts || []
-              console.log(currentParts)
               await updateMessage()
               break
             }
           }
         } else if (event.type === 'message.part.updated') {
-          const partEvent = event as EventMessagePartUpdated
-          const part = partEvent.properties.part
+          const part = event.properties.part
 
           if (part.sessionID !== session.id) {
             console.log(`ignoring different session part`, part)
@@ -280,6 +281,7 @@ async function handleOpencodeSession(
 
           // Only update when parts complete (not on every streaming update)
           if (part.type === 'tool' && part.state?.status === 'completed') {
+            console.log(part.tool)
             if (!currentMessage) {
               const initialContent = formatPart(part)
               if (initialContent) {
@@ -305,10 +307,10 @@ async function handleOpencodeSession(
             }
           }
         } else if (event.type === 'session.error') {
-          const errorEvent = event as EventSessionError
-          console.error('session error')
-          if (errorEvent.properties.sessionID === session.id) {
-            const errorData = errorEvent.properties.error
+
+          console.error('session error', event.properties)
+          if (event.properties.sessionID === session.id) {
+            const errorData = event.properties.error
             const errorMessage = errorData?.data?.message || 'Unknown error'
             await thread.send(`❌ Error: ${errorMessage}`)
           }
