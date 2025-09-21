@@ -350,7 +350,7 @@ async function handleOpencodeSession(
 
   const sendPartMessage = async (part: Part) => {
     const content = formatPart(part) + '\n\n'
-    if (!content || content.length === 0) {
+    if (!content.trim() || content.length === 0) {
       console.log(`[SEND SKIP] Part ${part.id} has no content`)
       return
     }
