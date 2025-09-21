@@ -6,6 +6,7 @@ import {
   Events,
   GatewayIntentBits,
   Partials,
+  PermissionsBitField,
   ThreadAutoArchiveDuration,
   type Message,
   type ThreadChannel,
@@ -22,6 +23,7 @@ import {
 import dedent from 'string-dedent'
 import { Database } from 'bun:sqlite'
 import { extractTagsArrays } from './xml'
+import { transcribeAudio } from './voice'
 import { $ } from 'bun'
 import { Lexer } from 'marked'
 
@@ -186,6 +188,63 @@ async function waitForServer(port: number, maxAttempts = 30): Promise<boolean> {
   throw new Error(
     `Server did not start on port ${port} after ${maxAttempts} seconds`,
   )
+}
+
+async function processVoiceAttachment(
+  message: Message,
+  thread: ThreadChannel,
+): Promise<string | null> {
+  const audioAttachment = Array.from(message.attachments.values()).find(
+    (attachment) => attachment.contentType?.startsWith('audio/'),
+  )
+
+  if (!audioAttachment) return null
+
+  console.log(
+    `[VOICE MESSAGE] Detected audio attachment: ${audioAttachment.name} (${audioAttachment.contentType})`,
+  )
+
+  try {
+    await message.react('⏳')
+    await sendThreadMessage(thread, '🎤 Transcribing voice message...')
+
+    const audioResponse = await fetch(audioAttachment.url)
+    const audioBuffer = Buffer.from(await audioResponse.arrayBuffer())
+
+    console.log(
+      `[VOICE MESSAGE] Downloaded ${audioBuffer.length} bytes, transcribing...`,
+    )
+
+    const transcription = await transcribeAudio({
+      audio: audioBuffer,
+      prompt: 'Discord voice message transcription',
+    })
+
+    console.log(
+      `[VOICE MESSAGE] Transcription successful: "${transcription.slice(0, 50)}${transcription.length > 50 ? '...' : ''}"`,
+    )
+
+    await sendThreadMessage(
+      thread,
+      `📝 **Transcribed message:** ${transcription}`,
+    )
+    return transcription
+  } catch (error) {
+    console.error(`[VOICE MESSAGE] Failed to transcribe audio:`, error)
+    await sendThreadMessage(
+      thread,
+      `✗ Failed to transcribe voice message: ${error instanceof Error ? error.message : 'Unknown error'}`,
+    )
+
+    try {
+      await message.reactions.removeAll()
+      await message.react('❌')
+    } catch (e) {
+      console.log(`[REACTION] Could not update reaction:`, e)
+    }
+
+    throw error
+  }
 }
 
 async function initializeOpencodeForDirectory(
@@ -877,22 +936,37 @@ export async function startDiscordBot({ token }: StartOptions) {
         }
       }
 
-      console.log(
-        `[MESSAGE] From ${message.author?.tag} in channel ${message.channelId}: "${message.content?.slice(0, 50)}${message.content && message.content.length > 50 ? '...' : ''}"`,
-      )
+      // Check if user is authoritative (server owner or has admin permissions)
+      if (message.guild && message.member) {
+        const isOwner = message.member.id === message.guild.ownerId
+        const isAdmin = message.member.permissions.has(
+          PermissionsBitField.Flags.Administrator,
+        )
+
+        if (!isOwner && !isAdmin) {
+          console.log(
+            `[IGNORED] Non-authoritative user ${message.author.tag} (ID: ${message.author.id}) - not owner or admin`,
+          )
+          return
+        }
+
+        console.log(
+          `[AUTHORIZED] Message from ${message.author.tag} (Owner: ${isOwner}, Admin: ${isAdmin})`,
+        )
+      }
+
       const channel = message.channel
+      const isThread = [
+        ChannelType.PublicThread,
+        ChannelType.PrivateThread,
+        ChannelType.AnnouncementThread,
+      ].includes(channel.type)
 
-      // Handle threads - continue existing sessions
-      const isThreadChannel =
-        channel.type === ChannelType.PublicThread ||
-        channel.type === ChannelType.PrivateThread ||
-        channel.type === ChannelType.AnnouncementThread
-
-      if (isThreadChannel) {
+      // For existing threads, check if session exists
+      if (isThread) {
         const thread = channel as ThreadChannel
         console.log(`[THREAD] Message in thread ${thread.name} (${thread.id})`)
 
-        // Check if thread has an existing session in database
         const row = db
           .prepare('SELECT session_id FROM thread_sessions WHERE thread_id = ?')
           .get(thread.id) as { session_id: string } | undefined
@@ -906,49 +980,43 @@ export async function startDiscordBot({ token }: StartOptions) {
           `[SESSION] Found session ${row.session_id} for thread ${thread.id}`,
         )
 
-        // Get the project directory from the parent channel
-        let projectDirectory: string | undefined
+        // Get project directory from parent channel
         const parent = thread.parent as TextChannel | null
-        const description = parent?.topic
+        const projectDirectory = parent?.topic
+          ? extractTagsArrays({
+              xml: parent.topic,
+              tags: ['kimaki.directory'],
+            })['kimaki.directory']?.[0]?.trim()
+          : undefined
 
-        if (description) {
-          console.log(
-            `[PARENT] Parent channel has description: "${description.slice(0, 100)}${description.length > 100 ? '...' : ''}"`,
+        if (projectDirectory && !fs.existsSync(projectDirectory)) {
+          console.log(`[ERROR] Directory does not exist: ${projectDirectory}`)
+          await sendThreadMessage(
+            thread,
+            `✗ Directory does not exist: ${JSON.stringify(projectDirectory)}`,
           )
-          const dir = extractTagsArrays({
-            xml: description,
-            tags: ['kimaki.directory'],
-          })['kimaki.directory']?.[0]?.trim()
-          if (dir) {
-            console.log(`[DIRECTORY] Extracted directory: ${dir}`)
-            if (!fs.existsSync(dir)) {
-              console.log(`[ERROR] Directory does not exist: ${dir}`)
-              await sendThreadMessage(
-                thread,
-                `✗ Directory does not exist: ${JSON.stringify(dir)}`,
-              )
-              return
-            }
-            projectDirectory = dir
-            console.log(`[DIRECTORY] Using project directory: ${dir}`)
-          } else {
-            console.log(
-              `[WARNING] No kimaki.directory tag found in parent channel description`,
-            )
+          return
+        }
+
+        // Handle voice message if present
+        let messageContent = message.content || ''
+        try {
+          const transcription = await processVoiceAttachment(message, thread)
+          if (transcription) {
+            messageContent = transcription
           }
-        } else {
-          console.log(`[WARNING] Parent channel has no description`)
+        } catch (error) {
+          return // Error already handled in processVoiceAttachment
         }
 
         try {
           await handleOpencodeSession(
-            message.content || '',
+            messageContent,
             thread,
             projectDirectory,
             message,
           )
         } catch (error) {
-          // Only re-throw if not an abort error
           if (!(error instanceof Error && error.name === 'AbortError')) {
             throw error
           }
@@ -956,33 +1024,24 @@ export async function startDiscordBot({ token }: StartOptions) {
         return
       }
 
-      // Handle text channels - check for kimaki tags to start new sessions
+      // For text channels, start new sessions with kimaki.directory tag
       if (channel.type === ChannelType.GuildText) {
         const textChannel = channel as TextChannel
         console.log(
           `[GUILD_TEXT] Message in text channel #${textChannel.name} (${textChannel.id})`,
         )
 
-        const description = textChannel.topic
-
-        if (!description) {
+        if (!textChannel.topic) {
           console.log(
             `[IGNORED] Channel #${textChannel.name} has no description`,
           )
           return
         }
 
-        console.log(
-          `[DESCRIPTION] Channel has description: "${description.slice(0, 100)}${description.length > 100 ? '...' : ''}"`,
-        )
-
-        // Extract kimaki tags from channel description
-        const extracted = extractTagsArrays({
-          xml: description,
+        const projectDirectory = extractTagsArrays({
+          xml: textChannel.topic,
           tags: ['kimaki.directory'],
-        })
-
-        const projectDirectory = extracted['kimaki.directory']?.[0]?.trim()
+        })['kimaki.directory']?.[0]?.trim()
 
         if (!projectDirectory) {
           console.log(
@@ -993,7 +1052,6 @@ export async function startDiscordBot({ token }: StartOptions) {
 
         console.log(`[DIRECTORY] Found kimaki.directory: ${projectDirectory}`)
 
-        // Check if directory exists
         if (!fs.existsSync(projectDirectory)) {
           console.log(`[ERROR] Directory does not exist: ${projectDirectory}`)
           await message.reply(
@@ -1002,30 +1060,43 @@ export async function startDiscordBot({ token }: StartOptions) {
           return
         }
 
-        console.log(`[DIRECTORY] Directory exists, creating thread`)
+        // Determine if this is a voice message
+        const hasVoice = message.attachments.some((a) =>
+          a.contentType?.startsWith('audio/'),
+        )
 
-        // Start a new thread for this conversation
-        const baseName = message.content.replace(/\s+/g, ' ').trim()
-        const name = (baseName || 'Claude Thread').slice(0, 80)
+        // Create thread
+        const threadName = hasVoice
+          ? 'Voice Message'
+          : message.content?.replace(/\s+/g, ' ').trim() || 'Claude Thread'
 
         const thread = await message.startThread({
-          name: name.length > 0 ? name : 'Claude Thread',
+          name: threadName.slice(0, 80),
           autoArchiveDuration: ThreadAutoArchiveDuration.OneDay,
           reason: 'Start Claude session',
         })
 
         console.log(`[THREAD] Created thread "${thread.name}" (${thread.id})`)
 
+        // Handle voice message if present
+        let messageContent = message.content || ''
+        try {
+          const transcription = await processVoiceAttachment(message, thread)
+          if (transcription) {
+            messageContent = transcription
+          }
+        } catch (error) {
+          return // Error already handled in processVoiceAttachment
+        }
+
         await handleOpencodeSession(
-          message.content || '',
+          messageContent,
           thread,
           projectDirectory,
           message,
         )
       } else {
-        console.log(
-          `[IGNORED] Channel type ${channel.type} is not supported (not GuildText or Thread)`,
-        )
+        console.log(`[IGNORED] Channel type ${channel.type} is not supported`)
       }
     } catch (error) {
       console.error('Discord handler error:', error)

@@ -1,5 +1,19 @@
 # Changelog
 
+## 2025-01-25 01:00
+
+- Refactor message handling to eliminate duplicate code between threads and channels
+- Extract voice transcription logic into `processVoiceAttachment` helper function
+- Simplify project directory extraction and validation
+- Remove unnecessary conditional branches and streamline control flow
+
+## 2025-01-25 00:30
+
+- Add voice message handling to Discord bot
+- Transcribe audio attachments using OpenAI Whisper before processing
+- Transform voice messages to text and reuse existing text message handler
+- Support all audio/* content types from Discord attachments
+
 ## 2025-01-25 00:15
 
 - Update todowrite rendering to use unicode characters (□ ◈ ☑ ☒) instead of text symbols
