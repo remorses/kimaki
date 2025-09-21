@@ -190,10 +190,15 @@ async function waitForServer(port: number, maxAttempts = 30): Promise<boolean> {
   )
 }
 
-async function processVoiceAttachment(
-  message: Message,
-  thread: ThreadChannel,
-): Promise<string | null> {
+async function processVoiceAttachment({
+  message,
+  thread,
+  projectDirectory,
+}: {
+  message: Message
+  thread: ThreadChannel
+  projectDirectory?: string
+}): Promise<string | null> {
   const audioAttachment = Array.from(message.attachments.values()).find(
     (attachment) => attachment.contentType?.startsWith('audio/'),
   )
@@ -215,9 +220,27 @@ async function processVoiceAttachment(
       `[VOICE MESSAGE] Downloaded ${audioBuffer.length} bytes, transcribing...`,
     )
 
+    // Get project file tree for context if directory is provided
+    let transcriptionPrompt = 'Discord voice message transcription'
+    
+    if (projectDirectory) {
+      try {
+        console.log(`[VOICE MESSAGE] Getting project file tree from ${projectDirectory}`)
+        // Use git ls-files to get tracked files, then pipe to tree
+        const result = await $`cd ${projectDirectory} && git ls-files | tree --fromfile -a`.text()
+        
+        if (result) {
+          transcriptionPrompt = `Discord voice message transcription. Project file structure:\n${result}\n\nPlease transcribe file names and paths accurately based on this context.`
+          console.log(`[VOICE MESSAGE] Added project context to transcription prompt`)
+        }
+      } catch (e) {
+        console.log(`[VOICE MESSAGE] Could not get project tree:`, e)
+      }
+    }
+
     const transcription = await transcribeAudio({
       audio: audioBuffer,
-      prompt: 'Discord voice message transcription',
+      prompt: transcriptionPrompt,
     })
 
     console.log(
@@ -1015,7 +1038,11 @@ export async function startDiscordBot({ token }: StartOptions) {
         // Handle voice message if present
         let messageContent = message.content || ''
         try {
-          const transcription = await processVoiceAttachment(message, thread)
+          const transcription = await processVoiceAttachment({
+            message,
+            thread,
+            projectDirectory,
+          })
           if (transcription) {
             messageContent = transcription
           }
@@ -1095,7 +1122,11 @@ export async function startDiscordBot({ token }: StartOptions) {
         // Handle voice message if present
         let messageContent = message.content || ''
         try {
-          const transcription = await processVoiceAttachment(message, thread)
+          const transcription = await processVoiceAttachment({
+            message,
+            thread,
+            projectDirectory,
+          })
           if (transcription) {
             messageContent = transcription
           }

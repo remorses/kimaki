@@ -1,5 +1,12 @@
 # Changelog
 
+## 2025-01-25 01:15
+
+- Convert `processVoiceAttachment` to use object arguments for better API design
+- Add project file tree context to voice transcription prompts using `git ls-files | tree --fromfile`
+- Include file structure in transcription prompt to improve accuracy for file name references
+- Add 2-second timeout for thread name updates to handle rate limiting gracefully
+
 ## 2025-01-25 01:00
 
 - Refactor message handling to eliminate duplicate code between threads and channels
