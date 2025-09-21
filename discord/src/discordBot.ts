@@ -1,3 +1,4 @@
+import path from 'node:path'
 import {
   ChannelType,
   Client,
@@ -14,10 +15,6 @@ import {
   createOpencodeClient,
   type OpencodeClient,
   type Part,
-  type Event,
-  type EventMessagePartUpdated,
-  type EventMessageUpdated,
-  type EventSessionError,
 } from '@opencode-ai/sdk'
 import dedent from 'string-dedent'
 
@@ -119,6 +116,7 @@ function formatPart(part: Part): string {
       if (part.state.status === 'completed' || part.state.status === 'error') {
         // console.log(part)
         // Escape triple backticks so Discord does not break code blocks
+        let language = ''
         let outputToDisplay = ''
         if (part.tool === 'bash') {
           outputToDisplay =
@@ -129,9 +127,39 @@ function formatPart(part: Part): string {
         }
         if (part.tool === 'edit') {
           outputToDisplay = (part.state.input?.newString as string) || ''
+          language = path.extname((part.state.input.filePath as string) || '')
+        }
+        if (part.tool === 'todowrite') {
+          const todos =
+            (part.state.input?.todos as {
+              content: string
+              status: 'pending' | 'in_progress' | 'completed' | 'cancelled'
+            }[]) || []
+          outputToDisplay = todos
+            .map((todo) => {
+              let statusIcon = '[ ]'
+              switch (todo.status) {
+                case 'pending':
+                  statusIcon = '[ ]'
+                  break
+                case 'in_progress':
+                  statusIcon = '[~]'
+                  break
+                case 'completed':
+                  statusIcon = '[x]'
+                  break
+                case 'cancelled':
+                  statusIcon = '[!]'
+                  break
+              }
+              return `${statusIcon} ${todo.content}`
+            })
+            .join('\n')
+          language = ''
         }
         if (part.tool === 'write') {
           outputToDisplay = (part.state.input?.content as string) || ''
+          language = path.extname((part.state.input.filePath as string) || '')
         }
         outputToDisplay =
           outputToDisplay.length > 500
@@ -141,14 +169,19 @@ function formatPart(part: Part): string {
 
         const toolTitle =
           part.state.status === 'completed' ? part.state.title || '' : 'error'
-        const icon = part.state.status === 'completed' ? '🛠️' : '❌'
+        const icon =
+          part.state.status === 'completed'
+            ? '◼︎'
+            : part.state.status === 'error'
+              ? '✖️'
+              : ''
         const title = `${icon} ${part.tool} ${toolTitle}`
 
         let text = title
 
         if (outputToDisplay) {
           text += dedent`
-          \`\`\`
+          \`\`\`${language}
           ${outputToDisplay}
           \`\`\`
           `
@@ -210,21 +243,21 @@ async function handleOpencodeSession(
   let updateTimeouts = new Map<string, NodeJS.Timeout>()
 
   const updatePartMessage = async (part: Part) => {
-    const content = formatPart(part)
+    const content = formatPart(part) + '\n\n'
     if (!content || content.length === 0) return
 
     const existingMessage = partIdToMessage.get(part.id)
 
     if (existingMessage) {
       try {
-        await existingMessage.edit(content.slice(0, 2000))
+        await existingMessage.edit(content.slice(0, 6000))
         lastUpdateTime = Date.now()
       } catch (error) {
         console.error('Failed to update message:', error)
       }
     } else {
       try {
-        const newMessage = await thread.send(content.slice(0, 2000))
+        const newMessage = await thread.send(content.slice(0, 6000))
         partIdToMessage.set(part.id, newMessage)
         lastUpdateTime = Date.now()
       } catch (error) {
@@ -330,7 +363,6 @@ async function handleOpencodeSession(
         parts: [{ type: 'text', text: prompt }],
       },
     })
-    await thread.send(`finished`)
 
     return { sessionID: session.id, result: response.data }
   } catch (error) {
