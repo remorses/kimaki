@@ -11,16 +11,19 @@
     "test:send": "tsx send-test-message.ts"
   },
   "devDependencies": {
+    "@opencode-ai/sdk": "^0.11.0",
     "@types/bun": "latest",
     "@types/ms": "^2.1.0",
-    "@types/node": "^24.3.0"
+    "@types/node": "^24.3.0",
+    "tsx": "^4.20.5"
   },
   "peerDependencies": {
     "typescript": "^5"
   },
   "dependencies": {
-    "@opencode-ai/sdk": "^0.10.3",
     "discord.js": "^14.16.3",
+    "domhandler": "^5.0.3",
+    "htmlparser2": "^10.0.0",
     "string-dedent": "^3.0.2",
     "zod": "^4.0.17"
   }

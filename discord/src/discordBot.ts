@@ -8,6 +8,8 @@ import {
   ThreadAutoArchiveDuration,
   type Message,
   type ThreadChannel,
+  type Guild,
+  type TextChannel,
 } from 'discord.js'
 import { spawn, type ChildProcess } from 'node:child_process'
 import net from 'node:net'
@@ -18,6 +20,7 @@ import {
 } from '@opencode-ai/sdk'
 import dedent from 'string-dedent'
 import { Database } from 'bun:sqlite'
+import { extractTagsArrays } from './xml'
 
 type StartOptions = {
   token: string
@@ -278,51 +281,23 @@ async function handleOpencodeSession(
   }
 
   let currentParts: Part[] = []
-  let lastUpdateTime = 0
-  let updateTimeouts = new Map<string, NodeJS.Timeout>()
 
-  const updatePartMessage = async (part: Part) => {
+  const sendPartMessage = async (part: Part) => {
     const content = formatPart(part) + '\n\n'
     if (!content || content.length === 0) return
 
-    const existingMessage = partIdToMessage.get(part.id)
+    // Skip if already sent
+    if (partIdToMessage.has(part.id)) return
 
-    if (existingMessage) {
-      try {
-        await existingMessage.edit(content.slice(0, 6000))
-        lastUpdateTime = Date.now()
-      } catch (error) {
-        console.error('Failed to update message:', error)
-      }
-    } else {
-      try {
-        const newMessage = await thread.send(content.slice(0, 6000))
-        partIdToMessage.set(part.id, newMessage)
-        
-        // Store part-message mapping in database
-        db.prepare('INSERT OR REPLACE INTO part_messages (part_id, message_id, thread_id) VALUES (?, ?, ?)').run(part.id, newMessage.id, thread.id)
-        
-        lastUpdateTime = Date.now()
-      } catch (error) {
-        console.error('Failed to send message:', error)
-      }
+    try {
+      const newMessage = await thread.send(content.slice(0, 6000))
+      partIdToMessage.set(part.id, newMessage)
+      
+      // Store part-message mapping in database
+      db.prepare('INSERT OR REPLACE INTO part_messages (part_id, message_id, thread_id) VALUES (?, ?, ?)').run(part.id, newMessage.id, thread.id)
+    } catch (error) {
+      console.error('Failed to send message:', error)
     }
-  }
-
-  const schedulePartUpdate = (part: Part) => {
-    // Clear existing timeout for this part
-    const existingTimeout = updateTimeouts.get(part.id)
-    if (existingTimeout) {
-      clearTimeout(existingTimeout)
-    }
-
-    // Schedule update with delay
-    const timeout = setTimeout(async () => {
-      updateTimeouts.delete(part.id)
-      await updatePartMessage(part)
-    }, 300)
-
-    updateTimeouts.set(part.id, timeout)
   }
 
   const eventHandler = (async () => {
@@ -370,12 +345,16 @@ async function handleOpencodeSession(
             `Part update: id=${part.id}, type=${part.type}, text=${'text' in part && typeof part.text === 'string' ? part.text.slice(0, 50) : ''}`,
           )
 
-          // Update messages for different part types
-          if (part.type === 'tool' && part.state?.status === 'completed') {
-            console.log(part.tool)
-            await updatePartMessage(part)
-          } else if (part.type === 'text' || part.type === 'reasoning') {
-            schedulePartUpdate(part)
+          // Check if this is a step-finish part
+          if (part.type === 'step-finish') {
+            // Send all parts accumulated so far to Discord
+            console.log('Step finished, sending parts to Discord')
+            for (const p of currentParts) {
+              // Skip step-start and step-finish parts as they have no visual content
+              if (p.type !== 'step-start' && p.type !== 'step-finish') {
+                await sendPartMessage(p)
+              }
+            }
           }
         } else if (event.type === 'session.error') {
           console.error('session error', event.properties)
@@ -392,17 +371,13 @@ async function handleOpencodeSession(
       console.error(`unexpected error in event handling code`, e)
       throw e
     } finally {
-      // Clear any remaining timeouts
-      for (const timeout of updateTimeouts.values()) {
-        clearTimeout(timeout)
-      }
-      // Don't update parts that already have messages
+      // Send any remaining parts that weren't sent
       for (const part of currentParts) {
         if (!partIdToMessage.has(part.id)) {
           console.log(
             `Final update for part without message: id=${part.id}, type=${part.type}`,
           )
-          await updatePartMessage(part)
+          await sendPartMessage(part)
         }
       }
     }
@@ -423,6 +398,59 @@ async function handleOpencodeSession(
     )
     throw error
   }
+}
+
+export type ChannelWithTags = {
+  id: string
+  name: string
+  description: string | null
+  kimakiRepoUrl?: string
+  kimakiBranch?: string
+  otherTags: Record<string, string[]>
+}
+
+export async function getChannelsWithDescriptions(guild: Guild): Promise<ChannelWithTags[]> {
+  const channels: ChannelWithTags[] = []
+  
+  guild.channels.cache
+    .filter((channel) => channel.isTextBased())
+    .forEach((channel) => {
+      const textChannel = channel as TextChannel
+      const description = textChannel.topic || null
+      
+      let kimakiRepoUrl: string | undefined
+      let kimakiBranch: string | undefined
+      let otherTags: Record<string, string[]> = {}
+      
+      if (description) {
+        const extracted = extractTagsArrays({
+          xml: description,
+          tags: ['kimaki.repoUrl', 'kimaki.branch'],
+        })
+        
+        kimakiRepoUrl = extracted['kimaki.repoUrl']?.[0]
+        kimakiBranch = extracted['kimaki.branch']?.[0]
+        
+        // Store any other extracted tags
+        const extractedKeys = Object.keys(extracted) as (keyof typeof extracted)[]
+        extractedKeys.forEach((key) => {
+          if (key !== 'kimaki.repoUrl' && key !== 'kimaki.branch' && key !== 'others') {
+            otherTags[key] = extracted[key]
+          }
+        })
+      }
+      
+      channels.push({
+        id: textChannel.id,
+        name: textChannel.name,
+        description,
+        kimakiRepoUrl,
+        kimakiBranch,
+        otherTags,
+      })
+    })
+  
+  return channels
 }
 
 export async function startDiscordBot({ token, channelId }: StartOptions) {
