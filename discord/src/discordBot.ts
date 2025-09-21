@@ -17,6 +17,7 @@ import {
   type Part,
 } from '@opencode-ai/sdk'
 import dedent from 'string-dedent'
+import { Database } from 'bun:sqlite'
 
 type StartOptions = {
   token: string
@@ -25,6 +26,26 @@ type StartOptions = {
 
 let serverProcess: ChildProcess | null = null
 let client: OpencodeClient | null = null
+
+const db = new Database(':memory:')
+
+// Initialize tables
+db.exec(`
+  CREATE TABLE IF NOT EXISTS thread_sessions (
+    thread_id TEXT PRIMARY KEY,
+    session_id TEXT NOT NULL,
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+  )
+`)
+
+db.exec(`
+  CREATE TABLE IF NOT EXISTS part_messages (
+    part_id TEXT PRIMARY KEY,
+    message_id TEXT NOT NULL,
+    thread_id TEXT NOT NULL,
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+  )
+`)
 
 async function getOpenPort(): Promise<number> {
   return new Promise((resolve, reject) => {
@@ -204,11 +225,12 @@ function formatPart(part: Part): string {
 async function handleOpencodeSession(
   prompt: string,
   thread: ThreadChannel,
-  threadToSession: Map<string, string>,
 ) {
   const client = await initializeOpencode()
 
-  let sessionId = threadToSession.get(thread.id)
+  // Get session ID from database
+  const row = db.prepare('SELECT session_id FROM thread_sessions WHERE thread_id = ?').get(thread.id) as { session_id: string } | undefined
+  let sessionId = row?.session_id
   let session
 
   if (sessionId) {
@@ -233,12 +255,28 @@ async function handleOpencodeSession(
     throw new Error('Failed to create or get session')
   }
 
-  threadToSession.set(thread.id, session.id)
+  // Store session ID in database
+  db.prepare('INSERT OR REPLACE INTO thread_sessions (thread_id, session_id) VALUES (?, ?)').run(thread.id, session.id)
 
   const eventsResult = await client.event.subscribe()
   const events = eventsResult.stream
 
+  // Load existing part-message mappings from database
   const partIdToMessage = new Map<string, Message>()
+  const existingParts = db.prepare('SELECT part_id, message_id FROM part_messages WHERE thread_id = ?').all(thread.id) as { part_id: string, message_id: string }[]
+  
+  // Pre-populate map with existing messages
+  for (const row of existingParts) {
+    try {
+      const message = await thread.messages.fetch(row.message_id)
+      if (message) {
+        partIdToMessage.set(row.part_id, message)
+      }
+    } catch (error) {
+      console.log(`Could not fetch message ${row.message_id} for part ${row.part_id}`)
+    }
+  }
+
   let currentParts: Part[] = []
   let lastUpdateTime = 0
   let updateTimeouts = new Map<string, NodeJS.Timeout>()
@@ -260,6 +298,10 @@ async function handleOpencodeSession(
       try {
         const newMessage = await thread.send(content.slice(0, 6000))
         partIdToMessage.set(part.id, newMessage)
+        
+        // Store part-message mapping in database
+        db.prepare('INSERT OR REPLACE INTO part_messages (part_id, message_id, thread_id) VALUES (?, ?, ?)').run(part.id, newMessage.id, thread.id)
+        
         lastUpdateTime = Date.now()
       } catch (error) {
         console.error('Failed to send message:', error)
@@ -398,8 +440,6 @@ export async function startDiscordBot({ token, channelId }: StartOptions) {
     ],
   })
 
-  const threadToSession = new Map<string, string>()
-
   discordClient.once(Events.ClientReady, (c) => {
     console.log(`Discord bot logged in as ${c.user.tag}`)
   })
@@ -429,7 +469,6 @@ export async function startDiscordBot({ token, channelId }: StartOptions) {
         await handleOpencodeSession(
           message.content || '',
           thread,
-          threadToSession,
         )
         return
       }
@@ -442,14 +481,14 @@ export async function startDiscordBot({ token, channelId }: StartOptions) {
 
       if (isThreadChannel) {
         const thread = channel as ThreadChannel
-        const existing = threadToSession.get(thread.id)
-        if (!existing) return
+        // Check if thread has an existing session in database
+        const row = db.prepare('SELECT session_id FROM thread_sessions WHERE thread_id = ?').get(thread.id) as { session_id: string } | undefined
+        if (!row) return
 
         const thinkingMessage = await thread.send('Thinking…')
         await handleOpencodeSession(
           message.content || '',
           thread,
-          threadToSession,
         )
         await thinkingMessage.delete()
       }
@@ -470,6 +509,7 @@ export async function startDiscordBot({ token, channelId }: StartOptions) {
     if (serverProcess && !serverProcess.killed) {
       serverProcess.kill('SIGTERM')
     }
+    db.close()
     discordClient.destroy()
     process.exit(0)
   })
@@ -478,6 +518,7 @@ export async function startDiscordBot({ token, channelId }: StartOptions) {
     if (serverProcess && !serverProcess.killed) {
       serverProcess.kill('SIGTERM')
     }
+    db.close()
     discordClient.destroy()
     process.exit(0)
   })
