@@ -29,7 +29,6 @@ type StartOptions = {
   token: string
 }
 
-const THINKING_MESSAGE = 'thinking…'
 const EMPTY_MESSAGE = '\u200B'
 
 // Map of project directory to OpenCode server process and client
@@ -279,19 +278,19 @@ function formatPart(part: Part): string {
             }[]) || []
           outputToDisplay = todos
             .map((todo) => {
-              let statusIcon = '[ ]'
+              let statusIcon = '□'
               switch (todo.status) {
                 case 'pending':
-                  statusIcon = '[ ]'
+                  statusIcon = '□'
                   break
                 case 'in_progress':
-                  statusIcon = '[~]'
+                  statusIcon = '◈'
                   break
                 case 'completed':
-                  statusIcon = '[x]'
+                  statusIcon = '☑'
                   break
                 case 'cancelled':
-                  statusIcon = '[!]'
+                  statusIcon = '☒'
                   break
               }
               return `${statusIcon} ${todo.content}`
@@ -323,11 +322,16 @@ function formatPart(part: Part): string {
         let text = title
 
         if (outputToDisplay) {
-          text += dedent`
-          \`\`\`${language}
-          ${outputToDisplay}
-          \`\`\`
-          `
+          // Don't wrap todowrite output in code blocks
+          if (part.tool === 'todowrite') {
+            text += '\n' + outputToDisplay
+          } else {
+            text += dedent`
+            \`\`\`${language}
+            ${outputToDisplay}
+            \`\`\`
+            `
+          }
         }
         return text
       }
@@ -347,7 +351,6 @@ async function handleOpencodeSession(
   prompt: string,
   thread: ThreadChannel,
   projectDirectory?: string,
-  initialThinkingMessage?: Message,
   originalMessage?: Message,
 ) {
   console.log(
@@ -369,9 +372,6 @@ async function handleOpencodeSession(
   console.log(`[OPENCODE SESSION] Using directory: ${directory}`)
 
   // Note: We'll cancel the existing request after we have the session ID
-
-  // Track the current thinking message
-  let thinkingMessage = initialThinkingMessage
 
   const client = await initializeOpencodeForDirectory(directory)
 
@@ -458,6 +458,7 @@ async function handleOpencodeSession(
   }
 
   let currentParts: Part[] = []
+  let stopTyping: (() => void) | null = null
 
   const sendPartMessage = async (part: Part) => {
     const content = formatPart(part) + '\n\n'
@@ -475,17 +476,6 @@ async function handleOpencodeSession(
     }
 
     try {
-      // Edit the current thinking message to empty before sending the part
-      if (thinkingMessage) {
-        try {
-          await thinkingMessage.edit(EMPTY_MESSAGE)
-          console.log(`[THINKING] Edited thinking message to empty before sending part`)
-        } catch (e) {
-          console.log(`[THINKING] Could not edit thinking message:`, e)
-        }
-        thinkingMessage = undefined
-      }
-
       console.log(
         `[SEND] Sending part ${part.id} (type: ${part.type}) to Discord, content length: ${content.length}`,
       )
@@ -498,20 +488,35 @@ async function handleOpencodeSession(
       db.prepare(
         'INSERT OR REPLACE INTO part_messages (part_id, message_id, thread_id) VALUES (?, ?, ?)',
       ).run(part.id, firstMessage.id, thread.id)
-
-      // Add thinking message back after sending the part
-      try {
-        thinkingMessage = await thread.send(THINKING_MESSAGE)
-        console.log(`[THINKING] Added thinking message after part`)
-      } catch (e) {
-        console.log(`[THINKING] Could not add thinking message:`, e)
-      }
     } catch (error) {
       console.error(`[SEND ERROR] Failed to send part ${part.id}:`, error)
     }
   }
 
   const eventHandler = async () => {
+    // Local typing function for this session
+    function startTyping(thread: ThreadChannel): () => void {
+      console.log(`[TYPING] Starting typing for thread ${thread.id}`)
+
+      // Send initial typing
+      thread.sendTyping().catch((e) => {
+        console.log(`[TYPING] Failed to send initial typing: ${e}`)
+      })
+
+      // Set up interval to send typing every 9 seconds
+      const interval = setInterval(() => {
+        thread.sendTyping().catch((e) => {
+          console.log(`[TYPING] Failed to send periodic typing: ${e}`)
+        })
+      }, 8000)
+
+      // Return stop function
+      return () => {
+        clearInterval(interval)
+        console.log(`[TYPING] Stopped typing for thread ${thread.id}`)
+      }
+    }
+
     try {
       let assistantMessageId: string | undefined
 
@@ -566,6 +571,11 @@ async function handleOpencodeSession(
           console.log(
             `[PART] Update: id=${part.id}, type=${part.type}, text=${'text' in part && typeof part.text === 'string' ? part.text.slice(0, 50) : ''}`,
           )
+
+          // Start typing on step-start
+          if (part.type === 'step-start' && !stopTyping) {
+            stopTyping = startTyping(thread)
+          }
 
           // Check if this is a step-finish part
           if (part.type === 'step-finish') {
@@ -632,7 +642,11 @@ async function handleOpencodeSession(
           console.log(
             `[CLEANUP] Sending unsent part: id=${part.id}, type=${part.type}`,
           )
-          await sendPartMessage(part)
+          try {
+            await sendPartMessage(part)
+          } catch (error) {
+            console.log(`[CLEANUP] Failed to send part ${part.id} during cleanup:`, error)
+          }
         }
       }
       if (unsentCount === 0) {
@@ -641,14 +655,11 @@ async function handleOpencodeSession(
         console.log(`[CLEANUP] Sent ${unsentCount} previously unsent parts`)
       }
 
-      // Edit the final thinking message to empty
-      if (thinkingMessage) {
-        try {
-          await thinkingMessage.edit(EMPTY_MESSAGE)
-          console.log(`[THINKING] Edited final thinking message to empty`)
-        } catch (e) {
-          console.log(`[THINKING] Could not edit final thinking message:`, e)
-        }
+      // Stop typing when session ends
+      if (stopTyping) {
+        stopTyping()
+        stopTyping = null
+        console.log(`[CLEANUP] Stopped typing for session`)
       }
     }
   }
@@ -893,20 +904,14 @@ export async function startDiscordBot({ token }: StartOptions) {
           console.log(`[WARNING] Parent channel has no description`)
         }
 
-        const thinkingMessage = await thread.send(THINKING_MESSAGE)
         try {
           await handleOpencodeSession(
             message.content || '',
             thread,
             projectDirectory,
-            thinkingMessage,
             message,
           )
         } catch (error) {
-          // Edit thinking message to empty even on error
-          try {
-            await thinkingMessage.edit(EMPTY_MESSAGE)
-          } catch {}
           // Only re-throw if not an abort error
           if (!(error instanceof Error && error.name === 'AbortError')) {
             throw error
@@ -975,14 +980,10 @@ export async function startDiscordBot({ token }: StartOptions) {
 
         console.log(`[THREAD] Created thread "${thread.name}" (${thread.id})`)
 
-        // Send initial thinking message
-        const thinkingMessage = await thread.send(THINKING_MESSAGE)
-
         await handleOpencodeSession(
           message.content || '',
           thread,
           projectDirectory,
-          thinkingMessage,
           message,
         )
       } else {

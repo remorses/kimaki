@@ -145,6 +145,12 @@ importers:
 
   discord:
     dependencies:
+      '@ai-sdk/openai':
+        specifier: ^2.0.23
+        version: 2.0.23(zod@4.1.5)
+      ai:
+        specifier: ^5.0.29
+        version: 5.0.29(zod@4.1.5)
       discord.js:
         specifier: ^14.16.3
         version: 14.22.1
@@ -154,6 +160,9 @@ importers:
       htmlparser2:
         specifier: ^10.0.0
         version: 10.0.0
+      marked:
+        specifier: ^16.3.0
+        version: 16.3.0
       string-dedent:
         specifier: ^3.0.2
         version: 3.0.2
@@ -1526,6 +1535,11 @@ packages:
 
   magic-string@0.30.18:
     resolution: {integrity: sha512-yi8swmWbO17qHhwIBNeeZxTceJMeBvWJaId6dyvTSOwTipqeHhMhOrz6513r1sOKnpvQ7zkhlG8tPrpilwTxHQ==}
+
+  marked@16.3.0:
+    resolution: {integrity: sha512-K3UxuKu6l6bmA5FUwYho8CfJBlsUWAooKtdGgMcERSpF7gcBUrCGsLH7wDaaNOzwq18JzSUDyoEb/YsrqMac3w==}
+    engines: {node: '>= 20'}
+    hasBin: true
 
   merge2@1.4.1:
     resolution: {integrity: sha512-8q7VEgMJW4J8tcfVPy8g09NcQwZdbwFEqhe/WZkoIzjn/3TGDwtOCYtXGxA3O8tPzpczCCDgv+P2P5y00ZJOOg==}
@@ -3420,6 +3434,8 @@ snapshots:
   magic-string@0.30.18:
     dependencies:
       '@jridgewell/sourcemap-codec': 1.5.5
+
+  marked@16.3.0: {}
 
   merge2@1.4.1: {}
 
