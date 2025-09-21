@@ -116,25 +116,44 @@ function formatPart(part: Part): string {
     case 'reasoning':
       return `💭 ${part.text || ''}`
     case 'tool':
-      if (part.state.status === 'completed') {
-        const output = part.state.output || ''
+      if (part.state.status === 'completed' || part.state.status === 'error') {
         // console.log(part)
         // Escape triple backticks so Discord does not break code blocks
-        let outputToDisplay = output.replace(/```/g, '\\`\\`\\`')
-        const truncated =
+        let outputToDisplay = ''
+        if (part.tool === 'bash') {
+          outputToDisplay =
+            part.state.status === 'completed'
+              ? part.state.output
+              : part.state.error
+          outputToDisplay ||= ''
+        }
+        if (part.tool === 'edit') {
+          outputToDisplay = (part.state.input?.newString as string) || ''
+        }
+        if (part.tool === 'write') {
+          outputToDisplay = (part.state.input?.content as string) || ''
+        }
+        outputToDisplay =
           outputToDisplay.length > 500
             ? outputToDisplay.slice(0, 497) + `…`
             : outputToDisplay
-        let arg = ''
-        if (part.tool === 'bash') {
-        }
-        return dedent`
-        🔧 ${part.tool} ${part.state.title || ''}
+        outputToDisplay = outputToDisplay.replace(/```/g, '\\`\\`\\`')
 
-        \`\`\`
-        ${truncated}
-        \`\`\`
-        `
+        const toolTitle =
+          part.state.status === 'completed' ? part.state.title || '' : 'error'
+        const icon = part.state.status === 'completed' ? '🛠️' : '❌'
+        const title = `${icon} ${part.tool} ${toolTitle}`
+
+        let text = title
+
+        if (outputToDisplay) {
+          text += dedent`
+          \`\`\`
+          ${outputToDisplay}
+          \`\`\`
+          `
+        }
+        return text
       }
       return ''
     case 'file':
@@ -185,52 +204,50 @@ async function handleOpencodeSession(
   const eventsResult = await client.event.subscribe()
   const events = eventsResult.stream
 
-  let currentMessage: Message | undefined
+  const partIdToMessage = new Map<string, Message>()
   let currentParts: Part[] = []
   let lastUpdateTime = 0
-  let updateTimeout: NodeJS.Timeout | undefined
+  let updateTimeouts = new Map<string, NodeJS.Timeout>()
 
-  const updateMessage = async (currentParts: Part[]) => {
-    if (!currentMessage) {
-      console.log('not updating the message because there is no currentMessage')
-      return
-    }
-    if (currentParts.length === 0) {
-      console.log('not updating the message because there are no currentParts')
-      return
-    }
+  const updatePartMessage = async (part: Part) => {
+    const content = formatPart(part)
+    if (!content || content.length === 0) return
 
-    // Clear any pending update
-    if (updateTimeout) {
-      clearTimeout(updateTimeout)
-      updateTimeout = undefined
-    }
+    const existingMessage = partIdToMessage.get(part.id)
 
-    const content = currentParts
-      .map(formatPart)
-      .filter((text) => text.length > 0)
-      .join('\n\n')
-
-    if (content.length > 0) {
+    if (existingMessage) {
       try {
-        await currentMessage.edit(content.slice(0, 2000))
+        await existingMessage.edit(content.slice(0, 2000))
         lastUpdateTime = Date.now()
       } catch (error) {
         console.error('Failed to update message:', error)
       }
+    } else {
+      try {
+        const newMessage = await thread.send(content.slice(0, 2000))
+        partIdToMessage.set(part.id, newMessage)
+        lastUpdateTime = Date.now()
+      } catch (error) {
+        console.error('Failed to send message:', error)
+      }
     }
   }
 
-  const scheduleUpdate = () => {
-    if (updateTimeout) return // Already scheduled
+  const schedulePartUpdate = (part: Part) => {
+    const existingTimeout = updateTimeouts.get(part.id)
+    if (existingTimeout) {
+      clearTimeout(existingTimeout)
+    }
 
     const timeSinceLastUpdate = Date.now() - lastUpdateTime
-    const delay = Math.max(0, 300 - timeSinceLastUpdate) // Wait at least 500ms between updates
+    const delay = Math.max(0, 300 - timeSinceLastUpdate)
 
-    updateTimeout = setTimeout(() => {
-      updateTimeout = undefined
-      updateMessage(currentParts)
+    const timeout = setTimeout(() => {
+      updateTimeouts.delete(part.id)
+      updatePartMessage(part)
     }, delay)
+
+    updateTimeouts.set(part.id, timeout)
   }
 
   const eventHandler = (async () => {
@@ -274,32 +291,12 @@ async function handleOpencodeSession(
             currentParts.push(part)
           }
 
-          // Only update when parts complete (not on every streaming update)
+          // Update messages for different part types
           if (part.type === 'tool' && part.state?.status === 'completed') {
             console.log(part.tool)
-            if (!currentMessage) {
-              const initialContent = formatPart(part)
-              if (initialContent) {
-                currentMessage = await thread.send(
-                  initialContent.slice(0, 2000),
-                )
-                lastUpdateTime = Date.now()
-              }
-            } else {
-              scheduleUpdate()
-            }
+            await updatePartMessage(part)
           } else if (part.type === 'text' || part.type === 'reasoning') {
-            if (!currentMessage) {
-              const initialContent = formatPart(part)
-              if (initialContent) {
-                currentMessage = await thread.send(
-                  initialContent.slice(0, 2000),
-                )
-                lastUpdateTime = Date.now()
-              }
-            } else {
-              scheduleUpdate()
-            }
+            schedulePartUpdate(part)
           }
         } else if (event.type === 'session.error') {
           console.error('session error', event.properties)
@@ -316,8 +313,14 @@ async function handleOpencodeSession(
       console.error(`unexpected error in event handling code`, e)
       throw e
     } finally {
-      // Always do a final update when stream ends
-      await updateMessage(currentParts)
+      // Clear any remaining timeouts
+      for (const timeout of updateTimeouts.values()) {
+        clearTimeout(timeout)
+      }
+      // Update all remaining parts
+      for (const part of currentParts) {
+        await updatePartMessage(part)
+      }
     }
   })()
 
@@ -328,8 +331,6 @@ async function handleOpencodeSession(
         parts: [{ type: 'text', text: prompt }],
       },
     })
-    // const currentParts = response.data?.parts || []
-    await updateMessage(currentParts)
     await thread.send(`finished`)
 
     return { sessionID: session.id, result: response.data }
