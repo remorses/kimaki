@@ -352,6 +352,15 @@ async function handleOpencodeSession(
     `[OPENCODE SESSION] Starting for thread ${thread.id} with prompt: "${prompt.slice(0, 50)}${prompt.length > 50 ? '...' : ''}"`,
   )
 
+  // Add spinner emoji to thread name to indicate processing
+  const originalThreadName = thread.name
+  try {
+    await thread.setName(`🔄 ${originalThreadName}`)
+    console.log(`[THREAD] Added spinner emoji to thread name`)
+  } catch (e) {
+    console.log(`[THREAD] Could not add spinner emoji:`, e)
+  }
+
   // Use default directory if not specified
   const directory = projectDirectory || process.cwd()
   console.log(`[OPENCODE SESSION] Using directory: ${directory}`)
@@ -497,7 +506,7 @@ async function handleOpencodeSession(
     }
   }
 
-  const eventHandler = (async () => {
+  const eventHandler = async () => {
     try {
       let assistantMessageId: string | undefined
 
@@ -575,6 +584,14 @@ async function handleOpencodeSession(
               `[SESSION ERROR] Sending error to thread: ${errorMessage}`,
             )
             await sendThreadMessage(thread, `❌ Error: ${errorMessage}`)
+            
+            // Update thread name with error X
+            try {
+              await thread.setName(`❌ ${originalThreadName}`)
+              console.log(`[THREAD] Added error X to thread name due to session error`)
+            } catch (e) {
+              console.log(`[THREAD] Could not add error X:`, e)
+            }
           } else {
             console.log(
               `[SESSION ERROR IGNORED] Error for different session (expected: ${session.id}, got: ${event.properties.sessionID})`,
@@ -626,12 +643,16 @@ async function handleOpencodeSession(
         }
       }
     }
-  })()
+  }
 
   try {
     console.log(
       `[PROMPT] Sending prompt to session ${session.id}: "${prompt.slice(0, 100)}${prompt.length > 100 ? '...' : ''}"`,
     )
+    
+    // Start the event handler
+    const eventHandlerPromise = eventHandler()
+    
     const response = await client.session.prompt({
       path: { id: session.id },
       body: {
@@ -639,16 +660,36 @@ async function handleOpencodeSession(
       },
     })
     abortController.abort('finished')
+    
+    // Wait for event handler to complete
+    await eventHandlerPromise
 
     console.log(`[PROMPT] Successfully sent prompt, got response`)
     // Remove the controller after successful completion
     activeRequests.delete(directory)
+    
+    // Update thread name with success checkmark
+    try {
+      await thread.setName(`✅ ${originalThreadName}`)
+      console.log(`[THREAD] Added success checkmark to thread name`)
+    } catch (e) {
+      console.log(`[THREAD] Could not add success checkmark:`, e)
+    }
+    
     return { sessionID: session.id, result: response.data }
   } catch (error) {
     console.error(`[PROMPT ERROR] Failed to send prompt:`, error)
     // Remove the controller on error
     activeRequests.delete(directory)
-
+    
+    // Update thread name with error X
+    try {
+      await thread.setName(`❌ ${originalThreadName}`)
+      console.log(`[THREAD] Added error X to thread name`)
+    } catch (e) {
+      console.log(`[THREAD] Could not add error X:`, e)
+    }
+    
     // Only show error message if not aborted by a new request
     if (!(error instanceof Error && error.name === 'AbortError')) {
       await sendThreadMessage(
