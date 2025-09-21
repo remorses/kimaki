@@ -225,7 +225,7 @@ async function handleOpencodeSession(
     if (updateTimeout) return // Already scheduled
 
     const timeSinceLastUpdate = Date.now() - lastUpdateTime
-    const delay = Math.max(0, 500 - timeSinceLastUpdate) // Wait at least 500ms between updates
+    const delay = Math.max(0, 300 - timeSinceLastUpdate) // Wait at least 500ms between updates
 
     updateTimeout = setTimeout(() => {
       updateTimeout = undefined
@@ -250,16 +250,6 @@ async function handleOpencodeSession(
           // Track assistant message ID
           if (msg.role === 'assistant') {
             assistantMessageId = msg.id
-
-            if (msg.time?.completed) {
-              const message = await client.session.message({
-                path: { id: msg.sessionID, messageID: msg.id },
-              })
-
-              currentParts = message.data?.parts || []
-              await updateMessage(currentParts)
-              break
-            }
           }
         } else if (event.type === 'message.part.updated') {
           const part = event.properties.part
@@ -338,8 +328,9 @@ async function handleOpencodeSession(
         parts: [{ type: 'text', text: prompt }],
       },
     })
-    const currentParts = response.data?.parts || []
+    // const currentParts = response.data?.parts || []
     await updateMessage(currentParts)
+    await thread.send(`finished`)
 
     return { sessionID: session.id, result: response.data }
   } catch (error) {

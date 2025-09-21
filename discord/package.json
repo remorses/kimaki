@@ -4,7 +4,7 @@
   "type": "module",
   "private": true,
   "scripts": {
-    "dev": "bun run --watch index.ts",
+    "dev": "tsx --env-file=.env --watch index.ts",
     "test": "bun run scripts/test-opencode.ts",
     "watch": "bun run scripts/watch-session.ts",
     "test:events": "tsx test-events.ts",
