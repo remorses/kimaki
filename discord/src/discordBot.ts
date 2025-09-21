@@ -42,7 +42,7 @@ const opencodeServers = new Map<
   }
 >()
 
-// Map of project directory to current AbortController
+// Map of session ID to current AbortController
 const activeRequests = new Map<string, AbortController>()
 
 const db = new Database('discord-sessions.db')
@@ -368,12 +368,7 @@ async function handleOpencodeSession(
   const directory = projectDirectory || process.cwd()
   console.log(`[OPENCODE SESSION] Using directory: ${directory}`)
 
-  // Cancel any existing request for this directory
-  const existingController = activeRequests.get(directory)
-  if (existingController) {
-    console.log(`[ABORT] Cancelling existing request for directory: ${directory}`)
-    existingController.abort('New request started')
-  }
+  // Note: We'll cancel the existing request after we have the session ID
 
   // Track the current thinking message
   let thinkingMessage = initialThinkingMessage
@@ -423,9 +418,16 @@ async function handleOpencodeSession(
   ).run(thread.id, session.id)
   console.log(`[DATABASE] Stored session ${session.id} for thread ${thread.id}`)
 
+  // Cancel any existing request for this session
+  const existingController = activeRequests.get(session.id)
+  if (existingController) {
+    console.log(`[ABORT] Cancelling existing request for session: ${session.id}`)
+    existingController.abort('New request started')
+  }
+
   const abortController = new AbortController()
-  // Store this controller for this directory
-  activeRequests.set(directory, abortController)
+  // Store this controller for this session
+  activeRequests.set(session.id, abortController)
 
   const eventsResult = await client.event.subscribe({
     signal: abortController.signal,
@@ -670,7 +672,7 @@ async function handleOpencodeSession(
 
     console.log(`[PROMPT] Successfully sent prompt, got response`)
     // Remove the controller after successful completion
-    activeRequests.delete(directory)
+    activeRequests.delete(session.id)
 
     // Update reaction to success
     if (originalMessage) {
@@ -687,7 +689,7 @@ async function handleOpencodeSession(
   } catch (error) {
     console.error(`[PROMPT ERROR] Failed to send prompt:`, error)
     // Remove the controller on error
-    activeRequests.delete(directory)
+    activeRequests.delete(session.id)
 
     // Update reaction to error
     if (originalMessage) {
