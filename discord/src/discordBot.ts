@@ -1,4 +1,5 @@
 import path from 'node:path'
+import fs from 'node:fs'
 import {
   ChannelType,
   Client,
@@ -25,11 +26,17 @@ import { $ } from 'bun'
 
 type StartOptions = {
   token: string
-  channelId: string
 }
 
-let serverProcess: ChildProcess | null = null
-let client: OpencodeClient | null = null
+// Map of project directory to OpenCode server process and client
+const opencodeServers = new Map<
+  string,
+  {
+    process: ChildProcess
+    client: OpencodeClient
+    port: number
+  }
+>()
 
 const db = new Database(':memory:')
 
@@ -95,40 +102,66 @@ async function waitForServer(port: number, maxAttempts = 30): Promise<boolean> {
   )
 }
 
-async function initializeOpencode() {
-  if (!serverProcess || serverProcess.killed) {
-    const port = await getOpenPort()
-    console.log(`Starting OpenCode server on port ${port}...`)
+async function initializeOpencodeForDirectory(
+  directory: string,
+): Promise<OpencodeClient> {
+  console.log(`[OPENCODE] Initializing for directory: ${directory}`)
 
-    serverProcess = spawn('opencode', ['serve', '--port', port.toString()], {
+  // Check if we already have a server for this directory
+  const existing = opencodeServers.get(directory)
+  if (existing && !existing.process.killed) {
+    console.log(
+      `[OPENCODE] Reusing existing server on port ${existing.port} for directory: ${directory}`,
+    )
+    return existing.client
+  }
+
+  const port = await getOpenPort()
+  console.log(
+    `[OPENCODE] Starting new server on port ${port} for directory: ${directory}`,
+  )
+
+  const serverProcess = spawn(
+    'opencode',
+    ['serve', '--port', port.toString()],
+    {
       stdio: 'pipe',
       detached: false,
+      cwd: directory,
       env: {
         ...process.env,
         OPENCODE_PORT: port.toString(),
       },
-    })
+    },
+  )
 
-    serverProcess.stdout?.on('data', (data) => {
-      console.log(`[OpenCode] ${data.toString().trim()}`)
-    })
+  serverProcess.stdout?.on('data', (data) => {
+    console.log(`[OpenCode:${port}] ${data.toString().trim()}`)
+  })
 
-    serverProcess.stderr?.on('data', (data) => {
-      console.error(`[OpenCode Error] ${data.toString().trim()}`)
-    })
+  serverProcess.stderr?.on('data', (data) => {
+    console.error(`[OpenCode Error:${port}] ${data.toString().trim()}`)
+  })
 
-    serverProcess.on('error', (error) => {
-      console.error('Failed to start OpenCode server:', error)
-    })
-    serverProcess.on('exit', (error) => {
-      console.error('OpenCode server exited:', error)
-    })
+  serverProcess.on('error', (error) => {
+    console.error(`Failed to start OpenCode server on port ${port}:`, error)
+  })
 
-    await waitForServer(port)
-    client = createOpencodeClient({ baseUrl: `http://localhost:${port}` })
-  }
+  serverProcess.on('exit', (code) => {
+    console.log(`OpenCode server on port ${port} exited with code:`, code)
+    opencodeServers.delete(directory)
+  })
 
-  return client!
+  await waitForServer(port)
+  const client = createOpencodeClient({ baseUrl: `http://localhost:${port}` })
+
+  opencodeServers.set(directory, {
+    process: serverProcess,
+    client,
+    port,
+  })
+
+  return client
 }
 
 function formatPart(part: Part): string {
@@ -226,8 +259,20 @@ function formatPart(part: Part): string {
   }
 }
 
-async function handleOpencodeSession(prompt: string, thread: ThreadChannel) {
-  const client = await initializeOpencode()
+async function handleOpencodeSession(
+  prompt: string,
+  thread: ThreadChannel,
+  projectDirectory?: string,
+) {
+  console.log(
+    `[OPENCODE SESSION] Starting for thread ${thread.id} with prompt: "${prompt.slice(0, 50)}${prompt.length > 50 ? '...' : ''}"`,
+  )
+
+  // Use default directory if not specified
+  const directory = projectDirectory || process.cwd()
+  console.log(`[OPENCODE SESSION] Using directory: ${directory}`)
+
+  const client = await initializeOpencodeForDirectory(directory)
 
   // Get session ID from database
   const row = db
@@ -237,21 +282,29 @@ async function handleOpencodeSession(prompt: string, thread: ThreadChannel) {
   let session
 
   if (sessionId) {
+    console.log(`[SESSION] Attempting to reuse existing session ${sessionId}`)
     try {
       const sessionResponse = await client.session.get({
         path: { id: sessionId },
       })
       session = sessionResponse.data
+      console.log(`[SESSION] Successfully reused session ${sessionId}`)
     } catch (error) {
-      console.log('Session not found, creating new one')
+      console.log(
+        `[SESSION] Session ${sessionId} not found, will create new one`,
+      )
     }
   }
 
   if (!session) {
+    console.log(
+      `[SESSION] Creating new session with title: "${prompt.slice(0, 80)}"`,
+    )
     const sessionResponse = await client.session.create({
       body: { title: prompt.slice(0, 80) },
     })
     session = sessionResponse.data
+    console.log(`[SESSION] Created new session ${session?.id}`)
   }
 
   if (!session) {
@@ -262,9 +315,11 @@ async function handleOpencodeSession(prompt: string, thread: ThreadChannel) {
   db.prepare(
     'INSERT OR REPLACE INTO thread_sessions (thread_id, session_id) VALUES (?, ?)',
   ).run(thread.id, session.id)
+  console.log(`[DATABASE] Stored session ${session.id} for thread ${thread.id}`)
 
   const eventsResult = await client.event.subscribe()
   const events = eventsResult.stream
+  console.log(`[EVENTS] Subscribed to OpenCode events`)
 
   // Load existing part-message mappings from database
   const partIdToMessage = new Map<string, Message>()
@@ -292,21 +347,35 @@ async function handleOpencodeSession(prompt: string, thread: ThreadChannel) {
 
   const sendPartMessage = async (part: Part) => {
     const content = formatPart(part) + '\n\n'
-    if (!content || content.length === 0) return
+    if (!content || content.length === 0) {
+      console.log(`[SEND SKIP] Part ${part.id} has no content`)
+      return
+    }
 
     // Skip if already sent
-    if (partIdToMessage.has(part.id)) return
+    if (partIdToMessage.has(part.id)) {
+      console.log(
+        `[SEND SKIP] Part ${part.id} already sent as message ${partIdToMessage.get(part.id)?.id}`,
+      )
+      return
+    }
 
     try {
+      console.log(
+        `[SEND] Sending part ${part.id} (type: ${part.type}) to Discord, content length: ${content.length}`,
+      )
       const newMessage = await thread.send(content.slice(0, 6000))
       partIdToMessage.set(part.id, newMessage)
+      console.log(
+        `[SEND SUCCESS] Part ${part.id} sent as message ${newMessage.id}`,
+      )
 
       // Store part-message mapping in database
       db.prepare(
         'INSERT OR REPLACE INTO part_messages (part_id, message_id, thread_id) VALUES (?, ?, ?)',
       ).run(part.id, newMessage.id, thread.id)
     } catch (error) {
-      console.error('Failed to send message:', error)
+      console.error(`[SEND ERROR] Failed to send part ${part.id}:`, error)
     }
   }
 
@@ -315,30 +384,41 @@ async function handleOpencodeSession(prompt: string, thread: ThreadChannel) {
       let assistantMessageId: string | undefined
 
       for await (const event of events) {
-        console.log(event.type)
+        console.log(`[EVENT] Received: ${event.type}`)
         if (event.type === 'message.updated') {
           const msg = event.properties.info
 
           if (msg.sessionID !== session.id) {
-            console.log(`ignoring message from another session`, msg)
+            console.log(
+              `[EVENT IGNORED] Message from different session (expected: ${session.id}, got: ${msg.sessionID})`,
+            )
             continue
           }
 
           // Track assistant message ID
           if (msg.role === 'assistant') {
             assistantMessageId = msg.id
+            console.log(
+              `[EVENT] Tracking assistant message ${assistantMessageId}`,
+            )
+          } else {
+            console.log(`[EVENT] Message role: ${msg.role}`)
           }
         } else if (event.type === 'message.part.updated') {
           const part = event.properties.part
 
           if (part.sessionID !== session.id) {
-            console.log(`ignoring different session part`, part)
+            console.log(
+              `[EVENT IGNORED] Part from different session (expected: ${session.id}, got: ${part.sessionID})`,
+            )
             continue
           }
 
           // Only process parts from assistant messages
           if (part.messageID !== assistantMessageId) {
-            console.log(`ignoring non assistant part`, part)
+            console.log(
+              `[EVENT IGNORED] Part from non-assistant message (expected: ${assistantMessageId}, got: ${part.messageID})`,
+            )
             continue
           }
 
@@ -352,13 +432,15 @@ async function handleOpencodeSession(prompt: string, thread: ThreadChannel) {
           }
 
           console.log(
-            `Part update: id=${part.id}, type=${part.type}, text=${'text' in part && typeof part.text === 'string' ? part.text.slice(0, 50) : ''}`,
+            `[PART] Update: id=${part.id}, type=${part.type}, text=${'text' in part && typeof part.text === 'string' ? part.text.slice(0, 50) : ''}`,
           )
 
           // Check if this is a step-finish part
           if (part.type === 'step-finish') {
             // Send all parts accumulated so far to Discord
-            console.log('Step finished, sending parts to Discord')
+            console.log(
+              `[STEP-FINISH] Sending ${currentParts.length} parts to Discord`,
+            )
             for (const p of currentParts) {
               // Skip step-start and step-finish parts as they have no visual content
               if (p.type !== 'step-start' && p.type !== 'step-finish') {
@@ -367,14 +449,24 @@ async function handleOpencodeSession(prompt: string, thread: ThreadChannel) {
             }
           }
         } else if (event.type === 'session.error') {
-          console.error('session error', event.properties)
+          console.error(`[SESSION ERROR]`, event.properties)
           if (event.properties.sessionID === session.id) {
             const errorData = event.properties.error
             const errorMessage = errorData?.data?.message || 'Unknown error'
+            console.error(
+              `[SESSION ERROR] Sending error to thread: ${errorMessage}`,
+            )
             await thread.send(`❌ Error: ${errorMessage}`)
+          } else {
+            console.log(
+              `[SESSION ERROR IGNORED] Error for different session (expected: ${session.id}, got: ${event.properties.sessionID})`,
+            )
           }
           break
         } else if (event.type === 'file.edited') {
+          console.log(`[EVENT] File edited event received`)
+        } else {
+          console.log(`[EVENT] Unhandled event type: ${event.type}`)
         }
       }
     } catch (e) {
@@ -382,18 +474,31 @@ async function handleOpencodeSession(prompt: string, thread: ThreadChannel) {
       throw e
     } finally {
       // Send any remaining parts that weren't sent
+      console.log(
+        `[CLEANUP] Checking ${currentParts.length} parts for unsent messages`,
+      )
+      let unsentCount = 0
       for (const part of currentParts) {
         if (!partIdToMessage.has(part.id)) {
+          unsentCount++
           console.log(
-            `Final update for part without message: id=${part.id}, type=${part.type}`,
+            `[CLEANUP] Sending unsent part: id=${part.id}, type=${part.type}`,
           )
           await sendPartMessage(part)
         }
+      }
+      if (unsentCount === 0) {
+        console.log(`[CLEANUP] All parts were already sent`)
+      } else {
+        console.log(`[CLEANUP] Sent ${unsentCount} previously unsent parts`)
       }
     }
   })()
 
   try {
+    console.log(
+      `[PROMPT] Sending prompt to session ${session.id}: "${prompt.slice(0, 100)}${prompt.length > 100 ? '...' : ''}"`,
+    )
     const response = await client.session.prompt({
       path: { id: session.id },
       body: {
@@ -401,8 +506,10 @@ async function handleOpencodeSession(prompt: string, thread: ThreadChannel) {
       },
     })
 
+    console.log(`[PROMPT] Successfully sent prompt, got response`)
     return { sessionID: session.id, result: response.data }
   } catch (error) {
+    console.error(`[PROMPT ERROR] Failed to send prompt:`, error)
     await thread.send(
       `❌ Error: ${error instanceof Error ? error.message : String(error)}`,
     )
@@ -414,62 +521,8 @@ export type ChannelWithTags = {
   id: string
   name: string
   description: string | null
-  kimakiRepoUrl?: string
-  kimakiBranch?: string
+  kimakiDirectory?: string
   otherTags: Record<string, string[]>
-}
-
-export type OpencodeProject = {
-  id: string
-  directory: string
-  repoUrl?: string
-  branch?: string
-}
-
-export async function getOpencodeProjects(): Promise<OpencodeProject[]> {
-  const client = await initializeOpencode()
-  const projects: OpencodeProject[] = []
-
-  const projectsResponse = await client.project.list()
-  if (!projectsResponse.data) {
-    return projects
-  }
-
-  for (const project of projectsResponse.data) {
-    const projectInfo: OpencodeProject = {
-      id: project.id,
-      directory: project.worktree,
-    }
-
-    // Get git info if it's a git repo
-    if (project.vcs === 'git') {
-      try {
-        // Get current branch
-        const branchResult = await $`git branch --show-current`
-          .cwd(project.worktree)
-          .quiet()
-        const branch = branchResult.text().trim()
-        if (branch) {
-          projectInfo.branch = branch
-        }
-
-        // Get origin remote URL
-        const urlResult = await $`git remote get-url origin`
-          .cwd(project.worktree)
-          .quiet()
-        const url = urlResult.text().trim()
-        if (url) {
-          projectInfo.repoUrl = url
-        }
-      } catch {
-        // Git info not available
-      }
-    }
-
-    projects.push(projectInfo)
-  }
-
-  return projects
 }
 
 export async function getChannelsWithDescriptions(
@@ -483,29 +536,23 @@ export async function getChannelsWithDescriptions(
       const textChannel = channel as TextChannel
       const description = textChannel.topic || null
 
-      let kimakiRepoUrl: string | undefined
-      let kimakiBranch: string | undefined
+      let kimakiDirectory: string | undefined
       let otherTags: Record<string, string[]> = {}
 
       if (description) {
         const extracted = extractTagsArrays({
           xml: description,
-          tags: ['kimaki.repoUrl', 'kimaki.branch'],
+          tags: ['kimaki.directory'],
         })
 
-        kimakiRepoUrl = extracted['kimaki.repoUrl']?.[0]
-        kimakiBranch = extracted['kimaki.branch']?.[0]
+        kimakiDirectory = extracted['kimaki.directory']?.[0]?.trim()
 
         // Store any other extracted tags
         const extractedKeys = Object.keys(
           extracted,
         ) as (keyof typeof extracted)[]
         extractedKeys.forEach((key) => {
-          if (
-            key !== 'kimaki.repoUrl' &&
-            key !== 'kimaki.branch' &&
-            key !== 'others'
-          ) {
+          if (key !== 'kimaki.directory' && key !== 'others') {
             otherTags[key] = extracted[key]
           }
         })
@@ -515,8 +562,7 @@ export async function getChannelsWithDescriptions(
         id: textChannel.id,
         name: textChannel.name,
         description,
-        kimakiRepoUrl,
-        kimakiBranch,
+        kimakiDirectory,
         otherTags,
       })
     })
@@ -524,7 +570,7 @@ export async function getChannelsWithDescriptions(
   return channels
 }
 
-export async function startDiscordBot({ token, channelId }: StartOptions) {
+export async function startDiscordBot({ token }: StartOptions) {
   const discordClient = new Client({
     intents: [
       GatewayIntentBits.Guilds,
@@ -539,22 +585,176 @@ export async function startDiscordBot({ token, channelId }: StartOptions) {
     ],
   })
 
-  discordClient.once(Events.ClientReady, (c) => {
-    console.log(`Discord bot logged in as ${c.user.tag}`)
+  discordClient.once(Events.ClientReady, async (c) => {
+    console.log(`[READY] Discord bot logged in as ${c.user.tag}`)
+    console.log(`[READY] Connected to ${c.guilds.cache.size} guild(s)`)
+
+    // List all guilds and channels with kimaki.directory tags
+    for (const guild of c.guilds.cache.values()) {
+      console.log(`[GUILD] ${guild.name} (${guild.id})`)
+
+      const channels = await getChannelsWithDescriptions(guild)
+      const kimakiChannels = channels.filter((ch) => ch.kimakiDirectory)
+
+      if (kimakiChannels.length > 0) {
+        console.log(
+          `  Found ${kimakiChannels.length} channel(s) with kimaki.directory:`,
+        )
+        for (const channel of kimakiChannels) {
+          console.log(`  - #${channel.name}: ${channel.kimakiDirectory}`)
+        }
+      } else {
+        console.log(`  No channels with kimaki.directory tag`)
+      }
+    }
+
+    console.log(
+      `[READY] Bot is ready and monitoring all channels with kimaki.directory tags`,
+    )
   })
 
   discordClient.on(Events.MessageCreate, async (message: Message) => {
     try {
-      if (message.author?.bot) return
+      if (message.author?.bot) {
+        console.log(
+          `[IGNORED] Bot message from ${message.author.tag} in channel ${message.channelId}`,
+        )
+        return
+      }
       if (message.partial) {
+        console.log(`[PARTIAL] Fetching partial message ${message.id}`)
         try {
           await message.fetch()
-        } catch {
+        } catch (error) {
+          console.log(
+            `[IGNORED] Failed to fetch partial message ${message.id}:`,
+            error,
+          )
           return
         }
       }
 
-      if (message.channelId === channelId) {
+      console.log(
+        `[MESSAGE] From ${message.author?.tag} in channel ${message.channelId}: "${message.content?.slice(0, 50)}${message.content && message.content.length > 50 ? '...' : ''}"`,
+      )
+      const channel = message.channel
+
+      // Handle threads - continue existing sessions
+      const isThreadChannel =
+        channel.type === ChannelType.PublicThread ||
+        channel.type === ChannelType.PrivateThread ||
+        channel.type === ChannelType.AnnouncementThread
+
+      if (isThreadChannel) {
+        const thread = channel as ThreadChannel
+        console.log(`[THREAD] Message in thread ${thread.name} (${thread.id})`)
+
+        // Check if thread has an existing session in database
+        const row = db
+          .prepare('SELECT session_id FROM thread_sessions WHERE thread_id = ?')
+          .get(thread.id) as { session_id: string } | undefined
+
+        if (!row) {
+          console.log(`[IGNORED] No session found for thread ${thread.id}`)
+          return
+        }
+
+        console.log(
+          `[SESSION] Found session ${row.session_id} for thread ${thread.id}`,
+        )
+
+        // Get the project directory from the parent channel
+        let projectDirectory: string | undefined
+        const parent = thread.parent as TextChannel | null
+        const description = parent?.topic
+
+        if (description) {
+          console.log(
+            `[PARENT] Parent channel has description: "${description.slice(0, 100)}${description.length > 100 ? '...' : ''}"`,
+          )
+          const dir = extractTagsArrays({
+            xml: description,
+            tags: ['kimaki.directory'],
+          })['kimaki.directory']?.[0]?.trim()
+          if (dir) {
+            console.log(`[DIRECTORY] Extracted directory: ${dir}`)
+            if (!fs.existsSync(dir)) {
+              console.log(`[ERROR] Directory does not exist: ${dir}`)
+              await thread.send(
+                `❌ Directory does not exist: ${JSON.stringify(dir)}`,
+              )
+              return
+            }
+            projectDirectory = dir
+            console.log(`[DIRECTORY] Using project directory: ${dir}`)
+          } else {
+            console.log(
+              `[WARNING] No kimaki.directory tag found in parent channel description`,
+            )
+          }
+        } else {
+          console.log(`[WARNING] Parent channel has no description`)
+        }
+
+        const thinkingMessage = await thread.send('Thinking…')
+        await handleOpencodeSession(
+          message.content || '',
+          thread,
+          projectDirectory,
+        )
+        await thinkingMessage.delete()
+        return
+      }
+
+      // Handle text channels - check for kimaki tags to start new sessions
+      if (channel.type === ChannelType.GuildText) {
+        const textChannel = channel as TextChannel
+        console.log(
+          `[GUILD_TEXT] Message in text channel #${textChannel.name} (${textChannel.id})`,
+        )
+
+        const description = textChannel.topic
+
+        if (!description) {
+          console.log(
+            `[IGNORED] Channel #${textChannel.name} has no description`,
+          )
+          return
+        }
+
+        console.log(
+          `[DESCRIPTION] Channel has description: "${description.slice(0, 100)}${description.length > 100 ? '...' : ''}"`,
+        )
+
+        // Extract kimaki tags from channel description
+        const extracted = extractTagsArrays({
+          xml: description,
+          tags: ['kimaki.directory'],
+        })
+
+        const projectDirectory = extracted['kimaki.directory']?.[0]?.trim()
+
+        if (!projectDirectory) {
+          console.log(
+            `[IGNORED] Channel #${textChannel.name} has no kimaki.directory tag`,
+          )
+          return
+        }
+
+        console.log(`[DIRECTORY] Found kimaki.directory: ${projectDirectory}`)
+
+        // Check if directory exists
+        if (!fs.existsSync(projectDirectory)) {
+          console.log(`[ERROR] Directory does not exist: ${projectDirectory}`)
+          await message.reply(
+            `❌ Directory does not exist: ${JSON.stringify(projectDirectory)}`,
+          )
+          return
+        }
+
+        console.log(`[DIRECTORY] Directory exists, creating thread`)
+
+        // Start a new thread for this conversation
         const baseName = message.content.replace(/\s+/g, ' ').trim()
         const name = (baseName || 'Claude Thread').slice(0, 80)
 
@@ -564,28 +764,17 @@ export async function startDiscordBot({ token, channelId }: StartOptions) {
           reason: 'Start Claude session',
         })
 
-        // await thread.send('thinking…')
-        await handleOpencodeSession(message.content || '', thread)
-        return
-      }
+        console.log(`[THREAD] Created thread "${thread.name}" (${thread.id})`)
 
-      const channel = message.channel
-      const isThreadChannel =
-        channel.type === ChannelType.PublicThread ||
-        channel.type === ChannelType.PrivateThread ||
-        channel.type === ChannelType.AnnouncementThread
-
-      if (isThreadChannel) {
-        const thread = channel as ThreadChannel
-        // Check if thread has an existing session in database
-        const row = db
-          .prepare('SELECT session_id FROM thread_sessions WHERE thread_id = ?')
-          .get(thread.id) as { session_id: string } | undefined
-        if (!row) return
-
-        const thinkingMessage = await thread.send('Thinking…')
-        await handleOpencodeSession(message.content || '', thread)
-        await thinkingMessage.delete()
+        await handleOpencodeSession(
+          message.content || '',
+          thread,
+          projectDirectory,
+        )
+      } else {
+        console.log(
+          `[IGNORED] Channel type ${channel.type} is not supported (not GuildText or Thread)`,
+        )
       }
     } catch (error) {
       console.error('Discord handler error:', error)
@@ -601,8 +790,14 @@ export async function startDiscordBot({ token, channelId }: StartOptions) {
   await discordClient.login(token)
 
   process.on('SIGINT', () => {
-    if (serverProcess && !serverProcess.killed) {
-      serverProcess.kill('SIGTERM')
+    // Kill all OpenCode servers
+    for (const [dir, server] of opencodeServers) {
+      if (!server.process.killed) {
+        console.log(
+          `Stopping OpenCode server on port ${server.port} for ${dir}`,
+        )
+        server.process.kill('SIGTERM')
+      }
     }
     db.close()
     discordClient.destroy()
@@ -610,8 +805,14 @@ export async function startDiscordBot({ token, channelId }: StartOptions) {
   })
 
   process.on('SIGTERM', () => {
-    if (serverProcess && !serverProcess.killed) {
-      serverProcess.kill('SIGTERM')
+    // Kill all OpenCode servers
+    for (const [dir, server] of opencodeServers) {
+      if (!server.process.killed) {
+        console.log(
+          `Stopping OpenCode server on port ${server.port} for ${dir}`,
+        )
+        server.process.kill('SIGTERM')
+      }
     }
     db.close()
     discordClient.destroy()
