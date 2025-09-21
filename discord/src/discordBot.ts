@@ -234,18 +234,17 @@ async function handleOpencodeSession(
   }
 
   const schedulePartUpdate = (part: Part) => {
+    // Clear existing timeout for this part
     const existingTimeout = updateTimeouts.get(part.id)
     if (existingTimeout) {
       clearTimeout(existingTimeout)
     }
 
-    const timeSinceLastUpdate = Date.now() - lastUpdateTime
-    const delay = Math.max(0, 300 - timeSinceLastUpdate)
-
-    const timeout = setTimeout(() => {
+    // Schedule update with delay
+    const timeout = setTimeout(async () => {
       updateTimeouts.delete(part.id)
-      updatePartMessage(part)
-    }, delay)
+      await updatePartMessage(part)
+    }, 300)
 
     updateTimeouts.set(part.id, timeout)
   }
