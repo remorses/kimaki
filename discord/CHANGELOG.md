@@ -1,5 +1,11 @@
 # Changelog
 
+## 2025-01-25 01:30
+
+- Add prompt when existing channels are connected to ask if user wants to add new channels or start server immediately
+- Skip project selection flow when user chooses to start with existing channels only
+- Improve user experience by not forcing channel creation when channels already exist
+
 ## 2025-01-25 01:15
 
 - Convert `processVoiceAttachment` to use object arguments for better API design

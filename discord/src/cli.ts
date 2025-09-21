@@ -9,6 +9,7 @@ import {
   isCancel,
   multiselect,
   spinner,
+  select,
 } from '@clack/prompts'
 import { generateBotInstallUrl } from './utils'
 import {
@@ -200,6 +201,8 @@ async function main() {
   }
 
   // Show existing kimaki channels
+  let shouldAddChannels = true
+  
   if (kimakiChannels.length > 0) {
     const channelList = kimakiChannels
       .flatMap(({ guild, channels }) =>
@@ -211,6 +214,24 @@ async function main() {
       .join('\n')
 
     note(channelList, 'Existing Kimaki Channels')
+    
+    // Ask user if they want to add new channels or start the server
+    console.log()
+    const action = await select({
+      message: 'What would you like to do?',
+      options: [
+        { value: 'start', label: 'Start the Discord bot with existing channels' },
+        { value: 'add', label: 'Add new channels before starting' }
+      ]
+    })
+    
+    if (isCancel(action)) {
+      cancel('Setup cancelled')
+      discordClient.destroy()
+      process.exit(0)
+    }
+    
+    shouldAddChannels = action === 'add'
   }
 
   // Initialize OpenCode in current directory
@@ -268,7 +289,7 @@ async function main() {
       'All OpenCode projects already have Discord channels',
       'No New Projects',
     )
-  } else {
+  } else if (shouldAddChannels) {
 
     // Let user select projects
     const selectedProjects = await multiselect({
