@@ -122,8 +122,11 @@ function formatPart(part: Part): string {
           outputToDisplay.length > 500
             ? outputToDisplay.slice(0, 497) + `…`
             : outputToDisplay
+        let arg = ''
+        if (part.tool === 'bash') {
+        }
         return dedent`
-        🔧 ${part.tool}
+        🔧 ${part.tool} ${part.state.title || ''}
 
         \`\`\`
         ${truncated}
@@ -184,7 +187,7 @@ async function handleOpencodeSession(
   let lastUpdateTime = 0
   let updateTimeout: NodeJS.Timeout | undefined
 
-  const updateMessage = async () => {
+  const updateMessage = async (currentParts: Part[]) => {
     if (!currentMessage) {
       console.log('not updating the message because there is no currentMessage')
       return
@@ -223,7 +226,7 @@ async function handleOpencodeSession(
 
     updateTimeout = setTimeout(() => {
       updateTimeout = undefined
-      updateMessage()
+      updateMessage(currentParts)
     }, delay)
   }
 
@@ -234,8 +237,7 @@ async function handleOpencodeSession(
       for await (const event of events) {
         console.log(event.type)
         if (event.type === 'message.updated') {
-          const msgEvent = event as EventMessageUpdated
-          const msg = msgEvent.properties.info
+          const msg = event.properties.info
 
           if (msg.sessionID !== session.id) {
             console.log(`ignoring message from another session`, msg)
@@ -252,7 +254,7 @@ async function handleOpencodeSession(
               })
 
               currentParts = message.data?.parts || []
-              await updateMessage()
+              await updateMessage(currentParts)
               break
             }
           }
@@ -307,7 +309,6 @@ async function handleOpencodeSession(
             }
           }
         } else if (event.type === 'session.error') {
-
           console.error('session error', event.properties)
           if (event.properties.sessionID === session.id) {
             const errorData = event.properties.error
@@ -323,7 +324,7 @@ async function handleOpencodeSession(
       throw e
     } finally {
       // Always do a final update when stream ends
-      await updateMessage()
+      await updateMessage(currentParts)
     }
   })()
 
@@ -334,6 +335,8 @@ async function handleOpencodeSession(
         parts: [{ type: 'text', text: prompt }],
       },
     })
+    const currentParts = response.data?.parts || []
+    await updateMessage(currentParts)
 
     return { sessionID: session.id, result: response.data }
   } catch (error) {
