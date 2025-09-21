@@ -21,6 +21,8 @@
     "typescript": "^5"
   },
   "dependencies": {
+    "@ai-sdk/openai": "^2.0.23",
+    "ai": "^5.0.29",
     "discord.js": "^14.16.3",
     "domhandler": "^5.0.3",
     "htmlparser2": "^10.0.0",
