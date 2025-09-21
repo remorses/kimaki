@@ -21,6 +21,7 @@ import {
 import dedent from 'string-dedent'
 import { Database } from 'bun:sqlite'
 import { extractTagsArrays } from './xml'
+import { $ } from 'bun'
 
 type StartOptions = {
   token: string
@@ -225,14 +226,13 @@ function formatPart(part: Part): string {
   }
 }
 
-async function handleOpencodeSession(
-  prompt: string,
-  thread: ThreadChannel,
-) {
+async function handleOpencodeSession(prompt: string, thread: ThreadChannel) {
   const client = await initializeOpencode()
 
   // Get session ID from database
-  const row = db.prepare('SELECT session_id FROM thread_sessions WHERE thread_id = ?').get(thread.id) as { session_id: string } | undefined
+  const row = db
+    .prepare('SELECT session_id FROM thread_sessions WHERE thread_id = ?')
+    .get(thread.id) as { session_id: string } | undefined
   let sessionId = row?.session_id
   let session
 
@@ -259,15 +259,21 @@ async function handleOpencodeSession(
   }
 
   // Store session ID in database
-  db.prepare('INSERT OR REPLACE INTO thread_sessions (thread_id, session_id) VALUES (?, ?)').run(thread.id, session.id)
+  db.prepare(
+    'INSERT OR REPLACE INTO thread_sessions (thread_id, session_id) VALUES (?, ?)',
+  ).run(thread.id, session.id)
 
   const eventsResult = await client.event.subscribe()
   const events = eventsResult.stream
 
   // Load existing part-message mappings from database
   const partIdToMessage = new Map<string, Message>()
-  const existingParts = db.prepare('SELECT part_id, message_id FROM part_messages WHERE thread_id = ?').all(thread.id) as { part_id: string, message_id: string }[]
-  
+  const existingParts = db
+    .prepare(
+      'SELECT part_id, message_id FROM part_messages WHERE thread_id = ?',
+    )
+    .all(thread.id) as { part_id: string; message_id: string }[]
+
   // Pre-populate map with existing messages
   for (const row of existingParts) {
     try {
@@ -276,7 +282,9 @@ async function handleOpencodeSession(
         partIdToMessage.set(row.part_id, message)
       }
     } catch (error) {
-      console.log(`Could not fetch message ${row.message_id} for part ${row.part_id}`)
+      console.log(
+        `Could not fetch message ${row.message_id} for part ${row.part_id}`,
+      )
     }
   }
 
@@ -292,9 +300,11 @@ async function handleOpencodeSession(
     try {
       const newMessage = await thread.send(content.slice(0, 6000))
       partIdToMessage.set(part.id, newMessage)
-      
+
       // Store part-message mapping in database
-      db.prepare('INSERT OR REPLACE INTO part_messages (part_id, message_id, thread_id) VALUES (?, ?, ?)').run(part.id, newMessage.id, thread.id)
+      db.prepare(
+        'INSERT OR REPLACE INTO part_messages (part_id, message_id, thread_id) VALUES (?, ?, ?)',
+      ).run(part.id, newMessage.id, thread.id)
     } catch (error) {
       console.error('Failed to send message:', error)
     }
@@ -409,37 +419,98 @@ export type ChannelWithTags = {
   otherTags: Record<string, string[]>
 }
 
-export async function getChannelsWithDescriptions(guild: Guild): Promise<ChannelWithTags[]> {
+export type OpencodeProject = {
+  id: string
+  directory: string
+  repoUrl?: string
+  branch?: string
+}
+
+export async function getOpencodeProjects(): Promise<OpencodeProject[]> {
+  const client = await initializeOpencode()
+  const projects: OpencodeProject[] = []
+
+  const projectsResponse = await client.project.list()
+  if (!projectsResponse.data) {
+    return projects
+  }
+
+  for (const project of projectsResponse.data) {
+    const projectInfo: OpencodeProject = {
+      id: project.id,
+      directory: project.worktree,
+    }
+
+    // Get git info if it's a git repo
+    if (project.vcs === 'git') {
+      try {
+        // Get current branch
+        const branchResult = await $`git branch --show-current`
+          .cwd(project.worktree)
+          .quiet()
+        const branch = branchResult.text().trim()
+        if (branch) {
+          projectInfo.branch = branch
+        }
+
+        // Get origin remote URL
+        const urlResult = await $`git remote get-url origin`
+          .cwd(project.worktree)
+          .quiet()
+        const url = urlResult.text().trim()
+        if (url) {
+          projectInfo.repoUrl = url
+        }
+      } catch {
+        // Git info not available
+      }
+    }
+
+    projects.push(projectInfo)
+  }
+
+  return projects
+}
+
+export async function getChannelsWithDescriptions(
+  guild: Guild,
+): Promise<ChannelWithTags[]> {
   const channels: ChannelWithTags[] = []
-  
+
   guild.channels.cache
     .filter((channel) => channel.isTextBased())
     .forEach((channel) => {
       const textChannel = channel as TextChannel
       const description = textChannel.topic || null
-      
+
       let kimakiRepoUrl: string | undefined
       let kimakiBranch: string | undefined
       let otherTags: Record<string, string[]> = {}
-      
+
       if (description) {
         const extracted = extractTagsArrays({
           xml: description,
           tags: ['kimaki.repoUrl', 'kimaki.branch'],
         })
-        
+
         kimakiRepoUrl = extracted['kimaki.repoUrl']?.[0]
         kimakiBranch = extracted['kimaki.branch']?.[0]
-        
+
         // Store any other extracted tags
-        const extractedKeys = Object.keys(extracted) as (keyof typeof extracted)[]
+        const extractedKeys = Object.keys(
+          extracted,
+        ) as (keyof typeof extracted)[]
         extractedKeys.forEach((key) => {
-          if (key !== 'kimaki.repoUrl' && key !== 'kimaki.branch' && key !== 'others') {
+          if (
+            key !== 'kimaki.repoUrl' &&
+            key !== 'kimaki.branch' &&
+            key !== 'others'
+          ) {
             otherTags[key] = extracted[key]
           }
         })
       }
-      
+
       channels.push({
         id: textChannel.id,
         name: textChannel.name,
@@ -449,7 +520,7 @@ export async function getChannelsWithDescriptions(guild: Guild): Promise<Channel
         otherTags,
       })
     })
-  
+
   return channels
 }
 
@@ -494,10 +565,7 @@ export async function startDiscordBot({ token, channelId }: StartOptions) {
         })
 
         // await thread.send('thinking…')
-        await handleOpencodeSession(
-          message.content || '',
-          thread,
-        )
+        await handleOpencodeSession(message.content || '', thread)
         return
       }
 
@@ -510,14 +578,13 @@ export async function startDiscordBot({ token, channelId }: StartOptions) {
       if (isThreadChannel) {
         const thread = channel as ThreadChannel
         // Check if thread has an existing session in database
-        const row = db.prepare('SELECT session_id FROM thread_sessions WHERE thread_id = ?').get(thread.id) as { session_id: string } | undefined
+        const row = db
+          .prepare('SELECT session_id FROM thread_sessions WHERE thread_id = ?')
+          .get(thread.id) as { session_id: string } | undefined
         if (!row) return
 
         const thinkingMessage = await thread.send('Thinking…')
-        await handleOpencodeSession(
-          message.content || '',
-          thread,
-        )
+        await handleOpencodeSession(message.content || '', thread)
         await thinkingMessage.delete()
       }
     } catch (error) {
