@@ -29,6 +29,8 @@ type StartOptions = {
   token: string
 }
 
+const THINKING_MESSAGE = 'thinking…'
+
 // Map of project directory to OpenCode server process and client
 const opencodeServers = new Map<
   string,
@@ -97,27 +99,27 @@ async function sendThreadMessage(thread: ThreadChannel, content: string): Promis
   // Use marked's lexer to tokenize markdown content
   const lexer = new Lexer()
   const tokens = lexer.lex(content)
-  
+
   const chunks: string[] = []
   let currentChunk = ''
-  
+
   // Process each token and add to chunks
   for (const token of tokens) {
     const tokenText = token.raw || ''
-    
+
     // If adding this token would exceed limit and we have content, flush current chunk
     if (currentChunk && currentChunk.length + tokenText.length > MAX_LENGTH) {
       chunks.push(currentChunk)
       currentChunk = ''
     }
-    
+
     // If this single token is longer than MAX_LENGTH, split it
     if (tokenText.length > MAX_LENGTH) {
       if (currentChunk) {
         chunks.push(currentChunk)
         currentChunk = ''
       }
-      
+
       let remainingText = tokenText
       while (remainingText.length > MAX_LENGTH) {
         // Try to split at a newline if possible
@@ -126,7 +128,7 @@ async function sendThreadMessage(thread: ThreadChannel, content: string): Promis
         if (newlineIndex > MAX_LENGTH * 0.7) {
           splitIndex = newlineIndex + 1
         }
-        
+
         chunks.push(remainingText.slice(0, splitIndex))
         remainingText = remainingText.slice(splitIndex)
       }
@@ -135,7 +137,7 @@ async function sendThreadMessage(thread: ThreadChannel, content: string): Promis
       currentChunk += tokenText
     }
   }
-  
+
   // Add any remaining content
   if (currentChunk) {
     chunks.push(currentChunk)
@@ -344,6 +346,7 @@ async function handleOpencodeSession(
   prompt: string,
   thread: ThreadChannel,
   projectDirectory?: string,
+  initialThinkingMessage?: Message,
 ) {
   console.log(
     `[OPENCODE SESSION] Starting for thread ${thread.id} with prompt: "${prompt.slice(0, 50)}${prompt.length > 50 ? '...' : ''}"`,
@@ -359,6 +362,9 @@ async function handleOpencodeSession(
     console.log(`[ABORT] Cancelling existing request for directory: ${directory}`)
     existingController.abort('New request started')
   }
+
+  // Track the current thinking message
+  let thinkingMessage = initialThinkingMessage
 
   const client = await initializeOpencodeForDirectory(directory)
 
@@ -408,7 +414,7 @@ async function handleOpencodeSession(
   const abortController = new AbortController()
   // Store this controller for this directory
   activeRequests.set(directory, abortController)
-  
+
   const eventsResult = await client.event.subscribe({
     signal: abortController.signal,
   })
@@ -455,6 +461,17 @@ async function handleOpencodeSession(
     }
 
     try {
+      // Edit the current thinking message to a newline before sending the part
+      if (thinkingMessage) {
+        try {
+          await thinkingMessage.edit('\n')
+          console.log(`[THINKING] Edited thinking message to newline before sending part`)
+        } catch (e) {
+          console.log(`[THINKING] Could not edit thinking message:`, e)
+        }
+        thinkingMessage = undefined
+      }
+
       console.log(
         `[SEND] Sending part ${part.id} (type: ${part.type}) to Discord, content length: ${content.length}`,
       )
@@ -467,6 +484,14 @@ async function handleOpencodeSession(
       db.prepare(
         'INSERT OR REPLACE INTO part_messages (part_id, message_id, thread_id) VALUES (?, ?, ?)',
       ).run(part.id, firstMessage.id, thread.id)
+
+      // Add thinking message back after sending the part
+      try {
+        thinkingMessage = await thread.send(THINKING_MESSAGE)
+        console.log(`[THINKING] Added thinking message after part`)
+      } catch (e) {
+        console.log(`[THINKING] Could not add thinking message:`, e)
+      }
     } catch (error) {
       console.error(`[SEND ERROR] Failed to send part ${part.id}:`, error)
     }
@@ -590,6 +615,16 @@ async function handleOpencodeSession(
       } else {
         console.log(`[CLEANUP] Sent ${unsentCount} previously unsent parts`)
       }
+
+      // Edit the final thinking message to a newline
+      if (thinkingMessage) {
+        try {
+          await thinkingMessage.edit('\n')
+          console.log(`[THINKING] Edited final thinking message to newline`)
+        } catch (e) {
+          console.log(`[THINKING] Could not edit final thinking message:`, e)
+        }
+      }
     }
   })()
 
@@ -613,7 +648,7 @@ async function handleOpencodeSession(
     console.error(`[PROMPT ERROR] Failed to send prompt:`, error)
     // Remove the controller on error
     activeRequests.delete(directory)
-    
+
     // Only show error message if not aborted by a new request
     if (!(error instanceof Error && error.name === 'AbortError')) {
       await sendThreadMessage(
@@ -805,17 +840,19 @@ export async function startDiscordBot({ token }: StartOptions) {
           console.log(`[WARNING] Parent channel has no description`)
         }
 
-        const thinkingMessage = await sendThreadMessage(thread, 'Thinking…')
+        const thinkingMessage = await thread.send(THINKING_MESSAGE)
         try {
           await handleOpencodeSession(
             message.content || '',
             thread,
             projectDirectory,
+            thinkingMessage,
           )
-          await thinkingMessage.delete()
         } catch (error) {
-          // Delete thinking message even on error
-          await thinkingMessage.delete()
+          // Edit thinking message to newline even on error
+          try {
+            await thinkingMessage.edit('\n')
+          } catch {}
           // Only re-throw if not an abort error
           if (!(error instanceof Error && error.name === 'AbortError')) {
             throw error
@@ -884,10 +921,14 @@ export async function startDiscordBot({ token }: StartOptions) {
 
         console.log(`[THREAD] Created thread "${thread.name}" (${thread.id})`)
 
+        // Send initial thinking message
+        const thinkingMessage = await thread.send(THINKING_MESSAGE)
+
         await handleOpencodeSession(
           message.content || '',
           thread,
           projectDirectory,
+          thinkingMessage,
         )
       } else {
         console.log(
