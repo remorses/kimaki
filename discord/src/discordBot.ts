@@ -506,6 +506,10 @@ async function handleOpencodeSession(
     let typingInterval: NodeJS.Timeout | null = null
 
     function startTyping(thread: ThreadChannel): () => void {
+      if (abortController.signal.aborted) {
+        console.log(`[TYPING] Not starting typing, already aborted`)
+        return () => {}
+      }
       console.log(`[TYPING] Starting typing for thread ${thread.id}`)
 
       // Clear any previous typing interval
@@ -612,6 +616,11 @@ async function handleOpencodeSession(
                 await sendPartMessage(p)
               }
             }
+            // start typing in a moment, so that if the session finished, because step-finish is at the end of the message, we do not show typing status
+            setTimeout(() => {
+              if (abortController.signal.aborted) return
+              stopTyping = startTyping(thread)
+            }, 100)
           }
         } else if (event.type === 'session.error') {
           console.error(`[SESSION ERROR]`, event.properties)
