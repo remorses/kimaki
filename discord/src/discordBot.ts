@@ -76,6 +76,114 @@ async function getOpenPort(): Promise<number> {
   })
 }
 
+/**
+ * Send a message to a Discord thread, automatically splitting long messages
+ * @param thread - The thread channel to send to
+ * @param content - The content to send (can be longer than 2000 chars)
+ * @returns The first message sent
+ */
+async function sendThreadMessage(thread: ThreadChannel, content: string): Promise<Message> {
+  const MAX_LENGTH = 2000
+
+  // Simple case: content fits in one message
+  if (content.length <= MAX_LENGTH) {
+    return await thread.send(content)
+  }
+
+  // Split long content into chunks
+  const chunks: string[] = []
+  let remaining = content
+
+  while (remaining.length > 0) {
+    if (remaining.length <= MAX_LENGTH) {
+      chunks.push(remaining)
+      break
+    }
+
+    // Find a good place to split (prefer newline)
+    let splitIndex = MAX_LENGTH
+    const newlineIndex = remaining.lastIndexOf('\n', MAX_LENGTH - 1)
+
+    // Use newline if it's reasonably close to the max
+    if (newlineIndex > MAX_LENGTH * 0.7) {
+      splitIndex = newlineIndex + 1
+    }
+
+    chunks.push(remaining.slice(0, splitIndex))
+    remaining = remaining.slice(splitIndex)
+  }
+
+  // Send all chunks
+  console.log(`[THREAD MESSAGE] Splitting ${content.length} chars into ${chunks.length} messages`)
+
+  let firstMessage: Message | undefined
+  for (let i = 0; i < chunks.length; i++) {
+    const chunk = chunks[i]
+    if (!chunk) continue
+    const message = await thread.send(chunk)
+    if (i === 0) firstMessage = message
+  }
+
+  return firstMessage!
+}
+
+/**
+ * Reply to a message, automatically splitting long replies
+ * @param message - The message to reply to
+ * @param content - The content to send (can be longer than 2000 chars)
+ * @returns The first reply message sent
+ */
+async function replyMessage(message: Message, content: string): Promise<Message> {
+  const MAX_LENGTH = 2000
+
+  // Simple case: content fits in one message
+  if (content.length <= MAX_LENGTH) {
+    return await message.reply(content)
+  }
+
+  // Split long content into chunks
+  const chunks: string[] = []
+  let remaining = content
+
+  while (remaining.length > 0) {
+    if (remaining.length <= MAX_LENGTH) {
+      chunks.push(remaining)
+      break
+    }
+
+    // Find a good place to split (prefer newline)
+    let splitIndex = MAX_LENGTH
+    const newlineIndex = remaining.lastIndexOf('\n', MAX_LENGTH - 1)
+
+    // Use newline if it's reasonably close to the max
+    if (newlineIndex > MAX_LENGTH * 0.7) {
+      splitIndex = newlineIndex + 1
+    }
+
+    chunks.push(remaining.slice(0, splitIndex))
+    remaining = remaining.slice(splitIndex)
+  }
+
+  // Send all chunks (only first as reply, rest as regular messages)
+  console.log(`[REPLY MESSAGE] Splitting ${content.length} chars into ${chunks.length} messages`)
+
+  const firstChunk = chunks[0]
+  if (!firstChunk) throw new Error('No chunks to send')
+
+  const firstMessage = await message.reply(firstChunk)
+
+  // Send remaining chunks as regular messages in the same channel (if it's a text channel)
+
+  for (let i = 1; i < chunks.length; i++) {
+    const chunk = chunks[i]
+    if (!chunk) continue
+    await message.channel.send(chunk)
+  }
+
+
+  return firstMessage
+}
+
 async function waitForServer(port: number, maxAttempts = 30): Promise<boolean> {
   for (let i = 0; i < maxAttempts; i++) {
     try {
@@ -367,16 +475,15 @@ async function handleOpencodeSession(
       console.log(
         `[SEND] Sending part ${part.id} (type: ${part.type}) to Discord, content length: ${content.length}`,
       )
-      const newMessage = await thread.send(content.slice(0, 6000))
-      partIdToMessage.set(part.id, newMessage)
-      console.log(
-        `[SEND SUCCESS] Part ${part.id} sent as message ${newMessage.id}`,
-      )
+
+      const firstMessage = await sendThreadMessage(thread, content)
+      partIdToMessage.set(part.id, firstMessage)
+      console.log(`[SEND SUCCESS] Part ${part.id} sent as message ${firstMessage.id}`)
 
       // Store part-message mapping in database
       db.prepare(
         'INSERT OR REPLACE INTO part_messages (part_id, message_id, thread_id) VALUES (?, ?, ?)',
-      ).run(part.id, newMessage.id, thread.id)
+      ).run(part.id, firstMessage.id, thread.id)
     } catch (error) {
       console.error(`[SEND ERROR] Failed to send part ${part.id}:`, error)
     }
@@ -459,7 +566,7 @@ async function handleOpencodeSession(
             console.error(
               `[SESSION ERROR] Sending error to thread: ${errorMessage}`,
             )
-            await thread.send(`❌ Error: ${errorMessage}`)
+            await sendThreadMessage(thread, `❌ Error: ${errorMessage}`)
           } else {
             console.log(
               `[SESSION ERROR IGNORED] Error for different session (expected: ${session.id}, got: ${event.properties.sessionID})`,
@@ -519,7 +626,8 @@ async function handleOpencodeSession(
     return { sessionID: session.id, result: response.data }
   } catch (error) {
     console.error(`[PROMPT ERROR] Failed to send prompt:`, error)
-    await thread.send(
+    await sendThreadMessage(
+      thread,
       `❌ Error: ${error instanceof Error ? error.message : String(error)}`,
     )
     throw error
@@ -689,7 +797,8 @@ export async function startDiscordBot({ token }: StartOptions) {
             console.log(`[DIRECTORY] Extracted directory: ${dir}`)
             if (!fs.existsSync(dir)) {
               console.log(`[ERROR] Directory does not exist: ${dir}`)
-              await thread.send(
+              await sendThreadMessage(
+                thread,
                 `❌ Directory does not exist: ${JSON.stringify(dir)}`,
               )
               return
@@ -705,7 +814,7 @@ export async function startDiscordBot({ token }: StartOptions) {
           console.log(`[WARNING] Parent channel has no description`)
         }
 
-        const thinkingMessage = await thread.send('Thinking…')
+        const thinkingMessage = await sendThreadMessage(thread, 'Thinking…')
         await handleOpencodeSession(
           message.content || '',
           thread,
@@ -755,7 +864,8 @@ export async function startDiscordBot({ token }: StartOptions) {
         // Check if directory exists
         if (!fs.existsSync(projectDirectory)) {
           console.log(`[ERROR] Directory does not exist: ${projectDirectory}`)
-          await message.reply(
+          await replyMessage(
+            message,
             `❌ Directory does not exist: ${JSON.stringify(projectDirectory)}`,
           )
           return
@@ -789,7 +899,7 @@ export async function startDiscordBot({ token }: StartOptions) {
       console.error('Discord handler error:', error)
       try {
         const errMsg = error instanceof Error ? error.message : String(error)
-        await message.reply(`Error: ${errMsg}`)
+        await replyMessage(message, `Error: ${errMsg}`)
       } catch {
         console.error('Discord handler error (fallback):', error)
       }
