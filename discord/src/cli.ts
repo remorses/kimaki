@@ -32,6 +32,10 @@ import {
 import path from 'node:path'
 import fs from 'node:fs'
 
+// Parse command line arguments
+const args = process.argv.slice(2)
+const forceSetup = args.includes('--force')
+
 type Project = {
   id: string
   worktree: string
@@ -46,76 +50,110 @@ async function main() {
   console.log()
   intro('🤖 Discord Bot Setup')
 
-  note(
-    '1. Go to https://discord.com/developers/applications\n' +
-      '2. Click "New Application"\n' +
-      '3. Give your application a name\n' +
-      '4. Copy the Application ID from the "General Information" section',
-    'Step 1: Create Discord Application',
-  )
-
-  const appId = await text({
-    message: 'Enter your Discord Application ID:',
-    placeholder: 'e.g., 1234567890123456789',
-    validate(value) {
-      if (!value) return 'Application ID is required'
-      if (!/^\d{17,20}$/.test(value))
-        return 'Invalid Application ID format (should be 17-20 digits)'
-    },
-  })
-
-  if (isCancel(appId)) {
-    cancel('Setup cancelled')
-    process.exit(0)
-  }
-
-  note(
-    '1. Go to the "Bot" section in the left sidebar\n' +
-      '2. Click "Reset Token" to generate a new bot token\n' +
-      "3. Copy the token (you won't be able to see it again!)",
-    'Step 2: Get Bot Token',
-  )
-
-  const token = await password({
-    message: 'Enter your Discord Bot Token (will be hidden):',
-    validate(value) {
-      if (!value) return 'Bot token is required'
-      if (value.length < 50) return 'Invalid token format (too short)'
-    },
-  })
-
-  if (isCancel(token)) {
-    cancel('Setup cancelled')
-    process.exit(0)
-  }
-
-  // Save token to database
   const db = getDatabase()
-  db.prepare(
-    'INSERT OR REPLACE INTO bot_tokens (app_id, token) VALUES (?, ?)',
-  ).run(appId, token)
+  let appId: string
+  let token: string
 
-  console.log()
-  note('Token saved to database', 'Credentials Stored')
+  // Check for existing credentials
+  const existingBot = db
+    .prepare('SELECT app_id, token FROM bot_tokens ORDER BY created_at DESC LIMIT 1')
+    .get() as { app_id: string; token: string } | undefined
 
-  // Show install URL and WAIT for installation
-  console.log()
-  note(
-    `Bot install URL:\n${generateBotInstallUrl({ clientId: appId })}\n\nYou MUST install the bot in your Discord server before continuing.`,
-    'Step 3: Install Bot to Server'
-  )
+  if (existingBot && !forceSetup) {
+    // Use existing credentials
+    appId = existingBot.app_id
+    token = existingBot.token
+    console.log()
+    note(
+      `Using saved bot credentials:\nApp ID: ${appId}\n\nTo use different credentials, run with --force`,
+      'Existing Bot Found'
+    )
+    
+    // Show install URL in case they need it
+    console.log()
+    note(
+      `Bot install URL (in case you need to add it to another server):\n${generateBotInstallUrl({ clientId: appId })}`,
+      'Install URL'
+    )
+  } else {
+    // Get new credentials
+    if (forceSetup && existingBot) {
+      console.log()
+      note('Ignoring saved credentials due to --force flag', 'Force Setup')
+    }
 
-  const installed = await text({
-    message: 'Press Enter AFTER you have installed the bot in your server:',
-    placeholder: 'Press Enter to continue',
-    validate() {
-      return undefined
-    },
-  })
+    note(
+      '1. Go to https://discord.com/developers/applications\n' +
+        '2. Click "New Application"\n' +
+        '3. Give your application a name\n' +
+        '4. Copy the Application ID from the "General Information" section',
+      'Step 1: Create Discord Application',
+    )
 
-  if (isCancel(installed)) {
-    cancel('Setup cancelled')
-    process.exit(0)
+    const appIdInput = await text({
+      message: 'Enter your Discord Application ID:',
+      placeholder: 'e.g., 1234567890123456789',
+      validate(value) {
+        if (!value) return 'Application ID is required'
+        if (!/^\d{17,20}$/.test(value))
+          return 'Invalid Application ID format (should be 17-20 digits)'
+      },
+    })
+
+    if (isCancel(appIdInput)) {
+      cancel('Setup cancelled')
+      process.exit(0)
+    }
+    appId = appIdInput
+
+    note(
+      '1. Go to the "Bot" section in the left sidebar\n' +
+        '2. Click "Reset Token" to generate a new bot token\n' +
+        "3. Copy the token (you won't be able to see it again!)",
+      'Step 2: Get Bot Token',
+    )
+
+    const tokenInput = await password({
+      message: 'Enter your Discord Bot Token (will be hidden):',
+      validate(value) {
+        if (!value) return 'Bot token is required'
+        if (value.length < 50) return 'Invalid token format (too short)'
+      },
+    })
+
+    if (isCancel(tokenInput)) {
+      cancel('Setup cancelled')
+      process.exit(0)
+    }
+    token = tokenInput
+
+    // Save token to database
+    db.prepare(
+      'INSERT OR REPLACE INTO bot_tokens (app_id, token) VALUES (?, ?)',
+    ).run(appId, token)
+
+    console.log()
+    note('Token saved to database', 'Credentials Stored')
+
+    // Show install URL and WAIT for installation
+    console.log()
+    note(
+      `Bot install URL:\n${generateBotInstallUrl({ clientId: appId })}\n\nYou MUST install the bot in your Discord server before continuing.`,
+      'Step 3: Install Bot to Server'
+    )
+
+    const installed = await text({
+      message: 'Press Enter AFTER you have installed the bot in your server:',
+      placeholder: 'Press Enter to continue',
+      validate() {
+        return undefined
+      },
+    })
+
+    if (isCancel(installed)) {
+      cancel('Setup cancelled')
+      process.exit(0)
+    }
   }
 
   // NOW create Discord client and connect
@@ -312,7 +350,7 @@ async function main() {
   // Start the bot at the very end
   console.log()
   s.start('Starting Discord bot...')
-  await startDiscordBot({ token, discordClient })
+  await startDiscordBot({ token, appId, discordClient })
   s.stop('Discord bot is running!')
 
   // Show channel links if any were created or exist

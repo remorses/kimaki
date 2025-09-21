@@ -29,6 +29,7 @@ import { Lexer } from 'marked'
 
 type StartOptions = {
   token: string
+  appId?: string
 }
 
 
@@ -931,43 +932,57 @@ export async function getChannelsWithDescriptions(
   return channels
 }
 
-export async function startDiscordBot({ token, discordClient }: StartOptions & { discordClient?: Client }) {
+export async function startDiscordBot({ token, appId, discordClient }: StartOptions & { discordClient?: Client }) {
   if (!discordClient) {
     discordClient = await createDiscordClient()
   }
 
   // Get the app ID for this bot instance
-  let currentAppId: string | undefined
+  let currentAppId: string | undefined = appId
 
   discordClient.once(Events.ClientReady, async (c) => {
     console.log(`[READY] Discord bot logged in as ${c.user.tag}`)
     console.log(`[READY] Connected to ${c.guilds.cache.size} guild(s)`)
+    console.log(`[READY] Bot user ID: ${c.user.id}`)
     
-    // Store the current app ID
-    currentAppId = c.user.id
-    console.log(`[READY] Bot Application ID: ${currentAppId}`)
+    // If appId wasn't provided, fetch it from the application
+    if (!currentAppId) {
+      await c.application?.fetch()
+      currentAppId = c.application?.id
+      
+      if (!currentAppId) {
+        console.error('[ERROR] Could not get application ID')
+        throw new Error('Failed to get bot application ID')
+      }
+      console.log(`[READY] Bot Application ID (fetched): ${currentAppId}`)
+    } else {
+      console.log(`[READY] Bot Application ID (provided): ${currentAppId}`)
+    }
 
-    // List all guilds and channels with kimaki.directory tags
+    // List all guilds and channels that belong to this bot
     for (const guild of c.guilds.cache.values()) {
       console.log(`[GUILD] ${guild.name} (${guild.id})`)
 
       const channels = await getChannelsWithDescriptions(guild)
-      const kimakiChannels = channels.filter((ch) => ch.kimakiDirectory)
+      // Only show channels that belong to this bot
+      const kimakiChannels = channels.filter((ch) => 
+        ch.kimakiDirectory && (!ch.kimakiApp || ch.kimakiApp === currentAppId)
+      )
 
       if (kimakiChannels.length > 0) {
         console.log(
-          `  Found ${kimakiChannels.length} channel(s) with kimaki.directory:`,
+          `  Found ${kimakiChannels.length} channel(s) for this bot:`,
         )
         for (const channel of kimakiChannels) {
           console.log(`  - #${channel.name}: ${channel.kimakiDirectory}`)
         }
       } else {
-        console.log(`  No channels with kimaki.directory tag`)
+        console.log(`  No channels for this bot`)
       }
     }
 
     console.log(
-      `[READY] Bot is ready and monitoring all channels with kimaki.directory tags`,
+      `[READY] Bot is ready and will only respond to channels with app ID: ${currentAppId}`,
     )
   })
 
