@@ -347,18 +347,20 @@ async function handleOpencodeSession(
   thread: ThreadChannel,
   projectDirectory?: string,
   initialThinkingMessage?: Message,
+  originalMessage?: Message,
 ) {
   console.log(
     `[OPENCODE SESSION] Starting for thread ${thread.id} with prompt: "${prompt.slice(0, 50)}${prompt.length > 50 ? '...' : ''}"`,
   )
 
-  // Add spinner emoji to thread name to indicate processing
-  const originalThreadName = thread.name
-  try {
-    await thread.setName(`🔄 ${originalThreadName}`)
-    console.log(`[THREAD] Added spinner emoji to thread name`)
-  } catch (e) {
-    console.log(`[THREAD] Could not add spinner emoji:`, e)
+  // Add processing reaction to original message
+  if (originalMessage) {
+    try {
+      await originalMessage.react('⏳')
+      console.log(`[REACTION] Added processing reaction to message`)
+    } catch (e) {
+      console.log(`[REACTION] Could not add processing reaction:`, e)
+    }
   }
 
   // Use default directory if not specified
@@ -583,14 +585,17 @@ async function handleOpencodeSession(
             console.error(
               `[SESSION ERROR] Sending error to thread: ${errorMessage}`,
             )
-            await sendThreadMessage(thread, `❌ Error: ${errorMessage}`)
-            
-            // Update thread name with error X
-            try {
-              await thread.setName(`❌ ${originalThreadName}`)
-              console.log(`[THREAD] Added error X to thread name due to session error`)
-            } catch (e) {
-              console.log(`[THREAD] Could not add error X:`, e)
+            await sendThreadMessage(thread, `✗ Error: ${errorMessage}`)
+
+            // Update reaction to error
+            if (originalMessage) {
+              try {
+                await originalMessage.reactions.removeAll()
+                await originalMessage.react('❌')
+                console.log(`[REACTION] Added error reaction due to session error`)
+              } catch (e) {
+                console.log(`[REACTION] Could not update reaction:`, e)
+              }
             }
           } else {
             console.log(
@@ -649,10 +654,10 @@ async function handleOpencodeSession(
     console.log(
       `[PROMPT] Sending prompt to session ${session.id}: "${prompt.slice(0, 100)}${prompt.length > 100 ? '...' : ''}"`,
     )
-    
+
     // Start the event handler
     const eventHandlerPromise = eventHandler()
-    
+
     const response = await client.session.prompt({
       path: { id: session.id },
       body: {
@@ -660,41 +665,45 @@ async function handleOpencodeSession(
       },
     })
     abortController.abort('finished')
-    
-    // Wait for event handler to complete
-    await eventHandlerPromise
+
 
     console.log(`[PROMPT] Successfully sent prompt, got response`)
     // Remove the controller after successful completion
     activeRequests.delete(directory)
-    
-    // Update thread name with success checkmark
-    try {
-      await thread.setName(`✅ ${originalThreadName}`)
-      console.log(`[THREAD] Added success checkmark to thread name`)
-    } catch (e) {
-      console.log(`[THREAD] Could not add success checkmark:`, e)
+
+    // Update reaction to success
+    if (originalMessage) {
+      try {
+        await originalMessage.reactions.removeAll()
+        await originalMessage.react('✅')
+        console.log(`[REACTION] Added success reaction to message`)
+      } catch (e) {
+        console.log(`[REACTION] Could not update reaction:`, e)
+      }
     }
-    
+
     return { sessionID: session.id, result: response.data }
   } catch (error) {
     console.error(`[PROMPT ERROR] Failed to send prompt:`, error)
     // Remove the controller on error
     activeRequests.delete(directory)
-    
-    // Update thread name with error X
-    try {
-      await thread.setName(`❌ ${originalThreadName}`)
-      console.log(`[THREAD] Added error X to thread name`)
-    } catch (e) {
-      console.log(`[THREAD] Could not add error X:`, e)
+
+    // Update reaction to error
+    if (originalMessage) {
+      try {
+        await originalMessage.reactions.removeAll()
+        await originalMessage.react('❌')
+        console.log(`[REACTION] Added error reaction to message`)
+      } catch (e) {
+        console.log(`[REACTION] Could not update reaction:`, e)
+      }
     }
-    
+
     // Only show error message if not aborted by a new request
     if (!(error instanceof Error && error.name === 'AbortError')) {
       await sendThreadMessage(
         thread,
-        `❌ Error: ${error instanceof Error ? error.message : String(error)}`,
+        `✗ Error: ${error instanceof Error ? error.message : String(error)}`,
       )
     }
     throw error
@@ -866,7 +875,7 @@ export async function startDiscordBot({ token }: StartOptions) {
               console.log(`[ERROR] Directory does not exist: ${dir}`)
               await sendThreadMessage(
                 thread,
-                `❌ Directory does not exist: ${JSON.stringify(dir)}`,
+                `✗ Directory does not exist: ${JSON.stringify(dir)}`,
               )
               return
             }
@@ -888,6 +897,7 @@ export async function startDiscordBot({ token }: StartOptions) {
             thread,
             projectDirectory,
             thinkingMessage,
+            message,
           )
         } catch (error) {
           // Edit thinking message to newline even on error
@@ -943,7 +953,7 @@ export async function startDiscordBot({ token }: StartOptions) {
         if (!fs.existsSync(projectDirectory)) {
           console.log(`[ERROR] Directory does not exist: ${projectDirectory}`)
           await message.reply(
-            `❌ Directory does not exist: ${JSON.stringify(projectDirectory)}`,
+            `✗ Directory does not exist: ${JSON.stringify(projectDirectory)}`,
           )
           return
         }
@@ -970,6 +980,7 @@ export async function startDiscordBot({ token }: StartOptions) {
           thread,
           projectDirectory,
           thinkingMessage,
+          message,
         )
       } else {
         console.log(
