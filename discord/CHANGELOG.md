@@ -1,5 +1,16 @@
 # Changelog
 
+## 2025-09-21
+
+- Add `/resume` slash command for resuming existing OpenCode sessions
+- Implement autocomplete for session selection showing title and last updated time
+- Create new Discord thread when resuming a session
+- Fetch and render all previous messages from the resumed session
+- Store thread-session associations in SQLite database
+- Reuse existing part-message mapping logic for resumed sessions
+- Add session-utils module with tests for fetching and processing session messages
+- Add `register-commands` script for standalone command registration
+
 ## 2025-01-25 01:30
 
 - Add prompt when existing channels are connected to ask if user wants to add new channels or start server immediately

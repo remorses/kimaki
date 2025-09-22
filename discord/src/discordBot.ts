@@ -12,6 +12,9 @@ import {
   type ThreadChannel,
   type Guild,
   type TextChannel,
+  type Interaction,
+  type AutocompleteInteraction,
+  type ChatInputCommandInteraction,
 } from 'discord.js'
 import { spawn, type ChildProcess } from 'node:child_process'
 import net from 'node:net'
@@ -26,12 +29,12 @@ import { extractTagsArrays } from './xml'
 import { transcribeAudio } from './voice'
 import { $ } from 'bun'
 import { Lexer } from 'marked'
+import { fetchSessionMessages,  } from './session-utils'
 
 type StartOptions = {
   token: string
   appId?: string
 }
-
 
 // Map of project directory to OpenCode server process and client
 const opencodeServers = new Map<
@@ -51,7 +54,7 @@ let db: Database | null = null
 export function getDatabase(): Database {
   if (!db) {
     db = new Database('discord-sessions.db')
-    
+
     // Initialize tables
     db.exec(`
       CREATE TABLE IF NOT EXISTS thread_sessions (
@@ -78,7 +81,7 @@ export function getDatabase(): Database {
       )
     `)
   }
-  
+
   return db
 }
 
@@ -241,13 +244,18 @@ async function processVoiceAttachment({
 
     if (projectDirectory) {
       try {
-        console.log(`[VOICE MESSAGE] Getting project file tree from ${projectDirectory}`)
+        console.log(
+          `[VOICE MESSAGE] Getting project file tree from ${projectDirectory}`,
+        )
         // Use git ls-files to get tracked files, then pipe to tree
-        const result = await $`cd ${projectDirectory} && git ls-files | tree --fromfile -a`.text()
+        const result =
+          await $`cd ${projectDirectory} && git ls-files | tree --fromfile -a`.text()
 
         if (result) {
           transcriptionPrompt = `Discord voice message transcription. Project file structure:\n${result}\n\nPlease transcribe file names and paths accurately based on this context.`
-          console.log(`[VOICE MESSAGE] Added project context to transcription prompt`)
+          console.log(
+            `[VOICE MESSAGE] Added project context to transcription prompt`,
+          )
         }
       } catch (e) {
         console.log(`[VOICE MESSAGE] Could not get project tree:`, e)
@@ -269,7 +277,7 @@ async function processVoiceAttachment({
       try {
         await Promise.race([
           thread.setName(threadName),
-          new Promise((resolve) => setTimeout(resolve, 2000))
+          new Promise((resolve) => setTimeout(resolve, 2000)),
         ])
         console.log(`[THREAD] Updated thread name to: "${threadName}"`)
       } catch (e) {
@@ -544,9 +552,11 @@ async function handleOpencodeSession(
   }
 
   // Store session ID in database
-  getDatabase().prepare(
-    'INSERT OR REPLACE INTO thread_sessions (thread_id, session_id) VALUES (?, ?)',
-  ).run(thread.id, session.id)
+  getDatabase()
+    .prepare(
+      'INSERT OR REPLACE INTO thread_sessions (thread_id, session_id) VALUES (?, ?)',
+    )
+    .run(thread.id, session.id)
   console.log(`[DATABASE] Stored session ${session.id} for thread ${thread.id}`)
 
   // Cancel any existing request for this session
@@ -620,9 +630,11 @@ async function handleOpencodeSession(
       )
 
       // Store part-message mapping in database
-      getDatabase().prepare(
-        'INSERT OR REPLACE INTO part_messages (part_id, message_id, thread_id) VALUES (?, ?, ?)',
-      ).run(part.id, firstMessage.id, thread.id)
+      getDatabase()
+        .prepare(
+          'INSERT OR REPLACE INTO part_messages (part_id, message_id, thread_id) VALUES (?, ?, ?)',
+        )
+        .run(part.id, firstMessage.id, thread.id)
     } catch (error) {
       console.error(`[SEND ERROR] Failed to send part ${part.id}:`, error)
     }
@@ -932,7 +944,11 @@ export async function getChannelsWithDescriptions(
   return channels
 }
 
-export async function startDiscordBot({ token, appId, discordClient }: StartOptions & { discordClient?: Client }) {
+export async function startDiscordBot({
+  token,
+  appId,
+  discordClient,
+}: StartOptions & { discordClient?: Client }) {
   if (!discordClient) {
     discordClient = await createDiscordClient()
   }
@@ -944,12 +960,12 @@ export async function startDiscordBot({ token, appId, discordClient }: StartOpti
     console.log(`[READY] Discord bot logged in as ${c.user.tag}`)
     console.log(`[READY] Connected to ${c.guilds.cache.size} guild(s)`)
     console.log(`[READY] Bot user ID: ${c.user.id}`)
-    
+
     // If appId wasn't provided, fetch it from the application
     if (!currentAppId) {
       await c.application?.fetch()
       currentAppId = c.application?.id
-      
+
       if (!currentAppId) {
         console.error('[ERROR] Could not get application ID')
         throw new Error('Failed to get bot application ID')
@@ -965,14 +981,14 @@ export async function startDiscordBot({ token, appId, discordClient }: StartOpti
 
       const channels = await getChannelsWithDescriptions(guild)
       // Only show channels that belong to this bot
-      const kimakiChannels = channels.filter((ch) => 
-        ch.kimakiDirectory && (!ch.kimakiApp || ch.kimakiApp === currentAppId)
+      const kimakiChannels = channels.filter(
+        (ch) =>
+          ch.kimakiDirectory &&
+          (!ch.kimakiApp || ch.kimakiApp === currentAppId),
       )
 
       if (kimakiChannels.length > 0) {
-        console.log(
-          `  Found ${kimakiChannels.length} channel(s) for this bot:`,
-        )
+        console.log(`  Found ${kimakiChannels.length} channel(s) for this bot:`)
         for (const channel of kimakiChannels) {
           console.log(`  - #${channel.name}: ${channel.kimakiDirectory}`)
         }
@@ -1055,7 +1071,7 @@ export async function startDiscordBot({ token, appId, discordClient }: StartOpti
         const parent = thread.parent as TextChannel | null
         let projectDirectory: string | undefined
         let channelAppId: string | undefined
-        
+
         if (parent?.topic) {
           const extracted = extractTagsArrays({
             xml: parent.topic,
@@ -1065,10 +1081,12 @@ export async function startDiscordBot({ token, appId, discordClient }: StartOpti
           projectDirectory = extracted['kimaki.directory']?.[0]?.trim()
           channelAppId = extracted['kimaki.app']?.[0]?.trim()
         }
-        
+
         // Check if this channel belongs to current bot instance
         if (channelAppId && channelAppId !== currentAppId) {
-          console.log(`[IGNORED] Thread belongs to different bot app (expected: ${currentAppId}, got: ${channelAppId})`)
+          console.log(
+            `[IGNORED] Thread belongs to different bot app (expected: ${currentAppId}, got: ${channelAppId})`,
+          )
           return
         }
 
@@ -1139,10 +1157,12 @@ export async function startDiscordBot({ token, appId, discordClient }: StartOpti
           )
           return
         }
-        
+
         // Check if this channel belongs to current bot instance
         if (channelAppId && channelAppId !== currentAppId) {
-          console.log(`[IGNORED] Channel belongs to different bot app (expected: ${currentAppId}, got: ${channelAppId})`)
+          console.log(
+            `[IGNORED] Channel belongs to different bot app (expected: ${currentAppId}, got: ${channelAppId})`,
+          )
           return
         }
 
@@ -1211,6 +1231,235 @@ export async function startDiscordBot({ token, appId, discordClient }: StartOpti
       }
     }
   })
+
+  // Handle slash command interactions
+  discordClient.on(
+    Events.InteractionCreate,
+    async (interaction: Interaction) => {
+      try {
+        // Handle autocomplete
+        if (interaction.isAutocomplete()) {
+          if (interaction.commandName === 'resume') {
+            const focusedValue = interaction.options.getFocused()
+
+            // Get the channel's project directory from its topic
+            let projectDirectory: string | undefined
+            if (
+              interaction.channel &&
+              interaction.channel.type === ChannelType.GuildText
+            ) {
+              const textChannel = interaction.channel as TextChannel
+              if (textChannel.topic) {
+                const extracted = extractTagsArrays({
+                  xml: textChannel.topic,
+                  tags: ['kimaki.directory'],
+                })
+                projectDirectory = extracted['kimaki.directory']?.[0]?.trim()
+              }
+            }
+
+            if (!projectDirectory) {
+              await interaction.respond([])
+              return
+            }
+
+            try {
+              // Get OpenCode client for this directory
+              const client =
+                await initializeOpencodeForDirectory(projectDirectory)
+
+              // List sessions
+              const sessionsResponse = await client.session.list()
+              if (!sessionsResponse.data) {
+                await interaction.respond([])
+                return
+              }
+
+              // Filter and map sessions to choices
+              const sessions = sessionsResponse.data
+                .filter((session) =>
+                  session.title
+                    .toLowerCase()
+                    .includes(focusedValue.toLowerCase()),
+                )
+                .slice(0, 25) // Discord limit
+                .map((session) => ({
+                  name: `${session.title} (${new Date(session.time.updated).toLocaleString()})`,
+                  value: session.id,
+                }))
+
+              await interaction.respond(sessions)
+            } catch (error) {
+              console.error('[AUTOCOMPLETE] Error fetching sessions:', error)
+              await interaction.respond([])
+            }
+          }
+        }
+
+        // Handle slash commands
+        if (interaction.isChatInputCommand()) {
+          const command = interaction
+
+          if (command.commandName === 'resume') {
+            await command.deferReply({ ephemeral: false })
+
+            const sessionId = command.options.getString('session', true)
+            const channel = command.channel
+
+            if (!channel || channel.type !== ChannelType.GuildText) {
+              await command.editReply(
+                'This command can only be used in text channels',
+              )
+              return
+            }
+
+            const textChannel = channel as TextChannel
+
+            // Get project directory from channel topic
+            let projectDirectory: string | undefined
+            let channelAppId: string | undefined
+
+            if (textChannel.topic) {
+              const extracted = extractTagsArrays({
+                xml: textChannel.topic,
+                tags: ['kimaki.directory', 'kimaki.app'],
+              })
+
+              projectDirectory = extracted['kimaki.directory']?.[0]?.trim()
+              channelAppId = extracted['kimaki.app']?.[0]?.trim()
+            }
+
+            // Check if this channel belongs to current bot instance
+            if (channelAppId && channelAppId !== currentAppId) {
+              await command.editReply(
+                'This channel is not configured for this bot',
+              )
+              return
+            }
+
+            if (!projectDirectory) {
+              await command.editReply(
+                'This channel is not configured with a project directory',
+              )
+              return
+            }
+
+            if (!fs.existsSync(projectDirectory)) {
+              await command.editReply(
+                `Directory does not exist: ${projectDirectory}`,
+              )
+              return
+            }
+
+            try {
+              // Initialize OpenCode client for the directory
+              const client =
+                await initializeOpencodeForDirectory(projectDirectory)
+
+              // Get session title
+              const sessionResponse = await client.session.get({
+                path: { id: sessionId },
+              })
+
+              if (!sessionResponse.data) {
+                await command.editReply('Session not found')
+                return
+              }
+
+              const sessionTitle = sessionResponse.data.title
+
+              // Create thread for the resumed session
+              const thread = await textChannel.threads.create({
+                name: `Resume: ${sessionTitle}`.slice(0, 100),
+                autoArchiveDuration: ThreadAutoArchiveDuration.OneDay,
+                reason: `Resuming session ${sessionId}`,
+              })
+
+              // Store session ID in database
+              getDatabase()
+                .prepare(
+                  'INSERT OR REPLACE INTO thread_sessions (thread_id, session_id) VALUES (?, ?)',
+                )
+                .run(thread.id, sessionId)
+
+              console.log(
+                `[RESUME] Created thread ${thread.id} for session ${sessionId}`,
+              )
+
+              // Fetch all messages for the session
+              const messagesResponse = await client.session.messages({
+                path: { id: sessionId },
+              })
+
+              if (!messagesResponse.data) {
+                throw new Error('Failed to fetch session messages')
+              }
+
+              const messages = messagesResponse.data
+
+              await command.editReply(
+                `Resumed session "${sessionTitle}" in ${thread.toString()}`,
+              )
+
+              // Send initial message to thread
+              await sendThreadMessage(
+                thread,
+                `📂 **Resumed session:** ${sessionTitle}\n📅 **Created:** ${new Date(sessionResponse.data.time.created).toLocaleString()}\n\n*Loading ${messages.length} messages...*`,
+              )
+
+              // Render all existing messages
+              let messageCount = 0
+              for (const message of messages) {
+                if (message.info.role === 'user') {
+                  // Render user messages
+                  const userParts = message.parts.filter(
+                    (p) => p.type === 'text',
+                  )
+                  const userText = userParts
+                    .map((p) => p.text)
+                    .join('\n\n')
+                  if (userText) {
+                    await sendThreadMessage(thread, `**User:**\n${userText}`)
+                  }
+                } else if (message.info.role === 'assistant') {
+                  // Render assistant parts
+                  for (const part of message.parts) {
+                    const content = formatPart(part)
+                    if (content.trim()) {
+                      const discordMessage = await sendThreadMessage(
+                        thread,
+                        content,
+                      )
+
+                      // Store part-message mapping in database
+                      getDatabase()
+                        .prepare(
+                          'INSERT OR REPLACE INTO part_messages (part_id, message_id, thread_id) VALUES (?, ?, ?)',
+                        )
+                        .run(part.id, discordMessage.id, thread.id)
+                    }
+                  }
+                }
+                messageCount++
+              }
+
+              await sendThreadMessage(
+                thread,
+                `✅ **Session resumed!** Loaded ${messageCount} messages.\n\nYou can now continue the conversation by sending messages in this thread.`,
+              )
+            } catch (error) {
+              console.error('[RESUME] Error:', error)
+              await command.editReply(
+                `Failed to resume session: ${error instanceof Error ? error.message : 'Unknown error'}`,
+              )
+            }
+          }
+        }
+      } catch (error) {
+        console.error('[INTERACTION] Error handling interaction:', error)
+      }
+    },
+  )
 
   await discordClient.login(token)
 

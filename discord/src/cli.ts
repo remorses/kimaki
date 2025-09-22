@@ -29,6 +29,9 @@ import {
   ChannelType,
   type TextChannel,
   type Guild,
+  REST,
+  Routes,
+  SlashCommandBuilder,
 } from 'discord.js'
 import path from 'node:path'
 import fs from 'node:fs'
@@ -36,6 +39,36 @@ import fs from 'node:fs'
 // Parse command line arguments
 const args = process.argv.slice(2)
 const forceSetup = args.includes('--force')
+
+async function registerCommands(token: string, appId: string) {
+  const commands = [
+    new SlashCommandBuilder()
+      .setName('resume')
+      .setDescription('Resume an existing OpenCode session')
+      .addStringOption(option =>
+        option.setName('session')
+          .setDescription('The session to resume')
+          .setRequired(true)
+          .setAutocomplete(true)),
+  ].map(command => command.toJSON())
+
+  const rest = new REST().setToken(token)
+
+  try {
+    console.log('[COMMANDS] Starting to register slash commands...')
+
+    // Register commands globally
+    const data = await rest.put(
+      Routes.applicationCommands(appId),
+      { body: commands },
+    ) as any[]
+
+    console.log(`[COMMANDS] Successfully registered ${data.length} slash commands`)
+  } catch (error) {
+    console.error('[COMMANDS] Failed to register slash commands:', error)
+    throw error
+  }
+}
 
 type Project = {
   id: string
@@ -366,6 +399,18 @@ async function main() {
         )
       }
     }
+  }
+
+  // Register slash commands
+  console.log()
+  s.start('Registering slash commands...')
+  try {
+    await registerCommands(token, appId)
+    s.stop('Slash commands registered!')
+  } catch (error) {
+    s.stop('Failed to register slash commands')
+    console.error('Error:', error instanceof Error ? error.message : String(error))
+    // Continue anyway as commands might already be registered
   }
 
   // Start the bot at the very end

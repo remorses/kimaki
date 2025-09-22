@@ -8,7 +8,8 @@
     "test": "bun run scripts/test-opencode.ts",
     "watch": "bun run scripts/watch-session.ts",
     "test:events": "tsx test-events.ts",
-    "test:send": "tsx send-test-message.ts"
+    "test:send": "tsx send-test-message.ts",
+    "register-commands": "bun run scripts/register-commands.ts"
   },
   "devDependencies": {
     "@opencode-ai/sdk": "^0.11.0",
