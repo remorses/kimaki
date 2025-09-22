@@ -285,7 +285,7 @@ async function processVoiceAttachment({
 
     await sendThreadMessage(
       thread,
-      `📝 **Transcribed message:** ${transcription}`,
+      `📝 **Transcribed message:** ${escapeCodeBlock(transcription)}`,
     )
     return transcription
   } catch (error) {
@@ -304,6 +304,24 @@ async function processVoiceAttachment({
 
     throw error
   }
+}
+
+/**
+ * Escape Discord formatting characters in code blocks
+ */
+function escapeCodeBlock(text: string): string {
+  return text
+    .replace(/```/g, '\\`\\`\\`')      // Triple backticks
+    .replace(/``/g, '\\`\\`')          // Double backticks
+    .replace(/(?<!\\)`(?!`)/g, '\\`')  // Single backticks (not already escaped or part of double/triple)
+    .replace(/\|\|/g, '\\|\\|')        // Double pipes (spoiler syntax)
+}
+
+/**
+ * Escape Discord formatting characters in inline code
+ */
+function escapeInlineCode(text: string): string {
+  return text.replace(/`/g, '\\`')
 }
 
 export async function initializeOpencodeForDirectory(
@@ -371,9 +389,9 @@ export async function initializeOpencodeForDirectory(
 function formatPart(part: Part): string {
   switch (part.type) {
     case 'text':
-      return part.text || ''
+      return escapeCodeBlock(part.text || '')
     case 'reasoning':
-      return `💭 ${part.text || ''}`
+      return `💭 ${escapeCodeBlock(part.text || '')}`
     case 'tool':
       if (part.state.status === 'completed' || part.state.status === 'error') {
         // console.log(part)
@@ -429,18 +447,13 @@ function formatPart(part: Part): string {
             : outputToDisplay
         
         // Escape Discord formatting characters that could break code blocks
-        outputToDisplay = outputToDisplay
-          .replace(/```/g, '\\`\\`\\`')  // Triple backticks
-          .replace(/``/g, '\\`\\`')      // Double backticks
-          .replace(/(?<!\\)`(?!`)/g, '\\`') // Single backticks (not already escaped or part of double/triple)
-          .replace(/\|\|/g, '\\|\\|')    // Double pipes (spoiler syntax)
+        outputToDisplay = escapeCodeBlock(outputToDisplay)
 
         let toolTitle =
           part.state.status === 'completed' ? part.state.title || '' : 'error'
         // Escape backticks in the title before wrapping in backticks
         if (toolTitle) {
-          toolTitle = toolTitle.replace(/`/g, '\\`')
-          toolTitle = `\`${toolTitle}\``
+          toolTitle = `\`${escapeInlineCode(toolTitle)}\``
         }
         const icon =
           part.state.status === 'completed'
@@ -1431,7 +1444,9 @@ export async function startDiscordBot({
                     .map((p) => p.text)
                     .join('\n\n')
                   if (userText) {
-                    await sendThreadMessage(thread, `**User:**\n${userText}`)
+                    // Escape backticks in user messages to prevent formatting issues
+                    const escapedText = escapeCodeBlock(userText)
+                    await sendThreadMessage(thread, `**User:**\n${escapedText}`)
                   }
                 } else if (message.info.role === 'assistant') {
                   // Render assistant parts
