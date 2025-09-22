@@ -1,5 +1,10 @@
-import path from 'node:path'
-import fs from 'node:fs'
+import {
+  createOpencodeClient,
+  type OpencodeClient,
+  type Part,
+} from '@opencode-ai/sdk'
+import { $ } from 'bun'
+import { Database } from 'bun:sqlite'
 import {
   ChannelType,
   Client,
@@ -8,28 +13,20 @@ import {
   Partials,
   PermissionsBitField,
   ThreadAutoArchiveDuration,
-  type Message,
-  type ThreadChannel,
   type Guild,
-  type TextChannel,
   type Interaction,
-  type AutocompleteInteraction,
-  type ChatInputCommandInteraction,
+  type Message,
+  type TextChannel,
+  type ThreadChannel
 } from 'discord.js'
-import { spawn, type ChildProcess } from 'node:child_process'
-import net from 'node:net'
-import {
-  createOpencodeClient,
-  type OpencodeClient,
-  type Part,
-} from '@opencode-ai/sdk'
-import dedent from 'string-dedent'
-import { Database } from 'bun:sqlite'
-import { extractTagsArrays } from './xml'
-import { transcribeAudio } from './voice'
-import { $ } from 'bun'
 import { Lexer } from 'marked'
-import { fetchSessionMessages,  } from './session-utils'
+import { spawn, type ChildProcess } from 'node:child_process'
+import fs from 'node:fs'
+import net from 'node:net'
+import path from 'node:path'
+import dedent from 'string-dedent'
+import { transcribeAudio } from './voice'
+import { extractTagsArrays } from './xml'
 
 type StartOptions = {
   token: string
