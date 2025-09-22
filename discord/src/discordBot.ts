@@ -220,6 +220,9 @@ async function setupVoiceHandling({
     )
     voiceData.genAiSession.stop()
   }
+  session.sendRealtimeInput({
+    text: `<systemMessage>\nsay "Hello boss, how we doing today?"\n</systemMessage>`,
+  })
 
   voiceData.genAiSession = { session, stop }
 
@@ -1944,6 +1947,7 @@ export async function startDiscordBot({
           adapterCreator: newState.guild.voiceAdapterCreator,
           selfDeaf: false,
           debug: true,
+          daveEncryption: false,
 
           selfMute: false, // Not muted so bot can speak
         })
