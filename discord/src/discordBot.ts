@@ -3,7 +3,7 @@ import {
   type OpencodeClient,
   type Part,
 } from '@opencode-ai/sdk'
-import Database from '@farjs/better-sqlite3-wrapper'
+import Database from 'better-sqlite3'
 import {
   ChannelType,
   Client,

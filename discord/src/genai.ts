@@ -273,6 +273,7 @@ export async function startGenAiSession({
         console.debug('Opened')
       },
       onmessage: function (message: LiveServerMessage) {
+        console.log(message)
         responseQueue.push(message)
       },
       onerror: function (e: ErrorEvent) {
