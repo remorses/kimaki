@@ -266,9 +266,7 @@ async function setupVoiceHandling({
           )
           return
         }
-        console.log(
-          `[VOICE] Received audio frame from user ${userId}: ${frame.length} bytes`,
-        )
+
         // stream incrementally — low latency
         voiceData.genAiSession.session.sendRealtimeInput({
           audio: {

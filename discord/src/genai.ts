@@ -255,7 +255,8 @@ export async function startGenAiSession({
     apiKey: process.env.GEMINI_API_KEY,
   })
 
-  const model = 'models/gemini-2.5-flash-preview-native-audio-dialog'
+  const model = 'models/gemini-2.5-flash-live-preview'
+
 
 
   session = await ai.live.connect({

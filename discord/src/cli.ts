@@ -40,6 +40,8 @@ import fs from 'node:fs'
 const args = process.argv.slice(2)
 const forceSetup = args.includes('--force')
 
+process.title = 'kimaki'
+
 async function registerCommands(token: string, appId: string) {
   const commands = [
     new SlashCommandBuilder()
