@@ -3,6 +3,9 @@ import {
   type OpencodeClient,
   type Part,
 } from '@opencode-ai/sdk'
+
+import { createDirectVoiceStreamer } from './directVoiceStreaming'
+
 import Database from 'better-sqlite3'
 import {
   ChannelType,
@@ -23,9 +26,6 @@ import {
   joinVoiceChannel,
   VoiceConnectionStatus,
   entersState,
-  createAudioPlayer,
-  createAudioResource,
-  StreamType,
   EndBehaviorType,
   type VoiceConnection,
 } from '@discordjs/voice'
@@ -72,6 +72,11 @@ const voiceConnections = new Map<
       session: Session
       stop: () => void
     }
+    voiceStreamer?: {
+      write(pcmData: Buffer): void
+      stop(): void
+      isActive: boolean
+    }
   }
 >()
 
@@ -91,59 +96,38 @@ async function setupVoiceHandling(
     return
   }
 
-  // Create resampler to convert 24kHz mono to 48kHz stereo
-  const resampler = new Resampler({
-    inRate: 24000, // GenAI outputs 24kHz (not 16kHz!)
-    outRate: 48000, // Discord expects 48kHz
-    inChannels: 1, // GenAI outputs mono
-    outChannels: 2, // Discord expects stereo
+  // Import the direct streaming module
+  const { createDirectVoiceStreamer } = await import('./directVoiceStreaming')
+
+  // Create direct voice streamer
+  const voiceStreamer = createDirectVoiceStreamer({
+    connection,
+    inputSampleRate: 24000, // GenAI outputs 16kHz
+    inputChannels: 1, // GenAI outputs mono
+    onStop: () => {
+      console.log('[VOICE] Voice streamer stopped')
+    },
   })
 
-  resampler.on('end', () => {
-    console.log('[VOICE] Resampler stream ended')
-  })
+  // Store the streamer for cleanup
+  voiceData.voiceStreamer = voiceStreamer
 
-  // Create encoder for Discord - now properly configured for 48kHz stereo
-  const encoder = new prism.opus.Encoder({
-    rate: 48000, // Matches resampler output
-    channels: 2, // Matches resampler output
-    frameSize: 960, // 20ms at 48kHz
-  })
-
-  encoder.on('end', () => {
-    console.log('[VOICE] Discord Sending Opus Encoder stream ended')
-  })
-
-  // Pipe resampler to encoder
-  resampler.pipe(encoder)
-
-  // Create audio player and resource
-  const player = createAudioPlayer({debug:true})
-  player.on('error', (error) => {
-    console.error(`[VOICE] Audio player error:`, error)
-  })
-  player.on('debug', (error) => {
-    console.error(`[VOICE] Audio player debug:`, error)
-  })
-  player.on('stateChange', ({status}) => {
-    console.error(`[VOICE] Audio player state change:`, status)
-  })
-
-  const resource = createAudioResource(encoder, {
-    inputType: StreamType.Opus,
-  })
-  player.play(resource)
-  const sub = connection.subscribe(player)
-
-  // Start GenAI session
   const { session, stop } = await startGenAiSession({
-    onAssistantAudioChunk({ data }) {
+    onAssistantAudioChunk({ data, mimeType }) {
       console.log(
-        `[VOICE] sending GenAI audio chunk to discord: ${data.length} bytes`,
+        `[VOICE] GenAI audio chunk: ${data.length} bytes, mimeType: ${mimeType}`,
       )
-      // data is raw PCM s16le @ 24 kHz mono
-      // Write to resampler which will convert to 48kHz stereo
-      resampler.write(data)
+      // data is raw PCM s16le @ 16 kHz mono
+      // Write directly to our voice streamer
+      voiceStreamer.write(data)
+    },
+    onAssistantStartSpeaking() {
+      console.log('[VOICE] Assistant started speaking')
+      connection.setSpeaking(true)
+    },
+    onAssistantStopSpeaking() {
+      console.log('[VOICE] Assistant stopped speaking')
+      connection.setSpeaking(false)
     },
     systemMessage: `You are Kimaki, a helpful AI assistant in a Discord voice channel. You're listening to users speak and will respond with voice. Be conversational and helpful. Keep responses concise.`,
   })
@@ -1746,6 +1730,10 @@ export async function startDiscordBot({
             console.log(
               `[VOICE] No other admins in channel, bot leaving voice channel in guild: ${guild.name}`,
             )
+            // Stop voice streamer if exists
+            if (voiceData.voiceStreamer) {
+              voiceData.voiceStreamer.stop()
+            }
             // Stop GenAI session if exists
             if (voiceData.genAiSession) {
               voiceData.genAiSession.stop()
@@ -1936,6 +1924,9 @@ export async function startDiscordBot({
     }
     // Destroy all voice connections
     for (const [guildId, voiceData] of voiceConnections) {
+      if (voiceData.voiceStreamer) {
+        voiceData.voiceStreamer.stop()
+      }
       if (voiceData.genAiSession) {
         voiceData.genAiSession.stop()
       }
@@ -1964,6 +1955,9 @@ export async function startDiscordBot({
     }
     // Destroy all voice connections
     for (const [guildId, voiceData] of voiceConnections) {
+      if (voiceData.voiceStreamer) {
+        voiceData.voiceStreamer.stop()
+      }
       if (voiceData.genAiSession) {
         voiceData.genAiSession.stop()
       }

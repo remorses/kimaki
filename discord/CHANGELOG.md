@@ -1,5 +1,13 @@
 # Changelog
 
+## 2025-09-22 11:45
+
+- Replace AudioPlayer/AudioResource with direct voice streaming implementation
+- Create `directVoiceStreaming.ts` module that uses VoiceConnection's low-level APIs
+- Implement custom 20ms timer cycle for Opus packet scheduling
+- Handle packet queueing, silence frames, and speaking state directly
+- Remove dependency on discord.js audio player abstraction for continuous streaming
+
 ## 2025-09-22 10:15
 
 - Add tool support to `startGenAiSession` function

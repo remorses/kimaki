@@ -104,16 +104,21 @@ function defaultAudioChunkHandler({
 
 export async function startGenAiSession({
   onAssistantAudioChunk,
+  onAssistantStartSpeaking,
+  onAssistantStopSpeaking,
   systemMessage,
   tools,
 }: {
   onAssistantAudioChunk?: (args: { data: Buffer; mimeType: string }) => void
+  onAssistantStartSpeaking?: () => void
+  onAssistantStopSpeaking?: () => void
   systemMessage?: string
   tools?: Record<string, AITool<any, any>>
 } = {}) {
   const responseQueue: LiveServerMessage[] = []
   let session: Session | undefined = undefined
   const callableTools: Array<CallableTool & { name: string }> = []
+  let isAssistantSpeaking = false
 
   const audioChunkHandler = onAssistantAudioChunk || defaultAudioChunkHandler
 
@@ -194,6 +199,13 @@ export async function startGenAiSession({
             console.log('Skipping non-audio inlineData:', inlineData.mimeType)
             continue
           }
+
+          // Trigger start speaking callback the first time audio is received
+          if (!isAssistantSpeaking && onAssistantStartSpeaking) {
+            isAssistantSpeaking = true
+            onAssistantStartSpeaking()
+          }
+
           const buffer = Buffer.from(inlineData?.data ?? '', 'base64')
           await audioChunkHandler({
             data: buffer,
@@ -223,9 +235,17 @@ export async function startGenAiSession({
     }
     if (message.serverContent?.interrupted) {
       console.log('[assistant was interrupted]')
+      if (isAssistantSpeaking && onAssistantStopSpeaking) {
+        isAssistantSpeaking = false
+        onAssistantStopSpeaking()
+      }
     }
     if (message.serverContent?.turnComplete) {
       console.log('[assistant turn complete]')
+      if (isAssistantSpeaking && onAssistantStopSpeaking) {
+        isAssistantSpeaking = false
+        onAssistantStopSpeaking()
+      }
     }
   }
 
@@ -234,37 +254,6 @@ export async function startGenAiSession({
   })
 
   const model = 'models/gemini-2.5-flash-live-preview'
-
-  const config: any = {
-    responseModalities: [Modality.AUDIO],
-    mediaResolution: MediaResolution.MEDIA_RESOLUTION_MEDIUM,
-    inputAudioTranscription: {}, // transcribes your input speech
-    outputAudioTranscription: {}, // transcribes the model's spoken audio
-    systemInstruction: {
-      parts: [
-        {
-          text: systemMessage || '',
-        },
-      ],
-    },
-    speechConfig: {
-      voiceConfig: {
-        prebuiltVoiceConfig: {
-          voiceName: 'Charon', // Orus also not bad
-        },
-      },
-    },
-    contextWindowCompression: {
-      triggerTokens: '25600',
-
-      slidingWindow: { targetTokens: '12800' },
-    },
-  }
-
-  // Add tools to config if provided
-  if (callableTools.length > 0) {
-    config.tools = callableTools
-  }
 
   session = await ai.live.connect({
     model,
@@ -283,7 +272,32 @@ export async function startGenAiSession({
         console.debug('Close:', e.reason)
       },
     },
-    config,
+    config: {
+      tools: callableTools,
+      responseModalities: [Modality.AUDIO],
+      mediaResolution: MediaResolution.MEDIA_RESOLUTION_MEDIUM,
+      inputAudioTranscription: {}, // transcribes your input speech
+      outputAudioTranscription: {}, // transcribes the model's spoken audio
+      systemInstruction: {
+        parts: [
+          {
+            text: systemMessage || '',
+          },
+        ],
+      },
+      speechConfig: {
+        voiceConfig: {
+          prebuiltVoiceConfig: {
+            voiceName: 'Charon', // Orus also not bad
+          },
+        },
+      },
+      contextWindowCompression: {
+        triggerTokens: '25600',
+
+        slidingWindow: { targetTokens: '12800' },
+      },
+    },
   })
 
   startListening()
