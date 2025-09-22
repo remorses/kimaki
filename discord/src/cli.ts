@@ -55,7 +55,7 @@ async function registerCommands(token: string, appId: string) {
   const rest = new REST().setToken(token)
 
   try {
-    console.log('[COMMANDS] Starting to register slash commands...')
+    // console.log('[COMMANDS] Starting to register slash commands...')
 
     // Register commands globally
     const data = await rest.put(
@@ -102,7 +102,7 @@ async function main() {
       `Using saved bot credentials:\nApp ID: ${appId}\n\nTo use different credentials, run with --force`,
       'Existing Bot Found'
     )
-    
+
     // Show install URL in case they need it
     console.log()
     note(
@@ -235,7 +235,7 @@ async function main() {
 
   // Show existing kimaki channels
   let shouldAddChannels = true
-  
+
   if (kimakiChannels.length > 0) {
     const channelList = kimakiChannels
       .flatMap(({ guild, channels }) =>
@@ -247,7 +247,7 @@ async function main() {
       .join('\n')
 
     note(channelList, 'Existing Kimaki Channels')
-    
+
     // Ask user if they want to add new channels or start the server
     console.log()
     const action = await select({
@@ -257,13 +257,13 @@ async function main() {
         { value: 'add', label: 'Add new channels before starting' }
       ]
     })
-    
+
     if (isCancel(action)) {
       cancel('Setup cancelled')
       discordClient.destroy()
       process.exit(0)
     }
-    
+
     shouldAddChannels = action === 'add'
   }
 
@@ -380,10 +380,10 @@ async function main() {
             topic: `<kimaki><directory>${project.worktree}</directory><app>${appId}</app></kimaki>`,
           })) as TextChannel
 
-          createdChannels.push({ 
-            name: channel.name, 
+          createdChannels.push({
+            name: channel.name,
             id: channel.id,
-            guildId: targetGuild.id 
+            guildId: targetGuild.id
           })
         } catch (error) {
           console.error(`Failed to create channel for ${baseName}:`, error)
@@ -394,7 +394,7 @@ async function main() {
 
       if (createdChannels.length > 0) {
         note(
-          createdChannels.map(ch => `#${ch.name}`).join('\n'), 
+          createdChannels.map(ch => `#${ch.name}`).join('\n'),
           'Created Channels'
         )
       }
@@ -421,10 +421,10 @@ async function main() {
 
   // Show channel links if any were created or exist
   const allChannels: { name: string; id: string; guildId: string; directory?: string }[] = []
-  
+
   // Add newly created channels
   allChannels.push(...createdChannels)
-  
+
   // Add existing kimaki channels
   kimakiChannels.forEach(({ guild, channels }) => {
     channels.forEach(ch => {
@@ -439,10 +439,10 @@ async function main() {
 
   if (allChannels.length > 0) {
     console.log()
-    const channelLinks = allChannels.map(ch => 
+    const channelLinks = allChannels.map(ch =>
       `• #${ch.name}: https://discord.com/channels/${ch.guildId}/${ch.id}`
     ).join('\n')
-    
+
     note(
       `Your kimaki channels are ready! Click any link below to open in Discord:\n\n${channelLinks}\n\nSend a message in any channel to start using OpenCode!`,
       '🚀 Ready to Use'

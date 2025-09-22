@@ -22,6 +22,8 @@ export function generateBotInstallUrl({
     PermissionsBitField.Flags.ManageMessages,
     PermissionsBitField.Flags.UseExternalEmojis,
     PermissionsBitField.Flags.AttachFiles,
+    PermissionsBitField.Flags.Connect,
+    PermissionsBitField.Flags.Speak,
   ],
   scopes = ['bot'],
   guildId,
@@ -59,6 +61,8 @@ function getRequiredBotPermissions(): bigint[] {
     PermissionsBitField.Flags.ManageMessages,
     PermissionsBitField.Flags.UseExternalEmojis,
     PermissionsBitField.Flags.AttachFiles,
+    PermissionsBitField.Flags.Connect,
+    PermissionsBitField.Flags.Speak,
   ]
 }
 

@@ -17,8 +17,15 @@ import {
   type Interaction,
   type Message,
   type TextChannel,
-  type ThreadChannel
+  type ThreadChannel,
+  type VoiceChannel,
 } from 'discord.js'
+import {
+  joinVoiceChannel,
+  VoiceConnectionStatus,
+  entersState,
+  type VoiceConnection,
+} from '@discordjs/voice'
 import { Lexer } from 'marked'
 import { spawn, type ChildProcess } from 'node:child_process'
 import fs from 'node:fs'
@@ -46,6 +53,9 @@ const opencodeServers = new Map<
 
 // Map of session ID to current AbortController
 const activeRequests = new Map<string, AbortController>()
+
+// Map of guild ID to voice connection
+const voiceConnections = new Map<string, VoiceConnection>()
 
 let db: Database | null = null
 
@@ -315,16 +325,16 @@ async function processVoiceAttachment({
  */
 function escapeDiscordFormatting(text: string): string {
   return text
-    .replace(/```/g, '\\`\\`\\`')      // Triple backticks
-    .replace(/``/g, '\\`\\`')          // Double backticks
-    .replace(/(?<!\\)`(?!`)/g, '\\`')  // Single backticks (not already escaped or part of double/triple)
-    .replace(/\|\|/g, '\\|\\|')        // Double pipes (spoiler syntax)
+    .replace(/```/g, '\\`\\`\\`') // Triple backticks
+    .replace(/``/g, '\\`\\`') // Double backticks
+    .replace(/(?<!\\)`(?!`)/g, '\\`') // Single backticks (not already escaped or part of double/triple)
+    .replace(/\|\|/g, '\\|\\|') // Double pipes (spoiler syntax)
 }
 
 export async function initializeOpencodeForDirectory(
   directory: string,
 ): Promise<OpencodeClient> {
-  console.log(`[OPENCODE] Initializing for directory: ${directory}`)
+  // console.log(`[OPENCODE] Initializing for directory: ${directory}`)
 
   // Check if we already have a server for this directory
   const existing = opencodeServers.get(directory)
@@ -336,9 +346,9 @@ export async function initializeOpencodeForDirectory(
   }
 
   const port = await getOpenPort()
-  console.log(
-    `[OPENCODE] Starting new server on port ${port} for directory: ${directory}`,
-  )
+  // console.log(
+  //   `[OPENCODE] Starting new server on port ${port} for directory: ${directory}`,
+  // )
 
   const serverProcess = spawn(
     'opencode',
@@ -442,7 +452,7 @@ function formatPart(part: Part): string {
           outputToDisplay.length > 500
             ? outputToDisplay.slice(0, 497) + `…`
             : outputToDisplay
-        
+
         // Escape Discord formatting characters that could break code blocks
         outputToDisplay = escapeDiscordFormatting(outputToDisplay)
 
@@ -477,7 +487,12 @@ function formatPart(part: Part): string {
       return `📄 ${part.filename || 'File'}`
     case 'step-start':
     case 'step-finish':
+    case 'patch':
       return ''
+    case 'agent':
+      return `◼︎ agent ${part.id}`
+    case 'snapshot':
+      return `◼︎ snapshot ${part.snapshot}`
     default:
       console.log('Unknown part type:', part)
       return ''
@@ -490,6 +505,7 @@ export async function createDiscordClient() {
       GatewayIntentBits.Guilds,
       GatewayIntentBits.GuildMessages,
       GatewayIntentBits.MessageContent,
+      GatewayIntentBits.GuildVoiceStates,
     ],
     partials: [
       Partials.Channel,
@@ -509,7 +525,7 @@ async function handleOpencodeSession(
   console.log(
     `[OPENCODE SESSION] Starting for thread ${thread.id} with prompt: "${prompt.slice(0, 50)}${prompt.length > 50 ? '...' : ''}"`,
   )
-  
+
   // Track session start time
   const sessionStartTime = Date.now()
 
@@ -787,7 +803,10 @@ async function handleOpencodeSession(
             console.error(
               `[SESSION ERROR] Sending error to thread: ${errorMessage}`,
             )
-            await sendThreadMessage(thread, `✗ opencode session error: ${errorMessage}`)
+            await sendThreadMessage(
+              thread,
+              `✗ opencode session error: ${errorMessage}`,
+            )
 
             // Update reaction to error
             if (originalMessage) {
@@ -855,7 +874,7 @@ async function handleOpencodeSession(
         stopTyping = null
         console.log(`[CLEANUP] Stopped typing for session`)
       }
-      
+
       // Send duration message
       const sessionDuration = prettyMilliseconds(Date.now() - sessionStartTime)
       await sendThreadMessage(thread, `_Completed in ${sessionDuration}_`)
@@ -915,7 +934,7 @@ async function handleOpencodeSession(
     if (!(error instanceof Error && error.name === 'AbortError')) {
       await sendThreadMessage(
         thread,
-        `✗ Unexpected bot Error: ${error instanceof Error ? (error.stack || error.message) : String(error)}`,
+        `✗ Unexpected bot Error: ${error instanceof Error ? error.stack || error.message : String(error)}`,
       )
     }
     throw error
@@ -1438,9 +1457,7 @@ export async function startDiscordBot({
                   const userParts = message.parts.filter(
                     (p) => p.type === 'text',
                   )
-                  const userText = userParts
-                    .map((p) => p.text)
-                    .join('\n\n')
+                  const userText = userParts.map((p) => p.text).join('\n\n')
                   if (userText) {
                     // Escape backticks in user messages to prevent formatting issues
                     const escapedText = escapeDiscordFormatting(userText)
@@ -1486,6 +1503,218 @@ export async function startDiscordBot({
     },
   )
 
+  // Handle voice state updates
+  discordClient.on(Events.VoiceStateUpdate, async (oldState, newState) => {
+    try {
+      const member = newState.member || oldState.member
+      if (!member) return
+
+      // Check if user is admin or server owner
+      const guild = newState.guild || oldState.guild
+      const isOwner = member.id === guild.ownerId
+      const isAdmin = member.permissions.has(
+        PermissionsBitField.Flags.Administrator,
+      )
+
+      if (!isOwner && !isAdmin) {
+        // Not an admin user, ignore
+        return
+      }
+
+      // Handle admin leaving voice channel
+      if (oldState.channelId !== null && newState.channelId === null) {
+        console.log(
+          `[VOICE] Admin user ${member.user.tag} left voice channel: ${oldState.channel?.name}`,
+        )
+
+        // Check if bot should leave too
+        const guildId = guild.id
+        const connection = voiceConnections.get(guildId)
+
+        if (
+          connection &&
+          connection.joinConfig.channelId === oldState.channelId
+        ) {
+          // Check if any other admin is still in the channel
+          const voiceChannel = oldState.channel as VoiceChannel
+          if (!voiceChannel) return
+
+          const hasOtherAdmins = voiceChannel.members.some((m) => {
+            if (m.id === member.id || m.user.bot) return false
+            return (
+              m.id === guild.ownerId ||
+              m.permissions.has(PermissionsBitField.Flags.Administrator)
+            )
+          })
+
+          if (!hasOtherAdmins) {
+            console.log(
+              `[VOICE] No other admins in channel, bot leaving voice channel in guild: ${guild.name}`,
+            )
+            connection.destroy()
+            voiceConnections.delete(guildId)
+          } else {
+            console.log(
+              `[VOICE] Other admins still in channel, bot staying in voice channel`,
+            )
+          }
+        }
+        return
+      }
+
+      // Handle admin moving between voice channels
+      if (
+        oldState.channelId !== null &&
+        newState.channelId !== null &&
+        oldState.channelId !== newState.channelId
+      ) {
+        console.log(
+          `[VOICE] Admin user ${member.user.tag} moved from ${oldState.channel?.name} to ${newState.channel?.name}`,
+        )
+
+        // Check if we need to follow the admin
+        const guildId = guild.id
+        const connection = voiceConnections.get(guildId)
+
+        if (
+          connection &&
+          connection.joinConfig.channelId === oldState.channelId
+        ) {
+          // Check if any other admin is still in the old channel
+          const oldVoiceChannel = oldState.channel as VoiceChannel
+          if (oldVoiceChannel) {
+            const hasOtherAdmins = oldVoiceChannel.members.some((m) => {
+              if (m.id === member.id || m.user.bot) return false
+              return (
+                m.id === guild.ownerId ||
+                m.permissions.has(PermissionsBitField.Flags.Administrator)
+              )
+            })
+
+            if (!hasOtherAdmins) {
+              console.log(
+                `[VOICE] Following admin to new channel: ${newState.channel?.name}`,
+              )
+              const voiceChannel = newState.channel as VoiceChannel
+              if (voiceChannel) {
+                connection.rejoin({
+                  channelId: voiceChannel.id,
+                  selfDeaf: false,
+                  selfMute: true,
+                })
+              }
+            } else {
+              console.log(
+                `[VOICE] Other admins still in old channel, bot staying put`,
+              )
+            }
+          }
+        }
+      }
+
+      // Handle admin joining voice channel (initial join)
+      if (oldState.channelId === null && newState.channelId !== null) {
+        console.log(
+          `[VOICE] Admin user ${member.user.tag} (Owner: ${isOwner}, Admin: ${isAdmin}) joined voice channel: ${newState.channel?.name}`,
+        )
+      }
+
+      // Only proceed with joining if this is a new join or channel move
+      if (newState.channelId === null) return
+
+      const voiceChannel = newState.channel as VoiceChannel
+      if (!voiceChannel) return
+
+      // Check if bot already has a connection in this guild
+      const existingConnection = voiceConnections.get(newState.guild.id)
+      if (
+        existingConnection &&
+        existingConnection.state.status !== VoiceConnectionStatus.Destroyed
+      ) {
+        console.log(
+          `[VOICE] Bot already connected to a voice channel in guild ${newState.guild.name}`,
+        )
+
+        // If bot is in a different channel, move to the admin's channel
+        if (existingConnection.joinConfig.channelId !== voiceChannel.id) {
+          console.log(
+            `[VOICE] Moving bot from channel ${existingConnection.joinConfig.channelId} to ${voiceChannel.id}`,
+          )
+          existingConnection.rejoin({
+            channelId: voiceChannel.id,
+            selfDeaf: false,
+            selfMute: true,
+          })
+        }
+        return
+      }
+
+      try {
+        // Join the voice channel
+        console.log(
+          `[VOICE] Attempting to join voice channel: ${voiceChannel.name} (${voiceChannel.id})`,
+        )
+
+        const connection = joinVoiceChannel({
+          channelId: voiceChannel.id,
+          guildId: newState.guild.id,
+          adapterCreator: newState.guild.voiceAdapterCreator,
+          selfDeaf: false,
+          selfMute: true, // Start muted
+        })
+
+        // Store the connection
+        voiceConnections.set(newState.guild.id, connection)
+
+        // Wait for connection to be ready
+        await entersState(connection, VoiceConnectionStatus.Ready, 30_000)
+        console.log(
+          `[VOICE] Successfully joined voice channel: ${voiceChannel.name} in guild: ${newState.guild.name}`,
+        )
+
+        // Handle connection state changes
+        connection.on(VoiceConnectionStatus.Disconnected, async () => {
+          console.log(
+            `[VOICE] Disconnected from voice channel in guild: ${newState.guild.name}`,
+          )
+          try {
+            // Try to reconnect
+            await Promise.race([
+              entersState(connection, VoiceConnectionStatus.Signalling, 5_000),
+              entersState(connection, VoiceConnectionStatus.Connecting, 5_000),
+            ])
+            console.log(`[VOICE] Reconnecting to voice channel`)
+          } catch (error) {
+            // Seems to be a real disconnect, destroy the connection
+            console.log(`[VOICE] Failed to reconnect, destroying connection`)
+            connection.destroy()
+            voiceConnections.delete(newState.guild.id)
+          }
+        })
+
+        connection.on(VoiceConnectionStatus.Destroyed, () => {
+          console.log(
+            `[VOICE] Connection destroyed for guild: ${newState.guild.name}`,
+          )
+          voiceConnections.delete(newState.guild.id)
+        })
+
+        // Handle errors
+        connection.on('error', (error) => {
+          console.error(
+            `[VOICE] Connection error in guild ${newState.guild.name}:`,
+            error,
+          )
+        })
+      } catch (error) {
+        console.error(`[VOICE] Failed to join voice channel:`, error)
+        voiceConnections.delete(newState.guild.id)
+      }
+    } catch (error) {
+      console.error('[VOICE] Error in voice state update handler:', error)
+    }
+  })
+
   await discordClient.login(token)
 
   process.on('SIGINT', () => {
@@ -1498,6 +1727,14 @@ export async function startDiscordBot({
         server.process.kill('SIGTERM')
       }
     }
+    // Destroy all voice connections
+    for (const [guildId, connection] of voiceConnections) {
+      if (connection.state.status !== VoiceConnectionStatus.Destroyed) {
+        console.log(`Destroying voice connection for guild ${guildId}`)
+        connection.destroy()
+      }
+    }
+    voiceConnections.clear()
     getDatabase().close()
     discordClient.destroy()
     process.exit(0)
@@ -1513,6 +1750,14 @@ export async function startDiscordBot({
         server.process.kill('SIGTERM')
       }
     }
+    // Destroy all voice connections
+    for (const [guildId, connection] of voiceConnections) {
+      if (connection.state.status !== VoiceConnectionStatus.Destroyed) {
+        console.log(`Destroying voice connection for guild ${guildId}`)
+        connection.destroy()
+      }
+    }
+    voiceConnections.clear()
     getDatabase().close()
     discordClient.destroy()
     process.exit(0)
