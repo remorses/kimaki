@@ -211,10 +211,12 @@ async function processVoiceAttachment({
   message,
   thread,
   projectDirectory,
+  isNewThread = false,
 }: {
   message: Message
   thread: ThreadChannel
   projectDirectory?: string
+  isNewThread?: boolean
 }): Promise<string | null> {
   const audioAttachment = Array.from(message.attachments.values()).find(
     (attachment) => attachment.contentType?.startsWith('audio/'),
@@ -269,23 +271,25 @@ async function processVoiceAttachment({
       `[VOICE MESSAGE] Transcription successful: "${transcription.slice(0, 50)}${transcription.length > 50 ? '...' : ''}"`,
     )
 
-    // Update thread name with transcribed content
-    const threadName = transcription.replace(/\s+/g, ' ').trim().slice(0, 80)
-    if (threadName) {
-      try {
-        await Promise.race([
-          thread.setName(threadName),
-          new Promise((resolve) => setTimeout(resolve, 2000)),
-        ])
-        console.log(`[THREAD] Updated thread name to: "${threadName}"`)
-      } catch (e) {
-        console.log(`[THREAD] Could not update thread name:`, e)
+    // Update thread name with transcribed content only for new threads
+    if (isNewThread) {
+      const threadName = transcription.replace(/\s+/g, ' ').trim().slice(0, 80)
+      if (threadName) {
+        try {
+          await Promise.race([
+            thread.setName(threadName),
+            new Promise((resolve) => setTimeout(resolve, 2000)),
+          ])
+          console.log(`[THREAD] Updated thread name to: "${threadName}"`)
+        } catch (e) {
+          console.log(`[THREAD] Could not update thread name:`, e)
+        }
       }
     }
 
     await sendThreadMessage(
       thread,
-      `📝 **Transcribed message:** ${escapeCodeBlock(transcription)}`,
+      `📝 **Transcribed message:** ${escapeDiscordFormatting(transcription)}`,
     )
     return transcription
   } catch (error) {
@@ -307,21 +311,14 @@ async function processVoiceAttachment({
 }
 
 /**
- * Escape Discord formatting characters in code blocks
+ * Escape Discord formatting characters to prevent breaking code blocks and inline code
  */
-function escapeCodeBlock(text: string): string {
+function escapeDiscordFormatting(text: string): string {
   return text
     .replace(/```/g, '\\`\\`\\`')      // Triple backticks
     .replace(/``/g, '\\`\\`')          // Double backticks
     .replace(/(?<!\\)`(?!`)/g, '\\`')  // Single backticks (not already escaped or part of double/triple)
     .replace(/\|\|/g, '\\|\\|')        // Double pipes (spoiler syntax)
-}
-
-/**
- * Escape Discord formatting characters in inline code
- */
-function escapeInlineCode(text: string): string {
-  return text.replace(/`/g, '\\`')
 }
 
 export async function initializeOpencodeForDirectory(
@@ -389,9 +386,9 @@ export async function initializeOpencodeForDirectory(
 function formatPart(part: Part): string {
   switch (part.type) {
     case 'text':
-      return escapeCodeBlock(part.text || '')
+      return escapeDiscordFormatting(part.text || '')
     case 'reasoning':
-      return `💭 ${escapeCodeBlock(part.text || '')}`
+      return `💭 ${escapeDiscordFormatting(part.text || '')}`
     case 'tool':
       if (part.state.status === 'completed' || part.state.status === 'error') {
         // console.log(part)
@@ -447,13 +444,13 @@ function formatPart(part: Part): string {
             : outputToDisplay
         
         // Escape Discord formatting characters that could break code blocks
-        outputToDisplay = escapeCodeBlock(outputToDisplay)
+        outputToDisplay = escapeDiscordFormatting(outputToDisplay)
 
         let toolTitle =
           part.state.status === 'completed' ? part.state.title || '' : 'error'
         // Escape backticks in the title before wrapping in backticks
         if (toolTitle) {
-          toolTitle = `\`${escapeInlineCode(toolTitle)}\``
+          toolTitle = `\`${escapeDiscordFormatting(toolTitle)}\``
         }
         const icon =
           part.state.status === 'completed'
@@ -1229,6 +1226,7 @@ export async function startDiscordBot({
             message,
             thread,
             projectDirectory,
+            isNewThread: true,
           })
           if (transcription) {
             messageContent = transcription
@@ -1445,7 +1443,7 @@ export async function startDiscordBot({
                     .join('\n\n')
                   if (userText) {
                     // Escape backticks in user messages to prevent formatting issues
-                    const escapedText = escapeCodeBlock(userText)
+                    const escapedText = escapeDiscordFormatting(userText)
                     await sendThreadMessage(thread, `**User:**\n${escapedText}`)
                   }
                 } else if (message.info.role === 'assistant') {
