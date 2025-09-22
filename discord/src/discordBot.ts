@@ -767,7 +767,7 @@ async function handleOpencodeSession(
             console.error(
               `[SESSION ERROR] Sending error to thread: ${errorMessage}`,
             )
-            await sendThreadMessage(thread, `✗ Error: ${errorMessage}`)
+            await sendThreadMessage(thread, `✗ opencode session error: ${errorMessage}`)
 
             // Update reaction to error
             if (originalMessage) {
@@ -890,7 +890,7 @@ async function handleOpencodeSession(
     if (!(error instanceof Error && error.name === 'AbortError')) {
       await sendThreadMessage(
         thread,
-        `✗ Error: ${error instanceof Error ? error.message : String(error)}`,
+        `✗ Unexpected bot Error: ${error instanceof Error ? error.stack : String(error)}`,
       )
     }
     throw error
