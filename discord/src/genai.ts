@@ -124,42 +124,21 @@ export async function startGenAiSession({
     }
   }
 
-  async function handleTurn(): Promise<LiveServerMessage[]> {
-    const turn: LiveServerMessage[] = []
-    let done = false
-    while (!done) {
-      const message = await waitMessage()
-      turn.push(message)
-      if (message.serverContent && message.serverContent.turnComplete) {
-        done = true
-      }
-    }
-    return turn
-  }
-
   async function startListening() {
+    let message: LiveServerMessage | undefined = undefined
+
     while (session) {
       try {
-        await handleTurn()
+        message = responseQueue.shift()
+        if (message) {
+          await handleModelTurn(message)
+        } else {
+          await new Promise((resolve) => setTimeout(resolve, 100))
+        }
       } catch (error) {
-        console.error('Error handling turn:', error)
+        console.error('GenAI error handling turn:', error)
       }
     }
-  }
-
-  async function waitMessage(): Promise<LiveServerMessage> {
-    let done = false
-    let message: LiveServerMessage | undefined = undefined
-    while (!done) {
-      message = responseQueue.shift()
-      if (message) {
-        await handleModelTurn(message)
-        done = true
-      } else {
-        await new Promise((resolve) => setTimeout(resolve, 100))
-      }
-    }
-    return message!
   }
 
   async function handleModelTurn(message: LiveServerMessage) {
@@ -170,7 +149,9 @@ export async function startGenAiSession({
       if (message.toolCall.functionCalls && callableTools.length > 0) {
         try {
           for (const tool of callableTools) {
-            if (!message.toolCall.functionCalls.some((x) => x.name === tool.name)) {
+            if (
+              !message.toolCall.functionCalls.some((x) => x.name === tool.name)
+            ) {
               continue
             }
             const parts = await tool.callTool(message.toolCall.functionCalls)
@@ -197,28 +178,54 @@ export async function startGenAiSession({
           console.error('Error handling tool calls:', error)
         }
       }
-      return
+    }
+    if (message.serverContent?.modelTurn?.parts) {
+      for (const part of message.serverContent.modelTurn.parts) {
+        if (part?.fileData) {
+          console.log(`File: ${part?.fileData.fileUri}`)
+        }
+
+        if (part?.inlineData) {
+          const inlineData = part.inlineData
+          if (
+            !inlineData.mimeType ||
+            !inlineData.mimeType.startsWith('audio/')
+          ) {
+            console.log('Skipping non-audio inlineData:', inlineData.mimeType)
+            continue
+          }
+          const buffer = Buffer.from(inlineData?.data ?? '', 'base64')
+          audioChunkHandler({
+            data: buffer,
+            mimeType: inlineData.mimeType ?? '',
+          })
+        }
+
+        if (part?.text) {
+          console.log('[google genai text]', part.text)
+        }
+      }
+    }
+    // Handle input transcription (user's audio transcription)
+    if (message.serverContent?.inputTranscription?.text) {
+      console.log(
+        '[user transcription]',
+        message.serverContent.inputTranscription.text,
+      )
     }
 
-    if (message.serverContent?.modelTurn?.parts) {
-      const part = message.serverContent?.modelTurn?.parts?.[0]
-
-      if (part?.fileData) {
-        console.log(`File: ${part?.fileData.fileUri}`)
-      }
-
-      if (part?.inlineData) {
-        const inlineData = part?.inlineData
-        const buffer = Buffer.from(inlineData?.data ?? '', 'base64')
-        audioChunkHandler({
-          data: buffer,
-          mimeType: inlineData.mimeType ?? '',
-        })
-      }
-
-      if (part?.text) {
-        console.log('[google genai text]', part?.text)
-      }
+    // Handle output transcription (model's audio transcription)
+    if (message.serverContent?.outputTranscription?.text) {
+      console.log(
+        '[assistant transcription]',
+        message.serverContent.outputTranscription.text,
+      )
+    }
+    if (message.serverContent?.interrupted) {
+      console.log('[assistant was interrupted]')
+    }
+    if (message.serverContent?.turnComplete) {
+      console.log('[assistant turn complete]')
     }
   }
 
@@ -231,7 +238,8 @@ export async function startGenAiSession({
   const config: any = {
     responseModalities: [Modality.AUDIO],
     mediaResolution: MediaResolution.MEDIA_RESOLUTION_MEDIUM,
-
+    inputAudioTranscription: {}, // transcribes your input speech
+    outputAudioTranscription: {}, // transcribes the model's spoken audio
     systemInstruction: {
       parts: [
         {

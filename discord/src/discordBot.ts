@@ -77,6 +77,111 @@ const voiceConnections = new Map<
 
 let db: Database | null = null
 
+// Set up voice handling for a connection (called once per connection)
+async function setupVoiceHandling(connection: VoiceConnection, guildId: string) {
+  console.log(`[VOICE] Setting up voice handling for guild ${guildId}`)
+
+  // Get voice data
+  const voiceData = voiceConnections.get(guildId)
+  if (!voiceData) {
+    console.error(`[VOICE] No voice data found for guild ${guildId}`)
+    return
+  }
+
+  // Create resampler to convert 24kHz mono to 48kHz stereo
+  const resampler = new Resampler({
+    inRate: 24000, // GenAI outputs 24kHz (not 16kHz!)
+    outRate: 48000, // Discord expects 48kHz
+    inChannels: 1, // GenAI outputs mono
+    outChannels: 2, // Discord expects stereo
+  })
+
+  // Create encoder for Discord - now properly configured for 48kHz stereo
+  const encoder = new prism.opus.Encoder({
+    rate: 48000,      // Matches resampler output
+    channels: 2,      // Matches resampler output
+    frameSize: 960    // 20ms at 48kHz
+  })
+
+  // Pipe resampler to encoder
+  resampler.pipe(encoder)
+
+  // Create audio player and resource
+  const player = createAudioPlayer()
+  const resource = createAudioResource(encoder, {
+    inputType: StreamType.Opus,
+  })
+  player.play(resource)
+  connection.subscribe(player)
+
+  // Start GenAI session
+  const { session, stop } = await startGenAiSession({
+    onAssistantAudioChunk({ data }) {
+      console.log(`[VOICE] GenAI audio chunk: ${data.length} bytes`)
+      // data is raw PCM s16le @ 24 kHz mono
+      // Write to resampler which will convert to 48kHz stereo
+      resampler.write(data)
+    },
+    systemMessage: `You are Kimaki, a helpful AI assistant in a Discord voice channel. You're listening to users speak and will respond with voice. Be conversational and helpful. Keep responses concise.`,
+  })
+
+  voiceData.genAiSession = { session, stop }
+
+  // Set up voice receiver for user input
+  const receiver = connection.receiver
+  receiver.speaking.on('start', (userId) => {
+    console.log(`[VOICE] User ${userId} started speaking`)
+
+    const audioStream = receiver.subscribe(userId, {
+      end: { behavior: EndBehaviorType.AfterSilence, duration: 1000 },
+    })
+
+    const decoder = new prism.opus.Decoder({
+      rate: 48000,
+      channels: 2,
+      frameSize: 960,
+    })
+
+    // Downsample 48k stereo -> 16k mono
+    const userResampler = new Resampler({
+      inRate: 48000,
+      outRate: 16000,
+      inChannels: 2,
+      outChannels: 1,
+    })
+
+    // Frame to exact 20 ms blocks so the GenAI side can decode smoothly
+    const framer = frame16kMono20ms()
+
+    const pipeline = audioStream
+      .pipe(decoder)
+      .pipe(userResampler)
+      .pipe(framer)
+
+    pipeline
+      .on('data', (frame: Buffer) => {
+        if (!voiceData.genAiSession?.session) {
+          console.warn(`[VOICE] Received audio frame but no GenAI session active for guild ${guildId}`)
+          return
+        }
+        console.log(`[VOICE] Received audio frame from user ${userId}: ${frame.length} bytes`)
+        // stream incrementally — low latency
+        voiceData.genAiSession.session.sendRealtimeInput({
+          audio: {
+            mimeType: 'audio/pcm;rate=16000',
+            data: frame.toString('base64'),
+          },
+        })
+      })
+      .on('end', () => {
+        console.log(`[VOICE] User ${userId} stopped speaking`)
+      })
+      .on('error', (error) => {
+        console.error(`[VOICE] Pipeline error for user ${userId}:`, error)
+      })
+  })
+}
+
 // Helper: buffer arbitrary PCM chunks into exact 20ms frames at 16 kHz mono (s16le)
 function makePcm16kMonoFramer() {
   const SAMPLES_PER_20MS = 320 // 16,000 Hz * 0.02s
@@ -1743,106 +1848,8 @@ export async function startDiscordBot({
           `[VOICE] Successfully joined voice channel: ${voiceChannel.name} in guild: ${newState.guild.name}`,
         )
 
-        // Set up audio processing with GenAI
-        const voiceData = voiceConnections.get(newState.guild.id)!
-
-        // Create resampler to convert 24kHz mono to 48kHz stereo
-        const resampler = new Resampler({
-          inRate: 24000, // GenAI outputs 24kHz (not 16kHz!)
-          outRate: 48000, // Discord expects 48kHz
-          inChannels: 1, // GenAI outputs mono
-          outChannels: 2, // Discord expects stereo
-        })
-
-        // Create encoder for Discord - now properly configured for 48kHz stereo
-        const encoder = new prism.opus.Encoder({
-          rate: 48000,      // Matches resampler output
-          channels: 2,      // Matches resampler output
-          frameSize: 960    // 20ms at 48kHz
-        })
-
-        // Pipe resampler to encoder
-        resampler.pipe(encoder)
-
-        // Create audio player and resource
-        const player = createAudioPlayer()
-        const resource = createAudioResource(encoder, {
-          inputType: StreamType.Opus,
-        })
-        player.play(resource)
-        connection.subscribe(player)
-
-        // Start GenAI session
-        const { session, stop } = await startGenAiSession({
-          onAssistantAudioChunk({ data }) {
-            console.log(`[VOICE] GenAI audio chunk: ${data.length} bytes`)
-            // data is raw PCM s16le @ 24 kHz mono
-            // Write to resampler which will convert to 48kHz stereo
-            resampler.write(data)
-          },
-          systemMessage: `You are Kimaki, a helpful AI assistant in a Discord voice channel. You're listening to users speak and will respond with voice. Be conversational and helpful. Keep responses concise.`,
-        })
-
-        voiceData.genAiSession = { session, stop }
-
-        // Set up voice receiver for user input
-        const receiver = connection.receiver
-        receiver.speaking.on('start', (userId) => {
-          console.log(`[VOICE] User ${userId} started speaking`)
-
-          const audioStream = receiver.subscribe(userId, {
-            end: { behavior: EndBehaviorType.AfterSilence, duration: 1000 },
-          })
-
-          const decoder = new prism.opus.Decoder({
-            rate: 48000,
-            channels: 2,
-            frameSize: 960,
-          })
-
-          // Downsample 48k stereo -> 16k mono
-          const resampler = new Resampler({
-            inRate: 48000,
-            outRate: 16000,
-            inChannels: 2,
-            outChannels: 1,
-          })
-
-          // Frame to exact 20 ms blocks so the GenAI side can decode smoothly
-          const framer = frame16kMono20ms()
-
-          audioStream
-            .once('error', (e) => console.error('[VOICE] opus stream error', e))
-            .pipe(decoder)
-            .once('error', (e) => console.error('[VOICE] decoder error', e))
-            .pipe(resampler)
-            .once('error', (e) => console.error('[VOICE] resampler error', e))
-            .pipe(framer)
-            .on('data', (frame: Buffer) => {
-              console.log(
-                `[VOICE] sending discord user audio data to genai with length ${frame.length}`,
-              )
-              if (!voiceData.genAiSession?.session) {
-                console.log(
-                  `[VOICE] No active GenAI session, cannot send audio input`,
-                )
-                return
-              }
-              // stream incrementally — low latency
-              voiceData.genAiSession.session.sendRealtimeInput({
-                audio: {
-                  mimeType: 'audio/pcm;rate=16000',
-                  data: frame.toString('base64'),
-                },
-              })
-            })
-            .on('end', () => {
-              console.log(`[VOICE] User ${userId} stopped speaking`)
-              // speaking segment ended after ~1s silence
-              // you can signal end-of-utterance if your API needs it
-              // voiceData.genAiSession.session?.sendRealtimeInput({ event: 'segment_end' });
-            })
-        })
+        // Set up voice handling (only once per connection)
+        await setupVoiceHandling(connection, newState.guild.id)
 
         // Handle connection state changes
         connection.on(VoiceConnectionStatus.Disconnected, async () => {
