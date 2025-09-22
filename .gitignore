@@ -8,3 +8,4 @@ coverage
 useraudio
 .env
 *.db
+*.wav
