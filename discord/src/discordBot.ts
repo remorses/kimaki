@@ -1746,19 +1746,19 @@ export async function startDiscordBot({
         // Set up audio processing with GenAI
         const voiceData = voiceConnections.get(newState.guild.id)!
 
-        // Create framer and encoder for assistant audio
-        const framer = makePcm16kMonoFramer()
-        const encoder = new prism.opus.Encoder({
-          rate: 16000,
-          channels: 1,
-          frameSize: 320,
+        // Create resampler to convert 16kHz mono to 48kHz stereo
+        const resampler = new Resampler({
+          inRate: 16000, // GenAI outputs 16kHz
+          outRate: 48000, // Discord expects 48kHz
+          inChannels: 1, // GenAI outputs mono
+          outChannels: 1, // Discord expects stereo
         })
-        framer.stream.pipe(encoder)
+
 
         // Create audio player and resource
         const player = createAudioPlayer()
-        const resource = createAudioResource(encoder, {
-          inputType: StreamType.Opus,
+        const resource = createAudioResource(resampler, {
+          inputType: StreamType.Raw,
         })
         player.play(resource)
         connection.subscribe(player)
@@ -1766,9 +1766,10 @@ export async function startDiscordBot({
         // Start GenAI session
         const { session, stop } = await startGenAiSession({
           onAssistantAudioChunk({ data }) {
-            console.log(`sending genai assistant audio to discord with length ${data.length}`)
+            console.log(`[VOICE] GenAI audio chunk: ${data.length} bytes`)
             // data is raw PCM s16le @ 16 kHz mono
-            framer.pushPcm(data)
+            // Write to resampler which will convert to 48kHz stereo
+            resampler.write(data)
           },
           systemMessage: `You are Kimaki, a helpful AI assistant in a Discord voice channel. You're listening to users speak and will respond with voice. Be conversational and helpful. Keep responses concise.`,
         })
@@ -1809,7 +1810,9 @@ export async function startDiscordBot({
             .once('error', (e) => console.error('[VOICE] resampler error', e))
             .pipe(framer)
             .on('data', (frame: Buffer) => {
-              console.log(`sending discord user audio data to discord with length ${frame.length}`)
+              console.log(
+                `[VOICE] sending discord user audio data to genai with length ${frame.length}`,
+              )
               if (!voiceData.genAiSession?.session) {
                 console.log(
                   `[VOICE] No active GenAI session, cannot send audio input`,
