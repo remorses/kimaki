@@ -1,5 +1,12 @@
 # Changelog
 
+## 2025-09-22 10:15
+
+- Add tool support to `startGenAiSession` function
+- Import `aiToolToCallableTool` from liveapi package
+- Convert AI SDK tools to GenAI CallableTools format
+- Handle tool calls and send tool responses back to session
+
 ## 2025-09-21
 
 - Add `/resume` slash command for resuming existing OpenCode sessions

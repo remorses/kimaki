@@ -1,9 +1,14 @@
+import { createAudioResource, StreamType } from '@discordjs/voice';
 import { startGenAiSession } from '../src/genai'
 
 async function test() {
   console.log('Starting GenAI session test...')
 
-  const { session, stop } = await startGenAiSession({})
+  const { session, stop } = await startGenAiSession({
+    onAssistantAudioChunk({ data }) {},
+  })
+
+
 
   console.log('Session started. Audio will be saved to audio.wav')
   console.log('Press Ctrl+C to stop.')
@@ -15,6 +20,7 @@ async function test() {
     turns: ['what model are you?'],
     turnComplete: true,
   })
+
 
   process.on('SIGINT', () => {
     console.log('\nStopping session...')

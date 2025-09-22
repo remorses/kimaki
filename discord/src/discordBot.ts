@@ -24,6 +24,10 @@ import {
   joinVoiceChannel,
   VoiceConnectionStatus,
   entersState,
+  createAudioPlayer,
+  createAudioResource,
+  StreamType,
+  EndBehaviorType,
   type VoiceConnection,
 } from '@discordjs/voice'
 import { Lexer } from 'marked'
@@ -31,10 +35,15 @@ import { spawn, type ChildProcess } from 'node:child_process'
 import fs from 'node:fs'
 import net from 'node:net'
 import path from 'node:path'
+import { PassThrough, Transform } from 'node:stream'
+import * as prism from 'prism-media'
+import { Resampler } from '@purinton/resampler'
 import dedent from 'string-dedent'
 import { transcribeAudio } from './voice'
 import { extractTagsArrays } from './xml'
 import prettyMilliseconds from 'pretty-ms'
+import { startGenAiSession } from './genai'
+import type { Session } from '@google/genai'
 
 type StartOptions = {
   token: string
@@ -54,10 +63,63 @@ const opencodeServers = new Map<
 // Map of session ID to current AbortController
 const activeRequests = new Map<string, AbortController>()
 
-// Map of guild ID to voice connection
-const voiceConnections = new Map<string, VoiceConnection>()
+// Map of guild ID to voice connection and GenAI session
+const voiceConnections = new Map<
+  string,
+  {
+    connection: VoiceConnection
+    genAiSession?: {
+      session: Session
+      stop: () => void
+    }
+  }
+>()
 
 let db: Database | null = null
+
+// Helper: buffer arbitrary PCM chunks into exact 20ms frames at 16 kHz mono (s16le)
+function makePcm16kMonoFramer() {
+  const SAMPLES_PER_20MS = 320 // 16,000 Hz * 0.02s
+  const FRAME_BYTES = SAMPLES_PER_20MS * 2 // 2 bytes (s16le) * 1 ch
+  let stash = Buffer.alloc(0)
+  const out = new PassThrough({ highWaterMark: FRAME_BYTES * 8 })
+
+  return {
+    stream: out, // emits exact 20ms frames of PCM s16le 16k mono
+    pushPcm(buf: Buffer) {
+      stash = Buffer.concat([stash, buf])
+      while (stash.length >= FRAME_BYTES) {
+        out.write(stash.subarray(0, FRAME_BYTES))
+        stash = stash.subarray(FRAME_BYTES)
+      }
+    },
+    end() {
+      out.end()
+    },
+  }
+}
+
+// 20 ms @ 16 kHz mono s16le = 320 samples * 2 bytes = 640 bytes
+const FRAME_BYTES = 640
+
+function frame16kMono20ms() {
+  let stash = Buffer.alloc(0)
+  return new Transform({
+    transform(chunk, _enc, cb) {
+      stash = Buffer.concat([stash, chunk])
+      while (stash.length >= FRAME_BYTES) {
+        this.push(stash.subarray(0, FRAME_BYTES))
+        stash = stash.subarray(FRAME_BYTES)
+      }
+      cb()
+    },
+    flush(cb) {
+      // optionally push tail (not full 20 ms) — often better to drop it
+      // if (stash.length) this.push(stash);
+      cb()
+    },
+  })
+}
 
 export function getDatabase(): Database {
   if (!db) {
@@ -1529,11 +1591,11 @@ export async function startDiscordBot({
 
         // Check if bot should leave too
         const guildId = guild.id
-        const connection = voiceConnections.get(guildId)
+        const voiceData = voiceConnections.get(guildId)
 
         if (
-          connection &&
-          connection.joinConfig.channelId === oldState.channelId
+          voiceData &&
+          voiceData.connection.joinConfig.channelId === oldState.channelId
         ) {
           // Check if any other admin is still in the channel
           const voiceChannel = oldState.channel as VoiceChannel
@@ -1551,7 +1613,11 @@ export async function startDiscordBot({
             console.log(
               `[VOICE] No other admins in channel, bot leaving voice channel in guild: ${guild.name}`,
             )
-            connection.destroy()
+            // Stop GenAI session if exists
+            if (voiceData.genAiSession) {
+              voiceData.genAiSession.stop()
+            }
+            voiceData.connection.destroy()
             voiceConnections.delete(guildId)
           } else {
             console.log(
@@ -1574,11 +1640,11 @@ export async function startDiscordBot({
 
         // Check if we need to follow the admin
         const guildId = guild.id
-        const connection = voiceConnections.get(guildId)
+        const voiceData = voiceConnections.get(guildId)
 
         if (
-          connection &&
-          connection.joinConfig.channelId === oldState.channelId
+          voiceData &&
+          voiceData.connection.joinConfig.channelId === oldState.channelId
         ) {
           // Check if any other admin is still in the old channel
           const oldVoiceChannel = oldState.channel as VoiceChannel
@@ -1597,10 +1663,10 @@ export async function startDiscordBot({
               )
               const voiceChannel = newState.channel as VoiceChannel
               if (voiceChannel) {
-                connection.rejoin({
+                voiceData.connection.rejoin({
                   channelId: voiceChannel.id,
                   selfDeaf: false,
-                  selfMute: true,
+                  selfMute: false,
                 })
               }
             } else {
@@ -1626,24 +1692,27 @@ export async function startDiscordBot({
       if (!voiceChannel) return
 
       // Check if bot already has a connection in this guild
-      const existingConnection = voiceConnections.get(newState.guild.id)
+      const existingVoiceData = voiceConnections.get(newState.guild.id)
       if (
-        existingConnection &&
-        existingConnection.state.status !== VoiceConnectionStatus.Destroyed
+        existingVoiceData &&
+        existingVoiceData.connection.state.status !==
+          VoiceConnectionStatus.Destroyed
       ) {
         console.log(
           `[VOICE] Bot already connected to a voice channel in guild ${newState.guild.name}`,
         )
 
         // If bot is in a different channel, move to the admin's channel
-        if (existingConnection.joinConfig.channelId !== voiceChannel.id) {
+        if (
+          existingVoiceData.connection.joinConfig.channelId !== voiceChannel.id
+        ) {
           console.log(
-            `[VOICE] Moving bot from channel ${existingConnection.joinConfig.channelId} to ${voiceChannel.id}`,
+            `[VOICE] Moving bot from channel ${existingVoiceData.connection.joinConfig.channelId} to ${voiceChannel.id}`,
           )
-          existingConnection.rejoin({
+          existingVoiceData.connection.rejoin({
             channelId: voiceChannel.id,
             selfDeaf: false,
-            selfMute: true,
+            selfMute: false,
           })
         }
         return
@@ -1660,17 +1729,108 @@ export async function startDiscordBot({
           guildId: newState.guild.id,
           adapterCreator: newState.guild.voiceAdapterCreator,
           selfDeaf: false,
-          selfMute: true, // Start muted
+          debug: true,
+
+          selfMute: false, // Not muted so bot can speak
         })
 
         // Store the connection
-        voiceConnections.set(newState.guild.id, connection)
+        voiceConnections.set(newState.guild.id, { connection })
 
         // Wait for connection to be ready
         await entersState(connection, VoiceConnectionStatus.Ready, 30_000)
         console.log(
           `[VOICE] Successfully joined voice channel: ${voiceChannel.name} in guild: ${newState.guild.name}`,
         )
+
+        // Set up audio processing with GenAI
+        const voiceData = voiceConnections.get(newState.guild.id)!
+
+        // Create framer and encoder for assistant audio
+        const framer = makePcm16kMonoFramer()
+        const encoder = new prism.opus.Encoder({
+          rate: 16000,
+          channels: 1,
+          frameSize: 320,
+        })
+        framer.stream.pipe(encoder)
+
+        // Create audio player and resource
+        const player = createAudioPlayer()
+        const resource = createAudioResource(encoder, {
+          inputType: StreamType.Opus,
+        })
+        player.play(resource)
+        connection.subscribe(player)
+
+        // Start GenAI session
+        const { session, stop } = await startGenAiSession({
+          onAssistantAudioChunk({ data }) {
+            console.log(`sending genai assistant audio to discord with length ${data.length}`)
+            // data is raw PCM s16le @ 16 kHz mono
+            framer.pushPcm(data)
+          },
+          systemMessage: `You are Kimaki, a helpful AI assistant in a Discord voice channel. You're listening to users speak and will respond with voice. Be conversational and helpful. Keep responses concise.`,
+        })
+
+        voiceData.genAiSession = { session, stop }
+
+        // Set up voice receiver for user input
+        const receiver = connection.receiver
+        receiver.speaking.on('start', (userId) => {
+          console.log(`[VOICE] User ${userId} started speaking`)
+
+          const audioStream = receiver.subscribe(userId, {
+            end: { behavior: EndBehaviorType.AfterSilence, duration: 1000 },
+          })
+
+          const decoder = new prism.opus.Decoder({
+            rate: 48000,
+            channels: 2,
+            frameSize: 960,
+          })
+
+          // Downsample 48k stereo -> 16k mono
+          const resampler = new Resampler({
+            inRate: 48000,
+            outRate: 16000,
+            inChannels: 2,
+            outChannels: 1,
+          })
+
+          // Frame to exact 20 ms blocks so the GenAI side can decode smoothly
+          const framer = frame16kMono20ms()
+
+          audioStream
+            .once('error', (e) => console.error('[VOICE] opus stream error', e))
+            .pipe(decoder)
+            .once('error', (e) => console.error('[VOICE] decoder error', e))
+            .pipe(resampler)
+            .once('error', (e) => console.error('[VOICE] resampler error', e))
+            .pipe(framer)
+            .on('data', (frame: Buffer) => {
+              console.log(`sending discord user audio data to discord with length ${frame.length}`)
+              if (!voiceData.genAiSession?.session) {
+                console.log(
+                  `[VOICE] No active GenAI session, cannot send audio input`,
+                )
+                return
+              }
+              // stream incrementally — low latency
+              voiceData.genAiSession.session.sendRealtimeInput({
+                audio: {
+                  mimeType: 'audio/pcm;rate=16000',
+                  data: frame.toString('base64'),
+                },
+              })
+            })
+            .on('end', () => {
+              console.log(`[VOICE] User ${userId} stopped speaking`)
+              // speaking segment ended after ~1s silence
+              // you can signal end-of-utterance if your API needs it
+              // voiceData.genAiSession.session?.sendRealtimeInput({ event: 'segment_end' });
+            })
+        })
 
         // Handle connection state changes
         connection.on(VoiceConnectionStatus.Disconnected, async () => {
@@ -1728,10 +1888,15 @@ export async function startDiscordBot({
       }
     }
     // Destroy all voice connections
-    for (const [guildId, connection] of voiceConnections) {
-      if (connection.state.status !== VoiceConnectionStatus.Destroyed) {
+    for (const [guildId, voiceData] of voiceConnections) {
+      if (voiceData.genAiSession) {
+        voiceData.genAiSession.stop()
+      }
+      if (
+        voiceData.connection.state.status !== VoiceConnectionStatus.Destroyed
+      ) {
         console.log(`Destroying voice connection for guild ${guildId}`)
-        connection.destroy()
+        voiceData.connection.destroy()
       }
     }
     voiceConnections.clear()
@@ -1751,10 +1916,15 @@ export async function startDiscordBot({
       }
     }
     // Destroy all voice connections
-    for (const [guildId, connection] of voiceConnections) {
-      if (connection.state.status !== VoiceConnectionStatus.Destroyed) {
+    for (const [guildId, voiceData] of voiceConnections) {
+      if (voiceData.genAiSession) {
+        voiceData.genAiSession.stop()
+      }
+      if (
+        voiceData.connection.state.status !== VoiceConnectionStatus.Destroyed
+      ) {
         console.log(`Destroying voice connection for guild ${guildId}`)
-        connection.destroy()
+        voiceData.connection.destroy()
       }
     }
     voiceConnections.clear()

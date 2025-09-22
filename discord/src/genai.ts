@@ -5,7 +5,10 @@ import {
   Modality,
   Session,
 } from '@google/genai'
+import type { CallableTool } from '@google/genai'
 import { writeFile } from 'fs'
+import type { Tool as AITool } from 'ai'
+import { aiToolToCallableTool } from '@xmorse/liveapi'
 
 const audioParts: Buffer[] = []
 
@@ -101,13 +104,25 @@ function defaultAudioChunkHandler({
 
 export async function startGenAiSession({
   onAssistantAudioChunk,
+  systemMessage,
+  tools,
 }: {
   onAssistantAudioChunk?: (args: { data: Buffer; mimeType: string }) => void
+  systemMessage?: string
+  tools?: Record<string, AITool<any, any>>
 } = {}) {
   const responseQueue: LiveServerMessage[] = []
   let session: Session | undefined = undefined
+  const callableTools: Array<CallableTool & { name: string }> = []
 
   const audioChunkHandler = onAssistantAudioChunk || defaultAudioChunkHandler
+
+  // Convert AI SDK tools to GenAI CallableTools
+  if (tools) {
+    for (const [name, tool] of Object.entries(tools)) {
+      callableTools.push(aiToolToCallableTool(tool, name))
+    }
+  }
 
   async function handleTurn(): Promise<LiveServerMessage[]> {
     const turn: LiveServerMessage[] = []
@@ -138,7 +153,7 @@ export async function startGenAiSession({
     while (!done) {
       message = responseQueue.shift()
       if (message) {
-        handleModelTurn(message)
+        await handleModelTurn(message)
         done = true
       } else {
         await new Promise((resolve) => setTimeout(resolve, 100))
@@ -147,7 +162,44 @@ export async function startGenAiSession({
     return message!
   }
 
-  function handleModelTurn(message: LiveServerMessage) {
+  async function handleModelTurn(message: LiveServerMessage) {
+    if (message.toolCall) {
+      console.log('toolcall: ', message.toolCall)
+
+      // Handle tool calls
+      if (message.toolCall.functionCalls && callableTools.length > 0) {
+        try {
+          for (const tool of callableTools) {
+            if (!message.toolCall.functionCalls.some((x) => x.name === tool.name)) {
+              continue
+            }
+            const parts = await tool.callTool(message.toolCall.functionCalls)
+
+            const functionResponses = parts
+              .filter((part) => part.functionResponse)
+              .map((part) => ({
+                response: part.functionResponse!.response as Record<
+                  string,
+                  unknown
+                >,
+                id: part.functionResponse!.id,
+                name: part.functionResponse!.name,
+              }))
+
+            if (functionResponses.length > 0 && session) {
+              session.sendToolResponse({ functionResponses })
+              console.log(
+                'client-toolResponse: ' + JSON.stringify({ functionResponses }),
+              )
+            }
+          }
+        } catch (error) {
+          console.error('Error handling tool calls:', error)
+        }
+      }
+      return
+    }
+
     if (message.serverContent?.modelTurn?.parts) {
       const part = message.serverContent?.modelTurn?.parts?.[0]
 
@@ -165,7 +217,7 @@ export async function startGenAiSession({
       }
 
       if (part?.text) {
-        console.log(part?.text)
+        console.log('[google genai text]', part?.text)
       }
     }
   }
@@ -176,21 +228,34 @@ export async function startGenAiSession({
 
   const model = 'models/gemini-2.5-flash-live-preview'
 
-  const config = {
+  const config: any = {
     responseModalities: [Modality.AUDIO],
     mediaResolution: MediaResolution.MEDIA_RESOLUTION_MEDIUM,
+
+    systemInstruction: {
+      parts: [
+        {
+          text: systemMessage || '',
+        },
+      ],
+    },
     speechConfig: {
-      languageCode: 'en-US',
       voiceConfig: {
         prebuiltVoiceConfig: {
-          voiceName: 'Puck',
+          voiceName: 'Charon', // Orus also not bad
         },
       },
     },
     contextWindowCompression: {
       triggerTokens: '25600',
+
       slidingWindow: { targetTokens: '12800' },
     },
+  }
+
+  // Add tools to config if provided
+  if (callableTools.length > 0) {
+    config.tools = callableTools
   }
 
   session = await ai.live.connect({
