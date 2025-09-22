@@ -128,7 +128,20 @@ async function setupVoiceHandling({
   // Store the streamer for cleanup
   voiceData.voiceStreamer = voiceStreamer
 
-  const { tools } = await getTools({ directory })
+  const { tools } = await getTools({ 
+    directory,
+    onMessageCompleted: (params) => {
+      if (!voiceData.genAiSession?.session) return
+
+      const text = params.error
+        ? `<systemMessage>\nThe coding agent encountered an error while processing session ${params.sessionId}: ${params.error?.message || String(params.error)}\n</systemMessage>`
+        : `<systemMessage>\nThe coding agent finished working on session ${params.sessionId}\n\nHere's what the assistant wrote:\n${params.markdown}\n</systemMessage>`
+
+      voiceData.genAiSession.session.sendRealtimeInput({
+        text,
+      })
+    }
+  })
   const { session, stop } = await startGenAiSession({
     tools,
     onAssistantAudioChunk({ data, mimeType }) {
