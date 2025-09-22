@@ -93,15 +93,21 @@ async function setupVoiceHandling({
   guildId: string
   channelId: string
 }) {
-  console.log(`[VOICE] Setting up voice handling for guild ${guildId}, channel ${channelId}`)
+  console.log(
+    `[VOICE] Setting up voice handling for guild ${guildId}, channel ${channelId}`,
+  )
 
   // Check if this voice channel has an associated directory
   const channelDirRow = getDatabase()
-    .prepare('SELECT directory FROM channel_directories WHERE channel_id = ? AND channel_type = ?')
+    .prepare(
+      'SELECT directory FROM channel_directories WHERE channel_id = ? AND channel_type = ?',
+    )
     .get(channelId, 'voice') as { directory: string } | undefined
 
   if (!channelDirRow) {
-    console.log(`[VOICE] Voice channel ${channelId} has no associated directory, skipping setup`)
+    console.log(
+      `[VOICE] Voice channel ${channelId} has no associated directory, skipping setup`,
+    )
     return
   }
 
@@ -113,6 +119,14 @@ async function setupVoiceHandling({
   if (!voiceData) {
     console.error(`[VOICE] No voice data found for guild ${guildId}`)
     return
+  }
+
+  // Stop any existing voice streamer before creating a new one
+  if (voiceData.voiceStreamer) {
+    console.log(
+      '[VOICE] Stopping existing voice streamer before creating new one',
+    )
+    voiceData.voiceStreamer.stop()
   }
 
   // Create direct voice streamer
@@ -128,7 +142,7 @@ async function setupVoiceHandling({
   // Store the streamer for cleanup
   voiceData.voiceStreamer = voiceStreamer
 
-  const { tools } = await getTools({ 
+  const { tools } = await getTools({
     directory,
     onMessageCompleted: (params) => {
       if (!voiceData.genAiSession?.session) return
@@ -140,7 +154,7 @@ async function setupVoiceHandling({
       voiceData.genAiSession.session.sendRealtimeInput({
         text,
       })
-    }
+    },
   })
   const { session, stop } = await startGenAiSession({
     tools,
@@ -163,13 +177,58 @@ async function setupVoiceHandling({
       console.log('[VOICE] Assistant interrupted while speaking')
       voiceStreamer.interrupt()
     },
-    systemMessage: `You are Kimaki, a helpful AI assistant in a Discord voice channel. You're listening to users speak and will respond with voice. Be conversational and helpful. Keep responses concise.`,
+    systemMessage: dedent`
+    You are Kimaki, an AI similar to Jarvis: you help your user (an engineer) controlling his coding agent, just like Jarvis controls Ironman armor and machines. Speak fast.
+
+    You should talk like Jarvis, British accent, satirical, joking and calm. Be short and concise. Speak fast.
+
+    After tool calls give a super short summary of the assistant message, you should say what the assistant message writes.
+
+    Before starting a new session ask for confirmation if it is not clear if the user finished describing it. ask "message ready, send?"
+
+    NEVER repeat the whole tool call parameters or message.
+
+    Your job is to manage many opencode agent chat instances. Opencode is the agent used to write the code, it is similar to Claude Code.
+
+    For everything the user asks it is implicit that the user is asking for you to proxy the requests to opencode sessions.
+
+    You can
+    - start new chats on a given project
+    - read the chats to report progress to the user
+    - submit messages to the chat
+    - list files for a given projects, so you can translate imprecise user prompts to precise messages that mention filename paths using @
+
+    Common patterns
+    - to get the last session use the listChats tool
+    - when user asks you to do something you submit a new session to do it. it's implicit that you proxy requests to the agents chat!
+    - when you submit a session assume the session will take a minute or 2 to complete the task
+
+    Rules
+    - never spell files by mentioning dots, letters, etc. instead give a brief description of the filename
+    - NEVER spell hashes or IDs
+    - never read session ids or other ids
+
+    Your voice is calm and monotone, NEVER excited and goofy. But you speak without jargon or bs and do veiled short jokes.
+    You speak like you knew something other don't. You are cool and cold.
+    `,
   })
+
+  // Stop any existing GenAI session before storing new one
+  if (voiceData.genAiSession) {
+    console.log(
+      '[VOICE] Stopping existing GenAI session before creating new one',
+    )
+    voiceData.genAiSession.stop()
+  }
 
   voiceData.genAiSession = { session, stop }
 
   // Set up voice receiver for user input
   const receiver = connection.receiver
+
+  // Remove all existing listeners to prevent accumulation
+  receiver.speaking.removeAllListeners('start')
+
   receiver.speaking.on('start', (userId) => {
     console.log(`[VOICE] User ${userId} started speaking`)
 
@@ -903,9 +962,22 @@ async function handleOpencodeSession(
           console.log(`[TYPING] Failed to send periodic typing: ${e}`)
         })
       }, 8000)
-      abortController.signal.addEventListener('abort', () => {
-        clearInterval(typingInterval!)
-      })
+
+      // Only add listener if not already aborted
+      if (!abortController.signal.aborted) {
+        abortController.signal.addEventListener(
+          'abort',
+          () => {
+            if (typingInterval) {
+              clearInterval(typingInterval)
+              typingInterval = null
+            }
+          },
+          {
+            once: true,
+          },
+        )
+      }
 
       // Return stop function
       return () => {
@@ -1889,7 +1961,7 @@ export async function startDiscordBot({
         await setupVoiceHandling({
           connection,
           guildId: newState.guild.id,
-          channelId: voiceChannel.id
+          channelId: voiceChannel.id,
         })
 
         // Handle connection state changes
@@ -1937,11 +2009,9 @@ export async function startDiscordBot({
 
   await discordClient.login(token)
 
-
-
   const handleShutdown = async (signal: string) => {
     console.log(`\n[SHUTDOWN] Received ${signal}, cleaning up...`)
-    
+
     // Kill all OpenCode servers
     for (const [dir, server] of opencodeServers) {
       if (!server.process.killed) {
@@ -1951,9 +2021,11 @@ export async function startDiscordBot({
         server.process.kill('SIGTERM')
       }
     }
-    
+
     // Destroy all voice connections
-    console.log(`[SHUTDOWN] Disconnecting from ${voiceConnections.size} voice channel(s)...`)
+    console.log(
+      `[SHUTDOWN] Disconnecting from ${voiceConnections.size} voice channel(s)...`,
+    )
     const disconnectPromises = []
     for (const [guildId, voiceData] of voiceConnections) {
       if (voiceData.voiceStreamer) {
@@ -1968,13 +2040,18 @@ export async function startDiscordBot({
         console.log(`[SHUTDOWN] Leaving voice channel in guild ${guildId}`)
         // First disconnect to leave the channel gracefully
         voiceData.connection.disconnect()
-        
+
         // Wait for disconnect to complete
         const disconnectPromise = new Promise<void>((resolve) => {
-          if (voiceData.connection.state.status === VoiceConnectionStatus.Disconnected) {
+          if (
+            voiceData.connection.state.status ===
+            VoiceConnectionStatus.Disconnected
+          ) {
             resolve()
           } else {
-            voiceData.connection.once(VoiceConnectionStatus.Disconnected, () => resolve())
+            voiceData.connection.once(VoiceConnectionStatus.Disconnected, () =>
+              resolve(),
+            )
             // Timeout after 1 second in case disconnect doesn't complete
             setTimeout(() => resolve(), 1000)
           }
@@ -1982,21 +2059,21 @@ export async function startDiscordBot({
           // Then destroy the connection to clean up resources
           voiceData.connection.destroy()
         })
-        
+
         disconnectPromises.push(disconnectPromise)
       }
     }
-    
+
     // Wait for all disconnections to complete
     await Promise.all(disconnectPromises)
     voiceConnections.clear()
-    
+
     console.log('[SHUTDOWN] Closing database...')
     getDatabase().close()
-    
+
     console.log('[SHUTDOWN] Destroying Discord client...')
     discordClient.destroy()
-    
+
     console.log('[SHUTDOWN] Cleanup complete, exiting.')
     process.exit(0)
   }

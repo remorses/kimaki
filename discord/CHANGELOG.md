@@ -1,5 +1,12 @@
 # Changelog
 
+## 2025-09-22 12:05
+
+- Fix event listener leak warning by removing existing 'start' listeners on receiver.speaking before adding new ones
+- Add { once: true } option to abort signal event listener to prevent accumulation
+- Stop existing voice streamer and GenAI session before creating new ones in setupVoiceHandling
+- Prevent max event listeners warning when voice connections are re-established
+
 ## 2025-09-22 11:45
 
 - Replace AudioPlayer/AudioResource with direct voice streaming implementation
