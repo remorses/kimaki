@@ -21,6 +21,11 @@ export interface DirectVoiceStreamer {
   stop(): void
 
   /**
+   * Clear the current queue without stopping the streamer
+   */
+  interrupt(): void
+
+  /**
    * Whether the streamer is currently active
    */
   isActive: boolean
@@ -115,6 +120,16 @@ export function createDirectVoiceStreamer({
       resampler.write(pcmData)
     },
 
+    interrupt() {
+      // Clear the Opus packet queue
+      opusPacketQueue.length = 0
+
+      // Stop speaking immediately
+      connection.setSpeaking(false)
+
+      console.log('[DIRECT VOICE] Interrupted - cleared queue')
+    },
+
     stop() {
       if (!active) return
 
@@ -175,6 +190,12 @@ export function createFramedVoiceStreamer({
         buffer = buffer.subarray(frameSize)
         baseStreamer.write(frame)
       }
+    },
+
+    interrupt() {
+      // Clear the buffer
+      buffer = Buffer.alloc(0)
+      baseStreamer.interrupt()
     },
 
     stop() {
