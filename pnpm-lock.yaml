@@ -154,6 +154,9 @@ importers:
       '@discordjs/voice':
         specifier: ^0.19.0
         version: 0.19.0
+      '@google/genai':
+        specifier: ^1.16.0
+        version: 1.16.0
       '@snazzah/davey':
         specifier: ^0.1.6
         version: 0.1.6
