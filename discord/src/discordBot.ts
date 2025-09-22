@@ -757,7 +757,7 @@ async function handleOpencodeSession(
             setTimeout(() => {
               if (abortController.signal.aborted) return
               stopTyping = startTyping(thread)
-            }, 100)
+            }, 300)
           }
         } else if (event.type === 'session.error') {
           console.error(`[SESSION ERROR]`, event.properties)
