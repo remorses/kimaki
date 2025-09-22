@@ -27,6 +27,7 @@ import path from 'node:path'
 import dedent from 'string-dedent'
 import { transcribeAudio } from './voice'
 import { extractTagsArrays } from './xml'
+import prettyMilliseconds from 'pretty-ms'
 
 type StartOptions = {
   token: string
@@ -444,13 +445,9 @@ function formatPart(part: Part): string {
         if (outputToDisplay) {
           // Don't wrap todowrite output in code blocks
           if (part.tool === 'todowrite') {
-            text += '\n' + outputToDisplay
+            text += '\n\n' + outputToDisplay
           } else {
-            text += dedent`
-            \`\`\`${language}
-            ${outputToDisplay}
-            \`\`\`
-            `
+            text += '\n\n```' + language + '\n' + outputToDisplay + '\n```'
           }
         }
         return text
@@ -492,6 +489,9 @@ async function handleOpencodeSession(
   console.log(
     `[OPENCODE SESSION] Starting for thread ${thread.id} with prompt: "${prompt.slice(0, 50)}${prompt.length > 50 ? '...' : ''}"`,
   )
+  
+  // Track session start time
+  const sessionStartTime = Date.now()
 
   // Add processing reaction to original message
   if (originalMessage) {
@@ -835,6 +835,11 @@ async function handleOpencodeSession(
         stopTyping = null
         console.log(`[CLEANUP] Stopped typing for session`)
       }
+      
+      // Send duration message
+      const sessionDuration = prettyMilliseconds(Date.now() - sessionStartTime)
+      await sendThreadMessage(thread, `_Completed in ${sessionDuration}_`)
+      console.log(`[SESSION DURATION] Session completed in ${sessionDuration}`)
     }
   }
 
