@@ -45,12 +45,14 @@ async function registerCommands(token: string, appId: string) {
     new SlashCommandBuilder()
       .setName('resume')
       .setDescription('Resume an existing OpenCode session')
-      .addStringOption(option =>
-        option.setName('session')
+      .addStringOption((option) =>
+        option
+          .setName('session')
           .setDescription('The session to resume')
           .setRequired(true)
-          .setAutocomplete(true)),
-  ].map(command => command.toJSON())
+          .setAutocomplete(true),
+      ),
+  ].map((command) => command.toJSON())
 
   const rest = new REST().setToken(token)
 
@@ -58,12 +60,13 @@ async function registerCommands(token: string, appId: string) {
     // console.log('[COMMANDS] Starting to register slash commands...')
 
     // Register commands globally
-    const data = await rest.put(
-      Routes.applicationCommands(appId),
-      { body: commands },
-    ) as any[]
+    const data = (await rest.put(Routes.applicationCommands(appId), {
+      body: commands,
+    })) as any[]
 
-    console.log(`[COMMANDS] Successfully registered ${data.length} slash commands`)
+    console.log(
+      `[COMMANDS] Successfully registered ${data.length} slash commands`,
+    )
   } catch (error) {
     console.error('[COMMANDS] Failed to register slash commands:', error)
     throw error
@@ -90,7 +93,9 @@ async function main() {
 
   // Check for existing credentials
   const existingBot = db
-    .prepare('SELECT app_id, token FROM bot_tokens ORDER BY created_at DESC LIMIT 1')
+    .prepare(
+      'SELECT app_id, token FROM bot_tokens ORDER BY created_at DESC LIMIT 1',
+    )
     .get() as { app_id: string; token: string } | undefined
 
   if (existingBot && !forceSetup) {
@@ -100,14 +105,14 @@ async function main() {
     console.log()
     note(
       `Using saved bot credentials:\nApp ID: ${appId}\n\nTo use different credentials, run with --force`,
-      'Existing Bot Found'
+      'Existing Bot Found',
     )
 
     // Show install URL in case they need it
     console.log()
     note(
       `Bot install URL (in case you need to add it to another server):\n${generateBotInstallUrl({ clientId: appId })}`,
-      'Install URL'
+      'Install URL',
     )
   } else {
     // Get new credentials
@@ -173,7 +178,7 @@ async function main() {
     console.log()
     note(
       `Bot install URL:\n${generateBotInstallUrl({ clientId: appId })}\n\nYou MUST install the bot in your Discord server before continuing.`,
-      'Step 3: Install Bot to Server'
+      'Step 3: Install Bot to Server',
     )
 
     const installed = await text({
@@ -208,7 +213,10 @@ async function main() {
         for (const guild of guilds) {
           const channels = await getChannelsWithDescriptions(guild)
           // Filter channels that have kimaki directory and optionally match current app
-          const kimakiChans = channels.filter((ch) => ch.kimakiDirectory && (!ch.kimakiApp || ch.kimakiApp === appId))
+          const kimakiChans = channels.filter(
+            (ch) =>
+              ch.kimakiDirectory && (!ch.kimakiApp || ch.kimakiApp === appId),
+          )
 
           if (kimakiChans.length > 0) {
             kimakiChannels.push({ guild, channels: kimakiChans })
@@ -233,6 +241,30 @@ async function main() {
     process.exit(1)
   }
 
+  // Sync existing channels to database
+  for (const { guild, channels } of kimakiChannels) {
+    for (const channel of channels) {
+      if (channel.kimakiDirectory) {
+        // Store text channel in database
+        db.prepare(
+          'INSERT OR IGNORE INTO channel_directories (channel_id, directory, channel_type) VALUES (?, ?, ?)',
+        ).run(channel.id, channel.kimakiDirectory, 'text')
+
+        // Check if there's a voice channel with the same name
+        const voiceChannel = guild.channels.cache.find(
+          (ch) =>
+            ch.type === ChannelType.GuildVoice && ch.name === channel.name,
+        )
+
+        if (voiceChannel) {
+          db.prepare(
+            'INSERT OR IGNORE INTO channel_directories (channel_id, directory, channel_type) VALUES (?, ?, ?)',
+          ).run(voiceChannel.id, channel.kimakiDirectory, 'voice')
+        }
+      }
+    }
+  }
+
   // Show existing kimaki channels
   let shouldAddChannels = true
 
@@ -240,7 +272,12 @@ async function main() {
     const channelList = kimakiChannels
       .flatMap(({ guild, channels }) =>
         channels.map((ch) => {
-          const appInfo = ch.kimakiApp === appId ? ' (this bot)' : ch.kimakiApp ? ` (app: ${ch.kimakiApp})` : ''
+          const appInfo =
+            ch.kimakiApp === appId
+              ? ' (this bot)'
+              : ch.kimakiApp
+                ? ` (app: ${ch.kimakiApp})`
+                : ''
           return `#${ch.name} in ${guild.name}: ${ch.kimakiDirectory}${appInfo}`
         }),
       )
@@ -253,9 +290,12 @@ async function main() {
     const action = await select({
       message: 'What would you like to do?',
       options: [
-        { value: 'start', label: 'Start the Discord bot with existing channels' },
-        { value: 'add', label: 'Add new channels before starting' }
-      ]
+        {
+          value: 'start',
+          label: 'Start the Discord bot with existing channels',
+        },
+        { value: 'add', label: 'Add new channels before starting' },
+      ],
     })
 
     if (isCancel(action)) {
@@ -323,7 +363,6 @@ async function main() {
       'No New Projects',
     )
   } else if (shouldAddChannels) {
-
     // Let user select projects
     const selectedProjects = await multiselect({
       message: 'Select projects to create Discord channels for:',
@@ -338,7 +377,9 @@ async function main() {
       // Select guild if multiple
       let targetGuild: Guild
       if (guilds.length === 0) {
-        console.error('No Discord servers found! The bot must be installed in at least one server.')
+        console.error(
+          'No Discord servers found! The bot must be installed in at least one server.',
+        )
         process.exit(1)
       } else if (guilds.length === 1) {
         targetGuild = guilds[0]!
@@ -374,19 +415,35 @@ async function main() {
           .slice(0, 100)
 
         try {
-          const channel = (await targetGuild.channels.create({
+          // Create text channel
+          const textChannel = await targetGuild.channels.create({
             name: channelName,
             type: ChannelType.GuildText,
             topic: `<kimaki><directory>${project.worktree}</directory><app>${appId}</app></kimaki>`,
-          })) as TextChannel
+          })
+
+          // Create voice channel with same name
+          const voiceChannel = await targetGuild.channels.create({
+            name: channelName,
+            type: ChannelType.GuildVoice,
+          })
+
+          // Store both channels in database
+          db.prepare(
+            'INSERT OR REPLACE INTO channel_directories (channel_id, directory, channel_type) VALUES (?, ?, ?)',
+          ).run(textChannel.id, project.worktree, 'text')
+
+          db.prepare(
+            'INSERT OR REPLACE INTO channel_directories (channel_id, directory, channel_type) VALUES (?, ?, ?)',
+          ).run(voiceChannel.id, project.worktree, 'voice')
 
           createdChannels.push({
-            name: channel.name,
-            id: channel.id,
-            guildId: targetGuild.id
+            name: textChannel.name,
+            id: textChannel.id,
+            guildId: targetGuild.id,
           })
         } catch (error) {
-          console.error(`Failed to create channel for ${baseName}:`, error)
+          console.error(`Failed to create channels for ${baseName}:`, error)
         }
       }
 
@@ -394,8 +451,8 @@ async function main() {
 
       if (createdChannels.length > 0) {
         note(
-          createdChannels.map(ch => `#${ch.name}`).join('\n'),
-          'Created Channels'
+          createdChannels.map((ch) => `#${ch.name}`).join('\n'),
+          'Created Channels',
         )
       }
     }
@@ -409,7 +466,10 @@ async function main() {
     s.stop('Slash commands registered!')
   } catch (error) {
     s.stop('Failed to register slash commands')
-    console.error('Error:', error instanceof Error ? error.message : String(error))
+    console.error(
+      'Error:',
+      error instanceof Error ? error.message : String(error),
+    )
     // Continue anyway as commands might already be registered
   }
 
@@ -420,38 +480,44 @@ async function main() {
   s.stop('Discord bot is running!')
 
   // Show channel links if any were created or exist
-  const allChannels: { name: string; id: string; guildId: string; directory?: string }[] = []
+  const allChannels: {
+    name: string
+    id: string
+    guildId: string
+    directory?: string
+  }[] = []
 
   // Add newly created channels
   allChannels.push(...createdChannels)
 
   // Add existing kimaki channels
   kimakiChannels.forEach(({ guild, channels }) => {
-    channels.forEach(ch => {
+    channels.forEach((ch) => {
       allChannels.push({
         name: ch.name,
         id: ch.id,
         guildId: guild.id,
-        directory: ch.kimakiDirectory
+        directory: ch.kimakiDirectory,
       })
     })
   })
 
   if (allChannels.length > 0) {
     console.log()
-    const channelLinks = allChannels.map(ch =>
-      `• #${ch.name}: https://discord.com/channels/${ch.guildId}/${ch.id}`
-    ).join('\n')
+    const channelLinks = allChannels
+      .map(
+        (ch) =>
+          `• #${ch.name}: https://discord.com/channels/${ch.guildId}/${ch.id}`,
+      )
+      .join('\n')
 
     note(
       `Your kimaki channels are ready! Click any link below to open in Discord:\n\n${channelLinks}\n\nSend a message in any channel to start using OpenCode!`,
-      '🚀 Ready to Use'
+      '🚀 Ready to Use',
     )
   }
 
-  outro(
-    '✨ Setup complete!',
-  )
+  outro('✨ Setup complete!')
 }
 
 main().catch(console.error)

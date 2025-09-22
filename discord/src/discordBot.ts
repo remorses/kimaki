@@ -84,11 +84,29 @@ const voiceConnections = new Map<
 let db: Database.Database | null = null
 
 // Set up voice handling for a connection (called once per connection)
-async function setupVoiceHandling(
-  connection: VoiceConnection,
-  guildId: string,
-) {
-  console.log(`[VOICE] Setting up voice handling for guild ${guildId}`)
+async function setupVoiceHandling({
+  connection,
+  guildId,
+  channelId,
+}: {
+  connection: VoiceConnection
+  guildId: string
+  channelId: string
+}) {
+  console.log(`[VOICE] Setting up voice handling for guild ${guildId}, channel ${channelId}`)
+
+  // Check if this voice channel has an associated directory
+  const channelDirRow = getDatabase()
+    .prepare('SELECT directory FROM channel_directories WHERE channel_id = ? AND channel_type = ?')
+    .get(channelId, 'voice') as { directory: string } | undefined
+
+  if (!channelDirRow) {
+    console.log(`[VOICE] Voice channel ${channelId} has no associated directory, skipping setup`)
+    return
+  }
+
+  const directory = channelDirRow.directory
+  console.log(`[VOICE] Found directory for voice channel: ${directory}`)
 
   // Get voice data
   const voiceData = voiceConnections.get(guildId)
@@ -110,7 +128,6 @@ async function setupVoiceHandling(
   // Store the streamer for cleanup
   voiceData.voiceStreamer = voiceStreamer
 
-  const directory = '' // TODO get kimaki directory from discord voice channel description xml like other ones
   const { tools } = await getTools({ directory })
   const { session, stop } = await startGenAiSession({
     tools,
@@ -191,28 +208,6 @@ async function setupVoiceHandling(
   })
 }
 
-// Helper: buffer arbitrary PCM chunks into exact 20ms frames at 16 kHz mono (s16le)
-function makePcm16kMonoFramer() {
-  const SAMPLES_PER_20MS = 320 // 16,000 Hz * 0.02s
-  const FRAME_BYTES = SAMPLES_PER_20MS * 2 // 2 bytes (s16le) * 1 ch
-  let stash = Buffer.alloc(0)
-  const out = new PassThrough({ highWaterMark: FRAME_BYTES * 8 })
-
-  return {
-    stream: out, // emits exact 20ms frames of PCM s16le 16k mono
-    pushPcm(buf: Buffer) {
-      stash = Buffer.concat([stash, buf])
-      while (stash.length >= FRAME_BYTES) {
-        out.write(stash.subarray(0, FRAME_BYTES))
-        stash = stash.subarray(FRAME_BYTES)
-      }
-    },
-    end() {
-      out.end()
-    },
-  }
-}
-
 // 20 ms @ 16 kHz mono s16le = 320 samples * 2 bytes = 640 bytes
 const FRAME_BYTES = 640
 
@@ -261,6 +256,15 @@ export function getDatabase(): Database.Database {
       CREATE TABLE IF NOT EXISTS bot_tokens (
         app_id TEXT PRIMARY KEY,
         token TEXT NOT NULL,
+        created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+      )
+    `)
+
+    db.exec(`
+      CREATE TABLE IF NOT EXISTS channel_directories (
+        channel_id TEXT PRIMARY KEY,
+        directory TEXT NOT NULL,
+        channel_type TEXT NOT NULL,
         created_at DATETIME DEFAULT CURRENT_TIMESTAMP
       )
     `)
@@ -1866,7 +1870,11 @@ export async function startDiscordBot({
         )
 
         // Set up voice handling (only once per connection)
-        await setupVoiceHandling(connection, newState.guild.id)
+        await setupVoiceHandling({
+          connection,
+          guildId: newState.guild.id,
+          channelId: voiceChannel.id
+        })
 
         // Handle connection state changes
         connection.on(VoiceConnectionStatus.Disconnected, async () => {
