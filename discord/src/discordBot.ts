@@ -3,7 +3,7 @@ import {
   type OpencodeClient,
   type Part,
 } from '@opencode-ai/sdk'
-import Database from 'better-sqlite3'
+import Database from '@farjs/better-sqlite3-wrapper'
 import {
   ChannelType,
   Client,
@@ -118,9 +118,12 @@ async function setupVoiceHandling(
   resampler.pipe(encoder)
 
   // Create audio player and resource
-  const player = createAudioPlayer({})
+  const player = createAudioPlayer({debug:true})
   player.on('error', (error) => {
     console.error(`[VOICE] Audio player error:`, error)
+  })
+  player.on('debug', (error) => {
+    console.error(`[VOICE] Audio player debug:`, error)
   })
   player.on('stateChange', ({status}) => {
     console.error(`[VOICE] Audio player state change:`, status)
