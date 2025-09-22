@@ -195,7 +195,7 @@ export async function startGenAiSession({
             continue
           }
           const buffer = Buffer.from(inlineData?.data ?? '', 'base64')
-          audioChunkHandler({
+          await audioChunkHandler({
             data: buffer,
             mimeType: inlineData.mimeType ?? '',
           })

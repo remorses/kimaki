@@ -78,7 +78,10 @@ const voiceConnections = new Map<
 let db: Database.Database | null = null
 
 // Set up voice handling for a connection (called once per connection)
-async function setupVoiceHandling(connection: VoiceConnection, guildId: string) {
+async function setupVoiceHandling(
+  connection: VoiceConnection,
+  guildId: string,
+) {
   console.log(`[VOICE] Setting up voice handling for guild ${guildId}`)
 
   // Get voice data
@@ -96,28 +99,45 @@ async function setupVoiceHandling(connection: VoiceConnection, guildId: string) 
     outChannels: 2, // Discord expects stereo
   })
 
+  resampler.on('end', () => {
+    console.log('[VOICE] Resampler stream ended')
+  })
+
   // Create encoder for Discord - now properly configured for 48kHz stereo
   const encoder = new prism.opus.Encoder({
-    rate: 48000,      // Matches resampler output
-    channels: 2,      // Matches resampler output
-    frameSize: 960    // 20ms at 48kHz
+    rate: 48000, // Matches resampler output
+    channels: 2, // Matches resampler output
+    frameSize: 960, // 20ms at 48kHz
+  })
+
+  encoder.on('end', () => {
+    console.log('[VOICE] Discord Sending Opus Encoder stream ended')
   })
 
   // Pipe resampler to encoder
   resampler.pipe(encoder)
 
   // Create audio player and resource
-  const player = createAudioPlayer()
+  const player = createAudioPlayer({})
+  player.on('error', (error) => {
+    console.error(`[VOICE] Audio player error:`, error)
+  })
+  player.on('stateChange', ({status}) => {
+    console.error(`[VOICE] Audio player state change:`, status)
+  })
+
   const resource = createAudioResource(encoder, {
     inputType: StreamType.Opus,
   })
   player.play(resource)
-  connection.subscribe(player)
+  const sub = connection.subscribe(player)
 
   // Start GenAI session
   const { session, stop } = await startGenAiSession({
     onAssistantAudioChunk({ data }) {
-      console.log(`[VOICE] GenAI audio chunk: ${data.length} bytes`)
+      console.log(
+        `[VOICE] sending GenAI audio chunk to discord: ${data.length} bytes`,
+      )
       // data is raw PCM s16le @ 24 kHz mono
       // Write to resampler which will convert to 48kHz stereo
       resampler.write(data)
@@ -153,18 +173,19 @@ async function setupVoiceHandling(connection: VoiceConnection, guildId: string) 
     // Frame to exact 20 ms blocks so the GenAI side can decode smoothly
     const framer = frame16kMono20ms()
 
-    const pipeline = audioStream
-      .pipe(decoder)
-      .pipe(userResampler)
-      .pipe(framer)
+    const pipeline = audioStream.pipe(decoder).pipe(userResampler).pipe(framer)
 
     pipeline
       .on('data', (frame: Buffer) => {
         if (!voiceData.genAiSession?.session) {
-          console.warn(`[VOICE] Received audio frame but no GenAI session active for guild ${guildId}`)
+          console.warn(
+            `[VOICE] Received audio frame but no GenAI session active for guild ${guildId}`,
+          )
           return
         }
-        console.log(`[VOICE] Received audio frame from user ${userId}: ${frame.length} bytes`)
+        console.log(
+          `[VOICE] Received audio frame from user ${userId}: ${frame.length} bytes`,
+        )
         // stream incrementally — low latency
         voiceData.genAiSession.session.sendRealtimeInput({
           audio: {
@@ -428,7 +449,7 @@ async function processVoiceAttachment({
         const execAsync = promisify(exec)
         const { stdout } = await execAsync(
           'git ls-files | tree --fromfile -a',
-          { cwd: projectDirectory }
+          { cwd: projectDirectory },
         )
         const result = stdout
 
