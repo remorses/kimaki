@@ -4,7 +4,7 @@
   "type": "module",
   "private": true,
   "scripts": {
-    "dev": "tsx watch index.ts",
+    "dev": "tsx --env-file .env src/cli.ts",
     "test": "tsx scripts/test-opencode.ts",
     "watch": "tsx scripts/watch-session.ts",
     "test:events": "tsx test-events.ts",
@@ -30,6 +30,7 @@
     "@discordjs/voice": "^0.19.0",
     "@farjs/better-sqlite3-wrapper": "^3.0.0",
     "@google/genai": "^1.16.0",
+    "@openai/realtime-api-beta": "github:openai/openai-realtime-api-beta",
     "@purinton/resampler": "^1.0.4",
     "@snazzah/davey": "^0.1.6",
     "@xmorse/liveapi": "workspace:*",
