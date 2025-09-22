@@ -427,11 +427,20 @@ function formatPart(part: Part): string {
           outputToDisplay.length > 500
             ? outputToDisplay.slice(0, 497) + `…`
             : outputToDisplay
-        outputToDisplay = outputToDisplay.replace(/```/g, '\\`\\`\\`')
+        
+        // Escape Discord formatting characters that could break code blocks
+        outputToDisplay = outputToDisplay
+          .replace(/```/g, '\\`\\`\\`')  // Triple backticks
+          .replace(/``/g, '\\`\\`')      // Double backticks
+          .replace(/(?<!\\)`(?!`)/g, '\\`') // Single backticks (not already escaped or part of double/triple)
 
         let toolTitle =
           part.state.status === 'completed' ? part.state.title || '' : 'error'
-        if (toolTitle) toolTitle = `\`${toolTitle}\``
+        // Escape backticks in the title before wrapping in backticks
+        if (toolTitle) {
+          toolTitle = toolTitle.replace(/`/g, '\\`')
+          toolTitle = `\`${toolTitle}\``
+        }
         const icon =
           part.state.status === 'completed'
             ? '◼︎'
