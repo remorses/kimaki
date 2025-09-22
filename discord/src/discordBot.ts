@@ -1937,7 +1937,11 @@ export async function startDiscordBot({
 
   await discordClient.login(token)
 
-  process.on('SIGINT', () => {
+
+
+  const handleShutdown = async (signal: string) => {
+    console.log(`\n[SHUTDOWN] Received ${signal}, cleaning up...`)
+    
     // Kill all OpenCode servers
     for (const [dir, server] of opencodeServers) {
       if (!server.process.killed) {
@@ -1947,7 +1951,10 @@ export async function startDiscordBot({
         server.process.kill('SIGTERM')
       }
     }
+    
     // Destroy all voice connections
+    console.log(`[SHUTDOWN] Disconnecting from ${voiceConnections.size} voice channel(s)...`)
+    const disconnectPromises = []
     for (const [guildId, voiceData] of voiceConnections) {
       if (voiceData.voiceStreamer) {
         voiceData.voiceStreamer.stop()
@@ -1958,44 +1965,46 @@ export async function startDiscordBot({
       if (
         voiceData.connection.state.status !== VoiceConnectionStatus.Destroyed
       ) {
-        console.log(`Destroying voice connection for guild ${guildId}`)
-        voiceData.connection.destroy()
+        console.log(`[SHUTDOWN] Leaving voice channel in guild ${guildId}`)
+        // First disconnect to leave the channel gracefully
+        voiceData.connection.disconnect()
+        
+        // Wait for disconnect to complete
+        const disconnectPromise = new Promise<void>((resolve) => {
+          if (voiceData.connection.state.status === VoiceConnectionStatus.Disconnected) {
+            resolve()
+          } else {
+            voiceData.connection.once(VoiceConnectionStatus.Disconnected, () => resolve())
+            // Timeout after 1 second in case disconnect doesn't complete
+            setTimeout(() => resolve(), 1000)
+          }
+        }).then(() => {
+          // Then destroy the connection to clean up resources
+          voiceData.connection.destroy()
+        })
+        
+        disconnectPromises.push(disconnectPromise)
       }
     }
+    
+    // Wait for all disconnections to complete
+    await Promise.all(disconnectPromises)
     voiceConnections.clear()
+    
+    console.log('[SHUTDOWN] Closing database...')
     getDatabase().close()
+    
+    console.log('[SHUTDOWN] Destroying Discord client...')
     discordClient.destroy()
+    
+    console.log('[SHUTDOWN] Cleanup complete, exiting.')
     process.exit(0)
-  })
+  }
 
   process.on('SIGTERM', () => {
-    // Kill all OpenCode servers
-    for (const [dir, server] of opencodeServers) {
-      if (!server.process.killed) {
-        console.log(
-          `Stopping OpenCode server on port ${server.port} for ${dir}`,
-        )
-        server.process.kill('SIGTERM')
-      }
-    }
-    // Destroy all voice connections
-    for (const [guildId, voiceData] of voiceConnections) {
-      if (voiceData.voiceStreamer) {
-        voiceData.voiceStreamer.stop()
-      }
-      if (voiceData.genAiSession) {
-        voiceData.genAiSession.stop()
-      }
-      if (
-        voiceData.connection.state.status !== VoiceConnectionStatus.Destroyed
-      ) {
-        console.log(`Destroying voice connection for guild ${guildId}`)
-        voiceData.connection.destroy()
-      }
-    }
-    voiceConnections.clear()
-    getDatabase().close()
-    discordClient.destroy()
-    process.exit(0)
+    handleShutdown('SIGTERM').catch(console.error)
+  })
+  process.on('SIGINT', () => {
+    handleShutdown('SIGINT').catch(console.error)
   })
 }
