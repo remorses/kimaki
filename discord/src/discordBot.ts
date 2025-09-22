@@ -144,7 +144,10 @@ async function setupVoiceHandling({
       connection.setSpeaking(true)
     },
     onAssistantStopSpeaking() {
-      console.log('[VOICE] Assistant stopped speaking')
+      console.log('[VOICE] Assistant stopped speaking (natural finish)')
+    },
+    onAssistantInterruptSpeaking() {
+      console.log('[VOICE] Assistant interrupted while speaking')
       voiceStreamer.interrupt()
     },
     systemMessage: `You are Kimaki, a helpful AI assistant in a Discord voice channel. You're listening to users speak and will respond with voice. Be conversational and helpful. Keep responses concise.`,

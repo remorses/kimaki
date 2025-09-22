@@ -106,12 +106,14 @@ export async function startGenAiSession({
   onAssistantAudioChunk,
   onAssistantStartSpeaking,
   onAssistantStopSpeaking,
+  onAssistantInterruptSpeaking,
   systemMessage,
   tools,
 }: {
   onAssistantAudioChunk?: (args: { data: Buffer; mimeType: string }) => void
   onAssistantStartSpeaking?: () => void
   onAssistantStopSpeaking?: () => void
+  onAssistantInterruptSpeaking?: () => void
   systemMessage?: string
   tools?: Record<string, AITool<any, any>>
 } = {}) {
@@ -235,9 +237,9 @@ export async function startGenAiSession({
     }
     if (message.serverContent?.interrupted) {
       console.log('[assistant was interrupted]')
-      if (isAssistantSpeaking && onAssistantStopSpeaking) {
+      if (isAssistantSpeaking && onAssistantInterruptSpeaking) {
         isAssistantSpeaking = false
-        onAssistantStopSpeaking()
+        onAssistantInterruptSpeaking()
       }
     }
     if (message.serverContent?.turnComplete) {
