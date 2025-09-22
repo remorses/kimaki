@@ -433,6 +433,7 @@ function formatPart(part: Part): string {
           .replace(/```/g, '\\`\\`\\`')  // Triple backticks
           .replace(/``/g, '\\`\\`')      // Double backticks
           .replace(/(?<!\\)`(?!`)/g, '\\`') // Single backticks (not already escaped or part of double/triple)
+          .replace(/\|\|/g, '\\|\\|')    // Double pipes (spoiler syntax)
 
         let toolTitle =
           part.state.status === 'completed' ? part.state.title || '' : 'error'
