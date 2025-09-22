@@ -102,10 +102,7 @@ function defaultAudioChunkHandler({
 export async function startGenAiSession({
   onAssistantAudioChunk,
 }: {
-  onAssistantAudioChunk?: (args: {
-    data: Buffer
-    mimeType: string
-  }) => void
+  onAssistantAudioChunk?: (args: { data: Buffer; mimeType: string }) => void
 } = {}) {
   const responseQueue: LiveServerMessage[] = []
   let session: Session | undefined = undefined
@@ -215,13 +212,10 @@ export async function startGenAiSession({
     config,
   })
 
-  session.sendClientContent({
-    turns: [`INSERT_INPUT_HERE`],
-  })
-
   startListening()
 
   return {
+    session,
     stop: () => {
       const currentSession = session
       session = undefined
