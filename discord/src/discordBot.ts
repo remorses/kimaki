@@ -890,7 +890,7 @@ async function handleOpencodeSession(
     if (!(error instanceof Error && error.name === 'AbortError')) {
       await sendThreadMessage(
         thread,
-        `✗ Unexpected bot Error: ${error instanceof Error ? error.stack : String(error)}`,
+        `✗ Unexpected bot Error: ${error instanceof Error ? (error.stack || error.message) : String(error)}`,
       )
     }
     throw error
