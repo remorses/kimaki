@@ -1746,19 +1746,28 @@ export async function startDiscordBot({
         // Set up audio processing with GenAI
         const voiceData = voiceConnections.get(newState.guild.id)!
 
-        // Create resampler to convert 16kHz mono to 48kHz stereo
+        // Create resampler to convert 24kHz mono to 48kHz stereo
         const resampler = new Resampler({
-          inRate: 16000, // GenAI outputs 16kHz
+          inRate: 24000, // GenAI outputs 24kHz (not 16kHz!)
           outRate: 48000, // Discord expects 48kHz
           inChannels: 1, // GenAI outputs mono
-          outChannels: 1, // Discord expects stereo
+          outChannels: 2, // Discord expects stereo
         })
 
+        // Create encoder for Discord - now properly configured for 48kHz stereo
+        const encoder = new prism.opus.Encoder({
+          rate: 48000,      // Matches resampler output
+          channels: 2,      // Matches resampler output
+          frameSize: 960    // 20ms at 48kHz
+        })
+
+        // Pipe resampler to encoder
+        resampler.pipe(encoder)
 
         // Create audio player and resource
         const player = createAudioPlayer()
-        const resource = createAudioResource(resampler, {
-          inputType: StreamType.Raw,
+        const resource = createAudioResource(encoder, {
+          inputType: StreamType.Opus,
         })
         player.play(resource)
         connection.subscribe(player)
@@ -1767,7 +1776,7 @@ export async function startDiscordBot({
         const { session, stop } = await startGenAiSession({
           onAssistantAudioChunk({ data }) {
             console.log(`[VOICE] GenAI audio chunk: ${data.length} bytes`)
-            // data is raw PCM s16le @ 16 kHz mono
+            // data is raw PCM s16le @ 24 kHz mono
             // Write to resampler which will convert to 48kHz stereo
             resampler.write(data)
           },
