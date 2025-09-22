@@ -4,15 +4,16 @@
   "type": "module",
   "private": true,
   "scripts": {
-    "dev": "bun run --watch index.ts",
-    "test": "bun run scripts/test-opencode.ts",
-    "watch": "bun run scripts/watch-session.ts",
+    "dev": "tsx watch index.ts",
+    "test": "tsx scripts/test-opencode.ts",
+    "watch": "tsx scripts/watch-session.ts",
     "test:events": "tsx test-events.ts",
     "test:send": "tsx send-test-message.ts",
-    "register-commands": "bun run scripts/register-commands.ts"
+    "register-commands": "tsx scripts/register-commands.ts"
   },
   "devDependencies": {
     "@opencode-ai/sdk": "^0.11.0",
+    "@types/better-sqlite3": "^7.6.13",
     "@types/bun": "latest",
     "@types/ms": "^2.1.0",
     "@types/node": "^24.3.0",
@@ -31,6 +32,7 @@
     "@snazzah/davey": "^0.1.6",
     "@xmorse/liveapi": "workspace:*",
     "ai": "^5.0.29",
+    "better-sqlite3": "^12.3.0",
     "discord.js": "^14.16.3",
     "domhandler": "^5.0.3",
     "htmlparser2": "^10.0.0",

@@ -1,4 +1,4 @@
-#!/usr/bin/env bun
+#!/usr/bin/env tsx
 import { createOpencodeClient } from '@opencode-ai/sdk'
 
 async function listProjectsAndData() {
@@ -31,25 +31,25 @@ async function listProjectsAndData() {
       // Get git info if it's a git repo
       if (project.vcs === 'git') {
         try {
-          const { $ } = await import('bun')
+          const { exec } = await import('node:child_process')
+          const { promisify } = await import('node:util')
+          const execAsync = promisify(exec)
           
           // Get current branch
-          const branchResult = await $`git branch --show-current`.cwd(project.worktree).quiet()
-          const branch = branchResult.text().trim()
-          if (branch) {
-            console.log(`   Branch: ${branch}`)
+          const { stdout: branch } = await execAsync('git branch --show-current', { cwd: project.worktree })
+          if (branch.trim()) {
+            console.log(`   Branch: ${branch.trim()}`)
           }
           
           // Get remotes
-          const remotesResult = await $`git remote`.cwd(project.worktree).quiet()
-          const remoteNames = remotesResult.text().trim().split('\n').filter(Boolean)
+          const { stdout: remotesOutput } = await execAsync('git remote', { cwd: project.worktree })
+          const remoteNames = remotesOutput.trim().split('\n').filter(Boolean)
           
           if (remoteNames.length > 0) {
             console.log(`   Git Remotes:`)
             for (const remoteName of remoteNames) {
-              const urlResult = await $`git remote get-url ${remoteName}`.cwd(project.worktree).quiet()
-              const url = urlResult.text().trim()
-              console.log(`     ${remoteName}: ${url}`)
+              const { stdout: url } = await execAsync(`git remote get-url ${remoteName}`, { cwd: project.worktree })
+              console.log(`     ${remoteName}: ${url.trim()}`)
             }
           }
         } catch (e) {

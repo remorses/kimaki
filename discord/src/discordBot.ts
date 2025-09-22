@@ -3,8 +3,7 @@ import {
   type OpencodeClient,
   type Part,
 } from '@opencode-ai/sdk'
-import { $ } from 'bun'
-import { Database } from 'bun:sqlite'
+import Database from 'better-sqlite3'
 import {
   ChannelType,
   Client,
@@ -31,10 +30,11 @@ import {
   type VoiceConnection,
 } from '@discordjs/voice'
 import { Lexer } from 'marked'
-import { spawn, type ChildProcess } from 'node:child_process'
+import { spawn, exec, type ChildProcess } from 'node:child_process'
 import fs from 'node:fs'
 import net from 'node:net'
 import path from 'node:path'
+import { promisify } from 'node:util'
 import { PassThrough, Transform } from 'node:stream'
 import * as prism from 'prism-media'
 import { Resampler } from '@purinton/resampler'
@@ -75,7 +75,7 @@ const voiceConnections = new Map<
   }
 >()
 
-let db: Database | null = null
+let db: Database.Database | null = null
 
 // Set up voice handling for a connection (called once per connection)
 async function setupVoiceHandling(connection: VoiceConnection, guildId: string) {
@@ -226,7 +226,7 @@ function frame16kMono20ms() {
   })
 }
 
-export function getDatabase(): Database {
+export function getDatabase(): Database.Database {
   if (!db) {
     db = new Database('discord-sessions.db')
 
@@ -425,8 +425,12 @@ async function processVoiceAttachment({
           `[VOICE MESSAGE] Getting project file tree from ${projectDirectory}`,
         )
         // Use git ls-files to get tracked files, then pipe to tree
-        const result =
-          await $`cd ${projectDirectory} && git ls-files | tree --fromfile -a`.text()
+        const execAsync = promisify(exec)
+        const { stdout } = await execAsync(
+          'git ls-files | tree --fromfile -a',
+          { cwd: projectDirectory }
+        )
+        const result = stdout
 
         if (result) {
           transcriptionPrompt = `Discord voice message transcription. Project file structure:\n${result}\n\nPlease transcribe file names and paths accurately based on this context.`
