@@ -178,6 +178,9 @@ importers:
       better-sqlite3:
         specifier: ^12.3.0
         version: 12.3.0
+      date-fns:
+        specifier: ^4.1.0
+        version: 4.1.0
       discord.js:
         specifier: ^14.16.3
         version: 14.22.1
@@ -187,12 +190,18 @@ importers:
       htmlparser2:
         specifier: ^10.0.0
         version: 10.0.0
+      js-yaml:
+        specifier: ^4.1.0
+        version: 4.1.0
       marked:
         specifier: ^16.3.0
         version: 16.3.0
       node-opus:
         specifier: ^0.3.3
         version: 0.3.3
+      picocolors:
+        specifier: ^1.1.1
+        version: 1.1.1
       pretty-ms:
         specifier: ^9.3.0
         version: 9.3.0
@@ -218,6 +227,9 @@ importers:
       '@types/bun':
         specifier: latest
         version: 1.2.22(@types/react@19.1.13)
+      '@types/js-yaml':
+        specifier: ^4.0.9
+        version: 4.0.9
       '@types/ms':
         specifier: ^2.1.0
         version: 2.1.0

@@ -44,6 +44,7 @@ import { extractTagsArrays } from './xml'
 import prettyMilliseconds from 'pretty-ms'
 import { startGenAiSession } from './genai'
 import type { Session } from '@google/genai'
+import { getTools } from './tools'
 
 type StartOptions = {
   token: string
@@ -96,9 +97,6 @@ async function setupVoiceHandling(
     return
   }
 
-  // Import the direct streaming module
-  const { createDirectVoiceStreamer } = await import('./directVoiceStreaming')
-
   // Create direct voice streamer
   const voiceStreamer = createDirectVoiceStreamer({
     connection,
@@ -112,7 +110,10 @@ async function setupVoiceHandling(
   // Store the streamer for cleanup
   voiceData.voiceStreamer = voiceStreamer
 
+  const directory = '' // TODO get kimaki directory from discord voice channel description xml like other ones
+  const { tools } = await getTools({ directory })
   const { session, stop } = await startGenAiSession({
+    tools,
     onAssistantAudioChunk({ data, mimeType }) {
       console.log(
         `[VOICE] GenAI audio chunk: ${data.length} bytes, mimeType: ${mimeType}`,
