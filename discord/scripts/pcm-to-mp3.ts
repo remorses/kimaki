@@ -23,14 +23,13 @@ async function convertToMp3(filePath: string) {
   const ffmpegArgs = [
     "-i", filePath,
     "-acodec", "mp3",
-    "-ar", "24000",
     "-ac", "1"
   ];
   
   if (inputFormat === "pcm" || filePath.includes(".s16le.pcm")) {
     ffmpegArgs.unshift(
       "-f", "s16le",
-      "-ar", "24000",
+      "-ar", "16000",
       "-ac", "1"
     );
   } else if (filePath.includes(".s24le")) {
