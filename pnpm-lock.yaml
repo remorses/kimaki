@@ -36,6 +36,9 @@ importers:
       vite:
         specifier: ^7.1.4
         version: 7.1.4(@types/node@24.3.0)(jiti@2.5.1)(tsx@4.20.5)
+      vite-node:
+        specifier: ^3.2.4
+        version: 3.2.4(@types/node@24.3.0)(jiti@2.5.1)(tsx@4.20.5)
       vitest:
         specifier: ^3.2.4
         version: 3.2.4(@types/node@24.3.0)(jiti@2.5.1)(tsx@4.20.5)

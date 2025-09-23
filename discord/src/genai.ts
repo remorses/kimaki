@@ -117,7 +117,6 @@ export async function startGenAiSession({
   systemMessage?: string
   tools?: Record<string, AITool<any, any>>
 } = {}) {
-  const responseQueue: LiveServerMessage[] = []
   let session: Session | undefined = undefined
   const callableTools: Array<CallableTool & { name: string }> = []
   let isAssistantSpeaking = false
@@ -131,58 +130,43 @@ export async function startGenAiSession({
     }
   }
 
-  async function startListening() {
-    let message: LiveServerMessage | undefined = undefined
-
-    while (session) {
-      try {
-        message = responseQueue.shift()
-        if (message) {
-          await handleModelTurn(message)
-        } else {
-          await new Promise((resolve) => setTimeout(resolve, 100))
-        }
-      } catch (error) {
-        console.error('GenAI error handling turn:', error)
-      }
-    }
-  }
-
-  async function handleModelTurn(message: LiveServerMessage) {
+  function handleModelTurn(message: LiveServerMessage) {
     if (message.toolCall) {
       console.log('toolcall: ', message.toolCall)
 
       // Handle tool calls
       if (message.toolCall.functionCalls && callableTools.length > 0) {
-        try {
-          for (const tool of callableTools) {
-            if (
-              !message.toolCall.functionCalls.some((x) => x.name === tool.name)
-            ) {
-              continue
-            }
-            const parts = await tool.callTool(message.toolCall.functionCalls)
-
-            const functionResponses = parts
-              .filter((part) => part.functionResponse)
-              .map((part) => ({
-                response: part.functionResponse!.response as Record<
-                  string,
-                  unknown
-                >,
-                id: part.functionResponse!.id,
-                name: part.functionResponse!.name,
-              }))
-
-            if (functionResponses.length > 0 && session) {
-              session.sendToolResponse({ functionResponses })
-              console.log(
-                'client-toolResponse: ' + JSON.stringify({ functionResponses }),
-              )
-            }
+        for (const tool of callableTools) {
+          if (
+            !message.toolCall.functionCalls.some((x) => x.name === tool.name)
+          ) {
+            continue
           }
-        } catch (error) {
-          console.error('Error handling tool calls:', error)
+          tool
+            .callTool(message.toolCall.functionCalls)
+            .then((parts) => {
+              const functionResponses = parts
+                .filter((part) => part.functionResponse)
+                .map((part) => ({
+                  response: part.functionResponse!.response as Record<
+                    string,
+                    unknown
+                  >,
+                  id: part.functionResponse!.id,
+                  name: part.functionResponse!.name,
+                }))
+
+              if (functionResponses.length > 0 && session) {
+                session.sendToolResponse({ functionResponses })
+                console.log(
+                  'client-toolResponse: ' +
+                    JSON.stringify({ functionResponses }),
+                )
+              }
+            })
+            .catch((error) => {
+              console.error('Error handling tool calls:', error)
+            })
         }
       }
     }
@@ -209,7 +193,7 @@ export async function startGenAiSession({
           }
 
           const buffer = Buffer.from(inlineData?.data ?? '', 'base64')
-          await audioChunkHandler({
+          audioChunkHandler({
             data: buffer,
             mimeType: inlineData.mimeType ?? '',
           })
@@ -257,8 +241,6 @@ export async function startGenAiSession({
 
   const model = 'models/gemini-2.5-flash-live-preview'
 
-
-
   session = await ai.live.connect({
     model,
     callbacks: {
@@ -266,8 +248,12 @@ export async function startGenAiSession({
         console.debug('Opened')
       },
       onmessage: function (message: LiveServerMessage) {
-        console.log(message)
-        responseQueue.push(message)
+        // console.log(message)
+        try {
+          handleModelTurn(message)
+        } catch (error) {
+          console.error('GenAI error handling turn:', error)
+        }
       },
       onerror: function (e: ErrorEvent) {
         console.debug('Error:', e.message)
@@ -303,8 +289,6 @@ export async function startGenAiSession({
       },
     },
   })
-
-  startListening()
 
   return {
     session,

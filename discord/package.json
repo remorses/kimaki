@@ -5,9 +5,11 @@
   "private": true,
   "scripts": {
     "dev": "DEBUG=1 tsx --env-file .env src/cli.ts",
+    "dev:bun": "DEBUG=1 bun --env-file .env src/cli.ts",
     "test": "tsx scripts/test-opencode.ts",
     "watch": "tsx scripts/watch-session.ts",
     "test:events": "tsx test-events.ts",
+    "pcm-to-mp3": "bun scripts/pcm-to-mp3",
     "test:send": "tsx send-test-message.ts",
     "register-commands": "tsx scripts/register-commands.ts"
   },

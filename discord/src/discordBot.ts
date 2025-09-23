@@ -4,7 +4,7 @@ import {
   type Part,
 } from '@opencode-ai/sdk'
 
-import { createDirectVoiceStreamer } from './directVoiceStreaming'
+import { createGenAIWorker, type GenAIWorker } from './genai-worker-wrapper.js'
 
 import Database from 'better-sqlite3'
 import {
@@ -40,12 +40,10 @@ import { PassThrough, Transform } from 'node:stream'
 import * as prism from 'prism-media'
 import { Resampler } from '@purinton/resampler'
 import dedent from 'string-dedent'
-import { transcribeAudio } from './voice'
-import { extractTagsArrays } from './xml'
+import { transcribeAudio } from './voice.js'
+import { extractTagsArrays } from './xml.js'
 import prettyMilliseconds from 'pretty-ms'
-import { startGenAiSession } from './genai'
 import type { Session } from '@google/genai'
-import { getTools } from './tools'
 
 type StartOptions = {
   token: string
@@ -65,56 +63,38 @@ const opencodeServers = new Map<
 // Map of session ID to current AbortController
 const activeRequests = new Map<string, AbortController>()
 
-// Map of guild ID to voice connection and GenAI session
+// Map of guild ID to voice connection and GenAI worker
 const voiceConnections = new Map<
   string,
   {
     connection: VoiceConnection
-    genAiSession?: {
-      session: Session
-      stop: () => void
-    }
-    voiceStreamer?: {
-      write(pcmData: Buffer): void
-      stop(): void
-      isActive: boolean
-    }
-    audioStreams?: {
-      input: fs.WriteStream
-      output: fs.WriteStream
-    }
+    genAiWorker?: GenAIWorker
+    userAudioStream?: fs.WriteStream
   }
 >()
 
 let db: Database.Database | null = null
 
-// Create audio log streams for debugging
-async function createAudioLogStreams(
+// Create user audio log stream for debugging
+async function createUserAudioLogStream(
   guildId: string,
   channelId: string
-): Promise<{ input: fs.WriteStream; output: fs.WriteStream } | undefined> {
+): Promise<fs.WriteStream | undefined> {
+  if (!process.env.DEBUG) return undefined
+
   const timestamp = new Date().toISOString().replace(/[:.]/g, '-')
   const audioDir = path.join(process.cwd(), 'discord-audio-logs', guildId, channelId)
 
   try {
     await mkdir(audioDir, { recursive: true })
 
-
-    const outputFileName = `assistant_${timestamp}.s24le.pcm`
-    const outputFilePath = path.join(audioDir, outputFileName)
-    const outputAudioStream = createWriteStream(outputFilePath)
-    console.log(`[AUDIO LOG] Created assistant audio log: ${outputFilePath}`)
-
-    // Create input stream for user audio (16kHz mono s16le PCM)
-    const inputFileName = `user_${timestamp}.s16le.pcm`
+    // Create stream for user audio (16kHz mono s16le PCM)
+    const inputFileName = `user_${timestamp}.16.pcm`
     const inputFilePath = path.join(audioDir, inputFileName)
     const inputAudioStream = createWriteStream(inputFilePath)
     console.log(`[AUDIO LOG] Created user audio log: ${inputFilePath}`)
 
-    return {
-      input: inputAudioStream,
-      output: outputAudioStream
-    }
+    return inputAudioStream
   } catch (error) {
     console.error('[AUDIO LOG] Failed to create audio log directory:', error)
     return undefined
@@ -159,69 +139,16 @@ async function setupVoiceHandling({
     return
   }
 
-  // Stop any existing voice streamer before creating a new one
-  if (voiceData.voiceStreamer) {
-    console.log(
-      '[VOICE] Stopping existing voice streamer before creating new one',
-    )
-    voiceData.voiceStreamer.stop()
-  }
 
-  // Create direct voice streamer
-  const voiceStreamer = createDirectVoiceStreamer({
-    connection,
-    inputSampleRate: 24000, // GenAI outputs 16kHz
-    inputChannels: 1, // GenAI outputs mono
-    onStop: () => {
-      console.log('[VOICE] Voice streamer stopped')
-    },
-  })
 
-  // Store the streamer for cleanup
-  voiceData.voiceStreamer = voiceStreamer
+  // Create user audio stream for debugging
+  voiceData.userAudioStream = await createUserAudioLogStream(guildId, channelId)
 
-  // Create PCM file streams for audio logging if DEBUG is enabled
-  if (process.env.DEBUG) {
-    voiceData.audioStreams = await createAudioLogStreams(guildId, channelId)
-  }
-
-  const { tools } = await getTools({
+  // Create GenAI worker
+  const genAiWorker = await createGenAIWorker({
     directory,
-    onMessageCompleted: (params) => {
-      if (!voiceData.genAiSession?.session) return
-
-      const text = params.error
-        ? `<systemMessage>\nThe coding agent encountered an error while processing session ${params.sessionId}: ${params.error?.message || String(params.error)}\n</systemMessage>`
-        : `<systemMessage>\nThe coding agent finished working on session ${params.sessionId}\n\nHere's what the assistant wrote:\n${params.markdown}\n</systemMessage>`
-
-      voiceData.genAiSession.session.sendRealtimeInput({
-        text,
-      })
-    },
-  })
-  const { session, stop } = await startGenAiSession({
-    tools,
-    onAssistantAudioChunk({ data, mimeType }) {
-      console.log(
-        `[VOICE] GenAI audio chunk: ${data.length} bytes, mimeType: ${mimeType}`,
-      )
-      // Write to PCM file if stream exists
-      voiceData.audioStreams?.output?.write(data)
-      // data is raw PCM s16le @ 16 kHz mono
-      // Write directly to our voice streamer
-      voiceStreamer.write(data)
-    },
-    onAssistantStartSpeaking() {
-      console.log('[VOICE] Assistant started speaking')
-      connection.setSpeaking(true)
-    },
-    onAssistantStopSpeaking() {
-      console.log('[VOICE] Assistant stopped speaking (natural finish)')
-    },
-    onAssistantInterruptSpeaking() {
-      console.log('[VOICE] Assistant interrupted while speaking')
-      voiceStreamer.interrupt()
-    },
+    guildId,
+    channelId,
     systemMessage: dedent`
     You are Kimaki, an AI similar to Jarvis: you help your user (an engineer) controlling his coding agent, just like Jarvis controls Ironman armor and machines. Speak fast.
 
@@ -256,20 +183,59 @@ async function setupVoiceHandling({
     Your voice is calm and monotone, NEVER excited and goofy. But you speak without jargon or bs and do veiled short jokes.
     You speak like you knew something other don't. You are cool and cold.
     `,
+    onAssistantOpusPacket(packet) {
+      // Opus packets are sent at 20ms intervals from worker, play directly
+      if (connection.state.status !== VoiceConnectionStatus.Ready) {
+        console.log('[VOICE] Skipping packet: connection not ready')
+        return
+      }
+
+      try {
+        connection.setSpeaking(true)
+        connection.playOpusPacket(Buffer.from(packet))
+      } catch (error) {
+        console.error('[VOICE] Error sending packet:', error)
+      }
+    },
+    onAssistantStartSpeaking() {
+      console.log('[VOICE] Assistant started speaking')
+      connection.setSpeaking(true)
+    },
+    onAssistantStopSpeaking() {
+      console.log('[VOICE] Assistant stopped speaking (natural finish)')
+      connection.setSpeaking(false)
+    },
+    onAssistantInterruptSpeaking() {
+      console.log('[VOICE] Assistant interrupted while speaking')
+      genAiWorker.interrupt()
+      connection.setSpeaking(false)
+    },
+    onToolCallCompleted(params) {
+      const text = params.error
+        ? `<systemMessage>\nThe coding agent encountered an error while processing session ${params.sessionId}: ${params.error?.message || String(params.error)}\n</systemMessage>`
+        : `<systemMessage>\nThe coding agent finished working on session ${params.sessionId}\n\nHere's what the assistant wrote:\n${params.markdown}\n</systemMessage>`
+
+      genAiWorker.sendTextInput(text)
+    },
+    onError(error) {
+      console.error('[VOICE] GenAI worker error:', error)
+    },
   })
 
-  // Stop any existing GenAI session before storing new one
-  if (voiceData.genAiSession) {
+  // Stop any existing GenAI worker before storing new one
+  if (voiceData.genAiWorker) {
     console.log(
-      '[VOICE] Stopping existing GenAI session before creating new one',
+      '[VOICE] Stopping existing GenAI worker before creating new one',
     )
-    voiceData.genAiSession.stop()
+    await voiceData.genAiWorker.stop()
   }
-  session.sendRealtimeInput({
-    text: `<systemMessage>\nsay "Hello boss, how we doing today?"\n</systemMessage>`,
-  })
 
-  voiceData.genAiSession = { session, stop }
+  // Send initial greeting
+  genAiWorker.sendTextInput(
+    `<systemMessage>\nsay "Hello boss, how we doing today?"\n</systemMessage>`
+  )
+
+  voiceData.genAiWorker = genAiWorker
 
   // Set up voice receiver for user input
   const receiver = connection.receiver
@@ -305,22 +271,20 @@ async function setupVoiceHandling({
 
     pipeline
       .on('data', (frame: Buffer) => {
-        if (!voiceData.genAiSession?.session) {
+        if (!voiceData.genAiWorker) {
           console.warn(
-            `[VOICE] Received audio frame but no GenAI session active for guild ${guildId}`,
+            `[VOICE] Received audio frame but no GenAI worker active for guild ${guildId}`,
           )
           return
         }
 
         // Write to PCM file if stream exists
-        voiceData.audioStreams?.input?.write(frame)
+        voiceData.userAudioStream?.write(frame)
 
         // stream incrementally — low latency
-        voiceData.genAiSession.session.sendRealtimeInput({
-          audio: {
-            mimeType: 'audio/pcm;rate=16000',
-            data: frame.toString('base64'),
-          },
+        voiceData.genAiWorker.sendRealtimeInput({
+          mimeType: 'audio/pcm;rate=16000',
+          data: frame.toString('base64'),
         })
       })
       .on('end', () => {
@@ -1880,19 +1844,15 @@ export async function startDiscordBot({
             console.log(
               `[VOICE] No other admins in channel, bot leaving voice channel in guild: ${guild.name}`,
             )
-            // Stop voice streamer if exists
-            if (voiceData.voiceStreamer) {
-              voiceData.voiceStreamer.stop()
+
+            // Stop GenAI worker if exists
+            if (voiceData.genAiWorker) {
+              voiceData.genAiWorker.stop()
             }
-            // Stop GenAI session if exists
-            if (voiceData.genAiSession) {
-              voiceData.genAiSession.stop()
-            }
-            // Close audio streams if exist
-            if (voiceData.audioStreams) {
-              voiceData.audioStreams.input?.end()
-              voiceData.audioStreams.output?.end()
-              console.log('[AUDIO LOG] Closed audio streams')
+            // Close user audio stream if exists
+            if (voiceData.userAudioStream) {
+              voiceData.userAudioStream.end()
+              console.log('[AUDIO LOG] Closed user audio stream')
             }
             voiceData.connection.destroy()
             voiceConnections.delete(guildId)
@@ -2054,11 +2014,10 @@ export async function startDiscordBot({
           )
           const voiceData = voiceConnections.get(newState.guild.id)
           if (voiceData) {
-            // Clean up audio streams
-            if (voiceData.audioStreams) {
-              voiceData.audioStreams.input?.end()
-              voiceData.audioStreams.output?.end()
-              console.log('[AUDIO LOG] Closed audio streams (on destroy)')
+            // Clean up user audio stream
+            if (voiceData.userAudioStream) {
+              voiceData.userAudioStream.end()
+              console.log('[AUDIO LOG] Closed user audio stream (on destroy)')
             }
           }
           voiceConnections.delete(newState.guild.id)
@@ -2101,11 +2060,9 @@ export async function startDiscordBot({
     )
     const disconnectPromises = []
     for (const [guildId, voiceData] of voiceConnections) {
-      if (voiceData.voiceStreamer) {
-        voiceData.voiceStreamer.stop()
-      }
-      if (voiceData.genAiSession) {
-        voiceData.genAiSession.stop()
+
+      if (voiceData.genAiWorker) {
+        voiceData.genAiWorker.stop()
       }
       if (
         voiceData.connection.state.status !== VoiceConnectionStatus.Destroyed

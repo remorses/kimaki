@@ -11,7 +11,7 @@ import {
   spinner,
   select,
 } from '@clack/prompts'
-import { generateBotInstallUrl } from './utils'
+import { generateBotInstallUrl } from './utils.js'
 import {
   getChannelsWithDescriptions,
   createDiscordClient,
@@ -19,7 +19,7 @@ import {
   startDiscordBot,
   initializeOpencodeForDirectory,
   type ChannelWithTags,
-} from './discordBot'
+} from './discordBot.js'
 import type { OpencodeClient } from '@opencode-ai/sdk'
 import {
   Client,

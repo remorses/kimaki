@@ -10,9 +10,9 @@ import {
 } from '@opencode-ai/sdk'
 import { formatDistanceToNow } from 'date-fns'
 
-import { ShareMarkdown } from './markdown'
+import { ShareMarkdown } from './markdown.js'
 import pc from 'picocolors'
-import { initializeOpencodeForDirectory } from './discordBot'
+import { initializeOpencodeForDirectory } from './discordBot.js'
 
 export async function getTools({
   onMessageCompleted,
