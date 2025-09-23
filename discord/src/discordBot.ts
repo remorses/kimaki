@@ -38,7 +38,6 @@ import path from 'node:path'
 import { promisify } from 'node:util'
 import { PassThrough, Transform, type TransformCallback } from 'node:stream'
 import * as prism from 'prism-media'
-import { Resampler } from '@purinton/resampler'
 import dedent from 'string-dedent'
 import { transcribeAudio } from './voice.js'
 import { extractTagsArrays } from './xml.js'
@@ -74,6 +73,38 @@ const voiceConnections = new Map<
 >()
 
 let db: Database.Database | null = null
+
+function convertToMono16k(buffer: Buffer): Buffer {
+  // Parameters
+  const inputSampleRate = 48000
+  const outputSampleRate = 16000
+  const ratio = inputSampleRate / outputSampleRate
+  const inputChannels = 2 // Stereo
+  const bytesPerSample = 2 // 16-bit
+
+  // Calculate output buffer size
+  const inputSamples = buffer.length / (bytesPerSample * inputChannels)
+  const outputSamples = Math.floor(inputSamples / ratio)
+  const outputBuffer = Buffer.alloc(outputSamples * bytesPerSample)
+
+  // Process each output sample
+  for (let i = 0; i < outputSamples; i++) {
+    // Find the corresponding input sample
+    const inputIndex = Math.floor(i * ratio) * inputChannels * bytesPerSample
+
+    // Average the left and right channels for mono conversion
+    if (inputIndex + 3 < buffer.length) {
+      const leftSample = buffer.readInt16LE(inputIndex)
+      const rightSample = buffer.readInt16LE(inputIndex + 2)
+      const monoSample = Math.round((leftSample + rightSample) / 2)
+
+      // Write to output buffer
+      outputBuffer.writeInt16LE(monoSample, i * bytesPerSample)
+    }
+  }
+
+  return outputBuffer
+}
 
 // Create user audio log stream for debugging
 async function createUserAudioLogStream(
@@ -259,18 +290,22 @@ async function setupVoiceHandling({
       frameSize: 960,
     })
 
-    // Downsample 48k stereo -> 16k mono
-    const userResampler = new Resampler({
-      inRate: 48000,
-      outRate: 16000,
-      inChannels: 2,
-      outChannels: 1,
+    // Transform to downsample 48k stereo -> 16k mono
+    const downsampleTransform = new Transform({
+      transform(chunk: Buffer, _encoding, callback) {
+        try {
+          const downsampled = convertToMono16k(chunk)
+          callback(null, downsampled)
+        } catch (error) {
+          callback(error as Error)
+        }
+      },
     })
 
     // Frame to exact 20 ms blocks so the GenAI side can decode smoothly
     const framer = frameMono16khz()
 
-    const pipeline = audioStream.pipe(decoder).pipe(userResampler).pipe(framer)
+    const pipeline = audioStream.pipe(decoder).pipe(downsampleTransform)
 
     pipeline
       .on('data', (frame: Buffer) => {
