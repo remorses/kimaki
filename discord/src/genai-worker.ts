@@ -11,12 +11,14 @@ import type {
   WorkerOutMessage,
 } from './worker-types.js'
 import type { Session } from '@google/genai'
+import { createLogger } from './logger.js'
 
 if (!parentPort) {
   throw new Error('This module must be run as a worker thread')
 }
 
-console.log(`[WORKER ${threadId}] GenAI worker started`)
+const workerLogger = createLogger(`WORKER ${threadId}`)
+workerLogger.log('GenAI worker started')
 
 // Audio configuration
 const AUDIO_CONFIG = {
@@ -105,11 +107,11 @@ async function createAssistantAudioLogStream(
     const outputFileName = `assistant_${timestamp}.24.pcm`
     const outputFilePath = path.join(audioDir, outputFileName)
     const outputAudioStream = createWriteStream(outputFilePath)
-    console.log(`[WORKER ${threadId}] Created assistant audio log: ${outputFilePath}`)
+    workerLogger.log(`Created assistant audio log: ${outputFilePath}`)
 
     return outputAudioStream
   } catch (error) {
-    console.error(`[WORKER ${threadId}] Failed to create audio log directory:`, error)
+    workerLogger.error(`Failed to create audio log directory:`, error)
     return null
   }
 }
@@ -121,12 +123,12 @@ opusEncoder.on('data', (packet: Buffer) => {
 
 // Handle errors
 resampler.on('error', (error: any) => {
-  console.error(`[WORKER ${threadId}] Resampler error:`, error)
+  workerLogger.error(`Resampler error:`, error)
   sendError(`Resampler error: ${error.message}`)
 })
 
 opusEncoder.on('error', (error: any) => {
-  console.error(`[WORKER ${threadId}] Encoder error:`, error)
+  workerLogger.error(`Encoder error:`, error)
   sendError(`Encoder error: ${error.message}`)
 })
 
@@ -139,28 +141,28 @@ function sendError(error: string) {
 
 
 async function cleanupAsync(): Promise<void> {
-  console.log(`[WORKER ${threadId}] Starting async cleanup`)
+  workerLogger.log(`Starting async cleanup`)
 
   stopPacketSending()
 
   if (session) {
-    console.log(`[WORKER ${threadId}] Stopping GenAI session`)
+    workerLogger.log(`Stopping GenAI session`)
     session.stop()
     session = null
   }
 
   // Wait for audio log stream to finish writing
   if (audioLogStream) {
-    console.log(`[WORKER ${threadId}] Closing assistant audio log stream`)
+    workerLogger.log(`Closing assistant audio log stream`)
     await new Promise<void>((resolve, reject) => {
       audioLogStream!.end(() => {
-        console.log(`[WORKER ${threadId}] Assistant audio log stream closed`)
+        workerLogger.log(`Assistant audio log stream closed`)
         resolve()
       })
       audioLogStream!.on('error', reject)
       // Add timeout to prevent hanging
       setTimeout(() => {
-        console.log(`[WORKER ${threadId}] Audio stream close timeout, continuing`)
+        workerLogger.log(`Audio stream close timeout, continuing`)
         resolve()
       }, 3000)
     })
@@ -173,7 +175,7 @@ async function cleanupAsync(): Promise<void> {
   // End the encoder stream
   await new Promise<void>((resolve) => {
     opusEncoder.end(() => {
-      console.log(`[WORKER ${threadId}] Opus encoder ended`)
+      workerLogger.log(`Opus encoder ended`)
       resolve()
     })
     // Add timeout
@@ -183,14 +185,14 @@ async function cleanupAsync(): Promise<void> {
   // End the resampler stream
   await new Promise<void>((resolve) => {
     resampler.end(() => {
-      console.log(`[WORKER ${threadId}] Resampler ended`)
+      workerLogger.log(`Resampler ended`)
       resolve()
     })
     // Add timeout
     setTimeout(resolve, 1000)
   })
 
-  console.log(`[WORKER ${threadId}] Async cleanup complete`)
+  workerLogger.log(`Async cleanup complete`)
 }
 
 // Handle messages from main thread
@@ -198,7 +200,7 @@ parentPort.on('message', async (message: WorkerInMessage) => {
   try {
     switch (message.type) {
       case 'init': {
-        console.log(`[WORKER ${threadId}] Initializing with directory:`, message.directory)
+        workerLogger.log(`Initializing with directory:`, message.directory)
 
         // Create audio log stream for assistant audio
         audioLogStream = await createAssistantAudioLogStream(message.guildId, message.channelId)
@@ -276,21 +278,21 @@ parentPort.on('message', async (message: WorkerInMessage) => {
       }
 
       case 'interrupt': {
-        console.log(`[WORKER ${threadId}] Interrupting playback`)
+        workerLogger.log(`Interrupting playback`)
         // Clear the opus packet queue
         opusPacketQueue.length = 0
         break
       }
 
       case 'stop': {
-        console.log(`[WORKER ${threadId}] Stopping worker`)
+        workerLogger.log(`Stopping worker`)
         await cleanupAsync()
         // process.exit(0)
         break
       }
     }
   } catch (error) {
-    console.error(`[WORKER ${threadId}] Error handling message:`, error)
+    workerLogger.error(`Error handling message:`, error)
     sendError(
       error instanceof Error ? error.message : 'Unknown error in worker'
     )

@@ -8,6 +8,9 @@ import {
   type AssistantMessage,
   type Provider,
 } from '@opencode-ai/sdk'
+import { createLogger } from './logger.js'
+
+const toolsLogger = createLogger('TOOLS')
 import { formatDistanceToNow } from 'date-fns'
 
 import { ShareMarkdown } from './markdown.js'
@@ -189,7 +192,7 @@ export async function getTools({
         'Get a list of available chat sessions sorted by most recent',
       inputSchema: z.object({}),
       execute: async () => {
-        console.log(`listing opencode sessions`)
+        toolsLogger.log(`Listing opencode sessions`)
         const sessions = await client.session.list()
 
         if (!sessions.data) {

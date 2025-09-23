@@ -35,6 +35,10 @@ import {
 } from 'discord.js'
 import path from 'node:path'
 import fs from 'node:fs'
+import { createLogger } from './logger.js'
+
+const cliLogger = createLogger('CLI')
+const setupLogger = createLogger('SETUP')
 
 // Parse command line arguments
 const args = process.argv.slice(2)
@@ -66,11 +70,11 @@ async function registerCommands(token: string, appId: string) {
       body: commands,
     })) as any[]
 
-    console.log(
-      `[COMMANDS] Successfully registered ${data.length} slash commands`,
+    cliLogger.log(
+      `COMMANDS: Successfully registered ${data.length} slash commands`,
     )
   } catch (error) {
-    console.error('[COMMANDS] Failed to register slash commands:', error)
+    cliLogger.error('COMMANDS: Failed to register slash commands:', error)
     throw error
   }
 }
@@ -86,7 +90,7 @@ type Project = {
 }
 
 async function main() {
-  console.log()
+  cliLogger.log()
   intro('🤖 Discord Bot Setup')
 
   const db = getDatabase()
@@ -104,14 +108,14 @@ async function main() {
     // Use existing credentials
     appId = existingBot.app_id
     token = existingBot.token
-    console.log()
+    cliLogger.log()
     note(
       `Using saved bot credentials:\nApp ID: ${appId}\n\nTo use different credentials, run with --force`,
       'Existing Bot Found',
     )
 
     // Show install URL in case they need it
-    console.log()
+    cliLogger.log()
     note(
       `Bot install URL (in case you need to add it to another server):\n${generateBotInstallUrl({ clientId: appId })}`,
       'Install URL',
@@ -119,7 +123,7 @@ async function main() {
   } else {
     // Get new credentials
     if (forceSetup && existingBot) {
-      console.log()
+      cliLogger.log()
       note('Ignoring saved credentials due to --force flag', 'Force Setup')
     }
 
@@ -173,11 +177,11 @@ async function main() {
       'INSERT OR REPLACE INTO bot_tokens (app_id, token) VALUES (?, ?)',
     ).run(appId, token)
 
-    console.log()
+    cliLogger.log()
     note('Token saved to database', 'Credentials Stored')
 
     // Show install URL and WAIT for installation
-    console.log()
+    cliLogger.log()
     note(
       `Bot install URL:\n${generateBotInstallUrl({ clientId: appId })}\n\nYou MUST install the bot in your Discord server before continuing.`,
       'Step 3: Install Bot to Server',
@@ -236,7 +240,7 @@ async function main() {
     s.stop('Connected to Discord!')
   } catch (error) {
     s.stop('Failed to connect to Discord')
-    console.error(
+    cliLogger.error(
       'Error:',
       error instanceof Error ? error.message : String(error),
     )
@@ -288,7 +292,7 @@ async function main() {
     note(channelList, 'Existing Kimaki Channels')
 
     // Ask user if they want to add new channels or start the server
-    console.log()
+    cliLogger.log()
     const action = await select({
       message: 'What would you like to do?',
       options: [
@@ -320,7 +324,7 @@ async function main() {
     s.stop('OpenCode server started!')
   } catch (error) {
     s.stop('Failed to start OpenCode')
-    console.error(
+    cliLogger.error(
       'Error:',
       error instanceof Error ? error.message : String(error),
     )
@@ -342,7 +346,7 @@ async function main() {
     s.stop(`Found ${projects.length} OpenCode project(s)`)
   } catch (error) {
     s.stop('Failed to fetch projects')
-    console.error(
+    cliLogger.error(
       'Error:',
       error instanceof Error ? error.message : String(error),
     )
@@ -379,7 +383,7 @@ async function main() {
       // Select guild if multiple
       let targetGuild: Guild
       if (guilds.length === 0) {
-        console.error(
+        cliLogger.error(
           'No Discord servers found! The bot must be installed in at least one server.',
         )
         process.exit(1)
@@ -445,7 +449,7 @@ async function main() {
             guildId: targetGuild.id,
           })
         } catch (error) {
-          console.error(`Failed to create channels for ${baseName}:`, error)
+          cliLogger.error(`Failed to create channels for ${baseName}:`, error)
         }
       }
 
@@ -461,14 +465,14 @@ async function main() {
   }
 
   // Register slash commands
-  console.log()
+  cliLogger.log()
   s.start('Registering slash commands...')
   try {
     await registerCommands(token, appId)
     s.stop('Slash commands registered!')
   } catch (error) {
     s.stop('Failed to register slash commands')
-    console.error(
+    cliLogger.error(
       'Error:',
       error instanceof Error ? error.message : String(error),
     )
@@ -476,7 +480,7 @@ async function main() {
   }
 
   // Start the bot at the very end
-  console.log()
+  cliLogger.log()
   s.start('Starting Discord bot...')
   await startDiscordBot({ token, appId, discordClient })
   s.stop('Discord bot is running!')
@@ -505,7 +509,7 @@ async function main() {
   })
 
   if (allChannels.length > 0) {
-    console.log()
+    cliLogger.log()
     const channelLinks = allChannels
       .map(
         (ch) =>
@@ -522,4 +526,4 @@ async function main() {
   outro('✨ Setup complete!')
 }
 
-main().catch(console.error)
+main().catch(cliLogger.error)

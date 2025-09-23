@@ -1,6 +1,9 @@
 import { RealtimeClient } from '@openai/realtime-api-beta'
 import { writeFile } from 'fs'
 import type { Tool } from 'ai'
+import { createLogger } from './logger.js'
+
+const openaiLogger = createLogger('OPENAI')
 
 // Export the session type for reuse
 export interface OpenAIRealtimeSession {
@@ -48,10 +51,10 @@ const audioParts: Buffer[] = []
 function saveBinaryFile(fileName: string, content: Buffer) {
   writeFile(fileName, content, 'utf8', (err) => {
     if (err) {
-      console.error(`Error writing file ${fileName}:`, err)
+      openaiLogger.error(`Error writing file ${fileName}:`, err)
       return
     }
-    console.log(`Appending stream content to file ${fileName}.`)
+    openaiLogger.log(`Appending stream content to file ${fileName}.`)
   })
 }
 
@@ -231,7 +234,7 @@ export async function startGenAiSession({
             })
             return result
           } catch (error) {
-            console.error(`Tool ${name} execution error:`, error)
+            openaiLogger.error(`Tool ${name} execution error:`, error)
             return { error: String(error) }
           }
         },
@@ -297,9 +300,9 @@ export async function startGenAiSession({
       if (delta?.transcript) {
         if ('role' in item) {
           if (item.role === 'user') {
-            console.log('[user transcription]', delta.transcript)
+            openaiLogger.log('User transcription:', delta.transcript)
           } else if (item.role === 'assistant') {
-            console.log('[assistant transcription]', delta.transcript)
+            openaiLogger.log('Assistant transcription:', delta.transcript)
           }
         }
       }
@@ -322,7 +325,7 @@ export async function startGenAiSession({
   )
 
   client.on('conversation.interrupted', () => {
-    console.log('[assistant was interrupted]')
+    openaiLogger.log('Assistant was interrupted')
     if (isAssistantSpeaking && onAssistantInterruptSpeaking) {
       isAssistantSpeaking = false
       onAssistantInterruptSpeaking()

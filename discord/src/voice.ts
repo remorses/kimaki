@@ -1,5 +1,8 @@
 import { openai } from '@ai-sdk/openai'
 import { experimental_transcribe as transcribe } from 'ai'
+import { createLogger } from './logger.js'
+
+const voiceLogger = createLogger('VOICE')
 
 export async function transcribeAudio({
   audio,
@@ -29,7 +32,7 @@ export async function transcribeAudio({
 
     return result.text
   } catch (error) {
-    console.error('Failed to transcribe audio:', error)
+    voiceLogger.error('Failed to transcribe audio:', error)
     throw new Error(`Audio transcription failed: ${error instanceof Error ? error.message : 'Unknown error'}`)
   }
 }

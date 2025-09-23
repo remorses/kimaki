@@ -9,16 +9,19 @@ import type { CallableTool } from '@google/genai'
 import { writeFile } from 'fs'
 import type { Tool as AITool } from 'ai'
 import { aiToolToCallableTool } from '@xmorse/liveapi'
+import { createLogger } from './logger.js'
+
+const genaiLogger = createLogger('GENAI')
 
 const audioParts: Buffer[] = []
 
 function saveBinaryFile(fileName: string, content: Buffer) {
   writeFile(fileName, content, 'utf8', (err) => {
     if (err) {
-      console.error(`Error writing file ${fileName}:`, err)
+      genaiLogger.error(`Error writing file ${fileName}:`, err)
       return
     }
-    console.log(`Appending stream content to file ${fileName}.`)
+    genaiLogger.log(`Appending stream content to file ${fileName}.`)
   })
 }
 
@@ -132,7 +135,7 @@ export async function startGenAiSession({
 
   function handleModelTurn(message: LiveServerMessage) {
     if (message.toolCall) {
-      console.log('toolcall: ', message.toolCall)
+      genaiLogger.log('Tool call:', message.toolCall)
 
       // Handle tool calls
       if (message.toolCall.functionCalls && callableTools.length > 0) {
@@ -158,14 +161,14 @@ export async function startGenAiSession({
 
               if (functionResponses.length > 0 && session) {
                 session.sendToolResponse({ functionResponses })
-                console.log(
+                genaiLogger.log(
                   'client-toolResponse: ' +
                     JSON.stringify({ functionResponses }),
                 )
               }
             })
             .catch((error) => {
-              console.error('Error handling tool calls:', error)
+              genaiLogger.error('Error handling tool calls:', error)
             })
         }
       }
@@ -173,7 +176,7 @@ export async function startGenAiSession({
     if (message.serverContent?.modelTurn?.parts) {
       for (const part of message.serverContent.modelTurn.parts) {
         if (part?.fileData) {
-          console.log(`File: ${part?.fileData.fileUri}`)
+          genaiLogger.log(`File: ${part?.fileData.fileUri}`)
         }
 
         if (part?.inlineData) {
@@ -182,7 +185,7 @@ export async function startGenAiSession({
             !inlineData.mimeType ||
             !inlineData.mimeType.startsWith('audio/')
           ) {
-            console.log('Skipping non-audio inlineData:', inlineData.mimeType)
+            genaiLogger.log('Skipping non-audio inlineData:', inlineData.mimeType)
             continue
           }
 
@@ -200,13 +203,13 @@ export async function startGenAiSession({
         }
 
         if (part?.text) {
-          console.log('[google genai text]', part.text)
+          genaiLogger.log('Text:', part.text)
         }
       }
     }
     // Handle input transcription (user's audio transcription)
     if (message.serverContent?.inputTranscription?.text) {
-      console.log(
+      genaiLogger.log(
         '[user transcription]',
         message.serverContent.inputTranscription.text,
       )
@@ -214,20 +217,20 @@ export async function startGenAiSession({
 
     // Handle output transcription (model's audio transcription)
     if (message.serverContent?.outputTranscription?.text) {
-      console.log(
+      genaiLogger.log(
         '[assistant transcription]',
         message.serverContent.outputTranscription.text,
       )
     }
     if (message.serverContent?.interrupted) {
-      console.log('[assistant was interrupted]')
+      genaiLogger.log('Assistant was interrupted')
       if (isAssistantSpeaking && onAssistantInterruptSpeaking) {
         isAssistantSpeaking = false
         onAssistantInterruptSpeaking()
       }
     }
     if (message.serverContent?.turnComplete) {
-      console.log('[assistant turn complete]')
+      genaiLogger.log('Assistant turn complete')
       if (isAssistantSpeaking && onAssistantStopSpeaking) {
         isAssistantSpeaking = false
         onAssistantStopSpeaking()
@@ -245,21 +248,21 @@ export async function startGenAiSession({
     model,
     callbacks: {
       onopen: function () {
-        console.debug('Opened')
+        genaiLogger.debug('Opened')
       },
       onmessage: function (message: LiveServerMessage) {
-        // console.log(message)
+        // genaiLogger.log(message)
         try {
           handleModelTurn(message)
         } catch (error) {
-          console.error('GenAI error handling turn:', error)
+          genaiLogger.error('Error handling turn:', error)
         }
       },
       onerror: function (e: ErrorEvent) {
-        console.debug('Error:', e.message)
+        genaiLogger.debug('Error:', e.message)
       },
       onclose: function (e: CloseEvent) {
-        console.debug('Close:', e.reason)
+        genaiLogger.debug('Close:', e.reason)
       },
     },
     config: {

@@ -1,5 +1,8 @@
 import { DomHandler, Parser, ElementType } from 'htmlparser2'
 import type { ChildNode, Element, Text } from 'domhandler'
+import { createLogger } from './logger.js'
+
+const xmlLogger = createLogger('XML')
 
 export function extractTagsArrays<T extends string>({
   xml,
@@ -21,7 +24,7 @@ export function extractTagsArrays<T extends string>({
     const handler = new DomHandler(
       (error, dom) => {
         if (error) {
-          console.error('Error parsing XML:', error)
+          xmlLogger.error('Error parsing XML:', error)
         } else {
           const findTags = (nodes: ChildNode[], path: string[] = []) => {
             nodes.forEach((node) => {
@@ -102,7 +105,7 @@ export function extractTagsArrays<T extends string>({
     parser.write(xml)
     parser.end()
   } catch (error) {
-    console.error('Unexpected error in extractTags:', error)
+    xmlLogger.error('Unexpected error in extractTags:', error)
   }
 
   return result as Record<T, string[]> & { others: string[] }

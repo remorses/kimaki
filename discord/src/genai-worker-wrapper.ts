@@ -1,6 +1,10 @@
 import { Worker } from 'node:worker_threads'
 import type { WorkerInMessage, WorkerOutMessage } from './worker-types.js'
 import type { Tool as AITool } from 'ai'
+import { createLogger } from './logger.js'
+
+const genaiWorkerLogger = createLogger('GENAI WORKER')
+const genaiWrapperLogger = createLogger('GENAI WORKER WRAPPER')
 
 export interface GenAIWorkerOptions {
   directory: string
@@ -55,11 +59,11 @@ export function createGenAIWorker(
           options.onToolCallCompleted?.(message)
           break
         case 'error':
-          console.error('[GENAI WORKER] Error:', message.error)
+          genaiWorkerLogger.error('Error:', message.error)
           options.onError?.(message.error)
           break
         case 'ready':
-          console.log('[GENAI WORKER] Ready')
+          genaiWorkerLogger.log('Ready')
           // Resolve with the worker interface
           resolve({
             sendRealtimeInput({ audio, audioStreamEnd }) {
@@ -81,7 +85,7 @@ export function createGenAIWorker(
               } satisfies WorkerInMessage)
             },
             async stop() {
-              console.log('[GENAI WORKER WRAPPER] Stopping worker...')
+              genaiWrapperLogger.log('Stopping worker...')
               // Send stop message to trigger graceful shutdown
               worker.postMessage({ type: 'stop' } satisfies WorkerInMessage)
 
@@ -93,7 +97,7 @@ export function createGenAIWorker(
                 worker.once('exit', (code) => {
                   if (!resolved) {
                     resolved = true
-                    console.log(
+                    genaiWrapperLogger.log(
                       `[GENAI WORKER WRAPPER] Worker exited with code ${code}`,
                     )
                     resolve()
@@ -104,11 +108,11 @@ export function createGenAIWorker(
                 setTimeout(() => {
                   if (!resolved) {
                     resolved = true
-                    console.log(
+                    genaiWrapperLogger.log(
                       '[GENAI WORKER WRAPPER] Worker did not exit gracefully, terminating...',
                     )
                     worker.terminate().then(() => {
-                      console.log('[GENAI WORKER WRAPPER] Worker terminated')
+                      genaiWrapperLogger.log('Worker terminated')
                       resolve()
                     })
                   }
@@ -122,13 +126,13 @@ export function createGenAIWorker(
 
     // Handle worker errors
     worker.on('error', (error) => {
-      console.error('[GENAI WORKER] Worker error:', error)
+      genaiWorkerLogger.error('Worker error:', error)
       reject(error)
     })
 
     worker.on('exit', (code) => {
       if (code !== 0) {
-        console.error(`[GENAI WORKER] Worker stopped with exit code ${code}`)
+        genaiWorkerLogger.error(`Worker stopped with exit code ${code}`)
       }
     })
 
