@@ -36,7 +36,7 @@ import { mkdir } from 'node:fs/promises'
 import net from 'node:net'
 import path from 'node:path'
 import { promisify } from 'node:util'
-import { PassThrough, Transform } from 'node:stream'
+import { PassThrough, Transform, type TransformCallback } from 'node:stream'
 import * as prism from 'prism-media'
 import { Resampler } from '@purinton/resampler'
 import dedent from 'string-dedent'
@@ -78,12 +78,17 @@ let db: Database.Database | null = null
 // Create user audio log stream for debugging
 async function createUserAudioLogStream(
   guildId: string,
-  channelId: string
+  channelId: string,
 ): Promise<fs.WriteStream | undefined> {
   if (!process.env.DEBUG) return undefined
 
   const timestamp = new Date().toISOString().replace(/[:.]/g, '-')
-  const audioDir = path.join(process.cwd(), 'discord-audio-logs', guildId, channelId)
+  const audioDir = path.join(
+    process.cwd(),
+    'discord-audio-logs',
+    guildId,
+    channelId,
+  )
 
   try {
     await mkdir(audioDir, { recursive: true })
@@ -138,8 +143,6 @@ async function setupVoiceHandling({
     console.error(`[VOICE] No voice data found for guild ${guildId}`)
     return
   }
-
-
 
   // Create user audio stream for debugging
   voiceData.userAudioStream = await createUserAudioLogStream(guildId, channelId)
@@ -232,7 +235,7 @@ async function setupVoiceHandling({
 
   // Send initial greeting
   genAiWorker.sendTextInput(
-    `<systemMessage>\nsay "Hello boss, how we doing today?"\n</systemMessage>`
+    `<systemMessage>\nsay "Hello boss, how we doing today?"\n</systemMessage>`,
   )
 
   voiceData.genAiWorker = genAiWorker
@@ -265,7 +268,7 @@ async function setupVoiceHandling({
     })
 
     // Frame to exact 20 ms blocks so the GenAI side can decode smoothly
-    const framer = frame16kMono20ms()
+    const framer = frameMono16khz()
 
     const pipeline = audioStream.pipe(decoder).pipe(userResampler).pipe(framer)
 
@@ -277,6 +280,7 @@ async function setupVoiceHandling({
           )
           return
         }
+        console.log('user audio chunk length', frame.length)
 
         // Write to PCM file if stream exists
         voiceData.userAudioStream?.write(frame)
@@ -289,6 +293,9 @@ async function setupVoiceHandling({
       })
       .on('end', () => {
         console.log(`[VOICE] User ${userId} stopped speaking`)
+        voiceData.genAiWorker?.sendRealtimeInput({
+          audioStreamEnd: true,
+        })
       })
       .on('error', (error) => {
         console.error(`[VOICE] Pipeline error for user ${userId}:`, error)
@@ -296,23 +303,50 @@ async function setupVoiceHandling({
   })
 }
 
-// 20 ms @ 16 kHz mono s16le = 320 samples * 2 bytes = 640 bytes
-const FRAME_BYTES = 640
+export function frameMono16khz(): Transform {
+  // Hardcoded: 16 kHz, mono, 16-bit PCM, 20 ms -> 320 samples -> 640 bytes
+  const FRAME_BYTES =
+    (100 /*ms*/ * 16_000 /*Hz*/ * 1 /*channels*/ * 2) /*bytes per sample*/ /
+    1000
+  let stash: Buffer = Buffer.alloc(0)
+  let offset = 0
 
-function frame16kMono20ms() {
-  let stash = Buffer.alloc(0)
   return new Transform({
-    transform(chunk, _enc, cb) {
-      stash = Buffer.concat([stash, chunk])
-      while (stash.length >= FRAME_BYTES) {
-        this.push(stash.subarray(0, FRAME_BYTES))
-        stash = stash.subarray(FRAME_BYTES)
+    readableObjectMode: false,
+    writableObjectMode: false,
+
+    transform(chunk: Buffer, _enc: BufferEncoding, cb: TransformCallback) {
+      // Normalize stash so offset is always 0 before appending
+      if (offset > 0) {
+        // Drop already-consumed prefix without copying the rest twice
+        stash = stash.subarray(offset)
+        offset = 0
       }
+
+      // Append new data (single concat per incoming chunk)
+      stash = stash.length ? Buffer.concat([stash, chunk]) : chunk
+
+      // Emit as many full 20 ms frames as we can
+      while (stash.length - offset >= FRAME_BYTES) {
+        this.push(stash.subarray(offset, offset + FRAME_BYTES))
+        offset += FRAME_BYTES
+      }
+
+      // If everything was consumed exactly, reset to empty buffer
+      if (offset === stash.length) {
+        stash = Buffer.alloc(0)
+        offset = 0
+      }
+
       cb()
     },
-    flush(cb) {
-      // optionally push tail (not full 20 ms) — often better to drop it
-      // if (stash.length) this.push(stash);
+
+    flush(cb: TransformCallback) {
+      // We intentionally drop any trailing partial (< 20 ms) to keep framing strict.
+      // If you prefer to emit it, uncomment the next line:
+      // if (stash.length - offset > 0) this.push(stash.subarray(offset));
+      stash = Buffer.alloc(0)
+      offset = 0
       cb()
     },
   })
@@ -1796,6 +1830,55 @@ export async function startDiscordBot({
     },
   )
 
+  // Helper function to clean up voice connection and associated resources
+  async function cleanupVoiceConnection(guildId: string) {
+    const voiceData = voiceConnections.get(guildId)
+    if (!voiceData) return
+
+    console.log(`[VOICE CLEANUP] Starting cleanup for guild ${guildId}`)
+
+    try {
+      // Stop GenAI worker if exists (this is async!)
+      if (voiceData.genAiWorker) {
+        console.log(`[VOICE CLEANUP] Stopping GenAI worker...`)
+        await voiceData.genAiWorker.stop()
+        console.log(`[VOICE CLEANUP] GenAI worker stopped`)
+      }
+
+      // Close user audio stream if exists
+      if (voiceData.userAudioStream) {
+        console.log(`[VOICE CLEANUP] Closing user audio stream...`)
+        await new Promise<void>((resolve) => {
+          voiceData.userAudioStream!.end(() => {
+            console.log('[VOICE CLEANUP] User audio stream closed')
+            resolve()
+          })
+          // Timeout after 2 seconds
+          setTimeout(resolve, 2000)
+        })
+      }
+
+      // Destroy voice connection
+      if (
+        voiceData.connection.state.status !== VoiceConnectionStatus.Destroyed
+      ) {
+        console.log(`[VOICE CLEANUP] Destroying voice connection...`)
+        voiceData.connection.destroy()
+      }
+
+      // Remove from map
+      voiceConnections.delete(guildId)
+      console.log(`[VOICE CLEANUP] Cleanup complete for guild ${guildId}`)
+    } catch (error) {
+      console.error(
+        `[VOICE CLEANUP] Error during cleanup for guild ${guildId}:`,
+        error,
+      )
+      // Still remove from map even if there was an error
+      voiceConnections.delete(guildId)
+    }
+  }
+
   // Handle voice state updates
   discordClient.on(Events.VoiceStateUpdate, async (oldState, newState) => {
     try {
@@ -1845,17 +1928,8 @@ export async function startDiscordBot({
               `[VOICE] No other admins in channel, bot leaving voice channel in guild: ${guild.name}`,
             )
 
-            // Stop GenAI worker if exists
-            if (voiceData.genAiWorker) {
-              voiceData.genAiWorker.stop()
-            }
-            // Close user audio stream if exists
-            if (voiceData.userAudioStream) {
-              voiceData.userAudioStream.end()
-              console.log('[AUDIO LOG] Closed user audio stream')
-            }
-            voiceData.connection.destroy()
-            voiceConnections.delete(guildId)
+            // Properly clean up all resources
+            await cleanupVoiceConnection(guildId)
           } else {
             console.log(
               `[VOICE] Other admins still in channel, bot staying in voice channel`,
@@ -2008,19 +2082,12 @@ export async function startDiscordBot({
           }
         })
 
-        connection.on(VoiceConnectionStatus.Destroyed, () => {
+        connection.on(VoiceConnectionStatus.Destroyed, async () => {
           console.log(
             `[VOICE] Connection destroyed for guild: ${newState.guild.name}`,
           )
-          const voiceData = voiceConnections.get(newState.guild.id)
-          if (voiceData) {
-            // Clean up user audio stream
-            if (voiceData.userAudioStream) {
-              voiceData.userAudioStream.end()
-              console.log('[AUDIO LOG] Closed user audio stream (on destroy)')
-            }
-          }
-          voiceConnections.delete(newState.guild.id)
+          // Use the cleanup function to ensure everything is properly closed
+          await cleanupVoiceConnection(newState.guild.id)
         })
 
         // Handle errors
@@ -2032,7 +2099,7 @@ export async function startDiscordBot({
         })
       } catch (error) {
         console.error(`[VOICE] Failed to join voice channel:`, error)
-        voiceConnections.delete(newState.guild.id)
+        await cleanupVoiceConnection(newState.guild.id)
       }
     } catch (error) {
       console.error('[VOICE] Error in voice state update handler:', error)
@@ -2044,74 +2111,85 @@ export async function startDiscordBot({
   const handleShutdown = async (signal: string) => {
     console.log(`\n[SHUTDOWN] Received ${signal}, cleaning up...`)
 
-    // Kill all OpenCode servers
-    for (const [dir, server] of opencodeServers) {
-      if (!server.process.killed) {
+    // Prevent multiple shutdown calls
+    if ((global as any).shuttingDown) {
+      console.log('[SHUTDOWN] Already shutting down, ignoring duplicate signal')
+      return
+    }
+    ;(global as any).shuttingDown = true
+
+    try {
+      // Clean up all voice connections (this includes GenAI workers and audio streams)
+      const cleanupPromises: Promise<void>[] = []
+      for (const [guildId] of voiceConnections) {
         console.log(
-          `Stopping OpenCode server on port ${server.port} for ${dir}`,
+          `[SHUTDOWN] Cleaning up voice connection for guild ${guildId}`,
         )
-        server.process.kill('SIGTERM')
+        cleanupPromises.push(cleanupVoiceConnection(guildId))
       }
+
+      // Wait for all cleanups to complete
+      if (cleanupPromises.length > 0) {
+        console.log(
+          `[SHUTDOWN] Waiting for ${cleanupPromises.length} voice connection(s) to clean up...`,
+        )
+        await Promise.allSettled(cleanupPromises)
+        console.log(`[SHUTDOWN] All voice connections cleaned up`)
+      }
+
+      // Kill all OpenCode servers
+      for (const [dir, server] of opencodeServers) {
+        if (!server.process.killed) {
+          console.log(
+            `[SHUTDOWN] Stopping OpenCode server on port ${server.port} for ${dir}`,
+          )
+          server.process.kill('SIGTERM')
+        }
+      }
+      opencodeServers.clear()
+
+      console.log('[SHUTDOWN] Closing database...')
+      getDatabase().close()
+
+      console.log('[SHUTDOWN] Destroying Discord client...')
+      discordClient.destroy()
+
+      console.log('[SHUTDOWN] Cleanup complete, exiting.')
+      process.exit(0)
+    } catch (error) {
+      console.error('[SHUTDOWN] Error during cleanup:', error)
+      process.exit(1)
     }
-
-    // Destroy all voice connections
-    console.log(
-      `[SHUTDOWN] Disconnecting from ${voiceConnections.size} voice channel(s)...`,
-    )
-    const disconnectPromises = []
-    for (const [guildId, voiceData] of voiceConnections) {
-
-      if (voiceData.genAiWorker) {
-        voiceData.genAiWorker.stop()
-      }
-      if (
-        voiceData.connection.state.status !== VoiceConnectionStatus.Destroyed
-      ) {
-        console.log(`[SHUTDOWN] Leaving voice channel in guild ${guildId}`)
-        // First disconnect to leave the channel gracefully
-        voiceData.connection.disconnect()
-
-        // Wait for disconnect to complete
-        const disconnectPromise = new Promise<void>((resolve) => {
-          if (
-            voiceData.connection.state.status ===
-            VoiceConnectionStatus.Disconnected
-          ) {
-            resolve()
-          } else {
-            voiceData.connection.once(VoiceConnectionStatus.Disconnected, () =>
-              resolve(),
-            )
-            // Timeout after 1 second in case disconnect doesn't complete
-            setTimeout(() => resolve(), 1000)
-          }
-        }).then(() => {
-          // Then destroy the connection to clean up resources
-          voiceData.connection.destroy()
-        })
-
-        disconnectPromises.push(disconnectPromise)
-      }
-    }
-
-    // Wait for all disconnections to complete
-    await Promise.all(disconnectPromises)
-    voiceConnections.clear()
-
-    console.log('[SHUTDOWN] Closing database...')
-    getDatabase().close()
-
-    console.log('[SHUTDOWN] Destroying Discord client...')
-    discordClient.destroy()
-
-    console.log('[SHUTDOWN] Cleanup complete, exiting.')
-    process.exit(0)
   }
 
-  process.on('SIGTERM', () => {
-    handleShutdown('SIGTERM').catch(console.error)
+  // Override default signal handlers to prevent immediate exit
+  process.on('SIGTERM', async () => {
+    try {
+      await handleShutdown('SIGTERM')
+    } catch (error) {
+      console.error('[SIGTERM] Error during shutdown:', error)
+      process.exit(1)
+    }
   })
-  process.on('SIGINT', () => {
-    handleShutdown('SIGINT').catch(console.error)
+
+  process.on('SIGINT', async () => {
+    try {
+      await handleShutdown('SIGINT')
+    } catch (error) {
+      console.error('[SIGINT] Error during shutdown:', error)
+      process.exit(1)
+    }
+  })
+
+  // Prevent unhandled promise rejections from crashing the process during shutdown
+  process.on('unhandledRejection', (reason, promise) => {
+    if ((global as any).shuttingDown) {
+      console.log(
+        '[SHUTDOWN] Ignoring unhandled rejection during shutdown:',
+        reason,
+      )
+      return
+    }
+    console.error('Unhandled Rejection at:', promise, 'reason:', reason)
   })
 }

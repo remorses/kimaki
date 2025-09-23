@@ -4,7 +4,7 @@
   "type": "module",
   "private": true,
   "scripts": {
-    "dev": "DEBUG=1 tsx --env-file .env src/cli.ts",
+    "dev": "pnpm tsc && DEBUG=1 tsx --env-file .env src/cli.ts",
     "dev:bun": "DEBUG=1 bun --env-file .env src/cli.ts",
     "test": "tsx scripts/test-opencode.ts",
     "watch": "tsx scripts/watch-session.ts",

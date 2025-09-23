@@ -61,7 +61,7 @@ export function createDirectVoiceStreamer({
     console.error('[DIRECT VOICE] Resampler end')
   })
 
-  const frameSize = 960 // 20ms at 48kHz (960 samples per frame)
+  const frameSize = 48000 * 20 / 1000 // 20ms at 48kHz = 960 samples per frame
   // Create Opus encoder for Discord (48kHz stereo)
   const encoder = new prism.opus.Encoder({
     rate: 48000,

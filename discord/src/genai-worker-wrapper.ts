@@ -32,7 +32,9 @@ export function createGenAIWorker(
   options: GenAIWorkerOptions,
 ): Promise<GenAIWorker> {
   return new Promise((resolve, reject) => {
-    const worker = new Worker(new URL('../dist/genai-worker.js', import.meta.url))
+    const worker = new Worker(
+      new URL('../dist/genai-worker.js', import.meta.url),
+    )
 
     // Handle messages from worker
     worker.on('message', (message: WorkerOutMessage) => {
@@ -78,10 +80,39 @@ export function createGenAIWorker(
               } satisfies WorkerInMessage)
             },
             async stop() {
-              // Send stop message
+              console.log('[GENAI WORKER WRAPPER] Stopping worker...')
+              // Send stop message to trigger graceful shutdown
               worker.postMessage({ type: 'stop' } satisfies WorkerInMessage)
-              // Wait for worker to terminate
-              await worker.terminate()
+
+              // Wait for worker to exit gracefully (with timeout)
+              await new Promise<void>((resolve) => {
+                let resolved = false
+
+                // Listen for worker exit
+                worker.once('exit', (code) => {
+                  if (!resolved) {
+                    resolved = true
+                    console.log(
+                      `[GENAI WORKER WRAPPER] Worker exited with code ${code}`,
+                    )
+                    resolve()
+                  }
+                })
+
+                // Timeout after 5 seconds and force terminate
+                setTimeout(() => {
+                  if (!resolved) {
+                    resolved = true
+                    console.log(
+                      '[GENAI WORKER WRAPPER] Worker did not exit gracefully, terminating...',
+                    )
+                    worker.terminate().then(() => {
+                      console.log('[GENAI WORKER WRAPPER] Worker terminated')
+                      resolve()
+                    })
+                  }
+                }, 5000)
+              })
             },
           })
           break

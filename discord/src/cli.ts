@@ -268,9 +268,9 @@ async function main() {
   }
 
   // Show existing kimaki channels
-  let shouldAddChannels = true
+  let shouldAddChannels = false
 
-  if (kimakiChannels.length > 0) {
+  if (false && kimakiChannels.length > 0) {
     const channelList = kimakiChannels
       .flatMap(({ guild, channels }) =>
         channels.map((ch) => {

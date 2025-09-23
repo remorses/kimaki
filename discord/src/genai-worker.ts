@@ -151,6 +151,61 @@ function cleanup() {
   resampler.end()
 }
 
+async function cleanupAsync(): Promise<void> {
+  console.log(`[WORKER ${threadId}] Starting async cleanup`)
+
+  stopPacketSending()
+
+  if (session) {
+    console.log(`[WORKER ${threadId}] Stopping GenAI session`)
+    session.stop()
+    session = null
+  }
+
+  // Wait for audio log stream to finish writing
+  if (audioLogStream) {
+    console.log(`[WORKER ${threadId}] Closing assistant audio log stream`)
+    await new Promise<void>((resolve, reject) => {
+      audioLogStream!.end(() => {
+        console.log(`[WORKER ${threadId}] Assistant audio log stream closed`)
+        resolve()
+      })
+      audioLogStream!.on('error', reject)
+      // Add timeout to prevent hanging
+      setTimeout(() => {
+        console.log(`[WORKER ${threadId}] Audio stream close timeout, continuing`)
+        resolve()
+      }, 3000)
+    })
+    audioLogStream = null
+  }
+
+  // Unpipe and end the encoder first
+  resampler.unpipe(opusEncoder)
+
+  // End the encoder stream
+  await new Promise<void>((resolve) => {
+    opusEncoder.end(() => {
+      console.log(`[WORKER ${threadId}] Opus encoder ended`)
+      resolve()
+    })
+    // Add timeout
+    setTimeout(resolve, 1000)
+  })
+
+  // End the resampler stream
+  await new Promise<void>((resolve) => {
+    resampler.end(() => {
+      console.log(`[WORKER ${threadId}] Resampler ended`)
+      resolve()
+    })
+    // Add timeout
+    setTimeout(resolve, 1000)
+  })
+
+  console.log(`[WORKER ${threadId}] Async cleanup complete`)
+}
+
 // Handle messages from main thread
 parentPort.on('message', async (message: WorkerInMessage) => {
   try {
@@ -241,8 +296,8 @@ parentPort.on('message', async (message: WorkerInMessage) => {
 
       case 'stop': {
         console.log(`[WORKER ${threadId}] Stopping worker`)
-        cleanup()
-        process.exit(0)
+        await cleanupAsync()
+        // process.exit(0)
         break
       }
     }
@@ -253,8 +308,3 @@ parentPort.on('message', async (message: WorkerInMessage) => {
     )
   }
 })
-
-// Cleanup on exit
-process.on('exit', cleanup)
-process.on('SIGINT', cleanup)
-process.on('SIGTERM', cleanup)
