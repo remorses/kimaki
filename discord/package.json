@@ -4,7 +4,7 @@
   "type": "module",
   "private": true,
   "scripts": {
-    "dev": "tsx --env-file .env src/cli.ts",
+    "dev": "DEBUG=1 tsx --env-file .env src/cli.ts",
     "test": "tsx scripts/test-opencode.ts",
     "watch": "tsx scripts/watch-session.ts",
     "test:events": "tsx test-events.ts",

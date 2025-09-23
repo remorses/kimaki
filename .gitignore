@@ -9,3 +9,4 @@ useraudio
 .env
 *.db
 *.wav
+discord-audio-logs

@@ -1,5 +1,21 @@
 # Changelog
 
+## 2025-09-23 14:15
+
+- Update PCM audio logging to only activate when DEBUG environment variable is set
+- Extract audio stream creation into `createAudioLogStreams` helper function
+- Use optional chaining for stream writes to handle missing streams gracefully
+- Simplify cleanup logic with optional chaining
+
+## 2025-09-23 14:00
+
+- Add PCM audio logging for Discord voice chats
+- Audio streams for both user input and assistant output saved to files
+- Files saved in `discord-audio-logs/<guild_id>/<channel_id>/` directory structure
+- Format: 16kHz mono s16le PCM with FFmpeg-compatible naming convention
+- Automatic cleanup when voice sessions end
+- Add documentation for audio file playback and conversion
+
 ## 2025-09-22 12:05
 
 - Fix event listener leak warning by removing existing 'start' listeners on receiver.speaking before adding new ones

@@ -31,7 +31,8 @@ import {
 } from '@discordjs/voice'
 import { Lexer } from 'marked'
 import { spawn, exec, type ChildProcess } from 'node:child_process'
-import fs from 'node:fs'
+import fs, { createWriteStream } from 'node:fs'
+import { mkdir } from 'node:fs/promises'
 import net from 'node:net'
 import path from 'node:path'
 import { promisify } from 'node:util'
@@ -78,10 +79,47 @@ const voiceConnections = new Map<
       stop(): void
       isActive: boolean
     }
+    audioStreams?: {
+      input: fs.WriteStream
+      output: fs.WriteStream
+    }
   }
 >()
 
 let db: Database.Database | null = null
+
+// Create audio log streams for debugging
+async function createAudioLogStreams(
+  guildId: string,
+  channelId: string
+): Promise<{ input: fs.WriteStream; output: fs.WriteStream } | undefined> {
+  const timestamp = new Date().toISOString().replace(/[:.]/g, '-')
+  const audioDir = path.join(process.cwd(), 'discord-audio-logs', guildId, channelId)
+
+  try {
+    await mkdir(audioDir, { recursive: true })
+
+
+    const outputFileName = `assistant_${timestamp}.s24le.pcm`
+    const outputFilePath = path.join(audioDir, outputFileName)
+    const outputAudioStream = createWriteStream(outputFilePath)
+    console.log(`[AUDIO LOG] Created assistant audio log: ${outputFilePath}`)
+
+    // Create input stream for user audio (16kHz mono s16le PCM)
+    const inputFileName = `user_${timestamp}.s16le.pcm`
+    const inputFilePath = path.join(audioDir, inputFileName)
+    const inputAudioStream = createWriteStream(inputFilePath)
+    console.log(`[AUDIO LOG] Created user audio log: ${inputFilePath}`)
+
+    return {
+      input: inputAudioStream,
+      output: outputAudioStream
+    }
+  } catch (error) {
+    console.error('[AUDIO LOG] Failed to create audio log directory:', error)
+    return undefined
+  }
+}
 
 // Set up voice handling for a connection (called once per connection)
 async function setupVoiceHandling({
@@ -142,6 +180,11 @@ async function setupVoiceHandling({
   // Store the streamer for cleanup
   voiceData.voiceStreamer = voiceStreamer
 
+  // Create PCM file streams for audio logging if DEBUG is enabled
+  if (process.env.DEBUG) {
+    voiceData.audioStreams = await createAudioLogStreams(guildId, channelId)
+  }
+
   const { tools } = await getTools({
     directory,
     onMessageCompleted: (params) => {
@@ -162,6 +205,8 @@ async function setupVoiceHandling({
       console.log(
         `[VOICE] GenAI audio chunk: ${data.length} bytes, mimeType: ${mimeType}`,
       )
+      // Write to PCM file if stream exists
+      voiceData.audioStreams?.output?.write(data)
       // data is raw PCM s16le @ 16 kHz mono
       // Write directly to our voice streamer
       voiceStreamer.write(data)
@@ -266,6 +311,9 @@ async function setupVoiceHandling({
           )
           return
         }
+
+        // Write to PCM file if stream exists
+        voiceData.audioStreams?.input?.write(frame)
 
         // stream incrementally — low latency
         voiceData.genAiSession.session.sendRealtimeInput({
@@ -586,6 +634,11 @@ async function processVoiceAttachment({
 function escapeDiscordFormatting(text: string): string {
   return text
     .replace(/```/g, '\\`\\`\\`') // Triple backticks
+    .replace(/````/g, '\\`\\`\\`\\`') // Quadruple backticks
+}
+
+function escapeInlineCode(text: string): string {
+  return text
     .replace(/``/g, '\\`\\`') // Double backticks
     .replace(/(?<!\\)`(?!`)/g, '\\`') // Single backticks (not already escaped or part of double/triple)
     .replace(/\|\|/g, '\\|\\|') // Double pipes (spoiler syntax)
@@ -720,7 +773,7 @@ function formatPart(part: Part): string {
           part.state.status === 'completed' ? part.state.title || '' : 'error'
         // Escape backticks in the title before wrapping in backticks
         if (toolTitle) {
-          toolTitle = `\`${escapeDiscordFormatting(toolTitle)}\``
+          toolTitle = `\`${escapeInlineCode(toolTitle)}\``
         }
         const icon =
           part.state.status === 'completed'
@@ -737,6 +790,9 @@ function formatPart(part: Part): string {
           if (part.tool === 'todowrite') {
             text += '\n\n' + outputToDisplay
           } else {
+            if (language.startsWith('.')) {
+              language = language.slice(1)
+            }
             text += '\n\n```' + language + '\n' + outputToDisplay + '\n```'
           }
         }
@@ -1832,6 +1888,12 @@ export async function startDiscordBot({
             if (voiceData.genAiSession) {
               voiceData.genAiSession.stop()
             }
+            // Close audio streams if exist
+            if (voiceData.audioStreams) {
+              voiceData.audioStreams.input?.end()
+              voiceData.audioStreams.output?.end()
+              console.log('[AUDIO LOG] Closed audio streams')
+            }
             voiceData.connection.destroy()
             voiceConnections.delete(guildId)
           } else {
@@ -1990,6 +2052,15 @@ export async function startDiscordBot({
           console.log(
             `[VOICE] Connection destroyed for guild: ${newState.guild.name}`,
           )
+          const voiceData = voiceConnections.get(newState.guild.id)
+          if (voiceData) {
+            // Clean up audio streams
+            if (voiceData.audioStreams) {
+              voiceData.audioStreams.input?.end()
+              voiceData.audioStreams.output?.end()
+              console.log('[AUDIO LOG] Closed audio streams (on destroy)')
+            }
+          }
           voiceConnections.delete(newState.guild.id)
         })
 
