@@ -137,19 +137,6 @@ function sendError(error: string) {
   } satisfies WorkerOutMessage)
 }
 
-function cleanup() {
-  stopPacketSending()
-  if (session) {
-    session.stop()
-    session = null
-  }
-  if (audioLogStream) {
-    audioLogStream.end()
-    console.log(`[WORKER ${threadId}] Closed assistant audio log stream`)
-    audioLogStream = null
-  }
-  resampler.end()
-}
 
 async function cleanupAsync(): Promise<void> {
   console.log(`[WORKER ${threadId}] Starting async cleanup`)
