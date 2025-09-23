@@ -22,7 +22,7 @@ export interface GenAIWorkerOptions {
 }
 
 export interface GenAIWorker {
-  sendRealtimeInput(audio: { mimeType: string; data: string }): void
+  sendRealtimeInput(params: { audio?: { mimeType: string; data: string }; audioStreamEnd?: boolean }): void
   sendTextInput(text: string): void
   interrupt(): void
   stop(): Promise<void>
@@ -62,10 +62,11 @@ export function createGenAIWorker(
           console.log('[GENAI WORKER] Ready')
           // Resolve with the worker interface
           resolve({
-            sendRealtimeInput(audio) {
+            sendRealtimeInput({ audio, audioStreamEnd }) {
               worker.postMessage({
                 type: 'sendRealtimeInput',
                 audio,
+                audioStreamEnd,
               } satisfies WorkerInMessage)
             },
             sendTextInput(text) {

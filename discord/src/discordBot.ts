@@ -287,14 +287,16 @@ async function setupVoiceHandling({
 
         // stream incrementally — low latency
         voiceData.genAiWorker.sendRealtimeInput({
-          mimeType: 'audio/pcm;rate=16000',
-          data: frame.toString('base64'),
+          audio: {
+            mimeType: 'audio/pcm;rate=16000',
+            data: frame.toString('base64'),
+          }
         })
       })
       .on('end', () => {
         console.log(`[VOICE] User ${userId} stopped speaking`)
         voiceData.genAiWorker?.sendRealtimeInput({
-          audioStreamEnd: true,
+          audioStreamEnd: true
         })
       })
       .on('error', (error) => {

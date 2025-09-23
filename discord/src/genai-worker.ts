@@ -272,6 +272,7 @@ parentPort.on('message', async (message: WorkerInMessage) => {
         }
         session.session.sendRealtimeInput({
           audio: message.audio,
+          audioStreamEnd: message.audioStreamEnd,
         })
         break
       }

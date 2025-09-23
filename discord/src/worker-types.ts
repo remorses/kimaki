@@ -11,10 +11,11 @@ export type WorkerInMessage =
     }
   | {
       type: 'sendRealtimeInput'
-      audio: {
+      audio?: {
         mimeType: string
         data: string // base64
       }
+      audioStreamEnd?: boolean
     }
   | {
       type: 'sendTextInput'
