@@ -250,7 +250,7 @@ async function setupVoiceHandling({
     console.log(`[VOICE] User ${userId} started speaking`)
 
     const audioStream = receiver.subscribe(userId, {
-      end: { behavior: EndBehaviorType.AfterSilence, duration: 1000 },
+      end: { behavior: EndBehaviorType.AfterSilence, duration: 500 },
     })
 
     const decoder = new prism.opus.Decoder({
@@ -290,13 +290,13 @@ async function setupVoiceHandling({
           audio: {
             mimeType: 'audio/pcm;rate=16000',
             data: frame.toString('base64'),
-          }
+          },
         })
       })
       .on('end', () => {
         console.log(`[VOICE] User ${userId} stopped speaking`)
         voiceData.genAiWorker?.sendRealtimeInput({
-          audioStreamEnd: true
+          audioStreamEnd: true,
         })
       })
       .on('error', (error) => {
