@@ -277,8 +277,16 @@ async function setupVoiceHandling({
   // Remove all existing listeners to prevent accumulation
   receiver.speaking.removeAllListeners('start')
 
+  // Counter to track overlapping speaking sessions
+  let speakingSessionCount = 0
+
   receiver.speaking.on('start', (userId) => {
     console.log(`[VOICE] User ${userId} started speaking`)
+
+    // Increment session count for this new speaking session
+    speakingSessionCount++
+    const currentSessionCount = speakingSessionCount
+    console.log(`[VOICE] Speaking session ${currentSessionCount} started`)
 
     const audioStream = receiver.subscribe(userId, {
       end: { behavior: EndBehaviorType.AfterSilence, duration: 500 },
@@ -302,13 +310,20 @@ async function setupVoiceHandling({
       },
     })
 
-    // Frame to exact 20 ms blocks so the GenAI side can decode smoothly
     const framer = frameMono16khz()
 
-    const pipeline = audioStream.pipe(decoder).pipe(downsampleTransform)
+    const pipeline = audioStream.pipe(decoder).pipe(downsampleTransform).pipe(framer)
 
     pipeline
       .on('data', (frame: Buffer) => {
+        // Check if a newer speaking session has started
+        if (currentSessionCount !== speakingSessionCount) {
+          console.log(
+            `[VOICE] Skipping audio frame from session ${currentSessionCount} because newer session ${speakingSessionCount} has started`,
+          )
+          return
+        }
+
         if (!voiceData.genAiWorker) {
           console.warn(
             `[VOICE] Received audio frame but no GenAI worker active for guild ${guildId}`,
@@ -329,10 +344,17 @@ async function setupVoiceHandling({
         })
       })
       .on('end', () => {
-        console.log(`[VOICE] User ${userId} stopped speaking`)
-        voiceData.genAiWorker?.sendRealtimeInput({
-          audioStreamEnd: true,
-        })
+        // Only send audioStreamEnd if this is still the current session
+        if (currentSessionCount === speakingSessionCount) {
+          console.log(`[VOICE] User ${userId} stopped speaking (session ${currentSessionCount})`)
+          voiceData.genAiWorker?.sendRealtimeInput({
+            audioStreamEnd: true,
+          })
+        } else {
+          console.log(
+            `[VOICE] User ${userId} stopped speaking (session ${currentSessionCount}), but skipping audioStreamEnd because newer session ${speakingSessionCount} exists`,
+          )
+        }
       })
       .on('error', (error) => {
         console.error(`[VOICE] Pipeline error for user ${userId}:`, error)
