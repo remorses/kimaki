@@ -24,7 +24,7 @@ while :; do
   code=$?
 
   # Exit cleanly if the app ended OK or via SIGINT/SIGTERM
-  if (( code == 0 || code == 130 || code == 143 )); then
+  if (( code == 0 || code == 130 || code == 143 || code == 64 )); then
     exit "$code"
   fi
   # otherwise loop; the 5s throttle above will apply

@@ -3,7 +3,7 @@
   "private": true,
   "scripts": {
     "test": "NODE_ENV=test vitest",
-    "watch": "pnpm -r watch",
+    "dev": "pnpm --filter kimaki dev",
     "build": "pnpm -r build",
     "kimaki": "pnpm --filter kimaki play",
     "release": "pnpm build && changeset",
