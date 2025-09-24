@@ -354,6 +354,6 @@ export async function startGenAiSession({
       client.disconnect()
     },
   }
-  
+
   return sessionResult
 }

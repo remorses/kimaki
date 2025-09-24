@@ -19,20 +19,24 @@ export async function transcribeAudio({
     const result = await transcribe({
       model: openai.transcription('whisper-1'),
       audio,
-      ...(prompt || language || temperature !== undefined ? {
-        providerOptions: {
-          openai: {
-            ...(prompt && { prompt }),
-            ...(language && { language }),
-            ...(temperature !== undefined && { temperature }),
+      ...(prompt || language || temperature !== undefined
+        ? {
+            providerOptions: {
+              openai: {
+                ...(prompt && { prompt }),
+                ...(language && { language }),
+                ...(temperature !== undefined && { temperature }),
+              },
+            },
           }
-        }
-      } : {})
+        : {}),
     })
 
     return result.text
   } catch (error) {
     voiceLogger.error('Failed to transcribe audio:', error)
-    throw new Error(`Audio transcription failed: ${error instanceof Error ? error.message : 'Unknown error'}`)
+    throw new Error(
+      `Audio transcription failed: ${error instanceof Error ? error.message : 'Unknown error'}`,
+    )
   }
 }

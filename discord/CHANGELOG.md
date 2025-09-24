@@ -85,7 +85,7 @@
 - Add voice message handling to Discord bot
 - Transcribe audio attachments using OpenAI Whisper before processing
 - Transform voice messages to text and reuse existing text message handler
-- Support all audio/* content types from Discord attachments
+- Support all audio/\* content types from Discord attachments
 
 ## 2025-01-25 00:15
 

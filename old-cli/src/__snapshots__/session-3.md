@@ -3058,7 +3058,6 @@ Perfect! I've successfully created a comprehensive test file for the `ShareMarkd
 
 1. **Uses inline snapshots** as requested
 2. **Tests all major functionality** including:
-
    - Basic session with user and assistant messages
    - Tool usage with input/output and duration
    - Reasoning blocks with expandable details

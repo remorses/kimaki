@@ -523,7 +523,7 @@ export class LiveAPIClient {
     let hasVideo = false
 
     for (const ch of chunks) {
-      this.session.sendRealtimeInput({ media: ch,  })
+      this.session.sendRealtimeInput({ media: ch })
       if (ch.mimeType.includes('audio')) {
         hasAudio = true
       }

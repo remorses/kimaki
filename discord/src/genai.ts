@@ -185,7 +185,10 @@ export async function startGenAiSession({
             !inlineData.mimeType ||
             !inlineData.mimeType.startsWith('audio/')
           ) {
-            genaiLogger.log('Skipping non-audio inlineData:', inlineData.mimeType)
+            genaiLogger.log(
+              'Skipping non-audio inlineData:',
+              inlineData.mimeType,
+            )
             continue
           }
 

@@ -4519,7 +4519,6 @@ description: Type-check the CLI TypeScript code
 Perfect! The implementation is already complete and working. The `readSessionMessages` tool in `cli.ts` correctly:
 
 1. **When `lastAssistantOnly` is true** (lines 261-298):
-
    - Calls `markdownRenderer.generate()` with `{ sessionID: sessionId, lastAssistantOnly: true }`
    - The markdown will only contain the last assistant message
 
@@ -5188,20 +5187,17 @@ Please double-check the changes made to the listChats function in cli.ts to ensu
 Here’s a quick verification of listChats in cli.ts and the plan to ensure correct sorting:
 
 - Status: Sorting by updated timestamp is not currently applied in the existing code.
-
   - Evidence: The block builds sessionList from sessions.data.map(...) without sorting. See: execute: async () => { const sessions = await client.session.list(); ... const sessionList = sessions.data.map(async (session) => { ... }) }
 
 - Data shape: Each Session has time.updated as a number, so numeric sorting is appropriate (Session type shows time: { created: number; updated: number }).
 
 - Proposed fix: Sort by updated descending before mapping.
-
   - Patch idea:
     - After retrieving sessions, add:
       const sortedSessions = [...sessions.data].sort((a, b) => b.time.updated - a.time.updated);
     - Then map over sortedSessions instead of sessions.data.
 
 - Patch snippet (conceptual diff):
-
   - Before:
     - const sessionList = sessions.data.map(async (session) => { ... })
   - After:
@@ -5370,24 +5366,20 @@ limit: 120
 Here’s the quick check on listChats in cli.ts.
 
 - What it does now
-
   - Sorts sessions with: `const sortedSessions = [...sessions.data].sort((a,b) => b.time.updated - a.time.updated).slice(0, 20)`
   - Then maps over `sortedSessions` to build the response.
 
 - Observations
-
   - The comparator includes an extra, unused check:
     - `const aCompleted = ('completed' in a.time) ? a.time.completed : null` (and similar for b)
     - Since `Session.time` only has `created` and `updated`, this branch never fires; sorting falls back to `time.updated` anyway.
   - Result: effectively sorted by `time.updated` descending (most recent first). The slice keeps only the first 20.
 
 - Potential improvement
-
   - Remove the unused aCompleted/bCompleted logic for clarity and type-safety:
     - Replace the sort with: `const sortedSessions = [...sessions.data].sort((a, b) => b.time.updated - a.time.updated).slice(0, 20)`
 
 - Patch suggestion (minimal)
-
   - Before:
     - sort((a, b) => { const aCompleted = ...; const bCompleted = ...; if (...) ...; return b.time.updated - a.time.updated }).slice(0, 20)
   - After:

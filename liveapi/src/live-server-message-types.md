@@ -297,7 +297,6 @@ class FunctionResponse {
 2. **Part Types**: A single `modelTurn` can contain multiple parts of different types (text, audio, function calls, etc.)
 
 3. **Function Flow**:
-
    - Server sends `toolCall` with `functionCalls`
    - Client executes and responds
    - Server may include `functionResponse` in subsequent `modelTurn.parts`

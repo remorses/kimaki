@@ -32,7 +32,9 @@ export async function writeConfig(config: KimakiConfig): Promise<void> {
   await fs.promises.writeFile(configPath, JSON.stringify(config, null, 2))
 }
 
-export async function updateConfig(updates: Partial<KimakiConfig>): Promise<void> {
+export async function updateConfig(
+  updates: Partial<KimakiConfig>,
+): Promise<void> {
   const config = await readConfig()
   const updatedConfig = { ...config, ...updates }
   await writeConfig(updatedConfig)

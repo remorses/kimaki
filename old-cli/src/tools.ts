@@ -106,12 +106,14 @@ export async function startOpencodeServer(port: number): Promise<ChildProcess> {
   return serverProcess
 }
 
-
-async function selectModelProvider(providedModel?: { providerId: string; modelId: string }) {
+async function selectModelProvider(providedModel?: {
+  providerId: string
+  modelId: string
+}) {
   if (providedModel) {
     return {
       providerID: providedModel.providerId,
-      modelID: providedModel.modelId
+      modelID: providedModel.modelId,
     }
   }
 
@@ -119,11 +121,13 @@ async function selectModelProvider(providedModel?: { providerId: string; modelId
   if (config.preferredModel) {
     return {
       providerID: config.preferredModel.providerId,
-      modelID: config.preferredModel.modelId
+      modelID: config.preferredModel.modelId,
     }
   }
 
-  throw new Error('No model specified and no preferred model set. Please call getModels to see available models and ask user to choose one. Do not spell model names exactly, give rough names like Sonnet or GPT5. Prefer latest versions')
+  throw new Error(
+    'No model specified and no preferred model set. Please call getModels to see available models and ask user to choose one. Do not spell model names exactly, give rough names like Sonnet or GPT5. Prefer latest versions',
+  )
 }
 
 export async function getTools({
@@ -243,10 +247,19 @@ export async function getTools({
           .string()
           .describe('The initial message to start the chat with'),
         title: z.string().optional().describe('Optional title for the session'),
-        model: z.object({
-          providerId: z.string().describe('The provider ID (e.g., "anthropic", "openai")'),
-          modelId: z.string().describe('The model ID (e.g., "claude-opus-4-20250514", "gpt-5")'),
-        }).optional().describe('Optional model to use for this session'),
+        model: z
+          .object({
+            providerId: z
+              .string()
+              .describe('The provider ID (e.g., "anthropic", "openai")'),
+            modelId: z
+              .string()
+              .describe(
+                'The model ID (e.g., "claude-opus-4-20250514", "gpt-5")',
+              ),
+          })
+          .optional()
+          .describe('Optional model to use for this session'),
       }),
       execute: async ({ message, title, model }) => {
         if (!message.trim()) {
@@ -260,49 +273,50 @@ export async function getTools({
             await updateConfig({
               preferredModel: {
                 providerId: model.providerId,
-                modelId: model.modelId
-              }
+                modelId: model.modelId,
+              },
             })
           }
 
-        const session = await client.session.create({
-          body: {
-            title: title || message.slice(0, 50),
-          },
-        })
-
-        if (!session.data) {
-          throw new Error('Failed to create session')
-        }
-
-        // do not await
-        client.session
-          .prompt({
-            path: { id: session.data.id },
+          const session = await client.session.create({
             body: {
-              parts: [{ type: 'text', text: message }],
-              model: modelID && providerID ? { modelID, providerID } : undefined,
+              title: title || message.slice(0, 50),
             },
           })
-          .then(async (response) => {
-            const markdown = await markdownRenderer.generate({
-              sessionID: session.data.id,
-              lastAssistantOnly: true,
+
+          if (!session.data) {
+            throw new Error('Failed to create session')
+          }
+
+          // do not await
+          client.session
+            .prompt({
+              path: { id: session.data.id },
+              body: {
+                parts: [{ type: 'text', text: message }],
+                model:
+                  modelID && providerID ? { modelID, providerID } : undefined,
+              },
             })
-            onMessageCompleted?.({
-              sessionId: session.data.id,
-              messageId: '',
-              data: response.data,
-              markdown,
+            .then(async (response) => {
+              const markdown = await markdownRenderer.generate({
+                sessionID: session.data.id,
+                lastAssistantOnly: true,
+              })
+              onMessageCompleted?.({
+                sessionId: session.data.id,
+                messageId: '',
+                data: response.data,
+                markdown,
+              })
             })
-          })
-          .catch((error) => {
-            onMessageCompleted?.({
-              sessionId: session.data.id,
-              messageId: '',
-              error,
+            .catch((error) => {
+              onMessageCompleted?.({
+                sessionId: session.data.id,
+                messageId: '',
+                error,
+              })
             })
-          })
 
           return {
             success: true,
@@ -312,7 +326,10 @@ export async function getTools({
         } catch (error) {
           return {
             success: false,
-            error: error instanceof Error ? error.message : 'Failed to create chat session'
+            error:
+              error instanceof Error
+                ? error.message
+                : 'Failed to create chat session',
           }
         }
       },
@@ -500,7 +517,8 @@ export async function getTools({
         } catch (error) {
           return {
             success: false,
-            error: error instanceof Error ? error.message : 'Unknown error occurred',
+            error:
+              error instanceof Error ? error.message : 'Unknown error occurred',
           }
         }
       },
@@ -535,7 +553,8 @@ export async function getTools({
         } catch (error) {
           return {
             success: false,
-            error: error instanceof Error ? error.message : 'Failed to fetch models',
+            error:
+              error instanceof Error ? error.message : 'Failed to fetch models',
             models: [],
           }
         }

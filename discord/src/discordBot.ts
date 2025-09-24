@@ -265,9 +265,7 @@ async function setupVoiceHandling({
 
   // Stop any existing GenAI worker before storing new one
   if (voiceData.genAiWorker) {
-    voiceLogger.log(
-      'Stopping existing GenAI worker before creating new one',
-    )
+    voiceLogger.log('Stopping existing GenAI worker before creating new one')
     await voiceData.genAiWorker.stop()
   }
 
@@ -308,7 +306,6 @@ async function setupVoiceHandling({
     // Add error handler to prevent crashes from corrupted data
     decoder.on('error', (error) => {
       voiceLogger.error(`Opus decoder error for user ${userId}:`, error)
-
     })
 
     // Transform to downsample 48k stereo -> 16k mono
@@ -325,13 +322,18 @@ async function setupVoiceHandling({
 
     const framer = frameMono16khz()
 
-    const pipeline = audioStream.pipe(decoder).pipe(downsampleTransform).pipe(framer)
+    const pipeline = audioStream
+      .pipe(decoder)
+      .pipe(downsampleTransform)
+      .pipe(framer)
 
     pipeline
       .on('data', (frame: Buffer) => {
         // Check if a newer speaking session has started
         if (currentSessionCount !== speakingSessionCount) {
-          voiceLogger.log(`Skipping audio frame from session ${currentSessionCount} because newer session ${speakingSessionCount} has started`)
+          voiceLogger.log(
+            `Skipping audio frame from session ${currentSessionCount} because newer session ${speakingSessionCount} has started`,
+          )
           return
         }
 
@@ -357,12 +359,16 @@ async function setupVoiceHandling({
       .on('end', () => {
         // Only send audioStreamEnd if this is still the current session
         if (currentSessionCount === speakingSessionCount) {
-          voiceLogger.log(`User ${userId} stopped speaking (session ${currentSessionCount})`)
+          voiceLogger.log(
+            `User ${userId} stopped speaking (session ${currentSessionCount})`,
+          )
           voiceData.genAiWorker?.sendRealtimeInput({
             audioStreamEnd: true,
           })
         } else {
-          voiceLogger.log(`User ${userId} stopped speaking (session ${currentSessionCount}), but skipping audioStreamEnd because newer session ${speakingSessionCount} exists`)
+          voiceLogger.log(
+            `User ${userId} stopped speaking (session ${currentSessionCount}), but skipping audioStreamEnd because newer session ${speakingSessionCount} exists`,
+          )
         }
       })
       .on('error', (error) => {
@@ -559,7 +565,9 @@ async function sendThreadMessage(
   }
 
   // Send all chunks
-  discordLogger.log(`MESSAGE: Splitting ${content.length} chars into ${chunks.length} messages`)
+  discordLogger.log(
+    `MESSAGE: Splitting ${content.length} chars into ${chunks.length} messages`,
+  )
 
   let firstMessage: Message | undefined
   for (let i = 0; i < chunks.length; i++) {
@@ -615,7 +623,9 @@ async function processVoiceAttachment({
 
   if (!audioAttachment) return null
 
-  voiceLogger.log(`Detected audio attachment: ${audioAttachment.name} (${audioAttachment.contentType})`)
+  voiceLogger.log(
+    `Detected audio attachment: ${audioAttachment.name} (${audioAttachment.contentType})`,
+  )
 
   try {
     await message.react('⏳')
@@ -654,7 +664,9 @@ async function processVoiceAttachment({
       prompt: transcriptionPrompt,
     })
 
-    voiceLogger.log(`Transcription successful: "${transcription.slice(0, 50)}${transcription.length > 50 ? '...' : ''}"`)
+    voiceLogger.log(
+      `Transcription successful: "${transcription.slice(0, 50)}${transcription.length > 50 ? '...' : ''}"`,
+    )
 
     // Update thread name with transcribed content only for new threads
     if (isNewThread) {
@@ -905,7 +917,9 @@ async function handleOpencodeSession(
   projectDirectory?: string,
   originalMessage?: Message,
 ) {
-  voiceLogger.log(`[OPENCODE SESSION] Starting for thread ${thread.id} with prompt: "${prompt.slice(0, 50)}${prompt.length > 50 ? '...' : ''}"`)
+  voiceLogger.log(
+    `[OPENCODE SESSION] Starting for thread ${thread.id} with prompt: "${prompt.slice(0, 50)}${prompt.length > 50 ? '...' : ''}"`,
+  )
 
   // Track session start time
   const sessionStartTime = Date.now()
@@ -944,12 +958,16 @@ async function handleOpencodeSession(
       session = sessionResponse.data
       sessionLogger.log(`Successfully reused session ${sessionId}`)
     } catch (error) {
-      voiceLogger.log(`[SESSION] Session ${sessionId} not found, will create new one`)
+      voiceLogger.log(
+        `[SESSION] Session ${sessionId} not found, will create new one`,
+      )
     }
   }
 
   if (!session) {
-    voiceLogger.log(`[SESSION] Creating new session with title: "${prompt.slice(0, 80)}"`)
+    voiceLogger.log(
+      `[SESSION] Creating new session with title: "${prompt.slice(0, 80)}"`,
+    )
     const sessionResponse = await client.session.create({
       body: { title: prompt.slice(0, 80) },
     })
@@ -972,7 +990,9 @@ async function handleOpencodeSession(
   // Cancel any existing request for this session
   const existingController = activeRequests.get(session.id)
   if (existingController) {
-    voiceLogger.log(`[ABORT] Cancelling existing request for session: ${session.id}`)
+    voiceLogger.log(
+      `[ABORT] Cancelling existing request for session: ${session.id}`,
+    )
     existingController.abort('New request started')
   }
 
@@ -1002,7 +1022,9 @@ async function handleOpencodeSession(
         partIdToMessage.set(row.part_id, message)
       }
     } catch (error) {
-      voiceLogger.log(`Could not fetch message ${row.message_id} for part ${row.part_id}`)
+      voiceLogger.log(
+        `Could not fetch message ${row.message_id} for part ${row.part_id}`,
+      )
     }
   }
 
@@ -1018,16 +1040,22 @@ async function handleOpencodeSession(
 
     // Skip if already sent
     if (partIdToMessage.has(part.id)) {
-      voiceLogger.log(`[SEND SKIP] Part ${part.id} already sent as message ${partIdToMessage.get(part.id)?.id}`)
+      voiceLogger.log(
+        `[SEND SKIP] Part ${part.id} already sent as message ${partIdToMessage.get(part.id)?.id}`,
+      )
       return
     }
 
     try {
-      voiceLogger.log(`[SEND] Sending part ${part.id} (type: ${part.type}) to Discord, content length: ${content.length}`)
+      voiceLogger.log(
+        `[SEND] Sending part ${part.id} (type: ${part.type}) to Discord, content length: ${content.length}`,
+      )
 
       const firstMessage = await sendThreadMessage(thread, content)
       partIdToMessage.set(part.id, firstMessage)
-      voiceLogger.log(`[SEND SUCCESS] Part ${part.id} sent as message ${firstMessage.id}`)
+      voiceLogger.log(
+        `[SEND SUCCESS] Part ${part.id} sent as message ${firstMessage.id}`,
+      )
 
       // Store part-message mapping in database
       getDatabase()
@@ -1106,14 +1134,18 @@ async function handleOpencodeSession(
           const msg = event.properties.info
 
           if (msg.sessionID !== session.id) {
-            voiceLogger.log(`[EVENT IGNORED] Message from different session (expected: ${session.id}, got: ${msg.sessionID})`)
+            voiceLogger.log(
+              `[EVENT IGNORED] Message from different session (expected: ${session.id}, got: ${msg.sessionID})`,
+            )
             continue
           }
 
           // Track assistant message ID
           if (msg.role === 'assistant') {
             assistantMessageId = msg.id
-            voiceLogger.log(`[EVENT] Tracking assistant message ${assistantMessageId}`)
+            voiceLogger.log(
+              `[EVENT] Tracking assistant message ${assistantMessageId}`,
+            )
           } else {
             sessionLogger.log(`Message role: ${msg.role}`)
           }
@@ -1121,13 +1153,17 @@ async function handleOpencodeSession(
           const part = event.properties.part
 
           if (part.sessionID !== session.id) {
-            voiceLogger.log(`[EVENT IGNORED] Part from different session (expected: ${session.id}, got: ${part.sessionID})`)
+            voiceLogger.log(
+              `[EVENT IGNORED] Part from different session (expected: ${session.id}, got: ${part.sessionID})`,
+            )
             continue
           }
 
           // Only process parts from assistant messages
           if (part.messageID !== assistantMessageId) {
-            voiceLogger.log(`[EVENT IGNORED] Part from non-assistant message (expected: ${assistantMessageId}, got: ${part.messageID})`)
+            voiceLogger.log(
+              `[EVENT IGNORED] Part from non-assistant message (expected: ${assistantMessageId}, got: ${part.messageID})`,
+            )
             continue
           }
 
@@ -1140,7 +1176,9 @@ async function handleOpencodeSession(
             currentParts.push(part)
           }
 
-          voiceLogger.log(`[PART] Update: id=${part.id}, type=${part.type}, text=${'text' in part && typeof part.text === 'string' ? part.text.slice(0, 50) : ''}`)
+          voiceLogger.log(
+            `[PART] Update: id=${part.id}, type=${part.type}, text=${'text' in part && typeof part.text === 'string' ? part.text.slice(0, 50) : ''}`,
+          )
 
           // Start typing on step-start
           if (part.type === 'step-start') {
@@ -1150,7 +1188,9 @@ async function handleOpencodeSession(
           // Check if this is a step-finish part
           if (part.type === 'step-finish') {
             // Send all parts accumulated so far to Discord
-            voiceLogger.log(`[STEP-FINISH] Sending ${currentParts.length} parts to Discord`)
+            voiceLogger.log(
+              `[STEP-FINISH] Sending ${currentParts.length} parts to Discord`,
+            )
             for (const p of currentParts) {
               // Skip step-start and step-finish parts as they have no visual content
               if (p.type !== 'step-start' && p.type !== 'step-finish') {
@@ -1168,9 +1208,7 @@ async function handleOpencodeSession(
           if (event.properties.sessionID === session.id) {
             const errorData = event.properties.error
             const errorMessage = errorData?.data?.message || 'Unknown error'
-            sessionLogger.error(
-              `Sending error to thread: ${errorMessage}`,
-            )
+            sessionLogger.error(`Sending error to thread: ${errorMessage}`)
             await sendThreadMessage(
               thread,
               `✗ opencode session error: ${errorMessage}`,
@@ -1181,13 +1219,17 @@ async function handleOpencodeSession(
               try {
                 await originalMessage.reactions.removeAll()
                 await originalMessage.react('❌')
-                voiceLogger.log(`[REACTION] Added error reaction due to session error`)
+                voiceLogger.log(
+                  `[REACTION] Added error reaction due to session error`,
+                )
               } catch (e) {
                 discordLogger.log(`Could not update reaction:`, e)
               }
             }
           } else {
-            voiceLogger.log(`[SESSION ERROR IGNORED] Error for different session (expected: ${session.id}, got: ${event.properties.sessionID})`)
+            voiceLogger.log(
+              `[SESSION ERROR IGNORED] Error for different session (expected: ${session.id}, got: ${event.properties.sessionID})`,
+            )
           }
           break
         } else if (event.type === 'file.edited') {
@@ -1199,19 +1241,25 @@ async function handleOpencodeSession(
     } catch (e) {
       if (e instanceof Error && e.name === 'AbortError') {
         // Ignore abort controller errors as requested
-        sessionLogger.log('AbortController aborted event handling (normal exit)')
+        sessionLogger.log(
+          'AbortController aborted event handling (normal exit)',
+        )
         return
       }
       sessionLogger.error(`Unexpected error in event handling code`, e)
       throw e
     } finally {
       // Send any remaining parts that weren't sent
-      voiceLogger.log(`[CLEANUP] Checking ${currentParts.length} parts for unsent messages`)
+      voiceLogger.log(
+        `[CLEANUP] Checking ${currentParts.length} parts for unsent messages`,
+      )
       let unsentCount = 0
       for (const part of currentParts) {
         if (!partIdToMessage.has(part.id)) {
           unsentCount++
-          voiceLogger.log(`[CLEANUP] Sending unsent part: id=${part.id}, type=${part.type}`)
+          voiceLogger.log(
+            `[CLEANUP] Sending unsent part: id=${part.id}, type=${part.type}`,
+          )
           try {
             await sendPartMessage(part)
           } catch (error) {
@@ -1243,7 +1291,9 @@ async function handleOpencodeSession(
   }
 
   try {
-    voiceLogger.log(`[PROMPT] Sending prompt to session ${session.id}: "${prompt.slice(0, 100)}${prompt.length > 100 ? '...' : ''}"`)
+    voiceLogger.log(
+      `[PROMPT] Sending prompt to session ${session.id}: "${prompt.slice(0, 100)}${prompt.length > 100 ? '...' : ''}"`,
+    )
 
     // Start the event handler
     const eventHandlerPromise = eventHandler()
@@ -1387,7 +1437,9 @@ export async function startDiscordBot({
       )
 
       if (kimakiChannels.length > 0) {
-        discordLogger.log(`  Found ${kimakiChannels.length} channel(s) for this bot:`)
+        discordLogger.log(
+          `  Found ${kimakiChannels.length} channel(s) for this bot:`,
+        )
         for (const channel of kimakiChannels) {
           discordLogger.log(`  - #${channel.name}: ${channel.kimakiDirectory}`)
         }
@@ -1396,13 +1448,17 @@ export async function startDiscordBot({
       }
     }
 
-    voiceLogger.log(`[READY] Bot is ready and will only respond to channels with app ID: ${currentAppId}`)
+    voiceLogger.log(
+      `[READY] Bot is ready and will only respond to channels with app ID: ${currentAppId}`,
+    )
   })
 
   discordClient.on(Events.MessageCreate, async (message: Message) => {
     try {
       if (message.author?.bot) {
-        voiceLogger.log(`[IGNORED] Bot message from ${message.author.tag} in channel ${message.channelId}`)
+        voiceLogger.log(
+          `[IGNORED] Bot message from ${message.author.tag} in channel ${message.channelId}`,
+        )
         return
       }
       if (message.partial) {
@@ -1426,11 +1482,15 @@ export async function startDiscordBot({
         )
 
         if (!isOwner && !isAdmin) {
-          voiceLogger.log(`[IGNORED] Non-authoritative user ${message.author.tag} (ID: ${message.author.id}) - not owner or admin`)
+          voiceLogger.log(
+            `[IGNORED] Non-authoritative user ${message.author.tag} (ID: ${message.author.id}) - not owner or admin`,
+          )
           return
         }
 
-        voiceLogger.log(`[AUTHORIZED] Message from ${message.author.tag} (Owner: ${isOwner}, Admin: ${isAdmin})`)
+        voiceLogger.log(
+          `[AUTHORIZED] Message from ${message.author.tag} (Owner: ${isOwner}, Admin: ${isAdmin})`,
+        )
       }
 
       const channel = message.channel
@@ -1454,7 +1514,9 @@ export async function startDiscordBot({
           return
         }
 
-        voiceLogger.log(`[SESSION] Found session ${row.session_id} for thread ${thread.id}`)
+        voiceLogger.log(
+          `[SESSION] Found session ${row.session_id} for thread ${thread.id}`,
+        )
 
         // Get project directory and app ID from parent channel
         const parent = thread.parent as TextChannel | null
@@ -1473,7 +1535,9 @@ export async function startDiscordBot({
 
         // Check if this channel belongs to current bot instance
         if (channelAppId && channelAppId !== currentAppId) {
-          voiceLogger.log(`[IGNORED] Thread belongs to different bot app (expected: ${currentAppId}, got: ${channelAppId})`)
+          voiceLogger.log(
+            `[IGNORED] Thread belongs to different bot app (expected: ${currentAppId}, got: ${channelAppId})`,
+          )
           return
         }
 
@@ -1519,10 +1583,14 @@ export async function startDiscordBot({
       // For text channels, start new sessions with kimaki.directory tag
       if (channel.type === ChannelType.GuildText) {
         const textChannel = channel as TextChannel
-        voiceLogger.log(`[GUILD_TEXT] Message in text channel #${textChannel.name} (${textChannel.id})`)
+        voiceLogger.log(
+          `[GUILD_TEXT] Message in text channel #${textChannel.name} (${textChannel.id})`,
+        )
 
         if (!textChannel.topic) {
-          voiceLogger.log(`[IGNORED] Channel #${textChannel.name} has no description`)
+          voiceLogger.log(
+            `[IGNORED] Channel #${textChannel.name} has no description`,
+          )
           return
         }
 
@@ -1535,17 +1603,23 @@ export async function startDiscordBot({
         const channelAppId = extracted['kimaki.app']?.[0]?.trim()
 
         if (!projectDirectory) {
-          voiceLogger.log(`[IGNORED] Channel #${textChannel.name} has no kimaki.directory tag`)
+          voiceLogger.log(
+            `[IGNORED] Channel #${textChannel.name} has no kimaki.directory tag`,
+          )
           return
         }
 
         // Check if this channel belongs to current bot instance
         if (channelAppId && channelAppId !== currentAppId) {
-          voiceLogger.log(`[IGNORED] Channel belongs to different bot app (expected: ${currentAppId}, got: ${channelAppId})`)
+          voiceLogger.log(
+            `[IGNORED] Channel belongs to different bot app (expected: ${currentAppId}, got: ${channelAppId})`,
+          )
           return
         }
 
-        discordLogger.log(`DIRECTORY: Found kimaki.directory: ${projectDirectory}`)
+        discordLogger.log(
+          `DIRECTORY: Found kimaki.directory: ${projectDirectory}`,
+        )
         if (channelAppId) {
           discordLogger.log(`APP: Channel app ID: ${channelAppId}`)
         }
@@ -1670,7 +1744,10 @@ export async function startDiscordBot({
 
               await interaction.respond(sessions)
             } catch (error) {
-              voiceLogger.error('[AUTOCOMPLETE] Error fetching sessions:', error)
+              voiceLogger.error(
+                '[AUTOCOMPLETE] Error fetching sessions:',
+                error,
+              )
               await interaction.respond([])
             }
           }
@@ -1762,7 +1839,9 @@ export async function startDiscordBot({
                 )
                 .run(thread.id, sessionId)
 
-              voiceLogger.log(`[RESUME] Created thread ${thread.id} for session ${sessionId}`)
+              voiceLogger.log(
+                `[RESUME] Created thread ${thread.id} for session ${sessionId}`,
+              )
 
               // Fetch all messages for the session
               const messagesResponse = await client.session.messages({
@@ -1879,10 +1958,7 @@ export async function startDiscordBot({
       voiceConnections.delete(guildId)
       voiceLogger.log(`Cleanup complete for guild ${guildId}`)
     } catch (error) {
-      voiceLogger.error(
-        `Error during cleanup for guild ${guildId}:`,
-        error,
-      )
+      voiceLogger.error(`Error during cleanup for guild ${guildId}:`, error)
       // Still remove from map even if there was an error
       voiceConnections.delete(guildId)
     }
@@ -1908,7 +1984,9 @@ export async function startDiscordBot({
 
       // Handle admin leaving voice channel
       if (oldState.channelId !== null && newState.channelId === null) {
-        voiceLogger.log(`Admin user ${member.user.tag} left voice channel: ${oldState.channel?.name}`)
+        voiceLogger.log(
+          `Admin user ${member.user.tag} left voice channel: ${oldState.channel?.name}`,
+        )
 
         // Check if bot should leave too
         const guildId = guild.id
@@ -1931,12 +2009,16 @@ export async function startDiscordBot({
           })
 
           if (!hasOtherAdmins) {
-            voiceLogger.log(`No other admins in channel, bot leaving voice channel in guild: ${guild.name}`)
+            voiceLogger.log(
+              `No other admins in channel, bot leaving voice channel in guild: ${guild.name}`,
+            )
 
             // Properly clean up all resources
             await cleanupVoiceConnection(guildId)
           } else {
-            voiceLogger.log(`Other admins still in channel, bot staying in voice channel`)
+            voiceLogger.log(
+              `Other admins still in channel, bot staying in voice channel`,
+            )
           }
         }
         return
@@ -1948,7 +2030,9 @@ export async function startDiscordBot({
         newState.channelId !== null &&
         oldState.channelId !== newState.channelId
       ) {
-        voiceLogger.log(`Admin user ${member.user.tag} moved from ${oldState.channel?.name} to ${newState.channel?.name}`)
+        voiceLogger.log(
+          `Admin user ${member.user.tag} moved from ${oldState.channel?.name} to ${newState.channel?.name}`,
+        )
 
         // Check if we need to follow the admin
         const guildId = guild.id
@@ -1970,7 +2054,9 @@ export async function startDiscordBot({
             })
 
             if (!hasOtherAdmins) {
-              voiceLogger.log(`Following admin to new channel: ${newState.channel?.name}`)
+              voiceLogger.log(
+                `Following admin to new channel: ${newState.channel?.name}`,
+              )
               const voiceChannel = newState.channel as VoiceChannel
               if (voiceChannel) {
                 voiceData.connection.rejoin({
@@ -1980,7 +2066,9 @@ export async function startDiscordBot({
                 })
               }
             } else {
-              voiceLogger.log(`Other admins still in old channel, bot staying put`)
+              voiceLogger.log(
+                `Other admins still in old channel, bot staying put`,
+              )
             }
           }
         }
@@ -1988,7 +2076,9 @@ export async function startDiscordBot({
 
       // Handle admin joining voice channel (initial join)
       if (oldState.channelId === null && newState.channelId !== null) {
-        voiceLogger.log(`Admin user ${member.user.tag} (Owner: ${isOwner}, Admin: ${isAdmin}) joined voice channel: ${newState.channel?.name}`)
+        voiceLogger.log(
+          `Admin user ${member.user.tag} (Owner: ${isOwner}, Admin: ${isAdmin}) joined voice channel: ${newState.channel?.name}`,
+        )
       }
 
       // Only proceed with joining if this is a new join or channel move
@@ -2004,13 +2094,17 @@ export async function startDiscordBot({
         existingVoiceData.connection.state.status !==
           VoiceConnectionStatus.Destroyed
       ) {
-        voiceLogger.log(`Bot already connected to a voice channel in guild ${newState.guild.name}`)
+        voiceLogger.log(
+          `Bot already connected to a voice channel in guild ${newState.guild.name}`,
+        )
 
         // If bot is in a different channel, move to the admin's channel
         if (
           existingVoiceData.connection.joinConfig.channelId !== voiceChannel.id
         ) {
-          voiceLogger.log(`Moving bot from channel ${existingVoiceData.connection.joinConfig.channelId} to ${voiceChannel.id}`)
+          voiceLogger.log(
+            `Moving bot from channel ${existingVoiceData.connection.joinConfig.channelId} to ${voiceChannel.id}`,
+          )
           existingVoiceData.connection.rejoin({
             channelId: voiceChannel.id,
             selfDeaf: false,
@@ -2022,7 +2116,9 @@ export async function startDiscordBot({
 
       try {
         // Join the voice channel
-        voiceLogger.log(`Attempting to join voice channel: ${voiceChannel.name} (${voiceChannel.id})`)
+        voiceLogger.log(
+          `Attempting to join voice channel: ${voiceChannel.name} (${voiceChannel.id})`,
+        )
 
         const connection = joinVoiceChannel({
           channelId: voiceChannel.id,
@@ -2040,7 +2136,9 @@ export async function startDiscordBot({
 
         // Wait for connection to be ready
         await entersState(connection, VoiceConnectionStatus.Ready, 30_000)
-        voiceLogger.log(`Successfully joined voice channel: ${voiceChannel.name} in guild: ${newState.guild.name}`)
+        voiceLogger.log(
+          `Successfully joined voice channel: ${voiceChannel.name} in guild: ${newState.guild.name}`,
+        )
 
         // Set up voice handling (only once per connection)
         await setupVoiceHandling({
@@ -2051,7 +2149,9 @@ export async function startDiscordBot({
 
         // Handle connection state changes
         connection.on(VoiceConnectionStatus.Disconnected, async () => {
-          voiceLogger.log(`Disconnected from voice channel in guild: ${newState.guild.name}`)
+          voiceLogger.log(
+            `Disconnected from voice channel in guild: ${newState.guild.name}`,
+          )
           try {
             // Try to reconnect
             await Promise.race([
@@ -2068,7 +2168,9 @@ export async function startDiscordBot({
         })
 
         connection.on(VoiceConnectionStatus.Destroyed, async () => {
-          voiceLogger.log(`Connection destroyed for guild: ${newState.guild.name}`)
+          voiceLogger.log(
+            `Connection destroyed for guild: ${newState.guild.name}`,
+          )
           // Use the cleanup function to ensure everything is properly closed
           await cleanupVoiceConnection(newState.guild.id)
         })
@@ -2105,13 +2207,17 @@ export async function startDiscordBot({
       // Clean up all voice connections (this includes GenAI workers and audio streams)
       const cleanupPromises: Promise<void>[] = []
       for (const [guildId] of voiceConnections) {
-        voiceLogger.log(`[SHUTDOWN] Cleaning up voice connection for guild ${guildId}`)
+        voiceLogger.log(
+          `[SHUTDOWN] Cleaning up voice connection for guild ${guildId}`,
+        )
         cleanupPromises.push(cleanupVoiceConnection(guildId))
       }
 
       // Wait for all cleanups to complete
       if (cleanupPromises.length > 0) {
-        voiceLogger.log(`[SHUTDOWN] Waiting for ${cleanupPromises.length} voice connection(s) to clean up...`)
+        voiceLogger.log(
+          `[SHUTDOWN] Waiting for ${cleanupPromises.length} voice connection(s) to clean up...`,
+        )
         await Promise.allSettled(cleanupPromises)
         discordLogger.log(`All voice connections cleaned up`)
       }
@@ -2119,7 +2225,9 @@ export async function startDiscordBot({
       // Kill all OpenCode servers
       for (const [dir, server] of opencodeServers) {
         if (!server.process.killed) {
-          voiceLogger.log(`[SHUTDOWN] Stopping OpenCode server on port ${server.port} for ${dir}`)
+          voiceLogger.log(
+            `[SHUTDOWN] Stopping OpenCode server on port ${server.port} for ${dir}`,
+          )
           server.process.kill('SIGTERM')
         }
       }
@@ -2161,10 +2269,7 @@ export async function startDiscordBot({
   // Prevent unhandled promise rejections from crashing the process during shutdown
   process.on('unhandledRejection', (reason, promise) => {
     if ((global as any).shuttingDown) {
-      discordLogger.log(
-        'Ignoring unhandled rejection during shutdown:',
-        reason,
-      )
+      discordLogger.log('Ignoring unhandled rejection during shutdown:', reason)
       return
     }
     discordLogger.error('Unhandled Rejection at:', promise, 'reason:', reason)

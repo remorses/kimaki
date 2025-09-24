@@ -6,10 +6,7 @@ import { Resampler } from '@purinton/resampler'
 import * as prism from 'prism-media'
 import { startGenAiSession } from './genai.js'
 import { getTools } from './tools.js'
-import type {
-  WorkerInMessage,
-  WorkerOutMessage,
-} from './worker-types.js'
+import type { WorkerInMessage, WorkerOutMessage } from './worker-types.js'
 import type { Session } from '@google/genai'
 import { createLogger } from './logger.js'
 
@@ -39,7 +36,12 @@ process.on('uncaughtException', (error) => {
 })
 
 process.on('unhandledRejection', (reason, promise) => {
-  workerLogger.error('Unhandled rejection in worker:', reason, 'at promise:', promise)
+  workerLogger.error(
+    'Unhandled rejection in worker:',
+    reason,
+    'at promise:',
+    promise,
+  )
   sendError(`Worker unhandled rejection: ${reason}`)
 })
 
@@ -89,7 +91,7 @@ function startPacketSending() {
     // Transfer packet as ArrayBuffer
     const arrayBuffer = packet.buffer.slice(
       packet.byteOffset,
-      packet.byteOffset + packet.byteLength
+      packet.byteOffset + packet.byteLength,
     ) as ArrayBuffer
 
     parentPort!.postMessage(
@@ -97,7 +99,7 @@ function startPacketSending() {
         type: 'assistantOpusPacket',
         packet: arrayBuffer,
       } satisfies WorkerOutMessage,
-      [arrayBuffer] // Transfer ownership
+      [arrayBuffer], // Transfer ownership
     )
   }, 20)
 }
@@ -119,12 +121,17 @@ let audioLogStream: WriteStream | null = null
 // Create assistant audio log stream for debugging
 async function createAssistantAudioLogStream(
   guildId: string,
-  channelId: string
+  channelId: string,
 ): Promise<WriteStream | null> {
   if (!process.env.DEBUG) return null
 
   const timestamp = new Date().toISOString().replace(/[:.]/g, '-')
-  const audioDir = path.join(process.cwd(), 'discord-audio-logs', guildId, channelId)
+  const audioDir = path.join(
+    process.cwd(),
+    'discord-audio-logs',
+    guildId,
+    channelId,
+  )
 
   try {
     await mkdir(audioDir, { recursive: true })
@@ -177,9 +184,6 @@ opusEncoder.on('error', (error: any) => {
     sendError(`Encoder error: ${error.message}`)
   }
 })
-
-
-
 
 async function cleanupAsync(): Promise<void> {
   workerLogger.log(`Starting async cleanup`)
@@ -244,7 +248,10 @@ parentPort.on('message', async (message: WorkerInMessage) => {
         workerLogger.log(`Initializing with directory:`, message.directory)
 
         // Create audio log stream for assistant audio
-        audioLogStream = await createAssistantAudioLogStream(message.guildId, message.channelId)
+        audioLogStream = await createAssistantAudioLogStream(
+          message.guildId,
+          message.channelId,
+        )
 
         // Start packet sending interval
         startPacketSending()
@@ -348,7 +355,7 @@ parentPort.on('message', async (message: WorkerInMessage) => {
   } catch (error) {
     workerLogger.error(`Error handling message:`, error)
     sendError(
-      error instanceof Error ? error.message : 'Unknown error in worker'
+      error instanceof Error ? error.message : 'Unknown error in worker',
     )
   }
 })

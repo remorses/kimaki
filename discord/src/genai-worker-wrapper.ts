@@ -26,7 +26,10 @@ export interface GenAIWorkerOptions {
 }
 
 export interface GenAIWorker {
-  sendRealtimeInput(params: { audio?: { mimeType: string; data: string }; audioStreamEnd?: boolean }): void
+  sendRealtimeInput(params: {
+    audio?: { mimeType: string; data: string }
+    audioStreamEnd?: boolean
+  }): void
   sendTextInput(text: string): void
   interrupt(): void
   stop(): Promise<void>
