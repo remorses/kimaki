@@ -1,8 +1,8 @@
 {
-  "name": "kimaki-discord",
+  "name": "kimaki",
   "module": "index.ts",
   "type": "module",
-  "private": true,
+  "version": "0.0.4",
   "scripts": {
     "dev": "pnpm tsc && DEBUG=1 tsx --env-file .env src/cli.ts",
     "dev:bun": "DEBUG=1 bun --env-file .env src/cli.ts",
@@ -13,6 +13,13 @@
     "test:send": "tsx send-test-message.ts",
     "register-commands": "tsx scripts/register-commands.ts"
   },
+  "repository": "https://github.com/remorses/kimaki",
+  "bin": "bin.sh",
+  "files": [
+    "dist",
+    "src",
+    "bin.js"
+  ],
   "devDependencies": {
     "@opencode-ai/sdk": "^0.11.0",
     "@types/better-sqlite3": "^7.6.13",
@@ -32,12 +39,11 @@
     "@discordjs/voice": "^0.19.0",
     "@farjs/better-sqlite3-wrapper": "^3.0.0",
     "@google/genai": "^1.16.0",
-    "@openai/realtime-api-beta": "github:openai/openai-realtime-api-beta",
     "@purinton/resampler": "^1.0.4",
     "@snazzah/davey": "^0.1.6",
-    "@xmorse/liveapi": "workspace:*",
     "ai": "^5.0.29",
     "better-sqlite3": "^12.3.0",
+    "cac": "^6.7.14",
     "date-fns": "^4.1.0",
     "discord.js": "^14.16.3",
     "domhandler": "^5.0.3",
