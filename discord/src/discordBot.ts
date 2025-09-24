@@ -305,6 +305,12 @@ async function setupVoiceHandling({
       frameSize: 960,
     })
 
+    // Add error handler to prevent crashes from corrupted data
+    decoder.on('error', (error) => {
+      voiceLogger.error(`Opus decoder error for user ${userId}:`, error)
+
+    })
+
     // Transform to downsample 48k stereo -> 16k mono
     const downsampleTransform = new Transform({
       transform(chunk: Buffer, _encoding, callback) {
@@ -362,6 +368,19 @@ async function setupVoiceHandling({
       .on('error', (error) => {
         voiceLogger.error(`Pipeline error for user ${userId}:`, error)
       })
+
+    // Also add error handlers to individual stream components
+    audioStream.on('error', (error) => {
+      voiceLogger.error(`Audio stream error for user ${userId}:`, error)
+    })
+
+    downsampleTransform.on('error', (error) => {
+      voiceLogger.error(`Downsample transform error for user ${userId}:`, error)
+    })
+
+    framer.on('error', (error) => {
+      voiceLogger.error(`Framer error for user ${userId}:`, error)
+    })
   })
 }
 
