@@ -1,5 +1,15 @@
 # Changelog
 
+## 2025-09-24 09:20
+
+- Add comprehensive error handling to prevent process crashes from corrupted audio data
+- Add error handlers to prism-media opus decoder to catch "The compressed data passed is corrupted" errors
+- Add error handlers to all stream components in voice pipeline (audioStream, downsampleTransform, framer)
+- Add error handling in genai-worker for resampler, opus encoder, and audio log streams
+- Add write callbacks with error handling for stream writes
+- Add global uncaughtException and unhandledRejection handlers in worker thread
+- Prevent Discord browser clients' corrupted opus packets from crashing the bot
+
 ## 2025-09-23 14:15
 
 - Update PCM audio logging to only activate when DEBUG environment variable is set

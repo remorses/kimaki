@@ -20,6 +20,29 @@ if (!parentPort) {
 const workerLogger = createLogger(`WORKER ${threadId}`)
 workerLogger.log('GenAI worker started')
 
+// Define sendError early so it can be used by global handlers
+function sendError(error: string) {
+  if (parentPort) {
+    parentPort.postMessage({
+      type: 'error',
+      error,
+    } satisfies WorkerOutMessage)
+  }
+}
+
+// Add global error handlers for the worker thread
+process.on('uncaughtException', (error) => {
+  workerLogger.error('Uncaught exception in worker:', error)
+  sendError(`Worker crashed: ${error.message}`)
+  // Exit immediately on uncaught exception
+  process.exit(1)
+})
+
+process.on('unhandledRejection', (reason, promise) => {
+  workerLogger.error('Unhandled rejection in worker:', reason, 'at promise:', promise)
+  sendError(`Worker unhandled rejection: ${reason}`)
+})
+
 // Audio configuration
 const AUDIO_CONFIG = {
   inputSampleRate: 24000, // GenAI output
@@ -45,8 +68,11 @@ const opusEncoder = new prism.opus.Encoder({
   frameSize: AUDIO_CONFIG.opusFrameSize,
 })
 
-// Pipe resampler to encoder
-resampler.pipe(opusEncoder)
+// Pipe resampler to encoder with error handling
+resampler.pipe(opusEncoder).on('error', (error) => {
+  workerLogger.error('Pipe error between resampler and encoder:', error)
+  sendError(`Audio pipeline error: ${error.message}`)
+})
 
 // Opus packet queue and interval for 20ms packet sending
 const opusPacketQueue: Buffer[] = []
@@ -107,6 +133,12 @@ async function createAssistantAudioLogStream(
     const outputFileName = `assistant_${timestamp}.24.pcm`
     const outputFilePath = path.join(audioDir, outputFileName)
     const outputAudioStream = createWriteStream(outputFilePath)
+
+    // Add error handler to prevent crashes
+    outputAudioStream.on('error', (error) => {
+      workerLogger.error(`Assistant audio log stream error:`, error)
+    })
+
     workerLogger.log(`Created assistant audio log: ${outputFilePath}`)
 
     return outputAudioStream
@@ -121,6 +153,15 @@ opusEncoder.on('data', (packet: Buffer) => {
   opusPacketQueue.push(packet)
 })
 
+// Handle stream end events
+opusEncoder.on('end', () => {
+  workerLogger.log('Opus encoder stream ended')
+})
+
+resampler.on('end', () => {
+  workerLogger.log('Resampler stream ended')
+})
+
 // Handle errors
 resampler.on('error', (error: any) => {
   workerLogger.error(`Resampler error:`, error)
@@ -129,15 +170,15 @@ resampler.on('error', (error: any) => {
 
 opusEncoder.on('error', (error: any) => {
   workerLogger.error(`Encoder error:`, error)
-  sendError(`Encoder error: ${error.message}`)
+  // Check for specific corrupted data errors
+  if (error.message?.includes('The compressed data passed is corrupted')) {
+    workerLogger.warn('Received corrupted audio data in opus encoder')
+  } else {
+    sendError(`Encoder error: ${error.message}`)
+  }
 })
 
-function sendError(error: string) {
-  parentPort!.postMessage({
-    type: 'error',
-    error,
-  } satisfies WorkerOutMessage)
-}
+
 
 
 async function cleanupAsync(): Promise<void> {
@@ -225,10 +266,23 @@ parentPort.on('message', async (message: WorkerInMessage) => {
           systemMessage: message.systemMessage,
           onAssistantAudioChunk({ data }) {
             // Write to audio log if enabled
-            audioLogStream?.write(data)
+            if (audioLogStream && !audioLogStream.destroyed) {
+              audioLogStream.write(data, (err) => {
+                if (err) {
+                  workerLogger.error('Error writing to audio log:', err)
+                }
+              })
+            }
 
             // Write PCM data to resampler which will output Opus packets
-            resampler.write(data)
+            if (!resampler.destroyed) {
+              resampler.write(data, (err) => {
+                if (err) {
+                  workerLogger.error('Error writing to resampler:', err)
+                  sendError(`Failed to process audio: ${err.message}`)
+                }
+              })
+            }
           },
           onAssistantStartSpeaking() {
             parentPort!.postMessage({
