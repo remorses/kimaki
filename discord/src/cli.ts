@@ -238,6 +238,11 @@ async function run({ restart, addChannels }: CliOptions) {
     }
     token = tokenInput
 
+    note(
+      `You can get a Gemini api Key at https://aistudio.google.com/apikey`,
+      `Gemini API Key`,
+    )
+
     const geminiApiKey = await password({
       message:
         'Enter your Gemini API Key for voice channels and audio transcription (optional, press Enter to skip):',
