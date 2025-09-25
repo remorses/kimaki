@@ -783,19 +783,22 @@ export async function initializeOpencodeForDirectory(
   )
 
   serverProcess.stdout?.on('data', (data) => {
-    opencodeLogger.log(`Port ${port}: ${data.toString().trim()}`)
+    opencodeLogger.log(`opencode ${directory}: ${data.toString().trim()}`)
   })
 
   serverProcess.stderr?.on('data', (data) => {
-    opencodeLogger.error(`Port  error: ${data.toString().trim()}`)
+    opencodeLogger.error(`opencode ${directory}: ${data.toString().trim()}`)
   })
 
   serverProcess.on('error', (error) => {
-    opencodeLogger.error(`Failed to start server on port :`, error)
+    opencodeLogger.error(`Failed to start server on port :`, port, error)
   })
 
   serverProcess.on('exit', (code) => {
-    opencodeLogger.log(`Opencode server on ${directory} exited with code:`, code)
+    opencodeLogger.log(
+      `Opencode server on ${directory} exited with code:`,
+      code,
+    )
     opencodeServers.delete(directory)
   })
 
