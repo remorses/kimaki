@@ -772,7 +772,7 @@ function formatPart(part: Part): string {
     case 'text':
       return escapeDiscordFormatting(part.text || '')
     case 'reasoning':
-      if (!part.text) return ''
+      if (!part.text?.trim()) return ''
       return `▪︎ thinking: ${escapeDiscordFormatting(part.text || '')}`
     case 'tool':
       if (part.state.status === 'completed' || part.state.status === 'error') {
@@ -799,22 +799,22 @@ function formatPart(part: Part): string {
             }[]) || []
           outputToDisplay = todos
             .map((todo) => {
-              let statusIcon = '□'
+              let statusIcon = '▢'
               switch (todo.status) {
                 case 'pending':
-                  statusIcon = '□'
+                  statusIcon = '▢'
                   break
                 case 'in_progress':
-                  statusIcon = '◈'
+                  statusIcon = '●'
                   break
                 case 'completed':
-                  statusIcon = '☑'
+                  statusIcon = '■'
                   break
                 case 'cancelled':
-                  statusIcon = '☒'
+                  statusIcon = '■'
                   break
               }
-              return `${statusIcon} ${todo.content}`
+              return `\`${statusIcon}\` ${todo.content}`
             })
             .join('\n')
           language = ''
