@@ -67,7 +67,7 @@ const opencodeServers = new Map<
 >()
 
 // Map of session ID to current AbortController
-const activeRequests = new Map<string, AbortController>()
+const abortControllers = new Map<string, AbortController>()
 
 // Map of guild ID to voice connection and GenAI worker
 const voiceConnections = new Map<
@@ -627,84 +627,66 @@ async function processVoiceAttachment({
     `Detected audio attachment: ${audioAttachment.name} (${audioAttachment.contentType})`,
   )
 
-  try {
-    await message.react('⏳')
-    await sendThreadMessage(thread, '🎤 Transcribing voice message...')
+  await message.react('⏳')
+  await sendThreadMessage(thread, '🎤 Transcribing voice message...')
 
-    const audioResponse = await fetch(audioAttachment.url)
-    const audioBuffer = Buffer.from(await audioResponse.arrayBuffer())
+  const audioResponse = await fetch(audioAttachment.url)
+  const audioBuffer = Buffer.from(await audioResponse.arrayBuffer())
 
-    voiceLogger.log(`Downloaded ${audioBuffer.length} bytes, transcribing...`)
+  voiceLogger.log(`Downloaded ${audioBuffer.length} bytes, transcribing...`)
 
-    // Get project file tree for context if directory is provided
-    let transcriptionPrompt = 'Discord voice message transcription'
+  // Get project file tree for context if directory is provided
+  let transcriptionPrompt = 'Discord voice message transcription'
 
-    if (projectDirectory) {
-      try {
-        voiceLogger.log(`Getting project file tree from ${projectDirectory}`)
-        // Use git ls-files to get tracked files, then pipe to tree
-        const execAsync = promisify(exec)
-        const { stdout } = await execAsync(
-          'git ls-files | tree --fromfile -a',
-          { cwd: projectDirectory },
-        )
-        const result = stdout
-
-        if (result) {
-          transcriptionPrompt = `Discord voice message transcription. Project file structure:\n${result}\n\nPlease transcribe file names and paths accurately based on this context.`
-          voiceLogger.log(`Added project context to transcription prompt`)
-        }
-      } catch (e) {
-        voiceLogger.log(`Could not get project tree:`, e)
-      }
-    }
-
-    const transcription = await transcribeAudio({
-      audio: audioBuffer,
-      prompt: transcriptionPrompt,
-    })
-
-    voiceLogger.log(
-      `Transcription successful: "${transcription.slice(0, 50)}${transcription.length > 50 ? '...' : ''}"`,
-    )
-
-    // Update thread name with transcribed content only for new threads
-    if (isNewThread) {
-      const threadName = transcription.replace(/\s+/g, ' ').trim().slice(0, 80)
-      if (threadName) {
-        try {
-          await Promise.race([
-            thread.setName(threadName),
-            new Promise((resolve) => setTimeout(resolve, 2000)),
-          ])
-          discordLogger.log(`Updated thread name to: "${threadName}"`)
-        } catch (e) {
-          discordLogger.log(`Could not update thread name:`, e)
-        }
-      }
-    }
-
-    await sendThreadMessage(
-      thread,
-      `📝 **Transcribed message:** ${escapeDiscordFormatting(transcription)}`,
-    )
-    return transcription
-  } catch (error) {
-    voiceLogger.error(`Failed to transcribe audio:`, error)
-    await sendThreadMessage(
-      thread,
-      `✗ Failed to transcribe voice message: ${error instanceof Error ? error.message : 'Unknown error'}`,
-    )
-
+  if (projectDirectory) {
     try {
-      await message.reactions.removeAll()
-      await message.react('❌')
-    } catch (e) {
-      discordLogger.log(`Could not update reaction:`, e)
-    }
+      voiceLogger.log(`Getting project file tree from ${projectDirectory}`)
+      // Use git ls-files to get tracked files, then pipe to tree
+      const execAsync = promisify(exec)
+      const { stdout } = await execAsync('git ls-files | tree --fromfile -a', {
+        cwd: projectDirectory,
+      })
+      const result = stdout
 
-    throw error
+      if (result) {
+        transcriptionPrompt = `Discord voice message transcription. Project file structure:\n${result}\n\nPlease transcribe file names and paths accurately based on this context.`
+        voiceLogger.log(`Added project context to transcription prompt`)
+      }
+    } catch (e) {
+      voiceLogger.log(`Could not get project tree:`, e)
+    }
   }
+
+  const transcription = await transcribeAudio({
+    audio: audioBuffer,
+    prompt: transcriptionPrompt,
+  })
+
+  voiceLogger.log(
+    `Transcription successful: "${transcription.slice(0, 50)}${transcription.length > 50 ? '...' : ''}"`,
+  )
+
+  // Update thread name with transcribed content only for new threads
+  if (isNewThread) {
+    const threadName = transcription.replace(/\s+/g, ' ').trim().slice(0, 80)
+    if (threadName) {
+      try {
+        await Promise.race([
+          thread.setName(threadName),
+          new Promise((resolve) => setTimeout(resolve, 2000)),
+        ])
+        discordLogger.log(`Updated thread name to: "${threadName}"`)
+      } catch (e) {
+        discordLogger.log(`Could not update thread name:`, e)
+      }
+    }
+  }
+
+  await sendThreadMessage(
+    thread,
+    `📝 **Transcribed message:** ${escapeDiscordFormatting(transcription)}`,
+  )
+  return transcription
 }
 
 /**
@@ -988,7 +970,7 @@ async function handleOpencodeSession(
   dbLogger.log(`Stored session ${session.id} for thread ${thread.id}`)
 
   // Cancel any existing request for this session
-  const existingController = activeRequests.get(session.id)
+  const existingController = abortControllers.get(session.id)
   if (existingController) {
     voiceLogger.log(
       `[ABORT] Cancelling existing request for session: ${session.id}`,
@@ -996,9 +978,12 @@ async function handleOpencodeSession(
     existingController.abort('New request started')
   }
 
+  if (abortControllers.has(session.id)) {
+    abortControllers.get(session.id)?.abort('new reply')
+  }
   const abortController = new AbortController()
   // Store this controller for this session
-  activeRequests.set(session.id, abortController)
+  abortControllers.set(session.id, abortController)
 
   const eventsResult = await client.event.subscribe({
     signal: abortController.signal,
@@ -1284,12 +1269,19 @@ async function handleOpencodeSession(
       }
 
       // Only send duration message if request was not aborted or was aborted with 'finished' reason
-      if (!abortController.signal.aborted || abortController.signal.reason === 'finished') {
-        const sessionDuration = prettyMilliseconds(Date.now() - sessionStartTime)
+      if (
+        !abortController.signal.aborted ||
+        abortController.signal.reason === 'finished'
+      ) {
+        const sessionDuration = prettyMilliseconds(
+          Date.now() - sessionStartTime,
+        )
         await sendThreadMessage(thread, `_Completed in ${sessionDuration}_`)
         sessionLogger.log(`DURATION: Session completed in ${sessionDuration}`)
       } else {
-        sessionLogger.log(`Session was aborted (reason: ${abortController.signal.reason}), skipping duration message`)
+        sessionLogger.log(
+          `Session was aborted (reason: ${abortController.signal.reason}), skipping duration message`,
+        )
       }
     }
   }
@@ -1307,12 +1299,13 @@ async function handleOpencodeSession(
       body: {
         parts: [{ type: 'text', text: prompt }],
       },
+      signal: abortController.signal,
     })
     abortController.abort('finished')
 
     sessionLogger.log(`Successfully sent prompt, got response`)
-    // Remove the controller after successful completion
-    activeRequests.delete(session.id)
+
+    abortControllers.delete(session.id)
 
     // Update reaction to success
     if (originalMessage) {
@@ -1328,28 +1321,24 @@ async function handleOpencodeSession(
     return { sessionID: session.id, result: response.data }
   } catch (error) {
     sessionLogger.error(`ERROR: Failed to send prompt:`, error)
-    // Remove the controller on error
-    activeRequests.delete(session.id)
 
-    // Update reaction to error
-    if (originalMessage) {
-      try {
-        await originalMessage.reactions.removeAll()
-        await originalMessage.react('❌')
-        discordLogger.log(`Added error reaction to message`)
-      } catch (e) {
-        discordLogger.log(`Could not update reaction:`, e)
-      }
-    }
-
-    // Only show error message if not aborted by a new request
     if (!(error instanceof Error && error.name === 'AbortError')) {
+      abortController.abort('error')
+
+      if (originalMessage) {
+        try {
+          await originalMessage.reactions.removeAll()
+          await originalMessage.react('❌')
+          discordLogger.log(`Added error reaction to message`)
+        } catch (e) {
+          discordLogger.log(`Could not update reaction:`, e)
+        }
+      }
       await sendThreadMessage(
         thread,
         `✗ Unexpected bot Error: ${error instanceof Error ? error.stack || error.message : String(error)}`,
       )
     }
-    throw error
   }
 }
 
@@ -1556,31 +1545,22 @@ export async function startDiscordBot({
 
         // Handle voice message if present
         let messageContent = message.content || ''
-        try {
-          const transcription = await processVoiceAttachment({
-            message,
-            thread,
-            projectDirectory,
-          })
-          if (transcription) {
-            messageContent = transcription
-          }
-        } catch (error) {
-          return // Error already handled in processVoiceAttachment
+
+        const transcription = await processVoiceAttachment({
+          message,
+          thread,
+          projectDirectory,
+        })
+        if (transcription) {
+          messageContent = transcription
         }
 
-        try {
-          await handleOpencodeSession(
-            messageContent,
-            thread,
-            projectDirectory,
-            message,
-          )
-        } catch (error) {
-          if (!(error instanceof Error && error.name === 'AbortError')) {
-            throw error
-          }
-        }
+        await handleOpencodeSession(
+          messageContent,
+          thread,
+          projectDirectory,
+          message,
+        )
         return
       }
 
@@ -1656,18 +1636,15 @@ export async function startDiscordBot({
 
         // Handle voice message if present
         let messageContent = message.content || ''
-        try {
-          const transcription = await processVoiceAttachment({
-            message,
-            thread,
-            projectDirectory,
-            isNewThread: true,
-          })
-          if (transcription) {
-            messageContent = transcription
-          }
-        } catch (error) {
-          return // Error already handled in processVoiceAttachment
+
+        const transcription = await processVoiceAttachment({
+          message,
+          thread,
+          projectDirectory,
+          isNewThread: true,
+        })
+        if (transcription) {
+          messageContent = transcription
         }
 
         await handleOpencodeSession(
