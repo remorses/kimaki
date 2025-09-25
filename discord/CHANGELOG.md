@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.1.3
+
+### Patch Changes
+
+- Nicer onboarding
+
 ## 0.1.2
 
 ### Patch Changes
