@@ -8,6 +8,8 @@ export type WorkerInMessage =
       systemMessage?: string
       guildId: string
       channelId: string
+      appId: string
+      geminiApiKey?: string | null
     }
   | {
       type: 'sendRealtimeInput'

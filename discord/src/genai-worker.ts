@@ -271,6 +271,7 @@ parentPort.on('message', async (message: WorkerInMessage) => {
         session = await startGenAiSession({
           tools,
           systemMessage: message.systemMessage,
+          geminiApiKey: message.geminiApiKey,
           onAssistantAudioChunk({ data }) {
             // Write to audio log if enabled
             if (audioLogStream && !audioLogStream.destroyed) {

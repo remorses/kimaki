@@ -113,6 +113,7 @@ export async function startGenAiSession({
   onAssistantInterruptSpeaking,
   systemMessage,
   tools,
+  geminiApiKey,
 }: {
   onAssistantAudioChunk?: (args: { data: Buffer; mimeType: string }) => void
   onAssistantStartSpeaking?: () => void
@@ -120,6 +121,7 @@ export async function startGenAiSession({
   onAssistantInterruptSpeaking?: () => void
   systemMessage?: string
   tools?: Record<string, AITool<any, any>>
+  geminiApiKey?: string | null
 } = {}) {
   let session: Session | undefined = undefined
   const callableTools: Array<CallableTool & { name: string }> = []
@@ -242,8 +244,15 @@ export async function startGenAiSession({
     }
   }
 
+  const apiKey = geminiApiKey || process.env.GEMINI_API_KEY
+  
+  if (!apiKey) {
+    genaiLogger.error('No Gemini API key provided')
+    throw new Error('Gemini API key is required for voice interactions')
+  }
+
   const ai = new GoogleGenAI({
-    apiKey: process.env.GEMINI_API_KEY,
+    apiKey,
   })
 
   const model = 'models/gemini-2.5-flash-live-preview'

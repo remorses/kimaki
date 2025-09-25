@@ -11,6 +11,8 @@ export interface GenAIWorkerOptions {
   systemMessage?: string
   guildId: string
   channelId: string
+  appId: string
+  geminiApiKey?: string | null
   onAssistantOpusPacket: (packet: ArrayBuffer) => void
   onAssistantStartSpeaking?: () => void
   onAssistantStopSpeaking?: () => void
@@ -146,6 +148,8 @@ export function createGenAIWorker(
       systemMessage: options.systemMessage,
       guildId: options.guildId,
       channelId: options.channelId,
+      appId: options.appId,
+      geminiApiKey: options.geminiApiKey,
     }
     worker.postMessage(initMessage)
   })

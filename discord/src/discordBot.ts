@@ -152,10 +152,12 @@ async function setupVoiceHandling({
   connection,
   guildId,
   channelId,
+  appId,
 }: {
   connection: VoiceConnection
   guildId: string
   channelId: string
+  appId: string
 }) {
   voiceLogger.log(
     `Setting up voice handling for guild ${guildId}, channel ${channelId}`,
@@ -188,11 +190,18 @@ async function setupVoiceHandling({
   // Create user audio stream for debugging
   voiceData.userAudioStream = await createUserAudioLogStream(guildId, channelId)
 
+  // Get API keys from database
+  const apiKeys = getDatabase()
+    .prepare('SELECT gemini_api_key FROM bot_api_keys WHERE app_id = ?')
+    .get(appId) as { gemini_api_key: string | null } | undefined
+
   // Create GenAI worker
   const genAiWorker = await createGenAIWorker({
     directory,
     guildId,
     channelId,
+    appId,
+    geminiApiKey: apiKeys?.gemini_api_key,
     systemMessage: dedent`
     You are Kimaki, an AI similar to Jarvis: you help your user (an engineer) controlling his coding agent, just like Jarvis controls Ironman armor and machines. Speak fast.
 
@@ -480,6 +489,15 @@ export function getDatabase(): Database.Database {
         created_at DATETIME DEFAULT CURRENT_TIMESTAMP
       )
     `)
+
+    db.exec(`
+      CREATE TABLE IF NOT EXISTS bot_api_keys (
+        app_id TEXT PRIMARY KEY,
+        gemini_api_key TEXT,
+        openai_api_key TEXT,
+        created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+      )
+    `)
   }
 
   return db
@@ -614,11 +632,13 @@ async function processVoiceAttachment({
   thread,
   projectDirectory,
   isNewThread = false,
+  appId,
 }: {
   message: Message
   thread: ThreadChannel
   projectDirectory?: string
   isNewThread?: boolean
+  appId?: string
 }): Promise<string | null> {
   const audioAttachment = Array.from(message.attachments.values()).find(
     (attachment) => attachment.contentType?.startsWith('audio/'),
@@ -660,9 +680,22 @@ async function processVoiceAttachment({
     }
   }
 
+  // Get OpenAI API key from database if appId is provided
+  let openaiApiKey: string | undefined
+  if (appId) {
+    const apiKeys = getDatabase()
+      .prepare('SELECT openai_api_key FROM bot_api_keys WHERE app_id = ?')
+      .get(appId) as { openai_api_key: string | null } | undefined
+    
+    if (apiKeys?.openai_api_key) {
+      openaiApiKey = apiKeys.openai_api_key
+    }
+  }
+
   const transcription = await transcribeAudio({
     audio: audioBuffer,
     prompt: transcriptionPrompt,
+    openaiApiKey,
   })
 
   voiceLogger.log(
@@ -1635,6 +1668,7 @@ export async function startDiscordBot({
           message,
           thread,
           projectDirectory,
+          appId: currentAppId,
         })
         if (transcription) {
           messageContent = transcription
@@ -1727,6 +1761,7 @@ export async function startDiscordBot({
           thread,
           projectDirectory,
           isNewThread: true,
+          appId: currentAppId,
         })
         if (transcription) {
           messageContent = transcription
@@ -2224,6 +2259,7 @@ export async function startDiscordBot({
           connection,
           guildId: newState.guild.id,
           channelId: voiceChannel.id,
+          appId: currentAppId!,
         })
 
         // Handle connection state changes

@@ -223,9 +223,9 @@ async function run({ restart, addChannels }: CliOptions) {
         "3. Copy the token (you won't be able to see it again!)",
       'Step 3: Get Bot Token',
     )
-
     const tokenInput = await password({
-      message: 'Enter your Discord Bot Token (will be hidden):',
+      message:
+        'Enter your Discord Bot Token (from "Bot" section - click "Reset Token" if needed):',
       validate(value) {
         if (!value) return 'Bot token is required'
         if (value.length < 50) return 'Invalid token format (too short)'
@@ -237,6 +237,43 @@ async function run({ restart, addChannels }: CliOptions) {
       process.exit(0)
     }
     token = tokenInput
+
+    const geminiApiKey = await password({
+      message:
+        'Enter your Gemini API Key for voice channels (optional, press Enter to skip):',
+      validate(value) {
+        if (value && value.length < 10) return 'Invalid API key format'
+        return undefined
+      },
+    })
+
+    if (isCancel(geminiApiKey)) {
+      cancel('Setup cancelled')
+      process.exit(0)
+    }
+
+    const openaiApiKey = await password({
+      message:
+        'Enter your OpenAI API Key for transcribing user text (optional, press Enter to skip):',
+      validate(value) {
+        if (value && !value.startsWith('sk-'))
+          return 'OpenAI API key should start with "sk-"'
+        return undefined
+      },
+    })
+
+    if (isCancel(openaiApiKey)) {
+      cancel('Setup cancelled')
+      process.exit(0)
+    }
+
+    // Store API keys in database
+    if (geminiApiKey || openaiApiKey) {
+      db.prepare(
+        'INSERT OR REPLACE INTO bot_api_keys (app_id, gemini_api_key, openai_api_key) VALUES (?, ?, ?)',
+      ).run(appId, geminiApiKey || null, openaiApiKey || null)
+      note('API keys saved successfully', 'API Keys Stored')
+    }
 
     note(
       `Bot install URL:\n${generateBotInstallUrl({ clientId: appId })}\n\nYou MUST install the bot in your Discord server before continuing.`,

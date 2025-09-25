@@ -1,4 +1,4 @@
-import { openai } from '@ai-sdk/openai'
+import { createOpenAI } from '@ai-sdk/openai'
 import { experimental_transcribe as transcribe } from 'ai'
 import { createLogger } from './logger.js'
 
@@ -9,15 +9,29 @@ export async function transcribeAudio({
   prompt,
   language,
   temperature,
+  openaiApiKey,
 }: {
   audio: Buffer | Uint8Array | ArrayBuffer | string
   prompt?: string
   language?: string
   temperature?: number
+  openaiApiKey?: string
 }): Promise<string> {
   try {
+    // Use provided API key or fall back to environment variable
+    const apiKey = openaiApiKey || process.env.OPENAI_API_KEY
+    
+    if (!apiKey) {
+      throw new Error('OpenAI API key is required for audio transcription')
+    }
+    
+    // Create OpenAI provider instance with the API key
+    const openaiProvider = createOpenAI({
+      apiKey,
+    })
+    
     const result = await transcribe({
-      model: openai.transcription('whisper-1'),
+      model: openaiProvider.transcription('whisper-1'),
       audio,
       ...(prompt || language || temperature !== undefined
         ? {
