@@ -2,7 +2,7 @@
   "name": "kimaki",
   "module": "index.ts",
   "type": "module",
-  "version": "0.1.0",
+  "version": "0.1.2",
   "scripts": {
     "dev": "pnpm tsc && DEBUG=1 tsx --env-file .env src/cli.ts",
     "prepublishOnly": "pnpm tsc",
@@ -15,7 +15,7 @@
     "register-commands": "tsx scripts/register-commands.ts"
   },
   "repository": "https://github.com/remorses/kimaki",
-  "bin": "bin.sh",
+  "bin": "bin.js",
   "files": [
     "dist",
     "src",

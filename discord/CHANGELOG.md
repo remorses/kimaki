@@ -1,5 +1,17 @@
 # Changelog
 
+## 0.1.2
+
+### Patch Changes
+
+- fix entrypoint bin.sh
+
+## 0.1.1
+
+### Patch Changes
+
+- fix woring getClient call
+
 ## 0.1.0
 
 ### Minor Changes
