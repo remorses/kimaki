@@ -1,6 +1,7 @@
 import type { OpencodeClient } from '@opencode-ai/sdk'
 import { format } from 'date-fns'
 import * as yaml from 'js-yaml'
+import { extractNonXmlContent } from './xml.js'
 
 export class ShareMarkdown {
   constructor(private client: OpencodeClient) {}
@@ -95,8 +96,11 @@ export class ShareMarkdown {
 
       for (const part of parts) {
         if (part.type === 'text' && part.text) {
-          lines.push(part.text)
-          lines.push('')
+          const cleanedText = extractNonXmlContent(part.text)
+          if (cleanedText.trim()) {
+            lines.push(cleanedText)
+            lines.push('')
+          }
         } else if (part.type === 'file') {
           lines.push(`📎 **Attachment**: ${part.filename || 'unnamed file'}`)
           if (part.url) {

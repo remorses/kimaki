@@ -26,11 +26,12 @@ export async function getTools({
     sessionId: string
     messageId: string
     data?: { info: AssistantMessage }
-    error?: any
+    error?: unknown
     markdown?: string
   }) => void
 }) {
-  const client = await initializeOpencodeForDirectory(directory)
+  const getClient = await initializeOpencodeForDirectory(directory)
+  const client = getClient()
 
   const markdownRenderer = new ShareMarkdown(client)
 
@@ -41,7 +42,7 @@ export async function getTools({
   const getSessionModel = async (
     sessionId: string,
   ): Promise<{ providerID: string; modelID: string } | undefined> => {
-    const res = await client.session.messages({ path: { id: sessionId } })
+    const res = await getClient().session.messages({ path: { id: sessionId } })
     const data = res.data
     if (!data || data.length === 0) return undefined
     for (let i = data.length - 1; i >= 0; i--) {
@@ -68,8 +69,8 @@ export async function getTools({
         const sessionModel = await getSessionModel(sessionId)
 
         // do not await
-        client.session
-          .prompt({
+        getClient()
+          .session.prompt({
             path: { id: sessionId },
 
             body: {
@@ -132,7 +133,7 @@ export async function getTools({
         }
 
         try {
-          const session = await client.session.create({
+          const session = await getClient().session.create({
             body: {
               title: title || message.slice(0, 50),
             },
@@ -143,8 +144,8 @@ export async function getTools({
           }
 
           // do not await
-          client.session
-            .prompt({
+          getClient()
+            .session.prompt({
               path: { id: session.data.id },
               body: {
                 parts: [{ type: 'text', text: message }],
@@ -193,7 +194,7 @@ export async function getTools({
       inputSchema: z.object({}),
       execute: async () => {
         toolsLogger.log(`Listing opencode sessions`)
-        const sessions = await client.session.list()
+        const sessions = await getClient().session.list()
 
         if (!sessions.data) {
           return { success: false, error: 'No sessions found' }
@@ -209,7 +210,7 @@ export async function getTools({
           const finishedAt = session.time.updated
           const status = await (async () => {
             if (session.revert) return 'error'
-            const messagesResponse = await client.session.messages({
+            const messagesResponse = await getClient().session.messages({
               path: { id: session.id },
             })
             const messages = messagesResponse.data || []
@@ -256,7 +257,7 @@ export async function getTools({
         query: z.string().describe('The search query for files'),
       }),
       execute: async ({ folder, query }) => {
-        const results = await client.find.files({
+        const results = await getClient().find.files({
           query: {
             query,
             directory: folder,
@@ -281,7 +282,7 @@ export async function getTools({
       }),
       execute: async ({ sessionId, lastAssistantOnly = false }) => {
         if (lastAssistantOnly) {
-          const messages = await client.session.messages({
+          const messages = await getClient().session.messages({
             path: { id: sessionId },
           })
 
@@ -322,7 +323,7 @@ export async function getTools({
             sessionID: sessionId,
           })
 
-          const messages = await client.session.messages({
+          const messages = await getClient().session.messages({
             path: { id: sessionId },
           })
           const lastMessage = messages.data?.[messages.data.length - 1]
@@ -350,7 +351,7 @@ export async function getTools({
       }),
       execute: async ({ sessionId }) => {
         try {
-          const result = await client.session.abort({
+          const result = await getClient().session.abort({
             path: { id: sessionId },
           })
 
@@ -381,7 +382,7 @@ export async function getTools({
       inputSchema: z.object({}),
       execute: async () => {
         try {
-          const providersResponse = await client.config.providers({})
+          const providersResponse = await getClient().config.providers({})
           const providers: Provider[] = providersResponse.data?.providers || []
 
           const models: Array<{ providerId: string; modelId: string }> = []

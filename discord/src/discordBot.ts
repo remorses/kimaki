@@ -40,7 +40,7 @@ import { PassThrough, Transform, type TransformCallback } from 'node:stream'
 import * as prism from 'prism-media'
 import dedent from 'string-dedent'
 import { transcribeAudio } from './voice.js'
-import { extractTagsArrays } from './xml.js'
+import { extractTagsArrays, extractNonXmlContent } from './xml.js'
 import prettyMilliseconds from 'pretty-ms'
 import type { Session } from '@google/genai'
 import { createLogger } from './logger.js'
@@ -1942,10 +1942,16 @@ export async function startDiscordBot({
                   const userParts = message.parts.filter(
                     (p) => p.type === 'text',
                   )
-                  const userText = userParts
-                    .map((p) => (typeof p.text === 'string' ? p.text : ''))
+                  const userTexts = userParts
+                    .map((p) => {
+                      if (typeof p.text === 'string') {
+                        return extractNonXmlContent(p.text)
+                      }
+                      return ''
+                    })
                     .filter((t) => t.trim())
-                    .join('\n\n')
+                  
+                  const userText = userTexts.join('\n\n')
                   if (userText) {
                     // Escape backticks in user messages to prevent formatting issues
                     const escapedText = escapeDiscordFormatting(userText)

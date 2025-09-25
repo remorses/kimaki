@@ -110,3 +110,8 @@ export function extractTagsArrays<T extends string>({
 
   return result as Record<T, string[]> & { others: string[] }
 }
+
+export function extractNonXmlContent(xml: string): string {
+  const result = extractTagsArrays({ xml, tags: [] })
+  return result.others.join('\n')
+}
