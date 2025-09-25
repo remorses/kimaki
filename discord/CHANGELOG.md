@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.1.0
+
+### Minor Changes
+
+- init
+
 ## 2025-09-24 09:20
 
 - Add comprehensive error handling to prevent process crashes from corrupted audio data
