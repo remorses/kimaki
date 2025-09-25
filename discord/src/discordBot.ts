@@ -79,6 +79,9 @@ const voiceConnections = new Map<
   }
 >()
 
+// Map of directory to retry count for server restarts
+const serverRetryCount = new Map<string, number>()
+
 let db: Database.Database | null = null
 
 function convertToMono16k(buffer: Buffer): Buffer {
@@ -749,9 +752,7 @@ function getKimakiMetadata(textChannel: TextChannel | null): {
   return { projectDirectory, channelAppId }
 }
 
-export async function initializeOpencodeForDirectory(
-  directory: string,
-): Promise<OpencodeClient> {
+export async function initializeOpencodeForDirectory(directory: string) {
   // console.log(`[OPENCODE] Initializing for directory: ${directory}`)
 
   // Check if we already have a server for this directory
@@ -760,7 +761,15 @@ export async function initializeOpencodeForDirectory(
     opencodeLogger.log(
       `Reusing existing server on port ${existing.port} for directory: ${directory}`,
     )
-    return existing.client
+    return () => {
+      const entry = opencodeServers.get(directory)
+      if (!entry?.client) {
+        throw new Error(
+          `OpenCode server for directory "${directory}" is in an error state (no client available)`,
+        )
+      }
+      return entry.client
+    }
   }
 
   const port = await getOpenPort()
@@ -800,6 +809,25 @@ export async function initializeOpencodeForDirectory(
       code,
     )
     opencodeServers.delete(directory)
+    if (code !== 0) {
+      const retryCount = serverRetryCount.get(directory) || 0
+      if (retryCount < 5) {
+        serverRetryCount.set(directory, retryCount + 1)
+        opencodeLogger.log(
+          `Restarting server for directory: ${directory} (attempt ${retryCount + 1}/5)`,
+        )
+        initializeOpencodeForDirectory(directory).catch((e) => {
+          opencodeLogger.error(`Failed to restart opencode server:`, e)
+        })
+      } else {
+        opencodeLogger.error(
+          `Server for ${directory} crashed too many times (5), not restarting`,
+        )
+      }
+    } else {
+      // Reset retry count on clean exit
+      serverRetryCount.delete(directory)
+    }
   })
 
   await waitForServer(port)
@@ -811,7 +839,15 @@ export async function initializeOpencodeForDirectory(
     port,
   })
 
-  return client
+  return () => {
+    const entry = opencodeServers.get(directory)
+    if (!entry?.client) {
+      throw new Error(
+        `OpenCode server for directory "${directory}" is in an error state (no client available)`,
+      )
+    }
+    return entry.client
+  }
 }
 
 function formatPart(part: Part): string {
@@ -971,7 +1007,7 @@ async function handleOpencodeSession(
 
   // Note: We'll cancel the existing request after we have the session ID
 
-  const client = await initializeOpencodeForDirectory(directory)
+  const getClient = await initializeOpencodeForDirectory(directory)
 
   // Get session ID from database
   const row = getDatabase()
@@ -983,7 +1019,7 @@ async function handleOpencodeSession(
   if (sessionId) {
     sessionLogger.log(`Attempting to reuse existing session ${sessionId}`)
     try {
-      const sessionResponse = await client.session.get({
+      const sessionResponse = await getClient().session.get({
         path: { id: sessionId },
       })
       session = sessionResponse.data
@@ -999,7 +1035,7 @@ async function handleOpencodeSession(
     voiceLogger.log(
       `[SESSION] Creating new session with title: "${prompt.slice(0, 80)}"`,
     )
-    const sessionResponse = await client.session.create({
+    const sessionResponse = await getClient().session.create({
       body: { title: prompt.slice(0, 80) },
     })
     session = sessionResponse.data
@@ -1034,7 +1070,7 @@ async function handleOpencodeSession(
   // Store this controller for this session
   abortControllers.set(session.id, abortController)
 
-  const eventsResult = await client.event.subscribe({
+  const eventsResult = await getClient().event.subscribe({
     signal: abortController.signal,
   })
   const events = eventsResult.stream
@@ -1343,7 +1379,7 @@ async function handleOpencodeSession(
     // Start the event handler
     const eventHandlerPromise = eventHandler()
 
-    const response = await client.session.prompt({
+    const response = await getClient().session.prompt({
       path: { id: session.id },
       body: {
         parts: [{ type: 'text', text: prompt }],
@@ -1753,11 +1789,11 @@ export async function startDiscordBot({
 
             try {
               // Get OpenCode client for this directory
-              const client =
+              const getClient =
                 await initializeOpencodeForDirectory(projectDirectory)
 
               // List sessions
-              const sessionsResponse = await client.session.list()
+              const sessionsResponse = await getClient().session.list()
               if (!sessionsResponse.data) {
                 await interaction.respond([])
                 return
@@ -1844,11 +1880,11 @@ export async function startDiscordBot({
 
             try {
               // Initialize OpenCode client for the directory
-              const client =
+              const getClient =
                 await initializeOpencodeForDirectory(projectDirectory)
 
               // Get session title
-              const sessionResponse = await client.session.get({
+              const sessionResponse = await getClient().session.get({
                 path: { id: sessionId },
               })
 
@@ -1878,7 +1914,7 @@ export async function startDiscordBot({
               )
 
               // Fetch all messages for the session
-              const messagesResponse = await client.session.messages({
+              const messagesResponse = await getClient().session.messages({
                 path: { id: sessionId },
               })
 
