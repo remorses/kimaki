@@ -240,7 +240,7 @@ async function run({ restart, addChannels }: CliOptions) {
 
     const geminiApiKey = await password({
       message:
-        'Enter your Gemini API Key for voice channels (optional, press Enter to skip):',
+        'Enter your Gemini API Key for voice channels and audio transcription (optional, press Enter to skip):',
       validate(value) {
         if (value && value.length < 10) return 'Invalid API key format'
         return undefined
@@ -252,27 +252,12 @@ async function run({ restart, addChannels }: CliOptions) {
       process.exit(0)
     }
 
-    const openaiApiKey = await password({
-      message:
-        'Enter your OpenAI API Key for transcribing user text (optional, press Enter to skip):',
-      validate(value) {
-        if (value && !value.startsWith('sk-'))
-          return 'OpenAI API key should start with "sk-"'
-        return undefined
-      },
-    })
-
-    if (isCancel(openaiApiKey)) {
-      cancel('Setup cancelled')
-      process.exit(0)
-    }
-
-    // Store API keys in database
-    if (geminiApiKey || openaiApiKey) {
+    // Store API key in database
+    if (geminiApiKey) {
       db.prepare(
-        'INSERT OR REPLACE INTO bot_api_keys (app_id, gemini_api_key, openai_api_key) VALUES (?, ?, ?)',
-      ).run(appId, geminiApiKey || null, openaiApiKey || null)
-      note('API keys saved successfully', 'API Keys Stored')
+        'INSERT OR REPLACE INTO bot_api_keys (app_id, gemini_api_key) VALUES (?, ?)',
+      ).run(appId, geminiApiKey || null)
+      note('API key saved successfully', 'API Key Stored')
     }
 
     note(

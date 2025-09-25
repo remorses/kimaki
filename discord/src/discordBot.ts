@@ -494,7 +494,6 @@ export function getDatabase(): Database.Database {
       CREATE TABLE IF NOT EXISTS bot_api_keys (
         app_id TEXT PRIMARY KEY,
         gemini_api_key TEXT,
-        openai_api_key TEXT,
         created_at DATETIME DEFAULT CURRENT_TIMESTAMP
       )
     `)
@@ -680,22 +679,22 @@ async function processVoiceAttachment({
     }
   }
 
-  // Get OpenAI API key from database if appId is provided
-  let openaiApiKey: string | undefined
+  // Get Gemini API key from database if appId is provided
+  let geminiApiKey: string | undefined
   if (appId) {
     const apiKeys = getDatabase()
-      .prepare('SELECT openai_api_key FROM bot_api_keys WHERE app_id = ?')
-      .get(appId) as { openai_api_key: string | null } | undefined
+      .prepare('SELECT gemini_api_key FROM bot_api_keys WHERE app_id = ?')
+      .get(appId) as { gemini_api_key: string | null } | undefined
     
-    if (apiKeys?.openai_api_key) {
-      openaiApiKey = apiKeys.openai_api_key
+    if (apiKeys?.gemini_api_key) {
+      geminiApiKey = apiKeys.gemini_api_key
     }
   }
 
   const transcription = await transcribeAudio({
     audio: audioBuffer,
     prompt: transcriptionPrompt,
-    openaiApiKey,
+    geminiApiKey,
   })
 
   voiceLogger.log(

@@ -1,5 +1,12 @@
 # Changelog
 
+## 2025-09-25
+
+- Switch audio transcription from OpenAI to Gemini for unified API usage
+- Store Gemini API key in database for both voice channels and audio transcription  
+- Remove OpenAI API key requirement and dependency
+- Update CLI to only prompt for Gemini API key with clearer messaging
+
 ## 0.1.3
 
 ### Patch Changes
