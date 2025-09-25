@@ -24,6 +24,7 @@ import type { OpencodeClient } from '@opencode-ai/sdk'
 import {
   Events,
   ChannelType,
+  type CategoryChannel,
   type Guild,
   REST,
   Routes,
@@ -86,6 +87,25 @@ async function registerCommands(token: string, appId: string) {
     cliLogger.error('COMMANDS: Failed to register slash commands:', error)
     throw error
   }
+}
+
+async function ensureKimakiCategory(guild: Guild): Promise<CategoryChannel> {
+  const existingCategory = guild.channels.cache.find((channel): channel is CategoryChannel => {
+    if (channel.type !== ChannelType.GuildCategory) {
+      return false
+    }
+
+    return channel.name.toLowerCase() === 'kimaki'
+  })
+
+  if (existingCategory) {
+    return existingCategory
+  }
+
+  return guild.channels.create({
+    name: 'Kimaki',
+    type: ChannelType.GuildCategory,
+  })
 }
 
 async function run({ restart, addChannels }: CliOptions) {
@@ -386,15 +406,19 @@ async function run({ restart, addChannels }: CliOptions) {
           .slice(0, 100)
 
         try {
+          const kimakiCategory = await ensureKimakiCategory(targetGuild)
+
           const textChannel = await targetGuild.channels.create({
             name: channelName,
             type: ChannelType.GuildText,
+            parent: kimakiCategory,
             topic: `<kimaki><directory>${project.worktree}</directory><app>${appId}</app></kimaki>`,
           })
 
           const voiceChannel = await targetGuild.channels.create({
             name: channelName,
             type: ChannelType.GuildVoice,
+            parent: kimakiCategory,
           })
 
           db.prepare(

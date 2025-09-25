@@ -2,21 +2,7 @@
     <br/>
     <br/>
     <h3>kimaki</h3>
-    <p>IronMan's Jarvis for coding agents</p>
+    <p>IronMan's Jarvis for coding agents, inside Discord</p>
     <br/>
     <br/>
 </div>
-
-## Usage
-
-First, install [opencode](https://github.com/sst/opencode):
-
-```bash
-curl -fsSL https://opencode.ai/install | bash
-```
-
-Then run kimaki (requires headphones):
-
-```bash
-GEMINI_API_KEY=... npx -y kimaki
-```
