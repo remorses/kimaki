@@ -324,28 +324,16 @@ async function run({ restart, addChannels }: CliOptions) {
 
   s.start('Starting OpenCode server...')
 
-  let client: OpencodeClient
-
-  try {
-    const currentDir = process.cwd()
-    client = await initializeOpencodeForDirectory(currentDir)
-    s.stop('OpenCode server started!')
-  } catch (error) {
-    s.stop('Failed to start OpenCode')
-    cliLogger.error(
-      'Error:',
-      error instanceof Error ? error.message : String(error),
-    )
-    discordClient.destroy()
-    process.exit(EXIT_NO_RESTART)
-  }
+  const currentDir = process.cwd()
+  let getClient = await initializeOpencodeForDirectory(currentDir)
+  s.stop('OpenCode server started!')
 
   s.start('Fetching OpenCode projects...')
 
   let projects: Project[] = []
 
   try {
-    const projectsResponse = await client.project.list()
+    const projectsResponse = await getClient().project.list()
     if (!projectsResponse.data) {
       throw new Error('Failed to fetch projects')
     }
