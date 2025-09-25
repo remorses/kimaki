@@ -334,9 +334,9 @@ async function setupVoiceHandling({
       .on('data', (frame: Buffer) => {
         // Check if a newer speaking session has started
         if (currentSessionCount !== speakingSessionCount) {
-          voiceLogger.log(
-            `Skipping audio frame from session ${currentSessionCount} because newer session ${speakingSessionCount} has started`,
-          )
+          // voiceLogger.log(
+          //   `Skipping audio frame from session ${currentSessionCount} because newer session ${speakingSessionCount} has started`,
+          // )
           return
         }
 
@@ -346,7 +346,7 @@ async function setupVoiceHandling({
           )
           return
         }
-        voiceLogger.debug('User audio chunk length', frame.length)
+        // voiceLogger.debug('User audio chunk length', frame.length)
 
         // Write to PCM file if stream exists
         voiceData.userAudioStream?.write(frame)
@@ -1950,7 +1950,7 @@ export async function startDiscordBot({
                       return ''
                     })
                     .filter((t) => t.trim())
-                  
+
                   const userText = userTexts.join('\n\n')
                   if (userText) {
                     // Escape backticks in user messages to prevent formatting issues
