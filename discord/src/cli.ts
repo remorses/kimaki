@@ -13,7 +13,7 @@ import {
   multiselect,
   spinner,
 } from '@clack/prompts'
-import { generateBotInstallUrl } from './utils.js'
+import { deduplicateByKey, generateBotInstallUrl } from './utils.js'
 import {
   getChannelsWithDescriptions,
   createDiscordClient,
@@ -139,7 +139,6 @@ async function ensureKimakiCategory(guild: Guild): Promise<CategoryChannel> {
 
 async function run({ restart, addChannels }: CliOptions) {
   const forceSetup = Boolean(restart)
-  const shouldAddChannels = Boolean(addChannels)
 
   intro('🤖 Discord Bot Setup')
 
@@ -152,6 +151,9 @@ async function run({ restart, addChannels }: CliOptions) {
       'SELECT app_id, token FROM bot_tokens ORDER BY created_at DESC LIMIT 1',
     )
     .get() as { app_id: string; token: string } | undefined
+
+  const shouldAddChannels =
+    !existingBot?.token || forceSetup || Boolean(addChannels)
 
   if (existingBot && !forceSetup) {
     appId = existingBot.app_id
@@ -365,11 +367,15 @@ async function run({ restart, addChannels }: CliOptions) {
   }
 
   const existingDirs = kimakiChannels.flatMap(({ channels }) =>
-    channels.map((ch) => ch.kimakiDirectory).filter(Boolean),
+    channels
+      .filter((ch) => ch.kimakiDirectory && ch.kimakiApp === appId)
+      .map((ch) => ch.kimakiDirectory)
+      .filter(Boolean),
   )
 
-  const availableProjects = projects.filter(
-    (project) => !existingDirs.includes(project.worktree),
+  const availableProjects = deduplicateByKey(
+    projects.filter((project) => !existingDirs.includes(project.worktree)),
+    (x) => x.worktree,
   )
 
   if (availableProjects.length === 0) {
@@ -379,7 +385,10 @@ async function run({ restart, addChannels }: CliOptions) {
     )
   }
 
-  if (shouldAddChannels && availableProjects.length > 0) {
+  if (
+    (!existingDirs?.length && availableProjects.length > 0) ||
+    shouldAddChannels
+  ) {
     const selectedProjects = await multiselect({
       message: 'Select projects to create Discord channels for:',
       options: availableProjects.map((project) => ({
@@ -425,7 +434,7 @@ async function run({ restart, addChannels }: CliOptions) {
         if (!project) continue
 
         const baseName = path.basename(project.worktree)
-        const channelName = `kimaki-${baseName}`
+        const channelName = `${baseName}`
           .toLowerCase()
           .replace(/[^a-z0-9-]/g, '-')
           .slice(0, 100)

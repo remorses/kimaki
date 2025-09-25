@@ -48,26 +48,15 @@ export function generateBotInstallUrl({
   return url.toString()
 }
 
-function getRequiredBotPermissions(): bigint[] {
-  return [
-    PermissionsBitField.Flags.ViewChannel,
-    PermissionsBitField.Flags.ManageChannels,
-    PermissionsBitField.Flags.SendMessages,
-    PermissionsBitField.Flags.SendMessagesInThreads,
-    PermissionsBitField.Flags.CreatePublicThreads,
-    PermissionsBitField.Flags.ManageThreads,
-    PermissionsBitField.Flags.ReadMessageHistory,
-    PermissionsBitField.Flags.AddReactions,
-    PermissionsBitField.Flags.ManageMessages,
-    PermissionsBitField.Flags.UseExternalEmojis,
-    PermissionsBitField.Flags.AttachFiles,
-    PermissionsBitField.Flags.Connect,
-    PermissionsBitField.Flags.Speak,
-  ]
-}
 
-function getPermissionNames(): string[] {
-  const permissions = getRequiredBotPermissions()
-  const permissionsBitField = new PermissionsBitField(permissions)
-  return permissionsBitField.toArray()
+export function deduplicateByKey<T, K>(arr: T[], keyFn: (item: T) => K): T[] {
+  const seen = new Set<K>()
+  return arr.filter(item => {
+    const key = keyFn(item)
+    if (seen.has(key)) {
+      return false
+    }
+    seen.add(key)
+    return true
+  })
 }
