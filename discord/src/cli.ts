@@ -216,12 +216,6 @@ async function run({ restart, addChannels }: CliOptions) {
     }
     token = tokenInput
 
-    db.prepare(
-      'INSERT OR REPLACE INTO bot_tokens (app_id, token) VALUES (?, ?)',
-    ).run(appId, token)
-
-    note('Token saved to database', 'Credentials Stored')
-
     note(
       `Bot install URL:\n${generateBotInstallUrl({ clientId: appId })}\n\nYou MUST install the bot in your Discord server before continuing.`,
       'Step 3: Install Bot to Server',
@@ -280,6 +274,9 @@ async function run({ restart, addChannels }: CliOptions) {
     )
     process.exit(EXIT_NO_RESTART)
   }
+  db.prepare(
+    'INSERT OR REPLACE INTO bot_tokens (app_id, token) VALUES (?, ?)',
+  ).run(appId, token)
 
   for (const { guild, channels } of kimakiChannels) {
     for (const channel of channels) {
