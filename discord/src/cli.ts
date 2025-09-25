@@ -197,9 +197,29 @@ async function run({ restart, addChannels }: CliOptions) {
 
     note(
       '1. Go to the "Bot" section in the left sidebar\n' +
-        '2. Click "Reset Token" to generate a new bot token\n' +
+        '2. Scroll down to "Privileged Gateway Intents"\n' +
+        '3. Enable these intents by toggling them ON:\n' +
+        '   • SERVER MEMBERS INTENT\n' +
+        '   • MESSAGE CONTENT INTENT\n' +
+        '4. Click "Save Changes" at the bottom',
+      'Step 2: Enable Required Intents',
+    )
+
+    const intentsConfirmed = await text({
+      message: 'Press Enter after enabling both intents:',
+      placeholder: 'Enter',
+    })
+
+    if (isCancel(intentsConfirmed)) {
+      cancel('Setup cancelled')
+      process.exit(0)
+    }
+
+    note(
+      '1. Still in the "Bot" section\n' +
+        '2. Click "Reset Token" to generate a new bot token (in case of errors try again)\n' +
         "3. Copy the token (you won't be able to see it again!)",
-      'Step 2: Get Bot Token',
+      'Step 3: Get Bot Token',
     )
 
     const tokenInput = await password({
@@ -218,12 +238,12 @@ async function run({ restart, addChannels }: CliOptions) {
 
     note(
       `Bot install URL:\n${generateBotInstallUrl({ clientId: appId })}\n\nYou MUST install the bot in your Discord server before continuing.`,
-      'Step 3: Install Bot to Server',
+      'Step 4: Install Bot to Server',
     )
 
-    const installed = await confirm({
+    const installed = await text({
       message: 'Press Enter AFTER you have installed the bot in your server:',
-      initialValue: true,
+      placeholder: 'Enter',
     })
 
     if (isCancel(installed)) {
