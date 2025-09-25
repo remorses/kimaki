@@ -1283,10 +1283,14 @@ async function handleOpencodeSession(
         sessionLogger.log(`Stopped typing for session`)
       }
 
-      // Send duration message
-      const sessionDuration = prettyMilliseconds(Date.now() - sessionStartTime)
-      await sendThreadMessage(thread, `_Completed in ${sessionDuration}_`)
-      sessionLogger.log(`DURATION: Session completed in ${sessionDuration}`)
+      // Only send duration message if request was not aborted or was aborted with 'finished' reason
+      if (!abortController.signal.aborted || abortController.signal.reason === 'finished') {
+        const sessionDuration = prettyMilliseconds(Date.now() - sessionStartTime)
+        await sendThreadMessage(thread, `_Completed in ${sessionDuration}_`)
+        sessionLogger.log(`DURATION: Session completed in ${sessionDuration}`)
+      } else {
+        sessionLogger.log(`Session was aborted (reason: ${abortController.signal.reason}), skipping duration message`)
+      }
     }
   }
 
