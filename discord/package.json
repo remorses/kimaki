@@ -29,9 +29,6 @@
     "@types/node": "^24.3.0",
     "tsx": "^4.20.5"
   },
-  "peerDependencies": {
-    "typescript": "^5"
-  },
   "dependencies": {
     "@ai-sdk/openai": "^2.0.23",
     "@clack/prompts": "^0.11.0",
