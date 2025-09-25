@@ -15,7 +15,7 @@ Kimaki will store the bot state in a local sqlite database. You should keep the 
 
 ## Usage
 
-`npx -y kimaki`
+`npx -y kimaki@latest`
 
 The cli will ask you for
 
