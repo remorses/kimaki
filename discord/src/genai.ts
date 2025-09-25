@@ -8,8 +8,9 @@ import {
 import type { CallableTool } from '@google/genai'
 import { writeFile } from 'fs'
 import type { Tool as AITool } from 'ai'
-import { aiToolToCallableTool } from '@xmorse/liveapi'
+
 import { createLogger } from './logger.js'
+import { aiToolToCallableTool } from './ai-tool-to-genai.js'
 
 const genaiLogger = createLogger('GENAI')
 

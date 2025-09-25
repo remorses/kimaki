@@ -29,12 +29,12 @@
     "tsx": "^4.20.5"
   },
   "dependencies": {
-    "@opencode-ai/sdk": "^0.11.0",
     "@ai-sdk/openai": "^2.0.23",
     "@clack/prompts": "^0.11.0",
     "@discordjs/opus": "^0.10.0",
     "@discordjs/voice": "^0.19.0",
     "@google/genai": "^1.16.0",
+    "@opencode-ai/sdk": "^0.11.0",
     "@purinton/resampler": "^1.0.4",
     "@snazzah/davey": "^0.1.6",
     "ai": "^5.0.29",
@@ -43,6 +43,7 @@
     "date-fns": "^4.1.0",
     "discord.js": "^14.16.3",
     "domhandler": "^5.0.3",
+    "go-try": "^3.0.2",
     "htmlparser2": "^10.0.0",
     "js-yaml": "^4.1.0",
     "marked": "^16.3.0",

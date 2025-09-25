@@ -705,6 +705,74 @@ function escapeInlineCode(text: string): string {
     .replace(/\|\|/g, '\\|\\|') // Double pipes (spoiler syntax)
 }
 
+function resolveTextChannel(
+  channel: TextChannel | ThreadChannel | null | undefined,
+): TextChannel | null {
+  if (!channel) {
+    return null
+  }
+
+  if (channel.type === ChannelType.GuildText) {
+    return channel as TextChannel
+  }
+
+  if (
+    channel.type === ChannelType.PublicThread ||
+    channel.type === ChannelType.PrivateThread ||
+    channel.type === ChannelType.AnnouncementThread
+  ) {
+    const parent = channel.parent
+    if (parent?.type === ChannelType.GuildText) {
+      return parent as TextChannel
+    }
+  }
+
+  return null
+}
+
+function getKimakiMetadata(textChannel: TextChannel | null): {
+  projectDirectory?: string
+  channelAppId?: string
+} {
+  if (!textChannel?.topic) {
+    return {}
+  }
+
+  const extracted = extractTagsArrays({
+    xml: textChannel.topic,
+    tags: ['kimaki.directory', 'kimaki.app'],
+  })
+
+  const projectDirectory = extracted['kimaki.directory']?.[0]?.trim()
+  const channelAppId = extracted['kimaki.app']?.[0]?.trim()
+
+  return { projectDirectory, channelAppId }
+}
+
+function getFileAutocompleteState(value: string | null | undefined): {
+  prefix: string
+  token: string
+  selected: Set<string>
+} {
+  const input = value ?? ''
+  const match = input.match(/([^,\s]*)$/)
+  const token = match ? match[1] || '' : ''
+  const prefix = input.slice(0, input.length - token.length)
+
+  const parts = input
+    .split(/[\s,]+/)
+    .map((part) => part.trim())
+    .filter(Boolean)
+
+  const selected = new Set(parts)
+  const trimmedToken = token.trim()
+  if (trimmedToken) {
+    selected.delete(trimmedToken)
+  }
+
+  return { prefix, token, selected }
+}
+
 export async function initializeOpencodeForDirectory(
   directory: string,
 ): Promise<OpencodeClient> {
@@ -816,6 +884,7 @@ function formatPart(part: Part): string {
               }
               return `\`${statusIcon}\` ${todo.content}`
             })
+            .filter(Boolean)
             .join('\n')
           language = ''
         }
@@ -1684,13 +1753,17 @@ export async function startDiscordBot({
               interaction.channel &&
               interaction.channel.type === ChannelType.GuildText
             ) {
-              const textChannel = interaction.channel as TextChannel
-              if (textChannel.topic) {
-                const extracted = extractTagsArrays({
-                  xml: textChannel.topic,
-                  tags: ['kimaki.directory'],
-                })
-                projectDirectory = extracted['kimaki.directory']?.[0]?.trim()
+              const textChannel = resolveTextChannel(
+                interaction.channel as TextChannel | ThreadChannel | null,
+              )
+              if (textChannel) {
+                const { projectDirectory: directory, channelAppId } =
+                  getKimakiMetadata(textChannel)
+                if (channelAppId && channelAppId !== currentAppId) {
+                  await interaction.respond([])
+                  return
+                }
+                projectDirectory = directory
               }
             }
 
@@ -1854,7 +1927,10 @@ export async function startDiscordBot({
                   const userParts = message.parts.filter(
                     (p) => p.type === 'text',
                   )
-                  const userText = userParts.map((p) => p.text).join('\n\n')
+                  const userText = userParts
+                    .map((p) => (typeof p.text === 'string' ? p.text : ''))
+                    .filter((t) => t.trim())
+                    .join('\n\n')
                   if (userText) {
                     // Escape backticks in user messages to prevent formatting issues
                     const escapedText = escapeDiscordFormatting(userText)

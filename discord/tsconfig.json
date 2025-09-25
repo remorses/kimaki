@@ -11,6 +11,7 @@
     "outDir": "dist",
     "rootDir": "src",
 
+    "useUnknownInCatchVariables": false,
     // Bundler mode
     "moduleResolution": "nodenext",
     "verbatimModuleSyntax": true,

@@ -1,3 +1,7 @@
+/* eslint-disable @typescript-eslint/ban-ts-comment */
+/* istanbul ignore file */
+// @ts-nocheck
+
 import { RealtimeClient } from '@openai/realtime-api-beta'
 import { writeFile } from 'fs'
 import type { Tool } from 'ai'

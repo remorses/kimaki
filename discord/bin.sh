@@ -6,9 +6,6 @@ set -u -o pipefail
 
 NODE_BIN="${NODE_BIN:-node}"
 
-# Resolve target relative to this script file
-SCRIPT_DIR="$(CDPATH= cd -- "$(dirname -- "${BASH_SOURCE[0]:-$0}")" && pwd)"
-TARGET="${TARGET:-"$SCRIPT_DIR/../dist/cli.js"}"
 
 last_start=0
 
@@ -20,7 +17,7 @@ while :; do
   fi
   last_start=$(date +%s)
 
-  "$NODE_BIN" "$TARGET" "$@"
+  "$NODE_BIN" "./dist/cli.js" "$@"
   code=$?
 
   # Exit cleanly if the app ended OK or via SIGINT/SIGTERM

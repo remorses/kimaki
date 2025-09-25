@@ -8,6 +8,7 @@ import {
   note,
   cancel,
   isCancel,
+  log,
   multiselect,
   spinner,
 } from '@clack/prompts'
@@ -71,6 +72,29 @@ async function registerCommands(token: string, appId: string) {
         return option
       })
       .toJSON(),
+    new SlashCommandBuilder()
+      .setName('session')
+      .setDescription('Start a new OpenCode session')
+      .addStringOption((option) => {
+        option
+          .setName('prompt')
+          .setDescription('Prompt content for the session')
+          .setRequired(true)
+
+        return option
+      })
+      .addStringOption((option) => {
+        option
+          .setName('files')
+          .setDescription(
+            'Files to mention (comma or space separated; autocomplete)',
+          )
+          .setAutocomplete(true)
+          .setMaxLength(6000)
+
+        return option
+      })
+      .toJSON(),
   ]
 
   const rest = new REST().setToken(token)
@@ -80,23 +104,27 @@ async function registerCommands(token: string, appId: string) {
       body: commands,
     })) as any[]
 
-    cliLogger.log(
+    cliLogger.info(
       `COMMANDS: Successfully registered ${data.length} slash commands`,
     )
   } catch (error) {
-    cliLogger.error('COMMANDS: Failed to register slash commands:', error)
+    cliLogger.error(
+      'COMMANDS: Failed to register slash commands: ' + String(error),
+    )
     throw error
   }
 }
 
 async function ensureKimakiCategory(guild: Guild): Promise<CategoryChannel> {
-  const existingCategory = guild.channels.cache.find((channel): channel is CategoryChannel => {
-    if (channel.type !== ChannelType.GuildCategory) {
-      return false
-    }
+  const existingCategory = guild.channels.cache.find(
+    (channel): channel is CategoryChannel => {
+      if (channel.type !== ChannelType.GuildCategory) {
+        return false
+      }
 
-    return channel.name.toLowerCase() === 'kimaki'
-  })
+      return channel.name.toLowerCase() === 'kimaki'
+    },
+  )
 
   if (existingCategory) {
     return existingCategory
@@ -112,7 +140,6 @@ async function run({ restart, addChannels }: CliOptions) {
   const forceSetup = Boolean(restart)
   const shouldAddChannels = Boolean(addChannels)
 
-  cliLogger.log()
   intro('🤖 Discord Bot Setup')
 
   const db = getDatabase()
@@ -128,20 +155,18 @@ async function run({ restart, addChannels }: CliOptions) {
   if (existingBot && !forceSetup) {
     appId = existingBot.app_id
     token = existingBot.token
-    cliLogger.log()
+
     note(
       `Using saved bot credentials:\nApp ID: ${appId}\n\nTo use different credentials, run with --restart`,
       'Existing Bot Found',
     )
 
-    cliLogger.log()
     note(
       `Bot install URL (in case you need to add it to another server):\n${generateBotInstallUrl({ clientId: appId })}`,
       'Install URL',
     )
   } else {
     if (forceSetup && existingBot) {
-      cliLogger.log()
       note('Ignoring saved credentials due to --restart flag', 'Restart Setup')
     }
 
@@ -194,10 +219,8 @@ async function run({ restart, addChannels }: CliOptions) {
       'INSERT OR REPLACE INTO bot_tokens (app_id, token) VALUES (?, ?)',
     ).run(appId, token)
 
-    cliLogger.log()
     note('Token saved to database', 'Credentials Stored')
 
-    cliLogger.log()
     note(
       `Bot install URL:\n${generateBotInstallUrl({ clientId: appId })}\n\nYou MUST install the bot in your Discord server before continuing.`,
       'Step 3: Install Bot to Server',
@@ -255,8 +278,7 @@ async function run({ restart, addChannels }: CliOptions) {
   } catch (error) {
     s.stop('Failed to connect to Discord')
     cliLogger.error(
-      'Error:',
-      error instanceof Error ? error.message : String(error),
+      'Error: ' + (error instanceof Error ? error.message : String(error)),
     )
     process.exit(EXIT_NO_RESTART)
   }
@@ -450,7 +472,6 @@ async function run({ restart, addChannels }: CliOptions) {
     }
   }
 
-  cliLogger.log()
   cliLogger.log('Registering slash commands asynchronously...')
   void registerCommands(token, appId)
     .then(() => {
@@ -488,7 +509,6 @@ async function run({ restart, addChannels }: CliOptions) {
   })
 
   if (allChannels.length > 0) {
-    cliLogger.log()
     const channelLinks = allChannels
       .map(
         (ch) =>
