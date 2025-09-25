@@ -772,7 +772,8 @@ function formatPart(part: Part): string {
     case 'text':
       return escapeDiscordFormatting(part.text || '')
     case 'reasoning':
-      return `💭 ${escapeDiscordFormatting(part.text || '')}`
+      if (!part.text) return ''
+      return `▪︎ thinking: ${escapeDiscordFormatting(part.text || '')}`
     case 'tool':
       if (part.state.status === 'completed' || part.state.status === 'error') {
         // console.log(part)
