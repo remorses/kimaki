@@ -8,6 +8,7 @@ import {
   note,
   cancel,
   isCancel,
+  confirm,
   log,
   multiselect,
   spinner,
@@ -226,12 +227,9 @@ async function run({ restart, addChannels }: CliOptions) {
       'Step 3: Install Bot to Server',
     )
 
-    const installed = await text({
+    const installed = await confirm({
       message: 'Press Enter AFTER you have installed the bot in your server:',
-      placeholder: 'Press Enter to continue',
-      validate() {
-        return undefined
-      },
+      initialValue: true,
     })
 
     if (isCancel(installed)) {
