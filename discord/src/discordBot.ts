@@ -749,30 +749,6 @@ function getKimakiMetadata(textChannel: TextChannel | null): {
   return { projectDirectory, channelAppId }
 }
 
-function getFileAutocompleteState(value: string | null | undefined): {
-  prefix: string
-  token: string
-  selected: Set<string>
-} {
-  const input = value ?? ''
-  const match = input.match(/([^,\s]*)$/)
-  const token = match ? match[1] || '' : ''
-  const prefix = input.slice(0, input.length - token.length)
-
-  const parts = input
-    .split(/[\s,]+/)
-    .map((part) => part.trim())
-    .filter(Boolean)
-
-  const selected = new Set(parts)
-  const trimmedToken = token.trim()
-  if (trimmedToken) {
-    selected.delete(trimmedToken)
-  }
-
-  return { prefix, token, selected }
-}
-
 export async function initializeOpencodeForDirectory(
   directory: string,
 ): Promise<OpencodeClient> {
@@ -819,7 +795,7 @@ export async function initializeOpencodeForDirectory(
   })
 
   serverProcess.on('exit', (code) => {
-    opencodeLogger.log(`Server on port  exited with code:`, code)
+    opencodeLogger.log(`Opencode server on ${directory} exited with code:`, code)
     opencodeServers.delete(directory)
   })
 
