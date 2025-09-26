@@ -34,6 +34,7 @@ import { spawn, exec, type ChildProcess } from 'node:child_process'
 import fs, { createWriteStream } from 'node:fs'
 import { mkdir } from 'node:fs/promises'
 import net from 'node:net'
+import os from 'node:os'
 import path from 'node:path'
 import { promisify } from 'node:util'
 import { PassThrough, Transform, type TransformCallback } from 'node:stream'
@@ -453,7 +454,19 @@ export function frameMono16khz(): Transform {
 
 export function getDatabase(): Database.Database {
   if (!db) {
-    db = new Database('discord-sessions.db')
+    // Create ~/.kimaki directory if it doesn't exist
+    const kimakiDir = path.join(os.homedir(), '.kimaki')
+
+    try {
+      fs.mkdirSync(kimakiDir, { recursive: true })
+    } catch (error) {
+      dbLogger.error('Failed to create ~/.kimaki directory:', error)
+    }
+
+    const dbPath = path.join(kimakiDir, 'discord-sessions.db')
+
+    dbLogger.log(`Opening database at: ${dbPath}`)
+    db = new Database(dbPath)
 
     // Initialize tables
     db.exec(`
@@ -685,7 +698,7 @@ async function processVoiceAttachment({
     const apiKeys = getDatabase()
       .prepare('SELECT gemini_api_key FROM bot_api_keys WHERE app_id = ?')
       .get(appId) as { gemini_api_key: string | null } | undefined
-    
+
     if (apiKeys?.gemini_api_key) {
       geminiApiKey = apiKeys.gemini_api_key
     }
@@ -1534,6 +1547,7 @@ export async function startDiscordBot({
       discordLogger.log(`Bot Application ID (provided): ${currentAppId}`)
     }
 
+
     // List all guilds and channels that belong to this bot
     for (const guild of c.guilds.cache.values()) {
       discordLogger.log(`${guild.name} (${guild.id})`)
@@ -2348,7 +2362,10 @@ export async function startDiscordBot({
       opencodeServers.clear()
 
       discordLogger.log('Closing database...')
-      getDatabase().close()
+      if (db) {
+        db.close()
+        db = null
+      }
 
       discordLogger.log('Destroying Discord client...')
       discordClient.destroy()

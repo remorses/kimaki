@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.1.5
+
+### Patch Changes
+
+- Move database file to ~/.kimaki/ directory for better organization
+- Database is now stored as ~/.kimaki/discord-sessions.db
+
 ## 0.1.4
 
 ### Patch Changes
