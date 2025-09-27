@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.1.6
+
+### Patch Changes
+
+- Check for OpenCode CLI availability at startup and offer to install it if missing
+- Automatically install OpenCode using the official install script when user confirms
+- Set OPENCODE_PATH environment variable for the current session after installation
+- Use the discovered OpenCode path for all subsequent spawn commands
+
 ## 0.1.5
 
 ### Patch Changes

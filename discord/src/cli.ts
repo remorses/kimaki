@@ -35,6 +35,7 @@ import {
 import path from 'node:path'
 import fs from 'node:fs'
 import { createLogger } from './logger.js'
+import { spawnSync, execSync, type ExecSyncOptions } from 'node:child_process'
 
 const cliLogger = createLogger('CLI')
 const cli = cac('kimaki')
@@ -141,6 +142,74 @@ async function run({ restart, addChannels }: CliOptions) {
   const forceSetup = Boolean(restart)
 
   intro('🤖 Discord Bot Setup')
+
+  // Step 0: Check if OpenCode CLI is available
+  const opencodeCheck = spawnSync('which', ['opencode'], { shell: true })
+
+  if (opencodeCheck.status !== 0) {
+    note(
+      'OpenCode CLI is required but not found in your PATH.',
+      '⚠️  OpenCode Not Found',
+    )
+
+    const shouldInstall = await confirm({
+      message: 'Would you like to install OpenCode right now?',
+    })
+
+    if (isCancel(shouldInstall) || !shouldInstall) {
+      cancel('OpenCode CLI is required to run this bot')
+      process.exit(0)
+    }
+
+    const s = spinner()
+    s.start('Installing OpenCode CLI...')
+
+    try {
+      execSync('curl -fsSL https://opencode.ai/install | bash', {
+        stdio: 'inherit',
+        shell: '/bin/bash'
+      })
+      s.stop('OpenCode CLI installed successfully!')
+
+      // The install script adds opencode to PATH via shell configuration
+      // For the current process, we need to check common installation paths
+      const possiblePaths = [
+        `${process.env.HOME}/.local/bin/opencode`,
+        `${process.env.HOME}/.opencode/bin/opencode`,
+        '/usr/local/bin/opencode',
+        '/opt/opencode/bin/opencode'
+      ]
+
+      const installedPath = possiblePaths.find(p => {
+        try {
+          fs.accessSync(p, fs.constants.F_OK)
+          return true
+        } catch {
+          return false
+        }
+      })
+
+      if (!installedPath) {
+        note(
+          'OpenCode was installed but may not be available in this session.\n' +
+          'Please restart your terminal and run this command again.',
+          '⚠️  Restart Required',
+        )
+        process.exit(0)
+      }
+
+      // For subsequent spawn calls in this session, we can use the full path
+      process.env.OPENCODE_PATH = installedPath
+
+    } catch (error) {
+      s.stop('Failed to install OpenCode CLI')
+      cliLogger.error(
+        'Installation error:',
+        error instanceof Error ? error.message : String(error),
+      )
+      process.exit(EXIT_NO_RESTART)
+    }
+  }
 
   const db = getDatabase()
   let appId: string

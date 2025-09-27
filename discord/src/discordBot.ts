@@ -822,8 +822,10 @@ export async function initializeOpencodeForDirectory(directory: string) {
   //   `[OPENCODE] Starting new server on port ${port} for directory: ${directory}`,
   // )
 
+  const opencodeCommand = process.env.OPENCODE_PATH || 'opencode'
+
   const serverProcess = spawn(
-    'opencode',
+    opencodeCommand,
     ['serve', '--port', port.toString()],
     {
       stdio: 'pipe',
@@ -1547,7 +1549,6 @@ export async function startDiscordBot({
       discordLogger.log(`Bot Application ID (provided): ${currentAppId}`)
     }
 
-
     // List all guilds and channels that belong to this bot
     for (const guild of c.guilds.cache.values()) {
       discordLogger.log(`${guild.name} (${guild.id})`)
@@ -1868,6 +1869,87 @@ export async function startDiscordBot({
               )
               await interaction.respond([])
             }
+          } else if (interaction.commandName === 'session') {
+            const focusedOption = interaction.options.getFocused(true)
+
+            if (focusedOption.name === 'files') {
+              const focusedValue = focusedOption.value
+
+              // Split by comma to handle multiple files
+              const parts = focusedValue.split(',')
+              const previousFiles = parts.slice(0, -1).map(f => f.trim()).filter(f => f)
+              const currentQuery = (parts[parts.length - 1] || '').trim()
+
+              // Get the channel's project directory from its topic
+              let projectDirectory: string | undefined
+              if (
+                interaction.channel &&
+                interaction.channel.type === ChannelType.GuildText
+              ) {
+                const textChannel = resolveTextChannel(
+                  interaction.channel as TextChannel | ThreadChannel | null,
+                )
+                if (textChannel) {
+                  const { projectDirectory: directory, channelAppId } =
+                    getKimakiMetadata(textChannel)
+                  if (channelAppId && channelAppId !== currentAppId) {
+                    await interaction.respond([])
+                    return
+                  }
+                  projectDirectory = directory
+                }
+              }
+
+              if (!projectDirectory) {
+                await interaction.respond([])
+                return
+              }
+
+              try {
+                // Get OpenCode client for this directory
+                const getClient =
+                  await initializeOpencodeForDirectory(projectDirectory)
+
+                // Use find.files to search for files based on current query
+                const response = await getClient().find.files({
+                  query: {
+                    query: currentQuery || '',
+                  },
+                })
+
+                // Get file paths from the response
+                const files = response.data || []
+
+                // Build the prefix with previous files
+                const prefix = previousFiles.length > 0 
+                  ? previousFiles.join(', ') + ', '
+                  : ''
+
+                // Map to Discord autocomplete format
+                const choices = files
+                  .slice(0, 25) // Discord limit
+                  .map((file: string) => {
+                    const fullValue = prefix + file
+                    // Get all basenames for display
+                    const allFiles = [...previousFiles, file]
+                    const allBasenames = allFiles.map(f => f.split('/').pop() || f)
+                    let displayName = allBasenames.join(', ')
+                    // Truncate if too long
+                    if (displayName.length > 100) {
+                      displayName = '…' + displayName.slice(-97)
+                    }
+                    return {
+                      name: displayName,
+                      value: fullValue,
+                    }
+                  })
+
+                await interaction.respond(choices)
+              } catch (error) {
+                voiceLogger.error('[AUTOCOMPLETE] Error fetching files:', error)
+                await interaction.respond([])
+              }
+            }
           }
         }
 
@@ -1875,7 +1957,100 @@ export async function startDiscordBot({
         if (interaction.isChatInputCommand()) {
           const command = interaction
 
-          if (command.commandName === 'resume') {
+          if (command.commandName === 'session') {
+            await command.deferReply({ ephemeral: false })
+
+            const prompt = command.options.getString('prompt', true)
+            const filesString = command.options.getString('files') || ''
+            const channel = command.channel
+
+            if (!channel || channel.type !== ChannelType.GuildText) {
+              await command.editReply(
+                'This command can only be used in text channels',
+              )
+              return
+            }
+
+            const textChannel = channel as TextChannel
+
+            // Get project directory from channel topic
+            let projectDirectory: string | undefined
+            let channelAppId: string | undefined
+
+            if (textChannel.topic) {
+              const extracted = extractTagsArrays({
+                xml: textChannel.topic,
+                tags: ['kimaki.directory', 'kimaki.app'],
+              })
+
+              projectDirectory = extracted['kimaki.directory']?.[0]?.trim()
+              channelAppId = extracted['kimaki.app']?.[0]?.trim()
+            }
+
+            // Check if this channel belongs to current bot instance
+            if (channelAppId && channelAppId !== currentAppId) {
+              await command.editReply(
+                'This channel is not configured for this bot',
+              )
+              return
+            }
+
+            if (!projectDirectory) {
+              await command.editReply(
+                'This channel is not configured with a project directory',
+              )
+              return
+            }
+
+            if (!fs.existsSync(projectDirectory)) {
+              await command.editReply(
+                `Directory does not exist: ${projectDirectory}`,
+              )
+              return
+            }
+
+            try {
+              // Initialize OpenCode client for the directory
+              const getClient =
+                await initializeOpencodeForDirectory(projectDirectory)
+
+              // Process file mentions - split by comma only
+              const files = filesString
+                .split(',')
+                .map((f) => f.trim())
+                .filter((f) => f)
+
+              // Build the full prompt with file mentions
+              let fullPrompt = prompt
+              if (files.length > 0) {
+                fullPrompt = `${prompt}\n\n@${files.join(' @')}`
+              }
+
+              // Send a message first, then create thread from it
+              const starterMessage = await textChannel.send({
+                content: `🚀 **Starting OpenCode session**\n📝 ${prompt.slice(0, 200)}${prompt.length > 200 ? '…' : ''}${files.length > 0 ? `\n📎 Files: ${files.join(', ')}` : ''}`,
+              })
+
+              // Create thread from the message
+              const thread = await starterMessage.startThread({
+                name: prompt.slice(0, 100),
+                autoArchiveDuration: 1440, // 24 hours
+                reason: 'OpenCode session',
+              })
+
+              await command.editReply(
+                `Created new session in ${thread.toString()}`,
+              )
+
+              // Start the OpenCode session
+              await handleOpencodeSession(fullPrompt, thread, projectDirectory)
+            } catch (error) {
+              voiceLogger.error('[SESSION] Error:', error)
+              await command.editReply(
+                `Failed to create session: ${error instanceof Error ? error.message : 'Unknown error'}`,
+              )
+            }
+          } else if (command.commandName === 'resume') {
             await command.deferReply({ ephemeral: false })
 
             const sessionId = command.options.getString('session', true)
@@ -1988,12 +2163,12 @@ export async function startDiscordBot({
                 if (message.info.role === 'user') {
                   // Render user messages
                   const userParts = message.parts.filter(
-                    (p) => p.type === 'text',
+                    (p) => p.type === 'text' && !p.synthetic,
                   )
                   const userTexts = userParts
                     .map((p) => {
-                      if (typeof p.text === 'string') {
-                        return extractNonXmlContent(p.text)
+                      if (p.type === 'text') {
+                        return p.text
                       }
                       return ''
                     })
