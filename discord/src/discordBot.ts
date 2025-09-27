@@ -403,7 +403,7 @@ async function setupVoiceHandling({
   })
 }
 
-export function frameMono16khz(): Transform {
+function frameMono16khz(): Transform {
   // Hardcoded: 16 kHz, mono, 16-bit PCM, 20 ms -> 320 samples -> 640 bytes
   const FRAME_BYTES =
     (100 /*ms*/ * 16_000 /*Hz*/ * 1 /*channels*/ * 2) /*bytes per sample*/ /
@@ -972,7 +972,7 @@ function formatPart(part: Part): string {
           part.state.status === 'completed'
             ? '◼︎'
             : part.state.status === 'error'
-              ? '✖️'
+              ? '⨯'
               : ''
         const title = `${icon} ${part.tool} ${toolTitle}`
 
@@ -1877,7 +1877,10 @@ export async function startDiscordBot({
 
               // Split by comma to handle multiple files
               const parts = focusedValue.split(',')
-              const previousFiles = parts.slice(0, -1).map(f => f.trim()).filter(f => f)
+              const previousFiles = parts
+                .slice(0, -1)
+                .map((f) => f.trim())
+                .filter((f) => f)
               const currentQuery = (parts[parts.length - 1] || '').trim()
 
               // Get the channel's project directory from its topic
@@ -1921,9 +1924,10 @@ export async function startDiscordBot({
                 const files = response.data || []
 
                 // Build the prefix with previous files
-                const prefix = previousFiles.length > 0 
-                  ? previousFiles.join(', ') + ', '
-                  : ''
+                const prefix =
+                  previousFiles.length > 0
+                    ? previousFiles.join(', ') + ', '
+                    : ''
 
                 // Map to Discord autocomplete format
                 const choices = files
@@ -1932,7 +1936,9 @@ export async function startDiscordBot({
                     const fullValue = prefix + file
                     // Get all basenames for display
                     const allFiles = [...previousFiles, file]
-                    const allBasenames = allFiles.map(f => f.split('/').pop() || f)
+                    const allBasenames = allFiles.map(
+                      (f) => f.split('/').pop() || f,
+                    )
                     let displayName = allBasenames.join(', ')
                     // Truncate if too long
                     if (displayName.length > 100) {
