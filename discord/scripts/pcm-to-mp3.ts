@@ -16,6 +16,12 @@ async function convertToMp3(filePath: string) {
   const basename = path.basename(filePath, ext)
   const outputPath = path.join(dir, `${basename}.mp3`)
 
+  try {
+    await fs.promises.access(outputPath, fs.constants.F_OK)
+    console.log(`Skipping: ${outputPath} already exists`)
+    return
+  } catch {}
+
   console.log(`Converting: ${filePath} -> ${outputPath}`)
 
   const inputFormat = ext.slice(1)
