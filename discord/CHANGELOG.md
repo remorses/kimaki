@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.2.0
+
+### Minor Changes
+
+- simpler onboarding. do not ask for server id
+
 ## 0.1.6
 
 ### Patch Changes

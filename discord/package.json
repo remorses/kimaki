@@ -2,7 +2,7 @@
   "name": "kimaki",
   "module": "index.ts",
   "type": "module",
-  "version": "0.1.5",
+  "version": "0.2.0",
   "scripts": {
     "dev": "pnpm tsc && DEBUG=1 tsx --env-file .env src/cli.ts",
     "prepublishOnly": "pnpm tsc",

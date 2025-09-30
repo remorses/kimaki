@@ -167,7 +167,7 @@ async function run({ restart, addChannels }: CliOptions) {
     try {
       execSync('curl -fsSL https://opencode.ai/install | bash', {
         stdio: 'inherit',
-        shell: '/bin/bash'
+        shell: '/bin/bash',
       })
       s.stop('OpenCode CLI installed successfully!')
 
@@ -177,10 +177,10 @@ async function run({ restart, addChannels }: CliOptions) {
         `${process.env.HOME}/.local/bin/opencode`,
         `${process.env.HOME}/.opencode/bin/opencode`,
         '/usr/local/bin/opencode',
-        '/opt/opencode/bin/opencode'
+        '/opt/opencode/bin/opencode',
       ]
 
-      const installedPath = possiblePaths.find(p => {
+      const installedPath = possiblePaths.find((p) => {
         try {
           fs.accessSync(p, fs.constants.F_OK)
           return true
@@ -192,7 +192,7 @@ async function run({ restart, addChannels }: CliOptions) {
       if (!installedPath) {
         note(
           'OpenCode was installed but may not be available in this session.\n' +
-          'Please restart your terminal and run this command again.',
+            'Please restart your terminal and run this command again.',
           '⚠️  Restart Required',
         )
         process.exit(0)
@@ -200,7 +200,6 @@ async function run({ restart, addChannels }: CliOptions) {
 
       // For subsequent spawn calls in this session, we can use the full path
       process.env.OPENCODE_PATH = installedPath
-
     } catch (error) {
       s.stop('Failed to install OpenCode CLI')
       cliLogger.error(
@@ -446,7 +445,7 @@ async function run({ restart, addChannels }: CliOptions) {
   let projects: Project[] = []
 
   try {
-    const projectsResponse = await getClient().project.list()
+    const projectsResponse = await getClient().project.list({})
     if (!projectsResponse.data) {
       throw new Error('Failed to fetch projects')
     }
@@ -505,22 +504,24 @@ async function run({ restart, addChannels }: CliOptions) {
 
       if (guilds.length === 1) {
         targetGuild = guilds[0]!
+        note(`Using server: ${targetGuild.name}`, 'Server Selected')
       } else {
-        const guildId = await text({
-          message: 'Enter the Discord server ID to create channels in:',
-          placeholder: guilds[0]?.id,
-          validate(value) {
-            if (!value) return 'Server ID is required'
-            if (!guilds.find((g) => g.id === value)) return 'Invalid server ID'
-          },
+        const guildSelection = await multiselect({
+          message: 'Select a Discord server to create channels in:',
+          options: guilds.map((guild) => ({
+            value: guild.id,
+            label: `${guild.name} (${guild.memberCount} members)`,
+          })),
+          required: true,
+          maxItems: 1,
         })
 
-        if (isCancel(guildId)) {
+        if (isCancel(guildSelection)) {
           cancel('Setup cancelled')
           process.exit(0)
         }
 
-        targetGuild = guilds.find((g) => g.id === guildId)!
+        targetGuild = guilds.find((g) => g.id === guildSelection[0])!
       }
 
       s.start('Creating Discord channels...')
