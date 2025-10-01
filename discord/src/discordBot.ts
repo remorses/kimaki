@@ -878,7 +878,14 @@ export async function initializeOpencodeForDirectory(directory: string) {
   })
 
   await waitForServer(port)
-  const client = createOpencodeClient({ baseUrl: `http://localhost:${port}` })
+
+  const customFetch = (url: any, options: any) =>
+    fetch(url, { ...options, timeout: false })
+
+  const client = createOpencodeClient({
+    baseUrl: `http://localhost:${port}`,
+    fetch: customFetch as any,
+  })
 
   opencodeServers.set(directory, {
     process: serverProcess,
