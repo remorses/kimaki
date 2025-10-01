@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.2.1
+
+### Patch Changes
+
+- fix fetch timeout. restore voice channels
+
 ## 0.2.0
 
 ### Minor Changes
