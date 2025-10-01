@@ -54,6 +54,9 @@ export type WorkerOutMessage =
       markdown?: string
     }
   | {
+      type: 'allSessionsCompleted'
+    }
+  | {
       type: 'error'
       error: string
     }

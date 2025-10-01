@@ -70,13 +70,27 @@ const opencodeServers = new Map<
 // Map of session ID to current AbortController
 const abortControllers = new Map<string, AbortController>()
 
-// Map of guild ID to voice connection and GenAI worker
+// Map of guild ID to voice connection
 const voiceConnections = new Map<
   string,
   {
     connection: VoiceConnection
-    genAiWorker?: GenAIWorker
     userAudioStream?: fs.WriteStream
+  }
+>()
+
+// Map of channel ID to GenAI worker and session state
+// This allows sessions to persist across voice channel changes
+const genAiSessions = new Map<
+  string,
+  {
+    genAiWorker: GenAIWorker
+    hasActiveSessions: boolean // Track if there are active OpenCode sessions
+    pendingCleanup: boolean // Track if cleanup was requested (user left channel)
+    cleanupTimer?: NodeJS.Timeout // Timer for delayed cleanup
+    guildId: string
+    channelId: string
+    directory: string
   }
 >()
 
@@ -154,11 +168,13 @@ async function setupVoiceHandling({
   guildId,
   channelId,
   appId,
+  cleanupGenAiSession,
 }: {
   connection: VoiceConnection
   guildId: string
   channelId: string
   appId: string
+  cleanupGenAiSession: (channelId: string) => Promise<void>
 }) {
   voiceLogger.log(
     `Setting up voice handling for guild ${guildId}, channel ${channelId}`,
@@ -191,12 +207,36 @@ async function setupVoiceHandling({
   // Create user audio stream for debugging
   voiceData.userAudioStream = await createUserAudioLogStream(guildId, channelId)
 
+  // Check if we already have a GenAI session for this channel
+  const existingSession = genAiSessions.get(channelId)
+  if (existingSession) {
+    voiceLogger.log(`Reusing existing GenAI session for channel ${channelId}`)
+
+    // Cancel any pending cleanup since user has returned
+    if (existingSession.pendingCleanup) {
+      voiceLogger.log(
+        `Cancelling pending cleanup for channel ${channelId} - user returned`,
+      )
+      existingSession.pendingCleanup = false
+
+      if (existingSession.cleanupTimer) {
+        clearTimeout(existingSession.cleanupTimer)
+        existingSession.cleanupTimer = undefined
+      }
+    }
+
+    // Session already exists, just update the voice handling
+    return
+  }
+
   // Get API keys from database
   const apiKeys = getDatabase()
     .prepare('SELECT gemini_api_key FROM bot_api_keys WHERE app_id = ?')
     .get(appId) as { gemini_api_key: string | null } | undefined
 
-  // Create GenAI worker
+  // Track if sessions are active
+  let hasActiveSessions = false
+
   const genAiWorker = await createGenAIWorker({
     directory,
     guildId,
@@ -264,36 +304,97 @@ async function setupVoiceHandling({
       genAiWorker.interrupt()
       connection.setSpeaking(false)
     },
+    onAllSessionsCompleted() {
+      // All OpenCode sessions have completed
+      hasActiveSessions = false
+      voiceLogger.log('All OpenCode sessions completed for this GenAI session')
+
+      // Update the stored session state
+      const session = genAiSessions.get(channelId)
+      if (session) {
+        session.hasActiveSessions = false
+
+        // If cleanup is pending (user left channel), schedule cleanup with grace period
+        if (session.pendingCleanup) {
+          voiceLogger.log(
+            `Scheduling cleanup for channel ${channelId} in 1 minute`,
+          )
+
+          // Clear any existing timer
+          if (session.cleanupTimer) {
+            clearTimeout(session.cleanupTimer)
+          }
+
+          // Schedule cleanup after 1 minute grace period
+          session.cleanupTimer = setTimeout(() => {
+            // Double-check that cleanup is still needed
+            const currentSession = genAiSessions.get(channelId)
+            if (
+              currentSession?.pendingCleanup &&
+              !currentSession.hasActiveSessions
+            ) {
+              voiceLogger.log(
+                `Grace period expired, cleaning up GenAI session for channel ${channelId}`,
+              )
+              // Use the main cleanup function - defined later in startDiscordBot
+              cleanupGenAiSession(channelId)
+            }
+          }, 60000) // 1 minute
+        }
+      }
+    },
     onToolCallCompleted(params) {
+      // Note: We now track at the tools.ts level, but still handle completion messages
+      voiceLogger.log(`OpenCode session ${params.sessionId} completed`)
+
       const text = params.error
         ? `<systemMessage>\nThe coding agent encountered an error while processing session ${params.sessionId}: ${params.error?.message || String(params.error)}\n</systemMessage>`
         : `<systemMessage>\nThe coding agent finished working on session ${params.sessionId}\n\nHere's what the assistant wrote:\n${params.markdown}\n</systemMessage>`
 
       genAiWorker.sendTextInput(text)
+
+      // Mark that we have active sessions (will be updated by onAllSessionsCompleted when done)
+      hasActiveSessions = true
+      const session = genAiSessions.get(channelId)
+      if (session) {
+        session.hasActiveSessions = true
+      }
     },
     onError(error) {
       voiceLogger.error('GenAI worker error:', error)
     },
   })
 
-  // Stop any existing GenAI worker before storing new one
-  if (voiceData.genAiWorker) {
-    voiceLogger.log('Stopping existing GenAI worker before creating new one')
-    await voiceData.genAiWorker.stop()
-  }
-
   // Send initial greeting
   genAiWorker.sendTextInput(
     `<systemMessage>\nsay "Hello boss, how we doing today?"\n</systemMessage>`,
   )
 
-  voiceData.genAiWorker = genAiWorker
+  // Store the GenAI session
+  genAiSessions.set(channelId, {
+    genAiWorker,
+    hasActiveSessions,
+    pendingCleanup: false,
+    cleanupTimer: undefined,
+    guildId,
+    channelId,
+    directory,
+  })
 
   // Set up voice receiver for user input
   const receiver = connection.receiver
 
   // Remove all existing listeners to prevent accumulation
   receiver.speaking.removeAllListeners('start')
+
+  // Get the GenAI session for this channel
+  const genAiSession = genAiSessions.get(channelId)
+  if (!genAiSession) {
+    voiceLogger.error(
+      `GenAI session was just created but not found for channel ${channelId}`,
+    )
+    return
+  }
 
   // Counter to track overlapping speaking sessions
   let speakingSessionCount = 0
@@ -350,9 +451,10 @@ async function setupVoiceHandling({
           return
         }
 
-        if (!voiceData.genAiWorker) {
+        const genAiSession = genAiSessions.get(channelId)
+        if (!genAiSession) {
           voiceLogger.warn(
-            `[VOICE] Received audio frame but no GenAI worker active for guild ${guildId}`,
+            `[VOICE] Received audio frame but no GenAI session active for channel ${channelId}`,
           )
           return
         }
@@ -362,7 +464,7 @@ async function setupVoiceHandling({
         voiceData.userAudioStream?.write(frame)
 
         // stream incrementally — low latency
-        voiceData.genAiWorker.sendRealtimeInput({
+        genAiSession.genAiWorker.sendRealtimeInput({
           audio: {
             mimeType: 'audio/pcm;rate=16000',
             data: frame.toString('base64'),
@@ -375,7 +477,8 @@ async function setupVoiceHandling({
           voiceLogger.log(
             `User ${userId} stopped speaking (session ${currentSessionCount})`,
           )
-          voiceData.genAiWorker?.sendRealtimeInput({
+          const genAiSession = genAiSessions.get(channelId)
+          genAiSession?.genAiWorker.sendRealtimeInput({
             audioStreamEnd: true,
           })
         } else {
@@ -878,7 +981,23 @@ export async function initializeOpencodeForDirectory(directory: string) {
   })
 
   await waitForServer(port)
-  const client = createOpencodeClient({ baseUrl: `http://localhost:${port}` })
+
+  // Create a custom fetch that disables Bun's default timeout
+  const customFetch = (
+    input: string | URL | Request,
+    init?: RequestInit,
+  ): Promise<Response> => {
+    return fetch(input, {
+      ...init,
+      // @ts-ignore - Bun-specific option to disable timeout
+      timeout: false,
+    })
+  }
+
+  const client = createOpencodeClient({
+    baseUrl: `http://localhost:${port}`,
+    fetch: customFetch,
+  })
 
   opencodeServers.set(directory, {
     process: serverProcess,
@@ -2226,21 +2345,43 @@ export async function startDiscordBot({
     },
   )
 
+  // Helper function to clean up GenAI session
+  async function cleanupGenAiSession(channelId: string) {
+    const genAiSession = genAiSessions.get(channelId)
+    if (!genAiSession) return
+
+    try {
+      // Clear any cleanup timer
+      if (genAiSession.cleanupTimer) {
+        clearTimeout(genAiSession.cleanupTimer)
+        genAiSession.cleanupTimer = undefined
+      }
+
+      voiceLogger.log(`Stopping GenAI worker for channel ${channelId}...`)
+      await genAiSession.genAiWorker.stop()
+      voiceLogger.log(`GenAI worker stopped for channel ${channelId}`)
+
+      // Remove from map
+      genAiSessions.delete(channelId)
+      voiceLogger.log(`GenAI session cleanup complete for channel ${channelId}`)
+    } catch (error) {
+      voiceLogger.error(
+        `Error during GenAI session cleanup for channel ${channelId}:`,
+        error,
+      )
+      // Still remove from map even if there was an error
+      genAiSessions.delete(channelId)
+    }
+  }
+
   // Helper function to clean up voice connection and associated resources
-  async function cleanupVoiceConnection(guildId: string) {
+  async function cleanupVoiceConnection(guildId: string, channelId?: string) {
     const voiceData = voiceConnections.get(guildId)
     if (!voiceData) return
 
     voiceLogger.log(`Starting cleanup for guild ${guildId}`)
 
     try {
-      // Stop GenAI worker if exists (this is async!)
-      if (voiceData.genAiWorker) {
-        voiceLogger.log(`Stopping GenAI worker...`)
-        await voiceData.genAiWorker.stop()
-        voiceLogger.log(`GenAI worker stopped`)
-      }
-
       // Close user audio stream if exists
       if (voiceData.userAudioStream) {
         voiceLogger.log(`Closing user audio stream...`)
@@ -2264,7 +2405,45 @@ export async function startDiscordBot({
 
       // Remove from map
       voiceConnections.delete(guildId)
-      voiceLogger.log(`Cleanup complete for guild ${guildId}`)
+      voiceLogger.log(`Voice connection cleanup complete for guild ${guildId}`)
+
+      // Mark the GenAI session for cleanup when all sessions complete
+      if (channelId) {
+        const genAiSession = genAiSessions.get(channelId)
+        if (genAiSession) {
+          voiceLogger.log(
+            `Marking channel ${channelId} for cleanup when sessions complete`,
+          )
+          genAiSession.pendingCleanup = true
+
+          // If no active sessions, trigger cleanup immediately (with grace period)
+          if (!genAiSession.hasActiveSessions) {
+            voiceLogger.log(
+              `No active sessions, scheduling cleanup for channel ${channelId} in 1 minute`,
+            )
+
+            // Clear any existing timer
+            if (genAiSession.cleanupTimer) {
+              clearTimeout(genAiSession.cleanupTimer)
+            }
+
+            // Schedule cleanup after 1 minute grace period
+            genAiSession.cleanupTimer = setTimeout(() => {
+              // Double-check that cleanup is still needed
+              const currentSession = genAiSessions.get(channelId)
+              if (
+                currentSession?.pendingCleanup &&
+                !currentSession.hasActiveSessions
+              ) {
+                voiceLogger.log(
+                  `Grace period expired, cleaning up GenAI session for channel ${channelId}`,
+                )
+                cleanupGenAiSession(channelId)
+              }
+            }, 60000) // 1 minute
+          }
+        }
+      }
     } catch (error) {
       voiceLogger.error(`Error during cleanup for guild ${guildId}:`, error)
       // Still remove from map even if there was an error
@@ -2322,7 +2501,7 @@ export async function startDiscordBot({
             )
 
             // Properly clean up all resources
-            await cleanupVoiceConnection(guildId)
+            await cleanupVoiceConnection(guildId, oldState.channelId)
           } else {
             voiceLogger.log(
               `Other admins still in channel, bot staying in voice channel`,
@@ -2371,6 +2550,16 @@ export async function startDiscordBot({
                   channelId: voiceChannel.id,
                   selfDeaf: false,
                   selfMute: false,
+                })
+
+                // Set up voice handling for the new channel
+                // This will reuse existing GenAI session if one exists
+                await setupVoiceHandling({
+                  connection: voiceData.connection,
+                  guildId,
+                  channelId: voiceChannel.id,
+                  appId: currentAppId!,
+                  cleanupGenAiSession,
                 })
               }
             } else {
@@ -2454,6 +2643,7 @@ export async function startDiscordBot({
           guildId: newState.guild.id,
           channelId: voiceChannel.id,
           appId: currentAppId!,
+          cleanupGenAiSession,
         })
 
         // Handle connection state changes
@@ -2481,7 +2671,7 @@ export async function startDiscordBot({
             `Connection destroyed for guild: ${newState.guild.name}`,
           )
           // Use the cleanup function to ensure everything is properly closed
-          await cleanupVoiceConnection(newState.guild.id)
+          await cleanupVoiceConnection(newState.guild.id, voiceChannel.id)
         })
 
         // Handle errors
@@ -2493,7 +2683,7 @@ export async function startDiscordBot({
         })
       } catch (error) {
         voiceLogger.error(`Failed to join voice channel:`, error)
-        await cleanupVoiceConnection(newState.guild.id)
+        await cleanupVoiceConnection(newState.guild.id, voiceChannel.id)
       }
     } catch (error) {
       voiceLogger.error('Error in voice state update handler:', error)
@@ -2513,22 +2703,42 @@ export async function startDiscordBot({
     ;(global as any).shuttingDown = true
 
     try {
-      // Clean up all voice connections (this includes GenAI workers and audio streams)
-      const cleanupPromises: Promise<void>[] = []
-      for (const [guildId] of voiceConnections) {
+      // Clean up all voice connections
+      const voiceCleanupPromises: Promise<void>[] = []
+      for (const [guildId, voiceData] of voiceConnections) {
         voiceLogger.log(
           `[SHUTDOWN] Cleaning up voice connection for guild ${guildId}`,
         )
-        cleanupPromises.push(cleanupVoiceConnection(guildId))
+        // Find the channel ID for this connection
+        const channelId = voiceData.connection.joinConfig.channelId || undefined
+        voiceCleanupPromises.push(cleanupVoiceConnection(guildId, channelId))
       }
 
-      // Wait for all cleanups to complete
-      if (cleanupPromises.length > 0) {
+      // Wait for all voice cleanups to complete
+      if (voiceCleanupPromises.length > 0) {
         voiceLogger.log(
-          `[SHUTDOWN] Waiting for ${cleanupPromises.length} voice connection(s) to clean up...`,
+          `[SHUTDOWN] Waiting for ${voiceCleanupPromises.length} voice connection(s) to clean up...`,
         )
-        await Promise.allSettled(cleanupPromises)
+        await Promise.allSettled(voiceCleanupPromises)
         discordLogger.log(`All voice connections cleaned up`)
+      }
+
+      // Clean up all GenAI sessions (force cleanup regardless of active sessions)
+      const genAiCleanupPromises: Promise<void>[] = []
+      for (const [channelId, session] of genAiSessions) {
+        voiceLogger.log(
+          `[SHUTDOWN] Cleaning up GenAI session for channel ${channelId} (active sessions: ${session.hasActiveSessions})`,
+        )
+        genAiCleanupPromises.push(cleanupGenAiSession(channelId))
+      }
+
+      // Wait for all GenAI cleanups to complete
+      if (genAiCleanupPromises.length > 0) {
+        voiceLogger.log(
+          `[SHUTDOWN] Waiting for ${genAiCleanupPromises.length} GenAI session(s) to clean up...`,
+        )
+        await Promise.allSettled(genAiCleanupPromises)
+        discordLogger.log(`All GenAI sessions cleaned up`)
       }
 
       // Kill all OpenCode servers

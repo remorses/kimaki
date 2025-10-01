@@ -19,6 +19,7 @@ import { initializeOpencodeForDirectory } from './discordBot.js'
 
 export async function getTools({
   onMessageCompleted,
+  onAllSessionsCompleted,
   directory,
 }: {
   directory: string
@@ -29,6 +30,7 @@ export async function getTools({
     error?: unknown
     markdown?: string
   }) => void
+  onAllSessionsCompleted?: () => void
 }) {
   const getClient = await initializeOpencodeForDirectory(directory)
   const client = getClient()
@@ -37,6 +39,9 @@ export async function getTools({
 
   const providersResponse = await client.config.providers({})
   const providers: Provider[] = providersResponse.data?.providers || []
+  
+  // Track all active OpenCode sessions
+  const activeSessions = new Set<string>()
 
   // Helper: get last assistant model for a session (non-summary)
   const getSessionModel = async (
@@ -68,6 +73,10 @@ export async function getTools({
       execute: async ({ sessionId, message }) => {
         const sessionModel = await getSessionModel(sessionId)
 
+        // Track this session as active
+        activeSessions.add(sessionId)
+        toolsLogger.log(`Session ${sessionId} started, ${activeSessions.size} active sessions`)
+
         // do not await
         getClient()
           .session.prompt({
@@ -89,6 +98,16 @@ export async function getTools({
               data: response.data,
               markdown,
             })
+            
+            // Remove from active sessions
+            activeSessions.delete(sessionId)
+            toolsLogger.log(`Session ${sessionId} completed, ${activeSessions.size} active sessions remaining`)
+            
+            // Check if all sessions are complete
+            if (activeSessions.size === 0) {
+              toolsLogger.log('All sessions completed')
+              onAllSessionsCompleted?.()
+            }
           })
           .catch((error) => {
             onMessageCompleted?.({
@@ -96,6 +115,16 @@ export async function getTools({
               messageId: '',
               error,
             })
+            
+            // Remove from active sessions even on error
+            activeSessions.delete(sessionId)
+            toolsLogger.log(`Session ${sessionId} failed, ${activeSessions.size} active sessions remaining`)
+            
+            // Check if all sessions are complete
+            if (activeSessions.size === 0) {
+              toolsLogger.log('All sessions completed')
+              onAllSessionsCompleted?.()
+            }
           })
         return {
           success: true,
@@ -143,32 +172,58 @@ export async function getTools({
             throw new Error('Failed to create session')
           }
 
+          const newSessionId = session.data.id
+          
+          // Track this session as active
+          activeSessions.add(newSessionId)
+          toolsLogger.log(`New session ${newSessionId} created, ${activeSessions.size} active sessions`)
+
           // do not await
           getClient()
             .session.prompt({
-              path: { id: session.data.id },
+              path: { id: newSessionId },
               body: {
                 parts: [{ type: 'text', text: message }],
               },
             })
             .then(async (response) => {
               const markdown = await markdownRenderer.generate({
-                sessionID: session.data.id,
+                sessionID: newSessionId,
                 lastAssistantOnly: true,
               })
               onMessageCompleted?.({
-                sessionId: session.data.id,
+                sessionId: newSessionId,
                 messageId: '',
                 data: response.data,
                 markdown,
               })
+              
+              // Remove from active sessions
+              activeSessions.delete(newSessionId)
+              toolsLogger.log(`Session ${newSessionId} completed, ${activeSessions.size} active sessions remaining`)
+              
+              // Check if all sessions are complete
+              if (activeSessions.size === 0) {
+                toolsLogger.log('All sessions completed')
+                onAllSessionsCompleted?.()
+              }
             })
             .catch((error) => {
               onMessageCompleted?.({
-                sessionId: session.data.id,
+                sessionId: newSessionId,
                 messageId: '',
                 error,
               })
+              
+              // Remove from active sessions even on error
+              activeSessions.delete(newSessionId)
+              toolsLogger.log(`Session ${newSessionId} failed, ${activeSessions.size} active sessions remaining`)
+              
+              // Check if all sessions are complete
+              if (activeSessions.size === 0) {
+                toolsLogger.log('All sessions completed')
+                onAllSessionsCompleted?.()
+              }
             })
 
           return {

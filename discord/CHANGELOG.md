@@ -1,5 +1,17 @@
 # Changelog
 
+## 0.2.1
+
+### Patch Changes
+
+- Improved voice channel session management: GenAI sessions now persist when users switch between voice channels
+- Track all active OpenCode sessions (not individual tool calls) for accurate session lifecycle management  
+- Sessions remain active until ALL OpenCode sessions complete, preventing premature cleanup
+- Event-driven cleanup: No more polling - cleanup happens directly in onAllSessionsCompleted callback
+- 1-minute grace period: Sessions are cleaned up 60 seconds after all work completes, allowing users to return
+- Cancel cleanup on rejoin: If user returns to channel during grace period, cleanup is cancelled
+- Separate voice connection management from GenAI session lifecycle for better session persistence
+
 ## 0.2.0
 
 ### Minor Changes

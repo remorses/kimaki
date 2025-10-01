@@ -17,6 +17,7 @@ export interface GenAIWorkerOptions {
   onAssistantStartSpeaking?: () => void
   onAssistantStopSpeaking?: () => void
   onAssistantInterruptSpeaking?: () => void
+  onAllSessionsCompleted?: () => void
   onToolCallCompleted?: (params: {
     sessionId: string
     messageId: string
@@ -59,6 +60,9 @@ export function createGenAIWorker(
           break
         case 'assistantInterruptSpeaking':
           options.onAssistantInterruptSpeaking?.()
+          break
+        case 'allSessionsCompleted':
+          options.onAllSessionsCompleted?.()
           break
         case 'toolCallCompleted':
           options.onToolCallCompleted?.(message)

@@ -265,6 +265,11 @@ parentPort.on('message', async (message: WorkerInMessage) => {
               ...params,
             } satisfies WorkerOutMessage)
           },
+          onAllSessionsCompleted: () => {
+            parentPort!.postMessage({
+              type: 'allSessionsCompleted',
+            } satisfies WorkerOutMessage)
+          },
         })
 
         // Start GenAI session
