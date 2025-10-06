@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.3.0
+
+### Minor Changes
+
+- Fix abort errors after 5 mins. DIsable permissions.
+
 ## 0.2.1
 
 ### Patch Changes
