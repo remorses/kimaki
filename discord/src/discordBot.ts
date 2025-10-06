@@ -2,6 +2,7 @@ import {
   createOpencodeClient,
   type OpencodeClient,
   type Part,
+  Config,
 } from '@opencode-ai/sdk'
 
 import { createGenAIWorker, type GenAIWorker } from './genai-worker-wrapper.js'
@@ -837,6 +838,41 @@ export async function initializeOpencodeForDirectory(directory: string) {
       cwd: directory,
       env: {
         ...process.env,
+        OPENCODE_CONFIG_CONTENT: JSON.stringify({
+          $schema: 'https://opencode.ai/config.json',
+          lsp: {
+            typescript: { disabled: true },
+            eslint: { disabled: true },
+            gopls: { disabled: true },
+            'ruby-lsp': { disabled: true },
+            pyright: { disabled: true },
+            'elixir-ls': { disabled: true },
+            zls: { disabled: true },
+            csharp: { disabled: true },
+            vue: { disabled: true },
+            rust: { disabled: true },
+            clangd: { disabled: true },
+            svelte: { disabled: true },
+          },
+          formatter: {
+            prettier: { disabled: true },
+            biome: { disabled: true },
+            gofmt: { disabled: true },
+            mix: { disabled: true },
+            zig: { disabled: true },
+            'clang-format': { disabled: true },
+            ktlint: { disabled: true },
+            ruff: { disabled: true },
+            rubocop: { disabled: true },
+            standardrb: { disabled: true },
+            htmlbeautifier: { disabled: true },
+          },
+          permission: {
+            edit: 'allow',
+            bash: 'allow',
+            webfetch: 'allow',
+          },
+        } satisfies Config),
         OPENCODE_PORT: port.toString(),
       },
     },
