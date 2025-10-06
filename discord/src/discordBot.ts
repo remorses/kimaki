@@ -2,7 +2,7 @@ import {
   createOpencodeClient,
   type OpencodeClient,
   type Part,
-  Config,
+  type Config,
 } from '@opencode-ai/sdk'
 
 import { createGenAIWorker, type GenAIWorker } from './genai-worker-wrapper.js'

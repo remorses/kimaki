@@ -48,7 +48,6 @@ export function generateBotInstallUrl({
   return url.toString()
 }
 
-
 export function deduplicateByKey<T, K>(arr: T[], keyFn: (item: T) => K): T[] {
   const seen = new Set<K>()
   return arr.filter((item) => {
@@ -68,6 +67,9 @@ export function isAbortError(
   return (
     error instanceof Error &&
     (error.name === 'AbortError' ||
+      error.name === 'Aborterror' ||
+      error.name === 'aborterror' ||
+      error.name.toLowerCase() === 'aborterror' ||
       error.message?.includes('aborted') ||
       (signal?.aborted ?? false))
   )
