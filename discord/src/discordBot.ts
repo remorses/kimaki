@@ -46,6 +46,9 @@ import prettyMilliseconds from 'pretty-ms'
 import type { Session } from '@google/genai'
 import { createLogger } from './logger.js'
 import { isAbortError } from './utils.js'
+import { setGlobalDispatcher, Agent } from 'undici'
+// disables the automatic 5 minutes abort after no body
+setGlobalDispatcher(new Agent({ headersTimeout: 0, bodyTimeout: 0 }))
 
 const discordLogger = createLogger('DISCORD')
 const voiceLogger = createLogger('VOICE')
