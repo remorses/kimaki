@@ -51,7 +51,7 @@ export function generateBotInstallUrl({
 
 export function deduplicateByKey<T, K>(arr: T[], keyFn: (item: T) => K): T[] {
   const seen = new Set<K>()
-  return arr.filter(item => {
+  return arr.filter((item) => {
     const key = keyFn(item)
     if (seen.has(key)) {
       return false
@@ -59,4 +59,16 @@ export function deduplicateByKey<T, K>(arr: T[], keyFn: (item: T) => K): T[] {
     seen.add(key)
     return true
   })
+}
+
+export function isAbortError(
+  error: unknown,
+  signal?: AbortSignal,
+): error is Error {
+  return (
+    error instanceof Error &&
+    (error.name === 'AbortError' ||
+      error.message?.includes('aborted') ||
+      (signal?.aborted ?? false))
+  )
 }

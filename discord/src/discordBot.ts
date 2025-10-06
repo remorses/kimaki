@@ -45,6 +45,7 @@ import { extractTagsArrays, extractNonXmlContent } from './xml.js'
 import prettyMilliseconds from 'pretty-ms'
 import type { Session } from '@google/genai'
 import { createLogger } from './logger.js'
+import { isAbortError } from './utils.js'
 
 const discordLogger = createLogger('DISCORD')
 const voiceLogger = createLogger('VOICE')
@@ -1364,8 +1365,7 @@ async function handleOpencodeSession(
         }
       }
     } catch (e) {
-      if (e instanceof Error && e.name === 'AbortError') {
-        // Ignore abort controller errors as requested
+      if (isAbortError(e, abortController.signal)) {
         sessionLogger.log(
           'AbortController aborted event handling (normal exit)',
         )
@@ -1462,7 +1462,7 @@ async function handleOpencodeSession(
   } catch (error) {
     sessionLogger.error(`ERROR: Failed to send prompt:`, error)
 
-    if (!(error instanceof Error && error.name === 'AbortError')) {
+    if (!isAbortError(error, abortController.signal)) {
       abortController.abort('error')
 
       if (originalMessage) {
