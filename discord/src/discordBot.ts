@@ -954,22 +954,28 @@ function formatPart(part: Part): string {
       return `▪︎ thinking: ${escapeDiscordFormatting(part.text || '')}`
     case 'tool':
       if (part.state.status === 'completed' || part.state.status === 'error') {
-        // console.log(part)
-        // Escape triple backticks so Discord does not break code blocks
         let language = ''
         let outputToDisplay = ''
+        let summaryText = ''
+
         if (part.tool === 'bash') {
-          outputToDisplay =
+          const output =
             part.state.status === 'completed'
               ? part.state.output
               : part.state.error
-          outputToDisplay ||= ''
-        }
-        if (part.tool === 'edit') {
-          outputToDisplay = (part.state.input?.newString as string) || ''
-          language = path.extname((part.state.input.filePath as string) || '')
-        }
-        if (part.tool === 'todowrite') {
+          const lines = (output || '').split('\n').filter((l) => l.trim())
+          summaryText = `(${lines.length} line${lines.length === 1 ? '' : 's'})`
+        } else if (part.tool === 'edit') {
+          const newString = (part.state.input?.newString as string) || ''
+          const oldString = (part.state.input?.oldString as string) || ''
+          const added = newString.split('\n').length
+          const removed = oldString.split('\n').length
+          summaryText = `(+${added}-${removed})`
+        } else if (part.tool === 'write') {
+          const content = (part.state.input?.content as string) || ''
+          const lines = content.split('\n').length
+          summaryText = `(${lines} line${lines === 1 ? '' : 's'})`
+        } else if (part.tool === 'todowrite') {
           const todos =
             (part.state.input?.todos as {
               content: string
@@ -996,23 +1002,26 @@ function formatPart(part: Part): string {
             })
             .filter(Boolean)
             .join('\n')
-          language = ''
+        } else if (part.tool === 'webfetch') {
+          const url = (part.state.input?.url as string) || ''
+          const urlWithoutProtocol = url.replace(/^https?:\/\//, '')
+          summaryText = urlWithoutProtocol ? `(${urlWithoutProtocol})` : ''
+        } else if (part.state.input) {
+          const inputFields = Object.entries(part.state.input)
+            .map(([key, value]) => {
+              if (value === null || value === undefined) return null
+              const stringValue = typeof value === 'string' ? value : JSON.stringify(value)
+              const truncatedValue = stringValue.length > 100 ? stringValue.slice(0, 100) + '…' : stringValue
+              return `${key}: ${truncatedValue}`
+            })
+            .filter(Boolean)
+          if (inputFields.length > 0) {
+            outputToDisplay = inputFields.join('\n')
+          }
         }
-        if (part.tool === 'write') {
-          outputToDisplay = (part.state.input?.content as string) || ''
-          language = path.extname((part.state.input.filePath as string) || '')
-        }
-        outputToDisplay =
-          outputToDisplay.length > 500
-            ? outputToDisplay.slice(0, 497) + `…`
-            : outputToDisplay
-
-        // Escape Discord formatting characters that could break code blocks
-        outputToDisplay = escapeDiscordFormatting(outputToDisplay)
 
         let toolTitle =
           part.state.status === 'completed' ? part.state.title || '' : 'error'
-        // Escape backticks in the title before wrapping in backticks
         if (toolTitle) {
           toolTitle = `\`${escapeInlineCode(toolTitle)}\``
         }
@@ -1022,20 +1031,12 @@ function formatPart(part: Part): string {
             : part.state.status === 'error'
               ? '⨯'
               : ''
-        const title = `${icon} ${part.tool} ${toolTitle}`
+        const title = `${icon} ${part.tool} ${toolTitle} ${summaryText}`
 
         let text = title
 
         if (outputToDisplay) {
-          // Don't wrap todowrite output in code blocks
-          if (part.tool === 'todowrite') {
-            text += '\n\n' + outputToDisplay
-          } else {
-            if (language.startsWith('.')) {
-              language = language.slice(1)
-            }
-            text += '\n\n```' + language + '\n' + outputToDisplay + '\n```'
-          }
+          text += '\n\n' + outputToDisplay
         }
         return text
       }

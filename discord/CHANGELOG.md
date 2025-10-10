@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.3.1
+
+### Patch Changes
+
+- display custom tool calls in Discord with tool name and colon-delimited key-value fields
+- add special handling for webfetch tool to display URL without protocol
+- truncate field values at 100 chars with unicode ellipsis
+
 ## 0.3.0
 
 ### Minor Changes

@@ -2,9 +2,9 @@
   "name": "kimaki",
   "module": "index.ts",
   "type": "module",
-  "version": "0.3.0",
+  "version": "0.3.1",
   "scripts": {
-    "dev": "pnpm tsc && DEBUG=1 tsx --env-file .env src/cli.ts",
+    "dev": "pnpm tsc && tsx --env-file .env src/cli.ts",
     "prepublishOnly": "pnpm tsc",
     "dev:bun": "DEBUG=1 bun --env-file .env src/cli.ts",
     "test": "tsx scripts/test-opencode.ts",
