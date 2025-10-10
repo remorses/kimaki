@@ -1514,9 +1514,16 @@ async function handleOpencodeSession(
           discordLogger.log(`Could not update reaction:`, e)
         }
       }
+      // Always log the error's constructor name (if any) and make error reporting more readable
+      const errorName = error && typeof error === 'object' && 'constructor' in error && error.constructor && typeof error.constructor.name === 'string'
+        ? error.constructor.name
+        : typeof error
+      const errorMsg = error instanceof Error
+        ? (error.stack || error.message)
+        : String(error)
       await sendThreadMessage(
         thread,
-        `✗ Unexpected bot Error: ${error instanceof Error ? error.stack || error.message : String(error)}`,
+        `✗ Unexpected bot Error: [${errorName}]\n${errorMsg}`,
       )
     }
   }

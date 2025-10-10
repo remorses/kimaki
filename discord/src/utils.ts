@@ -65,12 +65,13 @@ export function isAbortError(
   signal?: AbortSignal,
 ): error is Error {
   return (
-    error instanceof Error &&
-    (error.name === 'AbortError' ||
-      error.name === 'Aborterror' ||
-      error.name === 'aborterror' ||
-      error.name.toLowerCase() === 'aborterror' ||
-      error.message?.includes('aborted') ||
-      (signal?.aborted ?? false))
+    (error instanceof Error &&
+      (error.name === 'AbortError' ||
+        error.name === 'Aborterror' ||
+        error.name === 'aborterror' ||
+        error.name.toLowerCase() === 'aborterror' ||
+        error.message?.includes('aborted') ||
+        (signal?.aborted ?? false))) ||
+    (error instanceof DOMException && error.name === 'AbortError')
   )
 }
