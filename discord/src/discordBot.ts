@@ -1498,7 +1498,7 @@ async function handleOpencodeSession(
 
     sessionLogger.log(`Successfully sent prompt, got response`)
 
-    abortControllers.delete(session.id)
+    // abortControllers.delete(session.id)
 
     // Update reaction to success
     if (originalMessage) {
