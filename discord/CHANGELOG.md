@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.4.1
+
+### Patch Changes
+
+- Separate abort controllers for event subscription and prompt requests
+- Fix messages not being responded to after aborting during long commands
+- Event stream now stays alive across multiple prompts instead of being destroyed on abort
+
 ## 0.4.0
 
 ### Minor Changes

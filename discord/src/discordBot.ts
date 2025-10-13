@@ -1175,13 +1175,10 @@ async function handleOpencodeSession(
   if (abortControllers.has(session.id)) {
     abortControllers.get(session.id)?.abort(new Error('new reply'))
   }
-  const abortController = new AbortController()
-  // Store this controller for this session
-  abortControllers.set(session.id, abortController)
+  const promptAbortController = new AbortController()
+  abortControllers.set(session.id, promptAbortController)
 
-  const eventsResult = await getClient().event.subscribe({
-    signal: abortController.signal,
-  })
+  const eventsResult = await getClient().event.subscribe({})
   const events = eventsResult.stream
   sessionLogger.log(`Subscribed to OpenCode events`)
 
@@ -1253,7 +1250,7 @@ async function handleOpencodeSession(
     let typingInterval: NodeJS.Timeout | null = null
 
     function startTyping(thread: ThreadChannel): () => void {
-      if (abortController.signal.aborted) {
+      if (promptAbortController.signal.aborted) {
         discordLogger.log(`Not starting typing, already aborted`)
         return () => {}
       }
@@ -1279,8 +1276,8 @@ async function handleOpencodeSession(
       }, 8000)
 
       // Only add listener if not already aborted
-      if (!abortController.signal.aborted) {
-        abortController.signal.addEventListener(
+      if (!promptAbortController.signal.aborted) {
+        promptAbortController.signal.addEventListener(
           'abort',
           () => {
             if (typingInterval) {
@@ -1378,7 +1375,7 @@ async function handleOpencodeSession(
             }
             // start typing in a moment, so that if the session finished, because step-finish is at the end of the message, we do not show typing status
             setTimeout(() => {
-              if (abortController.signal.aborted) return
+              if (promptAbortController.signal.aborted) return
               stopTyping = startTyping(thread)
             }, 300)
           }
@@ -1418,12 +1415,6 @@ async function handleOpencodeSession(
         }
       }
     } catch (e) {
-      if (isAbortError(e, abortController.signal)) {
-        sessionLogger.log(
-          'AbortController aborted event handling (normal exit)',
-        )
-        return
-      }
       sessionLogger.error(`Unexpected error in event handling code`, e)
       throw e
     } finally {
@@ -1463,8 +1454,8 @@ async function handleOpencodeSession(
 
       // Only send duration message if request was not aborted or was aborted with 'finished' reason
       if (
-        !abortController.signal.aborted ||
-        abortController.signal.reason === 'finished'
+        !promptAbortController.signal.aborted ||
+        promptAbortController.signal.reason === 'finished'
       ) {
         const sessionDuration = prettyMilliseconds(
           Date.now() - sessionStartTime,
@@ -1473,7 +1464,7 @@ async function handleOpencodeSession(
         sessionLogger.log(`DURATION: Session completed in ${sessionDuration}`)
       } else {
         sessionLogger.log(
-          `Session was aborted (reason: ${abortController.signal.reason}), skipping duration message`,
+          `Session was aborted (reason: ${promptAbortController.signal.reason}), skipping duration message`,
         )
       }
     }
@@ -1492,9 +1483,9 @@ async function handleOpencodeSession(
       body: {
         parts: [{ type: 'text', text: prompt }],
       },
-      signal: abortController.signal,
+      signal: promptAbortController.signal,
     })
-    abortController.abort(new Error('finished'))
+    promptAbortController.abort(new Error('finished'))
 
     sessionLogger.log(`Successfully sent prompt, got response`)
 
@@ -1515,8 +1506,8 @@ async function handleOpencodeSession(
   } catch (error) {
     sessionLogger.error(`ERROR: Failed to send prompt:`, error)
 
-    if (!isAbortError(error, abortController.signal)) {
-      abortController.abort(new Error('error'))
+    if (!isAbortError(error, promptAbortController.signal)) {
+      promptAbortController.abort(new Error('error'))
 
       if (originalMessage) {
         try {
