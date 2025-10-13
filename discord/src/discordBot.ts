@@ -945,6 +945,7 @@ export async function initializeOpencodeForDirectory(directory: string) {
   }
 }
 
+
 function formatPart(part: Part): string {
   switch (part.type) {
     case 'text':
@@ -954,7 +955,6 @@ function formatPart(part: Part): string {
       return `▪︎ thinking: ${escapeDiscordFormatting(part.text || '')}`
     case 'tool':
       if (part.state.status === 'completed' || part.state.status === 'error') {
-        let language = ''
         let outputToDisplay = ''
         let summaryText = ''
 
@@ -975,6 +975,15 @@ function formatPart(part: Part): string {
           const content = (part.state.input?.content as string) || ''
           const lines = content.split('\n').length
           summaryText = `(${lines} line${lines === 1 ? '' : 's'})`
+        } else if (part.tool === 'read') {
+        } else if (part.tool === 'write') {
+        } else if (part.tool === 'edit') {
+        } else if (part.tool === 'list') {
+        } else if (part.tool === 'glob') {
+        } else if (part.tool === 'grep') {
+        } else if (part.tool === 'task') {
+        } else if (part.tool === 'todoread') {
+          // Special handling for read - don't show arguments
         } else if (part.tool === 'todowrite') {
           const todos =
             (part.state.input?.todos as {
@@ -1010,13 +1019,17 @@ function formatPart(part: Part): string {
           const inputFields = Object.entries(part.state.input)
             .map(([key, value]) => {
               if (value === null || value === undefined) return null
-              const stringValue = typeof value === 'string' ? value : JSON.stringify(value)
-              const truncatedValue = stringValue.length > 100 ? stringValue.slice(0, 100) + '…' : stringValue
+              const stringValue =
+                typeof value === 'string' ? value : JSON.stringify(value)
+              const truncatedValue =
+                stringValue.length > 100
+                  ? stringValue.slice(0, 100) + '…'
+                  : stringValue
               return `${key}: ${truncatedValue}`
             })
             .filter(Boolean)
           if (inputFields.length > 0) {
-            outputToDisplay = inputFields.join('\n')
+            outputToDisplay = inputFields.join(', ')
           }
         }
 
@@ -1515,12 +1528,16 @@ async function handleOpencodeSession(
         }
       }
       // Always log the error's constructor name (if any) and make error reporting more readable
-      const errorName = error && typeof error === 'object' && 'constructor' in error && error.constructor && typeof error.constructor.name === 'string'
-        ? error.constructor.name
-        : typeof error
-      const errorMsg = error instanceof Error
-        ? (error.stack || error.message)
-        : String(error)
+      const errorName =
+        error &&
+        typeof error === 'object' &&
+        'constructor' in error &&
+        error.constructor &&
+        typeof error.constructor.name === 'string'
+          ? error.constructor.name
+          : typeof error
+      const errorMsg =
+        error instanceof Error ? error.stack || error.message : String(error)
       await sendThreadMessage(
         thread,
         `✗ Unexpected bot Error: [${errorName}]\n${errorMsg}`,
