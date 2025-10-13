@@ -1,5 +1,17 @@
 # Changelog
 
+## 0.4.2
+
+### Patch Changes
+
+- Revert 0.4.1 changes that caused multiple event listeners to accumulate
+
+## 0.4.1
+
+### Patch Changes
+
+- Separate abort controllers for event subscription and prompt requests (reverted in 0.4.2)
+
 ## 0.4.0
 
 ### Minor Changes
