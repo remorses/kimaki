@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.4.0
+
+### Minor Changes
+
+- hide the too many params in discord
+
 ## 0.3.2
 
 ### Patch Changes
