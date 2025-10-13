@@ -1169,11 +1169,11 @@ async function handleOpencodeSession(
     voiceLogger.log(
       `[ABORT] Cancelling existing request for session: ${session.id}`,
     )
-    existingController.abort('New request started')
+    existingController.abort(new Error('New request started'))
   }
 
   if (abortControllers.has(session.id)) {
-    abortControllers.get(session.id)?.abort('new reply')
+    abortControllers.get(session.id)?.abort(new Error('new reply'))
   }
   const abortController = new AbortController()
   // Store this controller for this session
@@ -1494,7 +1494,7 @@ async function handleOpencodeSession(
       },
       signal: abortController.signal,
     })
-    abortController.abort('finished')
+    abortController.abort(new Error('finished'))
 
     sessionLogger.log(`Successfully sent prompt, got response`)
 
@@ -1516,7 +1516,7 @@ async function handleOpencodeSession(
     sessionLogger.error(`ERROR: Failed to send prompt:`, error)
 
     if (!isAbortError(error, abortController.signal)) {
-      abortController.abort('error')
+      abortController.abort(new Error('error'))
 
       if (originalMessage) {
         try {
