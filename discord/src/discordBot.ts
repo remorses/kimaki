@@ -946,128 +946,149 @@ export async function initializeOpencodeForDirectory(directory: string) {
 }
 
 
-function formatPart(part: Part): string {
-  switch (part.type) {
-    case 'text':
-      return escapeDiscordFormatting(part.text || '')
-    case 'reasoning':
-      if (!part.text?.trim()) return ''
-      return `▪︎ thinking: ${escapeDiscordFormatting(part.text || '')}`
-    case 'tool':
-      if (part.state.status === 'completed' || part.state.status === 'error') {
-        let outputToDisplay = ''
-        let summaryText = ''
+function getToolSummaryText(part: Part): string {
+  if (part.type !== 'tool') return ''
+  if (part.state.status !== 'completed' && part.state.status !== 'error') return ''
 
-        if (part.tool === 'bash') {
-          const output =
-            part.state.status === 'completed'
-              ? part.state.output
-              : part.state.error
-          const lines = (output || '').split('\n').filter((l) => l.trim())
-          summaryText = `(${lines.length} line${lines.length === 1 ? '' : 's'})`
-        } else if (part.tool === 'edit') {
-          const newString = (part.state.input?.newString as string) || ''
-          const oldString = (part.state.input?.oldString as string) || ''
-          const added = newString.split('\n').length
-          const removed = oldString.split('\n').length
-          summaryText = `(+${added}-${removed})`
-        } else if (part.tool === 'write') {
-          const content = (part.state.input?.content as string) || ''
-          const lines = content.split('\n').length
-          summaryText = `(${lines} line${lines === 1 ? '' : 's'})`
-        } else if (part.tool === 'read') {
-        } else if (part.tool === 'write') {
-        } else if (part.tool === 'edit') {
-        } else if (part.tool === 'list') {
-        } else if (part.tool === 'glob') {
-        } else if (part.tool === 'grep') {
-        } else if (part.tool === 'task') {
-        } else if (part.tool === 'todoread') {
-          // Special handling for read - don't show arguments
-        } else if (part.tool === 'todowrite') {
-          const todos =
-            (part.state.input?.todos as {
-              content: string
-              status: 'pending' | 'in_progress' | 'completed' | 'cancelled'
-            }[]) || []
-          outputToDisplay = todos
-            .map((todo) => {
-              let statusIcon = '▢'
-              switch (todo.status) {
-                case 'pending':
-                  statusIcon = '▢'
-                  break
-                case 'in_progress':
-                  statusIcon = '●'
-                  break
-                case 'completed':
-                  statusIcon = '■'
-                  break
-                case 'cancelled':
-                  statusIcon = '■'
-                  break
-              }
-              return `\`${statusIcon}\` ${todo.content}`
-            })
-            .filter(Boolean)
-            .join('\n')
-        } else if (part.tool === 'webfetch') {
-          const url = (part.state.input?.url as string) || ''
-          const urlWithoutProtocol = url.replace(/^https?:\/\//, '')
-          summaryText = urlWithoutProtocol ? `(${urlWithoutProtocol})` : ''
-        } else if (part.state.input) {
-          const inputFields = Object.entries(part.state.input)
-            .map(([key, value]) => {
-              if (value === null || value === undefined) return null
-              const stringValue =
-                typeof value === 'string' ? value : JSON.stringify(value)
-              const truncatedValue =
-                stringValue.length > 100
-                  ? stringValue.slice(0, 100) + '…'
-                  : stringValue
-              return `${key}: ${truncatedValue}`
-            })
-            .filter(Boolean)
-          if (inputFields.length > 0) {
-            outputToDisplay = inputFields.join(', ')
-          }
-        }
-
-        let toolTitle =
-          part.state.status === 'completed' ? part.state.title || '' : 'error'
-        if (toolTitle) {
-          toolTitle = `\`${escapeInlineCode(toolTitle)}\``
-        }
-        const icon =
-          part.state.status === 'completed'
-            ? '◼︎'
-            : part.state.status === 'error'
-              ? '⨯'
-              : ''
-        const title = `${icon} ${part.tool} ${toolTitle} ${summaryText}`
-
-        let text = title
-
-        if (outputToDisplay) {
-          text += '\n\n' + outputToDisplay
-        }
-        return text
-      }
-      return ''
-    case 'file':
-      return `📄 ${part.filename || 'File'}`
-    case 'step-start':
-    case 'step-finish':
-    case 'patch':
-      return ''
-    case 'agent':
-      return `◼︎ agent ${part.id}`
-    case 'snapshot':
-      return `◼︎ snapshot ${part.snapshot}`
-    default:
-      discordLogger.warn('Unknown part type:', part)
-      return ''
+  if (part.tool === 'bash') {
+    const output = part.state.status === 'completed' ? part.state.output : part.state.error
+    const lines = (output || '').split('\n').filter((l: string) => l.trim())
+    return `(${lines.length} line${lines.length === 1 ? '' : 's'})`
   }
+
+  if (part.tool === 'edit') {
+    const newString = (part.state.input?.newString as string) || ''
+    const oldString = (part.state.input?.oldString as string) || ''
+    const added = newString.split('\n').length
+    const removed = oldString.split('\n').length
+    return `(+${added}-${removed})`
+  }
+
+  if (part.tool === 'write') {
+    const content = (part.state.input?.content as string) || ''
+    const lines = content.split('\n').length
+    return `(${lines} line${lines === 1 ? '' : 's'})`
+  }
+
+  if (part.tool === 'webfetch') {
+    const url = (part.state.input?.url as string) || ''
+    const urlWithoutProtocol = url.replace(/^https?:\/\//, '')
+    return urlWithoutProtocol ? `(${urlWithoutProtocol})` : ''
+  }
+
+  return ''
+}
+
+function getToolOutputToDisplay(part: Part): string {
+  if (part.type !== 'tool') return ''
+  if (part.state.status !== 'completed' && part.state.status !== 'error') return ''
+
+  if (part.state.status === 'error') {
+    return part.state.error || 'Unknown error'
+  }
+
+  if (part.tool === 'todowrite') {
+    const todos =
+      (part.state.input?.todos as {
+        content: string
+        status: 'pending' | 'in_progress' | 'completed' | 'cancelled'
+      }[]) || []
+    return todos
+      .map((todo) => {
+        let statusIcon = '▢'
+        if (todo.status === 'in_progress') {
+          statusIcon = '●'
+        }
+        if (todo.status === 'completed' || todo.status === 'cancelled') {
+          statusIcon = '■'
+        }
+        return `\`${statusIcon}\` ${todo.content}`
+      })
+      .filter(Boolean)
+      .join('\n')
+  }
+
+  if (
+    part.tool === 'bash' ||
+    part.tool === 'edit' ||
+    part.tool === 'write' ||
+    part.tool === 'webfetch' ||
+    part.tool === 'read' ||
+    part.tool === 'list' ||
+    part.tool === 'glob' ||
+    part.tool === 'grep' ||
+    part.tool === 'task' ||
+    part.tool === 'todoread'
+  ) {
+    return ''
+  }
+
+  if (!part.state.input) return ''
+
+  const inputFields = Object.entries(part.state.input)
+    .map(([key, value]) => {
+      if (value === null || value === undefined) return null
+      const stringValue = typeof value === 'string' ? value : JSON.stringify(value)
+      const truncatedValue = stringValue.length > 100 ? stringValue.slice(0, 100) + '…' : stringValue
+      return `${key}: ${truncatedValue}`
+    })
+    .filter(Boolean)
+
+  if (inputFields.length === 0) return ''
+
+  return inputFields.join(', ')
+}
+
+function formatPart(part: Part): string {
+  if (part.type === 'text') {
+    return part.text || ''
+  }
+
+  if (part.type === 'reasoning') {
+    if (!part.text?.trim()) return ''
+    return `▪︎ thinking: ${escapeDiscordFormatting(part.text || '')}`
+  }
+
+  if (part.type === 'file') {
+    return `📄 ${part.filename || 'File'}`
+  }
+
+  if (part.type === 'step-start' || part.type === 'step-finish' || part.type === 'patch') {
+    return ''
+  }
+
+  if (part.type === 'agent') {
+    return `◼︎ agent ${part.id}`
+  }
+
+  if (part.type === 'snapshot') {
+    return `◼︎ snapshot ${part.snapshot}`
+  }
+
+  if (part.type === 'tool') {
+    if (part.state.status !== 'completed' && part.state.status !== 'error') {
+      return ''
+    }
+
+    const summaryText = getToolSummaryText(part)
+    const outputToDisplay = getToolOutputToDisplay(part)
+
+    let toolTitle = part.state.status === 'completed' ? part.state.title || '' : 'error'
+    if (toolTitle) {
+      toolTitle = `\`${escapeInlineCode(toolTitle)}\``
+    }
+
+    const icon = part.state.status === 'completed' ? '◼︎' : part.state.status === 'error' ? '⨯' : ''
+    const title = `${icon} ${part.tool} ${toolTitle} ${summaryText}`
+
+    if (outputToDisplay) {
+      return title + '\n\n' + outputToDisplay
+    }
+    return title
+  }
+
+  discordLogger.warn('Unknown part type:', part)
+  return ''
 }
 
 export async function createDiscordClient() {
