@@ -1580,9 +1580,9 @@ async function handleOpencodeSession(
         const sessionDuration = prettyMilliseconds(
           Date.now() - sessionStartTime,
         )
-        const attachCommand = port ? ` | \`opencode attach http://localhost:${port} -s ${session.id}\`` : ''
-        const modelInfo = usedModel ? ` | ${usedModel}` : ''
-        await sendThreadMessage(thread, `_Completed in ${sessionDuration}${modelInfo}${attachCommand}_`)
+        const attachCommand = port ? ` ⋅ ${session.id}` : ''
+        const modelInfo = usedModel ? ` ⋅ ${usedModel}` : ''
+        await sendThreadMessage(thread, `_Completed in ${sessionDuration}_${modelInfo}${attachCommand}`)
         sessionLogger.log(`DURATION: Session completed in ${sessionDuration}, port ${port}, model ${usedModel}`)
       } else {
         sessionLogger.log(
