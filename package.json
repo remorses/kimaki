@@ -2,11 +2,10 @@
   "name": "root",
   "private": true,
   "scripts": {
-    "test": "NODE_ENV=test vitest",
+    "test": "NODE_ENV=test pnpm --filter discord run vitest",
     "dev": "pnpm --filter kimaki dev",
-    "build": "pnpm -r build",
+    "agents.md": "agentsdotmd ./KIMAKI_AGENTS.md core.md typescript.md pnpm.md sentry.md vitest.md gitchamber.md changelog.md docs-writing.md cac.md shadcn.md tailwind.md spiceflow.md vercel-ai-sdk.md playwright.md zod.md",
     "kimaki": "pnpm --filter kimaki play",
-    "release": "pnpm build && changeset",
     "format": "prettier --write ."
   },
   "devDependencies": {
