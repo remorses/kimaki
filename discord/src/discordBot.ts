@@ -16,6 +16,7 @@ import {
   Partials,
   PermissionsBitField,
   ThreadAutoArchiveDuration,
+  type CategoryChannel,
   type Guild,
   type Interaction,
   type Message,
@@ -459,7 +460,6 @@ function frameMono16khz(): Transform {
 
 export function getDatabase(): Database.Database {
   if (!db) {
-    // Create ~/.kimaki directory if it doesn't exist
     const kimakiDir = path.join(os.homedir(), '.kimaki')
 
     try {
@@ -473,7 +473,6 @@ export function getDatabase(): Database.Database {
     dbLogger.log(`Opening database at: ${dbPath}`)
     db = new Database(dbPath)
 
-    // Initialize tables
     db.exec(`
       CREATE TABLE IF NOT EXISTS thread_sessions (
         thread_id TEXT PRIMARY KEY,
@@ -520,6 +519,76 @@ export function getDatabase(): Database.Database {
   return db
 }
 
+export async function ensureKimakiCategory(guild: Guild): Promise<CategoryChannel> {
+  const existingCategory = guild.channels.cache.find(
+    (channel): channel is CategoryChannel => {
+      if (channel.type !== ChannelType.GuildCategory) {
+        return false
+      }
+
+      return channel.name.toLowerCase() === 'kimaki'
+    },
+  )
+
+  if (existingCategory) {
+    return existingCategory
+  }
+
+  return guild.channels.create({
+    name: 'Kimaki',
+    type: ChannelType.GuildCategory,
+  })
+}
+
+export async function createProjectChannels({
+  guild,
+  projectDirectory,
+  appId,
+}: {
+  guild: Guild
+  projectDirectory: string
+  appId: string
+}): Promise<{ textChannelId: string; voiceChannelId: string; channelName: string }> {
+  const baseName = path.basename(projectDirectory)
+  const channelName = `${baseName}`
+    .toLowerCase()
+    .replace(/[^a-z0-9-]/g, '-')
+    .slice(0, 100)
+
+  const kimakiCategory = await ensureKimakiCategory(guild)
+
+  const textChannel = await guild.channels.create({
+    name: channelName,
+    type: ChannelType.GuildText,
+    parent: kimakiCategory,
+    topic: `<kimaki><directory>${projectDirectory}</directory><app>${appId}</app></kimaki>`,
+  })
+
+  const voiceChannel = await guild.channels.create({
+    name: channelName,
+    type: ChannelType.GuildVoice,
+    parent: kimakiCategory,
+  })
+
+  getDatabase()
+    .prepare(
+      'INSERT OR REPLACE INTO channel_directories (channel_id, directory, channel_type) VALUES (?, ?, ?)',
+    )
+    .run(textChannel.id, projectDirectory, 'text')
+
+  getDatabase()
+    .prepare(
+      'INSERT OR REPLACE INTO channel_directories (channel_id, directory, channel_type) VALUES (?, ?, ?)',
+    )
+    .run(voiceChannel.id, projectDirectory, 'voice')
+
+  return {
+    textChannelId: textChannel.id,
+    voiceChannelId: voiceChannel.id,
+    channelName,
+  }
+}
+
 async function getOpenPort(): Promise<number> {
   return new Promise((resolve, reject) => {
     const server = net.createServer()
@@ -549,6 +618,8 @@ async function sendThreadMessage(
   content: string,
 ): Promise<Message> {
   const MAX_LENGTH = 2000
+
+  content = escapeBackticksInCodeBlocks(content)
 
   // Simple case: content fits in one message
   if (content.length <= MAX_LENGTH) {
@@ -740,6 +811,24 @@ async function processVoiceAttachment({
     `📝 **Transcribed message:** ${escapeDiscordFormatting(transcription)}`,
   )
   return transcription
+}
+
+export function escapeBackticksInCodeBlocks(markdown: string): string {
+  const lexer = new Lexer()
+  const tokens = lexer.lex(markdown)
+
+  let result = ''
+
+  for (const token of tokens) {
+    if (token.type === 'code') {
+      const escapedCode = token.text.replace(/`/g, '\\`')
+      result += '```' + (token.lang || '') + '\n' + escapedCode + '\n```\n'
+    } else {
+      result += token.raw
+    }
+  }
+
+  return result
 }
 
 /**
@@ -945,7 +1034,6 @@ export async function initializeOpencodeForDirectory(directory: string) {
   }
 }
 
-
 function getToolSummaryText(part: Part): string {
   if (part.type !== 'tool') return ''
   if (part.state.status !== 'completed' && part.state.status !== 'error') return ''
@@ -976,7 +1064,32 @@ function getToolSummaryText(part: Part): string {
     return urlWithoutProtocol ? `(${urlWithoutProtocol})` : ''
   }
 
-  return ''
+  if (
+    part.tool === 'read' ||
+    part.tool === 'list' ||
+    part.tool === 'glob' ||
+    part.tool === 'grep' ||
+    part.tool === 'task' ||
+    part.tool === 'todoread' ||
+    part.tool === 'todowrite'
+  ) {
+    return ''
+  }
+
+  if (!part.state.input) return ''
+
+  const inputFields = Object.entries(part.state.input)
+    .map(([key, value]) => {
+      if (value === null || value === undefined) return null
+      const stringValue = typeof value === 'string' ? value : JSON.stringify(value)
+      const truncatedValue = stringValue.length > 100 ? stringValue.slice(0, 100) + '…' : stringValue
+      return `${key}: ${truncatedValue}`
+    })
+    .filter(Boolean)
+
+  if (inputFields.length === 0) return ''
+
+  return `(${inputFields.join(', ')})`
 }
 
 function getToolOutputToDisplay(part: Part): string {
@@ -1008,35 +1121,7 @@ function getToolOutputToDisplay(part: Part): string {
       .join('\n')
   }
 
-  if (
-    part.tool === 'bash' ||
-    part.tool === 'edit' ||
-    part.tool === 'write' ||
-    part.tool === 'webfetch' ||
-    part.tool === 'read' ||
-    part.tool === 'list' ||
-    part.tool === 'glob' ||
-    part.tool === 'grep' ||
-    part.tool === 'task' ||
-    part.tool === 'todoread'
-  ) {
-    return ''
-  }
-
-  if (!part.state.input) return ''
-
-  const inputFields = Object.entries(part.state.input)
-    .map(([key, value]) => {
-      if (value === null || value === undefined) return null
-      const stringValue = typeof value === 'string' ? value : JSON.stringify(value)
-      const truncatedValue = stringValue.length > 100 ? stringValue.slice(0, 100) + '…' : stringValue
-      return `${key}: ${truncatedValue}`
-    })
-    .filter(Boolean)
-
-  if (inputFields.length === 0) return ''
-
-  return inputFields.join(', ')
+  return ''
 }
 
 function formatPart(part: Part): string {
@@ -1046,7 +1131,7 @@ function formatPart(part: Part): string {
 
   if (part.type === 'reasoning') {
     if (!part.text?.trim()) return ''
-    return `▪︎ thinking: ${escapeDiscordFormatting(part.text || '')}`
+    return `◼︎ thinking`
   }
 
   if (part.type === 'file') {
@@ -1113,7 +1198,7 @@ async function handleOpencodeSession(
   thread: ThreadChannel,
   projectDirectory?: string,
   originalMessage?: Message,
-) {
+): Promise<{ sessionID: string; result: any; port?: number } | undefined> {
   voiceLogger.log(
     `[OPENCODE SESSION] Starting for thread ${thread.id} with prompt: "${prompt.slice(0, 50)}${prompt.length > 50 ? '...' : ''}"`,
   )
@@ -1138,6 +1223,10 @@ async function handleOpencodeSession(
   // Note: We'll cancel the existing request after we have the session ID
 
   const getClient = await initializeOpencodeForDirectory(directory)
+
+  // Get the port for this directory
+  const serverEntry = opencodeServers.get(directory)
+  const port = serverEntry?.port
 
   // Get session ID from database
   const row = getDatabase()
@@ -1230,6 +1319,7 @@ async function handleOpencodeSession(
 
   let currentParts: Part[] = []
   let stopTyping: (() => void) | null = null
+  let usedModel: string | undefined
 
   const sendPartMessage = async (part: Part) => {
     const content = formatPart(part) + '\n\n'
@@ -1490,8 +1580,10 @@ async function handleOpencodeSession(
         const sessionDuration = prettyMilliseconds(
           Date.now() - sessionStartTime,
         )
-        await sendThreadMessage(thread, `_Completed in ${sessionDuration}_`)
-        sessionLogger.log(`DURATION: Session completed in ${sessionDuration}`)
+        const attachCommand = port ? ` | \`opencode attach http://localhost:${port} -s ${session.id}\`` : ''
+        const modelInfo = usedModel ? ` | ${usedModel}` : ''
+        await sendThreadMessage(thread, `_Completed in ${sessionDuration}${modelInfo}${attachCommand}_`)
+        sessionLogger.log(`DURATION: Session completed in ${sessionDuration}, port ${port}, model ${usedModel}`)
       } else {
         sessionLogger.log(
           `Session was aborted (reason: ${abortController.signal.reason}), skipping duration message`,
@@ -1515,11 +1607,9 @@ async function handleOpencodeSession(
       },
       signal: abortController.signal,
     })
-    abortController.abort(new Error('finished'))
+    abortController.abort('finished')
 
     sessionLogger.log(`Successfully sent prompt, got response`)
-
-    // abortControllers.delete(session.id)
 
     // Update reaction to success
     if (originalMessage) {
@@ -1532,12 +1622,12 @@ async function handleOpencodeSession(
       }
     }
 
-    return { sessionID: session.id, result: response.data }
+    return { sessionID: session.id, result: response.data, port }
   } catch (error) {
     sessionLogger.error(`ERROR: Failed to send prompt:`, error)
 
     if (!isAbortError(error, abortController.signal)) {
-      abortController.abort(new Error('error'))
+      abortController.abort('error')
 
       if (originalMessage) {
         try {
@@ -1548,7 +1638,6 @@ async function handleOpencodeSession(
           discordLogger.log(`Could not update reaction:`, e)
         }
       }
-      // Always log the error's constructor name (if any) and make error reporting more readable
       const errorName =
         error &&
         typeof error === 'object' &&
@@ -2049,6 +2138,58 @@ export async function startDiscordBot({
                 await interaction.respond([])
               }
             }
+          } else if (interaction.commandName === 'add-project') {
+            const focusedValue = interaction.options.getFocused()
+
+            try {
+              const currentDir = process.cwd()
+              const getClient = await initializeOpencodeForDirectory(currentDir)
+
+              const projectsResponse = await getClient().project.list({})
+              if (!projectsResponse.data) {
+                await interaction.respond([])
+                return
+              }
+
+              const db = getDatabase()
+              const existingDirs = db
+                .prepare(
+                  'SELECT DISTINCT directory FROM channel_directories WHERE channel_type = ?',
+                )
+                .all('text') as { directory: string }[]
+              const existingDirSet = new Set(
+                existingDirs.map((row) => row.directory),
+              )
+
+              const availableProjects = projectsResponse.data.filter(
+                (project) => !existingDirSet.has(project.worktree),
+              )
+
+              const projects = availableProjects
+                .filter((project) => {
+                  const baseName = path.basename(project.worktree)
+                  const searchText = `${baseName} ${project.worktree}`.toLowerCase()
+                  return searchText.includes(focusedValue.toLowerCase())
+                })
+                .sort((a, b) => {
+                  const aTime = a.time.initialized || a.time.created
+                  const bTime = b.time.initialized || b.time.created
+                  return bTime - aTime
+                })
+                .slice(0, 25)
+                .map((project) => ({
+                  name: `${path.basename(project.worktree)} (${project.worktree})`,
+                  value: project.id,
+                }))
+
+              await interaction.respond(projects)
+            } catch (error) {
+              voiceLogger.error(
+                '[AUTOCOMPLETE] Error fetching projects:',
+                error,
+              )
+              await interaction.respond([])
+            }
           }
         }
 
@@ -2309,6 +2450,77 @@ export async function startDiscordBot({
               voiceLogger.error('[RESUME] Error:', error)
               await command.editReply(
                 `Failed to resume session: ${error instanceof Error ? error.message : 'Unknown error'}`,
+              )
+            }
+          } else if (command.commandName === 'add-project') {
+            await command.deferReply({ ephemeral: false })
+
+            const projectId = command.options.getString('project', true)
+            const guild = command.guild
+
+            if (!guild) {
+              await command.editReply('This command can only be used in a guild')
+              return
+            }
+
+            try {
+              const currentDir = process.cwd()
+              const getClient = await initializeOpencodeForDirectory(currentDir)
+
+              const projectsResponse = await getClient().project.list({})
+              if (!projectsResponse.data) {
+                await command.editReply('Failed to fetch projects')
+                return
+              }
+
+              const project = projectsResponse.data.find(
+                (p) => p.id === projectId,
+              )
+
+              if (!project) {
+                await command.editReply('Project not found')
+                return
+              }
+
+              const directory = project.worktree
+
+              if (!fs.existsSync(directory)) {
+                await command.editReply(`Directory does not exist: ${directory}`)
+                return
+              }
+
+              const db = getDatabase()
+              const existingChannel = db
+                .prepare(
+                  'SELECT channel_id FROM channel_directories WHERE directory = ? AND channel_type = ?',
+                )
+                .get(directory, 'text') as { channel_id: string } | undefined
+
+              if (existingChannel) {
+                await command.editReply(
+                  `A channel already exists for this directory: <#${existingChannel.channel_id}>`,
+                )
+                return
+              }
+
+              const { textChannelId, voiceChannelId, channelName } =
+                await createProjectChannels({
+                  guild,
+                  projectDirectory: directory,
+                  appId: currentAppId!,
+                })
+
+              await command.editReply(
+                `✅ Created channels for project:\n📝 Text: <#${textChannelId}>\n🔊 Voice: <#${voiceChannelId}>\n📁 Directory: \`${directory}\``,
+              )
+
+              discordLogger.log(
+                `Created channels for project ${channelName} at ${directory}`,
+              )
+            } catch (error) {
+              voiceLogger.error('[ADD-PROJECT] Error:', error)
+              await command.editReply(
+                `Failed to create channels: ${error instanceof Error ? error.message : 'Unknown error'}`,
               )
             }
           }

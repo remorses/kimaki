@@ -20,6 +20,8 @@ import {
   getDatabase,
   startDiscordBot,
   initializeOpencodeForDirectory,
+  ensureKimakiCategory,
+  createProjectChannels,
   type ChannelWithTags,
 } from './discordBot.js'
 import type { OpencodeClient } from '@opencode-ai/sdk'
@@ -97,6 +99,19 @@ async function registerCommands(token: string, appId: string) {
         return option
       })
       .toJSON(),
+    new SlashCommandBuilder()
+      .setName('add-project')
+      .setDescription('Create Discord channels for a new OpenCode project')
+      .addStringOption((option) => {
+        option
+          .setName('project')
+          .setDescription('Select an OpenCode project')
+          .setRequired(true)
+          .setAutocomplete(true)
+
+        return option
+      })
+      .toJSON(),
   ]
 
   const rest = new REST().setToken(token)
@@ -117,26 +132,7 @@ async function registerCommands(token: string, appId: string) {
   }
 }
 
-async function ensureKimakiCategory(guild: Guild): Promise<CategoryChannel> {
-  const existingCategory = guild.channels.cache.find(
-    (channel): channel is CategoryChannel => {
-      if (channel.type !== ChannelType.GuildCategory) {
-        return false
-      }
 
-      return channel.name.toLowerCase() === 'kimaki'
-    },
-  )
-
-  if (existingCategory) {
-    return existingCategory
-  }
-
-  return guild.channels.create({
-    name: 'Kimaki',
-    type: ChannelType.GuildCategory,
-  })
-}
 
 async function run({ restart, addChannels }: CliOptions) {
   const forceSetup = Boolean(restart)
@@ -530,43 +526,20 @@ async function run({ restart, addChannels }: CliOptions) {
         const project = projects.find((p) => p.id === projectId)
         if (!project) continue
 
-        const baseName = path.basename(project.worktree)
-        const channelName = `${baseName}`
-          .toLowerCase()
-          .replace(/[^a-z0-9-]/g, '-')
-          .slice(0, 100)
-
         try {
-          const kimakiCategory = await ensureKimakiCategory(targetGuild)
-
-          const textChannel = await targetGuild.channels.create({
-            name: channelName,
-            type: ChannelType.GuildText,
-            parent: kimakiCategory,
-            topic: `<kimaki><directory>${project.worktree}</directory><app>${appId}</app></kimaki>`,
+          const { textChannelId, channelName } = await createProjectChannels({
+            guild: targetGuild,
+            projectDirectory: project.worktree,
+            appId,
           })
-
-          const voiceChannel = await targetGuild.channels.create({
-            name: channelName,
-            type: ChannelType.GuildVoice,
-            parent: kimakiCategory,
-          })
-
-          db.prepare(
-            'INSERT OR REPLACE INTO channel_directories (channel_id, directory, channel_type) VALUES (?, ?, ?)',
-          ).run(textChannel.id, project.worktree, 'text')
-
-          db.prepare(
-            'INSERT OR REPLACE INTO channel_directories (channel_id, directory, channel_type) VALUES (?, ?, ?)',
-          ).run(voiceChannel.id, project.worktree, 'voice')
 
           createdChannels.push({
-            name: textChannel.name,
-            id: textChannel.id,
+            name: channelName,
+            id: textChannelId,
             guildId: targetGuild.id,
           })
         } catch (error) {
-          cliLogger.error(`Failed to create channels for ${baseName}:`, error)
+          cliLogger.error(`Failed to create channels for ${path.basename(project.worktree)}:`, error)
         }
       }
 
