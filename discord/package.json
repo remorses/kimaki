@@ -7,7 +7,7 @@
     "dev": "pnpm tsc && tsx --env-file .env src/cli.ts",
     "prepublishOnly": "pnpm tsc",
     "dev:bun": "DEBUG=1 bun --env-file .env src/cli.ts",
-    "test": "tsx scripts/test-opencode.ts",
+
     "watch": "tsx scripts/watch-session.ts",
     "test:events": "tsx test-events.ts",
     "pcm-to-mp3": "bun scripts/pcm-to-mp3",
