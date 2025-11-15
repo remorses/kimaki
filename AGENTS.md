@@ -1,16 +1,5 @@
-# Project Coding Guidelines
 
-NOTICE: AGENTS.md is generated using AGENTS.sh and should NEVER be manually updated.
-
-This file contains all coding guidelines and standards for this project.
-
----
-
-## opentui
-
-opentui is the framework used to render the tui, using react.
-
-IMPORTANT! before starting every task ALWAYS read opentui docs with `curl -s https://raw.githubusercontent.com/sst/opentui/refs/heads/main/packages/react/README.md`
+# core guidelines
 
 when summarizing changes at the end of the message, be super short, a few words and in bullet points, use bold text to highlight important keywords. use markdown.
 
@@ -26,7 +15,10 @@ NEVER add comments unless I tell you
 
 always use kebab case for new filenames. never use uppercase letters in filenames
 
----
+
+## see files in the repo
+
+use `git ls-files | tree --fromfile` to see files in the repo. this command will ignore files ignored by git
 
 # typescript
 
@@ -35,6 +27,10 @@ always use kebab case for new filenames. never use uppercase letters in filename
 - use a single object argument instead of multiple positional args: use object arguments for new typescript functions if the function would accept more than one argument, so it is more readable, ({a,b,c}) instead of (a,b,c). this way you can use the object as a sort of named argument feature, where order of arguments does not matter and it's easier to discover parameters.
 
 - always add the {} block body in arrow functions: arrow functions should never be written as `onClick={(x) => setState('')}`. NEVER. instead you should ALWAYS write `onClick={() => {setState('')}}`. this way it's easy to add new statements in the arrow function without refactoring it.
+
+- in array operations .map, .filter, .reduce and .flatMap are preferred over .forEach and for of loops. For example prefer doing `.push(...array.map(x => x.items))` over mutating array variables inside for loops. Always think of how to turn for loops into expressions using .map, .filter or .flatMap if you ever are about to write a for loop.
+
+- if you encounter typescript errors like "undefined | T is not assignable to T" after .filter(Boolean) operations: use a guarded function instead of Boolean: `.filter(isTruthy)`. implemented as `function isTruthy<T>(value: T): value is NonNullable<T> { return Boolean(value) }`
 
 - minimize useless comments: do not add useless comments if the code is self descriptive. only add comments if requested or if this was a change that i asked for, meaning it is not obvious code and needs some inline documentation. if a comment is required because the part of the code was result of difficult back and forth with me, keep it very short.
 
@@ -58,7 +54,7 @@ always use kebab case for new filenames. never use uppercase letters in filename
 
 - when creating urls from a path and a base url, prefer using `new URL(path, baseUrl).toString()` instead of normal string interpolation. use type-safe react-router `href` or spiceflow `this.safePath` (available inside routes) if possible
 
-- for node built-in imports, never import singular names. instead do `import fs from 'node:fs'`, same for path, os, etc.
+- for node built-in imports, never import singular exported names. instead do `import fs from 'node:fs'`, same for path, os, etc.
 
 - NEVER start the development server with pnpm dev yourself. there is no reason to do so, even with &
 
@@ -68,38 +64,36 @@ always use kebab case for new filenames. never use uppercase letters in filename
 
 ```ts
 // BAD. DO NOT DO THIS
-let favicon: string | undefined
+let favicon: string | undefined;
 if (docsConfig?.favicon) {
-  if (typeof docsConfig.favicon === 'string') {
-    favicon = docsConfig.favicon
+  if (typeof docsConfig.favicon === "string") {
+    favicon = docsConfig.favicon;
   } else if (docsConfig.favicon?.light) {
     // Use light favicon as default, could be enhanced with theme detection
-    favicon = docsConfig.favicon.light
+    favicon = docsConfig.favicon.light;
   }
 }
 // DO THIS. use an iife. Immediately Invoked Function Expression
 const favicon: string = (() => {
   if (!docsConfig?.favicon) {
-    return ''
+    return "";
   }
-  if (typeof docsConfig.favicon === 'string') {
-    return docsConfig.favicon
+  if (typeof docsConfig.favicon === "string") {
+    return docsConfig.favicon;
   }
   if (docsConfig.favicon?.light) {
     // Use light favicon as default, could be enhanced with theme detection
-    return docsConfig.favicon.light
+    return docsConfig.favicon.light;
   }
-  return ''
-})()
+  return "";
+})();
 // if you already know the type use it:
 const favicon: string = () => {
   // ...
-}
+};
 ```
 
 - when a package has to import files from another packages in the workspace never add a new tsconfig path, instead add that package as a workspace dependency using `pnpm i "package@workspace:*"`
-
-## typescript
 
 NEVER use require. always esm imports
 
@@ -113,17 +107,20 @@ always specify the type when creating arrays, especially for empty arrays. if yo
 
 ```ts
 // BAD: Type will be never[]
-const items = []
+const items = [];
 
 // GOOD: Specify the expected type
-const items: string[] = []
-const numbers: number[] = []
-const users: User[] = []
+const items: string[] = [];
+const numbers: number[] = [];
+const users: User[] = [];
 ```
 
 remember to always add the explicit type to avoid unexpected type inference.
 
----
+- when using nodejs APIs like fs always import the module and not the named exports. I prefer hacing nodejs APIs accessed on the module namspace like fs, os, path, etc.
+
+DO `import fs from 'fs'; fs.writeFileSync(...)`
+DO NOT `import { writeFileSync } from 'fs';`
 
 # package manager: pnpm with workspace
 
@@ -134,6 +131,12 @@ try to run commands inside the package folder that you are working on. for examp
 if you need to install packages always use pnpm
 
 instead of adding packages directly in package.json use `pnpm install package` inside the right workspace folder. NEVER manually add a package by updating package.json
+
+## updating a package
+
+when i ask you to update a package always run `pnpm update -r packagename`. to update to latest also add --latest
+
+Do not do `pnpm add packagename` to update a package. only to add a missing one. otherwise other packages versions will get out of sync.
 
 ## fixing duplicate pnpm dependencies
 
@@ -240,9 +243,7 @@ in this case, we could have only updated @better-auth/stripe to fix the issue to
 
 if after doing this we still have duplicate packages, you will have to ask the user for help. you can try deleting the node_modules and restarting the approach, but it rarely helps.
 
----
-
-## sentry
+# sentry
 
 this project uses sentry to notify about unexpected errors.
 
@@ -266,38 +267,38 @@ notice that
 - use the sentries npm package, this handles correctly every environment like Bun, Node, Browser, etc
 
 ```tsx
-import { captureException, flush, init } from 'sentries'
+import { captureException, flush, init } from "sentries";
 
 init({
-  dsn: 'https://e702f9c3dff49fd1aa16500c6056d0f7@o4509638447005696.ingest.de.sentry.io/4509638454476880',
+  dsn: "https://e702f9c3dff49fd1aa16500c6056d0f7@o4509638447005696.ingest.de.sentry.io/4509638454476880",
   integrations: [],
   tracesSampleRate: 0.01,
   profilesSampleRate: 0.01,
   beforeSend(event) {
-    if (process.env.NODE_ENV === 'development') {
-      return null
+    if (process.env.NODE_ENV === "development") {
+      return null;
     }
     if (process.env.BYTECODE_RUN) {
-      return null
+      return null;
     }
-    if (event?.['name'] === 'AbortError') {
-      return null
+    if (event?.["name"] === "AbortError") {
+      return null;
     }
 
-    return event
+    return event;
   },
-})
+});
 
 export async function notifyError(error: any, msg?: string) {
-  console.error(msg, error)
-  captureException(error, { extra: { msg } })
-  await flush(1000)
+  console.error(msg, error);
+  captureException(error, { extra: { msg } });
+  await flush(1000);
 }
 
 export class AppError extends Error {
   constructor(message: string) {
-    super(message)
-    this.name = 'AppError'
+    super(message);
+    this.name = "AppError";
   }
 }
 ```
@@ -307,8 +308,6 @@ export class AppError extends Error {
 every time you throw a user-readable error you should use AppError instead of Error
 
 AppError messages will be forwarded to the user as is. normal Error instances instead could have their messages obfuscated
-
----
 
 # testing
 
@@ -322,6 +321,10 @@ to understand how the code you are writing works, you should add inline snapshot
 
 > always call `pnpm vitest` or `pnpm test` with `--run` or they will hang forever waiting for changes!
 > ALWAYS read back the test if you use the `-u` option to make sure the inline snapshots are as you expect.
+
+- NEVER writes the snapshots content yourself in `toMatchInlineSnapshot`. instead leave it empty and call `pnpm test -u` to fill in snapshots content.
+
+- when updating implementation and `toMatchInlineSnapshot` should change, DO NOT remove the inline snapshots yourself, just run `pnpm test -u` instead! This will replace contents of the snapshots without wasting time doing it yourself.
 
 - for very long snapshots you should use `toMatchFileSnapshot(filename)` instead of `toMatchInlineSnapshot()`. put the snapshot files in a snapshots/ directory and use the appropriate extension for the file based on the content
 
@@ -341,26 +344,21 @@ sometimes tests work directly on database data, using prisma. to run these tests
 
 never write tests yourself that call prisma or interact with database or emails. for these, ask the user to write them for you.
 
----
+github.md
+# changelog
 
-## reading github repositories
+## 1.1.2
 
-you can use gitchamber.com to read repo files. run `curl https://gitchamber.com` to see how the API works. always use curl to fetch the responses of gitchamber.com
+### Patch Changes
 
-### vercel ai sdk documentation
-
-when working with the vercel ai sdk, you can fetch the latest docs using:
-https://gitchamber.com/repos/vercel/ai/main/files
-
-use gitchamber to read the .md files using curl
-
-you can swap out the topic with text you want to search docs for. you can also limit the total results returned with the param token to limit the tokens that will be added to the context window
-
----
-
-## changelog
+- Header comment in generated AGENTS.md instructing not to edit directly
+- Instructions to create ./MY_AGENTS.md for custom instructions
 
 after you make a change that is noteworthy, add an entry in the CHANGELOG.md file in the root of the package. there are 2 kinds of packages, public and private packages. private packages have a private: true field in package.json, public packages do not and instead have a version field in package.json. public packages are the ones that are published to npm.
+
+If the current package has a version field and it is not private then include the version in the changelog too like in the examples, otherwise use the current date and time.
+
+If you use the version you MUST use a bumped version compared to the current package.json version, and you should update the package.json version field to that version. But do not publish. I will handle that myself.
 
 to write a changelog.md file for a public package, use the following format, add a heading with the new version and a bullet list of your changes, like this:
 
@@ -397,24 +395,14 @@ use present tense. be detailed but concise, omit useless verbs like "implement",
 
 the website package has a dependency on docs-website. instead of duplicating code that is needed both in website and docs-website keep a file in docs-website instead and import from there for the website package.
 
----
-
-## writing docs
+# writing docs
 
 when generating a .md or .mdx file to document things, always add a frontmatter with title and description. also add a prompt field with the exact prompt used to generate the doc. use @ to reference files and urls and provide any context necessary to be able to recreate this file from scratch using a model. if you used urls also reference them. reference all files you had to read to create the doc. use yaml | syntax to add this prompt and never go over the column width of 80
-
----
-
-## cac for cli development
+# cac for cli development
 
 the cli uses cac npm package.
 
-notice that if you add a route in the spiceflow server you will need to run `pnpm --filter website gen-client` to update the apiClient inside cli.
-
-
----
-
-## styling
+# styling
 
 - always use tailwind for styling. prefer using simple styles using flex and gap. margins should be avoided, instead use flexbox gaps, grid gaps, or separate spacing divs.
 
@@ -434,23 +422,41 @@ this project uses shadcn components placed in the website/src/components/ui fold
 
 try to reuse these available components when you can, for example for buttons, tooltips, scroll areas, etc.
 
----
+## reusing shadcn components
 
-## tailwind v4
+when creating a new React component or adding jsx before creating your own buttons or other elements first check the files inside `src/components/ui` and `src/components` to see what is already available. So you can reuse things like Button and Tooltip components instead of creating your own.
+
+# tailwind v4
 
 this project uses tailwind v4. this new tailwind version does not use tailwind.config.js. instead it does all configuration in css files.
 
 read https://tailwindcss.com/docs/upgrade-guide to understand the updates landed in tailwind v4 if you do not have tailwind v4 in your training context. ignore the parts that talk about running the upgrade cli. this project already uses tailwind v4 so no need to upgrade anything.
 
----
+## spacing should use multiples of 4
 
-## calling the server from the client
+for margin, padding, gaps, widths and heights it is preferable to use multiples of 4 of the tailwind spacing scale. for example p-4 or gap-4
+
+4 is equal to 16px which is the default font size of the page. this way every spacing is a multiple of the height and width of a default letter.
+
+user interfaces are mostly text so using the letter width and height as a base unit makes it easier to reason about the layout and sizes.
+
+use grow instead of flex-1.
+
+# spiceflow
+
+before writing or updating spiceflow related code always execute this command to get Spiceflow full documentation: `curl -s https://gitchamber.com/repos/remorses/spiceflow/main/files/README.md`
+
+spiceflow is an API library similar to hono, it allows you to write api servers using whatwg requests and responses
+
+use zod to create schemas and types that need to be used for tool inputs or spiceflow API routes.
+
+## calling the server from the clientE
+
+you can obtain a type safe client for the API using `createSpiceflowClient` from `spiceflow/client`
 
 for simple routes that only have one interaction in the page, for example a form page, you should use react-router forms and actions to interact with the server.
 
 but when you do interactions from a component that can be rendered from multiple routes, or simply is not implemented inside a route page, you should use spiceflow client instead.
-
-the website exposes an API via spiceflow. here is spiceflow docs: https://getspiceflow.com/
 
 > ALWAYS use the fetch tool to get the latest docs if you need to implement a new route in a spiceflow API app server or need to add a new rpc call with a spiceflow api client!
 
@@ -469,10 +475,25 @@ spiceflow is a little-known api framework. if you add server routes to a file th
 
 this url returns a single long documentation that covers your use case. always fetch this document so you know how to use spiceflow. spiceflow is different from hono and other api frameworks, that's why you should ALWAYS fetch the docs first before using it
 
+## using spiceflow client in published public workspace packages
 
----
+usually you can just import the App type from the server workspace to create the client with createSpiceflowClient
 
-## ai sdk
+if you want to use the spiceflow client in a published package instead we will use the pattern of generating .d.ts and copying these in the workspace package, this way the package does not need to depend on unpublished private server package.
+
+example:
+
+```json
+{
+  "scripts": {
+    "gen-client": "export DIR=../plugin-mcp/src/generated/ && cd ../website && tsc --incremental && cd ../plugin-mcp && rm -rf $DIR && mkdir -p $DIR && cp ../website/dist/src/lib/api-client.* $DIR"
+  }
+}
+```
+
+notice that if you add a route in the spiceflow server you will need to run `pnpm --filter website gen-client` to update the apiClient inside cli.
+
+# ai sdk
 
 i use the vercel ai sdk to interact with LLMs, also known as the npm package `ai`. never use the openai sdk or provider-specific sdks, always use the vercel ai sdk, npm package `ai`. streamText is preferred over generateText, unless the model used is very small and fast and the current code doesn't care about streaming tokens or showing a preview to the user. `streamObject` is also preferred over generateObject.
 
@@ -482,23 +503,30 @@ https://gitchamber.com/repos/vercel/ai/main/files
 use gitchamber to read the .md files using curl
 
 you can swap out the topic with text you want to search docs for. you can also limit the total results returned with the param token to limit the tokens that will be added to the context window
-
----
-
-## playwright
+# playwright
 
 you can control the browser using the playwright mcp tools. these tools let you control the browser to get information or accomplish actions
 
 if i ask you to test something in the browser, know that the website dev server is already running at http://localhost:7664 for website and :7777 for docs-website (but docs-website needs to use the website domain specifically, for example name-hash.localhost:7777)
-
----
-
-## zod
-
-use zod to create schemas and types that need to be used for tool inputs or spiceflow API routes.
+# zod
 
 when you need to create a complex type that comes from a prisma table, do not create a new schema that tries to recreate the prisma table structure. instead just use `z.any() as ZodType<PrismaTable>)` to get type safety but leave any in the schema. this gets most of the benefits of zod without having to define a new zod schema that can easily go out of sync.
 
----
+## converting zod schema to jsonschema
 
+you MUST use the built in zod v4 toJSONSchema and not the npm package `zod-to-json-schema` which is outdated and does not support zod v4.
+
+```ts
+import { toJSONSchema } from "zod";
+
+const mySchema = z.object({
+  id: z.string().uuid(),
+  name: z.string().min(3).max(100),
+  age: z.number().min(0).optional(),
+});
+
+const jsonSchema = toJSONSchema(mySchema, {
+  removeAdditionalStrategy: "strict",
+});
 ```
+
