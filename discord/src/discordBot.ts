@@ -2441,55 +2441,23 @@ export async function startDiscordBot({
                     await sendThreadMessage(thread, `**User:**\n${escapedText}`)
                   }
                 } else if (message.info.role === 'assistant') {
-                  // Render assistant parts - batch them to avoid rate limits
-                  const MAX_BATCH_LENGTH = 1900
-                  let batchedContent = ''
-                  let batchedParts: Part[] = []
-
-                  const flushBatch = async () => {
-                    if (batchedContent.trim()) {
-                      const discordMessage = await sendThreadMessage(
-                        thread,
-                        batchedContent,
-                      )
-
-                      // Store part-message mappings in database
-                      for (const part of batchedParts) {
-                        getDatabase()
-                          .prepare(
-                            'INSERT OR REPLACE INTO part_messages (part_id, message_id, thread_id) VALUES (?, ?, ?)',
-                          )
-                          .run(part.id, discordMessage.id, thread.id)
-                      }
-                    }
-                    batchedContent = ''
-                    batchedParts = []
-                  }
-
+                  // Render assistant parts
                   for (const part of message.parts) {
                     const content = formatPart(part)
                     if (content.trim()) {
-                      // If adding this content would exceed the limit, flush the current batch
-                      if (
-                        batchedContent &&
-                        batchedContent.length + content.length + 2 >
-                          MAX_BATCH_LENGTH
-                      ) {
-                        await flushBatch()
-                      }
+                      const discordMessage = await sendThreadMessage(
+                        thread,
+                        content,
+                      )
 
-                      // Add content to batch
-                      if (batchedContent) {
-                        batchedContent += '\n\n' + content
-                      } else {
-                        batchedContent = content
-                      }
-                      batchedParts.push(part)
+                      // Store part-message mapping in database
+                      getDatabase()
+                        .prepare(
+                          'INSERT OR REPLACE INTO part_messages (part_id, message_id, thread_id) VALUES (?, ?, ?)',
+                        )
+                        .run(part.id, discordMessage.id, thread.id)
                     }
                   }
-
-                  // Flush any remaining content
-                  await flushBatch()
                 }
                 messageCount++
               }
