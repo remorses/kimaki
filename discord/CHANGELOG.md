@@ -5,6 +5,7 @@
 ### Patch Changes
 
 - fix: truncate autocomplete choices to 100 chars in resume and add-project commands to avoid DiscordAPIError[50035]
+- fix: filter out autocomplete choices in session command that exceed Discord's 100 char value limit
 
 ## 0.4.2
 

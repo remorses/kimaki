@@ -2127,7 +2127,6 @@ export async function startDiscordBot({
 
                 // Map to Discord autocomplete format
                 const choices = files
-                  .slice(0, 25) // Discord limit
                   .map((file: string) => {
                     const fullValue = prefix + file
                     // Get all basenames for display
@@ -2145,6 +2144,10 @@ export async function startDiscordBot({
                       value: fullValue,
                     }
                   })
+                  // Discord API limits choice value to 100 characters
+                  .filter((choice) => choice.value.length <= 100)
+                  .slice(0, 25) // Discord limit
+
 
                 await interaction.respond(choices)
               } catch (error) {
