@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.4.3
+
+### Patch Changes
+
+- fix: truncate autocomplete choices to 100 chars in resume and add-project commands to avoid DiscordAPIError[50035]
+
 ## 0.4.2
 
 ### Patch Changes

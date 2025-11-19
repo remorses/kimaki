@@ -2038,10 +2038,24 @@ export async function startDiscordBot({
                     .includes(focusedValue.toLowerCase()),
                 )
                 .slice(0, 25) // Discord limit
-                .map((session) => ({
-                  name: `${session.title} (${new Date(session.time.updated).toLocaleString()})`,
-                  value: session.id,
-                }))
+                .map((session) => {
+                  const dateStr = new Date(
+                    session.time.updated,
+                  ).toLocaleString()
+                  const suffix = ` (${dateStr})`
+                  // Discord limit is 100 chars. Reserve space for suffix.
+                  const maxTitleLength = 100 - suffix.length
+
+                  let title = session.title
+                  if (title.length > maxTitleLength) {
+                    title = title.slice(0, Math.max(0, maxTitleLength - 1)) + '…'
+                  }
+
+                  return {
+                    name: `${title}${suffix}`,
+                    value: session.id,
+                  }
+                })
 
               await interaction.respond(sessions)
             } catch (error) {
@@ -2177,10 +2191,13 @@ export async function startDiscordBot({
                   return bTime - aTime
                 })
                 .slice(0, 25)
-                .map((project) => ({
-                  name: `${path.basename(project.worktree)} (${project.worktree})`,
-                  value: project.id,
-                }))
+                .map((project) => {
+                  const name = `${path.basename(project.worktree)} (${project.worktree})`
+                  return {
+                    name: name.length > 100 ? name.slice(0, 99) + '…' : name,
+                    value: project.id,
+                  }
+                })
 
               await interaction.respond(projects)
             } catch (error) {
