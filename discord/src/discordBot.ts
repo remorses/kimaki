@@ -1433,6 +1433,10 @@ async function handleOpencodeSession(
           // Track assistant message ID
           if (msg.role === 'assistant') {
             assistantMessageId = msg.id
+
+
+            usedModel = msg.modelID
+
             voiceLogger.log(
               `[EVENT] Tracking assistant message ${assistantMessageId}`,
             )
@@ -1582,7 +1586,7 @@ async function handleOpencodeSession(
         )
         const attachCommand = port ? ` ⋅ ${session.id}` : ''
         const modelInfo = usedModel ? ` ⋅ ${usedModel}` : ''
-        await sendThreadMessage(thread, `_Completed in ${sessionDuration}_${modelInfo}${attachCommand}`)
+        await sendThreadMessage(thread, `_Completed in ${sessionDuration}_${attachCommand}${modelInfo}`)
         sessionLogger.log(`DURATION: Session completed in ${sessionDuration}, port ${port}, model ${usedModel}`)
       } else {
         sessionLogger.log(
