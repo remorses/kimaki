@@ -4,10 +4,9 @@
   "type": "module",
   "version": "0.4.5",
   "scripts": {
-    "dev": "pnpm tsc && tsx --env-file .env src/cli.ts",
+    "dev": "tsx --env-file .env src/cli.ts",
     "prepublishOnly": "pnpm tsc",
     "dev:bun": "DEBUG=1 bun --env-file .env src/cli.ts",
-
     "watch": "tsx scripts/watch-session.ts",
     "test:events": "tsx test-events.ts",
     "pcm-to-mp3": "bun scripts/pcm-to-mp3",
@@ -35,7 +34,7 @@
     "@discordjs/opus": "^0.10.0",
     "@discordjs/voice": "^0.19.0",
     "@google/genai": "^1.16.0",
-    "@opencode-ai/sdk": "^0.11.0",
+    "@opencode-ai/sdk": "^1.0.115",
     "@purinton/resampler": "^1.0.4",
     "@snazzah/davey": "^0.1.6",
     "ai": "^5.0.29",

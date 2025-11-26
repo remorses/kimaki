@@ -18,10 +18,8 @@
     "vite-node": "^3.2.4",
     "vitest": "^3.2.4"
   },
-  "pnpm": {
-    "overrides": {
-      "@opencode-ai/sdk": "^0.11.0"
-    }
+  "overrides": {
+    "@opencode-ai/sdk": "^1.0.115"
   },
   "repository": "https://github.com/remorses/",
   "author": "remorses <beats.by.morse@gmail.com>",
