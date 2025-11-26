@@ -127,7 +127,7 @@ export async function getTools({
           .optional()
           .describe('Optional model to use for this session'),
       }),
-      execute: async ({ message, title, model }) => {
+      execute: async ({ message, title,  }) => {
         if (!message.trim()) {
           throw new Error(`message must be a non empty string`)
         }
@@ -149,6 +149,7 @@ export async function getTools({
               path: { id: session.data.id },
               body: {
                 parts: [{ type: 'text', text: message }],
+                // model,
               },
             })
             .then(async (response) => {
