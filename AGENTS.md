@@ -413,7 +413,6 @@ the cli uses cac npm package.
 - try to keep styles as simple as possible, for breakpoints too.
 
 - to join many classes together use the `cn('class-1', 'class-2')` utility instead of `${}` or other methods. this utility is usually used in shadcn-compatible projects and mine is exported from `website/src/lib/cn` usually. prefer doing `cn(bool && 'class')` instead of `cn(bool ? 'class' : '')`
-
 - prefer `size-4` over `w-4 h-4`
 
 ## components
@@ -530,3 +529,11 @@ const jsonSchema = toJSONSchema(mySchema, {
 });
 ```
 
+# restarting the discord bot
+
+to restart the discord bot process so it uses the new code, send a SIGUSR2 signal to it.
+
+1. Find the process ID (PID) of the kimaki discord bot (e.g., using `ps aux | grep kimaki` or searching for "kimaki" in process list).
+2. Send the signal: `kill -SIGUSR2 <PID>`
+
+The bot will wait 1000ms and then restart itself with the same arguments.

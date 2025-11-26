@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.4.5
+
+### Patch Changes
+
+- Batch assistant messages in resume command to avoid spamming Discord with multiple messages for single response
+- Add SIGUSR2 signal handler to restart the process
+
+
 ## 0.4.4
 
 ### Patch Changes

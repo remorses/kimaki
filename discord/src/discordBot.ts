@@ -2446,21 +2446,38 @@ export async function startDiscordBot({
                   }
                 } else if (message.info.role === 'assistant') {
                   // Render assistant parts
+                  const partsToRender: { id: string; content: string }[] = []
+
                   for (const part of message.parts) {
                     const content = formatPart(part)
                     if (content.trim()) {
-                      const discordMessage = await sendThreadMessage(
-                        thread,
-                        content,
-                      )
-
-                      // Store part-message mapping in database
-                      getDatabase()
-                        .prepare(
-                          'INSERT OR REPLACE INTO part_messages (part_id, message_id, thread_id) VALUES (?, ?, ?)',
-                        )
-                        .run(part.id, discordMessage.id, thread.id)
+                      partsToRender.push({ id: part.id, content })
                     }
+                  }
+
+                  if (partsToRender.length > 0) {
+                    const combinedContent = partsToRender
+                      .map((p) => p.content)
+                      .join('\n\n')
+
+                    const discordMessage = await sendThreadMessage(
+                      thread,
+                      combinedContent,
+                    )
+
+                    const stmt = getDatabase().prepare(
+                      'INSERT OR REPLACE INTO part_messages (part_id, message_id, thread_id) VALUES (?, ?, ?)',
+                    )
+
+                    const transaction = getDatabase().transaction(
+                      (parts: { id: string }[]) => {
+                        for (const part of parts) {
+                          stmt.run(part.id, discordMessage.id, thread.id)
+                        }
+                      },
+                    )
+
+                    transaction(partsToRender)
                   }
                 }
                 messageCount++

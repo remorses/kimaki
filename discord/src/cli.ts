@@ -37,12 +37,26 @@ import {
 import path from 'node:path'
 import fs from 'node:fs'
 import { createLogger } from './logger.js'
-import { spawnSync, execSync, type ExecSyncOptions } from 'node:child_process'
+import { spawn, spawnSync, execSync, type ExecSyncOptions } from 'node:child_process'
 
 const cliLogger = createLogger('CLI')
 const cli = cac('kimaki')
 
 process.title = 'kimaki'
+
+process.on('SIGUSR2', () => {
+  cliLogger.info('Received SIGUSR2, restarting process in 1000ms...')
+  setTimeout(() => {
+    cliLogger.info('Restarting...')
+    spawn(process.argv[0]!, [...process.execArgv, ...process.argv.slice(1)], {
+      stdio: 'inherit',
+      detached: true,
+      cwd: process.cwd(),
+      env: process.env,
+    }).unref()
+    process.exit(0)
+  }, 1000)
+})
 
 const EXIT_NO_RESTART = 64
 
