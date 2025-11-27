@@ -3,6 +3,7 @@ import {
   type OpencodeClient,
   type Part,
   type Config,
+  type FilePartInput,
 } from '@opencode-ai/sdk'
 
 import { createGenAIWorker, type GenAIWorker } from './genai-worker-wrapper.js'
@@ -813,6 +814,19 @@ async function processVoiceAttachment({
   return transcription
 }
 
+function getImageAttachments(message: Message): FilePartInput[] {
+  const imageAttachments = Array.from(message.attachments.values()).filter(
+    (attachment) => attachment.contentType?.startsWith('image/'),
+  )
+
+  return imageAttachments.map((attachment) => ({
+    type: 'file' as const,
+    mime: attachment.contentType || 'image/png',
+    filename: attachment.name,
+    url: attachment.url,
+  }))
+}
+
 export function escapeBackticksInCodeBlocks(markdown: string): string {
   const lexer = new Lexer()
   const tokens = lexer.lex(markdown)
@@ -1160,7 +1174,7 @@ function formatPart(part: Part): string {
 
     let toolTitle = part.state.status === 'completed' ? part.state.title || '' : 'error'
     if (toolTitle) {
-      toolTitle = `\`${escapeInlineCode(toolTitle)}\``
+      toolTitle = `*${toolTitle}*`
     }
 
     const icon = part.state.status === 'completed' ? '◼︎' : part.state.status === 'error' ? '⨯' : ''
@@ -1193,12 +1207,19 @@ export async function createDiscordClient() {
   })
 }
 
-async function handleOpencodeSession(
-  prompt: string,
-  thread: ThreadChannel,
-  projectDirectory?: string,
-  originalMessage?: Message,
-): Promise<{ sessionID: string; result: any; port?: number } | undefined> {
+async function handleOpencodeSession({
+  prompt,
+  thread,
+  projectDirectory,
+  originalMessage,
+  images = [],
+}: {
+  prompt: string
+  thread: ThreadChannel
+  projectDirectory?: string
+  originalMessage?: Message
+  images?: FilePartInput[]
+}): Promise<{ sessionID: string; result: any; port?: number } | undefined> {
   voiceLogger.log(
     `[OPENCODE SESSION] Starting for thread ${thread.id} with prompt: "${prompt.slice(0, 50)}${prompt.length > 50 ? '...' : ''}"`,
   )
@@ -1600,14 +1621,20 @@ async function handleOpencodeSession(
     voiceLogger.log(
       `[PROMPT] Sending prompt to session ${session.id}: "${prompt.slice(0, 100)}${prompt.length > 100 ? '...' : ''}"`,
     )
+    if (images.length > 0) {
+      sessionLogger.log(`[PROMPT] Sending ${images.length} image(s):`, images.map((img) => ({ mime: img.mime, filename: img.filename, url: img.url.slice(0, 100) })))
+    }
 
     // Start the event handler
     const eventHandlerPromise = eventHandler()
 
+    const parts = [{ type: 'text' as const, text: prompt }, ...images]
+    sessionLogger.log(`[PROMPT] Parts to send:`, parts.length)
+
     const response = await getClient().session.prompt({
       path: { id: session.id },
       body: {
-        parts: [{ type: 'text', text: prompt }],
+        parts,
       },
       signal: abortController.signal,
     })
@@ -1874,12 +1901,14 @@ export async function startDiscordBot({
           messageContent = transcription
         }
 
-        await handleOpencodeSession(
-          messageContent,
+        const images = getImageAttachments(message)
+        await handleOpencodeSession({
+          prompt: messageContent,
           thread,
           projectDirectory,
-          message,
-        )
+          originalMessage: message,
+          images,
+        })
         return
       }
 
@@ -1967,12 +1996,14 @@ export async function startDiscordBot({
           messageContent = transcription
         }
 
-        await handleOpencodeSession(
-          messageContent,
+        const images = getImageAttachments(message)
+        await handleOpencodeSession({
+          prompt: messageContent,
           thread,
           projectDirectory,
-          message,
-        )
+          originalMessage: message,
+          images,
+        })
       } else {
         discordLogger.log(`Channel type ${channel.type} is not supported`)
       }
@@ -2307,7 +2338,11 @@ export async function startDiscordBot({
               )
 
               // Start the OpenCode session
-              await handleOpencodeSession(fullPrompt, thread, projectDirectory)
+              await handleOpencodeSession({
+                prompt: fullPrompt,
+                thread,
+                projectDirectory,
+              })
             } catch (error) {
               voiceLogger.error('[SESSION] Error:', error)
               await command.editReply(
