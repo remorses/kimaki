@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.4.6
+
+### Patch Changes
+
+- add support for images
+- update discord sdk
+
 ## 0.4.5
 
 ### Patch Changes

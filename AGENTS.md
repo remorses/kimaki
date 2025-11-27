@@ -529,6 +529,26 @@ const jsonSchema = toJSONSchema(mySchema, {
 });
 ```
 
+# publishing packages
+
+when asked to prepare a release for a publishable package (one with a version field in package.json):
+
+1. determine the version bump type (patch/minor/major)
+2. bump the version in package.json manually
+3. add a new entry at the top of CHANGELOG.md with the new version and changes
+4. do NOT use changesets or any other versioning tool
+
+example for a patch bump from 0.4.5 to 0.4.6:
+- edit package.json: `"version": "0.4.5"` → `"version": "0.4.6"`
+- add to CHANGELOG.md:
+```md
+## 0.4.6
+
+### Patch Changes
+
+- description of changes
+```
+
 # restarting the discord bot
 
 to restart the discord bot process so it uses the new code, send a SIGUSR2 signal to it.
