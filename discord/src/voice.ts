@@ -42,7 +42,17 @@ export async function transcribeAudio({
     }
 
     // Build the transcription prompt
-    let transcriptionPrompt = `Please transcribe this audio file accurately. Here is some relevant information and filenames that may be present in the audio:\n<context>\n${prompt}\n</context>\n`
+    let transcriptionPrompt = `Transcribe this audio accurately. The transcription will be sent to a coding agent (like Claude Code) to execute programming tasks.
+
+Assume the speaker is using technical and programming terminology: file paths, function names, CLI commands, package names, API names, programming concepts, etc. Prioritize technical accuracy over literal transcription - if a word sounds like a common programming term, prefer that interpretation.
+
+If the spoken message is unclear or ambiguous, rephrase it to better convey the intended meaning for a coding agent. The goal is effective communication of the user's programming intent, not a word-for-word transcription.
+
+Here are relevant filenames and context that may appear in the audio:
+<context>
+${prompt}
+</context>
+`
     if (language) {
       transcriptionPrompt += `\nThe audio is in ${language}.`
     }

@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.4.10
+
+### Patch Changes
+
+- show "Creating Discord thread..." toast at start of command
+- update command description to clarify it creates a Discord thread
+
 ## 0.4.9
 
 ### Patch Changes

@@ -39,6 +39,10 @@ export const KimakiDiscordPlugin: Plugin = async ({
         return
       }
 
+      await client.tui.showToast({
+        body: { message: 'Creating Discord thread...', variant: 'info' },
+      })
+
       try {
         const result =
           await $`npx -y kimaki send-to-discord ${sessionID} -d ${directory}`.text()

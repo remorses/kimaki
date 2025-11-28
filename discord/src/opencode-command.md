@@ -1,4 +1,4 @@
 ---
-description: Send current session to Kimaki Discord
+description: Create Discord thread for current session
 ---
-say "Session sent to discord!"
+Creating Discord thread for this session...
