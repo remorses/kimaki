@@ -4,6 +4,7 @@ import {
   type Part,
   type Config,
   type FilePartInput,
+  type Permission,
 } from '@opencode-ai/sdk'
 
 import { createGenAIWorker, type GenAIWorker } from './genai-worker-wrapper.js'
@@ -89,6 +90,12 @@ const voiceConnections = new Map<
 
 // Map of directory to retry count for server restarts
 const serverRetryCount = new Map<string, number>()
+
+// Map of thread ID to pending permission (only one pending permission per thread)
+const pendingPermissions = new Map<
+  string,
+  { permission: Permission; messageId: string; directory: string }
+>()
 
 let db: Database.Database | null = null
 
@@ -1547,6 +1554,51 @@ async function handleOpencodeSession({
             )
           }
           break
+        } else if (event.type === 'permission.updated') {
+          const permission = event.properties
+          if (permission.sessionID !== session.id) {
+            voiceLogger.log(
+              `[PERMISSION IGNORED] Permission for different session (expected: ${session.id}, got: ${permission.sessionID})`,
+            )
+            continue
+          }
+
+          sessionLogger.log(
+            `Permission requested: type=${permission.type}, title=${permission.title}`,
+          )
+
+          const patternStr = Array.isArray(permission.pattern)
+            ? permission.pattern.join(', ')
+            : permission.pattern || ''
+
+          const permissionMessage = await sendThreadMessage(
+            thread,
+            `⚠️ **Permission Required**\n\n` +
+              `**Type:** \`${permission.type}\`\n` +
+              `**Action:** ${permission.title}\n` +
+              (patternStr ? `**Pattern:** \`${patternStr}\`\n` : '') +
+              `\nUse \`/accept\` or \`/reject\` to respond.`,
+          )
+
+          pendingPermissions.set(thread.id, {
+            permission,
+            messageId: permissionMessage.id,
+            directory,
+          })
+        } else if (event.type === 'permission.replied') {
+          const { permissionID, response, sessionID } = event.properties
+          if (sessionID !== session.id) {
+            continue
+          }
+
+          sessionLogger.log(
+            `Permission ${permissionID} replied with: ${response}`,
+          )
+
+          const pending = pendingPermissions.get(thread.id)
+          if (pending && pending.permission.id === permissionID) {
+            pendingPermissions.delete(thread.id)
+          }
         } else if (event.type === 'file.edited') {
           sessionLogger.log(`File edited event received`)
         } else {
@@ -2598,6 +2650,128 @@ export async function startDiscordBot({
               await command.editReply(
                 `Failed to create channels: ${error instanceof Error ? error.message : 'Unknown error'}`,
               )
+            }
+          } else if (
+            command.commandName === 'accept' ||
+            command.commandName === 'accept-always'
+          ) {
+            const scope = command.commandName === 'accept-always' ? 'always' : 'once'
+            const channel = command.channel
+
+            if (!channel) {
+              await command.reply({
+                content: 'This command can only be used in a channel',
+                ephemeral: true,
+              })
+              return
+            }
+
+            const isThread = [
+              ChannelType.PublicThread,
+              ChannelType.PrivateThread,
+              ChannelType.AnnouncementThread,
+            ].includes(channel.type)
+
+            if (!isThread) {
+              await command.reply({
+                content: 'This command can only be used in a thread with an active session',
+                ephemeral: true,
+              })
+              return
+            }
+
+            const pending = pendingPermissions.get(channel.id)
+            if (!pending) {
+              await command.reply({
+                content: 'No pending permission request in this thread',
+                ephemeral: true,
+              })
+              return
+            }
+
+            try {
+              const getClient = await initializeOpencodeForDirectory(pending.directory)
+              await getClient().postSessionIdPermissionsPermissionId({
+                path: {
+                  id: pending.permission.sessionID,
+                  permissionID: pending.permission.id,
+                },
+                body: {
+                  response: scope,
+                },
+              })
+
+              pendingPermissions.delete(channel.id)
+              const msg =
+                scope === 'always'
+                  ? `✅ Permission **accepted** (auto-approve similar requests)`
+                  : `✅ Permission **accepted**`
+              await command.reply(msg)
+              sessionLogger.log(
+                `Permission ${pending.permission.id} accepted with scope: ${scope}`,
+              )
+            } catch (error) {
+              voiceLogger.error('[ACCEPT] Error:', error)
+              await command.reply({
+                content: `Failed to accept permission: ${error instanceof Error ? error.message : 'Unknown error'}`,
+                ephemeral: true,
+              })
+            }
+          } else if (command.commandName === 'reject') {
+            const channel = command.channel
+
+            if (!channel) {
+              await command.reply({
+                content: 'This command can only be used in a channel',
+                ephemeral: true,
+              })
+              return
+            }
+
+            const isThread = [
+              ChannelType.PublicThread,
+              ChannelType.PrivateThread,
+              ChannelType.AnnouncementThread,
+            ].includes(channel.type)
+
+            if (!isThread) {
+              await command.reply({
+                content: 'This command can only be used in a thread with an active session',
+                ephemeral: true,
+              })
+              return
+            }
+
+            const pending = pendingPermissions.get(channel.id)
+            if (!pending) {
+              await command.reply({
+                content: 'No pending permission request in this thread',
+                ephemeral: true,
+              })
+              return
+            }
+
+            try {
+              const getClient = await initializeOpencodeForDirectory(pending.directory)
+              await getClient().postSessionIdPermissionsPermissionId({
+                path: {
+                  id: pending.permission.sessionID,
+                  permissionID: pending.permission.id,
+                },
+                body: {
+                  response: 'reject',
+                },
+              })
+
+              pendingPermissions.delete(channel.id)
+              await command.reply(`❌ Permission **rejected**`)
+              sessionLogger.log(`Permission ${pending.permission.id} rejected`)
+            } catch (error) {
+              voiceLogger.error('[REJECT] Error:', error)
+              await command.reply({
+                content: `Failed to reject permission: ${error instanceof Error ? error.message : 'Unknown error'}`,
+                ephemeral: true,
+              })
             }
           }
         }

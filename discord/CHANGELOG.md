@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.4.7
+
+### Patch Changes
+
+- add `/accept`, `/accept-always`, `/reject` commands for handling OpenCode permission requests
+- show permission requests in Discord thread with type, action, and pattern info
+- `/accept-always` auto-approves future requests matching the same pattern
+
 ## 0.4.6
 
 ### Patch Changes

@@ -126,6 +126,18 @@ async function registerCommands(token: string, appId: string) {
         return option
       })
       .toJSON(),
+    new SlashCommandBuilder()
+      .setName('accept')
+      .setDescription('Accept a pending permission request (this request only)')
+      .toJSON(),
+    new SlashCommandBuilder()
+      .setName('accept-always')
+      .setDescription('Accept and auto-approve future requests matching this pattern (e.g. "git *" approves all git commands)')
+      .toJSON(),
+    new SlashCommandBuilder()
+      .setName('reject')
+      .setDescription('Reject a pending permission request')
+      .toJSON(),
   ]
 
   const rest = new REST().setToken(token)
