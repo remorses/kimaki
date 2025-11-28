@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.4.8
+
+### Patch Changes
+
+- add `send-to-discord` CLI command to send an OpenCode session to Discord
+- add OpenCode plugin for `/send-to-kimaki-discord` command integration
+
 ## 0.4.7
 
 ### Patch Changes

@@ -36,6 +36,8 @@ import {
 } from 'discord.js'
 import path from 'node:path'
 import fs from 'node:fs'
+import { createRequire } from 'node:module'
+import os from 'node:os'
 import { createLogger } from './logger.js'
 import { spawn, spawnSync, execSync, type ExecSyncOptions } from 'node:child_process'
 
@@ -649,6 +651,216 @@ cli
     } catch (error) {
       cliLogger.error(
         'Unhandled error:',
+        error instanceof Error ? error.message : String(error),
+      )
+      process.exit(EXIT_NO_RESTART)
+    }
+  })
+
+cli
+  .command(
+    'send-to-discord <sessionId>',
+    'Send an OpenCode session to Discord and create a thread for it',
+  )
+  .option('-d, --directory <dir>', 'Project directory (defaults to current working directory)')
+  .action(async (sessionId: string, options: { directory?: string }) => {
+    try {
+      const directory = options.directory || process.cwd()
+      
+      const db = getDatabase()
+      
+      const botRow = db
+        .prepare(
+          'SELECT app_id, token FROM bot_tokens ORDER BY created_at DESC LIMIT 1',
+        )
+        .get() as { app_id: string; token: string } | undefined
+
+      if (!botRow) {
+        cliLogger.error('No bot credentials found. Run `kimaki` first to set up the bot.')
+        process.exit(EXIT_NO_RESTART)
+      }
+
+      const channelRow = db
+        .prepare(
+          'SELECT channel_id FROM channel_directories WHERE directory = ? AND channel_type = ?',
+        )
+        .get(directory, 'text') as { channel_id: string } | undefined
+
+      if (!channelRow) {
+        cliLogger.error(
+          `No Discord channel found for directory: ${directory}\n` +
+            'Run `kimaki --add-channels` to create a channel for this project.',
+        )
+        process.exit(EXIT_NO_RESTART)
+      }
+
+      const s = spinner()
+      s.start('Connecting to Discord...')
+
+      const discordClient = await createDiscordClient()
+
+      await new Promise<void>((resolve, reject) => {
+        discordClient.once(Events.ClientReady, () => {
+          resolve()
+        })
+        discordClient.once(Events.Error, reject)
+        discordClient.login(botRow.token).catch(reject)
+      })
+
+      s.stop('Connected to Discord!')
+
+      const channel = await discordClient.channels.fetch(channelRow.channel_id)
+      if (!channel || channel.type !== ChannelType.GuildText) {
+        cliLogger.error('Could not find the text channel or it is not a text channel')
+        discordClient.destroy()
+        process.exit(EXIT_NO_RESTART)
+      }
+
+      const textChannel = channel as import('discord.js').TextChannel
+
+      s.start('Fetching session from OpenCode...')
+
+      const getClient = await initializeOpencodeForDirectory(directory)
+      const sessionResponse = await getClient().session.get({
+        path: { id: sessionId },
+      })
+
+      if (!sessionResponse.data) {
+        s.stop('Session not found')
+        discordClient.destroy()
+        process.exit(EXIT_NO_RESTART)
+      }
+
+      const session = sessionResponse.data
+      s.stop(`Found session: ${session.title}`)
+
+      s.start('Creating Discord thread...')
+
+      const thread = await textChannel.threads.create({
+        name: `Resume: ${session.title}`.slice(0, 100),
+        autoArchiveDuration: 1440,
+        reason: `Resuming session ${sessionId} from CLI`,
+      })
+
+      db.prepare(
+        'INSERT OR REPLACE INTO thread_sessions (thread_id, session_id) VALUES (?, ?)',
+      ).run(thread.id, sessionId)
+
+      s.stop('Created Discord thread!')
+
+      s.start('Loading session messages...')
+
+      const messagesResponse = await getClient().session.messages({
+        path: { id: sessionId },
+      })
+
+      if (!messagesResponse.data) {
+        s.stop('Failed to fetch session messages')
+        discordClient.destroy()
+        process.exit(EXIT_NO_RESTART)
+      }
+
+      const messages = messagesResponse.data
+
+      await thread.send(
+        `📂 **Resumed session:** ${session.title}\n📅 **Created:** ${new Date(session.time.created).toLocaleString()}\n\n*Loading ${messages.length} messages...*`,
+      )
+
+      let messageCount = 0
+      for (const message of messages) {
+        if (message.info.role === 'user') {
+          const userParts = message.parts.filter(
+            (p) => p.type === 'text' && !p.synthetic,
+          )
+          const userTexts = userParts
+            .map((p) => {
+              if (p.type === 'text') {
+                return p.text
+              }
+              return ''
+            })
+            .filter((t) => t.trim())
+
+          const userText = userTexts.join('\n\n')
+          if (userText) {
+            const truncated = userText.length > 1900 ? userText.slice(0, 1900) + '…' : userText
+            await thread.send(`**User:**\n${truncated}`)
+          }
+        } else if (message.info.role === 'assistant') {
+          const textParts = message.parts.filter((p) => p.type === 'text')
+          const texts = textParts
+            .map((p) => {
+              if (p.type === 'text') {
+                return p.text
+              }
+              return ''
+            })
+            .filter((t) => t?.trim())
+
+          if (texts.length > 0) {
+            const combinedText = texts.join('\n\n')
+            const truncated = combinedText.length > 1900 ? combinedText.slice(0, 1900) + '…' : combinedText
+            await thread.send(truncated)
+          }
+        }
+        messageCount++
+      }
+
+      await thread.send(
+        `✅ **Session resumed!** Loaded ${messageCount} messages.\n\nYou can now continue the conversation by sending messages in this thread.`,
+      )
+
+      s.stop(`Loaded ${messageCount} messages`)
+
+      const guildId = textChannel.guildId
+      const threadUrl = `https://discord.com/channels/${guildId}/${thread.id}`
+
+      note(
+        `Session "${session.title}" has been sent to Discord!\n\nThread: ${threadUrl}`,
+        '✅ Success',
+      )
+
+      discordClient.destroy()
+      process.exit(0)
+    } catch (error) {
+      cliLogger.error(
+        'Error:',
+        error instanceof Error ? error.message : String(error),
+      )
+      process.exit(EXIT_NO_RESTART)
+    }
+  })
+
+cli
+  .command('install-plugin', 'Install the OpenCode plugin for /send-to-kimaki-discord command')
+  .action(async () => {
+    try {
+      const require = createRequire(import.meta.url)
+      const pluginSrc = require.resolve('./opencode-plugin.ts')
+      const commandSrc = require.resolve('./opencode-command.md')
+
+      const opencodeConfig = path.join(os.homedir(), '.config', 'opencode')
+      const pluginDir = path.join(opencodeConfig, 'plugin')
+      const commandDir = path.join(opencodeConfig, 'command')
+
+      fs.mkdirSync(pluginDir, { recursive: true })
+      fs.mkdirSync(commandDir, { recursive: true })
+
+      const pluginDest = path.join(pluginDir, 'send-to-kimaki-discord.ts')
+      const commandDest = path.join(commandDir, 'send-to-kimaki-discord.md')
+
+      fs.copyFileSync(pluginSrc, pluginDest)
+      fs.copyFileSync(commandSrc, commandDest)
+
+      note(
+        `Plugin: ${pluginDest}\nCommand: ${commandDest}\n\nUse /send-to-kimaki-discord in OpenCode to send the current session to Discord.`,
+        '✅ Installed',
+      )
+
+      process.exit(0)
+    } catch (error) {
+      cliLogger.error(
+        'Error:',
         error instanceof Error ? error.message : String(error),
       )
       process.exit(EXIT_NO_RESTART)

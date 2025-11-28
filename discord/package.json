@@ -2,7 +2,7 @@
   "name": "kimaki",
   "module": "index.ts",
   "type": "module",
-  "version": "0.4.7",
+  "version": "0.4.8",
   "scripts": {
     "dev": "tsx --env-file .env src/cli.ts",
     "prepublishOnly": "pnpm tsc",
@@ -21,6 +21,7 @@
     "bin.js"
   ],
   "devDependencies": {
+    "@opencode-ai/plugin": "^1.0.119",
     "@types/better-sqlite3": "^7.6.13",
     "@types/bun": "latest",
     "@types/js-yaml": "^4.0.9",
