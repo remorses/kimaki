@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.4.9
+
+### Patch Changes
+
+- improve error handling in OpenCode plugin, check stderr and stdout for error messages
+
 ## 0.4.8
 
 ### Patch Changes
