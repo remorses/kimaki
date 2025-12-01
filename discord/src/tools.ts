@@ -15,7 +15,10 @@ import { formatDistanceToNow } from 'date-fns'
 
 import { ShareMarkdown } from './markdown.js'
 import pc from 'picocolors'
-import { initializeOpencodeForDirectory } from './discordBot.js'
+import {
+  initializeOpencodeForDirectory,
+  OPENCODE_SYSTEM_MESSAGE,
+} from './discordBot.js'
 
 export async function getTools({
   onMessageCompleted,
@@ -72,10 +75,10 @@ export async function getTools({
         getClient()
           .session.prompt({
             path: { id: sessionId },
-
             body: {
               parts: [{ type: 'text', text: message }],
               model: sessionModel,
+              system: OPENCODE_SYSTEM_MESSAGE,
             },
           })
           .then(async (response) => {
@@ -149,7 +152,7 @@ export async function getTools({
               path: { id: session.data.id },
               body: {
                 parts: [{ type: 'text', text: message }],
-                // model,
+                system: OPENCODE_SYSTEM_MESSAGE,
               },
             })
             .then(async (response) => {

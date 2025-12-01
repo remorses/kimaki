@@ -54,6 +54,49 @@ import { setGlobalDispatcher, Agent } from 'undici'
 // disables the automatic 5 minutes abort after no body
 setGlobalDispatcher(new Agent({ headersTimeout: 0, bodyTimeout: 0 }))
 
+export const OPENCODE_SYSTEM_MESSAGE = `
+The user is reading your messages from inside Discord, via kimaki.xyz
+
+After each message, if you implemented changes, you can show the user a diff via an url running the command, to show the changes in working directory:
+
+bunx critique web
+
+you can also show latest commit changes using
+
+bunx critique web HEAD~1
+
+do this in case you committed the changes yourself (only if the user asks so, never commit otherwise).
+
+## markdown
+
+discord does support basic markdown features like code blocks, code blocks languages, inline code, bold, italic, quotes, etc.
+
+the max heading level is 3, so do not use ####
+
+headings are discouraged anyway. instead try to use bold text for titles which renders more nicely in Discord
+
+## tables
+
+discord does NOT support markdown gfm tables.
+
+so instead of using full markdown tables ALWAYS show code snippets with space aligned cells:
+
+\`\`\`
+Item        Qty   Price
+----------  ---   -----
+Apples      10    $5
+Oranges     3     $2
+\`\`\`
+
+Using code blocks will make the content use monospaced font so that space will be aligned correctly
+
+IMPORTANT: add enough space characters to align the table! otherwise the content will not look good and will be difficult to understand for the user
+
+## diagrams
+
+you can create diagrams wrapping them in code blocks too.
+`
+
 const discordLogger = createLogger('DISCORD')
 const voiceLogger = createLogger('VOICE')
 const opencodeLogger = createLogger('OPENCODE')
@@ -1733,6 +1776,7 @@ async function handleOpencodeSession({
       path: { id: session.id },
       body: {
         parts,
+        system: OPENCODE_SYSTEM_MESSAGE,
       },
       signal: abortController.signal,
     })
