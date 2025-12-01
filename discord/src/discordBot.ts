@@ -92,6 +92,8 @@ Using code blocks will make the content use monospaced font so that space will b
 
 IMPORTANT: add enough space characters to align the table! otherwise the content will not look good and will be difficult to understand for the user
 
+code blocks for tables and diagrams MUST have Max length of 85 characters. otherwise the content will wrap
+
 ## diagrams
 
 you can create diagrams wrapping them in code blocks too.
