@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.4.11
+
+### Patch Changes
+
+- preserve code block formatting when splitting long Discord messages
+- add closing/opening fences when code blocks span multiple messages
+- use marked Lexer for robust markdown parsing instead of regex
+
 ## 0.4.10
 
 ### Patch Changes

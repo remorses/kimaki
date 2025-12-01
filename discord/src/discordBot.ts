@@ -629,69 +629,24 @@ async function sendThreadMessage(
 
   content = escapeBackticksInCodeBlocks(content)
 
-  // Simple case: content fits in one message
-  if (content.length <= MAX_LENGTH) {
-    return await thread.send(content)
+  const chunks = splitMarkdownForDiscord({ content, maxLength: MAX_LENGTH })
+
+  if (chunks.length > 1) {
+    discordLogger.log(
+      `MESSAGE: Splitting ${content.length} chars into ${chunks.length} messages`,
+    )
   }
-
-  // Use marked's lexer to tokenize markdown content
-  const lexer = new Lexer()
-  const tokens = lexer.lex(content)
-
-  const chunks: string[] = []
-  let currentChunk = ''
-
-  // Process each token and add to chunks
-  for (const token of tokens) {
-    const tokenText = token.raw || ''
-
-    // If adding this token would exceed limit and we have content, flush current chunk
-    if (currentChunk && currentChunk.length + tokenText.length > MAX_LENGTH) {
-      chunks.push(currentChunk)
-      currentChunk = ''
-    }
-
-    // If this single token is longer than MAX_LENGTH, split it
-    if (tokenText.length > MAX_LENGTH) {
-      if (currentChunk) {
-        chunks.push(currentChunk)
-        currentChunk = ''
-      }
-
-      let remainingText = tokenText
-      while (remainingText.length > MAX_LENGTH) {
-        // Try to split at a newline if possible
-        let splitIndex = MAX_LENGTH
-        const newlineIndex = remainingText.lastIndexOf('\n', MAX_LENGTH - 1)
-        if (newlineIndex > MAX_LENGTH * 0.7) {
-          splitIndex = newlineIndex + 1
-        }
-
-        chunks.push(remainingText.slice(0, splitIndex))
-        remainingText = remainingText.slice(splitIndex)
-      }
-      currentChunk = remainingText
-    } else {
-      currentChunk += tokenText
-    }
-  }
-
-  // Add any remaining content
-  if (currentChunk) {
-    chunks.push(currentChunk)
-  }
-
-  // Send all chunks
-  discordLogger.log(
-    `MESSAGE: Splitting ${content.length} chars into ${chunks.length} messages`,
-  )
 
   let firstMessage: Message | undefined
   for (let i = 0; i < chunks.length; i++) {
     const chunk = chunks[i]
-    if (!chunk) continue
+    if (!chunk) {
+      continue
+    }
     const message = await thread.send(chunk)
-    if (i === 0) firstMessage = message
+    if (i === 0) {
+      firstMessage = message
+    }
   }
 
   return firstMessage!
@@ -850,6 +805,97 @@ export function escapeBackticksInCodeBlocks(markdown: string): string {
   }
 
   return result
+}
+
+type LineInfo = {
+  text: string
+  inCodeBlock: boolean
+  lang: string
+  isOpeningFence: boolean
+  isClosingFence: boolean
+}
+
+export function splitMarkdownForDiscord({
+  content,
+  maxLength,
+}: {
+  content: string
+  maxLength: number
+}): string[] {
+  if (content.length <= maxLength) {
+    return [content]
+  }
+
+  const lexer = new Lexer()
+  const tokens = lexer.lex(content)
+
+  const lines: LineInfo[] = []
+  for (const token of tokens) {
+    if (token.type === 'code') {
+      const lang = token.lang || ''
+      lines.push({ text: '```' + lang + '\n', inCodeBlock: false, lang, isOpeningFence: true, isClosingFence: false })
+      const codeLines = token.text.split('\n')
+      for (const codeLine of codeLines) {
+        lines.push({ text: codeLine + '\n', inCodeBlock: true, lang, isOpeningFence: false, isClosingFence: false })
+      }
+      lines.push({ text: '```\n', inCodeBlock: false, lang: '', isOpeningFence: false, isClosingFence: true })
+    } else {
+      const rawLines = token.raw.split('\n')
+      for (let i = 0; i < rawLines.length; i++) {
+        const isLast = i === rawLines.length - 1
+        const text = isLast ? rawLines[i]! : rawLines[i]! + '\n'
+        if (text) {
+          lines.push({ text, inCodeBlock: false, lang: '', isOpeningFence: false, isClosingFence: false })
+        }
+      }
+    }
+  }
+
+  const chunks: string[] = []
+  let currentChunk = ''
+  let currentLang: string | null = null
+
+  for (const line of lines) {
+    const wouldExceed = currentChunk.length + line.text.length > maxLength
+
+    if (wouldExceed && currentChunk) {
+      if (currentLang !== null) {
+        currentChunk += '```\n'
+      }
+      chunks.push(currentChunk)
+
+      if (line.isClosingFence && currentLang !== null) {
+        currentChunk = ''
+        currentLang = null
+        continue
+      }
+
+      if (line.inCodeBlock || line.isOpeningFence) {
+        const lang = line.lang
+        currentChunk = '```' + lang + '\n'
+        if (!line.isOpeningFence) {
+          currentChunk += line.text
+        }
+        currentLang = lang
+      } else {
+        currentChunk = line.text
+        currentLang = null
+      }
+    } else {
+      currentChunk += line.text
+      if (line.inCodeBlock || line.isOpeningFence) {
+        currentLang = line.lang
+      } else if (line.isClosingFence) {
+        currentLang = null
+      }
+    }
+  }
+
+  if (currentChunk) {
+    chunks.push(currentChunk)
+  }
+
+  return chunks
 }
 
 /**
