@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.4.12
+
+### Patch Changes
+
+- system prompt instruction for 85 char max code block width to prevent Discord wrapping
+
 ## 0.4.11
 
 ### Patch Changes
