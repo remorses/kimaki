@@ -213,11 +213,13 @@ async function setupVoiceHandling({
   guildId,
   channelId,
   appId,
+  discordClient,
 }: {
   connection: VoiceConnection
   guildId: string
   channelId: string
   appId: string
+  discordClient: Client
 }) {
   voiceLogger.log(
     `Setting up voice handling for guild ${guildId}, channel ${channelId}`,
@@ -330,8 +332,28 @@ async function setupVoiceHandling({
 
       genAiWorker.sendTextInput(text)
     },
-    onError(error) {
+    async onError(error) {
       voiceLogger.error('GenAI worker error:', error)
+      const textChannelRow = getDatabase()
+        .prepare(
+          `SELECT cd2.channel_id FROM channel_directories cd1
+           JOIN channel_directories cd2 ON cd1.directory = cd2.directory
+           WHERE cd1.channel_id = ? AND cd1.channel_type = 'voice' AND cd2.channel_type = 'text'`,
+        )
+        .get(channelId) as { channel_id: string } | undefined
+
+      if (textChannelRow) {
+        try {
+          const textChannel = await discordClient.channels.fetch(
+            textChannelRow.channel_id,
+          )
+          if (textChannel?.isTextBased() && 'send' in textChannel) {
+            await textChannel.send(`⚠️ Voice session error: ${error}`)
+          }
+        } catch (e) {
+          voiceLogger.error('Failed to send error to text channel:', e)
+        }
+      }
     },
   })
 
@@ -1212,28 +1234,29 @@ function getToolOutputToDisplay(part: Part): string {
     return part.state.error || 'Unknown error'
   }
 
-  if (part.tool === 'todowrite') {
-    const todos =
-      (part.state.input?.todos as {
-        content: string
-        status: 'pending' | 'in_progress' | 'completed' | 'cancelled'
-      }[]) || []
-    return todos
-      .map((todo) => {
-        let statusIcon = '▢'
-        if (todo.status === 'in_progress') {
-          statusIcon = '●'
-        }
-        if (todo.status === 'completed' || todo.status === 'cancelled') {
-          statusIcon = '■'
-        }
-        return `\`${statusIcon}\` ${todo.content}`
-      })
-      .filter(Boolean)
-      .join('\n')
-  }
-
   return ''
+}
+
+function formatTodoList(part: Part): string {
+  if (part.type !== 'tool' || part.tool !== 'todowrite') return ''
+  const todos =
+    (part.state.input?.todos as {
+      content: string
+      status: 'pending' | 'in_progress' | 'completed' | 'cancelled'
+    }[]) || []
+  if (todos.length === 0) return ''
+  return todos
+    .map((todo, i) => {
+      const num = `${i + 1}.`
+      if (todo.status === 'in_progress') {
+        return `${num} **${todo.content}**`
+      }
+      if (todo.status === 'completed' || todo.status === 'cancelled') {
+        return `${num} ~~${todo.content}~~`
+      }
+      return `${num} ${todo.content}`
+    })
+    .join('\n')
 }
 
 function formatPart(part: Part): string {
@@ -1263,6 +1286,10 @@ function formatPart(part: Part): string {
   }
 
   if (part.type === 'tool') {
+    if (part.tool === 'todowrite') {
+      return formatTodoList(part)
+    }
+
     if (part.state.status !== 'completed' && part.state.status !== 'error') {
       return ''
     }
@@ -1270,9 +1297,20 @@ function formatPart(part: Part): string {
     const summaryText = getToolSummaryText(part)
     const outputToDisplay = getToolOutputToDisplay(part)
 
-    let toolTitle = part.state.status === 'completed' ? part.state.title || '' : 'error'
-    if (toolTitle) {
-      toolTitle = `*${toolTitle}*`
+    let toolTitle = ''
+    if (part.state.status === 'error') {
+      toolTitle = 'error'
+    } else if (part.tool === 'bash') {
+      const command = (part.state.input?.command as string) || ''
+      const isSingleLine = !command.includes('\n')
+      const hasBackticks = command.includes('`')
+      if (isSingleLine && command.length <= 120 && !hasBackticks) {
+        toolTitle = `\`${command}\``
+      } else {
+        toolTitle = part.state.title ? `*${part.state.title}*` : ''
+      }
+    } else if (part.state.title) {
+      toolTitle = `*${part.state.title}*`
     }
 
     const icon = part.state.status === 'completed' ? '◼︎' : part.state.status === 'error' ? '⨯' : ''
@@ -2600,67 +2638,55 @@ export async function startDiscordBot({
                 `📂 **Resumed session:** ${sessionTitle}\n📅 **Created:** ${new Date(sessionResponse.data.time.created).toLocaleString()}\n\n*Loading ${messages.length} messages...*`,
               )
 
-              // Render all existing messages
-              let messageCount = 0
+              // Collect all assistant parts first, then only render the last 30
+              const allAssistantParts: { id: string; content: string }[] = []
               for (const message of messages) {
-                if (message.info.role === 'user') {
-                  // Render user messages
-                  const userParts = message.parts.filter(
-                    (p) => p.type === 'text' && !p.synthetic,
-                  )
-                  const userTexts = userParts
-                    .map((p) => {
-                      if (p.type === 'text') {
-                        return p.text
-                      }
-                      return ''
-                    })
-                    .filter((t) => t.trim())
-
-                  const userText = userTexts.join('\n\n')
-                  if (userText) {
-                    // Escape backticks in user messages to prevent formatting issues
-                    const escapedText = escapeDiscordFormatting(userText)
-                    await sendThreadMessage(thread, `**User:**\n${escapedText}`)
-                  }
-                } else if (message.info.role === 'assistant') {
-                  // Render assistant parts
-                  const partsToRender: { id: string; content: string }[] = []
-
+                if (message.info.role === 'assistant') {
                   for (const part of message.parts) {
                     const content = formatPart(part)
                     if (content.trim()) {
-                      partsToRender.push({ id: part.id, content })
+                      allAssistantParts.push({ id: part.id, content })
                     }
                   }
-
-                  if (partsToRender.length > 0) {
-                    const combinedContent = partsToRender
-                      .map((p) => p.content)
-                      .join('\n\n')
-
-                    const discordMessage = await sendThreadMessage(
-                      thread,
-                      combinedContent,
-                    )
-
-                    const stmt = getDatabase().prepare(
-                      'INSERT OR REPLACE INTO part_messages (part_id, message_id, thread_id) VALUES (?, ?, ?)',
-                    )
-
-                    const transaction = getDatabase().transaction(
-                      (parts: { id: string }[]) => {
-                        for (const part of parts) {
-                          stmt.run(part.id, discordMessage.id, thread.id)
-                        }
-                      },
-                    )
-
-                    transaction(partsToRender)
-                  }
                 }
-                messageCount++
               }
+
+              const partsToRender = allAssistantParts.slice(-30)
+              const skippedCount = allAssistantParts.length - partsToRender.length
+
+              if (skippedCount > 0) {
+                await sendThreadMessage(
+                  thread,
+                  `*Skipped ${skippedCount} older assistant parts...*`,
+                )
+              }
+
+              if (partsToRender.length > 0) {
+                const combinedContent = partsToRender
+                  .map((p) => p.content)
+                  .join('\n\n')
+
+                const discordMessage = await sendThreadMessage(
+                  thread,
+                  combinedContent,
+                )
+
+                const stmt = getDatabase().prepare(
+                  'INSERT OR REPLACE INTO part_messages (part_id, message_id, thread_id) VALUES (?, ?, ?)',
+                )
+
+                const transaction = getDatabase().transaction(
+                  (parts: { id: string }[]) => {
+                    for (const part of parts) {
+                      stmt.run(part.id, discordMessage.id, thread.id)
+                    }
+                  },
+                )
+
+                transaction(partsToRender)
+              }
+
+              const messageCount = messages.length
 
               await sendThreadMessage(
                 thread,
@@ -3101,6 +3127,7 @@ export async function startDiscordBot({
           guildId: newState.guild.id,
           channelId: voiceChannel.id,
           appId: currentAppId!,
+          discordClient,
         })
 
         // Handle connection state changes

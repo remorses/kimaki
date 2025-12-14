@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.4.13
+
+### Patch Changes
+
+- bash tool displays actual command in inline code (`` `command` ``) instead of description when short (≤120 chars, single line)
+
 ## 0.4.12
 
 ### Patch Changes
