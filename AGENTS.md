@@ -1,3 +1,13 @@
+# restarting the discord bot
+
+ONLY restart the discord bot if the user explicitly asks for it.
+
+To restart the discord bot process so it uses the new code, send a SIGUSR2 signal to it.
+
+1. Find the process ID (PID) of the kimaki discord bot (e.g., using `ps aux | grep kimaki` or searching for "kimaki" in process list).
+2. Send the signal: `kill -SIGUSR2 <PID>`
+
+The bot will wait 1000ms and then restart itself with the same arguments.
 
 # core guidelines
 
@@ -19,6 +29,16 @@ always use kebab case for new filenames. never use uppercase letters in filename
 ## see files in the repo
 
 use `git ls-files | tree --fromfile` to see files in the repo. this command will ignore files ignored by git
+
+## handling unexpected file contents after a read or write
+
+if you find code that was not there since the last time you read the file it means the user or another agent edited the file. do not revert the changes that were added. instead keep them and integrate them with your new changes
+
+IMPORTANT: NEVER commit your changes unless clearly and specifically asked to!
+
+## opening me files in zed to show me a specific portion of code
+
+you can open files when i ask me "open in zed the line where ..." using the command `zed path/to/file:line`
 
 # typescript
 
@@ -313,6 +333,8 @@ AppError messages will be forwarded to the user as is. normal Error instances in
 
 do not write new test files unless asked. do not write tests if there is not already a test or describe block for that function or module.
 
+if the inputs for the tests is an array of repetitive fields and long content, generate this input data programmatically instead of hardcoding everything. only hardcode the important parts and generate other repetitive fields in a .map or .reduce
+
 tests should validate complex and non-obvious logic. if a test looks like a placeholder, do not add it.
 
 use vitest to run tests. tests should be run from the current package directory and not root. try using the test script instead of vitest directly. additional vitest flags can be added at the end, like --run to disable watch mode or -u to update snapshots.
@@ -345,55 +367,6 @@ sometimes tests work directly on database data, using prisma. to run these tests
 never write tests yourself that call prisma or interact with database or emails. for these, ask the user to write them for you.
 
 github.md
-# changelog
-
-## 1.1.2
-
-### Patch Changes
-
-- Header comment in generated AGENTS.md instructing not to edit directly
-- Instructions to create ./MY_AGENTS.md for custom instructions
-
-after you make a change that is noteworthy, add an entry in the CHANGELOG.md file in the root of the package. there are 2 kinds of packages, public and private packages. private packages have a private: true field in package.json, public packages do not and instead have a version field in package.json. public packages are the ones that are published to npm.
-
-If the current package has a version field and it is not private then include the version in the changelog too like in the examples, otherwise use the current date and time.
-
-If you use the version you MUST use a bumped version compared to the current package.json version, and you should update the package.json version field to that version. But do not publish. I will handle that myself.
-
-to write a changelog.md file for a public package, use the following format, add a heading with the new version and a bullet list of your changes, like this:
-
-```md
-## 0.1.3
-
-### Patch Changes
-
-- bug fixes
-
-## 0.1.2
-
-### Patch Changes
-
-- add support for githubPath
-```
-
-for private packages, which do not have versions, you must instead use the current date and time, for example:
-
-```md
-# Changelog
-
-## 2025-01-24 19:50
-
-- Added a feature to improve user experience
-- Fixed a bug that caused the app to crash on startup
-```
-
-these are just examples. be clear and concise in your changelog entries.
-
-use present tense. be detailed but concise, omit useless verbs like "implement", "added", just put the subject there instead, so it is shorter. it's implicit we are adding features or fixes. do not use nested bullet points. always show example code snippets if applicable, and use proper markdown formatting.
-
-```
-
-the website package has a dependency on docs-website. instead of duplicating code that is needed both in website and docs-website keep a file in docs-website instead and import from there for the website package.
 
 # writing docs
 
@@ -413,6 +386,7 @@ the cli uses cac npm package.
 - try to keep styles as simple as possible, for breakpoints too.
 
 - to join many classes together use the `cn('class-1', 'class-2')` utility instead of `${}` or other methods. this utility is usually used in shadcn-compatible projects and mine is exported from `website/src/lib/cn` usually. prefer doing `cn(bool && 'class')` instead of `cn(bool ? 'class' : '')`
+
 - prefer `size-4` over `w-4 h-4`
 
 ## components
@@ -529,31 +503,3 @@ const jsonSchema = toJSONSchema(mySchema, {
 });
 ```
 
-# publishing packages
-
-when asked to prepare a release for a publishable package (one with a version field in package.json):
-
-1. determine the version bump type (patch/minor/major)
-2. bump the version in package.json manually
-3. add a new entry at the top of CHANGELOG.md with the new version and changes
-4. do NOT use changesets or any other versioning tool
-
-example for a patch bump from 0.4.5 to 0.4.6:
-- edit package.json: `"version": "0.4.5"` → `"version": "0.4.6"`
-- add to CHANGELOG.md:
-```md
-## 0.4.6
-
-### Patch Changes
-
-- description of changes
-```
-
-# restarting the discord bot
-
-to restart the discord bot process so it uses the new code, send a SIGUSR2 signal to it.
-
-1. Find the process ID (PID) of the kimaki discord bot (e.g., using `ps aux | grep kimaki` or searching for "kimaki" in process list).
-2. Send the signal: `kill -SIGUSR2 <PID>`
-
-The bot will wait 1000ms and then restart itself with the same arguments.
