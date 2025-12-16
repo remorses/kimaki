@@ -17,7 +17,7 @@ import { ShareMarkdown } from './markdown.js'
 import pc from 'picocolors'
 import {
   initializeOpencodeForDirectory,
-  OPENCODE_SYSTEM_MESSAGE,
+  getOpencodeSystemMessage,
 } from './discordBot.js'
 
 export async function getTools({
@@ -78,7 +78,7 @@ export async function getTools({
             body: {
               parts: [{ type: 'text', text: message }],
               model: sessionModel,
-              system: OPENCODE_SYSTEM_MESSAGE,
+              system: getOpencodeSystemMessage({ sessionId }),
             },
           })
           .then(async (response) => {
@@ -152,7 +152,7 @@ export async function getTools({
               path: { id: session.data.id },
               body: {
                 parts: [{ type: 'text', text: message }],
-                system: OPENCODE_SYSTEM_MESSAGE,
+                system: getOpencodeSystemMessage({ sessionId: session.data.id }),
               },
             })
             .then(async (response) => {

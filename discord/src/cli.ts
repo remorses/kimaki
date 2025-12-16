@@ -33,6 +33,7 @@ import {
   REST,
   Routes,
   SlashCommandBuilder,
+  AttachmentBuilder,
 } from 'discord.js'
 import path from 'node:path'
 import fs from 'node:fs'
@@ -836,28 +837,120 @@ cli
   })
 
 cli
-  .command('install-plugin', 'Install the OpenCode plugin for /send-to-kimaki-discord command')
+  .command('upload-to-discord [...files]', 'Upload files to a Discord thread for a session')
+  .option('-s, --session <sessionId>', 'OpenCode session ID')
+  .action(async (files: string[], options: { session?: string }) => {
+    try {
+      const { session: sessionId } = options
+
+      if (!sessionId) {
+        cliLogger.error('Session ID is required. Use --session <sessionId>')
+        process.exit(EXIT_NO_RESTART)
+      }
+
+      if (!files || files.length === 0) {
+        cliLogger.error('At least one file path is required')
+        process.exit(EXIT_NO_RESTART)
+      }
+
+      const resolvedFiles = files.map((f) => path.resolve(f))
+      for (const file of resolvedFiles) {
+        if (!fs.existsSync(file)) {
+          cliLogger.error(`File not found: ${file}`)
+          process.exit(EXIT_NO_RESTART)
+        }
+      }
+
+      const db = getDatabase()
+
+      const threadRow = db
+        .prepare('SELECT thread_id FROM thread_sessions WHERE session_id = ?')
+        .get(sessionId) as { thread_id: string } | undefined
+
+      if (!threadRow) {
+        cliLogger.error(`No Discord thread found for session: ${sessionId}`)
+        cliLogger.error('Make sure the session has been sent to Discord first using /send-to-kimaki-discord')
+        process.exit(EXIT_NO_RESTART)
+      }
+
+      const botRow = db
+        .prepare(
+          'SELECT app_id, token FROM bot_tokens ORDER BY created_at DESC LIMIT 1',
+        )
+        .get() as { app_id: string; token: string } | undefined
+
+      if (!botRow) {
+        cliLogger.error('No bot credentials found. Run `kimaki` first to set up the bot.')
+        process.exit(EXIT_NO_RESTART)
+      }
+
+      const s = spinner()
+      s.start(`Uploading ${resolvedFiles.length} file(s)...`)
+
+      for (const file of resolvedFiles) {
+        const buffer = fs.readFileSync(file)
+
+        const formData = new FormData()
+        formData.append('payload_json', JSON.stringify({
+          attachments: [{ id: 0, filename: path.basename(file) }]
+        }))
+        formData.append('files[0]', new Blob([buffer]), path.basename(file))
+
+        const response = await fetch(
+          `https://discord.com/api/v10/channels/${threadRow.thread_id}/messages`,
+          {
+            method: 'POST',
+            headers: {
+              'Authorization': `Bot ${botRow.token}`,
+            },
+            body: formData,
+          }
+        )
+
+        if (!response.ok) {
+          const error = await response.text()
+          throw new Error(`Discord API error: ${response.status} - ${error}`)
+        }
+      }
+
+      s.stop(`Uploaded ${resolvedFiles.length} file(s)!`)
+
+      note(
+        `Files uploaded to Discord thread!\n\nFiles: ${resolvedFiles.map((f) => path.basename(f)).join(', ')}`,
+        '✅ Success',
+      )
+
+      process.exit(0)
+    } catch (error) {
+      cliLogger.error(
+        'Error:',
+        error instanceof Error ? error.message : String(error),
+      )
+      process.exit(EXIT_NO_RESTART)
+    }
+  })
+
+cli
+  .command('install-plugin', 'Install the OpenCode commands for kimaki Discord integration')
   .action(async () => {
     try {
       const require = createRequire(import.meta.url)
-      const pluginSrc = require.resolve('./opencode-plugin.ts')
-      const commandSrc = require.resolve('./opencode-command.md')
+      const sendCommandSrc = require.resolve('./opencode-command-send-to-discord.md')
+      const uploadCommandSrc = require.resolve('./opencode-command-upload-to-discord.md')
 
       const opencodeConfig = path.join(os.homedir(), '.config', 'opencode')
-      const pluginDir = path.join(opencodeConfig, 'plugin')
       const commandDir = path.join(opencodeConfig, 'command')
 
-      fs.mkdirSync(pluginDir, { recursive: true })
       fs.mkdirSync(commandDir, { recursive: true })
 
-      const pluginDest = path.join(pluginDir, 'send-to-kimaki-discord.ts')
-      const commandDest = path.join(commandDir, 'send-to-kimaki-discord.md')
+      const sendCommandDest = path.join(commandDir, 'send-to-kimaki-discord.md')
+      const uploadCommandDest = path.join(commandDir, 'upload-to-discord.md')
 
-      fs.copyFileSync(pluginSrc, pluginDest)
-      fs.copyFileSync(commandSrc, commandDest)
+      fs.copyFileSync(sendCommandSrc, sendCommandDest)
+      fs.copyFileSync(uploadCommandSrc, uploadCommandDest)
 
       note(
-        `Plugin: ${pluginDest}\nCommand: ${commandDest}\n\nUse /send-to-kimaki-discord in OpenCode to send the current session to Discord.`,
+        `Commands installed:\n- ${sendCommandDest}\n- ${uploadCommandDest}\n\nUse /send-to-kimaki-discord to send session to Discord.\nUse /upload-to-discord to upload files to the thread.`,
         '✅ Installed',
       )
 

@@ -76,8 +76,11 @@ function parseSlashCommand(text: string): ParsedCommand {
   return { isCommand: true, command, arguments: args }
 }
 
-export const OPENCODE_SYSTEM_MESSAGE = `
+export function getOpencodeSystemMessage({ sessionId }: { sessionId: string }) {
+  return `
 The user is reading your messages from inside Discord, via kimaki.xyz
+
+Your current OpenCode session ID is: ${sessionId}
 
 After each message, if you implemented changes, you can show the user a diff via an url running the command, to show the changes in working directory:
 
@@ -120,6 +123,7 @@ code blocks for tables and diagrams MUST have Max length of 85 characters. other
 
 you can create diagrams wrapping them in code blocks too.
 `
+}
 
 const discordLogger = createLogger('DISCORD')
 const voiceLogger = createLogger('VOICE')
@@ -1821,7 +1825,7 @@ async function handleOpencodeSession({
         path: { id: session.id },
         body: {
           parts,
-          system: OPENCODE_SYSTEM_MESSAGE,
+          system: getOpencodeSystemMessage({ sessionId: session.id }),
         },
         signal: abortController.signal,
       })

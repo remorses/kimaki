@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.4.14
+
+### Patch Changes
+
+- add `upload-to-discord` CLI command to upload files to Discord thread
+- add `/upload-to-discord` OpenCode command for LLM-driven file uploads
+- refactor system prompt to include session ID for LLM access
+- remove plugin dependency - commands now instruct LLM to run CLI directly
+- rename command files to support multiple commands
+
 ## 0.4.13
 
 ### Patch Changes
