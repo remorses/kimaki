@@ -134,11 +134,15 @@ async function registerCommands(token: string, appId: string) {
       .toJSON(),
     new SlashCommandBuilder()
       .setName('accept-always')
-      .setDescription('Accept and auto-approve future requests matching this pattern (e.g. "git *" approves all git commands)')
+      .setDescription('Accept and auto-approve future requests matching this pattern')
       .toJSON(),
     new SlashCommandBuilder()
       .setName('reject')
       .setDescription('Reject a pending permission request')
+      .toJSON(),
+    new SlashCommandBuilder()
+      .setName('abort')
+      .setDescription('Abort the current OpenCode request in this thread')
       .toJSON(),
   ]
 

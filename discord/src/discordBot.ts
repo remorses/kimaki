@@ -54,6 +54,28 @@ import { setGlobalDispatcher, Agent } from 'undici'
 // disables the automatic 5 minutes abort after no body
 setGlobalDispatcher(new Agent({ headersTimeout: 0, bodyTimeout: 0 }))
 
+type ParsedCommand = {
+  isCommand: true
+  command: string
+  arguments: string
+} | {
+  isCommand: false
+}
+
+function parseSlashCommand(text: string): ParsedCommand {
+  const trimmed = text.trim()
+  if (!trimmed.startsWith('/')) {
+    return { isCommand: false }
+  }
+  const match = trimmed.match(/^\/(\S+)(?:\s+(.*))?$/)
+  if (!match) {
+    return { isCommand: false }
+  }
+  const command = match[1]!
+  const args = match[2]?.trim() || ''
+  return { isCommand: true, command, arguments: args }
+}
+
 export const OPENCODE_SYSTEM_MESSAGE = `
 The user is reading your messages from inside Discord, via kimaki.xyz
 
@@ -1349,12 +1371,14 @@ async function handleOpencodeSession({
   projectDirectory,
   originalMessage,
   images = [],
+  parsedCommand,
 }: {
   prompt: string
   thread: ThreadChannel
   projectDirectory?: string
   originalMessage?: Message
   images?: FilePartInput[]
+  parsedCommand?: ParsedCommand
 }): Promise<{ sessionID: string; result: any; port?: number } | undefined> {
   voiceLogger.log(
     `[OPENCODE SESSION] Starting for thread ${thread.id} with prompt: "${prompt.slice(0, 50)}${prompt.length > 50 ? '...' : ''}"`,
@@ -1477,6 +1501,8 @@ async function handleOpencodeSession({
   let currentParts: Part[] = []
   let stopTyping: (() => void) | null = null
   let usedModel: string | undefined
+  let usedProviderID: string | undefined
+  let inputTokens = 0
 
   const sendPartMessage = async (part: Part) => {
     const content = formatPart(part) + '\n\n'
@@ -1487,22 +1513,12 @@ async function handleOpencodeSession({
 
     // Skip if already sent
     if (partIdToMessage.has(part.id)) {
-      voiceLogger.log(
-        `[SEND SKIP] Part ${part.id} already sent as message ${partIdToMessage.get(part.id)?.id}`,
-      )
       return
     }
 
     try {
-      voiceLogger.log(
-        `[SEND] Sending part ${part.id} (type: ${part.type}) to Discord, content length: ${content.length}`,
-      )
-
       const firstMessage = await sendThreadMessage(thread, content)
       partIdToMessage.set(part.id, firstMessage)
-      voiceLogger.log(
-        `[SEND SUCCESS] Part ${part.id} sent as message ${firstMessage.id}`,
-      )
 
       // Store part-message mapping in database
       getDatabase()
@@ -1525,13 +1541,10 @@ async function handleOpencodeSession({
         discordLogger.log(`Not starting typing, already aborted`)
         return () => {}
       }
-      discordLogger.log(`Starting typing for thread ${thread.id}`)
-
       // Clear any previous typing interval
       if (typingInterval) {
         clearInterval(typingInterval)
         typingInterval = null
-        discordLogger.log(`Cleared previous typing interval`)
       }
 
       // Send initial typing
@@ -1567,7 +1580,6 @@ async function handleOpencodeSession({
         if (typingInterval) {
           clearInterval(typingInterval)
           typingInterval = null
-          discordLogger.log(`Stopped typing for thread ${thread.id}`)
         }
       }
     }
@@ -1576,45 +1588,31 @@ async function handleOpencodeSession({
       let assistantMessageId: string | undefined
 
       for await (const event of events) {
-        sessionLogger.log(`Received: ${event.type}`)
         if (event.type === 'message.updated') {
           const msg = event.properties.info
 
           if (msg.sessionID !== session.id) {
-            voiceLogger.log(
-              `[EVENT IGNORED] Message from different session (expected: ${session.id}, got: ${msg.sessionID})`,
-            )
             continue
           }
 
           // Track assistant message ID
           if (msg.role === 'assistant') {
             assistantMessageId = msg.id
-
-
             usedModel = msg.modelID
-
-            voiceLogger.log(
-              `[EVENT] Tracking assistant message ${assistantMessageId}`,
-            )
-          } else {
-            sessionLogger.log(`Message role: ${msg.role}`)
+            usedProviderID = msg.providerID
+            if (msg.tokens.input > 0) {
+              inputTokens = msg.tokens.input
+            }
           }
         } else if (event.type === 'message.part.updated') {
           const part = event.properties.part
 
           if (part.sessionID !== session.id) {
-            voiceLogger.log(
-              `[EVENT IGNORED] Part from different session (expected: ${session.id}, got: ${part.sessionID})`,
-            )
             continue
           }
 
           // Only process parts from assistant messages
           if (part.messageID !== assistantMessageId) {
-            voiceLogger.log(
-              `[EVENT IGNORED] Part from non-assistant message (expected: ${assistantMessageId}, got: ${part.messageID})`,
-            )
             continue
           }
 
@@ -1627,9 +1625,7 @@ async function handleOpencodeSession({
             currentParts.push(part)
           }
 
-          voiceLogger.log(
-            `[PART] Update: id=${part.id}, type=${part.type}, text=${'text' in part && typeof part.text === 'string' ? part.text.slice(0, 50) : ''}`,
-          )
+
 
           // Start typing on step-start
           if (part.type === 'step-start') {
@@ -1638,10 +1634,12 @@ async function handleOpencodeSession({
 
           // Check if this is a step-finish part
           if (part.type === 'step-finish') {
+            // Track tokens from step-finish part
+            if (part.tokens?.input && part.tokens.input > 0) {
+              inputTokens = part.tokens.input
+              voiceLogger.log(`[STEP-FINISH] Captured tokens: ${inputTokens}`)
+            }
             // Send all parts accumulated so far to Discord
-            voiceLogger.log(
-              `[STEP-FINISH] Sending ${currentParts.length} parts to Discord`,
-            )
             for (const p of currentParts) {
               // Skip step-start and step-finish parts as they have no visual content
               if (p.type !== 'step-start' && p.type !== 'step-finish') {
@@ -1728,10 +1726,6 @@ async function handleOpencodeSession({
           if (pending && pending.permission.id === permissionID) {
             pendingPermissions.delete(thread.id)
           }
-        } else if (event.type === 'file.edited') {
-          sessionLogger.log(`File edited event received`)
-        } else {
-          sessionLogger.log(`Unhandled event type: ${event.type}`)
         }
       }
     } catch (e) {
@@ -1745,37 +1739,20 @@ async function handleOpencodeSession({
       throw e
     } finally {
       // Send any remaining parts that weren't sent
-      voiceLogger.log(
-        `[CLEANUP] Checking ${currentParts.length} parts for unsent messages`,
-      )
-      let unsentCount = 0
       for (const part of currentParts) {
         if (!partIdToMessage.has(part.id)) {
-          unsentCount++
-          voiceLogger.log(
-            `[CLEANUP] Sending unsent part: id=${part.id}, type=${part.type}`,
-          )
           try {
             await sendPartMessage(part)
           } catch (error) {
-            sessionLogger.log(
-              `Failed to send part ${part.id} during cleanup:`,
-              error,
-            )
+            sessionLogger.error(`Failed to send part ${part.id}:`, error)
           }
         }
-      }
-      if (unsentCount === 0) {
-        sessionLogger.log(`All parts were already sent`)
-      } else {
-        sessionLogger.log(`Sent ${unsentCount} previously unsent parts`)
       }
 
       // Stop typing when session ends
       if (stopTyping) {
         stopTyping()
         stopTyping = null
-        sessionLogger.log(`Stopped typing for session`)
       }
 
       // Only send duration message if request was not aborted or was aborted with 'finished' reason
@@ -1788,8 +1765,22 @@ async function handleOpencodeSession({
         )
         const attachCommand = port ? ` ⋅ ${session.id}` : ''
         const modelInfo = usedModel ? ` ⋅ ${usedModel}` : ''
-        await sendThreadMessage(thread, `_Completed in ${sessionDuration}_${attachCommand}${modelInfo}`)
-        sessionLogger.log(`DURATION: Session completed in ${sessionDuration}, port ${port}, model ${usedModel}`)
+        let contextInfo = ''
+        if (inputTokens > 0 && usedProviderID && usedModel) {
+          try {
+            const providersResponse = await getClient().provider.list({ query: { directory } })
+            const provider = providersResponse.data?.all?.find((p) => p.id === usedProviderID)
+            const model = provider?.models?.[usedModel]
+            if (model?.limit?.context) {
+              const percentage = Math.round((inputTokens / model.limit.context) * 100)
+              contextInfo = ` ⋅ ${percentage}%`
+            }
+          } catch (e) {
+            sessionLogger.error('Failed to fetch provider info for context percentage:', e)
+          }
+        }
+        await sendThreadMessage(thread, `_Completed in ${sessionDuration}${contextInfo}_${attachCommand}${modelInfo}`)
+        sessionLogger.log(`DURATION: Session completed in ${sessionDuration}, port ${port}, model ${usedModel}, tokens ${inputTokens}`)
       } else {
         sessionLogger.log(
           `Session was aborted (reason: ${abortController.signal.reason}), skipping duration message`,
@@ -1799,27 +1790,42 @@ async function handleOpencodeSession({
   }
 
   try {
-    voiceLogger.log(
-      `[PROMPT] Sending prompt to session ${session.id}: "${prompt.slice(0, 100)}${prompt.length > 100 ? '...' : ''}"`,
-    )
-    if (images.length > 0) {
-      sessionLogger.log(`[PROMPT] Sending ${images.length} image(s):`, images.map((img) => ({ mime: img.mime, filename: img.filename, url: img.url.slice(0, 100) })))
-    }
-
     // Start the event handler
     const eventHandlerPromise = eventHandler()
 
-    const parts = [{ type: 'text' as const, text: prompt }, ...images]
-    sessionLogger.log(`[PROMPT] Parts to send:`, parts.length)
+    let response: { data?: unknown }
+    if (parsedCommand?.isCommand) {
+      sessionLogger.log(
+        `[COMMAND] Sending command /${parsedCommand.command} to session ${session.id} with args: "${parsedCommand.arguments.slice(0, 100)}${parsedCommand.arguments.length > 100 ? '...' : ''}"`,
+      )
+      response = await getClient().session.command({
+        path: { id: session.id },
+        body: {
+          command: parsedCommand.command,
+          arguments: parsedCommand.arguments,
+        },
+        signal: abortController.signal,
+      })
+    } else {
+      voiceLogger.log(
+        `[PROMPT] Sending prompt to session ${session.id}: "${prompt.slice(0, 100)}${prompt.length > 100 ? '...' : ''}"`,
+      )
+      if (images.length > 0) {
+        sessionLogger.log(`[PROMPT] Sending ${images.length} image(s):`, images.map((img) => ({ mime: img.mime, filename: img.filename, url: img.url.slice(0, 100) })))
+      }
 
-    const response = await getClient().session.prompt({
-      path: { id: session.id },
-      body: {
-        parts,
-        system: OPENCODE_SYSTEM_MESSAGE,
-      },
-      signal: abortController.signal,
-    })
+      const parts = [{ type: 'text' as const, text: prompt }, ...images]
+      sessionLogger.log(`[PROMPT] Parts to send:`, parts.length)
+
+      response = await getClient().session.prompt({
+        path: { id: session.id },
+        body: {
+          parts,
+          system: OPENCODE_SYSTEM_MESSAGE,
+        },
+        signal: abortController.signal,
+      })
+    }
     abortController.abort('finished')
 
     sessionLogger.log(`Successfully sent prompt, got response`)
@@ -1976,9 +1982,6 @@ export async function startDiscordBot({
   discordClient.on(Events.MessageCreate, async (message: Message) => {
     try {
       if (message.author?.bot) {
-        voiceLogger.log(
-          `[IGNORED] Bot message from ${message.author.tag} in channel ${message.channelId}`,
-        )
         return
       }
       if (message.partial) {
@@ -2002,15 +2005,8 @@ export async function startDiscordBot({
         )
 
         if (!isOwner && !isAdmin) {
-          voiceLogger.log(
-            `[IGNORED] Non-authoritative user ${message.author.tag} (ID: ${message.author.id}) - not owner or admin`,
-          )
           return
         }
-
-        voiceLogger.log(
-          `[AUTHORIZED] Message from ${message.author.tag} (Owner: ${isOwner}, Admin: ${isAdmin})`,
-        )
       }
 
       const channel = message.channel
@@ -2084,12 +2080,14 @@ export async function startDiscordBot({
         }
 
         const images = getImageAttachments(message)
+        const parsedCommand = parseSlashCommand(messageContent)
         await handleOpencodeSession({
           prompt: messageContent,
           thread,
           projectDirectory,
           originalMessage: message,
           images,
+          parsedCommand,
         })
         return
       }
@@ -2179,12 +2177,14 @@ export async function startDiscordBot({
         }
 
         const images = getImageAttachments(message)
+        const parsedCommand = parseSlashCommand(messageContent)
         await handleOpencodeSession({
           prompt: messageContent,
           thread,
           projectDirectory,
           originalMessage: message,
           images,
+          parsedCommand,
         })
       } else {
         discordLogger.log(`Channel type ${channel.type} is not supported`)
@@ -2520,10 +2520,12 @@ export async function startDiscordBot({
               )
 
               // Start the OpenCode session
+              const parsedCommand = parseSlashCommand(fullPrompt)
               await handleOpencodeSession({
                 prompt: fullPrompt,
                 thread,
                 projectDirectory,
+                parsedCommand,
               })
             } catch (error) {
               voiceLogger.error('[SESSION] Error:', error)
@@ -2888,6 +2890,77 @@ export async function startDiscordBot({
               voiceLogger.error('[REJECT] Error:', error)
               await command.reply({
                 content: `Failed to reject permission: ${error instanceof Error ? error.message : 'Unknown error'}`,
+                ephemeral: true,
+              })
+            }
+          } else if (command.commandName === 'abort') {
+            const channel = command.channel
+
+            if (!channel) {
+              await command.reply({
+                content: 'This command can only be used in a channel',
+                ephemeral: true,
+              })
+              return
+            }
+
+            const isThread = [
+              ChannelType.PublicThread,
+              ChannelType.PrivateThread,
+              ChannelType.AnnouncementThread,
+            ].includes(channel.type)
+
+            if (!isThread) {
+              await command.reply({
+                content: 'This command can only be used in a thread with an active session',
+                ephemeral: true,
+              })
+              return
+            }
+
+            const textChannel = resolveTextChannel(channel as ThreadChannel)
+            const { projectDirectory: directory } = getKimakiMetadata(textChannel)
+
+            if (!directory) {
+              await command.reply({
+                content: 'Could not determine project directory for this channel',
+                ephemeral: true,
+              })
+              return
+            }
+
+            const row = getDatabase()
+              .prepare('SELECT session_id FROM thread_sessions WHERE thread_id = ?')
+              .get(channel.id) as { session_id: string } | undefined
+
+            if (!row?.session_id) {
+              await command.reply({
+                content: 'No active session in this thread',
+                ephemeral: true,
+              })
+              return
+            }
+
+            const sessionId = row.session_id
+
+            try {
+              const existingController = abortControllers.get(sessionId)
+              if (existingController) {
+                existingController.abort(new Error('User requested abort'))
+                abortControllers.delete(sessionId)
+              }
+
+              const getClient = await initializeOpencodeForDirectory(directory)
+              await getClient().session.abort({
+                path: { id: sessionId },
+              })
+
+              await command.reply(`🛑 Request **aborted**`)
+              sessionLogger.log(`Session ${sessionId} aborted by user`)
+            } catch (error) {
+              voiceLogger.error('[ABORT] Error:', error)
+              await command.reply({
+                content: `Failed to abort: ${error instanceof Error ? error.message : 'Unknown error'}`,
                 ephemeral: true,
               })
             }
