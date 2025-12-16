@@ -931,12 +931,11 @@ cli
   })
 
 cli
-  .command('install-plugin', 'Install the OpenCode commands for kimaki Discord integration')
+  .command('install-plugin', 'Install the OpenCode command for kimaki Discord integration')
   .action(async () => {
     try {
       const require = createRequire(import.meta.url)
       const sendCommandSrc = require.resolve('./opencode-command-send-to-discord.md')
-      const uploadCommandSrc = require.resolve('./opencode-command-upload-to-discord.md')
 
       const opencodeConfig = path.join(os.homedir(), '.config', 'opencode')
       const commandDir = path.join(opencodeConfig, 'command')
@@ -944,13 +943,11 @@ cli
       fs.mkdirSync(commandDir, { recursive: true })
 
       const sendCommandDest = path.join(commandDir, 'send-to-kimaki-discord.md')
-      const uploadCommandDest = path.join(commandDir, 'upload-to-discord.md')
 
       fs.copyFileSync(sendCommandSrc, sendCommandDest)
-      fs.copyFileSync(uploadCommandSrc, uploadCommandDest)
 
       note(
-        `Commands installed:\n- ${sendCommandDest}\n- ${uploadCommandDest}\n\nUse /send-to-kimaki-discord to send session to Discord.\nUse /upload-to-discord to upload files to the thread.`,
+        `Command installed:\n- ${sendCommandDest}\n\nUse /send-to-kimaki-discord to send session to Discord.`,
         '✅ Installed',
       )
 

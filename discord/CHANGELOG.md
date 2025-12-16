@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.4.16
+
+### Patch Changes
+
+- move upload-to-discord instructions to system prompt instead of separate command
+
 ## 0.4.15
 
 ### Patch Changes

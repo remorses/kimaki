@@ -82,6 +82,14 @@ The user is reading your messages from inside Discord, via kimaki.xyz
 
 Your current OpenCode session ID is: ${sessionId}
 
+## uploading files to discord
+
+To upload files (images, screenshots, etc.) to the Discord thread, run:
+
+npx -y kimaki upload-to-discord --session ${sessionId} <file1> [file2] ...
+
+## showing diffs
+
 After each message, if you implemented changes, you can show the user a diff via an url running the command, to show the changes in working directory:
 
 bunx critique web
