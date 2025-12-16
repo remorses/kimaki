@@ -869,7 +869,6 @@ cli
 
       if (!threadRow) {
         cliLogger.error(`No Discord thread found for session: ${sessionId}`)
-        cliLogger.error('Make sure the session has been sent to Discord first using /send-to-kimaki-discord')
         process.exit(EXIT_NO_RESTART)
       }
 

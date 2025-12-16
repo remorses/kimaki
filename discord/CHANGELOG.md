@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.4.17
+
+### Patch Changes
+
+- remove misleading error message in upload-to-discord
+
 ## 0.4.16
 
 ### Patch Changes
