@@ -84,7 +84,7 @@ Your current OpenCode session ID is: ${sessionId}
 
 ## uploading files to discord
 
-To upload files (images, screenshots, etc.) to the Discord thread, run:
+To upload files to the Discord thread (images, screenshots, long files that would clutter the chat), run:
 
 npx -y kimaki upload-to-discord --session ${sessionId} <file1> [file2] ...
 

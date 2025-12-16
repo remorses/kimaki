@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.4.18
+
+### Patch Changes
+
+- mention long files as uploadable in system prompt
+
 ## 0.4.17
 
 ### Patch Changes
