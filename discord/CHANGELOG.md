@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.4.15
+
+### Patch Changes
+
+- re-publish with CLI command fixes
+
 ## 0.4.14
 
 ### Patch Changes
