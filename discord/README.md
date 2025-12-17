@@ -30,27 +30,6 @@ This will guide you through:
 kimaki
 ```
 
-### Send a session to Discord
-
-Send an OpenCode session to Discord from the CLI:
-
-```bash
-kimaki send-to-discord <session-id>
-```
-
-Options:
-- `-d, --directory <dir>` - Project directory (defaults to current working directory)
-
-### OpenCode Integration
-
-To use the `/send-to-kimaki-discord` command in OpenCode:
-
-```bash
-npx kimaki install-plugin
-```
-
-Then use `/send-to-kimaki-discord` in OpenCode to send the current session to Discord.
-
 ## Discord Slash Commands
 
 Once the bot is running, you can use these commands in Discord:
