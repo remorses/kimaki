@@ -106,7 +106,7 @@ export class LiveAPIClient {
     }
 
     this.client = new GoogleGenAI({ apiKey })
-    this.model = model || 'models/gemini-2.0-flash-exp'
+    this.model = model || 'gemini-2.5-flash-native-audio-preview-12-2025'
     this.onStateChange = onStateChange
     this.onMessage = onMessage
     this.onUserAudioChunk = onUserAudioChunk

@@ -46,7 +46,7 @@ export function createAudioChatAPI(options: CreateAudioChatAPIOptions) {
         // Get model from query parameters
         const url = new URL(request.url)
         const model =
-          url.searchParams.get('model') || 'gemini-2.0-flash-live-001'
+          url.searchParams.get('model') || 'gemini-2.5-flash-native-audio-preview-12-2025'
 
         // Generate ephemeral token
         let token: string
