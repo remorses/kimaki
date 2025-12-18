@@ -620,6 +620,7 @@ export function getDatabase(): Database.Database {
       CREATE TABLE IF NOT EXISTS bot_api_keys (
         app_id TEXT PRIMARY KEY,
         gemini_api_key TEXT,
+        xai_api_key TEXT,
         created_at DATETIME DEFAULT CURRENT_TIMESTAMP
       )
     `)
@@ -877,14 +878,64 @@ async function processVoiceAttachment({
   return transcription
 }
 
-function getImageAttachments(message: Message): FilePartInput[] {
-  const imageAttachments = Array.from(message.attachments.values()).filter(
-    (attachment) => attachment.contentType?.startsWith('image/'),
+const TEXT_MIME_TYPES = [
+  'text/',
+  'application/json',
+  'application/xml',
+  'application/javascript',
+  'application/typescript',
+  'application/x-yaml',
+  'application/toml',
+]
+
+function isTextMimeType(contentType: string | null): boolean {
+  if (!contentType) {
+    return false
+  }
+  return TEXT_MIME_TYPES.some((prefix) => contentType.startsWith(prefix))
+}
+
+async function getTextAttachments(message: Message): Promise<string> {
+  const textAttachments = Array.from(message.attachments.values()).filter(
+    (attachment) => isTextMimeType(attachment.contentType),
   )
 
-  return imageAttachments.map((attachment) => ({
+  if (textAttachments.length === 0) {
+    return ''
+  }
+
+  const textContents = await Promise.all(
+    textAttachments.map(async (attachment) => {
+      try {
+        const response = await fetch(attachment.url)
+        if (!response.ok) {
+          return `<attachment filename="${attachment.name}" error="Failed to fetch: ${response.status}" />`
+        }
+        const text = await response.text()
+        return `<attachment filename="${attachment.name}" mime="${attachment.contentType}">\n${text}\n</attachment>`
+      } catch (error) {
+        const errMsg = error instanceof Error ? error.message : String(error)
+        return `<attachment filename="${attachment.name}" error="${errMsg}" />`
+      }
+    }),
+  )
+
+  return textContents.join('\n\n')
+}
+
+function getFileAttachments(message: Message): FilePartInput[] {
+  const fileAttachments = Array.from(message.attachments.values()).filter(
+    (attachment) => {
+      const contentType = attachment.contentType || ''
+      return (
+        contentType.startsWith('image/') || contentType === 'application/pdf'
+      )
+    },
+  )
+
+  return fileAttachments.map((attachment) => ({
     type: 'file' as const,
-    mime: attachment.contentType || 'image/png',
+    mime: attachment.contentType || 'application/octet-stream',
     filename: attachment.name,
     url: attachment.url,
   }))
@@ -2091,14 +2142,18 @@ export async function startDiscordBot({
           messageContent = transcription
         }
 
-        const images = getImageAttachments(message)
+        const fileAttachments = getFileAttachments(message)
+        const textAttachmentsContent = await getTextAttachments(message)
+        const promptWithAttachments = textAttachmentsContent
+          ? `${messageContent}\n\n${textAttachmentsContent}`
+          : messageContent
         const parsedCommand = parseSlashCommand(messageContent)
         await handleOpencodeSession({
-          prompt: messageContent,
+          prompt: promptWithAttachments,
           thread,
           projectDirectory,
           originalMessage: message,
-          images,
+          images: fileAttachments,
           parsedCommand,
         })
         return
@@ -2188,14 +2243,18 @@ export async function startDiscordBot({
           messageContent = transcription
         }
 
-        const images = getImageAttachments(message)
+        const fileAttachments = getFileAttachments(message)
+        const textAttachmentsContent = await getTextAttachments(message)
+        const promptWithAttachments = textAttachmentsContent
+          ? `${messageContent}\n\n${textAttachmentsContent}`
+          : messageContent
         const parsedCommand = parseSlashCommand(messageContent)
         await handleOpencodeSession({
-          prompt: messageContent,
+          prompt: promptWithAttachments,
           thread,
           projectDirectory,
           originalMessage: message,
-          images,
+          images: fileAttachments,
           parsedCommand,
         })
       } else {
@@ -3335,6 +3394,23 @@ export async function startDiscordBot({
       voiceLogger.error('[SIGINT] Error during shutdown:', error)
       process.exit(1)
     }
+  })
+
+  process.on('SIGUSR2', async () => {
+    discordLogger.log('Received SIGUSR2, restarting after cleanup...')
+    try {
+      await handleShutdown('SIGUSR2')
+    } catch (error) {
+      voiceLogger.error('[SIGUSR2] Error during shutdown:', error)
+    }
+    const { spawn } = await import('node:child_process')
+    spawn(process.argv[0]!, [...process.execArgv, ...process.argv.slice(1)], {
+      stdio: 'inherit',
+      detached: true,
+      cwd: process.cwd(),
+      env: process.env,
+    }).unref()
+    process.exit(0)
   })
 
   // Prevent unhandled promise rejections from crashing the process during shutdown

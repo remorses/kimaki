@@ -5,9 +5,9 @@ import path from 'node:path'
 import { Resampler } from '@purinton/resampler'
 import * as prism from 'prism-media'
 import { startGenAiSession } from './genai.js'
+import type { Session } from '@google/genai'
 import { getTools } from './tools.js'
 import type { WorkerInMessage, WorkerOutMessage } from './worker-types.js'
-import type { Session } from '@google/genai'
 import { createLogger } from './logger.js'
 
 if (!parentPort) {

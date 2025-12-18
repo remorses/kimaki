@@ -47,19 +47,7 @@ const cli = cac('kimaki')
 
 process.title = 'kimaki'
 
-process.on('SIGUSR2', () => {
-  cliLogger.info('Received SIGUSR2, restarting process in 1000ms...')
-  setTimeout(() => {
-    cliLogger.info('Restarting...')
-    spawn(process.argv[0]!, [...process.execArgv, ...process.argv.slice(1)], {
-      stdio: 'inherit',
-      detached: true,
-      cwd: process.cwd(),
-      env: process.env,
-    }).unref()
-    process.exit(0)
-  }, 1000)
-})
+
 
 const EXIT_NO_RESTART = 64
 
