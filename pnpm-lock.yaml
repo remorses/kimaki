@@ -52,8 +52,8 @@ importers:
         specifier: ^1.34.0
         version: 1.34.0
       '@opencode-ai/sdk':
-        specifier: ^1.0.115
-        version: 1.0.115
+        specifier: ^1.0.169
+        version: 1.0.169
       '@purinton/resampler':
         specifier: ^1.0.4
         version: 1.0.4
@@ -110,8 +110,8 @@ importers:
         version: 4.2.1
     devDependencies:
       '@opencode-ai/plugin':
-        specifier: ^1.0.119
-        version: 1.0.119
+        specifier: ^1.0.169
+        version: 1.0.169
       '@types/better-sqlite3':
         specifier: ^7.6.13
         version: 7.6.13
@@ -429,14 +429,11 @@ packages:
   '@napi-rs/wasm-runtime@0.2.12':
     resolution: {integrity: sha512-ZVWUcfwY4E/yPitQJl481FjFo3K22D6qF0DuFH6Y/nbnE11GY5uguDxZMGXPQ8WQ0128MXQD7TnfHyK4oWoIJQ==}
 
-  '@opencode-ai/plugin@1.0.119':
-    resolution: {integrity: sha512-9EKaakOrtAiAr0hnQFekduze+ofWCvDK/U49H2z55MJjV2j28KRdUYqQ4KSZic1cnpLTP1A9KZC8iM48jv0f6w==}
+  '@opencode-ai/plugin@1.0.169':
+    resolution: {integrity: sha512-7f1cVIsc82+8t1K6dM3bo+X7amWuCrkFwGqQb+2awjdKIejTRme76D8NpzC+BuQhMbF9JiH7yzJrAvJ9MejWIg==}
 
-  '@opencode-ai/sdk@1.0.115':
-    resolution: {integrity: sha512-9X/haKb2wGBfxIfTyNlSs2bFqQa6DP34mTsYoGsXhyp+DNIPo+Wvj1ar0WrY35bonm7+lBcpQ/kFF3dvp/lO1Q==}
-
-  '@opencode-ai/sdk@1.0.119':
-    resolution: {integrity: sha512-6QamTWRHZZcPOJ2uKca5kG2YB5mtySctnFYQ4wPI7xZOGDhkzEcMYBlFmLhCkcp7qTNuk3YLdEnsgNEts9/XsQ==}
+  '@opencode-ai/sdk@1.0.169':
+    resolution: {integrity: sha512-c9XyrvQlZOQ+WxtD3io+VKkwhH1g82e9eNgczpXe3h+rkt5LANFgiwCGSHVArD0p/5FiPQPUEGk7mwqAjGL/GQ==}
 
   '@opentelemetry/api@1.9.0':
     resolution: {integrity: sha512-3giAOQvZiH5F9bMlMiv8+GSPMeqg0dbaeo58/0SlA9sxSqZhnUtxzX9/2FzyhS9sWQf5S0GJE0AKBrFqjpeYcg==}
@@ -1991,14 +1988,12 @@ snapshots:
       '@tybys/wasm-util': 0.10.1
     optional: true
 
-  '@opencode-ai/plugin@1.0.119':
+  '@opencode-ai/plugin@1.0.169':
     dependencies:
-      '@opencode-ai/sdk': 1.0.119
+      '@opencode-ai/sdk': 1.0.169
       zod: 4.1.8
 
-  '@opencode-ai/sdk@1.0.115': {}
-
-  '@opencode-ai/sdk@1.0.119': {}
+  '@opencode-ai/sdk@1.0.169': {}
 
   '@opentelemetry/api@1.9.0': {}
 

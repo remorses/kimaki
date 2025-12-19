@@ -1565,7 +1565,7 @@ async function handleOpencodeSession({
   let stopTyping: (() => void) | null = null
   let usedModel: string | undefined
   let usedProviderID: string | undefined
-  let inputTokens = 0
+  let tokensUsedInSession = 0
 
   const sendPartMessage = async (part: Part) => {
     const content = formatPart(part) + '\n\n'
@@ -1654,21 +1654,25 @@ async function handleOpencodeSession({
         if (event.type === 'message.updated') {
           const msg = event.properties.info
 
+
+
           if (msg.sessionID !== session.id) {
             continue
           }
 
           // Track assistant message ID
           if (msg.role === 'assistant') {
+
+            tokensUsedInSession = msg.tokens.input + msg.tokens.output + msg.tokens.reasoning + msg.tokens.cache.read + msg.tokens.cache.write
+
             assistantMessageId = msg.id
             usedModel = msg.modelID
             usedProviderID = msg.providerID
-            if (msg.tokens.input > 0) {
-              inputTokens = msg.tokens.input
-            }
+
           }
         } else if (event.type === 'message.part.updated') {
           const part = event.properties.part
+
 
           if (part.sessionID !== session.id) {
             continue
@@ -1697,11 +1701,7 @@ async function handleOpencodeSession({
 
           // Check if this is a step-finish part
           if (part.type === 'step-finish') {
-            // Track tokens from step-finish part
-            if (part.tokens?.input && part.tokens.input > 0) {
-              inputTokens = part.tokens.input
-              voiceLogger.log(`[STEP-FINISH] Captured tokens: ${inputTokens}`)
-            }
+
             // Send all parts accumulated so far to Discord
             for (const p of currentParts) {
               // Skip step-start and step-finish parts as they have no visual content
@@ -1829,21 +1829,22 @@ async function handleOpencodeSession({
         const attachCommand = port ? ` ⋅ ${session.id}` : ''
         const modelInfo = usedModel ? ` ⋅ ${usedModel}` : ''
         let contextInfo = ''
-        if (inputTokens > 0 && usedProviderID && usedModel) {
-          try {
-            const providersResponse = await getClient().provider.list({ query: { directory } })
-            const provider = providersResponse.data?.all?.find((p) => p.id === usedProviderID)
-            const model = provider?.models?.[usedModel]
-            if (model?.limit?.context) {
-              const percentage = Math.round((inputTokens / model.limit.context) * 100)
-              contextInfo = ` ⋅ ${percentage}%`
-            }
-          } catch (e) {
-            sessionLogger.error('Failed to fetch provider info for context percentage:', e)
+
+
+        try {
+          const providersResponse = await getClient().provider.list({ query: { directory } })
+          const provider = providersResponse.data?.all?.find((p) => p.id === usedProviderID)
+          const model = provider?.models?.[usedModel || '']
+          if (model?.limit?.context) {
+            const percentage = Math.round((tokensUsedInSession / model.limit.context) * 100)
+            contextInfo = ` ⋅ ${percentage}%`
           }
+        } catch (e) {
+          sessionLogger.error('Failed to fetch provider info for context percentage:', e)
         }
+
         await sendThreadMessage(thread, `_Completed in ${sessionDuration}${contextInfo}_${attachCommand}${modelInfo}`)
-        sessionLogger.log(`DURATION: Session completed in ${sessionDuration}, port ${port}, model ${usedModel}, tokens ${inputTokens}`)
+        sessionLogger.log(`DURATION: Session completed in ${sessionDuration}, port ${port}, model ${usedModel}, tokens ${tokensUsedInSession}`)
       } else {
         sessionLogger.log(
           `Session was aborted (reason: ${abortController.signal.reason}), skipping duration message`,
