@@ -1301,7 +1301,7 @@ function getToolSummaryText(part: Part): string {
     .map(([key, value]) => {
       if (value === null || value === undefined) return null
       const stringValue = typeof value === 'string' ? value : JSON.stringify(value)
-      const truncatedValue = stringValue.length > 100 ? stringValue.slice(0, 100) + '…' : stringValue
+      const truncatedValue = stringValue.length > 300 ? stringValue.slice(0, 300) + '…' : stringValue
       return `${key}: ${truncatedValue}`
     })
     .filter(Boolean)
@@ -1662,13 +1662,14 @@ async function handleOpencodeSession({
 
           // Track assistant message ID
           if (msg.role === 'assistant') {
-
-            tokensUsedInSession = msg.tokens.input + msg.tokens.output + msg.tokens.reasoning + msg.tokens.cache.read + msg.tokens.cache.write
+            const newTokensTotal = msg.tokens.input + msg.tokens.output + msg.tokens.reasoning + msg.tokens.cache.read + msg.tokens.cache.write
+            if (newTokensTotal > 0) {
+              tokensUsedInSession = newTokensTotal
+            }
 
             assistantMessageId = msg.id
             usedModel = msg.modelID
             usedProviderID = msg.providerID
-
           }
         } else if (event.type === 'message.part.updated') {
           const part = event.properties.part
