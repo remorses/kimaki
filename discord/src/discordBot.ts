@@ -1858,7 +1858,7 @@ async function handleOpencodeSession({
     // Start the event handler
     const eventHandlerPromise = eventHandler()
 
-    let response: { data?: unknown }
+    let response: { data?: unknown; error?: unknown; response: Response }
     if (parsedCommand?.isCommand) {
       sessionLogger.log(
         `[COMMAND] Sending command /${parsedCommand.command} to session ${session.id} with args: "${parsedCommand.arguments.slice(0, 100)}${parsedCommand.arguments.length > 100 ? '...' : ''}"`,
@@ -1891,6 +1891,23 @@ async function handleOpencodeSession({
         signal: abortController.signal,
       })
     }
+
+    if (response.error) {
+      const errorMessage = (() => {
+        const err = response.error
+        if (err && typeof err === 'object') {
+          if ('data' in err && err.data && typeof err.data === 'object' && 'message' in err.data) {
+            return String(err.data.message)
+          }
+          if ('errors' in err && Array.isArray(err.errors) && err.errors.length > 0) {
+            return JSON.stringify(err.errors)
+          }
+        }
+        return JSON.stringify(err)
+      })()
+      throw new Error(`OpenCode API error (${response.response.status}): ${errorMessage}`)
+    }
+
     abortController.abort('finished')
 
     sessionLogger.log(`Successfully sent prompt, got response`)
