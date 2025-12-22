@@ -41,11 +41,42 @@ import fs from 'node:fs'
 
 import { createLogger } from './logger.js'
 import { spawn, spawnSync, execSync, type ExecSyncOptions } from 'node:child_process'
+import http from 'node:http'
 
 const cliLogger = createLogger('CLI')
 const cli = cac('kimaki')
 
 process.title = 'kimaki'
+
+const LOCK_PORT = 29988
+
+async function checkSingleInstance(): Promise<void> {
+  try {
+    const response = await fetch(`http://127.0.0.1:${LOCK_PORT}`, {
+      signal: AbortSignal.timeout(1000),
+    })
+    if (response.ok) {
+      cliLogger.error('Another kimaki instance is already running')
+      process.exit(1)
+    }
+  } catch {
+    // Connection refused means no instance running, continue
+  }
+}
+
+function startLockServer(): void {
+  const server = http.createServer((req, res) => {
+    res.writeHead(200)
+    res.end('kimaki')
+  })
+  server.listen(LOCK_PORT, '127.0.0.1')
+  server.on('error', (err: NodeJS.ErrnoException) => {
+    if (err.code === 'EADDRINUSE') {
+      cliLogger.error('Another kimaki instance is already running')
+      process.exit(1)
+    }
+  })
+}
 
 
 
@@ -118,6 +149,18 @@ async function registerCommands(token: string, appId: string) {
       })
       .toJSON(),
     new SlashCommandBuilder()
+      .setName('add-new-project')
+      .setDescription('Create a new project folder, initialize git, and start a session')
+      .addStringOption((option) => {
+        option
+          .setName('name')
+          .setDescription('Name for the new project folder')
+          .setRequired(true)
+
+        return option
+      })
+      .toJSON(),
+    new SlashCommandBuilder()
       .setName('accept')
       .setDescription('Accept a pending permission request (this request only)')
       .toJSON(),
@@ -132,6 +175,10 @@ async function registerCommands(token: string, appId: string) {
     new SlashCommandBuilder()
       .setName('abort')
       .setDescription('Abort the current OpenCode request in this thread')
+      .toJSON(),
+    new SlashCommandBuilder()
+      .setName('share')
+      .setDescription('Share the current session as a public URL')
       .toJSON(),
   ]
 
@@ -637,6 +684,8 @@ cli
   )
   .action(async (options: { restart?: boolean; addChannels?: boolean }) => {
     try {
+      await checkSingleInstance()
+      startLockServer()
       await run({
         restart: options.restart,
         addChannels: options.addChannels,

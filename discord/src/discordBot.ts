@@ -80,6 +80,8 @@ export function getOpencodeSystemMessage({ sessionId }: { sessionId: string }) {
   return `
 The user is reading your messages from inside Discord, via kimaki.xyz
 
+The user cannot see bash tool outputs. If there is important information in bash output, include it in your text response.
+
 Your current OpenCode session ID is: ${sessionId}
 
 ## uploading files to discord
@@ -1255,13 +1257,6 @@ export async function initializeOpencodeForDirectory(directory: string) {
 
 function getToolSummaryText(part: Part): string {
   if (part.type !== 'tool') return ''
-  if (part.state.status !== 'completed' && part.state.status !== 'error') return ''
-
-  if (part.tool === 'bash') {
-    const output = part.state.status === 'completed' ? part.state.output : part.state.error
-    const lines = (output || '').split('\n').filter((l: string) => l.trim())
-    return `(${lines.length} line${lines.length === 1 ? '' : 's'})`
-  }
 
   if (part.tool === 'edit') {
     const newString = (part.state.input?.newString as string) || ''
@@ -1284,6 +1279,7 @@ function getToolSummaryText(part: Part): string {
   }
 
   if (
+    part.tool === 'bash' ||
     part.tool === 'read' ||
     part.tool === 'list' ||
     part.tool === 'glob' ||
@@ -1309,17 +1305,6 @@ function getToolSummaryText(part: Part): string {
   if (inputFields.length === 0) return ''
 
   return `(${inputFields.join(', ')})`
-}
-
-function getToolOutputToDisplay(part: Part): string {
-  if (part.type !== 'tool') return ''
-  if (part.state.status !== 'completed' && part.state.status !== 'error') return ''
-
-  if (part.state.status === 'error') {
-    return part.state.error || 'Unknown error'
-  }
-
-  return ''
 }
 
 function formatTodoList(part: Part): string {
@@ -1375,16 +1360,16 @@ function formatPart(part: Part): string {
       return formatTodoList(part)
     }
 
-    if (part.state.status !== 'completed' && part.state.status !== 'error') {
+    if (part.state.status === 'pending') {
       return ''
     }
 
     const summaryText = getToolSummaryText(part)
-    const outputToDisplay = getToolOutputToDisplay(part)
+    const stateTitle = 'title' in part.state ? part.state.title : undefined
 
     let toolTitle = ''
     if (part.state.status === 'error') {
-      toolTitle = 'error'
+      toolTitle = part.state.error || 'error'
     } else if (part.tool === 'bash') {
       const command = (part.state.input?.command as string) || ''
       const isSingleLine = !command.includes('\n')
@@ -1392,19 +1377,14 @@ function formatPart(part: Part): string {
       if (isSingleLine && command.length <= 120 && !hasBackticks) {
         toolTitle = `\`${command}\``
       } else {
-        toolTitle = part.state.title ? `*${part.state.title}*` : ''
+        toolTitle = stateTitle ? `*${stateTitle}*` : ''
       }
-    } else if (part.state.title) {
-      toolTitle = `*${part.state.title}*`
+    } else if (stateTitle) {
+      toolTitle = `*${stateTitle}*`
     }
 
-    const icon = part.state.status === 'completed' ? '◼︎' : part.state.status === 'error' ? '⨯' : ''
-    const title = `${icon} ${part.tool} ${toolTitle} ${summaryText}`
-
-    if (outputToDisplay) {
-      return title + '\n\n' + outputToDisplay
-    }
-    return title
+    const icon = part.state.status === 'error' ? '⨯' : '◼︎'
+    return `${icon} ${part.tool} ${toolTitle} ${summaryText}`
   }
 
   discordLogger.warn('Unknown part type:', part)
@@ -1495,11 +1475,12 @@ async function handleOpencodeSession({
   }
 
   if (!session) {
+    const sessionTitle = prompt.length > 80 ? prompt.slice(0, 77) + '...' : prompt.slice(0, 80)
     voiceLogger.log(
-      `[SESSION] Creating new session with title: "${prompt.slice(0, 80)}"`,
+      `[SESSION] Creating new session with title: "${sessionTitle}"`,
     )
     const sessionResponse = await getClient().session.create({
-      body: { title: prompt.slice(0, 80) },
+      body: { title: sessionTitle },
     })
     session = sessionResponse.data
     sessionLogger.log(`Created new session ${session?.id}`)
@@ -1698,6 +1679,11 @@ async function handleOpencodeSession({
           // Start typing on step-start
           if (part.type === 'step-start') {
             stopTyping = startTyping(thread)
+          }
+
+          // Send tool parts immediately when they start running
+          if (part.type === 'tool' && part.state.status === 'running') {
+            await sendPartMessage(part)
           }
 
           // Check if this is a step-finish part
@@ -1912,14 +1898,12 @@ async function handleOpencodeSession({
 
     sessionLogger.log(`Successfully sent prompt, got response`)
 
-    // Update reaction to success
     if (originalMessage) {
       try {
         await originalMessage.reactions.removeAll()
         await originalMessage.react('✅')
-        discordLogger.log(`Added success reaction to message`)
       } catch (e) {
-        discordLogger.log(`Could not update reaction:`, e)
+        discordLogger.log(`Could not update reactions:`, e)
       }
     }
 
@@ -2861,6 +2845,94 @@ export async function startDiscordBot({
                 `Failed to create channels: ${error instanceof Error ? error.message : 'Unknown error'}`,
               )
             }
+          } else if (command.commandName === 'add-new-project') {
+            await command.deferReply({ ephemeral: false })
+
+            const projectName = command.options.getString('name', true)
+            const guild = command.guild
+            const channel = command.channel
+
+            if (!guild) {
+              await command.editReply('This command can only be used in a guild')
+              return
+            }
+
+            if (!channel || channel.type !== ChannelType.GuildText) {
+              await command.editReply('This command can only be used in a text channel')
+              return
+            }
+
+            const sanitizedName = projectName
+              .toLowerCase()
+              .replace(/[^a-z0-9-]/g, '-')
+              .replace(/-+/g, '-')
+              .replace(/^-|-$/g, '')
+              .slice(0, 100)
+
+            if (!sanitizedName) {
+              await command.editReply('Invalid project name')
+              return
+            }
+
+            const kimakiDir = path.join(os.homedir(), 'kimaki')
+            const projectDirectory = path.join(kimakiDir, sanitizedName)
+
+            try {
+              if (!fs.existsSync(kimakiDir)) {
+                fs.mkdirSync(kimakiDir, { recursive: true })
+                discordLogger.log(`Created kimaki directory: ${kimakiDir}`)
+              }
+
+              if (fs.existsSync(projectDirectory)) {
+                await command.editReply(`Project directory already exists: ${projectDirectory}`)
+                return
+              }
+
+              fs.mkdirSync(projectDirectory, { recursive: true })
+              discordLogger.log(`Created project directory: ${projectDirectory}`)
+
+              const { execSync } = await import('node:child_process')
+              execSync('git init', { cwd: projectDirectory, stdio: 'pipe' })
+              discordLogger.log(`Initialized git in: ${projectDirectory}`)
+
+              const { textChannelId, voiceChannelId, channelName } =
+                await createProjectChannels({
+                  guild,
+                  projectDirectory,
+                  appId: currentAppId!,
+                })
+
+              const textChannel = await guild.channels.fetch(textChannelId) as TextChannel
+
+              await command.editReply(
+                `✅ Created new project **${sanitizedName}**\n📁 Directory: \`${projectDirectory}\`\n📝 Text: <#${textChannelId}>\n🔊 Voice: <#${voiceChannelId}>\n\n_Starting session..._`,
+              )
+
+              const starterMessage = await textChannel.send({
+                content: `🚀 **New project initialized**\n📁 \`${projectDirectory}\``,
+              })
+
+              const thread = await starterMessage.startThread({
+                name: `Init: ${sanitizedName}`,
+                autoArchiveDuration: 1440,
+                reason: 'New project session',
+              })
+
+              await handleOpencodeSession({
+                prompt: 'The project was just initialized. Say hi and ask what the user wants to build.',
+                thread,
+                projectDirectory,
+              })
+
+              discordLogger.log(
+                `Created new project ${channelName} at ${projectDirectory}`,
+              )
+            } catch (error) {
+              voiceLogger.error('[ADD-NEW-PROJECT] Error:', error)
+              await command.editReply(
+                `Failed to create new project: ${error instanceof Error ? error.message : 'Unknown error'}`,
+              )
+            }
           } else if (
             command.commandName === 'accept' ||
             command.commandName === 'accept-always'
@@ -3051,6 +3123,79 @@ export async function startDiscordBot({
               voiceLogger.error('[ABORT] Error:', error)
               await command.reply({
                 content: `Failed to abort: ${error instanceof Error ? error.message : 'Unknown error'}`,
+                ephemeral: true,
+              })
+            }
+          } else if (command.commandName === 'share') {
+            const channel = command.channel
+
+            if (!channel) {
+              await command.reply({
+                content: 'This command can only be used in a channel',
+                ephemeral: true,
+              })
+              return
+            }
+
+            const isThread = [
+              ChannelType.PublicThread,
+              ChannelType.PrivateThread,
+              ChannelType.AnnouncementThread,
+            ].includes(channel.type)
+
+            if (!isThread) {
+              await command.reply({
+                content: 'This command can only be used in a thread with an active session',
+                ephemeral: true,
+              })
+              return
+            }
+
+            const textChannel = resolveTextChannel(channel as ThreadChannel)
+            const { projectDirectory: directory } = getKimakiMetadata(textChannel)
+
+            if (!directory) {
+              await command.reply({
+                content: 'Could not determine project directory for this channel',
+                ephemeral: true,
+              })
+              return
+            }
+
+            const row = getDatabase()
+              .prepare('SELECT session_id FROM thread_sessions WHERE thread_id = ?')
+              .get(channel.id) as { session_id: string } | undefined
+
+            if (!row?.session_id) {
+              await command.reply({
+                content: 'No active session in this thread',
+                ephemeral: true,
+              })
+              return
+            }
+
+            const sessionId = row.session_id
+
+            try {
+              const getClient = await initializeOpencodeForDirectory(directory)
+              const response = await getClient().session.share({
+                path: { id: sessionId },
+              })
+
+              if (!response.data?.share?.url) {
+                await command.reply({
+                  content: 'Failed to generate share URL',
+                  ephemeral: true,
+                })
+                return
+              }
+
+              await command.reply(`🔗 **Session shared:** ${response.data.share.url}`)
+              sessionLogger.log(`Session ${sessionId} shared: ${response.data.share.url}`)
+            } catch (error) {
+              voiceLogger.error('[SHARE] Error:', error)
+              await command.reply({
+                content: `Failed to share session: ${error instanceof Error ? error.message : 'Unknown error'}`,
                 ephemeral: true,
               })
             }
@@ -3339,7 +3484,7 @@ export async function startDiscordBot({
 
   await discordClient.login(token)
 
-  const handleShutdown = async (signal: string) => {
+  const handleShutdown = async (signal: string, { skipExit = false } = {}) => {
     discordLogger.log(`Received ${signal}, cleaning up...`)
 
     // Prevent multiple shutdown calls
@@ -3388,11 +3533,15 @@ export async function startDiscordBot({
       discordLogger.log('Destroying Discord client...')
       discordClient.destroy()
 
-      discordLogger.log('Cleanup complete, exiting.')
-      process.exit(0)
+      discordLogger.log('Cleanup complete.')
+      if (!skipExit) {
+        process.exit(0)
+      }
     } catch (error) {
       voiceLogger.error('[SHUTDOWN] Error during cleanup:', error)
-      process.exit(1)
+      if (!skipExit) {
+        process.exit(1)
+      }
     }
   }
 
@@ -3418,7 +3567,7 @@ export async function startDiscordBot({
   process.on('SIGUSR2', async () => {
     discordLogger.log('Received SIGUSR2, restarting after cleanup...')
     try {
-      await handleShutdown('SIGUSR2')
+      await handleShutdown('SIGUSR2', { skipExit: true })
     } catch (error) {
       voiceLogger.error('[SIGUSR2] Error during shutdown:', error)
     }

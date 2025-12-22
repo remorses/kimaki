@@ -1,5 +1,16 @@
 # Changelog
 
+## 0.4.19
+
+### Patch Changes
+
+- add **single instance lock** to prevent running multiple kimaki bots
+- add `/add-new-project` command to create project folder, init git, and start session
+- add `/share` command to share current session as public URL
+- show **tool running status** immediately instead of waiting for completion
+- inform user that **bash outputs are not visible** in system prompt
+- add README best practices for notifications, long messages, permissions
+
 ## 0.4.18
 
 ### Patch Changes
