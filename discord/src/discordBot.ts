@@ -1375,12 +1375,16 @@ function formatPart(part: Part): string {
       const isSingleLine = !command.includes('\n')
       const hasBackticks = command.includes('`')
       if (isSingleLine && command.length <= 120 && !hasBackticks) {
-        toolTitle = `\`${command}\``
+        toolTitle = `_${command}_`
       } else {
-        toolTitle = stateTitle ? `*${stateTitle}*` : ''
+        toolTitle = stateTitle ? `_${stateTitle}_` : ''
       }
+    } else if (part.tool === 'edit' || part.tool === 'write') {
+      const filePath = (part.state.input?.filePath as string) || ''
+      const fileName = filePath.split('/').pop() || filePath
+      toolTitle = fileName ? `_${fileName}_` : ''
     } else if (stateTitle) {
-      toolTitle = `*${stateTitle}*`
+      toolTitle = `_${stateTitle}_`
     }
 
     const icon = part.state.status === 'error' ? '⨯' : '◼︎'
@@ -1429,16 +1433,6 @@ async function handleOpencodeSession({
 
   // Track session start time
   const sessionStartTime = Date.now()
-
-  // Add processing reaction to original message
-  if (originalMessage) {
-    try {
-      await originalMessage.react('⏳')
-      discordLogger.log(`Added processing reaction to message`)
-    } catch (e) {
-      discordLogger.log(`Could not add processing reaction:`, e)
-    }
-  }
 
   // Use default directory if not specified
   const directory = projectDirectory || process.cwd()
@@ -1507,40 +1501,40 @@ async function handleOpencodeSession({
     existingController.abort(new Error('New request started'))
   }
 
-  if (abortControllers.has(session.id)) {
-    abortControllers.get(session.id)?.abort(new Error('new reply'))
-  }
   const abortController = new AbortController()
-  // Store this controller for this session
   abortControllers.set(session.id, abortController)
+
+  if (existingController) {
+    await new Promise((resolve) => { setTimeout(resolve, 200) })
+    if (abortController.signal.aborted) {
+      sessionLogger.log(`[DEBOUNCE] Request was superseded during wait, exiting`)
+      return
+    }
+  }
+
+  if (abortController.signal.aborted) {
+    sessionLogger.log(`[DEBOUNCE] Aborted before subscribe, exiting`)
+    return
+  }
 
   const eventsResult = await getClient().event.subscribe({
     signal: abortController.signal,
   })
+
+  if (abortController.signal.aborted) {
+    sessionLogger.log(`[DEBOUNCE] Aborted during subscribe, exiting`)
+    return
+  }
+
   const events = eventsResult.stream
   sessionLogger.log(`Subscribed to OpenCode events`)
 
-  // Load existing part-message mappings from database
-  const partIdToMessage = new Map<string, Message>()
-  const existingParts = getDatabase()
-    .prepare(
-      'SELECT part_id, message_id FROM part_messages WHERE thread_id = ?',
-    )
-    .all(thread.id) as { part_id: string; message_id: string }[]
-
-  // Pre-populate map with existing messages
-  for (const row of existingParts) {
-    try {
-      const message = await thread.messages.fetch(row.message_id)
-      if (message) {
-        partIdToMessage.set(row.part_id, message)
-      }
-    } catch (error) {
-      voiceLogger.log(
-        `Could not fetch message ${row.message_id} for part ${row.part_id}`,
-      )
-    }
-  }
+  const sentPartIds = new Set<string>(
+    (getDatabase()
+      .prepare('SELECT part_id FROM part_messages WHERE thread_id = ?')
+      .all(thread.id) as { part_id: string }[])
+      .map((row) => row.part_id)
+  )
 
   let currentParts: Part[] = []
   let stopTyping: (() => void) | null = null
@@ -1556,13 +1550,13 @@ async function handleOpencodeSession({
     }
 
     // Skip if already sent
-    if (partIdToMessage.has(part.id)) {
+    if (sentPartIds.has(part.id)) {
       return
     }
 
     try {
       const firstMessage = await sendThreadMessage(thread, content)
-      partIdToMessage.set(part.id, firstMessage)
+      sentPartIds.add(part.id)
 
       // Store part-message mapping in database
       getDatabase()
@@ -1686,6 +1680,11 @@ async function handleOpencodeSession({
             await sendPartMessage(part)
           }
 
+          // Send reasoning parts immediately (shows "◼︎ thinking" indicator early)
+          if (part.type === 'reasoning') {
+            await sendPartMessage(part)
+          }
+
           // Check if this is a step-finish part
           if (part.type === 'step-finish') {
 
@@ -1790,7 +1789,7 @@ async function handleOpencodeSession({
     } finally {
       // Send any remaining parts that weren't sent
       for (const part of currentParts) {
-        if (!partIdToMessage.has(part.id)) {
+        if (!sentPartIds.has(part.id)) {
           try {
             await sendPartMessage(part)
           } catch (error) {
@@ -1841,8 +1840,20 @@ async function handleOpencodeSession({
   }
 
   try {
-    // Start the event handler
     const eventHandlerPromise = eventHandler()
+
+    if (abortController.signal.aborted) {
+      sessionLogger.log(`[DEBOUNCE] Aborted before prompt, exiting`)
+      return
+    }
+
+    if (originalMessage) {
+      try {
+        await originalMessage.react('⏳')
+      } catch (e) {
+        discordLogger.log(`Could not add processing reaction:`, e)
+      }
+    }
 
     let response: { data?: unknown; error?: unknown; response: Response }
     if (parsedCommand?.isCommand) {

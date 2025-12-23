@@ -52,8 +52,8 @@ importers:
         specifier: ^1.34.0
         version: 1.34.0
       '@opencode-ai/sdk':
-        specifier: ^1.0.169
-        version: 1.0.169
+        specifier: ^1.0.193
+        version: 1.0.193
       '@purinton/resampler':
         specifier: ^1.0.4
         version: 1.0.4
@@ -110,8 +110,8 @@ importers:
         version: 4.2.1
     devDependencies:
       '@opencode-ai/plugin':
-        specifier: ^1.0.169
-        version: 1.0.169
+        specifier: ^1.0.193
+        version: 1.0.193
       '@types/better-sqlite3':
         specifier: ^7.6.13
         version: 7.6.13
@@ -429,11 +429,11 @@ packages:
   '@napi-rs/wasm-runtime@0.2.12':
     resolution: {integrity: sha512-ZVWUcfwY4E/yPitQJl481FjFo3K22D6qF0DuFH6Y/nbnE11GY5uguDxZMGXPQ8WQ0128MXQD7TnfHyK4oWoIJQ==}
 
-  '@opencode-ai/plugin@1.0.169':
-    resolution: {integrity: sha512-7f1cVIsc82+8t1K6dM3bo+X7amWuCrkFwGqQb+2awjdKIejTRme76D8NpzC+BuQhMbF9JiH7yzJrAvJ9MejWIg==}
+  '@opencode-ai/plugin@1.0.193':
+    resolution: {integrity: sha512-EazUjz+phR6vI+xRLGXSJGZ06qsJ+bkR5nd5nJZk7oAWJhGvFYQMAAtWoTquESpCJKwL67fYnuz0mE1hThnREw==}
 
-  '@opencode-ai/sdk@1.0.169':
-    resolution: {integrity: sha512-c9XyrvQlZOQ+WxtD3io+VKkwhH1g82e9eNgczpXe3h+rkt5LANFgiwCGSHVArD0p/5FiPQPUEGk7mwqAjGL/GQ==}
+  '@opencode-ai/sdk@1.0.193':
+    resolution: {integrity: sha512-q9lfbWMgJseIJXV61TZcj2tJddClFAADnPdwGjKqNyHyBl0AQl2lrd572vlFnaoqLpBb+GZ/mHDQv3rY9BX9oQ==}
 
   '@opentelemetry/api@1.9.0':
     resolution: {integrity: sha512-3giAOQvZiH5F9bMlMiv8+GSPMeqg0dbaeo58/0SlA9sxSqZhnUtxzX9/2FzyhS9sWQf5S0GJE0AKBrFqjpeYcg==}
@@ -1988,12 +1988,12 @@ snapshots:
       '@tybys/wasm-util': 0.10.1
     optional: true
 
-  '@opencode-ai/plugin@1.0.169':
+  '@opencode-ai/plugin@1.0.193':
     dependencies:
-      '@opencode-ai/sdk': 1.0.169
+      '@opencode-ai/sdk': 1.0.193
       zod: 4.1.8
 
-  '@opencode-ai/sdk@1.0.169': {}
+  '@opencode-ai/sdk@1.0.193': {}
 
   '@opentelemetry/api@1.9.0': {}
 

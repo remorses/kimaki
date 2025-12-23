@@ -1,5 +1,16 @@
 # Changelog
 
+## 0.4.20
+
+### Patch Changes
+
+- add **200ms debounce** after aborting interrupted sessions to prevent race conditions
+- fix **race condition** where requests could hang if aborted between checks and async calls
+- remove slow Discord API calls - use local SQLite for tracking sent parts instead of fetching messages
+- move **⏳ reaction** to right before prompt (not on message arrival) so superseded requests don't leave orphaned reactions
+- show **filename in italics** for edit/write tools: `◼︎ edit _file.ts_ (+5-3)`
+- use **italics** for bash commands and tool titles instead of backticks
+
 ## 0.4.19
 
 ### Patch Changes
