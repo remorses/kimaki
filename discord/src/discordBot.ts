@@ -61,8 +61,6 @@ type ParsedCommand = {
 } | {
   isCommand: false
 }
-const loadingEmoji = '⏳'
-
 function parseSlashCommand(text: string): ParsedCommand {
   const trimmed = text.trim()
   if (!trimmed.startsWith('/')) {
@@ -84,6 +82,32 @@ The user is reading your messages from inside Discord, via kimaki.xyz
 The user cannot see bash tool outputs. If there is important information in bash output, include it in your text response.
 
 Your current OpenCode session ID is: ${sessionId}
+
+## permissions
+
+Only users with these Discord permissions can send messages to the bot:
+- Server Owner
+- Administrator permission
+- Manage Server permission
+- "Kimaki" role (case-insensitive)
+
+## changing the model
+
+To change the model used by OpenCode, edit the project's \`opencode.json\` config file and set the \`model\` field:
+
+\`\`\`json
+{
+  "model": "anthropic/claude-sonnet-4-20250514"
+}
+\`\`\`
+
+Examples:
+- \`"anthropic/claude-sonnet-4-20250514"\` - Claude Sonnet 4
+- \`"anthropic/claude-opus-4-20250514"\` - Claude Opus 4
+- \`"openai/gpt-4o"\` - GPT-4o
+- \`"google/gemini-2.5-pro"\` - Gemini 2.5 Pro
+
+Format is \`provider/model-name\`. You can also set \`small_model\` for tasks like title generation.
 
 ## uploading files to discord
 
@@ -806,7 +830,6 @@ async function processVoiceAttachment({
     `Detected audio attachment: ${audioAttachment.name} (${audioAttachment.contentType})`,
   )
 
-  await message.react(loadingEmoji)
   await sendThreadMessage(thread, '🎤 Transcribing voice message...')
 
   const audioResponse = await fetch(audioAttachment.url)
@@ -1389,20 +1412,17 @@ function formatPart(part: Part): string {
     if (part.state.status === 'error') {
       toolTitle = part.state.error || 'error'
     } else if (part.tool === 'bash') {
-      if (stateTitle) {
+      const command = (part.state.input?.command as string) || ''
+      const description = (part.state.input?.description as string) || ''
+      const isSingleLine = !command.includes('\n')
+      const hasBackticks = command.includes('`')
+      if (isSingleLine && !hasBackticks && command.length <= 50) {
+        toolTitle = `\`${command}\``
+      } else if (description) {
+        toolTitle = `_${description}_`
+      } else if (stateTitle) {
         toolTitle = `_${stateTitle}_`
-      } else {
-        const command = (part.state.input?.command as string) || ''
-        const isSingleLine = !command.includes('\n')
-        const hasBackticks = command.includes('`')
-        if (isSingleLine && command.length <= 50 && !hasBackticks) {
-          toolTitle = `\`${command}\``
-        }
       }
-    } else if (part.tool === 'edit' || part.tool === 'write') {
-      const filePath = (part.state.input?.filePath as string) || ''
-      const fileName = filePath.split('/').pop() || filePath
-      toolTitle = fileName ? `_${fileName}_` : ''
     } else if (stateTitle) {
       toolTitle = `_${stateTitle}_`
     }
@@ -1562,6 +1582,49 @@ async function handleOpencodeSession({
   let usedProviderID: string | undefined
   let tokensUsedInSession = 0
 
+  let typingInterval: NodeJS.Timeout | null = null
+
+  function startTyping(): () => void {
+    if (abortController.signal.aborted) {
+      discordLogger.log(`Not starting typing, already aborted`)
+      return () => {}
+    }
+    if (typingInterval) {
+      clearInterval(typingInterval)
+      typingInterval = null
+    }
+
+    thread.sendTyping().catch((e) => {
+      discordLogger.log(`Failed to send initial typing: ${e}`)
+    })
+
+    typingInterval = setInterval(() => {
+      thread.sendTyping().catch((e) => {
+        discordLogger.log(`Failed to send periodic typing: ${e}`)
+      })
+    }, 8000)
+
+    if (!abortController.signal.aborted) {
+      abortController.signal.addEventListener(
+        'abort',
+        () => {
+          if (typingInterval) {
+            clearInterval(typingInterval)
+            typingInterval = null
+          }
+        },
+        { once: true },
+      )
+    }
+
+    return () => {
+      if (typingInterval) {
+        clearInterval(typingInterval)
+        typingInterval = null
+      }
+    }
+  }
+
   const sendPartMessage = async (part: Part) => {
     const content = formatPart(part) + '\n\n'
     if (!content.trim() || content.length === 0) {
@@ -1590,58 +1653,6 @@ async function handleOpencodeSession({
   }
 
   const eventHandler = async () => {
-    // Local typing function for this session
-    // Outer-scoped interval for typing notifications. Only one at a time.
-    let typingInterval: NodeJS.Timeout | null = null
-
-    function startTyping(thread: ThreadChannel): () => void {
-      if (abortController.signal.aborted) {
-        discordLogger.log(`Not starting typing, already aborted`)
-        return () => {}
-      }
-      // Clear any previous typing interval
-      if (typingInterval) {
-        clearInterval(typingInterval)
-        typingInterval = null
-      }
-
-      // Send initial typing
-      thread.sendTyping().catch((e) => {
-        discordLogger.log(`Failed to send initial typing: ${e}`)
-      })
-
-      // Set up interval to send typing every 8 seconds
-      typingInterval = setInterval(() => {
-        thread.sendTyping().catch((e) => {
-          discordLogger.log(`Failed to send periodic typing: ${e}`)
-        })
-      }, 8000)
-
-      // Only add listener if not already aborted
-      if (!abortController.signal.aborted) {
-        abortController.signal.addEventListener(
-          'abort',
-          () => {
-            if (typingInterval) {
-              clearInterval(typingInterval)
-              typingInterval = null
-            }
-          },
-          {
-            once: true,
-          },
-        )
-      }
-
-      // Return stop function
-      return () => {
-        if (typingInterval) {
-          clearInterval(typingInterval)
-          typingInterval = null
-        }
-      }
-    }
-
     try {
       let assistantMessageId: string | undefined
 
@@ -1692,7 +1703,7 @@ async function handleOpencodeSession({
 
           // Start typing on step-start
           if (part.type === 'step-start') {
-            stopTyping = startTyping(thread)
+            stopTyping = startTyping()
           }
 
           // Send tool parts immediately when they start running
@@ -1718,7 +1729,7 @@ async function handleOpencodeSession({
             // start typing in a moment, so that if the session finished, because step-finish is at the end of the message, we do not show typing status
             setTimeout(() => {
               if (abortController.signal.aborted) return
-              stopTyping = startTyping(thread)
+              stopTyping = startTyping()
             }, 300)
           }
         } else if (event.type === 'session.error') {
@@ -1867,13 +1878,7 @@ async function handleOpencodeSession({
       return
     }
 
-    if (originalMessage) {
-      try {
-        await originalMessage.react(loadingEmoji)
-      } catch (e) {
-        discordLogger.log(`Could not add processing reaction:`, e)
-      }
-    }
+    stopTyping = startTyping()
 
     let response: { data?: unknown; error?: unknown; response: Response }
     if (parsedCommand?.isCommand) {
@@ -2094,14 +2099,20 @@ export async function startDiscordBot({
         }
       }
 
-      // Check if user is authoritative (server owner or has admin permissions)
+      // Check if user is authoritative (server owner, admin, manage server, or has Kimaki role)
       if (message.guild && message.member) {
         const isOwner = message.member.id === message.guild.ownerId
         const isAdmin = message.member.permissions.has(
           PermissionsBitField.Flags.Administrator,
         )
+        const canManageServer = message.member.permissions.has(
+          PermissionsBitField.Flags.ManageGuild,
+        )
+        const hasKimakiRole = message.member.roles.cache.some(
+          (role) => role.name.toLowerCase() === 'kimaki',
+        )
 
-        if (!isOwner && !isAdmin) {
+        if (!isOwner && !isAdmin && !canManageServer && !hasKimakiRole) {
           return
         }
       }
@@ -3290,15 +3301,20 @@ export async function startDiscordBot({
       const member = newState.member || oldState.member
       if (!member) return
 
-      // Check if user is admin or server owner
+      // Check if user is admin, server owner, can manage server, or has Kimaki role
       const guild = newState.guild || oldState.guild
       const isOwner = member.id === guild.ownerId
       const isAdmin = member.permissions.has(
         PermissionsBitField.Flags.Administrator,
       )
+      const canManageServer = member.permissions.has(
+        PermissionsBitField.Flags.ManageGuild,
+      )
+      const hasKimakiRole = member.roles.cache.some(
+        (role) => role.name.toLowerCase() === 'kimaki',
+      )
 
-      if (!isOwner && !isAdmin) {
-        // Not an admin user, ignore
+      if (!isOwner && !isAdmin && !canManageServer && !hasKimakiRole) {
         return
       }
 
@@ -3324,7 +3340,9 @@ export async function startDiscordBot({
             if (m.id === member.id || m.user.bot) return false
             return (
               m.id === guild.ownerId ||
-              m.permissions.has(PermissionsBitField.Flags.Administrator)
+              m.permissions.has(PermissionsBitField.Flags.Administrator) ||
+              m.permissions.has(PermissionsBitField.Flags.ManageGuild) ||
+              m.roles.cache.some((role) => role.name.toLowerCase() === 'kimaki')
             )
           })
 
@@ -3369,7 +3387,9 @@ export async function startDiscordBot({
               if (m.id === member.id || m.user.bot) return false
               return (
                 m.id === guild.ownerId ||
-                m.permissions.has(PermissionsBitField.Flags.Administrator)
+                m.permissions.has(PermissionsBitField.Flags.Administrator) ||
+                m.permissions.has(PermissionsBitField.Flags.ManageGuild) ||
+                m.roles.cache.some((role) => role.name.toLowerCase() === 'kimaki')
               )
             })
 

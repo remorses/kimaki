@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.4.21
+
+### Patch Changes
+
+- add **Manage Server** permission to allowed users (in addition to Owner/Admin)
+- add **"Kimaki" role** support - users with a role named "Kimaki" (case-insensitive) can now interact with the bot
+- add **model configuration** info to system prompt - explains how to change model via `opencode.json`
+- update README with permissions and model configuration docs
+
 ## 0.4.20
 
 ### Patch Changes

@@ -31,4 +31,26 @@ Kimaki requires you to create a new Discord bot for each new computer you will i
 
 - **Send long messages as files** - Discord has a character limit for free users. To send longer prompts, tap the plus icon in Discord and use "Send message as file". File attachments don't count towards the message limit and Kimaki will read the file content as your prompt.
 
-- **Permissions** - Only server owners and users with Administrator permissions can interact with the bot. Other users' messages are ignored.
+- **Permissions** - Only users with specific Discord permissions can interact with the bot. Other users' messages are ignored. Allowed:
+  - Server Owner
+  - Administrator
+  - Manage Server
+  - "Kimaki" role (case-insensitive) - create a role named "Kimaki" and assign it to trusted users
+
+## Changing the Model
+
+To change the model used by OpenCode, edit the project's `opencode.json` config file and set the `model` field:
+
+```json
+{
+  "model": "anthropic/claude-sonnet-4-20250514"
+}
+```
+
+Examples:
+- `"anthropic/claude-sonnet-4-20250514"` - Claude Sonnet 4
+- `"anthropic/claude-opus-4-20250514"` - Claude Opus 4
+- `"openai/gpt-4o"` - GPT-4o
+- `"google/gemini-2.5-pro"` - Gemini 2.5 Pro
+
+Format is `provider/model-name`. You can also set `small_model` for tasks like title generation.
