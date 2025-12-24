@@ -61,6 +61,7 @@ type ParsedCommand = {
 } | {
   isCommand: false
 }
+const loadingEmoji = '⏳'
 
 function parseSlashCommand(text: string): ParsedCommand {
   const trimmed = text.trim()
@@ -805,7 +806,7 @@ async function processVoiceAttachment({
     `Detected audio attachment: ${audioAttachment.name} (${audioAttachment.contentType})`,
   )
 
-  await message.react('⏳')
+  await message.react(loadingEmoji)
   await sendThreadMessage(thread, '🎤 Transcribing voice message...')
 
   const audioResponse = await fetch(audioAttachment.url)
@@ -1259,35 +1260,52 @@ function getToolSummaryText(part: Part): string {
   if (part.type !== 'tool') return ''
 
   if (part.tool === 'edit') {
+    const filePath = (part.state.input?.filePath as string) || ''
     const newString = (part.state.input?.newString as string) || ''
     const oldString = (part.state.input?.oldString as string) || ''
     const added = newString.split('\n').length
     const removed = oldString.split('\n').length
-    return `(+${added}-${removed})`
+    const fileName = filePath.split('/').pop() || ''
+    return fileName ? `*${fileName}* (+${added}-${removed})` : `(+${added}-${removed})`
   }
 
   if (part.tool === 'write') {
+    const filePath = (part.state.input?.filePath as string) || ''
     const content = (part.state.input?.content as string) || ''
     const lines = content.split('\n').length
-    return `(${lines} line${lines === 1 ? '' : 's'})`
+    const fileName = filePath.split('/').pop() || ''
+    return fileName ? `*${fileName}* (${lines} line${lines === 1 ? '' : 's'})` : `(${lines} line${lines === 1 ? '' : 's'})`
   }
 
   if (part.tool === 'webfetch') {
     const url = (part.state.input?.url as string) || ''
     const urlWithoutProtocol = url.replace(/^https?:\/\//, '')
-    return urlWithoutProtocol ? `(${urlWithoutProtocol})` : ''
+    return urlWithoutProtocol ? `*${urlWithoutProtocol}*` : ''
   }
 
-  if (
-    part.tool === 'bash' ||
-    part.tool === 'read' ||
-    part.tool === 'list' ||
-    part.tool === 'glob' ||
-    part.tool === 'grep' ||
-    part.tool === 'task' ||
-    part.tool === 'todoread' ||
-    part.tool === 'todowrite'
-  ) {
+  if (part.tool === 'read') {
+    const filePath = (part.state.input?.filePath as string) || ''
+    const fileName = filePath.split('/').pop() || ''
+    return fileName ? `*${fileName}*` : ''
+  }
+
+  if (part.tool === 'list') {
+    const path = (part.state.input?.path as string) || ''
+    const dirName = path.split('/').pop() || path
+    return dirName ? `*${dirName}*` : ''
+  }
+
+  if (part.tool === 'glob') {
+    const pattern = (part.state.input?.pattern as string) || ''
+    return pattern ? `*${pattern}*` : ''
+  }
+
+  if (part.tool === 'grep') {
+    const pattern = (part.state.input?.pattern as string) || ''
+    return pattern ? `*${pattern}*` : ''
+  }
+
+  if (part.tool === 'bash' || part.tool === 'task' || part.tool === 'todoread' || part.tool === 'todowrite') {
     return ''
   }
 
@@ -1371,13 +1389,15 @@ function formatPart(part: Part): string {
     if (part.state.status === 'error') {
       toolTitle = part.state.error || 'error'
     } else if (part.tool === 'bash') {
-      const command = (part.state.input?.command as string) || ''
-      const isSingleLine = !command.includes('\n')
-      const hasBackticks = command.includes('`')
-      if (isSingleLine && command.length <= 120 && !hasBackticks) {
-        toolTitle = `_${command}_`
+      if (stateTitle) {
+        toolTitle = `_${stateTitle}_`
       } else {
-        toolTitle = stateTitle ? `_${stateTitle}_` : ''
+        const command = (part.state.input?.command as string) || ''
+        const isSingleLine = !command.includes('\n')
+        const hasBackticks = command.includes('`')
+        if (isSingleLine && command.length <= 50 && !hasBackticks) {
+          toolTitle = `\`${command}\``
+        }
       }
     } else if (part.tool === 'edit' || part.tool === 'write') {
       const filePath = (part.state.input?.filePath as string) || ''
@@ -1849,7 +1869,7 @@ async function handleOpencodeSession({
 
     if (originalMessage) {
       try {
-        await originalMessage.react('⏳')
+        await originalMessage.react(loadingEmoji)
       } catch (e) {
         discordLogger.log(`Could not add processing reaction:`, e)
       }
