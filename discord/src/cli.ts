@@ -180,6 +180,19 @@ async function registerCommands(token: string, appId: string) {
       .setName('share')
       .setDescription('Share the current session as a public URL')
       .toJSON(),
+    new SlashCommandBuilder()
+      .setName('model')
+      .setDescription('Change the model for this session')
+      .addStringOption((option) => {
+        option
+          .setName('model')
+          .setDescription('Select a model (provider/model format)')
+          .setRequired(true)
+          .setAutocomplete(true)
+
+        return option
+      })
+      .toJSON(),
   ]
 
   const rest = new REST().setToken(token)

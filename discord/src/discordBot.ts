@@ -651,6 +651,15 @@ export function getDatabase(): Database.Database {
         created_at DATETIME DEFAULT CURRENT_TIMESTAMP
       )
     `)
+
+    db.exec(`
+      CREATE TABLE IF NOT EXISTS thread_models (
+        thread_id TEXT PRIMARY KEY,
+        provider_id TEXT NOT NULL,
+        model_id TEXT NOT NULL,
+        created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+      )
+    `)
   }
 
   return db
@@ -1486,6 +1495,18 @@ async function handleOpencodeSession({
   const serverEntry = opencodeServers.get(directory)
   const port = serverEntry?.port
 
+  // Get thread model preference from database
+  const threadModelRow = getDatabase()
+    .prepare('SELECT provider_id, model_id FROM thread_models WHERE thread_id = ?')
+    .get(thread.id) as { provider_id: string; model_id: string } | undefined
+  const threadModel = threadModelRow
+    ? { providerID: threadModelRow.provider_id, modelID: threadModelRow.model_id }
+    : undefined
+
+  if (threadModel) {
+    sessionLogger.log(`Using thread model: ${threadModel.providerID}/${threadModel.modelID}`)
+  }
+
   // Get session ID from database
   const row = getDatabase()
     .prepare('SELECT session_id FROM thread_sessions WHERE thread_id = ?')
@@ -1909,6 +1930,7 @@ async function handleOpencodeSession({
         body: {
           parts,
           system: getOpencodeSystemMessage({ sessionId: session.id }),
+          model: threadModel,
         },
         signal: abortController.signal,
       })
@@ -2541,6 +2563,102 @@ export async function startDiscordBot({
                 '[AUTOCOMPLETE] Error fetching projects:',
                 error,
               )
+              await interaction.respond([])
+            }
+          } else if (interaction.commandName === 'model') {
+            const focusedValue = interaction.options.getFocused()
+
+            // Get the channel's project directory
+            let projectDirectory: string | undefined
+            const channel = interaction.channel
+
+            // Handle both text channels and threads
+            if (channel) {
+              if (channel.type === ChannelType.GuildText) {
+                const textChannel = resolveTextChannel(channel as TextChannel)
+                if (textChannel) {
+                  const { projectDirectory: directory, channelAppId } =
+                    getKimakiMetadata(textChannel)
+                  if (channelAppId && channelAppId !== currentAppId) {
+                    await interaction.respond([])
+                    return
+                  }
+                  projectDirectory = directory
+                }
+              } else if (
+                channel.type === ChannelType.PublicThread ||
+                channel.type === ChannelType.PrivateThread ||
+                channel.type === ChannelType.AnnouncementThread
+              ) {
+                const textChannel = resolveTextChannel(channel as ThreadChannel)
+                if (textChannel) {
+                  const { projectDirectory: directory, channelAppId } =
+                    getKimakiMetadata(textChannel)
+                  if (channelAppId && channelAppId !== currentAppId) {
+                    await interaction.respond([])
+                    return
+                  }
+                  projectDirectory = directory
+                }
+              }
+            }
+
+            if (!projectDirectory) {
+              await interaction.respond([])
+              return
+            }
+
+            try {
+              const getClient =
+                await initializeOpencodeForDirectory(projectDirectory)
+
+              // Fetch available providers and models
+              const providersResponse = await getClient().provider.list({
+                query: { directory: projectDirectory },
+              })
+
+              if (!providersResponse.data?.all) {
+                await interaction.respond([])
+                return
+              }
+
+              // Flatten providers and models into choices
+              const choices: { name: string; value: string }[] = []
+
+              for (const provider of providersResponse.data.all) {
+                if (!provider.models) continue
+
+                for (const [modelId, modelInfo] of Object.entries(provider.models)) {
+                  const fullModelId = `${provider.id}/${modelId}`
+                  const displayName = modelInfo.name || modelId
+
+                  // Filter by search query
+                  if (
+                    focusedValue &&
+                    !fullModelId.toLowerCase().includes(focusedValue.toLowerCase()) &&
+                    !displayName.toLowerCase().includes(focusedValue.toLowerCase())
+                  ) {
+                    continue
+                  }
+
+                  // Format: "Claude Sonnet 4 (anthropic/claude-sonnet-4)"
+                  let name = `${displayName} (${fullModelId})`
+                  if (name.length > 100) {
+                    name = name.slice(0, 97) + '…'
+                  }
+
+                  choices.push({
+                    name,
+                    value: fullModelId,
+                  })
+                }
+              }
+
+              // Sort by name and limit to 25
+              choices.sort((a, b) => a.name.localeCompare(b.name))
+              await interaction.respond(choices.slice(0, 25))
+            } catch (error) {
+              voiceLogger.error('[AUTOCOMPLETE] Error fetching models:', error)
               await interaction.respond([])
             }
           }
@@ -3241,6 +3359,54 @@ export async function startDiscordBot({
                 ephemeral: true,
               })
             }
+          } else if (command.commandName === 'model') {
+            const modelInput = command.options.getString('model', true)
+            const channel = command.channel
+
+            if (!channel) {
+              await command.reply({
+                content: 'This command can only be used in a channel',
+                ephemeral: true,
+              })
+              return
+            }
+
+            const isThread = [
+              ChannelType.PublicThread,
+              ChannelType.PrivateThread,
+              ChannelType.AnnouncementThread,
+            ].includes(channel.type)
+
+            if (!isThread) {
+              await command.reply({
+                content: 'This command can only be used in a thread with an active session',
+                ephemeral: true,
+              })
+              return
+            }
+
+            // Parse provider/model format
+            const parts = modelInput.split('/')
+            if (parts.length < 2) {
+              await command.reply({
+                content: 'Invalid model format. Use provider/model (e.g., anthropic/claude-sonnet-4-20250514)',
+                ephemeral: true,
+              })
+              return
+            }
+
+            const providerID = parts[0]!
+            const modelID = parts.slice(1).join('/')
+
+            // Store the model preference for this thread
+            getDatabase()
+              .prepare(
+                'INSERT OR REPLACE INTO thread_models (thread_id, provider_id, model_id) VALUES (?, ?, ?)',
+              )
+              .run(channel.id, providerID, modelID)
+
+            await command.reply(`🔄 **Model changed** to \`${modelInput}\` for this session`)
+            sessionLogger.log(`Thread ${channel.id} model set to ${providerID}/${modelID}`)
           }
         }
       } catch (error) {
