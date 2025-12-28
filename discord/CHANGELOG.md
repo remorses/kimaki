@@ -1,5 +1,19 @@
 # Changelog
 
+## 0.4.23
+
+### Minor Changes
+
+- Implement authoritative sync with a global OpenCode event watcher for Discord threads.
+- Add periodic backfill for missed non-text parts across linked sessions.
+- Improve Discord output with subtext summaries and clear TUI prompt quoting.
+
+### Patch Changes
+
+- Auto-reject pending permissions when a new prompt arrives to avoid blocking.
+- Prevent message echoes by detecting Discord-originated prompts.
+- Ensure session-to-thread routing stays consistent when reusing sessions.
+
 ## 0.4.22
 
 ### Patch Changes

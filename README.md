@@ -13,6 +13,12 @@ When running the `kimaki` cli the first time the cli will ask you choose what ex
 
 Kimaki will store the bot state in a local sqlite database. You should keep the kimaki cli running to be able to communicate to it via Discord
 
+## Features
+
+- **Authoritative Sync** - Connects to a persistent OpenCode server (port 39293) to sync all interactions (TUI, API, and Bot) to Discord in real-time.
+- **Universal Resumption** - Resumes existing sessions with full history backfill.
+- **Rich Meta-info** - Displays token usage, context cache, and model details in Discord subtext.
+
 ## Usage
 
 `npx -y kimaki@latest`
