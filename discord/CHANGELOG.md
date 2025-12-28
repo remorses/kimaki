@@ -1,5 +1,25 @@
 # Changelog
 
+## 0.5.0
+
+### Minor Changes
+
+- **Implement Authoritative Sync**: Unified all OpenCode surfaces (TUI, Bot, Events) into a single persistent Discord sync via `GlobalEventWatcher`.
+- **Global SSE Connection**: Bot now maintains a persistent connection to an external OpenCode server (port 39293) for real-time updates across all sessions.
+- **Enhanced Discord UI**:
+    - Add **Subtext Formatting** (`-# `) for clean meta-info display (Tokens, Time, Model).
+    - Implement **TUI Prompt Quoting**: TUI interactions are now visible and clearly labeled in Discord with `📝 _Prompt from TUI:_`.
+    - Improved **Session Summary**: Detailed footer including Tokens, Token Usage %, Context (Cache), Model, and Response Time.
+- **Robust History Backfill**: Missed events are automatically synchronized when the bot reconnects or resubscribes.
+
+### Patch Changes
+
+- **OOM Mitigation**: Increased Node.js heap limit to handle large session history processing.
+- **Multi-thread Routing Fix**: Ensure reused sessions correctly target the most recently created thread (`ORDER BY created_at DESC`).
+- **Echo Prevention**: Content-based comparison to prevent bot from echoing Discord-originated user messages.
+- **Defensive Formatting**: Fixed potential crashes in `formatPart` on malformed tool inputs.
+- Clean up unused formatting and utility modules.
+
 ## 0.4.21
 
 ### Patch Changes

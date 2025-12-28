@@ -50,6 +50,7 @@ import prettyMilliseconds from 'pretty-ms'
 import type { Session } from '@google/genai'
 import { createLogger } from './logger.js'
 import { isAbortError } from './utils.js'
+import { GlobalEventWatcher, type WatcherDependencies } from './global-event-watcher.js'
 import { setGlobalDispatcher, Agent } from 'undici'
 // disables the automatic 5 minutes abort after no body
 setGlobalDispatcher(new Agent({ headersTimeout: 0, bodyTimeout: 0 }))
@@ -202,6 +203,9 @@ const pendingPermissions = new Map<
   string,
   { permission: Permission; messageId: string; directory: string }
 >()
+
+// Authoritative Sync: Global event watcher instance (initialized in startDiscordBot)
+let globalEventWatcher: GlobalEventWatcher | null = null
 
 let db: Database.Database | null = null
 
@@ -648,6 +652,15 @@ export function getDatabase(): Database.Database {
         app_id TEXT PRIMARY KEY,
         gemini_api_key TEXT,
         xai_api_key TEXT,
+        created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+      )
+    `)
+
+    // Authoritative Sync: Thread to directory mapping for GlobalEventWatcher
+    db.exec(`
+      CREATE TABLE IF NOT EXISTS thread_directories (
+        thread_id TEXT PRIMARY KEY,
+        directory TEXT NOT NULL,
         created_at DATETIME DEFAULT CURRENT_TIMESTAMP
       )
     `)
@@ -1136,14 +1149,83 @@ function getKimakiMetadata(textChannel: TextChannel | null): {
   return { projectDirectory, channelAppId }
 }
 
+// Map of directory to external server client (no spawned process)
+const externalServerClients = new Map<string, { client: OpencodeClient; port: number }>()
+
+// Default port for external opencode-server (Supervisor-managed)
+const DEFAULT_EXTERNAL_PORT = 39293
+
+/**
+ * Check if an external opencode-server is available on the given port
+ */
+async function checkExternalServer(port: number): Promise<boolean> {
+  try {
+    const response = await fetch(`http://localhost:${port}/project/current`, {
+      signal: AbortSignal.timeout(2000),
+    })
+    return response.ok
+  } catch {
+    return false
+  }
+}
+
 export async function initializeOpencodeForDirectory(directory: string) {
   // console.log(`[OPENCODE] Initializing for directory: ${directory}`)
 
-  // Check if we already have a server for this directory
+  // Priority 1: Check if we already have an external server client for this directory
+  const existingExternal = externalServerClients.get(directory)
+  if (existingExternal) {
+    // Verify it's still alive
+    const isAlive = await checkExternalServer(existingExternal.port)
+    if (isAlive) {
+      opencodeLogger.log(
+        `Reusing external server on port ${existingExternal.port} for directory: ${directory}`,
+      )
+      return () => existingExternal.client
+    } else {
+      // External server died, remove from cache
+      externalServerClients.delete(directory)
+      opencodeLogger.log(
+        `External server on port ${existingExternal.port} is no longer available`,
+      )
+    }
+  }
+
+  // Priority 2: Check for external server on ENV port or default 39293
+  const externalPort = process.env.OPENCODE_EXTERNAL_PORT
+    ? parseInt(process.env.OPENCODE_EXTERNAL_PORT, 10)
+    : DEFAULT_EXTERNAL_PORT
+
+  const externalAvailable = await checkExternalServer(externalPort)
+  if (externalAvailable) {
+    opencodeLogger.log(
+      `Connecting to external server on port ${externalPort} for directory: ${directory}`,
+    )
+    const client = createOpencodeClient({
+      baseUrl: `http://localhost:${externalPort}`,
+      fetch: (request: Request) =>
+        fetch(request, {
+          // @ts-ignore
+          timeout: false,
+        }),
+    })
+    externalServerClients.set(directory, { client, port: externalPort })
+    return () => {
+      const entry = externalServerClients.get(directory)
+      if (!entry?.client) {
+        throw new Error(
+          `External OpenCode server for directory "${directory}" is no longer available`,
+        )
+      }
+      return entry.client
+    }
+  }
+
+  // Priority 3: Check if we already have a spawned server for this directory
   const existing = opencodeServers.get(directory)
   if (existing && !existing.process.killed) {
     opencodeLogger.log(
-      `Reusing existing server on port ${existing.port} for directory: ${directory}`,
+      `Reusing existing spawned server on port ${existing.port} for directory: ${directory}`,
     )
     return () => {
       const entry = opencodeServers.get(directory)
@@ -1156,6 +1238,10 @@ export async function initializeOpencodeForDirectory(directory: string) {
     }
   }
 
+  // Priority 4: Fallback - spawn a new server
+  opencodeLogger.log(
+    `No external server available, spawning new server for directory: ${directory}`,
+  )
   const port = await getOpenPort()
   // console.log(
   //   `[OPENCODE] Starting new server on port ${port} for directory: ${directory}`,
@@ -1283,9 +1369,9 @@ function getToolSummaryText(part: Part): string {
   if (part.type !== 'tool') return ''
 
   if (part.tool === 'edit') {
-    const filePath = (part.state.input?.filePath as string) || ''
-    const newString = (part.state.input?.newString as string) || ''
-    const oldString = (part.state.input?.oldString as string) || ''
+    const filePath = String(part.state.input?.filePath || '')
+    const newString = String(part.state.input?.newString || '')
+    const oldString = String(part.state.input?.oldString || '')
     const added = newString.split('\n').length
     const removed = oldString.split('\n').length
     const fileName = filePath.split('/').pop() || ''
@@ -1293,8 +1379,8 @@ function getToolSummaryText(part: Part): string {
   }
 
   if (part.tool === 'write') {
-    const filePath = (part.state.input?.filePath as string) || ''
-    const content = (part.state.input?.content as string) || ''
+    const filePath = String(part.state.input?.filePath || '')
+    const content = String(part.state.input?.content || '')
     const lines = content.split('\n').length
     const fileName = filePath.split('/').pop() || ''
     return fileName ? `*${fileName}* (${lines} line${lines === 1 ? '' : 's'})` : `(${lines} line${lines === 1 ? '' : 's'})`
@@ -1452,6 +1538,16 @@ export async function createDiscordClient() {
   })
 }
 
+/**
+ * handleOpencodeSession - Sync-integrated Version
+ * 
+ * The GlobalEventWatcher handles all event streaming and Discord message sending.
+ * This function now only:
+ * 1. Gets/creates a session
+ * 2. Links session to thread in DB (watcher picks it up)
+ * 3. Sends the prompt
+ * 4. Handles reactions on original message
+ */
 async function handleOpencodeSession({
   prompt,
   thread,
@@ -1471,20 +1567,16 @@ async function handleOpencodeSession({
     `[OPENCODE SESSION] Starting for thread ${thread.id} with prompt: "${prompt.slice(0, 50)}${prompt.length > 50 ? '...' : ''}"`,
   )
 
-  // Track session start time
-  const sessionStartTime = Date.now()
-
   // Use default directory if not specified
   const directory = projectDirectory || process.cwd()
   sessionLogger.log(`Using directory: ${directory}`)
 
-  // Note: We'll cancel the existing request after we have the session ID
-
   const getClient = await initializeOpencodeForDirectory(directory)
 
-  // Get the port for this directory
-  const serverEntry = opencodeServers.get(directory)
-  const port = serverEntry?.port
+  // Get the port for this directory (for external server or spawned)
+  const externalEntry = externalServerClients.get(directory)
+  const spawnedEntry = opencodeServers.get(directory)
+  const port = externalEntry?.port || spawnedEntry?.port
 
   // Get session ID from database
   const row = getDatabase()
@@ -1524,7 +1616,7 @@ async function handleOpencodeSession({
     throw new Error('Failed to create or get session')
   }
 
-  // Store session ID in database
+  // Store session ID in database - GlobalEventWatcher will pick this up
   getDatabase()
     .prepare(
       'INSERT OR REPLACE INTO thread_sessions (thread_id, session_id) VALUES (?, ?)',
@@ -1532,355 +1624,16 @@ async function handleOpencodeSession({
     .run(thread.id, session.id)
   dbLogger.log(`Stored session ${session.id} for thread ${thread.id}`)
 
-  // Cancel any existing request for this session
-  const existingController = abortControllers.get(session.id)
-  if (existingController) {
-    voiceLogger.log(
-      `[ABORT] Cancelling existing request for session: ${session.id}`,
+  // Store directory mapping for the watcher
+  getDatabase()
+    .prepare(
+      'INSERT OR REPLACE INTO thread_directories (thread_id, directory) VALUES (?, ?)',
     )
-    existingController.abort(new Error('New request started'))
-  }
-
-  const abortController = new AbortController()
-  abortControllers.set(session.id, abortController)
-
-  if (existingController) {
-    await new Promise((resolve) => { setTimeout(resolve, 200) })
-    if (abortController.signal.aborted) {
-      sessionLogger.log(`[DEBOUNCE] Request was superseded during wait, exiting`)
-      return
-    }
-  }
-
-  if (abortController.signal.aborted) {
-    sessionLogger.log(`[DEBOUNCE] Aborted before subscribe, exiting`)
-    return
-  }
-
-  const eventsResult = await getClient().event.subscribe({
-    signal: abortController.signal,
-  })
-
-  if (abortController.signal.aborted) {
-    sessionLogger.log(`[DEBOUNCE] Aborted during subscribe, exiting`)
-    return
-  }
-
-  const events = eventsResult.stream
-  sessionLogger.log(`Subscribed to OpenCode events`)
-
-  const sentPartIds = new Set<string>(
-    (getDatabase()
-      .prepare('SELECT part_id FROM part_messages WHERE thread_id = ?')
-      .all(thread.id) as { part_id: string }[])
-      .map((row) => row.part_id)
-  )
-
-  let currentParts: Part[] = []
-  let stopTyping: (() => void) | null = null
-  let usedModel: string | undefined
-  let usedProviderID: string | undefined
-  let tokensUsedInSession = 0
-
-  let typingInterval: NodeJS.Timeout | null = null
-
-  function startTyping(): () => void {
-    if (abortController.signal.aborted) {
-      discordLogger.log(`Not starting typing, already aborted`)
-      return () => {}
-    }
-    if (typingInterval) {
-      clearInterval(typingInterval)
-      typingInterval = null
-    }
-
-    thread.sendTyping().catch((e) => {
-      discordLogger.log(`Failed to send initial typing: ${e}`)
-    })
-
-    typingInterval = setInterval(() => {
-      thread.sendTyping().catch((e) => {
-        discordLogger.log(`Failed to send periodic typing: ${e}`)
-      })
-    }, 8000)
-
-    if (!abortController.signal.aborted) {
-      abortController.signal.addEventListener(
-        'abort',
-        () => {
-          if (typingInterval) {
-            clearInterval(typingInterval)
-            typingInterval = null
-          }
-        },
-        { once: true },
-      )
-    }
-
-    return () => {
-      if (typingInterval) {
-        clearInterval(typingInterval)
-        typingInterval = null
-      }
-    }
-  }
-
-  const sendPartMessage = async (part: Part) => {
-    const content = formatPart(part) + '\n\n'
-    if (!content.trim() || content.length === 0) {
-      discordLogger.log(`SKIP: Part ${part.id} has no content`)
-      return
-    }
-
-    // Skip if already sent
-    if (sentPartIds.has(part.id)) {
-      return
-    }
-
-    try {
-      const firstMessage = await sendThreadMessage(thread, content)
-      sentPartIds.add(part.id)
-
-      // Store part-message mapping in database
-      getDatabase()
-        .prepare(
-          'INSERT OR REPLACE INTO part_messages (part_id, message_id, thread_id) VALUES (?, ?, ?)',
-        )
-        .run(part.id, firstMessage.id, thread.id)
-    } catch (error) {
-      discordLogger.error(`ERROR: Failed to send part ${part.id}:`, error)
-    }
-  }
-
-  const eventHandler = async () => {
-    try {
-      let assistantMessageId: string | undefined
-
-      for await (const event of events) {
-        if (event.type === 'message.updated') {
-          const msg = event.properties.info
-
-
-
-          if (msg.sessionID !== session.id) {
-            continue
-          }
-
-          // Track assistant message ID
-          if (msg.role === 'assistant') {
-            const newTokensTotal = msg.tokens.input + msg.tokens.output + msg.tokens.reasoning + msg.tokens.cache.read + msg.tokens.cache.write
-            if (newTokensTotal > 0) {
-              tokensUsedInSession = newTokensTotal
-            }
-
-            assistantMessageId = msg.id
-            usedModel = msg.modelID
-            usedProviderID = msg.providerID
-          }
-        } else if (event.type === 'message.part.updated') {
-          const part = event.properties.part
-
-
-          if (part.sessionID !== session.id) {
-            continue
-          }
-
-          // Only process parts from assistant messages
-          if (part.messageID !== assistantMessageId) {
-            continue
-          }
-
-          const existingIndex = currentParts.findIndex(
-            (p: Part) => p.id === part.id,
-          )
-          if (existingIndex >= 0) {
-            currentParts[existingIndex] = part
-          } else {
-            currentParts.push(part)
-          }
-
-
-
-          // Start typing on step-start
-          if (part.type === 'step-start') {
-            stopTyping = startTyping()
-          }
-
-          // Send tool parts immediately when they start running
-          if (part.type === 'tool' && part.state.status === 'running') {
-            await sendPartMessage(part)
-          }
-
-          // Send reasoning parts immediately (shows "◼︎ thinking" indicator early)
-          if (part.type === 'reasoning') {
-            await sendPartMessage(part)
-          }
-
-          // Check if this is a step-finish part
-          if (part.type === 'step-finish') {
-
-            // Send all parts accumulated so far to Discord
-            for (const p of currentParts) {
-              // Skip step-start and step-finish parts as they have no visual content
-              if (p.type !== 'step-start' && p.type !== 'step-finish') {
-                await sendPartMessage(p)
-              }
-            }
-            // start typing in a moment, so that if the session finished, because step-finish is at the end of the message, we do not show typing status
-            setTimeout(() => {
-              if (abortController.signal.aborted) return
-              stopTyping = startTyping()
-            }, 300)
-          }
-        } else if (event.type === 'session.error') {
-          sessionLogger.error(`ERROR:`, event.properties)
-          if (event.properties.sessionID === session.id) {
-            const errorData = event.properties.error
-            const errorMessage = errorData?.data?.message || 'Unknown error'
-            sessionLogger.error(`Sending error to thread: ${errorMessage}`)
-            await sendThreadMessage(
-              thread,
-              `✗ opencode session error: ${errorMessage}`,
-            )
-
-            // Update reaction to error
-            if (originalMessage) {
-              try {
-                await originalMessage.reactions.removeAll()
-                await originalMessage.react('❌')
-                voiceLogger.log(
-                  `[REACTION] Added error reaction due to session error`,
-                )
-              } catch (e) {
-                discordLogger.log(`Could not update reaction:`, e)
-              }
-            }
-          } else {
-            voiceLogger.log(
-              `[SESSION ERROR IGNORED] Error for different session (expected: ${session.id}, got: ${event.properties.sessionID})`,
-            )
-          }
-          break
-        } else if (event.type === 'permission.updated') {
-          const permission = event.properties
-          if (permission.sessionID !== session.id) {
-            voiceLogger.log(
-              `[PERMISSION IGNORED] Permission for different session (expected: ${session.id}, got: ${permission.sessionID})`,
-            )
-            continue
-          }
-
-          sessionLogger.log(
-            `Permission requested: type=${permission.type}, title=${permission.title}`,
-          )
-
-          const patternStr = Array.isArray(permission.pattern)
-            ? permission.pattern.join(', ')
-            : permission.pattern || ''
-
-          const permissionMessage = await sendThreadMessage(
-            thread,
-            `⚠️ **Permission Required**\n\n` +
-              `**Type:** \`${permission.type}\`\n` +
-              `**Action:** ${permission.title}\n` +
-              (patternStr ? `**Pattern:** \`${patternStr}\`\n` : '') +
-              `\nUse \`/accept\` or \`/reject\` to respond.`,
-          )
-
-          pendingPermissions.set(thread.id, {
-            permission,
-            messageId: permissionMessage.id,
-            directory,
-          })
-        } else if (event.type === 'permission.replied') {
-          const { permissionID, response, sessionID } = event.properties
-          if (sessionID !== session.id) {
-            continue
-          }
-
-          sessionLogger.log(
-            `Permission ${permissionID} replied with: ${response}`,
-          )
-
-          const pending = pendingPermissions.get(thread.id)
-          if (pending && pending.permission.id === permissionID) {
-            pendingPermissions.delete(thread.id)
-          }
-        }
-      }
-    } catch (e) {
-      if (isAbortError(e, abortController.signal)) {
-        sessionLogger.log(
-          'AbortController aborted event handling (normal exit)',
-        )
-        return
-      }
-      sessionLogger.error(`Unexpected error in event handling code`, e)
-      throw e
-    } finally {
-      // Send any remaining parts that weren't sent
-      for (const part of currentParts) {
-        if (!sentPartIds.has(part.id)) {
-          try {
-            await sendPartMessage(part)
-          } catch (error) {
-            sessionLogger.error(`Failed to send part ${part.id}:`, error)
-          }
-        }
-      }
-
-      // Stop typing when session ends
-      if (stopTyping) {
-        stopTyping()
-        stopTyping = null
-      }
-
-      // Only send duration message if request was not aborted or was aborted with 'finished' reason
-      if (
-        !abortController.signal.aborted ||
-        abortController.signal.reason === 'finished'
-      ) {
-        const sessionDuration = prettyMilliseconds(
-          Date.now() - sessionStartTime,
-        )
-        const attachCommand = port ? ` ⋅ ${session.id}` : ''
-        const modelInfo = usedModel ? ` ⋅ ${usedModel}` : ''
-        let contextInfo = ''
-
-
-        try {
-          const providersResponse = await getClient().provider.list({ query: { directory } })
-          const provider = providersResponse.data?.all?.find((p) => p.id === usedProviderID)
-          const model = provider?.models?.[usedModel || '']
-          if (model?.limit?.context) {
-            const percentage = Math.round((tokensUsedInSession / model.limit.context) * 100)
-            contextInfo = ` ⋅ ${percentage}%`
-          }
-        } catch (e) {
-          sessionLogger.error('Failed to fetch provider info for context percentage:', e)
-        }
-
-        await sendThreadMessage(thread, `_Completed in ${sessionDuration}${contextInfo}_${attachCommand}${modelInfo}`)
-        sessionLogger.log(`DURATION: Session completed in ${sessionDuration}, port ${port}, model ${usedModel}, tokens ${tokensUsedInSession}`)
-      } else {
-        sessionLogger.log(
-          `Session was aborted (reason: ${abortController.signal.reason}), skipping duration message`,
-        )
-      }
-    }
-  }
+    .run(thread.id, directory)
 
   try {
-    const eventHandlerPromise = eventHandler()
-
-    if (abortController.signal.aborted) {
-      sessionLogger.log(`[DEBOUNCE] Aborted before prompt, exiting`)
-      return
-    }
-
-    stopTyping = startTyping()
-
     let response: { data?: unknown; error?: unknown; response: Response }
+    
     if (parsedCommand?.isCommand) {
       sessionLogger.log(
         `[COMMAND] Sending command /${parsedCommand.command} to session ${session.id} with args: "${parsedCommand.arguments.slice(0, 100)}${parsedCommand.arguments.length > 100 ? '...' : ''}"`,
@@ -1891,7 +1644,6 @@ async function handleOpencodeSession({
           command: parsedCommand.command,
           arguments: parsedCommand.arguments,
         },
-        signal: abortController.signal,
       })
     } else {
       voiceLogger.log(
@@ -1910,7 +1662,6 @@ async function handleOpencodeSession({
           parts,
           system: getOpencodeSystemMessage({ sessionId: session.id }),
         },
-        signal: abortController.signal,
       })
     }
 
@@ -1930,10 +1681,9 @@ async function handleOpencodeSession({
       throw new Error(`OpenCode API error (${response.response.status}): ${errorMessage}`)
     }
 
-    abortController.abort('finished')
-
     sessionLogger.log(`Successfully sent prompt, got response`)
 
+    // Update reaction to success
     if (originalMessage) {
       try {
         await originalMessage.reactions.removeAll()
@@ -1947,33 +1697,30 @@ async function handleOpencodeSession({
   } catch (error) {
     sessionLogger.error(`ERROR: Failed to send prompt:`, error)
 
-    if (!isAbortError(error, abortController.signal)) {
-      abortController.abort('error')
-
-      if (originalMessage) {
-        try {
-          await originalMessage.reactions.removeAll()
-          await originalMessage.react('❌')
-          discordLogger.log(`Added error reaction to message`)
-        } catch (e) {
-          discordLogger.log(`Could not update reaction:`, e)
-        }
+    if (originalMessage) {
+      try {
+        await originalMessage.reactions.removeAll()
+        await originalMessage.react('❌')
+        discordLogger.log(`Added error reaction to message`)
+      } catch (e) {
+        discordLogger.log(`Could not update reaction:`, e)
       }
-      const errorName =
-        error &&
-        typeof error === 'object' &&
-        'constructor' in error &&
-        error.constructor &&
-        typeof error.constructor.name === 'string'
-          ? error.constructor.name
-          : typeof error
-      const errorMsg =
-        error instanceof Error ? error.stack || error.message : String(error)
-      await sendThreadMessage(
-        thread,
-        `✗ Unexpected bot Error: [${errorName}]\n${errorMsg}`,
-      )
     }
+    
+    const errorName =
+      error &&
+      typeof error === 'object' &&
+      'constructor' in error &&
+      error.constructor &&
+      typeof error.constructor.name === 'string'
+        ? error.constructor.name
+        : typeof error
+    const errorMsg =
+      error instanceof Error ? error.stack || error.message : String(error)
+    await sendThreadMessage(
+      thread,
+      `✗ Unexpected bot Error: [${errorName}]\n${errorMsg}`,
+    )
   }
 }
 
@@ -2033,6 +1780,41 @@ export async function startDiscordBot({
   // Get the app ID for this bot instance
   let currentAppId: string | undefined = appId
 
+  // Authoritative Sync: Initialize function for both fresh ready and already-ready cases
+  const initializeSyncWatcher = async (c: Client<true>) => {
+    // Authoritative Sync: Start the GlobalEventWatcher for external server sync
+    const externalPort = process.env.OPENCODE_EXTERNAL_PORT
+      ? parseInt(process.env.OPENCODE_EXTERNAL_PORT, 10)
+      : DEFAULT_EXTERNAL_PORT
+
+    // Check if external server is available
+    const externalAvailable = await checkExternalServer(externalPort)
+    if (externalAvailable) {
+      discordLogger.log(`[SYNC] Starting GlobalEventWatcher on port ${externalPort}`)
+      
+      const watcherDeps: WatcherDependencies = {
+        getDatabase,
+        getDiscordClient: () => c,
+        sendThreadMessage,
+        formatPart,
+      }
+      
+      globalEventWatcher = new GlobalEventWatcher(externalPort, watcherDeps)
+      await globalEventWatcher.start()
+      discordLogger.log(`[SYNC] GlobalEventWatcher started successfully`)
+    } else {
+      discordLogger.log(`[SYNC] No external server on port ${externalPort}, watcher not started (fallback mode)`)
+    }
+  }
+
+  // Check if client is already ready (happens when passed from cli.ts)
+  if (discordClient.isReady()) {
+    discordLogger.log(`Discord client already ready, initializing sync watcher immediately`)
+    initializeSyncWatcher(discordClient).catch(e => {
+      discordLogger.error(`[SYNC] Failed to initialize watcher:`, e)
+    })
+  }
+
   discordClient.once(Events.ClientReady, async (c) => {
     discordLogger.log(`Discord bot logged in as ${c.user.tag}`)
     discordLogger.log(`Connected to ${c.guilds.cache.size} guild(s)`)
@@ -2079,6 +1861,11 @@ export async function startDiscordBot({
     voiceLogger.log(
       `[READY] Bot is ready and will only respond to channels with app ID: ${currentAppId}`,
     )
+
+    // Authoritative Sync: Initialize watcher (only if not already done)
+    if (!globalEventWatcher) {
+      await initializeSyncWatcher(c)
+    }
   })
 
   discordClient.on(Events.MessageCreate, async (message: Message) => {
