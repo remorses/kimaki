@@ -11,9 +11,9 @@ import {
 import { createLogger } from './logger.js'
 
 const toolsLogger = createLogger('TOOLS')
-import { formatDistanceToNow } from 'date-fns'
 
 import { ShareMarkdown } from './markdown.js'
+import { formatDistanceToNow } from './utils.js'
 import pc from 'picocolors'
 import {
   initializeOpencodeForDirectory,
@@ -232,9 +232,7 @@ export async function getTools({
             id: session.id,
             folder: session.directory,
             status,
-            finishedAt: formatDistanceToNow(new Date(finishedAt), {
-              addSuffix: true,
-            }),
+            finishedAt: formatDistanceToNow(new Date(finishedAt)),
             title: session.title,
             prompt: session.title,
           }

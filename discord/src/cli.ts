@@ -149,7 +149,7 @@ async function registerCommands(token: string, appId: string) {
       })
       .toJSON(),
     new SlashCommandBuilder()
-      .setName('add-new-project')
+      .setName('create-new-project')
       .setDescription('Create a new project folder, initialize git, and start a session')
       .addStringOption((option) => {
         option

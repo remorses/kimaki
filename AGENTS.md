@@ -21,6 +21,8 @@ NEVER commit yourself unless asked to do so. I will commit the code myself.
 
 NEVER add comments unless I tell you
 
+NEVER use emojis in messages or code unless explicitly asked
+
 ## files
 
 always use kebab case for new filenames. never use uppercase letters in filenames

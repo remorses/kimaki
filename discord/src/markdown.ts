@@ -1,6 +1,6 @@
 import type { OpencodeClient } from '@opencode-ai/sdk'
-import { format } from 'date-fns'
 import * as yaml from 'js-yaml'
+import { formatDateTime } from './utils.js'
 import { extractNonXmlContent } from './xml.js'
 
 export class ShareMarkdown {
@@ -62,10 +62,10 @@ export class ShareMarkdown {
         lines.push('## Session Information')
         lines.push('')
         lines.push(
-          `- **Created**: ${format(new Date(session.time.created), 'MMM d, yyyy, h:mm a')}`,
+          `- **Created**: ${formatDateTime(new Date(session.time.created))}`,
         )
         lines.push(
-          `- **Updated**: ${format(new Date(session.time.updated), 'MMM d, yyyy, h:mm a')}`,
+          `- **Updated**: ${formatDateTime(new Date(session.time.updated))}`,
         )
         if (session.version) {
           lines.push(`- **OpenCode Version**: v${session.version}`)

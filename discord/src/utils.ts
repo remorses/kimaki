@@ -75,3 +75,40 @@ export function isAbortError(
     (error instanceof DOMException && error.name === 'AbortError')
   )
 }
+
+const rtf = new Intl.RelativeTimeFormat('en', { numeric: 'auto' })
+
+const TIME_DIVISIONS: Array<{ amount: number; name: Intl.RelativeTimeFormatUnit }> = [
+  { amount: 60, name: 'seconds' },
+  { amount: 60, name: 'minutes' },
+  { amount: 24, name: 'hours' },
+  { amount: 7, name: 'days' },
+  { amount: 4.34524, name: 'weeks' },
+  { amount: 12, name: 'months' },
+  { amount: Number.POSITIVE_INFINITY, name: 'years' },
+]
+
+export function formatDistanceToNow(date: Date): string {
+  let duration = (date.getTime() - Date.now()) / 1000
+
+  for (const division of TIME_DIVISIONS) {
+    if (Math.abs(duration) < division.amount) {
+      return rtf.format(Math.round(duration), division.name)
+    }
+    duration /= division.amount
+  }
+  return rtf.format(Math.round(duration), 'years')
+}
+
+const dtf = new Intl.DateTimeFormat('en-US', {
+  month: 'short',
+  day: 'numeric',
+  year: 'numeric',
+  hour: 'numeric',
+  minute: '2-digit',
+  hour12: true,
+})
+
+export function formatDateTime(date: Date): string {
+  return dtf.format(date)
+}

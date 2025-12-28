@@ -46,6 +46,7 @@ import * as prism from 'prism-media'
 import dedent from 'string-dedent'
 import { transcribeAudio } from './voice.js'
 import { extractTagsArrays, extractNonXmlContent } from './xml.js'
+import { formatMarkdownTables } from './format-tables.js'
 import prettyMilliseconds from 'pretty-ms'
 import type { Session } from '@google/genai'
 import { createLogger } from './logger.js'
@@ -756,6 +757,7 @@ async function sendThreadMessage(
 ): Promise<Message> {
   const MAX_LENGTH = 2000
 
+  content = formatMarkdownTables(content)
   content = escapeBackticksInCodeBlocks(content)
 
   const chunks = splitMarkdownForDiscord({ content, maxLength: MAX_LENGTH })
@@ -1092,9 +1094,9 @@ function escapeInlineCode(text: string): string {
     .replace(/\|\|/g, '\\|\\|') // Double pipes (spoiler syntax)
 }
 
-function resolveTextChannel(
+async function resolveTextChannel(
   channel: TextChannel | ThreadChannel | null | undefined,
-): TextChannel | null {
+): Promise<TextChannel | null> {
   if (!channel) {
     return null
   }
@@ -1108,9 +1110,12 @@ function resolveTextChannel(
     channel.type === ChannelType.PrivateThread ||
     channel.type === ChannelType.AnnouncementThread
   ) {
-    const parent = channel.parent
-    if (parent?.type === ChannelType.GuildText) {
-      return parent as TextChannel
+    const parentId = channel.parentId
+    if (parentId) {
+      const parent = await channel.guild.channels.fetch(parentId)
+      if (parent?.type === ChannelType.GuildText) {
+        return parent as TextChannel
+      }
     }
   }
 
@@ -1328,8 +1333,18 @@ function getToolSummaryText(part: Part): string {
     return pattern ? `*${pattern}*` : ''
   }
 
-  if (part.tool === 'bash' || part.tool === 'task' || part.tool === 'todoread' || part.tool === 'todowrite') {
+  if (part.tool === 'bash' || part.tool === 'todoread' || part.tool === 'todowrite') {
     return ''
+  }
+
+  if (part.tool === 'task') {
+    const description = (part.state.input?.description as string) || ''
+    return description ? `_${description}_` : ''
+  }
+
+  if (part.tool === 'skill') {
+    const name = (part.state.input?.name as string) || ''
+    return name ? `_${name}_` : ''
   }
 
   if (!part.state.input) return ''
@@ -1355,19 +1370,12 @@ function formatTodoList(part: Part): string {
       content: string
       status: 'pending' | 'in_progress' | 'completed' | 'cancelled'
     }[]) || []
-  if (todos.length === 0) return ''
-  return todos
-    .map((todo, i) => {
-      const num = `${i + 1}.`
-      if (todo.status === 'in_progress') {
-        return `${num} **${todo.content}**`
-      }
-      if (todo.status === 'completed' || todo.status === 'cancelled') {
-        return `${num} ~~${todo.content}~~`
-      }
-      return `${num} ${todo.content}`
-    })
-    .join('\n')
+  const activeIndex = todos.findIndex((todo) => {
+    return todo.status === 'in_progress'
+  })
+  const activeTodo = todos[activeIndex]
+  if (activeIndex === -1 || !activeTodo) return ''
+  return `${activeIndex + 1}. **${activeTodo.content}**`
 }
 
 function formatPart(part: Part): string {
@@ -1415,9 +1423,9 @@ function formatPart(part: Part): string {
       const command = (part.state.input?.command as string) || ''
       const description = (part.state.input?.description as string) || ''
       const isSingleLine = !command.includes('\n')
-      const hasBackticks = command.includes('`')
-      if (isSingleLine && !hasBackticks && command.length <= 50) {
-        toolTitle = `\`${command}\``
+      const hasUnderscores = command.includes('_')
+      if (isSingleLine && !hasUnderscores && command.length <= 50) {
+        toolTitle = `_${command}_`
       } else if (description) {
         toolTitle = `_${description}_`
       } else if (stateTitle) {
@@ -1581,6 +1589,8 @@ async function handleOpencodeSession({
   let usedModel: string | undefined
   let usedProviderID: string | undefined
   let tokensUsedInSession = 0
+  let lastDisplayedContextPercentage = 0
+  let modelContextLimit: number | undefined
 
   let typingInterval: NodeJS.Timeout | null = null
 
@@ -1676,6 +1686,30 @@ async function handleOpencodeSession({
             assistantMessageId = msg.id
             usedModel = msg.modelID
             usedProviderID = msg.providerID
+
+            if (tokensUsedInSession > 0 && usedProviderID && usedModel) {
+              if (!modelContextLimit) {
+                try {
+                  const providersResponse = await getClient().provider.list({ query: { directory } })
+                  const provider = providersResponse.data?.all?.find((p) => p.id === usedProviderID)
+                  const model = provider?.models?.[usedModel]
+                  if (model?.limit?.context) {
+                    modelContextLimit = model.limit.context
+                  }
+                } catch (e) {
+                  sessionLogger.error('Failed to fetch provider info for context limit:', e)
+                }
+              }
+
+              if (modelContextLimit) {
+                const currentPercentage = Math.floor((tokensUsedInSession / modelContextLimit) * 100)
+                const thresholdCrossed = Math.floor(currentPercentage / 10) * 10
+                if (thresholdCrossed > lastDisplayedContextPercentage && thresholdCrossed >= 10) {
+                  lastDisplayedContextPercentage = thresholdCrossed
+                  await sendThreadMessage(thread, `◼︎ context usage ${currentPercentage}%`)
+                }
+              }
+            }
           }
         } else if (event.type === 'message.part.updated') {
           const part = event.properties.part
@@ -2328,11 +2362,8 @@ export async function startDiscordBot({
 
             // Get the channel's project directory from its topic
             let projectDirectory: string | undefined
-            if (
-              interaction.channel &&
-              interaction.channel.type === ChannelType.GuildText
-            ) {
-              const textChannel = resolveTextChannel(
+            if (interaction.channel) {
+              const textChannel = await resolveTextChannel(
                 interaction.channel as TextChannel | ThreadChannel | null,
               )
               if (textChannel) {
@@ -2414,11 +2445,8 @@ export async function startDiscordBot({
 
               // Get the channel's project directory from its topic
               let projectDirectory: string | undefined
-              if (
-                interaction.channel &&
-                interaction.channel.type === ChannelType.GuildText
-              ) {
-                const textChannel = resolveTextChannel(
+              if (interaction.channel) {
+                const textChannel = await resolveTextChannel(
                   interaction.channel as TextChannel | ThreadChannel | null,
                 )
                 if (textChannel) {
@@ -2782,7 +2810,7 @@ export async function startDiscordBot({
               if (partsToRender.length > 0) {
                 const combinedContent = partsToRender
                   .map((p) => p.content)
-                  .join('\n\n')
+                  .join('\n')
 
                 const discordMessage = await sendThreadMessage(
                   thread,
@@ -2887,7 +2915,7 @@ export async function startDiscordBot({
                 `Failed to create channels: ${error instanceof Error ? error.message : 'Unknown error'}`,
               )
             }
-          } else if (command.commandName === 'add-new-project') {
+          } else if (command.commandName === 'create-new-project') {
             await command.deferReply({ ephemeral: false })
 
             const projectName = command.options.getString('name', true)
@@ -3122,7 +3150,7 @@ export async function startDiscordBot({
               return
             }
 
-            const textChannel = resolveTextChannel(channel as ThreadChannel)
+            const textChannel = await resolveTextChannel(channel as ThreadChannel)
             const { projectDirectory: directory } = getKimakiMetadata(textChannel)
 
             if (!directory) {
@@ -3193,7 +3221,7 @@ export async function startDiscordBot({
               return
             }
 
-            const textChannel = resolveTextChannel(channel as ThreadChannel)
+            const textChannel = await resolveTextChannel(channel as ThreadChannel)
             const { projectDirectory: directory } = getKimakiMetadata(textChannel)
 
             if (!directory) {

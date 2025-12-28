@@ -41,7 +41,6 @@
     "ai": "^5.0.114",
     "better-sqlite3": "^12.3.0",
     "cac": "^6.7.14",
-    "date-fns": "^4.1.0",
     "discord.js": "^14.16.3",
     "domhandler": "^5.0.3",
     "go-try": "^3.0.2",
