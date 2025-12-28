@@ -22,6 +22,7 @@ import {
   type Guild,
   type Interaction,
   type Message,
+  MessageType,
   type TextChannel,
   type ThreadChannel,
   type VoiceChannel,
@@ -1873,6 +1874,15 @@ export async function startDiscordBot({
       if (message.author?.bot) {
         return
       }
+
+      // Ignore system messages (like thread name changes)
+      if (
+        message.type !== MessageType.Default &&
+        message.type !== MessageType.Reply
+      ) {
+        return
+      }
+
       if (message.partial) {
         discordLogger.log(`Fetching partial message ${message.id}`)
         try {
