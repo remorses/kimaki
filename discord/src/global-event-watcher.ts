@@ -62,6 +62,10 @@ export class GlobalEventWatcher {
   // Cache for threads that failed to fetch (avoid repeated API calls)
   private failedThreads = new Set<string>()
 
+  // Periodic backfill interval
+  private backfillInterval: NodeJS.Timeout | null = null
+  private static BACKFILL_INTERVAL_MS = 30000 // 30 seconds
+
   constructor(port: number, deps: WatcherDependencies) {
     this.port = port
     this.deps = deps
@@ -99,6 +103,28 @@ export class GlobalEventWatcher {
     this.backfillMissedEvents().catch(e => {
       watcherLogger.error('Backfill failed:', e)
     })
+
+    // Start periodic backfill for API-triggered messages (not emitted via SSE)
+    this.startPeriodicBackfill()
+  }
+
+  /**
+   * Start periodic backfill to catch API-triggered messages
+   */
+  private startPeriodicBackfill(): void {
+    if (this.backfillInterval) return
+    
+    this.backfillInterval = setInterval(async () => {
+      if (!this.isRunning || !this.client) return
+      
+      try {
+        await this.backfillMissedEvents()
+      } catch (e) {
+        watcherLogger.error('Periodic backfill failed:', e)
+      }
+    }, GlobalEventWatcher.BACKFILL_INTERVAL_MS)
+    
+    watcherLogger.log(`Started periodic backfill every ${GlobalEventWatcher.BACKFILL_INTERVAL_MS / 1000}s`)
   }
 
   /**
@@ -116,6 +142,11 @@ export class GlobalEventWatcher {
     if (this.reconnectTimeout) {
       clearTimeout(this.reconnectTimeout)
       this.reconnectTimeout = null
+    }
+
+    if (this.backfillInterval) {
+      clearInterval(this.backfillInterval)
+      this.backfillInterval = null
     }
 
     // Clear all typing indicators
@@ -387,7 +418,11 @@ export class GlobalEventWatcher {
           const lastId = this.lastCompletedMessageIds.get(sessionId)
           if (lastId !== msg.id) {
             this.lastCompletedMessageIds.set(sessionId, msg.id)
-            await this.sendCompletionSummary(thread, msg)
+            try {
+              await this.sendCompletionSummary(thread, msg)
+            } catch (e) {
+              watcherLogger.error(`Failed to send completion summary:`, e)
+            }
           }
         }
       }
@@ -450,7 +485,11 @@ export class GlobalEventWatcher {
     } else if (event.type === 'session.error') {
       this.stopTyping(threadId)
       const errorMessage = event.properties?.error?.data?.message || 'Unknown error'
-      await this.deps.sendThreadMessage(thread, `**Error:** ${errorMessage}`)
+      try {
+        await this.deps.sendThreadMessage(thread, `**Error:** ${errorMessage}`)
+      } catch (e) {
+        watcherLogger.error(`Failed to send error message:`, e)
+      }
     }
   }
 
