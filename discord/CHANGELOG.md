@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.4.22
+
+### Patch Changes
+
+- add **table formatting** for Discord - markdown tables are converted to monospace code blocks for better readability
+- add `formatMarkdownTables` utility and tests
+
 ## 0.4.21
 
 ### Patch Changes
