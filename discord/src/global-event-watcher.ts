@@ -381,8 +381,9 @@ export class GlobalEventWatcher {
       if (msg && msg.id && msg.role) {
         this.messageRoles.set(msg.id, msg.role)
         
-        // Handle assistant message completion summary
-        if (msg.role === 'assistant' && msg.finish) {
+        // Handle assistant message completion summary when message finishes with 'stop'
+        // 'stop' means the agent finished responding, 'tool-calls' means it's doing tools
+        if (msg.role === 'assistant' && msg.finish === 'stop') {
           const lastId = this.lastCompletedMessageIds.get(sessionId)
           if (lastId !== msg.id) {
             this.lastCompletedMessageIds.set(sessionId, msg.id)
@@ -483,9 +484,6 @@ export class GlobalEventWatcher {
         summaryParts.push(tokensStr)
       }
       
-      if (cacheRead > 0) {
-         summaryParts.push(`Context: ${cacheRead.toLocaleString()}`)
-      }
     }
 
     // Calculate duration if we have timing info
@@ -515,14 +513,39 @@ export class GlobalEventWatcher {
     
     // User message echo prevention and formatting
     if (role === 'user' && part.type === 'text') {
-      // Fetch the last message to see if it's an echo
-      const lastMessages = await thread.messages.fetch({ limit: 1 }).catch(() => null)
-      const lastMessage = lastMessages?.first()
+      // Fetch recent messages to check for echo
+      const lastMessages = await thread.messages.fetch({ limit: 10 }).catch(() => null)
       
-      // Check if this looks like an echo of the last message
-      if (lastMessage && lastMessage.content.trim() === (part.text || '').trim()) {
-        // Echo detected. Mark as sent so we don't try again, but don't send to Discord.
-        this.recordPartSent(part.id, lastMessage.id, threadId)
+      // Find a recent message from a non-bot user that matches the content
+      // This handles cases where attachments are appended to the prompt
+      const partText = (part.text || '').trim()
+      
+      // Also check the thread starter message (it may have different format)
+      const starterMessage = thread.id ? await thread.fetchStarterMessage().catch(() => null) : null
+      
+      const recentUserMessage = lastMessages?.find(msg => {
+        // Must be from a non-bot user
+        if (msg.author.bot) return false
+        // Must be recent (within last 2 minutes)
+        const age = Date.now() - msg.createdTimestamp
+        if (age > 120000) return false
+        // Content should match or be a prefix of the part text (attachments get appended)
+        const msgContent = msg.content.trim()
+        // Check both directions: Discord content is prefix of part, or exact match
+        return partText === msgContent || partText.startsWith(msgContent) || msgContent.startsWith(partText)
+      })
+      
+      // Also check starter message
+      const starterMatch = starterMessage && !starterMessage.author.bot && (
+        partText === starterMessage.content.trim() ||
+        partText.startsWith(starterMessage.content.trim()) ||
+        starterMessage.content.trim().startsWith(partText)
+      )
+      
+      if (recentUserMessage || starterMatch) {
+        // Echo detected - message originated from Discord, not TUI
+        const matchedMsg = recentUserMessage || starterMessage!
+        this.recordPartSent(part.id, matchedMsg.id, threadId)
         return
       }
 
