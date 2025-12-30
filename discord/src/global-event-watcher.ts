@@ -249,9 +249,18 @@ export class GlobalEventWatcher {
 
   /**
    * Backfill a single session
+   * 
+   * NOTE: We skip text parts in backfill because they may be incomplete during streaming.
+   * Text parts should only be sent via SSE step-finish to ensure complete content.
+   * We also skip sessions that are actively streaming (have pending parts in sessionParts).
    */
   private async backfillSession(sessionId: string, threadId: string): Promise<void> {
     if (!this.client) return
+
+    // Skip sessions that are actively streaming - their parts may be incomplete
+    if (this.sessionParts.has(sessionId)) {
+      return
+    }
 
     const messagesResponse = await this.client.session.messages({
       path: { id: sessionId },
@@ -271,6 +280,10 @@ export class GlobalEventWatcher {
       for (const part of message.parts) {
         if (this.isPartSent(part.id)) continue
         if (part.type === 'step-start' || part.type === 'step-finish') continue
+        
+        // Skip text parts in backfill - they should only come via SSE step-finish
+        // to ensure we get complete content (not partial streaming content)
+        if (part.type === 'text') continue
 
         // This part was missed - send it now
         const thread = await this.getThread(threadId)
