@@ -1603,6 +1603,9 @@ async function handleOpencodeSession({
     `[OPENCODE SESSION] Starting for thread ${thread.id} with prompt: "${prompt.slice(0, 50)}${prompt.length > 50 ? '...' : ''}"`,
   )
 
+  // Start typing indicator immediately so user sees feedback
+  thread.sendTyping().catch(() => {})
+
   // Use default directory if not specified
   const directory = projectDirectory || process.cwd()
   sessionLogger.log(`Using directory: ${directory}`)
@@ -2131,6 +2134,8 @@ async function handleOpencodeSession({
       sessionLogger.log(
         `[COMMAND] Sending command /${parsedCommand.command} to session ${session.id} with args: "${parsedCommand.arguments.slice(0, 100)}${parsedCommand.arguments.length > 100 ? '...' : ''}"`,
       )
+      // Keep typing indicator active during command execution
+      thread.sendTyping().catch(() => {})
       response = await getClient().session.command({
         path: { id: session.id },
         body: {
@@ -2150,6 +2155,8 @@ async function handleOpencodeSession({
       const parts = [{ type: 'text' as const, text: prompt }, ...images]
       sessionLogger.log(`[PROMPT] Parts to send:`, parts.length)
 
+      // Keep typing indicator active during prompt execution
+      thread.sendTyping().catch(() => {})
       response = await getClient().session.prompt({
         path: { id: session.id },
         body: {
