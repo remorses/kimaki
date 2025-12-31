@@ -8,3 +8,19 @@ To restart the discord bot process so it uses the new code, send a SIGUSR2 signa
 2. Send the signal: `kill -SIGUSR2 <PID>`
 
 The bot will wait 1000ms and then restart itself with the same arguments.
+
+# showing diffs with critique
+
+To show the user a visual diff of changes made, use the critique command:
+
+```bash
+bunx critique web
+```
+
+This uploads the diff to a temporary URL that the user can view. The URL expires in 7 days.
+
+To show changes from a specific commit instead of working directory:
+
+```bash
+bunx critique web HEAD~1
+```
