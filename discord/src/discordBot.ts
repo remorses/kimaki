@@ -2394,8 +2394,18 @@ export async function startDiscordBot({
                 return
               }
 
-              // Filter and map sessions to choices
+              // Get session IDs that already have Discord threads
+              const existingSessionIds = new Set(
+                (
+                  getDatabase()
+                    .prepare('SELECT session_id FROM thread_sessions')
+                    .all() as { session_id: string }[]
+                ).map((row) => row.session_id),
+              )
+
+              // Filter and map sessions to choices (exclude sessions with existing threads)
               const sessions = sessionsResponse.data
+                .filter((session) => !existingSessionIds.has(session.id))
                 .filter((session) =>
                   session.title
                     .toLowerCase()
