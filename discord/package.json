@@ -43,6 +43,7 @@
     "cac": "^6.7.14",
     "discord.js": "^14.16.3",
     "domhandler": "^5.0.3",
+    "glob": "^13.0.0",
     "go-try": "^3.0.2",
     "htmlparser2": "^10.0.0",
     "js-yaml": "^4.1.0",
