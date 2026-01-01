@@ -1,6 +1,8 @@
 import {
   VoiceConnectionStatus,
   EndBehaviorType,
+  joinVoiceChannel,
+  entersState,
   type VoiceConnection,
 } from '@discordjs/voice'
 import { exec } from 'node:child_process'
@@ -11,7 +13,15 @@ import { promisify } from 'node:util'
 import { Transform, type TransformCallback } from 'node:stream'
 import * as prism from 'prism-media'
 import dedent from 'string-dedent'
-import type { Client, Message, ThreadChannel } from 'discord.js'
+import {
+  PermissionsBitField,
+  Events,
+  type Client,
+  type Message,
+  type ThreadChannel,
+  type VoiceChannel,
+  type VoiceState,
+} from 'discord.js'
 import { createGenAIWorker, type GenAIWorker } from './genai-worker-wrapper.js'
 import { getDatabase } from './database.js'
 import { sendThreadMessage, escapeDiscordFormatting, SILENT_MESSAGE_FLAGS } from './discord-utils.js'
@@ -509,4 +519,227 @@ export async function processVoiceAttachment({
     `📝 **Transcribed message:** ${escapeDiscordFormatting(transcription)}`,
   )
   return transcription
+}
+
+export function registerVoiceStateHandler({
+  discordClient,
+  appId,
+}: {
+  discordClient: Client
+  appId: string
+}) {
+  discordClient.on(Events.VoiceStateUpdate, async (oldState: VoiceState, newState: VoiceState) => {
+    try {
+      const member = newState.member || oldState.member
+      if (!member) return
+
+      const guild = newState.guild || oldState.guild
+      const isOwner = member.id === guild.ownerId
+      const isAdmin = member.permissions.has(
+        PermissionsBitField.Flags.Administrator,
+      )
+      const canManageServer = member.permissions.has(
+        PermissionsBitField.Flags.ManageGuild,
+      )
+      const hasKimakiRole = member.roles.cache.some(
+        (role) => role.name.toLowerCase() === 'kimaki',
+      )
+
+      if (!isOwner && !isAdmin && !canManageServer && !hasKimakiRole) {
+        return
+      }
+
+      if (oldState.channelId !== null && newState.channelId === null) {
+        voiceLogger.log(
+          `Admin user ${member.user.tag} left voice channel: ${oldState.channel?.name}`,
+        )
+
+        const guildId = guild.id
+        const voiceData = voiceConnections.get(guildId)
+
+        if (
+          voiceData &&
+          voiceData.connection.joinConfig.channelId === oldState.channelId
+        ) {
+          const voiceChannel = oldState.channel as VoiceChannel
+          if (!voiceChannel) return
+
+          const hasOtherAdmins = voiceChannel.members.some((m) => {
+            if (m.id === member.id || m.user.bot) return false
+            return (
+              m.id === guild.ownerId ||
+              m.permissions.has(PermissionsBitField.Flags.Administrator) ||
+              m.permissions.has(PermissionsBitField.Flags.ManageGuild) ||
+              m.roles.cache.some((role) => role.name.toLowerCase() === 'kimaki')
+            )
+          })
+
+          if (!hasOtherAdmins) {
+            voiceLogger.log(
+              `No other admins in channel, bot leaving voice channel in guild: ${guild.name}`,
+            )
+
+            await cleanupVoiceConnection(guildId)
+          } else {
+            voiceLogger.log(
+              `Other admins still in channel, bot staying in voice channel`,
+            )
+          }
+        }
+        return
+      }
+
+      if (
+        oldState.channelId !== null &&
+        newState.channelId !== null &&
+        oldState.channelId !== newState.channelId
+      ) {
+        voiceLogger.log(
+          `Admin user ${member.user.tag} moved from ${oldState.channel?.name} to ${newState.channel?.name}`,
+        )
+
+        const guildId = guild.id
+        const voiceData = voiceConnections.get(guildId)
+
+        if (
+          voiceData &&
+          voiceData.connection.joinConfig.channelId === oldState.channelId
+        ) {
+          const oldVoiceChannel = oldState.channel as VoiceChannel
+          if (oldVoiceChannel) {
+            const hasOtherAdmins = oldVoiceChannel.members.some((m) => {
+              if (m.id === member.id || m.user.bot) return false
+              return (
+                m.id === guild.ownerId ||
+                m.permissions.has(PermissionsBitField.Flags.Administrator) ||
+                m.permissions.has(PermissionsBitField.Flags.ManageGuild) ||
+                m.roles.cache.some((role) => role.name.toLowerCase() === 'kimaki')
+              )
+            })
+
+            if (!hasOtherAdmins) {
+              voiceLogger.log(
+                `Following admin to new channel: ${newState.channel?.name}`,
+              )
+              const voiceChannel = newState.channel as VoiceChannel
+              if (voiceChannel) {
+                voiceData.connection.rejoin({
+                  channelId: voiceChannel.id,
+                  selfDeaf: false,
+                  selfMute: false,
+                })
+              }
+            } else {
+              voiceLogger.log(
+                `Other admins still in old channel, bot staying put`,
+              )
+            }
+          }
+        }
+      }
+
+      if (oldState.channelId === null && newState.channelId !== null) {
+        voiceLogger.log(
+          `Admin user ${member.user.tag} (Owner: ${isOwner}, Admin: ${isAdmin}) joined voice channel: ${newState.channel?.name}`,
+        )
+      }
+
+      if (newState.channelId === null) return
+
+      const voiceChannel = newState.channel as VoiceChannel
+      if (!voiceChannel) return
+
+      const existingVoiceData = voiceConnections.get(newState.guild.id)
+      if (
+        existingVoiceData &&
+        existingVoiceData.connection.state.status !==
+          VoiceConnectionStatus.Destroyed
+      ) {
+        voiceLogger.log(
+          `Bot already connected to a voice channel in guild ${newState.guild.name}`,
+        )
+
+        if (
+          existingVoiceData.connection.joinConfig.channelId !== voiceChannel.id
+        ) {
+          voiceLogger.log(
+            `Moving bot from channel ${existingVoiceData.connection.joinConfig.channelId} to ${voiceChannel.id}`,
+          )
+          existingVoiceData.connection.rejoin({
+            channelId: voiceChannel.id,
+            selfDeaf: false,
+            selfMute: false,
+          })
+        }
+        return
+      }
+
+      try {
+        voiceLogger.log(
+          `Attempting to join voice channel: ${voiceChannel.name} (${voiceChannel.id})`,
+        )
+
+        const connection = joinVoiceChannel({
+          channelId: voiceChannel.id,
+          guildId: newState.guild.id,
+          adapterCreator: newState.guild.voiceAdapterCreator,
+          selfDeaf: false,
+          debug: true,
+          daveEncryption: false,
+          selfMute: false,
+        })
+
+        voiceConnections.set(newState.guild.id, { connection })
+
+        await entersState(connection, VoiceConnectionStatus.Ready, 30_000)
+        voiceLogger.log(
+          `Successfully joined voice channel: ${voiceChannel.name} in guild: ${newState.guild.name}`,
+        )
+
+        await setupVoiceHandling({
+          connection,
+          guildId: newState.guild.id,
+          channelId: voiceChannel.id,
+          appId,
+          discordClient,
+        })
+
+        connection.on(VoiceConnectionStatus.Disconnected, async () => {
+          voiceLogger.log(
+            `Disconnected from voice channel in guild: ${newState.guild.name}`,
+          )
+          try {
+            await Promise.race([
+              entersState(connection, VoiceConnectionStatus.Signalling, 5_000),
+              entersState(connection, VoiceConnectionStatus.Connecting, 5_000),
+            ])
+            voiceLogger.log(`Reconnecting to voice channel`)
+          } catch (error) {
+            voiceLogger.log(`Failed to reconnect, destroying connection`)
+            connection.destroy()
+            voiceConnections.delete(newState.guild.id)
+          }
+        })
+
+        connection.on(VoiceConnectionStatus.Destroyed, async () => {
+          voiceLogger.log(
+            `Connection destroyed for guild: ${newState.guild.name}`,
+          )
+          await cleanupVoiceConnection(newState.guild.id)
+        })
+
+        connection.on('error', (error) => {
+          voiceLogger.error(
+            `Connection error in guild ${newState.guild.name}:`,
+            error,
+          )
+        })
+      } catch (error) {
+        voiceLogger.error(`Failed to join voice channel:`, error)
+        await cleanupVoiceConnection(newState.guild.id)
+      }
+    } catch (error) {
+      voiceLogger.error('Error in voice state update handler:', error)
+    }
+  })
 }
