@@ -180,6 +180,10 @@ async function registerCommands(token: string, appId: string) {
       .setName('share')
       .setDescription('Share the current session as a public URL')
       .toJSON(),
+    new SlashCommandBuilder()
+      .setName('fork')
+      .setDescription('Fork the session from a past user message')
+      .toJSON(),
   ]
 
   const rest = new REST().setToken(token)

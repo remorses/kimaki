@@ -1,6 +1,6 @@
 import { test, expect } from 'vitest'
 import { Lexer } from 'marked'
-import { escapeBackticksInCodeBlocks, splitMarkdownForDiscord } from './discordBot.js'
+import { escapeBackticksInCodeBlocks, splitMarkdownForDiscord } from './discord-utils.js'
 
 
 

@@ -1,15 +1,27 @@
 import {
-  createOpencodeClient,
   type OpencodeClient,
   type Part,
-  type Config,
   type FilePartInput,
   type Permission,
 } from '@opencode-ai/sdk'
 
 import { createGenAIWorker, type GenAIWorker } from './genai-worker-wrapper.js'
+import { getDatabase, closeDatabase } from './database.js'
+import { initializeOpencodeForDirectory, getOpencodeServers } from './opencode.js'
+import {
+  sendThreadMessage,
+  resolveTextChannel,
+  getKimakiMetadata,
+  escapeBackticksInCodeBlocks,
+  splitMarkdownForDiscord,
+  escapeDiscordFormatting,
+  SILENT_MESSAGE_FLAGS,
+} from './discord-utils.js'
+import { handleForkCommand, handleForkSelectMenu } from './fork.js'
 
-import Database from 'better-sqlite3'
+export { getDatabase, closeDatabase } from './database.js'
+export { initializeOpencodeForDirectory } from './opencode.js'
+export { escapeBackticksInCodeBlocks, splitMarkdownForDiscord } from './discord-utils.js'
 import {
   ChannelType,
   Client,
@@ -33,11 +45,9 @@ import {
   EndBehaviorType,
   type VoiceConnection,
 } from '@discordjs/voice'
-import { Lexer } from 'marked'
-import { spawn, exec, type ChildProcess } from 'node:child_process'
+import { exec } from 'node:child_process'
 import fs, { createWriteStream } from 'node:fs'
 import { mkdir } from 'node:fs/promises'
-import net from 'node:net'
 import os from 'node:os'
 import path from 'node:path'
 import { promisify } from 'node:util'
@@ -167,26 +177,12 @@ you can create diagrams wrapping them in code blocks too.
 
 const discordLogger = createLogger('DISCORD')
 const voiceLogger = createLogger('VOICE')
-const opencodeLogger = createLogger('OPENCODE')
 const sessionLogger = createLogger('SESSION')
-const dbLogger = createLogger('DB')
-
-const SILENT_MESSAGE_FLAGS = 4 | 4096
 
 type StartOptions = {
   token: string
   appId?: string
 }
-
-// Map of project directory to OpenCode server process and client
-const opencodeServers = new Map<
-  string,
-  {
-    process: ChildProcess
-    client: OpencodeClient
-    port: number
-  }
->()
 
 // Map of session ID to current AbortController
 const abortControllers = new Map<string, AbortController>()
@@ -201,16 +197,11 @@ const voiceConnections = new Map<
   }
 >()
 
-// Map of directory to retry count for server restarts
-const serverRetryCount = new Map<string, number>()
-
 // Map of thread ID to pending permission (only one pending permission per thread)
 const pendingPermissions = new Map<
   string,
   { permission: Permission; messageId: string; directory: string }
 >()
-
-let db: Database.Database | null = null
 
 function convertToMono16k(buffer: Buffer): Buffer {
   // Parameters
@@ -601,68 +592,6 @@ function frameMono16khz(): Transform {
   })
 }
 
-export function getDatabase(): Database.Database {
-  if (!db) {
-    const kimakiDir = path.join(os.homedir(), '.kimaki')
-
-    try {
-      fs.mkdirSync(kimakiDir, { recursive: true })
-    } catch (error) {
-      dbLogger.error('Failed to create ~/.kimaki directory:', error)
-    }
-
-    const dbPath = path.join(kimakiDir, 'discord-sessions.db')
-
-    dbLogger.log(`Opening database at: ${dbPath}`)
-    db = new Database(dbPath)
-
-    db.exec(`
-      CREATE TABLE IF NOT EXISTS thread_sessions (
-        thread_id TEXT PRIMARY KEY,
-        session_id TEXT NOT NULL,
-        created_at DATETIME DEFAULT CURRENT_TIMESTAMP
-      )
-    `)
-
-    db.exec(`
-      CREATE TABLE IF NOT EXISTS part_messages (
-        part_id TEXT PRIMARY KEY,
-        message_id TEXT NOT NULL,
-        thread_id TEXT NOT NULL,
-        created_at DATETIME DEFAULT CURRENT_TIMESTAMP
-      )
-    `)
-
-    db.exec(`
-      CREATE TABLE IF NOT EXISTS bot_tokens (
-        app_id TEXT PRIMARY KEY,
-        token TEXT NOT NULL,
-        created_at DATETIME DEFAULT CURRENT_TIMESTAMP
-      )
-    `)
-
-    db.exec(`
-      CREATE TABLE IF NOT EXISTS channel_directories (
-        channel_id TEXT PRIMARY KEY,
-        directory TEXT NOT NULL,
-        channel_type TEXT NOT NULL,
-        created_at DATETIME DEFAULT CURRENT_TIMESTAMP
-      )
-    `)
-
-    db.exec(`
-      CREATE TABLE IF NOT EXISTS bot_api_keys (
-        app_id TEXT PRIMARY KEY,
-        gemini_api_key TEXT,
-        xai_api_key TEXT,
-        created_at DATETIME DEFAULT CURRENT_TIMESTAMP
-      )
-    `)
-  }
-
-  return db
-}
-
 export async function ensureKimakiCategory(guild: Guild): Promise<CategoryChannel> {
   const existingCategory = guild.channels.cache.find(
     (channel): channel is CategoryChannel => {
@@ -753,88 +682,6 @@ export async function createProjectChannels({
     voiceChannelId: voiceChannel.id,
     channelName,
   }
-}
-
-async function getOpenPort(): Promise<number> {
-  return new Promise((resolve, reject) => {
-    const server = net.createServer()
-    server.listen(0, () => {
-      const address = server.address()
-      if (address && typeof address === 'object') {
-        const port = address.port
-        server.close(() => {
-          resolve(port)
-        })
-      } else {
-        reject(new Error('Failed to get port'))
-      }
-    })
-    server.on('error', reject)
-  })
-}
-
-/**
- * Send a message to a Discord thread, automatically splitting long messages
- * @param thread - The thread channel to send to
- * @param content - The content to send (can be longer than 2000 chars)
- * @returns The first message sent
- */
-async function sendThreadMessage(
-  thread: ThreadChannel,
-  content: string,
-): Promise<Message> {
-  const MAX_LENGTH = 2000
-
-  content = formatMarkdownTables(content)
-  content = escapeBackticksInCodeBlocks(content)
-
-  const chunks = splitMarkdownForDiscord({ content, maxLength: MAX_LENGTH })
-
-  if (chunks.length > 1) {
-    discordLogger.log(
-      `MESSAGE: Splitting ${content.length} chars into ${chunks.length} messages`,
-    )
-  }
-
-  let firstMessage: Message | undefined
-  for (let i = 0; i < chunks.length; i++) {
-    const chunk = chunks[i]
-    if (!chunk) {
-      continue
-    }
-    const message = await thread.send({ content: chunk, flags: SILENT_MESSAGE_FLAGS })
-    if (i === 0) {
-      firstMessage = message
-    }
-  }
-
-  return firstMessage!
-}
-
-async function waitForServer(port: number, maxAttempts = 30): Promise<boolean> {
-  for (let i = 0; i < maxAttempts; i++) {
-    try {
-      const endpoints = [
-        `http://localhost:${port}/api/health`,
-        `http://localhost:${port}/`,
-        `http://localhost:${port}/api`,
-      ]
-
-      for (const endpoint of endpoints) {
-        try {
-          const response = await fetch(endpoint)
-          if (response.status < 500) {
-            opencodeLogger.log(`Server ready on port `)
-            return true
-          }
-        } catch (e) {}
-      }
-    } catch (e) {}
-    await new Promise((resolve) => setTimeout(resolve, 1000))
-  }
-  throw new Error(
-    `Server did not start on port ${port} after ${maxAttempts} seconds`,
-  )
 }
 
 async function processVoiceAttachment({
@@ -999,321 +846,6 @@ function getFileAttachments(message: Message): FilePartInput[] {
     filename: attachment.name,
     url: attachment.url,
   }))
-}
-
-export function escapeBackticksInCodeBlocks(markdown: string): string {
-  const lexer = new Lexer()
-  const tokens = lexer.lex(markdown)
-
-  let result = ''
-
-  for (const token of tokens) {
-    if (token.type === 'code') {
-      const escapedCode = token.text.replace(/`/g, '\\`')
-      result += '```' + (token.lang || '') + '\n' + escapedCode + '\n```\n'
-    } else {
-      result += token.raw
-    }
-  }
-
-  return result
-}
-
-type LineInfo = {
-  text: string
-  inCodeBlock: boolean
-  lang: string
-  isOpeningFence: boolean
-  isClosingFence: boolean
-}
-
-export function splitMarkdownForDiscord({
-  content,
-  maxLength,
-}: {
-  content: string
-  maxLength: number
-}): string[] {
-  if (content.length <= maxLength) {
-    return [content]
-  }
-
-  const lexer = new Lexer()
-  const tokens = lexer.lex(content)
-
-  const lines: LineInfo[] = []
-  for (const token of tokens) {
-    if (token.type === 'code') {
-      const lang = token.lang || ''
-      lines.push({ text: '```' + lang + '\n', inCodeBlock: false, lang, isOpeningFence: true, isClosingFence: false })
-      const codeLines = token.text.split('\n')
-      for (const codeLine of codeLines) {
-        lines.push({ text: codeLine + '\n', inCodeBlock: true, lang, isOpeningFence: false, isClosingFence: false })
-      }
-      lines.push({ text: '```\n', inCodeBlock: false, lang: '', isOpeningFence: false, isClosingFence: true })
-    } else {
-      const rawLines = token.raw.split('\n')
-      for (let i = 0; i < rawLines.length; i++) {
-        const isLast = i === rawLines.length - 1
-        const text = isLast ? rawLines[i]! : rawLines[i]! + '\n'
-        if (text) {
-          lines.push({ text, inCodeBlock: false, lang: '', isOpeningFence: false, isClosingFence: false })
-        }
-      }
-    }
-  }
-
-  const chunks: string[] = []
-  let currentChunk = ''
-  let currentLang: string | null = null
-
-  for (const line of lines) {
-    const wouldExceed = currentChunk.length + line.text.length > maxLength
-
-    if (wouldExceed && currentChunk) {
-      if (currentLang !== null) {
-        currentChunk += '```\n'
-      }
-      chunks.push(currentChunk)
-
-      if (line.isClosingFence && currentLang !== null) {
-        currentChunk = ''
-        currentLang = null
-        continue
-      }
-
-      if (line.inCodeBlock || line.isOpeningFence) {
-        const lang = line.lang
-        currentChunk = '```' + lang + '\n'
-        if (!line.isOpeningFence) {
-          currentChunk += line.text
-        }
-        currentLang = lang
-      } else {
-        currentChunk = line.text
-        currentLang = null
-      }
-    } else {
-      currentChunk += line.text
-      if (line.inCodeBlock || line.isOpeningFence) {
-        currentLang = line.lang
-      } else if (line.isClosingFence) {
-        currentLang = null
-      }
-    }
-  }
-
-  if (currentChunk) {
-    chunks.push(currentChunk)
-  }
-
-  return chunks
-}
-
-/**
- * Escape Discord formatting characters to prevent breaking code blocks and inline code
- */
-function escapeDiscordFormatting(text: string): string {
-  return text
-    .replace(/```/g, '\\`\\`\\`') // Triple backticks
-    .replace(/````/g, '\\`\\`\\`\\`') // Quadruple backticks
-}
-
-function escapeInlineCode(text: string): string {
-  return text
-    .replace(/``/g, '\\`\\`') // Double backticks
-    .replace(/(?<!\\)`(?!`)/g, '\\`') // Single backticks (not already escaped or part of double/triple)
-    .replace(/\|\|/g, '\\|\\|') // Double pipes (spoiler syntax)
-}
-
-async function resolveTextChannel(
-  channel: TextChannel | ThreadChannel | null | undefined,
-): Promise<TextChannel | null> {
-  if (!channel) {
-    return null
-  }
-
-  if (channel.type === ChannelType.GuildText) {
-    return channel as TextChannel
-  }
-
-  if (
-    channel.type === ChannelType.PublicThread ||
-    channel.type === ChannelType.PrivateThread ||
-    channel.type === ChannelType.AnnouncementThread
-  ) {
-    const parentId = channel.parentId
-    if (parentId) {
-      const parent = await channel.guild.channels.fetch(parentId)
-      if (parent?.type === ChannelType.GuildText) {
-        return parent as TextChannel
-      }
-    }
-  }
-
-  return null
-}
-
-function getKimakiMetadata(textChannel: TextChannel | null): {
-  projectDirectory?: string
-  channelAppId?: string
-} {
-  if (!textChannel?.topic) {
-    return {}
-  }
-
-  const extracted = extractTagsArrays({
-    xml: textChannel.topic,
-    tags: ['kimaki.directory', 'kimaki.app'],
-  })
-
-  const projectDirectory = extracted['kimaki.directory']?.[0]?.trim()
-  const channelAppId = extracted['kimaki.app']?.[0]?.trim()
-
-  return { projectDirectory, channelAppId }
-}
-
-export async function initializeOpencodeForDirectory(directory: string) {
-  // console.log(`[OPENCODE] Initializing for directory: ${directory}`)
-
-  // Check if we already have a server for this directory
-  const existing = opencodeServers.get(directory)
-  if (existing && !existing.process.killed) {
-    opencodeLogger.log(
-      `Reusing existing server on port ${existing.port} for directory: ${directory}`,
-    )
-    return () => {
-      const entry = opencodeServers.get(directory)
-      if (!entry?.client) {
-        throw new Error(
-          `OpenCode server for directory "${directory}" is in an error state (no client available)`,
-        )
-      }
-      return entry.client
-    }
-  }
-
-  const port = await getOpenPort()
-  // console.log(
-  //   `[OPENCODE] Starting new server on port ${port} for directory: ${directory}`,
-  // )
-
-  const opencodeCommand = process.env.OPENCODE_PATH || 'opencode'
-
-  const serverProcess = spawn(
-    opencodeCommand,
-    ['serve', '--port', port.toString()],
-    {
-      stdio: 'pipe',
-      detached: false,
-      cwd: directory,
-      env: {
-        ...process.env,
-        OPENCODE_CONFIG_CONTENT: JSON.stringify({
-          $schema: 'https://opencode.ai/config.json',
-          lsp: {
-            typescript: { disabled: true },
-            eslint: { disabled: true },
-            gopls: { disabled: true },
-            'ruby-lsp': { disabled: true },
-            pyright: { disabled: true },
-            'elixir-ls': { disabled: true },
-            zls: { disabled: true },
-            csharp: { disabled: true },
-            vue: { disabled: true },
-            rust: { disabled: true },
-            clangd: { disabled: true },
-            svelte: { disabled: true },
-          },
-          formatter: {
-            prettier: { disabled: true },
-            biome: { disabled: true },
-            gofmt: { disabled: true },
-            mix: { disabled: true },
-            zig: { disabled: true },
-            'clang-format': { disabled: true },
-            ktlint: { disabled: true },
-            ruff: { disabled: true },
-            rubocop: { disabled: true },
-            standardrb: { disabled: true },
-            htmlbeautifier: { disabled: true },
-          },
-          permission: {
-            edit: 'allow',
-            bash: 'allow',
-            webfetch: 'allow',
-          },
-        } satisfies Config),
-        OPENCODE_PORT: port.toString(),
-      },
-    },
-  )
-
-  serverProcess.stdout?.on('data', (data) => {
-    opencodeLogger.log(`opencode ${directory}: ${data.toString().trim()}`)
-  })
-
-  serverProcess.stderr?.on('data', (data) => {
-    opencodeLogger.error(`opencode ${directory}: ${data.toString().trim()}`)
-  })
-
-  serverProcess.on('error', (error) => {
-    opencodeLogger.error(`Failed to start server on port :`, port, error)
-  })
-
-  serverProcess.on('exit', (code) => {
-    opencodeLogger.log(
-      `Opencode server on ${directory} exited with code:`,
-      code,
-    )
-    opencodeServers.delete(directory)
-    if (code !== 0) {
-      const retryCount = serverRetryCount.get(directory) || 0
-      if (retryCount < 5) {
-        serverRetryCount.set(directory, retryCount + 1)
-        opencodeLogger.log(
-          `Restarting server for directory: ${directory} (attempt ${retryCount + 1}/5)`,
-        )
-        initializeOpencodeForDirectory(directory).catch((e) => {
-          opencodeLogger.error(`Failed to restart opencode server:`, e)
-        })
-      } else {
-        opencodeLogger.error(
-          `Server for ${directory} crashed too many times (5), not restarting`,
-        )
-      }
-    } else {
-      // Reset retry count on clean exit
-      serverRetryCount.delete(directory)
-    }
-  })
-
-  await waitForServer(port)
-
-  const client = createOpencodeClient({
-    baseUrl: `http://localhost:${port}`,
-    fetch: (request: Request) =>
-      fetch(request, {
-        // @ts-ignore
-        timeout: false,
-      }),
-  })
-
-  opencodeServers.set(directory, {
-    process: serverProcess,
-    client,
-    port,
-  })
-
-  return () => {
-    const entry = opencodeServers.get(directory)
-    if (!entry?.client) {
-      throw new Error(
-        `OpenCode server for directory "${directory}" is in an error state (no client available)`,
-      )
-    }
-    return entry.client
-  }
 }
 
 function getToolSummaryText(part: Part): string {
@@ -1523,7 +1055,7 @@ async function handleOpencodeSession({
   const getClient = await initializeOpencodeForDirectory(directory)
 
   // Get the port for this directory
-  const serverEntry = opencodeServers.get(directory)
+  const serverEntry = getOpencodeServers().get(directory)
   const port = serverEntry?.port
 
   // Get session ID from database
@@ -1570,7 +1102,7 @@ async function handleOpencodeSession({
       'INSERT OR REPLACE INTO thread_sessions (thread_id, session_id) VALUES (?, ?)',
     )
     .run(thread.id, session.id)
-  dbLogger.log(`Stored session ${session.id} for thread ${thread.id}`)
+  sessionLogger.log(`Stored session ${session.id} for thread ${thread.id}`)
 
   // Cancel any existing request for this session
   const existingController = abortControllers.get(session.id)
@@ -3387,6 +2919,14 @@ export async function startDiscordBot({
                 flags: SILENT_MESSAGE_FLAGS,
               })
             }
+          } else if (command.commandName === 'fork') {
+            await handleForkCommand(command)
+          }
+        }
+
+        if (interaction.isStringSelectMenu()) {
+          if (interaction.customId.startsWith('fork_select:')) {
+            await handleForkSelectMenu(interaction)
           }
         }
       } catch (error) {
@@ -3711,7 +3251,7 @@ export async function startDiscordBot({
       }
 
       // Kill all OpenCode servers
-      for (const [dir, server] of opencodeServers) {
+      for (const [dir, server] of getOpencodeServers()) {
         if (!server.process.killed) {
           voiceLogger.log(
             `[SHUTDOWN] Stopping OpenCode server on port ${server.port} for ${dir}`,
@@ -3719,13 +3259,10 @@ export async function startDiscordBot({
           server.process.kill('SIGTERM')
         }
       }
-      opencodeServers.clear()
+      getOpencodeServers().clear()
 
       discordLogger.log('Closing database...')
-      if (db) {
-        db.close()
-        db = null
-      }
+      closeDatabase()
 
       discordLogger.log('Destroying Discord client...')
       discordClient.destroy()
