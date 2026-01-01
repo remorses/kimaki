@@ -678,6 +678,27 @@ export async function ensureKimakiCategory(guild: Guild): Promise<CategoryChanne
   })
 }
 
+export async function ensureKimakiAudioCategory(guild: Guild): Promise<CategoryChannel> {
+  const existingCategory = guild.channels.cache.find(
+    (channel): channel is CategoryChannel => {
+      if (channel.type !== ChannelType.GuildCategory) {
+        return false
+      }
+
+      return channel.name.toLowerCase() === 'kimaki audio'
+    },
+  )
+
+  if (existingCategory) {
+    return existingCategory
+  }
+
+  return guild.channels.create({
+    name: 'Kimaki Audio',
+    type: ChannelType.GuildCategory,
+  })
+}
+
 export async function createProjectChannels({
   guild,
   projectDirectory,
@@ -694,6 +715,7 @@ export async function createProjectChannels({
     .slice(0, 100)
 
   const kimakiCategory = await ensureKimakiCategory(guild)
+  const kimakiAudioCategory = await ensureKimakiAudioCategory(guild)
 
   const textChannel = await guild.channels.create({
     name: channelName,
@@ -705,7 +727,7 @@ export async function createProjectChannels({
   const voiceChannel = await guild.channels.create({
     name: channelName,
     type: ChannelType.GuildVoice,
-    parent: kimakiCategory,
+    parent: kimakiAudioCategory,
   })
 
   getDatabase()
@@ -815,12 +837,14 @@ async function processVoiceAttachment({
   projectDirectory,
   isNewThread = false,
   appId,
+  sessionMessages,
 }: {
   message: Message
   thread: ThreadChannel
   projectDirectory?: string
   isNewThread?: boolean
   appId?: string
+  sessionMessages?: string
 }): Promise<string | null> {
   const audioAttachment = Array.from(message.attachments.values()).find(
     (attachment) => attachment.contentType?.startsWith('audio/'),
@@ -877,6 +901,8 @@ async function processVoiceAttachment({
     audio: audioBuffer,
     prompt: transcriptionPrompt,
     geminiApiKey,
+    directory: projectDirectory,
+    sessionMessages,
   })
 
   voiceLogger.log(
@@ -2167,6 +2193,7 @@ export async function startDiscordBot({
         )
 
         if (!isOwner && !isAdmin && !canManageServer && !hasKimakiRole) {
+          await message.react('🔒')
           return
         }
       }
