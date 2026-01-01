@@ -2211,11 +2211,44 @@ export async function startDiscordBot({
         // Handle voice message if present
         let messageContent = message.content || ''
 
+        // Get session messages for transcription context
+        let sessionMessagesText: string | undefined
+        if (projectDirectory && row.session_id) {
+          try {
+            const getClient = await initializeOpencodeForDirectory(projectDirectory)
+            const messagesResponse = await getClient().session.messages({
+              path: { id: row.session_id },
+            })
+            const messages = messagesResponse.data || []
+            const recentMessages = messages.slice(-10)
+            sessionMessagesText = recentMessages
+              .map((m) => {
+                const role = m.info.role === 'user' ? 'User' : 'Assistant'
+                const text = (() => {
+                  if (m.info.role === 'user') {
+                    const textParts = (m.parts || []).filter((p) => p.type === 'text')
+                    return textParts
+                      .map((p) => ('text' in p ? p.text : ''))
+                      .filter(Boolean)
+                      .join('\n')
+                  }
+                  const assistantInfo = m.info as { text?: string }
+                  return assistantInfo.text?.slice(0, 500)
+                })()
+                return `[${role}]: ${text || '(no text)'}`
+              })
+              .join('\n\n')
+          } catch (e) {
+            voiceLogger.log(`Could not get session messages:`, e)
+          }
+        }
+
         const transcription = await processVoiceAttachment({
           message,
           thread,
           projectDirectory,
           appId: currentAppId,
+          sessionMessages: sessionMessagesText,
         })
         if (transcription) {
           messageContent = transcription
