@@ -1549,6 +1549,26 @@ async function handleOpencodeSession({
     existingController.abort(new Error('New request started'))
   }
 
+  // Auto-reject any pending permission for this thread so OpenCode can process new prompt
+  const pendingPerm = pendingPermissions.get(thread.id)
+  if (pendingPerm) {
+    try {
+      sessionLogger.log(`[PERMISSION] Auto-rejecting pending permission ${pendingPerm.permission.id} due to new message`)
+      await getClient().postSessionIdPermissionsPermissionId({
+        path: {
+          id: pendingPerm.permission.sessionID,
+          permissionID: pendingPerm.permission.id,
+        },
+        body: { response: 'reject' },
+      })
+      pendingPermissions.delete(thread.id)
+      await sendThreadMessage(thread, `⚠️ Previous permission request auto-rejected due to new message`)
+    } catch (e) {
+      sessionLogger.log(`[PERMISSION] Failed to auto-reject permission:`, e)
+      pendingPermissions.delete(thread.id)
+    }
+  }
+
   const abortController = new AbortController()
   abortControllers.set(session.id, abortController)
 
