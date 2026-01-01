@@ -1606,6 +1606,9 @@ async function handleOpencodeSession({
   // Start typing indicator immediately so user sees feedback
   thread.sendTyping().catch(() => {})
 
+  // Track session start time
+  const sessionStartTime = Date.now()
+
   // Use default directory if not specified
   const directory = projectDirectory || process.cwd()
   sessionLogger.log(`Using directory: ${directory}`)
