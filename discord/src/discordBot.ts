@@ -118,15 +118,19 @@ npx -y kimaki upload-to-discord --session ${sessionId} <file1> [file2] ...
 
 ## showing diffs
 
-After each message, if you implemented changes, you can show the user a diff via an url running the command, to show the changes in working directory:
+IMPORTANT: You MUST ALWAYS show the critique URL after editing any files. Run this command after making changes:
 
 bunx critique web
 
-you can also show latest commit changes using
+If there are other unrelated changes in the working directory, filter to only show the files you edited:
+
+bunx critique web -- path/to/file1.ts path/to/file2.ts
+
+You can also show latest commit changes using:
 
 bunx critique web HEAD~1
 
-do this in case you committed the changes yourself (only if the user asks so, never commit otherwise).
+Do this in case you committed the changes yourself (only if the user asks so, never commit otherwise).
 
 ## markdown
 
@@ -166,6 +170,8 @@ const voiceLogger = createLogger('VOICE')
 const opencodeLogger = createLogger('OPENCODE')
 const sessionLogger = createLogger('SESSION')
 const dbLogger = createLogger('DB')
+
+const SILENT_MESSAGE_FLAGS = 4 | 4096
 
 type StartOptions = {
   token: string
@@ -410,7 +416,7 @@ async function setupVoiceHandling({
             textChannelRow.channel_id,
           )
           if (textChannel?.isTextBased() && 'send' in textChannel) {
-            await textChannel.send(`⚠️ Voice session error: ${error}`)
+            await textChannel.send({ content: `⚠️ Voice session error: ${error}`, flags: SILENT_MESSAGE_FLAGS })
           }
         } catch (e) {
           voiceLogger.error('Failed to send error to text channel:', e)
@@ -796,7 +802,7 @@ async function sendThreadMessage(
     if (!chunk) {
       continue
     }
-    const message = await thread.send(chunk)
+    const message = await thread.send({ content: chunk, flags: SILENT_MESSAGE_FLAGS })
     if (i === 0) {
       firstMessage = message
     }
@@ -2248,10 +2254,10 @@ export async function startDiscordBot({
 
         if (projectDirectory && !fs.existsSync(projectDirectory)) {
           discordLogger.error(`Directory does not exist: ${projectDirectory}`)
-          await sendThreadMessage(
-            thread,
-            `✗ Directory does not exist: ${JSON.stringify(projectDirectory)}`,
-          )
+          await message.reply({
+            content: `✗ Directory does not exist: ${JSON.stringify(projectDirectory)}`,
+            flags: SILENT_MESSAGE_FLAGS,
+          })
           return
         }
 
@@ -2364,9 +2370,10 @@ export async function startDiscordBot({
 
         if (!fs.existsSync(projectDirectory)) {
           discordLogger.error(`Directory does not exist: ${projectDirectory}`)
-          await message.reply(
-            `✗ Directory does not exist: ${JSON.stringify(projectDirectory)}`,
-          )
+          await message.reply({
+            content: `✗ Directory does not exist: ${JSON.stringify(projectDirectory)}`,
+            flags: SILENT_MESSAGE_FLAGS,
+          })
           return
         }
 
@@ -2423,7 +2430,7 @@ export async function startDiscordBot({
       voiceLogger.error('Discord handler error:', error)
       try {
         const errMsg = error instanceof Error ? error.message : String(error)
-        await message.reply(`Error: ${errMsg}`)
+        await message.reply({ content: `Error: ${errMsg}`, flags: SILENT_MESSAGE_FLAGS })
       } catch {
         voiceLogger.error('Discord handler error (fallback):', error)
       }
@@ -2740,6 +2747,7 @@ export async function startDiscordBot({
               // Send a message first, then create thread from it
               const starterMessage = await textChannel.send({
                 content: `🚀 **Starting OpenCode session**\n📝 ${prompt.slice(0, 200)}${prompt.length > 200 ? '…' : ''}${files.length > 0 ? `\n📎 Files: ${files.join(', ')}` : ''}`,
+                flags: SILENT_MESSAGE_FLAGS,
               })
 
               // Create thread from the message
@@ -3070,6 +3078,7 @@ export async function startDiscordBot({
 
               const starterMessage = await textChannel.send({
                 content: `🚀 **New project initialized**\n📁 \`${projectDirectory}\``,
+                flags: SILENT_MESSAGE_FLAGS,
               })
 
               const thread = await starterMessage.startThread({
@@ -3104,6 +3113,7 @@ export async function startDiscordBot({
               await command.reply({
                 content: 'This command can only be used in a channel',
                 ephemeral: true,
+                flags: SILENT_MESSAGE_FLAGS,
               })
               return
             }
@@ -3118,6 +3128,7 @@ export async function startDiscordBot({
               await command.reply({
                 content: 'This command can only be used in a thread with an active session',
                 ephemeral: true,
+                flags: SILENT_MESSAGE_FLAGS,
               })
               return
             }
@@ -3127,6 +3138,7 @@ export async function startDiscordBot({
               await command.reply({
                 content: 'No pending permission request in this thread',
                 ephemeral: true,
+                flags: SILENT_MESSAGE_FLAGS,
               })
               return
             }
@@ -3148,7 +3160,7 @@ export async function startDiscordBot({
                 scope === 'always'
                   ? `✅ Permission **accepted** (auto-approve similar requests)`
                   : `✅ Permission **accepted**`
-              await command.reply(msg)
+              await command.reply({ content: msg, flags: SILENT_MESSAGE_FLAGS })
               sessionLogger.log(
                 `Permission ${pending.permission.id} accepted with scope: ${scope}`,
               )
@@ -3157,6 +3169,7 @@ export async function startDiscordBot({
               await command.reply({
                 content: `Failed to accept permission: ${error instanceof Error ? error.message : 'Unknown error'}`,
                 ephemeral: true,
+                flags: SILENT_MESSAGE_FLAGS,
               })
             }
           } else if (command.commandName === 'reject') {
@@ -3166,6 +3179,7 @@ export async function startDiscordBot({
               await command.reply({
                 content: 'This command can only be used in a channel',
                 ephemeral: true,
+                flags: SILENT_MESSAGE_FLAGS,
               })
               return
             }
@@ -3180,6 +3194,7 @@ export async function startDiscordBot({
               await command.reply({
                 content: 'This command can only be used in a thread with an active session',
                 ephemeral: true,
+                flags: SILENT_MESSAGE_FLAGS,
               })
               return
             }
@@ -3189,6 +3204,7 @@ export async function startDiscordBot({
               await command.reply({
                 content: 'No pending permission request in this thread',
                 ephemeral: true,
+                flags: SILENT_MESSAGE_FLAGS,
               })
               return
             }
@@ -3206,13 +3222,14 @@ export async function startDiscordBot({
               })
 
               pendingPermissions.delete(channel.id)
-              await command.reply(`❌ Permission **rejected**`)
+              await command.reply({ content: `❌ Permission **rejected**`, flags: SILENT_MESSAGE_FLAGS })
               sessionLogger.log(`Permission ${pending.permission.id} rejected`)
             } catch (error) {
               voiceLogger.error('[REJECT] Error:', error)
               await command.reply({
                 content: `Failed to reject permission: ${error instanceof Error ? error.message : 'Unknown error'}`,
                 ephemeral: true,
+                flags: SILENT_MESSAGE_FLAGS,
               })
             }
           } else if (command.commandName === 'abort') {
@@ -3222,6 +3239,7 @@ export async function startDiscordBot({
               await command.reply({
                 content: 'This command can only be used in a channel',
                 ephemeral: true,
+                flags: SILENT_MESSAGE_FLAGS,
               })
               return
             }
@@ -3236,6 +3254,7 @@ export async function startDiscordBot({
               await command.reply({
                 content: 'This command can only be used in a thread with an active session',
                 ephemeral: true,
+                flags: SILENT_MESSAGE_FLAGS,
               })
               return
             }
@@ -3247,6 +3266,7 @@ export async function startDiscordBot({
               await command.reply({
                 content: 'Could not determine project directory for this channel',
                 ephemeral: true,
+                flags: SILENT_MESSAGE_FLAGS,
               })
               return
             }
@@ -3259,6 +3279,7 @@ export async function startDiscordBot({
               await command.reply({
                 content: 'No active session in this thread',
                 ephemeral: true,
+                flags: SILENT_MESSAGE_FLAGS,
               })
               return
             }
@@ -3277,13 +3298,14 @@ export async function startDiscordBot({
                 path: { id: sessionId },
               })
 
-              await command.reply(`🛑 Request **aborted**`)
+              await command.reply({ content: `🛑 Request **aborted**`, flags: SILENT_MESSAGE_FLAGS })
               sessionLogger.log(`Session ${sessionId} aborted by user`)
             } catch (error) {
               voiceLogger.error('[ABORT] Error:', error)
               await command.reply({
                 content: `Failed to abort: ${error instanceof Error ? error.message : 'Unknown error'}`,
                 ephemeral: true,
+                flags: SILENT_MESSAGE_FLAGS,
               })
             }
           } else if (command.commandName === 'share') {
@@ -3293,6 +3315,7 @@ export async function startDiscordBot({
               await command.reply({
                 content: 'This command can only be used in a channel',
                 ephemeral: true,
+                flags: SILENT_MESSAGE_FLAGS,
               })
               return
             }
@@ -3307,6 +3330,7 @@ export async function startDiscordBot({
               await command.reply({
                 content: 'This command can only be used in a thread with an active session',
                 ephemeral: true,
+                flags: SILENT_MESSAGE_FLAGS,
               })
               return
             }
@@ -3318,6 +3342,7 @@ export async function startDiscordBot({
               await command.reply({
                 content: 'Could not determine project directory for this channel',
                 ephemeral: true,
+                flags: SILENT_MESSAGE_FLAGS,
               })
               return
             }
@@ -3330,6 +3355,7 @@ export async function startDiscordBot({
               await command.reply({
                 content: 'No active session in this thread',
                 ephemeral: true,
+                flags: SILENT_MESSAGE_FLAGS,
               })
               return
             }
@@ -3346,17 +3372,19 @@ export async function startDiscordBot({
                 await command.reply({
                   content: 'Failed to generate share URL',
                   ephemeral: true,
+                  flags: SILENT_MESSAGE_FLAGS,
                 })
                 return
               }
 
-              await command.reply(`🔗 **Session shared:** ${response.data.share.url}`)
+              await command.reply({ content: `🔗 **Session shared:** ${response.data.share.url}`, flags: SILENT_MESSAGE_FLAGS })
               sessionLogger.log(`Session ${sessionId} shared: ${response.data.share.url}`)
             } catch (error) {
               voiceLogger.error('[SHARE] Error:', error)
               await command.reply({
                 content: `Failed to share session: ${error instanceof Error ? error.message : 'Unknown error'}`,
                 ephemeral: true,
+                flags: SILENT_MESSAGE_FLAGS,
               })
             }
           }
