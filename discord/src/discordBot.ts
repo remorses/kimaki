@@ -1,11 +1,4 @@
-import {
-  type OpencodeClient,
-  type Part,
-  type FilePartInput,
-  type Permission,
-} from '@opencode-ai/sdk'
-
-import { createGenAIWorker, type GenAIWorker } from './genai-worker-wrapper.js'
+import type { FilePartInput } from '@opencode-ai/sdk'
 import { getDatabase, closeDatabase } from './database.js'
 import { initializeOpencodeForDirectory, getOpencodeServers } from './opencode.js'
 import {
@@ -14,14 +7,38 @@ import {
   getKimakiMetadata,
   escapeBackticksInCodeBlocks,
   splitMarkdownForDiscord,
-  escapeDiscordFormatting,
   SILENT_MESSAGE_FLAGS,
 } from './discord-utils.js'
 import { handleForkCommand, handleForkSelectMenu } from './fork.js'
+import { getOpencodeSystemMessage } from './system-message.js'
+import { formatPart, getFileAttachments, getTextAttachments } from './message-formatting.js'
+import {
+  ensureKimakiCategory,
+  ensureKimakiAudioCategory,
+  createProjectChannels,
+  getChannelsWithDescriptions,
+  type ChannelWithTags,
+} from './channel-management.js'
+import {
+  voiceConnections,
+  setupVoiceHandling,
+  cleanupVoiceConnection,
+  processVoiceAttachment,
+} from './voice-handler.js'
+import {
+  handleOpencodeSession,
+  parseSlashCommand,
+  abortControllers,
+  pendingPermissions,
+} from './session-handler.js'
 
 export { getDatabase, closeDatabase } from './database.js'
 export { initializeOpencodeForDirectory } from './opencode.js'
 export { escapeBackticksInCodeBlocks, splitMarkdownForDiscord } from './discord-utils.js'
+export { getOpencodeSystemMessage } from './system-message.js'
+export { ensureKimakiCategory, ensureKimakiAudioCategory, createProjectChannels, getChannelsWithDescriptions } from './channel-management.js'
+export type { ChannelWithTags } from './channel-management.js'
+
 import {
   ChannelType,
   Client,
@@ -30,8 +47,6 @@ import {
   Partials,
   PermissionsBitField,
   ThreadAutoArchiveDuration,
-  type CategoryChannel,
-  type Guild,
   type Interaction,
   type Message,
   type TextChannel,
@@ -42,969 +57,22 @@ import {
   joinVoiceChannel,
   VoiceConnectionStatus,
   entersState,
-  EndBehaviorType,
-  type VoiceConnection,
 } from '@discordjs/voice'
-import { exec } from 'node:child_process'
-import fs, { createWriteStream } from 'node:fs'
-import { mkdir } from 'node:fs/promises'
+import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
-import { promisify } from 'node:util'
-import { PassThrough, Transform, type TransformCallback } from 'node:stream'
-import * as prism from 'prism-media'
-import dedent from 'string-dedent'
-import { transcribeAudio } from './voice.js'
-import { extractTagsArrays, extractNonXmlContent } from './xml.js'
-import { formatMarkdownTables } from './format-tables.js'
-import prettyMilliseconds from 'pretty-ms'
-import type { Session } from '@google/genai'
+import { extractTagsArrays } from './xml.js'
 import { createLogger } from './logger.js'
-import { isAbortError } from './utils.js'
 import { setGlobalDispatcher, Agent } from 'undici'
-// disables the automatic 5 minutes abort after no body
+
 setGlobalDispatcher(new Agent({ headersTimeout: 0, bodyTimeout: 0 }))
-
-type ParsedCommand = {
-  isCommand: true
-  command: string
-  arguments: string
-} | {
-  isCommand: false
-}
-function parseSlashCommand(text: string): ParsedCommand {
-  const trimmed = text.trim()
-  if (!trimmed.startsWith('/')) {
-    return { isCommand: false }
-  }
-  const match = trimmed.match(/^\/(\S+)(?:\s+(.*))?$/)
-  if (!match) {
-    return { isCommand: false }
-  }
-  const command = match[1]!
-  const args = match[2]?.trim() || ''
-  return { isCommand: true, command, arguments: args }
-}
-
-export function getOpencodeSystemMessage({ sessionId }: { sessionId: string }) {
-  return `
-The user is reading your messages from inside Discord, via kimaki.xyz
-
-The user cannot see bash tool outputs. If there is important information in bash output, include it in your text response.
-
-Your current OpenCode session ID is: ${sessionId}
-
-## permissions
-
-Only users with these Discord permissions can send messages to the bot:
-- Server Owner
-- Administrator permission
-- Manage Server permission
-- "Kimaki" role (case-insensitive)
-
-## changing the model
-
-To change the model used by OpenCode, edit the project's \`opencode.json\` config file and set the \`model\` field:
-
-\`\`\`json
-{
-  "model": "anthropic/claude-sonnet-4-20250514"
-}
-\`\`\`
-
-Examples:
-- \`"anthropic/claude-sonnet-4-20250514"\` - Claude Sonnet 4
-- \`"anthropic/claude-opus-4-20250514"\` - Claude Opus 4
-- \`"openai/gpt-4o"\` - GPT-4o
-- \`"google/gemini-2.5-pro"\` - Gemini 2.5 Pro
-
-Format is \`provider/model-name\`. You can also set \`small_model\` for tasks like title generation.
-
-## uploading files to discord
-
-To upload files to the Discord thread (images, screenshots, long files that would clutter the chat), run:
-
-npx -y kimaki upload-to-discord --session ${sessionId} <file1> [file2] ...
-
-## showing diffs
-
-IMPORTANT: You MUST ALWAYS show the critique URL after editing any files. Run this command after making changes:
-
-bunx critique web
-
-If there are other unrelated changes in the working directory, filter to only show the files you edited:
-
-bunx critique web -- path/to/file1.ts path/to/file2.ts
-
-You can also show latest commit changes using:
-
-bunx critique web HEAD~1
-
-Do this in case you committed the changes yourself (only if the user asks so, never commit otherwise).
-
-## markdown
-
-discord does support basic markdown features like code blocks, code blocks languages, inline code, bold, italic, quotes, etc.
-
-the max heading level is 3, so do not use ####
-
-headings are discouraged anyway. instead try to use bold text for titles which renders more nicely in Discord
-
-## tables
-
-discord does NOT support markdown gfm tables.
-
-so instead of using full markdown tables ALWAYS show code snippets with space aligned cells:
-
-\`\`\`
-Item        Qty   Price
-----------  ---   -----
-Apples      10    $5
-Oranges     3     $2
-\`\`\`
-
-Using code blocks will make the content use monospaced font so that space will be aligned correctly
-
-IMPORTANT: add enough space characters to align the table! otherwise the content will not look good and will be difficult to understand for the user
-
-code blocks for tables and diagrams MUST have Max length of 85 characters. otherwise the content will wrap
-
-## diagrams
-
-you can create diagrams wrapping them in code blocks too.
-`
-}
 
 const discordLogger = createLogger('DISCORD')
 const voiceLogger = createLogger('VOICE')
-const sessionLogger = createLogger('SESSION')
 
 type StartOptions = {
   token: string
   appId?: string
-}
-
-// Map of session ID to current AbortController
-const abortControllers = new Map<string, AbortController>()
-
-// Map of guild ID to voice connection and GenAI worker
-const voiceConnections = new Map<
-  string,
-  {
-    connection: VoiceConnection
-    genAiWorker?: GenAIWorker
-    userAudioStream?: fs.WriteStream
-  }
->()
-
-// Map of thread ID to pending permission (only one pending permission per thread)
-const pendingPermissions = new Map<
-  string,
-  { permission: Permission; messageId: string; directory: string }
->()
-
-function convertToMono16k(buffer: Buffer): Buffer {
-  // Parameters
-  const inputSampleRate = 48000
-  const outputSampleRate = 16000
-  const ratio = inputSampleRate / outputSampleRate
-  const inputChannels = 2 // Stereo
-  const bytesPerSample = 2 // 16-bit
-
-  // Calculate output buffer size
-  const inputSamples = buffer.length / (bytesPerSample * inputChannels)
-  const outputSamples = Math.floor(inputSamples / ratio)
-  const outputBuffer = Buffer.alloc(outputSamples * bytesPerSample)
-
-  // Process each output sample
-  for (let i = 0; i < outputSamples; i++) {
-    // Find the corresponding input sample
-    const inputIndex = Math.floor(i * ratio) * inputChannels * bytesPerSample
-
-    // Average the left and right channels for mono conversion
-    if (inputIndex + 3 < buffer.length) {
-      const leftSample = buffer.readInt16LE(inputIndex)
-      const rightSample = buffer.readInt16LE(inputIndex + 2)
-      const monoSample = Math.round((leftSample + rightSample) / 2)
-
-      // Write to output buffer
-      outputBuffer.writeInt16LE(monoSample, i * bytesPerSample)
-    }
-  }
-
-  return outputBuffer
-}
-
-// Create user audio log stream for debugging
-async function createUserAudioLogStream(
-  guildId: string,
-  channelId: string,
-): Promise<fs.WriteStream | undefined> {
-  if (!process.env.DEBUG) return undefined
-
-  const timestamp = new Date().toISOString().replace(/[:.]/g, '-')
-  const audioDir = path.join(
-    process.cwd(),
-    'discord-audio-logs',
-    guildId,
-    channelId,
-  )
-
-  try {
-    await mkdir(audioDir, { recursive: true })
-
-    // Create stream for user audio (16kHz mono s16le PCM)
-    const inputFileName = `user_${timestamp}.16.pcm`
-    const inputFilePath = path.join(audioDir, inputFileName)
-    const inputAudioStream = createWriteStream(inputFilePath)
-    voiceLogger.log(`Created user audio log: ${inputFilePath}`)
-
-    return inputAudioStream
-  } catch (error) {
-    voiceLogger.error('Failed to create audio log directory:', error)
-    return undefined
-  }
-}
-
-// Set up voice handling for a connection (called once per connection)
-async function setupVoiceHandling({
-  connection,
-  guildId,
-  channelId,
-  appId,
-  discordClient,
-}: {
-  connection: VoiceConnection
-  guildId: string
-  channelId: string
-  appId: string
-  discordClient: Client
-}) {
-  voiceLogger.log(
-    `Setting up voice handling for guild ${guildId}, channel ${channelId}`,
-  )
-
-  // Check if this voice channel has an associated directory
-  const channelDirRow = getDatabase()
-    .prepare(
-      'SELECT directory FROM channel_directories WHERE channel_id = ? AND channel_type = ?',
-    )
-    .get(channelId, 'voice') as { directory: string } | undefined
-
-  if (!channelDirRow) {
-    voiceLogger.log(
-      `Voice channel ${channelId} has no associated directory, skipping setup`,
-    )
-    return
-  }
-
-  const directory = channelDirRow.directory
-  voiceLogger.log(`Found directory for voice channel: ${directory}`)
-
-  // Get voice data
-  const voiceData = voiceConnections.get(guildId)
-  if (!voiceData) {
-    voiceLogger.error(`No voice data found for guild ${guildId}`)
-    return
-  }
-
-  // Create user audio stream for debugging
-  voiceData.userAudioStream = await createUserAudioLogStream(guildId, channelId)
-
-  // Get API keys from database
-  const apiKeys = getDatabase()
-    .prepare('SELECT gemini_api_key FROM bot_api_keys WHERE app_id = ?')
-    .get(appId) as { gemini_api_key: string | null } | undefined
-
-  // Create GenAI worker
-  const genAiWorker = await createGenAIWorker({
-    directory,
-    guildId,
-    channelId,
-    appId,
-    geminiApiKey: apiKeys?.gemini_api_key,
-    systemMessage: dedent`
-    You are Kimaki, an AI similar to Jarvis: you help your user (an engineer) controlling his coding agent, just like Jarvis controls Ironman armor and machines. Speak fast.
-
-    You should talk like Jarvis, British accent, satirical, joking and calm. Be short and concise. Speak fast.
-
-    After tool calls give a super short summary of the assistant message, you should say what the assistant message writes.
-
-    Before starting a new session ask for confirmation if it is not clear if the user finished describing it. ask "message ready, send?"
-
-    NEVER repeat the whole tool call parameters or message.
-
-    Your job is to manage many opencode agent chat instances. Opencode is the agent used to write the code, it is similar to Claude Code.
-
-    For everything the user asks it is implicit that the user is asking for you to proxy the requests to opencode sessions.
-
-    You can
-    - start new chats on a given project
-    - read the chats to report progress to the user
-    - submit messages to the chat
-    - list files for a given projects, so you can translate imprecise user prompts to precise messages that mention filename paths using @
-
-    Common patterns
-    - to get the last session use the listChats tool
-    - when user asks you to do something you submit a new session to do it. it's implicit that you proxy requests to the agents chat!
-    - when you submit a session assume the session will take a minute or 2 to complete the task
-
-    Rules
-    - never spell files by mentioning dots, letters, etc. instead give a brief description of the filename
-    - NEVER spell hashes or IDs
-    - never read session ids or other ids
-
-    Your voice is calm and monotone, NEVER excited and goofy. But you speak without jargon or bs and do veiled short jokes.
-    You speak like you knew something other don't. You are cool and cold.
-    `,
-    onAssistantOpusPacket(packet) {
-      // Opus packets are sent at 20ms intervals from worker, play directly
-      if (connection.state.status !== VoiceConnectionStatus.Ready) {
-        voiceLogger.log('Skipping packet: connection not ready')
-        return
-      }
-
-      try {
-        connection.setSpeaking(true)
-        connection.playOpusPacket(Buffer.from(packet))
-      } catch (error) {
-        voiceLogger.error('Error sending packet:', error)
-      }
-    },
-    onAssistantStartSpeaking() {
-      voiceLogger.log('Assistant started speaking')
-      connection.setSpeaking(true)
-    },
-    onAssistantStopSpeaking() {
-      voiceLogger.log('Assistant stopped speaking (natural finish)')
-      connection.setSpeaking(false)
-    },
-    onAssistantInterruptSpeaking() {
-      voiceLogger.log('Assistant interrupted while speaking')
-      genAiWorker.interrupt()
-      connection.setSpeaking(false)
-    },
-    onToolCallCompleted(params) {
-      const text = params.error
-        ? `<systemMessage>\nThe coding agent encountered an error while processing session ${params.sessionId}: ${params.error?.message || String(params.error)}\n</systemMessage>`
-        : `<systemMessage>\nThe coding agent finished working on session ${params.sessionId}\n\nHere's what the assistant wrote:\n${params.markdown}\n</systemMessage>`
-
-      genAiWorker.sendTextInput(text)
-    },
-    async onError(error) {
-      voiceLogger.error('GenAI worker error:', error)
-      const textChannelRow = getDatabase()
-        .prepare(
-          `SELECT cd2.channel_id FROM channel_directories cd1
-           JOIN channel_directories cd2 ON cd1.directory = cd2.directory
-           WHERE cd1.channel_id = ? AND cd1.channel_type = 'voice' AND cd2.channel_type = 'text'`,
-        )
-        .get(channelId) as { channel_id: string } | undefined
-
-      if (textChannelRow) {
-        try {
-          const textChannel = await discordClient.channels.fetch(
-            textChannelRow.channel_id,
-          )
-          if (textChannel?.isTextBased() && 'send' in textChannel) {
-            await textChannel.send({ content: `⚠️ Voice session error: ${error}`, flags: SILENT_MESSAGE_FLAGS })
-          }
-        } catch (e) {
-          voiceLogger.error('Failed to send error to text channel:', e)
-        }
-      }
-    },
-  })
-
-  // Stop any existing GenAI worker before storing new one
-  if (voiceData.genAiWorker) {
-    voiceLogger.log('Stopping existing GenAI worker before creating new one')
-    await voiceData.genAiWorker.stop()
-  }
-
-  // Send initial greeting
-  genAiWorker.sendTextInput(
-    `<systemMessage>\nsay "Hello boss, how we doing today?"\n</systemMessage>`,
-  )
-
-  voiceData.genAiWorker = genAiWorker
-
-  // Set up voice receiver for user input
-  const receiver = connection.receiver
-
-  // Remove all existing listeners to prevent accumulation
-  receiver.speaking.removeAllListeners('start')
-
-  // Counter to track overlapping speaking sessions
-  let speakingSessionCount = 0
-
-  receiver.speaking.on('start', (userId) => {
-    voiceLogger.log(`User ${userId} started speaking`)
-
-    // Increment session count for this new speaking session
-    speakingSessionCount++
-    const currentSessionCount = speakingSessionCount
-    voiceLogger.log(`Speaking session ${currentSessionCount} started`)
-
-    const audioStream = receiver.subscribe(userId, {
-      end: { behavior: EndBehaviorType.AfterSilence, duration: 500 },
-    })
-
-    const decoder = new prism.opus.Decoder({
-      rate: 48000,
-      channels: 2,
-      frameSize: 960,
-    })
-
-    // Add error handler to prevent crashes from corrupted data
-    decoder.on('error', (error) => {
-      voiceLogger.error(`Opus decoder error for user ${userId}:`, error)
-    })
-
-    // Transform to downsample 48k stereo -> 16k mono
-    const downsampleTransform = new Transform({
-      transform(chunk: Buffer, _encoding, callback) {
-        try {
-          const downsampled = convertToMono16k(chunk)
-          callback(null, downsampled)
-        } catch (error) {
-          callback(error as Error)
-        }
-      },
-    })
-
-    const framer = frameMono16khz()
-
-    const pipeline = audioStream
-      .pipe(decoder)
-      .pipe(downsampleTransform)
-      .pipe(framer)
-
-    pipeline
-      .on('data', (frame: Buffer) => {
-        // Check if a newer speaking session has started
-        if (currentSessionCount !== speakingSessionCount) {
-          // voiceLogger.log(
-          //   `Skipping audio frame from session ${currentSessionCount} because newer session ${speakingSessionCount} has started`,
-          // )
-          return
-        }
-
-        if (!voiceData.genAiWorker) {
-          voiceLogger.warn(
-            `[VOICE] Received audio frame but no GenAI worker active for guild ${guildId}`,
-          )
-          return
-        }
-        // voiceLogger.debug('User audio chunk length', frame.length)
-
-        // Write to PCM file if stream exists
-        voiceData.userAudioStream?.write(frame)
-
-        // stream incrementally — low latency
-        voiceData.genAiWorker.sendRealtimeInput({
-          audio: {
-            mimeType: 'audio/pcm;rate=16000',
-            data: frame.toString('base64'),
-          },
-        })
-      })
-      .on('end', () => {
-        // Only send audioStreamEnd if this is still the current session
-        if (currentSessionCount === speakingSessionCount) {
-          voiceLogger.log(
-            `User ${userId} stopped speaking (session ${currentSessionCount})`,
-          )
-          voiceData.genAiWorker?.sendRealtimeInput({
-            audioStreamEnd: true,
-          })
-        } else {
-          voiceLogger.log(
-            `User ${userId} stopped speaking (session ${currentSessionCount}), but skipping audioStreamEnd because newer session ${speakingSessionCount} exists`,
-          )
-        }
-      })
-      .on('error', (error) => {
-        voiceLogger.error(`Pipeline error for user ${userId}:`, error)
-      })
-
-    // Also add error handlers to individual stream components
-    audioStream.on('error', (error) => {
-      voiceLogger.error(`Audio stream error for user ${userId}:`, error)
-    })
-
-    downsampleTransform.on('error', (error) => {
-      voiceLogger.error(`Downsample transform error for user ${userId}:`, error)
-    })
-
-    framer.on('error', (error) => {
-      voiceLogger.error(`Framer error for user ${userId}:`, error)
-    })
-  })
-}
-
-function frameMono16khz(): Transform {
-  // Hardcoded: 16 kHz, mono, 16-bit PCM, 20 ms -> 320 samples -> 640 bytes
-  const FRAME_BYTES =
-    (100 /*ms*/ * 16_000 /*Hz*/ * 1 /*channels*/ * 2) /*bytes per sample*/ /
-    1000
-  let stash: Buffer = Buffer.alloc(0)
-  let offset = 0
-
-  return new Transform({
-    readableObjectMode: false,
-    writableObjectMode: false,
-
-    transform(chunk: Buffer, _enc: BufferEncoding, cb: TransformCallback) {
-      // Normalize stash so offset is always 0 before appending
-      if (offset > 0) {
-        // Drop already-consumed prefix without copying the rest twice
-        stash = stash.subarray(offset)
-        offset = 0
-      }
-
-      // Append new data (single concat per incoming chunk)
-      stash = stash.length ? Buffer.concat([stash, chunk]) : chunk
-
-      // Emit as many full 20 ms frames as we can
-      while (stash.length - offset >= FRAME_BYTES) {
-        this.push(stash.subarray(offset, offset + FRAME_BYTES))
-        offset += FRAME_BYTES
-      }
-
-      // If everything was consumed exactly, reset to empty buffer
-      if (offset === stash.length) {
-        stash = Buffer.alloc(0)
-        offset = 0
-      }
-
-      cb()
-    },
-
-    flush(cb: TransformCallback) {
-      // We intentionally drop any trailing partial (< 20 ms) to keep framing strict.
-      // If you prefer to emit it, uncomment the next line:
-      // if (stash.length - offset > 0) this.push(stash.subarray(offset));
-      stash = Buffer.alloc(0)
-      offset = 0
-      cb()
-    },
-  })
-}
-
-export async function ensureKimakiCategory(guild: Guild): Promise<CategoryChannel> {
-  const existingCategory = guild.channels.cache.find(
-    (channel): channel is CategoryChannel => {
-      if (channel.type !== ChannelType.GuildCategory) {
-        return false
-      }
-
-      return channel.name.toLowerCase() === 'kimaki'
-    },
-  )
-
-  if (existingCategory) {
-    return existingCategory
-  }
-
-  return guild.channels.create({
-    name: 'Kimaki',
-    type: ChannelType.GuildCategory,
-  })
-}
-
-export async function ensureKimakiAudioCategory(guild: Guild): Promise<CategoryChannel> {
-  const existingCategory = guild.channels.cache.find(
-    (channel): channel is CategoryChannel => {
-      if (channel.type !== ChannelType.GuildCategory) {
-        return false
-      }
-
-      return channel.name.toLowerCase() === 'kimaki audio'
-    },
-  )
-
-  if (existingCategory) {
-    return existingCategory
-  }
-
-  return guild.channels.create({
-    name: 'Kimaki Audio',
-    type: ChannelType.GuildCategory,
-  })
-}
-
-export async function createProjectChannels({
-  guild,
-  projectDirectory,
-  appId,
-}: {
-  guild: Guild
-  projectDirectory: string
-  appId: string
-}): Promise<{ textChannelId: string; voiceChannelId: string; channelName: string }> {
-  const baseName = path.basename(projectDirectory)
-  const channelName = `${baseName}`
-    .toLowerCase()
-    .replace(/[^a-z0-9-]/g, '-')
-    .slice(0, 100)
-
-  const kimakiCategory = await ensureKimakiCategory(guild)
-  const kimakiAudioCategory = await ensureKimakiAudioCategory(guild)
-
-  const textChannel = await guild.channels.create({
-    name: channelName,
-    type: ChannelType.GuildText,
-    parent: kimakiCategory,
-    topic: `<kimaki><directory>${projectDirectory}</directory><app>${appId}</app></kimaki>`,
-  })
-
-  const voiceChannel = await guild.channels.create({
-    name: channelName,
-    type: ChannelType.GuildVoice,
-    parent: kimakiAudioCategory,
-  })
-
-  getDatabase()
-    .prepare(
-      'INSERT OR REPLACE INTO channel_directories (channel_id, directory, channel_type) VALUES (?, ?, ?)',
-    )
-    .run(textChannel.id, projectDirectory, 'text')
-
-  getDatabase()
-    .prepare(
-      'INSERT OR REPLACE INTO channel_directories (channel_id, directory, channel_type) VALUES (?, ?, ?)',
-    )
-    .run(voiceChannel.id, projectDirectory, 'voice')
-
-  return {
-    textChannelId: textChannel.id,
-    voiceChannelId: voiceChannel.id,
-    channelName,
-  }
-}
-
-async function processVoiceAttachment({
-  message,
-  thread,
-  projectDirectory,
-  isNewThread = false,
-  appId,
-  sessionMessages,
-}: {
-  message: Message
-  thread: ThreadChannel
-  projectDirectory?: string
-  isNewThread?: boolean
-  appId?: string
-  sessionMessages?: string
-}): Promise<string | null> {
-  const audioAttachment = Array.from(message.attachments.values()).find(
-    (attachment) => attachment.contentType?.startsWith('audio/'),
-  )
-
-  if (!audioAttachment) return null
-
-  voiceLogger.log(
-    `Detected audio attachment: ${audioAttachment.name} (${audioAttachment.contentType})`,
-  )
-
-  await sendThreadMessage(thread, '🎤 Transcribing voice message...')
-
-  const audioResponse = await fetch(audioAttachment.url)
-  const audioBuffer = Buffer.from(await audioResponse.arrayBuffer())
-
-  voiceLogger.log(`Downloaded ${audioBuffer.length} bytes, transcribing...`)
-
-  // Get project file tree for context if directory is provided
-  let transcriptionPrompt = 'Discord voice message transcription'
-
-  if (projectDirectory) {
-    try {
-      voiceLogger.log(`Getting project file tree from ${projectDirectory}`)
-      // Use git ls-files to get tracked files, then pipe to tree
-      const execAsync = promisify(exec)
-      const { stdout } = await execAsync('git ls-files | tree --fromfile -a', {
-        cwd: projectDirectory,
-      })
-      const result = stdout
-
-      if (result) {
-        transcriptionPrompt = `Discord voice message transcription. Project file structure:\n${result}\n\nPlease transcribe file names and paths accurately based on this context.`
-        voiceLogger.log(`Added project context to transcription prompt`)
-      }
-    } catch (e) {
-      voiceLogger.log(`Could not get project tree:`, e)
-    }
-  }
-
-  // Get Gemini API key from database if appId is provided
-  let geminiApiKey: string | undefined
-  if (appId) {
-    const apiKeys = getDatabase()
-      .prepare('SELECT gemini_api_key FROM bot_api_keys WHERE app_id = ?')
-      .get(appId) as { gemini_api_key: string | null } | undefined
-
-    if (apiKeys?.gemini_api_key) {
-      geminiApiKey = apiKeys.gemini_api_key
-    }
-  }
-
-  const transcription = await transcribeAudio({
-    audio: audioBuffer,
-    prompt: transcriptionPrompt,
-    geminiApiKey,
-    directory: projectDirectory,
-    sessionMessages,
-  })
-
-  voiceLogger.log(
-    `Transcription successful: "${transcription.slice(0, 50)}${transcription.length > 50 ? '...' : ''}"`,
-  )
-
-  // Update thread name with transcribed content only for new threads
-  if (isNewThread) {
-    const threadName = transcription.replace(/\s+/g, ' ').trim().slice(0, 80)
-    if (threadName) {
-      try {
-        await Promise.race([
-          thread.setName(threadName),
-          new Promise((resolve) => setTimeout(resolve, 2000)),
-        ])
-        discordLogger.log(`Updated thread name to: "${threadName}"`)
-      } catch (e) {
-        discordLogger.log(`Could not update thread name:`, e)
-      }
-    }
-  }
-
-  await sendThreadMessage(
-    thread,
-    `📝 **Transcribed message:** ${escapeDiscordFormatting(transcription)}`,
-  )
-  return transcription
-}
-
-const TEXT_MIME_TYPES = [
-  'text/',
-  'application/json',
-  'application/xml',
-  'application/javascript',
-  'application/typescript',
-  'application/x-yaml',
-  'application/toml',
-]
-
-function isTextMimeType(contentType: string | null): boolean {
-  if (!contentType) {
-    return false
-  }
-  return TEXT_MIME_TYPES.some((prefix) => contentType.startsWith(prefix))
-}
-
-async function getTextAttachments(message: Message): Promise<string> {
-  const textAttachments = Array.from(message.attachments.values()).filter(
-    (attachment) => isTextMimeType(attachment.contentType),
-  )
-
-  if (textAttachments.length === 0) {
-    return ''
-  }
-
-  const textContents = await Promise.all(
-    textAttachments.map(async (attachment) => {
-      try {
-        const response = await fetch(attachment.url)
-        if (!response.ok) {
-          return `<attachment filename="${attachment.name}" error="Failed to fetch: ${response.status}" />`
-        }
-        const text = await response.text()
-        return `<attachment filename="${attachment.name}" mime="${attachment.contentType}">\n${text}\n</attachment>`
-      } catch (error) {
-        const errMsg = error instanceof Error ? error.message : String(error)
-        return `<attachment filename="${attachment.name}" error="${errMsg}" />`
-      }
-    }),
-  )
-
-  return textContents.join('\n\n')
-}
-
-function getFileAttachments(message: Message): FilePartInput[] {
-  const fileAttachments = Array.from(message.attachments.values()).filter(
-    (attachment) => {
-      const contentType = attachment.contentType || ''
-      return (
-        contentType.startsWith('image/') || contentType === 'application/pdf'
-      )
-    },
-  )
-
-  return fileAttachments.map((attachment) => ({
-    type: 'file' as const,
-    mime: attachment.contentType || 'application/octet-stream',
-    filename: attachment.name,
-    url: attachment.url,
-  }))
-}
-
-function getToolSummaryText(part: Part): string {
-  if (part.type !== 'tool') return ''
-
-  if (part.tool === 'edit') {
-    const filePath = (part.state.input?.filePath as string) || ''
-    const newString = (part.state.input?.newString as string) || ''
-    const oldString = (part.state.input?.oldString as string) || ''
-    const added = newString.split('\n').length
-    const removed = oldString.split('\n').length
-    const fileName = filePath.split('/').pop() || ''
-    return fileName ? `*${fileName}* (+${added}-${removed})` : `(+${added}-${removed})`
-  }
-
-  if (part.tool === 'write') {
-    const filePath = (part.state.input?.filePath as string) || ''
-    const content = (part.state.input?.content as string) || ''
-    const lines = content.split('\n').length
-    const fileName = filePath.split('/').pop() || ''
-    return fileName ? `*${fileName}* (${lines} line${lines === 1 ? '' : 's'})` : `(${lines} line${lines === 1 ? '' : 's'})`
-  }
-
-  if (part.tool === 'webfetch') {
-    const url = (part.state.input?.url as string) || ''
-    const urlWithoutProtocol = url.replace(/^https?:\/\//, '')
-    return urlWithoutProtocol ? `*${urlWithoutProtocol}*` : ''
-  }
-
-  if (part.tool === 'read') {
-    const filePath = (part.state.input?.filePath as string) || ''
-    const fileName = filePath.split('/').pop() || ''
-    return fileName ? `*${fileName}*` : ''
-  }
-
-  if (part.tool === 'list') {
-    const path = (part.state.input?.path as string) || ''
-    const dirName = path.split('/').pop() || path
-    return dirName ? `*${dirName}*` : ''
-  }
-
-  if (part.tool === 'glob') {
-    const pattern = (part.state.input?.pattern as string) || ''
-    return pattern ? `*${pattern}*` : ''
-  }
-
-  if (part.tool === 'grep') {
-    const pattern = (part.state.input?.pattern as string) || ''
-    return pattern ? `*${pattern}*` : ''
-  }
-
-  if (part.tool === 'bash' || part.tool === 'todoread' || part.tool === 'todowrite') {
-    return ''
-  }
-
-  if (part.tool === 'task') {
-    const description = (part.state.input?.description as string) || ''
-    return description ? `_${description}_` : ''
-  }
-
-  if (part.tool === 'skill') {
-    const name = (part.state.input?.name as string) || ''
-    return name ? `_${name}_` : ''
-  }
-
-  if (!part.state.input) return ''
-
-  const inputFields = Object.entries(part.state.input)
-    .map(([key, value]) => {
-      if (value === null || value === undefined) return null
-      const stringValue = typeof value === 'string' ? value : JSON.stringify(value)
-      const truncatedValue = stringValue.length > 300 ? stringValue.slice(0, 300) + '…' : stringValue
-      return `${key}: ${truncatedValue}`
-    })
-    .filter(Boolean)
-
-  if (inputFields.length === 0) return ''
-
-  return `(${inputFields.join(', ')})`
-}
-
-function formatTodoList(part: Part): string {
-  if (part.type !== 'tool' || part.tool !== 'todowrite') return ''
-  const todos =
-    (part.state.input?.todos as {
-      content: string
-      status: 'pending' | 'in_progress' | 'completed' | 'cancelled'
-    }[]) || []
-  const activeIndex = todos.findIndex((todo) => {
-    return todo.status === 'in_progress'
-  })
-  const activeTodo = todos[activeIndex]
-  if (activeIndex === -1 || !activeTodo) return ''
-  return `${activeIndex + 1}. **${activeTodo.content}**`
-}
-
-function formatPart(part: Part): string {
-  if (part.type === 'text') {
-    return part.text || ''
-  }
-
-  if (part.type === 'reasoning') {
-    if (!part.text?.trim()) return ''
-    return `◼︎ thinking`
-  }
-
-  if (part.type === 'file') {
-    return `📄 ${part.filename || 'File'}`
-  }
-
-  if (part.type === 'step-start' || part.type === 'step-finish' || part.type === 'patch') {
-    return ''
-  }
-
-  if (part.type === 'agent') {
-    return `◼︎ agent ${part.id}`
-  }
-
-  if (part.type === 'snapshot') {
-    return `◼︎ snapshot ${part.snapshot}`
-  }
-
-  if (part.type === 'tool') {
-    if (part.tool === 'todowrite') {
-      return formatTodoList(part)
-    }
-
-    if (part.state.status === 'pending') {
-      return ''
-    }
-
-    const summaryText = getToolSummaryText(part)
-    const stateTitle = 'title' in part.state ? part.state.title : undefined
-
-    let toolTitle = ''
-    if (part.state.status === 'error') {
-      toolTitle = part.state.error || 'error'
-    } else if (part.tool === 'bash') {
-      const command = (part.state.input?.command as string) || ''
-      const description = (part.state.input?.description as string) || ''
-      const isSingleLine = !command.includes('\n')
-      const hasUnderscores = command.includes('_')
-      if (isSingleLine && !hasUnderscores && command.length <= 50) {
-        toolTitle = `_${command}_`
-      } else if (description) {
-        toolTitle = `_${description}_`
-      } else if (stateTitle) {
-        toolTitle = `_${stateTitle}_`
-      }
-    } else if (stateTitle) {
-      toolTitle = `_${stateTitle}_`
-    }
-
-    const icon = part.state.status === 'error' ? '⨯' : '◼︎'
-    return `${icon} ${part.tool} ${toolTitle} ${summaryText}`
-  }
-
-  discordLogger.warn('Unknown part type:', part)
-  return ''
 }
 
 export async function createDiscordClient() {
@@ -1024,621 +92,6 @@ export async function createDiscordClient() {
   })
 }
 
-async function handleOpencodeSession({
-  prompt,
-  thread,
-  projectDirectory,
-  originalMessage,
-  images = [],
-  parsedCommand,
-}: {
-  prompt: string
-  thread: ThreadChannel
-  projectDirectory?: string
-  originalMessage?: Message
-  images?: FilePartInput[]
-  parsedCommand?: ParsedCommand
-}): Promise<{ sessionID: string; result: any; port?: number } | undefined> {
-  voiceLogger.log(
-    `[OPENCODE SESSION] Starting for thread ${thread.id} with prompt: "${prompt.slice(0, 50)}${prompt.length > 50 ? '...' : ''}"`,
-  )
-
-  // Track session start time
-  const sessionStartTime = Date.now()
-
-  // Use default directory if not specified
-  const directory = projectDirectory || process.cwd()
-  sessionLogger.log(`Using directory: ${directory}`)
-
-  // Note: We'll cancel the existing request after we have the session ID
-
-  const getClient = await initializeOpencodeForDirectory(directory)
-
-  // Get the port for this directory
-  const serverEntry = getOpencodeServers().get(directory)
-  const port = serverEntry?.port
-
-  // Get session ID from database
-  const row = getDatabase()
-    .prepare('SELECT session_id FROM thread_sessions WHERE thread_id = ?')
-    .get(thread.id) as { session_id: string } | undefined
-  let sessionId = row?.session_id
-  let session
-
-  if (sessionId) {
-    sessionLogger.log(`Attempting to reuse existing session ${sessionId}`)
-    try {
-      const sessionResponse = await getClient().session.get({
-        path: { id: sessionId },
-      })
-      session = sessionResponse.data
-      sessionLogger.log(`Successfully reused session ${sessionId}`)
-    } catch (error) {
-      voiceLogger.log(
-        `[SESSION] Session ${sessionId} not found, will create new one`,
-      )
-    }
-  }
-
-  if (!session) {
-    const sessionTitle = prompt.length > 80 ? prompt.slice(0, 77) + '...' : prompt.slice(0, 80)
-    voiceLogger.log(
-      `[SESSION] Creating new session with title: "${sessionTitle}"`,
-    )
-    const sessionResponse = await getClient().session.create({
-      body: { title: sessionTitle },
-    })
-    session = sessionResponse.data
-    sessionLogger.log(`Created new session ${session?.id}`)
-  }
-
-  if (!session) {
-    throw new Error('Failed to create or get session')
-  }
-
-  // Store session ID in database
-  getDatabase()
-    .prepare(
-      'INSERT OR REPLACE INTO thread_sessions (thread_id, session_id) VALUES (?, ?)',
-    )
-    .run(thread.id, session.id)
-  sessionLogger.log(`Stored session ${session.id} for thread ${thread.id}`)
-
-  // Cancel any existing request for this session
-  const existingController = abortControllers.get(session.id)
-  if (existingController) {
-    voiceLogger.log(
-      `[ABORT] Cancelling existing request for session: ${session.id}`,
-    )
-    existingController.abort(new Error('New request started'))
-  }
-
-  // Auto-reject any pending permission for this thread so OpenCode can process new prompt
-  const pendingPerm = pendingPermissions.get(thread.id)
-  if (pendingPerm) {
-    try {
-      sessionLogger.log(`[PERMISSION] Auto-rejecting pending permission ${pendingPerm.permission.id} due to new message`)
-      await getClient().postSessionIdPermissionsPermissionId({
-        path: {
-          id: pendingPerm.permission.sessionID,
-          permissionID: pendingPerm.permission.id,
-        },
-        body: { response: 'reject' },
-      })
-      pendingPermissions.delete(thread.id)
-      await sendThreadMessage(thread, `⚠️ Previous permission request auto-rejected due to new message`)
-    } catch (e) {
-      sessionLogger.log(`[PERMISSION] Failed to auto-reject permission:`, e)
-      pendingPermissions.delete(thread.id)
-    }
-  }
-
-  const abortController = new AbortController()
-  abortControllers.set(session.id, abortController)
-
-  if (existingController) {
-    await new Promise((resolve) => { setTimeout(resolve, 200) })
-    if (abortController.signal.aborted) {
-      sessionLogger.log(`[DEBOUNCE] Request was superseded during wait, exiting`)
-      return
-    }
-  }
-
-  if (abortController.signal.aborted) {
-    sessionLogger.log(`[DEBOUNCE] Aborted before subscribe, exiting`)
-    return
-  }
-
-  const eventsResult = await getClient().event.subscribe({
-    signal: abortController.signal,
-  })
-
-  if (abortController.signal.aborted) {
-    sessionLogger.log(`[DEBOUNCE] Aborted during subscribe, exiting`)
-    return
-  }
-
-  const events = eventsResult.stream
-  sessionLogger.log(`Subscribed to OpenCode events`)
-
-  const sentPartIds = new Set<string>(
-    (getDatabase()
-      .prepare('SELECT part_id FROM part_messages WHERE thread_id = ?')
-      .all(thread.id) as { part_id: string }[])
-      .map((row) => row.part_id)
-  )
-
-  let currentParts: Part[] = []
-  let stopTyping: (() => void) | null = null
-  let usedModel: string | undefined
-  let usedProviderID: string | undefined
-  let tokensUsedInSession = 0
-  let lastDisplayedContextPercentage = 0
-  let modelContextLimit: number | undefined
-
-  let typingInterval: NodeJS.Timeout | null = null
-
-  function startTyping(): () => void {
-    if (abortController.signal.aborted) {
-      discordLogger.log(`Not starting typing, already aborted`)
-      return () => {}
-    }
-    if (typingInterval) {
-      clearInterval(typingInterval)
-      typingInterval = null
-    }
-
-    thread.sendTyping().catch((e) => {
-      discordLogger.log(`Failed to send initial typing: ${e}`)
-    })
-
-    typingInterval = setInterval(() => {
-      thread.sendTyping().catch((e) => {
-        discordLogger.log(`Failed to send periodic typing: ${e}`)
-      })
-    }, 8000)
-
-    if (!abortController.signal.aborted) {
-      abortController.signal.addEventListener(
-        'abort',
-        () => {
-          if (typingInterval) {
-            clearInterval(typingInterval)
-            typingInterval = null
-          }
-        },
-        { once: true },
-      )
-    }
-
-    return () => {
-      if (typingInterval) {
-        clearInterval(typingInterval)
-        typingInterval = null
-      }
-    }
-  }
-
-  const sendPartMessage = async (part: Part) => {
-    const content = formatPart(part) + '\n\n'
-    if (!content.trim() || content.length === 0) {
-      discordLogger.log(`SKIP: Part ${part.id} has no content`)
-      return
-    }
-
-    // Skip if already sent
-    if (sentPartIds.has(part.id)) {
-      return
-    }
-
-    try {
-      const firstMessage = await sendThreadMessage(thread, content)
-      sentPartIds.add(part.id)
-
-      // Store part-message mapping in database
-      getDatabase()
-        .prepare(
-          'INSERT OR REPLACE INTO part_messages (part_id, message_id, thread_id) VALUES (?, ?, ?)',
-        )
-        .run(part.id, firstMessage.id, thread.id)
-    } catch (error) {
-      discordLogger.error(`ERROR: Failed to send part ${part.id}:`, error)
-    }
-  }
-
-  const eventHandler = async () => {
-    try {
-      let assistantMessageId: string | undefined
-
-      for await (const event of events) {
-        if (event.type === 'message.updated') {
-          const msg = event.properties.info
-
-
-
-          if (msg.sessionID !== session.id) {
-            continue
-          }
-
-          // Track assistant message ID
-          if (msg.role === 'assistant') {
-            const newTokensTotal = msg.tokens.input + msg.tokens.output + msg.tokens.reasoning + msg.tokens.cache.read + msg.tokens.cache.write
-            if (newTokensTotal > 0) {
-              tokensUsedInSession = newTokensTotal
-            }
-
-            assistantMessageId = msg.id
-            usedModel = msg.modelID
-            usedProviderID = msg.providerID
-
-            if (tokensUsedInSession > 0 && usedProviderID && usedModel) {
-              if (!modelContextLimit) {
-                try {
-                  const providersResponse = await getClient().provider.list({ query: { directory } })
-                  const provider = providersResponse.data?.all?.find((p) => p.id === usedProviderID)
-                  const model = provider?.models?.[usedModel]
-                  if (model?.limit?.context) {
-                    modelContextLimit = model.limit.context
-                  }
-                } catch (e) {
-                  sessionLogger.error('Failed to fetch provider info for context limit:', e)
-                }
-              }
-
-              if (modelContextLimit) {
-                const currentPercentage = Math.floor((tokensUsedInSession / modelContextLimit) * 100)
-                const thresholdCrossed = Math.floor(currentPercentage / 10) * 10
-                if (thresholdCrossed > lastDisplayedContextPercentage && thresholdCrossed >= 10) {
-                  lastDisplayedContextPercentage = thresholdCrossed
-                  await sendThreadMessage(thread, `◼︎ context usage ${currentPercentage}%`)
-                }
-              }
-            }
-          }
-        } else if (event.type === 'message.part.updated') {
-          const part = event.properties.part
-
-
-          if (part.sessionID !== session.id) {
-            continue
-          }
-
-          // Only process parts from assistant messages
-          if (part.messageID !== assistantMessageId) {
-            continue
-          }
-
-          const existingIndex = currentParts.findIndex(
-            (p: Part) => p.id === part.id,
-          )
-          if (existingIndex >= 0) {
-            currentParts[existingIndex] = part
-          } else {
-            currentParts.push(part)
-          }
-
-
-
-          // Start typing on step-start
-          if (part.type === 'step-start') {
-            stopTyping = startTyping()
-          }
-
-          // Send tool parts immediately when they start running
-          if (part.type === 'tool' && part.state.status === 'running') {
-            await sendPartMessage(part)
-          }
-
-          // Send reasoning parts immediately (shows "◼︎ thinking" indicator early)
-          if (part.type === 'reasoning') {
-            await sendPartMessage(part)
-          }
-
-          // Check if this is a step-finish part
-          if (part.type === 'step-finish') {
-
-            // Send all parts accumulated so far to Discord
-            for (const p of currentParts) {
-              // Skip step-start and step-finish parts as they have no visual content
-              if (p.type !== 'step-start' && p.type !== 'step-finish') {
-                await sendPartMessage(p)
-              }
-            }
-            // start typing in a moment, so that if the session finished, because step-finish is at the end of the message, we do not show typing status
-            setTimeout(() => {
-              if (abortController.signal.aborted) return
-              stopTyping = startTyping()
-            }, 300)
-          }
-        } else if (event.type === 'session.error') {
-          sessionLogger.error(`ERROR:`, event.properties)
-          if (event.properties.sessionID === session.id) {
-            const errorData = event.properties.error
-            const errorMessage = errorData?.data?.message || 'Unknown error'
-            sessionLogger.error(`Sending error to thread: ${errorMessage}`)
-            await sendThreadMessage(
-              thread,
-              `✗ opencode session error: ${errorMessage}`,
-            )
-
-            // Update reaction to error
-            if (originalMessage) {
-              try {
-                await originalMessage.reactions.removeAll()
-                await originalMessage.react('❌')
-                voiceLogger.log(
-                  `[REACTION] Added error reaction due to session error`,
-                )
-              } catch (e) {
-                discordLogger.log(`Could not update reaction:`, e)
-              }
-            }
-          } else {
-            voiceLogger.log(
-              `[SESSION ERROR IGNORED] Error for different session (expected: ${session.id}, got: ${event.properties.sessionID})`,
-            )
-          }
-          break
-        } else if (event.type === 'permission.updated') {
-          const permission = event.properties
-          if (permission.sessionID !== session.id) {
-            voiceLogger.log(
-              `[PERMISSION IGNORED] Permission for different session (expected: ${session.id}, got: ${permission.sessionID})`,
-            )
-            continue
-          }
-
-          sessionLogger.log(
-            `Permission requested: type=${permission.type}, title=${permission.title}`,
-          )
-
-          const patternStr = Array.isArray(permission.pattern)
-            ? permission.pattern.join(', ')
-            : permission.pattern || ''
-
-          const permissionMessage = await sendThreadMessage(
-            thread,
-            `⚠️ **Permission Required**\n\n` +
-              `**Type:** \`${permission.type}\`\n` +
-              `**Action:** ${permission.title}\n` +
-              (patternStr ? `**Pattern:** \`${patternStr}\`\n` : '') +
-              `\nUse \`/accept\` or \`/reject\` to respond.`,
-          )
-
-          pendingPermissions.set(thread.id, {
-            permission,
-            messageId: permissionMessage.id,
-            directory,
-          })
-        } else if (event.type === 'permission.replied') {
-          const { permissionID, response, sessionID } = event.properties
-          if (sessionID !== session.id) {
-            continue
-          }
-
-          sessionLogger.log(
-            `Permission ${permissionID} replied with: ${response}`,
-          )
-
-          const pending = pendingPermissions.get(thread.id)
-          if (pending && pending.permission.id === permissionID) {
-            pendingPermissions.delete(thread.id)
-          }
-        }
-      }
-    } catch (e) {
-      if (isAbortError(e, abortController.signal)) {
-        sessionLogger.log(
-          'AbortController aborted event handling (normal exit)',
-        )
-        return
-      }
-      sessionLogger.error(`Unexpected error in event handling code`, e)
-      throw e
-    } finally {
-      // Send any remaining parts that weren't sent
-      for (const part of currentParts) {
-        if (!sentPartIds.has(part.id)) {
-          try {
-            await sendPartMessage(part)
-          } catch (error) {
-            sessionLogger.error(`Failed to send part ${part.id}:`, error)
-          }
-        }
-      }
-
-      // Stop typing when session ends
-      if (stopTyping) {
-        stopTyping()
-        stopTyping = null
-      }
-
-      // Only send duration message if request was not aborted or was aborted with 'finished' reason
-      if (
-        !abortController.signal.aborted ||
-        abortController.signal.reason === 'finished'
-      ) {
-        const sessionDuration = prettyMilliseconds(
-          Date.now() - sessionStartTime,
-        )
-        const attachCommand = port ? ` ⋅ ${session.id}` : ''
-        const modelInfo = usedModel ? ` ⋅ ${usedModel}` : ''
-        let contextInfo = ''
-
-
-        try {
-          const providersResponse = await getClient().provider.list({ query: { directory } })
-          const provider = providersResponse.data?.all?.find((p) => p.id === usedProviderID)
-          const model = provider?.models?.[usedModel || '']
-          if (model?.limit?.context) {
-            const percentage = Math.round((tokensUsedInSession / model.limit.context) * 100)
-            contextInfo = ` ⋅ ${percentage}%`
-          }
-        } catch (e) {
-          sessionLogger.error('Failed to fetch provider info for context percentage:', e)
-        }
-
-        await sendThreadMessage(thread, `_Completed in ${sessionDuration}${contextInfo}_${attachCommand}${modelInfo}`)
-        sessionLogger.log(`DURATION: Session completed in ${sessionDuration}, port ${port}, model ${usedModel}, tokens ${tokensUsedInSession}`)
-      } else {
-        sessionLogger.log(
-          `Session was aborted (reason: ${abortController.signal.reason}), skipping duration message`,
-        )
-      }
-    }
-  }
-
-  try {
-    const eventHandlerPromise = eventHandler()
-
-    if (abortController.signal.aborted) {
-      sessionLogger.log(`[DEBOUNCE] Aborted before prompt, exiting`)
-      return
-    }
-
-    stopTyping = startTyping()
-
-    let response: { data?: unknown; error?: unknown; response: Response }
-    if (parsedCommand?.isCommand) {
-      sessionLogger.log(
-        `[COMMAND] Sending command /${parsedCommand.command} to session ${session.id} with args: "${parsedCommand.arguments.slice(0, 100)}${parsedCommand.arguments.length > 100 ? '...' : ''}"`,
-      )
-      response = await getClient().session.command({
-        path: { id: session.id },
-        body: {
-          command: parsedCommand.command,
-          arguments: parsedCommand.arguments,
-        },
-        signal: abortController.signal,
-      })
-    } else {
-      voiceLogger.log(
-        `[PROMPT] Sending prompt to session ${session.id}: "${prompt.slice(0, 100)}${prompt.length > 100 ? '...' : ''}"`,
-      )
-      if (images.length > 0) {
-        sessionLogger.log(`[PROMPT] Sending ${images.length} image(s):`, images.map((img) => ({ mime: img.mime, filename: img.filename, url: img.url.slice(0, 100) })))
-      }
-
-      const parts = [{ type: 'text' as const, text: prompt }, ...images]
-      sessionLogger.log(`[PROMPT] Parts to send:`, parts.length)
-
-      response = await getClient().session.prompt({
-        path: { id: session.id },
-        body: {
-          parts,
-          system: getOpencodeSystemMessage({ sessionId: session.id }),
-        },
-        signal: abortController.signal,
-      })
-    }
-
-    if (response.error) {
-      const errorMessage = (() => {
-        const err = response.error
-        if (err && typeof err === 'object') {
-          if ('data' in err && err.data && typeof err.data === 'object' && 'message' in err.data) {
-            return String(err.data.message)
-          }
-          if ('errors' in err && Array.isArray(err.errors) && err.errors.length > 0) {
-            return JSON.stringify(err.errors)
-          }
-        }
-        return JSON.stringify(err)
-      })()
-      throw new Error(`OpenCode API error (${response.response.status}): ${errorMessage}`)
-    }
-
-    abortController.abort('finished')
-
-    sessionLogger.log(`Successfully sent prompt, got response`)
-
-    if (originalMessage) {
-      try {
-        await originalMessage.reactions.removeAll()
-        await originalMessage.react('✅')
-      } catch (e) {
-        discordLogger.log(`Could not update reactions:`, e)
-      }
-    }
-
-    return { sessionID: session.id, result: response.data, port }
-  } catch (error) {
-    sessionLogger.error(`ERROR: Failed to send prompt:`, error)
-
-    if (!isAbortError(error, abortController.signal)) {
-      abortController.abort('error')
-
-      if (originalMessage) {
-        try {
-          await originalMessage.reactions.removeAll()
-          await originalMessage.react('❌')
-          discordLogger.log(`Added error reaction to message`)
-        } catch (e) {
-          discordLogger.log(`Could not update reaction:`, e)
-        }
-      }
-      const errorName =
-        error &&
-        typeof error === 'object' &&
-        'constructor' in error &&
-        error.constructor &&
-        typeof error.constructor.name === 'string'
-          ? error.constructor.name
-          : typeof error
-      const errorMsg =
-        error instanceof Error ? error.stack || error.message : String(error)
-      await sendThreadMessage(
-        thread,
-        `✗ Unexpected bot Error: [${errorName}]\n${errorMsg}`,
-      )
-    }
-  }
-}
-
-export type ChannelWithTags = {
-  id: string
-  name: string
-  description: string | null
-  kimakiDirectory?: string
-  kimakiApp?: string
-}
-
-export async function getChannelsWithDescriptions(
-  guild: Guild,
-): Promise<ChannelWithTags[]> {
-  const channels: ChannelWithTags[] = []
-
-  guild.channels.cache
-    .filter((channel) => channel.isTextBased())
-    .forEach((channel) => {
-      const textChannel = channel as TextChannel
-      const description = textChannel.topic || null
-
-      let kimakiDirectory: string | undefined
-      let kimakiApp: string | undefined
-
-      if (description) {
-        const extracted = extractTagsArrays({
-          xml: description,
-          tags: ['kimaki.directory', 'kimaki.app'],
-        })
-
-        kimakiDirectory = extracted['kimaki.directory']?.[0]?.trim()
-        kimakiApp = extracted['kimaki.app']?.[0]?.trim()
-      }
-
-      channels.push({
-        id: textChannel.id,
-        name: textChannel.name,
-        description,
-        kimakiDirectory,
-        kimakiApp,
-      })
-    })
-
-  return channels
-}
-
 export async function startDiscordBot({
   token,
   appId,
@@ -1648,7 +101,6 @@ export async function startDiscordBot({
     discordClient = await createDiscordClient()
   }
 
-  // Get the app ID for this bot instance
   let currentAppId: string | undefined = appId
 
   discordClient.once(Events.ClientReady, async (c) => {
@@ -1656,7 +108,6 @@ export async function startDiscordBot({
     discordLogger.log(`Connected to ${c.guilds.cache.size} guild(s)`)
     discordLogger.log(`Bot user ID: ${c.user.id}`)
 
-    // If appId wasn't provided, fetch it from the application
     if (!currentAppId) {
       await c.application?.fetch()
       currentAppId = c.application?.id
@@ -1670,12 +121,10 @@ export async function startDiscordBot({
       discordLogger.log(`Bot Application ID (provided): ${currentAppId}`)
     }
 
-    // List all guilds and channels that belong to this bot
     for (const guild of c.guilds.cache.values()) {
       discordLogger.log(`${guild.name} (${guild.id})`)
 
       const channels = await getChannelsWithDescriptions(guild)
-      // Only show channels that belong to this bot
       const kimakiChannels = channels.filter(
         (ch) =>
           ch.kimakiDirectory &&
@@ -1717,7 +166,6 @@ export async function startDiscordBot({
         }
       }
 
-      // Check if user is authoritative (server owner, admin, manage server, or has Kimaki role)
       if (message.guild && message.member) {
         const isOwner = message.member.id === message.guild.ownerId
         const isAdmin = message.member.permissions.has(
@@ -1743,7 +191,6 @@ export async function startDiscordBot({
         ChannelType.AnnouncementThread,
       ].includes(channel.type)
 
-      // For existing threads, check if session exists
       if (isThread) {
         const thread = channel as ThreadChannel
         discordLogger.log(`Message in thread ${thread.name} (${thread.id})`)
@@ -1761,7 +208,6 @@ export async function startDiscordBot({
           `[SESSION] Found session ${row.session_id} for thread ${thread.id}`,
         )
 
-        // Get project directory and app ID from parent channel
         const parent = thread.parent as TextChannel | null
         let projectDirectory: string | undefined
         let channelAppId: string | undefined
@@ -1776,7 +222,6 @@ export async function startDiscordBot({
           channelAppId = extracted['kimaki.app']?.[0]?.trim()
         }
 
-        // Check if this channel belongs to current bot instance
         if (channelAppId && channelAppId !== currentAppId) {
           voiceLogger.log(
             `[IGNORED] Thread belongs to different bot app (expected: ${currentAppId}, got: ${channelAppId})`,
@@ -1793,10 +238,8 @@ export async function startDiscordBot({
           return
         }
 
-        // Handle voice message if present
         let messageContent = message.content || ''
 
-        // Get session messages for transcription context
         let sessionMessagesText: string | undefined
         if (projectDirectory && row.session_id) {
           try {
@@ -1856,7 +299,6 @@ export async function startDiscordBot({
         return
       }
 
-      // For text channels, start new sessions with kimaki.directory tag
       if (channel.type === ChannelType.GuildText) {
         const textChannel = channel as TextChannel
         voiceLogger.log(
@@ -1885,7 +327,6 @@ export async function startDiscordBot({
           return
         }
 
-        // Check if this channel belongs to current bot instance
         if (channelAppId && channelAppId !== currentAppId) {
           voiceLogger.log(
             `[IGNORED] Channel belongs to different bot app (expected: ${currentAppId}, got: ${channelAppId})`,
@@ -1909,12 +350,10 @@ export async function startDiscordBot({
           return
         }
 
-        // Determine if this is a voice message
         const hasVoice = message.attachments.some((a) =>
           a.contentType?.startsWith('audio/'),
         )
 
-        // Create thread
         const threadName = hasVoice
           ? 'Voice Message'
           : message.content?.replace(/\s+/g, ' ').trim() || 'Claude Thread'
@@ -1927,7 +366,6 @@ export async function startDiscordBot({
 
         discordLogger.log(`Created thread "${thread.name}" (${thread.id})`)
 
-        // Handle voice message if present
         let messageContent = message.content || ''
 
         const transcription = await processVoiceAttachment({
@@ -1969,17 +407,14 @@ export async function startDiscordBot({
     }
   })
 
-  // Handle slash command interactions
   discordClient.on(
     Events.InteractionCreate,
     async (interaction: Interaction) => {
       try {
-        // Handle autocomplete
         if (interaction.isAutocomplete()) {
           if (interaction.commandName === 'resume') {
             const focusedValue = interaction.options.getFocused()
 
-            // Get the channel's project directory from its topic
             let projectDirectory: string | undefined
             if (interaction.channel) {
               const textChannel = await resolveTextChannel(
@@ -2002,18 +437,15 @@ export async function startDiscordBot({
             }
 
             try {
-              // Get OpenCode client for this directory
               const getClient =
                 await initializeOpencodeForDirectory(projectDirectory)
 
-              // List sessions
               const sessionsResponse = await getClient().session.list()
               if (!sessionsResponse.data) {
                 await interaction.respond([])
                 return
               }
 
-              // Get session IDs that already have Discord threads
               const existingSessionIds = new Set(
                 (
                   getDatabase()
@@ -2022,7 +454,6 @@ export async function startDiscordBot({
                 ).map((row) => row.session_id),
               )
 
-              // Filter and map sessions to choices (exclude sessions with existing threads)
               const sessions = sessionsResponse.data
                 .filter((session) => !existingSessionIds.has(session.id))
                 .filter((session) =>
@@ -2030,13 +461,12 @@ export async function startDiscordBot({
                     .toLowerCase()
                     .includes(focusedValue.toLowerCase()),
                 )
-                .slice(0, 25) // Discord limit
+                .slice(0, 25)
                 .map((session) => {
                   const dateStr = new Date(
                     session.time.updated,
                   ).toLocaleString()
                   const suffix = ` (${dateStr})`
-                  // Discord limit is 100 chars. Reserve space for suffix.
                   const maxTitleLength = 100 - suffix.length
 
                   let title = session.title
@@ -2064,7 +494,6 @@ export async function startDiscordBot({
             if (focusedOption.name === 'files') {
               const focusedValue = focusedOption.value
 
-              // Split by comma to handle multiple files
               const parts = focusedValue.split(',')
               const previousFiles = parts
                 .slice(0, -1)
@@ -2072,7 +501,6 @@ export async function startDiscordBot({
                 .filter((f) => f)
               const currentQuery = (parts[parts.length - 1] || '').trim()
 
-              // Get the channel's project directory from its topic
               let projectDirectory: string | undefined
               if (interaction.channel) {
                 const textChannel = await resolveTextChannel(
@@ -2095,37 +523,30 @@ export async function startDiscordBot({
               }
 
               try {
-                // Get OpenCode client for this directory
                 const getClient =
                   await initializeOpencodeForDirectory(projectDirectory)
 
-                // Use find.files to search for files based on current query
                 const response = await getClient().find.files({
                   query: {
                     query: currentQuery || '',
                   },
                 })
 
-                // Get file paths from the response
                 const files = response.data || []
 
-                // Build the prefix with previous files
                 const prefix =
                   previousFiles.length > 0
                     ? previousFiles.join(', ') + ', '
                     : ''
 
-                // Map to Discord autocomplete format
                 const choices = files
                   .map((file: string) => {
                     const fullValue = prefix + file
-                    // Get all basenames for display
                     const allFiles = [...previousFiles, file]
                     const allBasenames = allFiles.map(
                       (f) => f.split('/').pop() || f,
                     )
                     let displayName = allBasenames.join(', ')
-                    // Truncate if too long
                     if (displayName.length > 100) {
                       displayName = '…' + displayName.slice(-97)
                     }
@@ -2134,10 +555,8 @@ export async function startDiscordBot({
                       value: fullValue,
                     }
                   })
-                  // Discord API limits choice value to 100 characters
                   .filter((choice) => choice.value.length <= 100)
-                  .slice(0, 25) // Discord limit
-
+                  .slice(0, 25)
 
                 await interaction.respond(choices)
               } catch (error) {
@@ -2203,7 +622,6 @@ export async function startDiscordBot({
           }
         }
 
-        // Handle slash commands
         if (interaction.isChatInputCommand()) {
           const command = interaction
 
@@ -2223,7 +641,6 @@ export async function startDiscordBot({
 
             const textChannel = channel as TextChannel
 
-            // Get project directory from channel topic
             let projectDirectory: string | undefined
             let channelAppId: string | undefined
 
@@ -2237,7 +654,6 @@ export async function startDiscordBot({
               channelAppId = extracted['kimaki.app']?.[0]?.trim()
             }
 
-            // Check if this channel belongs to current bot instance
             if (channelAppId && channelAppId !== currentAppId) {
               await command.editReply(
                 'This channel is not configured for this bot',
@@ -2260,32 +676,27 @@ export async function startDiscordBot({
             }
 
             try {
-              // Initialize OpenCode client for the directory
               const getClient =
                 await initializeOpencodeForDirectory(projectDirectory)
 
-              // Process file mentions - split by comma only
               const files = filesString
                 .split(',')
                 .map((f) => f.trim())
                 .filter((f) => f)
 
-              // Build the full prompt with file mentions
               let fullPrompt = prompt
               if (files.length > 0) {
                 fullPrompt = `${prompt}\n\n@${files.join(' @')}`
               }
 
-              // Send a message first, then create thread from it
               const starterMessage = await textChannel.send({
                 content: `🚀 **Starting OpenCode session**\n📝 ${prompt.slice(0, 200)}${prompt.length > 200 ? '…' : ''}${files.length > 0 ? `\n📎 Files: ${files.join(', ')}` : ''}`,
                 flags: SILENT_MESSAGE_FLAGS,
               })
 
-              // Create thread from the message
               const thread = await starterMessage.startThread({
                 name: prompt.slice(0, 100),
-                autoArchiveDuration: 1440, // 24 hours
+                autoArchiveDuration: 1440,
                 reason: 'OpenCode session',
               })
 
@@ -2293,7 +704,6 @@ export async function startDiscordBot({
                 `Created new session in ${thread.toString()}`,
               )
 
-              // Start the OpenCode session
               const parsedCommand = parseSlashCommand(fullPrompt)
               await handleOpencodeSession({
                 prompt: fullPrompt,
@@ -2322,7 +732,6 @@ export async function startDiscordBot({
 
             const textChannel = channel as TextChannel
 
-            // Get project directory from channel topic
             let projectDirectory: string | undefined
             let channelAppId: string | undefined
 
@@ -2336,7 +745,6 @@ export async function startDiscordBot({
               channelAppId = extracted['kimaki.app']?.[0]?.trim()
             }
 
-            // Check if this channel belongs to current bot instance
             if (channelAppId && channelAppId !== currentAppId) {
               await command.editReply(
                 'This channel is not configured for this bot',
@@ -2359,11 +767,9 @@ export async function startDiscordBot({
             }
 
             try {
-              // Initialize OpenCode client for the directory
               const getClient =
                 await initializeOpencodeForDirectory(projectDirectory)
 
-              // Get session title
               const sessionResponse = await getClient().session.get({
                 path: { id: sessionId },
               })
@@ -2375,14 +781,12 @@ export async function startDiscordBot({
 
               const sessionTitle = sessionResponse.data.title
 
-              // Create thread for the resumed session
               const thread = await textChannel.threads.create({
                 name: `Resume: ${sessionTitle}`.slice(0, 100),
                 autoArchiveDuration: ThreadAutoArchiveDuration.OneDay,
                 reason: `Resuming session ${sessionId}`,
               })
 
-              // Store session ID in database
               getDatabase()
                 .prepare(
                   'INSERT OR REPLACE INTO thread_sessions (thread_id, session_id) VALUES (?, ?)',
@@ -2393,7 +797,6 @@ export async function startDiscordBot({
                 `[RESUME] Created thread ${thread.id} for session ${sessionId}`,
               )
 
-              // Fetch all messages for the session
               const messagesResponse = await getClient().session.messages({
                 path: { id: sessionId },
               })
@@ -2408,13 +811,11 @@ export async function startDiscordBot({
                 `Resumed session "${sessionTitle}" in ${thread.toString()}`,
               )
 
-              // Send initial message to thread
               await sendThreadMessage(
                 thread,
                 `📂 **Resumed session:** ${sessionTitle}\n📅 **Created:** ${new Date(sessionResponse.data.time.created).toLocaleString()}\n\n*Loading ${messages.length} messages...*`,
               )
 
-              // Collect all assistant parts first, then only render the last 30
               const allAssistantParts: { id: string; content: string }[] = []
               for (const message of messages) {
                 if (message.info.role === 'assistant') {
@@ -2693,7 +1094,7 @@ export async function startDiscordBot({
                   ? `✅ Permission **accepted** (auto-approve similar requests)`
                   : `✅ Permission **accepted**`
               await command.reply({ content: msg, flags: SILENT_MESSAGE_FLAGS })
-              sessionLogger.log(
+              discordLogger.log(
                 `Permission ${pending.permission.id} accepted with scope: ${scope}`,
               )
             } catch (error) {
@@ -2755,7 +1156,7 @@ export async function startDiscordBot({
 
               pendingPermissions.delete(channel.id)
               await command.reply({ content: `❌ Permission **rejected**`, flags: SILENT_MESSAGE_FLAGS })
-              sessionLogger.log(`Permission ${pending.permission.id} rejected`)
+              discordLogger.log(`Permission ${pending.permission.id} rejected`)
             } catch (error) {
               voiceLogger.error('[REJECT] Error:', error)
               await command.reply({
@@ -2831,7 +1232,7 @@ export async function startDiscordBot({
               })
 
               await command.reply({ content: `🛑 Request **aborted**`, flags: SILENT_MESSAGE_FLAGS })
-              sessionLogger.log(`Session ${sessionId} aborted by user`)
+              discordLogger.log(`Session ${sessionId} aborted by user`)
             } catch (error) {
               voiceLogger.error('[ABORT] Error:', error)
               await command.reply({
@@ -2910,7 +1311,7 @@ export async function startDiscordBot({
               }
 
               await command.reply({ content: `🔗 **Session shared:** ${response.data.share.url}`, flags: SILENT_MESSAGE_FLAGS })
-              sessionLogger.log(`Session ${sessionId} shared: ${response.data.share.url}`)
+              discordLogger.log(`Session ${sessionId} shared: ${response.data.share.url}`)
             } catch (error) {
               voiceLogger.error('[SHARE] Error:', error)
               await command.reply({
@@ -2935,59 +1336,11 @@ export async function startDiscordBot({
     },
   )
 
-  // Helper function to clean up voice connection and associated resources
-  async function cleanupVoiceConnection(guildId: string) {
-    const voiceData = voiceConnections.get(guildId)
-    if (!voiceData) return
-
-    voiceLogger.log(`Starting cleanup for guild ${guildId}`)
-
-    try {
-      // Stop GenAI worker if exists (this is async!)
-      if (voiceData.genAiWorker) {
-        voiceLogger.log(`Stopping GenAI worker...`)
-        await voiceData.genAiWorker.stop()
-        voiceLogger.log(`GenAI worker stopped`)
-      }
-
-      // Close user audio stream if exists
-      if (voiceData.userAudioStream) {
-        voiceLogger.log(`Closing user audio stream...`)
-        await new Promise<void>((resolve) => {
-          voiceData.userAudioStream!.end(() => {
-            voiceLogger.log('User audio stream closed')
-            resolve()
-          })
-          // Timeout after 2 seconds
-          setTimeout(resolve, 2000)
-        })
-      }
-
-      // Destroy voice connection
-      if (
-        voiceData.connection.state.status !== VoiceConnectionStatus.Destroyed
-      ) {
-        voiceLogger.log(`Destroying voice connection...`)
-        voiceData.connection.destroy()
-      }
-
-      // Remove from map
-      voiceConnections.delete(guildId)
-      voiceLogger.log(`Cleanup complete for guild ${guildId}`)
-    } catch (error) {
-      voiceLogger.error(`Error during cleanup for guild ${guildId}:`, error)
-      // Still remove from map even if there was an error
-      voiceConnections.delete(guildId)
-    }
-  }
-
-  // Handle voice state updates
   discordClient.on(Events.VoiceStateUpdate, async (oldState, newState) => {
     try {
       const member = newState.member || oldState.member
       if (!member) return
 
-      // Check if user is admin, server owner, can manage server, or has Kimaki role
       const guild = newState.guild || oldState.guild
       const isOwner = member.id === guild.ownerId
       const isAdmin = member.permissions.has(
@@ -3004,13 +1357,11 @@ export async function startDiscordBot({
         return
       }
 
-      // Handle admin leaving voice channel
       if (oldState.channelId !== null && newState.channelId === null) {
         voiceLogger.log(
           `Admin user ${member.user.tag} left voice channel: ${oldState.channel?.name}`,
         )
 
-        // Check if bot should leave too
         const guildId = guild.id
         const voiceData = voiceConnections.get(guildId)
 
@@ -3018,7 +1369,6 @@ export async function startDiscordBot({
           voiceData &&
           voiceData.connection.joinConfig.channelId === oldState.channelId
         ) {
-          // Check if any other admin is still in the channel
           const voiceChannel = oldState.channel as VoiceChannel
           if (!voiceChannel) return
 
@@ -3037,7 +1387,6 @@ export async function startDiscordBot({
               `No other admins in channel, bot leaving voice channel in guild: ${guild.name}`,
             )
 
-            // Properly clean up all resources
             await cleanupVoiceConnection(guildId)
           } else {
             voiceLogger.log(
@@ -3048,7 +1397,6 @@ export async function startDiscordBot({
         return
       }
 
-      // Handle admin moving between voice channels
       if (
         oldState.channelId !== null &&
         newState.channelId !== null &&
@@ -3058,7 +1406,6 @@ export async function startDiscordBot({
           `Admin user ${member.user.tag} moved from ${oldState.channel?.name} to ${newState.channel?.name}`,
         )
 
-        // Check if we need to follow the admin
         const guildId = guild.id
         const voiceData = voiceConnections.get(guildId)
 
@@ -3066,7 +1413,6 @@ export async function startDiscordBot({
           voiceData &&
           voiceData.connection.joinConfig.channelId === oldState.channelId
         ) {
-          // Check if any other admin is still in the old channel
           const oldVoiceChannel = oldState.channel as VoiceChannel
           if (oldVoiceChannel) {
             const hasOtherAdmins = oldVoiceChannel.members.some((m) => {
@@ -3100,20 +1446,17 @@ export async function startDiscordBot({
         }
       }
 
-      // Handle admin joining voice channel (initial join)
       if (oldState.channelId === null && newState.channelId !== null) {
         voiceLogger.log(
           `Admin user ${member.user.tag} (Owner: ${isOwner}, Admin: ${isAdmin}) joined voice channel: ${newState.channel?.name}`,
         )
       }
 
-      // Only proceed with joining if this is a new join or channel move
       if (newState.channelId === null) return
 
       const voiceChannel = newState.channel as VoiceChannel
       if (!voiceChannel) return
 
-      // Check if bot already has a connection in this guild
       const existingVoiceData = voiceConnections.get(newState.guild.id)
       if (
         existingVoiceData &&
@@ -3124,7 +1467,6 @@ export async function startDiscordBot({
           `Bot already connected to a voice channel in guild ${newState.guild.name}`,
         )
 
-        // If bot is in a different channel, move to the admin's channel
         if (
           existingVoiceData.connection.joinConfig.channelId !== voiceChannel.id
         ) {
@@ -3141,7 +1483,6 @@ export async function startDiscordBot({
       }
 
       try {
-        // Join the voice channel
         voiceLogger.log(
           `Attempting to join voice channel: ${voiceChannel.name} (${voiceChannel.id})`,
         )
@@ -3153,20 +1494,16 @@ export async function startDiscordBot({
           selfDeaf: false,
           debug: true,
           daveEncryption: false,
-
-          selfMute: false, // Not muted so bot can speak
+          selfMute: false,
         })
 
-        // Store the connection
         voiceConnections.set(newState.guild.id, { connection })
 
-        // Wait for connection to be ready
         await entersState(connection, VoiceConnectionStatus.Ready, 30_000)
         voiceLogger.log(
           `Successfully joined voice channel: ${voiceChannel.name} in guild: ${newState.guild.name}`,
         )
 
-        // Set up voice handling (only once per connection)
         await setupVoiceHandling({
           connection,
           guildId: newState.guild.id,
@@ -3175,20 +1512,17 @@ export async function startDiscordBot({
           discordClient,
         })
 
-        // Handle connection state changes
         connection.on(VoiceConnectionStatus.Disconnected, async () => {
           voiceLogger.log(
             `Disconnected from voice channel in guild: ${newState.guild.name}`,
           )
           try {
-            // Try to reconnect
             await Promise.race([
               entersState(connection, VoiceConnectionStatus.Signalling, 5_000),
               entersState(connection, VoiceConnectionStatus.Connecting, 5_000),
             ])
             voiceLogger.log(`Reconnecting to voice channel`)
           } catch (error) {
-            // Seems to be a real disconnect, destroy the connection
             voiceLogger.log(`Failed to reconnect, destroying connection`)
             connection.destroy()
             voiceConnections.delete(newState.guild.id)
@@ -3199,11 +1533,9 @@ export async function startDiscordBot({
           voiceLogger.log(
             `Connection destroyed for guild: ${newState.guild.name}`,
           )
-          // Use the cleanup function to ensure everything is properly closed
           await cleanupVoiceConnection(newState.guild.id)
         })
 
-        // Handle errors
         connection.on('error', (error) => {
           voiceLogger.error(
             `Connection error in guild ${newState.guild.name}:`,
@@ -3224,7 +1556,6 @@ export async function startDiscordBot({
   const handleShutdown = async (signal: string, { skipExit = false } = {}) => {
     discordLogger.log(`Received ${signal}, cleaning up...`)
 
-    // Prevent multiple shutdown calls
     if ((global as any).shuttingDown) {
       discordLogger.log('Already shutting down, ignoring duplicate signal')
       return
@@ -3232,7 +1563,6 @@ export async function startDiscordBot({
     ;(global as any).shuttingDown = true
 
     try {
-      // Clean up all voice connections (this includes GenAI workers and audio streams)
       const cleanupPromises: Promise<void>[] = []
       for (const [guildId] of voiceConnections) {
         voiceLogger.log(
@@ -3241,7 +1571,6 @@ export async function startDiscordBot({
         cleanupPromises.push(cleanupVoiceConnection(guildId))
       }
 
-      // Wait for all cleanups to complete
       if (cleanupPromises.length > 0) {
         voiceLogger.log(
           `[SHUTDOWN] Waiting for ${cleanupPromises.length} voice connection(s) to clean up...`,
@@ -3250,7 +1579,6 @@ export async function startDiscordBot({
         discordLogger.log(`All voice connections cleaned up`)
       }
 
-      // Kill all OpenCode servers
       for (const [dir, server] of getOpencodeServers()) {
         if (!server.process.killed) {
           voiceLogger.log(
@@ -3279,7 +1607,6 @@ export async function startDiscordBot({
     }
   }
 
-  // Override default signal handlers to prevent immediate exit
   process.on('SIGTERM', async () => {
     try {
       await handleShutdown('SIGTERM')
@@ -3315,7 +1642,6 @@ export async function startDiscordBot({
     process.exit(0)
   })
 
-  // Prevent unhandled promise rejections from crashing the process during shutdown
   process.on('unhandledRejection', (reason, promise) => {
     if ((global as any).shuttingDown) {
       discordLogger.log('Ignoring unhandled rejection during shutdown:', reason)
