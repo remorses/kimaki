@@ -23,7 +23,7 @@ import {
   ensureKimakiCategory,
   createProjectChannels,
   type ChannelWithTags,
-} from './discordBot.js'
+} from './discord-bot.js'
 import type { OpencodeClient } from '@opencode-ai/sdk'
 import {
   Events,

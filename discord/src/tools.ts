@@ -18,7 +18,7 @@ import pc from 'picocolors'
 import {
   initializeOpencodeForDirectory,
   getOpencodeSystemMessage,
-} from './discordBot.js'
+} from './discord-bot.js'
 
 export async function getTools({
   onMessageCompleted,
