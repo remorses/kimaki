@@ -19,6 +19,11 @@ import {
   SILENT_MESSAGE_FLAGS,
 } from './discord-utils.js'
 import { handleForkCommand, handleForkSelectMenu } from './fork.js'
+import {
+  handleModelCommand,
+  handleProviderSelectMenu,
+  handleModelSelectMenu,
+} from './model-command.js'
 import { formatPart } from './message-formatting.js'
 import { createProjectChannels } from './channel-management.js'
 import {
@@ -40,10 +45,14 @@ export function registerInteractionHandler({
   discordClient: Client
   appId: string
 }) {
+  interactionLogger.log('[REGISTER] Interaction handler registered')
+
   discordClient.on(
     Events.InteractionCreate,
     async (interaction: Interaction) => {
       try {
+        interactionLogger.log(`[INTERACTION] Received: ${interaction.type} - ${interaction.isChatInputCommand() ? interaction.commandName : interaction.isAutocomplete() ? `autocomplete:${interaction.commandName}` : 'other'}`)
+
         if (interaction.isAutocomplete()) {
           if (interaction.commandName === 'resume') {
             const focusedValue = interaction.options.getFocused()
@@ -257,6 +266,7 @@ export function registerInteractionHandler({
 
         if (interaction.isChatInputCommand()) {
           const command = interaction
+          interactionLogger.log(`[COMMAND] Processing: ${command.commandName}`)
 
           if (command.commandName === 'session') {
             await command.deferReply({ ephemeral: false })
@@ -343,6 +353,7 @@ export function registerInteractionHandler({
                 thread,
                 projectDirectory,
                 parsedCommand,
+                channelId: textChannel.id,
               })
             } catch (error) {
               interactionLogger.error('[SESSION] Error:', error)
@@ -657,6 +668,7 @@ export function registerInteractionHandler({
                 prompt: 'The project was just initialized. Say hi and ask what the user wants to build.',
                 thread,
                 projectDirectory,
+                channelId: textChannel.id,
               })
 
               discordLogger.log(
@@ -955,16 +967,33 @@ export function registerInteractionHandler({
             }
           } else if (command.commandName === 'fork') {
             await handleForkCommand(command)
+          } else if (command.commandName === 'model') {
+            await handleModelCommand({ interaction: command, appId })
           }
         }
 
         if (interaction.isStringSelectMenu()) {
           if (interaction.customId.startsWith('fork_select:')) {
             await handleForkSelectMenu(interaction)
+          } else if (interaction.customId.startsWith('model_provider:')) {
+            await handleProviderSelectMenu(interaction)
+          } else if (interaction.customId.startsWith('model_select:')) {
+            await handleModelSelectMenu(interaction)
           }
         }
       } catch (error) {
         interactionLogger.error('[INTERACTION] Error handling interaction:', error)
+        // Try to respond to the interaction if possible
+        try {
+          if (interaction.isRepliable() && !interaction.replied && !interaction.deferred) {
+            await interaction.reply({
+              content: 'An error occurred processing this command.',
+              ephemeral: true,
+            })
+          }
+        } catch (replyError) {
+          interactionLogger.error('[INTERACTION] Failed to send error reply:', replyError)
+        }
       }
     },
   )

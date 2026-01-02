@@ -64,6 +64,9 @@ export async function handleForkCommand(interaction: ChatInputCommandInteraction
     return
   }
 
+  // Defer reply before API calls to avoid 3-second timeout
+  await interaction.deferReply({ ephemeral: true })
+
   const sessionId = row.session_id
 
   try {
@@ -74,9 +77,8 @@ export async function handleForkCommand(interaction: ChatInputCommandInteraction
     })
 
     if (!messagesResponse.data) {
-      await interaction.reply({
+      await interaction.editReply({
         content: 'Failed to fetch session messages',
-        ephemeral: true,
       })
       return
     }
@@ -86,9 +88,8 @@ export async function handleForkCommand(interaction: ChatInputCommandInteraction
     )
 
     if (userMessages.length === 0) {
-      await interaction.reply({
+      await interaction.editReply({
         content: 'No user messages found in this session',
-        ephemeral: true,
       })
       return
     }
@@ -117,16 +118,14 @@ export async function handleForkCommand(interaction: ChatInputCommandInteraction
     const actionRow = new ActionRowBuilder<StringSelectMenuBuilder>()
       .addComponents(selectMenu)
 
-    await interaction.reply({
+    await interaction.editReply({
       content: '**Fork Session**\nSelect the user message to fork from. The forked session will continue as if you had not sent that message:',
       components: [actionRow],
-      ephemeral: true,
     })
   } catch (error) {
     forkLogger.error('Error loading messages:', error)
-    await interaction.reply({
+    await interaction.editReply({
       content: `Failed to load messages: ${error instanceof Error ? error.message : 'Unknown error'}`,
-      ephemeral: true,
     })
   }
 }

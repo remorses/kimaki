@@ -184,6 +184,10 @@ async function registerCommands(token: string, appId: string) {
       .setName('fork')
       .setDescription('Fork the session from a past user message')
       .toJSON(),
+    new SlashCommandBuilder()
+      .setName('model')
+      .setDescription('Set the preferred model for this channel or session')
+      .toJSON(),
   ]
 
   const rest = new REST().setToken(token)

@@ -40,7 +40,9 @@ npx -y kimaki upload-to-discord --session ${sessionId} <file1> [file2] ...
 
 ## showing diffs
 
-IMPORTANT: You MUST ALWAYS show the critique URL after editing any files. Run this command after making changes:
+IMPORTANT: After editing any files, you MUST execute the critique command using the Bash tool to get a diff URL, then share that URL with the user.
+
+Execute this after making changes:
 
 bunx critique web
 
@@ -53,6 +55,8 @@ You can also show latest commit changes using:
 bunx critique web HEAD~1
 
 Do this in case you committed the changes yourself (only if the user asks so, never commit otherwise).
+
+The command outputs a URL - share that URL with the user so they can see the diff.
 
 ## markdown
 

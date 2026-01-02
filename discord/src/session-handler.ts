@@ -1,7 +1,7 @@
 import type { Part, FilePartInput, Permission } from '@opencode-ai/sdk'
 import type { Message, ThreadChannel } from 'discord.js'
 import prettyMilliseconds from 'pretty-ms'
-import { getDatabase } from './database.js'
+import { getDatabase, getSessionModel, getChannelModel } from './database.js'
 import { initializeOpencodeForDirectory, getOpencodeServers } from './opencode.js'
 import { sendThreadMessage } from './discord-utils.js'
 import { formatPart } from './message-formatting.js'
@@ -49,6 +49,7 @@ export async function handleOpencodeSession({
   originalMessage,
   images = [],
   parsedCommand,
+  channelId,
 }: {
   prompt: string
   thread: ThreadChannel
@@ -56,6 +57,7 @@ export async function handleOpencodeSession({
   originalMessage?: Message
   images?: FilePartInput[]
   parsedCommand?: ParsedCommand
+  channelId?: string
 }): Promise<{ sessionID: string; result: any; port?: number } | undefined> {
   voiceLogger.log(
     `[OPENCODE SESSION] Starting for thread ${thread.id} with prompt: "${prompt.slice(0, 50)}${prompt.length > 50 ? '...' : ''}"`,
@@ -509,11 +511,27 @@ export async function handleOpencodeSession({
       const parts = [{ type: 'text' as const, text: prompt }, ...images]
       sessionLogger.log(`[PROMPT] Parts to send:`, parts.length)
 
+      // Get model preference: session-level overrides channel-level
+      const modelPreference = getSessionModel(session.id) || (channelId ? getChannelModel(channelId) : undefined)
+      const modelParam = (() => {
+        if (!modelPreference) {
+          return undefined
+        }
+        const [providerID, ...modelParts] = modelPreference.split('/')
+        const modelID = modelParts.join('/')
+        if (!providerID || !modelID) {
+          return undefined
+        }
+        sessionLogger.log(`[MODEL] Using model preference: ${modelPreference}`)
+        return { providerID, modelID }
+      })()
+
       response = await getClient().session.prompt({
         path: { id: session.id },
         body: {
           parts,
           system: getOpencodeSystemMessage({ sessionId: session.id }),
+          model: modelParam,
         },
         signal: abortController.signal,
       })
