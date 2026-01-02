@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.4.24
+
+### Patch Changes
+
+- add **test-model-id.ts** script for validating model ID format and provider.list API
+- cleanup **pnpm-lock.yaml** - remove stale liveapi dependencies
+
 ## 0.4.23
 
 ### Patch Changes
