@@ -88,7 +88,7 @@ export async function startDiscordBot({
 
   let currentAppId: string | undefined = appId
 
-  discordClient.once(Events.ClientReady, async (c) => {
+  const setupHandlers = async (c: Client<true>) => {
     discordLogger.log(`Discord bot logged in as ${c.user.tag}`)
     discordLogger.log(`Connected to ${c.guilds.cache.size} guild(s)`)
     discordLogger.log(`Bot user ID: ${c.user.id}`)
@@ -134,7 +134,15 @@ export async function startDiscordBot({
 
     registerInteractionHandler({ discordClient: c, appId: currentAppId })
     registerVoiceStateHandler({ discordClient: c, appId: currentAppId })
-  })
+  }
+
+  // If client is already ready (was logged in before being passed to us),
+  // run setup immediately. Otherwise wait for the ClientReady event.
+  if (discordClient.isReady()) {
+    await setupHandlers(discordClient)
+  } else {
+    discordClient.once(Events.ClientReady, setupHandlers)
+  }
 
   discordClient.on(Events.MessageCreate, async (message: Message) => {
     try {
@@ -283,6 +291,7 @@ export async function startDiscordBot({
           originalMessage: message,
           images: fileAttachments,
           parsedCommand,
+          channelId: parent?.id,
         })
         return
       }
@@ -380,6 +389,7 @@ export async function startDiscordBot({
           originalMessage: message,
           images: fileAttachments,
           parsedCommand,
+          channelId: textChannel.id,
         })
       } else {
         discordLogger.log(`Channel type ${channel.type} is not supported`)
