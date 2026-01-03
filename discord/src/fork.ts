@@ -1,3 +1,7 @@
+// Session fork command handler.
+// Implements the /fork slash command to create new sessions branching
+// from a specific user message in the conversation history.
+
 import {
   ChatInputCommandInteraction,
   StringSelectMenuInteraction,

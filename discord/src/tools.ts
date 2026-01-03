@@ -1,3 +1,7 @@
+// Voice assistant tool definitions for the GenAI worker.
+// Provides tools for managing OpenCode sessions (create, submit, abort),
+// listing chats, searching files, and reading session messages.
+
 import { tool } from 'ai'
 import { z } from 'zod'
 import { spawn, type ChildProcess } from 'node:child_process'

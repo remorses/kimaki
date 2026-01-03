@@ -1,3 +1,7 @@
+// Audio transcription service using Google Gemini.
+// Transcribes voice messages with code-aware context, using grep/glob tools
+// to verify technical terms, filenames, and function names in the codebase.
+
 import {
   GoogleGenAI,
   Type,

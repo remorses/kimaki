@@ -1,3 +1,7 @@
+// Discord-specific utility functions.
+// Handles markdown splitting for Discord's 2000-char limit, code block escaping,
+// thread message sending, and channel metadata extraction from topic tags.
+
 import {
   ChannelType,
   type Message,

@@ -1,3 +1,7 @@
+// OpenCode server process manager.
+// Spawns and maintains OpenCode API servers per project directory,
+// handles automatic restarts on failure, and provides typed SDK clients.
+
 import { spawn, type ChildProcess } from 'node:child_process'
 import net from 'node:net'
 import {

@@ -1,3 +1,7 @@
+// Prefixed logging utility using @clack/prompts.
+// Creates loggers with consistent prefixes for different subsystems
+// (DISCORD, VOICE, SESSION, etc.) for easier debugging.
+
 import { log } from '@clack/prompts'
 
 export function createLogger(prefix: string) {

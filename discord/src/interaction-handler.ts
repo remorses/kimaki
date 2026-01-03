@@ -1,3 +1,7 @@
+// Discord slash command and interaction handler.
+// Processes all slash commands (/session, /resume, /fork, /model, /abort, etc.)
+// and manages autocomplete, select menu interactions for the bot.
+
 import {
   ChannelType,
   Events,

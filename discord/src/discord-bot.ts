@@ -1,3 +1,7 @@
+// Core Discord bot module that handles message events and bot lifecycle.
+// Bridges Discord messages to OpenCode sessions, manages voice connections,
+// and orchestrates the main event loop for the Kimaki bot.
+
 import { getDatabase, closeDatabase } from './database.js'
 import { initializeOpencodeForDirectory, getOpencodeServers } from './opencode.js'
 import {

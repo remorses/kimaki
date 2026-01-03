@@ -1,3 +1,7 @@
+// OpenCode session lifecycle manager.
+// Creates, maintains, and sends prompts to OpenCode sessions from Discord threads.
+// Handles streaming events, permissions, abort signals, and message queuing.
+
 import type { Part, FilePartInput, Permission } from '@opencode-ai/sdk'
 import type { Message, ThreadChannel } from 'discord.js'
 import prettyMilliseconds from 'pretty-ms'

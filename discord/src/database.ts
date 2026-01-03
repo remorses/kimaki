@@ -1,3 +1,7 @@
+// SQLite database manager for persistent bot state.
+// Stores thread-session mappings, bot tokens, channel directories,
+// API keys, and model preferences in ~/.kimaki/discord-sessions.db.
+
 import Database from 'better-sqlite3'
 import fs from 'node:fs'
 import os from 'node:os'

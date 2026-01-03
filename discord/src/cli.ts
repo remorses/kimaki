@@ -1,3 +1,7 @@
+// Main CLI entrypoint for the Kimaki Discord bot.
+// Handles interactive setup, Discord OAuth, slash command registration,
+// project channel creation, and launching the bot with opencode integration.
+
 #!/usr/bin/env node
 import { cac } from 'cac'
 import {

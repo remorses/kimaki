@@ -1,3 +1,7 @@
+// OpenCode system prompt generator.
+// Creates the system message injected into every OpenCode session,
+// including Discord-specific formatting rules, diff commands, and permissions info.
+
 export function getOpencodeSystemMessage({ sessionId }: { sessionId: string }) {
   return `
 The user is reading your messages from inside Discord, via kimaki.xyz

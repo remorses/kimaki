@@ -1,3 +1,7 @@
+// Model selection command handler.
+// Implements the /model slash command for setting AI model preferences
+// at the channel or session level with provider and model select menus.
+
 import {
   ChatInputCommandInteraction,
   StringSelectMenuInteraction,

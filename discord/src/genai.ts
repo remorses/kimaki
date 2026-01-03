@@ -1,3 +1,7 @@
+// Google GenAI Live session manager for real-time voice interactions.
+// Establishes bidirectional audio streaming with Gemini, handles tool calls,
+// and manages the assistant's audio output for Discord voice channels.
+
 import {
   GoogleGenAI,
   LiveServerMessage,

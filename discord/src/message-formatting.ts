@@ -1,3 +1,7 @@
+// OpenCode message part formatting for Discord.
+// Converts SDK message parts (text, tools, reasoning) to Discord-friendly format,
+// handles file attachments, and provides tool summary generation.
+
 import type { Part, FilePartInput, SessionMessagesResponse } from '@opencode-ai/sdk'
 import type { Message } from 'discord.js'
 import { createLogger } from './logger.js'

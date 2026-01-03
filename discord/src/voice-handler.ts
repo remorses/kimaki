@@ -1,3 +1,7 @@
+// Discord voice channel connection and audio stream handler.
+// Manages joining/leaving voice channels, captures user audio, resamples to 16kHz,
+// and routes audio to the GenAI worker for real-time voice assistant interactions.
+
 import {
   VoiceConnectionStatus,
   EndBehaviorType,

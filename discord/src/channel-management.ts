@@ -1,3 +1,7 @@
+// Discord channel and category management.
+// Creates and manages Kimaki project channels (text + voice pairs),
+// extracts channel metadata from topic tags, and ensures category structure.
+
 import {
   ChannelType,
   type CategoryChannel,

@@ -1,3 +1,7 @@
+// AI SDK to Google GenAI tool converter.
+// Transforms Vercel AI SDK tool definitions into Google GenAI CallableTool format
+// for use with Gemini's function calling in the voice assistant.
+
 import type { Tool, jsonSchema as JsonSchemaType } from 'ai'
 import type {
   FunctionDeclaration,
