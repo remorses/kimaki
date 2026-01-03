@@ -1,6 +1,4 @@
-// Model selection command handler.
-// Implements the /model slash command for setting AI model preferences
-// at the channel or session level with provider and model select menus.
+// /model command - Set the preferred model for this channel or session.
 
 import {
   ChatInputCommandInteraction,
@@ -12,10 +10,10 @@ import {
   type TextChannel,
 } from 'discord.js'
 import crypto from 'node:crypto'
-import { getDatabase, setChannelModel, setSessionModel, runModelMigrations } from './database.js'
-import { initializeOpencodeForDirectory } from './opencode.js'
-import { resolveTextChannel, getKimakiMetadata } from './discord-utils.js'
-import { createLogger } from './logger.js'
+import { getDatabase, setChannelModel, setSessionModel, runModelMigrations } from '../database.js'
+import { initializeOpencodeForDirectory } from '../opencode.js'
+import { resolveTextChannel, getKimakiMetadata } from '../discord-utils.js'
+import { createLogger } from '../logger.js'
 
 const modelLogger = createLogger('MODEL')
 
@@ -29,7 +27,7 @@ const pendingModelContexts = new Map<string, {
   providerName?: string
 }>()
 
-type ProviderInfo = {
+export type ProviderInfo = {
   id: string
   name: string
   models: Record<

@@ -1,6 +1,4 @@
-// Session fork command handler.
-// Implements the /fork slash command to create new sessions branching
-// from a specific user message in the conversation history.
+// /fork command - Fork the session from a past user message.
 
 import {
   ChatInputCommandInteraction,
@@ -12,11 +10,11 @@ import {
   type ThreadChannel,
 } from 'discord.js'
 import type { TextPart } from '@opencode-ai/sdk'
-import { getDatabase } from './database.js'
-import { initializeOpencodeForDirectory } from './opencode.js'
-import { resolveTextChannel, getKimakiMetadata, sendThreadMessage } from './discord-utils.js'
-import { collectLastAssistantParts } from './message-formatting.js'
-import { createLogger } from './logger.js'
+import { getDatabase } from '../database.js'
+import { initializeOpencodeForDirectory } from '../opencode.js'
+import { resolveTextChannel, getKimakiMetadata, sendThreadMessage } from '../discord-utils.js'
+import { collectLastAssistantParts } from '../message-formatting.js'
+import { createLogger } from '../logger.js'
 
 const sessionLogger = createLogger('SESSION')
 const forkLogger = createLogger('FORK')
