@@ -200,6 +200,10 @@ async function registerCommands(token: string, appId: string) {
         return option
       })
       .toJSON(),
+    new SlashCommandBuilder()
+      .setName('clear-queue')
+      .setDescription('Clear all queued messages in this thread')
+      .toJSON(),
   ]
 
   const rest = new REST().setToken(token)

@@ -33,6 +33,7 @@ import {
   pendingPermissions,
   addToQueue,
   getQueueLength,
+  clearQueue,
 } from './session-handler.js'
 import { extractTagsArrays } from './xml.js'
 import { createLogger } from './logger.js'
@@ -1048,6 +1049,52 @@ export function registerInteractionHandler({
             })
 
             interactionLogger.log(`[QUEUE] User ${command.user.displayName} queued message in thread ${channel.id}`)
+          } else if (command.commandName === 'clear-queue') {
+            const channel = command.channel
+
+            if (!channel) {
+              await command.reply({
+                content: 'This command can only be used in a channel',
+                ephemeral: true,
+                flags: SILENT_MESSAGE_FLAGS,
+              })
+              return
+            }
+
+            const isThread = [
+              ChannelType.PublicThread,
+              ChannelType.PrivateThread,
+              ChannelType.AnnouncementThread,
+            ].includes(channel.type)
+
+            if (!isThread) {
+              await command.reply({
+                content: 'This command can only be used in a thread',
+                ephemeral: true,
+                flags: SILENT_MESSAGE_FLAGS,
+              })
+              return
+            }
+
+            const queueLength = getQueueLength(channel.id)
+
+            if (queueLength === 0) {
+              await command.reply({
+                content: 'No messages in queue',
+                ephemeral: true,
+                flags: SILENT_MESSAGE_FLAGS,
+              })
+              return
+            }
+
+            clearQueue(channel.id)
+
+            await command.reply({
+              content: `🗑 Cleared ${queueLength} queued message${queueLength > 1 ? 's' : ''}`,
+              flags: SILENT_MESSAGE_FLAGS,
+            })
+
+            interactionLogger.log(`[QUEUE] User ${command.user.displayName} cleared queue in thread ${channel.id}`)
           }
         }
 

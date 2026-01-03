@@ -135,6 +135,7 @@ Just send a message in any channel linked to a project. Kimaki handles the rest.
 | `/share` | Generate a public URL to share the current session |
 | `/fork` | Fork the session from a previous message |
 | `/queue <message>` | Queue a message to send after current response finishes |
+| `/clear-queue` | Clear all queued messages in this thread |
 
 ### CLI Commands
 
