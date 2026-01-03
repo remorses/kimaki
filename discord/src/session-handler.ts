@@ -42,6 +42,39 @@ export const pendingPermissions = new Map<
   { permission: Permission; messageId: string; directory: string }
 >()
 
+export type QueuedMessage = {
+  prompt: string
+  userId: string
+  username: string
+  queuedAt: number
+  images?: FilePartInput[]
+}
+
+// Queue of messages waiting to be sent after current response finishes
+// Key is threadId, value is array of queued messages
+export const messageQueue = new Map<string, QueuedMessage[]>()
+
+export function addToQueue({
+  threadId,
+  message,
+}: {
+  threadId: string
+  message: QueuedMessage
+}): number {
+  const queue = messageQueue.get(threadId) || []
+  queue.push(message)
+  messageQueue.set(threadId, queue)
+  return queue.length
+}
+
+export function getQueueLength(threadId: string): number {
+  return messageQueue.get(threadId)?.length || 0
+}
+
+export function clearQueue(threadId: string): void {
+  messageQueue.delete(threadId)
+}
+
 export async function handleOpencodeSession({
   prompt,
   thread,
@@ -469,6 +502,36 @@ export async function handleOpencodeSession({
 
         await sendThreadMessage(thread, `_Completed in ${sessionDuration}${contextInfo}_${attachCommand}${modelInfo}`)
         sessionLogger.log(`DURATION: Session completed in ${sessionDuration}, port ${port}, model ${usedModel}, tokens ${tokensUsedInSession}`)
+
+        // Process queued messages after completion
+        const queue = messageQueue.get(thread.id)
+        if (queue && queue.length > 0) {
+          const nextMessage = queue.shift()!
+          if (queue.length === 0) {
+            messageQueue.delete(thread.id)
+          }
+
+          sessionLogger.log(`[QUEUE] Processing queued message from ${nextMessage.username}`)
+
+          // Show that queued message is being sent
+          await sendThreadMessage(thread, `» **${nextMessage.username}:** ${nextMessage.prompt.slice(0, 150)}${nextMessage.prompt.length > 150 ? '...' : ''}`)
+
+          // Send the queued message as a new prompt (recursive call)
+          // Use setImmediate to avoid blocking and allow this finally to complete
+          setImmediate(() => {
+            handleOpencodeSession({
+              prompt: nextMessage.prompt,
+              thread,
+              projectDirectory,
+              images: nextMessage.images,
+              channelId,
+            }).catch(async (e) => {
+              sessionLogger.error(`[QUEUE] Failed to process queued message:`, e)
+              const errorMsg = e instanceof Error ? e.message : String(e)
+              await sendThreadMessage(thread, `✗ Queued message failed: ${errorMsg.slice(0, 200)}`)
+            })
+          })
+        }
       } else {
         sessionLogger.log(
           `Session was aborted (reason: ${abortController.signal.reason}), skipping duration message`,

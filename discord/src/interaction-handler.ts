@@ -31,6 +31,8 @@ import {
   parseSlashCommand,
   abortControllers,
   pendingPermissions,
+  addToQueue,
+  getQueueLength,
 } from './session-handler.js'
 import { extractTagsArrays } from './xml.js'
 import { createLogger } from './logger.js'
@@ -969,6 +971,103 @@ export function registerInteractionHandler({
             await handleForkCommand(command)
           } else if (command.commandName === 'model') {
             await handleModelCommand({ interaction: command, appId })
+          } else if (command.commandName === 'queue') {
+            const message = command.options.getString('message', true)
+            const channel = command.channel
+
+            if (!channel) {
+              await command.reply({
+                content: 'This command can only be used in a channel',
+                ephemeral: true,
+                flags: SILENT_MESSAGE_FLAGS,
+              })
+              return
+            }
+
+            const isThread = [
+              ChannelType.PublicThread,
+              ChannelType.PrivateThread,
+              ChannelType.AnnouncementThread,
+            ].includes(channel.type)
+
+            if (!isThread) {
+              await command.reply({
+                content: 'This command can only be used in a thread with an active session',
+                ephemeral: true,
+                flags: SILENT_MESSAGE_FLAGS,
+              })
+              return
+            }
+
+            const row = getDatabase()
+              .prepare('SELECT session_id FROM thread_sessions WHERE thread_id = ?')
+              .get(channel.id) as { session_id: string } | undefined
+
+            if (!row?.session_id) {
+              await command.reply({
+                content: 'No active session in this thread. Send a message directly instead.',
+                ephemeral: true,
+                flags: SILENT_MESSAGE_FLAGS,
+              })
+              return
+            }
+
+            // Check if there's an active request running
+            const hasActiveRequest = abortControllers.has(row.session_id)
+
+            if (!hasActiveRequest) {
+              // No active request, send immediately
+              const textChannel = await resolveTextChannel(channel as ThreadChannel)
+              const { projectDirectory } = getKimakiMetadata(textChannel)
+
+              if (!projectDirectory) {
+                await command.reply({
+                  content: 'Could not determine project directory',
+                  ephemeral: true,
+                  flags: SILENT_MESSAGE_FLAGS,
+                })
+                return
+              }
+
+              await command.reply({
+                content: `» **${command.user.displayName}:** ${message.slice(0, 100)}${message.length > 100 ? '...' : ''}`,
+                flags: SILENT_MESSAGE_FLAGS,
+              })
+
+              interactionLogger.log(`[QUEUE] No active request, sending immediately in thread ${channel.id}`)
+
+              handleOpencodeSession({
+                prompt: message,
+                thread: channel as ThreadChannel,
+                projectDirectory,
+                channelId: textChannel?.id || channel.id,
+              }).catch(async (e) => {
+                interactionLogger.error(`[QUEUE] Failed to send message:`, e)
+                const errorMsg = e instanceof Error ? e.message : String(e)
+                await sendThreadMessage(channel as ThreadChannel, `✗ Failed: ${errorMsg.slice(0, 200)}`)
+              })
+
+              return
+            }
+
+            // Add to queue
+            const queuePosition = addToQueue({
+              threadId: channel.id,
+              message: {
+                prompt: message,
+                userId: command.user.id,
+                username: command.user.displayName,
+                queuedAt: Date.now(),
+              },
+            })
+
+            await command.reply({
+              content: `✅ Message queued (position: ${queuePosition}). Will be sent after current response.`,
+              ephemeral: true,
+              flags: SILENT_MESSAGE_FLAGS,
+            })
+
+            interactionLogger.log(`[QUEUE] User ${command.user.displayName} queued message in thread ${channel.id}`)
           }
         }
 

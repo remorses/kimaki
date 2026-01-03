@@ -188,6 +188,18 @@ async function registerCommands(token: string, appId: string) {
       .setName('model')
       .setDescription('Set the preferred model for this channel or session')
       .toJSON(),
+    new SlashCommandBuilder()
+      .setName('queue')
+      .setDescription('Queue a message to be sent after the current response finishes')
+      .addStringOption((option) => {
+        option
+          .setName('message')
+          .setDescription('The message to queue')
+          .setRequired(true)
+
+        return option
+      })
+      .toJSON(),
   ]
 
   const rest = new REST().setToken(token)
