@@ -1,8 +1,7 @@
+#!/usr/bin/env node
 // Main CLI entrypoint for the Kimaki Discord bot.
 // Handles interactive setup, Discord OAuth, slash command registration,
 // project channel creation, and launching the bot with opencode integration.
-
-#!/usr/bin/env node
 import { cac } from 'cac'
 import {
   intro,
@@ -207,6 +206,14 @@ async function registerCommands(token: string, appId: string) {
     new SlashCommandBuilder()
       .setName('clear-queue')
       .setDescription('Clear all queued messages in this thread')
+      .toJSON(),
+    new SlashCommandBuilder()
+      .setName('undo')
+      .setDescription('Undo the last assistant message (revert file changes)')
+      .toJSON(),
+    new SlashCommandBuilder()
+      .setName('redo')
+      .setDescription('Redo previously undone changes')
       .toJSON(),
   ]
 
