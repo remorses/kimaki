@@ -11,6 +11,7 @@ import type { TextPart } from '@opencode-ai/sdk'
 import { getDatabase } from './database.js'
 import { initializeOpencodeForDirectory } from './opencode.js'
 import { resolveTextChannel, getKimakiMetadata, sendThreadMessage } from './discord-utils.js'
+import { collectLastAssistantParts } from './message-formatting.js'
 import { createLogger } from './logger.js'
 
 const sessionLogger = createLogger('SESSION')
@@ -209,7 +210,38 @@ export async function handleForkSelectMenu(interaction: StringSelectMenuInteract
 
     await sendThreadMessage(
       thread,
-      `**Forked session created!**\nFrom: \`${sessionId}\`\nNew session: \`${forkedSession.id}\`\n\nYou can now continue the conversation from this point.`
+      `**Forked session created!**\nFrom: \`${sessionId}\`\nNew session: \`${forkedSession.id}\``,
+    )
+
+    // Fetch and display the last assistant messages from the forked session
+    const messagesResponse = await getClient().session.messages({
+      path: { id: forkedSession.id },
+    })
+
+    if (messagesResponse.data) {
+      const { partIds, content } = collectLastAssistantParts({
+        messages: messagesResponse.data,
+      })
+
+      if (content.trim()) {
+        const discordMessage = await sendThreadMessage(thread, content)
+
+        // Store part-message mappings for future reference
+        const stmt = getDatabase().prepare(
+          'INSERT OR REPLACE INTO part_messages (part_id, message_id, thread_id) VALUES (?, ?, ?)',
+        )
+        const transaction = getDatabase().transaction((ids: string[]) => {
+          for (const partId of ids) {
+            stmt.run(partId, discordMessage.id, thread.id)
+          }
+        })
+        transaction(partIds)
+      }
+    }
+
+    await sendThreadMessage(
+      thread,
+      `You can now continue the conversation from this point.`,
     )
 
     await interaction.editReply(

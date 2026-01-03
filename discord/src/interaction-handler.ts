@@ -24,7 +24,7 @@ import {
   handleProviderSelectMenu,
   handleModelSelectMenu,
 } from './model-command.js'
-import { formatPart } from './message-formatting.js'
+import { collectLastAssistantParts } from './message-formatting.js'
 import { createProjectChannels } from './channel-management.js'
 import {
   handleOpencodeSession,
@@ -462,20 +462,9 @@ export function registerInteractionHandler({
                 `📂 **Resumed session:** ${sessionTitle}\n📅 **Created:** ${new Date(sessionResponse.data.time.created).toLocaleString()}\n\n*Loading ${messages.length} messages...*`,
               )
 
-              const allAssistantParts: { id: string; content: string }[] = []
-              for (const message of messages) {
-                if (message.info.role === 'assistant') {
-                  for (const part of message.parts) {
-                    const content = formatPart(part)
-                    if (content.trim()) {
-                      allAssistantParts.push({ id: part.id, content })
-                    }
-                  }
-                }
-              }
-
-              const partsToRender = allAssistantParts.slice(-30)
-              const skippedCount = allAssistantParts.length - partsToRender.length
+              const { partIds, content, skippedCount } = collectLastAssistantParts({
+                messages,
+              })
 
               if (skippedCount > 0) {
                 await sendThreadMessage(
@@ -484,29 +473,20 @@ export function registerInteractionHandler({
                 )
               }
 
-              if (partsToRender.length > 0) {
-                const combinedContent = partsToRender
-                  .map((p) => p.content)
-                  .join('\n')
-
-                const discordMessage = await sendThreadMessage(
-                  thread,
-                  combinedContent,
-                )
+              if (content.trim()) {
+                const discordMessage = await sendThreadMessage(thread, content)
 
                 const stmt = getDatabase().prepare(
                   'INSERT OR REPLACE INTO part_messages (part_id, message_id, thread_id) VALUES (?, ?, ?)',
                 )
 
-                const transaction = getDatabase().transaction(
-                  (parts: { id: string }[]) => {
-                    for (const part of parts) {
-                      stmt.run(part.id, discordMessage.id, thread.id)
-                    }
-                  },
-                )
+                const transaction = getDatabase().transaction((ids: string[]) => {
+                  for (const partId of ids) {
+                    stmt.run(partId, discordMessage.id, thread.id)
+                  }
+                })
 
-                transaction(partsToRender)
+                transaction(partIds)
               }
 
               const messageCount = messages.length

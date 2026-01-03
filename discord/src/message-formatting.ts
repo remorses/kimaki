@@ -1,8 +1,40 @@
-import type { Part, FilePartInput } from '@opencode-ai/sdk'
+import type { Part, FilePartInput, SessionMessagesResponse } from '@opencode-ai/sdk'
 import type { Message } from 'discord.js'
 import { createLogger } from './logger.js'
 
 const logger = createLogger('FORMATTING')
+
+/**
+ * Collects and formats the last N assistant parts from session messages.
+ * Used by both /resume and /fork to show recent assistant context.
+ */
+export function collectLastAssistantParts({
+  messages,
+  limit = 30,
+}: {
+  messages: SessionMessagesResponse
+  limit?: number
+}): { partIds: string[]; content: string; skippedCount: number } {
+  const allAssistantParts: { id: string; content: string }[] = []
+
+  for (const message of messages) {
+    if (message.info.role === 'assistant') {
+      for (const part of message.parts) {
+        const content = formatPart(part)
+        if (content.trim()) {
+          allAssistantParts.push({ id: part.id, content: content.trimEnd() })
+        }
+      }
+    }
+  }
+
+  const partsToRender = allAssistantParts.slice(-limit)
+  const partIds = partsToRender.map((p) => p.id)
+  const content = partsToRender.map((p) => p.content).join('\n')
+  const skippedCount = allAssistantParts.length - partsToRender.length
+
+  return { partIds, content, skippedCount }
+}
 
 export const TEXT_MIME_TYPES = [
   'text/',
