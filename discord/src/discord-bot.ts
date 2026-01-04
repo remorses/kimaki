@@ -7,8 +7,11 @@ import { initializeOpencodeForDirectory, getOpencodeServers } from './opencode.j
 import {
   escapeBackticksInCodeBlocks,
   splitMarkdownForDiscord,
+  sendThreadMessage,
   SILENT_MESSAGE_FLAGS,
 } from './discord-utils.js'
+import { formatPart } from './message-formatting.js'
+import { GlobalEventWatcher } from './global-event-watcher.js'
 import { getOpencodeSystemMessage } from './system-message.js'
 import { getFileAttachments, getTextAttachments } from './message-formatting.js'
 import {
@@ -138,6 +141,19 @@ export async function startDiscordBot({
 
     registerInteractionHandler({ discordClient: c, appId: currentAppId })
     registerVoiceStateHandler({ discordClient: c, appId: currentAppId })
+
+    // Start GlobalEventWatcher for authoritative sync (port 39293)
+    const AUTHORITATIVE_PORT = 39293
+    const watcher = new GlobalEventWatcher(AUTHORITATIVE_PORT, {
+      getDatabase: () => getDatabase(),
+      getDiscordClient: () => c,
+      sendThreadMessage: (thread, content) => sendThreadMessage(thread, content),
+      formatPart: (part) => formatPart(part),
+    })
+    watcher.start().catch((e) => {
+      discordLogger.error('[SYNC] Failed to start GlobalEventWatcher:', e)
+    })
+    discordLogger.log(`[SYNC] GlobalEventWatcher started on port ${AUTHORITATIVE_PORT}`)
   }
 
   // If client is already ready (was logged in before being passed to us),

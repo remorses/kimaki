@@ -132,6 +132,15 @@ export async function sendThreadMessage(
 ): Promise<Message> {
   const MAX_LENGTH = 2000
 
+  // Ensure content is a string
+  if (typeof content !== 'string') {
+    content = String(content ?? '')
+  }
+  
+  if (!content.trim()) {
+    throw new Error('Cannot send empty message')
+  }
+
   content = formatMarkdownTables(content)
   content = escapeBackticksInCodeBlocks(content)
 

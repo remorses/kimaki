@@ -289,9 +289,12 @@ export class GlobalEventWatcher {
         const thread = await this.getThread(threadId)
         if (!thread) continue
 
-        const content = this.deps.formatPart(part)
+        let content = this.deps.formatPart(part)
         // Ensure content is a string and not empty
-        if (typeof content !== 'string' || !content.trim()) continue
+        if (typeof content !== 'string') {
+          content = String(content ?? '')
+        }
+        if (!content.trim()) continue
 
         try {
           const discordMessage = await this.deps.sendThreadMessage(thread, content + '\n\n')
@@ -562,6 +565,11 @@ export class GlobalEventWatcher {
     if (this.isPartSent(part.id)) return
 
     let content = this.deps.formatPart(part)
+    
+    // Ensure content is a string early
+    if (typeof content !== 'string') {
+      content = String(content ?? '')
+    }
     
     // User message echo prevention and formatting
     if (role === 'user' && part.type === 'text') {

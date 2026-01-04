@@ -107,9 +107,9 @@ export function getToolSummaryText(part: Part): string {
   if (part.type !== 'tool') return ''
 
   if (part.tool === 'edit') {
-    const filePath = (part.state.input?.filePath as string) || ''
-    const newString = (part.state.input?.newString as string) || ''
-    const oldString = (part.state.input?.oldString as string) || ''
+    const filePath = String(part.state.input?.filePath ?? '')
+    const newString = String(part.state.input?.newString ?? '')
+    const oldString = String(part.state.input?.oldString ?? '')
     const added = newString.split('\n').length
     const removed = oldString.split('\n').length
     const fileName = filePath.split('/').pop() || ''
@@ -117,21 +117,21 @@ export function getToolSummaryText(part: Part): string {
   }
 
   if (part.tool === 'write') {
-    const filePath = (part.state.input?.filePath as string) || ''
-    const content = (part.state.input?.content as string) || ''
+    const filePath = String(part.state.input?.filePath ?? '')
+    const content = String(part.state.input?.content ?? '')
     const lines = content.split('\n').length
     const fileName = filePath.split('/').pop() || ''
     return fileName ? `*${fileName}* (${lines} line${lines === 1 ? '' : 's'})` : `(${lines} line${lines === 1 ? '' : 's'})`
   }
 
   if (part.tool === 'webfetch') {
-    const url = (part.state.input?.url as string) || ''
+    const url = String(part.state.input?.url ?? '')
     const urlWithoutProtocol = url.replace(/^https?:\/\//, '')
     return urlWithoutProtocol ? `*${urlWithoutProtocol}*` : ''
   }
 
   if (part.tool === 'read') {
-    const filePath = (part.state.input?.filePath as string) || ''
+    const filePath = String(part.state.input?.filePath ?? '')
     const fileName = filePath.split('/').pop() || ''
     return fileName ? `*${fileName}*` : ''
   }
