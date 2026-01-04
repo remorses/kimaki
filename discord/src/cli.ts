@@ -1,4 +1,7 @@
 #!/usr/bin/env node
+// Main CLI entrypoint for the Kimaki Discord bot.
+// Handles interactive setup, Discord OAuth, slash command registration,
+// project channel creation, and launching the bot with opencode integration.
 import { cac } from 'cac'
 import {
   intro,
@@ -23,7 +26,7 @@ import {
   ensureKimakiCategory,
   createProjectChannels,
   type ChannelWithTags,
-} from './discordBot.js'
+} from './discord-bot.js'
 import type { OpencodeClient } from '@opencode-ai/sdk'
 import {
   Events,
@@ -179,6 +182,38 @@ async function registerCommands(token: string, appId: string) {
     new SlashCommandBuilder()
       .setName('share')
       .setDescription('Share the current session as a public URL')
+      .toJSON(),
+    new SlashCommandBuilder()
+      .setName('fork')
+      .setDescription('Fork the session from a past user message')
+      .toJSON(),
+    new SlashCommandBuilder()
+      .setName('model')
+      .setDescription('Set the preferred model for this channel or session')
+      .toJSON(),
+    new SlashCommandBuilder()
+      .setName('queue')
+      .setDescription('Queue a message to be sent after the current response finishes')
+      .addStringOption((option) => {
+        option
+          .setName('message')
+          .setDescription('The message to queue')
+          .setRequired(true)
+
+        return option
+      })
+      .toJSON(),
+    new SlashCommandBuilder()
+      .setName('clear-queue')
+      .setDescription('Clear all queued messages in this thread')
+      .toJSON(),
+    new SlashCommandBuilder()
+      .setName('undo')
+      .setDescription('Undo the last assistant message (revert file changes)')
+      .toJSON(),
+    new SlashCommandBuilder()
+      .setName('redo')
+      .setDescription('Redo previously undone changes')
       .toJSON(),
   ]
 

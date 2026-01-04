@@ -1,4 +1,9 @@
 #!/usr/bin/env node
+
+// CLI entrypoint with automatic restart capability.
+// Spawns the main CLI and restarts it on non-zero exit codes with throttling.
+// Exit codes 0, 130 (SIGINT), 143 (SIGTERM), or 64 (EXIT_NO_RESTART) terminate cleanly.
+
 import { spawn } from 'node:child_process'
 import { fileURLToPath } from 'node:url'
 import { dirname, join } from 'node:path'

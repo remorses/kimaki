@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
-# Restarts dist/cli.js if it exits non-zero.
+# Bash fallback entrypoint for the Discord bot.
+# Restarts dist/cli.js on crash with 5-second throttling between restarts.
 # Throttles restarts to at most once every 5 seconds.
 
 set -u -o pipefail

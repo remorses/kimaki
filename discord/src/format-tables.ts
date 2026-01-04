@@ -1,3 +1,7 @@
+// Markdown table to code block converter.
+// Discord doesn't render GFM tables, so this converts them to
+// space-aligned code blocks for proper monospace display.
+
 import { Lexer, type Token, type Tokens } from 'marked'
 
 export function formatMarkdownTables(markdown: string): string {

@@ -1,3 +1,7 @@
+// Audio transcription service using Google Gemini.
+// Transcribes voice messages with code-aware context, using grep/glob tools
+// to verify technical terms, filenames, and function names in the codebase.
+
 import {
   GoogleGenAI,
   Type,
@@ -115,7 +119,7 @@ const globToolDeclaration = {
 const transcriptionResultToolDeclaration = {
   name: 'transcriptionResult',
   description:
-    'Submit the final transcription result. You MUST call this tool with a non-empty transcription. Always transcribe what you hear, never return empty.',
+    'MANDATORY: You MUST call this tool to complete the task. This is the ONLY way to return results - text responses are ignored. Call this with your transcription, even if imperfect. An imperfect transcription is better than none.',
   parameters: {
     type: Type.OBJECT,
     properties: {
@@ -248,12 +252,18 @@ export async function runTranscriptionLoop({
 
       if (result.type === 'toolResponse') {
         stepsRemaining--
-        const stepsWarning =
-          stepsRemaining <= 0
-            ? '\n\n[SYSTEM: No more tool calls allowed. You MUST call transcriptionResult NOW with your best transcription.]'
-            : stepsRemaining === 1
-              ? '\n\n[SYSTEM: 1 step remaining. Call transcriptionResult next.]'
-              : `\n\n[SYSTEM: ${stepsRemaining} steps remaining before you must call transcriptionResult.]`
+        const stepsWarning: string = (() => {
+          if (stepsRemaining <= 0) {
+            return '\n\n[CRITICAL: Tool limit reached. You MUST call transcriptionResult NOW. No more grep/glob allowed. Call transcriptionResult immediately with your best transcription.]'
+          }
+          if (stepsRemaining === 1) {
+            return '\n\n[URGENT: FINAL STEP. You MUST call transcriptionResult NOW. Do NOT call grep or glob. Call transcriptionResult with your transcription immediately.]'
+          }
+          if (stepsRemaining <= 3) {
+            return `\n\n[WARNING: Only ${stepsRemaining} steps remaining. Finish searching soon and call transcriptionResult. Do not wait until the last step.]`
+          }
+          return ''
+        })()
 
         functionResponseParts.push({
           functionResponse: {
@@ -330,14 +340,21 @@ export async function transcribeAudio({
 
     const transcriptionPrompt = `${languageHint}Transcribe this audio for a coding agent (like Claude Code or OpenCode).
 
+CRITICAL REQUIREMENT: You MUST call the "transcriptionResult" tool to complete this task.
+- The transcriptionResult tool is the ONLY way to return results
+- Text responses are completely ignored - only tool calls work
+- You MUST call transcriptionResult even if you run out of tool calls
+- An imperfect transcription is better than no transcription
+- DO NOT end without calling transcriptionResult
+
 This is a software development environment. The speaker is giving instructions to an AI coding assistant. Expect:
 - File paths, function names, CLI commands, package names, API endpoints
 
 RULES:
-1. Call "transcriptionResult" with a non-empty transcription
+1. You have LIMITED tool calls - use grep/glob sparingly, call them in parallel
 2. If audio is unclear, transcribe your best interpretation
-3. If audio seems silent/empty, respond with "[inaudible audio]"
-4. You have limited tool calls - call multiple grep/glob tools in parallel to optimize for speed
+3. If audio seems silent/empty, call transcriptionResult with "[inaudible audio]"
+4. When warned about remaining steps, STOP searching and call transcriptionResult immediately
 
 Common corrections (apply without tool calls):
 - "reacked" → "React", "jason" → "JSON", "get hub" → "GitHub", "no JS" → "Node.js", "dacker" → "Docker"
@@ -348,7 +365,7 @@ ${prompt}
 </context>
 ${sessionMessages ? `\nRecent session messages:\n<session_messages>\n${sessionMessages}\n</session_messages>` : ''}
 
-Call "transcriptionResult" with your transcription.
+REMEMBER: Call "transcriptionResult" tool with your transcription. This is mandatory.
 
 Note: "critique" is a CLI tool for showing diffs in the browser.`
 

@@ -1,3 +1,7 @@
+// General utility functions for the bot.
+// Includes Discord OAuth URL generation, array deduplication,
+// abort error detection, and date/time formatting helpers.
+
 import { PermissionsBitField } from 'discord.js'
 
 type GenerateInstallUrlOptions = {

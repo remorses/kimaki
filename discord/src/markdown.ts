@@ -1,3 +1,7 @@
+// Session-to-markdown renderer for sharing.
+// Generates shareable markdown from OpenCode sessions, formatting
+// user messages, assistant responses, tool calls, and reasoning blocks.
+
 import type { OpencodeClient } from '@opencode-ai/sdk'
 import * as yaml from 'js-yaml'
 import { formatDateTime } from './utils.js'

@@ -1,18 +1,21 @@
 # Changelog
 
-## 0.4.23
-
-### Minor Changes
-
-- Implement authoritative sync with a global OpenCode event watcher for Discord threads.
-- Add periodic backfill for missed non-text parts across linked sessions.
-- Improve Discord output with subtext summaries and clear TUI prompt quoting.
+## 0.4.24
 
 ### Patch Changes
 
-- Auto-reject pending permissions when a new prompt arrives to avoid blocking.
-- Prevent message echoes by detecting Discord-originated prompts.
-- Ensure session-to-thread routing stays consistent when reusing sessions.
+- add **test-model-id.ts** script for validating model ID format and provider.list API
+- cleanup **pnpm-lock.yaml** - remove stale liveapi dependencies
+
+## 0.4.23
+
+### Patch Changes
+
+- fix **command timeouts**: fixed issue where `/fork`, `/abort`, and `/share` commands would time out by deferring replies immediately
+- fix **startup race condition**: fixed issue where interaction handlers were not registered if the client was already ready during startup
+- add **/model command**: new command to set preferred model for a channel or session
+- update **/model** to use dropdowns with models sorted by release date (newest first)
+- improve **customId handling**: use hash keys for select menus to avoid Discord's 100-char limit on custom IDs
 
 ## 0.4.22
 

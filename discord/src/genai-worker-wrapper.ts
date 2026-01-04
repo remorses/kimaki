@@ -1,3 +1,7 @@
+// Main thread interface for the GenAI worker.
+// Spawns and manages the worker thread, handling message passing for
+// audio input/output, tool call completions, and graceful shutdown.
+
 import { Worker } from 'node:worker_threads'
 import type { WorkerInMessage, WorkerOutMessage } from './worker-types.js'
 import type { Tool as AITool } from 'ai'

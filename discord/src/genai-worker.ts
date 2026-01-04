@@ -1,3 +1,7 @@
+// Worker thread for GenAI voice processing.
+// Runs in a separate thread to handle audio encoding/decoding without blocking.
+// Resamples 24kHz GenAI output to 48kHz stereo Opus packets for Discord.
+
 import { parentPort, threadId } from 'node:worker_threads'
 import { createWriteStream, type WriteStream } from 'node:fs'
 import { mkdir } from 'node:fs/promises'

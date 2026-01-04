@@ -2,50 +2,169 @@
     <br/>
     <br/>
     <h3>kimaki</h3>
-    <p>IronMan's Jarvis for coding agents, inside Discord</p>
+    <p>Iron Man's Jarvis for coding agents, inside Discord</p>
     <br/>
     <br/>
 </div>
 
-Kimaki is a Discord bot you can install in a Discord server to control opencode sessions in any computer via Discord
+Kimaki is a Discord bot that lets you control [OpenCode](https://opencode.ai) coding sessions from Discord. Send a message in a Discord channel → an AI agent edits code on your machine.
 
-When running the `kimaki` cli the first time the cli will ask you choose what existing opencode projects to add to Discord, Kimaki will create a new channel for each project. Writing a message in that channel will start a new opencode session
+## Quick Start
 
-Kimaki will store the bot state in a local sqlite database. You should keep the kimaki cli running to be able to communicate to it via Discord
+```bash
+npx -y kimaki@latest
+```
 
-## Features
+That's it. The CLI guides you through everything.
 
-- **Authoritative Sync** - Connects to a persistent OpenCode server (port 39293) to sync all interactions (TUI, API, and Bot) to Discord in real-time.
-- **Universal Resumption** - Resumes existing sessions with full history backfill.
-- **Rich Meta-info** - Displays token usage, context cache, and model details in Discord subtext.
+## What is Kimaki?
 
-## Usage
+Kimaki connects Discord to OpenCode, a coding agent similar to Claude Code. Each Discord channel is linked to a project directory on your machine. When you send a message in that channel, Kimaki starts an OpenCode session that can:
 
-`npx -y kimaki@latest`
+- Read and edit files
+- Run terminal commands
+- Search your codebase
+- Use any tools you've configured
 
-The cli will ask you for
+Think of it as texting your codebase. You describe what you want, the AI does it.
 
-- Discord bot app id and token
-- What opencode projects add to Discord
-- Gemini API key for audio transcriptions and voice channels interaction
+## Installation & Setup
 
-Kimaki requires you to create a new Discord bot for each new computer you will install kimaki in. You can create as many bots as you want, then install each bot in spare machines to be able to control these machines via Discord. Each Discord channel will be associated with a specific machine and project directory.
+Run the CLI and follow the interactive prompts:
+
+```bash
+npx -y kimaki@latest
+```
+
+The setup wizard will:
+
+1. **Create a Discord Bot** - Walk you through creating a bot at [discord.com/developers](https://discord.com/developers/applications)
+2. **Configure Bot Settings** - Enable required intents (Message Content, Server Members, Voice States)
+3. **Install to Your Server** - Generate an invite link with proper permissions
+4. **Select Projects** - Choose which OpenCode projects to add as Discord channels
+5. **Voice Setup (Optional)** - Request a Google Gemini API key for voice features
+
+Keep the CLI running. It's the bridge between Discord and your machine.
+
+## Architecture: One Bot Per Machine
+
+**Each Discord bot you create is tied to one machine.** This is by design.
+
+When you run `kimaki` on a computer, it spawns OpenCode servers for projects on that machine. The bot can only access directories on the machine where it's running.
+
+To control multiple machines:
+
+1. Create a separate Discord bot for each machine
+2. Run `kimaki` on each machine with its own bot token
+3. Add all bots to the same Discord server
+
+Each channel shows which bot (machine) it's connected to. You can have channels from different machines in the same server, controlled by different bots.
 
 ## Best Practices
 
-- **Set notifications to mentions only** - This way you won't be spammed with notifications during a session. When a session finishes, the bot adds a ✅ reaction to your initial message (or ❌ on error), so you can check the thread at your convenience.
+**Create a dedicated Discord server for your agents.** This keeps your coding sessions separate from other servers and gives you full control over permissions.
 
-- **Send long messages as files** - Discord has a character limit for free users. To send longer prompts, tap the plus icon in Discord and use "Send message as file". File attachments don't count towards the message limit and Kimaki will read the file content as your prompt.
+**Add all your bots to that server.** One server, multiple machines. Each channel is clearly labeled with its project directory.
 
-- **Permissions** - Only users with specific Discord permissions can interact with the bot. Other users' messages are ignored. Allowed:
-  - Server Owner
-  - Administrator
-  - Manage Server
-  - "Kimaki" role (case-insensitive) - create a role named "Kimaki" and assign it to trusted users
+**Use the "Kimaki" role for team access.** Create a role named "Kimaki" (case-insensitive) and assign it to users who should be able to trigger sessions.
 
-## Changing the Model
+**Send long prompts as file attachments.** Discord has character limits for messages. Tap the plus icon and use "Send message as file" for longer prompts. Kimaki reads file attachments as your message.
 
-To change the model used by OpenCode, edit the project's `opencode.json` config file and set the `model` field:
+## Required Permissions
+
+Only users with these Discord permissions can interact with the bot:
+
+- **Server Owner** - Full access
+- **Administrator** - Full access
+- **Manage Server** - Full access
+- **"Kimaki" role** - Create a role with this name and assign to trusted users
+
+Messages from users without these permissions are ignored.
+
+## Features
+
+### Text Messages
+
+Send any message in a channel linked to a project. Kimaki creates a thread and starts an OpenCode session.
+
+### File Attachments
+
+Attach images, code files, or any other files to your message. Kimaki includes them in the session context.
+
+### Voice Messages
+
+Record a voice message in Discord. Kimaki transcribes it using Google's Gemini API and processes it as text. The transcription uses your project's file tree for accuracy, recognizing function names and file paths you mention.
+
+Requires a Gemini API key (prompted during setup).
+
+### Voice Channels
+
+Join a voice channel linked to a project for real-time voice interaction. Talk naturally, and Kimaki responds with voice—like having Jarvis for your codebase.
+
+Uses Gemini's native audio model for low-latency conversation.
+
+### Session Management
+
+- **Resume sessions** - Continue where you left off
+- **Fork sessions** - Branch from any message in the conversation
+- **Share sessions** - Generate public URLs to share your session
+
+### Message Queue
+
+Use `/queue <message>` to queue a follow-up message while the AI is still responding. The queued message sends automatically when the current response finishes. If no response is in progress, it sends immediately. Useful for chaining tasks without waiting.
+
+## Commands Reference
+
+### Text Interaction
+
+Just send a message in any channel linked to a project. Kimaki handles the rest.
+
+### Slash Commands
+
+| Command | Description |
+|---------|-------------|
+| `/session <prompt>` | Start a new session with an initial prompt |
+| `/resume <session>` | Resume a previous session (with autocomplete) |
+| `/abort` | Stop the current running session |
+| `/add-project <project>` | Create channels for an existing OpenCode project |
+| `/create-new-project <name>` | Create a new project folder and start a session |
+| `/accept` | Accept a permission request (file edit, command execution) |
+| `/accept-always` | Accept and auto-approve similar future requests |
+| `/reject` | Reject a permission request |
+| `/model` | Change the AI model for this channel |
+| `/share` | Generate a public URL to share the current session |
+| `/fork` | Fork the session from a previous message |
+| `/queue <message>` | Queue a message to send after current response finishes |
+| `/clear-queue` | Clear all queued messages in this thread |
+
+### CLI Commands
+
+```bash
+# Start the bot (interactive setup on first run)
+npx -y kimaki@latest
+
+# Upload files to a Discord thread
+npx -y kimaki upload-to-discord --session <session-id> <file1> [file2...]
+```
+
+## How It Works
+
+**SQLite Database** - Kimaki stores state in `~/.kimaki/discord-sessions.db`. This maps Discord threads to OpenCode sessions, channels to directories, and stores your bot credentials.
+
+**OpenCode Servers** - When you message a channel, Kimaki spawns (or reuses) an OpenCode server for that project directory. The server handles the actual AI coding session.
+
+**Channel Metadata** - Each channel's topic contains XML metadata linking it to a directory and bot:
+```xml
+<kimaki><directory>/path/to/project</directory><app>bot_id</app></kimaki>
+```
+
+**Voice Processing** - Voice features run in a worker thread. Audio flows: Discord Opus → Decoder → Downsample (48kHz→16kHz) → Gemini API → Response → Upsample → Opus → Discord.
+
+**Graceful Restart** - Send `SIGUSR2` to restart the bot with new code without losing connections.
+
+## Model Configuration
+
+Set the AI model in your project's `opencode.json`:
 
 ```json
 {
@@ -53,10 +172,12 @@ To change the model used by OpenCode, edit the project's `opencode.json` config 
 }
 ```
 
-Examples:
-- `"anthropic/claude-sonnet-4-20250514"` - Claude Sonnet 4
-- `"anthropic/claude-opus-4-20250514"` - Claude Opus 4
-- `"openai/gpt-4o"` - GPT-4o
-- `"google/gemini-2.5-pro"` - Gemini 2.5 Pro
+Format: `provider/model-name`
 
-Format is `provider/model-name`. You can also set `small_model` for tasks like title generation.
+**Examples:**
+- `anthropic/claude-sonnet-4-20250514` - Claude Sonnet 4
+- `anthropic/claude-opus-4-20250514` - Claude Opus 4
+- `openai/gpt-4o` - GPT-4o
+- `google/gemini-2.5-pro` - Gemini 2.5 Pro
+
+Or use the `/model` command in Discord to change models per channel.

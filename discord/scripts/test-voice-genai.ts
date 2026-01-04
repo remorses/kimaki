@@ -1,4 +1,4 @@
-import { createDiscordClient, startDiscordBot } from '../src/discordBot'
+import { createDiscordClient, startDiscordBot } from '../src/discord-bot'
 
 async function test() {
   console.log('Starting Discord bot with voice and GenAI integration test...')

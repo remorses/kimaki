@@ -1,0 +1,159 @@
+// SQLite database manager for persistent bot state.
+// Stores thread-session mappings, bot tokens, channel directories,
+// API keys, and model preferences in ~/.kimaki/discord-sessions.db.
+
+import Database from 'better-sqlite3'
+import fs from 'node:fs'
+import os from 'node:os'
+import path from 'node:path'
+import { createLogger } from './logger.js'
+
+const dbLogger = createLogger('DB')
+
+let db: Database.Database | null = null
+
+export function getDatabase(): Database.Database {
+  if (!db) {
+    const kimakiDir = path.join(os.homedir(), '.kimaki')
+
+    try {
+      fs.mkdirSync(kimakiDir, { recursive: true })
+    } catch (error) {
+      dbLogger.error('Failed to create ~/.kimaki directory:', error)
+    }
+
+    const dbPath = path.join(kimakiDir, 'discord-sessions.db')
+
+    dbLogger.log(`Opening database at: ${dbPath}`)
+    db = new Database(dbPath)
+
+    db.exec(`
+      CREATE TABLE IF NOT EXISTS thread_sessions (
+        thread_id TEXT PRIMARY KEY,
+        session_id TEXT NOT NULL,
+        created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+      )
+    `)
+
+    db.exec(`
+      CREATE TABLE IF NOT EXISTS part_messages (
+        part_id TEXT PRIMARY KEY,
+        message_id TEXT NOT NULL,
+        thread_id TEXT NOT NULL,
+        created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+      )
+    `)
+
+    db.exec(`
+      CREATE TABLE IF NOT EXISTS bot_tokens (
+        app_id TEXT PRIMARY KEY,
+        token TEXT NOT NULL,
+        created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+      )
+    `)
+
+    db.exec(`
+      CREATE TABLE IF NOT EXISTS channel_directories (
+        channel_id TEXT PRIMARY KEY,
+        directory TEXT NOT NULL,
+        channel_type TEXT NOT NULL,
+        created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+      )
+    `)
+
+    db.exec(`
+      CREATE TABLE IF NOT EXISTS bot_api_keys (
+        app_id TEXT PRIMARY KEY,
+        gemini_api_key TEXT,
+        xai_api_key TEXT,
+        created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+      )
+    `)
+
+    runModelMigrations(db)
+  }
+
+  return db
+}
+
+/**
+ * Run migrations for model preferences tables.
+ * Called on startup and can be called on-demand.
+ */
+export function runModelMigrations(database?: Database.Database): void {
+  const targetDb = database || getDatabase()
+
+  targetDb.exec(`
+    CREATE TABLE IF NOT EXISTS channel_models (
+      channel_id TEXT PRIMARY KEY,
+      model_id TEXT NOT NULL,
+      created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+      updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+    )
+  `)
+
+  targetDb.exec(`
+    CREATE TABLE IF NOT EXISTS session_models (
+      session_id TEXT PRIMARY KEY,
+      model_id TEXT NOT NULL,
+      created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+    )
+  `)
+
+  dbLogger.log('Model preferences migrations complete')
+}
+
+/**
+ * Get the model preference for a channel.
+ * @returns Model ID in format "provider_id/model_id" or undefined
+ */
+export function getChannelModel(channelId: string): string | undefined {
+  const db = getDatabase()
+  const row = db
+    .prepare('SELECT model_id FROM channel_models WHERE channel_id = ?')
+    .get(channelId) as { model_id: string } | undefined
+  return row?.model_id
+}
+
+/**
+ * Set the model preference for a channel.
+ * @param modelId Model ID in format "provider_id/model_id"
+ */
+export function setChannelModel(channelId: string, modelId: string): void {
+  const db = getDatabase()
+  db.prepare(
+    `INSERT INTO channel_models (channel_id, model_id, updated_at) 
+     VALUES (?, ?, CURRENT_TIMESTAMP)
+     ON CONFLICT(channel_id) DO UPDATE SET model_id = ?, updated_at = CURRENT_TIMESTAMP`
+  ).run(channelId, modelId, modelId)
+}
+
+/**
+ * Get the model preference for a session.
+ * @returns Model ID in format "provider_id/model_id" or undefined
+ */
+export function getSessionModel(sessionId: string): string | undefined {
+  const db = getDatabase()
+  const row = db
+    .prepare('SELECT model_id FROM session_models WHERE session_id = ?')
+    .get(sessionId) as { model_id: string } | undefined
+  return row?.model_id
+}
+
+/**
+ * Set the model preference for a session.
+ * @param modelId Model ID in format "provider_id/model_id"
+ */
+export function setSessionModel(sessionId: string, modelId: string): void {
+  const db = getDatabase()
+  db.prepare(
+    `INSERT OR REPLACE INTO session_models (session_id, model_id) VALUES (?, ?)`
+  ).run(sessionId, modelId)
+}
+
+export function closeDatabase(): void {
+  if (db) {
+    db.close()
+    db = null
+  }
+}
