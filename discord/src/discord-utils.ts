@@ -16,6 +16,8 @@ import { createLogger } from './logger.js'
 const discordLogger = createLogger('DISCORD')
 
 export const SILENT_MESSAGE_FLAGS = 4 | 4096
+// Same as SILENT but without SuppressNotifications - triggers badge/notification
+export const NOTIFY_MESSAGE_FLAGS = 4
 
 export function escapeBackticksInCodeBlocks(markdown: string): string {
   const lexer = new Lexer()
@@ -129,11 +131,17 @@ export function splitMarkdownForDiscord({
 export async function sendThreadMessage(
   thread: ThreadChannel,
   content: string,
+  options?: { flags?: number }
 ): Promise<Message> {
   const MAX_LENGTH = 2000
 
   content = formatMarkdownTables(content)
   content = escapeBackticksInCodeBlocks(content)
+
+  // If custom flags provided, send as single message (no chunking)
+  if (options?.flags !== undefined) {
+    return thread.send({ content, flags: options.flags })
+  }
 
   const chunks = splitMarkdownForDiscord({ content, maxLength: MAX_LENGTH })
 

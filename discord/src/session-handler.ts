@@ -7,7 +7,7 @@ import type { Message, ThreadChannel } from 'discord.js'
 import prettyMilliseconds from 'pretty-ms'
 import { getDatabase, getSessionModel, getChannelModel } from './database.js'
 import { initializeOpencodeForDirectory, getOpencodeServers } from './opencode.js'
-import { sendThreadMessage } from './discord-utils.js'
+import { sendThreadMessage, NOTIFY_MESSAGE_FLAGS } from './discord-utils.js'
 import { formatPart } from './message-formatting.js'
 import { getOpencodeSystemMessage } from './system-message.js'
 import { createLogger } from './logger.js'
@@ -504,7 +504,7 @@ export async function handleOpencodeSession({
           sessionLogger.error('Failed to fetch provider info for context percentage:', e)
         }
 
-        await sendThreadMessage(thread, `_Completed in ${sessionDuration}${contextInfo}_${attachCommand}${modelInfo}`)
+        await sendThreadMessage(thread, `_Completed in ${sessionDuration}${contextInfo}_${attachCommand}${modelInfo}`, { flags: NOTIFY_MESSAGE_FLAGS })
         sessionLogger.log(`DURATION: Session completed in ${sessionDuration}, port ${port}, model ${usedModel}, tokens ${tokensUsedInSession}`)
 
         // Process queued messages after completion
