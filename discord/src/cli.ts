@@ -55,6 +55,7 @@ const LOCK_PORT = 29988
 
 async function killProcessOnPort(port: number): Promise<boolean> {
   const isWindows = process.platform === 'win32'
+  const myPid = process.pid
 
   try {
     if (isWindows) {
@@ -63,22 +64,26 @@ async function killProcessOnPort(port: number): Promise<boolean> {
         shell: false,
         encoding: 'utf-8',
       })
-      const pid = result.stdout?.trim().split('\n')[0]?.trim()
-      if (pid && /^\d+$/.test(pid)) {
-        cliLogger.log(`Killing existing kimaki process (PID: ${pid})`)
-        spawnSync('taskkill', ['/F', '/PID', pid], { shell: false })
+      const pids = result.stdout?.trim().split('\n').map((p) => p.trim()).filter((p) => /^\d+$/.test(p))
+      // Filter out our own PID and take the first (oldest)
+      const targetPid = pids?.find((p) => parseInt(p, 10) !== myPid)
+      if (targetPid) {
+        cliLogger.log(`Killing existing kimaki process (PID: ${targetPid})`)
+        spawnSync('taskkill', ['/F', '/PID', targetPid], { shell: false })
         return true
       }
     } else {
-      // Unix: use lsof to find PID
-      const result = spawnSync('lsof', ['-i', `:${port}`, '-t'], {
+      // Unix: use lsof with -sTCP:LISTEN to only find the listening process
+      const result = spawnSync('lsof', ['-i', `:${port}`, '-sTCP:LISTEN', '-t'], {
         shell: false,
         encoding: 'utf-8',
       })
-      const pid = result.stdout?.trim().split('\n')[0]?.trim()
-      if (pid && /^\d+$/.test(pid)) {
-        cliLogger.log(`Killing existing kimaki process (PID: ${pid})`)
-        process.kill(parseInt(pid, 10), 'SIGKILL')
+      const pids = result.stdout?.trim().split('\n').map((p) => p.trim()).filter((p) => /^\d+$/.test(p))
+      // Filter out our own PID and take the first (oldest)
+      const targetPid = pids?.find((p) => parseInt(p, 10) !== myPid)
+      if (targetPid) {
+        cliLogger.log(`Killing existing kimaki process (PID: ${targetPid})`)
+        process.kill(parseInt(targetPid, 10), 'SIGKILL')
         return true
       }
     }
