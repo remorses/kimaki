@@ -53,31 +53,78 @@ process.title = 'kimaki'
 
 const LOCK_PORT = 29988
 
+async function killProcessOnPort(port: number): Promise<boolean> {
+  const isWindows = process.platform === 'win32'
+
+  try {
+    if (isWindows) {
+      // Windows: find PID using netstat, then kill
+      const result = spawnSync('cmd', ['/c', `for /f "tokens=5" %a in ('netstat -ano ^| findstr :${port} ^| findstr LISTENING') do @echo %a`], {
+        shell: false,
+        encoding: 'utf-8',
+      })
+      const pid = result.stdout?.trim().split('\n')[0]?.trim()
+      if (pid && /^\d+$/.test(pid)) {
+        cliLogger.log(`Killing existing kimaki process (PID: ${pid})`)
+        spawnSync('taskkill', ['/F', '/PID', pid], { shell: false })
+        return true
+      }
+    } else {
+      // Unix: use lsof to find PID
+      const result = spawnSync('lsof', ['-i', `:${port}`, '-t'], {
+        shell: false,
+        encoding: 'utf-8',
+      })
+      const pid = result.stdout?.trim().split('\n')[0]?.trim()
+      if (pid && /^\d+$/.test(pid)) {
+        cliLogger.log(`Killing existing kimaki process (PID: ${pid})`)
+        process.kill(parseInt(pid, 10), 'SIGKILL')
+        return true
+      }
+    }
+  } catch {
+    // Failed to kill, continue anyway
+  }
+  return false
+}
+
 async function checkSingleInstance(): Promise<void> {
   try {
     const response = await fetch(`http://127.0.0.1:${LOCK_PORT}`, {
       signal: AbortSignal.timeout(1000),
     })
     if (response.ok) {
-      cliLogger.error('Another kimaki instance is already running')
-      process.exit(1)
+      cliLogger.log('Another kimaki instance detected')
+      await killProcessOnPort(LOCK_PORT)
+      // Wait a moment for port to be released
+      await new Promise((resolve) => { setTimeout(resolve, 500) })
     }
   } catch {
     // Connection refused means no instance running, continue
   }
 }
 
-function startLockServer(): void {
-  const server = http.createServer((req, res) => {
-    res.writeHead(200)
-    res.end('kimaki')
-  })
-  server.listen(LOCK_PORT, '127.0.0.1')
-  server.on('error', (err: NodeJS.ErrnoException) => {
-    if (err.code === 'EADDRINUSE') {
-      cliLogger.error('Another kimaki instance is already running')
-      process.exit(1)
-    }
+async function startLockServer(): Promise<void> {
+  return new Promise((resolve, reject) => {
+    const server = http.createServer((req, res) => {
+      res.writeHead(200)
+      res.end('kimaki')
+    })
+    server.listen(LOCK_PORT, '127.0.0.1')
+    server.once('listening', () => {
+      resolve()
+    })
+    server.on('error', async (err: NodeJS.ErrnoException) => {
+      if (err.code === 'EADDRINUSE') {
+        cliLogger.log('Port still in use, retrying...')
+        await killProcessOnPort(LOCK_PORT)
+        await new Promise((r) => { setTimeout(r, 500) })
+        // Retry once
+        server.listen(LOCK_PORT, '127.0.0.1')
+      } else {
+        reject(err)
+      }
+    })
   })
 }
 
@@ -720,7 +767,7 @@ cli
   .action(async (options: { restart?: boolean; addChannels?: boolean }) => {
     try {
       await checkSingleInstance()
-      startLockServer()
+      await startLockServer()
       await run({
         restart: options.restart,
         addChannels: options.addChannels,
