@@ -172,7 +172,7 @@ export function getToolSummaryText(part: Part): string {
     .map(([key, value]) => {
       if (value === null || value === undefined) return null
       const stringValue = typeof value === 'string' ? value : JSON.stringify(value)
-      const truncatedValue = stringValue.length > 300 ? stringValue.slice(0, 300) + '…' : stringValue
+      const truncatedValue = stringValue.length > 50 ? stringValue.slice(0, 50) + '…' : stringValue
       return `${key}: ${truncatedValue}`
     })
     .filter(Boolean)
@@ -199,12 +199,13 @@ export function formatTodoList(part: Part): string {
 
 export function formatPart(part: Part): string {
   if (part.type === 'text') {
-    return part.text || ''
+    if (!part.text?.trim()) return ''
+    return `⬥ ${part.text}`
   }
 
   if (part.type === 'reasoning') {
     if (!part.text?.trim()) return ''
-    return `◼︎ thinking`
+    return `┣ thinking`
   }
 
   if (part.type === 'file') {
@@ -216,11 +217,11 @@ export function formatPart(part: Part): string {
   }
 
   if (part.type === 'agent') {
-    return `◼︎ agent ${part.id}`
+    return `┣ agent ${part.id}`
   }
 
   if (part.type === 'snapshot') {
-    return `◼︎ snapshot ${part.snapshot}`
+    return `┣ snapshot ${part.snapshot}`
   }
 
   if (part.type === 'tool') {
@@ -254,7 +255,15 @@ export function formatPart(part: Part): string {
       toolTitle = `_${stateTitle}_`
     }
 
-    const icon = part.state.status === 'error' ? '⨯' : '◼︎'
+    const icon = (() => {
+      if (part.state.status === 'error') {
+        return '⨯'
+      }
+      if (part.tool === 'edit' || part.tool === 'write') {
+        return '◼︎'
+      }
+      return '┣'
+    })()
     return `${icon} ${part.tool} ${toolTitle} ${summaryText}`
   }
 
