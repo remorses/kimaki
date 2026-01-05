@@ -1,5 +1,19 @@
 # Changelog
 
+## 0.4.25
+
+### Patch Changes
+
+- add **/queue** command to queue messages during active sessions
+- add **/clear-queue** command to clear queued messages
+- add **/undo** and **/redo** commands for session history navigation
+- add **/fork** improvements - show last assistant message in selection
+- feat: **auto-kill existing kimaki instance** instead of failing when another instance is running
+- fix: **prevent killing own process** when checking for existing instance (use `-sTCP:LISTEN` flag)
+- feat: **notification badge** on session completion message
+- feat: **lowercase capitalization rules** in system prompt for Discord-style messaging
+- refactor: extract commands into separate files with cleaner dispatcher
+
 ## 0.4.24
 
 ### Patch Changes
