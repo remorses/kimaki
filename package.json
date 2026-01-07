@@ -17,12 +17,13 @@
     "vitest": "^3.2.4"
   },
   "overrides": {
-    "@opencode-ai/sdk": "^1.0.115"
+    "@opencode-ai/sdk": "^1.1.3"
   },
   "repository": "https://github.com/remorses/",
   "author": "remorses <beats.by.morse@gmail.com>",
   "license": "",
   "dependencies": {
+    "@opencode-ai/sdk": "^1.1.3",
     "string-dedent": "^3.0.2",
     "tiny-jsonc": "^1.0.2"
   }
