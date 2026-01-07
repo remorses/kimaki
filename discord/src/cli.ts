@@ -27,7 +27,7 @@ import {
   createProjectChannels,
   type ChannelWithTags,
 } from './discord-bot.js'
-import type { OpencodeClient } from '@opencode-ai/sdk'
+import type { OpencodeClient, Command as OpencodeCommand } from '@opencode-ai/sdk'
 import {
   Events,
   ChannelType,
@@ -84,18 +84,7 @@ async function killProcessOnPort(port: number): Promise<boolean> {
       if (targetPid) {
         const pid = parseInt(targetPid, 10)
         cliLogger.log(`Stopping existing kimaki process (PID: ${pid})`)
-        // use SIGTERM first for graceful shutdown (allows cleanup of opencode servers)
-        process.kill(pid, 'SIGTERM')
-        // wait for graceful shutdown
-        await new Promise((resolve) => { setTimeout(resolve, 2000) })
-        // check if still running and force kill if needed
-        try {
-          process.kill(pid, 0) // signal 0 just checks if process exists
-          cliLogger.log(`Process ${pid} still running, sending SIGKILL`)
-          process.kill(pid, 'SIGKILL')
-        } catch {
-          cliLogger.debug(`Process ${pid} already terminated`)
-        }
+        process.kill(pid, 'SIGKILL')
         return true
       }
     }
@@ -164,7 +153,10 @@ type CliOptions = {
   addChannels?: boolean
 }
 
-async function registerCommands(token: string, appId: string) {
+// Commands to skip when registering user commands (reserved names)
+const SKIP_USER_COMMANDS = ['init']
+
+async function registerCommands(token: string, appId: string, userCommands: OpencodeCommand[] = []) {
   const commands = [
     new SlashCommandBuilder()
       .setName('resume')
@@ -284,6 +276,30 @@ async function registerCommands(token: string, appId: string) {
       .setDescription('Redo previously undone changes')
       .toJSON(),
   ]
+
+  // Add user-defined commands with -cmd suffix
+  for (const cmd of userCommands) {
+    if (SKIP_USER_COMMANDS.includes(cmd.name)) {
+      continue
+    }
+
+    const commandName = `${cmd.name}-cmd`
+    const description = cmd.description || `Run /${cmd.name} command`
+
+    commands.push(
+      new SlashCommandBuilder()
+        .setName(commandName)
+        .setDescription(description.slice(0, 100)) // Discord limits to 100 chars
+        .addStringOption((option) => {
+          option
+            .setName('arguments')
+            .setDescription('Arguments to pass to the command')
+            .setRequired(false)
+          return option
+        })
+        .toJSON(),
+    )
+  }
 
   const rest = new REST().setToken(token)
 
@@ -725,8 +741,37 @@ async function run({ restart, addChannels }: CliOptions) {
     }
   }
 
+  // Fetch user-defined commands using the already-running server
+  const allUserCommands: OpencodeCommand[] = []
+  try {
+    const commandsResponse = await getClient().command.list({
+      query: { directory: currentDir },
+    })
+    if (commandsResponse.data) {
+      allUserCommands.push(...commandsResponse.data)
+    }
+  } catch {
+    // Ignore errors fetching commands
+  }
+
+  // Log available user commands
+  const registrableCommands = allUserCommands.filter(
+    (cmd) => !SKIP_USER_COMMANDS.includes(cmd.name),
+  )
+
+  if (registrableCommands.length > 0) {
+    const commandList = registrableCommands
+      .map((cmd) => `  /${cmd.name}-cmd - ${cmd.description || 'No description'}`)
+      .join('\n')
+
+    note(
+      `Found ${registrableCommands.length} user-defined command(s):\n${commandList}`,
+      'OpenCode Commands',
+    )
+  }
+
   cliLogger.log('Registering slash commands asynchronously...')
-  void registerCommands(token, appId)
+  void registerCommands(token, appId, allUserCommands)
     .then(() => {
       cliLogger.log('Slash commands registered!')
     })

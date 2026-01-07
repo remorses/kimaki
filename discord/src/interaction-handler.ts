@@ -14,9 +14,11 @@ import { handleForkCommand, handleForkSelectMenu } from './commands/fork.js'
 import { handleModelCommand, handleProviderSelectMenu, handleModelSelectMenu } from './commands/model.js'
 import { handleQueueCommand, handleClearQueueCommand } from './commands/queue.js'
 import { handleUndoCommand, handleRedoCommand } from './commands/undo-redo.js'
+import { handleUserCommand } from './commands/user-command.js'
 import { createLogger } from './logger.js'
 
 const interactionLogger = createLogger('INTERACTION')
+
 
 export function registerInteractionHandler({
   discordClient,
@@ -122,6 +124,12 @@ export function registerInteractionHandler({
             case 'redo':
               await handleRedoCommand({ command: interaction, appId })
               return
+          }
+
+          // Handle user-defined commands (ending with -cmd suffix)
+          if (interaction.commandName.endsWith('-cmd')) {
+            await handleUserCommand({ command: interaction, appId })
+            return
           }
           return
         }
