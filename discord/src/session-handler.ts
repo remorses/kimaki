@@ -343,7 +343,7 @@ export async function handleOpencodeSession({
   const sendPartMessage = async (part: Part) => {
     const content = formatPart(part) + '\n\n'
     if (!content.trim() || content.length === 0) {
-      discordLogger.log(`SKIP: Part ${part.id} has no content`)
+      // discordLogger.log(`SKIP: Part ${part.id} has no content`)
       return
     }
 
