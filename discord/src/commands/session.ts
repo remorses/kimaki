@@ -8,7 +8,7 @@ import { getDatabase } from '../database.js'
 import { initializeOpencodeForDirectory } from '../opencode.js'
 import { SILENT_MESSAGE_FLAGS } from '../discord-utils.js'
 import { extractTagsArrays } from '../xml.js'
-import { handleOpencodeSession, parseSlashCommand } from '../session-handler.js'
+import { handleOpencodeSession } from '../session-handler.js'
 import { createLogger } from '../logger.js'
 
 const logger = createLogger('SESSION')
@@ -86,12 +86,10 @@ export async function handleSessionCommand({
 
     await command.editReply(`Created new session in ${thread.toString()}`)
 
-    const parsedCommand = parseSlashCommand(fullPrompt)
     await handleOpencodeSession({
       prompt: fullPrompt,
       thread,
       projectDirectory,
-      parsedCommand,
       channelId: textChannel.id,
     })
   } catch (error) {

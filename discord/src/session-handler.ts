@@ -17,28 +17,6 @@ const sessionLogger = createLogger('SESSION')
 const voiceLogger = createLogger('VOICE')
 const discordLogger = createLogger('DISCORD')
 
-export type ParsedCommand = {
-  isCommand: true
-  command: string
-  arguments: string
-} | {
-  isCommand: false
-}
-
-export function parseSlashCommand(text: string): ParsedCommand {
-  const trimmed = text.trim()
-  if (!trimmed.startsWith('/')) {
-    return { isCommand: false }
-  }
-  const match = trimmed.match(/^\/(\S+)(?:\s+(.*))?$/)
-  if (!match) {
-    return { isCommand: false }
-  }
-  const command = match[1]!
-  const args = match[2]?.trim() || ''
-  return { isCommand: true, command, arguments: args }
-}
-
 export const abortControllers = new Map<string, AbortController>()
 
 export const pendingPermissions = new Map<
@@ -158,7 +136,6 @@ export async function handleOpencodeSession({
   projectDirectory,
   originalMessage,
   images = [],
-  parsedCommand,
   channelId,
 }: {
   prompt: string
@@ -166,7 +143,6 @@ export async function handleOpencodeSession({
   projectDirectory?: string
   originalMessage?: Message
   images?: FilePartInput[]
-  parsedCommand?: ParsedCommand
   channelId?: string
 }): Promise<{ sessionID: string; result: any; port?: number } | undefined> {
   voiceLogger.log(
@@ -630,68 +606,53 @@ export async function handleOpencodeSession({
 
     stopTyping = startTyping()
 
-    let response: { data?: unknown; error?: unknown; response: Response }
-    if (parsedCommand?.isCommand) {
-      sessionLogger.log(
-        `[COMMAND] Sending command /${parsedCommand.command} to session ${session.id} with args: "${parsedCommand.arguments.slice(0, 100)}${parsedCommand.arguments.length > 100 ? '...' : ''}"`,
-      )
-      response = await getClient().session.command({
-        path: { id: session.id },
-        body: {
-          command: parsedCommand.command,
-          arguments: parsedCommand.arguments,
-        },
-        signal: abortController.signal,
-      })
-    } else {
-      voiceLogger.log(
-        `[PROMPT] Sending prompt to session ${session.id}: "${prompt.slice(0, 100)}${prompt.length > 100 ? '...' : ''}"`,
-      )
-      // append image paths to prompt so ai knows where they are on disk
-      const promptWithImagePaths = (() => {
-        if (images.length === 0) {
-          return prompt
-        }
-        sessionLogger.log(`[PROMPT] Sending ${images.length} image(s):`, images.map((img) => ({ mime: img.mime, filename: img.filename, url: img.url.slice(0, 100) })))
-        const imagePathsList = images.map((img) => `- ${img.filename}: ${img.url}`).join('\n')
-        return `${prompt}\n\n**attached images:**\n${imagePathsList}`
-      })()
-
-      const parts = [{ type: 'text' as const, text: promptWithImagePaths }, ...images]
-      sessionLogger.log(`[PROMPT] Parts to send:`, parts.length)
-
-      // Get model preference: session-level overrides channel-level
-      const modelPreference = getSessionModel(session.id) || (channelId ? getChannelModel(channelId) : undefined)
-      const modelParam = (() => {
-        if (!modelPreference) {
-          return undefined
-        }
-        const [providerID, ...modelParts] = modelPreference.split('/')
-        const modelID = modelParts.join('/')
-        if (!providerID || !modelID) {
-          return undefined
-        }
-        sessionLogger.log(`[MODEL] Using model preference: ${modelPreference}`)
-        return { providerID, modelID }
-      })()
-
-      // Get agent preference: session-level overrides channel-level
-      const agentPreference = getSessionAgent(session.id) || (channelId ? getChannelAgent(channelId) : undefined)
-      if (agentPreference) {
-        sessionLogger.log(`[AGENT] Using agent preference: ${agentPreference}`)
+    voiceLogger.log(
+      `[PROMPT] Sending prompt to session ${session.id}: "${prompt.slice(0, 100)}${prompt.length > 100 ? '...' : ''}"`,
+    )
+    // append image paths to prompt so ai knows where they are on disk
+    const promptWithImagePaths = (() => {
+      if (images.length === 0) {
+        return prompt
       }
+      sessionLogger.log(`[PROMPT] Sending ${images.length} image(s):`, images.map((img) => ({ mime: img.mime, filename: img.filename, url: img.url.slice(0, 100) })))
+      const imagePathsList = images.map((img) => `- ${img.filename}: ${img.url}`).join('\n')
+      return `${prompt}\n\n**attached images:**\n${imagePathsList}`
+    })()
 
-      response = await getClient().session.prompt({
-        path: { id: session.id },
-        body: {
-          parts,
-          system: getOpencodeSystemMessage({ sessionId: session.id }),
-          model: modelParam,
-          agent: agentPreference,
-        },
-        signal: abortController.signal,
-      })
+    const parts = [{ type: 'text' as const, text: promptWithImagePaths }, ...images]
+    sessionLogger.log(`[PROMPT] Parts to send:`, parts.length)
+
+    // Get model preference: session-level overrides channel-level
+    const modelPreference = getSessionModel(session.id) || (channelId ? getChannelModel(channelId) : undefined)
+    const modelParam = (() => {
+      if (!modelPreference) {
+        return undefined
+      }
+      const [providerID, ...modelParts] = modelPreference.split('/')
+      const modelID = modelParts.join('/')
+      if (!providerID || !modelID) {
+        return undefined
+      }
+      sessionLogger.log(`[MODEL] Using model preference: ${modelPreference}`)
+      return { providerID, modelID }
+    })()
+
+    // Get agent preference: session-level overrides channel-level
+    const agentPreference = getSessionAgent(session.id) || (channelId ? getChannelAgent(channelId) : undefined)
+    if (agentPreference) {
+      sessionLogger.log(`[AGENT] Using agent preference: ${agentPreference}`)
     }
+
+    const response = await getClient().session.prompt({
+      path: { id: session.id },
+      body: {
+        parts,
+        system: getOpencodeSystemMessage({ sessionId: session.id }),
+        model: modelParam,
+        agent: agentPreference,
+      },
+      signal: abortController.signal,
+    })
 
     if (response.error) {
       const errorMessage = (() => {

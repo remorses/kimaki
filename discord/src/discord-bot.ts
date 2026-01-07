@@ -28,10 +28,7 @@ import {
   getCompactSessionContext,
   getLastSessionId,
 } from './markdown.js'
-import {
-  handleOpencodeSession,
-  parseSlashCommand,
-} from './session-handler.js'
+import { handleOpencodeSession } from './session-handler.js'
 import { registerInteractionHandler } from './interaction-handler.js'
 
 export { getDatabase, closeDatabase } from './database.js'
@@ -297,14 +294,12 @@ export async function startDiscordBot({
         const promptWithAttachments = textAttachmentsContent
           ? `${messageContent}\n\n${textAttachmentsContent}`
           : messageContent
-        const parsedCommand = parseSlashCommand(messageContent)
         await handleOpencodeSession({
           prompt: promptWithAttachments,
           thread,
           projectDirectory,
           originalMessage: message,
           images: fileAttachments,
-          parsedCommand,
           channelId: parent?.id,
         })
         return
@@ -395,14 +390,12 @@ export async function startDiscordBot({
         const promptWithAttachments = textAttachmentsContent
           ? `${messageContent}\n\n${textAttachmentsContent}`
           : messageContent
-        const parsedCommand = parseSlashCommand(messageContent)
         await handleOpencodeSession({
           prompt: promptWithAttachments,
           thread,
           projectDirectory,
           originalMessage: message,
           images: fileAttachments,
-          parsedCommand,
           channelId: textChannel.id,
         })
       } else {

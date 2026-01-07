@@ -4,7 +4,7 @@
 import type { CommandContext, CommandHandler } from './types.js'
 import { ChannelType, type TextChannel, type ThreadChannel } from 'discord.js'
 import { extractTagsArrays } from '../xml.js'
-import { handleOpencodeSession, parseSlashCommand } from '../session-handler.js'
+import { handleOpencodeSession } from '../session-handler.js'
 import { SILENT_MESSAGE_FLAGS } from '../discord-utils.js'
 import { createLogger } from '../logger.js'
 import { getDatabase } from '../database.js'
@@ -128,12 +128,10 @@ export const handleUserCommand: CommandHandler = async ({
       // Running in existing thread - just send the command
       await command.editReply(`Running /${commandName}...`)
 
-      const parsedCommand = parseSlashCommand(fullPrompt)
       await handleOpencodeSession({
         prompt: fullPrompt,
         thread,
         projectDirectory,
-        parsedCommand,
         channelId: textChannel?.id,
       })
     } else if (textChannel) {
@@ -152,12 +150,10 @@ export const handleUserCommand: CommandHandler = async ({
 
       await command.editReply(`Started /${commandName} in ${newThread.toString()}`)
 
-      const parsedCommand = parseSlashCommand(fullPrompt)
       await handleOpencodeSession({
         prompt: fullPrompt,
         thread: newThread,
         projectDirectory,
-        parsedCommand,
         channelId: textChannel.id,
       })
     }
