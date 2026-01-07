@@ -5,7 +5,7 @@
 import type { Part, FilePartInput, Permission } from '@opencode-ai/sdk'
 import type { Message, ThreadChannel } from 'discord.js'
 import prettyMilliseconds from 'pretty-ms'
-import { getDatabase, getSessionModel, getChannelModel } from './database.js'
+import { getDatabase, getSessionModel, getChannelModel, getSessionAgent, getChannelAgent } from './database.js'
 import { initializeOpencodeForDirectory, getOpencodeServers } from './opencode.js'
 import { sendThreadMessage, NOTIFY_MESSAGE_FLAGS } from './discord-utils.js'
 import { formatPart } from './message-formatting.js'
@@ -293,6 +293,7 @@ export async function handleOpencodeSession({
   let stopTyping: (() => void) | null = null
   let usedModel: string | undefined
   let usedProviderID: string | undefined
+  let usedAgent: string | undefined
   let tokensUsedInSession = 0
   let lastDisplayedContextPercentage = 0
   let modelContextLimit: number | undefined
@@ -386,6 +387,7 @@ export async function handleOpencodeSession({
             assistantMessageId = msg.id
             usedModel = msg.modelID
             usedProviderID = msg.providerID
+            usedAgent = msg.mode
 
             if (tokensUsedInSession > 0 && usedProviderID && usedModel) {
               if (!modelContextLimit) {
@@ -563,6 +565,7 @@ export async function handleOpencodeSession({
         )
         const attachCommand = port ? ` ⋅ ${session.id}` : ''
         const modelInfo = usedModel ? ` ⋅ ${usedModel}` : ''
+        const agentInfo = usedAgent && usedAgent.toLowerCase() !== 'build' ? ` ⋅ **${usedAgent}**` : ''
         let contextInfo = ''
 
         try {
@@ -577,7 +580,7 @@ export async function handleOpencodeSession({
           sessionLogger.error('Failed to fetch provider info for context percentage:', e)
         }
 
-        await sendThreadMessage(thread, `_Completed in ${sessionDuration}${contextInfo}_${attachCommand}${modelInfo}`, { flags: NOTIFY_MESSAGE_FLAGS })
+        await sendThreadMessage(thread, `_Completed in ${sessionDuration}${contextInfo}_${attachCommand}${modelInfo}${agentInfo}`, { flags: NOTIFY_MESSAGE_FLAGS })
         sessionLogger.log(`DURATION: Session completed in ${sessionDuration}, port ${port}, model ${usedModel}, tokens ${tokensUsedInSession}`)
 
         // Process queued messages after completion
@@ -672,12 +675,19 @@ export async function handleOpencodeSession({
         return { providerID, modelID }
       })()
 
+      // Get agent preference: session-level overrides channel-level
+      const agentPreference = getSessionAgent(session.id) || (channelId ? getChannelAgent(channelId) : undefined)
+      if (agentPreference) {
+        sessionLogger.log(`[AGENT] Using agent preference: ${agentPreference}`)
+      }
+
       response = await getClient().session.prompt({
         path: { id: session.id },
         body: {
           parts,
           system: getOpencodeSystemMessage({ sessionId: session.id }),
           model: modelParam,
+          agent: agentPreference,
         },
         signal: abortController.signal,
       })

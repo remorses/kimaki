@@ -100,6 +100,23 @@ export function runModelMigrations(database?: Database.Database): void {
     )
   `)
 
+  targetDb.exec(`
+    CREATE TABLE IF NOT EXISTS channel_agents (
+      channel_id TEXT PRIMARY KEY,
+      agent_name TEXT NOT NULL,
+      created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+      updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+    )
+  `)
+
+  targetDb.exec(`
+    CREATE TABLE IF NOT EXISTS session_agents (
+      session_id TEXT PRIMARY KEY,
+      agent_name TEXT NOT NULL,
+      created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+    )
+  `)
+
   dbLogger.log('Model preferences migrations complete')
 }
 
@@ -149,6 +166,50 @@ export function setSessionModel(sessionId: string, modelId: string): void {
   db.prepare(
     `INSERT OR REPLACE INTO session_models (session_id, model_id) VALUES (?, ?)`
   ).run(sessionId, modelId)
+}
+
+/**
+ * Get the agent preference for a channel.
+ */
+export function getChannelAgent(channelId: string): string | undefined {
+  const db = getDatabase()
+  const row = db
+    .prepare('SELECT agent_name FROM channel_agents WHERE channel_id = ?')
+    .get(channelId) as { agent_name: string } | undefined
+  return row?.agent_name
+}
+
+/**
+ * Set the agent preference for a channel.
+ */
+export function setChannelAgent(channelId: string, agentName: string): void {
+  const db = getDatabase()
+  db.prepare(
+    `INSERT INTO channel_agents (channel_id, agent_name, updated_at) 
+     VALUES (?, ?, CURRENT_TIMESTAMP)
+     ON CONFLICT(channel_id) DO UPDATE SET agent_name = ?, updated_at = CURRENT_TIMESTAMP`
+  ).run(channelId, agentName, agentName)
+}
+
+/**
+ * Get the agent preference for a session.
+ */
+export function getSessionAgent(sessionId: string): string | undefined {
+  const db = getDatabase()
+  const row = db
+    .prepare('SELECT agent_name FROM session_agents WHERE session_id = ?')
+    .get(sessionId) as { agent_name: string } | undefined
+  return row?.agent_name
+}
+
+/**
+ * Set the agent preference for a session.
+ */
+export function setSessionAgent(sessionId: string, agentName: string): void {
+  const db = getDatabase()
+  db.prepare(
+    `INSERT OR REPLACE INTO session_agents (session_id, agent_name) VALUES (?, ?)`
+  ).run(sessionId, agentName)
 }
 
 export function closeDatabase(): void {

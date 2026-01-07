@@ -12,6 +12,7 @@ import { handleAbortCommand } from './commands/abort.js'
 import { handleShareCommand } from './commands/share.js'
 import { handleForkCommand, handleForkSelectMenu } from './commands/fork.js'
 import { handleModelCommand, handleProviderSelectMenu, handleModelSelectMenu } from './commands/model.js'
+import { handleAgentCommand, handleAgentSelectMenu } from './commands/agent.js'
 import { handleQueueCommand, handleClearQueueCommand } from './commands/queue.js'
 import { handleUndoCommand, handleRedoCommand } from './commands/undo-redo.js'
 import { handleUserCommand } from './commands/user-command.js'
@@ -109,6 +110,10 @@ export function registerInteractionHandler({
               await handleModelCommand({ interaction, appId })
               return
 
+            case 'agent':
+              await handleAgentCommand({ interaction, appId })
+              return
+
             case 'queue':
               await handleQueueCommand({ command: interaction, appId })
               return
@@ -149,6 +154,11 @@ export function registerInteractionHandler({
 
           if (customId.startsWith('model_select:')) {
             await handleModelSelectMenu(interaction)
+            return
+          }
+
+          if (customId.startsWith('agent_select:')) {
+            await handleAgentSelectMenu(interaction)
             return
           }
           return
