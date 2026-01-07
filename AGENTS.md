@@ -9,6 +9,20 @@ To restart the discord bot process so it uses the new code, send a SIGUSR2 signa
 
 The bot will wait 1000ms and then restart itself with the same arguments.
 
+# debugging
+
+in development mode (when running from source, not from node_modules), all logs are written to `discord/tmp/kimaki.log`. this file is reset on each startup.
+
+to debug issues, read this log file to see timestamped logs from all subsystems (discord, voice, session, etc). the format is:
+
+```
+[2026-01-06T12:34:56.789Z] [INFO] [SESSION] your message here
+```
+
+when debugging errors from a discord session, ALWAYS read this log file first to understand what happened. the log contains all events leading up to the error.
+
+IMPORTANT: never silently swallow errors. every catch block must log something using the logger. if you see a catch block that does nothing or only has a comment, add logging to it.
+
 # core guidelines
 
 when summarizing changes at the end of the message, be super short, a few words and in bullet points, use bold text to highlight important keywords. use markdown.
