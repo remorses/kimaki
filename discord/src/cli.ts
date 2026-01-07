@@ -252,6 +252,10 @@ async function registerCommands(token: string, appId: string, userCommands: Open
       .setDescription('Set the preferred model for this channel or session')
       .toJSON(),
     new SlashCommandBuilder()
+      .setName('agent')
+      .setDescription('Set the preferred agent for this channel or session')
+      .toJSON(),
+    new SlashCommandBuilder()
       .setName('queue')
       .setDescription('Queue a message to be sent after the current response finishes')
       .addStringOption((option) => {
@@ -718,6 +722,7 @@ async function run({ restart, addChannels }: CliOptions) {
             guild: targetGuild,
             projectDirectory: project.worktree,
             appId,
+            botName: discordClient.user?.username,
           })
 
           createdChannels.push({

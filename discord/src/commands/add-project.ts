@@ -67,6 +67,7 @@ export async function handleAddProjectCommand({
         guild,
         projectDirectory: directory,
         appId,
+        botName: command.client.user?.username,
       })
 
     await command.editReply(

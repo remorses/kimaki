@@ -12,14 +12,19 @@ import path from 'node:path'
 import { getDatabase } from './database.js'
 import { extractTagsArrays } from './xml.js'
 
-export async function ensureKimakiCategory(guild: Guild): Promise<CategoryChannel> {
+export async function ensureKimakiCategory(
+  guild: Guild,
+  botName?: string,
+): Promise<CategoryChannel> {
+  const categoryName = botName ? `Kimaki ${botName}` : 'Kimaki'
+
   const existingCategory = guild.channels.cache.find(
     (channel): channel is CategoryChannel => {
       if (channel.type !== ChannelType.GuildCategory) {
         return false
       }
 
-      return channel.name.toLowerCase() === 'kimaki'
+      return channel.name.toLowerCase() === categoryName.toLowerCase()
     },
   )
 
@@ -28,19 +33,24 @@ export async function ensureKimakiCategory(guild: Guild): Promise<CategoryChanne
   }
 
   return guild.channels.create({
-    name: 'Kimaki',
+    name: categoryName,
     type: ChannelType.GuildCategory,
   })
 }
 
-export async function ensureKimakiAudioCategory(guild: Guild): Promise<CategoryChannel> {
+export async function ensureKimakiAudioCategory(
+  guild: Guild,
+  botName?: string,
+): Promise<CategoryChannel> {
+  const categoryName = botName ? `Kimaki Audio ${botName}` : 'Kimaki Audio'
+
   const existingCategory = guild.channels.cache.find(
     (channel): channel is CategoryChannel => {
       if (channel.type !== ChannelType.GuildCategory) {
         return false
       }
 
-      return channel.name.toLowerCase() === 'kimaki audio'
+      return channel.name.toLowerCase() === categoryName.toLowerCase()
     },
   )
 
@@ -49,7 +59,7 @@ export async function ensureKimakiAudioCategory(guild: Guild): Promise<CategoryC
   }
 
   return guild.channels.create({
-    name: 'Kimaki Audio',
+    name: categoryName,
     type: ChannelType.GuildCategory,
   })
 }
@@ -58,10 +68,12 @@ export async function createProjectChannels({
   guild,
   projectDirectory,
   appId,
+  botName,
 }: {
   guild: Guild
   projectDirectory: string
   appId: string
+  botName?: string
 }): Promise<{ textChannelId: string; voiceChannelId: string; channelName: string }> {
   const baseName = path.basename(projectDirectory)
   const channelName = `${baseName}`
@@ -69,8 +81,8 @@ export async function createProjectChannels({
     .replace(/[^a-z0-9-]/g, '-')
     .slice(0, 100)
 
-  const kimakiCategory = await ensureKimakiCategory(guild)
-  const kimakiAudioCategory = await ensureKimakiAudioCategory(guild)
+  const kimakiCategory = await ensureKimakiCategory(guild, botName)
+  const kimakiAudioCategory = await ensureKimakiAudioCategory(guild, botName)
 
   const textChannel = await guild.channels.create({
     name: channelName,
