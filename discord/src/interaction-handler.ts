@@ -91,6 +91,7 @@ export function registerInteractionHandler({
               return
 
             case 'abort':
+            case 'stop':
               await handleAbortCommand({ command: interaction, appId })
               return
 

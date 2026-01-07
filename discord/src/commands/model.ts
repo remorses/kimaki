@@ -13,6 +13,7 @@ import crypto from 'node:crypto'
 import { getDatabase, setChannelModel, setSessionModel, runModelMigrations } from '../database.js'
 import { initializeOpencodeForDirectory } from '../opencode.js'
 import { resolveTextChannel, getKimakiMetadata } from '../discord-utils.js'
+import { abortAndRetrySession } from '../session-handler.js'
 import { createLogger } from '../logger.js'
 
 const modelLogger = createLogger('MODEL')
@@ -25,6 +26,7 @@ const pendingModelContexts = new Map<string, {
   isThread: boolean
   providerId?: string
   providerName?: string
+  thread?: ThreadChannel
 }>()
 
 export type ProviderInfo = {
@@ -156,6 +158,7 @@ export async function handleModelCommand({
       channelId: targetChannelId,
       sessionId: sessionId,
       isThread: isThread,
+      thread: isThread ? (channel as ThreadChannel) : undefined,
     }
     const contextHash = crypto.randomBytes(8).toString('hex')
     pendingModelContexts.set(contextHash, context)
@@ -355,10 +358,27 @@ export async function handleModelSelectMenu(
       setSessionModel(context.sessionId, fullModelId)
       modelLogger.log(`Set model ${fullModelId} for session ${context.sessionId}`)
 
-      await interaction.editReply({
-        content: `Model preference set for this session:\n**${context.providerName}** / **${selectedModelId}**\n\n\`${fullModelId}\``,
-        components: [],
-      })
+      // Check if there's a running request and abort+retry with new model
+      let retried = false
+      if (context.thread) {
+        retried = await abortAndRetrySession({
+          sessionId: context.sessionId,
+          thread: context.thread,
+          projectDirectory: context.dir,
+        })
+      }
+
+      if (retried) {
+        await interaction.editReply({
+          content: `Model changed for this session:\n**${context.providerName}** / **${selectedModelId}**\n\n\`${fullModelId}\`\n\n_Retrying current request with new model..._`,
+          components: [],
+        })
+      } else {
+        await interaction.editReply({
+          content: `Model preference set for this session:\n**${context.providerName}** / **${selectedModelId}**\n\n\`${fullModelId}\``,
+          components: [],
+        })
+      }
     } else {
       // Store for channel
       setChannelModel(context.channelId, fullModelId)
