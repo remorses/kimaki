@@ -194,7 +194,12 @@ export function formatTodoList(part: Part): string {
   })
   const activeTodo = todos[activeIndex]
   if (activeIndex === -1 || !activeTodo) return ''
-  return `${activeIndex + 1}. **${activeTodo.content}**`
+  // parenthesized digits ⑴-⒇ for 1-20, fallback to regular number for 21+
+  const parenthesizedDigits = '⑴⑵⑶⑷⑸⑹⑺⑻⑼⑽⑾⑿⒀⒁⒂⒃⒄⒅⒆⒇'
+  const todoNumber = activeIndex + 1
+  const num = todoNumber <= 20 ? parenthesizedDigits[todoNumber - 1] : `(${todoNumber})`
+  const content = activeTodo.content.charAt(0).toLowerCase() + activeTodo.content.slice(1)
+  return `${num} **${content}**`
 }
 
 export function formatPart(part: Part): string {

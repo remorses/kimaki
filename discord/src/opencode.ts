@@ -58,9 +58,15 @@ async function waitForServer(port: number, maxAttempts = 30): Promise<boolean> {
             opencodeLogger.log(`Server ready on port `)
             return true
           }
-        } catch (e) {}
+        } catch (e) {
+          // expected during polling, server not ready yet
+          opencodeLogger.debug(`Polling ${endpoint}: not ready yet`)
+        }
       }
-    } catch (e) {}
+    } catch (e) {
+      // expected during polling
+      opencodeLogger.debug(`Server polling attempt failed:`, e)
+    }
     await new Promise((resolve) => setTimeout(resolve, 1000))
   }
   throw new Error(

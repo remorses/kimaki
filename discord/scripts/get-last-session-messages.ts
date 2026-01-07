@@ -37,9 +37,13 @@ async function waitForServer(port: number, maxAttempts = 30): Promise<boolean> {
             console.log(`Server ready on port ${port}`)
             return true
           }
-        } catch (e) {}
+        } catch (e) {
+          // expected during polling, server not ready yet
+        }
       }
-    } catch (e) {}
+    } catch (e) {
+      // expected during polling
+    }
     await new Promise((resolve) => setTimeout(resolve, 1000))
   }
   throw new Error(

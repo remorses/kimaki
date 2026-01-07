@@ -1,7 +1,7 @@
 import { test, expect, beforeAll, afterAll } from 'vitest'
 import { spawn, type ChildProcess } from 'child_process'
 import { OpencodeClient } from '@opencode-ai/sdk'
-import { ShareMarkdown } from './markdown.js'
+import { ShareMarkdown, getCompactSessionContext } from './markdown.js'
 
 let serverProcess: ChildProcess
 let client: OpencodeClient
@@ -311,4 +311,48 @@ test('generate markdown from multiple sessions', async () => {
       // Continue with other sessions
     }
   }
+})
+
+// test for getCompactSessionContext - disabled in CI since it requires a specific session
+test.skipIf(process.env.CI)('getCompactSessionContext generates compact format', async () => {
+  const sessionId = 'ses_46c2205e8ffeOll1JUSuYChSAM'
+
+  const context = await getCompactSessionContext({
+    client,
+    sessionId,
+    includeSystemPrompt: true,
+    maxMessages: 15,
+  })
+
+  console.log(`Generated compact context length: ${context.length} characters`)
+
+  expect(context).toBeTruthy()
+  expect(context.length).toBeGreaterThan(0)
+  // should have tool calls or messages
+  expect(context).toMatch(/\[Tool \w+\]:|\[User\]:|\[Assistant\]:/)
+
+  await expect(context).toMatchFileSnapshot(
+    './__snapshots__/compact-session-context.md',
+  )
+})
+
+test.skipIf(process.env.CI)('getCompactSessionContext without system prompt', async () => {
+  const sessionId = 'ses_46c2205e8ffeOll1JUSuYChSAM'
+
+  const context = await getCompactSessionContext({
+    client,
+    sessionId,
+    includeSystemPrompt: false,
+    maxMessages: 10,
+  })
+
+  console.log(`Generated compact context (no system) length: ${context.length} characters`)
+
+  expect(context).toBeTruthy()
+  // should NOT have system prompt
+  expect(context).not.toContain('[System Prompt]')
+
+  await expect(context).toMatchFileSnapshot(
+    './__snapshots__/compact-session-context-no-system.md',
+  )
 })

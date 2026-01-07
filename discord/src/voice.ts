@@ -52,7 +52,8 @@ async function runGrep({
       .join('\n')
 
     return output.slice(0, 2000)
-  } catch {
+  } catch (e) {
+    voiceLogger.error('grep search failed:', e)
     return 'grep search failed'
   }
 }
@@ -304,7 +305,8 @@ export async function transcribeAudio({
   temperature,
   geminiApiKey,
   directory,
-  sessionMessages,
+  currentSessionContext,
+  lastSessionContext,
 }: {
   audio: Buffer | Uint8Array | ArrayBuffer | string
   prompt?: string
@@ -312,7 +314,8 @@ export async function transcribeAudio({
   temperature?: number
   geminiApiKey?: string
   directory?: string
-  sessionMessages?: string
+  currentSessionContext?: string
+  lastSessionContext?: string
 }): Promise<string> {
   try {
     const apiKey = geminiApiKey || process.env.GEMINI_API_KEY
@@ -338,6 +341,22 @@ export async function transcribeAudio({
 
     const languageHint = language ? `The audio is in ${language}.\n\n` : ''
 
+    // build session context section
+    const sessionContextParts: string[] = []
+    if (lastSessionContext) {
+      sessionContextParts.push(`<last_session>
+${lastSessionContext}
+</last_session>`)
+    }
+    if (currentSessionContext) {
+      sessionContextParts.push(`<current_session>
+${currentSessionContext}
+</current_session>`)
+    }
+    const sessionContextSection = sessionContextParts.length > 0
+      ? `\nSession context (use to understand references to files, functions, tools used):\n${sessionContextParts.join('\n\n')}`
+      : ''
+
     const transcriptionPrompt = `${languageHint}Transcribe this audio for a coding agent (like Claude Code or OpenCode).
 
 CRITICAL REQUIREMENT: You MUST call the "transcriptionResult" tool to complete this task.
@@ -351,30 +370,30 @@ This is a software development environment. The speaker is giving instructions t
 - File paths, function names, CLI commands, package names, API endpoints
 
 RULES:
-1. You have LIMITED tool calls - use grep/glob sparingly, call them in parallel
-2. If audio is unclear, transcribe your best interpretation
-3. If audio seems silent/empty, call transcriptionResult with "[inaudible audio]"
-4. When warned about remaining steps, STOP searching and call transcriptionResult immediately
+1. If audio is unclear, transcribe your best interpretation, interpreting words event with strong accents are present, identifying the accent being used first so you can guess what the words meawn
+2. If audio seems silent/empty, call transcriptionResult with "[inaudible audio]"
+3. Use the session context below to understand technical terms, file names, function names mentioned
 
 Common corrections (apply without tool calls):
 - "reacked" → "React", "jason" → "JSON", "get hub" → "GitHub", "no JS" → "Node.js", "dacker" → "Docker"
 
-Project context for reference:
-<context>
+Project file structure:
+<file_tree>
 ${prompt}
-</context>
-${sessionMessages ? `\nRecent session messages:\n<session_messages>\n${sessionMessages}\n</session_messages>` : ''}
+</file_tree>
+${sessionContextSection}
 
 REMEMBER: Call "transcriptionResult" tool with your transcription. This is mandatory.
 
 Note: "critique" is a CLI tool for showing diffs in the browser.`
 
-    const hasDirectory = directory && directory.trim().length > 0
+    // const hasDirectory = directory && directory.trim().length > 0
     const tools = [
       {
         functionDeclarations: [
           transcriptionResultToolDeclaration,
-          ...(hasDirectory ? [grepToolDeclaration, globToolDeclaration] : []),
+          // grep/glob disabled - was causing transcription to hang
+          // ...(hasDirectory ? [grepToolDeclaration, globToolDeclaration] : []),
         ],
       },
     ]

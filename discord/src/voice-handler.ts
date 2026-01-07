@@ -434,14 +434,16 @@ export async function processVoiceAttachment({
   projectDirectory,
   isNewThread = false,
   appId,
-  sessionMessages,
+  currentSessionContext,
+  lastSessionContext,
 }: {
   message: Message
   thread: ThreadChannel
   projectDirectory?: string
   isNewThread?: boolean
   appId?: string
-  sessionMessages?: string
+  currentSessionContext?: string
+  lastSessionContext?: string
 }): Promise<string | null> {
   const audioAttachment = Array.from(message.attachments.values()).find(
     (attachment) => attachment.contentType?.startsWith('audio/'),
@@ -496,7 +498,8 @@ export async function processVoiceAttachment({
     prompt: transcriptionPrompt,
     geminiApiKey,
     directory: projectDirectory,
-    sessionMessages,
+    currentSessionContext,
+    lastSessionContext,
   })
 
   voiceLogger.log(

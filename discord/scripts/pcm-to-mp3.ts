@@ -20,7 +20,9 @@ async function convertToMp3(filePath: string) {
     await fs.promises.access(outputPath, fs.constants.F_OK)
     console.log(`Skipping: ${outputPath} already exists`)
     return
-  } catch {}
+  } catch {
+    // file doesn't exist, continue with conversion
+  }
 
   console.log(`Converting: ${filePath} -> ${outputPath}`)
 

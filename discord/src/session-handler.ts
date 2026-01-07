@@ -79,6 +79,79 @@ export function clearQueue(threadId: string): void {
   messageQueue.delete(threadId)
 }
 
+/**
+ * Abort a running session and retry with the last user message.
+ * Used when model preference changes mid-request.
+ * Fetches last user message from OpenCode API instead of tracking in memory.
+ * @returns true if aborted and retry scheduled, false if no active request
+ */
+export async function abortAndRetrySession({
+  sessionId,
+  thread,
+  projectDirectory,
+}: {
+  sessionId: string
+  thread: ThreadChannel
+  projectDirectory: string
+}): Promise<boolean> {
+  const controller = abortControllers.get(sessionId)
+
+  if (!controller) {
+    sessionLogger.log(`[ABORT+RETRY] No active request for session ${sessionId}`)
+    return false
+  }
+
+  sessionLogger.log(`[ABORT+RETRY] Aborting session ${sessionId} for model change`)
+
+  // Abort with special reason so we don't show "completed" message
+  controller.abort('model-change')
+
+  // Also call the API abort endpoint
+  const getClient = await initializeOpencodeForDirectory(projectDirectory)
+  try {
+    await getClient().session.abort({ path: { id: sessionId } })
+  } catch (e) {
+    sessionLogger.log(`[ABORT+RETRY] API abort call failed (may already be done):`, e)
+  }
+
+  // Small delay to let the abort propagate
+  await new Promise((resolve) => { setTimeout(resolve, 300) })
+
+  // Fetch last user message from API
+  sessionLogger.log(`[ABORT+RETRY] Fetching last user message for session ${sessionId}`)
+  const messagesResponse = await getClient().session.messages({ path: { id: sessionId } })
+  const messages = messagesResponse.data || []
+  const lastUserMessage = [...messages].reverse().find((m) => m.info.role === 'user')
+
+  if (!lastUserMessage) {
+    sessionLogger.log(`[ABORT+RETRY] No user message found in session ${sessionId}`)
+    return false
+  }
+
+  // Extract text and images from parts
+  const textPart = lastUserMessage.parts.find((p) => p.type === 'text') as { type: 'text'; text: string } | undefined
+  const prompt = textPart?.text || ''
+  const images = lastUserMessage.parts.filter((p) => p.type === 'file') as FilePartInput[]
+
+  sessionLogger.log(`[ABORT+RETRY] Re-triggering session ${sessionId} with new model`)
+
+  // Use setImmediate to avoid blocking
+  setImmediate(() => {
+    handleOpencodeSession({
+      prompt,
+      thread,
+      projectDirectory,
+      images,
+    }).catch(async (e) => {
+      sessionLogger.error(`[ABORT+RETRY] Failed to retry:`, e)
+      const errorMsg = e instanceof Error ? e.message : String(e)
+      await sendThreadMessage(thread, `✗ Failed to retry with new model: ${errorMsg.slice(0, 200)}`)
+    })
+  })
+
+  return true
+}
+
 export async function handleOpencodeSession({
   prompt,
   thread,

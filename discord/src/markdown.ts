@@ -6,6 +6,9 @@ import type { OpencodeClient } from '@opencode-ai/sdk'
 import * as yaml from 'js-yaml'
 import { formatDateTime } from './utils.js'
 import { extractNonXmlContent } from './xml.js'
+import { createLogger } from './logger.js'
+
+const markdownLogger = createLogger('MARKDOWN')
 
 export class ShareMarkdown {
   constructor(private client: OpencodeClient) {}
@@ -229,5 +232,134 @@ export class ShareMarkdown {
     const minutes = Math.floor(ms / 60000)
     const seconds = Math.floor((ms % 60000) / 1000)
     return `${minutes}m ${seconds}s`
+  }
+}
+
+/**
+ * Generate compact session context for voice transcription.
+ * Includes system prompt (optional), user messages, assistant text,
+ * and tool calls in compact form (name + params only, no output).
+ */
+export async function getCompactSessionContext({
+  client,
+  sessionId,
+  includeSystemPrompt = false,
+  maxMessages = 20,
+}: {
+  client: OpencodeClient
+  sessionId: string
+  includeSystemPrompt?: boolean
+  maxMessages?: number
+}): Promise<string> {
+  try {
+    const messagesResponse = await client.session.messages({
+      path: { id: sessionId },
+    })
+    const messages = messagesResponse.data || []
+
+    const lines: string[] = []
+
+    // Get system prompt if requested
+    // Note: OpenCode SDK doesn't expose system prompt directly. We try multiple approaches:
+    // 1. session.system field (if available in future SDK versions)
+    // 2. synthetic text part in first assistant message (current approach)
+    if (includeSystemPrompt && messages.length > 0) {
+      const firstAssistant = messages.find((m) => m.info.role === 'assistant')
+      if (firstAssistant) {
+        // look for text part marked as synthetic (system prompt)
+        const systemPart = (firstAssistant.parts || []).find(
+          (p) => p.type === 'text' && (p as any).synthetic === true,
+        )
+        if (systemPart && 'text' in systemPart && systemPart.text) {
+          lines.push('[System Prompt]')
+          const truncated = systemPart.text.slice(0, 3000)
+          lines.push(truncated)
+          if (systemPart.text.length > 3000) {
+            lines.push('...(truncated)')
+          }
+          lines.push('')
+        }
+      }
+    }
+
+    // Process recent messages
+    const recentMessages = messages.slice(-maxMessages)
+
+    for (const msg of recentMessages) {
+      if (msg.info.role === 'user') {
+        const textParts = (msg.parts || [])
+          .filter((p) => p.type === 'text' && 'text' in p)
+          .map((p) => ('text' in p ? extractNonXmlContent(p.text || '') : ''))
+          .filter(Boolean)
+        if (textParts.length > 0) {
+          lines.push(`[User]: ${textParts.join(' ').slice(0, 1000)}`)
+          lines.push('')
+        }
+      } else if (msg.info.role === 'assistant') {
+        // Get assistant text parts (non-synthetic, non-empty)
+        const textParts = (msg.parts || [])
+          .filter((p) => p.type === 'text' && 'text' in p && !p.synthetic && p.text)
+          .map((p) => ('text' in p ? p.text : ''))
+          .filter(Boolean)
+        if (textParts.length > 0) {
+          lines.push(`[Assistant]: ${textParts.join(' ').slice(0, 1000)}`)
+          lines.push('')
+        }
+
+        // Get tool calls in compact form (name + params only)
+        const toolParts = (msg.parts || []).filter(
+          (p) =>
+            p.type === 'tool' &&
+            'state' in p &&
+            p.state?.status === 'completed',
+        )
+        for (const part of toolParts) {
+          if (part.type === 'tool' && 'tool' in part && 'state' in part) {
+            const toolName = part.tool
+            // skip noisy tools
+            if (toolName === 'todoread' || toolName === 'todowrite') {
+              continue
+            }
+            const input = part.state?.input || {}
+            // compact params: just key=value on one line
+            const params = Object.entries(input)
+              .map(([k, v]) => {
+                const val = typeof v === 'string' ? v.slice(0, 100) : JSON.stringify(v).slice(0, 100)
+                return `${k}=${val}`
+              })
+              .join(', ')
+            lines.push(`[Tool ${toolName}]: ${params}`)
+          }
+        }
+      }
+    }
+
+    return lines.join('\n').slice(0, 8000)
+  } catch (e) {
+    markdownLogger.error('Failed to get compact session context:', e)
+    return ''
+  }
+}
+
+/**
+ * Get the last session for a directory (excluding the current one).
+ */
+export async function getLastSessionId({
+  client,
+  excludeSessionId,
+}: {
+  client: OpencodeClient
+  excludeSessionId?: string
+}): Promise<string | null> {
+  try {
+    const sessionsResponse = await client.session.list()
+    const sessions = sessionsResponse.data || []
+
+    // Sessions are sorted by time, get the most recent one that isn't the current
+    const lastSession = sessions.find((s) => s.id !== excludeSessionId)
+    return lastSession?.id || null
+  } catch (e) {
+    markdownLogger.error('Failed to get last session:', e)
+    return null
   }
 }

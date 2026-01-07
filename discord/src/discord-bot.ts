@@ -25,6 +25,10 @@ import {
   registerVoiceStateHandler,
 } from './voice-handler.js'
 import {
+  getCompactSessionContext,
+  getLastSessionId,
+} from './markdown.js'
+import {
   handleOpencodeSession,
   parseSlashCommand,
 } from './session-handler.js'
@@ -240,34 +244,39 @@ export async function startDiscordBot({
 
         let messageContent = message.content || ''
 
-        let sessionMessagesText: string | undefined
-        if (projectDirectory && row.session_id) {
+        let currentSessionContext: string | undefined
+        let lastSessionContext: string | undefined
+
+        if (projectDirectory) {
           try {
             const getClient = await initializeOpencodeForDirectory(projectDirectory)
-            const messagesResponse = await getClient().session.messages({
-              path: { id: row.session_id },
-            })
-            const messages = messagesResponse.data || []
-            const recentMessages = messages.slice(-10)
-            sessionMessagesText = recentMessages
-              .map((m) => {
-                const role = m.info.role === 'user' ? 'User' : 'Assistant'
-                const text = (() => {
-                  if (m.info.role === 'user') {
-                    const textParts = (m.parts || []).filter((p) => p.type === 'text')
-                    return textParts
-                      .map((p) => ('text' in p ? p.text : ''))
-                      .filter(Boolean)
-                      .join('\n')
-                  }
-                  const assistantInfo = m.info as { text?: string }
-                  return assistantInfo.text?.slice(0, 500)
-                })()
-                return `[${role}]: ${text || '(no text)'}`
+            const client = getClient()
+
+            // get current session context (without system prompt, it would be duplicated)
+            if (row.session_id) {
+              currentSessionContext = await getCompactSessionContext({
+                client,
+                sessionId: row.session_id,
+                includeSystemPrompt: false,
+                maxMessages: 15,
               })
-              .join('\n\n')
+            }
+
+            // get last session context (with system prompt for project context)
+            const lastSessionId = await getLastSessionId({
+              client,
+              excludeSessionId: row.session_id,
+            })
+            if (lastSessionId) {
+              lastSessionContext = await getCompactSessionContext({
+                client,
+                sessionId: lastSessionId,
+                includeSystemPrompt: true,
+                maxMessages: 10,
+              })
+            }
           } catch (e) {
-            voiceLogger.log(`Could not get session messages:`, e)
+            voiceLogger.error(`Could not get session context:`, e)
           }
         }
 
@@ -276,7 +285,8 @@ export async function startDiscordBot({
           thread,
           projectDirectory,
           appId: currentAppId,
-          sessionMessages: sessionMessagesText,
+          currentSessionContext,
+          lastSessionContext,
         })
         if (transcription) {
           messageContent = transcription
