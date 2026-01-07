@@ -9,6 +9,14 @@ import { createLogger } from './logger.js'
 const logger = createLogger('FORMATTING')
 
 /**
+ * Escapes Discord inline markdown characters so dynamic content
+ * doesn't break formatting when wrapped in *, _, **, etc.
+ */
+function escapeInlineMarkdown(text: string): string {
+  return text.replace(/([*_~|`\\])/g, '\\$1')
+}
+
+/**
  * Collects and formats the last N assistant parts from session messages.
  * Used by both /resume and /fork to show recent assistant context.
  */
@@ -113,7 +121,7 @@ export function getToolSummaryText(part: Part): string {
     const added = newString.split('\n').length
     const removed = oldString.split('\n').length
     const fileName = filePath.split('/').pop() || ''
-    return fileName ? `*${fileName}* (+${added}-${removed})` : `(+${added}-${removed})`
+    return fileName ? `*${escapeInlineMarkdown(fileName)}* (+${added}-${removed})` : `(+${added}-${removed})`
   }
 
   if (part.tool === 'write') {
@@ -121,35 +129,35 @@ export function getToolSummaryText(part: Part): string {
     const content = (part.state.input?.content as string) || ''
     const lines = content.split('\n').length
     const fileName = filePath.split('/').pop() || ''
-    return fileName ? `*${fileName}* (${lines} line${lines === 1 ? '' : 's'})` : `(${lines} line${lines === 1 ? '' : 's'})`
+    return fileName ? `*${escapeInlineMarkdown(fileName)}* (${lines} line${lines === 1 ? '' : 's'})` : `(${lines} line${lines === 1 ? '' : 's'})`
   }
 
   if (part.tool === 'webfetch') {
     const url = (part.state.input?.url as string) || ''
     const urlWithoutProtocol = url.replace(/^https?:\/\//, '')
-    return urlWithoutProtocol ? `*${urlWithoutProtocol}*` : ''
+    return urlWithoutProtocol ? `*${escapeInlineMarkdown(urlWithoutProtocol)}*` : ''
   }
 
   if (part.tool === 'read') {
     const filePath = (part.state.input?.filePath as string) || ''
     const fileName = filePath.split('/').pop() || ''
-    return fileName ? `*${fileName}*` : ''
+    return fileName ? `*${escapeInlineMarkdown(fileName)}*` : ''
   }
 
   if (part.tool === 'list') {
     const path = (part.state.input?.path as string) || ''
     const dirName = path.split('/').pop() || path
-    return dirName ? `*${dirName}*` : ''
+    return dirName ? `*${escapeInlineMarkdown(dirName)}*` : ''
   }
 
   if (part.tool === 'glob') {
     const pattern = (part.state.input?.pattern as string) || ''
-    return pattern ? `*${pattern}*` : ''
+    return pattern ? `*${escapeInlineMarkdown(pattern)}*` : ''
   }
 
   if (part.tool === 'grep') {
     const pattern = (part.state.input?.pattern as string) || ''
-    return pattern ? `*${pattern}*` : ''
+    return pattern ? `*${escapeInlineMarkdown(pattern)}*` : ''
   }
 
   if (part.tool === 'bash' || part.tool === 'todoread' || part.tool === 'todowrite') {
@@ -158,12 +166,12 @@ export function getToolSummaryText(part: Part): string {
 
   if (part.tool === 'task') {
     const description = (part.state.input?.description as string) || ''
-    return description ? `_${description}_` : ''
+    return description ? `_${escapeInlineMarkdown(description)}_` : ''
   }
 
   if (part.tool === 'skill') {
     const name = (part.state.input?.name as string) || ''
-    return name ? `_${name}_` : ''
+    return name ? `_${escapeInlineMarkdown(name)}_` : ''
   }
 
   if (!part.state.input) return ''
@@ -199,12 +207,20 @@ export function formatTodoList(part: Part): string {
   const todoNumber = activeIndex + 1
   const num = todoNumber <= 20 ? parenthesizedDigits[todoNumber - 1] : `(${todoNumber})`
   const content = activeTodo.content.charAt(0).toLowerCase() + activeTodo.content.slice(1)
-  return `${num} **${content}**`
+  return `${num} **${escapeInlineMarkdown(content)}**`
 }
 
 export function formatPart(part: Part): string {
   if (part.type === 'text') {
     if (!part.text?.trim()) return ''
+    const trimmed = part.text.trimStart()
+    const firstChar = trimmed[0] || ''
+    const markdownStarters = ['#', '*', '_', '-', '>', '`', '[', '|']
+    const startsWithMarkdown =
+      markdownStarters.includes(firstChar) || /^\d+\./.test(trimmed)
+    if (startsWithMarkdown) {
+      return `\n${part.text}`
+    }
     return `⬥ ${part.text}`
   }
 
@@ -248,16 +264,15 @@ export function formatPart(part: Part): string {
       const command = (part.state.input?.command as string) || ''
       const description = (part.state.input?.description as string) || ''
       const isSingleLine = !command.includes('\n')
-      const hasUnderscores = command.includes('_')
-      if (isSingleLine && !hasUnderscores && command.length <= 50) {
-        toolTitle = `_${command}_`
+      if (isSingleLine && command.length <= 50) {
+        toolTitle = `_${escapeInlineMarkdown(command)}_`
       } else if (description) {
-        toolTitle = `_${description}_`
+        toolTitle = `_${escapeInlineMarkdown(description)}_`
       } else if (stateTitle) {
-        toolTitle = `_${stateTitle}_`
+        toolTitle = `_${escapeInlineMarkdown(stateTitle)}_`
       }
     } else if (stateTitle) {
-      toolTitle = `_${stateTitle}_`
+      toolTitle = `_${escapeInlineMarkdown(stateTitle)}_`
     }
 
     const icon = (() => {
