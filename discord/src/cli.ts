@@ -82,13 +82,25 @@ async function killProcessOnPort(port: number): Promise<boolean> {
       // Filter out our own PID and take the first (oldest)
       const targetPid = pids?.find((p) => parseInt(p, 10) !== myPid)
       if (targetPid) {
-        cliLogger.log(`Killing existing kimaki process (PID: ${targetPid})`)
-        process.kill(parseInt(targetPid, 10), 'SIGKILL')
+        const pid = parseInt(targetPid, 10)
+        cliLogger.log(`Stopping existing kimaki process (PID: ${pid})`)
+        // use SIGTERM first for graceful shutdown (allows cleanup of opencode servers)
+        process.kill(pid, 'SIGTERM')
+        // wait for graceful shutdown
+        await new Promise((resolve) => { setTimeout(resolve, 2000) })
+        // check if still running and force kill if needed
+        try {
+          process.kill(pid, 0) // signal 0 just checks if process exists
+          cliLogger.log(`Process ${pid} still running, sending SIGKILL`)
+          process.kill(pid, 'SIGKILL')
+        } catch {
+          cliLogger.debug(`Process ${pid} already terminated`)
+        }
         return true
       }
     }
-  } catch {
-    // Failed to kill, continue anyway
+  } catch (e) {
+    cliLogger.debug(`Failed to kill process on port ${port}:`, e)
   }
   return false
 }
@@ -105,7 +117,7 @@ async function checkSingleInstance(): Promise<void> {
       await new Promise((resolve) => { setTimeout(resolve, 500) })
     }
   } catch {
-    // Connection refused means no instance running, continue
+    cliLogger.debug('No other kimaki instance detected on lock port')
   }
 }
 
@@ -229,6 +241,10 @@ async function registerCommands(token: string, appId: string) {
       .toJSON(),
     new SlashCommandBuilder()
       .setName('abort')
+      .setDescription('Abort the current OpenCode request in this thread')
+      .toJSON(),
+    new SlashCommandBuilder()
+      .setName('stop')
       .setDescription('Abort the current OpenCode request in this thread')
       .toJSON(),
     new SlashCommandBuilder()
