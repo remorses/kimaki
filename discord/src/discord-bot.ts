@@ -292,7 +292,7 @@ export async function startDiscordBot({
           messageContent = transcription
         }
 
-        const fileAttachments = getFileAttachments(message)
+        const fileAttachments = await getFileAttachments(message)
         const textAttachmentsContent = await getTextAttachments(message)
         const promptWithAttachments = textAttachmentsContent
           ? `${messageContent}\n\n${textAttachmentsContent}`
@@ -390,7 +390,7 @@ export async function startDiscordBot({
           messageContent = transcription
         }
 
-        const fileAttachments = getFileAttachments(message)
+        const fileAttachments = await getFileAttachments(message)
         const textAttachmentsContent = await getTextAttachments(message)
         const promptWithAttachments = textAttachmentsContent
           ? `${messageContent}\n\n${textAttachmentsContent}`

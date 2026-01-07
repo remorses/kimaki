@@ -4,7 +4,11 @@
 
 import type { Part, FilePartInput, SessionMessagesResponse } from '@opencode-ai/sdk'
 import type { Message } from 'discord.js'
+import fs from 'node:fs'
+import path from 'node:path'
 import { createLogger } from './logger.js'
+
+const ATTACHMENTS_DIR = path.join(process.cwd(), 'tmp', 'discord-attachments')
 
 const logger = createLogger('FORMATTING')
 
@@ -93,7 +97,7 @@ export async function getTextAttachments(message: Message): Promise<string> {
   return textContents.join('\n\n')
 }
 
-export function getFileAttachments(message: Message): FilePartInput[] {
+export async function getFileAttachments(message: Message): Promise<FilePartInput[]> {
   const fileAttachments = Array.from(message.attachments.values()).filter(
     (attachment) => {
       const contentType = attachment.contentType || ''
@@ -103,12 +107,44 @@ export function getFileAttachments(message: Message): FilePartInput[] {
     },
   )
 
-  return fileAttachments.map((attachment) => ({
-    type: 'file' as const,
-    mime: attachment.contentType || 'application/octet-stream',
-    filename: attachment.name,
-    url: attachment.url,
-  }))
+  if (fileAttachments.length === 0) {
+    return []
+  }
+
+  // ensure tmp directory exists
+  if (!fs.existsSync(ATTACHMENTS_DIR)) {
+    fs.mkdirSync(ATTACHMENTS_DIR, { recursive: true })
+  }
+
+  const results = await Promise.all(
+    fileAttachments.map(async (attachment) => {
+      try {
+        const response = await fetch(attachment.url)
+        if (!response.ok) {
+          logger.error(`Failed to fetch attachment ${attachment.name}: ${response.status}`)
+          return null
+        }
+
+        const buffer = Buffer.from(await response.arrayBuffer())
+        const localPath = path.join(ATTACHMENTS_DIR, `${message.id}-${attachment.name}`)
+        fs.writeFileSync(localPath, buffer)
+
+        logger.log(`Downloaded attachment to ${localPath}`)
+
+        return {
+          type: 'file' as const,
+          mime: attachment.contentType || 'application/octet-stream',
+          filename: attachment.name,
+          url: localPath,
+        }
+      } catch (error) {
+        logger.error(`Error downloading attachment ${attachment.name}:`, error)
+        return null
+      }
+    }),
+  )
+
+  return results.filter((r) => r !== null) as FilePartInput[]
 }
 
 export function getToolSummaryText(part: Part): string {
