@@ -493,14 +493,22 @@ export async function processVoiceAttachment({
     }
   }
 
-  const transcription = await transcribeAudio({
-    audio: audioBuffer,
-    prompt: transcriptionPrompt,
-    geminiApiKey,
-    directory: projectDirectory,
-    currentSessionContext,
-    lastSessionContext,
-  })
+  let transcription: string
+  try {
+    transcription = await transcribeAudio({
+      audio: audioBuffer,
+      prompt: transcriptionPrompt,
+      geminiApiKey,
+      directory: projectDirectory,
+      currentSessionContext,
+      lastSessionContext,
+    })
+  } catch (error) {
+    const errMsg = error instanceof Error ? error.message : String(error)
+    voiceLogger.error(`Transcription failed:`, error)
+    await sendThreadMessage(thread, `⚠️ Transcription failed: ${errMsg}`)
+    return null
+  }
 
   voiceLogger.log(
     `Transcription successful: "${transcription.slice(0, 50)}${transcription.length > 50 ? '...' : ''}"`,
