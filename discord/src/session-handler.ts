@@ -644,11 +644,17 @@ export async function handleOpencodeSession({
       voiceLogger.log(
         `[PROMPT] Sending prompt to session ${session.id}: "${prompt.slice(0, 100)}${prompt.length > 100 ? '...' : ''}"`,
       )
-      if (images.length > 0) {
+      // append image paths to prompt so ai knows where they are on disk
+      const promptWithImagePaths = (() => {
+        if (images.length === 0) {
+          return prompt
+        }
         sessionLogger.log(`[PROMPT] Sending ${images.length} image(s):`, images.map((img) => ({ mime: img.mime, filename: img.filename, url: img.url.slice(0, 100) })))
-      }
+        const imagePathsList = images.map((img) => `- ${img.filename}: ${img.url}`).join('\n')
+        return `${prompt}\n\n**attached images:**\n${imagePathsList}`
+      })()
 
-      const parts = [{ type: 'text' as const, text: prompt }, ...images]
+      const parts = [{ type: 'text' as const, text: promptWithImagePaths }, ...images]
       sessionLogger.log(`[PROMPT] Parts to send:`, parts.length)
 
       // Get model preference: session-level overrides channel-level
