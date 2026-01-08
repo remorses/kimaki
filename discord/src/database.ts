@@ -62,6 +62,14 @@ export function getDatabase(): Database.Database {
     `)
 
     db.exec(`
+      CREATE TABLE IF NOT EXISTS thread_directories (
+        thread_id TEXT PRIMARY KEY,
+        directory TEXT NOT NULL,
+        created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+      )
+    `)
+
+    db.exec(`
       CREATE TABLE IF NOT EXISTS bot_api_keys (
         app_id TEXT PRIMARY KEY,
         gemini_api_key TEXT,
