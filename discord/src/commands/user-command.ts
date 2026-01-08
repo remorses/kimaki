@@ -121,18 +121,19 @@ export const handleUserCommand: CommandHandler = async ({
   await command.deferReply({ ephemeral: false })
 
   try {
-    // Format as a slash command prompt for OpenCode
-    const fullPrompt = `/${commandName} ${args}`.trim()
+    // Use the dedicated session.command API instead of formatting as text prompt
+    const commandPayload = { name: commandName, arguments: args }
 
     if (isThread && thread) {
       // Running in existing thread - just send the command
       await command.editReply(`Running /${commandName}...`)
 
       await handleOpencodeSession({
-        prompt: fullPrompt,
+        prompt: '', // Not used when command is set
         thread,
         projectDirectory,
         channelId: textChannel?.id,
+        command: commandPayload,
       })
     } else if (textChannel) {
       // Running in text channel - create a new thread
@@ -151,10 +152,11 @@ export const handleUserCommand: CommandHandler = async ({
       await command.editReply(`Started /${commandName} in ${newThread.toString()}`)
 
       await handleOpencodeSession({
-        prompt: fullPrompt,
+        prompt: '', // Not used when command is set
         thread: newThread,
         projectDirectory,
         channelId: textChannel.id,
+        command: commandPayload,
       })
     }
   } catch (error) {

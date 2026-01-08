@@ -137,6 +137,7 @@ export async function handleOpencodeSession({
   originalMessage,
   images = [],
   channelId,
+  command,
 }: {
   prompt: string
   thread: ThreadChannel
@@ -144,6 +145,8 @@ export async function handleOpencodeSession({
   originalMessage?: Message
   images?: FilePartInput[]
   channelId?: string
+  /** If set, uses session.command API instead of session.prompt */
+  command?: { name: string; arguments: string }
 }): Promise<{ sessionID: string; result: any; port?: number } | undefined> {
   voiceLogger.log(
     `[OPENCODE SESSION] Starting for thread ${thread.id} with prompt: "${prompt.slice(0, 50)}${prompt.length > 50 ? '...' : ''}"`,
@@ -643,16 +646,27 @@ export async function handleOpencodeSession({
       sessionLogger.log(`[AGENT] Using agent preference: ${agentPreference}`)
     }
 
-    const response = await getClient().session.prompt({
-      path: { id: session.id },
-      body: {
-        parts,
-        system: getOpencodeSystemMessage({ sessionId: session.id }),
-        model: modelParam,
-        agent: agentPreference,
-      },
-      signal: abortController.signal,
-    })
+    // Use session.command API for slash commands, session.prompt for regular messages
+    const response = command
+      ? await getClient().session.command({
+          path: { id: session.id },
+          body: {
+            command: command.name,
+            arguments: command.arguments,
+            agent: agentPreference,
+          },
+          signal: abortController.signal,
+        })
+      : await getClient().session.prompt({
+          path: { id: session.id },
+          body: {
+            parts,
+            system: getOpencodeSystemMessage({ sessionId: session.id }),
+            model: modelParam,
+            agent: agentPreference,
+          },
+          signal: abortController.signal,
+        })
 
     if (response.error) {
       const errorMessage = (() => {
