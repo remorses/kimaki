@@ -1,5 +1,25 @@
 # Changelog
 
+## 0.4.26
+
+### Patch Changes
+
+- add Discord dropdowns for AI question tool prompts
+- add **/agent** command to set agent preference per channel or session
+- add user-defined OpenCode slash command support
+- add dev-mode file logging
+- add abort-and-retry flow when switching models mid-session
+- add graceful shutdown with SIGTERM before SIGKILL and **/stop** alias
+- add image attachment downloads with prompt path inclusion
+- add bot username to category names for multi-bot support
+- fix OpenCode server startup reliability
+- fix transcription errors sent to thread instead of channel
+- fix long-line markdown splitting and inline markdown escaping
+- fix `-cmd` command parsing
+- chore: update **@opencode-ai/sdk** to 1.1.3 and gitignore tmp
+- chore: simplify system prompt and silence noisy debug log
+- refactor: update Discord message icons and formatting
+
 ## 0.4.25
 
 ### Patch Changes
