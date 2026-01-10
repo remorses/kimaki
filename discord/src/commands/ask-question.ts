@@ -9,7 +9,7 @@ import {
   type ThreadChannel,
 } from 'discord.js'
 import crypto from 'node:crypto'
-import { sendThreadMessage } from '../discord-utils.js'
+import { sendThreadMessage, NOTIFY_MESSAGE_FLAGS } from '../discord-utils.js'
 import { getOpencodeServerPort } from '../opencode.js'
 import { createLogger } from '../logger.js'
 
@@ -111,6 +111,7 @@ export async function showAskUserQuestionDropdowns({
     await thread.send({
       content: `**${q.header}**\n${q.question}`,
       components: [actionRow],
+      flags: NOTIFY_MESSAGE_FLAGS,
     })
   }
 
