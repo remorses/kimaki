@@ -10,6 +10,10 @@ import {
   type OpencodeClient,
   type Config,
 } from '@opencode-ai/sdk'
+import {
+  createOpencodeClient as createOpencodeClientV2,
+  type OpencodeClient as OpencodeClientV2,
+} from '@opencode-ai/sdk/v2'
 import { createLogger } from './logger.js'
 
 const opencodeLogger = createLogger('OPENCODE')
@@ -19,6 +23,7 @@ const opencodeServers = new Map<
   {
     process: ChildProcess
     client: OpencodeClient
+    clientV2: OpencodeClientV2
     port: number
   }
 >()
@@ -188,18 +193,27 @@ export async function initializeOpencodeForDirectory(directory: string) {
     throw e
   }
 
+  const baseUrl = `http://127.0.0.1:${port}`
+  const fetchWithTimeout = (request: Request) =>
+    fetch(request, {
+      // @ts-ignore
+      timeout: false,
+    })
+
   const client = createOpencodeClient({
-    baseUrl: `http://127.0.0.1:${port}`,
-    fetch: (request: Request) =>
-      fetch(request, {
-        // @ts-ignore
-        timeout: false,
-      }),
+    baseUrl,
+    fetch: fetchWithTimeout,
+  })
+
+  const clientV2 = createOpencodeClientV2({
+    baseUrl,
+    fetch: fetchWithTimeout as typeof fetch,
   })
 
   opencodeServers.set(directory, {
     process: serverProcess,
     client,
+    clientV2,
     port,
   })
 
@@ -216,4 +230,14 @@ export async function initializeOpencodeForDirectory(directory: string) {
 
 export function getOpencodeServers() {
   return opencodeServers
+}
+
+export function getOpencodeServerPort(directory: string): number | null {
+  const entry = opencodeServers.get(directory)
+  return entry?.port ?? null
+}
+
+export function getOpencodeClientV2(directory: string): OpencodeClientV2 | null {
+  const entry = opencodeServers.get(directory)
+  return entry?.clientV2 ?? null
 }

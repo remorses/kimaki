@@ -9,7 +9,6 @@ import {
   ThreadAutoArchiveDuration,
   type ThreadChannel,
 } from 'discord.js'
-import type { TextPart } from '@opencode-ai/sdk'
 import { getDatabase } from '../database.js'
 import { initializeOpencodeForDirectory } from '../opencode.js'
 import { resolveTextChannel, getKimakiMetadata, sendThreadMessage } from '../discord-utils.js'
@@ -100,7 +99,7 @@ export async function handleForkCommand(interaction: ChatInputCommandInteraction
     const recentMessages = userMessages.slice(-25)
 
     const options = recentMessages.map((m, index) => {
-      const textPart = m.parts.find((p) => p.type === 'text') as TextPart | undefined
+      const textPart = m.parts.find((p) => p.type === 'text') as { type: 'text'; text: string } | undefined
       const preview = textPart?.text?.slice(0, 80) || '(no text)'
       const label = `${index + 1}. ${preview}${preview.length >= 80 ? '...' : ''}`
 

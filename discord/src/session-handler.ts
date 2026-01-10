@@ -2,16 +2,18 @@
 // Creates, maintains, and sends prompts to OpenCode sessions from Discord threads.
 // Handles streaming events, permissions, abort signals, and message queuing.
 
-import type { Part, FilePartInput, Permission } from '@opencode-ai/sdk'
+import type { Part, PermissionRequest } from '@opencode-ai/sdk/v2'
+import type { FilePartInput } from '@opencode-ai/sdk'
 import type { Message, ThreadChannel } from 'discord.js'
 import prettyMilliseconds from 'pretty-ms'
 import { getDatabase, getSessionModel, getChannelModel, getSessionAgent, getChannelAgent } from './database.js'
-import { initializeOpencodeForDirectory, getOpencodeServers } from './opencode.js'
+import { initializeOpencodeForDirectory, getOpencodeServers, getOpencodeClientV2 } from './opencode.js'
 import { sendThreadMessage, NOTIFY_MESSAGE_FLAGS } from './discord-utils.js'
 import { formatPart } from './message-formatting.js'
 import { getOpencodeSystemMessage } from './system-message.js'
 import { createLogger } from './logger.js'
 import { isAbortError } from './utils.js'
+import { showAskUserQuestionDropdowns } from './commands/ask-question.js'
 
 const sessionLogger = createLogger('SESSION')
 const voiceLogger = createLogger('VOICE')
@@ -21,7 +23,7 @@ export const abortControllers = new Map<string, AbortController>()
 
 export const pendingPermissions = new Map<
   string,
-  { permission: Permission; messageId: string; directory: string }
+  { permission: PermissionRequest; messageId: string; directory: string }
 >()
 
 export type QueuedMessage = {
@@ -249,9 +251,15 @@ export async function handleOpencodeSession({
     return
   }
 
-  const eventsResult = await getClient().event.subscribe({
-    signal: abortController.signal,
-  })
+  // Use v2 client for event subscription (has proper types for question.asked events)
+  const clientV2 = getOpencodeClientV2(directory)
+  if (!clientV2) {
+    throw new Error(`OpenCode v2 client not found for directory: ${directory}`)
+  }
+  const eventsResult = await clientV2.event.subscribe(
+    { directory },
+    { signal: abortController.signal }
+  )
 
   if (abortController.signal.aborted) {
     sessionLogger.log(`[DEBOUNCE] Aborted during subscribe, exiting`)
@@ -463,7 +471,7 @@ export async function handleOpencodeSession({
             )
           }
           break
-        } else if (event.type === 'permission.updated') {
+        } else if (event.type === 'permission.asked') {
           const permission = event.properties
           if (permission.sessionID !== session.id) {
             voiceLogger.log(
@@ -473,18 +481,15 @@ export async function handleOpencodeSession({
           }
 
           sessionLogger.log(
-            `Permission requested: type=${permission.type}, title=${permission.title}`,
+            `Permission requested: permission=${permission.permission}, patterns=${permission.patterns.join(', ')}`,
           )
 
-          const patternStr = Array.isArray(permission.pattern)
-            ? permission.pattern.join(', ')
-            : permission.pattern || ''
+          const patternStr = permission.patterns.join(', ')
 
           const permissionMessage = await sendThreadMessage(
             thread,
             `⚠️ **Permission Required**\n\n` +
-              `**Type:** \`${permission.type}\`\n` +
-              `**Action:** ${permission.title}\n` +
+              `**Type:** \`${permission.permission}\`\n` +
               (patternStr ? `**Pattern:** \`${patternStr}\`\n` : '') +
               `\nUse \`/accept\` or \`/reject\` to respond.`,
           )
@@ -495,19 +500,40 @@ export async function handleOpencodeSession({
             directory,
           })
         } else if (event.type === 'permission.replied') {
-          const { permissionID, response, sessionID } = event.properties
+          const { requestID, reply, sessionID } = event.properties
           if (sessionID !== session.id) {
             continue
           }
 
           sessionLogger.log(
-            `Permission ${permissionID} replied with: ${response}`,
+            `Permission ${requestID} replied with: ${reply}`,
           )
 
           const pending = pendingPermissions.get(thread.id)
-          if (pending && pending.permission.id === permissionID) {
+          if (pending && pending.permission.id === requestID) {
             pendingPermissions.delete(thread.id)
           }
+        } else if (event.type === 'question.asked') {
+          const questionRequest = event.properties
+
+          if (questionRequest.sessionID !== session.id) {
+            sessionLogger.log(
+              `[QUESTION IGNORED] Question for different session (expected: ${session.id}, got: ${questionRequest.sessionID})`,
+            )
+            continue
+          }
+
+          sessionLogger.log(
+            `Question requested: id=${questionRequest.id}, questions=${questionRequest.questions.length}`,
+          )
+
+          await showAskUserQuestionDropdowns({
+            thread,
+            sessionId: session.id,
+            directory,
+            requestId: questionRequest.id,
+            input: { questions: questionRequest.questions },
+          })
         }
       }
     } catch (e) {

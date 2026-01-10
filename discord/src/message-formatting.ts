@@ -2,11 +2,18 @@
 // Converts SDK message parts (text, tools, reasoning) to Discord-friendly format,
 // handles file attachments, and provides tool summary generation.
 
-import type { Part, FilePartInput, SessionMessagesResponse } from '@opencode-ai/sdk'
+import type { Part } from '@opencode-ai/sdk/v2'
+import type { FilePartInput } from '@opencode-ai/sdk'
 import type { Message } from 'discord.js'
 import fs from 'node:fs'
 import path from 'node:path'
 import { createLogger } from './logger.js'
+
+// Generic message type compatible with both v1 and v2 SDK
+type GenericSessionMessage = {
+  info: { role: string; id?: string }
+  parts: Part[]
+}
 
 const ATTACHMENTS_DIR = path.join(process.cwd(), 'tmp', 'discord-attachments')
 
@@ -28,7 +35,7 @@ export function collectLastAssistantParts({
   messages,
   limit = 30,
 }: {
-  messages: SessionMessagesResponse
+  messages: GenericSessionMessage[]
   limit?: number
 }): { partIds: string[]; content: string; skippedCount: number } {
   const allAssistantParts: { id: string; content: string }[] = []
@@ -284,6 +291,11 @@ export function formatPart(part: Part): string {
   if (part.type === 'tool') {
     if (part.tool === 'todowrite') {
       return formatTodoList(part)
+    }
+
+    // Question tool is handled via Discord dropdowns, not text
+    if (part.tool === 'question') {
+      return ''
     }
 
     if (part.state.status === 'pending') {

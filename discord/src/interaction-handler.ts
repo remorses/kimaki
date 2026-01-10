@@ -13,6 +13,7 @@ import { handleShareCommand } from './commands/share.js'
 import { handleForkCommand, handleForkSelectMenu } from './commands/fork.js'
 import { handleModelCommand, handleProviderSelectMenu, handleModelSelectMenu } from './commands/model.js'
 import { handleAgentCommand, handleAgentSelectMenu } from './commands/agent.js'
+import { handleAskQuestionSelectMenu } from './commands/ask-question.js'
 import { handleQueueCommand, handleClearQueueCommand } from './commands/queue.js'
 import { handleUndoCommand, handleRedoCommand } from './commands/undo-redo.js'
 import { handleUserCommand } from './commands/user-command.js'
@@ -159,6 +160,11 @@ export function registerInteractionHandler({
 
           if (customId.startsWith('agent_select:')) {
             await handleAgentSelectMenu(interaction)
+            return
+          }
+
+          if (customId.startsWith('ask_question:')) {
+            await handleAskQuestionSelectMenu(interaction)
             return
           }
           return
