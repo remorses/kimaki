@@ -7,7 +7,7 @@ import { handleSessionCommand, handleSessionAutocomplete } from './commands/sess
 import { handleResumeCommand, handleResumeAutocomplete } from './commands/resume.js'
 import { handleAddProjectCommand, handleAddProjectAutocomplete } from './commands/add-project.js'
 import { handleCreateNewProjectCommand } from './commands/create-new-project.js'
-import { handleAcceptCommand, handleRejectCommand } from './commands/permissions.js'
+import { handlePermissionSelectMenu } from './commands/permissions.js'
 import { handleAbortCommand } from './commands/abort.js'
 import { handleShareCommand } from './commands/share.js'
 import { handleForkCommand, handleForkSelectMenu } from './commands/fork.js'
@@ -85,15 +85,6 @@ export function registerInteractionHandler({
               await handleCreateNewProjectCommand({ command: interaction, appId })
               return
 
-            case 'accept':
-            case 'accept-always':
-              await handleAcceptCommand({ command: interaction, appId })
-              return
-
-            case 'reject':
-              await handleRejectCommand({ command: interaction, appId })
-              return
-
             case 'abort':
             case 'stop':
               await handleAbortCommand({ command: interaction, appId })
@@ -165,6 +156,11 @@ export function registerInteractionHandler({
 
           if (customId.startsWith('ask_question:')) {
             await handleAskQuestionSelectMenu(interaction)
+            return
+          }
+
+          if (customId.startsWith('permission:')) {
+            await handlePermissionSelectMenu(interaction)
             return
           }
           return

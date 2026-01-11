@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.4.27
+
+### Patch Changes
+
+- replace `/accept`, `/accept-always`, `/reject` commands with **dropdown menu** for permission requests
+- show Accept, Accept Always, and Deny options in a single dropdown
+
 ## 0.4.26
 
 ### Patch Changes

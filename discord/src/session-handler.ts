@@ -14,6 +14,7 @@ import { getOpencodeSystemMessage } from './system-message.js'
 import { createLogger } from './logger.js'
 import { isAbortError } from './utils.js'
 import { showAskUserQuestionDropdowns } from './commands/ask-question.js'
+import { showPermissionDropdown, cleanupPermissionContext } from './commands/permissions.js'
 
 const sessionLogger = createLogger('SESSION')
 const voiceLogger = createLogger('VOICE')
@@ -23,7 +24,7 @@ export const abortControllers = new Map<string, AbortController>()
 
 export const pendingPermissions = new Map<
   string,
-  { permission: PermissionRequest; messageId: string; directory: string }
+  { permission: PermissionRequest; messageId: string; directory: string; contextHash: string }
 >()
 
 export type QueuedMessage = {
@@ -227,10 +228,13 @@ export async function handleOpencodeSession({
         },
         body: { response: 'reject' },
       })
+      // Clean up both the pending permission and its dropdown context
+      cleanupPermissionContext(pendingPerm.contextHash)
       pendingPermissions.delete(thread.id)
       await sendThreadMessage(thread, `⚠️ Previous permission request auto-rejected due to new message`)
     } catch (e) {
       sessionLogger.log(`[PERMISSION] Failed to auto-reject permission:`, e)
+      cleanupPermissionContext(pendingPerm.contextHash)
       pendingPermissions.delete(thread.id)
     }
   }
@@ -484,20 +488,18 @@ export async function handleOpencodeSession({
             `Permission requested: permission=${permission.permission}, patterns=${permission.patterns.join(', ')}`,
           )
 
-          const patternStr = permission.patterns.join(', ')
-
-          const permissionMessage = await sendThreadMessage(
+          // Show dropdown instead of text message
+          const { messageId, contextHash } = await showPermissionDropdown({
             thread,
-            `⚠️ **Permission Required**\n\n` +
-              `**Type:** \`${permission.permission}\`\n` +
-              (patternStr ? `**Pattern:** \`${patternStr}\`\n` : '') +
-              `\nUse \`/accept\` or \`/reject\` to respond.`,
-          )
+            permission,
+            directory,
+          })
 
           pendingPermissions.set(thread.id, {
             permission,
-            messageId: permissionMessage.id,
+            messageId,
             directory,
+            contextHash,
           })
         } else if (event.type === 'permission.replied') {
           const { requestID, reply, sessionID } = event.properties
@@ -511,6 +513,7 @@ export async function handleOpencodeSession({
 
           const pending = pendingPermissions.get(thread.id)
           if (pending && pending.permission.id === requestID) {
+            cleanupPermissionContext(pending.contextHash)
             pendingPermissions.delete(thread.id)
           }
         } else if (event.type === 'question.asked') {

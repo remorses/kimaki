@@ -220,18 +220,6 @@ async function registerCommands(token: string, appId: string, userCommands: Open
       })
       .toJSON(),
     new SlashCommandBuilder()
-      .setName('accept')
-      .setDescription('Accept a pending permission request (this request only)')
-      .toJSON(),
-    new SlashCommandBuilder()
-      .setName('accept-always')
-      .setDescription('Accept and auto-approve future requests matching this pattern')
-      .toJSON(),
-    new SlashCommandBuilder()
-      .setName('reject')
-      .setDescription('Reject a pending permission request')
-      .toJSON(),
-    new SlashCommandBuilder()
       .setName('abort')
       .setDescription('Abort the current OpenCode request in this thread')
       .toJSON(),
