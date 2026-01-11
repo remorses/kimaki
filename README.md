@@ -60,6 +60,28 @@ To control multiple machines:
 
 Each channel shows which bot (machine) it's connected to. You can have channels from different machines in the same server, controlled by different bots.
 
+## Multiple Discord Servers
+
+A single Kimaki instance can serve multiple Discord servers. Install the bot in each server using the install URL shown during setup, then add project channels to each server.
+
+### Method 1: Use `/add-project` command
+
+1. Run `npx kimaki` once to set up the bot
+2. Install the bot in both servers using the install URL
+3. In **Server A**: run `/add-project` and select your project
+4. In **Server B**: run `/add-project` and select your project
+
+The `/add-project` command creates channels in whichever server you run it from.
+
+### Method 2: Re-run CLI with `--add-channels`
+
+1. Run `npx kimaki` - set up bot, install in both servers, create channels in first server
+2. Run `npx kimaki --add-channels` - select projects for the second server
+
+The setup wizard lets you pick one server at a time.
+
+You can even link the same project to channels in multiple servers - both will point to the same directory on your machine.
+
 ## Best Practices
 
 **Create a dedicated Discord server for your agents.** This keeps your coding sessions separate from other servers and gives you full control over permissions.
