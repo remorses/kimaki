@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.4.28
+
+### Patch Changes
+
+- fix **Accept Always** not persisting - use v2 API (`permission.reply`) instead of deprecated v1 API
+
 ## 0.4.27
 
 ### Patch Changes

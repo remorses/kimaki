@@ -221,13 +221,13 @@ export async function handleOpencodeSession({
   if (pendingPerm) {
     try {
       sessionLogger.log(`[PERMISSION] Auto-rejecting pending permission ${pendingPerm.permission.id} due to new message`)
-      await getClient().postSessionIdPermissionsPermissionId({
-        path: {
-          id: pendingPerm.permission.sessionID,
-          permissionID: pendingPerm.permission.id,
-        },
-        body: { response: 'reject' },
-      })
+      const clientV2 = getOpencodeClientV2(directory)
+      if (clientV2) {
+        await clientV2.permission.reply({
+          requestID: pendingPerm.permission.id,
+          reply: 'reject',
+        })
+      }
       // Clean up both the pending permission and its dropdown context
       cleanupPermissionContext(pendingPerm.contextHash)
       pendingPermissions.delete(thread.id)

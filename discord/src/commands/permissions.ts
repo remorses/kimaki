@@ -10,7 +10,7 @@ import {
 } from 'discord.js'
 import crypto from 'node:crypto'
 import type { PermissionRequest } from '@opencode-ai/sdk/v2'
-import { initializeOpencodeForDirectory } from '../opencode.js'
+import { getOpencodeClientV2 } from '../opencode.js'
 import { NOTIFY_MESSAGE_FLAGS } from '../discord-utils.js'
 import { createLogger } from '../logger.js'
 
@@ -120,13 +120,13 @@ export async function handlePermissionSelectMenu(
   const response = interaction.values[0] as 'once' | 'always' | 'reject'
 
   try {
-    const getClient = await initializeOpencodeForDirectory(context.directory)
-    await getClient().postSessionIdPermissionsPermissionId({
-      path: {
-        id: context.permission.sessionID,
-        permissionID: context.permission.id,
-      },
-      body: { response },
+    const clientV2 = getOpencodeClientV2(context.directory)
+    if (!clientV2) {
+      throw new Error('OpenCode server not found for directory')
+    }
+    await clientV2.permission.reply({
+      requestID: context.permission.id,
+      reply: response,
     })
 
     pendingPermissionContexts.delete(contextHash)
