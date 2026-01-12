@@ -180,7 +180,10 @@ export async function startDiscordBot({
         )
 
         if (!isOwner && !isAdmin && !canManageServer && !hasKimakiRole) {
-          await message.react('🔒')
+          await message.reply({
+            content: `You don't have permission to start sessions.\nTo use Kimaki, ask a server admin to give you the **Kimaki** role.`,
+            flags: SILENT_MESSAGE_FLAGS,
+          })
           return
         }
       }
