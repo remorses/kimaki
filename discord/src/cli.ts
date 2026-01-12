@@ -543,6 +543,33 @@ async function run({ restart, addChannels }: CliOptions) {
         guilds.push(...Array.from(c.guilds.cache.values()))
 
         for (const guild of guilds) {
+          // Create Kimaki role if it doesn't exist (fire-and-forget)
+          guild.roles
+            .fetch()
+            .then((roles) => {
+              const existingRole = roles.find(
+                (role) => role.name.toLowerCase() === 'kimaki',
+              )
+              if (existingRole) {
+                return
+              }
+              return guild.roles.create({
+                name: 'Kimaki',
+                reason:
+                  'Kimaki bot permission role - assign to users who can start sessions, send messages in threads, and use voice features',
+              })
+            })
+            .then((role) => {
+              if (role) {
+                cliLogger.info(`Created "Kimaki" role in ${guild.name}`)
+              }
+            })
+            .catch((error) => {
+              cliLogger.warn(
+                `Could not create Kimaki role in ${guild.name}: ${error instanceof Error ? error.message : String(error)}`,
+              )
+            })
+
           const channels = await getChannelsWithDescriptions(guild)
           const kimakiChans = channels.filter(
             (ch) =>
