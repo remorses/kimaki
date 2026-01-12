@@ -13,7 +13,7 @@ import { formatPart } from './message-formatting.js'
 import { getOpencodeSystemMessage } from './system-message.js'
 import { createLogger } from './logger.js'
 import { isAbortError } from './utils.js'
-import { showAskUserQuestionDropdowns } from './commands/ask-question.js'
+import { showAskUserQuestionDropdowns, cancelPendingQuestion } from './commands/ask-question.js'
 import { showPermissionDropdown, cleanupPermissionContext } from './commands/permissions.js'
 
 const sessionLogger = createLogger('SESSION')
@@ -239,6 +239,13 @@ export async function handleOpencodeSession({
     }
   }
 
+  // Cancel any pending question tool if user sends a new message
+  const questionCancelled = await cancelPendingQuestion(thread.id)
+  if (questionCancelled) {
+    sessionLogger.log(`[QUESTION] Cancelled pending question due to new message`)
+    await sendThreadMessage(thread, `⚠️ Previous question cancelled - processing your new message`)
+  }
+
   const abortController = new AbortController()
   abortControllers.set(session.id, abortController)
 
@@ -399,7 +406,7 @@ export async function handleOpencodeSession({
                 const thresholdCrossed = Math.floor(currentPercentage / 10) * 10
                 if (thresholdCrossed > lastDisplayedContextPercentage && thresholdCrossed >= 10) {
                   lastDisplayedContextPercentage = thresholdCrossed
-                  await sendThreadMessage(thread, `⬥ context usage ${currentPercentage}%`)
+                  await sendThreadMessage(thread, `⸬ context usage ${currentPercentage}%`)
                 }
               }
             }
