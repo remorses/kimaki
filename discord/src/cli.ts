@@ -872,12 +872,30 @@ cli
     '--data-dir <path>',
     'Data directory for config and database (default: ~/.kimaki)',
   )
-  .action(async (options: { restart?: boolean; addChannels?: boolean; dataDir?: string }) => {
+  .option('--install-url', 'Print the bot install URL and exit')
+  .action(async (options: { restart?: boolean; addChannels?: boolean; dataDir?: string; installUrl?: boolean }) => {
     try {
       // Set data directory early, before any database access
       if (options.dataDir) {
         setDataDir(options.dataDir)
         cliLogger.log(`Using data directory: ${getDataDir()}`)
+      }
+
+      if (options.installUrl) {
+        const db = getDatabase()
+        const existingBot = db
+          .prepare(
+            'SELECT app_id FROM bot_tokens ORDER BY created_at DESC LIMIT 1',
+          )
+          .get() as { app_id: string } | undefined
+
+        if (!existingBot) {
+          cliLogger.error('No bot configured yet. Run `kimaki` first to set up.')
+          process.exit(EXIT_NO_RESTART)
+        }
+
+        console.log(generateBotInstallUrl({ clientId: existingBot.app_id }))
+        process.exit(0)
       }
       
       await checkSingleInstance()
