@@ -45,13 +45,12 @@ import fs from 'node:fs'
 import { createLogger } from './logger.js'
 import { spawn, spawnSync, execSync, type ExecSyncOptions } from 'node:child_process'
 import http from 'node:http'
+import { setDataDir, getDataDir, getLockPort } from './config.js'
 
 const cliLogger = createLogger('CLI')
 const cli = cac('kimaki')
 
 process.title = 'kimaki'
-
-const LOCK_PORT = 29988
 
 async function killProcessOnPort(port: number): Promise<boolean> {
   const isWindows = process.platform === 'win32'
@@ -95,13 +94,14 @@ async function killProcessOnPort(port: number): Promise<boolean> {
 }
 
 async function checkSingleInstance(): Promise<void> {
+  const lockPort = getLockPort()
   try {
-    const response = await fetch(`http://127.0.0.1:${LOCK_PORT}`, {
+    const response = await fetch(`http://127.0.0.1:${lockPort}`, {
       signal: AbortSignal.timeout(1000),
     })
     if (response.ok) {
-      cliLogger.log('Another kimaki instance detected')
-      await killProcessOnPort(LOCK_PORT)
+      cliLogger.log(`Another kimaki instance detected for data dir: ${getDataDir()}`)
+      await killProcessOnPort(lockPort)
       // Wait a moment for port to be released
       await new Promise((resolve) => { setTimeout(resolve, 500) })
     }
@@ -111,22 +111,24 @@ async function checkSingleInstance(): Promise<void> {
 }
 
 async function startLockServer(): Promise<void> {
+  const lockPort = getLockPort()
   return new Promise((resolve, reject) => {
     const server = http.createServer((req, res) => {
       res.writeHead(200)
       res.end('kimaki')
     })
-    server.listen(LOCK_PORT, '127.0.0.1')
+    server.listen(lockPort, '127.0.0.1')
     server.once('listening', () => {
+      cliLogger.debug(`Lock server started on port ${lockPort}`)
       resolve()
     })
     server.on('error', async (err: NodeJS.ErrnoException) => {
       if (err.code === 'EADDRINUSE') {
         cliLogger.log('Port still in use, retrying...')
-        await killProcessOnPort(LOCK_PORT)
+        await killProcessOnPort(lockPort)
         await new Promise((r) => { setTimeout(r, 500) })
         // Retry once
-        server.listen(LOCK_PORT, '127.0.0.1')
+        server.listen(lockPort, '127.0.0.1')
       } else {
         reject(err)
       }
@@ -151,6 +153,7 @@ type Project = {
 type CliOptions = {
   restart?: boolean
   addChannels?: boolean
+  dataDir?: string
 }
 
 // Commands to skip when registering user commands (reserved names)
@@ -823,13 +826,24 @@ cli
     '--add-channels',
     'Select OpenCode projects to create Discord channels before starting',
   )
-  .action(async (options: { restart?: boolean; addChannels?: boolean }) => {
+  .option(
+    '--data-dir <path>',
+    'Data directory for config and database (default: ~/.kimaki)',
+  )
+  .action(async (options: { restart?: boolean; addChannels?: boolean; dataDir?: string }) => {
     try {
+      // Set data directory early, before any database access
+      if (options.dataDir) {
+        setDataDir(options.dataDir)
+        cliLogger.log(`Using data directory: ${getDataDir()}`)
+      }
+      
       await checkSingleInstance()
       await startLockServer()
       await run({
         restart: options.restart,
         addChannels: options.addChannels,
+        dataDir: options.dataDir,
       })
     } catch (error) {
       cliLogger.error(

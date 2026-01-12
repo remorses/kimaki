@@ -1,12 +1,12 @@
 // SQLite database manager for persistent bot state.
 // Stores thread-session mappings, bot tokens, channel directories,
-// API keys, and model preferences in ~/.kimaki/discord-sessions.db.
+// API keys, and model preferences in <dataDir>/discord-sessions.db.
 
 import Database from 'better-sqlite3'
 import fs from 'node:fs'
-import os from 'node:os'
 import path from 'node:path'
 import { createLogger } from './logger.js'
+import { getDataDir } from './config.js'
 
 const dbLogger = createLogger('DB')
 
@@ -14,15 +14,15 @@ let db: Database.Database | null = null
 
 export function getDatabase(): Database.Database {
   if (!db) {
-    const kimakiDir = path.join(os.homedir(), '.kimaki')
+    const dataDir = getDataDir()
 
     try {
-      fs.mkdirSync(kimakiDir, { recursive: true })
+      fs.mkdirSync(dataDir, { recursive: true })
     } catch (error) {
-      dbLogger.error('Failed to create ~/.kimaki directory:', error)
+      dbLogger.error(`Failed to create data directory ${dataDir}:`, error)
     }
 
-    const dbPath = path.join(kimakiDir, 'discord-sessions.db')
+    const dbPath = path.join(dataDir, 'discord-sessions.db')
 
     dbLogger.log(`Opening database at: ${dbPath}`)
     db = new Database(dbPath)
