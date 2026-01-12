@@ -235,16 +235,15 @@ jobs:
           KIMAKI_BOT_TOKEN: ${{ secrets.KIMAKI_BOT_TOKEN }}
         run: |
           npx -y kimaki start-session \
-            --channel "${{ vars.KIMAKI_CHANNEL_ID }}" \
+            --channel "1234567890123456789" \
             --prompt "Investigate issue ${{ github.event.issue.html_url }} using gh cli. Try fixing it in a new worktree ./${{ github.event.issue.number }}" \
             --name "Issue #${{ github.event.issue.number }}"
 ```
 
 **Setup:**
 1. Add `KIMAKI_BOT_TOKEN` to your repository secrets (Settings → Secrets → Actions)
-2. Add `KIMAKI_CHANNEL_ID` to your repository variables (Settings → Variables → Actions)
+2. Replace `1234567890123456789` with your Discord channel ID (right-click channel → Copy Channel ID)
 3. Make sure the Kimaki bot is running on your machine
-4. The bot will create a session and start investigating the issue
 
 ### How It Works
 
