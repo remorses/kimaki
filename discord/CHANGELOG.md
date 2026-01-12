@@ -1,5 +1,20 @@
 # Changelog
 
+## 0.4.31
+
+### Patch Changes
+
+- feat: **auto-create Kimaki role** on CLI startup for easier permission management
+- feat: add **--install-url** CLI option to print bot invite URL without starting bot
+- feat: **unnest code blocks from lists** for Discord compatibility
+- perf: **parallelize CLI startup** operations for faster boot
+- fix: **cancel pending question** when user sends new message
+- fix: **flush pending text** before showing question dropdowns
+- fix: **reply with helpful message** when user lacks Kimaki role
+- fix: move **Kimaki role to bottom** position for easier assignment
+- fix: prevent **infinite loop** in splitLongLine with small maxLength
+- fix: context usage rendering with empty diamond symbol
+
 ## 0.4.30
 
 ### Patch Changes
