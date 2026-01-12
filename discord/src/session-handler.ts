@@ -406,7 +406,7 @@ export async function handleOpencodeSession({
                 const thresholdCrossed = Math.floor(currentPercentage / 10) * 10
                 if (thresholdCrossed > lastDisplayedContextPercentage && thresholdCrossed >= 10) {
                   lastDisplayedContextPercentage = thresholdCrossed
-                  const chunk = ` ◳ context usage ${currentPercentage}%`
+                  const chunk = `⬦ context usage ${currentPercentage}%`
                   await thread.send({ content: chunk, flags: SILENT_MESSAGE_FLAGS })
                 }
               }
