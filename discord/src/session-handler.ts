@@ -8,7 +8,7 @@ import type { Message, ThreadChannel } from 'discord.js'
 import prettyMilliseconds from 'pretty-ms'
 import { getDatabase, getSessionModel, getChannelModel, getSessionAgent, getChannelAgent } from './database.js'
 import { initializeOpencodeForDirectory, getOpencodeServers, getOpencodeClientV2 } from './opencode.js'
-import { sendThreadMessage, NOTIFY_MESSAGE_FLAGS } from './discord-utils.js'
+import { sendThreadMessage, NOTIFY_MESSAGE_FLAGS, SILENT_MESSAGE_FLAGS } from './discord-utils.js'
 import { formatPart } from './message-formatting.js'
 import { getOpencodeSystemMessage } from './system-message.js'
 import { createLogger } from './logger.js'
@@ -406,7 +406,8 @@ export async function handleOpencodeSession({
                 const thresholdCrossed = Math.floor(currentPercentage / 10) * 10
                 if (thresholdCrossed > lastDisplayedContextPercentage && thresholdCrossed >= 10) {
                   lastDisplayedContextPercentage = thresholdCrossed
-                  await sendThreadMessage(thread, ` ◳ context usage ${currentPercentage}%`)
+                  const chunk = ` ◳ context usage ${currentPercentage}%`
+                  await thread.send({ content: chunk, flags: SILENT_MESSAGE_FLAGS })
                 }
               }
             }
