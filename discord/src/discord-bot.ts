@@ -412,6 +412,99 @@ export async function startDiscordBot({
     }
   })
 
+  // Magic prefix used by `kimaki start-session` CLI command to initiate sessions
+  const BOT_SESSION_PREFIX = '🤖 **Bot-initiated session**'
+
+  // Handle bot-initiated threads created by `kimaki start-session`
+  discordClient.on(Events.ThreadCreate, async (thread, newlyCreated) => {
+    try {
+      if (!newlyCreated) {
+        return
+      }
+
+      // Only handle threads in text channels
+      const parent = thread.parent as TextChannel | null
+      if (!parent || parent.type !== ChannelType.GuildText) {
+        return
+      }
+
+      // Get the starter message to check for magic prefix
+      const starterMessage = await thread.fetchStarterMessage().catch(() => null)
+      if (!starterMessage) {
+        discordLogger.log(`[THREAD_CREATE] Could not fetch starter message for thread ${thread.id}`)
+        return
+      }
+
+      // Only handle messages from this bot with the magic prefix
+      if (starterMessage.author.id !== discordClient.user?.id) {
+        return
+      }
+
+      if (!starterMessage.content.startsWith(BOT_SESSION_PREFIX)) {
+        return
+      }
+
+      discordLogger.log(`[BOT_SESSION] Detected bot-initiated thread: ${thread.name}`)
+
+      // Extract the prompt (everything after the prefix)
+      const prompt = starterMessage.content.slice(BOT_SESSION_PREFIX.length).trim()
+      if (!prompt) {
+        discordLogger.log(`[BOT_SESSION] No prompt found in starter message`)
+        return
+      }
+
+      // Extract directory from parent channel topic
+      if (!parent.topic) {
+        discordLogger.log(`[BOT_SESSION] Parent channel has no topic`)
+        return
+      }
+
+      const extracted = extractTagsArrays({
+        xml: parent.topic,
+        tags: ['kimaki.directory', 'kimaki.app'],
+      })
+
+      const projectDirectory = extracted['kimaki.directory']?.[0]?.trim()
+      const channelAppId = extracted['kimaki.app']?.[0]?.trim()
+
+      if (!projectDirectory) {
+        discordLogger.log(`[BOT_SESSION] No kimaki.directory in parent channel topic`)
+        return
+      }
+
+      if (channelAppId && channelAppId !== currentAppId) {
+        discordLogger.log(`[BOT_SESSION] Channel belongs to different bot app`)
+        return
+      }
+
+      if (!fs.existsSync(projectDirectory)) {
+        discordLogger.error(`[BOT_SESSION] Directory does not exist: ${projectDirectory}`)
+        await thread.send({
+          content: `✗ Directory does not exist: ${JSON.stringify(projectDirectory)}`,
+          flags: SILENT_MESSAGE_FLAGS,
+        })
+        return
+      }
+
+      discordLogger.log(`[BOT_SESSION] Starting session for thread ${thread.id} with prompt: "${prompt.slice(0, 50)}..."`)
+
+      await handleOpencodeSession({
+        prompt,
+        thread,
+        projectDirectory,
+        channelId: parent.id,
+      })
+    } catch (error) {
+      voiceLogger.error('[BOT_SESSION] Error handling bot-initiated thread:', error)
+      try {
+        const errMsg = error instanceof Error ? error.message : String(error)
+        await thread.send({ content: `Error: ${errMsg}`, flags: SILENT_MESSAGE_FLAGS })
+      } catch {
+        // Ignore send errors
+      }
+    }
+  })
+
   await discordClient.login(token)
 
   const handleShutdown = async (signal: string, { skipExit = false } = {}) => {

@@ -690,7 +690,7 @@ export async function handleOpencodeSession({
           path: { id: session.id },
           body: {
             parts,
-            system: getOpencodeSystemMessage({ sessionId: session.id }),
+            system: getOpencodeSystemMessage({ sessionId: session.id, channelId }),
             model: modelParam,
             agent: agentPreference,
           },

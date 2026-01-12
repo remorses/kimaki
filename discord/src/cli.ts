@@ -46,6 +46,7 @@ import { createLogger } from './logger.js'
 import { spawn, spawnSync, execSync, type ExecSyncOptions } from 'node:child_process'
 import http from 'node:http'
 import { setDataDir, getDataDir, getLockPort } from './config.js'
+import { extractTagsArrays } from './xml.js'
 
 const cliLogger = createLogger('CLI')
 const cli = cac('kimaki')
@@ -957,6 +958,196 @@ cli
     }
   })
 
+
+// Magic prefix used to identify bot-initiated sessions.
+// The running bot will recognize this prefix and start a session.
+const BOT_SESSION_PREFIX = '🤖 **Bot-initiated session**'
+
+cli
+  .command('start-session', 'Start a new session in a Discord channel (creates thread, bot handles the rest)')
+  .option('-c, --channel <channelId>', 'Discord channel ID')
+  .option('-p, --prompt <prompt>', 'Initial prompt for the session')
+  .option('-n, --name [name]', 'Thread name (optional, defaults to prompt preview)')
+  .option('-a, --app-id [appId]', 'Bot application ID (required if no local database)')
+  .action(async (options: { channel?: string; prompt?: string; name?: string; appId?: string }) => {
+    try {
+      const { channel: channelId, prompt, name, appId: optionAppId } = options
+
+      if (!channelId) {
+        cliLogger.error('Channel ID is required. Use --channel <channelId>')
+        process.exit(EXIT_NO_RESTART)
+      }
+
+      if (!prompt) {
+        cliLogger.error('Prompt is required. Use --prompt <prompt>')
+        process.exit(EXIT_NO_RESTART)
+      }
+
+      // Get bot token from env var or database
+      const envToken = process.env.KIMAKI_BOT_TOKEN
+      let botToken: string | undefined
+      let appId: string | undefined = optionAppId
+
+      if (envToken) {
+        botToken = envToken
+        if (!appId) {
+          // Try to get app_id from database if available (optional in CI)
+          try {
+            const db = getDatabase()
+            const botRow = db
+              .prepare('SELECT app_id FROM bot_tokens ORDER BY created_at DESC LIMIT 1')
+              .get() as { app_id: string } | undefined
+            appId = botRow?.app_id
+          } catch {
+            // Database might not exist in CI, that's ok
+          }
+        }
+      } else {
+        // Fall back to database
+        try {
+          const db = getDatabase()
+          const botRow = db
+            .prepare('SELECT app_id, token FROM bot_tokens ORDER BY created_at DESC LIMIT 1')
+            .get() as { app_id: string; token: string } | undefined
+
+          if (botRow) {
+            botToken = botRow.token
+            appId = appId || botRow.app_id
+          }
+        } catch (e) {
+          // Database error - will fall through to the check below
+          cliLogger.error('Database error:', e instanceof Error ? e.message : String(e))
+        }
+      }
+
+      if (!botToken) {
+        cliLogger.error('No bot token found. Set KIMAKI_BOT_TOKEN env var or run `kimaki` first to set up.')
+        process.exit(EXIT_NO_RESTART)
+      }
+
+      const s = spinner()
+      s.start('Fetching channel info...')
+
+      // Get channel info to extract directory from topic
+      const channelResponse = await fetch(
+        `https://discord.com/api/v10/channels/${channelId}`,
+        {
+          headers: {
+            'Authorization': `Bot ${botToken}`,
+          },
+        }
+      )
+
+      if (!channelResponse.ok) {
+        const error = await channelResponse.text()
+        s.stop('Failed to fetch channel')
+        throw new Error(`Discord API error: ${channelResponse.status} - ${error}`)
+      }
+
+      const channelData = await channelResponse.json() as {
+        id: string
+        name: string
+        topic?: string
+        guild_id: string
+      }
+
+      if (!channelData.topic) {
+        s.stop('Channel has no topic')
+        throw new Error(`Channel #${channelData.name} has no topic. It must have a <kimaki.directory> tag.`)
+      }
+
+      const extracted = extractTagsArrays({
+        xml: channelData.topic,
+        tags: ['kimaki.directory', 'kimaki.app'],
+      })
+
+      const projectDirectory = extracted['kimaki.directory']?.[0]?.trim()
+      const channelAppId = extracted['kimaki.app']?.[0]?.trim()
+
+      if (!projectDirectory) {
+        s.stop('No kimaki.directory tag found')
+        throw new Error(`Channel #${channelData.name} has no <kimaki.directory> tag in topic.`)
+      }
+
+      // Verify app ID matches if both are present
+      if (channelAppId && appId && channelAppId !== appId) {
+        s.stop('Channel belongs to different bot')
+        throw new Error(`Channel belongs to a different bot (expected: ${appId}, got: ${channelAppId})`)
+      }
+
+      s.message('Creating starter message...')
+
+      // Create starter message with magic prefix
+      // The full prompt goes in the message so the bot can read it
+      const starterMessageResponse = await fetch(
+        `https://discord.com/api/v10/channels/${channelId}/messages`,
+        {
+          method: 'POST',
+          headers: {
+            'Authorization': `Bot ${botToken}`,
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({
+            content: `${BOT_SESSION_PREFIX}\n${prompt}`,
+          }),
+        }
+      )
+
+      if (!starterMessageResponse.ok) {
+        const error = await starterMessageResponse.text()
+        s.stop('Failed to create message')
+        throw new Error(`Discord API error: ${starterMessageResponse.status} - ${error}`)
+      }
+
+      const starterMessage = await starterMessageResponse.json() as { id: string }
+
+      s.message('Creating thread...')
+
+      // Create thread from the message
+      const threadName = name || (prompt.length > 80 ? prompt.slice(0, 77) + '...' : prompt)
+      const threadResponse = await fetch(
+        `https://discord.com/api/v10/channels/${channelId}/messages/${starterMessage.id}/threads`,
+        {
+          method: 'POST',
+          headers: {
+            'Authorization': `Bot ${botToken}`,
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({
+            name: threadName.slice(0, 100),
+            auto_archive_duration: 1440, // 1 day
+          }),
+        }
+      )
+
+      if (!threadResponse.ok) {
+        const error = await threadResponse.text()
+        s.stop('Failed to create thread')
+        throw new Error(`Discord API error: ${threadResponse.status} - ${error}`)
+      }
+
+      const threadData = await threadResponse.json() as { id: string; name: string }
+
+      s.stop('Thread created!')
+
+      const threadUrl = `https://discord.com/channels/${channelData.guild_id}/${threadData.id}`
+
+      note(
+        `Thread: ${threadData.name}\nDirectory: ${projectDirectory}\n\nThe running bot will pick this up and start the session.\n\nURL: ${threadUrl}`,
+        '✅ Thread Created',
+      )
+
+      console.log(threadUrl)
+
+      process.exit(0)
+    } catch (error) {
+      cliLogger.error(
+        'Error:',
+        error instanceof Error ? error.message : String(error),
+      )
+      process.exit(EXIT_NO_RESTART)
+    }
+  })
 
 
 cli.help()

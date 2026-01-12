@@ -189,7 +189,69 @@ npx -y kimaki@latest
 
 # Upload files to a Discord thread
 npx -y kimaki upload-to-discord --session <session-id> <file1> [file2...]
+
+# Start a session programmatically (useful for CI/automation)
+npx -y kimaki start-session --channel <channel-id> --prompt "your prompt"
 ```
+
+## Programmatically Start Sessions
+
+You can start Kimaki sessions from CI pipelines, cron jobs, or any automation. The `start-session` command creates a Discord thread, and the running bot on your machine picks it up.
+
+### Environment Variables
+
+| Variable | Required | Description |
+|----------|----------|-------------|
+| `KIMAKI_BOT_TOKEN` | Yes (in CI) | Discord bot token |
+
+### CLI Options
+
+```bash
+npx -y kimaki start-session \
+  --channel <channel-id>  # Required: Discord channel ID
+  --prompt <prompt>       # Required: Initial prompt for the session
+  --name <name>           # Optional: Thread name (defaults to prompt preview)
+  --app-id <app-id>       # Optional: Bot application ID for validation
+```
+
+### Example: GitHub Actions on New Issues
+
+This workflow starts a Kimaki session whenever a new issue is opened:
+
+```yaml
+# .github/workflows/investigate-issues.yml
+name: Investigate New Issues
+
+on:
+  issues:
+    types: [opened]
+
+jobs:
+  investigate:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Start Kimaki Session
+        env:
+          KIMAKI_BOT_TOKEN: ${{ secrets.KIMAKI_BOT_TOKEN }}
+        run: |
+          npx -y kimaki start-session \
+            --channel "${{ vars.KIMAKI_CHANNEL_ID }}" \
+            --prompt "Investigate issue ${{ github.event.issue.html_url }} using gh cli. Try fixing it in a new worktree ./${{ github.event.issue.number }}" \
+            --name "Issue #${{ github.event.issue.number }}"
+```
+
+**Setup:**
+1. Add `KIMAKI_BOT_TOKEN` to your repository secrets (Settings → Secrets → Actions)
+2. Add `KIMAKI_CHANNEL_ID` to your repository variables (Settings → Variables → Actions)
+3. Make sure the Kimaki bot is running on your machine
+4. The bot will create a session and start investigating the issue
+
+### How It Works
+
+1. **CI runs `start-session`** → Creates a Discord thread with magic prefix
+2. **Running bot detects thread** → Recognizes the `🤖 **Bot-initiated session**` prefix
+3. **Bot starts OpenCode session** → Uses the prompt from the thread
+4. **AI investigates** → Runs on your machine with full codebase access
 
 ## How It Works
 
