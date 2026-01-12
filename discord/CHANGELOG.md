@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.4.29
+
+### Patch Changes
+
+- add **--data-dir** option for running multiple bot instances with separate databases
+- **abbreviate paths** in project selection with `~` for home directory
+- **filter out** `opencode-test-*` projects from channel creation lists
+- docs: add multiple Discord servers section to README
+
 ## 0.4.28
 
 ### Patch Changes
