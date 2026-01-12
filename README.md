@@ -172,14 +172,14 @@ Just send a message in any channel linked to a project. Kimaki handles the rest.
 | `/abort` | Stop the current running session |
 | `/add-project <project>` | Create channels for an existing OpenCode project |
 | `/create-new-project <name>` | Create a new project folder and start a session |
-| `/accept` | Accept a permission request (file edit, command execution) |
-| `/accept-always` | Accept and auto-approve similar future requests |
-| `/reject` | Reject a permission request |
-| `/model` | Change the AI model for this channel |
+| `/model` | Change the AI model for this channel or session |
+| `/agent` | Change the agent for this channel or session |
 | `/share` | Generate a public URL to share the current session |
 | `/fork` | Fork the session from a previous message |
 | `/queue <message>` | Queue a message to send after current response finishes |
 | `/clear-queue` | Clear all queued messages in this thread |
+| `/undo` | Undo the last assistant message (revert file changes) |
+| `/redo` | Redo the last undone message |
 
 ### CLI Commands
 
@@ -206,7 +206,7 @@ npx -y kimaki upload-to-discord --session <session-id> <file1> [file2...]
 
 **Graceful Restart** - Send `SIGUSR2` to restart the bot with new code without losing connections.
 
-## Model Configuration
+## Model & Agent Configuration
 
 Set the AI model in your project's `opencode.json`:
 
@@ -224,4 +224,6 @@ Format: `provider/model-name`
 - `openai/gpt-4o` - GPT-4o
 - `google/gemini-2.5-pro` - Gemini 2.5 Pro
 
-Or use the `/model` command in Discord to change models per channel.
+Or use these Discord commands to change settings per channel/session:
+- `/model` - Select a different AI model
+- `/agent` - Select a different agent (if you have multiple agents configured in your project)
