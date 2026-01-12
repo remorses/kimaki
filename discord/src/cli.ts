@@ -16,7 +16,7 @@ import {
   multiselect,
   spinner,
 } from '@clack/prompts'
-import { deduplicateByKey, generateBotInstallUrl } from './utils.js'
+import { deduplicateByKey, generateBotInstallUrl, abbreviatePath } from './utils.js'
 import {
   getChannelsWithDescriptions,
   createDiscordClient,
@@ -647,7 +647,15 @@ async function run({ restart, addChannels }: CliOptions) {
   )
 
   const availableProjects = deduplicateByKey(
-    projects.filter((project) => !existingDirs.includes(project.worktree)),
+    projects.filter((project) => {
+      if (existingDirs.includes(project.worktree)) {
+        return false
+      }
+      if (path.basename(project.worktree).startsWith('opencode-test-')) {
+        return false
+      }
+      return true
+    }),
     (x) => x.worktree,
   )
 
@@ -666,7 +674,7 @@ async function run({ restart, addChannels }: CliOptions) {
       message: 'Select projects to create Discord channels for:',
       options: availableProjects.map((project) => ({
         value: project.id,
-        label: `${path.basename(project.worktree)} (${project.worktree})`,
+        label: `${path.basename(project.worktree)} (${abbreviatePath(project.worktree)})`,
       })),
       required: false,
     })

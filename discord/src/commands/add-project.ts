@@ -7,6 +7,7 @@ import { getDatabase } from '../database.js'
 import { initializeOpencodeForDirectory } from '../opencode.js'
 import { createProjectChannels } from '../channel-management.js'
 import { createLogger } from '../logger.js'
+import { abbreviatePath } from '../utils.js'
 
 const logger = createLogger('ADD-PROJECT')
 
@@ -107,9 +108,15 @@ export async function handleAddProjectAutocomplete({
       .all('text') as { directory: string }[]
     const existingDirSet = new Set(existingDirs.map((row) => row.directory))
 
-    const availableProjects = projectsResponse.data.filter(
-      (project) => !existingDirSet.has(project.worktree),
-    )
+    const availableProjects = projectsResponse.data.filter((project) => {
+      if (existingDirSet.has(project.worktree)) {
+        return false
+      }
+      if (path.basename(project.worktree).startsWith('opencode-test-')) {
+        return false
+      }
+      return true
+    })
 
     const projects = availableProjects
       .filter((project) => {
@@ -124,7 +131,7 @@ export async function handleAddProjectAutocomplete({
       })
       .slice(0, 25)
       .map((project) => {
-        const name = `${path.basename(project.worktree)} (${project.worktree})`
+        const name = `${path.basename(project.worktree)} (${abbreviatePath(project.worktree)})`
         return {
           name: name.length > 100 ? name.slice(0, 99) + '…' : name,
           value: project.id,

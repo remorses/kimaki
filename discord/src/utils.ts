@@ -2,6 +2,7 @@
 // Includes Discord OAuth URL generation, array deduplication,
 // abort error detection, and date/time formatting helpers.
 
+import os from 'node:os'
 import { PermissionsBitField } from 'discord.js'
 
 type GenerateInstallUrlOptions = {
@@ -115,4 +116,12 @@ const dtf = new Intl.DateTimeFormat('en-US', {
 
 export function formatDateTime(date: Date): string {
   return dtf.format(date)
+}
+
+export function abbreviatePath(fullPath: string): string {
+  const home = os.homedir()
+  if (fullPath.startsWith(home)) {
+    return '~' + fullPath.slice(home.length)
+  }
+  return fullPath
 }
