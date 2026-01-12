@@ -38,17 +38,17 @@ IMPORTANT: After editing any files, you MUST execute the critique command using 
 
 Execute this after making changes:
 
-bunx critique web
+bunx critique web --title "Add user authentication flow"
 
 If there are other unrelated changes in the working directory, filter to only show the files you edited:
 
-bunx critique web -- path/to/file1.ts path/to/file2.ts
+bunx critique web --title "Fix database connection retry" -- path/to/file1.ts path/to/file2.ts
 
 You can also show latest commit changes using:
 
-bunx critique web HEAD
+bunx critique web --title "Refactor API endpoints" HEAD
 
-bunx critique web HEAD~1 to get the one before last
+bunx critique web --title "Update dependencies" HEAD~1 to get the one before last
 
 Do this in case you committed the changes yourself (only if the user asks so, never commit otherwise).
 
