@@ -529,8 +529,14 @@ async function run({ restart, addChannels }: CliOptions) {
   }
 
   const s = spinner()
-  s.start('Creating Discord client and connecting...')
 
+  // Start OpenCode server EARLY - let it initialize in parallel with Discord login.
+  // This is the biggest startup bottleneck (can take 1-30 seconds to spawn and wait for ready)
+  const currentDir = process.cwd()
+  s.start('Starting OpenCode server...')
+  const opencodePromise = initializeOpencodeForDirectory(currentDir)
+
+  s.message('Connecting to Discord...')
   const discordClient = await createDiscordClient()
 
   const guilds: Guild[] = []
@@ -542,48 +548,56 @@ async function run({ restart, addChannels }: CliOptions) {
       discordClient.once(Events.ClientReady, async (c) => {
         guilds.push(...Array.from(c.guilds.cache.values()))
 
-        for (const guild of guilds) {
-          // Create Kimaki role if it doesn't exist, or fix its position (fire-and-forget)
-          guild.roles
-            .fetch()
-            .then(async (roles) => {
-              const existingRole = roles.find(
-                (role) => role.name.toLowerCase() === 'kimaki',
-              )
-              if (existingRole) {
-                // Move to bottom if not already there
-                if (existingRole.position > 1) {
-                  await existingRole.setPosition(1)
-                  cliLogger.info(`Moved "Kimaki" role to bottom in ${guild.name}`)
+        // Process all guilds in parallel for faster startup
+        const guildResults = await Promise.all(
+          guilds.map(async (guild) => {
+            // Create Kimaki role if it doesn't exist, or fix its position (fire-and-forget)
+            guild.roles
+              .fetch()
+              .then(async (roles) => {
+                const existingRole = roles.find(
+                  (role) => role.name.toLowerCase() === 'kimaki',
+                )
+                if (existingRole) {
+                  // Move to bottom if not already there
+                  if (existingRole.position > 1) {
+                    await existingRole.setPosition(1)
+                    cliLogger.info(`Moved "Kimaki" role to bottom in ${guild.name}`)
+                  }
+                  return
                 }
-                return
-              }
-              return guild.roles.create({
-                name: 'Kimaki',
-                position: 1, // Place at bottom so anyone with Manage Roles can assign it
-                reason:
-                  'Kimaki bot permission role - assign to users who can start sessions, send messages in threads, and use voice features',
+                return guild.roles.create({
+                  name: 'Kimaki',
+                  position: 1, // Place at bottom so anyone with Manage Roles can assign it
+                  reason:
+                    'Kimaki bot permission role - assign to users who can start sessions, send messages in threads, and use voice features',
+                })
               })
-            })
-            .then((role) => {
-              if (role) {
-                cliLogger.info(`Created "Kimaki" role in ${guild.name}`)
-              }
-            })
-            .catch((error) => {
-              cliLogger.warn(
-                `Could not create Kimaki role in ${guild.name}: ${error instanceof Error ? error.message : String(error)}`,
-              )
-            })
+              .then((role) => {
+                if (role) {
+                  cliLogger.info(`Created "Kimaki" role in ${guild.name}`)
+                }
+              })
+              .catch((error) => {
+                cliLogger.warn(
+                  `Could not create Kimaki role in ${guild.name}: ${error instanceof Error ? error.message : String(error)}`,
+                )
+              })
 
-          const channels = await getChannelsWithDescriptions(guild)
-          const kimakiChans = channels.filter(
-            (ch) =>
-              ch.kimakiDirectory && (!ch.kimakiApp || ch.kimakiApp === appId),
-          )
+            const channels = await getChannelsWithDescriptions(guild)
+            const kimakiChans = channels.filter(
+              (ch) =>
+                ch.kimakiDirectory && (!ch.kimakiApp || ch.kimakiApp === appId),
+            )
 
-          if (kimakiChans.length > 0) {
-            kimakiChannels.push({ guild, channels: kimakiChans })
+            return { guild, channels: kimakiChans }
+          }),
+        )
+
+        // Collect results
+        for (const result of guildResults) {
+          if (result.channels.length > 0) {
+            kimakiChannels.push(result)
           }
         }
 
@@ -646,32 +660,25 @@ async function run({ restart, addChannels }: CliOptions) {
     note(channelList, 'Existing Kimaki Channels')
   }
 
-  s.start('Starting OpenCode server...')
+  // Await the OpenCode server that was started in parallel with Discord login
+  s.start('Waiting for OpenCode server...')
+  const getClient = await opencodePromise
+  s.stop('OpenCode server ready!')
 
-  const currentDir = process.cwd()
-  let getClient = await initializeOpencodeForDirectory(currentDir)
-  s.stop('OpenCode server started!')
+  s.start('Fetching OpenCode data...')
 
-  s.start('Fetching OpenCode projects...')
+  // Fetch projects and commands in parallel
+  const [projects, allUserCommands] = await Promise.all([
+    getClient().project.list({}).then((r) => r.data || []).catch((error) => {
+      s.stop('Failed to fetch projects')
+      cliLogger.error('Error:', error instanceof Error ? error.message : String(error))
+      discordClient.destroy()
+      process.exit(EXIT_NO_RESTART)
+    }),
+    getClient().command.list({ query: { directory: currentDir } }).then((r) => r.data || []).catch(() => []),
+  ])
 
-  let projects: Project[] = []
-
-  try {
-    const projectsResponse = await getClient().project.list({})
-    if (!projectsResponse.data) {
-      throw new Error('Failed to fetch projects')
-    }
-    projects = projectsResponse.data
-    s.stop(`Found ${projects.length} OpenCode project(s)`)
-  } catch (error) {
-    s.stop('Failed to fetch projects')
-    cliLogger.error(
-      'Error:',
-      error instanceof Error ? error.message : String(error),
-    )
-    discordClient.destroy()
-    process.exit(EXIT_NO_RESTART)
-  }
+  s.stop(`Found ${projects.length} OpenCode project(s)`)
 
   const existingDirs = kimakiChannels.flatMap(({ channels }) =>
     channels
@@ -777,19 +784,6 @@ async function run({ restart, addChannels }: CliOptions) {
         )
       }
     }
-  }
-
-  // Fetch user-defined commands using the already-running server
-  const allUserCommands: OpencodeCommand[] = []
-  try {
-    const commandsResponse = await getClient().command.list({
-      query: { directory: currentDir },
-    })
-    if (commandsResponse.data) {
-      allUserCommands.push(...commandsResponse.data)
-    }
-  } catch {
-    // Ignore errors fetching commands
   }
 
   // Log available user commands
