@@ -530,6 +530,14 @@ export async function handleOpencodeSession({
             `Question requested: id=${questionRequest.id}, questions=${questionRequest.questions.length}`,
           )
 
+          // Flush any pending text/reasoning parts before showing the dropdown
+          // This ensures text the LLM generated before the question tool is shown first
+          for (const p of currentParts) {
+            if (p.type !== 'step-start' && p.type !== 'step-finish') {
+              await sendPartMessage(p)
+            }
+          }
+
           await showAskUserQuestionDropdowns({
             thread,
             sessionId: session.id,
