@@ -543,18 +543,24 @@ async function run({ restart, addChannels }: CliOptions) {
         guilds.push(...Array.from(c.guilds.cache.values()))
 
         for (const guild of guilds) {
-          // Create Kimaki role if it doesn't exist (fire-and-forget)
+          // Create Kimaki role if it doesn't exist, or fix its position (fire-and-forget)
           guild.roles
             .fetch()
-            .then((roles) => {
+            .then(async (roles) => {
               const existingRole = roles.find(
                 (role) => role.name.toLowerCase() === 'kimaki',
               )
               if (existingRole) {
+                // Move to bottom if not already there
+                if (existingRole.position > 1) {
+                  await existingRole.setPosition(1)
+                  cliLogger.info(`Moved "Kimaki" role to bottom in ${guild.name}`)
+                }
                 return
               }
               return guild.roles.create({
                 name: 'Kimaki',
+                position: 1, // Place at bottom so anyone with Manage Roles can assign it
                 reason:
                   'Kimaki bot permission role - assign to users who can start sessions, send messages in threads, and use voice features',
               })
