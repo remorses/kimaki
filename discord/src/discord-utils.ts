@@ -11,6 +11,7 @@ import {
 import { Lexer } from 'marked'
 import { extractTagsArrays } from './xml.js'
 import { formatMarkdownTables } from './format-tables.js'
+import { unnestCodeBlocksFromLists } from './unnest-code-blocks.js'
 import { createLogger } from './logger.js'
 
 const discordLogger = createLogger('DISCORD')
@@ -198,6 +199,7 @@ export async function sendThreadMessage(
   const MAX_LENGTH = 2000
 
   content = formatMarkdownTables(content)
+  content = unnestCodeBlocksFromLists(content)
   content = escapeBackticksInCodeBlocks(content)
 
   // If custom flags provided, send as single message (no chunking)
