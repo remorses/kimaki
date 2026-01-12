@@ -126,7 +126,8 @@ export function splitMarkdownForDiscord({
 
         // calculate overhead for code block markers
         const codeBlockOverhead = line.inCodeBlock ? ('```' + line.lang + '\n').length + '```\n'.length : 0
-        const availablePerChunk = maxLength - codeBlockOverhead - 50 // safety margin
+        // ensure at least 10 chars available, even if maxLength is very small
+        const availablePerChunk = Math.max(10, maxLength - codeBlockOverhead - 50)
 
         const pieces = splitLongLine(line.text, availablePerChunk, line.inCodeBlock)
 

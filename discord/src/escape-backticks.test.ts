@@ -376,11 +376,19 @@ test('splitMarkdownForDiscord handles very long line inside code block', () => {
     \`\`\`
     ",
       "\`\`\`js
-    veryverylonglinethatexceedsmaxlength
-    \`\`\`
+    veryverylo\`\`\`
     ",
       "\`\`\`js
-    short
+    nglinethat\`\`\`
+    ",
+      "\`\`\`js
+    exceedsmax\`\`\`
+    ",
+      "\`\`\`js
+    length
+    \`\`\`
+    ",
+      "short
     \`\`\`
     ",
     ]
