@@ -1,5 +1,16 @@
 # Changelog
 
+## 0.4.30
+
+### Patch Changes
+
+- add **start-session** CLI command to programmatically create Discord threads and start sessions
+- support **KIMAKI_BOT_TOKEN** env var for headless/CI usage
+- add **ThreadCreate** handler to detect bot-initiated sessions with magic prefix
+- add **channelId** to system prompt for session context
+- add GitHub Actions example for automatic issue investigation
+- docs: update README command table with /agent, /undo, /redo
+
 ## 0.4.29
 
 ### Patch Changes
