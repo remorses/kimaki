@@ -11,6 +11,7 @@ import {
 import { Lexer } from 'marked'
 import { extractTagsArrays } from './xml.js'
 import { formatMarkdownTables } from './format-tables.js'
+import { limitHeadingDepth } from './limit-heading-depth.js'
 import { unnestCodeBlocksFromLists } from './unnest-code-blocks.js'
 import { createLogger } from './logger.js'
 
@@ -201,6 +202,7 @@ export async function sendThreadMessage(
 
   content = formatMarkdownTables(content)
   content = unnestCodeBlocksFromLists(content)
+  content = limitHeadingDepth(content)
   content = escapeBackticksInCodeBlocks(content)
 
   // If custom flags provided, send as single message (no chunking)
