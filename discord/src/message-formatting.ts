@@ -245,10 +245,10 @@ export function formatTodoList(part: Part): string {
   })
   const activeTodo = todos[activeIndex]
   if (activeIndex === -1 || !activeTodo) return ''
-  // parenthesized digits ⑴-⒇ for 1-20, fallback to regular number for 21+
-  const parenthesizedDigits = '⑴⑵⑶⑷⑸⑹⑺⑻⑼⑽⑾⑿⒀⒁⒂⒃⒄⒅⒆⒇'
+  // digit-with-period ⒈-⒛ for 1-20, fallback to regular number for 21+
+  const digitWithPeriod = '⒈⒉⒊⒋⒌⒍⒎⒏⒐⒑⒒⒓⒔⒕⒖⒗⒘⒙⒚⒛'
   const todoNumber = activeIndex + 1
-  const num = todoNumber <= 20 ? parenthesizedDigits[todoNumber - 1] : `(${todoNumber})`
+  const num = todoNumber <= 20 ? digitWithPeriod[todoNumber - 1] : `${todoNumber}.`
   const content = activeTodo.content.charAt(0).toLowerCase() + activeTodo.content.slice(1)
   return `${num} **${escapeInlineMarkdown(content)}**`
 }

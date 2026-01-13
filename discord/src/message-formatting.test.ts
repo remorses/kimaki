@@ -27,7 +27,7 @@ describe('formatTodoList', () => {
       },
     }
 
-    expect(formatTodoList(part)).toMatchInlineSnapshot(`"⑵ **second task**"`)
+    expect(formatTodoList(part)).toMatchInlineSnapshot(`"⒉ **second task**"`)
   })
 
   test('formats double digit todo numbers', () => {
@@ -53,7 +53,7 @@ describe('formatTodoList', () => {
       },
     }
 
-    expect(formatTodoList(part)).toMatchInlineSnapshot(`"⑿ **task 12**"`)
+    expect(formatTodoList(part)).toMatchInlineSnapshot(`"⒓ **task 12**"`)
   })
 
   test('lowercases first letter of content', () => {
@@ -76,6 +76,6 @@ describe('formatTodoList', () => {
       },
     }
 
-    expect(formatTodoList(part)).toMatchInlineSnapshot(`"⑴ **fix the bug**"`)
+    expect(formatTodoList(part)).toMatchInlineSnapshot(`"⒈ **fix the bug**"`)
   })
 })
