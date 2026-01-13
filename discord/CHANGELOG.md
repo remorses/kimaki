@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.4.33
+
+### Patch Changes
+
+- use **digit-with-period unicode** (⒈⒉⒊) for todo numbers instead of parenthesized digits
+- add **heading depth limiter** for Discord markdown (converts h4+ to h3)
+
 ## 0.4.32
 
 ### Patch Changes
