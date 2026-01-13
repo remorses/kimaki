@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.4.32
+
+### Patch Changes
+
+- feat: **flush pending text** before tool calls - ensures LLM text is shown before tools start
+- feat: **show token usage** for large tool outputs (>3k tokens) with context percentage
+
 ## 0.4.31
 
 ### Patch Changes

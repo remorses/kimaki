@@ -437,7 +437,38 @@ export async function handleOpencodeSession({
           }
 
           if (part.type === 'tool' && part.state.status === 'running') {
+            // Flush any pending text/reasoning parts before showing the tool
+            // This ensures text the LLM generated before the tool call is shown first
+            for (const p of currentParts) {
+              if (p.type !== 'step-start' && p.type !== 'step-finish' && p.id !== part.id) {
+                await sendPartMessage(p)
+              }
+            }
             await sendPartMessage(part)
+          }
+
+          // Show token usage for completed tools with large output (>5k tokens)
+          if (part.type === 'tool' && part.state.status === 'completed') {
+            const output = part.state.output || ''
+            const outputTokens = Math.ceil(output.length / 4)
+            const LARGE_OUTPUT_THRESHOLD = 3000
+            if (outputTokens >= LARGE_OUTPUT_THRESHOLD) {
+              const formattedTokens = outputTokens >= 1000
+                ? `${(outputTokens / 1000).toFixed(1)}k`
+                : String(outputTokens)
+              const percentageSuffix = (() => {
+                if (!modelContextLimit) {
+                  return ''
+                }
+                const pct = (outputTokens / modelContextLimit) * 100
+                if (pct < 1) {
+                  return ''
+                }
+                return ` (${pct.toFixed(1)}%)`
+              })()
+              const chunk = `⬦ ${part.tool} returned ${formattedTokens} tokens${percentageSuffix}`
+              await thread.send({ content: chunk, flags: SILENT_MESSAGE_FLAGS })
+            }
           }
 
           if (part.type === 'reasoning') {
