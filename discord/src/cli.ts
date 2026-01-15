@@ -279,7 +279,9 @@ async function registerCommands(token: string, appId: string, userCommands: Open
       continue
     }
 
-    const commandName = `${cmd.name}-cmd`
+    // Sanitize command name: oh-my-opencode uses MCP commands with colons, which Discord doesn't allow
+    const sanitizedName = cmd.name.replace(/:/g, '-')
+    const commandName = `${sanitizedName}-cmd`
     const description = cmd.description || `Run /${cmd.name} command`
 
     commands.push(
