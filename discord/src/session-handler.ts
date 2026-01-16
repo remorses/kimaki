@@ -481,6 +481,12 @@ export async function handleOpencodeSession({
             await sendPartMessage(part)
           }
 
+          // Send text parts when complete (time.end is set)
+          // Text parts stream incrementally; only send when finished to avoid partial text
+          if (part.type === 'text' && part.time?.end) {
+            await sendPartMessage(part)
+          }
+
           if (part.type === 'step-finish') {
             for (const p of currentParts) {
               if (p.type !== 'step-start' && p.type !== 'step-finish') {
