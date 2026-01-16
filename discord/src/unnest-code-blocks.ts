@@ -123,10 +123,12 @@ function renderSegments(segments: Segment[]): string {
         result.push(segment.prefix + segment.content + '\n')
       } else {
         // Raw content (no prefix means it's original raw)
-        result.push(segment.content)
+        // Ensure raw ends with newline for proper separation from next segment
+        const raw = segment.content.trimEnd()
+        result.push(raw + '\n')
       }
     }
   }
 
-  return result.join('')
+  return result.join('').trimEnd()
 }
