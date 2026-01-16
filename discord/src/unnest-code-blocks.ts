@@ -41,11 +41,15 @@ function processListToken(list: Tokens.List): Segment[] {
 function processListItem(item: Tokens.ListItem, prefix: string): Segment[] {
   const segments: Segment[] = []
   let currentText: string[] = []
+  // Track if we've seen a code block - text after code uses continuation prefix
+  let seenCodeBlock = false
 
   const flushText = (): void => {
     const text = currentText.join('').trim()
     if (text) {
-      segments.push({ type: 'list-item', prefix, content: text })
+      // After a code block, use '-' as continuation prefix to avoid repeating numbers
+      const effectivePrefix = seenCodeBlock ? '- ' : prefix
+      segments.push({ type: 'list-item', prefix: effectivePrefix, content: text })
     }
     currentText = []
   }
@@ -59,6 +63,7 @@ function processListItem(item: Tokens.ListItem, prefix: string): Segment[] {
         type: 'code',
         content: '```' + lang + '\n' + codeToken.text + '\n```\n',
       })
+      seenCodeBlock = true
     } else if (token.type === 'list') {
       flushText()
       // Recursively process nested list - segments bubble up

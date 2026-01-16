@@ -223,3 +223,22 @@ test('handles empty list item with code', () => {
     "
   `)
 })
+
+test('numbered list with text after code block', () => {
+  const input = `1. First item
+   \`\`\`js
+   const a = 1
+   \`\`\`
+   Text after the code
+2. Second item`
+  const result = unnestCodeBlocksFromLists(input)
+  expect(result).toMatchInlineSnapshot(`
+    "1. First item
+
+    \`\`\`js
+    const a = 1
+    \`\`\`
+    - Text after the code
+    2. Second item"
+  `)
+})
