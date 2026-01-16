@@ -6,6 +6,7 @@ import { log } from '@clack/prompts'
 import fs from 'node:fs'
 import path, { dirname } from 'node:path'
 import { fileURLToPath } from 'node:url'
+import util from 'node:util'
 
 const __filename = fileURLToPath(import.meta.url)
 const __dirname = dirname(__filename)
@@ -22,36 +23,43 @@ if (isDev) {
   fs.writeFileSync(logFilePath, `--- kimaki log started at ${new Date().toISOString()} ---\n`)
 }
 
-function writeToFile(level: string, prefix: string, args: any[]) {
+function formatArg(arg: unknown): string {
+  if (typeof arg === 'string') {
+    return arg
+  }
+  return util.inspect(arg, { colors: true, depth: 4 })
+}
+
+function writeToFile(level: string, prefix: string, args: unknown[]) {
   if (!isDev) {
     return
   }
   const timestamp = new Date().toISOString()
-  const message = `[${timestamp}] [${level}] [${prefix}] ${args.map((arg) => String(arg)).join(' ')}\n`
+  const message = `[${timestamp}] [${level}] [${prefix}] ${args.map(formatArg).join(' ')}\n`
   fs.appendFileSync(logFilePath, message)
 }
 
 export function createLogger(prefix: string) {
   return {
-    log: (...args: any[]) => {
+    log: (...args: unknown[]) => {
       writeToFile('INFO', prefix, args)
-      log.info([`[${prefix}]`, ...args.map((arg) => String(arg))].join(' '))
+      log.info([`[${prefix}]`, ...args.map(formatArg)].join(' '))
     },
-    error: (...args: any[]) => {
+    error: (...args: unknown[]) => {
       writeToFile('ERROR', prefix, args)
-      log.error([`[${prefix}]`, ...args.map((arg) => String(arg))].join(' '))
+      log.error([`[${prefix}]`, ...args.map(formatArg)].join(' '))
     },
-    warn: (...args: any[]) => {
+    warn: (...args: unknown[]) => {
       writeToFile('WARN', prefix, args)
-      log.warn([`[${prefix}]`, ...args.map((arg) => String(arg))].join(' '))
+      log.warn([`[${prefix}]`, ...args.map(formatArg)].join(' '))
     },
-    info: (...args: any[]) => {
+    info: (...args: unknown[]) => {
       writeToFile('INFO', prefix, args)
-      log.info([`[${prefix}]`, ...args.map((arg) => String(arg))].join(' '))
+      log.info([`[${prefix}]`, ...args.map(formatArg)].join(' '))
     },
-    debug: (...args: any[]) => {
+    debug: (...args: unknown[]) => {
       writeToFile('DEBUG', prefix, args)
-      log.info([`[${prefix}]`, ...args.map((arg) => String(arg))].join(' '))
+      log.info([`[${prefix}]`, ...args.map(formatArg)].join(' '))
     },
   }
 }
