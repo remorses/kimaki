@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.4.34
+
+### Patch Changes
+
+- fix **numbered list code block unnesting** to avoid repeating numbers
+- **send text parts immediately** when complete (time.end set)
+- don't show typing indicator on question tool prompts
+- instruct model to use **question tool on session end**
+- fix(cli): **sanitize command names** by replacing colons with hyphens
+
 ## 0.4.33
 
 ### Patch Changes

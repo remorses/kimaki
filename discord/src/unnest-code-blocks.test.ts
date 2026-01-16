@@ -242,3 +242,187 @@ test('numbered list with text after code block', () => {
     2. Second item"
   `)
 })
+
+test('numbered list with multiple code blocks and text between', () => {
+  const input = `1. First item
+   \`\`\`js
+   const a = 1
+   \`\`\`
+   Middle text
+   \`\`\`python
+   b = 2
+   \`\`\`
+   Final text
+2. Second item`
+  const result = unnestCodeBlocksFromLists(input)
+  expect(result).toMatchInlineSnapshot(`
+    "1. First item
+
+    \`\`\`js
+    const a = 1
+    \`\`\`
+    - Middle text
+
+    \`\`\`python
+    b = 2
+    \`\`\`
+    - Final text
+    2. Second item"
+  `)
+})
+
+test('unordered list with multiple code blocks and text between', () => {
+  const input = `- First item
+  \`\`\`js
+  const a = 1
+  \`\`\`
+  Middle text
+  \`\`\`python
+  b = 2
+  \`\`\`
+  Final text
+- Second item`
+  const result = unnestCodeBlocksFromLists(input)
+  expect(result).toMatchInlineSnapshot(`
+    "- First item
+
+    \`\`\`js
+    const a = 1
+    \`\`\`
+    - Middle text
+
+    \`\`\`python
+    b = 2
+    \`\`\`
+    - Final text
+    - Second item"
+  `)
+})
+
+test('numbered list starting from 5', () => {
+  const input = `5. Fifth item
+   \`\`\`js
+   code
+   \`\`\`
+   Text after
+6. Sixth item`
+  const result = unnestCodeBlocksFromLists(input)
+  expect(result).toMatchInlineSnapshot(`
+    "5. Fifth item
+
+    \`\`\`js
+    code
+    \`\`\`
+    - Text after
+    6. Sixth item"
+  `)
+})
+
+test('deeply nested list with code', () => {
+  const input = `- Level 1
+  - Level 2
+    - Level 3
+      \`\`\`js
+      deep code
+      \`\`\`
+      Text after deep code
+    - Another level 3
+  - Back to level 2`
+  const result = unnestCodeBlocksFromLists(input)
+  expect(result).toMatchInlineSnapshot(`
+    "- Level 1
+    - Level 2
+    - Level 3
+
+    \`\`\`js
+    deep code
+    \`\`\`
+    - Text after deep code
+    - Another level 3- Back to level 2"
+  `)
+})
+
+test('nested numbered list inside unordered with code', () => {
+  const input = `- Unordered item
+  1. Nested numbered
+     \`\`\`js
+     code
+     \`\`\`
+     Text after
+  2. Second nested
+- Another unordered`
+  const result = unnestCodeBlocksFromLists(input)
+  expect(result).toMatchInlineSnapshot(`
+    "- Unordered item
+    1. Nested numbered
+
+    \`\`\`js
+    code
+    \`\`\`
+    - Text after
+    2. Second nested- Another unordered"
+  `)
+})
+
+test('code block at end of numbered item no text after', () => {
+  const input = `1. First with text
+   \`\`\`js
+   code here
+   \`\`\`
+2. Second item
+3. Third item`
+  const result = unnestCodeBlocksFromLists(input)
+  expect(result).toMatchInlineSnapshot(`
+    "1. First with text
+
+    \`\`\`js
+    code here
+    \`\`\`
+    2. Second item
+    3. Third item"
+  `)
+})
+
+test('multiple items each with code and text after', () => {
+  const input = `1. First
+   \`\`\`js
+   code1
+   \`\`\`
+   After first
+2. Second
+   \`\`\`python
+   code2
+   \`\`\`
+   After second
+3. Third no code`
+  const result = unnestCodeBlocksFromLists(input)
+  expect(result).toMatchInlineSnapshot(`
+    "1. First
+
+    \`\`\`js
+    code1
+    \`\`\`
+    - After first
+    2. Second
+
+    \`\`\`python
+    code2
+    \`\`\`
+    - After second
+    3. Third no code"
+  `)
+})
+
+test('code block immediately after list marker', () => {
+  const input = `1. \`\`\`js
+   immediate code
+   \`\`\`
+2. Normal item`
+  const result = unnestCodeBlocksFromLists(input)
+  expect(result).toMatchInlineSnapshot(`
+    "\`\`\`js
+    immediate code
+    \`\`\`
+    2. Normal item"
+  `)
+})
