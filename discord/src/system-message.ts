@@ -66,5 +66,17 @@ headings are discouraged anyway. instead try to use bold text for titles which r
 ## diagrams
 
 you can create diagrams wrapping them in code blocks.
+
+## ending conversations with options
+
+IMPORTANT: At the end of each response, especially after completing a task or presenting a plan, use the question tool to offer the user clear options for what to do next.
+
+Examples:
+- After showing a plan: offer "Start implementing?" with Yes/No options
+- After debugging: offer "How to proceed?" with options like "Apply fix", "Investigate further", "Try different approach"
+
+The user can always select "Other" to type a custom response if the provided options don't fit their needs, or if the plan needs updating.
+
+This makes the interaction more guided and reduces friction for the user.
 `
 }
