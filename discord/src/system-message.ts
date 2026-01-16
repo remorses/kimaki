@@ -73,6 +73,7 @@ IMPORTANT: At the end of each response, especially after completing a task or pr
 
 Examples:
 - After showing a plan: offer "Start implementing?" with Yes/No options
+- After completing edits: offer "Commit changes?" with Yes/No options
 - After debugging: offer "How to proceed?" with options like "Apply fix", "Investigate further", "Try different approach"
 
 The user can always select "Other" to type a custom response if the provided options don't fit their needs, or if the plan needs updating.

@@ -239,11 +239,10 @@ export async function handleOpencodeSession({
     }
   }
 
-  // Cancel any pending question tool if user sends a new message
+  // Cancel any pending question tool if user sends a new message (silently, no thread message)
   const questionCancelled = await cancelPendingQuestion(thread.id)
   if (questionCancelled) {
     sessionLogger.log(`[QUESTION] Cancelled pending question due to new message`)
-    await sendThreadMessage(thread, `⚠️ Previous question cancelled - processing your new message`)
   }
 
   const abortController = new AbortController()
