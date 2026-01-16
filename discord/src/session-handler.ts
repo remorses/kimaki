@@ -13,7 +13,7 @@ import { formatPart } from './message-formatting.js'
 import { getOpencodeSystemMessage } from './system-message.js'
 import { createLogger } from './logger.js'
 import { isAbortError } from './utils.js'
-import { showAskUserQuestionDropdowns, cancelPendingQuestion } from './commands/ask-question.js'
+import { showAskUserQuestionDropdowns, cancelPendingQuestion, pendingQuestionContexts } from './commands/ask-question.js'
 import { showPermissionDropdown, cleanupPermissionContext } from './commands/permissions.js'
 
 const sessionLogger = createLogger('SESSION')
@@ -432,7 +432,14 @@ export async function handleOpencodeSession({
           }
 
           if (part.type === 'step-start') {
-            stopTyping = startTyping()
+            // Don't start typing if user needs to respond to a question or permission
+            const hasPendingQuestion = [...pendingQuestionContexts.values()].some(
+              (ctx) => ctx.thread.id === thread.id,
+            )
+            const hasPendingPermission = pendingPermissions.has(thread.id)
+            if (!hasPendingQuestion && !hasPendingPermission) {
+              stopTyping = startTyping()
+            }
           }
 
           if (part.type === 'tool' && part.state.status === 'running') {
@@ -482,6 +489,12 @@ export async function handleOpencodeSession({
             }
             setTimeout(() => {
               if (abortController.signal.aborted) return
+              // Don't restart typing if user needs to respond to a question or permission
+              const hasPendingQuestion = [...pendingQuestionContexts.values()].some(
+                (ctx) => ctx.thread.id === thread.id,
+              )
+              const hasPendingPermission = pendingPermissions.has(thread.id)
+              if (hasPendingQuestion || hasPendingPermission) return
               stopTyping = startTyping()
             }, 300)
           }
@@ -526,6 +539,12 @@ export async function handleOpencodeSession({
             `Permission requested: permission=${permission.permission}, patterns=${permission.patterns.join(', ')}`,
           )
 
+          // Stop typing - user needs to respond now, not the bot
+          if (stopTyping) {
+            stopTyping()
+            stopTyping = null
+          }
+
           // Show dropdown instead of text message
           const { messageId, contextHash } = await showPermissionDropdown({
             thread,
@@ -568,6 +587,12 @@ export async function handleOpencodeSession({
             `Question requested: id=${questionRequest.id}, questions=${questionRequest.questions.length}`,
           )
 
+          // Stop typing - user needs to respond now, not the bot
+          if (stopTyping) {
+            stopTyping()
+            stopTyping = null
+          }
+
           // Flush any pending text/reasoning parts before showing the dropdown
           // This ensures text the LLM generated before the question tool is shown first
           for (const p of currentParts) {
@@ -583,6 +608,12 @@ export async function handleOpencodeSession({
             requestId: questionRequest.id,
             input: { questions: questionRequest.questions },
           })
+        } else if (event.type === 'session.idle') {
+          // Session is done processing - abort to signal completion
+          if (event.properties.sessionID === session.id) {
+            sessionLogger.log(`[SESSION IDLE] Session ${session.id} is idle, aborting`)
+            abortController.abort('finished')
+          }
         }
       }
     } catch (e) {
