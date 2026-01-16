@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.4.35
+
+### Patch Changes
+
+- use **opencode from PATH** instead of hardcoded `~/.opencode/bin/opencode` path
+
 ## 0.4.34
 
 ### Patch Changes
