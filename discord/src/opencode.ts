@@ -115,8 +115,7 @@ export async function initializeOpencodeForDirectory(directory: string) {
 
   const port = await getOpenPort()
 
-  const opencodeBinDir = `${process.env.HOME}/.opencode/bin`
-  const opencodeCommand = process.env.OPENCODE_PATH || `${opencodeBinDir}/opencode`
+  const opencodeCommand = process.env.OPENCODE_PATH || 'opencode'
 
   const serverProcess = spawn(
     opencodeCommand,

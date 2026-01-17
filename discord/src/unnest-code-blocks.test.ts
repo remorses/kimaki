@@ -12,8 +12,7 @@ test('basic - single item with code block', () => {
 
     \`\`\`js
     const x = 1
-    \`\`\`
-    "
+    \`\`\`"
   `)
 })
 
@@ -53,8 +52,7 @@ test('multiple code blocks in one item', () => {
     \`\`\`
     \`\`\`python
     b = 2
-    \`\`\`
-    "
+    \`\`\`"
   `)
 })
 
@@ -132,8 +130,7 @@ test('mixed - some items have code, some dont', () => {
 
     \`\`\`python
     y = 2
-    \`\`\`
-    "
+    \`\`\`"
   `)
 })
 
@@ -150,8 +147,7 @@ test('text before and after code in same item', () => {
     \`\`\`js
     const x = 1
     \`\`\`
-    - End text
-    "
+    - End text"
   `)
 })
 
@@ -177,7 +173,6 @@ More text after.`
     \`\`\`js
     const x = 1
     \`\`\`
-
 
     More text after."
   `)
@@ -206,8 +201,7 @@ test('handles code block without language', () => {
 
     \`\`\`
     plain code
-    \`\`\`
-    "
+    \`\`\`"
   `)
 })
 
@@ -219,8 +213,7 @@ test('handles empty list item with code', () => {
   expect(result).toMatchInlineSnapshot(`
     "\`\`\`js
     const x = 1
-    \`\`\`
-    "
+    \`\`\`"
   `)
 })
 
@@ -338,7 +331,8 @@ test('deeply nested list with code', () => {
     deep code
     \`\`\`
     - Text after deep code
-    - Another level 3- Back to level 2"
+    - Another level 3
+    - Back to level 2"
   `)
 })
 
@@ -360,7 +354,8 @@ test('nested numbered list inside unordered with code', () => {
     code
     \`\`\`
     - Text after
-    2. Second nested- Another unordered"
+    2. Second nested
+    - Another unordered"
   `)
 })
 

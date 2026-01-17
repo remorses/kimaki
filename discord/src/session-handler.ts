@@ -825,20 +825,17 @@ export async function handleOpencodeSession({
           discordLogger.log(`Could not update reaction:`, e)
         }
       }
-      const errorName =
-        error &&
-        typeof error === 'object' &&
-        'constructor' in error &&
-        error.constructor &&
-        typeof error.constructor.name === 'string'
-          ? error.constructor.name
-          : typeof error
-      const errorMsg =
-        error instanceof Error ? error.stack || error.message : String(error)
-      await sendThreadMessage(
-        thread,
-        `✗ Unexpected bot Error: [${errorName}]\n${errorMsg}`,
-      )
+      const errorDisplay = (() => {
+        if (error instanceof Error) {
+          const name = error.constructor.name || 'Error'
+          return `[${name}]\n${error.stack || error.message}`
+        }
+        if (typeof error === 'string') {
+          return error
+        }
+        return String(error)
+      })()
+      await sendThreadMessage(thread, `✗ Unexpected bot Error: ${errorDisplay}`)
     }
   }
 }
