@@ -294,7 +294,7 @@ async function registerCommands(token: string, appId: string, userCommands: Open
 
     commands.push(
       new SlashCommandBuilder()
-        .setName(commandName)
+        .setName(commandName.slice(0, 32)) // Discord limits to 32 chars
         .setDescription(description.slice(0, 100)) // Discord limits to 100 chars
         .addStringOption((option) => {
           option
@@ -381,7 +381,7 @@ async function run({ restart, addChannels }: CliOptions) {
       if (!installedPath) {
         note(
           'OpenCode was installed but may not be available in this session.\n' +
-            'Please restart your terminal and run this command again.',
+          'Please restart your terminal and run this command again.',
           '⚠️  Restart Required',
         )
         process.exit(0)
@@ -432,9 +432,9 @@ async function run({ restart, addChannels }: CliOptions) {
 
     note(
       '1. Go to https://discord.com/developers/applications\n' +
-        '2. Click "New Application"\n' +
-        '3. Give your application a name\n' +
-        '4. Copy the Application ID from the "General Information" section',
+      '2. Click "New Application"\n' +
+      '3. Give your application a name\n' +
+      '4. Copy the Application ID from the "General Information" section',
       'Step 1: Create Discord Application',
     )
 
@@ -456,11 +456,11 @@ async function run({ restart, addChannels }: CliOptions) {
 
     note(
       '1. Go to the "Bot" section in the left sidebar\n' +
-        '2. Scroll down to "Privileged Gateway Intents"\n' +
-        '3. Enable these intents by toggling them ON:\n' +
-        '   • SERVER MEMBERS INTENT\n' +
-        '   • MESSAGE CONTENT INTENT\n' +
-        '4. Click "Save Changes" at the bottom',
+      '2. Scroll down to "Privileged Gateway Intents"\n' +
+      '3. Enable these intents by toggling them ON:\n' +
+      '   • SERVER MEMBERS INTENT\n' +
+      '   • MESSAGE CONTENT INTENT\n' +
+      '4. Click "Save Changes" at the bottom',
       'Step 2: Enable Required Intents',
     )
 
@@ -476,8 +476,8 @@ async function run({ restart, addChannels }: CliOptions) {
 
     note(
       '1. Still in the "Bot" section\n' +
-        '2. Click "Reset Token" to generate a new bot token (in case of errors try again)\n' +
-        "3. Copy the token (you won't be able to see it again!)",
+      '2. Click "Reset Token" to generate a new bot token (in case of errors try again)\n' +
+      "3. Copy the token (you won't be able to see it again!)",
       'Step 3: Get Bot Token',
     )
     const tokenInput = await password({
@@ -906,7 +906,7 @@ cli
         console.log(generateBotInstallUrl({ clientId: existingBot.app_id }))
         process.exit(0)
       }
-      
+
       await checkSingleInstance()
       await startLockServer()
       await run({
