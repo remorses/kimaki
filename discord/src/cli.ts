@@ -197,6 +197,14 @@ async function registerCommands(token: string, appId: string, userCommands: Open
 
         return option
       })
+      .addStringOption((option) => {
+        option
+          .setName('agent')
+          .setDescription('Agent to use for this session')
+          .setAutocomplete(true)
+
+        return option
+      })
       .toJSON(),
     new SlashCommandBuilder()
       .setName('add-project')
@@ -854,7 +862,12 @@ async function run({ restart, addChannels }: CliOptions) {
     )
   }
 
-  outro('✨ Setup complete!')
+  note(
+    'Leave this process running to keep the bot active.\n\nIf you close this process or restart your machine, run `npx kimaki` again to start the bot.',
+    '⚠️  Keep Running',
+  )
+
+  outro('✨ Setup complete! Listening for new messages... do not close this process.')
 }
 
 cli
