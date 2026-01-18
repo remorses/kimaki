@@ -6,6 +6,10 @@ import { Events, type Client, type Interaction } from 'discord.js'
 import { handleSessionCommand, handleSessionAutocomplete } from './commands/session.js'
 import { handleResumeCommand, handleResumeAutocomplete } from './commands/resume.js'
 import { handleAddProjectCommand, handleAddProjectAutocomplete } from './commands/add-project.js'
+import {
+  handleRemoveProjectCommand,
+  handleRemoveProjectAutocomplete,
+} from './commands/remove-project.js'
 import { handleCreateNewProjectCommand } from './commands/create-new-project.js'
 import { handlePermissionSelectMenu } from './commands/permissions.js'
 import { handleAbortCommand } from './commands/abort.js'
@@ -60,6 +64,10 @@ export function registerInteractionHandler({
             await handleAddProjectAutocomplete({ interaction, appId })
             return
 
+          case 'remove-project':
+            await handleRemoveProjectAutocomplete({ interaction, appId })
+            return
+
           default:
             await interaction.respond([])
             return
@@ -80,6 +88,10 @@ export function registerInteractionHandler({
 
           case 'add-project':
             await handleAddProjectCommand({ command: interaction, appId })
+            return
+
+          case 'remove-project':
+            await handleRemoveProjectCommand({ command: interaction, appId })
             return
 
           case 'create-new-project':

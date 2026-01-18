@@ -1,0 +1,136 @@
+// /remove-project command - Remove Discord channels for a project.
+
+import path from 'node:path'
+import type { CommandContext, AutocompleteContext } from './types.js'
+import { getDatabase } from '../database.js'
+import { createLogger } from '../logger.js'
+import { abbreviatePath } from '../utils.js'
+
+const logger = createLogger('REMOVE-PROJECT')
+
+export async function handleRemoveProjectCommand({ command, appId }: CommandContext): Promise<void> {
+  await command.deferReply({ ephemeral: false })
+
+  const directory = command.options.getString('project', true)
+  const guild = command.guild
+
+  if (!guild) {
+    await command.editReply('This command can only be used in a guild')
+    return
+  }
+
+  try {
+    const db = getDatabase()
+
+    // Get channel IDs for this directory
+    const channels = db
+      .prepare('SELECT channel_id, channel_type FROM channel_directories WHERE directory = ?')
+      .all(directory) as { channel_id: string; channel_type: string }[]
+
+    if (channels.length === 0) {
+      await command.editReply(`No channels found for directory: \`${directory}\``)
+      return
+    }
+
+    const deletedChannels: string[] = []
+    const failedChannels: string[] = []
+
+    for (const { channel_id, channel_type } of channels) {
+      try {
+        const channel = await guild.channels.fetch(channel_id).catch(() => null)
+
+        if (channel) {
+          await channel.delete(`Removed by /remove-project command`)
+          deletedChannels.push(`${channel_type}: ${channel_id}`)
+        } else {
+          // Channel doesn't exist in this guild or was already deleted
+          deletedChannels.push(`${channel_type}: ${channel_id} (already deleted)`)
+        }
+      } catch (error) {
+        logger.error(`Failed to delete channel ${channel_id}:`, error)
+        failedChannels.push(`${channel_type}: ${channel_id}`)
+      }
+    }
+
+    // Remove from database
+    db.prepare('DELETE FROM channel_directories WHERE directory = ?').run(directory)
+
+    const projectName = path.basename(directory)
+    let message = `Removed project **${projectName}**\n`
+    message += `Directory: \`${directory}\`\n\n`
+
+    if (deletedChannels.length > 0) {
+      message += `Deleted channels:\n${deletedChannels.map((c) => `- ${c}`).join('\n')}`
+    }
+
+    if (failedChannels.length > 0) {
+      message += `\n\nFailed to delete (may be in another server):\n${failedChannels.map((c) => `- ${c}`).join('\n')}`
+    }
+
+    await command.editReply(message)
+    logger.log(`Removed project ${projectName} at ${directory}`)
+  } catch (error) {
+    logger.error('[REMOVE-PROJECT] Error:', error)
+    await command.editReply(
+      `Failed to remove project: ${error instanceof Error ? error.message : 'Unknown error'}`,
+    )
+  }
+}
+
+export async function handleRemoveProjectAutocomplete({
+  interaction,
+  appId,
+}: AutocompleteContext): Promise<void> {
+  const focusedValue = interaction.options.getFocused()
+  const guild = interaction.guild
+
+  if (!guild) {
+    await interaction.respond([])
+    return
+  }
+
+  try {
+    const db = getDatabase()
+
+    // Get all directories with channels
+    const allChannels = db
+      .prepare(
+        'SELECT DISTINCT directory, channel_id FROM channel_directories WHERE channel_type = ?',
+      )
+      .all('text') as { directory: string; channel_id: string }[]
+
+    // Filter to only channels that exist in this guild
+    const projectsInGuild: { directory: string; channelId: string }[] = []
+
+    for (const { directory, channel_id } of allChannels) {
+      try {
+        const channel = await guild.channels.fetch(channel_id).catch(() => null)
+        if (channel) {
+          projectsInGuild.push({ directory, channelId: channel_id })
+        }
+      } catch {
+        // Channel not in this guild, skip
+      }
+    }
+
+    const projects = projectsInGuild
+      .filter(({ directory }) => {
+        const baseName = path.basename(directory)
+        const searchText = `${baseName} ${directory}`.toLowerCase()
+        return searchText.includes(focusedValue.toLowerCase())
+      })
+      .slice(0, 25)
+      .map(({ directory }) => {
+        const name = `${path.basename(directory)} (${abbreviatePath(directory)})`
+        return {
+          name: name.length > 100 ? name.slice(0, 99) + '...' : name,
+          value: directory,
+        }
+      })
+
+    await interaction.respond(projects)
+  } catch (error) {
+    logger.error('[AUTOCOMPLETE] Error fetching projects:', error)
+    await interaction.respond([])
+  }
+}

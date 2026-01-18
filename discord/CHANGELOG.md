@@ -1,5 +1,16 @@
 # Changelog
 
+## 0.4.36
+
+### Patch Changes
+
+- add **--project** option to `start-session` CLI command as alternative to `--channel`
+- add **/remove-project** command to delete channels for a project from Discord
+- add **agent** option to `/session` command for starting sessions with specific agent
+- fix: use first option as **placeholder** in question tool dropdowns
+- fix: limit Discord **command names to 32 characters**
+- add **keep-running instructions** to CLI setup outro
+
 ## 0.4.35
 
 ### Patch Changes

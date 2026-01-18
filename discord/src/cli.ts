@@ -235,6 +235,19 @@ async function registerCommands(
       })
       .toJSON(),
     new SlashCommandBuilder()
+      .setName('remove-project')
+      .setDescription('Remove Discord channels for a project')
+      .addStringOption((option) => {
+        option
+          .setName('project')
+          .setDescription('Select a project to remove')
+          .setRequired(true)
+          .setAutocomplete(true)
+
+        return option
+      })
+      .toJSON(),
+    new SlashCommandBuilder()
       .setName('create-new-project')
       .setDescription('Create a new project folder, initialize git, and start a session')
       .addStringOption((option) => {
