@@ -1,3 +1,5 @@
+<!-- This AGENTS.md file is generated. Look for an agents.md package.json script to see what files to update instead. -->
+
 # restarting the discord bot
 
 ONLY restart the discord bot if the user explicitly asks for it.
@@ -9,19 +11,9 @@ To restart the discord bot process so it uses the new code, send a SIGUSR2 signa
 
 The bot will wait 1000ms and then restart itself with the same arguments.
 
-# debugging
+## sqlite
 
-in development mode (when running from source, not from node_modules), all logs are written to `discord/tmp/kimaki.log`. this file is reset on each startup.
-
-to debug issues, read this log file to see timestamped logs from all subsystems (discord, voice, session, etc). the format is:
-
-```
-[2026-01-06T12:34:56.789Z] [INFO] [SESSION] your message here
-```
-
-when debugging errors from a discord session, ALWAYS read this log file first to understand what happened. the log contains all events leading up to the error.
-
-IMPORTANT: never silently swallow errors. every catch block must log something using the logger. if you see a catch block that does nothing or only has a comment, add logging to it.
+this project uses sqlite to preserve state between runs. the database should never have breaking changes, new kimaki versions should keep working with old sqlite databases created by an older kimaki version. if this happens specifically ask the user how to proceed, asking if it is ok adding migration in startup so users with existing db can still use kimaki and will not break.
 
 # core guidelines
 

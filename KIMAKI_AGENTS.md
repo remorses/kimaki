@@ -8,3 +8,7 @@ To restart the discord bot process so it uses the new code, send a SIGUSR2 signa
 2. Send the signal: `kill -SIGUSR2 <PID>`
 
 The bot will wait 1000ms and then restart itself with the same arguments.
+
+## sqlite
+
+this project uses sqlite to preserve state between runs. the database should never have breaking changes, new kimaki versions should keep working with old sqlite databases created by an older kimaki version. if this happens specifically ask the user how to proceed, asking if it is ok adding migration in startup so users with existing db can still use kimaki and will not break.
