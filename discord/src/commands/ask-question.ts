@@ -95,9 +95,10 @@ export async function showAskUserQuestionDropdowns({
       },
     ]
 
+    const placeholder = options.find((x) => x.label)?.label || 'Select an option'
     const selectMenu = new StringSelectMenuBuilder()
       .setCustomId(`ask_question:${contextHash}:${i}`)
-      .setPlaceholder(`Select an option`)
+      .setPlaceholder(placeholder)
       .addOptions(options)
 
     // Enable multi-select if the question supports it
