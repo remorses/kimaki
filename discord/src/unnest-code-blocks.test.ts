@@ -421,3 +421,35 @@ test('code block immediately after list marker', () => {
     2. Normal item"
   `)
 })
+
+test('code block with filename metadata', () => {
+  const input = `- Item with code
+  \`\`\`tsx filename=example.tsx
+  const x = 1
+  \`\`\``
+  const result = unnestCodeBlocksFromLists(input)
+  expect(result).toMatchInlineSnapshot(`
+    "- Item with code
+
+    \`\`\`tsx filename=example.tsx
+    const x = 1
+    \`\`\`"
+  `)
+})
+
+test('numbered list with filename metadata code block', () => {
+  const input = `1. First item
+   \`\`\`tsx filename=app.tsx
+   export default function App() {}
+   \`\`\`
+2. Second item`
+  const result = unnestCodeBlocksFromLists(input)
+  expect(result).toMatchInlineSnapshot(`
+    "1. First item
+
+    \`\`\`tsx filename=app.tsx
+    export default function App() {}
+    \`\`\`
+    2. Second item"
+  `)
+})

@@ -6,7 +6,7 @@ import type { Part, PermissionRequest } from '@opencode-ai/sdk/v2'
 import type { FilePartInput } from '@opencode-ai/sdk'
 import type { Message, ThreadChannel } from 'discord.js'
 import prettyMilliseconds from 'pretty-ms'
-import { getDatabase, getSessionModel, getChannelModel, getSessionAgent, getChannelAgent } from './database.js'
+import { getDatabase, getSessionModel, getChannelModel, getSessionAgent, getChannelAgent, setSessionAgent } from './database.js'
 import { initializeOpencodeForDirectory, getOpencodeServers, getOpencodeClientV2 } from './opencode.js'
 import { sendThreadMessage, NOTIFY_MESSAGE_FLAGS, SILENT_MESSAGE_FLAGS } from './discord-utils.js'
 import { formatPart } from './message-formatting.js'
@@ -141,6 +141,7 @@ export async function handleOpencodeSession({
   images = [],
   channelId,
   command,
+  agent,
 }: {
   prompt: string
   thread: ThreadChannel
@@ -150,6 +151,8 @@ export async function handleOpencodeSession({
   channelId?: string
   /** If set, uses session.command API instead of session.prompt */
   command?: { name: string; arguments: string }
+  /** Agent to use for this session */
+  agent?: string
 }): Promise<{ sessionID: string; result: any; port?: number } | undefined> {
   voiceLogger.log(
     `[OPENCODE SESSION] Starting for thread ${thread.id} with prompt: "${prompt.slice(0, 50)}${prompt.length > 50 ? '...' : ''}"`,
@@ -208,6 +211,12 @@ export async function handleOpencodeSession({
     )
     .run(thread.id, session.id)
   sessionLogger.log(`Stored session ${session.id} for thread ${thread.id}`)
+
+  // Store agent preference if provided
+  if (agent) {
+    setSessionAgent(session.id, agent)
+    sessionLogger.log(`Set agent preference for session ${session.id}: ${agent}`)
+  }
 
   const existingController = abortControllers.get(session.id)
   if (existingController) {

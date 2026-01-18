@@ -21,6 +21,7 @@ export async function handleSessionCommand({
 
   const prompt = command.options.getString('prompt', true)
   const filesString = command.options.getString('files') || ''
+  const agent = command.options.getString('agent') || undefined
   const channel = command.channel
 
   if (!channel || channel.type !== ChannelType.GuildText) {
@@ -91,6 +92,7 @@ export async function handleSessionCommand({
       thread,
       projectDirectory,
       channelId: textChannel.id,
+      agent,
     })
   } catch (error) {
     logger.error('[SESSION] Error:', error)
@@ -100,11 +102,77 @@ export async function handleSessionCommand({
   }
 }
 
+async function handleAgentAutocomplete({
+  interaction,
+  appId,
+}: AutocompleteContext): Promise<void> {
+  const focusedValue = interaction.options.getFocused()
+
+  let projectDirectory: string | undefined
+
+  if (interaction.channel) {
+    const channel = interaction.channel
+    if (channel.type === ChannelType.GuildText) {
+      const textChannel = channel as TextChannel
+      if (textChannel.topic) {
+        const extracted = extractTagsArrays({
+          xml: textChannel.topic,
+          tags: ['kimaki.directory', 'kimaki.app'],
+        })
+        const channelAppId = extracted['kimaki.app']?.[0]?.trim()
+        if (channelAppId && channelAppId !== appId) {
+          await interaction.respond([])
+          return
+        }
+        projectDirectory = extracted['kimaki.directory']?.[0]?.trim()
+      }
+    }
+  }
+
+  if (!projectDirectory) {
+    await interaction.respond([])
+    return
+  }
+
+  try {
+    const getClient = await initializeOpencodeForDirectory(projectDirectory)
+
+    const agentsResponse = await getClient().app.agents({
+      query: { directory: projectDirectory },
+    })
+
+    if (!agentsResponse.data || agentsResponse.data.length === 0) {
+      await interaction.respond([])
+      return
+    }
+
+    const agents = agentsResponse.data
+      .filter((a) => a.mode === 'primary' || a.mode === 'all')
+      .filter((a) => a.name.toLowerCase().includes(focusedValue.toLowerCase()))
+      .slice(0, 25)
+
+    const choices = agents.map((agent) => ({
+      name: agent.name.slice(0, 100),
+      value: agent.name,
+    }))
+
+    await interaction.respond(choices)
+  } catch (error) {
+    logger.error('[AUTOCOMPLETE] Error fetching agents:', error)
+    await interaction.respond([])
+  }
+}
+
 export async function handleSessionAutocomplete({
   interaction,
   appId,
 }: AutocompleteContext): Promise<void> {
   const focusedOption = interaction.options.getFocused(true)
+
+  if (focusedOption.name === 'agent') {
+    await handleAgentAutocomplete({ interaction, appId })
+    return
+  }
 
   if (focusedOption.name !== 'files') {
     return
