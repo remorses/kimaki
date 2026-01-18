@@ -17,12 +17,15 @@ import { createLogger } from '../logger.js'
 
 const agentLogger = createLogger('AGENT')
 
-const pendingAgentContexts = new Map<string, {
-  dir: string
-  channelId: string
-  sessionId?: string
-  isThread: boolean
-}>()
+const pendingAgentContexts = new Map<
+  string,
+  {
+    dir: string
+    channelId: string
+    sessionId?: string
+    isThread: boolean
+  }
+>()
 
 export async function handleAgentCommand({
   interaction,
@@ -72,7 +75,9 @@ export async function handleAgentCommand({
     channelAppId = metadata.channelAppId
     targetChannelId = channel.id
   } else {
-    await interaction.editReply({ content: 'This command can only be used in text channels or threads' })
+    await interaction.editReply({
+      content: 'This command can only be used in text channels or threads',
+    })
     return
   }
 
@@ -82,7 +87,9 @@ export async function handleAgentCommand({
   }
 
   if (!projectDirectory) {
-    await interaction.editReply({ content: 'This channel is not configured with a project directory' })
+    await interaction.editReply({
+      content: 'This channel is not configured with a project directory',
+    })
     return
   }
 
@@ -141,7 +148,7 @@ export async function handleAgentCommand({
 }
 
 export async function handleAgentSelectMenu(
-  interaction: StringSelectMenuInteraction
+  interaction: StringSelectMenuInteraction,
 ): Promise<void> {
   const customId = interaction.customId
 

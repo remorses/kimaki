@@ -2,13 +2,7 @@
 // Establishes bidirectional audio streaming with Gemini, handles tool calls,
 // and manages the assistant's audio output for Discord voice channels.
 
-import {
-  GoogleGenAI,
-  LiveServerMessage,
-  MediaResolution,
-  Modality,
-  Session,
-} from '@google/genai'
+import { GoogleGenAI, LiveServerMessage, MediaResolution, Modality, Session } from '@google/genai'
 import type { CallableTool } from '@google/genai'
 import { writeFile } from 'fs'
 import type { Tool as AITool } from 'ai'
@@ -97,13 +91,7 @@ function createWavHeader(dataLength: number, options: WavConversionOptions) {
   return buffer
 }
 
-function defaultAudioChunkHandler({
-  data,
-  mimeType,
-}: {
-  data: Buffer
-  mimeType: string
-}) {
+function defaultAudioChunkHandler({ data, mimeType }: { data: Buffer; mimeType: string }) {
   audioParts.push(data)
   const fileName = 'audio.wav'
   const buffer = convertToWav(audioParts, mimeType)
@@ -147,9 +135,7 @@ export async function startGenAiSession({
       // Handle tool calls
       if (message.toolCall.functionCalls && callableTools.length > 0) {
         for (const tool of callableTools) {
-          if (
-            !message.toolCall.functionCalls.some((x) => x.name === tool.name)
-          ) {
+          if (!message.toolCall.functionCalls.some((x) => x.name === tool.name)) {
             continue
           }
           tool
@@ -158,20 +144,14 @@ export async function startGenAiSession({
               const functionResponses = parts
                 .filter((part) => part.functionResponse)
                 .map((part) => ({
-                  response: part.functionResponse!.response as Record<
-                    string,
-                    unknown
-                  >,
+                  response: part.functionResponse!.response as Record<string, unknown>,
                   id: part.functionResponse!.id,
                   name: part.functionResponse!.name,
                 }))
 
               if (functionResponses.length > 0 && session) {
                 session.sendToolResponse({ functionResponses })
-                genaiLogger.log(
-                  'client-toolResponse: ' +
-                    JSON.stringify({ functionResponses }),
-                )
+                genaiLogger.log('client-toolResponse: ' + JSON.stringify({ functionResponses }))
               }
             })
             .catch((error) => {
@@ -188,14 +168,8 @@ export async function startGenAiSession({
 
         if (part?.inlineData) {
           const inlineData = part.inlineData
-          if (
-            !inlineData.mimeType ||
-            !inlineData.mimeType.startsWith('audio/')
-          ) {
-            genaiLogger.log(
-              'Skipping non-audio inlineData:',
-              inlineData.mimeType,
-            )
+          if (!inlineData.mimeType || !inlineData.mimeType.startsWith('audio/')) {
+            genaiLogger.log('Skipping non-audio inlineData:', inlineData.mimeType)
             continue
           }
 
@@ -219,18 +193,12 @@ export async function startGenAiSession({
     }
     // Handle input transcription (user's audio transcription)
     if (message.serverContent?.inputTranscription?.text) {
-      genaiLogger.log(
-        '[user transcription]',
-        message.serverContent.inputTranscription.text,
-      )
+      genaiLogger.log('[user transcription]', message.serverContent.inputTranscription.text)
     }
 
     // Handle output transcription (model's audio transcription)
     if (message.serverContent?.outputTranscription?.text) {
-      genaiLogger.log(
-        '[assistant transcription]',
-        message.serverContent.outputTranscription.text,
-      )
+      genaiLogger.log('[assistant transcription]', message.serverContent.outputTranscription.text)
     }
     if (message.serverContent?.interrupted) {
       genaiLogger.log('Assistant was interrupted')
@@ -249,7 +217,7 @@ export async function startGenAiSession({
   }
 
   const apiKey = geminiApiKey || process.env.GEMINI_API_KEY
-  
+
   if (!apiKey) {
     genaiLogger.error('No Gemini API key provided')
     throw new Error('Gemini API key is required for voice interactions')

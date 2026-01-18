@@ -2,13 +2,7 @@
 // Transcribes voice messages with code-aware context, using grep/glob tools
 // to verify technical terms, filenames, and function names in the codebase.
 
-import {
-  GoogleGenAI,
-  Type,
-  type Content,
-  type Part,
-  type Tool,
-} from '@google/genai'
+import { GoogleGenAI, Type, type Content, type Part, type Tool } from '@google/genai'
 import { createLogger } from './logger.js'
 import { glob } from 'glob'
 import { ripGrep } from 'ripgrep-js'
@@ -134,11 +128,7 @@ const transcriptionResultToolDeclaration = {
   },
 }
 
-function createToolRunner({
-  directory,
-}: {
-  directory?: string
-}): TranscriptionToolRunner {
+function createToolRunner({ directory }: { directory?: string }): TranscriptionToolRunner {
   const hasDirectory = directory && directory.trim().length > 0
 
   return async ({ name, args }) => {
@@ -242,9 +232,7 @@ export async function runTranscriptionLoop({
 
       if (result.type === 'result') {
         const transcription = result.transcription?.trim() || ''
-        voiceLogger.log(
-          `Transcription result received: "${transcription.slice(0, 100)}..."`,
-        )
+        voiceLogger.log(`Transcription result received: "${transcription.slice(0, 100)}..."`)
         if (!transcription) {
           throw new Error('Transcription failed: Model returned empty transcription')
         }
@@ -292,7 +280,10 @@ export async function runTranscriptionLoop({
         thinkingConfig: {
           thinkingBudget: 512,
         },
-        tools: stepsRemaining <= 0 ? [{ functionDeclarations: [transcriptionResultToolDeclaration] }] : tools,
+        tools:
+          stepsRemaining <= 0
+            ? [{ functionDeclarations: [transcriptionResultToolDeclaration] }]
+            : tools,
       },
     })
   }
@@ -353,9 +344,10 @@ ${lastSessionContext}
 ${currentSessionContext}
 </current_session>`)
     }
-    const sessionContextSection = sessionContextParts.length > 0
-      ? `\nSession context (use to understand references to files, functions, tools used):\n${sessionContextParts.join('\n\n')}`
-      : ''
+    const sessionContextSection =
+      sessionContextParts.length > 0
+        ? `\nSession context (use to understand references to files, functions, tools used):\n${sessionContextParts.join('\n\n')}`
+        : ''
 
     const transcriptionPrompt = `${languageHint}Transcribe this audio for a coding agent (like Claude Code or OpenCode).
 

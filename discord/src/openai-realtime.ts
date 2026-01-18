@@ -129,13 +129,7 @@ function createWavHeader(dataLength: number, options: WavConversionOptions) {
   return buffer
 }
 
-function defaultAudioChunkHandler({
-  data,
-  mimeType,
-}: {
-  data: Buffer
-  mimeType: string
-}) {
+function defaultAudioChunkHandler({ data, mimeType }: { data: Buffer; mimeType: string }) {
   audioParts.push(data)
   const fileName = 'audio.wav'
   const buffer = convertToWav(audioParts, mimeType)
@@ -247,36 +241,23 @@ export async function startGenAiSession({
   }
 
   // Set up event handlers
-  client.on(
-    'conversation.item.created',
-    ({ item }: { item: ConversationItem }) => {
-      if (
-        'role' in item &&
-        item.role === 'assistant' &&
-        item.type === 'message'
-      ) {
-        // Check if this is the first audio content
-        const hasAudio =
-          'content' in item &&
-          Array.isArray(item.content) &&
-          item.content.some((c) => 'type' in c && c.type === 'audio')
-        if (hasAudio && !isAssistantSpeaking && onAssistantStartSpeaking) {
-          isAssistantSpeaking = true
-          onAssistantStartSpeaking()
-        }
+  client.on('conversation.item.created', ({ item }: { item: ConversationItem }) => {
+    if ('role' in item && item.role === 'assistant' && item.type === 'message') {
+      // Check if this is the first audio content
+      const hasAudio =
+        'content' in item &&
+        Array.isArray(item.content) &&
+        item.content.some((c) => 'type' in c && c.type === 'audio')
+      if (hasAudio && !isAssistantSpeaking && onAssistantStartSpeaking) {
+        isAssistantSpeaking = true
+        onAssistantStartSpeaking()
       }
-    },
-  )
+    }
+  })
 
   client.on(
     'conversation.updated',
-    ({
-      item,
-      delta,
-    }: {
-      item: ConversationItem
-      delta: ConversationEventDelta | null
-    }) => {
+    ({ item, delta }: { item: ConversationItem; delta: ConversationEventDelta | null }) => {
       // Handle audio chunks
       if (delta?.audio && 'role' in item && item.role === 'assistant') {
         if (!isAssistantSpeaking && onAssistantStartSpeaking) {
@@ -313,20 +294,17 @@ export async function startGenAiSession({
     },
   )
 
-  client.on(
-    'conversation.item.completed',
-    ({ item }: { item: ConversationItem }) => {
-      if (
-        'role' in item &&
-        item.role === 'assistant' &&
-        isAssistantSpeaking &&
-        onAssistantStopSpeaking
-      ) {
-        isAssistantSpeaking = false
-        onAssistantStopSpeaking()
-      }
-    },
-  )
+  client.on('conversation.item.completed', ({ item }: { item: ConversationItem }) => {
+    if (
+      'role' in item &&
+      item.role === 'assistant' &&
+      isAssistantSpeaking &&
+      onAssistantStopSpeaking
+    ) {
+      isAssistantSpeaking = false
+      onAssistantStopSpeaking()
+    }
+  })
 
   client.on('conversation.interrupted', () => {
     openaiLogger.log('Assistant was interrupted')

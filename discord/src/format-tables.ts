@@ -78,10 +78,7 @@ function extractTokenText(token: Token): string {
   }
 }
 
-function calculateColumnWidths(
-  headers: string[],
-  rows: string[][],
-): number[] {
+function calculateColumnWidths(headers: string[], rows: string[][]): number[] {
   const widths = headers.map((h) => {
     return h.length
   })

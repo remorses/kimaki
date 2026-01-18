@@ -28,7 +28,11 @@ import {
 } from 'discord.js'
 import { createGenAIWorker, type GenAIWorker } from './genai-worker-wrapper.js'
 import { getDatabase } from './database.js'
-import { sendThreadMessage, escapeDiscordFormatting, SILENT_MESSAGE_FLAGS } from './discord-utils.js'
+import {
+  sendThreadMessage,
+  escapeDiscordFormatting,
+  SILENT_MESSAGE_FLAGS,
+} from './discord-utils.js'
 import { transcribeAudio } from './voice.js'
 import { createLogger } from './logger.js'
 
@@ -75,12 +79,7 @@ export async function createUserAudioLogStream(
   if (!process.env.DEBUG) return undefined
 
   const timestamp = new Date().toISOString().replace(/[:.]/g, '-')
-  const audioDir = path.join(
-    process.cwd(),
-    'discord-audio-logs',
-    guildId,
-    channelId,
-  )
+  const audioDir = path.join(process.cwd(), 'discord-audio-logs', guildId, channelId)
 
   try {
     await mkdir(audioDir, { recursive: true })
@@ -98,8 +97,7 @@ export async function createUserAudioLogStream(
 }
 
 export function frameMono16khz(): Transform {
-  const FRAME_BYTES =
-    (100 * 16_000 * 1 * 2) / 1000
+  const FRAME_BYTES = (100 * 16_000 * 1 * 2) / 1000
   let stash: Buffer = Buffer.alloc(0)
   let offset = 0
 
@@ -149,20 +147,14 @@ export async function setupVoiceHandling({
   appId: string
   discordClient: Client
 }) {
-  voiceLogger.log(
-    `Setting up voice handling for guild ${guildId}, channel ${channelId}`,
-  )
+  voiceLogger.log(`Setting up voice handling for guild ${guildId}, channel ${channelId}`)
 
   const channelDirRow = getDatabase()
-    .prepare(
-      'SELECT directory FROM channel_directories WHERE channel_id = ? AND channel_type = ?',
-    )
+    .prepare('SELECT directory FROM channel_directories WHERE channel_id = ? AND channel_type = ?')
     .get(channelId, 'voice') as { directory: string } | undefined
 
   if (!channelDirRow) {
-    voiceLogger.log(
-      `Voice channel ${channelId} has no associated directory, skipping setup`,
-    )
+    voiceLogger.log(`Voice channel ${channelId} has no associated directory, skipping setup`)
     return
   }
 
@@ -266,11 +258,12 @@ export async function setupVoiceHandling({
 
       if (textChannelRow) {
         try {
-          const textChannel = await discordClient.channels.fetch(
-            textChannelRow.channel_id,
-          )
+          const textChannel = await discordClient.channels.fetch(textChannelRow.channel_id)
           if (textChannel?.isTextBased() && 'send' in textChannel) {
-            await textChannel.send({ content: `⚠️ Voice session error: ${error}`, flags: SILENT_MESSAGE_FLAGS })
+            await textChannel.send({
+              content: `⚠️ Voice session error: ${error}`,
+              flags: SILENT_MESSAGE_FLAGS,
+            })
           }
         } catch (e) {
           voiceLogger.error('Failed to send error to text channel:', e)
@@ -330,10 +323,7 @@ export async function setupVoiceHandling({
 
     const framer = frameMono16khz()
 
-    const pipeline = audioStream
-      .pipe(decoder)
-      .pipe(downsampleTransform)
-      .pipe(framer)
+    const pipeline = audioStream.pipe(decoder).pipe(downsampleTransform).pipe(framer)
 
     pipeline
       .on('data', (frame: Buffer) => {
@@ -359,9 +349,7 @@ export async function setupVoiceHandling({
       })
       .on('end', () => {
         if (currentSessionCount === speakingSessionCount) {
-          voiceLogger.log(
-            `User ${userId} stopped speaking (session ${currentSessionCount})`,
-          )
+          voiceLogger.log(`User ${userId} stopped speaking (session ${currentSessionCount})`)
           voiceData.genAiWorker?.sendRealtimeInput({
             audioStreamEnd: true,
           })
@@ -413,9 +401,7 @@ export async function cleanupVoiceConnection(guildId: string) {
       })
     }
 
-    if (
-      voiceData.connection.state.status !== VoiceConnectionStatus.Destroyed
-    ) {
+    if (voiceData.connection.state.status !== VoiceConnectionStatus.Destroyed) {
       voiceLogger.log(`Destroying voice connection...`)
       voiceData.connection.destroy()
     }
@@ -445,8 +431,8 @@ export async function processVoiceAttachment({
   currentSessionContext?: string
   lastSessionContext?: string
 }): Promise<string | null> {
-  const audioAttachment = Array.from(message.attachments.values()).find(
-    (attachment) => attachment.contentType?.startsWith('audio/'),
+  const audioAttachment = Array.from(message.attachments.values()).find((attachment) =>
+    attachment.contentType?.startsWith('audio/'),
   )
 
   if (!audioAttachment) return null
@@ -550,15 +536,9 @@ export function registerVoiceStateHandler({
 
       const guild = newState.guild || oldState.guild
       const isOwner = member.id === guild.ownerId
-      const isAdmin = member.permissions.has(
-        PermissionsBitField.Flags.Administrator,
-      )
-      const canManageServer = member.permissions.has(
-        PermissionsBitField.Flags.ManageGuild,
-      )
-      const hasKimakiRole = member.roles.cache.some(
-        (role) => role.name.toLowerCase() === 'kimaki',
-      )
+      const isAdmin = member.permissions.has(PermissionsBitField.Flags.Administrator)
+      const canManageServer = member.permissions.has(PermissionsBitField.Flags.ManageGuild)
+      const hasKimakiRole = member.roles.cache.some((role) => role.name.toLowerCase() === 'kimaki')
 
       if (!isOwner && !isAdmin && !canManageServer && !hasKimakiRole) {
         return
@@ -572,10 +552,7 @@ export function registerVoiceStateHandler({
         const guildId = guild.id
         const voiceData = voiceConnections.get(guildId)
 
-        if (
-          voiceData &&
-          voiceData.connection.joinConfig.channelId === oldState.channelId
-        ) {
+        if (voiceData && voiceData.connection.joinConfig.channelId === oldState.channelId) {
           const voiceChannel = oldState.channel as VoiceChannel
           if (!voiceChannel) return
 
@@ -596,9 +573,7 @@ export function registerVoiceStateHandler({
 
             await cleanupVoiceConnection(guildId)
           } else {
-            voiceLogger.log(
-              `Other admins still in channel, bot staying in voice channel`,
-            )
+            voiceLogger.log(`Other admins still in channel, bot staying in voice channel`)
           }
         }
         return
@@ -616,10 +591,7 @@ export function registerVoiceStateHandler({
         const guildId = guild.id
         const voiceData = voiceConnections.get(guildId)
 
-        if (
-          voiceData &&
-          voiceData.connection.joinConfig.channelId === oldState.channelId
-        ) {
+        if (voiceData && voiceData.connection.joinConfig.channelId === oldState.channelId) {
           const oldVoiceChannel = oldState.channel as VoiceChannel
           if (oldVoiceChannel) {
             const hasOtherAdmins = oldVoiceChannel.members.some((m) => {
@@ -633,9 +605,7 @@ export function registerVoiceStateHandler({
             })
 
             if (!hasOtherAdmins) {
-              voiceLogger.log(
-                `Following admin to new channel: ${newState.channel?.name}`,
-              )
+              voiceLogger.log(`Following admin to new channel: ${newState.channel?.name}`)
               const voiceChannel = newState.channel as VoiceChannel
               if (voiceChannel) {
                 voiceData.connection.rejoin({
@@ -645,9 +615,7 @@ export function registerVoiceStateHandler({
                 })
               }
             } else {
-              voiceLogger.log(
-                `Other admins still in old channel, bot staying put`,
-              )
+              voiceLogger.log(`Other admins still in old channel, bot staying put`)
             }
           }
         }
@@ -667,16 +635,11 @@ export function registerVoiceStateHandler({
       const existingVoiceData = voiceConnections.get(newState.guild.id)
       if (
         existingVoiceData &&
-        existingVoiceData.connection.state.status !==
-          VoiceConnectionStatus.Destroyed
+        existingVoiceData.connection.state.status !== VoiceConnectionStatus.Destroyed
       ) {
-        voiceLogger.log(
-          `Bot already connected to a voice channel in guild ${newState.guild.name}`,
-        )
+        voiceLogger.log(`Bot already connected to a voice channel in guild ${newState.guild.name}`)
 
-        if (
-          existingVoiceData.connection.joinConfig.channelId !== voiceChannel.id
-        ) {
+        if (existingVoiceData.connection.joinConfig.channelId !== voiceChannel.id) {
           voiceLogger.log(
             `Moving bot from channel ${existingVoiceData.connection.joinConfig.channelId} to ${voiceChannel.id}`,
           )
@@ -720,9 +683,7 @@ export function registerVoiceStateHandler({
         })
 
         connection.on(VoiceConnectionStatus.Disconnected, async () => {
-          voiceLogger.log(
-            `Disconnected from voice channel in guild: ${newState.guild.name}`,
-          )
+          voiceLogger.log(`Disconnected from voice channel in guild: ${newState.guild.name}`)
           try {
             await Promise.race([
               entersState(connection, VoiceConnectionStatus.Signalling, 5_000),
@@ -737,17 +698,12 @@ export function registerVoiceStateHandler({
         })
 
         connection.on(VoiceConnectionStatus.Destroyed, async () => {
-          voiceLogger.log(
-            `Connection destroyed for guild: ${newState.guild.name}`,
-          )
+          voiceLogger.log(`Connection destroyed for guild: ${newState.guild.name}`)
           await cleanupVoiceConnection(newState.guild.id)
         })
 
         connection.on('error', (error) => {
-          voiceLogger.error(
-            `Connection error in guild ${newState.guild.name}:`,
-            error,
-          )
+          voiceLogger.error(`Connection error in guild ${newState.guild.name}:`, error)
         })
       } catch (error) {
         voiceLogger.error(`Failed to join voice channel:`, error)

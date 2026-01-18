@@ -12,10 +12,7 @@ import fs from 'node:fs'
 
 const userCommandLogger = createLogger('USER_CMD')
 
-export const handleUserCommand: CommandHandler = async ({
-  command,
-  appId,
-}: CommandContext) => {
+export const handleUserCommand: CommandHandler = async ({ command, appId }: CommandContext) => {
   const discordCommandName = command.commandName
   // Strip the -cmd suffix to get the actual OpenCode command name
   const commandName = discordCommandName.replace(/-cmd$/, '')
@@ -31,11 +28,11 @@ export const handleUserCommand: CommandHandler = async ({
     `Channel info: type=${channel?.type}, id=${channel?.id}, isNull=${channel === null}`,
   )
 
-  const isThread = channel && [
-    ChannelType.PublicThread,
-    ChannelType.PrivateThread,
-    ChannelType.AnnouncementThread,
-  ].includes(channel.type)
+  const isThread =
+    channel &&
+    [ChannelType.PublicThread, ChannelType.PrivateThread, ChannelType.AnnouncementThread].includes(
+      channel.type,
+    )
 
   const isTextChannel = channel?.type === ChannelType.GuildText
 
@@ -64,7 +61,8 @@ export const handleUserCommand: CommandHandler = async ({
 
     if (!row) {
       await command.reply({
-        content: 'This thread does not have an active session. Use this command in a project channel to create a new thread.',
+        content:
+          'This thread does not have an active session. Use this command in a project channel to create a new thread.',
         ephemeral: true,
       })
       return

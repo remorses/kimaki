@@ -122,7 +122,7 @@ export async function showAskUserQuestionDropdowns({
  * Handle dropdown selection for AskUserQuestion.
  */
 export async function handleAskQuestionSelectMenu(
-  interaction: StringSelectMenuInteraction
+  interaction: StringSelectMenuInteraction,
 ): Promise<void> {
   const customId = interaction.customId
 
@@ -196,9 +196,7 @@ export async function handleAskQuestionSelectMenu(
  * Submit all collected answers back to the OpenCode session.
  * Uses the question.reply API to provide answers to the waiting tool.
  */
-async function submitQuestionAnswers(
-  context: PendingQuestionContext
-): Promise<void> {
+async function submitQuestionAnswers(context: PendingQuestionContext): Promise<void> {
   try {
     const clientV2 = getOpencodeClientV2(context.directory)
     if (!clientV2) {
@@ -215,12 +213,14 @@ async function submitQuestionAnswers(
       answers,
     })
 
-    logger.log(`Submitted answers for question ${context.requestId} in session ${context.sessionId}`)
+    logger.log(
+      `Submitted answers for question ${context.requestId} in session ${context.sessionId}`,
+    )
   } catch (error) {
     logger.error('Failed to submit answers:', error)
     await sendThreadMessage(
       context.thread,
-      `✗ Failed to submit answers: ${error instanceof Error ? error.message : 'Unknown error'}`
+      `✗ Failed to submit answers: ${error instanceof Error ? error.message : 'Unknown error'}`,
     )
   }
 }

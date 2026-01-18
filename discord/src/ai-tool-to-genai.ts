@@ -119,9 +119,7 @@ function jsonSchemaToGenAISchema(jsonSchema: any): Schema {
 /**
  * Convert AI SDK Tool to GenAI FunctionDeclaration
  */
-export function aiToolToGenAIFunction(
-  tool: Tool<any, any>,
-): FunctionDeclaration {
+export function aiToolToGenAIFunction(tool: Tool<any, any>): FunctionDeclaration {
   // Extract the input schema - assume it's a Zod schema
   const inputSchema = tool.inputSchema as z.ZodType<any>
 
@@ -183,11 +181,7 @@ export function aiToolToCallableTool(
 
       for (const functionCall of functionCalls) {
         // Check if this function call matches our tool
-        if (
-          functionCall.name !== toolName &&
-          name &&
-          functionCall.name !== name
-        ) {
+        if (functionCall.name !== toolName && name && functionCall.name !== name) {
           continue
         }
 
@@ -249,7 +243,5 @@ export function extractSchemaFromTool(tool: Tool<any, any>): any {
 export function callableToolsFromObject(
   tools: Record<string, Tool<any, any>>,
 ): Array<CallableTool & { name: string }> {
-  return Object.entries(tools).map(([name, tool]) =>
-    aiToolToCallableTool(tool, name),
-  )
+  return Object.entries(tools).map(([name, tool]) => aiToolToCallableTool(tool, name))
 }

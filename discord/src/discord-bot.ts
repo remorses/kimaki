@@ -24,10 +24,7 @@ import {
   processVoiceAttachment,
   registerVoiceStateHandler,
 } from './voice-handler.js'
-import {
-  getCompactSessionContext,
-  getLastSessionId,
-} from './markdown.js'
+import { getCompactSessionContext, getLastSessionId } from './markdown.js'
 import { handleOpencodeSession } from './session-handler.js'
 import { registerInteractionHandler } from './interaction-handler.js'
 
@@ -35,7 +32,12 @@ export { getDatabase, closeDatabase } from './database.js'
 export { initializeOpencodeForDirectory } from './opencode.js'
 export { escapeBackticksInCodeBlocks, splitMarkdownForDiscord } from './discord-utils.js'
 export { getOpencodeSystemMessage } from './system-message.js'
-export { ensureKimakiCategory, ensureKimakiAudioCategory, createProjectChannels, getChannelsWithDescriptions } from './channel-management.js'
+export {
+  ensureKimakiCategory,
+  ensureKimakiAudioCategory,
+  createProjectChannels,
+  getChannelsWithDescriptions,
+} from './channel-management.js'
 export type { ChannelWithTags } from './channel-management.js'
 
 import {
@@ -73,12 +75,7 @@ export async function createDiscordClient() {
       GatewayIntentBits.MessageContent,
       GatewayIntentBits.GuildVoiceStates,
     ],
-    partials: [
-      Partials.Channel,
-      Partials.Message,
-      Partials.User,
-      Partials.ThreadMember,
-    ],
+    partials: [Partials.Channel, Partials.Message, Partials.User, Partials.ThreadMember],
   })
 }
 
@@ -116,15 +113,11 @@ export async function startDiscordBot({
 
       const channels = await getChannelsWithDescriptions(guild)
       const kimakiChannels = channels.filter(
-        (ch) =>
-          ch.kimakiDirectory &&
-          (!ch.kimakiApp || ch.kimakiApp === currentAppId),
+        (ch) => ch.kimakiDirectory && (!ch.kimakiApp || ch.kimakiApp === currentAppId),
       )
 
       if (kimakiChannels.length > 0) {
-        discordLogger.log(
-          `  Found ${kimakiChannels.length} channel(s) for this bot:`,
-        )
+        discordLogger.log(`  Found ${kimakiChannels.length} channel(s) for this bot:`)
         for (const channel of kimakiChannels) {
           discordLogger.log(`  - #${channel.name}: ${channel.kimakiDirectory}`)
         }
@@ -159,19 +152,14 @@ export async function startDiscordBot({
         try {
           await message.fetch()
         } catch (error) {
-          discordLogger.log(
-            `Failed to fetch partial message ${message.id}:`,
-            error,
-          )
+          discordLogger.log(`Failed to fetch partial message ${message.id}:`, error)
           return
         }
       }
 
       if (message.guild && message.member) {
         const isOwner = message.member.id === message.guild.ownerId
-        const isAdmin = message.member.permissions.has(
-          PermissionsBitField.Flags.Administrator,
-        )
+        const isAdmin = message.member.permissions.has(PermissionsBitField.Flags.Administrator)
         const canManageServer = message.member.permissions.has(
           PermissionsBitField.Flags.ManageGuild,
         )
@@ -208,9 +196,7 @@ export async function startDiscordBot({
           return
         }
 
-        voiceLogger.log(
-          `[SESSION] Found session ${row.session_id} for thread ${thread.id}`,
-        )
+        voiceLogger.log(`[SESSION] Found session ${row.session_id} for thread ${thread.id}`)
 
         const parent = thread.parent as TextChannel | null
         let projectDirectory: string | undefined
@@ -315,9 +301,7 @@ export async function startDiscordBot({
         )
 
         if (!textChannel.topic) {
-          voiceLogger.log(
-            `[IGNORED] Channel #${textChannel.name} has no description`,
-          )
+          voiceLogger.log(`[IGNORED] Channel #${textChannel.name} has no description`)
           return
         }
 
@@ -330,9 +314,7 @@ export async function startDiscordBot({
         const channelAppId = extracted['kimaki.app']?.[0]?.trim()
 
         if (!projectDirectory) {
-          voiceLogger.log(
-            `[IGNORED] Channel #${textChannel.name} has no kimaki.directory tag`,
-          )
+          voiceLogger.log(`[IGNORED] Channel #${textChannel.name} has no kimaki.directory tag`)
           return
         }
 
@@ -343,9 +325,7 @@ export async function startDiscordBot({
           return
         }
 
-        discordLogger.log(
-          `DIRECTORY: Found kimaki.directory: ${projectDirectory}`,
-        )
+        discordLogger.log(`DIRECTORY: Found kimaki.directory: ${projectDirectory}`)
         if (channelAppId) {
           discordLogger.log(`APP: Channel app ID: ${channelAppId}`)
         }
@@ -359,9 +339,7 @@ export async function startDiscordBot({
           return
         }
 
-        const hasVoice = message.attachments.some((a) =>
-          a.contentType?.startsWith('audio/'),
-        )
+        const hasVoice = message.attachments.some((a) => a.contentType?.startsWith('audio/'))
 
         const threadName = hasVoice
           ? 'Voice Message'
@@ -489,7 +467,9 @@ export async function startDiscordBot({
         return
       }
 
-      discordLogger.log(`[BOT_SESSION] Starting session for thread ${thread.id} with prompt: "${prompt.slice(0, 50)}..."`)
+      discordLogger.log(
+        `[BOT_SESSION] Starting session for thread ${thread.id} with prompt: "${prompt.slice(0, 50)}..."`,
+      )
 
       await handleOpencodeSession({
         prompt,
@@ -522,9 +502,7 @@ export async function startDiscordBot({
     try {
       const cleanupPromises: Promise<void>[] = []
       for (const [guildId] of voiceConnections) {
-        voiceLogger.log(
-          `[SHUTDOWN] Cleaning up voice connection for guild ${guildId}`,
-        )
+        voiceLogger.log(`[SHUTDOWN] Cleaning up voice connection for guild ${guildId}`)
         cleanupPromises.push(cleanupVoiceConnection(guildId))
       }
 
@@ -538,9 +516,7 @@ export async function startDiscordBot({
 
       for (const [dir, server] of getOpencodeServers()) {
         if (!server.process.killed) {
-          voiceLogger.log(
-            `[SHUTDOWN] Stopping OpenCode server on port ${server.port} for ${dir}`,
-          )
+          voiceLogger.log(`[SHUTDOWN] Stopping OpenCode server on port ${server.port} for ${dir}`)
           server.process.kill('SIGTERM')
         }
       }

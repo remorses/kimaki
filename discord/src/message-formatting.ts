@@ -77,8 +77,8 @@ export function isTextMimeType(contentType: string | null): boolean {
 }
 
 export async function getTextAttachments(message: Message): Promise<string> {
-  const textAttachments = Array.from(message.attachments.values()).filter(
-    (attachment) => isTextMimeType(attachment.contentType),
+  const textAttachments = Array.from(message.attachments.values()).filter((attachment) =>
+    isTextMimeType(attachment.contentType),
   )
 
   if (textAttachments.length === 0) {
@@ -105,14 +105,10 @@ export async function getTextAttachments(message: Message): Promise<string> {
 }
 
 export async function getFileAttachments(message: Message): Promise<FilePartInput[]> {
-  const fileAttachments = Array.from(message.attachments.values()).filter(
-    (attachment) => {
-      const contentType = attachment.contentType || ''
-      return (
-        contentType.startsWith('image/') || contentType === 'application/pdf'
-      )
-    },
-  )
+  const fileAttachments = Array.from(message.attachments.values()).filter((attachment) => {
+    const contentType = attachment.contentType || ''
+    return contentType.startsWith('image/') || contentType === 'application/pdf'
+  })
 
   if (fileAttachments.length === 0) {
     return []
@@ -164,7 +160,9 @@ export function getToolSummaryText(part: Part): string {
     const added = newString.split('\n').length
     const removed = oldString.split('\n').length
     const fileName = filePath.split('/').pop() || ''
-    return fileName ? `*${escapeInlineMarkdown(fileName)}* (+${added}-${removed})` : `(+${added}-${removed})`
+    return fileName
+      ? `*${escapeInlineMarkdown(fileName)}* (+${added}-${removed})`
+      : `(+${added}-${removed})`
   }
 
   if (part.tool === 'write') {
@@ -172,7 +170,9 @@ export function getToolSummaryText(part: Part): string {
     const content = (part.state.input?.content as string) || ''
     const lines = content.split('\n').length
     const fileName = filePath.split('/').pop() || ''
-    return fileName ? `*${escapeInlineMarkdown(fileName)}* (${lines} line${lines === 1 ? '' : 's'})` : `(${lines} line${lines === 1 ? '' : 's'})`
+    return fileName
+      ? `*${escapeInlineMarkdown(fileName)}* (${lines} line${lines === 1 ? '' : 's'})`
+      : `(${lines} line${lines === 1 ? '' : 's'})`
   }
 
   if (part.tool === 'webfetch') {
@@ -259,8 +259,7 @@ export function formatPart(part: Part): string {
     const trimmed = part.text.trimStart()
     const firstChar = trimmed[0] || ''
     const markdownStarters = ['#', '*', '_', '-', '>', '`', '[', '|']
-    const startsWithMarkdown =
-      markdownStarters.includes(firstChar) || /^\d+\./.test(trimmed)
+    const startsWithMarkdown = markdownStarters.includes(firstChar) || /^\d+\./.test(trimmed)
     if (startsWithMarkdown) {
       return `\n${part.text}`
     }

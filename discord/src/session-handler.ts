@@ -6,14 +6,29 @@ import type { Part, PermissionRequest } from '@opencode-ai/sdk/v2'
 import type { FilePartInput } from '@opencode-ai/sdk'
 import type { Message, ThreadChannel } from 'discord.js'
 import prettyMilliseconds from 'pretty-ms'
-import { getDatabase, getSessionModel, getChannelModel, getSessionAgent, getChannelAgent, setSessionAgent } from './database.js'
-import { initializeOpencodeForDirectory, getOpencodeServers, getOpencodeClientV2 } from './opencode.js'
+import {
+  getDatabase,
+  getSessionModel,
+  getChannelModel,
+  getSessionAgent,
+  getChannelAgent,
+  setSessionAgent,
+} from './database.js'
+import {
+  initializeOpencodeForDirectory,
+  getOpencodeServers,
+  getOpencodeClientV2,
+} from './opencode.js'
 import { sendThreadMessage, NOTIFY_MESSAGE_FLAGS, SILENT_MESSAGE_FLAGS } from './discord-utils.js'
 import { formatPart } from './message-formatting.js'
 import { getOpencodeSystemMessage } from './system-message.js'
 import { createLogger } from './logger.js'
 import { isAbortError } from './utils.js'
-import { showAskUserQuestionDropdowns, cancelPendingQuestion, pendingQuestionContexts } from './commands/ask-question.js'
+import {
+  showAskUserQuestionDropdowns,
+  cancelPendingQuestion,
+  pendingQuestionContexts,
+} from './commands/ask-question.js'
 import { showPermissionDropdown, cleanupPermissionContext } from './commands/permissions.js'
 
 const sessionLogger = createLogger('SESSION')
@@ -96,7 +111,9 @@ export async function abortAndRetrySession({
   }
 
   // Small delay to let the abort propagate
-  await new Promise((resolve) => { setTimeout(resolve, 300) })
+  await new Promise((resolve) => {
+    setTimeout(resolve, 300)
+  })
 
   // Fetch last user message from API
   sessionLogger.log(`[ABORT+RETRY] Fetching last user message for session ${sessionId}`)
@@ -110,7 +127,9 @@ export async function abortAndRetrySession({
   }
 
   // Extract text and images from parts
-  const textPart = lastUserMessage.parts.find((p) => p.type === 'text') as { type: 'text'; text: string } | undefined
+  const textPart = lastUserMessage.parts.find((p) => p.type === 'text') as
+    | { type: 'text'; text: string }
+    | undefined
   const prompt = textPart?.text || ''
   const images = lastUserMessage.parts.filter((p) => p.type === 'file') as FilePartInput[]
 
@@ -183,17 +202,13 @@ export async function handleOpencodeSession({
       session = sessionResponse.data
       sessionLogger.log(`Successfully reused session ${sessionId}`)
     } catch (error) {
-      voiceLogger.log(
-        `[SESSION] Session ${sessionId} not found, will create new one`,
-      )
+      voiceLogger.log(`[SESSION] Session ${sessionId} not found, will create new one`)
     }
   }
 
   if (!session) {
     const sessionTitle = prompt.length > 80 ? prompt.slice(0, 77) + '...' : prompt.slice(0, 80)
-    voiceLogger.log(
-      `[SESSION] Creating new session with title: "${sessionTitle}"`,
-    )
+    voiceLogger.log(`[SESSION] Creating new session with title: "${sessionTitle}"`)
     const sessionResponse = await getClient().session.create({
       body: { title: sessionTitle },
     })
@@ -206,9 +221,7 @@ export async function handleOpencodeSession({
   }
 
   getDatabase()
-    .prepare(
-      'INSERT OR REPLACE INTO thread_sessions (thread_id, session_id) VALUES (?, ?)',
-    )
+    .prepare('INSERT OR REPLACE INTO thread_sessions (thread_id, session_id) VALUES (?, ?)')
     .run(thread.id, session.id)
   sessionLogger.log(`Stored session ${session.id} for thread ${thread.id}`)
 
@@ -220,16 +233,16 @@ export async function handleOpencodeSession({
 
   const existingController = abortControllers.get(session.id)
   if (existingController) {
-    voiceLogger.log(
-      `[ABORT] Cancelling existing request for session: ${session.id}`,
-    )
+    voiceLogger.log(`[ABORT] Cancelling existing request for session: ${session.id}`)
     existingController.abort(new Error('New request started'))
   }
 
   const pendingPerm = pendingPermissions.get(thread.id)
   if (pendingPerm) {
     try {
-      sessionLogger.log(`[PERMISSION] Auto-rejecting pending permission ${pendingPerm.permission.id} due to new message`)
+      sessionLogger.log(
+        `[PERMISSION] Auto-rejecting pending permission ${pendingPerm.permission.id} due to new message`,
+      )
       const clientV2 = getOpencodeClientV2(directory)
       if (clientV2) {
         await clientV2.permission.reply({
@@ -240,7 +253,10 @@ export async function handleOpencodeSession({
       // Clean up both the pending permission and its dropdown context
       cleanupPermissionContext(pendingPerm.contextHash)
       pendingPermissions.delete(thread.id)
-      await sendThreadMessage(thread, `⚠️ Previous permission request auto-rejected due to new message`)
+      await sendThreadMessage(
+        thread,
+        `⚠️ Previous permission request auto-rejected due to new message`,
+      )
     } catch (e) {
       sessionLogger.log(`[PERMISSION] Failed to auto-reject permission:`, e)
       cleanupPermissionContext(pendingPerm.contextHash)
@@ -258,7 +274,9 @@ export async function handleOpencodeSession({
   abortControllers.set(session.id, abortController)
 
   if (existingController) {
-    await new Promise((resolve) => { setTimeout(resolve, 200) })
+    await new Promise((resolve) => {
+      setTimeout(resolve, 200)
+    })
     if (abortController.signal.aborted) {
       sessionLogger.log(`[DEBOUNCE] Request was superseded during wait, exiting`)
       return
@@ -277,7 +295,7 @@ export async function handleOpencodeSession({
   }
   const eventsResult = await clientV2.event.subscribe(
     { directory },
-    { signal: abortController.signal }
+    { signal: abortController.signal },
   )
 
   if (abortController.signal.aborted) {
@@ -289,10 +307,11 @@ export async function handleOpencodeSession({
   sessionLogger.log(`Subscribed to OpenCode events`)
 
   const sentPartIds = new Set<string>(
-    (getDatabase()
-      .prepare('SELECT part_id FROM part_messages WHERE thread_id = ?')
-      .all(thread.id) as { part_id: string }[])
-      .map((row) => row.part_id)
+    (
+      getDatabase()
+        .prepare('SELECT part_id FROM part_messages WHERE thread_id = ?')
+        .all(thread.id) as { part_id: string }[]
+    ).map((row) => row.part_id),
   )
 
   let currentParts: Part[] = []
@@ -385,7 +404,12 @@ export async function handleOpencodeSession({
           }
 
           if (msg.role === 'assistant') {
-            const newTokensTotal = msg.tokens.input + msg.tokens.output + msg.tokens.reasoning + msg.tokens.cache.read + msg.tokens.cache.write
+            const newTokensTotal =
+              msg.tokens.input +
+              msg.tokens.output +
+              msg.tokens.reasoning +
+              msg.tokens.cache.read +
+              msg.tokens.cache.write
             if (newTokensTotal > 0) {
               tokensUsedInSession = newTokensTotal
             }
@@ -398,7 +422,9 @@ export async function handleOpencodeSession({
             if (tokensUsedInSession > 0 && usedProviderID && usedModel) {
               if (!modelContextLimit) {
                 try {
-                  const providersResponse = await getClient().provider.list({ query: { directory } })
+                  const providersResponse = await getClient().provider.list({
+                    query: { directory },
+                  })
                   const provider = providersResponse.data?.all?.find((p) => p.id === usedProviderID)
                   const model = provider?.models?.[usedModel]
                   if (model?.limit?.context) {
@@ -410,7 +436,9 @@ export async function handleOpencodeSession({
               }
 
               if (modelContextLimit) {
-                const currentPercentage = Math.floor((tokensUsedInSession / modelContextLimit) * 100)
+                const currentPercentage = Math.floor(
+                  (tokensUsedInSession / modelContextLimit) * 100,
+                )
                 const thresholdCrossed = Math.floor(currentPercentage / 10) * 10
                 if (thresholdCrossed > lastDisplayedContextPercentage && thresholdCrossed >= 10) {
                   lastDisplayedContextPercentage = thresholdCrossed
@@ -431,9 +459,7 @@ export async function handleOpencodeSession({
             continue
           }
 
-          const existingIndex = currentParts.findIndex(
-            (p: Part) => p.id === part.id,
-          )
+          const existingIndex = currentParts.findIndex((p: Part) => p.id === part.id)
           if (existingIndex >= 0) {
             currentParts[existingIndex] = part
           } else {
@@ -468,9 +494,8 @@ export async function handleOpencodeSession({
             const outputTokens = Math.ceil(output.length / 4)
             const LARGE_OUTPUT_THRESHOLD = 3000
             if (outputTokens >= LARGE_OUTPUT_THRESHOLD) {
-              const formattedTokens = outputTokens >= 1000
-                ? `${(outputTokens / 1000).toFixed(1)}k`
-                : String(outputTokens)
+              const formattedTokens =
+                outputTokens >= 1000 ? `${(outputTokens / 1000).toFixed(1)}k` : String(outputTokens)
               const percentageSuffix = (() => {
                 if (!modelContextLimit) {
                   return ''
@@ -519,18 +544,13 @@ export async function handleOpencodeSession({
             const errorData = event.properties.error
             const errorMessage = errorData?.data?.message || 'Unknown error'
             sessionLogger.error(`Sending error to thread: ${errorMessage}`)
-            await sendThreadMessage(
-              thread,
-              `✗ opencode session error: ${errorMessage}`,
-            )
+            await sendThreadMessage(thread, `✗ opencode session error: ${errorMessage}`)
 
             if (originalMessage) {
               try {
                 await originalMessage.reactions.removeAll()
                 await originalMessage.react('❌')
-                voiceLogger.log(
-                  `[REACTION] Added error reaction due to session error`,
-                )
+                voiceLogger.log(`[REACTION] Added error reaction due to session error`)
               } catch (e) {
                 discordLogger.log(`Could not update reaction:`, e)
               }
@@ -579,9 +599,7 @@ export async function handleOpencodeSession({
             continue
           }
 
-          sessionLogger.log(
-            `Permission ${requestID} replied with: ${reply}`,
-          )
+          sessionLogger.log(`Permission ${requestID} replied with: ${reply}`)
 
           const pending = pendingPermissions.get(thread.id)
           if (pending && pending.permission.id === requestID) {
@@ -633,9 +651,7 @@ export async function handleOpencodeSession({
       }
     } catch (e) {
       if (isAbortError(e, abortController.signal)) {
-        sessionLogger.log(
-          'AbortController aborted event handling (normal exit)',
-        )
+        sessionLogger.log('AbortController aborted event handling (normal exit)')
         return
       }
       sessionLogger.error(`Unexpected error in event handling code`, e)
@@ -656,16 +672,12 @@ export async function handleOpencodeSession({
         stopTyping = null
       }
 
-      if (
-        !abortController.signal.aborted ||
-        abortController.signal.reason === 'finished'
-      ) {
-        const sessionDuration = prettyMilliseconds(
-          Date.now() - sessionStartTime,
-        )
+      if (!abortController.signal.aborted || abortController.signal.reason === 'finished') {
+        const sessionDuration = prettyMilliseconds(Date.now() - sessionStartTime)
         const attachCommand = port ? ` ⋅ ${session.id}` : ''
         const modelInfo = usedModel ? ` ⋅ ${usedModel}` : ''
-        const agentInfo = usedAgent && usedAgent.toLowerCase() !== 'build' ? ` ⋅ **${usedAgent}**` : ''
+        const agentInfo =
+          usedAgent && usedAgent.toLowerCase() !== 'build' ? ` ⋅ **${usedAgent}**` : ''
         let contextInfo = ''
 
         try {
@@ -680,8 +692,14 @@ export async function handleOpencodeSession({
           sessionLogger.error('Failed to fetch provider info for context percentage:', e)
         }
 
-        await sendThreadMessage(thread, `_Completed in ${sessionDuration}${contextInfo}_${attachCommand}${modelInfo}${agentInfo}`, { flags: NOTIFY_MESSAGE_FLAGS })
-        sessionLogger.log(`DURATION: Session completed in ${sessionDuration}, port ${port}, model ${usedModel}, tokens ${tokensUsedInSession}`)
+        await sendThreadMessage(
+          thread,
+          `_Completed in ${sessionDuration}${contextInfo}_${attachCommand}${modelInfo}${agentInfo}`,
+          { flags: NOTIFY_MESSAGE_FLAGS },
+        )
+        sessionLogger.log(
+          `DURATION: Session completed in ${sessionDuration}, port ${port}, model ${usedModel}, tokens ${tokensUsedInSession}`,
+        )
 
         // Process queued messages after completion
         const queue = messageQueue.get(thread.id)
@@ -694,7 +712,10 @@ export async function handleOpencodeSession({
           sessionLogger.log(`[QUEUE] Processing queued message from ${nextMessage.username}`)
 
           // Show that queued message is being sent
-          await sendThreadMessage(thread, `» **${nextMessage.username}:** ${nextMessage.prompt.slice(0, 150)}${nextMessage.prompt.length > 150 ? '...' : ''}`)
+          await sendThreadMessage(
+            thread,
+            `» **${nextMessage.username}:** ${nextMessage.prompt.slice(0, 150)}${nextMessage.prompt.length > 150 ? '...' : ''}`,
+          )
 
           // Send the queued message as a new prompt (recursive call)
           // Use setImmediate to avoid blocking and allow this finally to complete
@@ -738,7 +759,14 @@ export async function handleOpencodeSession({
       if (images.length === 0) {
         return prompt
       }
-      sessionLogger.log(`[PROMPT] Sending ${images.length} image(s):`, images.map((img) => ({ mime: img.mime, filename: img.filename, url: img.url.slice(0, 100) })))
+      sessionLogger.log(
+        `[PROMPT] Sending ${images.length} image(s):`,
+        images.map((img) => ({
+          mime: img.mime,
+          filename: img.filename,
+          url: img.url.slice(0, 100),
+        })),
+      )
       const imagePathsList = images.map((img) => `- ${img.filename}: ${img.url}`).join('\n')
       return `${prompt}\n\n**attached images:**\n${imagePathsList}`
     })()
@@ -747,7 +775,8 @@ export async function handleOpencodeSession({
     sessionLogger.log(`[PROMPT] Parts to send:`, parts.length)
 
     // Get model preference: session-level overrides channel-level
-    const modelPreference = getSessionModel(session.id) || (channelId ? getChannelModel(channelId) : undefined)
+    const modelPreference =
+      getSessionModel(session.id) || (channelId ? getChannelModel(channelId) : undefined)
     const modelParam = (() => {
       if (!modelPreference) {
         return undefined
@@ -762,7 +791,8 @@ export async function handleOpencodeSession({
     })()
 
     // Get agent preference: session-level overrides channel-level
-    const agentPreference = getSessionAgent(session.id) || (channelId ? getChannelAgent(channelId) : undefined)
+    const agentPreference =
+      getSessionAgent(session.id) || (channelId ? getChannelAgent(channelId) : undefined)
     if (agentPreference) {
       sessionLogger.log(`[AGENT] Using agent preference: ${agentPreference}`)
     }

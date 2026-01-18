@@ -141,7 +141,7 @@ export function setChannelModel(channelId: string, modelId: string): void {
   db.prepare(
     `INSERT INTO channel_models (channel_id, model_id, updated_at) 
      VALUES (?, ?, CURRENT_TIMESTAMP)
-     ON CONFLICT(channel_id) DO UPDATE SET model_id = ?, updated_at = CURRENT_TIMESTAMP`
+     ON CONFLICT(channel_id) DO UPDATE SET model_id = ?, updated_at = CURRENT_TIMESTAMP`,
   ).run(channelId, modelId, modelId)
 }
 
@@ -163,9 +163,10 @@ export function getSessionModel(sessionId: string): string | undefined {
  */
 export function setSessionModel(sessionId: string, modelId: string): void {
   const db = getDatabase()
-  db.prepare(
-    `INSERT OR REPLACE INTO session_models (session_id, model_id) VALUES (?, ?)`
-  ).run(sessionId, modelId)
+  db.prepare(`INSERT OR REPLACE INTO session_models (session_id, model_id) VALUES (?, ?)`).run(
+    sessionId,
+    modelId,
+  )
 }
 
 /**
@@ -187,7 +188,7 @@ export function setChannelAgent(channelId: string, agentName: string): void {
   db.prepare(
     `INSERT INTO channel_agents (channel_id, agent_name, updated_at) 
      VALUES (?, ?, CURRENT_TIMESTAMP)
-     ON CONFLICT(channel_id) DO UPDATE SET agent_name = ?, updated_at = CURRENT_TIMESTAMP`
+     ON CONFLICT(channel_id) DO UPDATE SET agent_name = ?, updated_at = CURRENT_TIMESTAMP`,
   ).run(channelId, agentName, agentName)
 }
 
@@ -207,9 +208,10 @@ export function getSessionAgent(sessionId: string): string | undefined {
  */
 export function setSessionAgent(sessionId: string, agentName: string): void {
   const db = getDatabase()
-  db.prepare(
-    `INSERT OR REPLACE INTO session_agents (session_id, agent_name) VALUES (?, ?)`
-  ).run(sessionId, agentName)
+  db.prepare(`INSERT OR REPLACE INTO session_agents (session_id, agent_name) VALUES (?, ?)`).run(
+    sessionId,
+    agentName,
+  )
 }
 
 export function closeDatabase(): void {

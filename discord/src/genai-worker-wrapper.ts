@@ -41,13 +41,9 @@ export interface GenAIWorker {
   stop(): Promise<void>
 }
 
-export function createGenAIWorker(
-  options: GenAIWorkerOptions,
-): Promise<GenAIWorker> {
+export function createGenAIWorker(options: GenAIWorkerOptions): Promise<GenAIWorker> {
   return new Promise((resolve, reject) => {
-    const worker = new Worker(
-      new URL('../dist/genai-worker.js', import.meta.url),
-    )
+    const worker = new Worker(new URL('../dist/genai-worker.js', import.meta.url))
 
     // Handle messages from worker
     worker.on('message', (message: WorkerOutMessage) => {
@@ -106,9 +102,7 @@ export function createGenAIWorker(
                 worker.once('exit', (code) => {
                   if (!resolved) {
                     resolved = true
-                    genaiWrapperLogger.log(
-                      `[GENAI WORKER WRAPPER] Worker exited with code ${code}`,
-                    )
+                    genaiWrapperLogger.log(`[GENAI WORKER WRAPPER] Worker exited with code ${code}`)
                     resolve()
                   }
                 })

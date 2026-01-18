@@ -54,9 +54,7 @@ export async function handleCreateNewProjectCommand({
     }
 
     if (fs.existsSync(projectDirectory)) {
-      await command.editReply(
-        `Project directory already exists: ${projectDirectory}`,
-      )
+      await command.editReply(`Project directory already exists: ${projectDirectory}`)
       return
     }
 
@@ -67,16 +65,13 @@ export async function handleCreateNewProjectCommand({
     execSync('git init', { cwd: projectDirectory, stdio: 'pipe' })
     logger.log(`Initialized git in: ${projectDirectory}`)
 
-    const { textChannelId, voiceChannelId, channelName } =
-      await createProjectChannels({
-        guild,
-        projectDirectory,
-        appId,
-      })
+    const { textChannelId, voiceChannelId, channelName } = await createProjectChannels({
+      guild,
+      projectDirectory,
+      appId,
+    })
 
-    const textChannel = (await guild.channels.fetch(
-      textChannelId,
-    )) as TextChannel
+    const textChannel = (await guild.channels.fetch(textChannelId)) as TextChannel
 
     await command.editReply(
       `✅ Created new project **${sanitizedName}**\n📁 Directory: \`${projectDirectory}\`\n📝 Text: <#${textChannelId}>\n🔊 Voice: <#${voiceChannelId}>\n\n_Starting session..._`,
@@ -94,8 +89,7 @@ export async function handleCreateNewProjectCommand({
     })
 
     await handleOpencodeSession({
-      prompt:
-        'The project was just initialized. Say hi and ask what the user wants to build.',
+      prompt: 'The project was just initialized. Say hi and ask what the user wants to build.',
       thread,
       projectDirectory,
       channelId: textChannel.id,

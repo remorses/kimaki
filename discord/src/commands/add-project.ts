@@ -11,10 +11,7 @@ import { abbreviatePath } from '../utils.js'
 
 const logger = createLogger('ADD-PROJECT')
 
-export async function handleAddProjectCommand({
-  command,
-  appId,
-}: CommandContext): Promise<void> {
+export async function handleAddProjectCommand({ command, appId }: CommandContext): Promise<void> {
   await command.deferReply({ ephemeral: false })
 
   const projectId = command.options.getString('project', true)
@@ -63,13 +60,12 @@ export async function handleAddProjectCommand({
       return
     }
 
-    const { textChannelId, voiceChannelId, channelName } =
-      await createProjectChannels({
-        guild,
-        projectDirectory: directory,
-        appId,
-        botName: command.client.user?.username,
-      })
+    const { textChannelId, voiceChannelId, channelName } = await createProjectChannels({
+      guild,
+      projectDirectory: directory,
+      appId,
+      botName: command.client.user?.username,
+    })
 
     await command.editReply(
       `✅ Created channels for project:\n📝 Text: <#${textChannelId}>\n🔊 Voice: <#${voiceChannelId}>\n📁 Directory: \`${directory}\``,
@@ -102,9 +98,7 @@ export async function handleAddProjectAutocomplete({
 
     const db = getDatabase()
     const existingDirs = db
-      .prepare(
-        'SELECT DISTINCT directory FROM channel_directories WHERE channel_type = ?',
-      )
+      .prepare('SELECT DISTINCT directory FROM channel_directories WHERE channel_type = ?')
       .all('text') as { directory: string }[]
     const existingDirSet = new Set(existingDirs.map((row) => row.directory))
 

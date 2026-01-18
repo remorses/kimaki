@@ -13,10 +13,7 @@ import { createLogger } from '../logger.js'
 
 const logger = createLogger('SESSION')
 
-export async function handleSessionCommand({
-  command,
-  appId,
-}: CommandContext): Promise<void> {
+export async function handleSessionCommand({ command, appId }: CommandContext): Promise<void> {
   await command.deferReply({ ephemeral: false })
 
   const prompt = command.options.getString('prompt', true)
@@ -50,9 +47,7 @@ export async function handleSessionCommand({
   }
 
   if (!projectDirectory) {
-    await command.editReply(
-      'This channel is not configured with a project directory',
-    )
+    await command.editReply('This channel is not configured with a project directory')
     return
   }
 
@@ -102,10 +97,7 @@ export async function handleSessionCommand({
   }
 }
 
-async function handleAgentAutocomplete({
-  interaction,
-  appId,
-}: AutocompleteContext): Promise<void> {
+async function handleAgentAutocomplete({ interaction, appId }: AutocompleteContext): Promise<void> {
   const focusedValue = interaction.options.getFocused()
 
   let projectDirectory: string | undefined
@@ -224,8 +216,7 @@ export async function handleSessionAutocomplete({
 
     const files = response.data || []
 
-    const prefix =
-      previousFiles.length > 0 ? previousFiles.join(', ') + ', ' : ''
+    const prefix = previousFiles.length > 0 ? previousFiles.join(', ') + ', ' : ''
 
     const choices = files
       .map((file: string) => {

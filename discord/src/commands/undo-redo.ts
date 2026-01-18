@@ -9,9 +9,7 @@ import { createLogger } from '../logger.js'
 
 const logger = createLogger('UNDO-REDO')
 
-export async function handleUndoCommand({
-  command,
-}: CommandContext): Promise<void> {
+export async function handleUndoCommand({ command }: CommandContext): Promise<void> {
   const channel = command.channel
 
   if (!channel) {
@@ -96,9 +94,7 @@ export async function handleUndoCommand({
     })
 
     if (response.error) {
-      await command.editReply(
-        `Failed to undo: ${JSON.stringify(response.error)}`,
-      )
+      await command.editReply(`Failed to undo: ${JSON.stringify(response.error)}`)
       return
     }
 
@@ -106,12 +102,8 @@ export async function handleUndoCommand({
       ? `\n\`\`\`diff\n${response.data.revert.diff.slice(0, 1500)}\n\`\`\``
       : ''
 
-    await command.editReply(
-      `⏪ **Undone** - reverted last assistant message${diffInfo}`,
-    )
-    logger.log(
-      `Session ${sessionId} reverted message ${lastAssistantMessage.info.id}`,
-    )
+    await command.editReply(`⏪ **Undone** - reverted last assistant message${diffInfo}`)
+    logger.log(`Session ${sessionId} reverted message ${lastAssistantMessage.info.id}`)
   } catch (error) {
     logger.error('[UNDO] Error:', error)
     await command.editReply(
@@ -120,9 +112,7 @@ export async function handleUndoCommand({
   }
 }
 
-export async function handleRedoCommand({
-  command,
-}: CommandContext): Promise<void> {
+export async function handleRedoCommand({ command }: CommandContext): Promise<void> {
   const channel = command.channel
 
   if (!channel) {
@@ -196,9 +186,7 @@ export async function handleRedoCommand({
     })
 
     if (response.error) {
-      await command.editReply(
-        `Failed to redo: ${JSON.stringify(response.error)}`,
-      )
+      await command.editReply(`Failed to redo: ${JSON.stringify(response.error)}`)
       return
     }
 

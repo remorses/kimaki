@@ -9,9 +9,7 @@ import { createLogger } from '../logger.js'
 
 const logger = createLogger('SHARE')
 
-export async function handleShareCommand({
-  command,
-}: CommandContext): Promise<void> {
+export async function handleShareCommand({ command }: CommandContext): Promise<void> {
   const channel = command.channel
 
   if (!channel) {

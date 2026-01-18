@@ -85,9 +85,7 @@ export async function handleForkCommand(interaction: ChatInputCommandInteraction
       return
     }
 
-    const userMessages = messagesResponse.data.filter(
-      (m) => m.info.role === 'user'
-    )
+    const userMessages = messagesResponse.data.filter((m) => m.info.role === 'user')
 
     if (userMessages.length === 0) {
       await interaction.editReply({
@@ -99,7 +97,9 @@ export async function handleForkCommand(interaction: ChatInputCommandInteraction
     const recentMessages = userMessages.slice(-25)
 
     const options = recentMessages.map((m, index) => {
-      const textPart = m.parts.find((p) => p.type === 'text') as { type: 'text'; text: string } | undefined
+      const textPart = m.parts.find((p) => p.type === 'text') as
+        | { type: 'text'; text: string }
+        | undefined
       const preview = textPart?.text?.slice(0, 80) || '(no text)'
       const label = `${index + 1}. ${preview}${preview.length >= 80 ? '...' : ''}`
 
@@ -117,11 +117,11 @@ export async function handleForkCommand(interaction: ChatInputCommandInteraction
       .setPlaceholder('Select a message to fork from')
       .addOptions(options)
 
-    const actionRow = new ActionRowBuilder<StringSelectMenuBuilder>()
-      .addComponents(selectMenu)
+    const actionRow = new ActionRowBuilder<StringSelectMenuBuilder>().addComponents(selectMenu)
 
     await interaction.editReply({
-      content: '**Fork Session**\nSelect the user message to fork from. The forked session will continue as if you had not sent that message:',
+      content:
+        '**Fork Session**\nSelect the user message to fork from. The forked session will continue as if you had not sent that message:',
       components: [actionRow],
     })
   } catch (error) {
@@ -132,7 +132,9 @@ export async function handleForkCommand(interaction: ChatInputCommandInteraction
   }
 }
 
-export async function handleForkSelectMenu(interaction: StringSelectMenuInteraction): Promise<void> {
+export async function handleForkSelectMenu(
+  interaction: StringSelectMenuInteraction,
+): Promise<void> {
   const customId = interaction.customId
 
   if (!customId.startsWith('fork_select:')) {
@@ -177,11 +179,14 @@ export async function handleForkSelectMenu(interaction: StringSelectMenuInteract
     const forkedSession = forkResponse.data
     const parentChannel = interaction.channel
 
-    if (!parentChannel || ![
-      ChannelType.PublicThread,
-      ChannelType.PrivateThread,
-      ChannelType.AnnouncementThread,
-    ].includes(parentChannel.type)) {
+    if (
+      !parentChannel ||
+      ![
+        ChannelType.PublicThread,
+        ChannelType.PrivateThread,
+        ChannelType.AnnouncementThread,
+      ].includes(parentChannel.type)
+    ) {
       await interaction.editReply('Could not access parent channel')
       return
     }
@@ -200,14 +205,10 @@ export async function handleForkSelectMenu(interaction: StringSelectMenuInteract
     })
 
     getDatabase()
-      .prepare(
-        'INSERT OR REPLACE INTO thread_sessions (thread_id, session_id) VALUES (?, ?)'
-      )
+      .prepare('INSERT OR REPLACE INTO thread_sessions (thread_id, session_id) VALUES (?, ?)')
       .run(thread.id, forkedSession.id)
 
-    sessionLogger.log(
-      `Created forked session ${forkedSession.id} in thread ${thread.id}`
-    )
+    sessionLogger.log(`Created forked session ${forkedSession.id} in thread ${thread.id}`)
 
     await sendThreadMessage(
       thread,
@@ -240,18 +241,13 @@ export async function handleForkSelectMenu(interaction: StringSelectMenuInteract
       }
     }
 
-    await sendThreadMessage(
-      thread,
-      `You can now continue the conversation from this point.`,
-    )
+    await sendThreadMessage(thread, `You can now continue the conversation from this point.`)
 
-    await interaction.editReply(
-      `Session forked! Continue in ${thread.toString()}`
-    )
+    await interaction.editReply(`Session forked! Continue in ${thread.toString()}`)
   } catch (error) {
     forkLogger.error('Error forking session:', error)
     await interaction.editReply(
-      `Failed to fork session: ${error instanceof Error ? error.message : 'Unknown error'}`
+      `Failed to fork session: ${error instanceof Error ? error.message : 'Unknown error'}`,
     )
   }
 }

@@ -14,6 +14,7 @@
     "typescript": "^5.9.2",
     "vite": "^7.1.4",
     "vite-node": "^3.2.4",
+    "oxfmt": "^0.24.0",
     "vitest": "^3.2.4"
   },
   "overrides": {

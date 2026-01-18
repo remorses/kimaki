@@ -11,7 +11,8 @@
     "test:events": "tsx test-events.ts",
     "pcm-to-mp3": "bun scripts/pcm-to-mp3",
     "test:send": "tsx send-test-message.ts",
-    "register-commands": "tsx scripts/register-commands.ts"
+    "register-commands": "tsx scripts/register-commands.ts",
+    "format": "oxfmt src"
   },
   "repository": "https://github.com/remorses/kimaki",
   "bin": "bin.js",

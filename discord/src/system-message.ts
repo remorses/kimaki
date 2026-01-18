@@ -2,7 +2,13 @@
 // Creates the system message injected into every OpenCode session,
 // including Discord-specific formatting rules, diff commands, and permissions info.
 
-export function getOpencodeSystemMessage({ sessionId, channelId }: { sessionId: string; channelId?: string }) {
+export function getOpencodeSystemMessage({
+  sessionId,
+  channelId,
+}: {
+  sessionId: string
+  channelId?: string
+}) {
   return `
 The user is reading your messages from inside Discord, via kimaki.xyz
 
@@ -23,7 +29,9 @@ Only users with these Discord permissions can send messages to the bot:
 To upload files to the Discord thread (images, screenshots, long files that would clutter the chat), run:
 
 npx -y kimaki upload-to-discord --session ${sessionId} <file1> [file2] ...
-${channelId ? `
+${
+  channelId
+    ? `
 ## starting new sessions from CLI
 
 To start a new thread/session in this channel programmatically, run:
@@ -31,7 +39,9 @@ To start a new thread/session in this channel programmatically, run:
 npx -y kimaki start-session --channel ${channelId} --prompt "your prompt here"
 
 This is useful for automation (cron jobs, GitHub webhooks, n8n, etc.)
-` : ''}
+`
+    : ''
+}
 ## showing diffs
 
 IMPORTANT: After editing any files, you MUST execute the critique command using the Bash tool to get a diff URL, then share that URL with the user.

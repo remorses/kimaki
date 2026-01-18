@@ -96,7 +96,7 @@ export async function showPermissionDropdown({
  * Handle dropdown selection for permission.
  */
 export async function handlePermissionSelectMenu(
-  interaction: StringSelectMenuInteraction
+  interaction: StringSelectMenuInteraction,
 ): Promise<void> {
   const customId = interaction.customId
 

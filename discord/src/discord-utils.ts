@@ -2,12 +2,7 @@
 // Handles markdown splitting for Discord's 2000-char limit, code block escaping,
 // thread message sending, and channel metadata extraction from topic tags.
 
-import {
-  ChannelType,
-  type Message,
-  type TextChannel,
-  type ThreadChannel,
-} from 'discord.js'
+import { ChannelType, type Message, type TextChannel, type ThreadChannel } from 'discord.js'
 import { Lexer } from 'marked'
 import { extractTagsArrays } from './xml.js'
 import { formatMarkdownTables } from './format-tables.js'
@@ -65,19 +60,43 @@ export function splitMarkdownForDiscord({
   for (const token of tokens) {
     if (token.type === 'code') {
       const lang = token.lang || ''
-      lines.push({ text: '```' + lang + '\n', inCodeBlock: false, lang, isOpeningFence: true, isClosingFence: false })
+      lines.push({
+        text: '```' + lang + '\n',
+        inCodeBlock: false,
+        lang,
+        isOpeningFence: true,
+        isClosingFence: false,
+      })
       const codeLines = token.text.split('\n')
       for (const codeLine of codeLines) {
-        lines.push({ text: codeLine + '\n', inCodeBlock: true, lang, isOpeningFence: false, isClosingFence: false })
+        lines.push({
+          text: codeLine + '\n',
+          inCodeBlock: true,
+          lang,
+          isOpeningFence: false,
+          isClosingFence: false,
+        })
       }
-      lines.push({ text: '```\n', inCodeBlock: false, lang: '', isOpeningFence: false, isClosingFence: true })
+      lines.push({
+        text: '```\n',
+        inCodeBlock: false,
+        lang: '',
+        isOpeningFence: false,
+        isClosingFence: true,
+      })
     } else {
       const rawLines = token.raw.split('\n')
       for (let i = 0; i < rawLines.length; i++) {
         const isLast = i === rawLines.length - 1
         const text = isLast ? rawLines[i]! : rawLines[i]! + '\n'
         if (text) {
-          lines.push({ text, inCodeBlock: false, lang: '', isOpeningFence: false, isClosingFence: false })
+          lines.push({
+            text,
+            inCodeBlock: false,
+            lang: '',
+            isOpeningFence: false,
+            isClosingFence: false,
+          })
         }
       }
     }
@@ -126,7 +145,9 @@ export function splitMarkdownForDiscord({
         }
 
         // calculate overhead for code block markers
-        const codeBlockOverhead = line.inCodeBlock ? ('```' + line.lang + '\n').length + '```\n'.length : 0
+        const codeBlockOverhead = line.inCodeBlock
+          ? ('```' + line.lang + '\n').length + '```\n'.length
+          : 0
         // ensure at least 10 chars available, even if maxLength is very small
         const availablePerChunk = Math.max(10, maxLength - codeBlockOverhead - 50)
 
@@ -196,7 +217,7 @@ export function splitMarkdownForDiscord({
 export async function sendThreadMessage(
   thread: ThreadChannel,
   content: string,
-  options?: { flags?: number }
+  options?: { flags?: number },
 ): Promise<Message> {
   const MAX_LENGTH = 2000
 
@@ -213,9 +234,7 @@ export async function sendThreadMessage(
   const chunks = splitMarkdownForDiscord({ content, maxLength: MAX_LENGTH })
 
   if (chunks.length > 1) {
-    discordLogger.log(
-      `MESSAGE: Splitting ${content.length} chars into ${chunks.length} messages`,
-    )
+    discordLogger.log(`MESSAGE: Splitting ${content.length} chars into ${chunks.length} messages`)
   }
 
   let firstMessage: Message | undefined
@@ -262,9 +281,7 @@ export async function resolveTextChannel(
 }
 
 export function escapeDiscordFormatting(text: string): string {
-  return text
-    .replace(/```/g, '\\`\\`\\`')
-    .replace(/````/g, '\\`\\`\\`\\`')
+  return text.replace(/```/g, '\\`\\`\\`').replace(/````/g, '\\`\\`\\`\\`')
 }
 
 export function getKimakiMetadata(textChannel: TextChannel | null): {

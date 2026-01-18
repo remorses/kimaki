@@ -28,11 +28,11 @@ export function getDataDir(): string {
  */
 export function setDataDir(dir: string): void {
   const resolvedDir = path.resolve(dir)
-  
+
   if (!fs.existsSync(resolvedDir)) {
     fs.mkdirSync(resolvedDir, { recursive: true })
   }
-  
+
   dataDir = resolvedDir
 }
 
@@ -53,17 +53,17 @@ const DEFAULT_LOCK_PORT = 29988
  */
 export function getLockPort(): number {
   const dir = getDataDir()
-  
+
   // Use original port for default data dir (backwards compatible)
   if (dir === DEFAULT_DATA_DIR) {
     return DEFAULT_LOCK_PORT
   }
-  
+
   // Hash-based port for custom data dirs
   let hash = 0
   for (let i = 0; i < dir.length; i++) {
     const char = dir.charCodeAt(i)
-    hash = ((hash << 5) - hash) + char
+    hash = (hash << 5) - hash + char
     hash = hash & hash // Convert to 32bit integer
   }
   // Map to port range 30000-39999

@@ -35,9 +35,7 @@ const waitForServer = async (port: number, maxAttempts = 30) => {
     console.log(`Waiting for server... attempt ${i + 1}/${maxAttempts}`)
     await new Promise((resolve) => setTimeout(resolve, 1000))
   }
-  throw new Error(
-    `Server did not start on port ${port} after ${maxAttempts} seconds`,
-  )
+  throw new Error(`Server did not start on port ${port} after ${maxAttempts} seconds`)
 }
 
 beforeAll(async () => {
@@ -117,9 +115,7 @@ test('generate markdown from first available session', async () => {
   // Take the first kimaki session
   const firstSession = kimakiSessions[0]
   const sessionID = firstSession!.id
-  console.log(
-    `Using session ID: ${sessionID} (${firstSession!.title || 'Untitled'})`,
-  )
+  console.log(`Using session ID: ${sessionID} (${firstSession!.title || 'Untitled'})`)
 
   // Create markdown exporter
   const exporter = new ShareMarkdown(client)
@@ -139,9 +135,7 @@ test('generate markdown from first available session', async () => {
   expect(markdown).toContain('## Conversation')
 
   // Save snapshot to file
-  await expect(markdown).toMatchFileSnapshot(
-    './__snapshots__/first-session-with-info.md',
-  )
+  await expect(markdown).toMatchFileSnapshot('./__snapshots__/first-session-with-info.md')
 })
 
 test('generate markdown without system info', async () => {
@@ -184,9 +178,7 @@ test('generate markdown without system info', async () => {
   expect(markdown).toContain('## Conversation')
 
   // Save snapshot to file
-  await expect(markdown).toMatchFileSnapshot(
-    './__snapshots__/first-session-no-info.md',
-  )
+  await expect(markdown).toMatchFileSnapshot('./__snapshots__/first-session-no-info.md')
 })
 
 test('generate markdown from session with tools', async () => {
@@ -218,11 +210,7 @@ test('generate markdown from session with tools', async () => {
       const messages = await client.session.messages({
         path: { id: session.id },
       })
-      if (
-        messages.data?.some((msg) =>
-          msg.parts?.some((part) => part.type === 'tool'),
-        )
-      ) {
+      if (messages.data?.some((msg) => msg.parts?.some((part) => part.type === 'tool'))) {
         sessionWithTools = session
         console.log(`Found session with tools: ${session.id}`)
         break
@@ -233,9 +221,7 @@ test('generate markdown from session with tools', async () => {
   }
 
   if (!sessionWithTools) {
-    console.warn(
-      'No kimaki session with tool usage found, using first kimaki session',
-    )
+    console.warn('No kimaki session with tool usage found, using first kimaki session')
     sessionWithTools = kimakiSessions[0]
   }
 
@@ -245,9 +231,7 @@ test('generate markdown from session with tools', async () => {
   })
 
   expect(markdown).toBeTruthy()
-  await expect(markdown).toMatchFileSnapshot(
-    './__snapshots__/session-with-tools.md',
-  )
+  await expect(markdown).toMatchFileSnapshot('./__snapshots__/session-with-tools.md')
 })
 
 test('error handling for non-existent session', async () => {
@@ -303,9 +287,7 @@ test('generate markdown from multiple sessions', async () => {
       })
 
       expect(markdown).toBeTruthy()
-      await expect(markdown).toMatchFileSnapshot(
-        `./__snapshots__/session-${i + 1}.md`,
-      )
+      await expect(markdown).toMatchFileSnapshot(`./__snapshots__/session-${i + 1}.md`)
     } catch (e) {
       console.error(`Error generating markdown for session ${session!.id}:`, e)
       // Continue with other sessions
@@ -331,9 +313,7 @@ test.skipIf(process.env.CI)('getCompactSessionContext generates compact format',
   // should have tool calls or messages
   expect(context).toMatch(/\[Tool \w+\]:|\[User\]:|\[Assistant\]:/)
 
-  await expect(context).toMatchFileSnapshot(
-    './__snapshots__/compact-session-context.md',
-  )
+  await expect(context).toMatchFileSnapshot('./__snapshots__/compact-session-context.md')
 })
 
 test.skipIf(process.env.CI)('getCompactSessionContext without system prompt', async () => {
@@ -352,7 +332,5 @@ test.skipIf(process.env.CI)('getCompactSessionContext without system prompt', as
   // should NOT have system prompt
   expect(context).not.toContain('[System Prompt]')
 
-  await expect(context).toMatchFileSnapshot(
-    './__snapshots__/compact-session-context-no-system.md',
-  )
+  await expect(context).toMatchFileSnapshot('./__snapshots__/compact-session-context-no-system.md')
 })

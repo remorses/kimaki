@@ -20,6 +20,4 @@ export type AutocompleteContext = {
 
 export type AutocompleteHandler = (ctx: AutocompleteContext) => Promise<void>
 
-export type SelectMenuHandler = (
-  interaction: StringSelectMenuInteraction,
-) => Promise<void>
+export type SelectMenuHandler = (interaction: StringSelectMenuInteraction) => Promise<void>

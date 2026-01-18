@@ -5,11 +5,7 @@
 import { spawn, type ChildProcess } from 'node:child_process'
 import fs from 'node:fs'
 import net from 'node:net'
-import {
-  createOpencodeClient,
-  type OpencodeClient,
-  type Config,
-} from '@opencode-ai/sdk'
+import { createOpencodeClient, type OpencodeClient, type Config } from '@opencode-ai/sdk'
 import {
   createOpencodeClient as createOpencodeClientV2,
   type OpencodeClient as OpencodeClientV2,
@@ -84,9 +80,7 @@ async function waitForServer(port: number, maxAttempts = 30): Promise<boolean> {
     }
     await new Promise((resolve) => setTimeout(resolve, 1000))
   }
-  throw new Error(
-    `Server did not start on port ${port} after ${maxAttempts} seconds`,
-  )
+  throw new Error(`Server did not start on port ${port} after ${maxAttempts} seconds`)
 }
 
 export async function initializeOpencodeForDirectory(directory: string) {
@@ -117,33 +111,31 @@ export async function initializeOpencodeForDirectory(directory: string) {
 
   const opencodeCommand = process.env.OPENCODE_PATH || 'opencode'
 
-  const serverProcess = spawn(
-    opencodeCommand,
-    ['serve', '--port', port.toString()],
-    {
-      stdio: 'pipe',
-      detached: false,
-      cwd: directory,
-      env: {
-        ...process.env,
-        OPENCODE_CONFIG_CONTENT: JSON.stringify({
-          $schema: 'https://opencode.ai/config.json',
-          lsp: false,
-          formatter: false,
-          permission: {
-            edit: 'allow',
-            bash: 'allow',
-            webfetch: 'allow',
-          },
-        } satisfies Config),
-        OPENCODE_PORT: port.toString(),
-      },
+  const serverProcess = spawn(opencodeCommand, ['serve', '--port', port.toString()], {
+    stdio: 'pipe',
+    detached: false,
+    cwd: directory,
+    env: {
+      ...process.env,
+      OPENCODE_CONFIG_CONTENT: JSON.stringify({
+        $schema: 'https://opencode.ai/config.json',
+        lsp: false,
+        formatter: false,
+        permission: {
+          edit: 'allow',
+          bash: 'allow',
+          webfetch: 'allow',
+        },
+      } satisfies Config),
+      OPENCODE_PORT: port.toString(),
     },
-  )
+  })
 
   // Buffer logs until we know if server started successfully
   const logBuffer: string[] = []
-  logBuffer.push(`Spawned opencode serve --port ${port} in ${directory} (pid: ${serverProcess.pid})`)
+  logBuffer.push(
+    `Spawned opencode serve --port ${port} in ${directory} (pid: ${serverProcess.pid})`,
+  )
 
   serverProcess.stdout?.on('data', (data) => {
     logBuffer.push(`[stdout] ${data.toString().trim()}`)
@@ -171,9 +163,7 @@ export async function initializeOpencodeForDirectory(directory: string) {
           opencodeLogger.error(`Failed to restart opencode server:`, e)
         })
       } else {
-        opencodeLogger.error(
-          `Server for ${directory} crashed too many times (5), not restarting`,
-        )
+        opencodeLogger.error(`Server for ${directory} crashed too many times (5), not restarting`)
       }
     } else {
       serverRetryCount.delete(directory)

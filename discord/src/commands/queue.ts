@@ -20,9 +20,7 @@ import { createLogger } from '../logger.js'
 
 const logger = createLogger('QUEUE')
 
-export async function handleQueueCommand({
-  command,
-}: CommandContext): Promise<void> {
+export async function handleQueueCommand({ command }: CommandContext): Promise<void> {
   const message = command.options.getString('message', true)
   const channel = command.channel
 
@@ -85,9 +83,7 @@ export async function handleQueueCommand({
       flags: SILENT_MESSAGE_FLAGS,
     })
 
-    logger.log(
-      `[QUEUE] No active request, sending immediately in thread ${channel.id}`,
-    )
+    logger.log(`[QUEUE] No active request, sending immediately in thread ${channel.id}`)
 
     handleOpencodeSession({
       prompt: message,
@@ -97,10 +93,7 @@ export async function handleQueueCommand({
     }).catch(async (e) => {
       logger.error(`[QUEUE] Failed to send message:`, e)
       const errorMsg = e instanceof Error ? e.message : String(e)
-      await sendThreadMessage(
-        channel as ThreadChannel,
-        `✗ Failed: ${errorMsg.slice(0, 200)}`,
-      )
+      await sendThreadMessage(channel as ThreadChannel, `✗ Failed: ${errorMsg.slice(0, 200)}`)
     })
 
     return
@@ -123,14 +116,10 @@ export async function handleQueueCommand({
     flags: SILENT_MESSAGE_FLAGS,
   })
 
-  logger.log(
-    `[QUEUE] User ${command.user.displayName} queued message in thread ${channel.id}`,
-  )
+  logger.log(`[QUEUE] User ${command.user.displayName} queued message in thread ${channel.id}`)
 }
 
-export async function handleClearQueueCommand({
-  command,
-}: CommandContext): Promise<void> {
+export async function handleClearQueueCommand({ command }: CommandContext): Promise<void> {
   const channel = command.channel
 
   if (!channel) {
@@ -175,7 +164,5 @@ export async function handleClearQueueCommand({
     flags: SILENT_MESSAGE_FLAGS,
   })
 
-  logger.log(
-    `[QUEUE] User ${command.user.displayName} cleared queue in thread ${channel.id}`,
-  )
+  logger.log(`[QUEUE] User ${command.user.displayName} cleared queue in thread ${channel.id}`)
 }

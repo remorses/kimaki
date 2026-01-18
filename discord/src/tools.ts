@@ -19,10 +19,7 @@ const toolsLogger = createLogger('TOOLS')
 import { ShareMarkdown } from './markdown.js'
 import { formatDistanceToNow } from './utils.js'
 import pc from 'picocolors'
-import {
-  initializeOpencodeForDirectory,
-  getOpencodeSystemMessage,
-} from './discord-bot.js'
+import { initializeOpencodeForDirectory, getOpencodeSystemMessage } from './discord-bot.js'
 
 export async function getTools({
   onMessageCompleted,
@@ -116,25 +113,17 @@ export async function getTools({
       description:
         'Start a new chat session with an initial message. Does not wait for the message to complete',
       inputSchema: z.object({
-        message: z
-          .string()
-          .describe('The initial message to start the chat with'),
+        message: z.string().describe('The initial message to start the chat with'),
         title: z.string().optional().describe('Optional title for the session'),
         model: z
           .object({
-            providerId: z
-              .string()
-              .describe('The provider ID (e.g., "anthropic", "openai")'),
-            modelId: z
-              .string()
-              .describe(
-                'The model ID (e.g., "claude-opus-4-20250514", "gpt-5")',
-              ),
+            providerId: z.string().describe('The provider ID (e.g., "anthropic", "openai")'),
+            modelId: z.string().describe('The model ID (e.g., "claude-opus-4-20250514", "gpt-5")'),
           })
           .optional()
           .describe('Optional model to use for this session'),
       }),
-      execute: async ({ message, title,  }) => {
+      execute: async ({ message, title }) => {
         if (!message.trim()) {
           throw new Error(`message must be a non empty string`)
         }
@@ -187,18 +176,14 @@ export async function getTools({
         } catch (error) {
           return {
             success: false,
-            error:
-              error instanceof Error
-                ? error.message
-                : 'Failed to create chat session',
+            error: error instanceof Error ? error.message : 'Failed to create chat session',
           }
         }
       },
     }),
 
     listChats: tool({
-      description:
-        'Get a list of available chat sessions sorted by most recent',
+      description: 'Get a list of available chat sessions sorted by most recent',
       inputSchema: z.object({}),
       execute: async () => {
         toolsLogger.log(`Listing opencode sessions`)
@@ -223,10 +208,7 @@ export async function getTools({
             })
             const messages = messagesResponse.data || []
             const lastMessage = messages[messages.length - 1]
-            if (
-              lastMessage?.info.role === 'assistant' &&
-              !lastMessage.info.time.completed
-            ) {
+            if (lastMessage?.info.role === 'assistant' && !lastMessage.info.time.completed) {
               return 'in_progress'
             }
             return 'finished'
@@ -281,10 +263,7 @@ export async function getTools({
       description: 'Read messages from a chat session',
       inputSchema: z.object({
         sessionId: z.string().describe('The session ID to read messages from'),
-        lastAssistantOnly: z
-          .boolean()
-          .optional()
-          .describe('Only read the last assistant message'),
+        lastAssistantOnly: z.boolean().optional().describe('Only read the last assistant message'),
       }),
       execute: async ({ sessionId, lastAssistantOnly = false }) => {
         if (lastAssistantOnly) {
@@ -296,9 +275,7 @@ export async function getTools({
             return { success: false, error: 'No messages found' }
           }
 
-          const assistantMessages = messages.data.filter(
-            (m) => m.info.role === 'assistant',
-          )
+          const assistantMessages = messages.data.filter((m) => m.info.role === 'assistant')
 
           if (assistantMessages.length === 0) {
             return {
@@ -309,8 +286,7 @@ export async function getTools({
 
           const lastMessage = assistantMessages[assistantMessages.length - 1]
           const status =
-            'completed' in lastMessage!.info.time &&
-            lastMessage!.info.time.completed
+            'completed' in lastMessage!.info.time && lastMessage!.info.time.completed
               ? 'completed'
               : 'in_progress'
 
@@ -376,8 +352,7 @@ export async function getTools({
         } catch (error) {
           return {
             success: false,
-            error:
-              error instanceof Error ? error.message : 'Unknown error occurred',
+            error: error instanceof Error ? error.message : 'Unknown error occurred',
           }
         }
       },
@@ -412,8 +387,7 @@ export async function getTools({
         } catch (error) {
           return {
             success: false,
-            error:
-              error instanceof Error ? error.message : 'Failed to fetch models',
+            error: error instanceof Error ? error.message : 'Failed to fetch models',
             models: [],
           }
         }

@@ -10,21 +10,14 @@ import fs from 'node:fs'
 import type { CommandContext, AutocompleteContext } from './types.js'
 import { getDatabase } from '../database.js'
 import { initializeOpencodeForDirectory } from '../opencode.js'
-import {
-  sendThreadMessage,
-  resolveTextChannel,
-  getKimakiMetadata,
-} from '../discord-utils.js'
+import { sendThreadMessage, resolveTextChannel, getKimakiMetadata } from '../discord-utils.js'
 import { extractTagsArrays } from '../xml.js'
 import { collectLastAssistantParts } from '../message-formatting.js'
 import { createLogger } from '../logger.js'
 
 const logger = createLogger('RESUME')
 
-export async function handleResumeCommand({
-  command,
-  appId,
-}: CommandContext): Promise<void> {
+export async function handleResumeCommand({ command, appId }: CommandContext): Promise<void> {
   await command.deferReply({ ephemeral: false })
 
   const sessionId = command.options.getString('session', true)
@@ -56,9 +49,7 @@ export async function handleResumeCommand({
   }
 
   if (!projectDirectory) {
-    await command.editReply(
-      'This channel is not configured with a project directory',
-    )
+    await command.editReply('This channel is not configured with a project directory')
     return
   }
 
@@ -88,9 +79,7 @@ export async function handleResumeCommand({
     })
 
     getDatabase()
-      .prepare(
-        'INSERT OR REPLACE INTO thread_sessions (thread_id, session_id) VALUES (?, ?)',
-      )
+      .prepare('INSERT OR REPLACE INTO thread_sessions (thread_id, session_id) VALUES (?, ?)')
       .run(thread.id, sessionId)
 
     logger.log(`[RESUME] Created thread ${thread.id} for session ${sessionId}`)
@@ -105,9 +94,7 @@ export async function handleResumeCommand({
 
     const messages = messagesResponse.data
 
-    await command.editReply(
-      `Resumed session "${sessionTitle}" in ${thread.toString()}`,
-    )
+    await command.editReply(`Resumed session "${sessionTitle}" in ${thread.toString()}`)
 
     await sendThreadMessage(
       thread,
@@ -119,10 +106,7 @@ export async function handleResumeCommand({
     })
 
     if (skippedCount > 0) {
-      await sendThreadMessage(
-        thread,
-        `*Skipped ${skippedCount} older assistant parts...*`,
-      )
+      await sendThreadMessage(thread, `*Skipped ${skippedCount} older assistant parts...*`)
     }
 
     if (content.trim()) {
@@ -168,8 +152,7 @@ export async function handleResumeAutocomplete({
       interaction.channel as TextChannel | ThreadChannel | null,
     )
     if (textChannel) {
-      const { projectDirectory: directory, channelAppId } =
-        getKimakiMetadata(textChannel)
+      const { projectDirectory: directory, channelAppId } = getKimakiMetadata(textChannel)
       if (channelAppId && channelAppId !== appId) {
         await interaction.respond([])
         return
@@ -194,17 +177,15 @@ export async function handleResumeAutocomplete({
 
     const existingSessionIds = new Set(
       (
-        getDatabase()
-          .prepare('SELECT session_id FROM thread_sessions')
-          .all() as { session_id: string }[]
+        getDatabase().prepare('SELECT session_id FROM thread_sessions').all() as {
+          session_id: string
+        }[]
       ).map((row) => row.session_id),
     )
 
     const sessions = sessionsResponse.data
       .filter((session) => !existingSessionIds.has(session.id))
-      .filter((session) =>
-        session.title.toLowerCase().includes(focusedValue.toLowerCase()),
-      )
+      .filter((session) => session.title.toLowerCase().includes(focusedValue.toLowerCase()))
       .slice(0, 25)
       .map((session) => {
         const dateStr = new Date(session.time.updated).toLocaleString()

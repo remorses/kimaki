@@ -66,10 +66,7 @@ export function deduplicateByKey<T, K>(arr: T[], keyFn: (item: T) => K): T[] {
   })
 }
 
-export function isAbortError(
-  error: unknown,
-  signal?: AbortSignal,
-): error is Error {
+export function isAbortError(error: unknown, signal?: AbortSignal): error is Error {
   return (
     (error instanceof Error &&
       (error.name === 'AbortError' ||

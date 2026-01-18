@@ -46,9 +46,7 @@ export class ShareMarkdown {
     // If lastAssistantOnly, filter to only the last assistant message
     const messagesToRender = lastAssistantOnly
       ? (() => {
-          const assistantMessages = messages.filter(
-            (m) => m.info.role === 'assistant',
-          )
+          const assistantMessages = messages.filter((m) => m.info.role === 'assistant')
           return assistantMessages.length > 0
             ? [assistantMessages[assistantMessages.length - 1]]
             : []
@@ -68,12 +66,8 @@ export class ShareMarkdown {
       if (includeSystemInfo === true) {
         lines.push('## Session Information')
         lines.push('')
-        lines.push(
-          `- **Created**: ${formatDateTime(new Date(session.time.created))}`,
-        )
-        lines.push(
-          `- **Updated**: ${formatDateTime(new Date(session.time.updated))}`,
-        )
+        lines.push(`- **Created**: ${formatDateTime(new Date(session.time.created))}`)
+        lines.push(`- **Updated**: ${formatDateTime(new Date(session.time.updated))}`)
         if (session.version) {
           lines.push(`- **OpenCode Version**: v${session.version}`)
         }
@@ -308,10 +302,7 @@ export async function getCompactSessionContext({
 
         // Get tool calls in compact form (name + params only)
         const toolParts = (msg.parts || []).filter(
-          (p) =>
-            p.type === 'tool' &&
-            'state' in p &&
-            p.state?.status === 'completed',
+          (p) => p.type === 'tool' && 'state' in p && p.state?.status === 'completed',
         )
         for (const part of toolParts) {
           if (part.type === 'tool' && 'tool' in part && 'state' in part) {
@@ -324,7 +315,8 @@ export async function getCompactSessionContext({
             // compact params: just key=value on one line
             const params = Object.entries(input)
               .map(([k, v]) => {
-                const val = typeof v === 'string' ? v.slice(0, 100) : JSON.stringify(v).slice(0, 100)
+                const val =
+                  typeof v === 'string' ? v.slice(0, 100) : JSON.stringify(v).slice(0, 100)
                 return `${k}=${val}`
               })
               .join(', ')

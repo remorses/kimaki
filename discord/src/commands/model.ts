@@ -19,15 +19,18 @@ import { createLogger } from '../logger.js'
 const modelLogger = createLogger('MODEL')
 
 // Store context by hash to avoid customId length limits (Discord max: 100 chars)
-const pendingModelContexts = new Map<string, {
-  dir: string
-  channelId: string
-  sessionId?: string
-  isThread: boolean
-  providerId?: string
-  providerName?: string
-  thread?: ThreadChannel
-}>()
+const pendingModelContexts = new Map<
+  string,
+  {
+    dir: string
+    channelId: string
+    sessionId?: string
+    isThread: boolean
+    providerId?: string
+    providerName?: string
+    thread?: ThreadChannel
+  }
+>()
 
 export type ProviderInfo = {
   id: string
@@ -196,7 +199,7 @@ export async function handleModelCommand({
  * Shows a second select menu with models for the chosen provider.
  */
 export async function handleProviderSelectMenu(
-  interaction: StringSelectMenuInteraction
+  interaction: StringSelectMenuInteraction,
 ): Promise<void> {
   const customId = interaction.customId
 
@@ -317,7 +320,7 @@ export async function handleProviderSelectMenu(
  * Stores the model preference in the database.
  */
 export async function handleModelSelectMenu(
-  interaction: StringSelectMenuInteraction
+  interaction: StringSelectMenuInteraction,
 ): Promise<void> {
   const customId = interaction.customId
 

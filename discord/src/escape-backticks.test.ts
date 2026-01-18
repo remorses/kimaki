@@ -2,8 +2,6 @@ import { test, expect } from 'vitest'
 import { Lexer } from 'marked'
 import { escapeBackticksInCodeBlocks, splitMarkdownForDiscord } from './discord-utils.js'
 
-
-
 test('escapes single backticks in code blocks', () => {
   const input = '```js\nconst x = `hello`\n```'
   const result = escapeBackticksInCodeBlocks(input)

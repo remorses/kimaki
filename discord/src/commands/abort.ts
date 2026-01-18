@@ -10,9 +10,7 @@ import { createLogger } from '../logger.js'
 
 const logger = createLogger('ABORT')
 
-export async function handleAbortCommand({
-  command,
-}: CommandContext): Promise<void> {
+export async function handleAbortCommand({ command }: CommandContext): Promise<void> {
   const channel = command.channel
 
   if (!channel) {
