@@ -996,22 +996,31 @@ cli
     'Start a new session in a Discord channel (creates thread, bot handles the rest)',
   )
   .option('-c, --channel <channelId>', 'Discord channel ID')
+  .option('-d, --project <path>', 'Project directory (alternative to --channel)')
   .option('-p, --prompt <prompt>', 'Initial prompt for the session')
   .option('-n, --name [name]', 'Thread name (optional, defaults to prompt preview)')
   .option('-a, --app-id [appId]', 'Bot application ID (required if no local database)')
-  .action(async (options: { channel?: string; prompt?: string; name?: string; appId?: string }) => {
-    try {
-      const { channel: channelId, prompt, name, appId: optionAppId } = options
+  .action(
+    async (options: {
+      channel?: string
+      project?: string
+      prompt?: string
+      name?: string
+      appId?: string
+    }) => {
+      try {
+        let { channel: channelId, prompt, name, appId: optionAppId } = options
+        const { project: projectPath } = options
 
-      if (!channelId) {
-        cliLogger.error('Channel ID is required. Use --channel <channelId>')
-        process.exit(EXIT_NO_RESTART)
-      }
+        if (!channelId && !projectPath) {
+          cliLogger.error('Either --channel or --project is required')
+          process.exit(EXIT_NO_RESTART)
+        }
 
-      if (!prompt) {
-        cliLogger.error('Prompt is required. Use --prompt <prompt>')
-        process.exit(EXIT_NO_RESTART)
-      }
+        if (!prompt) {
+          cliLogger.error('Prompt is required. Use --prompt <prompt>')
+          process.exit(EXIT_NO_RESTART)
+        }
 
       // Get bot token from env var or database
       const envToken = process.env.KIMAKI_BOT_TOKEN
@@ -1058,6 +1067,97 @@ cli
       }
 
       const s = spinner()
+
+      // If --project provided, resolve to channel ID
+      if (projectPath) {
+        const absolutePath = path.resolve(projectPath)
+
+        if (!fs.existsSync(absolutePath)) {
+          cliLogger.error(`Directory does not exist: ${absolutePath}`)
+          process.exit(EXIT_NO_RESTART)
+        }
+
+        s.start('Looking up channel for project...')
+
+        // Check if channel already exists for this directory
+        try {
+          const db = getDatabase()
+          const existingChannel = db
+            .prepare(
+              'SELECT channel_id FROM channel_directories WHERE directory = ? AND channel_type = ?',
+            )
+            .get(absolutePath, 'text') as { channel_id: string } | undefined
+
+          if (existingChannel) {
+            channelId = existingChannel.channel_id
+            s.message(`Found existing channel: ${channelId}`)
+          } else {
+            // Need to create a new channel
+            s.message('Creating new channel...')
+
+            if (!appId) {
+              s.stop('Missing app ID')
+              cliLogger.error(
+                'App ID is required to create channels. Use --app-id or run `kimaki` first.',
+              )
+              process.exit(EXIT_NO_RESTART)
+            }
+
+            const client = await createDiscordClient()
+
+            await new Promise<void>((resolve, reject) => {
+              client.once(Events.ClientReady, () => {
+                resolve()
+              })
+              client.once(Events.Error, reject)
+              client.login(botToken)
+            })
+
+            // Get guild from existing channels or first available
+            const guild = await (async () => {
+              // Try to find a guild from existing channels
+              const existingChannelRow = db
+                .prepare(
+                  'SELECT channel_id FROM channel_directories ORDER BY created_at DESC LIMIT 1',
+                )
+                .get() as { channel_id: string } | undefined
+
+              if (existingChannelRow) {
+                try {
+                  const ch = await client.channels.fetch(existingChannelRow.channel_id)
+                  if (ch && 'guild' in ch && ch.guild) {
+                    return ch.guild
+                  }
+                } catch {
+                  // Channel might be deleted, continue
+                }
+              }
+              // Fall back to first guild
+              const firstGuild = client.guilds.cache.first()
+              if (!firstGuild) {
+                throw new Error('No guild found. Add the bot to a server first.')
+              }
+              return firstGuild
+            })()
+
+            const { textChannelId } = await createProjectChannels({
+              guild,
+              projectDirectory: absolutePath,
+              appId,
+              botName: client.user?.username,
+            })
+
+            channelId = textChannelId
+            s.message(`Created channel: ${channelId}`)
+
+            client.destroy()
+          }
+        } catch (e) {
+          s.stop('Failed to resolve project')
+          throw e
+        }
+      }
+
       s.start('Fetching channel info...')
 
       // Get channel info to extract directory from topic
