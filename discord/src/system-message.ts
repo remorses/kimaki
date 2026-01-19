@@ -36,7 +36,11 @@ ${
 
 To start a new thread/session in this channel programmatically, run:
 
-npx -y kimaki start-session --channel ${channelId} --prompt "your prompt here"
+npx -y kimaki send --channel ${channelId} --prompt "your prompt here"
+
+Use --notify-only to create a notification thread without starting an AI session:
+
+npx -y kimaki send --channel ${channelId} --prompt "User cancelled subscription" --notify-only
 
 This is useful for automation (cron jobs, GitHub webhooks, n8n, etc.)
 `

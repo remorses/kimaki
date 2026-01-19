@@ -632,8 +632,8 @@ async function run({ restart, addChannels }: CliOptions) {
     for (const channel of channels) {
       if (channel.kimakiDirectory) {
         db.prepare(
-          'INSERT OR IGNORE INTO channel_directories (channel_id, directory, channel_type) VALUES (?, ?, ?)',
-        ).run(channel.id, channel.kimakiDirectory, 'text')
+          'INSERT OR IGNORE INTO channel_directories (channel_id, directory, channel_type, app_id) VALUES (?, ?, ?, ?)',
+        ).run(channel.id, channel.kimakiDirectory, 'text', channel.kimakiApp || null)
 
         const voiceChannel = guild.channels.cache.find(
           (ch) => ch.type === ChannelType.GuildVoice && ch.name === channel.name,
@@ -641,8 +641,8 @@ async function run({ restart, addChannels }: CliOptions) {
 
         if (voiceChannel) {
           db.prepare(
-            'INSERT OR IGNORE INTO channel_directories (channel_id, directory, channel_type) VALUES (?, ?, ?)',
-          ).run(voiceChannel.id, channel.kimakiDirectory, 'voice')
+            'INSERT OR IGNORE INTO channel_directories (channel_id, directory, channel_type, app_id) VALUES (?, ?, ?, ?)',
+          ).run(voiceChannel.id, channel.kimakiDirectory, 'voice', channel.kimakiApp || null)
         }
       }
     }
@@ -1002,17 +1002,22 @@ cli
 // Magic prefix used to identify bot-initiated sessions.
 // The running bot will recognize this prefix and start a session.
 const BOT_SESSION_PREFIX = '🤖 **Bot-initiated session**'
+// Notify-only prefix - bot won't start a session, just creates thread for notifications.
+// Reply to the thread to start a session with the notification as context.
+const BOT_NOTIFY_PREFIX = '📢 **Notification**'
 
 cli
   .command(
-    'start-session',
-    'Start a new session in a Discord channel (creates thread, bot handles the rest)',
+    'send',
+    'Send a message to Discord channel, creating a thread. Use --notify-only to skip AI session.',
   )
+  .alias('start-session') // backwards compatibility
   .option('-c, --channel <channelId>', 'Discord channel ID')
   .option('-d, --project <path>', 'Project directory (alternative to --channel)')
-  .option('-p, --prompt <prompt>', 'Initial prompt for the session')
+  .option('-p, --prompt <prompt>', 'Message content')
   .option('-n, --name [name]', 'Thread name (optional, defaults to prompt preview)')
   .option('-a, --app-id [appId]', 'Bot application ID (required if no local database)')
+  .option('--notify-only', 'Create notification thread without starting AI session')
   .action(
     async (options: {
       channel?: string
@@ -1020,10 +1025,20 @@ cli
       prompt?: string
       name?: string
       appId?: string
+      notifyOnly?: boolean
     }) => {
       try {
-        let { channel: channelId, prompt, name, appId: optionAppId } = options
+        let { channel: channelId, prompt, name, appId: optionAppId, notifyOnly } = options
         const { project: projectPath } = options
+        
+        // Get raw channel ID from argv to prevent JS number precision loss on large Discord IDs
+        // cac parses large numbers and loses precision, so we extract the original string value
+        if (channelId) {
+          const channelArgIndex = process.argv.findIndex((arg) => arg === '--channel' || arg === '-c')
+          if (channelArgIndex !== -1 && process.argv[channelArgIndex + 1]) {
+            channelId = process.argv[channelArgIndex + 1]
+          }
+        }
 
         if (!channelId && !projectPath) {
           cliLogger.error('Either --channel or --project is required')
@@ -1092,18 +1107,43 @@ cli
 
         s.start('Looking up channel for project...')
 
-        // Check if channel already exists for this directory
+        // Check if channel already exists for this directory or a parent directory
+        // This allows running from subfolders of a registered project
         try {
           const db = getDatabase()
-          const existingChannel = db
-            .prepare(
-              'SELECT channel_id FROM channel_directories WHERE directory = ? AND channel_type = ?',
-            )
-            .get(absolutePath, 'text') as { channel_id: string } | undefined
+          
+          // Helper to find channel for a path (prefers current bot's channel)
+          const findChannelForPath = (dirPath: string): { channel_id: string; directory: string } | undefined => {
+            const withAppId = db
+              .prepare(
+                'SELECT channel_id, directory FROM channel_directories WHERE directory = ? AND channel_type = ? AND app_id = ?',
+              )
+              .get(dirPath, 'text', appId) as { channel_id: string; directory: string } | undefined
+            if (withAppId) return withAppId
+            
+            return db
+              .prepare(
+                'SELECT channel_id, directory FROM channel_directories WHERE directory = ? AND channel_type = ?',
+              )
+              .get(dirPath, 'text') as { channel_id: string; directory: string } | undefined
+          }
+          
+          // Try exact match first, then walk up parent directories
+          let existingChannel: { channel_id: string; directory: string } | undefined
+          let searchPath = absolutePath
+          while (searchPath !== path.dirname(searchPath)) {
+            existingChannel = findChannelForPath(searchPath)
+            if (existingChannel) break
+            searchPath = path.dirname(searchPath)
+          }
 
           if (existingChannel) {
             channelId = existingChannel.channel_id
-            s.message(`Found existing channel: ${channelId}`)
+            if (existingChannel.directory !== absolutePath) {
+              s.message(`Found parent project channel: ${existingChannel.directory}`)
+            } else {
+              s.message(`Found existing channel: ${channelId}`)
+            }
           } else {
             // Need to create a new channel
             s.message('Creating new channel...')
@@ -1128,12 +1168,12 @@ cli
 
             // Get guild from existing channels or first available
             const guild = await (async () => {
-              // Try to find a guild from existing channels
+              // Try to find a guild from existing channels belonging to this bot
               const existingChannelRow = db
                 .prepare(
-                  'SELECT channel_id FROM channel_directories ORDER BY created_at DESC LIMIT 1',
+                  'SELECT channel_id FROM channel_directories WHERE app_id = ? ORDER BY created_at DESC LIMIT 1',
                 )
-                .get() as { channel_id: string } | undefined
+                .get(appId) as { channel_id: string } | undefined
 
               if (existingChannelRow) {
                 try {
@@ -1145,7 +1185,7 @@ cli
                   // Channel might be deleted, continue
                 }
               }
-              // Fall back to first guild
+              // Fall back to first guild the bot is in
               const firstGuild = client.guilds.cache.first()
               if (!firstGuild) {
                 throw new Error('No guild found. Add the bot to a server first.')
@@ -1224,7 +1264,8 @@ cli
       s.message('Creating starter message...')
 
       // Create starter message with magic prefix
-      // The full prompt goes in the message so the bot can read it
+      // BOT_SESSION_PREFIX triggers AI session, BOT_NOTIFY_PREFIX is notification-only
+      const messagePrefix = notifyOnly ? BOT_NOTIFY_PREFIX : BOT_SESSION_PREFIX
       const starterMessageResponse = await fetch(
         `https://discord.com/api/v10/channels/${channelId}/messages`,
         {
@@ -1234,7 +1275,7 @@ cli
             'Content-Type': 'application/json',
           },
           body: JSON.stringify({
-            content: `${BOT_SESSION_PREFIX}\n${prompt}`,
+            content: `${messagePrefix}\n${prompt}`,
           }),
         },
       )
@@ -1278,10 +1319,11 @@ cli
 
       const threadUrl = `https://discord.com/channels/${channelData.guild_id}/${threadData.id}`
 
-      note(
-        `Thread: ${threadData.name}\nDirectory: ${projectDirectory}\n\nThe running bot will pick this up and start the session.\n\nURL: ${threadUrl}`,
-        '✅ Thread Created',
-      )
+      const successMessage = notifyOnly
+        ? `Thread: ${threadData.name}\nDirectory: ${projectDirectory}\n\nNotification created. Reply to start a session.\n\nURL: ${threadUrl}`
+        : `Thread: ${threadData.name}\nDirectory: ${projectDirectory}\n\nThe running bot will pick this up and start the session.\n\nURL: ${threadUrl}`
+
+      note(successMessage, '✅ Thread Created')
 
       console.log(threadUrl)
 

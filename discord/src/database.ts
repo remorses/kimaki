@@ -61,6 +61,13 @@ export function getDatabase(): Database.Database {
       )
     `)
 
+    // Migration: add app_id column to channel_directories for multi-bot support
+    try {
+      db.exec(`ALTER TABLE channel_directories ADD COLUMN app_id TEXT`)
+    } catch {
+      // Column already exists, ignore
+    }
+
     db.exec(`
       CREATE TABLE IF NOT EXISTS bot_api_keys (
         app_id TEXT PRIMARY KEY,

@@ -191,12 +191,15 @@ npx -y kimaki@latest
 npx -y kimaki upload-to-discord --session <session-id> <file1> [file2...]
 
 # Start a session programmatically (useful for CI/automation)
-npx -y kimaki start-session --channel <channel-id> --prompt "your prompt"
+npx -y kimaki send --channel <channel-id> --prompt "your prompt"
+
+# Send notification without starting AI session (reply to start session later)
+npx -y kimaki send --channel <channel-id> --prompt "User cancelled subscription" --notify-only
 ```
 
 ## Programmatically Start Sessions
 
-You can start Kimaki sessions from CI pipelines, cron jobs, or any automation. The `start-session` command creates a Discord thread, and the running bot on your machine picks it up.
+You can start Kimaki sessions from CI pipelines, cron jobs, or any automation. The `send` command creates a Discord thread, and the running bot on your machine picks it up.
 
 ### Environment Variables
 
@@ -207,11 +210,12 @@ You can start Kimaki sessions from CI pipelines, cron jobs, or any automation. T
 ### CLI Options
 
 ```bash
-npx -y kimaki start-session \
+npx -y kimaki send \
   --channel <channel-id>  # Required: Discord channel ID
-  --prompt <prompt>       # Required: Initial prompt for the session
+  --prompt <prompt>       # Required: Message content
   --name <name>           # Optional: Thread name (defaults to prompt preview)
   --app-id <app-id>       # Optional: Bot application ID for validation
+  --notify-only           # Optional: Create notification thread without starting AI session
 ```
 
 ### Example: GitHub Actions on New Issues
@@ -234,7 +238,7 @@ jobs:
         env:
           KIMAKI_BOT_TOKEN: ${{ secrets.KIMAKI_BOT_TOKEN }}
         run: |
-          npx -y kimaki start-session \
+          npx -y kimaki send \
             --channel "1234567890123456789" \
             --prompt "Investigate issue ${{ github.event.issue.html_url }} using gh cli. Try fixing it in a new worktree ./${{ github.event.issue.number }}" \
             --name "Issue #${{ github.event.issue.number }}"
@@ -247,10 +251,12 @@ jobs:
 
 ### How It Works
 
-1. **CI runs `start-session`** → Creates a Discord thread with magic prefix
+1. **CI runs `send`** → Creates a Discord thread with magic prefix
 2. **Running bot detects thread** → Recognizes the `🤖 **Bot-initiated session**` prefix
 3. **Bot starts OpenCode session** → Uses the prompt from the thread
 4. **AI investigates** → Runs on your machine with full codebase access
+
+Use `--notify-only` for notifications that don't need immediate AI response (e.g., subscription events). Reply to the thread later to start a session with the notification as context.
 
 ## How It Works
 

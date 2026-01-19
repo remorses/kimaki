@@ -187,17 +187,6 @@ export async function startDiscordBot({
         const thread = channel as ThreadChannel
         discordLogger.log(`Message in thread ${thread.name} (${thread.id})`)
 
-        const row = getDatabase()
-          .prepare('SELECT session_id FROM thread_sessions WHERE thread_id = ?')
-          .get(thread.id) as { session_id: string } | undefined
-
-        if (!row) {
-          discordLogger.log(`No session found for thread ${thread.id}`)
-          return
-        }
-
-        voiceLogger.log(`[SESSION] Found session ${row.session_id} for thread ${thread.id}`)
-
         const parent = thread.parent as TextChannel | null
         let projectDirectory: string | undefined
         let channelAppId: string | undefined
@@ -227,6 +216,43 @@ export async function startDiscordBot({
           })
           return
         }
+
+        const row = getDatabase()
+          .prepare('SELECT session_id FROM thread_sessions WHERE thread_id = ?')
+          .get(thread.id) as { session_id: string } | undefined
+
+        // No existing session - start a new one (e.g., replying to a notification thread)
+        if (!row) {
+          discordLogger.log(`No session for thread ${thread.id}, starting new session`)
+          
+          if (!projectDirectory) {
+            discordLogger.log(`Cannot start session: no project directory for thread ${thread.id}`)
+            return
+          }
+
+          // Include starter message (notification) as context for the session
+          let prompt = message.content
+          const starterMessage = await thread.fetchStarterMessage().catch(() => null)
+          if (starterMessage?.content) {
+            // Strip notification prefix if present
+            const notificationContent = starterMessage.content
+              .replace(/^📢 \*\*Notification\*\*\n?/, '')
+              .trim()
+            if (notificationContent) {
+              prompt = `Context from notification:\n${notificationContent}\n\nUser request:\n${message.content}`
+            }
+          }
+
+          await handleOpencodeSession({
+            prompt,
+            thread,
+            projectDirectory,
+            channelId: parent?.id || '',
+          })
+          return
+        }
+
+        voiceLogger.log(`[SESSION] Found session ${row.session_id} for thread ${thread.id}`)
 
         let messageContent = message.content || ''
 
@@ -393,10 +419,10 @@ export async function startDiscordBot({
     }
   })
 
-  // Magic prefix used by `kimaki start-session` CLI command to initiate sessions
+  // Magic prefix used by `kimaki send` CLI command to initiate sessions
   const BOT_SESSION_PREFIX = '🤖 **Bot-initiated session**'
 
-  // Handle bot-initiated threads created by `kimaki start-session`
+  // Handle bot-initiated threads created by `kimaki send`
   discordClient.on(Events.ThreadCreate, async (thread, newlyCreated) => {
     try {
       if (!newlyCreated) {

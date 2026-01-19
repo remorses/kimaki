@@ -1,5 +1,16 @@
 # Changelog
 
+## 0.4.37
+
+### Patch Changes
+
+- rename `start-session` → **`send`** command (alias kept for backwards compat)
+- add **`--notify-only`** flag to create notification threads without starting AI session
+- add **`app_id`** column to channel_directories for multi-bot support
+- fix **JS number precision loss** for large Discord IDs in CLI arguments
+- add **subfolder lookup** - walks up parent directories to find closest registered project
+- fix **notification thread replies** to start new session with notification as context
+
 ## 0.4.36
 
 ### Patch Changes

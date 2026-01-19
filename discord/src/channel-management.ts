@@ -90,15 +90,15 @@ export async function createProjectChannels({
 
   getDatabase()
     .prepare(
-      'INSERT OR REPLACE INTO channel_directories (channel_id, directory, channel_type) VALUES (?, ?, ?)',
+      'INSERT OR REPLACE INTO channel_directories (channel_id, directory, channel_type, app_id) VALUES (?, ?, ?, ?)',
     )
-    .run(textChannel.id, projectDirectory, 'text')
+    .run(textChannel.id, projectDirectory, 'text', appId)
 
   getDatabase()
     .prepare(
-      'INSERT OR REPLACE INTO channel_directories (channel_id, directory, channel_type) VALUES (?, ?, ?)',
+      'INSERT OR REPLACE INTO channel_directories (channel_id, directory, channel_type, app_id) VALUES (?, ?, ?, ?)',
     )
-    .run(voiceChannel.id, projectDirectory, 'voice')
+    .run(voiceChannel.id, projectDirectory, 'voice', appId)
 
   return {
     textChannelId: textChannel.id,
