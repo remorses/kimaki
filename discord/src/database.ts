@@ -68,6 +68,14 @@ export function getDatabase(): Database.Database {
       // Column already exists, ignore
     }
 
+    // Table for threads that should auto-start a session (created by CLI without --notify-only)
+    db.exec(`
+      CREATE TABLE IF NOT EXISTS pending_auto_start (
+        thread_id TEXT PRIMARY KEY,
+        created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+      )
+    `)
+
     db.exec(`
       CREATE TABLE IF NOT EXISTS bot_api_keys (
         app_id TEXT PRIMARY KEY,

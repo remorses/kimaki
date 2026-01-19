@@ -999,12 +999,7 @@ cli
     }
   })
 
-// Magic prefix used to identify bot-initiated sessions.
-// The running bot will recognize this prefix and start a session.
-const BOT_SESSION_PREFIX = '🤖 **Bot-initiated session**'
-// Notify-only prefix - bot won't start a session, just creates thread for notifications.
-// Reply to the thread to start a session with the notification as context.
-const BOT_NOTIFY_PREFIX = '📢 **Notification**'
+
 
 cli
   .command(
@@ -1263,9 +1258,7 @@ cli
 
       s.message('Creating starter message...')
 
-      // Create starter message with magic prefix
-      // BOT_SESSION_PREFIX triggers AI session, BOT_NOTIFY_PREFIX is notification-only
-      const messagePrefix = notifyOnly ? BOT_NOTIFY_PREFIX : BOT_SESSION_PREFIX
+      // Create starter message with just the prompt (no prefix)
       const starterMessageResponse = await fetch(
         `https://discord.com/api/v10/channels/${channelId}/messages`,
         {
@@ -1275,7 +1268,7 @@ cli
             'Content-Type': 'application/json',
           },
           body: JSON.stringify({
-            content: `${messagePrefix}\n${prompt}`,
+            content: prompt,
           }),
         },
       )
@@ -1314,6 +1307,14 @@ cli
       }
 
       const threadData = (await threadResponse.json()) as { id: string; name: string }
+
+      // Mark thread for auto-start if not notify-only
+      if (!notifyOnly) {
+        const db = getDatabase()
+        db.prepare('INSERT OR REPLACE INTO pending_auto_start (thread_id) VALUES (?)').run(
+          threadData.id,
+        )
+      }
 
       s.stop('Thread created!')
 

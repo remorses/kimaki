@@ -251,8 +251,8 @@ jobs:
 
 ### How It Works
 
-1. **CI runs `send`** → Creates a Discord thread with magic prefix
-2. **Running bot detects thread** → Recognizes the `🤖 **Bot-initiated session**` prefix
+1. **CI runs `send`** → Creates a Discord thread with your prompt
+2. **Running bot detects thread** → Automatically starts a session
 3. **Bot starts OpenCode session** → Uses the prompt from the thread
 4. **AI investigates** → Runs on your machine with full codebase access
 

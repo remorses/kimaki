@@ -230,17 +230,11 @@ export async function startDiscordBot({
             return
           }
 
-          // Include starter message (notification) as context for the session
+          // Include starter message as context for the session
           let prompt = message.content
           const starterMessage = await thread.fetchStarterMessage().catch(() => null)
-          if (starterMessage?.content) {
-            // Strip notification prefix if present
-            const notificationContent = starterMessage.content
-              .replace(/^📢 \*\*Notification\*\*\n?/, '')
-              .trim()
-            if (notificationContent) {
-              prompt = `Context from notification:\n${notificationContent}\n\nUser request:\n${message.content}`
-            }
+          if (starterMessage?.content && starterMessage.content !== message.content) {
+            prompt = `Context from thread:\n${starterMessage.content}\n\nUser request:\n${message.content}`
           }
 
           await handleOpencodeSession({
@@ -419,15 +413,27 @@ export async function startDiscordBot({
     }
   })
 
-  // Magic prefix used by `kimaki send` CLI command to initiate sessions
-  const BOT_SESSION_PREFIX = '🤖 **Bot-initiated session**'
-
-  // Handle bot-initiated threads created by `kimaki send`
+  // Handle bot-initiated threads created by `kimaki send` (without --notify-only)
   discordClient.on(Events.ThreadCreate, async (thread, newlyCreated) => {
     try {
       if (!newlyCreated) {
         return
       }
+
+      // Check if this thread is marked for auto-start in the database
+      const db = getDatabase()
+      const pendingRow = db
+        .prepare('SELECT thread_id FROM pending_auto_start WHERE thread_id = ?')
+        .get(thread.id) as { thread_id: string } | undefined
+
+      if (!pendingRow) {
+        return // Not a CLI-initiated auto-start thread
+      }
+
+      // Remove from pending table
+      db.prepare('DELETE FROM pending_auto_start WHERE thread_id = ?').run(thread.id)
+
+      discordLogger.log(`[BOT_SESSION] Detected bot-initiated thread: ${thread.name}`)
 
       // Only handle threads in text channels
       const parent = thread.parent as TextChannel | null
@@ -435,26 +441,14 @@ export async function startDiscordBot({
         return
       }
 
-      // Get the starter message to check for magic prefix
+      // Get the starter message for the prompt
       const starterMessage = await thread.fetchStarterMessage().catch(() => null)
       if (!starterMessage) {
         discordLogger.log(`[THREAD_CREATE] Could not fetch starter message for thread ${thread.id}`)
         return
       }
 
-      // Only handle messages from this bot with the magic prefix
-      if (starterMessage.author.id !== discordClient.user?.id) {
-        return
-      }
-
-      if (!starterMessage.content.startsWith(BOT_SESSION_PREFIX)) {
-        return
-      }
-
-      discordLogger.log(`[BOT_SESSION] Detected bot-initiated thread: ${thread.name}`)
-
-      // Extract the prompt (everything after the prefix)
-      const prompt = starterMessage.content.slice(BOT_SESSION_PREFIX.length).trim()
+      const prompt = starterMessage.content.trim()
       if (!prompt) {
         discordLogger.log(`[BOT_SESSION] No prompt found in starter message`)
         return
