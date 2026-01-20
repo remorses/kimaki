@@ -46,6 +46,7 @@ import { spawn, spawnSync, execSync, type ExecSyncOptions } from 'node:child_pro
 import http from 'node:http'
 import { setDataDir, getDataDir, getLockPort } from './config.js'
 import { extractTagsArrays } from './xml.js'
+import { sanitizeAgentName } from './commands/agent.js'
 
 const cliLogger = createLogger('CLI')
 const cli = cac('kimaki')
@@ -176,11 +177,23 @@ type CliOptions = {
 // Commands to skip when registering user commands (reserved names)
 const SKIP_USER_COMMANDS = ['init']
 
-async function registerCommands(
-  token: string,
-  appId: string,
-  userCommands: OpencodeCommand[] = [],
-) {
+type AgentInfo = {
+  name: string
+  description?: string
+  mode: string
+}
+
+async function registerCommands({
+  token,
+  appId,
+  userCommands = [],
+  agents = [],
+}: {
+  token: string
+  appId: string
+  userCommands?: OpencodeCommand[]
+  agents?: AgentInfo[]
+}) {
   const commands = [
     new SlashCommandBuilder()
       .setName('resume')
@@ -325,6 +338,22 @@ async function registerCommands(
             .setRequired(false)
           return option
         })
+        .toJSON(),
+    )
+  }
+
+  // Add agent-specific quick commands like /plan-agent, /build-agent
+  // Filter to primary/all mode agents (same as /agent command shows)
+  const primaryAgents = agents.filter((a) => a.mode === 'primary' || a.mode === 'all')
+  for (const agent of primaryAgents) {
+    const sanitizedName = sanitizeAgentName(agent.name)
+    const commandName = `${sanitizedName}-agent`
+    const description = agent.description || `Switch to ${agent.name} agent`
+
+    commands.push(
+      new SlashCommandBuilder()
+        .setName(commandName.slice(0, 32)) // Discord limits to 32 chars
+        .setDescription(description.slice(0, 100))
         .toJSON(),
     )
   }
@@ -669,8 +698,8 @@ async function run({ restart, addChannels }: CliOptions) {
 
   s.start('Fetching OpenCode data...')
 
-  // Fetch projects and commands in parallel
-  const [projects, allUserCommands] = await Promise.all([
+  // Fetch projects, commands, and agents in parallel
+  const [projects, allUserCommands, allAgents] = await Promise.all([
     getClient()
       .project.list({})
       .then((r) => r.data || [])
@@ -682,6 +711,10 @@ async function run({ restart, addChannels }: CliOptions) {
       }),
     getClient()
       .command.list({ query: { directory: currentDir } })
+      .then((r) => r.data || [])
+      .catch(() => []),
+    getClient()
+      .app.agents({ query: { directory: currentDir } })
       .then((r) => r.data || [])
       .catch(() => []),
   ])
@@ -805,7 +838,7 @@ async function run({ restart, addChannels }: CliOptions) {
   }
 
   cliLogger.log('Registering slash commands asynchronously...')
-  void registerCommands(token, appId, allUserCommands)
+  void registerCommands({ token, appId, userCommands: allUserCommands, agents: allAgents })
     .then(() => {
       cliLogger.log('Slash commands registered!')
     })

@@ -185,6 +185,15 @@ export function setSessionModel(sessionId: string, modelId: string): void {
 }
 
 /**
+ * Clear the model preference for a session.
+ * Used when switching agents so the agent's model takes effect.
+ */
+export function clearSessionModel(sessionId: string): void {
+  const db = getDatabase()
+  db.prepare('DELETE FROM session_models WHERE session_id = ?').run(sessionId)
+}
+
+/**
  * Get the agent preference for a channel.
  */
 export function getChannelAgent(channelId: string): string | undefined {

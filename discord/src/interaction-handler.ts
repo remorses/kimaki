@@ -20,7 +20,7 @@ import {
   handleProviderSelectMenu,
   handleModelSelectMenu,
 } from './commands/model.js'
-import { handleAgentCommand, handleAgentSelectMenu } from './commands/agent.js'
+import { handleAgentCommand, handleAgentSelectMenu, handleQuickAgentCommand } from './commands/agent.js'
 import { handleAskQuestionSelectMenu } from './commands/ask-question.js'
 import { handleQueueCommand, handleClearQueueCommand } from './commands/queue.js'
 import { handleUndoCommand, handleRedoCommand } from './commands/undo-redo.js'
@@ -134,6 +134,12 @@ export function registerInteractionHandler({
           case 'redo':
             await handleRedoCommand({ command: interaction, appId })
             return
+        }
+
+        // Handle quick agent commands (ending with -agent suffix, but not the base /agent command)
+        if (interaction.commandName.endsWith('-agent') && interaction.commandName !== 'agent') {
+          await handleQuickAgentCommand({ command: interaction, appId })
+          return
         }
 
         // Handle user-defined commands (ending with -cmd suffix)

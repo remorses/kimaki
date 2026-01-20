@@ -641,6 +641,39 @@ export async function handleOpencodeSession({
             requestId: questionRequest.id,
             input: { questions: questionRequest.questions },
           })
+
+          // Process queued messages if any - queued message will cancel the pending question
+          const queue = messageQueue.get(thread.id)
+          if (queue && queue.length > 0) {
+            const nextMessage = queue.shift()!
+            if (queue.length === 0) {
+              messageQueue.delete(thread.id)
+            }
+
+            sessionLogger.log(
+              `[QUEUE] Question shown but queue has messages, processing from ${nextMessage.username}`,
+            )
+
+            await sendThreadMessage(
+              thread,
+              `» **${nextMessage.username}:** ${nextMessage.prompt.slice(0, 150)}${nextMessage.prompt.length > 150 ? '...' : ''}`,
+            )
+
+            // handleOpencodeSession will call cancelPendingQuestion, which cancels the dropdown
+            setImmediate(() => {
+              handleOpencodeSession({
+                prompt: nextMessage.prompt,
+                thread,
+                projectDirectory: directory,
+                images: nextMessage.images,
+                channelId,
+              }).catch(async (e) => {
+                sessionLogger.error(`[QUEUE] Failed to process queued message:`, e)
+                const errorMsg = e instanceof Error ? e.message : String(e)
+                await sendThreadMessage(thread, `✗ Queued message failed: ${errorMsg.slice(0, 200)}`)
+              })
+            })
+          }
         } else if (event.type === 'session.idle') {
           // Session is done processing - abort to signal completion
           if (event.properties.sessionID === session.id) {
@@ -774,10 +807,23 @@ export async function handleOpencodeSession({
     const parts = [{ type: 'text' as const, text: promptWithImagePaths }, ...images]
     sessionLogger.log(`[PROMPT] Parts to send:`, parts.length)
 
+    // Get agent preference: session-level overrides channel-level
+    const agentPreference =
+      getSessionAgent(session.id) || (channelId ? getChannelAgent(channelId) : undefined)
+    if (agentPreference) {
+      sessionLogger.log(`[AGENT] Using agent preference: ${agentPreference}`)
+    }
+
     // Get model preference: session-level overrides channel-level
+    // BUT: if an agent is set, don't pass model param so the agent's model takes effect
     const modelPreference =
       getSessionModel(session.id) || (channelId ? getChannelModel(channelId) : undefined)
     const modelParam = (() => {
+      // When an agent is set, let the agent's model config take effect
+      if (agentPreference) {
+        sessionLogger.log(`[MODEL] Skipping model param, agent "${agentPreference}" controls model`)
+        return undefined
+      }
       if (!modelPreference) {
         return undefined
       }
@@ -789,13 +835,6 @@ export async function handleOpencodeSession({
       sessionLogger.log(`[MODEL] Using model preference: ${modelPreference}`)
       return { providerID, modelID }
     })()
-
-    // Get agent preference: session-level overrides channel-level
-    const agentPreference =
-      getSessionAgent(session.id) || (channelId ? getChannelAgent(channelId) : undefined)
-    if (agentPreference) {
-      sessionLogger.log(`[AGENT] Using agent preference: ${agentPreference}`)
-    }
 
     // Use session.command API for slash commands, session.prompt for regular messages
     const response = command
@@ -850,9 +889,8 @@ export async function handleOpencodeSession({
 
     return { sessionID: session.id, result: response.data, port }
   } catch (error) {
-    sessionLogger.error(`ERROR: Failed to send prompt:`, error)
-
     if (!isAbortError(error, abortController.signal)) {
+      sessionLogger.error(`ERROR: Failed to send prompt:`, error)
       abortController.abort('error')
 
       if (originalMessage) {
