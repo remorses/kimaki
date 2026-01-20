@@ -181,6 +181,7 @@ type AgentInfo = {
   name: string
   description?: string
   mode: string
+  hidden?: boolean
 }
 
 async function registerCommands({
@@ -343,8 +344,10 @@ async function registerCommands({
   }
 
   // Add agent-specific quick commands like /plan-agent, /build-agent
-  // Filter to primary/all mode agents (same as /agent command shows)
-  const primaryAgents = agents.filter((a) => a.mode === 'primary' || a.mode === 'all')
+  // Filter to primary/all mode agents (same as /agent command shows), excluding hidden agents
+  const primaryAgents = agents.filter(
+    (a) => (a.mode === 'primary' || a.mode === 'all') && !a.hidden,
+  )
   for (const agent of primaryAgents) {
     const sanitizedName = sanitizeAgentName(agent.name)
     const commandName = `${sanitizedName}-agent`
