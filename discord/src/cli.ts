@@ -1309,11 +1309,16 @@ cli
       const threadData = (await threadResponse.json()) as { id: string; name: string }
 
       // Mark thread for auto-start if not notify-only
+      // This is optional - only works if local database exists (for local bot auto-start)
       if (!notifyOnly) {
-        const db = getDatabase()
-        db.prepare('INSERT OR REPLACE INTO pending_auto_start (thread_id) VALUES (?)').run(
-          threadData.id,
-        )
+        try {
+          const db = getDatabase()
+          db.prepare('INSERT OR REPLACE INTO pending_auto_start (thread_id) VALUES (?)').run(
+            threadData.id,
+          )
+        } catch {
+          // Database not available (e.g., CI environment) - skip auto-start marking
+        }
       }
 
       s.stop('Thread created!')
