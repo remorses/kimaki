@@ -11,7 +11,9 @@ export async function ensureKimakiCategory(
   guild: Guild,
   botName?: string,
 ): Promise<CategoryChannel> {
-  const categoryName = botName ? `Kimaki ${botName}` : 'Kimaki'
+  // Skip appending bot name if it's already "kimaki" to avoid "Kimaki kimaki"
+  const isKimakiBot = botName?.toLowerCase() === 'kimaki'
+  const categoryName = botName && !isKimakiBot ? `Kimaki ${botName}` : 'Kimaki'
 
   const existingCategory = guild.channels.cache.find((channel): channel is CategoryChannel => {
     if (channel.type !== ChannelType.GuildCategory) {
@@ -35,7 +37,9 @@ export async function ensureKimakiAudioCategory(
   guild: Guild,
   botName?: string,
 ): Promise<CategoryChannel> {
-  const categoryName = botName ? `Kimaki Audio ${botName}` : 'Kimaki Audio'
+  // Skip appending bot name if it's already "kimaki" to avoid "Kimaki Audio kimaki"
+  const isKimakiBot = botName?.toLowerCase() === 'kimaki'
+  const categoryName = botName && !isKimakiBot ? `Kimaki Audio ${botName}` : 'Kimaki Audio'
 
   const existingCategory = guild.channels.cache.find((channel): channel is CategoryChannel => {
     if (channel.type !== ChannelType.GuildCategory) {

@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.4.38
+
+### Patch Changes
+
+- fix **duplicate "kimaki"** in category names - now creates "Kimaki" instead of "Kimaki kimaki" when bot is named kimaki
+
 ## 0.4.37
 
 ### Patch Changes
