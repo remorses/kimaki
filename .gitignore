@@ -11,3 +11,6 @@ useraudio
 *.wav
 discord-audio-logs
 tmp
+
+# opensrc - source code for packages
+opensrc/
