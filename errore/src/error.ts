@@ -21,9 +21,14 @@ const isAnyTaggedError = (value: unknown): value is AnyTaggedError => {
 }
 
 /**
+ * Any class that extends Error
+ */
+type ErrorClass = new (...args: any[]) => Error
+
+/**
  * Instance type produced by TaggedError factory
  */
-export type TaggedErrorInstance<Tag extends string, Props> = Error & {
+export type TaggedErrorInstance<Tag extends string, Props, Base extends Error = Error> = Base & {
   readonly _tag: Tag
   toJSON(): object
 } & Readonly<Props>
@@ -31,10 +36,10 @@ export type TaggedErrorInstance<Tag extends string, Props> = Error & {
 /**
  * Class type produced by TaggedError factory
  */
-export type TaggedErrorClass<Tag extends string, Props> = {
-  new (...args: keyof Props extends never ? [args?: {}] : [args: Props]): TaggedErrorInstance<Tag, Props>
+export type TaggedErrorClass<Tag extends string, Props, Base extends Error = Error> = {
+  new (...args: keyof Props extends never ? [args?: {}] : [args: Props]): TaggedErrorInstance<Tag, Props, Base>
   /** Type guard for this error class */
-  is(value: unknown): value is TaggedErrorInstance<Tag, Props>
+  is(value: unknown): value is TaggedErrorInstance<Tag, Props, Base>
 }
 
 /**
@@ -54,20 +59,43 @@ export type TaggedErrorClass<Tag extends string, Props> = {
  * // Type guard
  * NotFoundError.is(err) // true
  * TaggedError.is(err)   // true (any tagged error)
+ *
+ * @example
+ * // With custom base class
+ * class AppError extends Error {
+ *   statusCode: number = 500
+ *   report() { console.log(this.message) }
+ * }
+ *
+ * class NotFoundError extends TaggedError("NotFoundError", AppError)<{
+ *   id: string;
+ *   message: string;
+ * }>() {
+ *   statusCode = 404
+ * }
+ *
+ * const err = new NotFoundError({ id: "123", message: "Not found" });
+ * err.statusCode // 404
+ * err.report()   // works
  */
 export const TaggedError: {
-  <Tag extends string>(tag: Tag): <Props extends Record<string, unknown> = {}>() => TaggedErrorClass<Tag, Props>
+  <Tag extends string, BaseClass extends ErrorClass = typeof Error>(
+    tag: Tag,
+    BaseClass?: BaseClass,
+  ): <Props extends Record<string, unknown> = {}>() => TaggedErrorClass<Tag, Props, InstanceType<BaseClass>>
   /** Type guard for any TaggedError instance */
   is(value: unknown): value is AnyTaggedError
 } = Object.assign(
-  <Tag extends string>(tag: Tag) =>
-    <Props extends Record<string, unknown> = {}>(): TaggedErrorClass<Tag, Props> => {
-      class Base extends Error {
+  <Tag extends string, BaseClass extends ErrorClass = typeof Error>(tag: Tag, BaseClass?: BaseClass) =>
+    <Props extends Record<string, unknown> = {}>(): TaggedErrorClass<Tag, Props, InstanceType<BaseClass>> => {
+      const ActualBase = (BaseClass ?? Error) as typeof Error
+
+      class Tagged extends ActualBase {
         readonly _tag: Tag = tag
 
         /** Type guard for this error class */
-        static is(value: unknown): value is Base {
-          return value instanceof Base
+        static is(value: unknown): value is Tagged {
+          return value instanceof Tagged
         }
 
         constructor(args?: Props) {
@@ -101,7 +129,7 @@ export const TaggedError: {
         }
       }
 
-      return Base as unknown as TaggedErrorClass<Tag, Props>
+      return Tagged as unknown as TaggedErrorClass<Tag, Props, InstanceType<BaseClass>>
     },
   { is: isAnyTaggedError },
 )

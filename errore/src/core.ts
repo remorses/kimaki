@@ -1,4 +1,4 @@
-import { UnhandledError } from './error'
+import { UnhandledError } from './error.js'
 
 /**
  * Type guard: checks if value is an Error.
