@@ -327,6 +327,235 @@ async function getUserDashboard(
 }
 ```
 
+### Replacing `let` + try-catch with Expressions
+
+A common pattern is declaring a variable with `let`, then assigning inside try-catch for error recovery. This is ugly and error-prone. errore makes these into clean expressions.
+
+#### Pattern 1: Fallback value on error
+
+**Before:**
+```ts
+let config;
+try {
+  config = JSON.parse(fs.readFileSync('config.json', 'utf-8'))
+} catch (e) {
+  config = { port: 3000, debug: false }  // fallback
+}
+```
+
+**After:** Use `unwrapOr` for a one-liner
+```ts
+import { tryFn, unwrapOr } from 'errore'
+
+const config = unwrapOr(
+  tryFn(() => JSON.parse(fs.readFileSync('config.json', 'utf-8'))),
+  { port: 3000, debug: false }
+)
+```
+
+#### Pattern 2: Different fallback logic based on error
+
+**Before:**
+```ts
+let user;
+try {
+  user = await fetchUser(id)
+} catch (e) {
+  if (e.code === 'NOT_FOUND') {
+    user = await createDefaultUser(id)
+  } else {
+    throw e
+  }
+}
+```
+
+**After:** Use `isError` + conditional
+```ts
+const fetchResult = await fetchUser(id)
+const user = isError(fetchResult) && RecordNotFoundError.is(fetchResult)
+  ? await createDefaultUser(id)
+  : fetchResult
+
+// Or more explicitly:
+const user = (() => {
+  const result = await fetchUser(id)
+  if (RecordNotFoundError.is(result)) {
+    return createDefaultUser(id)
+  }
+  return result
+})()
+```
+
+#### Pattern 3: Retry on failure
+
+**Before:**
+```ts
+let result;
+let attempts = 0;
+while (attempts < 3) {
+  try {
+    result = await fetchData()
+    break
+  } catch (e) {
+    attempts++
+    if (attempts >= 3) throw e
+    await sleep(1000)
+  }
+}
+```
+
+**After:** Loop with early break
+```ts
+async function fetchWithRetry(): Promise<NetworkError | Data> {
+  for (let attempt = 0; attempt < 3; attempt++) {
+    const result = await fetchData()
+    if (isOk(result)) return result
+    
+    if (attempt < 2) await sleep(1000)  // don't sleep on last attempt
+  }
+  return new NetworkError({ url: '/api', message: 'Failed after 3 attempts' })
+}
+
+const result = await fetchWithRetry()
+```
+
+#### Pattern 4: Accumulating results, some may fail
+
+**Before:**
+```ts
+const results = []
+for (const id of ids) {
+  try {
+    const item = await fetchItem(id)
+    results.push(item)
+  } catch (e) {
+    console.warn(`Failed to fetch ${id}`)
+    // continue with others
+  }
+}
+```
+
+**After:** Use `partition` or filter
+```ts
+import { partition, isOk } from 'errore'
+
+const allResults = await Promise.all(ids.map(fetchItem))
+const [items, errors] = partition(allResults)
+
+// Log errors if needed
+errors.forEach(e => console.warn('Failed:', e.message))
+
+// items contains only successful results
+```
+
+#### Pattern 5: Transform or default
+
+**Before:**
+```ts
+let value;
+try {
+  const raw = await fetchValue()
+  value = transform(raw)
+} catch (e) {
+  value = defaultValue
+}
+```
+
+**After:** Clean expression
+```ts
+const raw = await fetchValue()
+const value = isError(raw) ? defaultValue : transform(raw)
+```
+
+#### Pattern 6: Cache with fallback to fetch
+
+**Before:**
+```ts
+let data;
+try {
+  data = cache.get(key)
+  if (!data) throw new Error('cache miss')
+} catch (e) {
+  data = await fetchFromDb(key)
+  cache.set(key, data)
+}
+```
+
+**After:** Explicit flow
+```ts
+const cached = cache.get(key)  // returns Data | null
+
+const data = cached ?? await (async () => {
+  const fetched = await fetchFromDb(key)
+  if (isOk(fetched)) cache.set(key, fetched)
+  return fetched
+})()
+```
+
+Or simpler:
+```ts
+async function getWithCache(key: string): Promise<DbError | Data> {
+  const cached = cache.get(key)
+  if (cached) return cached
+  
+  const fetched = await fetchFromDb(key)
+  if (isOk(fetched)) cache.set(key, fetched)
+  
+  return fetched
+}
+```
+
+#### Pattern 7: Multiple sources with fallback chain
+
+**Before:**
+```ts
+let config;
+try {
+  config = loadFromEnv()
+} catch {
+  try {
+    config = loadFromFile()
+  } catch {
+    config = defaultConfig
+  }
+}
+```
+
+**After:** Chain with `??` and `unwrapOr`
+```ts
+const envConfig = loadFromEnv()      // ConfigError | Config
+const fileConfig = loadFromFile()    // ConfigError | Config
+
+const config = isOk(envConfig) ? envConfig
+  : isOk(fileConfig) ? fileConfig
+  : defaultConfig
+```
+
+Or as a function:
+```ts
+function loadConfig(): Config {
+  const sources = [loadFromEnv, loadFromFile]
+  
+  for (const load of sources) {
+    const result = load()
+    if (isOk(result)) return result
+  }
+  
+  return defaultConfig
+}
+```
+
+#### Key Insight: Expressions over Statements
+
+The pattern is always:
+1. **Before:** `let x; try { x = ... } catch { x = ... }` (statements)
+2. **After:** `const x = isError(result) ? fallback : result` (expression)
+
+This makes code:
+- More readable (no mutation)
+- Type-safe (TypeScript tracks the union)
+- Easier to test (pure expressions)
+
 ### Converting Existing Code Gradually
 
 You can convert one function at a time. Use `unwrap` at boundaries:
