@@ -294,20 +294,26 @@ export async function getTools({
               ? 'completed'
               : 'in_progress'
 
-          const markdown = await markdownRenderer.generate({
+          const markdownResult = await markdownRenderer.generate({
             sessionID: sessionId,
             lastAssistantOnly: true,
           })
+          if (errore.isError(markdownResult)) {
+            throw new Error(markdownResult.message)
+          }
 
           return {
             success: true,
-            markdown,
+            markdown: markdownResult,
             status,
           }
         } else {
-          const markdown = await markdownRenderer.generate({
+          const markdownResult = await markdownRenderer.generate({
             sessionID: sessionId,
           })
+          if (errore.isError(markdownResult)) {
+            throw new Error(markdownResult.message)
+          }
 
           const messages = await getClient().session.messages({
             path: { id: sessionId },
@@ -323,7 +329,7 @@ export async function getTools({
 
           return {
             success: true,
-            markdown,
+            markdown: markdownResult,
             status,
           }
         }
