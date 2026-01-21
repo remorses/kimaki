@@ -374,3 +374,143 @@ describe('real-world: fetch user flow', () => {
     expect(message).toBe('Failed: Connection failed')
   })
 })
+
+// ============================================================================
+// Error | T | null/undefined - Result + Option combined naturally
+// ============================================================================
+
+describe('Error | T | null (Result + Option combined)', () => {
+  // This pattern combines Result and Option without nesting!
+  // In Rust you'd need Result<Option<T>, E> or Option<Result<T, E>>
+  // Here it's just: Error | T | null
+
+  function findUser(id: string): NotFoundError | User | null {
+    if (id === 'error') return new NotFoundError({ id })
+    if (id === 'missing') return null
+    return { id, name: 'Alice' }
+  }
+
+  test('success case - returns value', () => {
+    const user = findUser('123')
+
+    if (isError(user)) return
+    if (user === null) return
+
+    // TypeScript knows: user is User
+    expect(user.name).toBe('Alice')
+  })
+
+  test('null case - using ?? operator', () => {
+    const user = findUser('missing')
+
+    if (isError(user)) return
+
+    // Can use ?? naturally with null
+    const name = user?.name ?? 'Anonymous'
+    expect(name).toBe('Anonymous')
+  })
+
+  test('error case - still works with isError', () => {
+    const user = findUser('error')
+
+    if (isError(user)) {
+      expect(user.id).toBe('error')
+    }
+  })
+
+  test('optional chaining works naturally', () => {
+    const user = findUser('missing')
+
+    if (isError(user)) return
+
+    // ?. works because user is User | null
+    const nameLength = user?.name?.length
+    expect(nameLength).toBeUndefined()
+  })
+
+  test('nullish coalescing with method calls', () => {
+    function getConfig(): ValidationError | { timeout?: number } | null {
+      return { timeout: undefined }
+    }
+
+    const config = getConfig()
+
+    if (isError(config)) return
+
+    // Chain ?. and ?? naturally
+    const timeout = config?.timeout ?? 5000
+    expect(timeout).toBe(5000)
+  })
+})
+
+describe('Error | T | undefined', () => {
+  function lookup(key: string): NetworkError | string | undefined {
+    if (key === 'error') return new NetworkError({ url: '/lookup', message: 'Failed' })
+    if (key === 'missing') return undefined
+    return 'found-value'
+  }
+
+  test('success returns value', () => {
+    const value = lookup('exists')
+
+    if (isError(value)) return
+    if (value === undefined) return
+
+    expect(value).toBe('found-value')
+  })
+
+  test('undefined case with ?? fallback', () => {
+    const value = lookup('missing')
+
+    if (isError(value)) return
+
+    const result = value ?? 'default'
+    expect(result).toBe('default')
+  })
+
+  test('error case still caught by isError', () => {
+    const value = lookup('error')
+
+    expect(isError(value)).toBe(true)
+    if (isError(value)) {
+      expect(value.url).toBe('/lookup')
+    }
+  })
+})
+
+describe('complex: Error | T | null | undefined', () => {
+  // Even triple union works naturally!
+  function query(sql: string): ValidationError | { rows: string[] } | null | undefined {
+    if (sql === 'invalid') return new ValidationError({ field: 'sql', message: 'Bad query' })
+    if (sql === 'empty') return null
+    if (sql === 'no-table') return undefined
+    return { rows: ['a', 'b', 'c'] }
+  }
+
+  test('all branches narrowed correctly', () => {
+    const result = query('SELECT *')
+
+    if (isError(result)) {
+      // TypeScript: result is ValidationError
+      return result.field
+    }
+
+    if (result == null) {
+      // TypeScript: result is null | undefined
+      return 'no data'
+    }
+
+    // TypeScript: result is { rows: string[] }
+    expect(result.rows).toEqual(['a', 'b', 'c'])
+  })
+
+  test('combined with ?? for defaults', () => {
+    const result = query('empty')
+
+    if (isError(result)) return
+
+    // Works with null OR undefined
+    const rows = result?.rows ?? []
+    expect(rows).toEqual([])
+  })
+})

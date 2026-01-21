@@ -201,6 +201,96 @@ This works because:
 2. Custom error classes extend `Error`
 3. After an `instanceof Error` check, TS excludes all Error subtypes
 
+## Result + Option Combined: `Error | T | null`
+
+One of errore's best features: you can naturally combine error handling with optional values. No wrapper nesting needed!
+
+In Rust, you'd need `Result<Option<T>, E>` or `Option<Result<T, E>>` and worry about the order. Here it's just a union:
+
+```ts
+// Result + Option in one natural type
+function findUser(id: string): NotFoundError | User | null {
+  if (id === 'bad') return new NotFoundError({ id })
+  if (id === 'missing') return null
+  return { id, name: 'Alice' }
+}
+
+const user = findUser('123')
+
+// Handle error first
+if (isError(user)) {
+  return user.message  // TypeScript: user is NotFoundError
+}
+
+// Handle null/missing case - use ?. and ?? naturally!
+const name = user?.name ?? 'Anonymous'
+
+// Or check explicitly
+if (user === null) {
+  return 'User not found'
+}
+
+// TypeScript knows: user is User
+console.log(user.name)
+```
+
+### Works with `undefined` too
+
+```ts
+function lookup(key: string): NetworkError | string | undefined {
+  if (key === 'fail') return new NetworkError({ url: '/api', message: 'Failed' })
+  if (key === 'missing') return undefined
+  return 'found-value'
+}
+
+const value = lookup('key')
+
+if (isError(value)) return value
+
+// ?? works naturally with undefined
+const result = value ?? 'default'
+```
+
+### Triple union: `Error | T | null | undefined`
+
+Even this works with full type inference:
+
+```ts
+function query(sql: string): ValidationError | { rows: string[] } | null | undefined {
+  if (sql === 'invalid') return new ValidationError({ field: 'sql', message: 'Bad' })
+  if (sql === 'empty') return null      // explicitly no data
+  if (sql === 'no-table') return undefined  // table doesn't exist
+  return { rows: ['a', 'b'] }
+}
+
+const result = query('SELECT *')
+
+if (isError(result)) {
+  return result.field  // TypeScript: ValidationError
+}
+
+if (result == null) {
+  return 'no data'  // handles both null and undefined
+}
+
+// TypeScript: { rows: string[] }
+console.log(result.rows)
+```
+
+### Why this is better than Rust/Zig
+
+| Language | Result + Option | Order matters? |
+|----------|-----------------|----------------|
+| Rust | `Result<Option<T>, E>` or `Option<Result<T, E>>` | Yes, must unwrap in order |
+| Zig | `!?T` (error union + optional) | Yes, specific syntax |
+| **errore** | `Error \| T \| null` | **No!** Check in any order |
+
+With errore:
+- Use `?.` and `??` naturally
+- Check `isError()` or `=== null` in any order
+- No unwrapping ceremony
+- TypeScript infers everything
+
 ## Comparison with Result Types
 
 | Result Pattern | errore |
@@ -210,6 +300,7 @@ This works because:
 | `result.value` | direct access after guard |
 | `result.map(fn)` | `map(result, fn)` |
 | `Result<User, Error>` | `Error \| User` |
+| `Result<Option<T>, E>` | `Error \| T \| null` |
 
 ## License
 
