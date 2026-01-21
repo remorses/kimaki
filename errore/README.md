@@ -180,11 +180,13 @@ async function processOrder(orderId: string): Promise<OrderError | Receipt> {
 // Caller gets union of all possible errors
 const receipt = await processOrder('123')
 if (isError(receipt)) {
-  matchError(receipt, {
+  const message = matchError(receipt, {
     NotFoundError: e => `Order ${e.id} not found`,
     ValidationError: e => `Invalid: ${e.field}`,
     PaymentError: e => `Payment failed: ${e.reason}`,
   })
+  console.log(message)
+  return
 }
 ```
 
@@ -229,15 +231,17 @@ class NetworkError extends TaggedError('NetworkError')<{
 type AppError = ValidationError | NetworkError
 
 // Exhaustive matching (TypeScript ensures all cases handled)
-matchError(error, {
+const message = matchError(error, {
   ValidationError: e => `Invalid ${e.field}`,
   NetworkError: e => `Failed to fetch ${e.url}`
 })
+console.log(message)
 
 // Partial matching with fallback
-matchErrorPartial(error, {
+const fallbackMsg = matchErrorPartial(error, {
   ValidationError: e => `Invalid ${e.field}`
 }, e => `Unknown error: ${e.message}`)
+console.log(fallbackMsg)
 
 // Type guards
 ValidationError.is(value)  // specific class
