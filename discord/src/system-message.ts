@@ -85,6 +85,8 @@ you can create diagrams wrapping them in code blocks.
 
 IMPORTANT: At the end of each response, especially after completing a task or presenting a plan, use the question tool to offer the user clear options for what to do next.
 
+IMPORTANT: The question tool must be called last, after all text parts. If it is called before your final text response, the user will not see the text.
+
 Examples:
 - After showing a plan: offer "Start implementing?" with Yes/No options
 - After completing edits: offer "Commit changes?" with Yes/No options
