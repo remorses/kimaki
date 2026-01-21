@@ -1,5 +1,7 @@
 # errore
 
+> **Note:** Always use `import * as errore from 'errore'` instead of named imports. This makes code easier to move between files, and more readable for people unfamiliar with errore since every function call is clearly namespaced (e.g. `errore.isError()` instead of just `isError()`).
+
 Type-safe errors as values for TypeScript. Like Go, but with full type inference.
 
 ## Why?
@@ -22,10 +24,10 @@ npm install errore
 ## Quick Start
 
 ```ts
-import { tryAsync, isError, TaggedError, matchError } from 'errore'
+import * as errore from 'errore'
 
 // Define typed errors
-class NotFoundError extends TaggedError('NotFoundError')<{
+class NotFoundError extends errore.TaggedError('NotFoundError')<{
   id: string
   message: string
 }>() {
@@ -34,19 +36,19 @@ class NotFoundError extends TaggedError('NotFoundError')<{
   }
 }
 
-class DbError extends TaggedError('DbError')<{
+class DbError extends errore.TaggedError('DbError')<{
   message: string
   cause: unknown
 }>() {}
 
 // Function returns Error | Value (no wrapper!)
 async function getUser(id: string): Promise<NotFoundError | DbError | User> {
-  const result = await tryAsync({
+  const result = await errore.tryAsync({
     try: () => db.query(id),
     catch: e => new DbError({ message: 'Query failed', cause: e })
   })
   
-  if (isError(result)) return result
+  if (errore.isError(result)) return result
   if (!result) return new NotFoundError({ id })
   
   return result
@@ -55,8 +57,8 @@ async function getUser(id: string): Promise<NotFoundError | DbError | User> {
 // Caller handles errors explicitly
 const user = await getUser('123')
 
-if (isError(user)) {
-  matchError(user, {
+if (errore.isError(user)) {
+  errore.matchError(user, {
     NotFoundError: e => console.log(`User ${e.id} not found`),
     DbError: e => console.log(`Database error: ${e.message}`)
   })
@@ -72,11 +74,11 @@ console.log(user.name)
 ### Type Guards
 
 ```ts
-import { isError, isOk } from 'errore'
+import * as errore from 'errore'
 
 const result: NetworkError | User = await fetchUser(id)
 
-if (isError(result)) {
+if (errore.isError(result)) {
   // result is NetworkError
   return result
 }
@@ -86,22 +88,22 @@ if (isError(result)) {
 ### Try Functions
 
 ```ts
-import { tryFn, tryAsync } from 'errore'
+import * as errore from 'errore'
 
 // Sync - wraps exceptions in UnhandledError
-const parsed = tryFn(() => JSON.parse(input))
+const parsed = errore.tryFn(() => JSON.parse(input))
 
 // Sync - with custom error type
-const parsed = tryFn({
+const parsed = errore.tryFn({
   try: () => JSON.parse(input),
   catch: e => new ParseError({ cause: e })
 })
 
 // Async
-const response = await tryAsync(() => fetch(url))
+const response = await errore.tryAsync(() => fetch(url))
 
 // Async - with custom error
-const response = await tryAsync({
+const response = await errore.tryAsync({
   try: () => fetch(url),
   catch: e => new NetworkError({ cause: e })
 })
@@ -110,19 +112,19 @@ const response = await tryAsync({
 ### Transformations
 
 ```ts
-import { map, mapError, andThen, tap } from 'errore'
+import * as errore from 'errore'
 
 // Transform value (if not error)
-const name = map(user, u => u.name)
+const name = errore.map(user, u => u.name)
 
 // Transform error
-const appError = mapError(dbError, e => new AppError({ cause: e }))
+const appError = errore.mapError(dbError, e => new AppError({ cause: e }))
 
 // Chain operations
-const posts = andThen(user, u => fetchPosts(u.id))
+const posts = errore.andThen(user, u => fetchPosts(u.id))
 
 // Side effects
-const logged = tap(user, u => console.log('Got user:', u.name))
+const logged = errore.tap(user, u => console.log('Got user:', u.name))
 ```
 
 ### Composing Operations
@@ -130,7 +132,7 @@ const logged = tap(user, u => console.log('Got user:', u.name))
 Chain multiple operations together:
 
 ```ts
-import { map, andThen, mapError, isError } from 'errore'
+import * as errore from 'errore'
 
 // Define operations that can fail
 function parseNumber(s: string): ValidationError | number { ... }
@@ -138,24 +140,24 @@ function validatePositive(n: number): ValidationError | number { ... }
 function divide(a: number, b: number): DivisionError | number { ... }
 
 // Compose with nested calls
-const result = andThen(
-  andThen(parseNumber(input), validatePositive),
+const result = errore.andThen(
+  errore.andThen(parseNumber(input), validatePositive),
   n => divide(100, n)
 )
 
 // Or step by step (often clearer)
 function calculate(input: string): ValidationError | DivisionError | number {
   const parsed = parseNumber(input)
-  if (isError(parsed)) return parsed
+  if (errore.isError(parsed)) return parsed
 
   const validated = validatePositive(parsed)
-  if (isError(validated)) return validated
+  if (errore.isError(validated)) return validated
 
   return divide(100, validated)
 }
 
 // Transform errors at the end
-const appResult = mapError(
+const appResult = errore.mapError(
   calculate(userInput),
   e => new AppError({ source: e._tag, message: e.message })
 )
@@ -164,23 +166,25 @@ const appResult = mapError(
 Real-world async composition:
 
 ```ts
+import * as errore from 'errore'
+
 async function processOrder(orderId: string): Promise<OrderError | Receipt> {
   const order = await fetchOrder(orderId)
-  if (isError(order)) return order
+  if (errore.isError(order)) return order
 
   const validated = validateOrder(order)
-  if (isError(validated)) return validated
+  if (errore.isError(validated)) return validated
 
   const payment = await processPayment(validated)
-  if (isError(payment)) return payment
+  if (errore.isError(payment)) return payment
 
   return generateReceipt(payment)
 }
 
 // Caller gets union of all possible errors
 const receipt = await processOrder('123')
-if (isError(receipt)) {
-  const message = matchError(receipt, {
+if (errore.isError(receipt)) {
+  const message = errore.matchError(receipt, {
     NotFoundError: e => `Order ${e.id} not found`,
     ValidationError: e => `Invalid: ${e.field}`,
     PaymentError: e => `Payment failed: ${e.reason}`,
@@ -193,37 +197,37 @@ if (isError(receipt)) {
 ### Extraction
 
 ```ts
-import { unwrap, unwrapOr, match, partition } from 'errore'
+import * as errore from 'errore'
 
 // Extract or throw
-const user = unwrap(result)
-const user = unwrap(result, 'Custom error message')
+const user = errore.unwrap(result)
+const user = errore.unwrap(result, 'Custom error message')
 
 // Extract or fallback
-const name = unwrapOr(result, 'Anonymous')
+const name = errore.unwrapOr(result, 'Anonymous')
 
 // Pattern match
-const message = match(result, {
+const message = errore.match(result, {
   ok: user => `Hello, ${user.name}`,
   err: error => `Failed: ${error.message}`
 })
 
 // Split array into [successes, errors]
-const [users, errors] = partition(results)
+const [users, errors] = errore.partition(results)
 ```
 
 ### Tagged Errors
 
 ```ts
-import { TaggedError, matchError, matchErrorPartial } from 'errore'
+import * as errore from 'errore'
 
 // Define errors with _tag discriminant
-class ValidationError extends TaggedError('ValidationError')<{
+class ValidationError extends errore.TaggedError('ValidationError')<{
   field: string
   message: string
 }>() {}
 
-class NetworkError extends TaggedError('NetworkError')<{
+class NetworkError extends errore.TaggedError('NetworkError')<{
   url: string
   message: string
 }>() {}
@@ -231,7 +235,7 @@ class NetworkError extends TaggedError('NetworkError')<{
 type AppError = ValidationError | NetworkError
 
 // Exhaustive matching (TypeScript ensures all cases handled)
-const message = matchError(error, {
+const message = errore.matchError(error, {
   ValidationError: e => `Invalid ${e.field}`,
   NetworkError: e => `Failed to fetch ${e.url}`
 })
@@ -240,20 +244,20 @@ console.log(message)
 // Handle plain Error with _ (underscore) handler
 function riskyOp(): ValidationError | Error { ... }
 const err = riskyOp()
-const msg = matchError(err, {
+const msg = errore.matchError(err, {
   ValidationError: e => `Invalid ${e.field}`,
   _: e => `Plain error: ${e.message}`  // catches non-tagged Error
 })
 
 // Partial matching with fallback
-const fallbackMsg = matchErrorPartial(error, {
+const fallbackMsg = errore.matchErrorPartial(error, {
   ValidationError: e => `Invalid ${e.field}`
 }, e => `Unknown error: ${e.message}`)
 console.log(fallbackMsg)
 
 // Type guards
 ValidationError.is(value)  // specific class
-TaggedError.is(value)      // any tagged error
+errore.TaggedError.is(value)      // any tagged error
 ```
 
 ## How Type Safety Works
@@ -283,6 +287,8 @@ One of errore's best features: you can naturally combine error handling with opt
 In Rust, you'd need `Result<Option<T>, E>` or `Option<Result<T, E>>` and worry about the order. Here it's just a union:
 
 ```ts
+import * as errore from 'errore'
+
 // Result + Option in one natural type
 function findUser(id: string): NotFoundError | User | null {
   if (id === 'bad') return new NotFoundError({ id })
@@ -293,7 +299,7 @@ function findUser(id: string): NotFoundError | User | null {
 const user = findUser('123')
 
 // Handle error first
-if (isError(user)) {
+if (errore.isError(user)) {
   return user.message  // TypeScript: user is NotFoundError
 }
 
@@ -312,6 +318,8 @@ console.log(user.name)
 ### Works with `undefined` too
 
 ```ts
+import * as errore from 'errore'
+
 function lookup(key: string): NetworkError | string | undefined {
   if (key === 'fail') return new NetworkError({ url: '/api', message: 'Failed' })
   if (key === 'missing') return undefined
@@ -320,7 +328,7 @@ function lookup(key: string): NetworkError | string | undefined {
 
 const value = lookup('key')
 
-if (isError(value)) return value
+if (errore.isError(value)) return value
 
 // ?? works naturally with undefined
 const result = value ?? 'default'
@@ -331,6 +339,8 @@ const result = value ?? 'default'
 Even this works with full type inference:
 
 ```ts
+import * as errore from 'errore'
+
 function query(sql: string): ValidationError | { rows: string[] } | null | undefined {
   if (sql === 'invalid') return new ValidationError({ field: 'sql', message: 'Bad' })
   if (sql === 'empty') return null      // explicitly no data
@@ -340,7 +350,7 @@ function query(sql: string): ValidationError | { rows: string[] } | null | undef
 
 const result = query('SELECT *')
 
-if (isError(result)) {
+if (errore.isError(result)) {
   return result.field  // TypeScript: ValidationError
 }
 

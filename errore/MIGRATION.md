@@ -1,5 +1,7 @@
 # Migrating to errore
 
+> **Note:** Always use `import * as errore from 'errore'` instead of named imports. This makes code easier to move between files, and more readable for people unfamiliar with errore since every function call is clearly namespaced (e.g. `errore.isError()` instead of just `isError()`).
+
 This guide shows how to migrate a TypeScript codebase from try-catch exceptions to type-safe errors as values, Go-style.
 
 ## Philosophy
@@ -18,11 +20,13 @@ try {
 
 You write:
 ```ts
+import * as errore from 'errore'
+
 const user = await fetchUser(id)
-if (isError(user)) return user  // early return, like Go
+if (errore.isError(user)) return user  // early return, like Go
 
 const posts = await fetchPosts(user.id)
-if (isError(posts)) return posts
+if (errore.isError(posts)) return posts
 
 return posts
 ```
@@ -49,15 +53,15 @@ Create typed errors for your domain using `TaggedError`:
 
 ```ts
 // errors.ts
-import { TaggedError } from 'errore'
+import * as errore from 'errore'
 
 // Database errors
-export class DbConnectionError extends TaggedError('DbConnectionError')<{
+export class DbConnectionError extends errore.TaggedError('DbConnectionError')<{
   message: string
   cause?: unknown
 }>() {}
 
-export class RecordNotFoundError extends TaggedError('RecordNotFoundError')<{
+export class RecordNotFoundError extends errore.TaggedError('RecordNotFoundError')<{
   table: string
   id: string
   message: string
@@ -68,20 +72,20 @@ export class RecordNotFoundError extends TaggedError('RecordNotFoundError')<{
 }
 
 // Network errors
-export class NetworkError extends TaggedError('NetworkError')<{
+export class NetworkError extends errore.TaggedError('NetworkError')<{
   url: string
   status?: number
   message: string
 }>() {}
 
 // Validation errors
-export class ValidationError extends TaggedError('ValidationError')<{
+export class ValidationError extends errore.TaggedError('ValidationError')<{
   field: string
   message: string
 }>() {}
 
 // Auth errors
-export class UnauthorizedError extends TaggedError('UnauthorizedError')<{
+export class UnauthorizedError extends errore.TaggedError('UnauthorizedError')<{
   message: string
 }>() {
   constructor() {
@@ -107,16 +111,16 @@ async function getUserById(id: string): Promise<User> {
 ### After: Function returns error or value
 
 ```ts
-import { tryAsync, isError } from 'errore'
+import * as errore from 'errore'
 import { DbConnectionError, RecordNotFoundError } from './errors'
 
 async function getUserById(id: string): Promise<DbConnectionError | RecordNotFoundError | User> {
-  const result = await tryAsync({
+  const result = await errore.tryAsync({
     try: () => db.query('SELECT * FROM users WHERE id = ?', [id]),
     catch: (e) => new DbConnectionError({ message: 'Database query failed', cause: e })
   })
   
-  if (isError(result)) return result
+  if (errore.isError(result)) return result
   if (!result) return new RecordNotFoundError({ table: 'users', id })
   
   return result
@@ -145,7 +149,7 @@ async function getFullUser(id: string): Promise<FullUser> {
 ### After: Early returns (Go-style)
 
 ```ts
-import { isError } from 'errore'
+import * as errore from 'errore'
 
 type GetFullUserError = 
   | DbConnectionError 
@@ -153,13 +157,13 @@ type GetFullUserError =
 
 async function getFullUser(id: string): Promise<GetFullUserError | FullUser> {
   const user = await getUserById(id)
-  if (isError(user)) return user
+  if (errore.isError(user)) return user
 
   const profile = await getProfileByUserId(user.id)
-  if (isError(profile)) return profile
+  if (errore.isError(profile)) return profile
 
   const settings = await getSettingsByUserId(user.id)
-  if (isError(settings)) return settings
+  if (errore.isError(settings)) return settings
 
   return { ...user, profile, settings }
 }
@@ -170,13 +174,13 @@ async function getFullUser(id: string): Promise<GetFullUserError | FullUser> {
 At your API handlers or entry points, handle all errors explicitly:
 
 ```ts
-import { isError, matchError } from 'errore'
+import * as errore from 'errore'
 
 app.get('/users/:id', async (req, res) => {
   const user = await getFullUser(req.params.id)
   
-  if (isError(user)) {
-    const response = matchError(user, {
+  if (errore.isError(user)) {
+    const response = errore.matchError(user, {
       RecordNotFoundError: (e) => ({ status: 404, body: { error: `User ${e.id} not found` } }),
       DbConnectionError: (e) => ({ status: 500, body: { error: 'Database error' } }),
     })
@@ -194,11 +198,11 @@ app.get('/users/:id', async (req, res) => {
 Use `tryFn` or `tryAsync` to wrap functions that throw:
 
 ```ts
-import { tryFn, tryAsync } from 'errore'
+import * as errore from 'errore'
 
 // Sync: JSON parsing
 function parseJson(input: string): ValidationError | unknown {
-  const result = tryFn({
+  const result = errore.tryFn({
     try: () => JSON.parse(input),
     catch: () => new ValidationError({ field: 'json', message: 'Invalid JSON' })
   })
@@ -207,17 +211,17 @@ function parseJson(input: string): ValidationError | unknown {
 
 // Async: fetch wrapper
 async function fetchJson<T>(url: string): Promise<NetworkError | T> {
-  const response = await tryAsync({
+  const response = await errore.tryAsync({
     try: () => fetch(url),
     catch: (e) => new NetworkError({ url, message: `Fetch failed: ${e}` })
   })
-  if (isError(response)) return response
+  if (errore.isError(response)) return response
   
   if (!response.ok) {
     return new NetworkError({ url, status: response.status, message: `HTTP ${response.status}` })
   }
   
-  const data = await tryAsync({
+  const data = await errore.tryAsync({
     try: () => response.json() as Promise<T>,
     catch: () => new NetworkError({ url, message: 'Invalid JSON response' })
   })
@@ -230,19 +234,21 @@ async function fetchJson<T>(url: string): Promise<NetworkError | T> {
 Combine error handling with optional values naturally:
 
 ```ts
+import * as errore from 'errore'
+
 async function findUserByEmail(email: string): Promise<DbConnectionError | User | null> {
-  const result = await tryAsync({
+  const result = await errore.tryAsync({
     try: () => db.query('SELECT * FROM users WHERE email = ?', [email]),
     catch: (e) => new DbConnectionError({ message: 'Query failed', cause: e })
   })
   
-  if (isError(result)) return result
+  if (errore.isError(result)) return result
   return result ?? null  // explicitly return null if not found
 }
 
 // Caller
 const user = await findUserByEmail('test@example.com')
-if (isError(user)) return user
+if (errore.isError(user)) return user
 if (user === null) {
   // Handle not found case
   return new RecordNotFoundError({ table: 'users', id: email })
@@ -275,24 +281,26 @@ function validateCreateUser(input: unknown): ValidationError | CreateUserInput {
 ### Multiple Sequential Operations
 
 ```ts
+import * as errore from 'errore'
+
 async function createUserWithProfile(
   input: CreateUserInput
 ): Promise<ValidationError | DbConnectionError | User> {
   // Validate
   const validated = validateCreateUser(input)
-  if (isError(validated)) return validated
+  if (errore.isError(validated)) return validated
 
   // Create user
   const user = await createUser(validated)
-  if (isError(user)) return user
+  if (errore.isError(user)) return user
 
   // Create default profile
   const profile = await createProfile({ userId: user.id, bio: '' })
-  if (isError(profile)) return profile
+  if (errore.isError(profile)) return profile
 
   // Send welcome email (don't fail if this fails)
   const emailResult = await sendWelcomeEmail(user.email)
-  if (isError(emailResult)) {
+  if (errore.isError(emailResult)) {
     console.warn('Failed to send welcome email:', emailResult.message)
     // Continue anyway
   }
@@ -304,6 +312,8 @@ async function createUserWithProfile(
 ### Parallel Operations
 
 ```ts
+import * as errore from 'errore'
+
 async function getUserDashboard(
   userId: string
 ): Promise<DbConnectionError | RecordNotFoundError | Dashboard> {
@@ -315,9 +325,9 @@ async function getUserDashboard(
   ])
 
   // Check each result
-  if (isError(userResult)) return userResult
-  if (isError(postsResult)) return postsResult
-  if (isError(statsResult)) return statsResult
+  if (errore.isError(userResult)) return userResult
+  if (errore.isError(postsResult)) return postsResult
+  if (errore.isError(statsResult)) return statsResult
 
   return {
     user: userResult,
@@ -345,10 +355,10 @@ try {
 
 **After:** Use `unwrapOr` for a one-liner
 ```ts
-import { tryFn, unwrapOr } from 'errore'
+import * as errore from 'errore'
 
-const config = unwrapOr(
-  tryFn(() => JSON.parse(fs.readFileSync('config.json', 'utf-8'))),
+const config = errore.unwrapOr(
+  errore.tryFn(() => JSON.parse(fs.readFileSync('config.json', 'utf-8'))),
   { port: 3000, debug: false }
 )
 ```
@@ -371,8 +381,10 @@ try {
 
 **After:** Use `isError` + conditional
 ```ts
+import * as errore from 'errore'
+
 const fetchResult = await fetchUser(id)
-const user = isError(fetchResult) && RecordNotFoundError.is(fetchResult)
+const user = errore.isError(fetchResult) && RecordNotFoundError.is(fetchResult)
   ? await createDefaultUser(id)
   : fetchResult
 
@@ -406,10 +418,12 @@ while (attempts < 3) {
 
 **After:** Loop with early break
 ```ts
+import * as errore from 'errore'
+
 async function fetchWithRetry(): Promise<NetworkError | Data> {
   for (let attempt = 0; attempt < 3; attempt++) {
     const result = await fetchData()
-    if (isOk(result)) return result
+    if (errore.isOk(result)) return result
     
     if (attempt < 2) await sleep(1000)  // don't sleep on last attempt
   }
@@ -437,10 +451,10 @@ for (const id of ids) {
 
 **After:** Use `partition` or filter
 ```ts
-import { partition, isOk } from 'errore'
+import * as errore from 'errore'
 
 const allResults = await Promise.all(ids.map(fetchItem))
-const [items, errors] = partition(allResults)
+const [items, errors] = errore.partition(allResults)
 
 // Log errors if needed
 errors.forEach(e => console.warn('Failed:', e.message))
@@ -463,8 +477,10 @@ try {
 
 **After:** Clean expression
 ```ts
+import * as errore from 'errore'
+
 const raw = await fetchValue()
-const value = isError(raw) ? defaultValue : transform(raw)
+const value = errore.isError(raw) ? defaultValue : transform(raw)
 ```
 
 #### Pattern 6: Cache with fallback to fetch
@@ -483,23 +499,27 @@ try {
 
 **After:** Explicit flow
 ```ts
+import * as errore from 'errore'
+
 const cached = cache.get(key)  // returns Data | null
 
 const data = cached ?? await (async () => {
   const fetched = await fetchFromDb(key)
-  if (isOk(fetched)) cache.set(key, fetched)
+  if (errore.isOk(fetched)) cache.set(key, fetched)
   return fetched
 })()
 ```
 
 Or simpler:
 ```ts
+import * as errore from 'errore'
+
 async function getWithCache(key: string): Promise<DbError | Data> {
   const cached = cache.get(key)
   if (cached) return cached
   
   const fetched = await fetchFromDb(key)
-  if (isOk(fetched)) cache.set(key, fetched)
+  if (errore.isOk(fetched)) cache.set(key, fetched)
   
   return fetched
 }
@@ -523,22 +543,26 @@ try {
 
 **After:** Chain with `??` and `unwrapOr`
 ```ts
+import * as errore from 'errore'
+
 const envConfig = loadFromEnv()      // ConfigError | Config
 const fileConfig = loadFromFile()    // ConfigError | Config
 
-const config = isOk(envConfig) ? envConfig
-  : isOk(fileConfig) ? fileConfig
+const config = errore.isOk(envConfig) ? envConfig
+  : errore.isOk(fileConfig) ? fileConfig
   : defaultConfig
 ```
 
 Or as a function:
 ```ts
+import * as errore from 'errore'
+
 function loadConfig(): Config {
   const sources = [loadFromEnv, loadFromFile]
   
   for (const load of sources) {
     const result = load()
-    if (isOk(result)) return result
+    if (errore.isOk(result)) return result
   }
   
   return defaultConfig
@@ -549,7 +573,7 @@ function loadConfig(): Config {
 
 The pattern is always:
 1. **Before:** `let x; try { x = ... } catch { x = ... }` (statements)
-2. **After:** `const x = isError(result) ? fallback : result` (expression)
+2. **After:** `const x = errore.isError(result) ? fallback : result` (expression)
 
 This makes code:
 - More readable (no mutation)
@@ -561,7 +585,7 @@ This makes code:
 You can convert one function at a time. Use `unwrap` at boundaries:
 
 ```ts
-import { isError, unwrap } from 'errore'
+import * as errore from 'errore'
 
 // New code using errore
 async function getUser(id: string): Promise<DbConnectionError | User> {
@@ -572,7 +596,7 @@ async function getUser(id: string): Promise<DbConnectionError | User> {
 async function legacyHandler(id: string) {
   const user = await getUser(id)
   // unwrap throws if error, returns value otherwise
-  return unwrap(user, 'Failed to get user')
+  return errore.unwrap(user, 'Failed to get user')
 }
 ```
 
@@ -590,20 +614,19 @@ async function legacyHandler(id: string) {
 ## Quick Reference
 
 ```ts
-import { 
-  tryFn,           // wrap sync throwing function
-  tryAsync,        // wrap async throwing function
-  isError,         // check if value is error (type guard)
-  isOk,            // check if value is NOT error
-  unwrap,          // extract value or throw
-  unwrapOr,        // extract value or use fallback
-  match,           // pattern match ok/err
-  matchError,      // pattern match by error _tag
-  TaggedError,     // create typed error classes
-} from 'errore'
+import * as errore from 'errore'
+// errore.tryFn        - wrap sync throwing function
+// errore.tryAsync     - wrap async throwing function
+// errore.isError      - check if value is error (type guard)
+// errore.isOk         - check if value is NOT error
+// errore.unwrap       - extract value or throw
+// errore.unwrapOr     - extract value or use fallback
+// errore.match        - pattern match ok/err
+// errore.matchError   - pattern match by error _tag
+// errore.TaggedError  - create typed error classes
 
 // Define errors
-class MyError extends TaggedError('MyError')<{ message: string }>() {}
+class MyError extends errore.TaggedError('MyError')<{ message: string }>() {}
 
 // Return errors instead of throwing
 function myFn(): MyError | string {
@@ -613,12 +636,12 @@ function myFn(): MyError | string {
 
 // Early return pattern
 const result = myFn()
-if (isError(result)) return result
+if (errore.isError(result)) return result
 // result is string here
 
 // Handle at top level
-if (isError(result)) {
-  const msg = matchError(result, {
+if (errore.isError(result)) {
+  const msg = errore.matchError(result, {
     MyError: e => e.message,
     _: e => `Unknown: ${e.message}`  // plain Error fallback
   })
