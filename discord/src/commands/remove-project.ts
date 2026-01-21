@@ -43,8 +43,8 @@ export async function handleRemoveProjectCommand({ command, appId }: CommandCont
       })
       
       if (errore.isError(channel)) {
-        // Channel doesn't exist in this guild or was already deleted
-        deletedChannels.push(`${channel_type}: ${channel_id} (already deleted)`)
+        logger.error(`Failed to fetch channel ${channel_id}:`, channel)
+        failedChannels.push(`${channel_type}: ${channel_id}`)
         continue
       }
       
