@@ -401,12 +401,25 @@ export async function handleOpencodeSession({
   }
 
   const eventHandler = async () => {
+    // Subtask tracking: child sessionId → { label, assistantMessageId }
+    const subtaskSessions = new Map<string, { label: string; assistantMessageId?: string }>()
+    // Counts spawned tasks per agent type: "explore" → 2
+    const agentSpawnCounts: Record<string, number> = {}
+    // Pending labels by description (task tool fires before child session is known)
+    const pendingLabels = new Map<string, string>()
+
     try {
       let assistantMessageId: string | undefined
 
       for await (const event of events) {
         if (event.type === 'message.updated') {
           const msg = event.properties.info
+
+          // Track assistant message IDs for subtask sessions
+          const subtaskInfo = subtaskSessions.get(msg.sessionID)
+          if (subtaskInfo && msg.role === 'assistant') {
+            subtaskInfo.assistantMessageId = msg.id
+          }
 
           if (msg.sessionID !== session.id) {
             continue
@@ -460,10 +473,84 @@ export async function handleOpencodeSession({
         } else if (event.type === 'message.part.updated') {
           const part = event.properties.part
 
-          if (part.sessionID !== session.id) {
+          // Check if this is a subtask event
+          let subtaskInfo = subtaskSessions.get(part.sessionID)
+
+          // If unknown sessionID, check if it's a child session of ours
+          if (!subtaskInfo && part.sessionID !== session.id) {
+            subtaskInfo = await (async () => {
+              const childSessionRes = await errore.tryAsync({
+                try: () =>
+                  clientV2.session.get({
+                    sessionID: part.sessionID,
+                    directory,
+                  }),
+                catch: (e) => new Error('Failed to fetch session', { cause: e }),
+              })
+              if (errore.isError(childSessionRes)) {
+                return undefined
+              }
+              const childSession = childSessionRes.data
+              if (!childSession || childSession.parentID !== session.id) {
+                return undefined
+              }
+              const label =
+                pendingLabels.get(childSession.title) ?? `task-${subtaskSessions.size + 1}`
+              const info = { label, assistantMessageId: undefined }
+              subtaskSessions.set(part.sessionID, info)
+              pendingLabels.delete(childSession.title)
+              sessionLogger.log(`[SUBTASK] Linked child session ${part.sessionID} to "${label}"`)
+              return info
+            })()
+          }
+
+          const isSubtaskEvent = Boolean(subtaskInfo)
+
+          // Accept events from main session OR tracked subtask sessions
+          if (part.sessionID !== session.id && !isSubtaskEvent) {
             continue
           }
 
+          // For subtask events, send them immediately with prefix (don't buffer in currentParts)
+          if (isSubtaskEvent && subtaskInfo) {
+            // Skip parts that aren't useful to show (step-start, step-finish, pending tools)
+            if (part.type === 'step-start' || part.type === 'step-finish') {
+              continue
+            }
+            if (part.type === 'tool' && part.state.status === 'pending') {
+              continue
+            }
+            // Skip text parts - the outer agent will report the task result anyway
+            if (part.type === 'text') {
+              continue
+            }
+            // Only show parts from assistant messages (not user prompts sent to subtask)
+            // Skip if we haven't seen an assistant message yet, or if this part is from a different message
+            if (
+              !subtaskInfo.assistantMessageId ||
+              part.messageID !== subtaskInfo.assistantMessageId
+            ) {
+              continue
+            }
+
+            const content = formatPart(part, subtaskInfo.label)
+            if (content.trim() && !sentPartIds.has(part.id)) {
+              try {
+                const msg = await sendThreadMessage(thread, content + '\n\n')
+                sentPartIds.add(part.id)
+                getDatabase()
+                  .prepare(
+                    'INSERT OR REPLACE INTO part_messages (part_id, message_id, thread_id) VALUES (?, ?, ?)',
+                  )
+                  .run(part.id, msg.id, thread.id)
+              } catch (error) {
+                discordLogger.error(`ERROR: Failed to send subtask part ${part.id}:`, error)
+              }
+            }
+            continue
+          }
+
+          // Main session events: require matching assistantMessageId
           if (part.messageID !== assistantMessageId) {
             continue
           }
@@ -495,6 +582,19 @@ export async function handleOpencodeSession({
               }
             }
             await sendPartMessage(part)
+            // Track task tool's subagent_type and display with label (only once per tool part)
+            if (part.tool === 'task' && !sentPartIds.has(part.id)) {
+              const description = (part.state.input?.description as string) || ''
+              const agent = (part.state.input?.subagent_type as string) || 'task'
+              if (description) {
+                agentSpawnCounts[agent] = (agentSpawnCounts[agent] || 0) + 1
+                const label = `${agent}-${agentSpawnCounts[agent]}`
+                pendingLabels.set(description, label)
+                const taskDisplay = `┣ task **${label}** _${description}_`
+                await sendThreadMessage(thread, taskDisplay + '\n\n')
+                sentPartIds.add(part.id)
+              }
+            }
           }
 
           // Show token usage for completed tools with large output (>5k tokens)
@@ -546,6 +646,22 @@ export async function handleOpencodeSession({
               if (hasPendingQuestion || hasPendingPermission) return
               stopTyping = startTyping()
             }, 300)
+          }
+
+          // Handle subtask parts - fallback if task tool didn't fire first
+          if (
+            part.type === 'subtask' &&
+            !pendingLabels.has(part.description) &&
+            !sentPartIds.has(part.id)
+          ) {
+            const agent = part.agent?.trim() || 'task'
+            agentSpawnCounts[agent] = (agentSpawnCounts[agent] || 0) + 1
+            const label = `${agent}-${agentSpawnCounts[agent]}`
+            pendingLabels.set(part.description, label)
+            sessionLogger.log(`[SUBTASK FALLBACK] Registered "${label}" for "${part.description}"`)
+            const taskDisplay = `┣ task **${label}** _${part.description}_`
+            await sendThreadMessage(thread, taskDisplay + '\n\n')
+            sentPartIds.add(part.id)
           }
         } else if (event.type === 'session.error') {
           sessionLogger.error(`ERROR:`, event.properties)
@@ -679,15 +795,24 @@ export async function handleOpencodeSession({
               }).catch(async (e) => {
                 sessionLogger.error(`[QUEUE] Failed to process queued message:`, e)
                 const errorMsg = e instanceof Error ? e.message : String(e)
-                await sendThreadMessage(thread, `✗ Queued message failed: ${errorMsg.slice(0, 200)}`)
+                await sendThreadMessage(
+                  thread,
+                  `✗ Queued message failed: ${errorMsg.slice(0, 200)}`,
+                )
               })
             })
           }
         } else if (event.type === 'session.idle') {
+          const idleSessionId = event.properties.sessionID
           // Session is done processing - abort to signal completion
-          if (event.properties.sessionID === session.id) {
+          if (idleSessionId === session.id) {
             sessionLogger.log(`[SESSION IDLE] Session ${session.id} is idle, aborting`)
             abortController.abort('finished')
+          } else if (subtaskSessions.has(idleSessionId)) {
+            // Child session completed - clean up tracking
+            const subtask = subtaskSessions.get(idleSessionId)
+            sessionLogger.log(`[SUBTASK IDLE] Subtask "${subtask?.label}" completed`)
+            subtaskSessions.delete(idleSessionId)
           }
         }
       }

@@ -212,9 +212,9 @@ export function getToolSummaryText(part: Part): string {
     return ''
   }
 
+  // Task tool display is handled via subtask part in session-handler (shows label like explore-1)
   if (part.tool === 'task') {
-    const description = (part.state.input?.description as string) || ''
-    return description ? `_${escapeInlineMarkdown(description)}_` : ''
+    return ''
   }
 
   if (part.tool === 'skill') {
@@ -258,9 +258,15 @@ export function formatTodoList(part: Part): string {
   return `${num} **${escapeInlineMarkdown(content)}**`
 }
 
-export function formatPart(part: Part): string {
+export function formatPart(part: Part, prefix?: string): string {
+  const pfx = prefix ? `${prefix}: ` : ''
+
   if (part.type === 'text') {
     if (!part.text?.trim()) return ''
+    // For subtask text, always use bullet with prefix
+    if (prefix) {
+      return `⬥ ${pfx}${part.text.trim()}`
+    }
     const trimmed = part.text.trimStart()
     const firstChar = trimmed[0] || ''
     const markdownStarters = ['#', '*', '_', '-', '>', '`', '[', '|']
@@ -273,11 +279,11 @@ export function formatPart(part: Part): string {
 
   if (part.type === 'reasoning') {
     if (!part.text?.trim()) return ''
-    return `┣ thinking`
+    return `┣ ${pfx}thinking`
   }
 
   if (part.type === 'file') {
-    return `📄 ${part.filename || 'File'}`
+    return prefix ? `📄 ${pfx}${part.filename || 'File'}` : `📄 ${part.filename || 'File'}`
   }
 
   if (part.type === 'step-start' || part.type === 'step-finish' || part.type === 'patch') {
@@ -285,20 +291,26 @@ export function formatPart(part: Part): string {
   }
 
   if (part.type === 'agent') {
-    return `┣ agent ${part.id}`
+    return `┣ ${pfx}agent ${part.id}`
   }
 
   if (part.type === 'snapshot') {
-    return `┣ snapshot ${part.snapshot}`
+    return `┣ ${pfx}snapshot ${part.snapshot}`
   }
 
   if (part.type === 'tool') {
     if (part.tool === 'todowrite') {
-      return formatTodoList(part)
+      const formatted = formatTodoList(part)
+      return prefix && formatted ? `┣ ${pfx}${formatted}` : formatted
     }
 
     // Question tool is handled via Discord dropdowns, not text
     if (part.tool === 'question') {
+      return ''
+    }
+
+    // Task tool display is handled in session-handler with proper label
+    if (part.tool === 'task') {
       return ''
     }
 
@@ -336,7 +348,7 @@ export function formatPart(part: Part): string {
       }
       return '┣'
     })()
-    return `${icon} ${part.tool} ${toolTitle} ${summaryText}`
+    return `${icon} ${pfx}${part.tool} ${toolTitle} ${summaryText}`.trim()
   }
 
   logger.warn('Unknown part type:', part)
