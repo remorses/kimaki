@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.4.39
+
+### Patch Changes
+
+- fix **0% token usage** race condition by fetching from API instead of relying on cached values
+- display **subtask events** with indexed labels (explore-1, explore-2) for better tracking
+- **filter hidden agents** from agent lists
+- adopt **errore typed errors** across discord bot for better error handling
+
 ## 0.4.38
 
 ### Patch Changes
