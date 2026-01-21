@@ -115,24 +115,53 @@ export const TaggedError: {
 export const isTaggedError = isAnyTaggedError
 
 /**
- * Handler map for exhaustive matching
+ * Handler map for exhaustive matching (tagged errors only)
  */
 type MatchHandlers<E extends AnyTaggedError, R> = {
   [K in E['_tag']]: (err: Extract<E, { _tag: K }>) => R
 }
 
 /**
- * Exhaustive pattern match on tagged error union by _tag.
+ * Handler map that includes `_` for plain Error (untagged)
+ */
+type MatchHandlersWithPlain<E extends Error, R> = {
+  [K in Extract<E, AnyTaggedError>['_tag']]: (err: Extract<E, { _tag: K }>) => R
+} & (Exclude<E, AnyTaggedError> extends never
+  ? {}
+  : { _: (err: Exclude<E, AnyTaggedError>) => R })
+
+/**
+ * Exhaustive pattern match on error union by _tag.
+ * Use `_` handler for plain Error instances without _tag.
  *
  * @example
+ * // Tagged errors only
  * matchError(err, {
  *   NotFoundError: (e) => `Missing: ${e.id}`,
  *   ValidationError: (e) => `Invalid: ${e.field}`,
  * });
+ *
+ * @example
+ * // Mixed tagged and plain Error
+ * matchError(err, {
+ *   NotFoundError: (e) => `Missing: ${e.id}`,
+ *   _: (e) => `Unknown error: ${e.message}`,
+ * });
  */
-export function matchError<E extends AnyTaggedError, R>(err: E, handlers: MatchHandlers<E, R>): R {
-  const handler = handlers[err._tag as E['_tag']]
-  return handler(err as Extract<E, { _tag: (typeof err)['_tag'] }>)
+export function matchError<E extends Error, R>(err: E, handlers: MatchHandlersWithPlain<E, R>): R {
+  const h = handlers as unknown as Record<string, (e: Error) => R>
+  if ('_tag' in err && typeof err._tag === 'string') {
+    const handler = h[err._tag]
+    if (handler) {
+      return handler(err)
+    }
+  }
+  // Fall through to _ handler for plain Error
+  const fallbackHandler = h['_']
+  if (fallbackHandler) {
+    return fallbackHandler(err)
+  }
+  throw new Error(`No handler for error: ${err.message}`)
 }
 
 /**
@@ -143,14 +172,22 @@ export function matchError<E extends AnyTaggedError, R>(err: E, handlers: MatchH
  *   NotFoundError: (e) => `Missing: ${e.id}`,
  * }, (e) => `Unknown: ${e.message}`);
  */
-export function matchErrorPartial<E extends AnyTaggedError, R>(
+export function matchErrorPartial<E extends Error, R>(
   err: E,
-  handlers: Partial<MatchHandlers<E, R>>,
+  handlers: Partial<MatchHandlersWithPlain<E, R>>,
   fallback: (e: E) => R,
 ): R {
-  const handler = handlers[err._tag as E['_tag']]
-  if (handler) {
-    return handler(err as Extract<E, { _tag: (typeof err)['_tag'] }>)
+  const h = handlers as unknown as Record<string, (e: Error) => R>
+  if ('_tag' in err && typeof err._tag === 'string') {
+    const handler = h[err._tag]
+    if (handler) {
+      return handler(err)
+    }
+  }
+  // Check for _ handler before fallback
+  const underscoreHandler = h['_']
+  if (underscoreHandler) {
+    return underscoreHandler(err)
   }
   return fallback(err)
 }

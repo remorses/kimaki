@@ -13,6 +13,7 @@ import {
   partition,
   TaggedError,
   matchError,
+  matchErrorPartial,
   UnhandledError,
 } from './index'
 
@@ -460,6 +461,62 @@ describe('matchError', () => {
       })
       expect(message).toBe('Missing: 123')
     }
+  })
+
+  test('_ handler catches plain Error', () => {
+    function riskyOperation(): NotFoundError | Error | string {
+      return new Error('Something went wrong')
+    }
+
+    const result = riskyOperation()
+
+    if (isError(result)) {
+      const message = matchError(result, {
+        NotFoundError: (e) => `Missing: ${e.id}`,
+        _: (e) => `Plain error: ${e.message}`,
+      })
+      expect(message).toBe('Plain error: Something went wrong')
+    }
+  })
+
+  test('_ handler with mixed tagged and plain errors', () => {
+    function getError(type: string): NotFoundError | ValidationError | Error {
+      if (type === 'notfound') return new NotFoundError({ id: '1' })
+      if (type === 'validation') return new ValidationError({ field: 'email', message: 'Invalid' })
+      return new Error('Unknown')
+    }
+
+    // Tagged error goes to its handler
+    const err1 = getError('notfound')
+    const msg1 = matchError(err1, {
+      NotFoundError: (e) => `NotFound: ${e.id}`,
+      ValidationError: (e) => `Validation: ${e.field}`,
+      _: (e) => `Plain: ${e.message}`,
+    })
+    expect(msg1).toBe('NotFound: 1')
+
+    // Plain Error goes to _ handler
+    const err2 = getError('plain')
+    const msg2 = matchError(err2, {
+      NotFoundError: (e) => `NotFound: ${e.id}`,
+      ValidationError: (e) => `Validation: ${e.field}`,
+      _: (e) => `Plain: ${e.message}`,
+    })
+    expect(msg2).toBe('Plain: Unknown')
+  })
+
+  test('matchErrorPartial with _ handler', () => {
+    function getError(): NotFoundError | Error {
+      return new Error('Oops')
+    }
+
+    const err = getError()
+    const message = matchErrorPartial(
+      err,
+      { _: (e) => `Caught plain: ${e.message}` },
+      () => 'fallback'
+    )
+    expect(message).toBe('Caught plain: Oops')
   })
 })
 

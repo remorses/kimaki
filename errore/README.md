@@ -237,6 +237,14 @@ const message = matchError(error, {
 })
 console.log(message)
 
+// Handle plain Error with _ (underscore) handler
+function riskyOp(): ValidationError | Error { ... }
+const err = riskyOp()
+const msg = matchError(err, {
+  ValidationError: e => `Invalid ${e.field}`,
+  _: e => `Plain error: ${e.message}`  // catches non-tagged Error
+})
+
 // Partial matching with fallback
 const fallbackMsg = matchErrorPartial(error, {
   ValidationError: e => `Invalid ${e.field}`
