@@ -1,6 +1,6 @@
 {
   "name": "errore",
-  "version": "0.5.0",
+  "version": "0.5.1",
   "description": "Type-safe errors as values for TypeScript. Like Go, but with full type inference.",
   "main": "dist/index.js",
   "module": "dist/index.mjs",
