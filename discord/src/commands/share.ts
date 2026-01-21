@@ -6,6 +6,7 @@ import { getDatabase } from '../database.js'
 import { initializeOpencodeForDirectory } from '../opencode.js'
 import { resolveTextChannel, getKimakiMetadata, SILENT_MESSAGE_FLAGS } from '../discord-utils.js'
 import { createLogger } from '../logger.js'
+import * as errore from 'errore'
 
 const logger = createLogger('SHARE')
 
@@ -63,8 +64,17 @@ export async function handleShareCommand({ command }: CommandContext): Promise<v
 
   const sessionId = row.session_id
 
+  const getClient = await initializeOpencodeForDirectory(directory)
+  if (errore.isError(getClient)) {
+    await command.reply({
+      content: `Failed to share session: ${getClient.message}`,
+      ephemeral: true,
+      flags: SILENT_MESSAGE_FLAGS,
+    })
+    return
+  }
+
   try {
-    const getClient = await initializeOpencodeForDirectory(directory)
     const response = await getClient().session.share({
       path: { id: sessionId },
     })

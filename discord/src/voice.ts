@@ -1,11 +1,23 @@
 // Audio transcription service using Google Gemini.
 // Transcribes voice messages with code-aware context, using grep/glob tools
 // to verify technical terms, filenames, and function names in the codebase.
+// Uses errore for type-safe error handling.
 
 import { GoogleGenAI, Type, type Content, type Part, type Tool } from '@google/genai'
+import * as errore from 'errore'
 import { createLogger } from './logger.js'
 import { glob } from 'glob'
 import { ripGrep } from 'ripgrep-js'
+import {
+  ApiKeyMissingError,
+  InvalidAudioFormatError,
+  TranscriptionError,
+  EmptyTranscriptionError,
+  NoResponseContentError,
+  NoToolResponseError,
+  GrepSearchError,
+  GlobSearchError,
+} from './errors.js'
 
 const voiceLogger = createLogger('VOICE')
 
@@ -21,60 +33,49 @@ export type TranscriptionToolRunner = ({
   | { type: 'skip' }
 >
 
-async function runGrep({
-  pattern,
-  directory,
-}: {
-  pattern: string
-  directory: string
-}): Promise<string> {
-  try {
-    const results = await ripGrep(directory, {
-      string: pattern,
-      globs: ['!node_modules/**', '!.git/**', '!dist/**', '!build/**'],
-    })
-
-    if (results.length === 0) {
-      return 'No matches found'
-    }
-
-    const output = results
-      .slice(0, 10)
-      .map((match) => {
-        return `${match.path.text}:${match.line_number}: ${match.lines.text.trim()}`
+function runGrep({ pattern, directory }: { pattern: string; directory: string }): Promise<GrepSearchError | string> {
+  return errore.tryAsync({
+    try: async () => {
+      const results = await ripGrep(directory, {
+        string: pattern,
+        globs: ['!node_modules/**', '!.git/**', '!dist/**', '!build/**'],
       })
-      .join('\n')
 
-    return output.slice(0, 2000)
-  } catch (e) {
-    voiceLogger.error('grep search failed:', e)
-    return 'grep search failed'
-  }
+      if (results.length === 0) {
+        return 'No matches found'
+      }
+
+      const output = results
+        .slice(0, 10)
+        .map((match) => {
+          return `${match.path.text}:${match.line_number}: ${match.lines.text.trim()}`
+        })
+        .join('\n')
+
+      return output.slice(0, 2000)
+    },
+    catch: (e) => new GrepSearchError({ pattern, cause: e }),
+  })
 }
 
-async function runGlob({
-  pattern,
-  directory,
-}: {
-  pattern: string
-  directory: string
-}): Promise<string> {
-  try {
-    const files = await glob(pattern, {
-      cwd: directory,
-      nodir: false,
-      ignore: ['node_modules/**', '.git/**', 'dist/**', 'build/**'],
-      maxDepth: 10,
-    })
+function runGlob({ pattern, directory }: { pattern: string; directory: string }): Promise<GlobSearchError | string> {
+  return errore.tryAsync({
+    try: async () => {
+      const files = await glob(pattern, {
+        cwd: directory,
+        nodir: false,
+        ignore: ['node_modules/**', '.git/**', 'dist/**', 'build/**'],
+        maxDepth: 10,
+      })
 
-    if (files.length === 0) {
-      return 'No files found'
-    }
+      if (files.length === 0) {
+        return 'No files found'
+      }
 
-    return files.slice(0, 30).join('\n')
-  } catch (error) {
-    return `Glob search failed: ${error instanceof Error ? error.message : 'Unknown error'}`
-  }
+      return files.slice(0, 30).join('\n')
+    },
+    catch: (e) => new GlobSearchError({ pattern, cause: e }),
+  })
 }
 
 const grepToolDeclaration = {
@@ -142,7 +143,14 @@ function createToolRunner({ directory }: { directory?: string }): TranscriptionT
     if (name === 'grep' && hasDirectory) {
       const pattern = args?.pattern || ''
       voiceLogger.log(`Grep search: "${pattern}"`)
-      const output = await runGrep({ pattern, directory })
+      const result = await runGrep({ pattern, directory })
+      const output = (() => {
+        if (errore.isError(result)) {
+          voiceLogger.error('grep search failed:', result)
+          return 'grep search failed'
+        }
+        return result
+      })()
       voiceLogger.log(`Grep result: ${output.slice(0, 100)}...`)
       return { type: 'toolResponse', name: 'grep', output }
     }
@@ -150,7 +158,14 @@ function createToolRunner({ directory }: { directory?: string }): TranscriptionT
     if (name === 'glob' && hasDirectory) {
       const pattern = args?.pattern || ''
       voiceLogger.log(`Glob search: "${pattern}"`)
-      const output = await runGlob({ pattern, directory })
+      const result = await runGlob({ pattern, directory })
+      const output = (() => {
+        if (errore.isError(result)) {
+          voiceLogger.error('glob search failed:', result)
+          return 'glob search failed'
+        }
+        return result
+      })()
       voiceLogger.log(`Glob result: ${output.slice(0, 100)}...`)
       return { type: 'toolResponse', name: 'glob', output }
     }
@@ -158,6 +173,12 @@ function createToolRunner({ directory }: { directory?: string }): TranscriptionT
     return { type: 'skip' }
   }
 }
+
+type TranscriptionLoopError =
+  | NoResponseContentError
+  | TranscriptionError
+  | EmptyTranscriptionError
+  | NoToolResponseError
 
 export async function runTranscriptionLoop({
   genAI,
@@ -175,19 +196,29 @@ export async function runTranscriptionLoop({
   temperature: number
   toolRunner: TranscriptionToolRunner
   maxSteps?: number
-}): Promise<string> {
-  let response = await genAI.models.generateContent({
-    model,
-    contents: initialContents,
-    config: {
-      temperature,
-      thinkingConfig: {
-        thinkingBudget: 1024,
-      },
-      tools,
-    },
+}): Promise<TranscriptionLoopError | string> {
+  // Wrap external API call that can throw
+  const initialResponse = await errore.tryAsync({
+    try: () =>
+      genAI.models.generateContent({
+        model,
+        contents: initialContents,
+        config: {
+          temperature,
+          thinkingConfig: {
+            thinkingBudget: 1024,
+          },
+          tools,
+        },
+      }),
+    catch: (e) => new TranscriptionError({ reason: `API call failed: ${String(e)}`, cause: e }),
   })
 
+  if (errore.isError(initialResponse)) {
+    return initialResponse
+  }
+
+  let response = initialResponse
   const conversationHistory: Content[] = [...initialContents]
   let stepsRemaining = maxSteps
 
@@ -199,7 +230,7 @@ export async function runTranscriptionLoop({
         voiceLogger.log(`No parts but got text response: "${text.slice(0, 100)}..."`)
         return text
       }
-      throw new Error('Transcription failed: No response content from model')
+      return new NoResponseContentError()
     }
 
     const functionCalls = candidate.content.parts.filter(
@@ -213,7 +244,7 @@ export async function runTranscriptionLoop({
         voiceLogger.log(`No function calls but got text: "${text.slice(0, 100)}..."`)
         return text
       }
-      throw new Error('Transcription failed: Model did not produce a transcription')
+      return new TranscriptionError({ reason: 'Model did not produce a transcription' })
     }
 
     conversationHistory.push({
@@ -234,7 +265,7 @@ export async function runTranscriptionLoop({
         const transcription = result.transcription?.trim() || ''
         voiceLogger.log(`Transcription result received: "${transcription.slice(0, 100)}..."`)
         if (!transcription) {
-          throw new Error('Transcription failed: Model returned empty transcription')
+          return new EmptyTranscriptionError()
         }
         return transcription
       }
@@ -264,7 +295,7 @@ export async function runTranscriptionLoop({
     }
 
     if (functionResponseParts.length === 0) {
-      throw new Error('Transcription failed: No valid tool responses')
+      return new NoToolResponseError()
     }
 
     conversationHistory.push({
@@ -272,24 +303,40 @@ export async function runTranscriptionLoop({
       parts: functionResponseParts,
     } as Content)
 
-    response = await genAI.models.generateContent({
-      model,
-      contents: conversationHistory,
-      config: {
-        temperature,
-        thinkingConfig: {
-          thinkingBudget: 512,
-        },
-        tools:
-          stepsRemaining <= 0
-            ? [{ functionDeclarations: [transcriptionResultToolDeclaration] }]
-            : tools,
-      },
+    // Wrap external API call that can throw
+    const nextResponse = await errore.tryAsync({
+      try: () =>
+        genAI.models.generateContent({
+          model,
+          contents: conversationHistory,
+          config: {
+            temperature,
+            thinkingConfig: {
+              thinkingBudget: 512,
+            },
+            tools:
+              stepsRemaining <= 0
+                ? [{ functionDeclarations: [transcriptionResultToolDeclaration] }]
+                : tools,
+          },
+        }),
+      catch: (e) => new TranscriptionError({ reason: `API call failed: ${String(e)}`, cause: e }),
     })
+
+    if (errore.isError(nextResponse)) {
+      return nextResponse
+    }
+
+    response = nextResponse
   }
 }
 
-export async function transcribeAudio({
+export type TranscribeAudioErrors =
+  | ApiKeyMissingError
+  | InvalidAudioFormatError
+  | TranscriptionLoopError
+
+export function transcribeAudio({
   audio,
   prompt,
   language,
@@ -307,49 +354,55 @@ export async function transcribeAudio({
   directory?: string
   currentSessionContext?: string
   lastSessionContext?: string
-}): Promise<string> {
-  try {
-    const apiKey = geminiApiKey || process.env.GEMINI_API_KEY
+}): Promise<TranscribeAudioErrors | string> {
+  const apiKey = geminiApiKey || process.env.GEMINI_API_KEY
 
-    if (!apiKey) {
-      throw new Error('Gemini API key is required for audio transcription')
-    }
+  if (!apiKey) {
+    return Promise.resolve(new ApiKeyMissingError({ service: 'Gemini' }))
+  }
 
-    const genAI = new GoogleGenAI({ apiKey })
+  const genAI = new GoogleGenAI({ apiKey })
 
-    let audioBase64: string
+  const audioBase64: string = (() => {
     if (typeof audio === 'string') {
-      audioBase64 = audio
-    } else if (audio instanceof Buffer) {
-      audioBase64 = audio.toString('base64')
-    } else if (audio instanceof Uint8Array) {
-      audioBase64 = Buffer.from(audio).toString('base64')
-    } else if (audio instanceof ArrayBuffer) {
-      audioBase64 = Buffer.from(audio).toString('base64')
-    } else {
-      throw new Error('Invalid audio format')
+      return audio
     }
+    if (audio instanceof Buffer) {
+      return audio.toString('base64')
+    }
+    if (audio instanceof Uint8Array) {
+      return Buffer.from(audio).toString('base64')
+    }
+    if (audio instanceof ArrayBuffer) {
+      return Buffer.from(audio).toString('base64')
+    }
+    return ''
+  })()
 
-    const languageHint = language ? `The audio is in ${language}.\n\n` : ''
+  if (!audioBase64) {
+    return Promise.resolve(new InvalidAudioFormatError())
+  }
 
-    // build session context section
-    const sessionContextParts: string[] = []
-    if (lastSessionContext) {
-      sessionContextParts.push(`<last_session>
+  const languageHint = language ? `The audio is in ${language}.\n\n` : ''
+
+  // build session context section
+  const sessionContextParts: string[] = []
+  if (lastSessionContext) {
+    sessionContextParts.push(`<last_session>
 ${lastSessionContext}
 </last_session>`)
-    }
-    if (currentSessionContext) {
-      sessionContextParts.push(`<current_session>
+  }
+  if (currentSessionContext) {
+    sessionContextParts.push(`<current_session>
 ${currentSessionContext}
 </current_session>`)
-    }
-    const sessionContextSection =
-      sessionContextParts.length > 0
-        ? `\nSession context (use to understand references to files, functions, tools used):\n${sessionContextParts.join('\n\n')}`
-        : ''
+  }
+  const sessionContextSection =
+    sessionContextParts.length > 0
+      ? `\nSession context (use to understand references to files, functions, tools used):\n${sessionContextParts.join('\n\n')}`
+      : ''
 
-    const transcriptionPrompt = `${languageHint}Transcribe this audio for a coding agent (like Claude Code or OpenCode).
+  const transcriptionPrompt = `${languageHint}Transcribe this audio for a coding agent (like Claude Code or OpenCode).
 
 CRITICAL REQUIREMENT: You MUST call the "transcriptionResult" tool to complete this task.
 - The transcriptionResult tool is the ONLY way to return results
@@ -379,46 +432,40 @@ REMEMBER: Call "transcriptionResult" tool with your transcription. This is manda
 
 Note: "critique" is a CLI tool for showing diffs in the browser.`
 
-    // const hasDirectory = directory && directory.trim().length > 0
-    const tools = [
-      {
-        functionDeclarations: [
-          transcriptionResultToolDeclaration,
-          // grep/glob disabled - was causing transcription to hang
-          // ...(hasDirectory ? [grepToolDeclaration, globToolDeclaration] : []),
-        ],
-      },
-    ]
+  // const hasDirectory = directory && directory.trim().length > 0
+  const tools = [
+    {
+      functionDeclarations: [
+        transcriptionResultToolDeclaration,
+        // grep/glob disabled - was causing transcription to hang
+        // ...(hasDirectory ? [grepToolDeclaration, globToolDeclaration] : []),
+      ],
+    },
+  ]
 
-    const initialContents: Content[] = [
-      {
-        role: 'user',
-        parts: [
-          { text: transcriptionPrompt },
-          {
-            inlineData: {
-              data: audioBase64,
-              mimeType: 'audio/mpeg',
-            },
+  const initialContents: Content[] = [
+    {
+      role: 'user',
+      parts: [
+        { text: transcriptionPrompt },
+        {
+          inlineData: {
+            data: audioBase64,
+            mimeType: 'audio/mpeg',
           },
-        ],
-      },
-    ]
+        },
+      ],
+    },
+  ]
 
-    const toolRunner = createToolRunner({ directory })
+  const toolRunner = createToolRunner({ directory })
 
-    return await runTranscriptionLoop({
-      genAI,
-      model: 'gemini-2.5-flash',
-      initialContents,
-      tools,
-      temperature: temperature ?? 0.3,
-      toolRunner,
-    })
-  } catch (error) {
-    voiceLogger.error('Failed to transcribe audio:', error)
-    throw new Error(
-      `Audio transcription failed: ${error instanceof Error ? error.message : 'Unknown error'}`,
-    )
-  }
+  return runTranscriptionLoop({
+    genAI,
+    model: 'gemini-2.5-flash',
+    initialContents,
+    tools,
+    temperature: temperature ?? 0.3,
+    toolRunner,
+  })
 }

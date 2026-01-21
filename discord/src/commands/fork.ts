@@ -14,6 +14,7 @@ import { initializeOpencodeForDirectory } from '../opencode.js'
 import { resolveTextChannel, getKimakiMetadata, sendThreadMessage } from '../discord-utils.js'
 import { collectLastAssistantParts } from '../message-formatting.js'
 import { createLogger } from '../logger.js'
+import * as errore from 'errore'
 
 const sessionLogger = createLogger('SESSION')
 const forkLogger = createLogger('FORK')
@@ -71,9 +72,15 @@ export async function handleForkCommand(interaction: ChatInputCommandInteraction
 
   const sessionId = row.session_id
 
-  try {
-    const getClient = await initializeOpencodeForDirectory(directory)
+  const getClient = await initializeOpencodeForDirectory(directory)
+  if (errore.isError(getClient)) {
+    await interaction.editReply({
+      content: `Failed to load messages: ${getClient.message}`,
+    })
+    return
+  }
 
+  try {
     const messagesResponse = await getClient().session.messages({
       path: { id: sessionId },
     })
@@ -85,7 +92,7 @@ export async function handleForkCommand(interaction: ChatInputCommandInteraction
       return
     }
 
-    const userMessages = messagesResponse.data.filter((m) => m.info.role === 'user')
+    const userMessages = messagesResponse.data.filter((m: { info: { role: string } }) => m.info.role === 'user')
 
     if (userMessages.length === 0) {
       await interaction.editReply({
@@ -96,8 +103,8 @@ export async function handleForkCommand(interaction: ChatInputCommandInteraction
 
     const recentMessages = userMessages.slice(-25)
 
-    const options = recentMessages.map((m, index) => {
-      const textPart = m.parts.find((p) => p.type === 'text') as
+    const options = recentMessages.map((m: { parts: Array<{ type: string; text?: string }>; info: { id: string; time: { created: number } } }, index: number) => {
+      const textPart = m.parts.find((p: { type: string }) => p.type === 'text') as
         | { type: 'text'; text: string }
         | undefined
       const preview = textPart?.text?.slice(0, 80) || '(no text)'
@@ -163,9 +170,13 @@ export async function handleForkSelectMenu(
 
   await interaction.deferReply({ ephemeral: false })
 
-  try {
-    const getClient = await initializeOpencodeForDirectory(directory)
+  const getClient = await initializeOpencodeForDirectory(directory)
+  if (errore.isError(getClient)) {
+    await interaction.editReply(`Failed to fork session: ${getClient.message}`)
+    return
+  }
 
+  try {
     const forkResponse = await getClient().session.fork({
       path: { id: sessionId },
       body: { messageID: selectedMessageId },

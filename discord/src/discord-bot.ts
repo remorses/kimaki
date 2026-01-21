@@ -53,6 +53,7 @@ import {
   type ThreadChannel,
 } from 'discord.js'
 import fs from 'node:fs'
+import * as errore from 'errore'
 import { extractTagsArrays } from './xml.js'
 import { createLogger } from './logger.js'
 import { setGlobalDispatcher, Agent } from 'undici'
@@ -149,10 +150,12 @@ export async function startDiscordBot({
       }
       if (message.partial) {
         discordLogger.log(`Fetching partial message ${message.id}`)
-        try {
-          await message.fetch()
-        } catch (error) {
-          discordLogger.log(`Failed to fetch partial message ${message.id}:`, error)
+        const fetched = await errore.tryAsync({
+          try: () => message.fetch(),
+          catch: (e) => e as Error,
+        })
+        if (errore.isError(fetched)) {
+          discordLogger.log(`Failed to fetch partial message ${message.id}:`, fetched.message)
           return
         }
       }
@@ -256,30 +259,41 @@ export async function startDiscordBot({
         if (projectDirectory) {
           try {
             const getClient = await initializeOpencodeForDirectory(projectDirectory)
+            if (errore.isError(getClient)) {
+              voiceLogger.error(`[SESSION] Failed to initialize OpenCode client:`, getClient.message)
+              throw new Error(getClient.message)
+            }
             const client = getClient()
 
             // get current session context (without system prompt, it would be duplicated)
             if (row.session_id) {
-              currentSessionContext = await getCompactSessionContext({
+              const result = await getCompactSessionContext({
                 client,
                 sessionId: row.session_id,
                 includeSystemPrompt: false,
                 maxMessages: 15,
               })
+              if (errore.isOk(result)) {
+                currentSessionContext = result
+              }
             }
 
             // get last session context (with system prompt for project context)
-            const lastSessionId = await getLastSessionId({
+            const lastSessionResult = await getLastSessionId({
               client,
               excludeSessionId: row.session_id,
             })
+            const lastSessionId = errore.unwrapOr(lastSessionResult, null)
             if (lastSessionId) {
-              lastSessionContext = await getCompactSessionContext({
+              const result = await getCompactSessionContext({
                 client,
                 sessionId: lastSessionId,
                 includeSystemPrompt: true,
                 maxMessages: 10,
               })
+              if (errore.isOk(result)) {
+                lastSessionContext = result
+              }
             }
           } catch (e) {
             voiceLogger.error(`Could not get session context:`, e)

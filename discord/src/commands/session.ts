@@ -10,6 +10,7 @@ import { SILENT_MESSAGE_FLAGS } from '../discord-utils.js'
 import { extractTagsArrays } from '../xml.js'
 import { handleOpencodeSession } from '../session-handler.js'
 import { createLogger } from '../logger.js'
+import * as errore from 'errore'
 
 const logger = createLogger('SESSION')
 
@@ -58,6 +59,10 @@ export async function handleSessionCommand({ command, appId }: CommandContext): 
 
   try {
     const getClient = await initializeOpencodeForDirectory(projectDirectory)
+    if (errore.isError(getClient)) {
+      await command.editReply(getClient.message)
+      return
+    }
 
     const files = filesString
       .split(',')
@@ -128,6 +133,10 @@ async function handleAgentAutocomplete({ interaction, appId }: AutocompleteConte
 
   try {
     const getClient = await initializeOpencodeForDirectory(projectDirectory)
+    if (errore.isError(getClient)) {
+      await interaction.respond([])
+      return
+    }
 
     const agentsResponse = await getClient().app.agents({
       query: { directory: projectDirectory },
@@ -207,6 +216,10 @@ export async function handleSessionAutocomplete({
 
   try {
     const getClient = await initializeOpencodeForDirectory(projectDirectory)
+    if (errore.isError(getClient)) {
+      await interaction.respond([])
+      return
+    }
 
     const response = await getClient().find.files({
       query: {

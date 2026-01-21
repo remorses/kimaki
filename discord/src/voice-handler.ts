@@ -1,6 +1,7 @@
 // Discord voice channel connection and audio stream handler.
 // Manages joining/leaving voice channels, captures user audio, resamples to 16kHz,
 // and routes audio to the GenAI worker for real-time voice assistant interactions.
+import * as errore from 'errore'
 
 import {
   VoiceConnectionStatus,
@@ -34,6 +35,8 @@ import {
   SILENT_MESSAGE_FLAGS,
 } from './discord-utils.js'
 import { transcribeAudio } from './voice.js'
+import { FetchError } from './errors.js'
+
 import { createLogger } from './logger.js'
 
 const voiceLogger = createLogger('VOICE')
@@ -443,7 +446,15 @@ export async function processVoiceAttachment({
 
   await sendThreadMessage(thread, '🎤 Transcribing voice message...')
 
-  const audioResponse = await fetch(audioAttachment.url)
+  const audioResponse = await errore.tryAsync({
+    try: () => fetch(audioAttachment.url),
+    catch: (e) => new FetchError({ url: audioAttachment.url, cause: e }),
+  })
+  if (errore.isError(audioResponse)) {
+    voiceLogger.error(`Failed to download audio attachment:`, audioResponse.message)
+    await sendThreadMessage(thread, `⚠️ Failed to download audio: ${audioResponse.message}`)
+    return null
+  }
   const audioBuffer = Buffer.from(await audioResponse.arrayBuffer())
 
   voiceLogger.log(`Downloaded ${audioBuffer.length} bytes, transcribing...`)
@@ -457,10 +468,9 @@ export async function processVoiceAttachment({
       const { stdout } = await execAsync('git ls-files | tree --fromfile -a', {
         cwd: projectDirectory,
       })
-      const result = stdout
 
-      if (result) {
-        transcriptionPrompt = `Discord voice message transcription. Project file structure:\n${result}\n\nPlease transcribe file names and paths accurately based on this context.`
+      if (stdout) {
+        transcriptionPrompt = `Discord voice message transcription. Project file structure:\n${stdout}\n\nPlease transcribe file names and paths accurately based on this context.`
         voiceLogger.log(`Added project context to transcription prompt`)
       }
     } catch (e) {
@@ -479,19 +489,25 @@ export async function processVoiceAttachment({
     }
   }
 
-  let transcription: string
-  try {
-    transcription = await transcribeAudio({
-      audio: audioBuffer,
-      prompt: transcriptionPrompt,
-      geminiApiKey,
-      directory: projectDirectory,
-      currentSessionContext,
-      lastSessionContext,
+  const transcription = await transcribeAudio({
+    audio: audioBuffer,
+    prompt: transcriptionPrompt,
+    geminiApiKey,
+    directory: projectDirectory,
+    currentSessionContext,
+    lastSessionContext,
+  })
+
+  if (errore.isError(transcription)) {
+    const errMsg = errore.matchError(transcription, {
+      ApiKeyMissingError: (e) => e.message,
+      InvalidAudioFormatError: (e) => e.message,
+      TranscriptionError: (e) => e.message,
+      EmptyTranscriptionError: (e) => e.message,
+      NoResponseContentError: (e) => e.message,
+      NoToolResponseError: (e) => e.message,
     })
-  } catch (error) {
-    const errMsg = error instanceof Error ? error.message : String(error)
-    voiceLogger.error(`Transcription failed:`, error)
+    voiceLogger.error(`Transcription failed:`, transcription)
     await sendThreadMessage(thread, `⚠️ Transcription failed: ${errMsg}`)
     return null
   }
@@ -503,14 +519,23 @@ export async function processVoiceAttachment({
   if (isNewThread) {
     const threadName = transcription.replace(/\s+/g, ' ').trim().slice(0, 80)
     if (threadName) {
-      try {
-        await Promise.race([
-          thread.setName(threadName),
-          new Promise((resolve) => setTimeout(resolve, 2000)),
-        ])
+      const renamed = await Promise.race([
+        errore.tryAsync({
+          try: () => thread.setName(threadName),
+          catch: (e) => e as Error,
+        }),
+        new Promise<null>((resolve) => {
+          setTimeout(() => {
+            resolve(null)
+          }, 2000)
+        }),
+      ])
+      if (renamed === null) {
+        voiceLogger.log(`Thread name update timed out`)
+      } else if (errore.isError(renamed)) {
+        voiceLogger.log(`Could not update thread name:`, renamed.message)
+      } else {
         voiceLogger.log(`Updated thread name to: "${threadName}"`)
-      } catch (e) {
-        voiceLogger.log(`Could not update thread name:`, e)
       }
     }
   }

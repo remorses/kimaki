@@ -13,6 +13,7 @@ import {
   type Provider,
 } from '@opencode-ai/sdk'
 import { createLogger } from './logger.js'
+import * as errore from 'errore'
 
 const toolsLogger = createLogger('TOOLS')
 
@@ -35,6 +36,9 @@ export async function getTools({
   }) => void
 }) {
   const getClient = await initializeOpencodeForDirectory(directory)
+  if (errore.isError(getClient)) {
+    throw new Error(getClient.message)
+  }
   const client = getClient()
 
   const markdownRenderer = new ShareMarkdown(client)
@@ -83,7 +87,7 @@ export async function getTools({
             },
           })
           .then(async (response) => {
-            const markdown = await markdownRenderer.generate({
+            const markdownResult = await markdownRenderer.generate({
               sessionID: sessionId,
               lastAssistantOnly: true,
             })
@@ -91,7 +95,7 @@ export async function getTools({
               sessionId,
               messageId: '',
               data: response.data,
-              markdown,
+              markdown: errore.unwrapOr(markdownResult, ''),
             })
           })
           .catch((error) => {
@@ -149,7 +153,7 @@ export async function getTools({
               },
             })
             .then(async (response) => {
-              const markdown = await markdownRenderer.generate({
+              const markdownResult = await markdownRenderer.generate({
                 sessionID: session.data.id,
                 lastAssistantOnly: true,
               })
@@ -157,7 +161,7 @@ export async function getTools({
                 sessionId: session.data.id,
                 messageId: '',
                 data: response.data,
-                markdown,
+                markdown: errore.unwrapOr(markdownResult, ''),
               })
             })
             .catch((error) => {

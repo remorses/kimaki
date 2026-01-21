@@ -1,6 +1,7 @@
 import { test, expect, beforeAll, afterAll } from 'vitest'
 import { spawn, type ChildProcess } from 'child_process'
 import { OpencodeClient } from '@opencode-ai/sdk'
+import * as errore from 'errore'
 import { ShareMarkdown, getCompactSessionContext } from './markdown.js'
 
 let serverProcess: ChildProcess
@@ -121,10 +122,13 @@ test('generate markdown from first available session', async () => {
   const exporter = new ShareMarkdown(client)
 
   // Generate markdown with system info
-  const markdown = await exporter.generate({
+  const markdownResult = await exporter.generate({
     sessionID,
     includeSystemInfo: true,
   })
+
+  expect(errore.isOk(markdownResult)).toBe(true)
+  const markdown = errore.unwrap(markdownResult)
 
   console.log(`Generated markdown length: ${markdown.length} characters`)
 
@@ -299,12 +303,15 @@ test('generate markdown from multiple sessions', async () => {
 test.skipIf(process.env.CI)('getCompactSessionContext generates compact format', async () => {
   const sessionId = 'ses_46c2205e8ffeOll1JUSuYChSAM'
 
-  const context = await getCompactSessionContext({
+  const contextResult = await getCompactSessionContext({
     client,
     sessionId,
     includeSystemPrompt: true,
     maxMessages: 15,
   })
+
+  expect(errore.isOk(contextResult)).toBe(true)
+  const context = errore.unwrap(contextResult)
 
   console.log(`Generated compact context length: ${context.length} characters`)
 
@@ -319,12 +326,15 @@ test.skipIf(process.env.CI)('getCompactSessionContext generates compact format',
 test.skipIf(process.env.CI)('getCompactSessionContext without system prompt', async () => {
   const sessionId = 'ses_46c2205e8ffeOll1JUSuYChSAM'
 
-  const context = await getCompactSessionContext({
+  const contextResult = await getCompactSessionContext({
     client,
     sessionId,
     includeSystemPrompt: false,
     maxMessages: 10,
   })
+
+  expect(errore.isOk(contextResult)).toBe(true)
+  const context = errore.unwrap(contextResult)
 
   console.log(`Generated compact context (no system) length: ${context.length} characters`)
 

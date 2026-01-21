@@ -8,6 +8,7 @@ import { initializeOpencodeForDirectory } from '../opencode.js'
 import { createProjectChannels } from '../channel-management.js'
 import { createLogger } from '../logger.js'
 import { abbreviatePath } from '../utils.js'
+import * as errore from 'errore'
 
 const logger = createLogger('ADD-PROJECT')
 
@@ -25,6 +26,10 @@ export async function handleAddProjectCommand({ command, appId }: CommandContext
   try {
     const currentDir = process.cwd()
     const getClient = await initializeOpencodeForDirectory(currentDir)
+    if (errore.isError(getClient)) {
+      await command.editReply(getClient.message)
+      return
+    }
 
     const projectsResponse = await getClient().project.list({})
     if (!projectsResponse.data) {
@@ -89,6 +94,10 @@ export async function handleAddProjectAutocomplete({
   try {
     const currentDir = process.cwd()
     const getClient = await initializeOpencodeForDirectory(currentDir)
+    if (errore.isError(getClient)) {
+      await interaction.respond([])
+      return
+    }
 
     const projectsResponse = await getClient().project.list({})
     if (!projectsResponse.data) {

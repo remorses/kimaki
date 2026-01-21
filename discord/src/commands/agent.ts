@@ -15,6 +15,7 @@ import { getDatabase, setChannelAgent, setSessionAgent, clearSessionModel, runMo
 import { initializeOpencodeForDirectory } from '../opencode.js'
 import { resolveTextChannel, getKimakiMetadata } from '../discord-utils.js'
 import { createLogger } from '../logger.js'
+import * as errore from 'errore'
 
 const agentLogger = createLogger('AGENT')
 
@@ -161,6 +162,10 @@ export async function handleAgentCommand({
 
   try {
     const getClient = await initializeOpencodeForDirectory(context.dir)
+    if (errore.isError(getClient)) {
+      await interaction.editReply({ content: getClient.message })
+      return
+    }
 
     const agentsResponse = await getClient().app.agents({
       query: { directory: context.dir },
@@ -172,7 +177,7 @@ export async function handleAgentCommand({
     }
 
     const agents = agentsResponse.data
-      .filter((a) => (a.mode === 'primary' || a.mode === 'all') && !a.hidden)
+      .filter((a) => (a.mode === 'primary' || a.mode === 'all'))
       .slice(0, 25)
 
     if (agents.length === 0) {
@@ -289,6 +294,10 @@ export async function handleQuickAgentCommand({
 
   try {
     const getClient = await initializeOpencodeForDirectory(context.dir)
+    if (errore.isError(getClient)) {
+      await command.editReply({ content: getClient.message })
+      return
+    }
 
     const agentsResponse = await getClient().app.agents({
       query: { directory: context.dir },

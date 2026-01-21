@@ -40,6 +40,7 @@ import {
 } from 'discord.js'
 import path from 'node:path'
 import fs from 'node:fs'
+import * as errore from 'errore'
 
 import { createLogger } from './logger.js'
 import { spawn, spawnSync, execSync, type ExecSyncOptions } from 'node:child_process'
@@ -580,7 +581,12 @@ async function run({ restart, addChannels }: CliOptions) {
   // This is the biggest startup bottleneck (can take 1-30 seconds to spawn and wait for ready)
   const currentDir = process.cwd()
   s.start('Starting OpenCode server...')
-  const opencodePromise = initializeOpencodeForDirectory(currentDir)
+  const opencodePromise = initializeOpencodeForDirectory(currentDir).then((result) => {
+    if (errore.isError(result)) {
+      throw new Error(result.message)
+    }
+    return result
+  })
 
   s.message('Connecting to Discord...')
   const discordClient = await createDiscordClient()

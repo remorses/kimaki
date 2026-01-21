@@ -1,6 +1,7 @@
 // /remove-project command - Remove Discord channels for a project.
 
 import path from 'node:path'
+import * as errore from 'errore'
 import type { CommandContext, AutocompleteContext } from './types.js'
 import { getDatabase } from '../database.js'
 import { createLogger } from '../logger.js'
@@ -36,19 +37,27 @@ export async function handleRemoveProjectCommand({ command, appId }: CommandCont
     const failedChannels: string[] = []
 
     for (const { channel_id, channel_type } of channels) {
-      try {
-        const channel = await guild.channels.fetch(channel_id).catch(() => null)
-
-        if (channel) {
+      const channel = await errore.tryAsync({
+        try: () => guild.channels.fetch(channel_id),
+        catch: (e) => e as Error,
+      })
+      
+      if (errore.isError(channel)) {
+        // Channel doesn't exist in this guild or was already deleted
+        deletedChannels.push(`${channel_type}: ${channel_id} (already deleted)`)
+        continue
+      }
+      
+      if (channel) {
+        try {
           await channel.delete(`Removed by /remove-project command`)
           deletedChannels.push(`${channel_type}: ${channel_id}`)
-        } else {
-          // Channel doesn't exist in this guild or was already deleted
-          deletedChannels.push(`${channel_type}: ${channel_id} (already deleted)`)
+        } catch (error) {
+          logger.error(`Failed to delete channel ${channel_id}:`, error)
+          failedChannels.push(`${channel_type}: ${channel_id}`)
         }
-      } catch (error) {
-        logger.error(`Failed to delete channel ${channel_id}:`, error)
-        failedChannels.push(`${channel_type}: ${channel_id}`)
+      } else {
+        deletedChannels.push(`${channel_type}: ${channel_id} (already deleted)`)
       }
     }
 
@@ -103,13 +112,16 @@ export async function handleRemoveProjectAutocomplete({
     const projectsInGuild: { directory: string; channelId: string }[] = []
 
     for (const { directory, channel_id } of allChannels) {
-      try {
-        const channel = await guild.channels.fetch(channel_id).catch(() => null)
-        if (channel) {
-          projectsInGuild.push({ directory, channelId: channel_id })
-        }
-      } catch {
+      const channel = await errore.tryAsync({
+        try: () => guild.channels.fetch(channel_id),
+        catch: (e) => e as Error,
+      })
+      if (errore.isError(channel)) {
         // Channel not in this guild, skip
+        continue
+      }
+      if (channel) {
+        projectsInGuild.push({ directory, channelId: channel_id })
       }
     }
 

@@ -7,7 +7,9 @@ import type { FilePartInput } from '@opencode-ai/sdk'
 import type { Message } from 'discord.js'
 import fs from 'node:fs'
 import path from 'node:path'
+import * as errore from 'errore'
 import { createLogger } from './logger.js'
+import { FetchError } from './errors.js'
 
 // Generic message type compatible with both v1 and v2 SDK
 type GenericSessionMessage = {
@@ -87,17 +89,18 @@ export async function getTextAttachments(message: Message): Promise<string> {
 
   const textContents = await Promise.all(
     textAttachments.map(async (attachment) => {
-      try {
-        const response = await fetch(attachment.url)
-        if (!response.ok) {
-          return `<attachment filename="${attachment.name}" error="Failed to fetch: ${response.status}" />`
-        }
-        const text = await response.text()
-        return `<attachment filename="${attachment.name}" mime="${attachment.contentType}">\n${text}\n</attachment>`
-      } catch (error) {
-        const errMsg = error instanceof Error ? error.message : String(error)
-        return `<attachment filename="${attachment.name}" error="${errMsg}" />`
+      const response = await errore.tryAsync({
+        try: () => fetch(attachment.url),
+        catch: (e) => new FetchError({ url: attachment.url, cause: e }),
+      })
+      if (errore.isError(response)) {
+        return `<attachment filename="${attachment.name}" error="${response.message}" />`
       }
+      if (!response.ok) {
+        return `<attachment filename="${attachment.name}" error="Failed to fetch: ${response.status}" />`
+      }
+      const text = await response.text()
+      return `<attachment filename="${attachment.name}" mime="${attachment.contentType}">\n${text}\n</attachment>`
     }),
   )
 
@@ -121,28 +124,30 @@ export async function getFileAttachments(message: Message): Promise<FilePartInpu
 
   const results = await Promise.all(
     fileAttachments.map(async (attachment) => {
-      try {
-        const response = await fetch(attachment.url)
-        if (!response.ok) {
-          logger.error(`Failed to fetch attachment ${attachment.name}: ${response.status}`)
-          return null
-        }
-
-        const buffer = Buffer.from(await response.arrayBuffer())
-        const localPath = path.join(ATTACHMENTS_DIR, `${message.id}-${attachment.name}`)
-        fs.writeFileSync(localPath, buffer)
-
-        logger.log(`Downloaded attachment to ${localPath}`)
-
-        return {
-          type: 'file' as const,
-          mime: attachment.contentType || 'application/octet-stream',
-          filename: attachment.name,
-          url: localPath,
-        }
-      } catch (error) {
-        logger.error(`Error downloading attachment ${attachment.name}:`, error)
+      const response = await errore.tryAsync({
+        try: () => fetch(attachment.url),
+        catch: (e) => new FetchError({ url: attachment.url, cause: e }),
+      })
+      if (errore.isError(response)) {
+        logger.error(`Error downloading attachment ${attachment.name}:`, response.message)
         return null
+      }
+      if (!response.ok) {
+        logger.error(`Failed to fetch attachment ${attachment.name}: ${response.status}`)
+        return null
+      }
+
+      const buffer = Buffer.from(await response.arrayBuffer())
+      const localPath = path.join(ATTACHMENTS_DIR, `${message.id}-${attachment.name}`)
+      fs.writeFileSync(localPath, buffer)
+
+      logger.log(`Downloaded attachment to ${localPath}`)
+
+      return {
+        type: 'file' as const,
+        mime: attachment.contentType || 'application/octet-stream',
+        filename: attachment.name,
+        url: localPath,
       }
     }),
   )

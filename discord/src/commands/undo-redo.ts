@@ -6,6 +6,7 @@ import { getDatabase } from '../database.js'
 import { initializeOpencodeForDirectory } from '../opencode.js'
 import { resolveTextChannel, getKimakiMetadata, SILENT_MESSAGE_FLAGS } from '../discord-utils.js'
 import { createLogger } from '../logger.js'
+import * as errore from 'errore'
 
 const logger = createLogger('UNDO-REDO')
 
@@ -63,11 +64,15 @@ export async function handleUndoCommand({ command }: CommandContext): Promise<vo
 
   const sessionId = row.session_id
 
+  await command.deferReply({ flags: SILENT_MESSAGE_FLAGS })
+
+  const getClient = await initializeOpencodeForDirectory(directory)
+  if (errore.isError(getClient)) {
+    await command.editReply(`Failed to undo: ${getClient.message}`)
+    return
+  }
+
   try {
-    await command.deferReply({ flags: SILENT_MESSAGE_FLAGS })
-
-    const getClient = await initializeOpencodeForDirectory(directory)
-
     // Fetch messages to find the last assistant message
     const messagesResponse = await getClient().session.messages({
       path: { id: sessionId },
@@ -166,11 +171,15 @@ export async function handleRedoCommand({ command }: CommandContext): Promise<vo
 
   const sessionId = row.session_id
 
+  await command.deferReply({ flags: SILENT_MESSAGE_FLAGS })
+
+  const getClient = await initializeOpencodeForDirectory(directory)
+  if (errore.isError(getClient)) {
+    await command.editReply(`Failed to redo: ${getClient.message}`)
+    return
+  }
+
   try {
-    await command.deferReply({ flags: SILENT_MESSAGE_FLAGS })
-
-    const getClient = await initializeOpencodeForDirectory(directory)
-
     // Check if session has reverted state
     const sessionResponse = await getClient().session.get({
       path: { id: sessionId },

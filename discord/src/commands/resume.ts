@@ -14,6 +14,7 @@ import { sendThreadMessage, resolveTextChannel, getKimakiMetadata } from '../dis
 import { extractTagsArrays } from '../xml.js'
 import { collectLastAssistantParts } from '../message-formatting.js'
 import { createLogger } from '../logger.js'
+import * as errore from 'errore'
 
 const logger = createLogger('RESUME')
 
@@ -60,6 +61,10 @@ export async function handleResumeCommand({ command, appId }: CommandContext): P
 
   try {
     const getClient = await initializeOpencodeForDirectory(projectDirectory)
+    if (errore.isError(getClient)) {
+      await command.editReply(getClient.message)
+      return
+    }
 
     const sessionResponse = await getClient().session.get({
       path: { id: sessionId },
@@ -168,6 +173,10 @@ export async function handleResumeAutocomplete({
 
   try {
     const getClient = await initializeOpencodeForDirectory(projectDirectory)
+    if (errore.isError(getClient)) {
+      await interaction.respond([])
+      return
+    }
 
     const sessionsResponse = await getClient().session.list()
     if (!sessionsResponse.data) {

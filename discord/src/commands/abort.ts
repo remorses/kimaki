@@ -7,6 +7,7 @@ import { initializeOpencodeForDirectory } from '../opencode.js'
 import { resolveTextChannel, getKimakiMetadata, SILENT_MESSAGE_FLAGS } from '../discord-utils.js'
 import { abortControllers } from '../session-handler.js'
 import { createLogger } from '../logger.js'
+import * as errore from 'errore'
 
 const logger = createLogger('ABORT')
 
@@ -64,14 +65,23 @@ export async function handleAbortCommand({ command }: CommandContext): Promise<v
 
   const sessionId = row.session_id
 
-  try {
-    const existingController = abortControllers.get(sessionId)
-    if (existingController) {
-      existingController.abort(new Error('User requested abort'))
-      abortControllers.delete(sessionId)
-    }
+  const existingController = abortControllers.get(sessionId)
+  if (existingController) {
+    existingController.abort(new Error('User requested abort'))
+    abortControllers.delete(sessionId)
+  }
 
-    const getClient = await initializeOpencodeForDirectory(directory)
+  const getClient = await initializeOpencodeForDirectory(directory)
+  if (errore.isError(getClient)) {
+    await command.reply({
+      content: `Failed to abort: ${getClient.message}`,
+      ephemeral: true,
+      flags: SILENT_MESSAGE_FLAGS,
+    })
+    return
+  }
+
+  try {
     await getClient().session.abort({
       path: { id: sessionId },
     })

@@ -30,6 +30,7 @@ import {
   pendingQuestionContexts,
 } from './commands/ask-question.js'
 import { showPermissionDropdown, cleanupPermissionContext } from './commands/permissions.js'
+import * as errore from 'errore'
 
 const sessionLogger = createLogger('SESSION')
 const voiceLogger = createLogger('VOICE')
@@ -104,6 +105,10 @@ export async function abortAndRetrySession({
 
   // Also call the API abort endpoint
   const getClient = await initializeOpencodeForDirectory(projectDirectory)
+  if (errore.isError(getClient)) {
+    sessionLogger.error(`[ABORT+RETRY] Failed to initialize OpenCode client:`, getClient.message)
+    return false
+  }
   try {
     await getClient().session.abort({ path: { id: sessionId } })
   } catch (e) {
@@ -183,6 +188,10 @@ export async function handleOpencodeSession({
   sessionLogger.log(`Using directory: ${directory}`)
 
   const getClient = await initializeOpencodeForDirectory(directory)
+  if (errore.isError(getClient)) {
+    await sendThreadMessage(thread, `✗ ${getClient.message}`)
+    return
+  }
 
   const serverEntry = getOpencodeServers().get(directory)
   const port = serverEntry?.port

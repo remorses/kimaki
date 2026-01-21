@@ -5,6 +5,7 @@
 import Database from 'better-sqlite3'
 import fs from 'node:fs'
 import path from 'node:path'
+import * as errore from 'errore'
 import { createLogger } from './logger.js'
 import { getDataDir } from './config.js'
 
@@ -16,10 +17,14 @@ export function getDatabase(): Database.Database {
   if (!db) {
     const dataDir = getDataDir()
 
-    try {
-      fs.mkdirSync(dataDir, { recursive: true })
-    } catch (error) {
-      dbLogger.error(`Failed to create data directory ${dataDir}:`, error)
+    const mkdirError = errore.tryFn({
+      try: () => {
+        fs.mkdirSync(dataDir, { recursive: true })
+      },
+      catch: (e) => e as Error,
+    })
+    if (errore.isError(mkdirError)) {
+      dbLogger.error(`Failed to create data directory ${dataDir}:`, mkdirError.message)
     }
 
     const dbPath = path.join(dataDir, 'discord-sessions.db')

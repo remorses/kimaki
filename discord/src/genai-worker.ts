@@ -4,13 +4,14 @@
 
 import { parentPort, threadId } from 'node:worker_threads'
 import { createWriteStream, type WriteStream } from 'node:fs'
-import { mkdir } from 'node:fs/promises'
 import path from 'node:path'
+import * as errore from 'errore'
 import { Resampler } from '@purinton/resampler'
 import * as prism from 'prism-media'
 import { startGenAiSession } from './genai.js'
 import type { Session } from '@google/genai'
 import { getTools } from './tools.js'
+import { mkdir } from 'node:fs/promises'
 import type { WorkerInMessage, WorkerOutMessage } from './worker-types.js'
 import { createLogger } from './logger.js'
 
@@ -127,26 +128,28 @@ async function createAssistantAudioLogStream(
   const timestamp = new Date().toISOString().replace(/[:.]/g, '-')
   const audioDir = path.join(process.cwd(), 'discord-audio-logs', guildId, channelId)
 
-  try {
-    await mkdir(audioDir, { recursive: true })
-
-    // Create stream for assistant audio (24kHz mono s16le PCM)
-    const outputFileName = `assistant_${timestamp}.24.pcm`
-    const outputFilePath = path.join(audioDir, outputFileName)
-    const outputAudioStream = createWriteStream(outputFilePath)
-
-    // Add error handler to prevent crashes
-    outputAudioStream.on('error', (error) => {
-      workerLogger.error(`Assistant audio log stream error:`, error)
-    })
-
-    workerLogger.log(`Created assistant audio log: ${outputFilePath}`)
-
-    return outputAudioStream
-  } catch (error) {
-    workerLogger.error(`Failed to create audio log directory:`, error)
+  const mkdirError = await errore.tryAsync({
+    try: () => mkdir(audioDir, { recursive: true }),
+    catch: (e) => e as Error,
+  })
+  if (errore.isError(mkdirError)) {
+    workerLogger.error(`Failed to create audio log directory:`, mkdirError.message)
     return null
   }
+
+  // Create stream for assistant audio (24kHz mono s16le PCM)
+  const outputFileName = `assistant_${timestamp}.24.pcm`
+  const outputFilePath = path.join(audioDir, outputFileName)
+  const outputAudioStream = createWriteStream(outputFilePath)
+
+  // Add error handler to prevent crashes
+  outputAudioStream.on('error', (error) => {
+    workerLogger.error(`Assistant audio log stream error:`, error)
+  })
+
+  workerLogger.log(`Created assistant audio log: ${outputFilePath}`)
+
+  return outputAudioStream
 }
 
 // Handle encoded Opus packets
