@@ -177,7 +177,10 @@ export async function handleAgentCommand({
     }
 
     const agents = agentsResponse.data
-      .filter((a) => (a.mode === 'primary' || a.mode === 'all'))
+      .filter((agent) => {
+        const hidden = (agent as { hidden?: boolean }).hidden
+        return (agent.mode === 'primary' || agent.mode === 'all') && !hidden
+      })
       .slice(0, 25)
 
     if (agents.length === 0) {
