@@ -405,8 +405,6 @@ export async function handleOpencodeSession({
     const subtaskSessions = new Map<string, { label: string; assistantMessageId?: string }>()
     // Counts spawned tasks per agent type: "explore" → 2
     const agentSpawnCounts: Record<string, number> = {}
-    // Pending labels by description (task tool fires before child session is known)
-    const pendingLabels = new Map<string, string>()
 
     try {
       let assistantMessageId: string | undefined
@@ -473,37 +471,8 @@ export async function handleOpencodeSession({
         } else if (event.type === 'message.part.updated') {
           const part = event.properties.part
 
-          // Check if this is a subtask event
-          let subtaskInfo = subtaskSessions.get(part.sessionID)
-
-          // If unknown sessionID, check if it's a child session of ours
-          if (!subtaskInfo && part.sessionID !== session.id) {
-            subtaskInfo = await (async () => {
-              const childSessionRes = await errore.tryAsync({
-                try: () =>
-                  clientV2.session.get({
-                    sessionID: part.sessionID,
-                    directory,
-                  }),
-                catch: (e) => new Error('Failed to fetch session', { cause: e }),
-              })
-              if (errore.isError(childSessionRes)) {
-                return undefined
-              }
-              const childSession = childSessionRes.data
-              if (!childSession || childSession.parentID !== session.id) {
-                return undefined
-              }
-              const label =
-                pendingLabels.get(childSession.title) ?? `task-${subtaskSessions.size + 1}`
-              const info = { label, assistantMessageId: undefined }
-              subtaskSessions.set(part.sessionID, info)
-              pendingLabels.delete(childSession.title)
-              sessionLogger.log(`[SUBTASK] Linked child session ${part.sessionID} to "${label}"`)
-              return info
-            })()
-          }
-
+          // Check if this is a subtask event (child session we're tracking)
+          const subtaskInfo = subtaskSessions.get(part.sessionID)
           const isSubtaskEvent = Boolean(subtaskInfo)
 
           // Accept events from main session OR tracked subtask sessions
@@ -582,14 +551,15 @@ export async function handleOpencodeSession({
               }
             }
             await sendPartMessage(part)
-            // Track task tool's subagent_type and display with label (only once per tool part)
+            // Track task tool and register child session when sessionId is available
             if (part.tool === 'task' && !sentPartIds.has(part.id)) {
               const description = (part.state.input?.description as string) || ''
               const agent = (part.state.input?.subagent_type as string) || 'task'
-              if (description) {
+              const childSessionId = (part.state.metadata?.sessionId as string) || ''
+              if (description && childSessionId) {
                 agentSpawnCounts[agent] = (agentSpawnCounts[agent] || 0) + 1
                 const label = `${agent}-${agentSpawnCounts[agent]}`
-                pendingLabels.set(description, label)
+                subtaskSessions.set(childSessionId, { label, assistantMessageId: undefined })
                 const taskDisplay = `┣ task **${label}** _${description}_`
                 await sendThreadMessage(thread, taskDisplay + '\n\n')
                 sentPartIds.add(part.id)
@@ -648,21 +618,6 @@ export async function handleOpencodeSession({
             }, 300)
           }
 
-          // Handle subtask parts - fallback if task tool didn't fire first
-          if (
-            part.type === 'subtask' &&
-            !pendingLabels.has(part.description) &&
-            !sentPartIds.has(part.id)
-          ) {
-            const agent = part.agent?.trim() || 'task'
-            agentSpawnCounts[agent] = (agentSpawnCounts[agent] || 0) + 1
-            const label = `${agent}-${agentSpawnCounts[agent]}`
-            pendingLabels.set(part.description, label)
-            sessionLogger.log(`[SUBTASK FALLBACK] Registered "${label}" for "${part.description}"`)
-            const taskDisplay = `┣ task **${label}** _${part.description}_`
-            await sendThreadMessage(thread, taskDisplay + '\n\n')
-            sentPartIds.add(part.id)
-          }
         } else if (event.type === 'session.error') {
           sessionLogger.error(`ERROR:`, event.properties)
           if (event.properties.sessionID === session.id) {
@@ -848,6 +803,32 @@ export async function handleOpencodeSession({
         let contextInfo = ''
 
         try {
+          // Fetch final token count from API since message.updated events can arrive
+          // after session.idle due to race conditions in event ordering
+          if (tokensUsedInSession === 0) {
+            const messagesResponse = await getClient().session.messages({
+              path: { id: session.id },
+            })
+            const messages = messagesResponse.data || []
+            const lastAssistant = [...messages]
+              .reverse()
+              .find((m) => m.info.role === 'assistant')
+            if (lastAssistant && 'tokens' in lastAssistant.info) {
+              const tokens = lastAssistant.info.tokens as {
+                input: number
+                output: number
+                reasoning: number
+                cache: { read: number; write: number }
+              }
+              tokensUsedInSession =
+                tokens.input +
+                tokens.output +
+                tokens.reasoning +
+                tokens.cache.read +
+                tokens.cache.write
+            }
+          }
+
           const providersResponse = await getClient().provider.list({ query: { directory } })
           const provider = providersResponse.data?.all?.find((p) => p.id === usedProviderID)
           const model = provider?.models?.[usedModel || '']
