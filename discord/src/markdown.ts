@@ -322,12 +322,13 @@ export function getCompactSessionContext({
                 continue
               }
               const input = part.state?.input || {}
+              const normalize = (value: string) => value.replace(/\s+/g, ' ').trim()
               // compact params: just key=value on one line
               const params = Object.entries(input)
                 .map(([k, v]) => {
                   const val =
                     typeof v === 'string' ? v.slice(0, 100) : JSON.stringify(v).slice(0, 100)
-                  return `${k}=${val}`
+                  return `${k}=${normalize(val)}`
                 })
                 .join(', ')
               lines.push(`[Tool ${toolName}]: ${params}`)
