@@ -211,6 +211,142 @@ describe('andThen', () => {
 })
 
 // ============================================================================
+// Composition
+// ============================================================================
+
+describe('composing multiple operations', () => {
+  // Additional error types for composition tests
+  class DivisionError extends TaggedError('DivisionError')<{
+    message: string
+  }>() {}
+
+  function validatePositive(n: number): ValidationError | number {
+    if (n <= 0) return new ValidationError({ field: 'number', message: 'Must be positive' })
+    return n
+  }
+
+  function divide(a: number, b: number): DivisionError | number {
+    if (b === 0) return new DivisionError({ message: 'Cannot divide by zero' })
+    return a / b
+  }
+
+  test('compose with nested andThen calls', () => {
+    const result = andThen(
+      andThen(parseNumber('10'), validatePositive),
+      (n) => divide(100, n)
+    )
+
+    expect(result).toBe(10)
+  })
+
+  test('step-by-step composition with early returns', () => {
+    function calculate(input: string): ValidationError | DivisionError | number {
+      const parsed = parseNumber(input)
+      if (isError(parsed)) return parsed
+
+      const validated = validatePositive(parsed)
+      if (isError(validated)) return validated
+
+      return divide(100, validated)
+    }
+
+    expect(calculate('10')).toBe(10)
+    expect(isError(calculate('bad'))).toBe(true)
+    expect(isError(calculate('-5'))).toBe(true)
+    expect(isError(calculate('0'))).toBe(true)
+  })
+
+  test('error type is union of all possible errors', () => {
+    function calculate(input: string): ValidationError | DivisionError | number {
+      const parsed = parseNumber(input)
+      if (isError(parsed)) return parsed
+
+      // Skip validatePositive to allow 0 through to divide
+      return divide(100, parsed)
+    }
+
+    // TypeScript knows the error is ValidationError | DivisionError
+    const result = calculate('0')  // divide by zero
+    if (isError(result)) {
+      // Can use matchError with all possible error types
+      const message = matchError(result, {
+        ValidationError: (e) => `Validation: ${e.field}`,
+        DivisionError: (e) => `Division: ${e.message}`,
+      })
+      expect(message).toBe('Division: Cannot divide by zero')
+    }
+  })
+
+  test('mapError at the end to normalize errors', () => {
+    class AppError extends TaggedError('AppError')<{
+      source: string
+      message: string
+    }>() {}
+
+    function calculate(input: string): ValidationError | DivisionError | number {
+      const parsed = parseNumber(input)
+      if (isError(parsed)) return parsed
+      return divide(100, parsed)
+    }
+
+    const result = calculate('0')
+    const normalized = mapError(result, (e) => new AppError({ source: e._tag, message: e.message }))
+
+    if (isError(normalized)) {
+      expect(normalized._tag).toBe('AppError')
+      expect(normalized.source).toBe('DivisionError')
+    }
+  })
+
+  test('compose map and andThen', () => {
+    const result = map(
+      andThen(parseNumber('5'), (n) => divide(100, n)),
+      (n) => `Result: ${n}`
+    )
+
+    expect(result).toBe('Result: 20')
+  })
+})
+
+describe('async composition', () => {
+  async function fetchValue(id: string): Promise<NotFoundError | number> {
+    if (id === 'missing') return new NotFoundError({ id })
+    return 42
+  }
+
+  async function processValue(n: number): Promise<ValidationError | string> {
+    if (n < 0) return new ValidationError({ field: 'value', message: 'Negative' })
+    return `processed: ${n}`
+  }
+
+  test('async step-by-step composition', async () => {
+    async function pipeline(id: string): Promise<NotFoundError | ValidationError | string> {
+      const value = await fetchValue(id)
+      if (isError(value)) return value
+
+      const processed = await processValue(value)
+      if (isError(processed)) return processed
+
+      return processed
+    }
+
+    expect(await pipeline('123')).toBe('processed: 42')
+    expect(isError(await pipeline('missing'))).toBe(true)
+  })
+
+  test('async with andThenAsync', async () => {
+    const { andThenAsync } = await import('./index')
+
+    const result = await andThenAsync(
+      await fetchValue('123'),
+      processValue
+    )
+
+    expect(result).toBe('processed: 42')
+  })
+})
+
+// ============================================================================
 // Extraction
 // ============================================================================
 

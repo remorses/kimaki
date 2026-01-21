@@ -125,6 +125,69 @@ const posts = andThen(user, u => fetchPosts(u.id))
 const logged = tap(user, u => console.log('Got user:', u.name))
 ```
 
+### Composing Operations
+
+Chain multiple operations together:
+
+```ts
+import { map, andThen, mapError, isError } from 'errore'
+
+// Define operations that can fail
+function parseNumber(s: string): ValidationError | number { ... }
+function validatePositive(n: number): ValidationError | number { ... }
+function divide(a: number, b: number): DivisionError | number { ... }
+
+// Compose with nested calls
+const result = andThen(
+  andThen(parseNumber(input), validatePositive),
+  n => divide(100, n)
+)
+
+// Or step by step (often clearer)
+function calculate(input: string): ValidationError | DivisionError | number {
+  const parsed = parseNumber(input)
+  if (isError(parsed)) return parsed
+
+  const validated = validatePositive(parsed)
+  if (isError(validated)) return validated
+
+  return divide(100, validated)
+}
+
+// Transform errors at the end
+const appResult = mapError(
+  calculate(userInput),
+  e => new AppError({ source: e._tag, message: e.message })
+)
+```
+
+Real-world async composition:
+
+```ts
+async function processOrder(orderId: string): Promise<OrderError | Receipt> {
+  const order = await fetchOrder(orderId)
+  if (isError(order)) return order
+
+  const validated = validateOrder(order)
+  if (isError(validated)) return validated
+
+  const payment = await processPayment(validated)
+  if (isError(payment)) return payment
+
+  return generateReceipt(payment)
+}
+
+// Caller gets union of all possible errors
+const receipt = await processOrder('123')
+if (isError(receipt)) {
+  matchError(receipt, {
+    NotFoundError: e => `Order ${e.id} not found`,
+    ValidationError: e => `Invalid: ${e.field}`,
+    PaymentError: e => `Payment failed: ${e.reason}`,
+  })
+}
+```
+
 ### Extraction
 
 ```ts
