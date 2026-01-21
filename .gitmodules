@@ -1,0 +1,3 @@
+[submodule "errore"]
+	path = errore
+	url = https://github.com/remorses/errore.git
