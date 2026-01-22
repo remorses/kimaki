@@ -2,7 +2,7 @@
 // Uses OpenCode SDK v2 to create worktrees with kimaki- prefix
 // Creates thread immediately, then worktree in background so user can type
 
-import { ChannelType, type TextChannel, type ThreadChannel } from 'discord.js'
+import { ChannelType, type TextChannel, type ThreadChannel, type Message } from 'discord.js'
 import fs from 'node:fs'
 import type { CommandContext } from './types.js'
 import {
@@ -74,14 +74,16 @@ function getProjectDirectoryFromChannel(
 }
 
 /**
- * Create worktree in background and update thread when done.
+ * Create worktree in background and update starter message when done.
  */
 async function createWorktreeInBackground({
   thread,
+  starterMessage,
   worktreeName,
   projectDirectory,
 }: {
   thread: ThreadChannel
+  starterMessage: Message
   worktreeName: string
   projectDirectory: string
 }): Promise<void> {
@@ -89,20 +91,14 @@ async function createWorktreeInBackground({
   const getClient = await initializeOpencodeForDirectory(projectDirectory)
   if (errore.isError(getClient)) {
     setWorktreeError({ threadId: thread.id, errorMessage: getClient.message })
-    await thread.send({
-      content: `❌ Failed to initialize OpenCode: ${getClient.message}`,
-      flags: SILENT_MESSAGE_FLAGS,
-    })
+    await starterMessage.edit(`🌳 **Worktree: ${worktreeName}**\n❌ Failed to initialize OpenCode: ${getClient.message}`)
     return
   }
 
   const clientV2 = getOpencodeClientV2(projectDirectory)
   if (!clientV2) {
     setWorktreeError({ threadId: thread.id, errorMessage: 'Failed to get OpenCode client' })
-    await thread.send({
-      content: '❌ Failed to get OpenCode client',
-      flags: SILENT_MESSAGE_FLAGS,
-    })
+    await starterMessage.edit(`🌳 **Worktree: ${worktreeName}**\n❌ Failed to get OpenCode client`)
     return
   }
 
@@ -134,19 +130,17 @@ async function createWorktreeInBackground({
     const errorMsg = worktreeResult.message
     logger.error('[NEW-WORKTREE] Error:', worktreeResult.cause)
     setWorktreeError({ threadId: thread.id, errorMessage: errorMsg })
-    await thread.send({
-      content: `❌ ${errorMsg}`,
-      flags: SILENT_MESSAGE_FLAGS,
-    })
+    await starterMessage.edit(`🌳 **Worktree: ${worktreeName}**\n❌ ${errorMsg}`)
     return
   }
 
-  // Success - update database and notify
+  // Success - update database and edit starter message
   setWorktreeReady({ threadId: thread.id, worktreeDirectory: worktreeResult.directory })
-  await thread.send({
-    content: `✅ Worktree ready!\n📁 \`${worktreeResult.directory}\`\n🌿 Branch: \`${worktreeResult.branch}\``,
-    flags: SILENT_MESSAGE_FLAGS,
-  })
+  await starterMessage.edit(
+    `🌳 **Worktree: ${worktreeName}**\n` +
+    `📁 \`${worktreeResult.directory}\`\n` +
+    `🌿 Branch: \`${worktreeResult.branch}\``
+  )
 }
 
 export async function handleNewWorktreeCommand({
@@ -179,7 +173,7 @@ export async function handleNewWorktreeCommand({
   }
 
   // Create thread immediately so user can start typing
-  const threadResult = await errore.tryAsync({
+  const result = await errore.tryAsync({
     try: async () => {
       const starterMessage = await textChannel.send({
         content: `🌳 **Creating worktree: ${worktreeName}**\n⏳ Setting up...`,
@@ -192,29 +186,32 @@ export async function handleNewWorktreeCommand({
         reason: 'Worktree session',
       })
 
-      return thread
+      return { thread, starterMessage }
     },
     catch: (e) => new WorktreeError('Failed to create thread', { cause: e }),
   })
 
-  if (errore.isError(threadResult)) {
-    logger.error('[NEW-WORKTREE] Error:', threadResult.cause)
-    await command.editReply(threadResult.message)
+  if (errore.isError(result)) {
+    logger.error('[NEW-WORKTREE] Error:', result.cause)
+    await command.editReply(result.message)
     return
   }
 
+  const { thread, starterMessage } = result
+
   // Store pending worktree in database
   createPendingWorktree({
-    threadId: threadResult.id,
+    threadId: thread.id,
     worktreeName,
     projectDirectory,
   })
 
-  await command.editReply(`Creating worktree in ${threadResult.toString()}`)
+  await command.editReply(`Creating worktree in ${thread.toString()}`)
 
   // Create worktree in background (don't await)
   createWorktreeInBackground({
-    thread: threadResult,
+    thread,
+    starterMessage,
     worktreeName,
     projectDirectory,
   }).catch((e) => {
