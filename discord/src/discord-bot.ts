@@ -58,7 +58,10 @@ import { extractTagsArrays } from './xml.js'
 import { createLogger } from './logger.js'
 import { setGlobalDispatcher, Agent } from 'undici'
 
-setGlobalDispatcher(new Agent({ headersTimeout: 0, bodyTimeout: 0 }))
+// Increase connection pool to prevent deadlock when multiple sessions have open SSE streams.
+// Each session's event.subscribe() holds a connection; without enough connections,
+// regular HTTP requests (question.reply, session.prompt) get blocked → deadlock.
+setGlobalDispatcher(new Agent({ headersTimeout: 0, bodyTimeout: 0, connections: 500 }))
 
 const discordLogger = createLogger('DISCORD')
 const voiceLogger = createLogger('VOICE')
@@ -154,7 +157,7 @@ export async function startDiscordBot({
           try: () => message.fetch(),
           catch: (e) => e as Error,
         })
-        if (errore.isError(fetched)) {
+        if (fetched instanceof Error) {
           discordLogger.log(`Failed to fetch partial message ${message.id}:`, fetched.message)
           return
         }
@@ -202,6 +205,20 @@ export async function startDiscordBot({
 
           projectDirectory = extracted['kimaki.directory']?.[0]?.trim()
           channelAppId = extracted['kimaki.app']?.[0]?.trim()
+        }
+
+        // Check if this thread is a worktree thread by parsing starter message XML
+        const starterMessage = await thread.fetchStarterMessage().catch(() => null)
+        if (starterMessage?.content) {
+          const worktreeExtracted = extractTagsArrays({
+            xml: starterMessage.content,
+            tags: ['kimaki.worktree.directory'],
+          })
+          const worktreeDirectory = worktreeExtracted['kimaki.worktree.directory']?.[0]?.trim()
+          if (worktreeDirectory) {
+            projectDirectory = worktreeDirectory
+            discordLogger.log(`Using worktree directory: ${projectDirectory}`)
+          }
         }
 
         if (channelAppId && channelAppId !== currentAppId) {
@@ -259,7 +276,7 @@ export async function startDiscordBot({
         if (projectDirectory) {
           try {
             const getClient = await initializeOpencodeForDirectory(projectDirectory)
-            if (errore.isError(getClient)) {
+            if (getClient instanceof Error) {
               voiceLogger.error(`[SESSION] Failed to initialize OpenCode client:`, getClient.message)
               throw new Error(getClient.message)
             }
