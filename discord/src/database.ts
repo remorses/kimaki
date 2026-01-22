@@ -23,7 +23,7 @@ export function getDatabase(): Database.Database {
       },
       catch: (e) => e as Error,
     })
-    if (errore.isError(mkdirError)) {
+    if (mkdirError instanceof Error) {
       dbLogger.error(`Failed to create data directory ${dataDir}:`, mkdirError.message)
     }
 
@@ -86,6 +86,20 @@ export function getDatabase(): Database.Database {
         app_id TEXT PRIMARY KEY,
         gemini_api_key TEXT,
         xai_api_key TEXT,
+        created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+      )
+    `)
+
+    // Track worktrees created for threads (for /new-worktree command)
+    // status: 'pending' while creating, 'ready' when done, 'error' if failed
+    db.exec(`
+      CREATE TABLE IF NOT EXISTS thread_worktrees (
+        thread_id TEXT PRIMARY KEY,
+        worktree_name TEXT NOT NULL,
+        worktree_directory TEXT,
+        project_directory TEXT NOT NULL,
+        status TEXT DEFAULT 'pending',
+        error_message TEXT,
         created_at DATETIME DEFAULT CURRENT_TIMESTAMP
       )
     `)
@@ -241,6 +255,87 @@ export function setSessionAgent(sessionId: string, agentName: string): void {
     sessionId,
     agentName,
   )
+}
+
+// Worktree status types
+export type WorktreeStatus = 'pending' | 'ready' | 'error'
+
+export type ThreadWorktree = {
+  thread_id: string
+  worktree_name: string
+  worktree_directory: string | null
+  project_directory: string
+  status: WorktreeStatus
+  error_message: string | null
+}
+
+/**
+ * Get the worktree info for a thread.
+ */
+export function getThreadWorktree(threadId: string): ThreadWorktree | undefined {
+  const db = getDatabase()
+  return db.prepare('SELECT * FROM thread_worktrees WHERE thread_id = ?').get(threadId) as
+    | ThreadWorktree
+    | undefined
+}
+
+/**
+ * Create a pending worktree entry for a thread.
+ */
+export function createPendingWorktree({
+  threadId,
+  worktreeName,
+  projectDirectory,
+}: {
+  threadId: string
+  worktreeName: string
+  projectDirectory: string
+}): void {
+  const db = getDatabase()
+  db.prepare(
+    `INSERT OR REPLACE INTO thread_worktrees (thread_id, worktree_name, project_directory, status) VALUES (?, ?, ?, 'pending')`,
+  ).run(threadId, worktreeName, projectDirectory)
+}
+
+/**
+ * Mark a worktree as ready with its directory.
+ */
+export function setWorktreeReady({
+  threadId,
+  worktreeDirectory,
+}: {
+  threadId: string
+  worktreeDirectory: string
+}): void {
+  const db = getDatabase()
+  db.prepare(
+    `UPDATE thread_worktrees SET worktree_directory = ?, status = 'ready' WHERE thread_id = ?`,
+  ).run(worktreeDirectory, threadId)
+}
+
+/**
+ * Mark a worktree as failed with error message.
+ */
+export function setWorktreeError({
+  threadId,
+  errorMessage,
+}: {
+  threadId: string
+  errorMessage: string
+}): void {
+  const db = getDatabase()
+  db.prepare(`UPDATE thread_worktrees SET status = 'error', error_message = ? WHERE thread_id = ?`).run(
+    errorMessage,
+    threadId,
+  )
+}
+
+/**
+ * Delete the worktree info for a thread.
+ */
+export function deleteThreadWorktree(threadId: string): void {
+  const db = getDatabase()
+  db.prepare('DELETE FROM thread_worktrees WHERE thread_id = ?').run(threadId)
 }
 
 export function closeDatabase(): void {

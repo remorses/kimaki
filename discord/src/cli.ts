@@ -212,7 +212,7 @@ async function registerCommands({
       })
       .toJSON(),
     new SlashCommandBuilder()
-      .setName('session')
+      .setName('new-session')
       .setDescription('Start a new OpenCode session')
       .addStringOption((option) => {
         option.setName('prompt').setDescription('Prompt content for the session').setRequired(true)
@@ -233,6 +233,18 @@ async function registerCommands({
           .setName('agent')
           .setDescription('Agent to use for this session')
           .setAutocomplete(true)
+
+        return option
+      })
+      .toJSON(),
+    new SlashCommandBuilder()
+      .setName('new-worktree')
+      .setDescription('Create a new git worktree and start a session thread')
+      .addStringOption((option) => {
+        option
+          .setName('name')
+          .setDescription('Name for the worktree (will be formatted: lowercase, spaces to dashes)')
+          .setRequired(true)
 
         return option
       })
@@ -583,7 +595,7 @@ async function run({ restart, addChannels }: CliOptions) {
   const currentDir = process.cwd()
   s.start('Starting OpenCode server...')
   const opencodePromise = initializeOpencodeForDirectory(currentDir).then((result) => {
-    if (errore.isError(result)) {
+    if (result instanceof Error) {
       throw new Error(result.message)
     }
     return result

@@ -1,4 +1,4 @@
-// /session command - Start a new OpenCode session.
+// /new-session command - Start a new OpenCode session.
 
 import { ChannelType, type TextChannel } from 'discord.js'
 import fs from 'node:fs'
@@ -59,7 +59,7 @@ export async function handleSessionCommand({ command, appId }: CommandContext): 
 
   try {
     const getClient = await initializeOpencodeForDirectory(projectDirectory)
-    if (errore.isError(getClient)) {
+    if (getClient instanceof Error) {
       await command.editReply(getClient.message)
       return
     }
@@ -133,7 +133,7 @@ async function handleAgentAutocomplete({ interaction, appId }: AutocompleteConte
 
   try {
     const getClient = await initializeOpencodeForDirectory(projectDirectory)
-    if (errore.isError(getClient)) {
+    if (getClient instanceof Error) {
       await interaction.respond([])
       return
     }
@@ -216,7 +216,7 @@ export async function handleSessionAutocomplete({
 
   try {
     const getClient = await initializeOpencodeForDirectory(projectDirectory)
-    if (errore.isError(getClient)) {
+    if (getClient instanceof Error) {
       await interaction.respond([])
       return
     }

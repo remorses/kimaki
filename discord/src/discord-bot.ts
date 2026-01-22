@@ -2,7 +2,7 @@
 // Bridges Discord messages to OpenCode sessions, manages voice connections,
 // and orchestrates the main event loop for the Kimaki bot.
 
-import { getDatabase, closeDatabase } from './database.js'
+import { getDatabase, closeDatabase, getThreadWorktree } from './database.js'
 import { initializeOpencodeForDirectory, getOpencodeServers } from './opencode.js'
 import {
   escapeBackticksInCodeBlocks,
@@ -207,16 +207,25 @@ export async function startDiscordBot({
           channelAppId = extracted['kimaki.app']?.[0]?.trim()
         }
 
-        // Check if this thread is a worktree thread by parsing starter message XML
-        const starterMessage = await thread.fetchStarterMessage().catch(() => null)
-        if (starterMessage?.content) {
-          const worktreeExtracted = extractTagsArrays({
-            xml: starterMessage.content,
-            tags: ['kimaki.worktree.directory'],
-          })
-          const worktreeDirectory = worktreeExtracted['kimaki.worktree.directory']?.[0]?.trim()
-          if (worktreeDirectory) {
-            projectDirectory = worktreeDirectory
+        // Check if this thread is a worktree thread
+        const worktreeInfo = getThreadWorktree(thread.id)
+        if (worktreeInfo) {
+          if (worktreeInfo.status === 'pending') {
+            await message.reply({
+              content: '⏳ Worktree is still being created. Please wait...',
+              flags: SILENT_MESSAGE_FLAGS,
+            })
+            return
+          }
+          if (worktreeInfo.status === 'error') {
+            await message.reply({
+              content: `❌ Worktree creation failed: ${worktreeInfo.error_message}`,
+              flags: SILENT_MESSAGE_FLAGS,
+            })
+            return
+          }
+          if (worktreeInfo.worktree_directory) {
+            projectDirectory = worktreeInfo.worktree_directory
             discordLogger.log(`Using worktree directory: ${projectDirectory}`)
           }
         }
