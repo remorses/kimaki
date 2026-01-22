@@ -9,6 +9,9 @@ import { formatMarkdownTables } from './format-tables.js'
 import { limitHeadingDepth } from './limit-heading-depth.js'
 import { unnestCodeBlocksFromLists } from './unnest-code-blocks.js'
 import { createLogger } from './logger.js'
+import mime from 'mime'
+import fs from 'node:fs'
+import path from 'node:path'
 
 const discordLogger = createLogger('DISCORD')
 
@@ -301,4 +304,51 @@ export function getKimakiMetadata(textChannel: TextChannel | null): {
   const channelAppId = extracted['kimaki.app']?.[0]?.trim()
 
   return { projectDirectory, channelAppId }
+}
+
+/**
+ * Upload files to a Discord thread/channel in a single message.
+ * Sending all files in one message causes Discord to display images in a grid layout.
+ */
+export async function uploadFilesToDiscord({
+  threadId,
+  botToken,
+  files,
+}: {
+  threadId: string
+  botToken: string
+  files: string[]
+}): Promise<void> {
+  if (files.length === 0) {
+    return
+  }
+
+  // Build attachments array for all files
+  const attachments = files.map((file, index) => ({
+    id: index,
+    filename: path.basename(file),
+  }))
+
+  const formData = new FormData()
+  formData.append('payload_json', JSON.stringify({ attachments }))
+
+  // Append each file with its array index, with correct MIME type for grid display
+  files.forEach((file, index) => {
+    const buffer = fs.readFileSync(file)
+    const mimeType = mime.getType(file) || 'application/octet-stream'
+    formData.append(`files[${index}]`, new Blob([buffer], { type: mimeType }), path.basename(file))
+  })
+
+  const response = await fetch(`https://discord.com/api/v10/channels/${threadId}/messages`, {
+    method: 'POST',
+    headers: {
+      Authorization: `Bot ${botToken}`,
+    },
+    body: formData,
+  })
+
+  if (!response.ok) {
+    const error = await response.text()
+    throw new Error(`Discord API error: ${response.status} - ${error}`)
+  }
 }

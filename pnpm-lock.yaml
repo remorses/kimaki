@@ -87,6 +87,9 @@ importers:
       marked:
         specifier: ^16.3.0
         version: 16.3.0
+      mime:
+        specifier: ^4.1.0
+        version: 4.1.0
       picocolors:
         specifier: ^1.1.1
         version: 1.1.1
@@ -1342,6 +1345,11 @@ packages:
   marked@16.3.0:
     resolution: {integrity: sha512-K3UxuKu6l6bmA5FUwYho8CfJBlsUWAooKtdGgMcERSpF7gcBUrCGsLH7wDaaNOzwq18JzSUDyoEb/YsrqMac3w==}
     engines: {node: '>= 20'}
+    hasBin: true
+
+  mime@4.1.0:
+    resolution: {integrity: sha512-X5ju04+cAzsojXKes0B/S4tcYtFAJ6tTMuSPBEn9CPGlrWr8Fiw7qYeLT0XyH80HSoAoqWCaz+MWKh22P7G1cw==}
+    engines: {node: '>=16'}
     hasBin: true
 
   mimic-response@3.1.0:
@@ -3077,6 +3085,8 @@ snapshots:
     optional: true
 
   marked@16.3.0: {}
+
+  mime@4.1.0: {}
 
   mimic-response@3.1.0: {}
 

@@ -43,6 +43,7 @@ import fs from 'node:fs'
 import * as errore from 'errore'
 
 import { createLogger } from './logger.js'
+import { uploadFilesToDiscord } from './discord-utils.js'
 import { spawn, spawnSync, execSync, type ExecSyncOptions } from 'node:child_process'
 import http from 'node:http'
 import { setDataDir, getDataDir, getLockPort } from './config.js'
@@ -998,34 +999,11 @@ cli
       const s = spinner()
       s.start(`Uploading ${resolvedFiles.length} file(s)...`)
 
-      for (const file of resolvedFiles) {
-        const buffer = fs.readFileSync(file)
-
-        const formData = new FormData()
-        formData.append(
-          'payload_json',
-          JSON.stringify({
-            attachments: [{ id: 0, filename: path.basename(file) }],
-          }),
-        )
-        formData.append('files[0]', new Blob([buffer]), path.basename(file))
-
-        const response = await fetch(
-          `https://discord.com/api/v10/channels/${threadRow.thread_id}/messages`,
-          {
-            method: 'POST',
-            headers: {
-              Authorization: `Bot ${botRow.token}`,
-            },
-            body: formData,
-          },
-        )
-
-        if (!response.ok) {
-          const error = await response.text()
-          throw new Error(`Discord API error: ${response.status} - ${error}`)
-        }
-      }
+      await uploadFilesToDiscord({
+        threadId: threadRow.thread_id,
+        botToken: botRow.token,
+        files: resolvedFiles,
+      })
 
       s.stop(`Uploaded ${resolvedFiles.length} file(s)!`)
 
