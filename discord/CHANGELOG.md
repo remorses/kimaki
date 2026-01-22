@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.4.41
+
+### Patch Changes
+
+- fix **npx kimaki@latest** failing with "Unsupported URL Type workspace:" - use pnpm publish to resolve workspace protocol
+- add **quick start mode** - skip OpenCode init when setup already done for faster bot startup
+- refactor CLI into smaller helper functions for better maintainability
+
 ## 0.4.40
 
 ### Patch Changes

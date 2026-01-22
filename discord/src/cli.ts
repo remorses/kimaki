@@ -389,6 +389,133 @@ async function registerCommands({
   }
 }
 
+/**
+ * Store channel-directory mappings in the database.
+ * Called after Discord login to persist channel configurations.
+ */
+function storeChannelDirectories({
+  kimakiChannels,
+  db,
+}: {
+  kimakiChannels: { guild: Guild; channels: ChannelWithTags[] }[]
+  db: ReturnType<typeof getDatabase>
+}): void {
+  for (const { guild, channels } of kimakiChannels) {
+    for (const channel of channels) {
+      if (channel.kimakiDirectory) {
+        db.prepare(
+          'INSERT OR IGNORE INTO channel_directories (channel_id, directory, channel_type, app_id) VALUES (?, ?, ?, ?)',
+        ).run(channel.id, channel.kimakiDirectory, 'text', channel.kimakiApp || null)
+
+        const voiceChannel = guild.channels.cache.find(
+          (ch) => ch.type === ChannelType.GuildVoice && ch.name === channel.name,
+        )
+
+        if (voiceChannel) {
+          db.prepare(
+            'INSERT OR IGNORE INTO channel_directories (channel_id, directory, channel_type, app_id) VALUES (?, ?, ?, ?)',
+          ).run(voiceChannel.id, channel.kimakiDirectory, 'voice', channel.kimakiApp || null)
+        }
+      }
+    }
+  }
+}
+
+/**
+ * Show the ready message with channel links.
+ * Called at the end of startup to display available channels.
+ */
+function showReadyMessage({
+  kimakiChannels,
+  createdChannels,
+  appId,
+}: {
+  kimakiChannels: { guild: Guild; channels: ChannelWithTags[] }[]
+  createdChannels: { name: string; id: string; guildId: string }[]
+  appId: string
+}): void {
+  const allChannels: {
+    name: string
+    id: string
+    guildId: string
+    directory?: string
+  }[] = []
+
+  allChannels.push(...createdChannels)
+
+  kimakiChannels.forEach(({ guild, channels }) => {
+    channels.forEach((ch) => {
+      allChannels.push({
+        name: ch.name,
+        id: ch.id,
+        guildId: guild.id,
+        directory: ch.kimakiDirectory,
+      })
+    })
+  })
+
+  if (allChannels.length > 0) {
+    const channelLinks = allChannels
+      .map((ch) => `• #${ch.name}: https://discord.com/channels/${ch.guildId}/${ch.id}`)
+      .join('\n')
+
+    note(
+      `Your kimaki channels are ready! Click any link below to open in Discord:\n\n${channelLinks}\n\nSend a message in any channel to start using OpenCode!`,
+      '🚀 Ready to Use',
+    )
+  }
+
+  note(
+    'Leave this process running to keep the bot active.\n\nIf you close this process or restart your machine, run `npx kimaki` again to start the bot.',
+    '⚠️  Keep Running',
+  )
+}
+
+/**
+ * Background initialization for quick start mode.
+ * Starts OpenCode server and registers slash commands without blocking bot startup.
+ */
+async function backgroundInit({
+  currentDir,
+  token,
+  appId,
+}: {
+  currentDir: string
+  token: string
+  appId: string
+}): Promise<void> {
+  try {
+    const opencodeResult = await initializeOpencodeForDirectory(currentDir)
+    if (opencodeResult instanceof Error) {
+      cliLogger.warn('Background OpenCode init failed:', opencodeResult.message)
+      // Still try to register basic commands without user commands/agents
+      await registerCommands({ token, appId, userCommands: [], agents: [] })
+      return
+    }
+
+    const getClient = opencodeResult
+
+    const [userCommands, agents] = await Promise.all([
+      getClient()
+        .command.list({ query: { directory: currentDir } })
+        .then((r) => r.data || [])
+        .catch(() => []),
+      getClient()
+        .app.agents({ query: { directory: currentDir } })
+        .then((r) => r.data || [])
+        .catch(() => []),
+    ])
+
+    await registerCommands({ token, appId, userCommands, agents })
+    cliLogger.log('Slash commands registered!')
+  } catch (error) {
+    cliLogger.error(
+      'Background init failed:',
+      error instanceof Error ? error.message : String(error),
+    )
+  }
+}
+
 async function run({ restart, addChannels }: CliOptions) {
   const forceSetup = Boolean(restart)
 
@@ -679,25 +806,8 @@ async function run({ restart, addChannels }: CliOptions) {
   }
   db.prepare('INSERT OR REPLACE INTO bot_tokens (app_id, token) VALUES (?, ?)').run(appId, token)
 
-  for (const { guild, channels } of kimakiChannels) {
-    for (const channel of channels) {
-      if (channel.kimakiDirectory) {
-        db.prepare(
-          'INSERT OR IGNORE INTO channel_directories (channel_id, directory, channel_type, app_id) VALUES (?, ?, ?, ?)',
-        ).run(channel.id, channel.kimakiDirectory, 'text', channel.kimakiApp || null)
-
-        const voiceChannel = guild.channels.cache.find(
-          (ch) => ch.type === ChannelType.GuildVoice && ch.name === channel.name,
-        )
-
-        if (voiceChannel) {
-          db.prepare(
-            'INSERT OR IGNORE INTO channel_directories (channel_id, directory, channel_type, app_id) VALUES (?, ?, ?, ?)',
-          ).run(voiceChannel.id, channel.kimakiDirectory, 'voice', channel.kimakiApp || null)
-        }
-      }
-    }
-  }
+  // Store channel-directory mappings
+  storeChannelDirectories({ kimakiChannels, db })
 
   if (kimakiChannels.length > 0) {
     const channelList = kimakiChannels
@@ -713,6 +823,22 @@ async function run({ restart, addChannels }: CliOptions) {
     note(channelList, 'Existing Kimaki Channels')
   }
 
+  // Quick start: if setup is already done, start bot immediately and background the rest
+  const isQuickStart = existingBot && !forceSetup && !addChannels
+  if (isQuickStart) {
+    s.start('Starting Discord bot...')
+    await startDiscordBot({ token, appId, discordClient })
+    s.stop('Discord bot is running!')
+
+    // Background: OpenCode init + slash command registration (non-blocking)
+    void backgroundInit({ currentDir, token, appId })
+
+    showReadyMessage({ kimakiChannels, createdChannels, appId })
+    outro('✨ Bot ready! Listening for messages...')
+    return
+  }
+
+  // Full setup path: wait for OpenCode, show prompts, create channels if needed
   // Await the OpenCode server that was started in parallel with Discord login
   s.start('Waiting for OpenCode server...')
   const getClient = await opencodePromise
@@ -875,42 +1001,7 @@ async function run({ restart, addChannels }: CliOptions) {
   await startDiscordBot({ token, appId, discordClient })
   s.stop('Discord bot is running!')
 
-  const allChannels: {
-    name: string
-    id: string
-    guildId: string
-    directory?: string
-  }[] = []
-
-  allChannels.push(...createdChannels)
-
-  kimakiChannels.forEach(({ guild, channels }) => {
-    channels.forEach((ch) => {
-      allChannels.push({
-        name: ch.name,
-        id: ch.id,
-        guildId: guild.id,
-        directory: ch.kimakiDirectory,
-      })
-    })
-  })
-
-  if (allChannels.length > 0) {
-    const channelLinks = allChannels
-      .map((ch) => `• #${ch.name}: https://discord.com/channels/${ch.guildId}/${ch.id}`)
-      .join('\n')
-
-    note(
-      `Your kimaki channels are ready! Click any link below to open in Discord:\n\n${channelLinks}\n\nSend a message in any channel to start using OpenCode!`,
-      '🚀 Ready to Use',
-    )
-  }
-
-  note(
-    'Leave this process running to keep the bot active.\n\nIf you close this process or restart your machine, run `npx kimaki` again to start the bot.',
-    '⚠️  Keep Running',
-  )
-
+  showReadyMessage({ kimakiChannels, createdChannels, appId })
   outro('✨ Setup complete! Listening for new messages... do not close this process.')
 }
 
