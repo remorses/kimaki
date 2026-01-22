@@ -1,5 +1,18 @@
 # Changelog
 
+## 0.4.40
+
+### Patch Changes
+
+- add **/new-worktree** command to create git worktrees from Discord
+- rename `/session` → **/new-session** for clarity
+- fix **SSE deadlock** by increasing connection pool size
+- fix **worktree thread creation** - check if worktree exists before creating thread
+- fix **worktree message editing** - edit starter message when ready instead of sending new one
+- send **multiple images in single message** for grid display
+- migrate to **createTaggedError** factory for typed error handling
+- update **errore** submodule to 0.7.1
+
 ## 0.4.39
 
 ### Patch Changes
