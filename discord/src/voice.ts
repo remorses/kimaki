@@ -145,7 +145,7 @@ function createToolRunner({ directory }: { directory?: string }): TranscriptionT
       voiceLogger.log(`Grep search: "${pattern}"`)
       const result = await runGrep({ pattern, directory })
       const output = (() => {
-        if (errore.isError(result)) {
+        if (result instanceof Error) {
           voiceLogger.error('grep search failed:', result)
           return 'grep search failed'
         }
@@ -160,7 +160,7 @@ function createToolRunner({ directory }: { directory?: string }): TranscriptionT
       voiceLogger.log(`Glob search: "${pattern}"`)
       const result = await runGlob({ pattern, directory })
       const output = (() => {
-        if (errore.isError(result)) {
+        if (result instanceof Error) {
           voiceLogger.error('glob search failed:', result)
           return 'glob search failed'
         }
@@ -214,7 +214,7 @@ export async function runTranscriptionLoop({
     catch: (e) => new TranscriptionError({ reason: `API call failed: ${String(e)}`, cause: e }),
   })
 
-  if (errore.isError(initialResponse)) {
+  if (initialResponse instanceof Error) {
     return initialResponse
   }
 
@@ -323,7 +323,7 @@ export async function runTranscriptionLoop({
       catch: (e) => new TranscriptionError({ reason: `API call failed: ${String(e)}`, cause: e }),
     })
 
-    if (errore.isError(nextResponse)) {
+    if (nextResponse instanceof Error) {
       return nextResponse
     }
 

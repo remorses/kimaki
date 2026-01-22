@@ -66,7 +66,7 @@ async function waitForServer(port: number, maxAttempts = 30): Promise<ServerStar
         try: () => fetch(endpoint),
         catch: (e) => new FetchError({ url: endpoint, cause: e }),
       })
-      if (errore.isError(response)) {
+      if (response instanceof Error) {
         // Connection refused or other transient errors - continue polling
         opencodeLogger.debug(`Server polling attempt failed: ${response.message}`)
         continue
@@ -107,7 +107,7 @@ export async function initializeOpencodeForDirectory(directory: string): Promise
     },
     catch: () => new DirectoryNotAccessibleError({ directory }),
   })
-  if (errore.isError(accessCheck)) {
+  if (accessCheck instanceof Error) {
     return accessCheck
   }
 
@@ -164,7 +164,7 @@ export async function initializeOpencodeForDirectory(directory: string): Promise
           `Restarting server for directory: ${directory} (attempt ${retryCount + 1}/5)`,
         )
         initializeOpencodeForDirectory(directory).then((result) => {
-          if (errore.isError(result)) {
+          if (result instanceof Error) {
             opencodeLogger.error(`Failed to restart opencode server:`, result)
           }
         })
@@ -177,7 +177,7 @@ export async function initializeOpencodeForDirectory(directory: string): Promise
   })
 
   const waitResult = await waitForServer(port)
-  if (errore.isError(waitResult)) {
+  if (waitResult instanceof Error) {
     // Dump buffered logs on failure
     opencodeLogger.error(`Server failed to start for ${directory}:`)
     for (const line of logBuffer) {

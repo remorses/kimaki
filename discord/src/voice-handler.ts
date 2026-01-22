@@ -450,7 +450,7 @@ export async function processVoiceAttachment({
     try: () => fetch(audioAttachment.url),
     catch: (e) => new FetchError({ url: audioAttachment.url, cause: e }),
   })
-  if (errore.isError(audioResponse)) {
+  if (audioResponse instanceof Error) {
     voiceLogger.error(`Failed to download audio attachment:`, audioResponse.message)
     await sendThreadMessage(thread, `⚠️ Failed to download audio: ${audioResponse.message}`)
     return null
@@ -498,7 +498,7 @@ export async function processVoiceAttachment({
     lastSessionContext,
   })
 
-  if (errore.isError(transcription)) {
+  if (transcription instanceof Error) {
     const errMsg = errore.matchError(transcription, {
       ApiKeyMissingError: (e) => e.message,
       InvalidAudioFormatError: (e) => e.message,
@@ -532,7 +532,7 @@ export async function processVoiceAttachment({
       ])
       if (renamed === null) {
         voiceLogger.log(`Thread name update timed out`)
-      } else if (errore.isError(renamed)) {
+      } else if (renamed instanceof Error) {
         voiceLogger.log(`Could not update thread name:`, renamed.message)
       } else {
         voiceLogger.log(`Updated thread name to: "${threadName}"`)

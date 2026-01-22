@@ -93,7 +93,7 @@ export async function getTextAttachments(message: Message): Promise<string> {
         try: () => fetch(attachment.url),
         catch: (e) => new FetchError({ url: attachment.url, cause: e }),
       })
-      if (errore.isError(response)) {
+      if (response instanceof Error) {
         return `<attachment filename="${attachment.name}" error="${response.message}" />`
       }
       if (!response.ok) {
@@ -128,7 +128,7 @@ export async function getFileAttachments(message: Message): Promise<FilePartInpu
         try: () => fetch(attachment.url),
         catch: (e) => new FetchError({ url: attachment.url, cause: e }),
       })
-      if (errore.isError(response)) {
+      if (response instanceof Error) {
         logger.error(`Error downloading attachment ${attachment.name}:`, response.message)
         return null
       }
