@@ -65,7 +65,7 @@ export async function handleShareCommand({ command }: CommandContext): Promise<v
   const sessionId = row.session_id
 
   const getClient = await initializeOpencodeForDirectory(directory)
-  if (errore.isError(getClient)) {
+  if (getClient instanceof Error) {
     await command.reply({
       content: `Failed to share session: ${getClient.message}`,
       ephemeral: true,

@@ -67,7 +67,7 @@ export async function handleUndoCommand({ command }: CommandContext): Promise<vo
   await command.deferReply({ flags: SILENT_MESSAGE_FLAGS })
 
   const getClient = await initializeOpencodeForDirectory(directory)
-  if (errore.isError(getClient)) {
+  if (getClient instanceof Error) {
     await command.editReply(`Failed to undo: ${getClient.message}`)
     return
   }
@@ -174,7 +174,7 @@ export async function handleRedoCommand({ command }: CommandContext): Promise<vo
   await command.deferReply({ flags: SILENT_MESSAGE_FLAGS })
 
   const getClient = await initializeOpencodeForDirectory(directory)
-  if (errore.isError(getClient)) {
+  if (getClient instanceof Error) {
     await command.editReply(`Failed to redo: ${getClient.message}`)
     return
   }

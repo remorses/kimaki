@@ -26,7 +26,7 @@ export async function handleAddProjectCommand({ command, appId }: CommandContext
   try {
     const currentDir = process.cwd()
     const getClient = await initializeOpencodeForDirectory(currentDir)
-    if (errore.isError(getClient)) {
+    if (getClient instanceof Error) {
       await command.editReply(getClient.message)
       return
     }
@@ -94,7 +94,7 @@ export async function handleAddProjectAutocomplete({
   try {
     const currentDir = process.cwd()
     const getClient = await initializeOpencodeForDirectory(currentDir)
-    if (errore.isError(getClient)) {
+    if (getClient instanceof Error) {
       await interaction.respond([])
       return
     }

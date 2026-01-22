@@ -36,7 +36,7 @@ export async function getTools({
   }) => void
 }) {
   const getClient = await initializeOpencodeForDirectory(directory)
-  if (errore.isError(getClient)) {
+  if (getClient instanceof Error) {
     throw new Error(getClient.message)
   }
   const client = getClient()
@@ -298,7 +298,7 @@ export async function getTools({
             sessionID: sessionId,
             lastAssistantOnly: true,
           })
-          if (errore.isError(markdownResult)) {
+          if (markdownResult instanceof Error) {
             throw new Error(markdownResult.message)
           }
 
@@ -311,7 +311,7 @@ export async function getTools({
           const markdownResult = await markdownRenderer.generate({
             sessionID: sessionId,
           })
-          if (errore.isError(markdownResult)) {
+          if (markdownResult instanceof Error) {
             throw new Error(markdownResult.message)
           }
 

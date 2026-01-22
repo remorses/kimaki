@@ -61,7 +61,7 @@ export async function handleResumeCommand({ command, appId }: CommandContext): P
 
   try {
     const getClient = await initializeOpencodeForDirectory(projectDirectory)
-    if (errore.isError(getClient)) {
+    if (getClient instanceof Error) {
       await command.editReply(getClient.message)
       return
     }
@@ -173,7 +173,7 @@ export async function handleResumeAutocomplete({
 
   try {
     const getClient = await initializeOpencodeForDirectory(projectDirectory)
-    if (errore.isError(getClient)) {
+    if (getClient instanceof Error) {
       await interaction.respond([])
       return
     }

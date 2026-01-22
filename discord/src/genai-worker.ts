@@ -132,7 +132,7 @@ async function createAssistantAudioLogStream(
     try: () => mkdir(audioDir, { recursive: true }),
     catch: (e) => e as Error,
   })
-  if (errore.isError(mkdirError)) {
+  if (mkdirError instanceof Error) {
     workerLogger.error(`Failed to create audio log directory:`, mkdirError.message)
     return null
   }

@@ -129,7 +129,7 @@ export async function handleModelCommand({
 
   try {
     const getClient = await initializeOpencodeForDirectory(projectDirectory)
-    if (errore.isError(getClient)) {
+    if (getClient instanceof Error) {
       await interaction.editReply({ content: getClient.message })
       return
     }
@@ -237,7 +237,7 @@ export async function handleProviderSelectMenu(
 
   try {
     const getClient = await initializeOpencodeForDirectory(context.dir)
-    if (errore.isError(getClient)) {
+    if (getClient instanceof Error) {
       await interaction.editReply({
         content: getClient.message,
         components: [],

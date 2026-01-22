@@ -72,7 +72,7 @@ export async function handleAbortCommand({ command }: CommandContext): Promise<v
   }
 
   const getClient = await initializeOpencodeForDirectory(directory)
-  if (errore.isError(getClient)) {
+  if (getClient instanceof Error) {
     await command.reply({
       content: `Failed to abort: ${getClient.message}`,
       ephemeral: true,

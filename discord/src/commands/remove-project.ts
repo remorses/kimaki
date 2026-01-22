@@ -42,7 +42,7 @@ export async function handleRemoveProjectCommand({ command, appId }: CommandCont
         catch: (e) => e as Error,
       })
       
-      if (errore.isError(channel)) {
+      if (channel instanceof Error) {
         logger.error(`Failed to fetch channel ${channel_id}:`, channel)
         failedChannels.push(`${channel_type}: ${channel_id}`)
         continue
@@ -116,7 +116,7 @@ export async function handleRemoveProjectAutocomplete({
         try: () => guild.channels.fetch(channel_id),
         catch: (e) => e as Error,
       })
-      if (errore.isError(channel)) {
+      if (channel instanceof Error) {
         // Channel not in this guild, skip
         continue
       }

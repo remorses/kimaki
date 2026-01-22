@@ -105,7 +105,7 @@ export async function abortAndRetrySession({
 
   // Also call the API abort endpoint
   const getClient = await initializeOpencodeForDirectory(projectDirectory)
-  if (errore.isError(getClient)) {
+  if (getClient instanceof Error) {
     sessionLogger.error(`[ABORT+RETRY] Failed to initialize OpenCode client:`, getClient.message)
     return false
   }
@@ -188,7 +188,7 @@ export async function handleOpencodeSession({
   sessionLogger.log(`Using directory: ${directory}`)
 
   const getClient = await initializeOpencodeForDirectory(directory)
-  if (errore.isError(getClient)) {
+  if (getClient instanceof Error) {
     await sendThreadMessage(thread, `✗ ${getClient.message}`)
     return
   }

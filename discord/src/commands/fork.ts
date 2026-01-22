@@ -73,7 +73,7 @@ export async function handleForkCommand(interaction: ChatInputCommandInteraction
   const sessionId = row.session_id
 
   const getClient = await initializeOpencodeForDirectory(directory)
-  if (errore.isError(getClient)) {
+  if (getClient instanceof Error) {
     await interaction.editReply({
       content: `Failed to load messages: ${getClient.message}`,
     })
@@ -171,7 +171,7 @@ export async function handleForkSelectMenu(
   await interaction.deferReply({ ephemeral: false })
 
   const getClient = await initializeOpencodeForDirectory(directory)
-  if (errore.isError(getClient)) {
+  if (getClient instanceof Error) {
     await interaction.editReply(`Failed to fork session: ${getClient.message}`)
     return
   }

@@ -162,7 +162,7 @@ export async function handleAgentCommand({
 
   try {
     const getClient = await initializeOpencodeForDirectory(context.dir)
-    if (errore.isError(getClient)) {
+    if (getClient instanceof Error) {
       await interaction.editReply({ content: getClient.message })
       return
     }
@@ -297,7 +297,7 @@ export async function handleQuickAgentCommand({
 
   try {
     const getClient = await initializeOpencodeForDirectory(context.dir)
-    if (errore.isError(getClient)) {
+    if (getClient instanceof Error) {
       await command.editReply({ content: getClient.message })
       return
     }
