@@ -14,6 +14,7 @@ import { initializeOpencodeForDirectory, getOpencodeClientV2 } from '../opencode
 import { SILENT_MESSAGE_FLAGS } from '../discord-utils.js'
 import { extractTagsArrays } from '../xml.js'
 import { createLogger } from '../logger.js'
+import { createWorktreeWithSubmodules } from '../worktree-utils.js'
 import * as errore from 'errore'
 
 const logger = createLogger('WORKTREE')
@@ -89,33 +90,17 @@ async function createWorktreeInBackground({
   projectDirectory: string
   clientV2: ReturnType<typeof getOpencodeClientV2> & {}
 }): Promise<void> {
-  // Create worktree using SDK v2
+  // Create worktree using SDK v2 and init submodules
   logger.log(`Creating worktree "${worktreeName}" for project ${projectDirectory}`)
-  const worktreeResult = await errore.tryAsync({
-    try: async () => {
-      const response = await clientV2.worktree.create({
-        directory: projectDirectory,
-        worktreeCreateInput: {
-          name: worktreeName,
-        },
-      })
-
-      if (response.error) {
-        throw new Error(`SDK error: ${JSON.stringify(response.error)}`)
-      }
-
-      if (!response.data) {
-        throw new Error('No worktree data returned from SDK')
-      }
-
-      return response.data
-    },
-    catch: (e) => new WorktreeError('Failed to create worktree', { cause: e }),
+  const worktreeResult = await createWorktreeWithSubmodules({
+    clientV2,
+    directory: projectDirectory,
+    name: worktreeName,
   })
 
-  if (errore.isError(worktreeResult)) {
+  if (worktreeResult instanceof Error) {
     const errorMsg = worktreeResult.message
-    logger.error('[NEW-WORKTREE] Error:', worktreeResult.cause)
+    logger.error('[NEW-WORKTREE] Error:', worktreeResult)
     setWorktreeError({ threadId: thread.id, errorMessage: errorMsg })
     await starterMessage.edit(`🌳 **Worktree: ${worktreeName}**\n❌ ${errorMsg}`)
     return

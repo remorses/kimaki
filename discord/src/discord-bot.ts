@@ -12,6 +12,7 @@ import {
 } from './database.js'
 import { initializeOpencodeForDirectory, getOpencodeServers, getOpencodeClientV2 } from './opencode.js'
 import { formatWorktreeName } from './commands/worktree.js'
+import { createWorktreeWithSubmodules } from './worktree-utils.js'
 import {
   escapeBackticksInCodeBlocks,
   splitMarkdownForDiscord,
@@ -454,30 +455,24 @@ export async function startDiscordBot({
               discordLogger.error(`[WORKTREE] No v2 client for ${projectDirectory}`)
               setWorktreeError({ threadId: thread.id, errorMessage: 'No OpenCode v2 client' })
             } else {
-              try {
-                const response = await clientV2.worktree.create({
-                  directory: projectDirectory,
-                  worktreeCreateInput: { name: worktreeName },
-                })
+              const worktreeResult = await createWorktreeWithSubmodules({
+                clientV2,
+                directory: projectDirectory,
+                name: worktreeName,
+              })
 
-                if (response.error) {
-                  throw new Error(`SDK error: ${JSON.stringify(response.error)}`)
-                }
-                if (!response.data) {
-                  throw new Error('No worktree data returned')
-                }
-
-                setWorktreeReady({ threadId: thread.id, worktreeDirectory: response.data.directory })
-                sessionDirectory = response.data.directory
-                discordLogger.log(`[WORKTREE] Created: ${response.data.directory} (branch: ${response.data.branch})`)
-              } catch (e) {
-                const errMsg = e instanceof Error ? e.message : String(e)
+              if (worktreeResult instanceof Error) {
+                const errMsg = worktreeResult.message
                 discordLogger.error(`[WORKTREE] Creation failed: ${errMsg}`)
                 setWorktreeError({ threadId: thread.id, errorMessage: errMsg })
                 await thread.send({
                   content: `⚠️ Failed to create worktree: ${errMsg}\nUsing main project directory instead.`,
                   flags: SILENT_MESSAGE_FLAGS,
                 })
+              } else {
+                setWorktreeReady({ threadId: thread.id, worktreeDirectory: worktreeResult.directory })
+                sessionDirectory = worktreeResult.directory
+                discordLogger.log(`[WORKTREE] Created: ${worktreeResult.directory} (branch: ${worktreeResult.branch})`)
               }
             }
           }

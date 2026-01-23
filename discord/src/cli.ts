@@ -1522,5 +1522,190 @@ cli
     }
   })
 
+cli
+  .command('add-project [directory]', 'Create Discord channels for a project directory')
+  .option('-g, --guild <guildId>', 'Discord guild/server ID (auto-detects if bot is in only one server)')
+  .option('-a, --app-id <appId>', 'Bot application ID (reads from database if available)')
+  .action(
+    async (
+      directory: string | undefined,
+      options: {
+        guild?: string
+        appId?: string
+      },
+    ) => {
+      try {
+        const absolutePath = path.resolve(directory || '.')
+
+        if (!fs.existsSync(absolutePath)) {
+          cliLogger.error(`Directory does not exist: ${absolutePath}`)
+          process.exit(EXIT_NO_RESTART)
+        }
+
+        // Get bot token from env var or database
+        const envToken = process.env.KIMAKI_BOT_TOKEN
+        let botToken: string | undefined
+        let appId: string | undefined = options.appId
+
+        if (envToken) {
+          botToken = envToken
+          if (!appId) {
+            try {
+              const db = getDatabase()
+              const botRow = db
+                .prepare('SELECT app_id FROM bot_tokens ORDER BY created_at DESC LIMIT 1')
+                .get() as { app_id: string } | undefined
+              appId = botRow?.app_id
+            } catch {
+              // Database might not exist in CI
+            }
+          }
+        } else {
+          try {
+            const db = getDatabase()
+            const botRow = db
+              .prepare('SELECT app_id, token FROM bot_tokens ORDER BY created_at DESC LIMIT 1')
+              .get() as { app_id: string; token: string } | undefined
+
+            if (botRow) {
+              botToken = botRow.token
+              appId = appId || botRow.app_id
+            }
+          } catch (e) {
+            cliLogger.error('Database error:', e instanceof Error ? e.message : String(e))
+          }
+        }
+
+        if (!botToken) {
+          cliLogger.error(
+            'No bot token found. Set KIMAKI_BOT_TOKEN env var or run `kimaki` first to set up.',
+          )
+          process.exit(EXIT_NO_RESTART)
+        }
+
+        if (!appId) {
+          cliLogger.error(
+            'App ID is required to create channels. Use --app-id or run `kimaki` first.',
+          )
+          process.exit(EXIT_NO_RESTART)
+        }
+
+        const s = spinner()
+        s.start('Checking for existing channel...')
+
+        // Check if channel already exists
+        try {
+          const db = getDatabase()
+          const existingChannel = db
+            .prepare(
+              'SELECT channel_id FROM channel_directories WHERE directory = ? AND channel_type = ? AND app_id = ?',
+            )
+            .get(absolutePath, 'text', appId) as { channel_id: string } | undefined
+
+          if (existingChannel) {
+            s.stop('Channel already exists')
+            note(
+              `Channel already exists for this directory.\n\nChannel: <#${existingChannel.channel_id}>\nDirectory: ${absolutePath}`,
+              '⚠️  Already Exists',
+            )
+            process.exit(0)
+          }
+        } catch {
+          // Database might not exist, continue to create
+        }
+
+        s.message('Connecting to Discord...')
+        const client = await createDiscordClient()
+
+        await new Promise<void>((resolve, reject) => {
+          client.once(Events.ClientReady, () => {
+            resolve()
+          })
+          client.once(Events.Error, reject)
+          client.login(botToken)
+        })
+
+        s.message('Finding guild...')
+
+        // Find guild
+        let guild: Guild
+        if (options.guild) {
+          const foundGuild = client.guilds.cache.get(options.guild)
+          if (!foundGuild) {
+            s.stop('Guild not found')
+            cliLogger.error(`Guild not found: ${options.guild}`)
+            client.destroy()
+            process.exit(EXIT_NO_RESTART)
+          }
+          guild = foundGuild
+        } else {
+          // Auto-detect: prefer guild with existing channels for this bot, else first guild
+          const db = getDatabase()
+          const existingChannelRow = db
+            .prepare(
+              'SELECT channel_id FROM channel_directories WHERE app_id = ? ORDER BY created_at DESC LIMIT 1',
+            )
+            .get(appId) as { channel_id: string } | undefined
+
+          if (existingChannelRow) {
+            try {
+              const ch = await client.channels.fetch(existingChannelRow.channel_id)
+              if (ch && 'guild' in ch && ch.guild) {
+                guild = ch.guild
+              } else {
+                throw new Error('Channel has no guild')
+              }
+            } catch {
+              // Channel might be deleted, fall back to first guild
+              const firstGuild = client.guilds.cache.first()
+              if (!firstGuild) {
+                s.stop('No guild found')
+                cliLogger.error('No guild found. Add the bot to a server first.')
+                client.destroy()
+                process.exit(EXIT_NO_RESTART)
+              }
+              guild = firstGuild
+            }
+          } else {
+            const firstGuild = client.guilds.cache.first()
+            if (!firstGuild) {
+              s.stop('No guild found')
+              cliLogger.error('No guild found. Add the bot to a server first.')
+              client.destroy()
+              process.exit(EXIT_NO_RESTART)
+            }
+            guild = firstGuild
+          }
+        }
+
+        s.message(`Creating channels in ${guild.name}...`)
+
+        const { textChannelId, voiceChannelId, channelName } = await createProjectChannels({
+          guild,
+          projectDirectory: absolutePath,
+          appId,
+          botName: client.user?.username,
+        })
+
+        client.destroy()
+
+        s.stop('Channels created!')
+
+        const channelUrl = `https://discord.com/channels/${guild.id}/${textChannelId}`
+
+        note(
+          `Created channels for project:\n\n📝 Text: #${channelName}\n🔊 Voice: #${channelName}\n📁 Directory: ${absolutePath}\n\nURL: ${channelUrl}`,
+          '✅ Success',
+        )
+
+        console.log(channelUrl)
+        process.exit(0)
+      } catch (error) {
+        cliLogger.error('Error:', error instanceof Error ? error.message : String(error))
+        process.exit(EXIT_NO_RESTART)
+      }
+    },
+  )
+
 cli.help()
 cli.parse()

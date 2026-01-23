@@ -195,7 +195,36 @@ npx -y kimaki send --channel <channel-id> --prompt "your prompt"
 
 # Send notification without starting AI session (reply to start session later)
 npx -y kimaki send --channel <channel-id> --prompt "User cancelled subscription" --notify-only
+
+# Create Discord channels for a project directory (without starting a session)
+npx -y kimaki add-project [directory]
 ```
+
+## Add Project Channels
+
+Create Discord channels for a project directory without starting a session. Useful for automation and scripting.
+
+```bash
+# Add current directory as a project
+npx -y kimaki add-project
+
+# Add a specific directory
+npx -y kimaki add-project /path/to/project
+
+# Specify guild when bot is in multiple servers
+npx -y kimaki add-project ./myproject --guild 123456789
+
+# In CI with env var for bot token
+KIMAKI_BOT_TOKEN=xxx npx -y kimaki add-project --app-id 987654321
+```
+
+### Options
+
+| Option | Description |
+|--------|-------------|
+| `[directory]` | Project directory path (defaults to current directory) |
+| `-g, --guild <guildId>` | Discord guild/server ID (auto-detects if bot is in only one server) |
+| `-a, --app-id <appId>` | Bot application ID (reads from database if available) |
 
 ## Programmatically Start Sessions
 
