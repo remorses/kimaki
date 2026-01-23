@@ -86,24 +86,30 @@ export async function handleMergeWorktreeCommand({ command, appId }: CommandCont
 
     logger.log(`Default branch: ${defaultBranch}, worktree branch: ${worktreeBranch}`)
 
-    // 2. Checkout default branch and merge worktree branch (using git -C)
-    logger.log(`Merging ${worktreeBranch} into ${defaultBranch} in ${mainRepoDir}`)
-    await execAsync(`git -C "${mainRepoDir}" checkout ${defaultBranch}`)
+    // 2. Fast-forward default branch to worktree branch (no checkout needed)
+    // This works without checkout by updating the branch ref directly
+    logger.log(`Fast-forwarding ${defaultBranch} to ${worktreeBranch} in ${mainRepoDir}`)
     const { stdout: mergeOutput } = await execAsync(
-      `git -C "${mainRepoDir}" merge ${worktreeBranch}`,
+      `git -C "${mainRepoDir}" fetch . ${worktreeBranch}:${defaultBranch}`,
     )
 
     // 4. Remove worktree prefix from thread title (fire and forget with timeout)
     void removeWorktreePrefixFromTitle(thread)
 
     await command.editReply(
-      `✅ Merged \`${worktreeBranch}\` into \`${defaultBranch}\`\n\n\`\`\`\n${mergeOutput.trim() || 'Fast-forward merge'}\n\`\`\``,
+      `✅ Fast-forwarded \`${defaultBranch}\` to \`${worktreeBranch}\`\n\n\`\`\`\n${mergeOutput.trim() || 'Done'}\n\`\`\``,
     )
 
     logger.log(`Successfully merged ${worktreeBranch} into ${defaultBranch}`)
   } catch (e) {
     const errorMsg = e instanceof Error ? e.message : String(e)
     logger.error(`Merge failed: ${errorMsg}`)
-    await command.editReply(`❌ Merge failed:\n\`\`\`\n${errorMsg}\n\`\`\``)
+
+    // Provide helpful message for non-fast-forward case
+    const hint = errorMsg.includes('non-fast-forward')
+      ? '\n\n**Hint:** This requires a non-fast-forward merge. Rebase or merge manually.'
+      : ''
+
+    await command.editReply(`❌ Merge failed:\n\`\`\`\n${errorMsg}\n\`\`\`${hint}`)
   }
 }
