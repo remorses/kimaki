@@ -174,6 +174,7 @@ type CliOptions = {
   restart?: boolean
   addChannels?: boolean
   dataDir?: string
+  useWorktrees?: boolean
 }
 
 // Commands to skip when registering user commands (reserved names)
@@ -516,7 +517,7 @@ async function backgroundInit({
   }
 }
 
-async function run({ restart, addChannels }: CliOptions) {
+async function run({ restart, addChannels, useWorktrees }: CliOptions) {
   const forceSetup = Boolean(restart)
 
   intro('🤖 Discord Bot Setup')
@@ -827,7 +828,7 @@ async function run({ restart, addChannels }: CliOptions) {
   const isQuickStart = existingBot && !forceSetup && !addChannels
   if (isQuickStart) {
     s.start('Starting Discord bot...')
-    await startDiscordBot({ token, appId, discordClient })
+    await startDiscordBot({ token, appId, discordClient, useWorktrees })
     s.stop('Discord bot is running!')
 
     // Background: OpenCode init + slash command registration (non-blocking)
@@ -998,7 +999,7 @@ async function run({ restart, addChannels }: CliOptions) {
     })
 
   s.start('Starting Discord bot...')
-  await startDiscordBot({ token, appId, discordClient })
+  await startDiscordBot({ token, appId, discordClient, useWorktrees })
   s.stop('Discord bot is running!')
 
   showReadyMessage({ kimakiChannels, createdChannels, appId })
@@ -1011,12 +1012,14 @@ cli
   .option('--add-channels', 'Select OpenCode projects to create Discord channels before starting')
   .option('--data-dir <path>', 'Data directory for config and database (default: ~/.kimaki)')
   .option('--install-url', 'Print the bot install URL and exit')
+  .option('--use-worktrees', 'Create git worktrees for all new sessions started from channel messages')
   .action(
     async (options: {
       restart?: boolean
       addChannels?: boolean
       dataDir?: string
       installUrl?: boolean
+      useWorktrees?: boolean
     }) => {
       try {
         // Set data directory early, before any database access
@@ -1046,6 +1049,7 @@ cli
           restart: options.restart,
           addChannels: options.addChannels,
           dataDir: options.dataDir,
+          useWorktrees: options.useWorktrees,
         })
       } catch (error) {
         cliLogger.error('Unhandled error:', error instanceof Error ? error.message : String(error))

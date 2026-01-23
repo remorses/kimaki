@@ -2,12 +2,23 @@
 // Creates the system message injected into every OpenCode session,
 // including Discord-specific formatting rules, diff commands, and permissions info.
 
+export type WorktreeInfo = {
+  /** The worktree directory path */
+  worktreeDirectory: string
+  /** The branch name (e.g., opencode/kimaki-feature) */
+  branch: string
+  /** The main repository directory */
+  mainRepoDirectory: string
+}
+
 export function getOpencodeSystemMessage({
   sessionId,
   channelId,
+  worktree,
 }: {
   sessionId: string
   channelId?: string
+  worktree?: WorktreeInfo
 }) {
   return `
 The user is reading your messages from inside Discord, via kimaki.xyz
@@ -58,6 +69,28 @@ Use this for handoff when:
 - User asks to "handoff", "continue in new thread", or "start fresh session"
 - You detect you're running low on context window space
 - A complex task would benefit from a clean slate with summarized context
+`
+    : ''
+}${
+  worktree
+    ? `
+## worktree
+
+This session is running inside a git worktree.
+- **Worktree path:** \`${worktree.worktreeDirectory}\`
+- **Branch:** \`${worktree.branch}\`
+- **Main repo:** \`${worktree.mainRepoDirectory}\`
+
+Before finishing a task, ask the user if they want to merge changes back to the main branch.
+
+To merge (without leaving the worktree):
+\`\`\`bash
+# Get the default branch name
+DEFAULT_BRANCH=$(git -C ${worktree.mainRepoDirectory} symbolic-ref refs/remotes/origin/HEAD 2>/dev/null | sed 's@^refs/remotes/origin/@@' || echo "main")
+
+# Merge worktree branch into main
+git -C ${worktree.mainRepoDirectory} checkout $DEFAULT_BRANCH && git -C ${worktree.mainRepoDirectory} merge ${worktree.branch}
+\`\`\`
 `
     : ''
 }

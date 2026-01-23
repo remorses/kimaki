@@ -13,6 +13,7 @@ import {
   getSessionAgent,
   getChannelAgent,
   setSessionAgent,
+  getThreadWorktree,
 } from './database.js'
 import {
   initializeOpencodeForDirectory,
@@ -21,7 +22,7 @@ import {
 } from './opencode.js'
 import { sendThreadMessage, NOTIFY_MESSAGE_FLAGS, SILENT_MESSAGE_FLAGS } from './discord-utils.js'
 import { formatPart } from './message-formatting.js'
-import { getOpencodeSystemMessage } from './system-message.js'
+import { getOpencodeSystemMessage, type WorktreeInfo } from './system-message.js'
 import { createLogger } from './logger.js'
 import { isAbortError } from './utils.js'
 import {
@@ -979,6 +980,17 @@ export async function handleOpencodeSession({
       return { providerID, modelID }
     })()
 
+    // Get worktree info if this thread is in a worktree
+    const worktreeInfo = getThreadWorktree(thread.id)
+    const worktree: WorktreeInfo | undefined =
+      worktreeInfo?.status === 'ready' && worktreeInfo.worktree_directory
+        ? {
+            worktreeDirectory: worktreeInfo.worktree_directory,
+            branch: worktreeInfo.worktree_name,
+            mainRepoDirectory: worktreeInfo.project_directory,
+          }
+        : undefined
+
     // Use session.command API for slash commands, session.prompt for regular messages
     const response = command
       ? await getClient().session.command({
@@ -994,7 +1006,7 @@ export async function handleOpencodeSession({
           path: { id: session.id },
           body: {
             parts,
-            system: getOpencodeSystemMessage({ sessionId: session.id, channelId }),
+            system: getOpencodeSystemMessage({ sessionId: session.id, channelId, worktree }),
             model: modelParam,
             agent: agentPreference,
           },

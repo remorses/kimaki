@@ -26,17 +26,17 @@ class WorktreeError extends Error {
 }
 
 /**
- * Format worktree name: lowercase, spaces to dashes, remove special chars, add kimaki- prefix.
- * "My Feature" → "kimaki-my-feature"
+ * Format worktree name: lowercase, spaces to dashes, remove special chars, add opencode/kimaki- prefix.
+ * "My Feature" → "opencode/kimaki-my-feature"
  */
-function formatWorktreeName(name: string): string {
+export function formatWorktreeName(name: string): string {
   const formatted = name
     .toLowerCase()
     .trim()
     .replace(/\s+/g, '-')
     .replace(/[^a-z0-9-]/g, '')
 
-  return `kimaki-${formatted}`
+  return `opencode/kimaki-${formatted}`
 }
 
 /**

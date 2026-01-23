@@ -2,8 +2,16 @@
 // Bridges Discord messages to OpenCode sessions, manages voice connections,
 // and orchestrates the main event loop for the Kimaki bot.
 
-import { getDatabase, closeDatabase, getThreadWorktree } from './database.js'
-import { initializeOpencodeForDirectory, getOpencodeServers } from './opencode.js'
+import {
+  getDatabase,
+  closeDatabase,
+  getThreadWorktree,
+  createPendingWorktree,
+  setWorktreeReady,
+  setWorktreeError,
+} from './database.js'
+import { initializeOpencodeForDirectory, getOpencodeServers, getOpencodeClientV2 } from './opencode.js'
+import { formatWorktreeName } from './commands/worktree.js'
 import {
   escapeBackticksInCodeBlocks,
   splitMarkdownForDiscord,
@@ -69,6 +77,8 @@ const voiceLogger = createLogger('VOICE')
 type StartOptions = {
   token: string
   appId?: string
+  /** When true, all new sessions from channel messages create git worktrees */
+  useWorktrees?: boolean
 }
 
 export async function createDiscordClient() {
@@ -87,6 +97,7 @@ export async function startDiscordBot({
   token,
   appId,
   discordClient,
+  useWorktrees,
 }: StartOptions & { discordClient?: Client }) {
   if (!discordClient) {
     discordClient = await createDiscordClient()
@@ -413,12 +424,71 @@ export async function startDiscordBot({
 
         discordLogger.log(`Created thread "${thread.name}" (${thread.id})`)
 
+        // Create worktree if --use-worktrees is enabled
+        let sessionDirectory = projectDirectory
+        if (useWorktrees) {
+          const worktreeName = formatWorktreeName(
+            hasVoice ? `voice-${Date.now()}` : threadName.slice(0, 50),
+          )
+          discordLogger.log(`[WORKTREE] Creating worktree: ${worktreeName}`)
+
+          // Store pending worktree immediately so bot knows about it
+          createPendingWorktree({
+            threadId: thread.id,
+            worktreeName,
+            projectDirectory,
+          })
+
+          // Initialize OpenCode and create worktree
+          const getClient = await initializeOpencodeForDirectory(projectDirectory)
+          if (getClient instanceof Error) {
+            discordLogger.error(`[WORKTREE] Failed to init OpenCode: ${getClient.message}`)
+            setWorktreeError({ threadId: thread.id, errorMessage: getClient.message })
+            await thread.send({
+              content: `⚠️ Failed to create worktree: ${getClient.message}\nUsing main project directory instead.`,
+              flags: SILENT_MESSAGE_FLAGS,
+            })
+          } else {
+            const clientV2 = getOpencodeClientV2(projectDirectory)
+            if (!clientV2) {
+              discordLogger.error(`[WORKTREE] No v2 client for ${projectDirectory}`)
+              setWorktreeError({ threadId: thread.id, errorMessage: 'No OpenCode v2 client' })
+            } else {
+              try {
+                const response = await clientV2.worktree.create({
+                  directory: projectDirectory,
+                  worktreeCreateInput: { name: worktreeName },
+                })
+
+                if (response.error) {
+                  throw new Error(`SDK error: ${JSON.stringify(response.error)}`)
+                }
+                if (!response.data) {
+                  throw new Error('No worktree data returned')
+                }
+
+                setWorktreeReady({ threadId: thread.id, worktreeDirectory: response.data.directory })
+                sessionDirectory = response.data.directory
+                discordLogger.log(`[WORKTREE] Created: ${response.data.directory} (branch: ${response.data.branch})`)
+              } catch (e) {
+                const errMsg = e instanceof Error ? e.message : String(e)
+                discordLogger.error(`[WORKTREE] Creation failed: ${errMsg}`)
+                setWorktreeError({ threadId: thread.id, errorMessage: errMsg })
+                await thread.send({
+                  content: `⚠️ Failed to create worktree: ${errMsg}\nUsing main project directory instead.`,
+                  flags: SILENT_MESSAGE_FLAGS,
+                })
+              }
+            }
+          }
+        }
+
         let messageContent = message.content || ''
 
         const transcription = await processVoiceAttachment({
           message,
           thread,
-          projectDirectory,
+          projectDirectory: sessionDirectory,
           isNewThread: true,
           appId: currentAppId,
         })
@@ -434,7 +504,7 @@ export async function startDiscordBot({
         await handleOpencodeSession({
           prompt: promptWithAttachments,
           thread,
-          projectDirectory,
+          projectDirectory: sessionDirectory,
           originalMessage: message,
           images: fileAttachments,
           channelId: textChannel.id,
