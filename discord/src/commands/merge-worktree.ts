@@ -86,9 +86,21 @@ export async function handleMergeWorktreeCommand({ command, appId }: CommandCont
 
     logger.log(`Default branch: ${defaultBranch}, worktree branch: ${worktreeBranch}`)
 
-    // 2. Fast-forward default branch to worktree branch (no checkout needed)
-    // This works without checkout by updating the branch ref directly
-    logger.log(`Fast-forwarding ${defaultBranch} to ${worktreeBranch} in ${mainRepoDir}`)
+    const worktreeDir = worktreeInfo.worktree_directory
+
+    // 2. First merge default branch INTO worktree (handles diverged branches)
+    // This ensures worktree has all changes from default branch
+    logger.log(`Merging ${defaultBranch} into worktree at ${worktreeDir}`)
+    try {
+      await execAsync(`git -C "${worktreeDir}" merge ${defaultBranch} --no-edit`)
+    } catch (e) {
+      // If merge fails (conflicts), abort and report
+      await execAsync(`git -C "${worktreeDir}" merge --abort`).catch(() => {})
+      throw new Error(`Merge conflict - resolve manually in worktree then retry`)
+    }
+
+    // 3. Now fast-forward default branch to worktree (guaranteed to work after step 2)
+    logger.log(`Fast-forwarding ${defaultBranch} to ${worktreeBranch}`)
     const { stdout: mergeOutput } = await execAsync(
       `git -C "${mainRepoDir}" fetch . ${worktreeBranch}:${defaultBranch}`,
     )
@@ -97,19 +109,13 @@ export async function handleMergeWorktreeCommand({ command, appId }: CommandCont
     void removeWorktreePrefixFromTitle(thread)
 
     await command.editReply(
-      `✅ Fast-forwarded \`${defaultBranch}\` to \`${worktreeBranch}\`\n\n\`\`\`\n${mergeOutput.trim() || 'Done'}\n\`\`\``,
+      `✅ Merged \`${worktreeBranch}\` into \`${defaultBranch}\`\n\n\`\`\`\n${mergeOutput.trim() || 'Done'}\n\`\`\``,
     )
 
     logger.log(`Successfully merged ${worktreeBranch} into ${defaultBranch}`)
   } catch (e) {
     const errorMsg = e instanceof Error ? e.message : String(e)
     logger.error(`Merge failed: ${errorMsg}`)
-
-    // Provide helpful message for non-fast-forward case
-    const hint = errorMsg.includes('non-fast-forward')
-      ? '\n\n**Hint:** This requires a non-fast-forward merge. Rebase or merge manually.'
-      : ''
-
-    await command.editReply(`❌ Merge failed:\n\`\`\`\n${errorMsg}\n\`\`\`${hint}`)
+    await command.editReply(`❌ Merge failed:\n\`\`\`\n${errorMsg}\n\`\`\``)
   }
 }
