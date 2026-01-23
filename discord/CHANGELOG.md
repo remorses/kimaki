@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.4.43
+
+### Patch Changes
+
+- feat: handle **2000 char limit** in send command with automatic splitting
+- fix: track **multiple pending permissions** per thread to prevent duplicates and hangs
+- update **errore** to 0.9.0 (breaking: `_` → `Error` in matchError)
+
 ## 0.4.42
 
 ### Patch Changes

@@ -506,6 +506,7 @@ export async function processVoiceAttachment({
       EmptyTranscriptionError: (e) => e.message,
       NoResponseContentError: (e) => e.message,
       NoToolResponseError: (e) => e.message,
+      Error: (e) => e.message,
     })
     voiceLogger.error(`Transcription failed:`, transcription)
     await sendThreadMessage(thread, `⚠️ Transcription failed: ${errMsg}`)
