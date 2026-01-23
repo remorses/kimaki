@@ -95,7 +95,16 @@ export async function handleMergeWorktreeCommand({ command, appId }: CommandCont
   const worktreeDir = worktreeInfo.worktree_directory
 
   try {
-    // 1. Get the default branch name
+    // 1. Check for uncommitted changes
+    const { stdout: status } = await execAsync(`git -C "${worktreeDir}" status --porcelain`)
+    if (status.trim()) {
+      await command.editReply(
+        `❌ Uncommitted changes detected in worktree.\n\nPlease commit your changes first, then retry \`/merge-worktree\`.`,
+      )
+      return
+    }
+
+    // 2. Get the default branch name
     logger.log(`Getting default branch for ${mainRepoDir}`)
     let defaultBranch: string
 
@@ -108,7 +117,7 @@ export async function handleMergeWorktreeCommand({ command, appId }: CommandCont
       defaultBranch = 'main'
     }
 
-    // 2. Determine if we're on a branch or detached HEAD
+    // 3. Determine if we're on a branch or detached HEAD
     const isDetached = await isDetachedHead(worktreeDir)
     const currentBranch = await getCurrentBranch(worktreeDir)
     let branchToMerge: string
@@ -126,7 +135,7 @@ export async function handleMergeWorktreeCommand({ command, appId }: CommandCont
 
     logger.log(`Default branch: ${defaultBranch}, branch to merge: ${branchToMerge}`)
 
-    // 3. Merge default branch INTO worktree (handles diverged branches)
+    // 4. Merge default branch INTO worktree (handles diverged branches)
     logger.log(`Merging ${defaultBranch} into worktree at ${worktreeDir}`)
     try {
       await execAsync(`git -C "${worktreeDir}" merge ${defaultBranch} --no-edit`)
@@ -141,17 +150,17 @@ export async function handleMergeWorktreeCommand({ command, appId }: CommandCont
       throw new Error(`Merge conflict - resolve manually in worktree then retry`)
     }
 
-    // 4. Update default branch ref to point to current HEAD
+    // 5. Update default branch ref to point to current HEAD
     // Use update-ref instead of fetch because fetch refuses if branch is checked out
     logger.log(`Updating ${defaultBranch} to point to current HEAD`)
     const { stdout: commitHash } = await execAsync(`git -C "${worktreeDir}" rev-parse HEAD`)
     await execAsync(`git -C "${mainRepoDir}" update-ref refs/heads/${defaultBranch} ${commitHash.trim()}`)
 
-    // 5. Switch to detached HEAD at default branch (allows main to be checked out elsewhere)
+    // 6. Switch to detached HEAD at default branch (allows main to be checked out elsewhere)
     logger.log(`Switching to detached HEAD at ${defaultBranch}`)
     await execAsync(`git -C "${worktreeDir}" checkout --detach ${defaultBranch}`)
 
-    // 6. Delete the merged branch (temp or original)
+    // 7. Delete the merged branch (temp or original)
     logger.log(`Deleting merged branch ${branchToMerge}`)
     await execAsync(`git -C "${worktreeDir}" branch -D ${branchToMerge}`).catch(() => {})
 
@@ -160,7 +169,7 @@ export async function handleMergeWorktreeCommand({ command, appId }: CommandCont
       await execAsync(`git -C "${worktreeDir}" branch -D ${worktreeInfo.worktree_name}`).catch(() => {})
     }
 
-    // 7. Remove worktree prefix from thread title (fire and forget with timeout)
+    // 8. Remove worktree prefix from thread title (fire and forget with timeout)
     void removeWorktreePrefixFromTitle(thread)
 
     const sourceDesc = isDetached ? 'detached commits' : `\`${branchToMerge}\``
