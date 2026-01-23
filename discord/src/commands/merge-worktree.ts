@@ -101,15 +101,23 @@ export async function handleMergeWorktreeCommand({ command, appId }: CommandCont
 
     // 3. Now fast-forward default branch to worktree (guaranteed to work after step 2)
     logger.log(`Fast-forwarding ${defaultBranch} to ${worktreeBranch}`)
-    const { stdout: mergeOutput } = await execAsync(
-      `git -C "${mainRepoDir}" fetch . ${worktreeBranch}:${defaultBranch}`,
-    )
+    await execAsync(`git -C "${mainRepoDir}" fetch . ${worktreeBranch}:${defaultBranch}`)
 
-    // 4. Remove worktree prefix from thread title (fire and forget with timeout)
+    // 4. Switch worktree to default branch so user can keep working
+    logger.log(`Switching worktree to ${defaultBranch}`)
+    await execAsync(`git -C "${worktreeDir}" checkout ${defaultBranch}`)
+
+    // 5. Delete the old worktree branch (it's merged now)
+    logger.log(`Deleting merged branch ${worktreeBranch}`)
+    await execAsync(`git -C "${worktreeDir}" branch -d ${worktreeBranch}`).catch(() => {
+      // Branch deletion is optional, might fail if branch doesn't exist locally
+    })
+
+    // 6. Remove worktree prefix from thread title (fire and forget with timeout)
     void removeWorktreePrefixFromTitle(thread)
 
     await command.editReply(
-      `✅ Merged \`${worktreeBranch}\` into \`${defaultBranch}\`\n\n\`\`\`\n${mergeOutput.trim() || 'Done'}\n\`\`\``,
+      `✅ Merged \`${worktreeBranch}\` into \`${defaultBranch}\`\n\nWorktree switched to \`${defaultBranch}\` - you can keep working here.`,
     )
 
     logger.log(`Successfully merged ${worktreeBranch} into ${defaultBranch}`)
