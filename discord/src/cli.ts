@@ -1402,6 +1402,13 @@ cli
       const DISCORD_MAX_LENGTH = 2000
       let starterMessage: { id: string }
 
+      // Embed marker for auto-start sessions (unless --notify-only)
+      // Bot checks for this embed footer to know it should start a session
+      const AUTO_START_MARKER = 'kimaki:start'
+      const autoStartEmbed = notifyOnly
+        ? undefined
+        : [{ color: 0x2b2d31, footer: { text: AUTO_START_MARKER } }]
+
       if (prompt.length > DISCORD_MAX_LENGTH) {
         // Send as file attachment with a short summary
         const preview = prompt.slice(0, 100).replace(/\n/g, ' ')
@@ -1423,6 +1430,7 @@ cli
             JSON.stringify({
               content: summaryContent,
               attachments: [{ id: 0, filename: 'prompt.md' }],
+              embeds: autoStartEmbed,
             }),
           )
           const buffer = fs.readFileSync(tmpFile)
@@ -1462,6 +1470,7 @@ cli
             },
             body: JSON.stringify({
               content: prompt,
+              embeds: autoStartEmbed,
             }),
           },
         )
@@ -1501,19 +1510,6 @@ cli
       }
 
       const threadData = (await threadResponse.json()) as { id: string; name: string }
-
-      // Mark thread for auto-start if not notify-only
-      // This is optional - only works if local database exists (for local bot auto-start)
-      if (!notifyOnly) {
-        try {
-          const db = getDatabase()
-          db.prepare('INSERT OR REPLACE INTO pending_auto_start (thread_id) VALUES (?)').run(
-            threadData.id,
-          )
-        } catch {
-          // Database not available (e.g., CI environment) - skip auto-start marking
-        }
-      }
 
       s.stop('Thread created!')
 

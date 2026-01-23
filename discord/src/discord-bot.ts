@@ -529,26 +529,13 @@ export async function startDiscordBot({
   })
 
   // Handle bot-initiated threads created by `kimaki send` (without --notify-only)
+  // Uses embed marker instead of database to avoid race conditions
+  const AUTO_START_MARKER = 'kimaki:start'
   discordClient.on(Events.ThreadCreate, async (thread, newlyCreated) => {
     try {
       if (!newlyCreated) {
         return
       }
-
-      // Check if this thread is marked for auto-start in the database
-      const db = getDatabase()
-      const pendingRow = db
-        .prepare('SELECT thread_id FROM pending_auto_start WHERE thread_id = ?')
-        .get(thread.id) as { thread_id: string } | undefined
-
-      if (!pendingRow) {
-        return // Not a CLI-initiated auto-start thread
-      }
-
-      // Remove from pending table
-      db.prepare('DELETE FROM pending_auto_start WHERE thread_id = ?').run(thread.id)
-
-      discordLogger.log(`[BOT_SESSION] Detected bot-initiated thread: ${thread.name}`)
 
       // Only handle threads in text channels
       const parent = thread.parent as TextChannel | null
@@ -556,12 +543,22 @@ export async function startDiscordBot({
         return
       }
 
-      // Get the starter message for the prompt
+      // Get the starter message to check for auto-start marker
       const starterMessage = await thread.fetchStarterMessage().catch(() => null)
       if (!starterMessage) {
         discordLogger.log(`[THREAD_CREATE] Could not fetch starter message for thread ${thread.id}`)
         return
       }
+
+      // Check if starter message has the auto-start embed marker
+      const hasAutoStartMarker = starterMessage.embeds.some(
+        (embed) => embed.footer?.text === AUTO_START_MARKER,
+      )
+      if (!hasAutoStartMarker) {
+        return // Not a CLI-initiated auto-start thread
+      }
+
+      discordLogger.log(`[BOT_SESSION] Detected bot-initiated thread: ${thread.name}`)
 
       const prompt = starterMessage.content.trim()
       if (!prompt) {
