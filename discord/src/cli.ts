@@ -251,6 +251,10 @@ async function registerCommands({
       })
       .toJSON(),
     new SlashCommandBuilder()
+      .setName('merge-worktree')
+      .setDescription('Merge the worktree branch into the default branch')
+      .toJSON(),
+    new SlashCommandBuilder()
       .setName('add-project')
       .setDescription('Create Discord channels for a new OpenCode project')
       .addStringOption((option) => {

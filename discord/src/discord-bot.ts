@@ -12,6 +12,7 @@ import {
 } from './database.js'
 import { initializeOpencodeForDirectory, getOpencodeServers, getOpencodeClientV2 } from './opencode.js'
 import { formatWorktreeName } from './commands/worktree.js'
+import { WORKTREE_PREFIX } from './commands/merge-worktree.js'
 import { createWorktreeWithSubmodules } from './worktree-utils.js'
 import {
   escapeBackticksInCodeBlocks,
@@ -413,9 +414,14 @@ export async function startDiscordBot({
 
         const hasVoice = message.attachments.some((a) => a.contentType?.startsWith('audio/'))
 
-        const threadName = hasVoice
+        const baseThreadName = hasVoice
           ? 'Voice Message'
           : message.content?.replace(/\s+/g, ' ').trim() || 'Claude Thread'
+
+        // Add worktree prefix if --use-worktrees is enabled
+        const threadName = useWorktrees
+          ? `${WORKTREE_PREFIX}${baseThreadName}`
+          : baseThreadName
 
         const thread = await message.startThread({
           name: threadName.slice(0, 80),

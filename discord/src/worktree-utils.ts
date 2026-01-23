@@ -6,7 +6,7 @@ import { promisify } from 'node:util'
 import { createLogger } from './logger.js'
 import type { getOpencodeClientV2 } from './opencode.js'
 
-const execAsync = promisify(exec)
+export const execAsync = promisify(exec)
 
 const logger = createLogger('WORKTREE-UTILS')
 
