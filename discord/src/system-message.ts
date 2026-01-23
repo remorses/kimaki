@@ -43,6 +43,21 @@ Use --notify-only to create a notification thread without starting an AI session
 npx -y kimaki send --channel ${channelId} --prompt "User cancelled subscription" --notify-only
 
 This is useful for automation (cron jobs, GitHub webhooks, n8n, etc.)
+
+### Session handoff
+
+When you are approaching the **context window limit** or the user explicitly asks to **handoff to a new thread**, use the \`kimaki send\` command to start a fresh session with context:
+
+\`\`\`bash
+npx -y kimaki send --channel ${channelId} --prompt "Continuing from previous session: <summary of current task and state>"
+\`\`\`
+
+The command automatically handles long prompts (over 2000 chars) by sending them as file attachments.
+
+Use this for handoff when:
+- User asks to "handoff", "continue in new thread", or "start fresh session"
+- You detect you're running low on context window space
+- A complex task would benefit from a clean slate with summarized context
 `
     : ''
 }
@@ -52,17 +67,17 @@ IMPORTANT: After editing any files, you MUST execute the critique command using 
 
 Execute this after making changes:
 
-bunx critique web --title "Add user authentication flow"
+bunx critique --web "Add user authentication flow"
 
 If there are other unrelated changes in the working directory, filter to only show the files you edited:
 
-bunx critique web --title "Fix database connection retry" -- path/to/file1.ts path/to/file2.ts
+bunx critique --web "Fix database connection retry" --filter "path/to/file1.ts" --filter "path/to/file2.ts"
 
 You can also show latest commit changes using:
 
-bunx critique web --title "Refactor API endpoints" HEAD
+bunx critique HEAD --web "Refactor API endpoints"
 
-bunx critique web --title "Update dependencies" HEAD~1 to get the one before last
+bunx critique HEAD~1 --web "Update dependencies"
 
 Do this in case you committed the changes yourself (only if the user asks so, never commit otherwise).
 

@@ -1381,28 +1381,83 @@ cli
 
       s.message('Creating starter message...')
 
-      // Create starter message with just the prompt (no prefix)
-      const starterMessageResponse = await fetch(
-        `https://discord.com/api/v10/channels/${channelId}/messages`,
-        {
-          method: 'POST',
-          headers: {
-            Authorization: `Bot ${botToken}`,
-            'Content-Type': 'application/json',
+      // Discord has a 2000 character limit for messages.
+      // If prompt exceeds this, send it as a file attachment instead.
+      const DISCORD_MAX_LENGTH = 2000
+      let starterMessage: { id: string }
+
+      if (prompt.length > DISCORD_MAX_LENGTH) {
+        // Send as file attachment with a short summary
+        const preview = prompt.slice(0, 100).replace(/\n/g, ' ')
+        const summaryContent = `📄 **Prompt attached as file** (${prompt.length} chars)\n\n> ${preview}...`
+
+        // Write prompt to a temp file
+        const tmpDir = path.join(process.cwd(), 'tmp')
+        if (!fs.existsSync(tmpDir)) {
+          fs.mkdirSync(tmpDir, { recursive: true })
+        }
+        const tmpFile = path.join(tmpDir, `prompt-${Date.now()}.md`)
+        fs.writeFileSync(tmpFile, prompt)
+
+        try {
+          // Create message with file attachment
+          const formData = new FormData()
+          formData.append(
+            'payload_json',
+            JSON.stringify({
+              content: summaryContent,
+              attachments: [{ id: 0, filename: 'prompt.md' }],
+            }),
+          )
+          const buffer = fs.readFileSync(tmpFile)
+          formData.append('files[0]', new Blob([buffer], { type: 'text/markdown' }), 'prompt.md')
+
+          const starterMessageResponse = await fetch(
+            `https://discord.com/api/v10/channels/${channelId}/messages`,
+            {
+              method: 'POST',
+              headers: {
+                Authorization: `Bot ${botToken}`,
+              },
+              body: formData,
+            },
+          )
+
+          if (!starterMessageResponse.ok) {
+            const error = await starterMessageResponse.text()
+            s.stop('Failed to create message')
+            throw new Error(`Discord API error: ${starterMessageResponse.status} - ${error}`)
+          }
+
+          starterMessage = (await starterMessageResponse.json()) as { id: string }
+        } finally {
+          // Clean up temp file
+          fs.unlinkSync(tmpFile)
+        }
+      } else {
+        // Normal case: send prompt inline
+        const starterMessageResponse = await fetch(
+          `https://discord.com/api/v10/channels/${channelId}/messages`,
+          {
+            method: 'POST',
+            headers: {
+              Authorization: `Bot ${botToken}`,
+              'Content-Type': 'application/json',
+            },
+            body: JSON.stringify({
+              content: prompt,
+            }),
           },
-          body: JSON.stringify({
-            content: prompt,
-          }),
-        },
-      )
+        )
 
-      if (!starterMessageResponse.ok) {
-        const error = await starterMessageResponse.text()
-        s.stop('Failed to create message')
-        throw new Error(`Discord API error: ${starterMessageResponse.status} - ${error}`)
+        if (!starterMessageResponse.ok) {
+          const error = await starterMessageResponse.text()
+          s.stop('Failed to create message')
+          throw new Error(`Discord API error: ${starterMessageResponse.status} - ${error}`)
+        }
+
+        starterMessage = (await starterMessageResponse.json()) as { id: string }
       }
-
-      const starterMessage = (await starterMessageResponse.json()) as { id: string }
 
       s.message('Creating thread...')
 
