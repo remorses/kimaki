@@ -172,6 +172,8 @@ Just send a message in any channel linked to a project. Kimaki handles the rest.
 | `/abort` | Stop the current running session |
 | `/add-project <project>` | Create channels for an existing OpenCode project |
 | `/create-new-project <name>` | Create a new project folder and start a session |
+| `/new-worktree <name>` | Create a git worktree and start a session (⬦ prefix) |
+| `/merge-worktree` | Merge worktree branch into default branch |
 | `/model` | Change the AI model for this channel or session |
 | `/agent` | Change the agent for this channel or session |
 | `/share` | Generate a public URL to share the current session |

@@ -15,6 +15,7 @@ import { SILENT_MESSAGE_FLAGS } from '../discord-utils.js'
 import { extractTagsArrays } from '../xml.js'
 import { createLogger } from '../logger.js'
 import { createWorktreeWithSubmodules } from '../worktree-utils.js'
+import { WORKTREE_PREFIX } from './merge-worktree.js'
 import * as errore from 'errore'
 
 const logger = createLogger('WORKTREE')
@@ -188,7 +189,7 @@ export async function handleNewWorktreeCommand({
       })
 
       const thread = await starterMessage.startThread({
-        name: `worktree: ${worktreeName}`,
+        name: `${WORKTREE_PREFIX}worktree: ${worktreeName}`,
         autoArchiveDuration: 1440,
         reason: 'Worktree session',
       })
