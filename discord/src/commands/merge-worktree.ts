@@ -141,9 +141,11 @@ export async function handleMergeWorktreeCommand({ command, appId }: CommandCont
       throw new Error(`Merge conflict - resolve manually in worktree then retry`)
     }
 
-    // 4. Fast-forward default branch to worktree (guaranteed to work after step 3)
-    logger.log(`Fast-forwarding ${defaultBranch} to ${branchToMerge}`)
-    await execAsync(`git -C "${mainRepoDir}" fetch . ${branchToMerge}:${defaultBranch}`)
+    // 4. Update default branch ref to point to current HEAD
+    // Use update-ref instead of fetch because fetch refuses if branch is checked out
+    logger.log(`Updating ${defaultBranch} to point to current HEAD`)
+    const { stdout: commitHash } = await execAsync(`git -C "${worktreeDir}" rev-parse HEAD`)
+    await execAsync(`git -C "${mainRepoDir}" update-ref refs/heads/${defaultBranch} ${commitHash.trim()}`)
 
     // 5. Switch to detached HEAD at default branch (allows main to be checked out elsewhere)
     logger.log(`Switching to detached HEAD at ${defaultBranch}`)
