@@ -38,9 +38,12 @@ const discordLogger = createLogger('DISCORD')
 
 export const abortControllers = new Map<string, AbortController>()
 
+// Track multiple pending permissions per thread (keyed by permission ID)
+// OpenCode handles blocking/sequencing - we just need to track all pending permissions
+// to avoid duplicates and properly clean up on auto-reject
 export const pendingPermissions = new Map<
-  string,
-  { permission: PermissionRequest; messageId: string; directory: string; contextHash: string }
+  string, // threadId
+  Map<string, { permission: PermissionRequest; messageId: string; directory: string; contextHash: string }> // permissionId -> data
 >()
 
 export type QueuedMessage = {
@@ -246,30 +249,34 @@ export async function handleOpencodeSession({
     existingController.abort(new Error('New request started'))
   }
 
-  const pendingPerm = pendingPermissions.get(thread.id)
-  if (pendingPerm) {
-    try {
-      sessionLogger.log(
-        `[PERMISSION] Auto-rejecting pending permission ${pendingPerm.permission.id} due to new message`,
-      )
-      const clientV2 = getOpencodeClientV2(directory)
-      if (clientV2) {
-        await clientV2.permission.reply({
-          requestID: pendingPerm.permission.id,
-          reply: 'reject',
-        })
+  // Auto-reject ALL pending permissions for this thread
+  const threadPermissions = pendingPermissions.get(thread.id)
+  if (threadPermissions && threadPermissions.size > 0) {
+    const clientV2 = getOpencodeClientV2(directory)
+    let rejectedCount = 0
+    for (const [permId, pendingPerm] of threadPermissions) {
+      try {
+        sessionLogger.log(`[PERMISSION] Auto-rejecting permission ${permId} due to new message`)
+        if (clientV2) {
+          await clientV2.permission.reply({
+            requestID: permId,
+            reply: 'reject',
+          })
+        }
+        cleanupPermissionContext(pendingPerm.contextHash)
+        rejectedCount++
+      } catch (e) {
+        sessionLogger.log(`[PERMISSION] Failed to auto-reject permission ${permId}:`, e)
+        cleanupPermissionContext(pendingPerm.contextHash)
       }
-      // Clean up both the pending permission and its dropdown context
-      cleanupPermissionContext(pendingPerm.contextHash)
-      pendingPermissions.delete(thread.id)
+    }
+    pendingPermissions.delete(thread.id)
+    if (rejectedCount > 0) {
+      const plural = rejectedCount > 1 ? 's' : ''
       await sendThreadMessage(
         thread,
-        `⚠️ Previous permission request auto-rejected due to new message`,
+        `⚠️ ${rejectedCount} pending permission request${plural} auto-rejected due to new message`,
       )
-    } catch (e) {
-      sessionLogger.log(`[PERMISSION] Failed to auto-reject permission:`, e)
-      cleanupPermissionContext(pendingPerm.contextHash)
-      pendingPermissions.delete(thread.id)
     }
   }
 
@@ -536,7 +543,7 @@ export async function handleOpencodeSession({
             const hasPendingQuestion = [...pendingQuestionContexts.values()].some(
               (ctx) => ctx.thread.id === thread.id,
             )
-            const hasPendingPermission = pendingPermissions.has(thread.id)
+            const hasPendingPermission = (pendingPermissions.get(thread.id)?.size ?? 0) > 0
             if (!hasPendingQuestion && !hasPendingPermission) {
               stopTyping = startTyping()
             }
@@ -612,7 +619,7 @@ export async function handleOpencodeSession({
               const hasPendingQuestion = [...pendingQuestionContexts.values()].some(
                 (ctx) => ctx.thread.id === thread.id,
               )
-              const hasPendingPermission = pendingPermissions.has(thread.id)
+              const hasPendingPermission = (pendingPermissions.get(thread.id)?.size ?? 0) > 0
               if (hasPendingQuestion || hasPendingPermission) return
               stopTyping = startTyping()
             }, 300)
@@ -650,6 +657,15 @@ export async function handleOpencodeSession({
             continue
           }
 
+          // Skip if this exact permission ID is already pending (dedupe)
+          const threadPermissions = pendingPermissions.get(thread.id)
+          if (threadPermissions?.has(permission.id)) {
+            sessionLogger.log(
+              `[PERMISSION] Skipping duplicate permission ${permission.id} (already pending)`,
+            )
+            continue
+          }
+
           sessionLogger.log(
             `Permission requested: permission=${permission.permission}, patterns=${permission.patterns.join(', ')}`,
           )
@@ -667,7 +683,11 @@ export async function handleOpencodeSession({
             directory,
           })
 
-          pendingPermissions.set(thread.id, {
+          // Track permission in nested map (threadId -> permissionId -> data)
+          if (!pendingPermissions.has(thread.id)) {
+            pendingPermissions.set(thread.id, new Map())
+          }
+          pendingPermissions.get(thread.id)!.set(permission.id, {
             permission,
             messageId,
             directory,
@@ -681,10 +701,18 @@ export async function handleOpencodeSession({
 
           sessionLogger.log(`Permission ${requestID} replied with: ${reply}`)
 
-          const pending = pendingPermissions.get(thread.id)
-          if (pending && pending.permission.id === requestID) {
-            cleanupPermissionContext(pending.contextHash)
-            pendingPermissions.delete(thread.id)
+          // Clean up the specific permission from nested map
+          const threadPermissions = pendingPermissions.get(thread.id)
+          if (threadPermissions) {
+            const pending = threadPermissions.get(requestID)
+            if (pending) {
+              cleanupPermissionContext(pending.contextHash)
+              threadPermissions.delete(requestID)
+              // Remove thread entry if no more pending permissions
+              if (threadPermissions.size === 0) {
+                pendingPermissions.delete(thread.id)
+              }
+            }
           }
         } else if (event.type === 'question.asked') {
           const questionRequest = event.properties
