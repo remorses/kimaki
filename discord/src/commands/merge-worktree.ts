@@ -1,8 +1,8 @@
-// /merge-worktree command - Merge worktree branch into main/default branch.
-// Finds the default branch, merges the worktree branch into it,
-// and removes the ⬦ prefix from the thread title.
+// /merge-worktree command - Merge worktree commits into main/default branch.
+// Handles both branch-based worktrees and detached HEAD state.
+// After merge, switches to detached HEAD at main so user can keep working.
 
-import { ChannelType, type ThreadChannel } from 'discord.js'
+import { type ThreadChannel } from 'discord.js'
 import type { CommandContext } from './types.js'
 import { getThreadWorktree } from '../database.js'
 import { createLogger } from '../logger.js'
@@ -40,6 +40,30 @@ async function removeWorktreePrefixFromTitle(thread: ThreadChannel): Promise<voi
   await Promise.race([editPromise, timeoutPromise])
 }
 
+/**
+ * Check if worktree is in detached HEAD state.
+ */
+async function isDetachedHead(worktreeDir: string): Promise<boolean> {
+  try {
+    await execAsync(`git -C "${worktreeDir}" symbolic-ref HEAD`)
+    return false
+  } catch {
+    return true
+  }
+}
+
+/**
+ * Get current branch name (returns null if detached).
+ */
+async function getCurrentBranch(worktreeDir: string): Promise<string | null> {
+  try {
+    const { stdout } = await execAsync(`git -C "${worktreeDir}" symbolic-ref --short HEAD`)
+    return stdout.trim() || null
+  } catch {
+    return null
+  }
+}
+
 export async function handleMergeWorktreeCommand({ command, appId }: CommandContext): Promise<void> {
   await command.deferReply({ ephemeral: false })
 
@@ -68,7 +92,7 @@ export async function handleMergeWorktreeCommand({ command, appId }: CommandCont
   }
 
   const mainRepoDir = worktreeInfo.project_directory
-  const worktreeBranch = worktreeInfo.worktree_name
+  const worktreeDir = worktreeInfo.worktree_directory
 
   try {
     // 1. Get the default branch name
@@ -84,43 +108,65 @@ export async function handleMergeWorktreeCommand({ command, appId }: CommandCont
       defaultBranch = 'main'
     }
 
-    logger.log(`Default branch: ${defaultBranch}, worktree branch: ${worktreeBranch}`)
+    // 2. Determine if we're on a branch or detached HEAD
+    const isDetached = await isDetachedHead(worktreeDir)
+    const currentBranch = await getCurrentBranch(worktreeDir)
+    let branchToMerge: string
+    let tempBranch: string | null = null
 
-    const worktreeDir = worktreeInfo.worktree_directory
+    if (isDetached) {
+      // Create a temporary branch from detached HEAD
+      tempBranch = `temp-merge-${Date.now()}`
+      logger.log(`Detached HEAD detected, creating temp branch: ${tempBranch}`)
+      await execAsync(`git -C "${worktreeDir}" checkout -b ${tempBranch}`)
+      branchToMerge = tempBranch
+    } else {
+      branchToMerge = currentBranch || worktreeInfo.worktree_name
+    }
 
-    // 2. First merge default branch INTO worktree (handles diverged branches)
-    // This ensures worktree has all changes from default branch
+    logger.log(`Default branch: ${defaultBranch}, branch to merge: ${branchToMerge}`)
+
+    // 3. Merge default branch INTO worktree (handles diverged branches)
     logger.log(`Merging ${defaultBranch} into worktree at ${worktreeDir}`)
     try {
       await execAsync(`git -C "${worktreeDir}" merge ${defaultBranch} --no-edit`)
     } catch (e) {
       // If merge fails (conflicts), abort and report
       await execAsync(`git -C "${worktreeDir}" merge --abort`).catch(() => {})
+      // Clean up temp branch if we created one
+      if (tempBranch) {
+        await execAsync(`git -C "${worktreeDir}" checkout --detach`).catch(() => {})
+        await execAsync(`git -C "${worktreeDir}" branch -D ${tempBranch}`).catch(() => {})
+      }
       throw new Error(`Merge conflict - resolve manually in worktree then retry`)
     }
 
-    // 3. Now fast-forward default branch to worktree (guaranteed to work after step 2)
-    logger.log(`Fast-forwarding ${defaultBranch} to ${worktreeBranch}`)
-    await execAsync(`git -C "${mainRepoDir}" fetch . ${worktreeBranch}:${defaultBranch}`)
+    // 4. Fast-forward default branch to worktree (guaranteed to work after step 3)
+    logger.log(`Fast-forwarding ${defaultBranch} to ${branchToMerge}`)
+    await execAsync(`git -C "${mainRepoDir}" fetch . ${branchToMerge}:${defaultBranch}`)
 
-    // 4. Switch worktree to default branch so user can keep working
-    logger.log(`Switching worktree to ${defaultBranch}`)
-    await execAsync(`git -C "${worktreeDir}" checkout ${defaultBranch}`)
+    // 5. Switch to detached HEAD at default branch (allows main to be checked out elsewhere)
+    logger.log(`Switching to detached HEAD at ${defaultBranch}`)
+    await execAsync(`git -C "${worktreeDir}" checkout --detach ${defaultBranch}`)
 
-    // 5. Delete the old worktree branch (it's merged now)
-    logger.log(`Deleting merged branch ${worktreeBranch}`)
-    await execAsync(`git -C "${worktreeDir}" branch -d ${worktreeBranch}`).catch(() => {
-      // Branch deletion is optional, might fail if branch doesn't exist locally
-    })
+    // 6. Delete the merged branch (temp or original)
+    logger.log(`Deleting merged branch ${branchToMerge}`)
+    await execAsync(`git -C "${worktreeDir}" branch -D ${branchToMerge}`).catch(() => {})
 
-    // 6. Remove worktree prefix from thread title (fire and forget with timeout)
+    // Also delete the original worktree branch if different from what we merged
+    if (!isDetached && branchToMerge !== worktreeInfo.worktree_name) {
+      await execAsync(`git -C "${worktreeDir}" branch -D ${worktreeInfo.worktree_name}`).catch(() => {})
+    }
+
+    // 7. Remove worktree prefix from thread title (fire and forget with timeout)
     void removeWorktreePrefixFromTitle(thread)
 
+    const sourceDesc = isDetached ? 'detached commits' : `\`${branchToMerge}\``
     await command.editReply(
-      `✅ Merged \`${worktreeBranch}\` into \`${defaultBranch}\`\n\nWorktree switched to \`${defaultBranch}\` - you can keep working here.`,
+      `✅ Merged ${sourceDesc} into \`${defaultBranch}\`\n\nWorktree now at detached HEAD - you can keep working here.`,
     )
 
-    logger.log(`Successfully merged ${worktreeBranch} into ${defaultBranch}`)
+    logger.log(`Successfully merged ${branchToMerge} into ${defaultBranch}`)
   } catch (e) {
     const errorMsg = e instanceof Error ? e.message : String(e)
     logger.error(`Merge failed: ${errorMsg}`)
