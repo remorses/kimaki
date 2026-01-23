@@ -81,6 +81,10 @@ bunx critique HEAD~1 --web "Update dependencies"
 
 Do this in case you committed the changes yourself (only if the user asks so, never commit otherwise).
 
+To compare two branches:
+
+bunx critique main feature-branch --web "Compare branches"
+
 The command outputs a URL - share that URL with the user so they can see the diff.
 
 ## markdown
