@@ -9,6 +9,7 @@ import {
   createPendingWorktree,
   setWorktreeReady,
   setWorktreeError,
+  getChannelWorktreesEnabled,
 } from './database.js'
 import { initializeOpencodeForDirectory, getOpencodeServers, getOpencodeClientV2 } from './opencode.js'
 import { formatWorktreeName } from './commands/worktree.js'
@@ -418,8 +419,11 @@ export async function startDiscordBot({
           ? 'Voice Message'
           : message.content?.replace(/\s+/g, ' ').trim() || 'Claude Thread'
 
-        // Add worktree prefix if --use-worktrees is enabled
-        const threadName = useWorktrees
+        // Check if worktrees should be enabled (CLI flag OR channel setting)
+        const shouldUseWorktrees = useWorktrees || getChannelWorktreesEnabled(textChannel.id)
+
+        // Add worktree prefix if worktrees are enabled
+        const threadName = shouldUseWorktrees
           ? `${WORKTREE_PREFIX}${baseThreadName}`
           : baseThreadName
 
@@ -431,9 +435,9 @@ export async function startDiscordBot({
 
         discordLogger.log(`Created thread "${thread.name}" (${thread.id})`)
 
-        // Create worktree if --use-worktrees is enabled
+        // Create worktree if worktrees are enabled (CLI flag OR channel setting)
         let sessionDirectory = projectDirectory
-        if (useWorktrees) {
+        if (shouldUseWorktrees) {
           const worktreeName = formatWorktreeName(
             hasVoice ? `voice-${Date.now()}` : threadName.slice(0, 50),
           )

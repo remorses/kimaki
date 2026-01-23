@@ -255,6 +255,14 @@ async function registerCommands({
       .setDescription('Merge the worktree branch into the default branch')
       .toJSON(),
     new SlashCommandBuilder()
+      .setName('enable-worktrees')
+      .setDescription('Enable automatic git worktree creation for new sessions in this channel')
+      .toJSON(),
+    new SlashCommandBuilder()
+      .setName('disable-worktrees')
+      .setDescription('Disable automatic git worktree creation for new sessions in this channel')
+      .toJSON(),
+    new SlashCommandBuilder()
       .setName('add-project')
       .setDescription('Create Discord channels for a new OpenCode project')
       .addStringOption((option) => {

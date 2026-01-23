@@ -105,6 +105,7 @@ export function getDatabase(): Database.Database {
     `)
 
     runModelMigrations(db)
+    runWorktreeSettingsMigrations(db)
   }
 
   return db
@@ -336,6 +337,48 @@ export function setWorktreeError({
 export function deleteThreadWorktree(threadId: string): void {
   const db = getDatabase()
   db.prepare('DELETE FROM thread_worktrees WHERE thread_id = ?').run(threadId)
+}
+
+/**
+ * Run migrations for channel worktree settings table.
+ * Called on startup. Allows per-channel opt-in for automatic worktree creation.
+ */
+export function runWorktreeSettingsMigrations(database?: Database.Database): void {
+  const targetDb = database || getDatabase()
+
+  targetDb.exec(`
+    CREATE TABLE IF NOT EXISTS channel_worktrees (
+      channel_id TEXT PRIMARY KEY,
+      enabled INTEGER NOT NULL DEFAULT 0,
+      created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+      updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+    )
+  `)
+
+  dbLogger.log('Channel worktree settings migrations complete')
+}
+
+/**
+ * Check if automatic worktree creation is enabled for a channel.
+ */
+export function getChannelWorktreesEnabled(channelId: string): boolean {
+  const db = getDatabase()
+  const row = db
+    .prepare('SELECT enabled FROM channel_worktrees WHERE channel_id = ?')
+    .get(channelId) as { enabled: number } | undefined
+  return row?.enabled === 1
+}
+
+/**
+ * Enable or disable automatic worktree creation for a channel.
+ */
+export function setChannelWorktreesEnabled(channelId: string, enabled: boolean): void {
+  const db = getDatabase()
+  db.prepare(
+    `INSERT INTO channel_worktrees (channel_id, enabled, updated_at) 
+     VALUES (?, ?, CURRENT_TIMESTAMP)
+     ON CONFLICT(channel_id) DO UPDATE SET enabled = ?, updated_at = CURRENT_TIMESTAMP`,
+  ).run(channelId, enabled ? 1 : 0, enabled ? 1 : 0)
 }
 
 export function closeDatabase(): void {
