@@ -8,10 +8,9 @@ import {
 } from 'discord.js'
 import fs from 'node:fs'
 import type { CommandContext, AutocompleteContext } from './types.js'
-import { getDatabase } from '../database.js'
+import { getDatabase, getChannelDirectory } from '../database.js'
 import { initializeOpencodeForDirectory } from '../opencode.js'
-import { sendThreadMessage, resolveTextChannel, getKimakiMetadata } from '../discord-utils.js'
-import { extractTagsArrays } from '../xml.js'
+import { sendThreadMessage, resolveTextChannel } from '../discord-utils.js'
 import { collectLastAssistantParts } from '../message-formatting.js'
 import { createLogger } from '../logger.js'
 import * as errore from 'errore'
@@ -31,18 +30,9 @@ export async function handleResumeCommand({ command, appId }: CommandContext): P
 
   const textChannel = channel as TextChannel
 
-  let projectDirectory: string | undefined
-  let channelAppId: string | undefined
-
-  if (textChannel.topic) {
-    const extracted = extractTagsArrays({
-      xml: textChannel.topic,
-      tags: ['kimaki.directory', 'kimaki.app'],
-    })
-
-    projectDirectory = extracted['kimaki.directory']?.[0]?.trim()
-    channelAppId = extracted['kimaki.app']?.[0]?.trim()
-  }
+  const channelConfig = getChannelDirectory(textChannel.id)
+  const projectDirectory = channelConfig?.directory
+  const channelAppId = channelConfig?.appId || undefined
 
   if (channelAppId && channelAppId !== appId) {
     await command.editReply('This channel is not configured for this bot')
@@ -157,12 +147,12 @@ export async function handleResumeAutocomplete({
       interaction.channel as TextChannel | ThreadChannel | null,
     )
     if (textChannel) {
-      const { projectDirectory: directory, channelAppId } = getKimakiMetadata(textChannel)
-      if (channelAppId && channelAppId !== appId) {
+      const channelConfig = getChannelDirectory(textChannel.id)
+      if (channelConfig?.appId && channelConfig.appId !== appId) {
         await interaction.respond([])
         return
       }
-      projectDirectory = directory
+      projectDirectory = channelConfig?.directory
     }
   }
 

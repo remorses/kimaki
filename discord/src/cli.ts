@@ -21,6 +21,7 @@ import {
   getChannelsWithDescriptions,
   createDiscordClient,
   getDatabase,
+  getChannelDirectory,
   startDiscordBot,
   initializeOpencodeForDirectory,
   ensureKimakiCategory,
@@ -47,7 +48,6 @@ import { uploadFilesToDiscord } from './discord-utils.js'
 import { spawn, spawnSync, execSync, type ExecSyncOptions } from 'node:child_process'
 import http from 'node:http'
 import { setDataDir, getDataDir, getLockPort } from './config.js'
-import { extractTagsArrays } from './xml.js'
 import { sanitizeAgentName } from './commands/agent.js'
 
 const cliLogger = createLogger('CLI')
@@ -1367,25 +1367,17 @@ cli
         guild_id: string
       }
 
-      if (!channelData.topic) {
-        s.stop('Channel has no topic')
+      const channelConfig = getChannelDirectory(channelData.id)
+
+      if (!channelConfig) {
+        s.stop('Channel not configured')
         throw new Error(
-          `Channel #${channelData.name} has no topic. It must have a <kimaki.directory> tag.`,
+          `Channel #${channelData.name} is not configured with a project directory. Run the bot first to sync channel data.`,
         )
       }
 
-      const extracted = extractTagsArrays({
-        xml: channelData.topic,
-        tags: ['kimaki.directory', 'kimaki.app'],
-      })
-
-      const projectDirectory = extracted['kimaki.directory']?.[0]?.trim()
-      const channelAppId = extracted['kimaki.app']?.[0]?.trim()
-
-      if (!projectDirectory) {
-        s.stop('No kimaki.directory tag found')
-        throw new Error(`Channel #${channelData.name} has no <kimaki.directory> tag in topic.`)
-      }
+      const projectDirectory = channelConfig.directory
+      const channelAppId = channelConfig.appId || undefined
 
       // Verify app ID matches if both are present
       if (channelAppId && appId && channelAppId !== appId) {

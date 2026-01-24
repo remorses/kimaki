@@ -4,8 +4,7 @@
 
 import { ChannelType, type CategoryChannel, type Guild, type TextChannel } from 'discord.js'
 import path from 'node:path'
-import { getDatabase } from './database.js'
-import { extractTagsArrays } from './xml.js'
+import { getDatabase, getChannelDirectory } from './database.js'
 
 export async function ensureKimakiCategory(
   guild: Guild,
@@ -83,7 +82,7 @@ export async function createProjectChannels({
     name: channelName,
     type: ChannelType.GuildText,
     parent: kimakiCategory,
-    topic: `<kimaki><directory>${projectDirectory}</directory><app>${appId}</app></kimaki>`,
+    // Channel configuration is stored in SQLite, not in the topic
   })
 
   const voiceChannel = await guild.channels.create({
@@ -128,25 +127,15 @@ export async function getChannelsWithDescriptions(guild: Guild): Promise<Channel
       const textChannel = channel as TextChannel
       const description = textChannel.topic || null
 
-      let kimakiDirectory: string | undefined
-      let kimakiApp: string | undefined
-
-      if (description) {
-        const extracted = extractTagsArrays({
-          xml: description,
-          tags: ['kimaki.directory', 'kimaki.app'],
-        })
-
-        kimakiDirectory = extracted['kimaki.directory']?.[0]?.trim()
-        kimakiApp = extracted['kimaki.app']?.[0]?.trim()
-      }
+      // Get channel config from database instead of parsing XML from topic
+      const channelConfig = getChannelDirectory(textChannel.id)
 
       channels.push({
         id: textChannel.id,
         name: textChannel.name,
         description,
-        kimakiDirectory,
-        kimakiApp,
+        kimakiDirectory: channelConfig?.directory,
+        kimakiApp: channelConfig?.appId || undefined,
       })
     })
 

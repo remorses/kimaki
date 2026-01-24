@@ -46,7 +46,7 @@ export async function handleEnableWorktreesCommand({
   if (!metadata.projectDirectory) {
     await command.reply({
       content:
-        'This channel is not configured with a project directory.\nAdd a `<kimaki.directory>/path/to/project</kimaki.directory>` tag to the channel description.',
+        'This channel is not configured with a project directory.\nUse `/add-project` to set up this channel.',
       ephemeral: true,
     })
     return
@@ -102,7 +102,7 @@ export async function handleDisableWorktreesCommand({
   if (!metadata.projectDirectory) {
     await command.reply({
       content:
-        'This channel is not configured with a project directory.\nAdd a `<kimaki.directory>/path/to/project</kimaki.directory>` tag to the channel description.',
+        'This channel is not configured with a project directory.\nUse `/add-project` to set up this channel.',
       ephemeral: true,
     })
     return

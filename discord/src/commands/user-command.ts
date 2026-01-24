@@ -3,11 +3,10 @@
 
 import type { CommandContext, CommandHandler } from './types.js'
 import { ChannelType, type TextChannel, type ThreadChannel } from 'discord.js'
-import { extractTagsArrays } from '../xml.js'
 import { handleOpencodeSession } from '../session-handler.js'
 import { SILENT_MESSAGE_FLAGS } from '../discord-utils.js'
 import { createLogger } from '../logger.js'
-import { getDatabase } from '../database.js'
+import { getDatabase, getChannelDirectory } from '../database.js'
 import fs from 'node:fs'
 
 const userCommandLogger = createLogger('USER_CMD')
@@ -68,28 +67,18 @@ export const handleUserCommand: CommandHandler = async ({ command, appId }: Comm
       return
     }
 
-    if (textChannel?.topic) {
-      const extracted = extractTagsArrays({
-        xml: textChannel.topic,
-        tags: ['kimaki.directory', 'kimaki.app'],
-      })
-
-      projectDirectory = extracted['kimaki.directory']?.[0]?.trim()
-      channelAppId = extracted['kimaki.app']?.[0]?.trim()
+    if (textChannel) {
+      const channelConfig = getChannelDirectory(textChannel.id)
+      projectDirectory = channelConfig?.directory
+      channelAppId = channelConfig?.appId || undefined
     }
   } else {
     // Running in a text channel - will create a new thread
     textChannel = channel as TextChannel
 
-    if (textChannel.topic) {
-      const extracted = extractTagsArrays({
-        xml: textChannel.topic,
-        tags: ['kimaki.directory', 'kimaki.app'],
-      })
-
-      projectDirectory = extracted['kimaki.directory']?.[0]?.trim()
-      channelAppId = extracted['kimaki.app']?.[0]?.trim()
-    }
+    const channelConfig = getChannelDirectory(textChannel.id)
+    projectDirectory = channelConfig?.directory
+    channelAppId = channelConfig?.appId || undefined
   }
 
   if (channelAppId && channelAppId !== appId) {

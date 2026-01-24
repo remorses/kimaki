@@ -9,10 +9,10 @@ import {
   createPendingWorktree,
   setWorktreeReady,
   setWorktreeError,
+  getChannelDirectory,
 } from '../database.js'
 import { initializeOpencodeForDirectory, getOpencodeClientV2 } from '../opencode.js'
 import { SILENT_MESSAGE_FLAGS } from '../discord-utils.js'
-import { extractTagsArrays } from '../xml.js'
 import { createLogger } from '../logger.js'
 import { createWorktreeWithSubmodules } from '../worktree-utils.js'
 import { WORKTREE_PREFIX } from './merge-worktree.js'
@@ -42,37 +42,27 @@ export function formatWorktreeName(name: string): string {
 }
 
 /**
- * Get project directory from channel topic.
+ * Get project directory from database.
  */
 function getProjectDirectoryFromChannel(
   channel: TextChannel,
   appId: string,
 ): string | WorktreeError {
-  if (!channel.topic) {
-    return new WorktreeError('This channel has no topic configured')
-  }
+  const channelConfig = getChannelDirectory(channel.id)
 
-  const extracted = extractTagsArrays({
-    xml: channel.topic,
-    tags: ['kimaki.directory', 'kimaki.app'],
-  })
-
-  const projectDirectory = extracted['kimaki.directory']?.[0]?.trim()
-  const channelAppId = extracted['kimaki.app']?.[0]?.trim()
-
-  if (channelAppId && channelAppId !== appId) {
-    return new WorktreeError('This channel is not configured for this bot')
-  }
-
-  if (!projectDirectory) {
+  if (!channelConfig) {
     return new WorktreeError('This channel is not configured with a project directory')
   }
 
-  if (!fs.existsSync(projectDirectory)) {
-    return new WorktreeError(`Directory does not exist: ${projectDirectory}`)
+  if (channelConfig.appId && channelConfig.appId !== appId) {
+    return new WorktreeError('This channel is not configured for this bot')
   }
 
-  return projectDirectory
+  if (!fs.existsSync(channelConfig.directory)) {
+    return new WorktreeError(`Directory does not exist: ${channelConfig.directory}`)
+  }
+
+  return channelConfig.directory
 }
 
 /**

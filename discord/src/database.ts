@@ -381,6 +381,29 @@ export function setChannelWorktreesEnabled(channelId: string, enabled: boolean):
   ).run(channelId, enabled ? 1 : 0, enabled ? 1 : 0)
 }
 
+/**
+ * Get the directory and app_id for a channel from the database.
+ * This is the single source of truth for channel-project mappings.
+ */
+export function getChannelDirectory(channelId: string): {
+  directory: string
+  appId: string | null
+} | undefined {
+  const db = getDatabase()
+  const row = db
+    .prepare('SELECT directory, app_id FROM channel_directories WHERE channel_id = ?')
+    .get(channelId) as { directory: string; app_id: string | null } | undefined
+
+  if (!row) {
+    return undefined
+  }
+
+  return {
+    directory: row.directory,
+    appId: row.app_id,
+  }
+}
+
 export function closeDatabase(): void {
   if (db) {
     db.close()

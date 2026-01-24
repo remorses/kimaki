@@ -4,10 +4,9 @@ import { ChannelType, type TextChannel } from 'discord.js'
 import fs from 'node:fs'
 import path from 'node:path'
 import type { CommandContext, AutocompleteContext } from './types.js'
-import { getDatabase } from '../database.js'
+import { getDatabase, getChannelDirectory } from '../database.js'
 import { initializeOpencodeForDirectory } from '../opencode.js'
 import { SILENT_MESSAGE_FLAGS } from '../discord-utils.js'
-import { extractTagsArrays } from '../xml.js'
 import { handleOpencodeSession } from '../session-handler.js'
 import { createLogger } from '../logger.js'
 import * as errore from 'errore'
@@ -29,18 +28,9 @@ export async function handleSessionCommand({ command, appId }: CommandContext): 
 
   const textChannel = channel as TextChannel
 
-  let projectDirectory: string | undefined
-  let channelAppId: string | undefined
-
-  if (textChannel.topic) {
-    const extracted = extractTagsArrays({
-      xml: textChannel.topic,
-      tags: ['kimaki.directory', 'kimaki.app'],
-    })
-
-    projectDirectory = extracted['kimaki.directory']?.[0]?.trim()
-    channelAppId = extracted['kimaki.app']?.[0]?.trim()
-  }
+  const channelConfig = getChannelDirectory(textChannel.id)
+  const projectDirectory = channelConfig?.directory
+  const channelAppId = channelConfig?.appId || undefined
 
   if (channelAppId && channelAppId !== appId) {
     await command.editReply('This channel is not configured for this bot')
@@ -107,22 +97,14 @@ async function handleAgentAutocomplete({ interaction, appId }: AutocompleteConte
 
   let projectDirectory: string | undefined
 
-  if (interaction.channel) {
-    const channel = interaction.channel
-    if (channel.type === ChannelType.GuildText) {
-      const textChannel = channel as TextChannel
-      if (textChannel.topic) {
-        const extracted = extractTagsArrays({
-          xml: textChannel.topic,
-          tags: ['kimaki.directory', 'kimaki.app'],
-        })
-        const channelAppId = extracted['kimaki.app']?.[0]?.trim()
-        if (channelAppId && channelAppId !== appId) {
-          await interaction.respond([])
-          return
-        }
-        projectDirectory = extracted['kimaki.directory']?.[0]?.trim()
+  if (interaction.channel && interaction.channel.type === ChannelType.GuildText) {
+    const channelConfig = getChannelDirectory(interaction.channel.id)
+    if (channelConfig) {
+      if (channelConfig.appId && channelConfig.appId !== appId) {
+        await interaction.respond([])
+        return
       }
+      projectDirectory = channelConfig.directory
     }
   }
 
@@ -190,22 +172,14 @@ export async function handleSessionAutocomplete({
 
   let projectDirectory: string | undefined
 
-  if (interaction.channel) {
-    const channel = interaction.channel
-    if (channel.type === ChannelType.GuildText) {
-      const textChannel = channel as TextChannel
-      if (textChannel.topic) {
-        const extracted = extractTagsArrays({
-          xml: textChannel.topic,
-          tags: ['kimaki.directory', 'kimaki.app'],
-        })
-        const channelAppId = extracted['kimaki.app']?.[0]?.trim()
-        if (channelAppId && channelAppId !== appId) {
-          await interaction.respond([])
-          return
-        }
-        projectDirectory = extracted['kimaki.directory']?.[0]?.trim()
+  if (interaction.channel && interaction.channel.type === ChannelType.GuildText) {
+    const channelConfig = getChannelDirectory(interaction.channel.id)
+    if (channelConfig) {
+      if (channelConfig.appId && channelConfig.appId !== appId) {
+        await interaction.respond([])
+        return
       }
+      projectDirectory = channelConfig.directory
     }
   }
 

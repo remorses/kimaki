@@ -10,6 +10,7 @@ import {
   setWorktreeReady,
   setWorktreeError,
   getChannelWorktreesEnabled,
+  getChannelDirectory,
 } from './database.js'
 import { initializeOpencodeForDirectory, getOpencodeServers, getOpencodeClientV2 } from './opencode.js'
 import { formatWorktreeName } from './commands/worktree.js'
@@ -39,7 +40,7 @@ import { getCompactSessionContext, getLastSessionId } from './markdown.js'
 import { handleOpencodeSession } from './session-handler.js'
 import { registerInteractionHandler } from './interaction-handler.js'
 
-export { getDatabase, closeDatabase } from './database.js'
+export { getDatabase, closeDatabase, getChannelDirectory } from './database.js'
 export { initializeOpencodeForDirectory } from './opencode.js'
 export { escapeBackticksInCodeBlocks, splitMarkdownForDiscord } from './discord-utils.js'
 export { getOpencodeSystemMessage } from './system-message.js'
@@ -65,7 +66,6 @@ import {
 } from 'discord.js'
 import fs from 'node:fs'
 import * as errore from 'errore'
-import { extractTagsArrays } from './xml.js'
 import { createLogger } from './logger.js'
 import { setGlobalDispatcher, Agent } from 'undici'
 
@@ -211,14 +211,12 @@ export async function startDiscordBot({
         let projectDirectory: string | undefined
         let channelAppId: string | undefined
 
-        if (parent?.topic) {
-          const extracted = extractTagsArrays({
-            xml: parent.topic,
-            tags: ['kimaki.directory', 'kimaki.app'],
-          })
-
-          projectDirectory = extracted['kimaki.directory']?.[0]?.trim()
-          channelAppId = extracted['kimaki.app']?.[0]?.trim()
+        if (parent) {
+          const channelConfig = getChannelDirectory(parent.id)
+          if (channelConfig) {
+            projectDirectory = channelConfig.directory
+            channelAppId = channelConfig.appId || undefined
+          }
         }
 
         // Check if this thread is a worktree thread
@@ -374,23 +372,15 @@ export async function startDiscordBot({
           `[GUILD_TEXT] Message in text channel #${textChannel.name} (${textChannel.id})`,
         )
 
-        if (!textChannel.topic) {
-          voiceLogger.log(`[IGNORED] Channel #${textChannel.name} has no description`)
+        const channelConfig = getChannelDirectory(textChannel.id)
+
+        if (!channelConfig) {
+          voiceLogger.log(`[IGNORED] Channel #${textChannel.name} has no project directory configured`)
           return
         }
 
-        const extracted = extractTagsArrays({
-          xml: textChannel.topic,
-          tags: ['kimaki.directory', 'kimaki.app'],
-        })
-
-        const projectDirectory = extracted['kimaki.directory']?.[0]?.trim()
-        const channelAppId = extracted['kimaki.app']?.[0]?.trim()
-
-        if (!projectDirectory) {
-          voiceLogger.log(`[IGNORED] Channel #${textChannel.name} has no kimaki.directory tag`)
-          return
-        }
+        const projectDirectory = channelConfig.directory
+        const channelAppId = channelConfig.appId || undefined
 
         if (channelAppId && channelAppId !== currentAppId) {
           voiceLogger.log(
@@ -566,24 +556,16 @@ export async function startDiscordBot({
         return
       }
 
-      // Extract directory from parent channel topic
-      if (!parent.topic) {
-        discordLogger.log(`[BOT_SESSION] Parent channel has no topic`)
+      // Get directory from database
+      const channelConfig = getChannelDirectory(parent.id)
+
+      if (!channelConfig) {
+        discordLogger.log(`[BOT_SESSION] No project directory configured for parent channel`)
         return
       }
 
-      const extracted = extractTagsArrays({
-        xml: parent.topic,
-        tags: ['kimaki.directory', 'kimaki.app'],
-      })
-
-      const projectDirectory = extracted['kimaki.directory']?.[0]?.trim()
-      const channelAppId = extracted['kimaki.app']?.[0]?.trim()
-
-      if (!projectDirectory) {
-        discordLogger.log(`[BOT_SESSION] No kimaki.directory in parent channel topic`)
-        return
-      }
+      const projectDirectory = channelConfig.directory
+      const channelAppId = channelConfig.appId || undefined
 
       if (channelAppId && channelAppId !== currentAppId) {
         discordLogger.log(`[BOT_SESSION] Channel belongs to different bot app`)

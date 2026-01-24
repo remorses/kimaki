@@ -4,8 +4,8 @@
 
 import { ChannelType, type Message, type TextChannel, type ThreadChannel } from 'discord.js'
 import { Lexer } from 'marked'
-import { extractTagsArrays } from './xml.js'
 import { formatMarkdownTables } from './format-tables.js'
+import { getChannelDirectory } from './database.js'
 import { limitHeadingDepth } from './limit-heading-depth.js'
 import { unnestCodeBlocksFromLists } from './unnest-code-blocks.js'
 import { createLogger } from './logger.js'
@@ -291,19 +291,20 @@ export function getKimakiMetadata(textChannel: TextChannel | null): {
   projectDirectory?: string
   channelAppId?: string
 } {
-  if (!textChannel?.topic) {
+  if (!textChannel) {
     return {}
   }
 
-  const extracted = extractTagsArrays({
-    xml: textChannel.topic,
-    tags: ['kimaki.directory', 'kimaki.app'],
-  })
+  const channelConfig = getChannelDirectory(textChannel.id)
 
-  const projectDirectory = extracted['kimaki.directory']?.[0]?.trim()
-  const channelAppId = extracted['kimaki.app']?.[0]?.trim()
+  if (!channelConfig) {
+    return {}
+  }
 
-  return { projectDirectory, channelAppId }
+  return {
+    projectDirectory: channelConfig.directory,
+    channelAppId: channelConfig.appId || undefined,
+  }
 }
 
 /**
