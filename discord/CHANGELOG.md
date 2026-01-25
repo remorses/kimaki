@@ -1,5 +1,18 @@
 # Changelog
 
+## 0.4.45
+
+### Patch Changes
+
+- add **/verbosity** command for text-only mode toggle
+- add **/new-worktree** support for existing threads
+- fix **queued messages** sent after session completion
+- fix **add-project --guild** flag for large Discord IDs
+- fix **dedupe permission dropdowns** to prevent duplicate prompts
+- fix **markdown chunk splitting** to prevent exceeding Discord limit
+- refactor session event flow to use **errore** typed errors
+- refactor **channel config** from XML topic to SQLite storage
+
 ## 0.4.44
 
 ### Patch Changes
