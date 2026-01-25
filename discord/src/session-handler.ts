@@ -14,6 +14,7 @@ import {
   getChannelAgent,
   setSessionAgent,
   getThreadWorktree,
+  getChannelVerbosity,
 } from './database.js'
 import {
   initializeOpencodeForDirectory,
@@ -445,7 +446,16 @@ export async function handleOpencodeSession({
     }
   }
 
+  // Get verbosity setting for this channel (use parent channel for threads)
+  const verbosityChannelId = channelId || thread.parentId || thread.id
+  const verbosity = getChannelVerbosity(verbosityChannelId)
+
   const sendPartMessage = async (part: Part) => {
+    // In text-only mode, only send text parts (the ⬥ diamond messages)
+    if (verbosity === 'text-only' && part.type !== 'text') {
+      return
+    }
+
     const content = formatPart(part) + '\n\n'
     if (!content.trim() || content.length === 0) {
       // discordLogger.log(`SKIP: Part ${part.id} has no content`)
@@ -652,8 +662,11 @@ export async function handleOpencodeSession({
             agentSpawnCounts[agent] = (agentSpawnCounts[agent] || 0) + 1
             const label = `${agent}-${agentSpawnCounts[agent]}`
             subtaskSessions.set(childSessionId, { label, assistantMessageId: undefined })
-            const taskDisplay = `┣ task **${label}** _${description}_`
-            await sendThreadMessage(thread, taskDisplay + '\n\n')
+            // Skip task messages in text-only mode
+            if (verbosity !== 'text-only') {
+              const taskDisplay = `┣ task **${label}** _${description}_`
+              await sendThreadMessage(thread, taskDisplay + '\n\n')
+            }
             sentPartIds.add(part.id)
           }
         }

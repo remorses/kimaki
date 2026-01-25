@@ -106,6 +106,7 @@ export function getDatabase(): Database.Database {
 
     runModelMigrations(db)
     runWorktreeSettingsMigrations(db)
+    runVerbosityMigrations(db)
   }
 
   return db
@@ -356,6 +357,47 @@ export function runWorktreeSettingsMigrations(database?: Database.Database): voi
   `)
 
   dbLogger.log('Channel worktree settings migrations complete')
+}
+
+// Verbosity levels for controlling output detail
+export type VerbosityLevel = 'tools-and-text' | 'text-only'
+
+export function runVerbosityMigrations(database?: Database.Database): void {
+  const targetDb = database || getDatabase()
+
+  targetDb.exec(`
+    CREATE TABLE IF NOT EXISTS channel_verbosity (
+      channel_id TEXT PRIMARY KEY,
+      verbosity TEXT NOT NULL DEFAULT 'tools-and-text',
+      updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+    )
+  `)
+
+  dbLogger.log('Channel verbosity settings migrations complete')
+}
+
+/**
+ * Get the verbosity setting for a channel.
+ * @returns 'tools-and-text' (default) or 'text-only'
+ */
+export function getChannelVerbosity(channelId: string): VerbosityLevel {
+  const db = getDatabase()
+  const row = db
+    .prepare('SELECT verbosity FROM channel_verbosity WHERE channel_id = ?')
+    .get(channelId) as { verbosity: string } | undefined
+  return (row?.verbosity as VerbosityLevel) || 'tools-and-text'
+}
+
+/**
+ * Set the verbosity setting for a channel.
+ */
+export function setChannelVerbosity(channelId: string, verbosity: VerbosityLevel): void {
+  const db = getDatabase()
+  db.prepare(
+    `INSERT INTO channel_verbosity (channel_id, verbosity, updated_at) 
+     VALUES (?, ?, CURRENT_TIMESTAMP)
+     ON CONFLICT(channel_id) DO UPDATE SET verbosity = ?, updated_at = CURRENT_TIMESTAMP`,
+  ).run(channelId, verbosity, verbosity)
 }
 
 /**

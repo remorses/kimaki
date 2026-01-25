@@ -342,6 +342,21 @@ async function registerCommands({
       .setName('redo')
       .setDescription('Redo previously undone changes')
       .toJSON(),
+    new SlashCommandBuilder()
+      .setName('verbosity')
+      .setDescription('Set output verbosity for new sessions in this channel')
+      .addStringOption((option) => {
+        option
+          .setName('level')
+          .setDescription('Verbosity level')
+          .setRequired(true)
+          .addChoices(
+            { name: 'tools-and-text (default)', value: 'tools-and-text' },
+            { name: 'text-only', value: 'text-only' },
+          )
+        return option
+      })
+      .toJSON(),
   ]
 
   // Add user-defined commands with -cmd suffix

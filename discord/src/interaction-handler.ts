@@ -31,6 +31,7 @@ import { handleAskQuestionSelectMenu } from './commands/ask-question.js'
 import { handleQueueCommand, handleClearQueueCommand } from './commands/queue.js'
 import { handleUndoCommand, handleRedoCommand } from './commands/undo-redo.js'
 import { handleUserCommand } from './commands/user-command.js'
+import { handleVerbosityCommand } from './commands/verbosity.js'
 import { createLogger } from './logger.js'
 
 const interactionLogger = createLogger('INTERACTION')
@@ -155,6 +156,10 @@ export function registerInteractionHandler({
 
           case 'redo':
             await handleRedoCommand({ command: interaction, appId })
+            return
+
+          case 'verbosity':
+            await handleVerbosityCommand({ command: interaction, appId })
             return
         }
 
