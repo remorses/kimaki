@@ -2,7 +2,7 @@
 // Creates, maintains, and sends prompts to OpenCode sessions from Discord threads.
 // Handles streaming events, permissions, abort signals, and message queuing.
 
-import type { Part, PermissionRequest } from '@opencode-ai/sdk/v2'
+import type { Part, PermissionRequest, QuestionRequest } from '@opencode-ai/sdk/v2'
 import type { FilePartInput } from '@opencode-ai/sdk'
 import type { Message, ThreadChannel } from 'discord.js'
 import prettyMilliseconds from 'pretty-ms'
@@ -331,7 +331,7 @@ export async function handleOpencodeSession({
     ).map((row) => row.part_id),
   )
 
-  let currentParts: Part[] = []
+  const partBuffer = new Map<string, Map<string, Part>>()
   let stopTyping: (() => void) | null = null
   let usedModel: string | undefined
   let usedProviderID: string | undefined
@@ -339,6 +339,7 @@ export async function handleOpencodeSession({
   let tokensUsedInSession = 0
   let lastDisplayedContextPercentage = 0
   let modelContextLimit: number | undefined
+  let assistantMessageId: string | undefined
 
   let typingInterval: NodeJS.Timeout | null = null
 
@@ -414,390 +415,495 @@ export async function handleOpencodeSession({
     // Counts spawned tasks per agent type: "explore" → 2
     const agentSpawnCounts: Record<string, number> = {}
 
+    const storePart = (part: Part) => {
+      const messageParts = partBuffer.get(part.messageID) || new Map<string, Part>()
+      messageParts.set(part.id, part)
+      partBuffer.set(part.messageID, messageParts)
+    }
+
+    const getBufferedParts = (messageID: string) => {
+      return Array.from(partBuffer.get(messageID)?.values() ?? [])
+    }
+
+    const shouldSendPart = ({ part, force }: { part: Part; force: boolean }) => {
+      if (part.type === 'step-start' || part.type === 'step-finish') {
+        return false
+      }
+
+      if (part.type === 'tool' && part.state.status === 'pending') {
+        return false
+      }
+
+      if (!force && part.type === 'text' && !part.time?.end) {
+        return false
+      }
+
+      if (!force && part.type === 'tool' && part.state.status === 'completed') {
+        return false
+      }
+
+      return true
+    }
+
+    const flushBufferedParts = async ({
+      messageID,
+      force,
+      skipPartId,
+    }: {
+      messageID: string
+      force: boolean
+      skipPartId?: string
+    }) => {
+      if (!messageID) {
+        return
+      }
+      const parts = getBufferedParts(messageID)
+      for (const part of parts) {
+        if (skipPartId && part.id === skipPartId) {
+          continue
+        }
+        if (!shouldSendPart({ part, force })) {
+          continue
+        }
+        await sendPartMessage(part)
+      }
+    }
+
+    const handleMessageUpdated = async (msg: {
+      id: string
+      sessionID: string
+      role: string
+      modelID?: string
+      providerID?: string
+      mode?: string
+      tokens?: {
+        input: number
+        output: number
+        reasoning: number
+        cache: { read: number; write: number }
+      }
+    }) => {
+      const subtaskInfo = subtaskSessions.get(msg.sessionID)
+      if (subtaskInfo && msg.role === 'assistant') {
+        subtaskInfo.assistantMessageId = msg.id
+      }
+
+      if (msg.sessionID !== session.id) {
+        return
+      }
+
+      if (msg.role !== 'assistant') {
+        return
+      }
+
+      if (msg.tokens) {
+        const newTokensTotal =
+          msg.tokens.input +
+          msg.tokens.output +
+          msg.tokens.reasoning +
+          msg.tokens.cache.read +
+          msg.tokens.cache.write
+        if (newTokensTotal > 0) {
+          tokensUsedInSession = newTokensTotal
+        }
+      }
+
+      assistantMessageId = msg.id
+      usedModel = msg.modelID
+      usedProviderID = msg.providerID
+      usedAgent = msg.mode
+
+      await flushBufferedParts({
+        messageID: assistantMessageId,
+        force: false,
+      })
+
+      if (tokensUsedInSession === 0 || !usedProviderID || !usedModel) {
+        return
+      }
+
+      if (!modelContextLimit) {
+        try {
+          const providersResponse = await getClient().provider.list({
+            query: { directory },
+          })
+          const provider = providersResponse.data?.all?.find((p) => p.id === usedProviderID)
+          const model = provider?.models?.[usedModel]
+          if (model?.limit?.context) {
+            modelContextLimit = model.limit.context
+          }
+        } catch (e) {
+          sessionLogger.error('Failed to fetch provider info for context limit:', e)
+        }
+      }
+
+      if (!modelContextLimit) {
+        return
+      }
+
+      const currentPercentage = Math.floor((tokensUsedInSession / modelContextLimit) * 100)
+      const thresholdCrossed = Math.floor(currentPercentage / 10) * 10
+      if (thresholdCrossed <= lastDisplayedContextPercentage || thresholdCrossed < 10) {
+        return
+      }
+      lastDisplayedContextPercentage = thresholdCrossed
+      const chunk = `⬦ context usage ${currentPercentage}%`
+      await thread.send({ content: chunk, flags: SILENT_MESSAGE_FLAGS })
+    }
+
+    const handleMainPart = async (part: Part) => {
+      const isActiveMessage = assistantMessageId ? part.messageID === assistantMessageId : false
+      const allowEarlyProcessing =
+        !assistantMessageId && part.type === 'tool' && part.state.status === 'running'
+      if (!isActiveMessage && !allowEarlyProcessing) {
+        if (part.type !== 'step-start') {
+          return
+        }
+      }
+
+      if (part.type === 'step-start') {
+        const hasPendingQuestion = [...pendingQuestionContexts.values()].some(
+          (ctx) => ctx.thread.id === thread.id,
+        )
+        const hasPendingPermission = (pendingPermissions.get(thread.id)?.size ?? 0) > 0
+        if (!hasPendingQuestion && !hasPendingPermission) {
+          stopTyping = startTyping()
+        }
+        return
+      }
+
+      if (part.type === 'tool' && part.state.status === 'running') {
+        await flushBufferedParts({
+          messageID: assistantMessageId || part.messageID,
+          force: true,
+          skipPartId: part.id,
+        })
+        await sendPartMessage(part)
+        if (part.tool === 'task' && !sentPartIds.has(part.id)) {
+          const description = (part.state.input?.description as string) || ''
+          const agent = (part.state.input?.subagent_type as string) || 'task'
+          const childSessionId = (part.state.metadata?.sessionId as string) || ''
+          if (description && childSessionId) {
+            agentSpawnCounts[agent] = (agentSpawnCounts[agent] || 0) + 1
+            const label = `${agent}-${agentSpawnCounts[agent]}`
+            subtaskSessions.set(childSessionId, { label, assistantMessageId: undefined })
+            const taskDisplay = `┣ task **${label}** _${description}_`
+            await sendThreadMessage(thread, taskDisplay + '\n\n')
+            sentPartIds.add(part.id)
+          }
+        }
+        return
+      }
+
+      if (part.type === 'tool' && part.state.status === 'completed') {
+        const output = part.state.output || ''
+        const outputTokens = Math.ceil(output.length / 4)
+        const largeOutputThreshold = 3000
+        if (outputTokens >= largeOutputThreshold) {
+          const formattedTokens =
+            outputTokens >= 1000 ? `${(outputTokens / 1000).toFixed(1)}k` : String(outputTokens)
+          const percentageSuffix = (() => {
+            if (!modelContextLimit) {
+              return ''
+            }
+            const pct = (outputTokens / modelContextLimit) * 100
+            if (pct < 1) {
+              return ''
+            }
+            return ` (${pct.toFixed(1)}%)`
+          })()
+          const chunk = `⬦ ${part.tool} returned ${formattedTokens} tokens${percentageSuffix}`
+          await thread.send({ content: chunk, flags: SILENT_MESSAGE_FLAGS })
+        }
+      }
+
+      if (part.type === 'reasoning') {
+        await sendPartMessage(part)
+        return
+      }
+
+      if (part.type === 'text' && part.time?.end) {
+        await sendPartMessage(part)
+        return
+      }
+
+      if (part.type === 'step-finish') {
+        await flushBufferedParts({
+          messageID: assistantMessageId || part.messageID,
+          force: true,
+        })
+        setTimeout(() => {
+          if (abortController.signal.aborted) return
+          const hasPendingQuestion = [...pendingQuestionContexts.values()].some(
+            (ctx) => ctx.thread.id === thread.id,
+          )
+          const hasPendingPermission = (pendingPermissions.get(thread.id)?.size ?? 0) > 0
+          if (hasPendingQuestion || hasPendingPermission) return
+          stopTyping = startTyping()
+        }, 300)
+      }
+    }
+
+    const handleSubtaskPart = async (
+      part: Part,
+      subtaskInfo: { label: string; assistantMessageId?: string },
+    ) => {
+      if (part.type === 'step-start' || part.type === 'step-finish') {
+        return
+      }
+      if (part.type === 'tool' && part.state.status === 'pending') {
+        return
+      }
+      if (part.type === 'text') {
+        return
+      }
+      if (!subtaskInfo.assistantMessageId || part.messageID !== subtaskInfo.assistantMessageId) {
+        return
+      }
+
+      const content = formatPart(part, subtaskInfo.label)
+      if (!content.trim() || sentPartIds.has(part.id)) {
+        return
+      }
+      try {
+        const msg = await sendThreadMessage(thread, content + '\n\n')
+        sentPartIds.add(part.id)
+        getDatabase()
+          .prepare(
+            'INSERT OR REPLACE INTO part_messages (part_id, message_id, thread_id) VALUES (?, ?, ?)',
+          )
+          .run(part.id, msg.id, thread.id)
+      } catch (error) {
+        discordLogger.error(`ERROR: Failed to send subtask part ${part.id}:`, error)
+      }
+    }
+
+    const handlePartUpdated = async (part: Part) => {
+      storePart(part)
+
+      const subtaskInfo = subtaskSessions.get(part.sessionID)
+      const isSubtaskEvent = Boolean(subtaskInfo)
+
+      if (part.sessionID !== session.id && !isSubtaskEvent) {
+        return
+      }
+
+      if (isSubtaskEvent && subtaskInfo) {
+        await handleSubtaskPart(part, subtaskInfo)
+        return
+      }
+
+      await handleMainPart(part)
+    }
+
+    const handleSessionError = async ({
+      sessionID,
+      error,
+    }: {
+      sessionID?: string
+      error?: { data?: { message?: string } }
+    }) => {
+      if (!sessionID || sessionID !== session.id) {
+        voiceLogger.log(
+          `[SESSION ERROR IGNORED] Error for different session (expected: ${session.id}, got: ${sessionID})`,
+        )
+        return
+      }
+
+      const errorMessage = error?.data?.message || 'Unknown error'
+      sessionLogger.error(`Sending error to thread: ${errorMessage}`)
+      await sendThreadMessage(thread, `✗ opencode session error: ${errorMessage}`)
+
+      if (!originalMessage) {
+        return
+      }
+      try {
+        await originalMessage.reactions.removeAll()
+        await originalMessage.react('❌')
+        voiceLogger.log(`[REACTION] Added error reaction due to session error`)
+      } catch (e) {
+        discordLogger.log(`Could not update reaction:`, e)
+      }
+    }
+
+    const handlePermissionAsked = async (permission: PermissionRequest) => {
+      if (permission.sessionID !== session.id) {
+        voiceLogger.log(
+          `[PERMISSION IGNORED] Permission for different session (expected: ${session.id}, got: ${permission.sessionID})`,
+        )
+        return
+      }
+
+      const threadPermissions = pendingPermissions.get(thread.id)
+      if (threadPermissions?.has(permission.id)) {
+        sessionLogger.log(
+          `[PERMISSION] Skipping duplicate permission ${permission.id} (already pending)`,
+        )
+        return
+      }
+
+      sessionLogger.log(
+        `Permission requested: permission=${permission.permission}, patterns=${permission.patterns.join(', ')}`,
+      )
+
+      if (stopTyping) {
+        stopTyping()
+        stopTyping = null
+      }
+
+      const { messageId, contextHash } = await showPermissionDropdown({
+        thread,
+        permission,
+        directory,
+      })
+
+      if (!pendingPermissions.has(thread.id)) {
+        pendingPermissions.set(thread.id, new Map())
+      }
+      pendingPermissions.get(thread.id)!.set(permission.id, {
+        permission,
+        messageId,
+        directory,
+        contextHash,
+      })
+    }
+
+    const handlePermissionReplied = ({
+      requestID,
+      reply,
+      sessionID,
+    }: {
+      requestID: string
+      reply: string
+      sessionID: string
+    }) => {
+      if (sessionID !== session.id) {
+        return
+      }
+
+      sessionLogger.log(`Permission ${requestID} replied with: ${reply}`)
+
+      const threadPermissions = pendingPermissions.get(thread.id)
+      if (!threadPermissions) {
+        return
+      }
+      const pending = threadPermissions.get(requestID)
+      if (!pending) {
+        return
+      }
+      cleanupPermissionContext(pending.contextHash)
+      threadPermissions.delete(requestID)
+      if (threadPermissions.size === 0) {
+        pendingPermissions.delete(thread.id)
+      }
+    }
+
+    const handleQuestionAsked = async (questionRequest: QuestionRequest) => {
+      if (questionRequest.sessionID !== session.id) {
+        sessionLogger.log(
+          `[QUESTION IGNORED] Question for different session (expected: ${session.id}, got: ${questionRequest.sessionID})`,
+        )
+        return
+      }
+
+      sessionLogger.log(
+        `Question requested: id=${questionRequest.id}, questions=${questionRequest.questions.length}`,
+      )
+
+      if (stopTyping) {
+        stopTyping()
+        stopTyping = null
+      }
+
+      await flushBufferedParts({
+        messageID: assistantMessageId || '',
+        force: true,
+      })
+
+      await showAskUserQuestionDropdowns({
+        thread,
+        sessionId: session.id,
+        directory,
+        requestId: questionRequest.id,
+        input: { questions: questionRequest.questions },
+      })
+
+      const queue = messageQueue.get(thread.id)
+      if (!queue || queue.length === 0) {
+        return
+      }
+
+      const nextMessage = queue.shift()!
+      if (queue.length === 0) {
+        messageQueue.delete(thread.id)
+      }
+
+      sessionLogger.log(
+        `[QUEUE] Question shown but queue has messages, processing from ${nextMessage.username}`,
+      )
+
+      await sendThreadMessage(
+        thread,
+        `» **${nextMessage.username}:** ${nextMessage.prompt.slice(0, 150)}${nextMessage.prompt.length > 150 ? '...' : ''}`,
+      )
+
+      setImmediate(() => {
+        handleOpencodeSession({
+          prompt: nextMessage.prompt,
+          thread,
+          projectDirectory: directory,
+          images: nextMessage.images,
+          channelId,
+        }).catch(async (e) => {
+          sessionLogger.error(`[QUEUE] Failed to process queued message:`, e)
+          const errorMsg = e instanceof Error ? e.message : String(e)
+          await sendThreadMessage(thread, `✗ Queued message failed: ${errorMsg.slice(0, 200)}`)
+        })
+      })
+    }
+
+    const handleSessionIdle = (idleSessionId: string) => {
+      if (idleSessionId === session.id) {
+        sessionLogger.log(`[SESSION IDLE] Session ${session.id} is idle, aborting`)
+        abortController.abort('finished')
+        return
+      }
+
+      if (!subtaskSessions.has(idleSessionId)) {
+        return
+      }
+      const subtask = subtaskSessions.get(idleSessionId)
+      sessionLogger.log(`[SUBTASK IDLE] Subtask "${subtask?.label}" completed`)
+      subtaskSessions.delete(idleSessionId)
+    }
+
     try {
-      let assistantMessageId: string | undefined
-
       for await (const event of events) {
-        if (event.type === 'message.updated') {
-          const msg = event.properties.info
-
-          // Track assistant message IDs for subtask sessions
-          const subtaskInfo = subtaskSessions.get(msg.sessionID)
-          if (subtaskInfo && msg.role === 'assistant') {
-            subtaskInfo.assistantMessageId = msg.id
-          }
-
-          if (msg.sessionID !== session.id) {
-            continue
-          }
-
-          if (msg.role === 'assistant') {
-            const newTokensTotal =
-              msg.tokens.input +
-              msg.tokens.output +
-              msg.tokens.reasoning +
-              msg.tokens.cache.read +
-              msg.tokens.cache.write
-            if (newTokensTotal > 0) {
-              tokensUsedInSession = newTokensTotal
-            }
-
-            assistantMessageId = msg.id
-            usedModel = msg.modelID
-            usedProviderID = msg.providerID
-            usedAgent = msg.mode
-
-            if (tokensUsedInSession > 0 && usedProviderID && usedModel) {
-              if (!modelContextLimit) {
-                try {
-                  const providersResponse = await getClient().provider.list({
-                    query: { directory },
-                  })
-                  const provider = providersResponse.data?.all?.find((p) => p.id === usedProviderID)
-                  const model = provider?.models?.[usedModel]
-                  if (model?.limit?.context) {
-                    modelContextLimit = model.limit.context
-                  }
-                } catch (e) {
-                  sessionLogger.error('Failed to fetch provider info for context limit:', e)
-                }
-              }
-
-              if (modelContextLimit) {
-                const currentPercentage = Math.floor(
-                  (tokensUsedInSession / modelContextLimit) * 100,
-                )
-                const thresholdCrossed = Math.floor(currentPercentage / 10) * 10
-                if (thresholdCrossed > lastDisplayedContextPercentage && thresholdCrossed >= 10) {
-                  lastDisplayedContextPercentage = thresholdCrossed
-                  const chunk = `⬦ context usage ${currentPercentage}%`
-                  await thread.send({ content: chunk, flags: SILENT_MESSAGE_FLAGS })
-                }
-              }
-            }
-          }
-        } else if (event.type === 'message.part.updated') {
-          const part = event.properties.part
-
-          // Check if this is a subtask event (child session we're tracking)
-          const subtaskInfo = subtaskSessions.get(part.sessionID)
-          const isSubtaskEvent = Boolean(subtaskInfo)
-
-          // Accept events from main session OR tracked subtask sessions
-          if (part.sessionID !== session.id && !isSubtaskEvent) {
-            continue
-          }
-
-          // For subtask events, send them immediately with prefix (don't buffer in currentParts)
-          if (isSubtaskEvent && subtaskInfo) {
-            // Skip parts that aren't useful to show (step-start, step-finish, pending tools)
-            if (part.type === 'step-start' || part.type === 'step-finish') {
-              continue
-            }
-            if (part.type === 'tool' && part.state.status === 'pending') {
-              continue
-            }
-            // Skip text parts - the outer agent will report the task result anyway
-            if (part.type === 'text') {
-              continue
-            }
-            // Only show parts from assistant messages (not user prompts sent to subtask)
-            // Skip if we haven't seen an assistant message yet, or if this part is from a different message
-            if (
-              !subtaskInfo.assistantMessageId ||
-              part.messageID !== subtaskInfo.assistantMessageId
-            ) {
-              continue
-            }
-
-            const content = formatPart(part, subtaskInfo.label)
-            if (content.trim() && !sentPartIds.has(part.id)) {
-              try {
-                const msg = await sendThreadMessage(thread, content + '\n\n')
-                sentPartIds.add(part.id)
-                getDatabase()
-                  .prepare(
-                    'INSERT OR REPLACE INTO part_messages (part_id, message_id, thread_id) VALUES (?, ?, ?)',
-                  )
-                  .run(part.id, msg.id, thread.id)
-              } catch (error) {
-                discordLogger.error(`ERROR: Failed to send subtask part ${part.id}:`, error)
-              }
-            }
-            continue
-          }
-
-          // Main session events: require matching assistantMessageId
-          if (part.messageID !== assistantMessageId) {
-            continue
-          }
-
-          const existingIndex = currentParts.findIndex((p: Part) => p.id === part.id)
-          if (existingIndex >= 0) {
-            currentParts[existingIndex] = part
-          } else {
-            currentParts.push(part)
-          }
-
-          if (part.type === 'step-start') {
-            // Don't start typing if user needs to respond to a question or permission
-            const hasPendingQuestion = [...pendingQuestionContexts.values()].some(
-              (ctx) => ctx.thread.id === thread.id,
-            )
-            const hasPendingPermission = (pendingPermissions.get(thread.id)?.size ?? 0) > 0
-            if (!hasPendingQuestion && !hasPendingPermission) {
-              stopTyping = startTyping()
-            }
-          }
-
-          if (part.type === 'tool' && part.state.status === 'running') {
-            // Flush any pending text/reasoning parts before showing the tool
-            // This ensures text the LLM generated before the tool call is shown first
-            for (const p of currentParts) {
-              if (p.type !== 'step-start' && p.type !== 'step-finish' && p.id !== part.id) {
-                await sendPartMessage(p)
-              }
-            }
-            await sendPartMessage(part)
-            // Track task tool and register child session when sessionId is available
-            if (part.tool === 'task' && !sentPartIds.has(part.id)) {
-              const description = (part.state.input?.description as string) || ''
-              const agent = (part.state.input?.subagent_type as string) || 'task'
-              const childSessionId = (part.state.metadata?.sessionId as string) || ''
-              if (description && childSessionId) {
-                agentSpawnCounts[agent] = (agentSpawnCounts[agent] || 0) + 1
-                const label = `${agent}-${agentSpawnCounts[agent]}`
-                subtaskSessions.set(childSessionId, { label, assistantMessageId: undefined })
-                const taskDisplay = `┣ task **${label}** _${description}_`
-                await sendThreadMessage(thread, taskDisplay + '\n\n')
-                sentPartIds.add(part.id)
-              }
-            }
-          }
-
-          // Show token usage for completed tools with large output (>5k tokens)
-          if (part.type === 'tool' && part.state.status === 'completed') {
-            const output = part.state.output || ''
-            const outputTokens = Math.ceil(output.length / 4)
-            const LARGE_OUTPUT_THRESHOLD = 3000
-            if (outputTokens >= LARGE_OUTPUT_THRESHOLD) {
-              const formattedTokens =
-                outputTokens >= 1000 ? `${(outputTokens / 1000).toFixed(1)}k` : String(outputTokens)
-              const percentageSuffix = (() => {
-                if (!modelContextLimit) {
-                  return ''
-                }
-                const pct = (outputTokens / modelContextLimit) * 100
-                if (pct < 1) {
-                  return ''
-                }
-                return ` (${pct.toFixed(1)}%)`
-              })()
-              const chunk = `⬦ ${part.tool} returned ${formattedTokens} tokens${percentageSuffix}`
-              await thread.send({ content: chunk, flags: SILENT_MESSAGE_FLAGS })
-            }
-          }
-
-          if (part.type === 'reasoning') {
-            await sendPartMessage(part)
-          }
-
-          // Send text parts when complete (time.end is set)
-          // Text parts stream incrementally; only send when finished to avoid partial text
-          if (part.type === 'text' && part.time?.end) {
-            await sendPartMessage(part)
-          }
-
-          if (part.type === 'step-finish') {
-            for (const p of currentParts) {
-              if (p.type !== 'step-start' && p.type !== 'step-finish') {
-                await sendPartMessage(p)
-              }
-            }
-            setTimeout(() => {
-              if (abortController.signal.aborted) return
-              // Don't restart typing if user needs to respond to a question or permission
-              const hasPendingQuestion = [...pendingQuestionContexts.values()].some(
-                (ctx) => ctx.thread.id === thread.id,
-              )
-              const hasPendingPermission = (pendingPermissions.get(thread.id)?.size ?? 0) > 0
-              if (hasPendingQuestion || hasPendingPermission) return
-              stopTyping = startTyping()
-            }, 300)
-          }
-
-        } else if (event.type === 'session.error') {
-          sessionLogger.error(`ERROR:`, event.properties)
-          if (event.properties.sessionID === session.id) {
-            const errorData = event.properties.error
-            const errorMessage = errorData?.data?.message || 'Unknown error'
-            sessionLogger.error(`Sending error to thread: ${errorMessage}`)
-            await sendThreadMessage(thread, `✗ opencode session error: ${errorMessage}`)
-
-            if (originalMessage) {
-              try {
-                await originalMessage.reactions.removeAll()
-                await originalMessage.react('❌')
-                voiceLogger.log(`[REACTION] Added error reaction due to session error`)
-              } catch (e) {
-                discordLogger.log(`Could not update reaction:`, e)
-              }
-            }
-          } else {
-            voiceLogger.log(
-              `[SESSION ERROR IGNORED] Error for different session (expected: ${session.id}, got: ${event.properties.sessionID})`,
-            )
-          }
-          break
-        } else if (event.type === 'permission.asked') {
-          const permission = event.properties
-          if (permission.sessionID !== session.id) {
-            voiceLogger.log(
-              `[PERMISSION IGNORED] Permission for different session (expected: ${session.id}, got: ${permission.sessionID})`,
-            )
-            continue
-          }
-
-          // Skip if this exact permission ID is already pending (dedupe)
-          const threadPermissions = pendingPermissions.get(thread.id)
-          if (threadPermissions?.has(permission.id)) {
-            sessionLogger.log(
-              `[PERMISSION] Skipping duplicate permission ${permission.id} (already pending)`,
-            )
-            continue
-          }
-
-          sessionLogger.log(
-            `Permission requested: permission=${permission.permission}, patterns=${permission.patterns.join(', ')}`,
-          )
-
-          // Stop typing - user needs to respond now, not the bot
-          if (stopTyping) {
-            stopTyping()
-            stopTyping = null
-          }
-
-          // Show dropdown instead of text message
-          const { messageId, contextHash } = await showPermissionDropdown({
-            thread,
-            permission,
-            directory,
-          })
-
-          // Track permission in nested map (threadId -> permissionId -> data)
-          if (!pendingPermissions.has(thread.id)) {
-            pendingPermissions.set(thread.id, new Map())
-          }
-          pendingPermissions.get(thread.id)!.set(permission.id, {
-            permission,
-            messageId,
-            directory,
-            contextHash,
-          })
-        } else if (event.type === 'permission.replied') {
-          const { requestID, reply, sessionID } = event.properties
-          if (sessionID !== session.id) {
-            continue
-          }
-
-          sessionLogger.log(`Permission ${requestID} replied with: ${reply}`)
-
-          // Clean up the specific permission from nested map
-          const threadPermissions = pendingPermissions.get(thread.id)
-          if (threadPermissions) {
-            const pending = threadPermissions.get(requestID)
-            if (pending) {
-              cleanupPermissionContext(pending.contextHash)
-              threadPermissions.delete(requestID)
-              // Remove thread entry if no more pending permissions
-              if (threadPermissions.size === 0) {
-                pendingPermissions.delete(thread.id)
-              }
-            }
-          }
-        } else if (event.type === 'question.asked') {
-          const questionRequest = event.properties
-
-          if (questionRequest.sessionID !== session.id) {
-            sessionLogger.log(
-              `[QUESTION IGNORED] Question for different session (expected: ${session.id}, got: ${questionRequest.sessionID})`,
-            )
-            continue
-          }
-
-          sessionLogger.log(
-            `Question requested: id=${questionRequest.id}, questions=${questionRequest.questions.length}`,
-          )
-
-          // Stop typing - user needs to respond now, not the bot
-          if (stopTyping) {
-            stopTyping()
-            stopTyping = null
-          }
-
-          // Flush any pending text/reasoning parts before showing the dropdown
-          // This ensures text the LLM generated before the question tool is shown first
-          for (const p of currentParts) {
-            if (p.type !== 'step-start' && p.type !== 'step-finish') {
-              await sendPartMessage(p)
-            }
-          }
-
-          await showAskUserQuestionDropdowns({
-            thread,
-            sessionId: session.id,
-            directory,
-            requestId: questionRequest.id,
-            input: { questions: questionRequest.questions },
-          })
-
-          // Process queued messages if any - queued message will cancel the pending question
-          const queue = messageQueue.get(thread.id)
-          if (queue && queue.length > 0) {
-            const nextMessage = queue.shift()!
-            if (queue.length === 0) {
-              messageQueue.delete(thread.id)
-            }
-
-            sessionLogger.log(
-              `[QUEUE] Question shown but queue has messages, processing from ${nextMessage.username}`,
-            )
-
-            await sendThreadMessage(
-              thread,
-              `» **${nextMessage.username}:** ${nextMessage.prompt.slice(0, 150)}${nextMessage.prompt.length > 150 ? '...' : ''}`,
-            )
-
-            // handleOpencodeSession will call cancelPendingQuestion, which cancels the dropdown
-            setImmediate(() => {
-              handleOpencodeSession({
-                prompt: nextMessage.prompt,
-                thread,
-                projectDirectory: directory,
-                images: nextMessage.images,
-                channelId,
-              }).catch(async (e) => {
-                sessionLogger.error(`[QUEUE] Failed to process queued message:`, e)
-                const errorMsg = e instanceof Error ? e.message : String(e)
-                await sendThreadMessage(
-                  thread,
-                  `✗ Queued message failed: ${errorMsg.slice(0, 200)}`,
-                )
-              })
-            })
-          }
-        } else if (event.type === 'session.idle') {
-          const idleSessionId = event.properties.sessionID
-          // Session is done processing - abort to signal completion
-          if (idleSessionId === session.id) {
-            sessionLogger.log(`[SESSION IDLE] Session ${session.id} is idle, aborting`)
-            abortController.abort('finished')
-          } else if (subtaskSessions.has(idleSessionId)) {
-            // Child session completed - clean up tracking
-            const subtask = subtaskSessions.get(idleSessionId)
-            sessionLogger.log(`[SUBTASK IDLE] Subtask "${subtask?.label}" completed`)
-            subtaskSessions.delete(idleSessionId)
-          }
+        switch (event.type) {
+          case 'message.updated':
+            await handleMessageUpdated(event.properties.info)
+            break
+          case 'message.part.updated':
+            await handlePartUpdated(event.properties.part)
+            break
+          case 'session.error':
+            sessionLogger.error(`ERROR:`, event.properties)
+            await handleSessionError(event.properties)
+            break
+          case 'permission.asked':
+            await handlePermissionAsked(event.properties)
+            break
+          case 'permission.replied':
+            handlePermissionReplied(event.properties)
+            break
+          case 'question.asked':
+            await handleQuestionAsked(event.properties)
+            break
+          case 'session.idle':
+            handleSessionIdle(event.properties.sessionID)
+            break
+          default:
+            break
         }
       }
     } catch (e) {
@@ -808,12 +914,16 @@ export async function handleOpencodeSession({
       sessionLogger.error(`Unexpected error in event handling code`, e)
       throw e
     } finally {
-      for (const part of currentParts) {
-        if (!sentPartIds.has(part.id)) {
-          try {
-            await sendPartMessage(part)
-          } catch (error) {
-            sessionLogger.error(`Failed to send part ${part.id}:`, error)
+      const finalMessageId = assistantMessageId
+      if (finalMessageId) {
+        const parts = getBufferedParts(finalMessageId)
+        for (const part of parts) {
+          if (!sentPartIds.has(part.id)) {
+            try {
+              await sendPartMessage(part)
+            } catch (error) {
+              sessionLogger.error(`Failed to send part ${part.id}:`, error)
+            }
           }
         }
       }
