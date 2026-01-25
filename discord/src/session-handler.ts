@@ -30,7 +30,11 @@ import {
   cancelPendingQuestion,
   pendingQuestionContexts,
 } from './commands/ask-question.js'
-import { showPermissionDropdown, cleanupPermissionContext } from './commands/permissions.js'
+import {
+  showPermissionDropdown,
+  cleanupPermissionContext,
+  addPermissionRequestToContext,
+} from './commands/permissions.js'
 import * as errore from 'errore'
 
 const sessionLogger = createLogger('SESSION')
@@ -44,8 +48,30 @@ export const abortControllers = new Map<string, AbortController>()
 // to avoid duplicates and properly clean up on auto-reject
 export const pendingPermissions = new Map<
   string, // threadId
-  Map<string, { permission: PermissionRequest; messageId: string; directory: string; contextHash: string }> // permissionId -> data
+  Map<
+    string,
+    {
+      permission: PermissionRequest
+      messageId: string
+      directory: string
+      contextHash: string
+      dedupeKey: string
+    }
+  > // permissionId -> data
 >()
+
+function buildPermissionDedupeKey({
+  permission,
+  directory,
+}: {
+  permission: PermissionRequest
+  directory: string
+}): string {
+  const normalizedPatterns = [...permission.patterns].sort((a, b) => {
+    return a.localeCompare(b)
+  })
+  return `${directory}::${permission.permission}::${normalizedPatterns.join('|')}`
+}
 
 export type QueuedMessage = {
   prompt: string
@@ -763,11 +789,41 @@ export async function handleOpencodeSession({
         return
       }
 
+      const dedupeKey = buildPermissionDedupeKey({ permission, directory })
       const threadPermissions = pendingPermissions.get(thread.id)
-      if (threadPermissions?.has(permission.id)) {
+      const existingPending = threadPermissions
+        ? Array.from(threadPermissions.values()).find((pending) => {
+            return pending.dedupeKey === dedupeKey
+          })
+        : undefined
+
+      if (existingPending) {
         sessionLogger.log(
-          `[PERMISSION] Skipping duplicate permission ${permission.id} (already pending)`,
+          `[PERMISSION] Deduped permission ${permission.id} (matches pending ${existingPending.permission.id})`,
         )
+        if (stopTyping) {
+          stopTyping()
+          stopTyping = null
+        }
+        if (!pendingPermissions.has(thread.id)) {
+          pendingPermissions.set(thread.id, new Map())
+        }
+        pendingPermissions.get(thread.id)!.set(permission.id, {
+          permission,
+          messageId: existingPending.messageId,
+          directory,
+          contextHash: existingPending.contextHash,
+          dedupeKey,
+        })
+        const added = addPermissionRequestToContext({
+          contextHash: existingPending.contextHash,
+          requestId: permission.id,
+        })
+        if (!added) {
+          sessionLogger.log(
+            `[PERMISSION] Failed to attach duplicate request ${permission.id} to context`,
+          )
+        }
         return
       }
 
@@ -794,6 +850,7 @@ export async function handleOpencodeSession({
         messageId,
         directory,
         contextHash,
+        dedupeKey,
       })
     }
 

@@ -18,6 +18,7 @@ const logger = createLogger('PERMISSIONS')
 
 type PendingPermissionContext = {
   permission: PermissionRequest
+  requestIds: string[]
   directory: string
   thread: ThreadChannel
   contextHash: string
@@ -43,6 +44,7 @@ export async function showPermissionDropdown({
 
   const context: PendingPermissionContext = {
     permission,
+    requestIds: [permission.id],
     directory,
     thread,
     contextHash,
@@ -124,10 +126,15 @@ export async function handlePermissionSelectMenu(
     if (!clientV2) {
       throw new Error('OpenCode server not found for directory')
     }
-    await clientV2.permission.reply({
-      requestID: context.permission.id,
-      reply: response,
-    })
+    const requestIds = context.requestIds.length > 0 ? context.requestIds : [context.permission.id]
+    await Promise.all(
+      requestIds.map((requestId) => {
+        return clientV2.permission.reply({
+          requestID: requestId,
+          reply: response,
+        })
+      }),
+    )
 
     pendingPermissionContexts.delete(contextHash)
 
@@ -153,7 +160,7 @@ export async function handlePermissionSelectMenu(
       components: [], // Remove the dropdown
     })
 
-    logger.log(`Permission ${context.permission.id} ${response}`)
+    logger.log(`Permission ${context.permission.id} ${response} (${requestIds.length} request(s))`)
   } catch (error) {
     logger.error('Error handling permission:', error)
     await interaction.editReply({
@@ -161,6 +168,25 @@ export async function handlePermissionSelectMenu(
       components: [],
     })
   }
+}
+
+export function addPermissionRequestToContext({
+  contextHash,
+  requestId,
+}: {
+  contextHash: string
+  requestId: string
+}): boolean {
+  const context = pendingPermissionContexts.get(contextHash)
+  if (!context) {
+    return false
+  }
+  if (context.requestIds.includes(requestId)) {
+    return false
+  }
+  context.requestIds = [...context.requestIds, requestId]
+  pendingPermissionContexts.set(contextHash, context)
+  return true
 }
 
 /**
