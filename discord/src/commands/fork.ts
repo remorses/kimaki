@@ -215,6 +215,9 @@ export async function handleForkSelectMenu(
       reason: `Forked from session ${sessionId}`,
     })
 
+    // Add user to thread so it appears in their sidebar
+    await thread.members.add(interaction.user.id)
+
     getDatabase()
       .prepare('INSERT OR REPLACE INTO thread_sessions (thread_id, session_id) VALUES (?, ?)')
       .run(thread.id, forkedSession.id)

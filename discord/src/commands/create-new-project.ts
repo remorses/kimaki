@@ -88,6 +88,9 @@ export async function handleCreateNewProjectCommand({
       reason: 'New project session',
     })
 
+    // Add user to thread so it appears in their sidebar
+    await thread.members.add(command.user.id)
+
     await handleOpencodeSession({
       prompt: 'The project was just initialized. Say hi and ask what the user wants to build.',
       thread,

@@ -73,6 +73,9 @@ export async function handleResumeCommand({ command, appId }: CommandContext): P
       reason: `Resuming session ${sessionId}`,
     })
 
+    // Add user to thread so it appears in their sidebar
+    await thread.members.add(command.user.id)
+
     getDatabase()
       .prepare('INSERT OR REPLACE INTO thread_sessions (thread_id, session_id) VALUES (?, ?)')
       .run(thread.id, sessionId)

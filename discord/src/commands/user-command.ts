@@ -136,6 +136,9 @@ export const handleUserCommand: CommandHandler = async ({ command, appId }: Comm
         reason: `OpenCode command: ${commandName}`,
       })
 
+      // Add user to thread so it appears in their sidebar
+      await newThread.members.add(command.user.id)
+
       await command.editReply(`Started /${commandName} in ${newThread.toString()}`)
 
       await handleOpencodeSession({

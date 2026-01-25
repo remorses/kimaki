@@ -228,6 +228,9 @@ export async function handleNewWorktreeCommand({
         reason: 'Worktree session',
       })
 
+      // Add user to thread so it appears in their sidebar
+      await thread.members.add(command.user.id)
+
       return { thread, starterMessage }
     },
     catch: (e) => new WorktreeError('Failed to create thread', { cause: e }),

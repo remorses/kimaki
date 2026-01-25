@@ -425,6 +425,9 @@ export async function startDiscordBot({
           reason: 'Start Claude session',
         })
 
+        // Add user to thread so it appears in their sidebar
+        await thread.members.add(message.author.id)
+
         discordLogger.log(`Created thread "${thread.name}" (${thread.id})`)
 
         // Create worktree if worktrees are enabled (CLI flag OR channel setting)

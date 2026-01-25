@@ -75,6 +75,9 @@ export async function handleSessionCommand({ command, appId }: CommandContext): 
       reason: 'OpenCode session',
     })
 
+    // Add user to thread so it appears in their sidebar
+    await thread.members.add(command.user.id)
+
     await command.editReply(`Created new session in ${thread.toString()}`)
 
     await handleOpencodeSession({
