@@ -86,6 +86,8 @@ export type QueuedMessage = {
 // Key is threadId, value is array of queued messages
 export const messageQueue = new Map<string, QueuedMessage[]>()
 
+const activeEventHandlers = new Map<string, Promise<void>>()
+
 export function addToQueue({
   threadId,
   message,
@@ -363,6 +365,17 @@ export async function handleOpencodeSession({
     return
   }
 
+  const previousHandler = activeEventHandlers.get(thread.id)
+  if (previousHandler) {
+    sessionLogger.log(`[EVENT] Waiting for previous handler to finish`)
+    await Promise.race([
+      previousHandler,
+      new Promise((resolve) => {
+        setTimeout(resolve, 1000)
+      }),
+    ])
+  }
+
   // Use v2 client for event subscription (has proper types for question.asked events)
   const clientV2 = getOpencodeClientV2(directory)
   if (!clientV2) {
@@ -398,6 +411,7 @@ export async function handleOpencodeSession({
   let lastDisplayedContextPercentage = 0
   let modelContextLimit: number | undefined
   let assistantMessageId: string | undefined
+  let handlerPromise: Promise<void> | null = null
 
   let typingInterval: NodeJS.Timeout | null = null
 
@@ -1151,7 +1165,13 @@ export async function handleOpencodeSession({
 
   const promptResult: Error | { sessionID: string; result: any; port?: number } | undefined =
     await errore.tryAsync(async () => {
-      const eventHandlerPromise = eventHandler()
+      const newHandlerPromise = eventHandler().finally(() => {
+        if (activeEventHandlers.get(thread.id) === newHandlerPromise) {
+          activeEventHandlers.delete(thread.id)
+        }
+      })
+      activeEventHandlers.set(thread.id, newHandlerPromise)
+      handlerPromise = newHandlerPromise
 
     if (abortController.signal.aborted) {
       sessionLogger.log(`[DEBOUNCE] Aborted before prompt, exiting`)
@@ -1272,6 +1292,15 @@ export async function handleOpencodeSession({
 
     return { sessionID: session.id, result: response.data, port }
   })
+
+  if (handlerPromise) {
+    await Promise.race([
+      handlerPromise,
+      new Promise((resolve) => {
+        setTimeout(resolve, 1000)
+      }),
+    ])
+  }
 
   if (!errore.isError(promptResult)) {
     return promptResult
