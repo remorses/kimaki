@@ -140,6 +140,9 @@ importers:
 
   errore:
     devDependencies:
+      hono:
+        specifier: ^4.11.5
+        version: 4.11.5
       typescript:
         specifier: ^5.0.0
         version: 5.9.2
@@ -1023,6 +1026,10 @@ packages:
 
   has-unicode@2.0.1:
     resolution: {integrity: sha512-8Rf9Y83NBReMnx0gFzA8JImQACstCYWUplepDa9xprwwtmgEZUF0h/i5xSA625zB/I37EtrswSST6OXxwaaIJQ==}
+
+  hono@4.11.5:
+    resolution: {integrity: sha512-WemPi9/WfyMwZs+ZUXdiwcCh9Y+m7L+8vki9MzDw3jJ+W9Lc+12HGsd368Qc1vZi1xwW8BWMMsnK5efYKPdt4g==}
+    engines: {node: '>=16.9.0'}
 
   htmlparser2@10.0.0:
     resolution: {integrity: sha512-TwAZM+zE5Tq3lrEHvOlvwgj1XLWQCtaaibSN11Q+gGBAS7Y1uZSWwXXRe4iF6OXnaq1riyQAPFOBtYc77Mxq0g==}
@@ -2520,6 +2527,8 @@ snapshots:
 
   has-unicode@2.0.1:
     optional: true
+
+  hono@4.11.5: {}
 
   htmlparser2@10.0.0:
     dependencies:
