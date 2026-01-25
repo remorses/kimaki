@@ -62,7 +62,11 @@ export async function handleQueueCommand({ command }: CommandContext): Promise<v
   }
 
   // Check if there's an active request running
-  const hasActiveRequest = abortControllers.has(row.session_id)
+  const existingController = abortControllers.get(row.session_id)
+  const hasActiveRequest = Boolean(existingController && !existingController.signal.aborted)
+  if (existingController && existingController.signal.aborted) {
+    abortControllers.delete(row.session_id)
+  }
 
   if (!hasActiveRequest) {
     // No active request, send immediately

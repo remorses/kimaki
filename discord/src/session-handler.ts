@@ -1023,6 +1023,7 @@ export async function handleOpencodeSession({
       sessionLogger.error(`Unexpected error in event handling code`, e)
       throw e
     } finally {
+      abortControllers.delete(session.id)
       const finalMessageId = assistantMessageId
       if (finalMessageId) {
         const parts = getBufferedParts(finalMessageId)
