@@ -227,6 +227,18 @@ export async function handleOpencodeSession({
   const directory = projectDirectory || process.cwd()
   sessionLogger.log(`Using directory: ${directory}`)
 
+  // Get worktree info early so we can use the correct directory for events and prompts
+  const worktreeInfo = getThreadWorktree(thread.id)
+  const worktreeDirectory =
+    worktreeInfo?.status === 'ready' && worktreeInfo.worktree_directory
+      ? worktreeInfo.worktree_directory
+      : undefined
+  // Use worktree directory for SDK calls if available, otherwise project directory
+  const sdkDirectory = worktreeDirectory || directory
+  if (worktreeDirectory) {
+    sessionLogger.log(`Using worktree directory for SDK calls: ${worktreeDirectory}`)
+  }
+
   const getClient = await initializeOpencodeForDirectory(directory)
   if (getClient instanceof Error) {
     await sendThreadMessage(thread, `✗ ${getClient.message}`)
@@ -247,6 +259,7 @@ export async function handleOpencodeSession({
     const sessionResponse = await errore.tryAsync(() => {
       return getClient().session.get({
         path: { id: sessionId },
+        query: { directory: sdkDirectory },
       })
     })
     if (sessionResponse instanceof Error) {
@@ -262,6 +275,7 @@ export async function handleOpencodeSession({
     voiceLogger.log(`[SESSION] Creating new session with title: "${sessionTitle}"`)
     const sessionResponse = await getClient().session.create({
       body: { title: sessionTitle },
+      query: { directory: sdkDirectory },
     })
     session = sessionResponse.data
     sessionLogger.log(`Created new session ${session?.id}`)
@@ -354,7 +368,7 @@ export async function handleOpencodeSession({
     throw new Error(`OpenCode v2 client not found for directory: ${directory}`)
   }
   const eventsResult = await clientV2.event.subscribe(
-    { directory },
+    { directory: sdkDirectory },
     { signal: abortController.signal },
   )
 
@@ -574,7 +588,7 @@ export async function handleOpencodeSession({
       if (!modelContextLimit) {
         const providersResponse = await errore.tryAsync(() => {
           return getClient().provider.list({
-            query: { directory },
+            query: { directory: sdkDirectory },
           })
         })
         if (providersResponse instanceof Error) {
@@ -1038,6 +1052,7 @@ export async function handleOpencodeSession({
           if (tokensUsedInSession === 0) {
             const messagesResponse = await getClient().session.messages({
               path: { id: session.id },
+              query: { directory: sdkDirectory },
             })
             const messages = messagesResponse.data || []
             const lastAssistant = [...messages]
@@ -1059,7 +1074,7 @@ export async function handleOpencodeSession({
             }
           }
 
-          const providersResponse = await getClient().provider.list({ query: { directory } })
+          const providersResponse = await getClient().provider.list({ query: { directory: sdkDirectory } })
           const provider = providersResponse.data?.all?.find((p) => p.id === usedProviderID)
           const model = provider?.models?.[usedModel || '']
           if (model?.limit?.context) {
@@ -1178,7 +1193,7 @@ export async function handleOpencodeSession({
       return { providerID, modelID }
     })()
 
-    const worktreeInfo = getThreadWorktree(thread.id)
+    // Build worktree info for system message (worktreeInfo was fetched at the start)
     const worktree: WorktreeInfo | undefined =
       worktreeInfo?.status === 'ready' && worktreeInfo.worktree_directory
         ? {
@@ -1191,6 +1206,7 @@ export async function handleOpencodeSession({
     const response = command
       ? await getClient().session.command({
           path: { id: session.id },
+          query: { directory: sdkDirectory },
           body: {
             command: command.name,
             arguments: command.arguments,
@@ -1200,6 +1216,7 @@ export async function handleOpencodeSession({
         })
       : await getClient().session.prompt({
           path: { id: session.id },
+          query: { directory: sdkDirectory },
           body: {
             parts,
             system: getOpencodeSystemMessage({ sessionId: session.id, channelId, worktree }),

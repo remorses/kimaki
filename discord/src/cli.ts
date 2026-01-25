@@ -240,12 +240,12 @@ async function registerCommands({
       .toJSON(),
     new SlashCommandBuilder()
       .setName('new-worktree')
-      .setDescription('Create a new git worktree and start a session thread')
+      .setDescription('Create a new git worktree (in thread: uses thread name if no name given)')
       .addStringOption((option) => {
         option
           .setName('name')
-          .setDescription('Name for the worktree (will be formatted: lowercase, spaces to dashes)')
-          .setRequired(true)
+          .setDescription('Name for worktree (optional in threads - uses thread name)')
+          .setRequired(false)
 
         return option
       })

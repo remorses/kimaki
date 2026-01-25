@@ -10,6 +10,7 @@ import {
   setWorktreeReady,
   setWorktreeError,
   getChannelDirectory,
+  getThreadWorktree,
 } from '../database.js'
 import { initializeOpencodeForDirectory, getOpencodeClientV2 } from '../opencode.js'
 import { SILENT_MESSAGE_FLAGS } from '../discord-utils.js'
@@ -30,6 +31,7 @@ class WorktreeError extends Error {
 /**
  * Format worktree name: lowercase, spaces to dashes, remove special chars, add opencode/kimaki- prefix.
  * "My Feature" → "opencode/kimaki-my-feature"
+ * Returns empty string if no valid name can be extracted.
  */
 export function formatWorktreeName(name: string): string {
   const formatted = name
@@ -38,7 +40,29 @@ export function formatWorktreeName(name: string): string {
     .replace(/\s+/g, '-')
     .replace(/[^a-z0-9-]/g, '')
 
+  if (!formatted) {
+    return ''
+  }
   return `opencode/kimaki-${formatted}`
+}
+
+/**
+ * Derive worktree name from thread name.
+ * Handles existing "⬦ worktree: opencode/kimaki-name" format or uses thread name directly.
+ */
+function deriveWorktreeNameFromThread(threadName: string): string {
+  // Handle existing "⬦ worktree: opencode/kimaki-name" format
+  const worktreeMatch = threadName.match(/worktree:\s*(.+)$/i)
+  const extractedName = worktreeMatch?.[1]?.trim()
+  if (extractedName) {
+    // If already has opencode/kimaki- prefix, return as is
+    if (extractedName.startsWith('opencode/kimaki-')) {
+      return extractedName
+    }
+    return formatWorktreeName(extractedName)
+  }
+  // Use thread name directly
+  return formatWorktreeName(threadName)
 }
 
 /**
@@ -112,18 +136,38 @@ export async function handleNewWorktreeCommand({
 }: CommandContext): Promise<void> {
   await command.deferReply({ ephemeral: false })
 
-  const rawName = command.options.getString('name', true)
-  const worktreeName = formatWorktreeName(rawName)
-
-  if (worktreeName === 'kimaki-') {
-    await command.editReply('Invalid worktree name. Please use letters, numbers, and spaces.')
+  const channel = command.channel
+  if (!channel) {
+    await command.editReply('Cannot determine channel')
     return
   }
 
-  const channel = command.channel
+  const isThread =
+    channel.type === ChannelType.PublicThread || channel.type === ChannelType.PrivateThread
 
-  if (!channel || channel.type !== ChannelType.GuildText) {
-    await command.editReply('This command can only be used in text channels')
+  // Handle command in existing thread - attach worktree to this thread
+  if (isThread) {
+    await handleWorktreeInThread({ command, appId, thread: channel as ThreadChannel })
+    return
+  }
+
+  // Handle command in text channel - create new thread with worktree (existing behavior)
+  if (channel.type !== ChannelType.GuildText) {
+    await command.editReply('This command can only be used in text channels or threads')
+    return
+  }
+
+  const rawName = command.options.getString('name')
+  if (!rawName) {
+    await command.editReply(
+      'Name is required when creating a worktree from a text channel. Use `/new-worktree name:my-feature`',
+    )
+    return
+  }
+
+  const worktreeName = formatWorktreeName(rawName)
+  if (!worktreeName) {
+    await command.editReply('Invalid worktree name. Please use letters, numbers, and spaces.')
     return
   }
 
@@ -210,6 +254,105 @@ export async function handleNewWorktreeCommand({
   createWorktreeInBackground({
     thread,
     starterMessage,
+    worktreeName,
+    projectDirectory,
+    clientV2,
+  }).catch((e) => {
+    logger.error('[NEW-WORKTREE] Background error:', e)
+  })
+}
+
+/**
+ * Handle /new-worktree when called inside an existing thread.
+ * Attaches a worktree to the current thread, using thread name if no name provided.
+ */
+async function handleWorktreeInThread({
+  command,
+  appId,
+  thread,
+}: CommandContext & { thread: ThreadChannel }): Promise<void> {
+  // Error if thread already has a worktree
+  if (getThreadWorktree(thread.id)) {
+    await command.editReply('This thread already has a worktree attached.')
+    return
+  }
+
+  // Get worktree name from parameter or derive from thread name
+  const rawName = command.options.getString('name')
+  const worktreeName = rawName ? formatWorktreeName(rawName) : deriveWorktreeNameFromThread(thread.name)
+
+  if (!worktreeName) {
+    await command.editReply('Invalid worktree name. Please provide a name or rename the thread.')
+    return
+  }
+
+  // Get parent channel for project directory
+  const parent = thread.parent
+  if (!parent || parent.type !== ChannelType.GuildText) {
+    await command.editReply('Cannot determine parent channel')
+    return
+  }
+
+  const projectDirectory = getProjectDirectoryFromChannel(parent as TextChannel, appId)
+  if (errore.isError(projectDirectory)) {
+    await command.editReply(projectDirectory.message)
+    return
+  }
+
+  // Initialize opencode
+  const getClient = await initializeOpencodeForDirectory(projectDirectory)
+  if (errore.isError(getClient)) {
+    await command.editReply(`Failed to initialize OpenCode: ${getClient.message}`)
+    return
+  }
+
+  const clientV2 = getOpencodeClientV2(projectDirectory)
+  if (!clientV2) {
+    await command.editReply('Failed to get OpenCode client')
+    return
+  }
+
+  // Check if worktree with this name already exists
+  const listResult = await errore.tryAsync({
+    try: async () => {
+      const response = await clientV2.worktree.list({ directory: projectDirectory })
+      return response.data || []
+    },
+    catch: (e) => new WorktreeError('Failed to list worktrees', { cause: e }),
+  })
+
+  if (errore.isError(listResult)) {
+    await command.editReply(listResult.message)
+    return
+  }
+
+  const existingWorktreePath = listResult.find((dir) => dir.endsWith(`/${worktreeName}`))
+  if (existingWorktreePath) {
+    await command.editReply(
+      `Worktree \`${worktreeName}\` already exists at \`${existingWorktreePath}\``,
+    )
+    return
+  }
+
+  // Store pending worktree in database for this existing thread
+  createPendingWorktree({
+    threadId: thread.id,
+    worktreeName,
+    projectDirectory,
+  })
+
+  // Send status message in thread
+  const statusMessage = await thread.send({
+    content: `🌳 **Creating worktree: ${worktreeName}**\n⏳ Setting up...`,
+    flags: SILENT_MESSAGE_FLAGS,
+  })
+
+  await command.editReply(`Creating worktree \`${worktreeName}\` for this thread...`)
+
+  // Create worktree in background
+  createWorktreeInBackground({
+    thread,
+    starterMessage: statusMessage,
     worktreeName,
     projectDirectory,
     clientV2,

@@ -236,9 +236,11 @@ export async function startDiscordBot({
             })
             return
           }
-          if (worktreeInfo.worktree_directory) {
-            projectDirectory = worktreeInfo.worktree_directory
-            discordLogger.log(`Using worktree directory: ${projectDirectory}`)
+          // Use original project directory for OpenCode server (session lives there)
+          // The worktree directory is passed via query.directory in prompt/command calls
+          if (worktreeInfo.project_directory) {
+            projectDirectory = worktreeInfo.project_directory
+            discordLogger.log(`Using project directory: ${projectDirectory} (worktree: ${worktreeInfo.worktree_directory})`)
           }
         }
 
