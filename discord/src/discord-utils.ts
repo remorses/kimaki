@@ -132,8 +132,18 @@ export function splitMarkdownForDiscord({
     return pieces
   }
 
+  const closingFence = '```\n'
+
   for (const line of lines) {
-    const wouldExceed = currentChunk.length + line.text.length > maxLength
+    const openingFenceSize =
+      currentChunk.length === 0 && (line.inCodeBlock || line.isOpeningFence)
+        ? ('```' + line.lang + '\n').length
+        : 0
+    const lineLength = line.isOpeningFence ? 0 : line.text.length
+    const activeFenceOverhead =
+      currentLang !== null || openingFenceSize > 0 ? closingFence.length : 0
+    const wouldExceed =
+      currentChunk.length + openingFenceSize + lineLength + activeFenceOverhead > maxLength
 
     if (wouldExceed) {
       // handle case where single line is longer than maxLength
@@ -195,9 +205,34 @@ export function splitMarkdownForDiscord({
         }
       } else {
         // currentChunk is empty but line still exceeds - shouldn't happen after above check
-        currentChunk = line.text
-        if (line.inCodeBlock || line.isOpeningFence) {
-          currentLang = line.lang
+        const openingFence = line.inCodeBlock || line.isOpeningFence
+        const openingFenceSize = openingFence ? ('```' + line.lang + '\n').length : 0
+        if (line.text.length + openingFenceSize + activeFenceOverhead > maxLength) {
+          const fencedOverhead = openingFence
+            ? ('```' + line.lang + '\n').length + closingFence.length
+            : 0
+          const availablePerChunk = Math.max(10, maxLength - fencedOverhead - 50)
+          const pieces = splitLongLine(line.text, availablePerChunk, line.inCodeBlock)
+          for (const piece of pieces) {
+            if (openingFence) {
+              chunks.push('```' + line.lang + '\n' + piece + closingFence)
+            } else {
+              chunks.push(piece)
+            }
+          }
+          currentChunk = ''
+          currentLang = null
+        } else {
+          if (openingFence) {
+            currentChunk = '```' + line.lang + '\n'
+            if (!line.isOpeningFence) {
+              currentChunk += line.text
+            }
+            currentLang = line.lang
+          } else {
+            currentChunk = line.text
+            currentLang = null
+          }
         }
       }
     } else {
@@ -211,6 +246,9 @@ export function splitMarkdownForDiscord({
   }
 
   if (currentChunk) {
+    if (currentLang !== null) {
+      currentChunk += closingFence
+    }
     chunks.push(currentChunk)
   }
 

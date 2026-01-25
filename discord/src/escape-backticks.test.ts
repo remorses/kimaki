@@ -194,11 +194,17 @@ test('splitMarkdownForDiscord adds closing and opening fences when splitting cod
     [
       "\`\`\`js
     line1
+    \`\`\`
+    ",
+      "\`\`\`js
     line2
     \`\`\`
     ",
       "\`\`\`js
     line3
+    \`\`\`
+    ",
+      "\`\`\`js
     line4
     \`\`\`
     ",
@@ -234,10 +240,12 @@ test('splitMarkdownForDiscord handles mixed content with code blocks', () => {
     [
       "Text before
     \`\`\`js
-    code
     \`\`\`
     ",
-      "Text after",
+      "\`\`\`js
+    code
+    \`\`\`
+    Text after",
     ]
   `)
 })
@@ -249,6 +257,9 @@ test('splitMarkdownForDiscord handles code block without language', () => {
   })
   expect(result).toMatchInlineSnapshot(`
     [
+      "\`\`\`
+    \`\`\`
+    ",
       "\`\`\`
     line1
     \`\`\`
@@ -437,10 +448,10 @@ And here is some text after the code block.`
 
     export function formatCurrency(amount: number): string {
       return new Intl.NumberFormat('en-US', {
-        style: 'currency',
     \`\`\`
     ",
       "\`\`\`typescript
+        style: 'currency',
         currency: 'USD',
       }).format(amount)
     }
