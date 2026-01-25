@@ -1591,30 +1591,7 @@ cli
         }
 
         const s = spinner()
-        s.start('Checking for existing channel...')
-
-        // Check if channel already exists
-        try {
-          const db = getDatabase()
-          const existingChannel = db
-            .prepare(
-              'SELECT channel_id FROM channel_directories WHERE directory = ? AND channel_type = ? AND app_id = ?',
-            )
-            .get(absolutePath, 'text', appId) as { channel_id: string } | undefined
-
-          if (existingChannel) {
-            s.stop('Channel already exists')
-            note(
-              `Channel already exists for this directory.\n\nChannel: <#${existingChannel.channel_id}>\nDirectory: ${absolutePath}`,
-              '⚠️  Already Exists',
-            )
-            process.exit(0)
-          }
-        } catch {
-          // Database might not exist, continue to create
-        }
-
-        s.message('Connecting to Discord...')
+        s.start('Connecting to Discord...')
         const client = await createDiscordClient()
 
         await new Promise<void>((resolve, reject) => {
@@ -1630,10 +1607,14 @@ cli
         // Find guild
         let guild: Guild
         if (options.guild) {
-          const foundGuild = client.guilds.cache.get(options.guild)
+          // Get raw guild ID from argv to avoid cac's number coercion losing precision on large IDs
+          const guildArgIndex = process.argv.findIndex((arg) => arg === '-g' || arg === '--guild')
+          const rawGuildArg = guildArgIndex >= 0 ? process.argv[guildArgIndex + 1] : undefined
+          const guildId = rawGuildArg || String(options.guild)
+          const foundGuild = client.guilds.cache.get(guildId)
           if (!foundGuild) {
             s.stop('Guild not found')
-            cliLogger.error(`Guild not found: ${options.guild}`)
+            cliLogger.error(`Guild not found: ${guildId}`)
             client.destroy()
             process.exit(EXIT_NO_RESTART)
           }
@@ -1676,6 +1657,36 @@ cli
             }
             guild = firstGuild
           }
+        }
+
+        // Check if channel already exists in this guild
+        s.message('Checking for existing channel...')
+        try {
+          const db = getDatabase()
+          const existingChannels = db
+            .prepare(
+              'SELECT channel_id FROM channel_directories WHERE directory = ? AND channel_type = ? AND app_id = ?',
+            )
+            .all(absolutePath, 'text', appId) as { channel_id: string }[]
+
+          for (const existingChannel of existingChannels) {
+            try {
+              const ch = await client.channels.fetch(existingChannel.channel_id)
+              if (ch && 'guild' in ch && ch.guild?.id === guild.id) {
+                s.stop('Channel already exists')
+                note(
+                  `Channel already exists for this directory in ${guild.name}.\n\nChannel: <#${existingChannel.channel_id}>\nDirectory: ${absolutePath}`,
+                  '⚠️  Already Exists',
+                )
+                client.destroy()
+                process.exit(0)
+              }
+            } catch {
+              // Channel might be deleted, continue checking
+            }
+          }
+        } catch {
+          // Database might not exist, continue to create
         }
 
         s.message(`Creating channels in ${guild.name}...`)
