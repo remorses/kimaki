@@ -113,10 +113,11 @@ export async function abortAndRetrySession({
     sessionLogger.error(`[ABORT+RETRY] Failed to initialize OpenCode client:`, getClient.message)
     return false
   }
-  try {
-    await getClient().session.abort({ path: { id: sessionId } })
-  } catch (e) {
-    sessionLogger.log(`[ABORT+RETRY] API abort call failed (may already be done):`, e)
+  const abortResult = await errore.tryAsync(() => {
+    return getClient().session.abort({ path: { id: sessionId } })
+  })
+  if (abortResult instanceof Error) {
+    sessionLogger.log(`[ABORT+RETRY] API abort call failed (may already be done):`, abortResult)
   }
 
   // Small delay to let the abort propagate
@@ -146,16 +147,25 @@ export async function abortAndRetrySession({
 
   // Use setImmediate to avoid blocking
   setImmediate(() => {
-    handleOpencodeSession({
-      prompt,
-      thread,
-      projectDirectory,
-      images,
-    }).catch(async (e) => {
-      sessionLogger.error(`[ABORT+RETRY] Failed to retry:`, e)
-      const errorMsg = e instanceof Error ? e.message : String(e)
-      await sendThreadMessage(thread, `✗ Failed to retry with new model: ${errorMsg.slice(0, 200)}`)
-    })
+    void errore
+      .tryAsync(async () => {
+        return handleOpencodeSession({
+          prompt,
+          thread,
+          projectDirectory,
+          images,
+        })
+      })
+      .then(async (result) => {
+        if (!(result instanceof Error)) {
+          return
+        }
+        sessionLogger.error(`[ABORT+RETRY] Failed to retry:`, result)
+        await sendThreadMessage(
+          thread,
+          `✗ Failed to retry with new model: ${result.message.slice(0, 200)}`,
+        )
+      })
   })
 
   return true
@@ -208,14 +218,16 @@ export async function handleOpencodeSession({
 
   if (sessionId) {
     sessionLogger.log(`Attempting to reuse existing session ${sessionId}`)
-    try {
-      const sessionResponse = await getClient().session.get({
+    const sessionResponse = await errore.tryAsync(() => {
+      return getClient().session.get({
         path: { id: sessionId },
       })
+    })
+    if (sessionResponse instanceof Error) {
+      voiceLogger.log(`[SESSION] Session ${sessionId} not found, will create new one`)
+    } else {
       session = sessionResponse.data
       sessionLogger.log(`Successfully reused session ${sessionId}`)
-    } catch (error) {
-      voiceLogger.log(`[SESSION] Session ${sessionId} not found, will create new one`)
     }
   }
 
@@ -256,20 +268,25 @@ export async function handleOpencodeSession({
     const clientV2 = getOpencodeClientV2(directory)
     let rejectedCount = 0
     for (const [permId, pendingPerm] of threadPermissions) {
-      try {
-        sessionLogger.log(`[PERMISSION] Auto-rejecting permission ${permId} due to new message`)
-        if (clientV2) {
-          await clientV2.permission.reply({
-            requestID: permId,
-            reply: 'reject',
-          })
-        }
+      sessionLogger.log(`[PERMISSION] Auto-rejecting permission ${permId} due to new message`)
+      if (!clientV2) {
+        sessionLogger.log(`[PERMISSION] OpenCode v2 client unavailable for permission ${permId}`)
         cleanupPermissionContext(pendingPerm.contextHash)
         rejectedCount++
-      } catch (e) {
-        sessionLogger.log(`[PERMISSION] Failed to auto-reject permission ${permId}:`, e)
-        cleanupPermissionContext(pendingPerm.contextHash)
+        continue
       }
+      const rejectResult = await errore.tryAsync(() => {
+        return clientV2.permission.reply({
+          requestID: permId,
+          reply: 'reject',
+        })
+      })
+      if (rejectResult instanceof Error) {
+        sessionLogger.log(`[PERMISSION] Failed to auto-reject permission ${permId}:`, rejectResult)
+      } else {
+        rejectedCount++
+      }
+      cleanupPermissionContext(pendingPerm.contextHash)
     }
     pendingPermissions.delete(thread.id)
     if (rejectedCount > 0) {
@@ -353,13 +370,17 @@ export async function handleOpencodeSession({
       typingInterval = null
     }
 
-    thread.sendTyping().catch((e) => {
-      discordLogger.log(`Failed to send initial typing: ${e}`)
+    void errore.tryAsync(() => thread.sendTyping()).then((result) => {
+      if (result instanceof Error) {
+        discordLogger.log(`Failed to send initial typing: ${result}`)
+      }
     })
 
     typingInterval = setInterval(() => {
-      thread.sendTyping().catch((e) => {
-        discordLogger.log(`Failed to send periodic typing: ${e}`)
+      void errore.tryAsync(() => thread.sendTyping()).then((result) => {
+        if (result instanceof Error) {
+          discordLogger.log(`Failed to send periodic typing: ${result}`)
+        }
       })
     }, 8000)
 
@@ -395,18 +416,20 @@ export async function handleOpencodeSession({
       return
     }
 
-    try {
-      const firstMessage = await sendThreadMessage(thread, content)
-      sentPartIds.add(part.id)
-
-      getDatabase()
-        .prepare(
-          'INSERT OR REPLACE INTO part_messages (part_id, message_id, thread_id) VALUES (?, ?, ?)',
-        )
-        .run(part.id, firstMessage.id, thread.id)
-    } catch (error) {
-      discordLogger.error(`ERROR: Failed to send part ${part.id}:`, error)
+    const sendResult = await errore.tryAsync(() => {
+      return sendThreadMessage(thread, content)
+    })
+    if (sendResult instanceof Error) {
+      discordLogger.error(`ERROR: Failed to send part ${part.id}:`, sendResult)
+      return
     }
+    sentPartIds.add(part.id)
+
+    getDatabase()
+      .prepare(
+        'INSERT OR REPLACE INTO part_messages (part_id, message_id, thread_id) VALUES (?, ?, ?)',
+      )
+      .run(part.id, sendResult.id, thread.id)
   }
 
   const eventHandler = async () => {
@@ -523,17 +546,19 @@ export async function handleOpencodeSession({
       }
 
       if (!modelContextLimit) {
-        try {
-          const providersResponse = await getClient().provider.list({
+        const providersResponse = await errore.tryAsync(() => {
+          return getClient().provider.list({
             query: { directory },
           })
+        })
+        if (providersResponse instanceof Error) {
+          sessionLogger.error('Failed to fetch provider info for context limit:', providersResponse)
+        } else {
           const provider = providersResponse.data?.all?.find((p) => p.id === usedProviderID)
           const model = provider?.models?.[usedModel]
           if (model?.limit?.context) {
             modelContextLimit = model.limit.context
           }
-        } catch (e) {
-          sessionLogger.error('Failed to fetch provider info for context limit:', e)
         }
       }
 
@@ -665,17 +690,19 @@ export async function handleOpencodeSession({
       if (!content.trim() || sentPartIds.has(part.id)) {
         return
       }
-      try {
-        const msg = await sendThreadMessage(thread, content + '\n\n')
-        sentPartIds.add(part.id)
-        getDatabase()
-          .prepare(
-            'INSERT OR REPLACE INTO part_messages (part_id, message_id, thread_id) VALUES (?, ?, ?)',
-          )
-          .run(part.id, msg.id, thread.id)
-      } catch (error) {
-        discordLogger.error(`ERROR: Failed to send subtask part ${part.id}:`, error)
+      const sendResult = await errore.tryAsync(() => {
+        return sendThreadMessage(thread, content + '\n\n')
+      })
+      if (sendResult instanceof Error) {
+        discordLogger.error(`ERROR: Failed to send subtask part ${part.id}:`, sendResult)
+        return
       }
+      sentPartIds.add(part.id)
+      getDatabase()
+        .prepare(
+          'INSERT OR REPLACE INTO part_messages (part_id, message_id, thread_id) VALUES (?, ?, ?)',
+        )
+        .run(part.id, sendResult.id, thread.id)
     }
 
     const handlePartUpdated = async (part: Part) => {
@@ -717,12 +744,14 @@ export async function handleOpencodeSession({
       if (!originalMessage) {
         return
       }
-      try {
+      const reactionResult = await errore.tryAsync(async () => {
         await originalMessage.reactions.removeAll()
         await originalMessage.react('❌')
+      })
+      if (reactionResult instanceof Error) {
+        discordLogger.log(`Could not update reaction:`, reactionResult)
+      } else {
         voiceLogger.log(`[REACTION] Added error reaction due to session error`)
-      } catch (e) {
-        discordLogger.log(`Could not update reaction:`, e)
       }
     }
 
@@ -848,17 +877,26 @@ export async function handleOpencodeSession({
       )
 
       setImmediate(() => {
-        handleOpencodeSession({
-          prompt: nextMessage.prompt,
-          thread,
-          projectDirectory: directory,
-          images: nextMessage.images,
-          channelId,
-        }).catch(async (e) => {
-          sessionLogger.error(`[QUEUE] Failed to process queued message:`, e)
-          const errorMsg = e instanceof Error ? e.message : String(e)
-          await sendThreadMessage(thread, `✗ Queued message failed: ${errorMsg.slice(0, 200)}`)
-        })
+        void errore
+          .tryAsync(async () => {
+            return handleOpencodeSession({
+              prompt: nextMessage.prompt,
+              thread,
+              projectDirectory: directory,
+              images: nextMessage.images,
+              channelId,
+            })
+          })
+          .then(async (result) => {
+            if (!(result instanceof Error)) {
+              return
+            }
+            sessionLogger.error(`[QUEUE] Failed to process queued message:`, result)
+            await sendThreadMessage(
+              thread,
+              `✗ Queued message failed: ${result.message.slice(0, 200)}`,
+            )
+          })
       })
     }
 
@@ -919,11 +957,7 @@ export async function handleOpencodeSession({
         const parts = getBufferedParts(finalMessageId)
         for (const part of parts) {
           if (!sentPartIds.has(part.id)) {
-            try {
-              await sendPartMessage(part)
-            } catch (error) {
-              sessionLogger.error(`Failed to send part ${part.id}:`, error)
-            }
+            await sendPartMessage(part)
           }
         }
       }
@@ -941,7 +975,7 @@ export async function handleOpencodeSession({
           usedAgent && usedAgent.toLowerCase() !== 'build' ? ` ⋅ **${usedAgent}**` : ''
         let contextInfo = ''
 
-        try {
+        const contextResult = await errore.tryAsync(async () => {
           // Fetch final token count from API since message.updated events can arrive
           // after session.idle due to race conditions in event ordering
           if (tokensUsedInSession === 0) {
@@ -975,8 +1009,9 @@ export async function handleOpencodeSession({
             const percentage = Math.round((tokensUsedInSession / model.limit.context) * 100)
             contextInfo = ` ⋅ ${percentage}%`
           }
-        } catch (e) {
-          sessionLogger.error('Failed to fetch provider info for context percentage:', e)
+        })
+        if (contextResult instanceof Error) {
+          sessionLogger.error('Failed to fetch provider info for context percentage:', contextResult)
         }
 
         await sendThreadMessage(
@@ -1028,8 +1063,9 @@ export async function handleOpencodeSession({
     }
   }
 
-  try {
-    const eventHandlerPromise = eventHandler()
+  const promptResult: Error | { sessionID: string; result: any; port?: number } | undefined =
+    await errore.tryAsync(async () => {
+      const eventHandlerPromise = eventHandler()
 
     if (abortController.signal.aborted) {
       sessionLogger.log(`[DEBOUNCE] Aborted before prompt, exiting`)
@@ -1041,7 +1077,6 @@ export async function handleOpencodeSession({
     voiceLogger.log(
       `[PROMPT] Sending prompt to session ${session.id}: "${prompt.slice(0, 100)}${prompt.length > 100 ? '...' : ''}"`,
     )
-    // append image paths to prompt so ai knows where they are on disk
     const promptWithImagePaths = (() => {
       if (images.length === 0) {
         return prompt
@@ -1061,19 +1096,15 @@ export async function handleOpencodeSession({
     const parts = [{ type: 'text' as const, text: promptWithImagePaths }, ...images]
     sessionLogger.log(`[PROMPT] Parts to send:`, parts.length)
 
-    // Get agent preference: session-level overrides channel-level
     const agentPreference =
       getSessionAgent(session.id) || (channelId ? getChannelAgent(channelId) : undefined)
     if (agentPreference) {
       sessionLogger.log(`[AGENT] Using agent preference: ${agentPreference}`)
     }
 
-    // Get model preference: session-level overrides channel-level
-    // BUT: if an agent is set, don't pass model param so the agent's model takes effect
     const modelPreference =
       getSessionModel(session.id) || (channelId ? getChannelModel(channelId) : undefined)
     const modelParam = (() => {
-      // When an agent is set, let the agent's model config take effect
       if (agentPreference) {
         sessionLogger.log(`[MODEL] Skipping model param, agent "${agentPreference}" controls model`)
         return undefined
@@ -1090,7 +1121,6 @@ export async function handleOpencodeSession({
       return { providerID, modelID }
     })()
 
-    // Get worktree info if this thread is in a worktree
     const worktreeInfo = getThreadWorktree(thread.id)
     const worktree: WorktreeInfo | undefined =
       worktreeInfo?.status === 'ready' && worktreeInfo.worktree_directory
@@ -1101,7 +1131,6 @@ export async function handleOpencodeSession({
           }
         : undefined
 
-    // Use session.command API for slash commands, session.prompt for regular messages
     const response = command
       ? await getClient().session.command({
           path: { id: session.id },
@@ -1144,40 +1173,46 @@ export async function handleOpencodeSession({
     sessionLogger.log(`Successfully sent prompt, got response`)
 
     if (originalMessage) {
-      try {
+      const reactionResult = await errore.tryAsync(async () => {
         await originalMessage.reactions.removeAll()
         await originalMessage.react('✅')
-      } catch (e) {
-        discordLogger.log(`Could not update reactions:`, e)
+      })
+      if (reactionResult instanceof Error) {
+        discordLogger.log(`Could not update reactions:`, reactionResult)
       }
     }
 
     return { sessionID: session.id, result: response.data, port }
-  } catch (error) {
-    if (!isAbortError(error, abortController.signal)) {
-      sessionLogger.error(`ERROR: Failed to send prompt:`, error)
-      abortController.abort('error')
+  })
 
-      if (originalMessage) {
-        try {
-          await originalMessage.reactions.removeAll()
-          await originalMessage.react('❌')
-          discordLogger.log(`Added error reaction to message`)
-        } catch (e) {
-          discordLogger.log(`Could not update reaction:`, e)
-        }
-      }
-      const errorDisplay = (() => {
-        if (error instanceof Error) {
-          const name = error.constructor.name || 'Error'
-          return `[${name}]\n${error.stack || error.message}`
-        }
-        if (typeof error === 'string') {
-          return error
-        }
-        return String(error)
-      })()
-      await sendThreadMessage(thread, `✗ Unexpected bot Error: ${errorDisplay}`)
+  if (!errore.isError(promptResult)) {
+    return promptResult
+  }
+
+  const promptError: Error = promptResult instanceof Error ? promptResult : new Error('Unknown error')
+  if (isAbortError(promptError, abortController.signal)) {
+    return
+  }
+
+  sessionLogger.error(`ERROR: Failed to send prompt:`, promptError)
+  abortController.abort('error')
+
+  if (originalMessage) {
+    const reactionResult = await errore.tryAsync(async () => {
+      await originalMessage.reactions.removeAll()
+      await originalMessage.react('❌')
+    })
+    if (reactionResult instanceof Error) {
+      discordLogger.log(`Could not update reaction:`, reactionResult)
+    } else {
+      discordLogger.log(`Added error reaction to message`)
     }
   }
+  const errorDisplay = (() => {
+    const promptErrorValue = promptError as unknown as Error
+    const name = promptErrorValue.name || 'Error'
+    const message = promptErrorValue.stack || promptErrorValue.message
+    return `[${name}]\n${message}`
+  })()
+  await sendThreadMessage(thread, `✗ Unexpected bot Error: ${errorDisplay}`)
 }
