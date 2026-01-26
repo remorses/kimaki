@@ -178,26 +178,31 @@ export function getToolSummaryText(part: Part): string {
   }
 
   if (part.tool === 'apply_patch') {
-    const state = part.state as { metadata?: { files?: unknown } }
-    const files = (state.metadata?.files as Array<{
-      relativePath?: string
-      filePath?: string
-      additions?: number
-      deletions?: number
-    }>) || []
-    if (files.length === 0) {
+    try {
+      const state = part.state as { metadata?: { files?: unknown } }
+      const rawFiles = state.metadata?.files
+      if (!Array.isArray(rawFiles) || rawFiles.length === 0) {
+        return ''
+      }
+      return rawFiles
+        .map((f) => {
+          if (!f || typeof f !== 'object') {
+            return null
+          }
+          const file = f as Record<string, unknown>
+          const pathStr = String(file.relativePath || file.filePath || '')
+          const fileName = pathStr.split('/').pop() || ''
+          const added = typeof file.additions === 'number' ? file.additions : 0
+          const removed = typeof file.deletions === 'number' ? file.deletions : 0
+          return fileName
+            ? `*${escapeInlineMarkdown(fileName)}* (+${added}-${removed})`
+            : `(+${added}-${removed})`
+        })
+        .filter(Boolean)
+        .join(', ')
+    } catch {
       return ''
     }
-    return files
-      .map((f) => {
-        const fileName = (f.relativePath || f.filePath || '').split('/').pop() || ''
-        const added = f.additions ?? 0
-        const removed = f.deletions ?? 0
-        return fileName
-          ? `*${escapeInlineMarkdown(fileName)}* (+${added}-${removed})`
-          : `(+${added}-${removed})`
-      })
-      .join(', ')
   }
 
   if (part.tool === 'write') {
