@@ -35,10 +35,12 @@ export async function showPermissionDropdown({
   thread,
   permission,
   directory,
+  subtaskLabel,
 }: {
   thread: ThreadChannel
   permission: PermissionRequest
   directory: string
+  subtaskLabel?: string
 }): Promise<{ messageId: string; contextHash: string }> {
   const contextHash = crypto.randomBytes(8).toString('hex')
 
@@ -80,9 +82,11 @@ export async function showPermissionDropdown({
 
   const actionRow = new ActionRowBuilder<StringSelectMenuBuilder>().addComponents(selectMenu)
 
+  const subtaskLine = subtaskLabel ? `**From:** \`${subtaskLabel}\`\n` : ''
   const permissionMessage = await thread.send({
     content:
       `⚠️ **Permission Required**\n\n` +
+      subtaskLine +
       `**Type:** \`${permission.permission}\`\n` +
       (patternStr ? `**Pattern:** \`${patternStr}\`` : ''),
     components: [actionRow],

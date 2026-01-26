@@ -837,12 +837,19 @@ export async function handleOpencodeSession({
     }
 
     const handlePermissionAsked = async (permission: PermissionRequest) => {
-      if (permission.sessionID !== session.id) {
+      const isMainSession = permission.sessionID === session.id
+      const isSubtaskSession = subtaskSessions.has(permission.sessionID)
+
+      if (!isMainSession && !isSubtaskSession) {
         voiceLogger.log(
-          `[PERMISSION IGNORED] Permission for different session (expected: ${session.id}, got: ${permission.sessionID})`,
+          `[PERMISSION IGNORED] Permission for unknown session (expected: ${session.id} or subtask, got: ${permission.sessionID})`,
         )
         return
       }
+
+      const subtaskLabel = isSubtaskSession
+        ? subtaskSessions.get(permission.sessionID)?.label
+        : undefined
 
       const dedupeKey = buildPermissionDedupeKey({ permission, directory })
       const threadPermissions = pendingPermissions.get(thread.id)
@@ -883,7 +890,7 @@ export async function handleOpencodeSession({
       }
 
       sessionLogger.log(
-        `Permission requested: permission=${permission.permission}, patterns=${permission.patterns.join(', ')}`,
+        `Permission requested: permission=${permission.permission}, patterns=${permission.patterns.join(', ')}${subtaskLabel ? `, subtask=${subtaskLabel}` : ''}`,
       )
 
       if (stopTyping) {
@@ -895,6 +902,7 @@ export async function handleOpencodeSession({
         thread,
         permission,
         directory,
+        subtaskLabel,
       })
 
       if (!pendingPermissions.has(thread.id)) {
@@ -918,7 +926,10 @@ export async function handleOpencodeSession({
       reply: string
       sessionID: string
     }) => {
-      if (sessionID !== session.id) {
+      const isMainSession = sessionID === session.id
+      const isSubtaskSession = subtaskSessions.has(sessionID)
+
+      if (!isMainSession && !isSubtaskSession) {
         return
       }
 

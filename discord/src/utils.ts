@@ -73,6 +73,7 @@ export function isAbortError(error: unknown, signal?: AbortSignal): error is Err
         error.name === 'Aborterror' ||
         error.name === 'aborterror' ||
         error.name.toLowerCase() === 'aborterror' ||
+        error.name === 'MessageAbortedError' ||
         error.message?.includes('aborted') ||
         (signal?.aborted ?? false))) ||
     (error instanceof DOMException && error.name === 'AbortError')
