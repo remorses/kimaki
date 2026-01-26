@@ -268,9 +268,9 @@ export function parseAskUserQuestionTool(part: {
 
 /**
  * Cancel a pending question for a thread (e.g., when user sends a new message).
- * Sends cancellation response to OpenCode so the session can continue.
+ * Sends the user's message as the answer to OpenCode so the model sees their actual response.
  */
-export async function cancelPendingQuestion(threadId: string): Promise<boolean> {
+export async function cancelPendingQuestion(threadId: string, userMessage?: string): Promise<boolean> {
   // Find pending question for this thread
   let contextHash: string | undefined
   let context: PendingQuestionContext | undefined
@@ -292,9 +292,10 @@ export async function cancelPendingQuestion(threadId: string): Promise<boolean> 
       throw new Error('OpenCode server not found for directory')
     }
 
-    // Preserve already-answered questions, mark unanswered as cancelled
+    // Use user's message as answer if provided, otherwise mark as "Other"
+    const customAnswer = userMessage || 'Other'
     const answers = context.questions.map((_, i) => {
-      return context.answers[i] || ['(cancelled - user sent new message)']
+      return context.answers[i] || [customAnswer]
     })
 
     await clientV2.question.reply({
@@ -302,9 +303,9 @@ export async function cancelPendingQuestion(threadId: string): Promise<boolean> 
       answers,
     })
 
-    logger.log(`Cancelled question ${context.requestId} due to new user message`)
+    logger.log(`Answered question ${context.requestId} with user message`)
   } catch (error) {
-    logger.error('Failed to cancel question:', error)
+    logger.error('Failed to answer question:', error)
   }
 
   // Clean up regardless of whether the API call succeeded
