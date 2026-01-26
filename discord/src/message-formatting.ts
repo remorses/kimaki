@@ -177,6 +177,29 @@ export function getToolSummaryText(part: Part): string {
       : `(+${added}-${removed})`
   }
 
+  if (part.tool === 'apply_patch') {
+    const state = part.state as { metadata?: { files?: unknown } }
+    const files = (state.metadata?.files as Array<{
+      relativePath?: string
+      filePath?: string
+      additions?: number
+      deletions?: number
+    }>) || []
+    if (files.length === 0) {
+      return ''
+    }
+    return files
+      .map((f) => {
+        const fileName = (f.relativePath || f.filePath || '').split('/').pop() || ''
+        const added = f.additions ?? 0
+        const removed = f.deletions ?? 0
+        return fileName
+          ? `*${escapeInlineMarkdown(fileName)}* (+${added}-${removed})`
+          : `(+${added}-${removed})`
+      })
+      .join(', ')
+  }
+
   if (part.tool === 'write') {
     const filePath = (part.state.input?.filePath as string) || ''
     const content = (part.state.input?.content as string) || ''
@@ -351,7 +374,7 @@ export function formatPart(part: Part, prefix?: string): string {
       if (part.state.status === 'error') {
         return '⨯'
       }
-      if (part.tool === 'edit' || part.tool === 'write') {
+      if (part.tool === 'edit' || part.tool === 'write' || part.tool === 'apply_patch') {
         return '◼︎'
       }
       return '┣'
