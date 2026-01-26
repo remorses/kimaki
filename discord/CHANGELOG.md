@@ -1,5 +1,23 @@
 # Changelog
 
+## 0.4.47
+
+### Patch Changes
+
+- add **/compact** command to trigger session context compaction
+- add **caffeinate** spawn on macOS to prevent system sleep during sessions
+- add **rate limit status** display in Discord when OpenCode is retrying
+- add **apply_patch tool** display like edit with square icon and file summary
+- add **uncommitted changes transfer** to worktree when using /new-worktree in threads
+- fix **subtask separator** - use ⋅ and fix double spaces in tool output
+- fix **stale session.idle events** ignored before content received
+- fix **apply_patch tool** summaries defensive handling
+- fix **abort reason** - pass Error to .abort() to prevent string leaking
+- fix **whitespace normalization** in tool call arguments for Discord display
+- fix **question tool answer** - send user message instead of 'cancelled'
+- fix **blank lines** removed from command response messages
+- refactor **log prefixes** shortened to max 8 chars with LogPrefix enum and picocolors
+
 ## 0.4.46
 
 ### Patch Changes
