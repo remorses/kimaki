@@ -134,7 +134,7 @@ export async function abortAndRetrySession({
   sessionLogger.log(`[ABORT+RETRY] Aborting session ${sessionId} for model change`)
 
   // Abort with special reason so we don't show "completed" message
-  controller.abort('model-change')
+  controller.abort(new Error('model-change'))
 
   // Also call the API abort endpoint
   const getClient = await initializeOpencodeForDirectory(projectDirectory)
@@ -1049,7 +1049,7 @@ export async function handleOpencodeSession({
     const handleSessionIdle = (idleSessionId: string) => {
       if (idleSessionId === session.id) {
         sessionLogger.log(`[SESSION IDLE] Session ${session.id} is idle, aborting`)
-        abortController.abort('finished')
+        abortController.abort(new Error('finished'))
         return
       }
 
@@ -1117,7 +1117,8 @@ export async function handleOpencodeSession({
         stopTyping = null
       }
 
-      if (!abortController.signal.aborted || abortController.signal.reason === 'finished') {
+      const abortReason = (abortController.signal.reason as Error)?.message
+      if (!abortController.signal.aborted || abortReason === 'finished') {
         const sessionDuration = prettyMilliseconds(Date.now() - sessionStartTime)
         const attachCommand = port ? ` ⋅ ${session.id}` : ''
         const modelInfo = usedModel ? ` ⋅ ${usedModel}` : ''
@@ -1208,7 +1209,7 @@ export async function handleOpencodeSession({
         }
       } else {
         sessionLogger.log(
-          `Session was aborted (reason: ${abortController.signal.reason}), skipping duration message`,
+          `Session was aborted (reason: ${abortReason}), skipping duration message`,
         )
       }
     }
@@ -1327,7 +1328,7 @@ export async function handleOpencodeSession({
       throw new Error(`OpenCode API error (${response.response.status}): ${errorMessage}`)
     }
 
-    abortController.abort('finished')
+    abortController.abort(new Error('finished'))
 
     sessionLogger.log(`Successfully sent prompt, got response`)
 
@@ -1363,7 +1364,7 @@ export async function handleOpencodeSession({
   }
 
   sessionLogger.error(`ERROR: Failed to send prompt:`, promptError)
-  abortController.abort('error')
+  abortController.abort(new Error('error'))
 
   if (originalMessage) {
     const reactionResult = await errore.tryAsync(async () => {
