@@ -14,12 +14,12 @@ import {
 } from '../database.js'
 import { initializeOpencodeForDirectory, getOpencodeClientV2 } from '../opencode.js'
 import { SILENT_MESSAGE_FLAGS } from '../discord-utils.js'
-import { createLogger } from '../logger.js'
+import { createLogger, LogPrefix } from '../logger.js'
 import { createWorktreeWithSubmodules, captureGitDiff, type CapturedDiff } from '../worktree-utils.js'
 import { WORKTREE_PREFIX } from './merge-worktree.js'
 import * as errore from 'errore'
 
-const logger = createLogger('WORKTREE')
+const logger = createLogger(LogPrefix.WORKTREE)
 
 class WorktreeError extends Error {
   constructor(message: string, options?: { cause?: unknown }) {

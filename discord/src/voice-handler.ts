@@ -37,9 +37,9 @@ import {
 import { transcribeAudio } from './voice.js'
 import { FetchError } from './errors.js'
 
-import { createLogger } from './logger.js'
+import { createLogger, LogPrefix } from './logger.js'
 
-const voiceLogger = createLogger('VOICE')
+const voiceLogger = createLogger(LogPrefix.VOICE)
 
 export type VoiceConnectionData = {
   connection: VoiceConnection

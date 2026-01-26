@@ -12,10 +12,10 @@ import { getDatabase, getChannelDirectory } from '../database.js'
 import { initializeOpencodeForDirectory } from '../opencode.js'
 import { sendThreadMessage, resolveTextChannel } from '../discord-utils.js'
 import { collectLastAssistantParts } from '../message-formatting.js'
-import { createLogger } from '../logger.js'
+import { createLogger, LogPrefix } from '../logger.js'
 import * as errore from 'errore'
 
-const logger = createLogger('RESUME')
+const logger = createLogger(LogPrefix.RESUME)
 
 export async function handleResumeCommand({ command, appId }: CommandContext): Promise<void> {
   await command.deferReply({ ephemeral: false })

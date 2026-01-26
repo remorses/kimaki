@@ -5,9 +5,9 @@
 import { ChatInputCommandInteraction, ChannelType, type TextChannel } from 'discord.js'
 import { getChannelWorktreesEnabled, setChannelWorktreesEnabled } from '../database.js'
 import { getKimakiMetadata } from '../discord-utils.js'
-import { createLogger } from '../logger.js'
+import { createLogger, LogPrefix } from '../logger.js'
 
-const worktreeSettingsLogger = createLogger('WORKTREE_SETTINGS')
+const worktreeSettingsLogger = createLogger(LogPrefix.WORKTREE_SETTINGS)
 
 /**
  * Handle the /enable-worktrees slash command.

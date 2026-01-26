@@ -12,7 +12,7 @@ import {
   type OpencodeClient as OpencodeClientV2,
 } from '@opencode-ai/sdk/v2'
 import * as errore from 'errore'
-import { createLogger } from './logger.js'
+import { createLogger, LogPrefix } from './logger.js'
 import {
   DirectoryNotAccessibleError,
   ServerStartError,
@@ -21,7 +21,7 @@ import {
   type OpenCodeErrors,
 } from './errors.js'
 
-const opencodeLogger = createLogger('OPENCODE')
+const opencodeLogger = createLogger(LogPrefix.OPENCODE)
 
 const opencodeServers = new Map<
   string,

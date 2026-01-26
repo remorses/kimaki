@@ -12,10 +12,10 @@ import {
   type AssistantMessage,
   type Provider,
 } from '@opencode-ai/sdk'
-import { createLogger } from './logger.js'
+import { createLogger, LogPrefix } from './logger.js'
 import * as errore from 'errore'
 
-const toolsLogger = createLogger('TOOLS')
+const toolsLogger = createLogger(LogPrefix.TOOLS)
 
 import { ShareMarkdown } from './markdown.js'
 import { formatDistanceToNow } from './utils.js'

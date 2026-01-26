@@ -66,7 +66,7 @@ import {
 } from 'discord.js'
 import fs from 'node:fs'
 import * as errore from 'errore'
-import { createLogger } from './logger.js'
+import { createLogger, LogPrefix } from './logger.js'
 import { setGlobalDispatcher, Agent } from 'undici'
 
 // Increase connection pool to prevent deadlock when multiple sessions have open SSE streams.
@@ -74,8 +74,8 @@ import { setGlobalDispatcher, Agent } from 'undici'
 // regular HTTP requests (question.reply, session.prompt) get blocked → deadlock.
 setGlobalDispatcher(new Agent({ headersTimeout: 0, bodyTimeout: 0, connections: 500 }))
 
-const discordLogger = createLogger('DISCORD')
-const voiceLogger = createLogger('VOICE')
+const discordLogger = createLogger(LogPrefix.DISCORD)
+const voiceLogger = createLogger(LogPrefix.VOICE)
 
 type StartOptions = {
   token: string

@@ -8,7 +8,7 @@ import type { Message } from 'discord.js'
 import fs from 'node:fs'
 import path from 'node:path'
 import * as errore from 'errore'
-import { createLogger } from './logger.js'
+import { createLogger, LogPrefix } from './logger.js'
 import { FetchError } from './errors.js'
 
 // Generic message type compatible with both v1 and v2 SDK
@@ -19,7 +19,7 @@ type GenericSessionMessage = {
 
 const ATTACHMENTS_DIR = path.join(process.cwd(), 'tmp', 'discord-attachments')
 
-const logger = createLogger('FORMATTING')
+const logger = createLogger(LogPrefix.FORMATTING)
 
 /**
  * Escapes Discord inline markdown characters so dynamic content

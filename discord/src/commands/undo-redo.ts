@@ -5,10 +5,10 @@ import type { CommandContext } from './types.js'
 import { getDatabase } from '../database.js'
 import { initializeOpencodeForDirectory } from '../opencode.js'
 import { resolveTextChannel, getKimakiMetadata, SILENT_MESSAGE_FLAGS } from '../discord-utils.js'
-import { createLogger } from '../logger.js'
+import { createLogger, LogPrefix } from '../logger.js'
 import * as errore from 'errore'
 
-const logger = createLogger('UNDO-REDO')
+const logger = createLogger(LogPrefix.UNDO_REDO)
 
 export async function handleUndoCommand({ command }: CommandContext): Promise<void> {
   const channel = command.channel

@@ -4,12 +4,12 @@
 
 import { exec, spawn } from 'node:child_process'
 import { promisify } from 'node:util'
-import { createLogger } from './logger.js'
+import { createLogger, LogPrefix } from './logger.js'
 import type { getOpencodeClientV2 } from './opencode.js'
 
 export const execAsync = promisify(exec)
 
-const logger = createLogger('WORKTREE-UTILS')
+const logger = createLogger(LogPrefix.WORKTREE_UTILS)
 
 type OpencodeClientV2 = NonNullable<ReturnType<typeof getOpencodeClientV2>>
 

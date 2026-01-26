@@ -11,9 +11,9 @@ import {
 import crypto from 'node:crypto'
 import { sendThreadMessage, NOTIFY_MESSAGE_FLAGS } from '../discord-utils.js'
 import { getOpencodeClientV2 } from '../opencode.js'
-import { createLogger } from '../logger.js'
+import { createLogger, LogPrefix } from '../logger.js'
 
-const logger = createLogger('ASK_QUESTION')
+const logger = createLogger(LogPrefix.ASK_QUESTION)
 
 // Schema matching the question tool input
 export type AskUserQuestionInput = {

@@ -8,10 +8,10 @@ import { getDatabase, getChannelDirectory } from '../database.js'
 import { initializeOpencodeForDirectory } from '../opencode.js'
 import { SILENT_MESSAGE_FLAGS } from '../discord-utils.js'
 import { handleOpencodeSession } from '../session-handler.js'
-import { createLogger } from '../logger.js'
+import { createLogger, LogPrefix } from '../logger.js'
 import * as errore from 'errore'
 
-const logger = createLogger('SESSION')
+const logger = createLogger(LogPrefix.SESSION)
 
 export async function handleSessionCommand({ command, appId }: CommandContext): Promise<void> {
   await command.deferReply({ ephemeral: false })

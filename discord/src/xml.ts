@@ -4,9 +4,9 @@
 
 import { DomHandler, Parser, ElementType } from 'htmlparser2'
 import type { ChildNode, Element, Text } from 'domhandler'
-import { createLogger } from './logger.js'
+import { createLogger, LogPrefix } from './logger.js'
 
-const xmlLogger = createLogger('XML')
+const xmlLogger = createLogger(LogPrefix.XML)
 
 export function extractTagsArrays<T extends string>({
   xml,

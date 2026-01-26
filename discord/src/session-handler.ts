@@ -24,7 +24,7 @@ import {
 import { sendThreadMessage, NOTIFY_MESSAGE_FLAGS, SILENT_MESSAGE_FLAGS } from './discord-utils.js'
 import { formatPart } from './message-formatting.js'
 import { getOpencodeSystemMessage, type WorktreeInfo } from './system-message.js'
-import { createLogger } from './logger.js'
+import { createLogger, LogPrefix } from './logger.js'
 import { isAbortError } from './utils.js'
 import {
   showAskUserQuestionDropdowns,
@@ -38,9 +38,9 @@ import {
 } from './commands/permissions.js'
 import * as errore from 'errore'
 
-const sessionLogger = createLogger('SESSION')
-const voiceLogger = createLogger('VOICE')
-const discordLogger = createLogger('DISCORD')
+const sessionLogger = createLogger(LogPrefix.SESSION)
+const voiceLogger = createLogger(LogPrefix.VOICE)
+const discordLogger = createLogger(LogPrefix.DISCORD)
 
 export const abortControllers = new Map<string, AbortController>()
 

@@ -6,10 +6,10 @@ import { getDatabase } from '../database.js'
 import { initializeOpencodeForDirectory } from '../opencode.js'
 import { resolveTextChannel, getKimakiMetadata, SILENT_MESSAGE_FLAGS } from '../discord-utils.js'
 import { abortControllers } from '../session-handler.js'
-import { createLogger } from '../logger.js'
+import { createLogger, LogPrefix } from '../logger.js'
 import * as errore from 'errore'
 
-const logger = createLogger('ABORT')
+const logger = createLogger(LogPrefix.ABORT)
 
 export async function handleAbortCommand({ command }: CommandContext): Promise<void> {
   const channel = command.channel

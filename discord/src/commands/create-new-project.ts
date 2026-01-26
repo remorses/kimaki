@@ -8,9 +8,9 @@ import { getProjectsDir } from '../config.js'
 import { createProjectChannels } from '../channel-management.js'
 import { handleOpencodeSession } from '../session-handler.js'
 import { SILENT_MESSAGE_FLAGS } from '../discord-utils.js'
-import { createLogger } from '../logger.js'
+import { createLogger, LogPrefix } from '../logger.js'
 
-const logger = createLogger('CREATE-NEW-PROJECT')
+const logger = createLogger(LogPrefix.CREATE_PROJECT)
 
 export async function handleCreateNewProjectCommand({
   command,

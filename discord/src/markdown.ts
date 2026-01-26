@@ -9,7 +9,7 @@ import { createTaggedError } from 'errore'
 import * as yaml from 'js-yaml'
 import { formatDateTime } from './utils.js'
 import { extractNonXmlContent } from './xml.js'
-import { createLogger } from './logger.js'
+import { createLogger, LogPrefix } from './logger.js'
 import { SessionNotFoundError, MessagesNotFoundError } from './errors.js'
 
 // Generic error for unexpected exceptions in async operations
@@ -18,7 +18,7 @@ class UnexpectedError extends createTaggedError({
   message: '$message',
 }) {}
 
-const markdownLogger = createLogger('MARKDOWN')
+const markdownLogger = createLogger(LogPrefix.MARKDOWN)
 
 export class ShareMarkdown {
   constructor(private client: OpencodeClient) {}

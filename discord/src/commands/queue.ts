@@ -16,9 +16,9 @@ import {
   getQueueLength,
   clearQueue,
 } from '../session-handler.js'
-import { createLogger } from '../logger.js'
+import { createLogger, LogPrefix } from '../logger.js'
 
-const logger = createLogger('QUEUE')
+const logger = createLogger(LogPrefix.QUEUE)
 
 export async function handleQueueCommand({ command }: CommandContext): Promise<void> {
   const message = command.options.getString('message', true)

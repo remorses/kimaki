@@ -4,10 +4,10 @@ import path from 'node:path'
 import * as errore from 'errore'
 import type { CommandContext, AutocompleteContext } from './types.js'
 import { getDatabase } from '../database.js'
-import { createLogger } from '../logger.js'
+import { createLogger, LogPrefix } from '../logger.js'
 import { abbreviatePath } from '../utils.js'
 
-const logger = createLogger('REMOVE-PROJECT')
+const logger = createLogger(LogPrefix.REMOVE_PROJECT)
 
 export async function handleRemoveProjectCommand({ command, appId }: CommandContext): Promise<void> {
   await command.deferReply({ ephemeral: false })

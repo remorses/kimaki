@@ -6,10 +6,10 @@ import Database from 'better-sqlite3'
 import fs from 'node:fs'
 import path from 'node:path'
 import * as errore from 'errore'
-import { createLogger } from './logger.js'
+import { createLogger, LogPrefix } from './logger.js'
 import { getDataDir } from './config.js'
 
-const dbLogger = createLogger('DB')
+const dbLogger = createLogger(LogPrefix.DB)
 
 let db: Database.Database | null = null
 

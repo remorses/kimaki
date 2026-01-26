@@ -14,10 +14,10 @@ import crypto from 'node:crypto'
 import { getDatabase, setChannelAgent, setSessionAgent, clearSessionModel, runModelMigrations } from '../database.js'
 import { initializeOpencodeForDirectory } from '../opencode.js'
 import { resolveTextChannel, getKimakiMetadata } from '../discord-utils.js'
-import { createLogger } from '../logger.js'
+import { createLogger, LogPrefix } from '../logger.js'
 import * as errore from 'errore'
 
-const agentLogger = createLogger('AGENT')
+const agentLogger = createLogger(LogPrefix.AGENT)
 
 const pendingAgentContexts = new Map<
   string,

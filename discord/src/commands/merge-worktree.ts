@@ -5,10 +5,10 @@
 import { type ThreadChannel } from 'discord.js'
 import type { CommandContext } from './types.js'
 import { getThreadWorktree } from '../database.js'
-import { createLogger } from '../logger.js'
+import { createLogger, LogPrefix } from '../logger.js'
 import { execAsync } from '../worktree-utils.js'
 
-const logger = createLogger('MERGE-WORKTREE')
+const logger = createLogger(LogPrefix.MERGE_WORKTREE)
 
 /** Worktree thread title prefix - indicates unmerged worktree */
 export const WORKTREE_PREFIX = '⬦ '

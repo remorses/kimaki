@@ -5,10 +5,10 @@
 import { Worker } from 'node:worker_threads'
 import type { WorkerInMessage, WorkerOutMessage } from './worker-types.js'
 import type { Tool as AITool } from 'ai'
-import { createLogger } from './logger.js'
+import { createLogger, LogPrefix } from './logger.js'
 
-const genaiWorkerLogger = createLogger('GENAI WORKER')
-const genaiWrapperLogger = createLogger('GENAI WORKER WRAPPER')
+const genaiWorkerLogger = createLogger(LogPrefix.GENAI_WORKER)
+const genaiWrapperLogger = createLogger(LogPrefix.GENAI_WORKER)
 
 export interface GenAIWorkerOptions {
   directory: string

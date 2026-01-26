@@ -13,11 +13,11 @@ import { getDatabase } from '../database.js'
 import { initializeOpencodeForDirectory } from '../opencode.js'
 import { resolveTextChannel, getKimakiMetadata, sendThreadMessage } from '../discord-utils.js'
 import { collectLastAssistantParts } from '../message-formatting.js'
-import { createLogger } from '../logger.js'
+import { createLogger, LogPrefix } from '../logger.js'
 import * as errore from 'errore'
 
-const sessionLogger = createLogger('SESSION')
-const forkLogger = createLogger('FORK')
+const sessionLogger = createLogger(LogPrefix.SESSION)
+const forkLogger = createLogger(LogPrefix.FORK)
 
 export async function handleForkCommand(interaction: ChatInputCommandInteraction): Promise<void> {
   const channel = interaction.channel

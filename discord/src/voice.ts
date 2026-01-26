@@ -5,7 +5,7 @@
 
 import { GoogleGenAI, Type, type Content, type Part, type Tool } from '@google/genai'
 import * as errore from 'errore'
-import { createLogger } from './logger.js'
+import { createLogger, LogPrefix } from './logger.js'
 import { glob } from 'glob'
 import { ripGrep } from 'ripgrep-js'
 import {
@@ -19,7 +19,7 @@ import {
   GlobSearchError,
 } from './errors.js'
 
-const voiceLogger = createLogger('VOICE')
+const voiceLogger = createLogger(LogPrefix.VOICE)
 
 export type TranscriptionToolRunner = ({
   name,

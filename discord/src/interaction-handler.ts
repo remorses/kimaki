@@ -32,9 +32,9 @@ import { handleQueueCommand, handleClearQueueCommand } from './commands/queue.js
 import { handleUndoCommand, handleRedoCommand } from './commands/undo-redo.js'
 import { handleUserCommand } from './commands/user-command.js'
 import { handleVerbosityCommand } from './commands/verbosity.js'
-import { createLogger } from './logger.js'
+import { createLogger, LogPrefix } from './logger.js'
 
-const interactionLogger = createLogger('INTERACTION')
+const interactionLogger = createLogger(LogPrefix.INTERACTION)
 
 export function registerInteractionHandler({
   discordClient,

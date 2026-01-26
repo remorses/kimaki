@@ -5,11 +5,11 @@ import type { CommandContext, CommandHandler } from './types.js'
 import { ChannelType, type TextChannel, type ThreadChannel } from 'discord.js'
 import { handleOpencodeSession } from '../session-handler.js'
 import { SILENT_MESSAGE_FLAGS } from '../discord-utils.js'
-import { createLogger } from '../logger.js'
+import { createLogger, LogPrefix } from '../logger.js'
 import { getDatabase, getChannelDirectory } from '../database.js'
 import fs from 'node:fs'
 
-const userCommandLogger = createLogger('USER_CMD')
+const userCommandLogger = createLogger(LogPrefix.USER_CMD)
 
 export const handleUserCommand: CommandHandler = async ({ command, appId }: CommandContext) => {
   const discordCommandName = command.commandName

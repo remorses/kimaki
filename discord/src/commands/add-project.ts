@@ -6,11 +6,11 @@ import type { CommandContext, AutocompleteContext } from './types.js'
 import { getDatabase } from '../database.js'
 import { initializeOpencodeForDirectory } from '../opencode.js'
 import { createProjectChannels } from '../channel-management.js'
-import { createLogger } from '../logger.js'
+import { createLogger, LogPrefix } from '../logger.js'
 import { abbreviatePath } from '../utils.js'
 import * as errore from 'errore'
 
-const logger = createLogger('ADD-PROJECT')
+const logger = createLogger(LogPrefix.ADD_PROJECT)
 
 export async function handleAddProjectCommand({ command, appId }: CommandContext): Promise<void> {
   await command.deferReply({ ephemeral: false })

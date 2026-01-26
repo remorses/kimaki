@@ -5,9 +5,9 @@
 import { RealtimeClient } from '@openai/realtime-api-beta'
 import { writeFile } from 'fs'
 import type { Tool } from 'ai'
-import { createLogger } from './logger.js'
+import { createLogger, LogPrefix } from './logger.js'
 
-const openaiLogger = createLogger('OPENAI')
+const openaiLogger = createLogger(LogPrefix.OPENAI)
 
 // Export the session type for reuse
 export interface OpenAIRealtimeSession {

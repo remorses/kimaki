@@ -43,14 +43,14 @@ import path from 'node:path'
 import fs from 'node:fs'
 import * as errore from 'errore'
 
-import { createLogger } from './logger.js'
+import { createLogger, LogPrefix } from './logger.js'
 import { uploadFilesToDiscord } from './discord-utils.js'
 import { spawn, spawnSync, execSync, type ExecSyncOptions } from 'node:child_process'
 import http from 'node:http'
 import { setDataDir, getDataDir, getLockPort } from './config.js'
 import { sanitizeAgentName } from './commands/agent.js'
 
-const cliLogger = createLogger('CLI')
+const cliLogger = createLogger(LogPrefix.CLI)
 const cli = cac('kimaki')
 
 process.title = 'kimaki'

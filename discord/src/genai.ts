@@ -7,10 +7,10 @@ import type { CallableTool } from '@google/genai'
 import { writeFile } from 'fs'
 import type { Tool as AITool } from 'ai'
 
-import { createLogger } from './logger.js'
+import { createLogger, LogPrefix } from './logger.js'
 import { aiToolToCallableTool } from './ai-tool-to-genai.js'
 
-const genaiLogger = createLogger('GENAI')
+const genaiLogger = createLogger(LogPrefix.GENAI)
 
 const audioParts: Buffer[] = []
 

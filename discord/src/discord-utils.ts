@@ -8,12 +8,12 @@ import { formatMarkdownTables } from './format-tables.js'
 import { getChannelDirectory } from './database.js'
 import { limitHeadingDepth } from './limit-heading-depth.js'
 import { unnestCodeBlocksFromLists } from './unnest-code-blocks.js'
-import { createLogger } from './logger.js'
+import { createLogger, LogPrefix } from './logger.js'
 import mime from 'mime'
 import fs from 'node:fs'
 import path from 'node:path'
 
-const discordLogger = createLogger('DISCORD')
+const discordLogger = createLogger(LogPrefix.DISCORD)
 
 export const SILENT_MESSAGE_FLAGS = 4 | 4096
 // Same as SILENT but without SuppressNotifications - triggers badge/notification

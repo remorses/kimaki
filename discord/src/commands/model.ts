@@ -14,10 +14,10 @@ import { getDatabase, setChannelModel, setSessionModel, runModelMigrations } fro
 import { initializeOpencodeForDirectory } from '../opencode.js'
 import { resolveTextChannel, getKimakiMetadata } from '../discord-utils.js'
 import { abortAndRetrySession } from '../session-handler.js'
-import { createLogger } from '../logger.js'
+import { createLogger, LogPrefix } from '../logger.js'
 import * as errore from 'errore'
 
-const modelLogger = createLogger('MODEL')
+const modelLogger = createLogger(LogPrefix.MODEL)
 
 // Store context by hash to avoid customId length limits (Discord max: 100 chars)
 const pendingModelContexts = new Map<

@@ -12,9 +12,9 @@ import crypto from 'node:crypto'
 import type { PermissionRequest } from '@opencode-ai/sdk/v2'
 import { getOpencodeClientV2 } from '../opencode.js'
 import { NOTIFY_MESSAGE_FLAGS } from '../discord-utils.js'
-import { createLogger } from '../logger.js'
+import { createLogger, LogPrefix } from '../logger.js'
 
-const logger = createLogger('PERMISSIONS')
+const logger = createLogger(LogPrefix.PERMISSIONS)
 
 type PendingPermissionContext = {
   permission: PermissionRequest
