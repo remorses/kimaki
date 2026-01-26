@@ -1,12 +1,13 @@
-// Prefixed logging utility using @clack/prompts.
-// Creates loggers with consistent prefixes for different subsystems
-// (DISCORD, VOICE, SESSION, etc.) for easier debugging.
+// Prefixed logging utility.
+// Uses picocolors for compact frequent logs (log, info, debug).
+// Uses @clack/prompts only for important events (warn, error) with visual distinction.
 
-import { log } from '@clack/prompts'
+import { log as clackLog } from '@clack/prompts'
 import fs from 'node:fs'
 import path, { dirname } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import util from 'node:util'
+import pc from 'picocolors'
 
 const __filename = fileURLToPath(import.meta.url)
 const __dirname = dirname(__filename)
@@ -39,27 +40,34 @@ function writeToFile(level: string, prefix: string, args: unknown[]) {
   fs.appendFileSync(logFilePath, message)
 }
 
+function getTimestamp(): string {
+  const now = new Date()
+  return `${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}:${String(now.getSeconds()).padStart(2, '0')}`
+}
+
 export function createLogger(prefix: string) {
   return {
     log: (...args: unknown[]) => {
       writeToFile('INFO', prefix, args)
-      log.info([`[${prefix}]`, ...args.map(formatArg)].join(' '))
+      console.log(pc.dim(getTimestamp()), pc.cyan(`[${prefix}]`), ...args.map(formatArg))
     },
     error: (...args: unknown[]) => {
       writeToFile('ERROR', prefix, args)
-      log.error([`[${prefix}]`, ...args.map(formatArg)].join(' '))
+      // use clack for errors - visually distinct
+      clackLog.error([`[${prefix}]`, ...args.map(formatArg)].join(' '))
     },
     warn: (...args: unknown[]) => {
       writeToFile('WARN', prefix, args)
-      log.warn([`[${prefix}]`, ...args.map(formatArg)].join(' '))
+      // use clack for warnings - visually distinct
+      clackLog.warn([`[${prefix}]`, ...args.map(formatArg)].join(' '))
     },
     info: (...args: unknown[]) => {
       writeToFile('INFO', prefix, args)
-      log.info([`[${prefix}]`, ...args.map(formatArg)].join(' '))
+      console.log(pc.dim(getTimestamp()), pc.blue(`[${prefix}]`), ...args.map(formatArg))
     },
     debug: (...args: unknown[]) => {
       writeToFile('DEBUG', prefix, args)
-      log.info([`[${prefix}]`, ...args.map(formatArg)].join(' '))
+      console.log(pc.dim(getTimestamp()), pc.dim(`[${prefix}]`), ...args.map(formatArg))
     },
   }
 }
