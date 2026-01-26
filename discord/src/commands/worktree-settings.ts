@@ -7,7 +7,7 @@ import { getChannelWorktreesEnabled, setChannelWorktreesEnabled } from '../datab
 import { getKimakiMetadata } from '../discord-utils.js'
 import { createLogger, LogPrefix } from '../logger.js'
 
-const worktreeSettingsLogger = createLogger(LogPrefix.WORKTREE_SETTINGS)
+const worktreeSettingsLogger = createLogger(LogPrefix.WORKTREE)
 
 /**
  * Handle the /enable-worktrees slash command.

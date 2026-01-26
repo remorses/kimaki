@@ -9,7 +9,7 @@ import type { getOpencodeClientV2 } from './opencode.js'
 
 export const execAsync = promisify(exec)
 
-const logger = createLogger(LogPrefix.WORKTREE_UTILS)
+const logger = createLogger(LogPrefix.WORKTREE)
 
 type OpencodeClientV2 = NonNullable<ReturnType<typeof getOpencodeClientV2>>
 

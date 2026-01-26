@@ -8,7 +8,7 @@ import { getThreadWorktree } from '../database.js'
 import { createLogger, LogPrefix } from '../logger.js'
 import { execAsync } from '../worktree-utils.js'
 
-const logger = createLogger(LogPrefix.MERGE_WORKTREE)
+const logger = createLogger(LogPrefix.WORKTREE)
 
 /** Worktree thread title prefix - indicates unmerged worktree */
 export const WORKTREE_PREFIX = '⬦ '
