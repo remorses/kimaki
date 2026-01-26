@@ -334,7 +334,7 @@ export function formatTodoList(part: Part): string {
 }
 
 export function formatPart(part: Part, prefix?: string): string {
-  const pfx = prefix ? `${prefix}: ` : ''
+  const pfx = prefix ? `${prefix} ⋅ ` : ''
 
   if (part.type === 'text') {
     if (!part.text?.trim()) return ''
@@ -423,7 +423,8 @@ export function formatPart(part: Part, prefix?: string): string {
       }
       return '┣'
     })()
-    return `${icon} ${pfx}${part.tool} ${toolTitle} ${summaryText}`.trim()
+    const toolParts = [part.tool, toolTitle, summaryText].filter(Boolean).join(' ')
+    return `${icon} ${pfx}${toolParts}`
   }
 
   logger.warn('Unknown part type:', part)
