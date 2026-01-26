@@ -14,3 +14,4 @@ tmp
 
 # opensrc - source code for packages
 opensrc/
+__snapshots__
