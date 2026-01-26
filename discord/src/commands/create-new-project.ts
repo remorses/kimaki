@@ -74,7 +74,7 @@ export async function handleCreateNewProjectCommand({
     const textChannel = (await guild.channels.fetch(textChannelId)) as TextChannel
 
     await command.editReply(
-      `✅ Created new project **${sanitizedName}**\n📁 Directory: \`${projectDirectory}\`\n📝 Text: <#${textChannelId}>\n🔊 Voice: <#${voiceChannelId}>\n\n_Starting session..._`,
+      `✅ Created new project **${sanitizedName}**\n📁 Directory: \`${projectDirectory}\`\n📝 Text: <#${textChannelId}>\n🔊 Voice: <#${voiceChannelId}>\n_Starting session..._`,
     )
 
     const starterMessage = await textChannel.send({

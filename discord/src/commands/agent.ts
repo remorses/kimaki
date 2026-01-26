@@ -257,7 +257,7 @@ export async function handleAgentSelectMenu(
       })
     } else {
       await interaction.editReply({
-        content: `Agent preference set for this channel: **${selectedAgent}**\n\nAll new sessions in this channel will use this agent.`,
+        content: `Agent preference set for this channel: **${selectedAgent}**\nAll new sessions in this channel will use this agent.`,
         components: [],
       })
     }
@@ -331,7 +331,7 @@ export async function handleQuickAgentCommand({
       })
     } else {
       await command.editReply({
-        content: `Switched to **${matchingAgent.name}** agent for this channel\n\nAll new sessions will use this agent.`,
+        content: `Switched to **${matchingAgent.name}** agent for this channel\nAll new sessions will use this agent.`,
       })
     }
   } catch (error) {

@@ -65,7 +65,7 @@ export async function handleVerbosityCommand({
     : 'All output will be shown, including tool executions and status messages.'
 
   await command.reply({
-    content: `Verbosity set to **${level}**.\n\n${description}\n\nThis applies to all new sessions in this channel.`,
+    content: `Verbosity set to **${level}**.\n${description}\nThis applies to all new sessions in this channel.`,
     ephemeral: true,
   })
 }

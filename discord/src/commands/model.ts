@@ -385,12 +385,12 @@ export async function handleModelSelectMenu(
 
       if (retried) {
         await interaction.editReply({
-          content: `Model changed for this session:\n**${context.providerName}** / **${selectedModelId}**\n\n\`${fullModelId}\`\n\n_Retrying current request with new model..._`,
+          content: `Model changed for this session:\n**${context.providerName}** / **${selectedModelId}**\n\`${fullModelId}\`\n_Retrying current request with new model..._`,
           components: [],
         })
       } else {
         await interaction.editReply({
-          content: `Model preference set for this session:\n**${context.providerName}** / **${selectedModelId}**\n\n\`${fullModelId}\``,
+          content: `Model preference set for this session:\n**${context.providerName}** / **${selectedModelId}**\n\`${fullModelId}\``,
           components: [],
         })
       }
@@ -400,7 +400,7 @@ export async function handleModelSelectMenu(
       modelLogger.log(`Set model ${fullModelId} for channel ${context.channelId}`)
 
       await interaction.editReply({
-        content: `Model preference set for this channel:\n**${context.providerName}** / **${selectedModelId}**\n\n\`${fullModelId}\`\n\nAll new sessions in this channel will use this model.`,
+        content: `Model preference set for this channel:\n**${context.providerName}** / **${selectedModelId}**\n\`${fullModelId}\`\nAll new sessions in this channel will use this model.`,
         components: [],
       })
     }
