@@ -1048,6 +1048,15 @@ export async function handleOpencodeSession({
 
     const handleSessionIdle = (idleSessionId: string) => {
       if (idleSessionId === session.id) {
+        // Ignore stale session.idle events - if we haven't received any content yet
+        // (no assistantMessageId set), this is likely a stale event from before
+        // the prompt was sent or from a previous request's subscription state.
+        if (!assistantMessageId) {
+          sessionLogger.log(
+            `[SESSION IDLE] Ignoring stale idle event for ${session.id} (no content received yet)`,
+          )
+          return
+        }
         sessionLogger.log(`[SESSION IDLE] Session ${session.id} is idle, aborting`)
         abortController.abort(new Error('finished'))
         return
