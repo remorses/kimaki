@@ -178,19 +178,33 @@ export function getToolSummaryText(part: Part): string {
   }
 
   if (part.tool === 'apply_patch') {
-    try {
-      const state = part.state as { metadata?: { files?: unknown } }
-      const rawFiles = state.metadata?.files
-      if (!Array.isArray(rawFiles) || rawFiles.length === 0) {
-        return ''
-      }
-      return rawFiles
+    const state = part.state as {
+      metadata?: { files?: unknown; diff?: unknown }
+      output?: unknown
+    }
+    const rawFiles = state.metadata?.files
+    const partMetaFiles = (part as { metadata?: { files?: unknown } }).metadata?.files
+    const filesList = Array.isArray(rawFiles)
+      ? rawFiles
+      : Array.isArray(partMetaFiles)
+        ? partMetaFiles
+        : []
+
+    const summarizeFiles = (files: unknown[]): string => {
+      const summarized = files
         .map((f) => {
-          if (!f || typeof f !== 'object') {
+          if (!f) {
+            return null
+          }
+          if (typeof f === 'string') {
+            const fileName = f.split('/').pop() || ''
+            return fileName ? `*${escapeInlineMarkdown(fileName)}* (+0-0)` : `(+0-0)`
+          }
+          if (typeof f !== 'object') {
             return null
           }
           const file = f as Record<string, unknown>
-          const pathStr = String(file.relativePath || file.filePath || '')
+          const pathStr = String(file.relativePath || file.filePath || file.path || '')
           const fileName = pathStr.split('/').pop() || ''
           const added = typeof file.additions === 'number' ? file.additions : 0
           const removed = typeof file.deletions === 'number' ? file.deletions : 0
@@ -200,9 +214,34 @@ export function getToolSummaryText(part: Part): string {
         })
         .filter(Boolean)
         .join(', ')
-    } catch {
-      return ''
+      return summarized
     }
+
+    if (filesList.length > 0) {
+      const summarized = summarizeFiles(filesList)
+      if (summarized) {
+        return summarized
+      }
+    }
+
+    const outputText = typeof state.output === 'string' ? state.output : ''
+    const outputLines = outputText.split('\n')
+    const updatedIndex = outputLines.findIndex((line) =>
+      line.startsWith('Success. Updated the following files:'),
+    )
+    if (updatedIndex !== -1) {
+      const fileLines = outputLines.slice(updatedIndex + 1).filter(Boolean)
+      if (fileLines.length > 0) {
+        const summarized = summarizeFiles(
+          fileLines.map((line) => line.replace(/^[AMD]\s+/, '').trim()),
+        )
+        if (summarized) {
+          return summarized
+        }
+      }
+    }
+
+    return ''
   }
 
   if (part.tool === 'write') {
