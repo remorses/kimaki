@@ -30,6 +30,13 @@ function escapeInlineMarkdown(text: string): string {
 }
 
 /**
+ * Normalize whitespace: convert newlines to spaces and collapse consecutive spaces.
+ */
+function normalizeWhitespace(text: string): string {
+  return text.replace(/[\r\n]+/g, ' ').replace(/\s+/g, ' ')
+}
+
+/**
  * Collects and formats the last N assistant parts from session messages.
  * Used by both /resume and /fork to show recent assistant context.
  */
@@ -228,7 +235,8 @@ export function getToolSummaryText(part: Part): string {
     .map(([key, value]) => {
       if (value === null || value === undefined) return null
       const stringValue = typeof value === 'string' ? value : JSON.stringify(value)
-      const truncatedValue = stringValue.length > 50 ? stringValue.slice(0, 50) + '…' : stringValue
+      const normalized = normalizeWhitespace(stringValue)
+      const truncatedValue = normalized.length > 50 ? normalized.slice(0, 50) + '…' : normalized
       return `${key}: ${truncatedValue}`
     })
     .filter(Boolean)
