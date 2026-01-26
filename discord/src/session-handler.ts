@@ -303,6 +303,15 @@ export async function handleOpencodeSession({
   if (existingController) {
     voiceLogger.log(`[ABORT] Cancelling existing request for session: ${session.id}`)
     existingController.abort(new Error('New request started'))
+    const abortResult = await errore.tryAsync(() => {
+      return getClient().session.abort({
+        path: { id: session.id },
+        query: { directory: sdkDirectory },
+      })
+    })
+    if (abortResult instanceof Error) {
+      sessionLogger.log(`[ABORT] Server abort failed (may be already done):`, abortResult)
+    }
   }
 
   // Auto-reject ALL pending permissions for this thread
@@ -740,6 +749,10 @@ export async function handleOpencodeSession({
       part: Part,
       subtaskInfo: { label: string; assistantMessageId?: string },
     ) => {
+      // In text-only mode, skip all subtask output (they're tool-related)
+      if (verbosity === 'text-only') {
+        return
+      }
       if (part.type === 'step-start' || part.type === 'step-finish') {
         return
       }
