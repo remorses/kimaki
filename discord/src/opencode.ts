@@ -54,31 +54,24 @@ async function getOpenPort(): Promise<number> {
 }
 
 async function waitForServer(port: number, maxAttempts = 30): Promise<ServerStartError | true> {
+  const endpoint = `http://127.0.0.1:${port}/api/health`
   for (let i = 0; i < maxAttempts; i++) {
-    const endpoints = [
-      `http://127.0.0.1:${port}/api/health`,
-      `http://127.0.0.1:${port}/`,
-      `http://127.0.0.1:${port}/api`,
-    ]
-
-    for (const endpoint of endpoints) {
-      const response = await errore.tryAsync({
-        try: () => fetch(endpoint),
-        catch: (e) => new FetchError({ url: endpoint, cause: e }),
-      })
-      if (response instanceof Error) {
-        // Connection refused or other transient errors - continue polling
-        opencodeLogger.debug(`Server polling attempt failed: ${response.message}`)
-        continue
-      }
-      if (response.status < 500) {
-        return true
-      }
-      const body = await response.text()
-      // Fatal errors that won't resolve with retrying
-      if (body.includes('BunInstallFailedError')) {
-        return new ServerStartError({ port, reason: body.slice(0, 200) })
-      }
+    const response = await errore.tryAsync({
+      try: () => fetch(endpoint),
+      catch: (e) => new FetchError({ url: endpoint, cause: e }),
+    })
+    if (response instanceof Error) {
+      // Connection refused or other transient errors - continue polling
+      await new Promise((resolve) => setTimeout(resolve, 1000))
+      continue
+    }
+    if (response.status < 500) {
+      return true
+    }
+    const body = await response.text()
+    // Fatal errors that won't resolve with retrying
+    if (body.includes('BunInstallFailedError')) {
+      return new ServerStartError({ port, reason: body.slice(0, 200) })
     }
     await new Promise((resolve) => setTimeout(resolve, 1000))
   }
