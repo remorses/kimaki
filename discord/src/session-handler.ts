@@ -418,6 +418,7 @@ export async function handleOpencodeSession({
   let usedAgent: string | undefined
   let tokensUsedInSession = 0
   let lastDisplayedContextPercentage = 0
+  let lastRateLimitDisplayTime = 0
   let modelContextLimit: number | undefined
   let assistantMessageId: string | undefined
   let handlerPromise: Promise<void> | null = null
@@ -1011,6 +1012,40 @@ export async function handleOpencodeSession({
       })
     }
 
+    const handleSessionStatus = async (properties: {
+      sessionID: string
+      status: { type: 'idle' } | { type: 'retry'; attempt: number; message: string; next: number } | { type: 'busy' }
+    }) => {
+      if (properties.sessionID !== session.id) {
+        return
+      }
+      if (properties.status.type !== 'retry') {
+        return
+      }
+      // Throttle to once per 10 seconds
+      const now = Date.now()
+      if (now - lastRateLimitDisplayTime < 10_000) {
+        return
+      }
+      lastRateLimitDisplayTime = now
+
+      const { attempt, message, next } = properties.status
+      const remainingMs = Math.max(0, next - now)
+      const remainingSec = Math.ceil(remainingMs / 1000)
+
+      const duration = (() => {
+        if (remainingSec < 60) {
+          return `${remainingSec}s`
+        }
+        const mins = Math.floor(remainingSec / 60)
+        const secs = remainingSec % 60
+        return secs > 0 ? `${mins}m ${secs}s` : `${mins}m`
+      })()
+
+      const chunk = `⬦ ${message} - retrying in ${duration} (attempt #${attempt})`
+      await thread.send({ content: chunk, flags: SILENT_MESSAGE_FLAGS })
+    }
+
     const handleSessionIdle = (idleSessionId: string) => {
       if (idleSessionId === session.id) {
         sessionLogger.log(`[SESSION IDLE] Session ${session.id} is idle, aborting`)
@@ -1050,6 +1085,9 @@ export async function handleOpencodeSession({
             break
           case 'session.idle':
             handleSessionIdle(event.properties.sessionID)
+            break
+          case 'session.status':
+            await handleSessionStatus(event.properties)
             break
           default:
             break
