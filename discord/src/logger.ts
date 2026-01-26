@@ -16,6 +16,7 @@ export const LogPrefix = {
   AGENT: 'AGENT',
   ASK_QUESTION: 'QUESTION',
   CLI: 'CLI',
+  COMPACT: 'COMPACT',
   CREATE_PROJECT: 'NEW_PROJ',
   DB: 'DB',
   DISCORD: 'DISCORD',

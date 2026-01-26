@@ -19,6 +19,7 @@ import {
 import { handleCreateNewProjectCommand } from './commands/create-new-project.js'
 import { handlePermissionSelectMenu } from './commands/permissions.js'
 import { handleAbortCommand } from './commands/abort.js'
+import { handleCompactCommand } from './commands/compact.js'
 import { handleShareCommand } from './commands/share.js'
 import { handleForkCommand, handleForkSelectMenu } from './commands/fork.js'
 import {
@@ -124,6 +125,10 @@ export function registerInteractionHandler({
           case 'abort':
           case 'stop':
             await handleAbortCommand({ command: interaction, appId })
+            return
+
+          case 'compact':
+            await handleCompactCommand({ command: interaction, appId })
             return
 
           case 'share':

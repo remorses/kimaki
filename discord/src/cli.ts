@@ -322,6 +322,10 @@ async function registerCommands({
       .setDescription('Abort the current OpenCode request in this thread')
       .toJSON(),
     new SlashCommandBuilder()
+      .setName('compact')
+      .setDescription('Compact the session context by summarizing conversation history')
+      .toJSON(),
+    new SlashCommandBuilder()
       .setName('stop')
       .setDescription('Abort the current OpenCode request in this thread')
       .toJSON(),
