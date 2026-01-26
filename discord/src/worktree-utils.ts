@@ -1,7 +1,8 @@
 // Worktree utility functions.
 // Wrapper for OpenCode worktree creation that also initializes git submodules.
+// Also handles capturing and applying git diffs when creating worktrees from threads.
 
-import { exec } from 'node:child_process'
+import { exec, spawn } from 'node:child_process'
 import { promisify } from 'node:util'
 import { createLogger } from './logger.js'
 import type { getOpencodeClientV2 } from './opencode.js'
@@ -20,16 +21,21 @@ type WorktreeResult = {
 /**
  * Create a worktree using OpenCode SDK and initialize git submodules.
  * This wrapper ensures submodules are properly set up in new worktrees.
+ *
+ * If diff is provided, it's applied BEFORE submodule update to ensure
+ * any submodule pointer changes in the diff are respected.
  */
 export async function createWorktreeWithSubmodules({
   clientV2,
   directory,
   name,
+  diff,
 }: {
   clientV2: OpencodeClientV2
   directory: string
   name: string
-}): Promise<WorktreeResult | Error> {
+  diff?: CapturedDiff | null
+}): Promise<WorktreeResult & { diffApplied: boolean } | Error> {
   // 1. Create worktree via OpenCode SDK
   const response = await clientV2.worktree.create({
     directory,
@@ -45,8 +51,19 @@ export async function createWorktreeWithSubmodules({
   }
 
   const worktreeDir = response.data.directory
+  let diffApplied = false
 
-  // 2. Init submodules in new worktree (don't block on failure)
+  // 2. Apply diff BEFORE submodule update (if provided)
+  // This ensures any submodule pointer changes in the diff are applied first,
+  // so submodule update checks out the correct commits.
+  if (diff) {
+    logger.log(`Applying diff to ${worktreeDir} before submodule init`)
+    diffApplied = await applyGitDiff(worktreeDir, diff)
+  }
+
+  // 3. Init submodules in new worktree (don't block on failure)
+  // Uses --init to initialize, --recursive for nested submodules.
+  // Submodules will be checked out at the commit specified by the (possibly updated) index.
   try {
     logger.log(`Initializing submodules in ${worktreeDir}`)
     await execAsync('git submodule update --init --recursive', {
@@ -60,7 +77,7 @@ export async function createWorktreeWithSubmodules({
     )
   }
 
-  // 3. Install dependencies using ni (detects package manager from lockfile)
+  // 4. Install dependencies using ni (detects package manager from lockfile)
   try {
     logger.log(`Installing dependencies in ${worktreeDir}`)
     await execAsync('npx -y ni', {
@@ -74,5 +91,92 @@ export async function createWorktreeWithSubmodules({
     )
   }
 
-  return response.data
+  return { ...response.data, diffApplied }
+}
+
+/**
+ * Captured git diff (both staged and unstaged changes).
+ */
+export type CapturedDiff = {
+  unstaged: string
+  staged: string
+}
+
+/**
+ * Capture git diff from a directory (both staged and unstaged changes).
+ * Returns null if no changes or on error.
+ */
+export async function captureGitDiff(directory: string): Promise<CapturedDiff | null> {
+  try {
+    // Capture unstaged changes
+    const unstagedResult = await execAsync('git diff', { cwd: directory })
+    const unstaged = unstagedResult.stdout.trim()
+
+    // Capture staged changes
+    const stagedResult = await execAsync('git diff --staged', { cwd: directory })
+    const staged = stagedResult.stdout.trim()
+
+    if (!unstaged && !staged) {
+      return null
+    }
+
+    return { unstaged, staged }
+  } catch (e) {
+    logger.warn(`Failed to capture git diff from ${directory}: ${e instanceof Error ? e.message : String(e)}`)
+    return null
+  }
+}
+
+/**
+ * Run a git command with stdin input.
+ * Uses spawn to pipe the diff content to git apply.
+ */
+function runGitWithStdin(args: string[], cwd: string, input: string): Promise<void> {
+  return new Promise((resolve, reject) => {
+    const child = spawn('git', args, { cwd, stdio: ['pipe', 'pipe', 'pipe'] })
+
+    let stderr = ''
+    child.stderr?.on('data', (data) => {
+      stderr += data.toString()
+    })
+
+    child.on('close', (code) => {
+      if (code === 0) {
+        resolve()
+      } else {
+        reject(new Error(stderr || `git ${args.join(' ')} failed with code ${code}`))
+      }
+    })
+
+    child.on('error', reject)
+
+    child.stdin?.write(input)
+    child.stdin?.end()
+  })
+}
+
+/**
+ * Apply a captured git diff to a directory.
+ * Applies staged changes first, then unstaged.
+ */
+export async function applyGitDiff(directory: string, diff: CapturedDiff): Promise<boolean> {
+  try {
+    // Apply staged changes first (and stage them)
+    if (diff.staged) {
+      logger.log(`Applying staged diff to ${directory}`)
+      await runGitWithStdin(['apply', '--index'], directory, diff.staged)
+    }
+
+    // Apply unstaged changes (don't stage them)
+    if (diff.unstaged) {
+      logger.log(`Applying unstaged diff to ${directory}`)
+      await runGitWithStdin(['apply'], directory, diff.unstaged)
+    }
+
+    logger.log(`Successfully applied diff to ${directory}`)
+    return true
+  } catch (e) {
+    logger.warn(`Failed to apply git diff to ${directory}: ${e instanceof Error ? e.message : String(e)}`)
+    return false
+  }
 }
