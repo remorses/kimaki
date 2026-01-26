@@ -51,6 +51,26 @@ import { setDataDir, getDataDir, getLockPort } from './config.js'
 import { sanitizeAgentName } from './commands/agent.js'
 
 const cliLogger = createLogger(LogPrefix.CLI)
+
+// Spawn caffeinate on macOS to prevent system sleep while bot is running.
+// Not detached, so it dies automatically with the parent process.
+function startCaffeinate() {
+  if (process.platform !== 'darwin') {
+    return
+  }
+  try {
+    const proc = spawn('caffeinate', ['-i'], {
+      stdio: 'ignore',
+      detached: false,
+    })
+    proc.on('error', (err) => {
+      cliLogger.warn('Failed to start caffeinate:', err.message)
+    })
+    cliLogger.log('Started caffeinate to prevent system sleep')
+  } catch (err) {
+    cliLogger.warn('Failed to spawn caffeinate:', err instanceof Error ? err.message : String(err))
+  }
+}
 const cli = cac('kimaki')
 
 process.title = 'kimaki'
@@ -545,6 +565,8 @@ async function backgroundInit({
 }
 
 async function run({ restart, addChannels, useWorktrees }: CliOptions) {
+  startCaffeinate()
+
   const forceSetup = Boolean(restart)
 
   intro('🤖 Discord Bot Setup')
