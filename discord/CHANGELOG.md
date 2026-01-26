@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.4.46
+
+### Patch Changes
+
+- fix **subtask output** hidden in text-only verbosity mode (thanks @xHeaven for reporting)
+- fix **add users to threads** so they appear in sidebar
+- fix **serialize discord event handlers** to prevent race conditions
+
 ## 0.4.45
 
 ### Patch Changes
