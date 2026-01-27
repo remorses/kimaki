@@ -133,7 +133,10 @@ async function handleAgentAutocomplete({ interaction, appId }: AutocompleteConte
     }
 
     const agents = agentsResponse.data
-      .filter((a) => a.mode === 'primary' || a.mode === 'all')
+      .filter((a) => {
+        const hidden = (a as { hidden?: boolean }).hidden
+        return (a.mode === 'primary' || a.mode === 'all') && !hidden
+      })
       .filter((a) => a.name.toLowerCase().includes(focusedValue.toLowerCase()))
       .slice(0, 25)
 
