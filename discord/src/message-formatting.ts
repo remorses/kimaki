@@ -224,6 +224,29 @@ export function getToolSummaryText(part: Part): string {
       }
     }
 
+    const patchText = (part.state.input?.patchText as string) || ''
+    if (patchText) {
+      const patchLines = patchText.split('\n')
+      const fileLines = patchLines.filter((line) => {
+        return (
+          line.startsWith('*** Add File:') ||
+          line.startsWith('*** Update File:') ||
+          line.startsWith('*** Delete File:') ||
+          line.startsWith('*** Move to:')
+        )
+      })
+      if (fileLines.length > 0) {
+        const summarized = summarizeFiles(
+          fileLines
+            .map((line) => line.replace(/^\*\*\* (Add File|Update File|Delete File|Move to):\s*/, ''))
+            .filter(Boolean),
+        )
+        if (summarized) {
+          return summarized
+        }
+      }
+    }
+
     const outputText = typeof state.output === 'string' ? state.output : ''
     const outputLines = outputText.split('\n')
     const updatedIndex = outputLines.findIndex((line) =>
