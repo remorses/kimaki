@@ -425,6 +425,8 @@ export async function handleOpencodeSession({
 
   let typingInterval: NodeJS.Timeout | null = null
   let hasSentParts = false
+  let promptResolved = false
+  let hasReceivedEvent = false
 
   function startTyping(): () => void {
     if (abortController.signal.aborted) {
@@ -592,6 +594,7 @@ export async function handleOpencodeSession({
       if (msg.sessionID !== session.id) {
         return
       }
+      hasReceivedEvent = true
 
       if (msg.role !== 'assistant') {
         return
@@ -1064,20 +1067,13 @@ export async function handleOpencodeSession({
 
     const handleSessionIdle = (idleSessionId: string) => {
       if (idleSessionId === session.id) {
-        // Ignore stale session.idle events - if we haven't received any content yet
-        // (no assistantMessageId set), this is likely a stale event from before
-        // the prompt was sent or from a previous request's subscription state.
-        if (!assistantMessageId) {
+        if (!promptResolved || !hasReceivedEvent) {
           sessionLogger.log(
-            `[SESSION IDLE] Ignoring stale idle event for ${session.id} (no content received yet)`,
+            `[SESSION IDLE] Ignoring idle event for ${session.id} (prompt not resolved or no events yet)`,
           )
           return
         }
-        if (!hasSentParts) {
-          sessionLogger.log(`[SESSION IDLE] Ignoring idle event (no parts sent yet)`)
-          return
-        }
-        sessionLogger.log(`[SESSION IDLE] Session ${session.id} is idle, aborting`)
+        sessionLogger.log(`[SESSION IDLE] Session ${session.id} is idle, ending stream`)
         abortController.abort(new Error('finished'))
         return
       }
@@ -1360,7 +1356,7 @@ export async function handleOpencodeSession({
       throw new Error(`OpenCode API error (${response.response.status}): ${errorMessage}`)
     }
 
-    abortController.abort(new Error('finished'))
+    promptResolved = true
 
     sessionLogger.log(`Successfully sent prompt, got response`)
 
