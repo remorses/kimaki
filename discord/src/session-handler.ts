@@ -1004,10 +1004,11 @@ export async function handleOpencodeSession({
       )
 
       setImmediate(() => {
+        const prefixedPrompt = `<discord-user name="${nextMessage.username}" />\n${nextMessage.prompt}`
         void errore
           .tryAsync(async () => {
             return handleOpencodeSession({
-              prompt: nextMessage.prompt,
+              prompt: prefixedPrompt,
               thread,
               projectDirectory: directory,
               images: nextMessage.images,
@@ -1222,8 +1223,9 @@ export async function handleOpencodeSession({
           // Send the queued message as a new prompt (recursive call)
           // Use setImmediate to avoid blocking and allow this finally to complete
           setImmediate(() => {
+            const prefixedPrompt = `<discord-user name="${nextMessage.username}" />\n${nextMessage.prompt}`
             handleOpencodeSession({
-              prompt: nextMessage.prompt,
+              prompt: prefixedPrompt,
               thread,
               projectDirectory,
               images: nextMessage.images,

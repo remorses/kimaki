@@ -77,6 +77,10 @@ setGlobalDispatcher(new Agent({ headersTimeout: 0, bodyTimeout: 0, connections: 
 const discordLogger = createLogger(LogPrefix.DISCORD)
 const voiceLogger = createLogger(LogPrefix.VOICE)
 
+function prefixWithDiscordUser({ username, prompt }: { username: string; prompt: string }): string {
+  return `<discord-user name="${username}" />\n${prompt}`
+}
+
 type StartOptions = {
   token: string
   appId?: string
@@ -165,6 +169,17 @@ export async function startDiscordBot({
       if (message.author?.bot) {
         return
       }
+
+      // Ignore messages that start with a mention of another user (not the bot).
+      // These are likely users talking to each other, not the bot.
+      const leadingMentionMatch = message.content?.match(/^<@!?(\d+)>/)
+      if (leadingMentionMatch) {
+        const mentionedUserId = leadingMentionMatch[1]
+        if (mentionedUserId !== discordClient.user?.id) {
+          return
+        }
+      }
+
       if (message.partial) {
         discordLogger.log(`Fetching partial message ${message.id}`)
         const fetched = await errore.tryAsync({
@@ -287,7 +302,7 @@ export async function startDiscordBot({
           }
 
           await handleOpencodeSession({
-            prompt,
+            prompt: prefixWithDiscordUser({ username: message.member?.displayName || message.author.displayName, prompt }),
             thread,
             projectDirectory,
             channelId: parent?.id || '',
@@ -364,7 +379,7 @@ export async function startDiscordBot({
           ? `${messageContent}\n\n${textAttachmentsContent}`
           : messageContent
         await handleOpencodeSession({
-          prompt: promptWithAttachments,
+          prompt: prefixWithDiscordUser({ username: message.member?.displayName || message.author.displayName, prompt: promptWithAttachments }),
           thread,
           projectDirectory,
           originalMessage: message,
@@ -508,7 +523,7 @@ export async function startDiscordBot({
           ? `${messageContent}\n\n${textAttachmentsContent}`
           : messageContent
         await handleOpencodeSession({
-          prompt: promptWithAttachments,
+          prompt: prefixWithDiscordUser({ username: message.member?.displayName || message.author.displayName, prompt: promptWithAttachments }),
           thread,
           projectDirectory: sessionDirectory,
           originalMessage: message,
