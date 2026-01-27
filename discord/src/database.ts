@@ -69,8 +69,11 @@ export function getDatabase(): Database.Database {
     // Migration: add app_id column to channel_directories for multi-bot support
     try {
       db.exec(`ALTER TABLE channel_directories ADD COLUMN app_id TEXT`)
-    } catch {
-      // Column already exists, ignore
+    } catch (error) {
+      dbLogger.debug(
+        'Failed to add app_id column to channel_directories (likely exists):',
+        error instanceof Error ? error.message : String(error),
+      )
     }
 
     // Table for threads that should auto-start a session (created by CLI without --notify-only)

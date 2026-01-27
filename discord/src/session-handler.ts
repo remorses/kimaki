@@ -424,6 +424,7 @@ export async function handleOpencodeSession({
   let handlerPromise: Promise<void> | null = null
 
   let typingInterval: NodeJS.Timeout | null = null
+  let hasSentParts = false
 
   function startTyping(): () => void {
     if (abortController.signal.aborted) {
@@ -497,6 +498,7 @@ export async function handleOpencodeSession({
       discordLogger.error(`ERROR: Failed to send part ${part.id}:`, sendResult)
       return
     }
+    hasSentParts = true
     sentPartIds.add(part.id)
 
     getDatabase()
@@ -1068,6 +1070,10 @@ export async function handleOpencodeSession({
           )
           return
         }
+        if (!hasSentParts) {
+          sessionLogger.log(`[SESSION IDLE] Ignoring idle event (no parts sent yet)`)
+          return
+        }
         sessionLogger.log(`[SESSION IDLE] Session ${session.id} is idle, aborting`)
         abortController.abort(new Error('finished'))
         return
@@ -1308,6 +1314,8 @@ export async function handleOpencodeSession({
             mainRepoDirectory: worktreeInfo.project_directory,
           }
         : undefined
+
+    hasSentParts = false
 
     const response = command
       ? await getClient().session.command({

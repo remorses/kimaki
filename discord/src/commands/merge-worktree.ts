@@ -47,7 +47,11 @@ async function isDetachedHead(worktreeDir: string): Promise<boolean> {
   try {
     await execAsync(`git -C "${worktreeDir}" symbolic-ref HEAD`)
     return false
-  } catch {
+  } catch (error) {
+    logger.debug(
+      `Failed to resolve HEAD for ${worktreeDir}:`,
+      error instanceof Error ? error.message : String(error),
+    )
     return true
   }
 }
@@ -59,7 +63,11 @@ async function getCurrentBranch(worktreeDir: string): Promise<string | null> {
   try {
     const { stdout } = await execAsync(`git -C "${worktreeDir}" symbolic-ref --short HEAD`)
     return stdout.trim() || null
-  } catch {
+  } catch (error) {
+    logger.debug(
+      `Failed to get current branch for ${worktreeDir}:`,
+      error instanceof Error ? error.message : String(error),
+    )
     return null
   }
 }
@@ -113,7 +121,11 @@ export async function handleMergeWorktreeCommand({ command, appId }: CommandCont
         `git -C "${mainRepoDir}" symbolic-ref refs/remotes/origin/HEAD 2>/dev/null | sed 's@^refs/remotes/origin/@@'`,
       )
       defaultBranch = stdout.trim() || 'main'
-    } catch {
+    } catch (error) {
+      logger.warn(
+        `Failed to detect default branch for ${mainRepoDir}, falling back to main:`,
+        error instanceof Error ? error.message : String(error),
+      )
       defaultBranch = 'main'
     }
 
@@ -141,11 +153,26 @@ export async function handleMergeWorktreeCommand({ command, appId }: CommandCont
       await execAsync(`git -C "${worktreeDir}" merge ${defaultBranch} --no-edit`)
     } catch (e) {
       // If merge fails (conflicts), abort and report
-      await execAsync(`git -C "${worktreeDir}" merge --abort`).catch(() => {})
+      await execAsync(`git -C "${worktreeDir}" merge --abort`).catch((error) => {
+        logger.warn(
+          `Failed to abort merge in ${worktreeDir}:`,
+          error instanceof Error ? error.message : String(error),
+        )
+      })
       // Clean up temp branch if we created one
       if (tempBranch) {
-        await execAsync(`git -C "${worktreeDir}" checkout --detach`).catch(() => {})
-        await execAsync(`git -C "${worktreeDir}" branch -D ${tempBranch}`).catch(() => {})
+        await execAsync(`git -C "${worktreeDir}" checkout --detach`).catch((error) => {
+          logger.warn(
+            `Failed to detach HEAD after merge conflict in ${worktreeDir}:`,
+            error instanceof Error ? error.message : String(error),
+          )
+        })
+        await execAsync(`git -C "${worktreeDir}" branch -D ${tempBranch}`).catch((error) => {
+          logger.warn(
+            `Failed to delete temp branch ${tempBranch} in ${worktreeDir}:`,
+            error instanceof Error ? error.message : String(error),
+          )
+        })
       }
       throw new Error(`Merge conflict - resolve manually in worktree then retry`)
     }
@@ -162,11 +189,21 @@ export async function handleMergeWorktreeCommand({ command, appId }: CommandCont
 
     // 7. Delete the merged branch (temp or original)
     logger.log(`Deleting merged branch ${branchToMerge}`)
-    await execAsync(`git -C "${worktreeDir}" branch -D ${branchToMerge}`).catch(() => {})
+    await execAsync(`git -C "${worktreeDir}" branch -D ${branchToMerge}`).catch((error) => {
+      logger.warn(
+        `Failed to delete merged branch ${branchToMerge} in ${worktreeDir}:`,
+        error instanceof Error ? error.message : String(error),
+      )
+    })
 
     // Also delete the original worktree branch if different from what we merged
     if (!isDetached && branchToMerge !== worktreeInfo.worktree_name) {
-      await execAsync(`git -C "${worktreeDir}" branch -D ${worktreeInfo.worktree_name}`).catch(() => {})
+      await execAsync(`git -C "${worktreeDir}" branch -D ${worktreeInfo.worktree_name}`).catch((error) => {
+        logger.warn(
+          `Failed to delete worktree branch ${worktreeInfo.worktree_name} in ${worktreeDir}:`,
+          error instanceof Error ? error.message : String(error),
+        )
+      })
     }
 
     // 8. Remove worktree prefix from thread title (fire and forget with timeout)

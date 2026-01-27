@@ -145,7 +145,11 @@ async function checkSingleInstance(): Promise<void> {
         setTimeout(resolve, 500)
       })
     }
-  } catch {
+  } catch (error) {
+    cliLogger.debug(
+      'Lock port check failed:',
+      error instanceof Error ? error.message : String(error),
+    )
     cliLogger.debug('No other kimaki instance detected on lock port')
   }
 }
@@ -551,11 +555,23 @@ async function backgroundInit({
       getClient()
         .command.list({ query: { directory: currentDir } })
         .then((r) => r.data || [])
-        .catch(() => []),
+        .catch((error) => {
+          cliLogger.warn(
+            'Failed to load user commands during background init:',
+            error instanceof Error ? error.message : String(error),
+          )
+          return []
+        }),
       getClient()
         .app.agents({ query: { directory: currentDir } })
         .then((r) => r.data || [])
-        .catch(() => []),
+        .catch((error) => {
+          cliLogger.warn(
+            'Failed to load agents during background init:',
+            error instanceof Error ? error.message : String(error),
+          )
+          return []
+        }),
     ])
 
     await registerCommands({ token, appId, userCommands, agents })
@@ -613,7 +629,11 @@ async function run({ restart, addChannels, useWorktrees }: CliOptions) {
         try {
           fs.accessSync(p, fs.constants.F_OK)
           return true
-        } catch {
+        } catch (error) {
+          cliLogger.debug(
+            `OpenCode path not found at ${p}:`,
+            error instanceof Error ? error.message : String(error),
+          )
           return false
         }
       })
@@ -914,11 +934,23 @@ async function run({ restart, addChannels, useWorktrees }: CliOptions) {
     getClient()
       .command.list({ query: { directory: currentDir } })
       .then((r) => r.data || [])
-      .catch(() => []),
+      .catch((error) => {
+        cliLogger.warn(
+          'Failed to load user commands during setup:',
+          error instanceof Error ? error.message : String(error),
+        )
+        return []
+      }),
     getClient()
       .app.agents({ query: { directory: currentDir } })
       .then((r) => r.data || [])
-      .catch(() => []),
+      .catch((error) => {
+        cliLogger.warn(
+          'Failed to load agents during setup:',
+          error instanceof Error ? error.message : String(error),
+        )
+        return []
+      }),
   ])
 
   s.stop(`Found ${projects.length} OpenCode project(s)`)
@@ -1240,8 +1272,11 @@ cli
               .prepare('SELECT app_id FROM bot_tokens ORDER BY created_at DESC LIMIT 1')
               .get() as { app_id: string } | undefined
             appId = botRow?.app_id
-          } catch {
-            // Database might not exist in CI, that's ok
+          } catch (error) {
+            cliLogger.debug(
+              'Database lookup failed while resolving app ID:',
+              error instanceof Error ? error.message : String(error),
+            )
           }
         }
       } else {
@@ -1356,8 +1391,11 @@ cli
                   if (ch && 'guild' in ch && ch.guild) {
                     return ch.guild
                   }
-                } catch {
-                  // Channel might be deleted, continue
+                } catch (error) {
+                  cliLogger.debug(
+                    'Failed to fetch existing channel while selecting guild:',
+                    error instanceof Error ? error.message : String(error),
+                  )
                 }
               }
               // Fall back to first guild the bot is in
@@ -1597,8 +1635,11 @@ cli
                 .prepare('SELECT app_id FROM bot_tokens ORDER BY created_at DESC LIMIT 1')
                 .get() as { app_id: string } | undefined
               appId = botRow?.app_id
-            } catch {
-              // Database might not exist in CI
+            } catch (error) {
+              cliLogger.debug(
+                'Database lookup failed while resolving app ID:',
+                error instanceof Error ? error.message : String(error),
+              )
             }
           }
         } else {
@@ -1677,8 +1718,11 @@ cli
               } else {
                 throw new Error('Channel has no guild')
               }
-            } catch {
-              // Channel might be deleted, fall back to first guild
+            } catch (error) {
+              cliLogger.debug(
+                'Failed to fetch existing channel while selecting guild:',
+                error instanceof Error ? error.message : String(error),
+              )
               const firstGuild = client.guilds.cache.first()
               if (!firstGuild) {
                 s.stop('No guild found')
@@ -1722,12 +1766,18 @@ cli
                 client.destroy()
                 process.exit(0)
               }
-            } catch {
-              // Channel might be deleted, continue checking
+            } catch (error) {
+              cliLogger.debug(
+                `Failed to fetch channel ${existingChannel.channel_id} while checking existing channels:`,
+                error instanceof Error ? error.message : String(error),
+              )
             }
           }
-        } catch {
-          // Database might not exist, continue to create
+        } catch (error) {
+          cliLogger.debug(
+            'Database lookup failed while checking existing channels:',
+            error instanceof Error ? error.message : String(error),
+          )
         }
 
         s.message(`Creating channels in ${guild.name}...`)

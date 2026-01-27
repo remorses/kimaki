@@ -275,7 +275,13 @@ export async function startDiscordBot({
 
           // Include starter message as context for the session
           let prompt = message.content
-          const starterMessage = await thread.fetchStarterMessage().catch(() => null)
+          const starterMessage = await thread.fetchStarterMessage().catch((error) => {
+            discordLogger.warn(
+              `[SESSION] Failed to fetch starter message for thread ${thread.id}:`,
+              error instanceof Error ? error.message : String(error),
+            )
+            return null
+          })
           if (starterMessage?.content && starterMessage.content !== message.content) {
             prompt = `Context from thread:\n${starterMessage.content}\n\nUser request:\n${message.content}`
           }
@@ -517,8 +523,11 @@ export async function startDiscordBot({
       try {
         const errMsg = error instanceof Error ? error.message : String(error)
         await message.reply({ content: `Error: ${errMsg}`, flags: SILENT_MESSAGE_FLAGS })
-      } catch {
-        voiceLogger.error('Discord handler error (fallback):', error)
+      } catch (sendError) {
+        voiceLogger.error(
+          'Discord handler error (fallback):',
+          sendError instanceof Error ? sendError.message : String(sendError),
+        )
       }
     }
   })
@@ -539,7 +548,13 @@ export async function startDiscordBot({
       }
 
       // Get the starter message to check for auto-start marker
-      const starterMessage = await thread.fetchStarterMessage().catch(() => null)
+      const starterMessage = await thread.fetchStarterMessage().catch((error) => {
+        discordLogger.warn(
+          `[THREAD_CREATE] Failed to fetch starter message for thread ${thread.id}:`,
+          error instanceof Error ? error.message : String(error),
+        )
+        return null
+      })
       if (!starterMessage) {
         discordLogger.log(`[THREAD_CREATE] Could not fetch starter message for thread ${thread.id}`)
         return
@@ -601,8 +616,11 @@ export async function startDiscordBot({
       try {
         const errMsg = error instanceof Error ? error.message : String(error)
         await thread.send({ content: `Error: ${errMsg}`, flags: SILENT_MESSAGE_FLAGS })
-      } catch {
-        // Ignore send errors
+      } catch (sendError) {
+        voiceLogger.error(
+          '[BOT_SESSION] Failed to send error message:',
+          sendError instanceof Error ? sendError.message : String(sendError),
+        )
       }
     }
   })
