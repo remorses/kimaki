@@ -1,3 +1,4 @@
+
 # restarting the discord bot
 
 ONLY restart the discord bot if the user explicitly asks for it.
