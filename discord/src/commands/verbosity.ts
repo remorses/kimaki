@@ -11,7 +11,7 @@ const verbosityLogger = createLogger(LogPrefix.VERBOSITY)
 
 /**
  * Handle the /verbosity slash command.
- * Sets output verbosity for the channel (applies to new sessions).
+ * Sets output verbosity for the channel (applies immediately, even mid-session).
  */
 export async function handleVerbosityCommand({
   command,
@@ -51,7 +51,7 @@ export async function handleVerbosityCommand({
 
   if (currentLevel === level) {
     await command.reply({
-      content: `Verbosity is already set to **${level}**.`,
+      content: `Verbosity is already set to **${level}** for this channel.`,
       ephemeral: true,
     })
     return
@@ -65,7 +65,7 @@ export async function handleVerbosityCommand({
     : 'All output will be shown, including tool executions and status messages.'
 
   await command.reply({
-    content: `Verbosity set to **${level}**.\n${description}\nThis applies to all new sessions in this channel.`,
+    content: `Verbosity set to **${level}** for this channel.\n${description}\nThis is a per-channel setting and applies immediately, including any active sessions.`,
     ephemeral: true,
   })
 }

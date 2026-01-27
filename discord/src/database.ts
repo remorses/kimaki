@@ -7,7 +7,7 @@ import fs from 'node:fs'
 import path from 'node:path'
 import * as errore from 'errore'
 import { createLogger, LogPrefix } from './logger.js'
-import { getDataDir } from './config.js'
+import { getDataDir, getDefaultVerbosity } from './config.js'
 
 const dbLogger = createLogger(LogPrefix.DB)
 
@@ -381,14 +381,17 @@ export function runVerbosityMigrations(database?: Database.Database): void {
 
 /**
  * Get the verbosity setting for a channel.
- * @returns 'tools-and-text' (default) or 'text-only'
+ * Falls back to the global default set via --verbosity CLI flag if no per-channel override exists.
  */
 export function getChannelVerbosity(channelId: string): VerbosityLevel {
   const db = getDatabase()
   const row = db
     .prepare('SELECT verbosity FROM channel_verbosity WHERE channel_id = ?')
     .get(channelId) as { verbosity: string } | undefined
-  return (row?.verbosity as VerbosityLevel) || 'tools-and-text'
+  if (row?.verbosity) {
+    return row.verbosity as VerbosityLevel
+  }
+  return getDefaultVerbosity()
 }
 
 /**

@@ -471,13 +471,15 @@ export async function handleOpencodeSession({
     }
   }
 
-  // Get verbosity setting for this channel (use parent channel for threads)
+  // Read verbosity dynamically so mid-session /verbosity changes take effect immediately
   const verbosityChannelId = channelId || thread.parentId || thread.id
-  const verbosity = getChannelVerbosity(verbosityChannelId)
+  const getVerbosity = () => {
+    return getChannelVerbosity(verbosityChannelId)
+  }
 
   const sendPartMessage = async (part: Part) => {
     // In text-only mode, only send text parts (the ⬥ diamond messages)
-    if (verbosity === 'text-only' && part.type !== 'text') {
+    if (getVerbosity() === 'text-only' && part.type !== 'text') {
       return
     }
 
@@ -689,7 +691,7 @@ export async function handleOpencodeSession({
             const label = `${agent}-${agentSpawnCounts[agent]}`
             subtaskSessions.set(childSessionId, { label, assistantMessageId: undefined })
             // Skip task messages in text-only mode
-            if (verbosity !== 'text-only') {
+            if (getVerbosity() !== 'text-only') {
               const taskDisplay = `┣ task **${label}** _${description}_`
               await sendThreadMessage(thread, taskDisplay + '\n\n')
             }
@@ -699,7 +701,7 @@ export async function handleOpencodeSession({
         return
       }
 
-      if (part.type === 'tool' && part.state.status === 'completed') {
+      if (part.type === 'tool' && part.state.status === 'completed' && getVerbosity() !== 'text-only') {
         const output = part.state.output || ''
         const outputTokens = Math.ceil(output.length / 4)
         const largeOutputThreshold = 3000
@@ -753,7 +755,7 @@ export async function handleOpencodeSession({
       subtaskInfo: { label: string; assistantMessageId?: string },
     ) => {
       // In text-only mode, skip all subtask output (they're tool-related)
-      if (verbosity === 'text-only') {
+      if (getVerbosity() === 'text-only') {
         return
       }
       if (part.type === 'step-start' || part.type === 'step-finish') {

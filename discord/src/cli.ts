@@ -47,7 +47,7 @@ import { createLogger, LogPrefix } from './logger.js'
 import { uploadFilesToDiscord } from './discord-utils.js'
 import { spawn, spawnSync, execSync, type ExecSyncOptions } from 'node:child_process'
 import http from 'node:http'
-import { setDataDir, getDataDir, getLockPort } from './config.js'
+import { setDataDir, getDataDir, getLockPort, setDefaultVerbosity } from './config.js'
 import { sanitizeAgentName } from './commands/agent.js'
 
 const cliLogger = createLogger(LogPrefix.CLI)
@@ -1098,6 +1098,7 @@ cli
   .option('--data-dir <path>', 'Data directory for config and database (default: ~/.kimaki)')
   .option('--install-url', 'Print the bot install URL and exit')
   .option('--use-worktrees', 'Create git worktrees for all new sessions started from channel messages')
+  .option('--verbosity <level>', 'Default verbosity for all channels (tools-and-text or text-only)')
   .action(
     async (options: {
       restart?: boolean
@@ -1105,12 +1106,22 @@ cli
       dataDir?: string
       installUrl?: boolean
       useWorktrees?: boolean
+      verbosity?: string
     }) => {
       try {
         // Set data directory early, before any database access
         if (options.dataDir) {
           setDataDir(options.dataDir)
           cliLogger.log(`Using data directory: ${getDataDir()}`)
+        }
+
+        if (options.verbosity) {
+          if (options.verbosity !== 'tools-and-text' && options.verbosity !== 'text-only') {
+            cliLogger.error(`Invalid verbosity level: ${options.verbosity}. Use "tools-and-text" or "text-only".`)
+            process.exit(EXIT_NO_RESTART)
+          }
+          setDefaultVerbosity(options.verbosity)
+          cliLogger.log(`Default verbosity: ${options.verbosity}`)
         }
 
         if (options.installUrl) {

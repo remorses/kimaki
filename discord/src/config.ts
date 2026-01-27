@@ -44,6 +44,20 @@ export function getProjectsDir(): string {
   return path.join(getDataDir(), 'projects')
 }
 
+// Default verbosity for channels that haven't set a per-channel override.
+// Set via --verbosity CLI flag at startup.
+import type { VerbosityLevel } from './database.js'
+
+let defaultVerbosity: VerbosityLevel = 'tools-and-text'
+
+export function getDefaultVerbosity(): VerbosityLevel {
+  return defaultVerbosity
+}
+
+export function setDefaultVerbosity(level: VerbosityLevel): void {
+  defaultVerbosity = level
+}
+
 const DEFAULT_LOCK_PORT = 29988
 
 /**
