@@ -72,8 +72,9 @@ export async function handleAddProjectCommand({ command, appId }: CommandContext
       botName: command.client.user?.username,
     })
 
+    const voiceInfo = voiceChannelId ? `\n🔊 Voice: <#${voiceChannelId}>` : ''
     await command.editReply(
-      `✅ Created channels for project:\n📝 Text: <#${textChannelId}>\n🔊 Voice: <#${voiceChannelId}>\n📁 Directory: \`${directory}\``,
+      `✅ Created channels for project:\n📝 Text: <#${textChannelId}>${voiceInfo}\n📁 Directory: \`${directory}\``,
     )
 
     logger.log(`Created channels for project ${channelName} at ${directory}`)

@@ -209,6 +209,7 @@ type CliOptions = {
   addChannels?: boolean
   dataDir?: string
   useWorktrees?: boolean
+  enableVoiceChannels?: boolean
 }
 
 // Commands to skip when registering user commands (reserved names)
@@ -595,7 +596,7 @@ async function backgroundInit({
   }
 }
 
-async function run({ restart, addChannels, useWorktrees }: CliOptions) {
+async function run({ restart, addChannels, useWorktrees, enableVoiceChannels }: CliOptions) {
   startCaffeinate()
 
   const forceSetup = Boolean(restart)
@@ -1057,6 +1058,7 @@ async function run({ restart, addChannels, useWorktrees }: CliOptions) {
             projectDirectory: project.worktree,
             appId,
             botName: discordClient.user?.username,
+            enableVoiceChannels,
           })
 
           createdChannels.push({
@@ -1123,6 +1125,7 @@ cli
   .option('--data-dir <path>', 'Data directory for config and database (default: ~/.kimaki)')
   .option('--install-url', 'Print the bot install URL and exit')
   .option('--use-worktrees', 'Create git worktrees for all new sessions started from channel messages')
+  .option('--enable-voice-channels', 'Create voice channels for projects (disabled by default)')
   .option('--verbosity <level>', 'Default verbosity for all channels (tools-and-text, text-and-essential-tools, or text-only)')
   .action(
     async (options: {
@@ -1131,6 +1134,7 @@ cli
       dataDir?: string
       installUrl?: boolean
       useWorktrees?: boolean
+      enableVoiceChannels?: boolean
       verbosity?: string
     }) => {
       try {
@@ -1172,6 +1176,7 @@ cli
           addChannels: options.addChannels,
           dataDir: options.dataDir,
           useWorktrees: options.useWorktrees,
+          enableVoiceChannels: options.enableVoiceChannels,
         })
       } catch (error) {
         cliLogger.error('Unhandled error:', error instanceof Error ? error.message : String(error))

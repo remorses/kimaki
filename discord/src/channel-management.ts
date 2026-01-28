@@ -63,12 +63,14 @@ export async function createProjectChannels({
   projectDirectory,
   appId,
   botName,
+  enableVoiceChannels = false,
 }: {
   guild: Guild
   projectDirectory: string
   appId: string
   botName?: string
-}): Promise<{ textChannelId: string; voiceChannelId: string; channelName: string }> {
+  enableVoiceChannels?: boolean
+}): Promise<{ textChannelId: string; voiceChannelId: string | null; channelName: string }> {
   const baseName = path.basename(projectDirectory)
   const channelName = `${baseName}`
     .toLowerCase()
@@ -76,7 +78,6 @@ export async function createProjectChannels({
     .slice(0, 100)
 
   const kimakiCategory = await ensureKimakiCategory(guild, botName)
-  const kimakiAudioCategory = await ensureKimakiAudioCategory(guild, botName)
 
   const textChannel = await guild.channels.create({
     name: channelName,
@@ -85,27 +86,35 @@ export async function createProjectChannels({
     // Channel configuration is stored in SQLite, not in the topic
   })
 
-  const voiceChannel = await guild.channels.create({
-    name: channelName,
-    type: ChannelType.GuildVoice,
-    parent: kimakiAudioCategory,
-  })
-
   getDatabase()
     .prepare(
       'INSERT OR REPLACE INTO channel_directories (channel_id, directory, channel_type, app_id) VALUES (?, ?, ?, ?)',
     )
     .run(textChannel.id, projectDirectory, 'text', appId)
 
-  getDatabase()
-    .prepare(
-      'INSERT OR REPLACE INTO channel_directories (channel_id, directory, channel_type, app_id) VALUES (?, ?, ?, ?)',
-    )
-    .run(voiceChannel.id, projectDirectory, 'voice', appId)
+  let voiceChannelId: string | null = null
+
+  if (enableVoiceChannels) {
+    const kimakiAudioCategory = await ensureKimakiAudioCategory(guild, botName)
+
+    const voiceChannel = await guild.channels.create({
+      name: channelName,
+      type: ChannelType.GuildVoice,
+      parent: kimakiAudioCategory,
+    })
+
+    getDatabase()
+      .prepare(
+        'INSERT OR REPLACE INTO channel_directories (channel_id, directory, channel_type, app_id) VALUES (?, ?, ?, ?)',
+      )
+      .run(voiceChannel.id, projectDirectory, 'voice', appId)
+
+    voiceChannelId = voiceChannel.id
+  }
 
   return {
     textChannelId: textChannel.id,
-    voiceChannelId: voiceChannel.id,
+    voiceChannelId,
     channelName,
   }
 }

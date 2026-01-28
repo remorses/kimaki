@@ -39,10 +39,10 @@ npx -y kimaki@latest
 The setup wizard will:
 
 1. **Create a Discord Bot** - Walk you through creating a bot at [discord.com/developers](https://discord.com/developers/applications)
-2. **Configure Bot Settings** - Enable required intents (Message Content, Server Members, Voice States)
+2. **Configure Bot Settings** - Enable required intents (Message Content, Server Members)
 3. **Install to Your Server** - Generate an invite link with proper permissions
 4. **Select Projects** - Choose which OpenCode projects to add as Discord channels
-5. **Voice Setup (Optional)** - Request a Google Gemini API key for voice features
+5. **Gemini API Key (Optional)** - For voice message transcription
 
 Keep the CLI running. It's the bridge between Discord and your machine.
 
@@ -140,12 +140,6 @@ Attach images, code files, or any other files to your message. Kimaki includes t
 Record a voice message in Discord. Kimaki transcribes it using Google's Gemini API and processes it as text. The transcription uses your project's file tree for accuracy, recognizing function names and file paths you mention.
 
 Requires a Gemini API key (prompted during setup).
-
-### Voice Channels
-
-Join a voice channel linked to a project for real-time voice interaction. Talk naturally, and Kimaki responds with voice—like having Jarvis for your codebase.
-
-Uses Gemini's native audio model for low-latency conversation.
 
 ### Session Management
 
