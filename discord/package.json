@@ -56,6 +56,7 @@
   },
   "optionalDependencies": {
     "@discordjs/opus": "^0.10.0",
-    "prism-media": "^1.3.5"
+    "prism-media": "^1.3.5",
+    "sharp": "^0.34.5"
   }
 }

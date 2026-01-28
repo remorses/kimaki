@@ -5,19 +5,16 @@
 import type { Part } from '@opencode-ai/sdk/v2'
 import type { FilePartInput } from '@opencode-ai/sdk'
 import type { Message } from 'discord.js'
-import fs from 'node:fs'
-import path from 'node:path'
 import * as errore from 'errore'
 import { createLogger, LogPrefix } from './logger.js'
 import { FetchError } from './errors.js'
+import { processImage } from './image-utils.js'
 
 // Generic message type compatible with both v1 and v2 SDK
 type GenericSessionMessage = {
   info: { role: string; id?: string }
   parts: Part[]
 }
-
-const ATTACHMENTS_DIR = path.join(process.cwd(), 'tmp', 'discord-attachments')
 
 const logger = createLogger(LogPrefix.FORMATTING)
 
@@ -192,11 +189,6 @@ export async function getFileAttachments(message: Message): Promise<FilePartInpu
     return []
   }
 
-  // ensure tmp directory exists
-  if (!fs.existsSync(ATTACHMENTS_DIR)) {
-    fs.mkdirSync(ATTACHMENTS_DIR, { recursive: true })
-  }
-
   const results = await Promise.all(
     fileAttachments.map(async (attachment) => {
       const response = await errore.tryAsync({
@@ -212,17 +204,22 @@ export async function getFileAttachments(message: Message): Promise<FilePartInpu
         return null
       }
 
-      const buffer = Buffer.from(await response.arrayBuffer())
-      const localPath = path.join(ATTACHMENTS_DIR, `${message.id}-${attachment.name}`)
-      fs.writeFileSync(localPath, buffer)
+      const rawBuffer = Buffer.from(await response.arrayBuffer())
+      const originalMime = attachment.contentType || 'application/octet-stream'
 
-      logger.log(`Downloaded attachment to ${localPath}`)
+      // Process image (resize if needed, convert to JPEG)
+      const { buffer, mime } = await processImage(rawBuffer, originalMime)
+
+      const base64 = buffer.toString('base64')
+      const dataUrl = `data:${mime};base64,${base64}`
+
+      logger.log(`Attachment ${attachment.name}: ${rawBuffer.length} → ${buffer.length} bytes, ${mime}`)
 
       return {
         type: 'file' as const,
-        mime: attachment.contentType || 'application/octet-stream',
+        mime,
         filename: attachment.name,
-        url: localPath,
+        url: dataUrl,
       }
     }),
   )
