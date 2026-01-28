@@ -134,6 +134,7 @@ export async function abortAndRetrySession({
   sessionLogger.log(`[ABORT+RETRY] Aborting session ${sessionId} for model change`)
 
   // Abort with special reason so we don't show "completed" message
+  sessionLogger.log(`[ABORT] reason=model-change sessionId=${sessionId} - user changed model mid-request, will retry with new model`)
   controller.abort(new Error('model-change'))
 
   // Also call the API abort endpoint
@@ -142,11 +143,12 @@ export async function abortAndRetrySession({
     sessionLogger.error(`[ABORT+RETRY] Failed to initialize OpenCode client:`, getClient.message)
     return false
   }
+  sessionLogger.log(`[ABORT-API] reason=model-change sessionId=${sessionId} - sending API abort for model change retry`)
   const abortResult = await errore.tryAsync(() => {
     return getClient().session.abort({ path: { id: sessionId } })
   })
   if (abortResult instanceof Error) {
-    sessionLogger.log(`[ABORT+RETRY] API abort call failed (may already be done):`, abortResult)
+    sessionLogger.log(`[ABORT-API] API abort call failed (may already be done):`, abortResult)
   }
 
   // Small delay to let the abort propagate
@@ -302,7 +304,9 @@ export async function handleOpencodeSession({
   const existingController = abortControllers.get(session.id)
   if (existingController) {
     voiceLogger.log(`[ABORT] Cancelling existing request for session: ${session.id}`)
+    sessionLogger.log(`[ABORT] reason=new-request sessionId=${session.id} threadId=${thread.id} - new user message arrived while previous request was still running`)
     existingController.abort(new Error('New request started'))
+    sessionLogger.log(`[ABORT-API] reason=new-request sessionId=${session.id} - sending API abort because new message arrived`)
     const abortResult = await errore.tryAsync(() => {
       return getClient().session.abort({
         path: { id: session.id },
@@ -310,7 +314,7 @@ export async function handleOpencodeSession({
       })
     })
     if (abortResult instanceof Error) {
-      sessionLogger.log(`[ABORT] Server abort failed (may be already done):`, abortResult)
+      sessionLogger.log(`[ABORT-API] Server abort failed (may be already done):`, abortResult)
     }
   }
 
@@ -1074,6 +1078,7 @@ export async function handleOpencodeSession({
           return
         }
         sessionLogger.log(`[SESSION IDLE] Session ${session.id} is idle, ending stream`)
+        sessionLogger.log(`[ABORT] reason=finished sessionId=${session.id} threadId=${thread.id} - session completed normally, received idle event after prompt resolved`)
         abortController.abort(new Error('finished'))
         return
       }
@@ -1392,6 +1397,7 @@ export async function handleOpencodeSession({
   }
 
   sessionLogger.error(`ERROR: Failed to send prompt:`, promptError)
+  sessionLogger.log(`[ABORT] reason=error sessionId=${session.id} threadId=${thread.id} - prompt failed with error: ${(promptError as Error).message}`)
   abortController.abort(new Error('error'))
 
   if (originalMessage) {

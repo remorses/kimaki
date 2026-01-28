@@ -67,6 +67,7 @@ export async function handleAbortCommand({ command }: CommandContext): Promise<v
 
   const existingController = abortControllers.get(sessionId)
   if (existingController) {
+    logger.log(`[ABORT] reason=user-requested sessionId=${sessionId} channelId=${channel.id} - user ran /abort command`)
     existingController.abort(new Error('User requested abort'))
     abortControllers.delete(sessionId)
   }
@@ -82,6 +83,7 @@ export async function handleAbortCommand({ command }: CommandContext): Promise<v
   }
 
   try {
+    logger.log(`[ABORT-API] reason=user-requested sessionId=${sessionId} channelId=${channel.id} - sending API abort from /abort command`)
     await getClient().session.abort({
       path: { id: sessionId },
     })

@@ -343,6 +343,7 @@ export async function getTools({
       }),
       execute: async ({ sessionId }) => {
         try {
+          toolsLogger.log(`[ABORT] reason=voice-tool sessionId=${sessionId} - user requested abort via voice assistant tool`)
           const result = await getClient().session.abort({
             path: { id: sessionId },
           })
