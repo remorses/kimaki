@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.4.51
+
+### Patch Changes
+
+- feat: add **no-kimaki role** to block users from bot access even with owner/admin permissions (thanks @TotalLag for the suggestion)
+- feat: disable **voice channels by default**, add `--enable-voice-channels` flag to opt-in
+
 ## 0.4.50
 
 ### Patch Changes
