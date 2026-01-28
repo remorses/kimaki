@@ -125,6 +125,17 @@ Only users with these Discord permissions can interact with the bot:
 
 Messages from users without these permissions are ignored.
 
+### Blocking Access with "no-kimaki" Role
+
+Create a role named **"no-kimaki"** (case-insensitive) to block specific users from using the bot, even if they have other permissions like Server Owner or Administrator.
+
+This implements the "four-eyes principle" - it adds friction to prevent accidental usage. Even if you're a server owner, you must remove this role to interact with the bot.
+
+**Use cases:**
+- Prevent accidental bot triggers by owners who share servers
+- Temporarily disable access for specific users
+- Break-glass scenario: removing the role is a deliberate action
+
 ## Features
 
 ### Text Messages
