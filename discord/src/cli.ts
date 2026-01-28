@@ -390,6 +390,7 @@ async function registerCommands({
           .setRequired(true)
           .addChoices(
             { name: 'tools-and-text (default)', value: 'tools-and-text' },
+            { name: 'text-and-essential-tools', value: 'text-and-essential-tools' },
             { name: 'text-only', value: 'text-only' },
           )
         return option
@@ -1122,7 +1123,7 @@ cli
   .option('--data-dir <path>', 'Data directory for config and database (default: ~/.kimaki)')
   .option('--install-url', 'Print the bot install URL and exit')
   .option('--use-worktrees', 'Create git worktrees for all new sessions started from channel messages')
-  .option('--verbosity <level>', 'Default verbosity for all channels (tools-and-text or text-only)')
+  .option('--verbosity <level>', 'Default verbosity for all channels (tools-and-text, text-and-essential-tools, or text-only)')
   .action(
     async (options: {
       restart?: boolean
@@ -1140,11 +1141,12 @@ cli
         }
 
         if (options.verbosity) {
-          if (options.verbosity !== 'tools-and-text' && options.verbosity !== 'text-only') {
-            cliLogger.error(`Invalid verbosity level: ${options.verbosity}. Use "tools-and-text" or "text-only".`)
+          const validLevels = ['tools-and-text', 'text-and-essential-tools', 'text-only']
+          if (!validLevels.includes(options.verbosity)) {
+            cliLogger.error(`Invalid verbosity level: ${options.verbosity}. Use one of: ${validLevels.join(', ')}`)
             process.exit(EXIT_NO_RESTART)
           }
-          setDefaultVerbosity(options.verbosity)
+          setDefaultVerbosity(options.verbosity as 'tools-and-text' | 'text-and-essential-tools' | 'text-only')
           cliLogger.log(`Default verbosity: ${options.verbosity}`)
         }
 

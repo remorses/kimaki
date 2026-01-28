@@ -60,9 +60,15 @@ export async function handleVerbosityCommand({
   setChannelVerbosity(channelId, level)
   verbosityLogger.log(`[VERBOSITY] Set channel ${channelId} to ${level}`)
 
-  const description = level === 'text-only'
-    ? 'Only text responses will be shown. Tool executions, status messages, and thinking will be hidden.'
-    : 'All output will be shown, including tool executions and status messages.'
+  const description = (() => {
+    if (level === 'text-only') {
+      return 'Only text responses will be shown. Tool executions, status messages, and thinking will be hidden.'
+    }
+    if (level === 'text-and-essential-tools') {
+      return 'Text responses and essential tools (edits, custom MCP tools) will be shown. Read, search, and navigation tools will be hidden.'
+    }
+    return 'All output will be shown, including tool executions and status messages.'
+  })()
 
   await command.reply({
     content: `Verbosity set to **${level}** for this channel.\n${description}\nThis is a per-channel setting and applies immediately, including any active sessions.`,

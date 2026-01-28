@@ -363,7 +363,10 @@ export function runWorktreeSettingsMigrations(database?: Database.Database): voi
 }
 
 // Verbosity levels for controlling output detail
-export type VerbosityLevel = 'tools-and-text' | 'text-only'
+// - tools-and-text: shows all output including tool executions
+// - text-and-essential-tools: shows text + edits + custom MCP tools, hides read/search/navigation tools
+// - text-only: only shows text responses (⬥ diamond parts)
+export type VerbosityLevel = 'tools-and-text' | 'text-and-essential-tools' | 'text-only'
 
 export function runVerbosityMigrations(database?: Database.Database): void {
   const targetDb = database || getDatabase()
