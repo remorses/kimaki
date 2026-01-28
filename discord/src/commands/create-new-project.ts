@@ -1,8 +1,10 @@
 // /create-new-project command - Create a new project folder, initialize git, and start a session.
+// Also exports createNewProject() for reuse during onboarding (welcome channel creation).
 
-import { ChannelType, type TextChannel } from 'discord.js'
+import { ChannelType, type Guild, type TextChannel } from 'discord.js'
 import fs from 'node:fs'
 import path from 'node:path'
+import { execSync } from 'node:child_process'
 import type { CommandContext } from './types.js'
 import { getProjectsDir } from '../config.js'
 import { createProjectChannels } from '../channel-management.js'
@@ -11,6 +13,67 @@ import { SILENT_MESSAGE_FLAGS } from '../discord-utils.js'
 import { createLogger, LogPrefix } from '../logger.js'
 
 const logger = createLogger(LogPrefix.CREATE_PROJECT)
+
+/**
+ * Core project creation logic: creates directory, inits git, creates Discord channels.
+ * Reused by the slash command handler and by onboarding (welcome channel).
+ * Returns null if the project directory already exists.
+ */
+export async function createNewProject({
+  guild,
+  projectName,
+  appId,
+  botName,
+}: {
+  guild: Guild
+  projectName: string
+  appId: string
+  botName?: string
+}): Promise<{
+  textChannelId: string
+  voiceChannelId: string
+  channelName: string
+  projectDirectory: string
+  sanitizedName: string
+} | null> {
+  const sanitizedName = projectName
+    .toLowerCase()
+    .replace(/[^a-z0-9-]/g, '-')
+    .replace(/-+/g, '-')
+    .replace(/^-|-$/g, '')
+    .slice(0, 100)
+
+  if (!sanitizedName) {
+    return null
+  }
+
+  const projectsDir = getProjectsDir()
+  const projectDirectory = path.join(projectsDir, sanitizedName)
+
+  if (!fs.existsSync(projectsDir)) {
+    fs.mkdirSync(projectsDir, { recursive: true })
+    logger.log(`Created projects directory: ${projectsDir}`)
+  }
+
+  if (fs.existsSync(projectDirectory)) {
+    return null
+  }
+
+  fs.mkdirSync(projectDirectory, { recursive: true })
+  logger.log(`Created project directory: ${projectDirectory}`)
+
+  execSync('git init', { cwd: projectDirectory, stdio: 'pipe' })
+  logger.log(`Initialized git in: ${projectDirectory}`)
+
+  const { textChannelId, voiceChannelId, channelName } = await createProjectChannels({
+    guild,
+    projectDirectory,
+    appId,
+    botName,
+  })
+
+  return { textChannelId, voiceChannelId, channelName, projectDirectory, sanitizedName }
+}
 
 export async function handleCreateNewProjectCommand({
   command,
@@ -32,45 +95,33 @@ export async function handleCreateNewProjectCommand({
     return
   }
 
-  const sanitizedName = projectName
-    .toLowerCase()
-    .replace(/[^a-z0-9-]/g, '-')
-    .replace(/-+/g, '-')
-    .replace(/^-|-$/g, '')
-    .slice(0, 100)
-
-  if (!sanitizedName) {
-    await command.editReply('Invalid project name')
-    return
-  }
-
-  const projectsDir = getProjectsDir()
-  const projectDirectory = path.join(projectsDir, sanitizedName)
-
   try {
-    if (!fs.existsSync(projectsDir)) {
-      fs.mkdirSync(projectsDir, { recursive: true })
-      logger.log(`Created projects directory: ${projectsDir}`)
-    }
+    const result = await createNewProject({
+      guild,
+      projectName,
+      appId,
+      botName: command.client.user?.username,
+    })
 
-    if (fs.existsSync(projectDirectory)) {
+    if (!result) {
+      const sanitizedName = projectName
+        .toLowerCase()
+        .replace(/[^a-z0-9-]/g, '-')
+        .replace(/-+/g, '-')
+        .replace(/^-|-$/g, '')
+        .slice(0, 100)
+
+      if (!sanitizedName) {
+        await command.editReply('Invalid project name')
+        return
+      }
+
+      const projectDirectory = path.join(getProjectsDir(), sanitizedName)
       await command.editReply(`Project directory already exists: ${projectDirectory}`)
       return
     }
 
-    fs.mkdirSync(projectDirectory, { recursive: true })
-    logger.log(`Created project directory: ${projectDirectory}`)
-
-    const { execSync } = await import('node:child_process')
-    execSync('git init', { cwd: projectDirectory, stdio: 'pipe' })
-    logger.log(`Initialized git in: ${projectDirectory}`)
-
-    const { textChannelId, voiceChannelId, channelName } = await createProjectChannels({
-      guild,
-      projectDirectory,
-      appId,
-    })
-
+    const { textChannelId, voiceChannelId, channelName, projectDirectory, sanitizedName } = result
     const textChannel = (await guild.channels.fetch(textChannelId)) as TextChannel
 
     await command.editReply(
