@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.4.50
+
+### Patch Changes
+
+- feat: add **text-and-essential-tools** verbosity level - shows text + edits + custom MCP tools, hides read/search/navigation
+- fix: **image handling** - send images as base64 data URLs with resizing, don't embed in prompt text
+- fix: add **HEIC support** for image attachments
+
 ## 0.4.49
 
 ### Patch Changes
