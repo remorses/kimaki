@@ -52,6 +52,16 @@ import { sanitizeAgentName } from './commands/agent.js'
 
 const cliLogger = createLogger(LogPrefix.CLI)
 
+// Strip bracketed paste escape sequences from terminal input.
+// iTerm2 and other terminals wrap pasted content with \x1b[200~ and \x1b[201~
+// which can cause validation to fail on macOS. See: https://github.com/remorses/kimaki/issues/18
+function stripBracketedPaste(value: string | undefined): string {
+  if (!value) {
+    return ''
+  }
+  return value.replace(/\x1b\[200~/g, '').replace(/\x1b\[201~/g, '').trim()
+}
+
 // Spawn caffeinate on macOS to prevent system sleep while bot is running.
 // Not detached, so it dies automatically with the parent process.
 function startCaffeinate() {
@@ -696,9 +706,13 @@ async function run({ restart, addChannels, useWorktrees }: CliOptions) {
       message: 'Enter your Discord Application ID:',
       placeholder: 'e.g., 1234567890123456789',
       validate(value) {
-        if (!value) return 'Application ID is required'
-        if (!/^\d{17,20}$/.test(value))
+        const cleaned = stripBracketedPaste(value)
+        if (!cleaned) {
+          return 'Application ID is required'
+        }
+        if (!/^\d{17,20}$/.test(cleaned)) {
           return 'Invalid Application ID format (should be 17-20 digits)'
+        }
       },
     })
 
@@ -706,7 +720,7 @@ async function run({ restart, addChannels, useWorktrees }: CliOptions) {
       cancel('Setup cancelled')
       process.exit(0)
     }
-    appId = appIdInput
+    appId = stripBracketedPaste(appIdInput)
 
     note(
       '1. Go to the "Bot" section in the left sidebar\n' +
@@ -737,8 +751,13 @@ async function run({ restart, addChannels, useWorktrees }: CliOptions) {
     const tokenInput = await password({
       message: 'Enter your Discord Bot Token (from "Bot" section - click "Reset Token" if needed):',
       validate(value) {
-        if (!value) return 'Bot token is required'
-        if (value.length < 50) return 'Invalid token format (too short)'
+        const cleaned = stripBracketedPaste(value)
+        if (!cleaned) {
+          return 'Bot token is required'
+        }
+        if (cleaned.length < 50) {
+          return 'Invalid token format (too short)'
+        }
       },
     })
 
@@ -746,29 +765,34 @@ async function run({ restart, addChannels, useWorktrees }: CliOptions) {
       cancel('Setup cancelled')
       process.exit(0)
     }
-    token = tokenInput
+    token = stripBracketedPaste(tokenInput)
 
     note(`You can get a Gemini api Key at https://aistudio.google.com/apikey`, `Gemini API Key`)
 
-    const geminiApiKey = await password({
+    const geminiApiKeyInput = await password({
       message:
         'Enter your Gemini API Key for voice channels and audio transcription (optional, press Enter to skip):',
       validate(value) {
-        if (value && value.length < 10) return 'Invalid API key format'
+        const cleaned = stripBracketedPaste(value)
+        if (cleaned && cleaned.length < 10) {
+          return 'Invalid API key format'
+        }
         return undefined
       },
     })
 
-    if (isCancel(geminiApiKey)) {
+    if (isCancel(geminiApiKeyInput)) {
       cancel('Setup cancelled')
       process.exit(0)
     }
+
+    const geminiApiKey = stripBracketedPaste(geminiApiKeyInput) || null
 
     // Store API key in database
     if (geminiApiKey) {
       db.prepare('INSERT OR REPLACE INTO bot_api_keys (app_id, gemini_api_key) VALUES (?, ?)').run(
         appId,
-        geminiApiKey || null,
+        geminiApiKey,
       )
       note('API key saved successfully', 'API Key Stored')
     }

@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.4.49
+
+### Patch Changes
+
+- fix **bracketed paste mode** causing setup to loop on macOS iTerm2 (thanks @ariane-emory for reporting)
+
 ## 0.4.48
 
 ### Patch Changes
