@@ -25,6 +25,7 @@
     "@opencode-ai/plugin": "^1.1.12",
     "@types/better-sqlite3": "^7.6.13",
     "@types/bun": "latest",
+    "@types/heic-convert": "^2.1.0",
     "@types/js-yaml": "^4.0.9",
     "@types/ms": "^2.1.0",
     "@types/node": "^24.3.0",
@@ -56,6 +57,7 @@
   },
   "optionalDependencies": {
     "@discordjs/opus": "^0.10.0",
+    "heic-convert": "^2.1.0",
     "prism-media": "^1.3.5",
     "sharp": "^0.34.5"
   }

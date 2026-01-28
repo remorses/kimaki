@@ -44,6 +44,23 @@ const discordLogger = createLogger(LogPrefix.DISCORD)
 
 export const abortControllers = new Map<string, AbortController>()
 
+// Built-in tools that are hidden in text-and-essential-tools verbosity mode.
+// Essential tools (edits, bash, todos, tasks, custom MCP tools) are shown; these navigation/read tools are hidden.
+const NON_ESSENTIAL_TOOLS = new Set([
+  'read',
+  'list',
+  'glob',
+  'grep',
+  'todoread',
+  'skill',
+  'question',
+  'webfetch',
+])
+
+function isEssentialTool(toolName: string): boolean {
+  return !NON_ESSENTIAL_TOOLS.has(toolName)
+}
+
 // Track multiple pending permissions per thread (keyed by permission ID)
 // OpenCode handles blocking/sequencing - we just need to track all pending permissions
 // to avoid duplicates and properly clean up on auto-reject
@@ -484,9 +501,20 @@ export async function handleOpencodeSession({
   }
 
   const sendPartMessage = async (part: Part) => {
+    const verbosity = getVerbosity()
     // In text-only mode, only send text parts (the ⬥ diamond messages)
-    if (getVerbosity() === 'text-only' && part.type !== 'text') {
+    if (verbosity === 'text-only' && part.type !== 'text') {
       return
+    }
+    // In text-and-essential-tools mode, show text + essential tools (edits, custom MCP tools)
+    if (verbosity === 'text-and-essential-tools') {
+      if (part.type === 'text') {
+        // text is always shown
+      } else if (part.type === 'tool' && isEssentialTool(part.tool)) {
+        // essential tools are shown
+      } else {
+        return
+      }
     }
 
     const content = formatPart(part) + '\n\n'
@@ -697,7 +725,7 @@ export async function handleOpencodeSession({
             agentSpawnCounts[agent] = (agentSpawnCounts[agent] || 0) + 1
             const label = `${agent}-${agentSpawnCounts[agent]}`
             subtaskSessions.set(childSessionId, { label, assistantMessageId: undefined })
-            // Skip task messages in text-only mode
+            // Show task messages in tools-and-text and text-and-essential-tools modes
             if (getVerbosity() !== 'text-only') {
               const taskDisplay = `┣ task **${label}** _${description}_`
               await sendThreadMessage(thread, taskDisplay + '\n\n')
@@ -708,25 +736,38 @@ export async function handleOpencodeSession({
         return
       }
 
-      if (part.type === 'tool' && part.state.status === 'completed' && getVerbosity() !== 'text-only') {
-        const output = part.state.output || ''
-        const outputTokens = Math.ceil(output.length / 4)
-        const largeOutputThreshold = 3000
-        if (outputTokens >= largeOutputThreshold) {
-          const formattedTokens =
-            outputTokens >= 1000 ? `${(outputTokens / 1000).toFixed(1)}k` : String(outputTokens)
-          const percentageSuffix = (() => {
-            if (!modelContextLimit) {
-              return ''
-            }
-            const pct = (outputTokens / modelContextLimit) * 100
-            if (pct < 1) {
-              return ''
-            }
-            return ` (${pct.toFixed(1)}%)`
-          })()
-          const chunk = `⬦ ${part.tool} returned ${formattedTokens} tokens${percentageSuffix}`
-          await thread.send({ content: chunk, flags: SILENT_MESSAGE_FLAGS })
+      // Show large output notifications for tools that are visible in current verbosity mode
+      if (part.type === 'tool' && part.state.status === 'completed') {
+        const showLargeOutput = (() => {
+          const verbosity = getVerbosity()
+          if (verbosity === 'text-only') {
+            return false
+          }
+          if (verbosity === 'text-and-essential-tools') {
+            return isEssentialTool(part.tool)
+          }
+          return true
+        })()
+        if (showLargeOutput) {
+          const output = part.state.output || ''
+          const outputTokens = Math.ceil(output.length / 4)
+          const largeOutputThreshold = 3000
+          if (outputTokens >= largeOutputThreshold) {
+            const formattedTokens =
+              outputTokens >= 1000 ? `${(outputTokens / 1000).toFixed(1)}k` : String(outputTokens)
+            const percentageSuffix = (() => {
+              if (!modelContextLimit) {
+                return ''
+              }
+              const pct = (outputTokens / modelContextLimit) * 100
+              if (pct < 1) {
+                return ''
+              }
+              return ` (${pct.toFixed(1)}%)`
+            })()
+            const chunk = `⬦ ${part.tool} returned ${formattedTokens} tokens${percentageSuffix}`
+            await thread.send({ content: chunk, flags: SILENT_MESSAGE_FLAGS })
+          }
         }
       }
 
@@ -761,9 +802,16 @@ export async function handleOpencodeSession({
       part: Part,
       subtaskInfo: { label: string; assistantMessageId?: string },
     ) => {
+      const verbosity = getVerbosity()
       // In text-only mode, skip all subtask output (they're tool-related)
-      if (getVerbosity() === 'text-only') {
+      if (verbosity === 'text-only') {
         return
+      }
+      // In text-and-essential-tools mode, only show essential tools from subtasks
+      if (verbosity === 'text-and-essential-tools') {
+        if (part.type !== 'tool' || !isEssentialTool(part.tool)) {
+          return
+        }
       }
       if (part.type === 'step-start' || part.type === 'step-finish') {
         return
@@ -1275,11 +1323,12 @@ export async function handleOpencodeSession({
         images.map((img) => ({
           mime: img.mime,
           filename: img.filename,
-          url: img.url.slice(0, 100),
+          urlPreview: img.url.slice(0, 50) + '...',
         })),
       )
-      const imagePathsList = images.map((img) => `- ${img.filename}: ${img.url}`).join('\n')
-      return `${prompt}\n\n**attached images:**\n${imagePathsList}`
+      // Just list filenames, not the full base64 URLs (images are passed as separate parts)
+      const imageList = images.map((img) => `- ${img.filename}`).join('\n')
+      return `${prompt}\n\n**attached images:**\n${imageList}`
     })()
 
     const parts = [{ type: 'text' as const, text: promptWithImagePaths }, ...images]
