@@ -30,6 +30,74 @@ function escapeInlineMarkdown(text: string): string {
 }
 
 /**
+ * Parses a patchText string (apply_patch format) and counts additions/deletions per file.
+ * Patch format uses `*** Add File:`, `*** Update File:`, `*** Delete File:` headers,
+ * with diff lines prefixed by `+` (addition) or `-` (deletion) inside `@@` hunks.
+ */
+function parsePatchCounts(
+  patchText: string,
+): Map<string, { additions: number; deletions: number }> {
+  const counts = new Map<string, { additions: number; deletions: number }>()
+  const lines = patchText.split('\n')
+  let currentFile = ''
+  let currentType = ''
+  let inHunk = false
+
+  for (const line of lines) {
+    const addMatch = line.match(/^\*\*\* Add File:\s*(.+)/)
+    const updateMatch = line.match(/^\*\*\* Update File:\s*(.+)/)
+    const deleteMatch = line.match(/^\*\*\* Delete File:\s*(.+)/)
+
+    if (addMatch || updateMatch || deleteMatch) {
+      const match = addMatch || updateMatch || deleteMatch
+      currentFile = (match?.[1] ?? '').trim()
+      currentType = addMatch ? 'add' : updateMatch ? 'update' : 'delete'
+      counts.set(currentFile, { additions: 0, deletions: 0 })
+      inHunk = false
+      continue
+    }
+
+    if (line.startsWith('@@')) {
+      inHunk = true
+      continue
+    }
+
+    if (line.startsWith('*** ')) {
+      inHunk = false
+      continue
+    }
+
+    if (!currentFile) {
+      continue
+    }
+
+    const entry = counts.get(currentFile)
+    if (!entry) {
+      continue
+    }
+
+    if (currentType === 'add') {
+      // all content lines in Add File are additions
+      if (line.length > 0 && !line.startsWith('*** ')) {
+        entry.additions++
+      }
+    } else if (currentType === 'delete') {
+      // all content lines in Delete File are deletions
+      if (line.length > 0 && !line.startsWith('*** ')) {
+        entry.deletions++
+      }
+    } else if (inHunk) {
+      if (line.startsWith('+')) {
+        entry.additions++
+      } else if (line.startsWith('-')) {
+        entry.deletions++
+      }
+    }
+  }
+  return counts
+}
+
+/**
  * Normalize whitespace: convert newlines to spaces and collapse consecutive spaces.
  */
 function normalizeWhitespace(text: string): string {
@@ -178,93 +246,20 @@ export function getToolSummaryText(part: Part): string {
   }
 
   if (part.tool === 'apply_patch') {
-    const state = part.state as {
-      metadata?: { files?: unknown; diff?: unknown }
-      output?: unknown
-    }
-    const rawFiles = state.metadata?.files
-    const partMetaFiles = (part as { metadata?: { files?: unknown } }).metadata?.files
-    const filesList = Array.isArray(rawFiles)
-      ? rawFiles
-      : Array.isArray(partMetaFiles)
-        ? partMetaFiles
-        : []
-
-    const summarizeFiles = (files: unknown[]): string => {
-      const summarized = files
-        .map((f) => {
-          if (!f) {
-            return null
-          }
-          if (typeof f === 'string') {
-            const fileName = f.split('/').pop() || ''
-            return fileName ? `*${escapeInlineMarkdown(fileName)}* (+0-0)` : `(+0-0)`
-          }
-          if (typeof f !== 'object') {
-            return null
-          }
-          const file = f as Record<string, unknown>
-          const pathStr = String(file.relativePath || file.filePath || file.path || '')
-          const fileName = pathStr.split('/').pop() || ''
-          const added = typeof file.additions === 'number' ? file.additions : 0
-          const removed = typeof file.deletions === 'number' ? file.deletions : 0
-          return fileName
-            ? `*${escapeInlineMarkdown(fileName)}* (+${added}-${removed})`
-            : `(+${added}-${removed})`
-        })
-        .filter(Boolean)
-        .join(', ')
-      return summarized
-    }
-
-    if (filesList.length > 0) {
-      const summarized = summarizeFiles(filesList)
-      if (summarized) {
-        return summarized
-      }
-    }
-
+    // Only inputs are available when parts are sent during streaming (output/metadata not yet populated)
     const patchText = (part.state.input?.patchText as string) || ''
-    if (patchText) {
-      const patchLines = patchText.split('\n')
-      const fileLines = patchLines.filter((line) => {
-        return (
-          line.startsWith('*** Add File:') ||
-          line.startsWith('*** Update File:') ||
-          line.startsWith('*** Delete File:') ||
-          line.startsWith('*** Move to:')
-        )
+    if (!patchText) {
+      return ''
+    }
+    const patchCounts = parsePatchCounts(patchText)
+    return [...patchCounts.entries()]
+      .map(([filePath, { additions, deletions }]) => {
+        const fileName = filePath.split('/').pop() || ''
+        return fileName
+          ? `*${escapeInlineMarkdown(fileName)}* (+${additions}-${deletions})`
+          : `(+${additions}-${deletions})`
       })
-      if (fileLines.length > 0) {
-        const summarized = summarizeFiles(
-          fileLines
-            .map((line) => line.replace(/^\*\*\* (Add File|Update File|Delete File|Move to):\s*/, ''))
-            .filter(Boolean),
-        )
-        if (summarized) {
-          return summarized
-        }
-      }
-    }
-
-    const outputText = typeof state.output === 'string' ? state.output : ''
-    const outputLines = outputText.split('\n')
-    const updatedIndex = outputLines.findIndex((line) =>
-      line.startsWith('Success. Updated the following files:'),
-    )
-    if (updatedIndex !== -1) {
-      const fileLines = outputLines.slice(updatedIndex + 1).filter(Boolean)
-      if (fileLines.length > 0) {
-        const summarized = summarizeFiles(
-          fileLines.map((line) => line.replace(/^[AMD]\s+/, '').trim()),
-        )
-        if (summarized) {
-          return summarized
-        }
-      }
-    }
-
-    return ''
+      .join(', ')
   }
 
   if (part.tool === 'write') {
