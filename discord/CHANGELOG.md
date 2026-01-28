@@ -1,5 +1,20 @@
 # Changelog
 
+## 0.4.48
+
+### Patch Changes
+
+- feat: add **discord username prefix** to AI prompts and ignore non-bot mentions
+- feat: make **verbosity apply mid-session** and add `--verbosity` default flag
+- fix: **gate session idle completion** to prevent premature session ends
+- fix: **show apply_patch file names** from input instead of output
+- fix: **filter hidden agents** from new-session autocomplete
+- fix: **handle permission requests** from subtask sessions
+- fix: log ignored errors and gate idle abort
+- refactor: simplify waitForServer to check single health endpoint
+- refactor: createNewProject extraction
+- update **@clack/prompts** to latest
+
 ## 0.4.47
 
 ### Patch Changes
