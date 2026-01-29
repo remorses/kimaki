@@ -397,6 +397,10 @@ async function registerCommands({
         return option
       })
       .toJSON(),
+    new SlashCommandBuilder()
+      .setName('restart-opencode-server')
+      .setDescription('Restart the opencode server for this channel only (fixes state/auth/plugins)')
+      .toJSON(),
   ]
 
   // Add user-defined commands with -cmd suffix

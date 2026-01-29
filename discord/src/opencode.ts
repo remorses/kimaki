@@ -226,3 +226,33 @@ export function getOpencodeClientV2(directory: string): OpencodeClientV2 | null 
   const entry = opencodeServers.get(directory)
   return entry?.clientV2 ?? null
 }
+
+/**
+ * Restart the opencode server for a directory.
+ * Kills the existing process and reinitializes a new one.
+ * Used for resolving opencode state issues, refreshing auth, plugins, etc.
+ */
+export async function restartOpencodeServer(directory: string): Promise<OpenCodeErrors | true> {
+  const existing = opencodeServers.get(directory)
+
+  if (existing) {
+    opencodeLogger.log(`Killing existing server for directory: ${directory} (pid: ${existing.process.pid})`)
+    // Reset retry count so the exit handler doesn't auto-restart
+    serverRetryCount.set(directory, 999)
+    existing.process.kill('SIGTERM')
+    opencodeServers.delete(directory)
+    // Give the process time to fully terminate
+    await new Promise((resolve) => {
+      setTimeout(resolve, 1000)
+    })
+  }
+
+  // Reset retry count for the fresh start
+  serverRetryCount.delete(directory)
+
+  const result = await initializeOpencodeForDirectory(directory)
+  if (result instanceof Error) {
+    return result
+  }
+  return true
+}

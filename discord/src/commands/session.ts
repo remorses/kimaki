@@ -65,7 +65,7 @@ export async function handleSessionCommand({ command, appId }: CommandContext): 
     }
 
     const starterMessage = await textChannel.send({
-      content: `🚀 **Starting OpenCode session**\n📝 ${prompt.slice(0, 200)}${prompt.length > 200 ? '…' : ''}${files.length > 0 ? `\n📎 Files: ${files.join(', ')}` : ''}`,
+      content: `🚀 **Starting OpenCode session**\n📝 ${prompt}${files.length > 0 ? `\n📎 Files: ${files.join(', ')}` : ''}`,
       flags: SILENT_MESSAGE_FLAGS,
     })
 
