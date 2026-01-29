@@ -1,4 +1,4 @@
-// /enable-worktrees and /disable-worktrees commands.
+// /toggle-worktrees command.
 // Allows per-channel opt-in for automatic worktree creation,
 // as an alternative to the global --use-worktrees CLI flag.
 
@@ -10,17 +10,17 @@ import { createLogger, LogPrefix } from '../logger.js'
 const worktreeSettingsLogger = createLogger(LogPrefix.WORKTREE)
 
 /**
- * Handle the /enable-worktrees slash command.
- * Enables automatic worktree creation for new sessions in this channel.
+ * Handle the /toggle-worktrees slash command.
+ * Toggles automatic worktree creation for new sessions in this channel.
  */
-export async function handleEnableWorktreesCommand({
+export async function handleToggleWorktreesCommand({
   command,
   appId,
 }: {
   command: ChatInputCommandInteraction
   appId: string
 }): Promise<void> {
-  worktreeSettingsLogger.log('[ENABLE_WORKTREES] Command called')
+  worktreeSettingsLogger.log('[TOGGLE_WORKTREES] Command called')
 
   const channel = command.channel
 
@@ -53,70 +53,19 @@ export async function handleEnableWorktreesCommand({
   }
 
   const wasEnabled = getChannelWorktreesEnabled(textChannel.id)
-  setChannelWorktreesEnabled(textChannel.id, true)
+  const nextEnabled = !wasEnabled
+  setChannelWorktreesEnabled(textChannel.id, nextEnabled)
 
-  worktreeSettingsLogger.log(`[ENABLE_WORKTREES] Enabled for channel ${textChannel.id}`)
+  const nextLabel = nextEnabled ? 'enabled' : 'disabled'
 
-  await command.reply({
-    content: wasEnabled
-      ? `Worktrees are already enabled for this channel.\n\nNew sessions started from messages in **#${textChannel.name}** will automatically create git worktrees.`
-      : `Worktrees **enabled** for this channel.\n\nNew sessions started from messages in **#${textChannel.name}** will now automatically create git worktrees.\n\nUse \`/disable-worktrees\` to turn this off.`,
-    ephemeral: true,
-  })
-}
-
-/**
- * Handle the /disable-worktrees slash command.
- * Disables automatic worktree creation for new sessions in this channel.
- */
-export async function handleDisableWorktreesCommand({
-  command,
-  appId,
-}: {
-  command: ChatInputCommandInteraction
-  appId: string
-}): Promise<void> {
-  worktreeSettingsLogger.log('[DISABLE_WORKTREES] Command called')
-
-  const channel = command.channel
-
-  if (!channel || channel.type !== ChannelType.GuildText) {
-    await command.reply({
-      content: 'This command can only be used in text channels (not threads).',
-      ephemeral: true,
-    })
-    return
-  }
-
-  const textChannel = channel as TextChannel
-  const metadata = getKimakiMetadata(textChannel)
-
-  if (metadata.channelAppId && metadata.channelAppId !== appId) {
-    await command.reply({
-      content: 'This channel is configured for a different bot.',
-      ephemeral: true,
-    })
-    return
-  }
-
-  if (!metadata.projectDirectory) {
-    await command.reply({
-      content:
-        'This channel is not configured with a project directory.\nUse `/add-project` to set up this channel.',
-      ephemeral: true,
-    })
-    return
-  }
-
-  const wasEnabled = getChannelWorktreesEnabled(textChannel.id)
-  setChannelWorktreesEnabled(textChannel.id, false)
-
-  worktreeSettingsLogger.log(`[DISABLE_WORKTREES] Disabled for channel ${textChannel.id}`)
+  worktreeSettingsLogger.log(
+    `[TOGGLE_WORKTREES] ${nextLabel.toUpperCase()} for channel ${textChannel.id}`,
+  )
 
   await command.reply({
-    content: wasEnabled
-      ? `Worktrees **disabled** for this channel.\n\nNew sessions started from messages in **#${textChannel.name}** will use the main project directory.\n\nUse \`/enable-worktrees\` to turn this back on.`
-      : `Worktrees are already disabled for this channel.\n\nNew sessions will use the main project directory.`,
+    content: nextEnabled
+      ? `Worktrees **enabled** for this channel.\n\nNew sessions started from messages in **#${textChannel.name}** will now automatically create git worktrees.\n\nNew setting for **#${textChannel.name}**: **enabled**.`
+      : `Worktrees **disabled** for this channel.\n\nNew sessions started from messages in **#${textChannel.name}** will use the main project directory.\n\nNew setting for **#${textChannel.name}**: **disabled**.`,
     ephemeral: true,
   })
 }

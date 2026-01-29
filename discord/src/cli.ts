@@ -290,12 +290,8 @@ async function registerCommands({
       .setDescription('Merge the worktree branch into the default branch')
       .toJSON(),
     new SlashCommandBuilder()
-      .setName('enable-worktrees')
-      .setDescription('Enable automatic git worktree creation for new sessions in this channel')
-      .toJSON(),
-    new SlashCommandBuilder()
-      .setName('disable-worktrees')
-      .setDescription('Disable automatic git worktree creation for new sessions in this channel')
+      .setName('toggle-worktrees')
+      .setDescription('Toggle automatic git worktree creation for new sessions in this channel')
       .toJSON(),
     new SlashCommandBuilder()
       .setName('add-project')
@@ -358,7 +354,7 @@ async function registerCommands({
       .toJSON(),
     new SlashCommandBuilder()
       .setName('login')
-      .setDescription('Authenticate with an AI provider (OAuth or API key)')
+      .setDescription('Authenticate with an AI provider (OAuth or API key). Use this instead of /connect')
       .toJSON(),
     new SlashCommandBuilder()
       .setName('agent')

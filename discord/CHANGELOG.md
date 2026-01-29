@@ -91,7 +91,7 @@
 
 - fix **send auto-start race condition** - use embed marker instead of database lookup
 - add **/merge-worktree** command to merge worktree branch into main with ⬦ thread prefix
-- add **/enable-worktrees** and **/disable-worktrees** commands for channel settings
+- add **/toggle-worktrees** command for channel settings
 - add **--use-worktrees** flag for automatic worktree creation on new sessions
 - add **add-project** CLI command with worktree submodule/deps init
 - fix **merge-worktree** non-fast-forward handling, uncommitted changes check, detached HEAD support

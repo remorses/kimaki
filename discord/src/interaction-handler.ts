@@ -6,10 +6,7 @@ import { Events, type Client, type Interaction } from 'discord.js'
 import { handleSessionCommand, handleSessionAutocomplete } from './commands/session.js'
 import { handleNewWorktreeCommand } from './commands/worktree.js'
 import { handleMergeWorktreeCommand } from './commands/merge-worktree.js'
-import {
-  handleEnableWorktreesCommand,
-  handleDisableWorktreesCommand,
-} from './commands/worktree-settings.js'
+import { handleToggleWorktreesCommand } from './commands/worktree-settings.js'
 import { handleResumeCommand, handleResumeAutocomplete } from './commands/resume.js'
 import { handleAddProjectCommand, handleAddProjectAutocomplete } from './commands/add-project.js'
 import {
@@ -105,12 +102,8 @@ export function registerInteractionHandler({
             await handleMergeWorktreeCommand({ command: interaction, appId })
             return
 
-          case 'enable-worktrees':
-            await handleEnableWorktreesCommand({ command: interaction, appId })
-            return
-
-          case 'disable-worktrees':
-            await handleDisableWorktreesCommand({ command: interaction, appId })
+          case 'toggle-worktrees':
+            await handleToggleWorktreesCommand({ command: interaction, appId })
             return
 
           case 'resume':
