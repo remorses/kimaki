@@ -1482,20 +1482,21 @@ export async function handleOpencodeSession({
       sessionLogger.log(`[AGENT] Using agent preference: ${agentPreference}`)
     }
 
-    const modelPreference =
-      getSessionModel(session.id) || (channelId ? getChannelModel(channelId) : undefined)
+    // Model priority: session model > agent model > channel model > default
+    const sessionModelPreference = getSessionModel(session.id)
+    const channelModelPreference = channelId ? getChannelModel(channelId) : undefined
     const modelParam = await (async () => {
-      // Use explicit user preference if set (takes priority over agent model)
-      if (modelPreference) {
-        const [providerID, ...modelParts] = modelPreference.split('/')
+      // 1. Session model preference (highest priority, explicit user override)
+      if (sessionModelPreference) {
+        const [providerID, ...modelParts] = sessionModelPreference.split('/')
         const modelID = modelParts.join('/')
         if (providerID && modelID) {
-          sessionLogger.log(`[MODEL] Using preference: ${modelPreference}`)
+          sessionLogger.log(`[MODEL] Using session preference: ${sessionModelPreference}`)
           return { providerID, modelID }
         }
       }
 
-      // If agent is set, check if agent has a model configured
+      // 2. Agent's configured model
       if (agentPreference) {
         const agentsResponse = await errore.tryAsync(() => {
           return getClient().app.agents({ query: { directory: sdkDirectory } })
@@ -1508,11 +1509,21 @@ export async function handleOpencodeSession({
             )
             return agent.model
           }
-          sessionLogger.log(`[MODEL] Agent "${agentPreference}" has no model configured, using default`)
+          sessionLogger.log(`[MODEL] Agent "${agentPreference}" has no model configured`)
         }
       }
 
-      // Fetch default model from OpenCode (like TUI does)
+      // 3. Channel model preference
+      if (channelModelPreference) {
+        const [providerID, ...modelParts] = channelModelPreference.split('/')
+        const modelID = modelParts.join('/')
+        if (providerID && modelID) {
+          sessionLogger.log(`[MODEL] Using channel preference: ${channelModelPreference}`)
+          return { providerID, modelID }
+        }
+      }
+
+      // 4. Default model from OpenCode (like TUI does)
       const defaultModel = await getDefaultModel({ getClient, directory: sdkDirectory })
       if (defaultModel) {
         sessionLogger.log(`[MODEL] Using default: ${defaultModel.providerID}/${defaultModel.modelID}`)

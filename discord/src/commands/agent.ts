@@ -123,8 +123,8 @@ export async function resolveAgentCommandContext({
 
 /**
  * Set the agent preference for a context (session or channel).
- * When switching agents for a session, also clears the session model preference
- * so the new agent's model takes effect.
+ * When switching agents for a session, clears session model preference
+ * so the new agent's model takes effect (agent model > channel model).
  */
 export function setAgentForContext({
   context,
@@ -137,7 +137,7 @@ export function setAgentForContext({
     setSessionAgent(context.sessionId, agentName)
     // Clear session model so the new agent's model takes effect
     clearSessionModel(context.sessionId)
-    agentLogger.log(`Set agent ${agentName} for session ${context.sessionId} (cleared model preference)`)
+    agentLogger.log(`Set agent ${agentName} for session ${context.sessionId} (cleared session model)`)
   } else {
     setChannelAgent(context.channelId, agentName)
     agentLogger.log(`Set agent ${agentName} for channel ${context.channelId}`)
