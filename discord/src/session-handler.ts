@@ -130,13 +130,14 @@ export function clearQueue(threadId: string): void {
 }
 
 /**
- * Read the user's last used model from OpenCode TUI's state file.
+ * Read user's recent models from OpenCode TUI's state file.
  * Uses same path as OpenCode: path.join(xdgState, "opencode", "model.json")
+ * Returns all recent models so we can iterate until finding a valid one.
  * See: opensrc/repos/github.com/sst/opencode/packages/opencode/src/global/index.ts
  */
-function getRecentModelFromTuiState(): { providerID: string; modelID: string } | undefined {
+function getRecentModelsFromTuiState(): Array<{ providerID: string; modelID: string }> {
   if (!xdgState) {
-    return undefined
+    return []
   }
   // Same path as OpenCode TUI: path.join(Global.Path.state, "model.json")
   const modelJsonPath = path.join(xdgState, 'opencode', 'model.json')
@@ -146,23 +147,49 @@ function getRecentModelFromTuiState(): { providerID: string; modelID: string } |
     const data = JSON.parse(content) as {
       recent?: Array<{ providerID: string; modelID: string }>
     }
-    return data.recent?.[0]
+    return data.recent ?? []
   })
 
   if (result instanceof Error) {
     // File doesn't exist or is invalid - this is normal for fresh installs
-    return undefined
+    return []
   }
 
   return result
 }
 
 /**
+ * Parse a model string in format "provider/model" into providerID and modelID.
+ */
+function parseModelString(model: string): { providerID: string; modelID: string } | undefined {
+  const [providerID, ...modelParts] = model.split('/')
+  const modelID = modelParts.join('/')
+  if (!providerID || !modelID) {
+    return undefined
+  }
+  return { providerID, modelID }
+}
+
+/**
+ * Validate that a model is available (provider connected + model exists).
+ */
+function isModelValid(
+  model: { providerID: string; modelID: string },
+  connected: string[],
+  providers: Array<{ id: string; models?: Record<string, unknown> }>,
+): boolean {
+  const isConnected = connected.includes(model.providerID)
+  const provider = providers.find((p) => p.id === model.providerID)
+  const modelExists = provider?.models && model.modelID in provider.models
+  return isConnected && !!modelExists
+}
+
+/**
  * Get the default model from OpenCode when no user preference is set.
- * Priority:
- * 1. User's last used model from TUI state (~/.local/state/opencode/model.json)
- * 2. First connected provider's default model from API
- * This matches OpenCode TUI behavior of always passing an explicit model.
+ * Priority (matches OpenCode TUI behavior):
+ * 1. OpenCode config.model setting
+ * 2. User's recent models from TUI state (~/.local/state/opencode/model.json)
+ * 3. First connected provider's default model from API
  */
 async function getDefaultModel({
   getClient,
@@ -176,43 +203,55 @@ async function getDefaultModel({
   }
 
   // Fetch connected providers to validate any model we return
-  const response = await errore.tryAsync(() => {
+  const providersResponse = await errore.tryAsync(() => {
     return getClient().provider.list({ query: { directory } })
   })
-  if (response instanceof Error) {
-    sessionLogger.log(`[MODEL] Failed to fetch providers for default model:`, response.message)
+  if (providersResponse instanceof Error) {
+    sessionLogger.log(`[MODEL] Failed to fetch providers for default model:`, providersResponse.message)
     return undefined
   }
-  if (!response.data) {
+  if (!providersResponse.data) {
     return undefined
   }
 
-  const { connected, default: defaults, all: providers } = response.data
+  const { connected, default: defaults, all: providers } = providersResponse.data
   if (connected.length === 0) {
     sessionLogger.log(`[MODEL] No connected providers found`)
     return undefined
   }
 
-  // Try to use user's last model from TUI state
-  const recentModel = getRecentModelFromTuiState()
-  if (recentModel) {
-    // Validate the model is still available (provider connected + model exists)
-    const isConnected = connected.includes(recentModel.providerID)
-    const provider = providers.find((p) => p.id === recentModel.providerID)
-    const modelExists = provider?.models && recentModel.modelID in provider.models
+  // 1. Check OpenCode config.model setting (highest priority after user preference)
+  const configResponse = await errore.tryAsync(() => {
+    return getClient().config.get({ query: { directory } })
+  })
+  if (!(configResponse instanceof Error) && configResponse.data?.model) {
+    const configModel = parseModelString(configResponse.data.model)
+    if (configModel && isModelValid(configModel, connected, providers)) {
+      sessionLogger.log(`[MODEL] Using config model: ${configModel.providerID}/${configModel.modelID}`)
+      return configModel
+    }
+    if (configModel) {
+      sessionLogger.log(
+        `[MODEL] Config model ${configResponse.data.model} not available, checking recent`,
+      )
+    }
+  }
 
-    if (isConnected && modelExists) {
+  // 2. Try to use user's recent models from TUI state (iterate until finding valid one)
+  const recentModels = getRecentModelsFromTuiState()
+  for (const recentModel of recentModels) {
+    if (isModelValid(recentModel, connected, providers)) {
       sessionLogger.log(
         `[MODEL] Using recent TUI model: ${recentModel.providerID}/${recentModel.modelID}`,
       )
       return recentModel
     }
-    sessionLogger.log(
-      `[MODEL] Recent TUI model ${recentModel.providerID}/${recentModel.modelID} not available (connected: ${isConnected}, exists: ${modelExists})`,
-    )
+  }
+  if (recentModels.length > 0) {
+    sessionLogger.log(`[MODEL] No valid recent TUI models found`)
   }
 
-  // Fall back to first connected provider's default model
+  // 3. Fall back to first connected provider's default model
   const firstConnected = connected[0]
   if (!firstConnected) {
     return undefined
