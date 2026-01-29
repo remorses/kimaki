@@ -155,7 +155,7 @@ export async function handleModelCommand({
     if (availableProviders.length === 0) {
       await interaction.editReply({
         content:
-          'No providers with credentials found. Use `/connect` in OpenCode TUI to add provider credentials.',
+          'No providers with credentials found. Use `/login` to connect a provider and add credentials.',
       })
       return
     }
