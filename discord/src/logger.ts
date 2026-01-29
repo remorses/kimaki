@@ -25,6 +25,7 @@ export const LogPrefix = {
   GENAI: 'GENAI',
   GENAI_WORKER: 'GENAI_W',
   INTERACTION: 'INTERACT',
+  LOGIN: 'LOGIN',
   MARKDOWN: 'MARKDOWN',
   MODEL: 'MODEL',
   OPENAI: 'OPENAI',

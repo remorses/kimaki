@@ -357,6 +357,10 @@ async function registerCommands({
       .setDescription('Set the preferred model for this channel or session')
       .toJSON(),
     new SlashCommandBuilder()
+      .setName('login')
+      .setDescription('Authenticate with an AI provider (OAuth or API key)')
+      .toJSON(),
+    new SlashCommandBuilder()
       .setName('agent')
       .setDescription('Set the preferred agent for this channel or session')
       .toJSON(),

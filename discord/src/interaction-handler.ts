@@ -27,6 +27,12 @@ import {
   handleProviderSelectMenu,
   handleModelSelectMenu,
 } from './commands/model.js'
+import {
+  handleLoginCommand,
+  handleLoginProviderSelectMenu,
+  handleLoginMethodSelectMenu,
+  handleApiKeyModalSubmit,
+} from './commands/login.js'
 import { handleAgentCommand, handleAgentSelectMenu, handleQuickAgentCommand } from './commands/agent.js'
 import { handleAskQuestionSelectMenu } from './commands/ask-question.js'
 import { handleQueueCommand, handleClearQueueCommand } from './commands/queue.js'
@@ -144,6 +150,10 @@ export function registerInteractionHandler({
             await handleModelCommand({ interaction, appId })
             return
 
+          case 'login':
+            await handleLoginCommand({ interaction, appId })
+            return
+
           case 'agent':
             await handleAgentCommand({ interaction, appId })
             return
@@ -217,6 +227,26 @@ export function registerInteractionHandler({
 
         if (customId.startsWith('permission:')) {
           await handlePermissionSelectMenu(interaction)
+          return
+        }
+
+        if (customId.startsWith('login_provider:')) {
+          await handleLoginProviderSelectMenu(interaction)
+          return
+        }
+
+        if (customId.startsWith('login_method:')) {
+          await handleLoginMethodSelectMenu(interaction)
+          return
+        }
+        return
+      }
+
+      if (interaction.isModalSubmit()) {
+        const customId = interaction.customId
+
+        if (customId.startsWith('login_apikey:')) {
+          await handleApiKeyModalSubmit(interaction)
           return
         }
         return
