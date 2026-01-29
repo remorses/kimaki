@@ -248,6 +248,19 @@ async function registerCommands({
       })
       .toJSON(),
     new SlashCommandBuilder()
+      .setName('resume-session')
+      .setDescription('Resume an existing OpenCode session')
+      .addStringOption((option) => {
+        option
+          .setName('session')
+          .setDescription('The session to resume')
+          .setRequired(true)
+          .setAutocomplete(true)
+
+        return option
+      })
+      .toJSON(),
+    new SlashCommandBuilder()
       .setName('new-session')
       .setDescription('Start a new OpenCode session')
       .addStringOption((option) => {

@@ -23,6 +23,17 @@ export async function handleResumeCommand({ command, appId }: CommandContext): P
   const sessionId = command.options.getString('session', true)
   const channel = command.channel
 
+  const isThread =
+    channel &&
+    [ChannelType.PublicThread, ChannelType.PrivateThread, ChannelType.AnnouncementThread].includes(
+      channel.type,
+    )
+
+  if (isThread) {
+    await command.editReply('This command can only be used in project channels, not threads')
+    return
+  }
+
   if (!channel || channel.type !== ChannelType.GuildText) {
     await command.editReply('This command can only be used in text channels')
     return

@@ -69,6 +69,7 @@ export function registerInteractionHandler({
             return
 
           case 'resume':
+          case 'resume-session':
             await handleResumeAutocomplete({ interaction, appId })
             return
 
@@ -107,6 +108,7 @@ export function registerInteractionHandler({
             return
 
           case 'resume':
+          case 'resume-session':
             await handleResumeCommand({ command: interaction, appId })
             return
 
