@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.4.52
+
+### Patch Changes
+
+- feat: include **Discord CDN URLs** for image attachments in prompts so agents can fetch images if needed
+- feat: always pass **explicit model** to OpenCode like TUI does for consistent behavior
+- fix: check **config.model** before recent models for default model selection
+- fix: add **suggestion to use CLI** for unlisted projects in add-project command
+- update **errore** submodule
+
 ## 0.4.51
 
 ### Patch Changes
