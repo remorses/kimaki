@@ -48,7 +48,7 @@ const discordLogger = createLogger(LogPrefix.DISCORD)
 export const abortControllers = new Map<string, AbortController>()
 
 // Built-in tools that are hidden in text-and-essential-tools verbosity mode.
-// Essential tools (edits, bash, todos, tasks, custom MCP tools) are shown; these navigation/read tools are hidden.
+// Essential tools (edits, bash with side effects, todos, tasks, custom MCP tools) are shown; these navigation/read tools are hidden.
 const NON_ESSENTIAL_TOOLS = new Set([
   'read',
   'list',
@@ -60,8 +60,22 @@ const NON_ESSENTIAL_TOOLS = new Set([
   'webfetch',
 ])
 
-function isEssentialTool(toolName: string): boolean {
+function isEssentialToolName(toolName: string): boolean {
   return !NON_ESSENTIAL_TOOLS.has(toolName)
+}
+
+function isEssentialToolPart(part: Part): boolean {
+  if (part.type !== 'tool') {
+    return false
+  }
+  if (!isEssentialToolName(part.tool)) {
+    return false
+  }
+  if (part.tool === 'bash') {
+    const hasSideEffect = part.state.input?.hasSideEffect
+    return hasSideEffect !== false
+  }
+  return true
 }
 
 // Track multiple pending permissions per thread (keyed by permission ID)
@@ -650,7 +664,7 @@ export async function handleOpencodeSession({
     if (verbosity === 'text-and-essential-tools') {
       if (part.type === 'text') {
         // text is always shown
-      } else if (part.type === 'tool' && isEssentialTool(part.tool)) {
+      } else if (part.type === 'tool' && isEssentialToolPart(part)) {
         // essential tools are shown
       } else {
         return
@@ -884,7 +898,7 @@ export async function handleOpencodeSession({
             return false
           }
           if (verbosity === 'text-and-essential-tools') {
-            return isEssentialTool(part.tool)
+            return isEssentialToolPart(part)
           }
           return true
         })()
@@ -949,7 +963,7 @@ export async function handleOpencodeSession({
       }
       // In text-and-essential-tools mode, only show essential tools from subtasks
       if (verbosity === 'text-and-essential-tools') {
-        if (part.type !== 'tool' || !isEssentialTool(part.tool)) {
+        if (!isEssentialToolPart(part)) {
           return
         }
       }

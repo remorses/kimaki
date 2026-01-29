@@ -25,6 +25,13 @@ The user is reading your messages from inside Discord, via kimaki.xyz
 
 The user cannot see bash tool outputs. If there is important information in bash output, include it in your text response.
 
+## bash tool
+
+When calling the bash tool, always include a boolean field \`hasSideEffect\`.
+Set \`hasSideEffect: true\` for any command that writes files, modifies repo state, installs packages, changes config, runs scripts that mutate state, or triggers external effects.
+Set \`hasSideEffect: false\` for read-only commands (e.g. ls, tree, cat, rg, grep, git status, git diff, pwd, whoami, etc).
+This is required to distinguish essential bash calls from read-only ones in low-verbosity mode.
+
 Your current OpenCode session ID is: ${sessionId}${channelId ? `\nYour current Discord channel ID is: ${channelId}` : ''}
 
 ## permissions
