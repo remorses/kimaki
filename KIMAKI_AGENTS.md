@@ -19,3 +19,7 @@ this project uses sqlite to preserve state between runs. the database should nev
 errore is a submodule. should always be in main. make sure it is never in detached state.
 
 it is a package for using errors as values in ts.
+
+## opencode
+
+if I ask you questions about opencode you can opensrc it from anomalyco/opencode
