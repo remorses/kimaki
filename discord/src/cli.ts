@@ -299,11 +299,11 @@ async function registerCommands({
       .toJSON(),
     new SlashCommandBuilder()
       .setName('add-project')
-      .setDescription('Create Discord channels for a new OpenCode project')
+      .setDescription('Create Discord channels for a project. Use `npx kimaki add-project` for unlisted projects')
       .addStringOption((option) => {
         option
           .setName('project')
-          .setDescription('Select an OpenCode project')
+          .setDescription('Select a project. Use `npx kimaki add-project` if not listed')
           .setRequired(true)
           .setAutocomplete(true)
 
@@ -1644,7 +1644,7 @@ cli
   })
 
 cli
-  .command('add-project [directory]', 'Create Discord channels for a project directory')
+  .command('add-project [directory]', 'Create Discord channels for a project directory (e.g. ./folder)')
   .option('-g, --guild <guildId>', 'Discord guild/server ID (auto-detects if bot is in only one server)')
   .option('-a, --app-id <appId>', 'Bot application ID (reads from database if available)')
   .action(
