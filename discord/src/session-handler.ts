@@ -3,7 +3,7 @@
 // Handles streaming events, permissions, abort signals, and message queuing.
 
 import type { Part, PermissionRequest, QuestionRequest } from '@opencode-ai/sdk/v2'
-import type { FilePartInput } from '@opencode-ai/sdk'
+import type { DiscordFileAttachment } from './message-formatting.js'
 import type { Message, ThreadChannel } from 'discord.js'
 import prettyMilliseconds from 'pretty-ms'
 import fs from 'node:fs'
@@ -99,7 +99,7 @@ export type QueuedMessage = {
   userId: string
   username: string
   queuedAt: number
-  images?: FilePartInput[]
+  images?: DiscordFileAttachment[]
 }
 
 // Queue of messages waiting to be sent after current response finishes
@@ -329,7 +329,7 @@ export async function abortAndRetrySession({
     | { type: 'text'; text: string }
     | undefined
   const prompt = textPart?.text || ''
-  const images = lastUserMessage.parts.filter((p) => p.type === 'file') as FilePartInput[]
+  const images = lastUserMessage.parts.filter((p) => p.type === 'file') as DiscordFileAttachment[]
 
   sessionLogger.log(`[ABORT+RETRY] Re-triggering session ${sessionId} with new model`)
 
@@ -373,7 +373,7 @@ export async function handleOpencodeSession({
   thread: ThreadChannel
   projectDirectory?: string
   originalMessage?: Message
-  images?: FilePartInput[]
+  images?: DiscordFileAttachment[]
   channelId?: string
   /** If set, uses session.command API instead of session.prompt */
   command?: { name: string; arguments: string }
@@ -1463,12 +1463,14 @@ export async function handleOpencodeSession({
         images.map((img) => ({
           mime: img.mime,
           filename: img.filename,
-          urlPreview: img.url.slice(0, 50) + '...',
+          sourceUrl: img.sourceUrl,
         })),
       )
-      // Just list filenames, not the full base64 URLs (images are passed as separate parts)
-      const imageList = images.map((img) => `- ${img.filename}`).join('\n')
-      return `${prompt}\n\n**attached images:**\n${imageList}`
+      // List source URLs and clarify these images are already in context (not paths to read)
+      const imageList = images
+        .map((img) => `- ${img.sourceUrl || img.filename}`)
+        .join('\n')
+      return `${prompt}\n\n**The following images are already included in this message as inline content (do not use Read tool on these):**\n${imageList}`
     })()
 
     const parts = [{ type: 'text' as const, text: promptWithImagePaths }, ...images]

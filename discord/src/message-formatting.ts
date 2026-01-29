@@ -5,6 +5,11 @@
 import type { Part } from '@opencode-ai/sdk/v2'
 import type { FilePartInput } from '@opencode-ai/sdk'
 import type { Message } from 'discord.js'
+
+// Extended FilePartInput with original Discord URL for reference in prompts
+export type DiscordFileAttachment = FilePartInput & {
+  sourceUrl?: string
+}
 import * as errore from 'errore'
 import { createLogger, LogPrefix } from './logger.js'
 import { FetchError } from './errors.js'
@@ -179,7 +184,7 @@ export async function getTextAttachments(message: Message): Promise<string> {
   return textContents.join('\n\n')
 }
 
-export async function getFileAttachments(message: Message): Promise<FilePartInput[]> {
+export async function getFileAttachments(message: Message): Promise<DiscordFileAttachment[]> {
   const fileAttachments = Array.from(message.attachments.values()).filter((attachment) => {
     const contentType = attachment.contentType || ''
     return contentType.startsWith('image/') || contentType === 'application/pdf'
@@ -220,11 +225,12 @@ export async function getFileAttachments(message: Message): Promise<FilePartInpu
         mime,
         filename: attachment.name,
         url: dataUrl,
+        sourceUrl: attachment.url,
       }
     }),
   )
 
-  return results.filter((r) => r !== null) as FilePartInput[]
+  return results.filter((r) => r !== null) as DiscordFileAttachment[]
 }
 
 export function getToolSummaryText(part: Part): string {
