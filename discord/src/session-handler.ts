@@ -6,6 +6,9 @@ import type { Part, PermissionRequest, QuestionRequest } from '@opencode-ai/sdk/
 import type { FilePartInput } from '@opencode-ai/sdk'
 import type { Message, ThreadChannel } from 'discord.js'
 import prettyMilliseconds from 'pretty-ms'
+import fs from 'node:fs'
+import path from 'node:path'
+import { xdgState } from 'xdg-basedir'
 import {
   getDatabase,
   getSessionModel,
@@ -124,6 +127,104 @@ export function getQueueLength(threadId: string): number {
 
 export function clearQueue(threadId: string): void {
   messageQueue.delete(threadId)
+}
+
+/**
+ * Read the user's last used model from OpenCode TUI's state file.
+ * Uses same path as OpenCode: path.join(xdgState, "opencode", "model.json")
+ * See: opensrc/repos/github.com/sst/opencode/packages/opencode/src/global/index.ts
+ */
+function getRecentModelFromTuiState(): { providerID: string; modelID: string } | undefined {
+  if (!xdgState) {
+    return undefined
+  }
+  // Same path as OpenCode TUI: path.join(Global.Path.state, "model.json")
+  const modelJsonPath = path.join(xdgState, 'opencode', 'model.json')
+
+  const result = errore.tryFn(() => {
+    const content = fs.readFileSync(modelJsonPath, 'utf-8')
+    const data = JSON.parse(content) as {
+      recent?: Array<{ providerID: string; modelID: string }>
+    }
+    return data.recent?.[0]
+  })
+
+  if (result instanceof Error) {
+    // File doesn't exist or is invalid - this is normal for fresh installs
+    return undefined
+  }
+
+  return result
+}
+
+/**
+ * Get the default model from OpenCode when no user preference is set.
+ * Priority:
+ * 1. User's last used model from TUI state (~/.local/state/opencode/model.json)
+ * 2. First connected provider's default model from API
+ * This matches OpenCode TUI behavior of always passing an explicit model.
+ */
+async function getDefaultModel({
+  getClient,
+  directory,
+}: {
+  getClient: Awaited<ReturnType<typeof initializeOpencodeForDirectory>>
+  directory: string
+}): Promise<{ providerID: string; modelID: string } | undefined> {
+  if (getClient instanceof Error) {
+    return undefined
+  }
+
+  // Fetch connected providers to validate any model we return
+  const response = await errore.tryAsync(() => {
+    return getClient().provider.list({ query: { directory } })
+  })
+  if (response instanceof Error) {
+    sessionLogger.log(`[MODEL] Failed to fetch providers for default model:`, response.message)
+    return undefined
+  }
+  if (!response.data) {
+    return undefined
+  }
+
+  const { connected, default: defaults, all: providers } = response.data
+  if (connected.length === 0) {
+    sessionLogger.log(`[MODEL] No connected providers found`)
+    return undefined
+  }
+
+  // Try to use user's last model from TUI state
+  const recentModel = getRecentModelFromTuiState()
+  if (recentModel) {
+    // Validate the model is still available (provider connected + model exists)
+    const isConnected = connected.includes(recentModel.providerID)
+    const provider = providers.find((p) => p.id === recentModel.providerID)
+    const modelExists = provider?.models && recentModel.modelID in provider.models
+
+    if (isConnected && modelExists) {
+      sessionLogger.log(
+        `[MODEL] Using recent TUI model: ${recentModel.providerID}/${recentModel.modelID}`,
+      )
+      return recentModel
+    }
+    sessionLogger.log(
+      `[MODEL] Recent TUI model ${recentModel.providerID}/${recentModel.modelID} not available (connected: ${isConnected}, exists: ${modelExists})`,
+    )
+  }
+
+  // Fall back to first connected provider's default model
+  const firstConnected = connected[0]
+  if (!firstConnected) {
+    return undefined
+  }
+  const defaultModelId = defaults[firstConnected]
+  if (!defaultModelId) {
+    sessionLogger.log(`[MODEL] No default model for provider ${firstConnected}`)
+    return undefined
+  }
+
+  sessionLogger.log(`[MODEL] Using provider default: ${firstConnected}/${defaultModelId}`)
+  return { providerID: firstConnected, modelID: defaultModelId }
 }
 
 /**
@@ -1059,7 +1160,7 @@ export async function handleOpencodeSession({
       )
 
       setImmediate(() => {
-        const prefixedPrompt = `<discord-user name="${nextMessage.username}" />\n${nextMessage.prompt}`
+        const prefixedPrompt = `${nextMessage.prompt}\n<discord-user name="${nextMessage.username}" />`
         void errore
           .tryAsync(async () => {
             return handleOpencodeSession({
@@ -1272,7 +1373,7 @@ export async function handleOpencodeSession({
           // Send the queued message as a new prompt (recursive call)
           // Use setImmediate to avoid blocking and allow this finally to complete
           setImmediate(() => {
-            const prefixedPrompt = `<discord-user name="${nextMessage.username}" />\n${nextMessage.prompt}`
+            const prefixedPrompt = `${nextMessage.prompt}\n<discord-user name="${nextMessage.username}" />`
             handleOpencodeSession({
               prompt: prefixedPrompt,
               thread,
@@ -1342,22 +1443,52 @@ export async function handleOpencodeSession({
 
     const modelPreference =
       getSessionModel(session.id) || (channelId ? getChannelModel(channelId) : undefined)
-    const modelParam = (() => {
+    const modelParam = await (async () => {
+      // Use explicit user preference if set (takes priority over agent model)
+      if (modelPreference) {
+        const [providerID, ...modelParts] = modelPreference.split('/')
+        const modelID = modelParts.join('/')
+        if (providerID && modelID) {
+          sessionLogger.log(`[MODEL] Using preference: ${modelPreference}`)
+          return { providerID, modelID }
+        }
+      }
+
+      // If agent is set, check if agent has a model configured
       if (agentPreference) {
-        sessionLogger.log(`[MODEL] Skipping model param, agent "${agentPreference}" controls model`)
-        return undefined
+        const agentsResponse = await errore.tryAsync(() => {
+          return getClient().app.agents({ query: { directory: sdkDirectory } })
+        })
+        if (!(agentsResponse instanceof Error) && agentsResponse.data) {
+          const agent = agentsResponse.data.find((a) => a.name === agentPreference)
+          if (agent?.model) {
+            sessionLogger.log(
+              `[MODEL] Using agent model: ${agent.model.providerID}/${agent.model.modelID}`,
+            )
+            return agent.model
+          }
+          sessionLogger.log(`[MODEL] Agent "${agentPreference}" has no model configured, using default`)
+        }
       }
-      if (!modelPreference) {
-        return undefined
+
+      // Fetch default model from OpenCode (like TUI does)
+      const defaultModel = await getDefaultModel({ getClient, directory: sdkDirectory })
+      if (defaultModel) {
+        sessionLogger.log(`[MODEL] Using default: ${defaultModel.providerID}/${defaultModel.modelID}`)
+        return defaultModel
       }
-      const [providerID, ...modelParts] = modelPreference.split('/')
-      const modelID = modelParts.join('/')
-      if (!providerID || !modelID) {
-        return undefined
-      }
-      sessionLogger.log(`[MODEL] Using model preference: ${modelPreference}`)
-      return { providerID, modelID }
+
+      // No model available - this will likely cause an error from OpenCode
+      sessionLogger.log(`[MODEL] No model available (no preference, no default)`)
+      return undefined
     })()
+
+    // Fail early if no model available
+    if (!modelParam) {
+      throw new Error(
+        'No AI provider connected. Configure a provider in OpenCode with `/connect` command.',
+      )
+    }
 
     // Build worktree info for system message (worktreeInfo was fetched at the start)
     const worktree: WorktreeInfo | undefined =

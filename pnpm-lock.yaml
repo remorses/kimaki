@@ -105,6 +105,9 @@ importers:
       undici:
         specifier: ^7.16.0
         version: 7.16.0
+      xdg-basedir:
+        specifier: ^5.1.0
+        version: 5.1.0
       zod:
         specifier: ^4.2.1
         version: 4.2.1
@@ -1852,6 +1855,10 @@ packages:
       utf-8-validate:
         optional: true
 
+  xdg-basedir@5.1.0:
+    resolution: {integrity: sha512-GCPAHLvrIH13+c0SuacwvRYj2SxJXQ4kaVTT5xgL3kPrz56XxkF21IGhjSE1+W0aw7gpBWRGXLCPnPby6lSpmQ==}
+    engines: {node: '>=12'}
+
   yallist@4.0.0:
     resolution: {integrity: sha512-3wdGidZyq5PB084XLES5TpOSRA3wjXAlIWMhum2kRcv/41Sn2emQ0dycQW4uZXLejwKvg6EsvbdlVL+FYEct7A==}
 
@@ -3541,6 +3548,8 @@ snapshots:
   wrappy@1.0.2: {}
 
   ws@8.18.3: {}
+
+  xdg-basedir@5.1.0: {}
 
   yallist@4.0.0:
     optional: true
