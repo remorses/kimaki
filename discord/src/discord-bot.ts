@@ -78,7 +78,7 @@ const discordLogger = createLogger(LogPrefix.DISCORD)
 const voiceLogger = createLogger(LogPrefix.VOICE)
 
 function prefixWithDiscordUser({ username, prompt }: { username: string; prompt: string }): string {
-  return `<discord-user name="${username}" />\n${prompt}`
+  return `${prompt}\n<discord-user name="${username}" />`
 }
 
 type StartOptions = {
