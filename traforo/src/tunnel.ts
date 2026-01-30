@@ -1,3 +1,4 @@
+import dedent from 'string-dedent'
 import type {
   UpstreamMessage,
   DownstreamMessage,
@@ -54,7 +55,9 @@ export default {
     const host = url.hostname
     const isUpgrade = req.headers.get('Upgrade') === 'websocket'
 
-    console.log(`[Worker] ${req.method} ${url.pathname} host=${host} upgrade=${isUpgrade}`)
+    console.log(
+      `[Worker] ${req.method} ${url.pathname} host=${host} upgrade=${isUpgrade}`,
+    )
 
     if (req.method === 'OPTIONS') {
       return addCors(new Response(null, { status: 204 }))
@@ -106,10 +109,10 @@ export class Tunnel {
 
     // Auto-respond to ping messages without waking DO
     this.ctx.setWebSocketAutoResponse(
-      new WebSocketRequestResponsePair('ping', 'pong')
+      new WebSocketRequestResponsePair('ping', 'pong'),
     )
     this.ctx.setWebSocketAutoResponse(
-      new WebSocketRequestResponsePair('{"type":"ping"}', '{"type":"pong"}')
+      new WebSocketRequestResponsePair('{"type":"ping"}', '{"type":"pong"}'),
     )
   }
 
@@ -118,7 +121,9 @@ export class Tunnel {
     const tunnelId = url.searchParams.get('_tunnelId') || 'default'
     const isUpgrade = req.headers.get('Upgrade') === 'websocket'
 
-    console.log(`[DO] fetch path=${url.pathname} tunnelId=${tunnelId} upgrade=${isUpgrade}`)
+    console.log(
+      `[DO] fetch path=${url.pathname} tunnelId=${tunnelId} upgrade=${isUpgrade}`,
+    )
 
     // WebSocket upgrade requests
     if (isUpgrade) {
@@ -127,7 +132,9 @@ export class Tunnel {
         return this.handleUpstreamConnection(tunnelId)
       }
       // User WebSocket connection to be proxied
-      console.log(`[DO] Handling user WS connection for ${tunnelId} path=${url.pathname}`)
+      console.log(
+        `[DO] Handling user WS connection for ${tunnelId} path=${url.pathname}`,
+      )
       return this.handleUserWsConnection(tunnelId, url.pathname, req.headers)
     }
 
@@ -190,11 +197,14 @@ export class Tunnel {
 
   private async handleHttpProxy(
     tunnelId: string,
-    req: Request
+    req: Request,
   ): Promise<Response> {
     const upstream = this.getUpstream(tunnelId)
     if (!upstream) {
-      return new Response('Tunnel offline', { status: 503 })
+      return new Response(offlineHtml(tunnelId), {
+        status: 503,
+        headers: { 'Content-Type': 'text/html; charset=utf-8' },
+      })
     }
 
     const reqId = crypto.randomUUID()
@@ -253,7 +263,7 @@ export class Tunnel {
   private handleUserWsConnection(
     tunnelId: string,
     path: string,
-    reqHeaders: Headers
+    reqHeaders: Headers,
   ): Response {
     const upstream = this.getUpstream(tunnelId)
     if (!upstream) {
@@ -343,7 +353,7 @@ export class Tunnel {
     ws: WebSocket,
     code: number,
     reason: string,
-    _wasClean: boolean
+    _wasClean: boolean,
   ) {
     const attachment = ws.deserializeAttachment() as Attachment | undefined
     if (!attachment) {
@@ -353,7 +363,7 @@ export class Tunnel {
     if (attachment.role === 'upstream') {
       // Upstream disconnected - notify all downstream connections
       const downstreams = this.ctx.getWebSockets(
-        `downstream:${attachment.tunnelId}`
+        `downstream:${attachment.tunnelId}`,
       )
       for (const down of downstreams) {
         try {
@@ -441,7 +451,7 @@ export class Tunnel {
     tunnelId: string,
     ws: WebSocket,
     rawMessage: string,
-    binary: boolean
+    binary: boolean,
   ) {
     // Forward message from user WebSocket to upstream
     const upstream = this.getUpstream(tunnelId)
@@ -676,4 +686,139 @@ const HOP_BY_HOP_HEADERS = new Set([
 
 function isHopByHopHeader(header: string): boolean {
   return HOP_BY_HOP_HEADERS.has(header.toLowerCase())
+}
+
+const html = dedent
+function offlineHtml(tunnelId: string): string {
+  const htmlStr = html`
+    <!DOCTYPE html>
+    <html lang="en">
+      <head>
+        <meta charset="UTF-8" />
+        <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+        <title>Tunnel Offline</title>
+        <style>
+          * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+          }
+          body {
+            font-family:
+              -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto,
+              'Helvetica Neue', Arial, sans-serif;
+            background: #fff;
+            color: #111;
+            min-height: 100vh;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            padding: 1rem;
+            line-height: 1.6;
+          }
+          .container {
+            max-width: 540px;
+            width: 100%;
+          }
+          h1 {
+            font-size: 1.5rem;
+            font-weight: 600;
+            margin-bottom: 1rem;
+            letter-spacing: -0.02em;
+          }
+          p {
+            color: #444;
+            margin-bottom: 1.5rem;
+          }
+          .tunnel-id {
+            font-family:
+              'SF Mono', Consolas, 'Liberation Mono', Menlo, monospace;
+            font-size: 0.875rem;
+            background: #f5f5f5;
+            padding: 0.25rem 0.5rem;
+            border-radius: 4px;
+          }
+          .section {
+            margin-top: 2rem;
+            padding-top: 2rem;
+            border-top: 1px solid #eee;
+          }
+          .section-title {
+            font-size: 0.75rem;
+            font-weight: 600;
+            text-transform: uppercase;
+            letter-spacing: 0.05em;
+            color: #888;
+            margin-bottom: 1rem;
+          }
+          pre {
+            font-family:
+              'SF Mono', Consolas, 'Liberation Mono', Menlo, monospace;
+            font-size: 0.8125rem;
+            background: #fafafa;
+            margin-left: -1rem;
+            margin-right: -1rem;
+            padding: 0.75rem 1rem;
+            overflow-x: auto;
+            line-height: 1.7;
+          }
+          code {
+            font-family: inherit;
+          }
+          .comment {
+            color: #888;
+          }
+          @media (prefers-color-scheme: dark) {
+            body {
+              background: #111;
+              color: #eee;
+            }
+            p {
+              color: #aaa;
+            }
+            .tunnel-id {
+              background: #222;
+            }
+            .section {
+              border-top-color: #333;
+            }
+            .section-title {
+              color: #666;
+            }
+            pre {
+              background: #1a1a1a;
+            }
+            .comment {
+              color: #666;
+            }
+          }
+        </style>
+      </head>
+      <body>
+        <div class="container">
+          <h1>Tunnel Offline</h1>
+          <p>
+            The tunnel <span class="tunnel-id">${tunnelId}</span> is no longer
+            connected. The local dev server has stopped running.
+          </p>
+          <p>
+            This usually happens when the terminal session ends or the process
+            is interrupted.
+          </p>
+          <div class="section">
+            <div class="section-title">Keep it running with tmux</div>
+            <pre><code><span class="comment"># Create a background session</span>
+    tmux new-session -d -s dev
+
+    <span class="comment"># Start your dev server with tunnel</span>
+    tmux send-keys -t dev "npx kimaki tunnel -p 3000 -- pnpm dev" Enter
+
+    <span class="comment"># View the tunnel URL</span>
+    tmux capture-pane -t dev -p | grep tunnel</code></pre>
+          </div>
+        </div>
+      </body>
+    </html>
+  `
+  return htmlStr
 }

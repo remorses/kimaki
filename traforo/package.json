@@ -51,6 +51,7 @@
   },
   "dependencies": {
     "@xmorse/cac": "^6.0.7",
+    "string-dedent": "^3.0.2",
     "ws": "^8.19.0"
   }
 }
