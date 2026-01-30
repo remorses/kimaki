@@ -1,0 +1,25 @@
+{
+  "name": "kimaki-tunnel",
+  "main": "src/tunnel.ts",
+  "compatibility_date": "2025-01-01",
+  "durable_objects": {
+    "bindings": [
+      {
+        "name": "TUNNEL_DO",
+        "class_name": "Tunnel"
+      }
+    ]
+  },
+  "migrations": [
+    {
+      "tag": "v1",
+      "new_classes": ["Tunnel"]
+    }
+  ],
+  "routes": [
+    {
+      "pattern": "*-tunnel.kimaki.xyz/*",
+      "zone_name": "kimaki.xyz"
+    }
+  ]
+}

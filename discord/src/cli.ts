@@ -1855,5 +1855,45 @@ cli
     },
   )
 
+cli
+  .command('tunnel', 'Expose a local port via tunnel')
+  .option('-p, --port <port>', 'Local port to expose (required)')
+  .option('-t, --tunnel-id [id]', 'Tunnel ID (random if omitted)')
+  .option('-h, --host [host]', 'Local host (default: localhost)')
+  .option('-s, --server [url]', 'Tunnel server URL')
+  .action(
+    async (options: {
+      port?: string
+      tunnelId?: string
+      host?: string
+      server?: string
+    }) => {
+      const { runTunnel, parseCommandFromArgv, CLI_NAME } = await import('kimaki-tunnel/run-tunnel')
+
+      if (!options.port) {
+        cliLogger.error('Error: --port is required')
+        cliLogger.error(`\nUsage: kimaki tunnel -p <port> [-- command]`)
+        process.exit(EXIT_NO_RESTART)
+      }
+
+      const port = parseInt(options.port, 10)
+      if (isNaN(port) || port < 1 || port > 65535) {
+        cliLogger.error(`Error: Invalid port number: ${options.port}`)
+        process.exit(EXIT_NO_RESTART)
+      }
+
+      // Parse command after -- from argv
+      const { command } = parseCommandFromArgv(process.argv)
+
+      await runTunnel({
+        port,
+        tunnelId: options.tunnelId,
+        localHost: options.host,
+        serverUrl: options.server,
+        command: command.length > 0 ? command : undefined,
+      })
+    }
+  )
+
 cli.help()
 cli.parse()

@@ -1,0 +1,38 @@
+{
+  "name": "kimaki-tunnel",
+  "version": "0.0.1",
+  "description": "HTTP tunnel via Cloudflare Durable Objects and WebSockets",
+  "type": "module",
+  "private": true,
+  "bin": {
+    "kimaki-tunnel": "./src/cli.ts"
+  },
+  "exports": {
+    ".": "./src/tunnel.ts",
+    "./client": "./src/client.ts",
+    "./types": "./src/types.ts",
+    "./run-tunnel": "./src/run-tunnel.ts"
+  },
+  "scripts": {
+    "dev": "wrangler dev",
+    "deploy": "wrangler deploy",
+    "deploy:preview": "wrangler deploy --env preview",
+    "typecheck": "tsc --noEmit",
+    "typecheck:client": "tsc --noEmit -p tsconfig.client.json",
+    "cli": "tsx src/cli.ts",
+    "test": "vitest --run"
+  },
+  "devDependencies": {
+    "@cloudflare/workers-types": "^4.20250712.0",
+    "@types/node": "^22.0.0",
+    "@types/ws": "^8.18.1",
+    "tsx": "^4.20.5",
+    "typescript": "^5.7.0",
+    "vitest": "^3.2.4",
+    "wrangler": "^4.24.3"
+  },
+  "dependencies": {
+    "cac": "^6.7.14",
+    "ws": "^8.19.0"
+  }
+}
