@@ -105,19 +105,27 @@ git -C ${worktree.mainRepoDirectory} checkout $DEFAULT_BRANCH && git -C ${worktr
 
 IMPORTANT: After editing any files, you MUST execute the critique command using the Bash tool to get a diff URL, then share that URL with the user.
 
-Execute this after making changes:
+Typical usage examples:
 
-bunx critique --web "Add user authentication flow"
+# Share working tree changes
+bunx critique --web "Describe pending changes"
+
+# Share staged changes
+bunx critique --staged --web "Describe staged changes"
+
+# Share changes since base branch (use when you're on a feature branch)
+bunx critique main --web "Describe branch changes"
+
+# Share new-branch changes compared to main
+bunx critique main...new-branch --web "Describe branch changes"
+
+# Share a single commit
+bunx critique --commit HEAD --web "Describe latest commit"
 
 If there are other unrelated changes in the working directory, filter to only show the files you edited:
 
+# Share only specific files
 bunx critique --web "Fix database connection retry" --filter "path/to/file1.ts" --filter "path/to/file2.ts"
-
-You can also show latest commit changes using:
-
-bunx critique HEAD --web "Refactor API endpoints"
-
-bunx critique HEAD~1 --web "Update dependencies"
 
 Do this in case you committed the changes yourself (only if the user asks so, never commit otherwise).
 
