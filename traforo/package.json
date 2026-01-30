@@ -29,7 +29,7 @@
     }
   },
   "scripts": {
-    "build": "tsc -p tsconfig.client.json",
+    "build": "tsc -p tsconfig.client.json && chmod +x dist/cli.js",
     "prepublishOnly": "pnpm build",
     "dev": "wrangler dev",
     "deploy": "wrangler deploy",
