@@ -1,6 +1,6 @@
 {
   "name": "traforo",
-  "version": "0.0.2",
+  "version": "0.0.3",
   "description": "HTTP tunnel via Cloudflare Durable Objects and WebSockets",
   "type": "module",
   "license": "MIT",
