@@ -127,7 +127,7 @@ export async function runTunnel(options: RunTunnelOptions): Promise<void> {
     localPort: port,
     tunnelId,
     localHost,
-    serverUrl: options.serverUrl,
+    ...(options.serverUrl && { serverUrl: options.serverUrl }),
   })
 
   // Handle shutdown
