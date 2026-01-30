@@ -26,6 +26,12 @@ it is a package for using errors as values in ts.
 
 if I ask you questions about opencode you can opensrc it from anomalyco/opencode
 
+## discord messages
+ 
+try to not use emojis in messages
+
+when creating system messages like replies to commands never add new line spaces between paragraphs or lines. put one line next to the one before.
+
 # core guidelines
 
 when summarizing changes at the end of the message, be super short, a few words and in bullet points, use bold text to highlight important keywords. use markdown.
@@ -527,26 +533,3 @@ const jsonSchema = toJSONSchema(mySchema, {
 });
 ```
 
-
-<!-- opensrc:start -->
-
-## Source Code Reference
-
-Source code for dependencies is available in `opensrc/` for deeper understanding of implementation details.
-
-See `opensrc/sources.json` for the list of available packages and their versions.
-
-Use this source code when you need to understand how a package works internally, not just its types/interface.
-
-### Fetching Additional Source Code
-
-To fetch source code for a package or repository you need to understand, run:
-
-```bash
-npx opensrc <package>           # npm package (e.g., npx opensrc zod)
-npx opensrc pypi:<package>      # Python package (e.g., npx opensrc pypi:requests)
-npx opensrc crates:<package>    # Rust crate (e.g., npx opensrc crates:serde)
-npx opensrc <owner>/<repo>      # GitHub repo (e.g., npx opensrc vercel/ai)
-```
-
-<!-- opensrc:end -->
