@@ -57,15 +57,15 @@ importers:
       '@purinton/resampler':
         specifier: ^1.0.4
         version: 1.0.4
+      '@xmorse/cac':
+        specifier: ^6.0.7
+        version: 6.0.7
       ai:
         specifier: ^5.0.114
         version: 5.0.114(zod@4.2.1)
       better-sqlite3:
         specifier: ^12.3.0
         version: 12.3.0
-      cac:
-        specifier: ^6.7.14
-        version: 6.7.14
       discord.js:
         specifier: ^14.16.3
         version: 14.22.1
