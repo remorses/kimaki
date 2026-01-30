@@ -5,7 +5,6 @@
 ### Patch Changes
 
 - feat: add **/login** command to authenticate with AI providers
-- feat: add **/resume-session** command to resume specific sessions from ID
 - feat: show **current model info** in `/model` command response
 - feat: show **task agent** name in Discord status/messages
 - feat: add **worktree toggle** instead of enable/disable commands
