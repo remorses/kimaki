@@ -307,7 +307,7 @@ export function getToolSummaryText(part: Part): string {
     return ''
   }
 
-  // Task tool display is handled via subtask part in session-handler (shows label like explore-1)
+  // Task tool display is handled via subtask part in session-handler (shows name + agent)
   if (part.tool === 'task') {
     return ''
   }

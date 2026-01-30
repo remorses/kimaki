@@ -881,7 +881,7 @@ export async function handleOpencodeSession({
             subtaskSessions.set(childSessionId, { label, assistantMessageId: undefined })
             // Show task messages in tools-and-text and text-and-essential-tools modes
             if (getVerbosity() !== 'text-only') {
-              const taskDisplay = `┣ task **${label}** _${description}_`
+              const taskDisplay = `┣ task **${description}**${agent ? ` _${agent}_` : ''}`
               await sendThreadMessage(thread, taskDisplay + '\n\n')
             }
             sentPartIds.add(part.id)
