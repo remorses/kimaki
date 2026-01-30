@@ -2,7 +2,7 @@
 // Main CLI entrypoint for the Kimaki Discord bot.
 // Handles interactive setup, Discord OAuth, slash command registration,
 // project channel creation, and launching the bot with opencode integration.
-import { cac } from 'cac'
+import { cac } from '@xmorse/cac'
 import {
   intro,
   outro,
@@ -1283,7 +1283,7 @@ cli
       try {
         let { channel: channelId, prompt, name, appId: optionAppId, notifyOnly } = options
         const { project: projectPath } = options
-        
+
         // Get raw channel ID from argv to prevent JS number precision loss on large Discord IDs
         // cac parses large numbers and loses precision, so we extract the original string value
         if (channelId) {
@@ -1367,7 +1367,7 @@ cli
         // This allows running from subfolders of a registered project
         try {
           const db = getDatabase()
-          
+
           // Helper to find channel for a path (prefers current bot's channel)
           const findChannelForPath = (dirPath: string): { channel_id: string; directory: string } | undefined => {
             const withAppId = db
@@ -1376,14 +1376,14 @@ cli
               )
               .get(dirPath, 'text', appId) as { channel_id: string; directory: string } | undefined
             if (withAppId) return withAppId
-            
+
             return db
               .prepare(
                 'SELECT channel_id, directory FROM channel_directories WHERE directory = ? AND channel_type = ?',
               )
               .get(dirPath, 'text') as { channel_id: string; directory: string } | undefined
           }
-          
+
           // Try exact match first, then walk up parent directories
           let existingChannel: { channel_id: string; directory: string } | undefined
           let searchPath = absolutePath

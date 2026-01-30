@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-import { cac } from 'cac'
+import { cac } from '@xmorse/cac'
 import { CLI_NAME, runTunnel, parseCommandFromArgv } from './run-tunnel.js'
 
 const { command, argv } = parseCommandFromArgv(process.argv)

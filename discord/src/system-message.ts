@@ -2,10 +2,10 @@
 // Creates the system message injected into every OpenCode session,
 // including Discord-specific formatting rules, diff commands, and permissions info.
 
-const TRAFORO_TUNNEL_INSTRUCTIONS = `
+const KIMAKI_TUNNEL_INSTRUCTIONS = `
 ## running dev servers with tunnel access
 
-When the user asks to start a dev server and make it accessible remotely, use \`traforo\` tunnel with \`tmux\` to run it in the background.
+When the user asks to start a dev server and make it accessible remotely, use \`kimaki tunnel\` with \`tmux\` to run it in the background.
 
 ### installing tmux (if missing)
 
@@ -25,8 +25,8 @@ Use a tmux session with a descriptive name like \`projectname-dev\` so you can r
 # Create a tmux session (use project name + dev, e.g. "myapp-dev", "website-dev")
 tmux new-session -d -s myapp-dev
 
-# Run the dev server with traforo tunnel inside the session
-tmux send-keys -t myapp-dev "npx traforo -p 3000 -- pnpm dev" Enter
+# Run the dev server with kimaki tunnel inside the session
+tmux send-keys -t myapp-dev "npx kimaki tunnel -p 3000 -- pnpm dev" Enter
 \`\`\`
 
 ### getting the tunnel URL
@@ -41,15 +41,15 @@ tmux capture-pane -t myapp-dev -p | grep -i "tunnel"
 \`\`\`bash
 # Next.js project
 tmux new-session -d -s projectname-nextjs-dev-3000
-tmux send-keys -t nextjs-dev "npx traforo -p 3000 -- pnpm dev" Enter
+tmux send-keys -t nextjs-dev "npx kimaki tunnel -p 3000 -- pnpm dev" Enter
 
 # Vite project on port 5173
 tmux new-session -d -s vite-dev-5173
-tmux send-keys -t vite-dev "npx traforo -p 5173 -- pnpm dev" Enter
+tmux send-keys -t vite-dev "npx kimaki tunnel -p 5173 -- pnpm dev" Enter
 
 # Custom tunnel ID for consistent URL
 tmux new-session -d -s holocron-dev
-tmux send-keys -t holocron-dev "npx traforo -p 3000 -t holocron -- pnpm dev" Enter
+tmux send-keys -t holocron-dev "npx kimaki tunnel -p 3000 -t holocron -- pnpm dev" Enter
 \`\`\`
 
 ### stopping the dev server
@@ -201,7 +201,7 @@ To compare two branches:
 bunx critique main feature-branch --web "Compare branches"
 
 The command outputs a URL - share that URL with the user so they can see the diff.
-${TRAFORO_TUNNEL_INSTRUCTIONS}
+${KIMAKI_TUNNEL_INSTRUCTIONS}
 ## markdown
 
 discord does support basic markdown features like code blocks, code blocks languages, inline code, bold, italic, quotes, etc.

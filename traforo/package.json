@@ -50,7 +50,7 @@
     "wrangler": "^4.24.3"
   },
   "dependencies": {
-    "cac": "^6.7.14",
+    "@xmorse/cac": "^6.0.7",
     "ws": "^8.19.0"
   }
 }
