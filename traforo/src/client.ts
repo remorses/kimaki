@@ -8,6 +8,9 @@ import type {
   DownstreamMessage,
   HttpRequestMessage,
   HttpResponseMessage,
+  HttpResponseStartMessage,
+  HttpResponseChunkMessage,
+  HttpResponseEndMessage,
   HttpErrorMessage,
   WsOpenMessage,
   WsFrameMessage,
@@ -164,29 +167,76 @@ export class TunnelClient {
         body: msg.method !== 'GET' && msg.method !== 'HEAD' ? body : undefined,
       })
 
-      // Read response body
-      const resBuffer = await res.arrayBuffer()
-      const resBody =
-        resBuffer.byteLength > 0
-          ? Buffer.from(resBuffer).toString('base64')
-          : null
-
       // Build response headers
       const resHeaders: Record<string, string> = {}
       res.headers.forEach((value, key) => {
         resHeaders[key] = value
       })
 
-      // Send response
-      const response: HttpResponseMessage = {
-        type: 'http_response',
-        id: msg.id,
-        status: res.status,
-        headers: resHeaders,
-        body: resBody,
-      }
+      // Check if we should stream the response
+      const contentType = res.headers.get('content-type') || ''
+      const transferEncoding = res.headers.get('transfer-encoding') || ''
+      const shouldStream =
+        contentType.includes('text/event-stream') ||
+        contentType.includes('application/x-ndjson') ||
+        transferEncoding.includes('chunked')
 
-      this.send(response)
+      if (shouldStream && res.body) {
+        console.log(`HTTP ${msg.method} ${msg.path} -> streaming response`)
+
+        // Send response start
+        const startMsg: HttpResponseStartMessage = {
+          type: 'http_response_start',
+          id: msg.id,
+          status: res.status,
+          headers: resHeaders,
+        }
+        this.send(startMsg)
+
+        // Stream chunks
+        const reader = res.body.getReader()
+        try {
+          while (true) {
+            const { done, value } = await reader.read()
+            if (done) {
+              break
+            }
+
+            const chunkMsg: HttpResponseChunkMessage = {
+              type: 'http_response_chunk',
+              id: msg.id,
+              chunk: Buffer.from(value).toString('base64'),
+            }
+            this.send(chunkMsg)
+          }
+        } finally {
+          reader.releaseLock()
+        }
+
+        // Send response end
+        const endMsg: HttpResponseEndMessage = {
+          type: 'http_response_end',
+          id: msg.id,
+        }
+        this.send(endMsg)
+      } else {
+        // Non-streaming: read full body
+        const resBuffer = await res.arrayBuffer()
+        const resBody =
+          resBuffer.byteLength > 0
+            ? Buffer.from(resBuffer).toString('base64')
+            : null
+
+        const response: HttpResponseMessage = {
+          type: 'http_response',
+          id: msg.id,
+          status: res.status,
+          headers: resHeaders,
+          body: resBody,
+        }
+
+        this.send(response)
+      }
     } catch (err) {
       console.error(`HTTP request failed:`, err)
 

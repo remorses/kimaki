@@ -3,6 +3,9 @@ import type {
   DownstreamMessage,
   HttpRequestMessage,
   HttpResponseMessage,
+  HttpResponseStartMessage,
+  HttpResponseChunkMessage,
+  HttpResponseEndMessage,
   HttpErrorMessage,
   WsOpenMessage,
   WsFrameMessage,
@@ -29,6 +32,13 @@ type PendingHttpRequest = {
   timeout: ReturnType<typeof setTimeout>
 }
 
+type StreamingHttpRequest = {
+  writer: WritableStreamDefaultWriter<Uint8Array>
+  timeout: ReturnType<typeof setTimeout>
+  status: number
+  headers: Headers
+}
+
 type PendingWsConnection = {
   userWs: WebSocket
   timeout: ReturnType<typeof setTimeout>
@@ -40,18 +50,24 @@ const WS_OPEN_TIMEOUT_MS = 10_000
 // Worker entrypoint
 export default {
   async fetch(req: Request, env: Env): Promise<Response> {
+    const url = new URL(req.url)
+    const host = url.hostname
+    const isUpgrade = req.headers.get('Upgrade') === 'websocket'
+
+    console.log(`[Worker] ${req.method} ${url.pathname} host=${host} upgrade=${isUpgrade}`)
+
     if (req.method === 'OPTIONS') {
       return addCors(new Response(null, { status: 204 }))
     }
 
-    const url = new URL(req.url)
-    const host = url.hostname
-
     // Extract tunnel ID from subdomain: {tunnelId}-tunnel.kimaki.xyz
     const tunnelId = extractTunnelId(host)
     if (!tunnelId) {
+      console.log(`[Worker] Invalid tunnel URL: ${host}`)
       return addCors(new Response('Invalid tunnel URL', { status: 400 }))
     }
+
+    console.log(`[Worker] tunnelId=${tunnelId}`)
 
     // Get the Durable Object for this tunnel
     const doId = env.TUNNEL_DO.idFromName(tunnelId)
@@ -62,6 +78,7 @@ export default {
     doUrl.searchParams.set('_tunnelId', tunnelId)
     const res = await stub.fetch(new Request(doUrl.toString(), req))
 
+    console.log(`[Worker] DO response status=${res.status}`)
     return addCors(res)
   },
 }
@@ -80,6 +97,7 @@ export class Tunnel {
   private ctx: DurableObjectState
   private env: Env
   private pendingHttpRequests: Map<string, PendingHttpRequest> = new Map()
+  private streamingHttpRequests: Map<string, StreamingHttpRequest> = new Map()
   private pendingWsConnections: Map<string, PendingWsConnection> = new Map()
 
   constructor(state: DurableObjectState, env: Env) {
@@ -100,18 +118,23 @@ export class Tunnel {
     const tunnelId = url.searchParams.get('_tunnelId') || 'default'
     const isUpgrade = req.headers.get('Upgrade') === 'websocket'
 
+    console.log(`[DO] fetch path=${url.pathname} tunnelId=${tunnelId} upgrade=${isUpgrade}`)
+
     // WebSocket upgrade requests
     if (isUpgrade) {
       if (url.pathname === '/traforo-upstream') {
+        console.log(`[DO] Handling upstream connection for ${tunnelId}`)
         return this.handleUpstreamConnection(tunnelId)
       }
       // User WebSocket connection to be proxied
+      console.log(`[DO] Handling user WS connection for ${tunnelId} path=${url.pathname}`)
       return this.handleUserWsConnection(tunnelId, url.pathname, req.headers)
     }
 
     // Status endpoint
     if (url.pathname === '/traforo-status') {
       const upstream = this.getUpstream(tunnelId)
+      console.log(`[DO] Status check: online=${!!upstream}`)
       return Response.json({
         online: !!upstream,
         tunnelId,
@@ -119,6 +142,7 @@ export class Tunnel {
     }
 
     // HTTP request to be proxied
+    console.log(`[DO] HTTP proxy request ${req.method} ${url.pathname}`)
     return this.handleHttpProxy(tunnelId, req)
   }
 
@@ -210,10 +234,11 @@ export class Tunnel {
       return new Response('Failed to send to tunnel', { status: 502 })
     }
 
-    // Wait for response
+    // Wait for response (either full or streaming start)
     return new Promise<Response>((resolve, reject) => {
       const timeout = setTimeout(() => {
         this.pendingHttpRequests.delete(reqId)
+        this.streamingHttpRequests.delete(reqId)
         resolve(new Response('Tunnel timeout', { status: 504 }))
       }, HTTP_TIMEOUT_MS)
 
@@ -337,6 +362,15 @@ export class Tunnel {
       }
       this.pendingHttpRequests.clear()
 
+      // Close all streaming HTTP requests
+      for (const [reqId, streaming] of this.streamingHttpRequests) {
+        clearTimeout(streaming.timeout)
+        try {
+          streaming.writer.close()
+        } catch {}
+      }
+      this.streamingHttpRequests.clear()
+
       // Close all pending WS connections
       for (const [connId, pending] of this.pendingWsConnections) {
         clearTimeout(pending.timeout)
@@ -368,6 +402,15 @@ export class Tunnel {
     switch (msg.type) {
       case 'http_response':
         this.handleHttpResponse(msg)
+        break
+      case 'http_response_start':
+        this.handleHttpResponseStart(msg)
+        break
+      case 'http_response_chunk':
+        this.handleHttpResponseChunk(msg)
+        break
+      case 'http_response_end':
+        this.handleHttpResponseEnd(msg)
         break
       case 'http_error':
         this.handleHttpError(msg)
@@ -450,6 +493,67 @@ export class Tunnel {
     }
 
     pending.resolve(new Response(body, { status: msg.status, headers }))
+  }
+
+  private handleHttpResponseStart(msg: HttpResponseStartMessage) {
+    const pending = this.pendingHttpRequests.get(msg.id)
+    if (!pending) {
+      return
+    }
+
+    // Remove from pending (we're about to resolve)
+    this.pendingHttpRequests.delete(msg.id)
+
+    // Build response headers
+    const headers = new Headers()
+    for (const [key, value] of Object.entries(msg.headers)) {
+      if (!isHopByHopHeader(key)) {
+        headers.set(key, value)
+      }
+    }
+
+    // Create TransformStream for streaming response
+    const { readable, writable } = new TransformStream<Uint8Array>()
+    const writer = writable.getWriter()
+
+    // Store streaming info for chunk handling
+    this.streamingHttpRequests.set(msg.id, {
+      writer,
+      timeout: pending.timeout,
+      status: msg.status,
+      headers,
+    })
+
+    // Resolve with streaming response
+    pending.resolve(new Response(readable, { status: msg.status, headers }))
+  }
+
+  private handleHttpResponseChunk(msg: HttpResponseChunkMessage) {
+    const streaming = this.streamingHttpRequests.get(msg.id)
+    if (!streaming) {
+      return
+    }
+
+    try {
+      const chunk = base64ToArrayBuffer(msg.chunk)
+      streaming.writer.write(new Uint8Array(chunk))
+    } catch (err) {
+      console.error(`[DO] Failed to write chunk: ${err}`)
+    }
+  }
+
+  private handleHttpResponseEnd(msg: HttpResponseEndMessage) {
+    const streaming = this.streamingHttpRequests.get(msg.id)
+    if (!streaming) {
+      return
+    }
+
+    clearTimeout(streaming.timeout)
+    this.streamingHttpRequests.delete(msg.id)
+
+    try {
+      streaming.writer.close()
+    } catch {}
   }
 
   private handleHttpError(msg: HttpErrorMessage) {

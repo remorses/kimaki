@@ -6,7 +6,7 @@
 import { spawn, type ChildProcess } from 'node:child_process'
 import fs from 'node:fs'
 import net from 'node:net'
-import { createOpencodeClient, type OpencodeClient, type Config } from '@opencode-ai/sdk'
+import { createOpencodeClient, type OpencodeClient } from '@opencode-ai/sdk'
 import {
   createOpencodeClient as createOpencodeClientV2,
   type OpencodeClient as OpencodeClientV2,
@@ -114,6 +114,7 @@ export async function initializeOpencodeForDirectory(directory: string): Promise
     cwd: directory,
     env: {
       ...process.env,
+      // SDK Config type is simplified; opencode accepts nested permission objects
       OPENCODE_CONFIG_CONTENT: JSON.stringify({
         $schema: 'https://opencode.ai/config.json',
         lsp: false,
@@ -121,9 +122,20 @@ export async function initializeOpencodeForDirectory(directory: string): Promise
         permission: {
           edit: 'allow',
           bash: 'allow',
+          external_directory: {
+            '*': 'ask',
+            '/tmp': 'allow',
+            '/tmp/*': 'allow',
+            '/private/var/folders/8w/*': 'allow',
+            '/private/var/folders/8w': 'allow',
+            '/private/tmp': 'allow',
+            '/private/tmp/*': 'allow',
+            'env:$TMPDIR': 'allow',
+            'env:$TMPDIR/*': 'allow',
+          },
           webfetch: 'allow',
         },
-      } satisfies Config),
+      }),
       OPENCODE_PORT: port.toString(),
     },
   })

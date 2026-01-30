@@ -47,13 +47,34 @@ export type UpstreamMessage =
 // Messages: Local Client → Worker/DO
 // ============================================
 
-// HTTP response from local server
+// HTTP response from local server (non-streaming, for small responses)
 export type HttpResponseMessage = {
   type: 'http_response'
   id: string
   status: number
   headers: Record<string, string>
   body: string | null // base64 encoded
+}
+
+// HTTP streaming response start (status + headers, body follows in chunks)
+export type HttpResponseStartMessage = {
+  type: 'http_response_start'
+  id: string
+  status: number
+  headers: Record<string, string>
+}
+
+// HTTP streaming response chunk
+export type HttpResponseChunkMessage = {
+  type: 'http_response_chunk'
+  id: string
+  chunk: string // base64 encoded
+}
+
+// HTTP streaming response end
+export type HttpResponseEndMessage = {
+  type: 'http_response_end'
+  id: string
 }
 
 // HTTP error (local server unavailable, timeout, etc)
@@ -95,6 +116,9 @@ export type WsErrorMessage = {
 // All messages that can be sent FROM the local client
 export type DownstreamMessage =
   | HttpResponseMessage
+  | HttpResponseStartMessage
+  | HttpResponseChunkMessage
+  | HttpResponseEndMessage
   | HttpErrorMessage
   | WsOpenedMessage
   | WsFrameResponseMessage
