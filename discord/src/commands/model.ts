@@ -10,10 +10,19 @@ import {
   type TextChannel,
 } from 'discord.js'
 import crypto from 'node:crypto'
-import { getDatabase, setChannelModel, setSessionModel, runModelMigrations } from '../database.js'
+import {
+  getDatabase,
+  setChannelModel,
+  setSessionModel,
+  runModelMigrations,
+  getChannelModel,
+  getSessionModel,
+  getSessionAgent,
+  getChannelAgent,
+} from '../database.js'
 import { initializeOpencodeForDirectory } from '../opencode.js'
 import { resolveTextChannel, getKimakiMetadata } from '../discord-utils.js'
-import { abortAndRetrySession } from '../session-handler.js'
+import { abortAndRetrySession, getDefaultModel, type DefaultModelSource } from '../session-handler.js'
 import { createLogger, LogPrefix } from '../logger.js'
 import * as errore from 'errore'
 
@@ -44,6 +53,73 @@ export type ProviderInfo = {
       release_date: string
     }
   >
+}
+
+export type CurrentModelInfo =
+  | { type: 'session'; model: string }
+  | { type: 'agent'; model: string; agentName: string }
+  | { type: 'channel'; model: string }
+  | { type: 'opencode-config'; model: string }
+  | { type: 'opencode-recent'; model: string }
+  | { type: 'opencode-provider-default'; model: string }
+  | { type: 'none' }
+
+/**
+ * Get the current model info for a channel/session, including where it comes from.
+ * Priority: session > agent > channel > opencode default
+ */
+async function getCurrentModelInfo({
+  sessionId,
+  channelId,
+  getClient,
+  directory,
+}: {
+  sessionId?: string
+  channelId: string
+  getClient: Awaited<ReturnType<typeof initializeOpencodeForDirectory>>
+  directory: string
+}): Promise<CurrentModelInfo> {
+  if (getClient instanceof Error) {
+    return { type: 'none' }
+  }
+
+  // 1. Check session model preference
+  if (sessionId) {
+    const sessionModel = getSessionModel(sessionId)
+    if (sessionModel) {
+      return { type: 'session', model: sessionModel }
+    }
+  }
+
+  // 2. Check agent's configured model
+  const agentPreference = sessionId
+    ? getSessionAgent(sessionId) || getChannelAgent(channelId)
+    : getChannelAgent(channelId)
+  if (agentPreference) {
+    const agentsResponse = await getClient().app.agents({ query: { directory } })
+    if (agentsResponse.data) {
+      const agent = agentsResponse.data.find((a) => a.name === agentPreference)
+      if (agent?.model) {
+        const model = `${agent.model.providerID}/${agent.model.modelID}`
+        return { type: 'agent', model, agentName: agentPreference }
+      }
+    }
+  }
+
+  // 3. Check channel model preference
+  const channelModel = getChannelModel(channelId)
+  if (channelModel) {
+    return { type: 'channel', model: channelModel }
+  }
+
+  // 4. Get opencode default (config > recent > provider default)
+  const defaultModel = await getDefaultModel({ getClient, directory })
+  if (defaultModel) {
+    const model = `${defaultModel.providerID}/${defaultModel.modelID}`
+    return { type: defaultModel.source, model }
+  }
+
+  return { type: 'none' }
 }
 
 /**
@@ -160,6 +236,31 @@ export async function handleModelCommand({
       return
     }
 
+    // Get current model info to display
+    const currentModelInfo = await getCurrentModelInfo({
+      sessionId,
+      channelId: targetChannelId,
+      getClient,
+      directory: projectDirectory,
+    })
+
+    const currentModelText = (() => {
+      switch (currentModelInfo.type) {
+        case 'session':
+          return `**Current (session override):** \`${currentModelInfo.model}\``
+        case 'agent':
+          return `**Current (agent "${currentModelInfo.agentName}"):** \`${currentModelInfo.model}\``
+        case 'channel':
+          return `**Current (channel override):** \`${currentModelInfo.model}\``
+        case 'opencode-config':
+        case 'opencode-recent':
+        case 'opencode-provider-default':
+          return `**Current (opencode default):** \`${currentModelInfo.model}\``
+        case 'none':
+          return '**Current:** none'
+      }
+    })()
+
     // Store context with a short hash key to avoid customId length limits
     const context = {
       dir: projectDirectory,
@@ -188,7 +289,7 @@ export async function handleModelCommand({
     const actionRow = new ActionRowBuilder<StringSelectMenuBuilder>().addComponents(selectMenu)
 
     await interaction.editReply({
-      content: '**Set Model Preference**\nSelect a provider:',
+      content: `**Set Model Preference**\n${currentModelText}\nSelect a provider:`,
       components: [actionRow],
     })
   } catch (error) {

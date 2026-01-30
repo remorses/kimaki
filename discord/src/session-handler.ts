@@ -198,20 +198,23 @@ function isModelValid(
   return isConnected && !!modelExists
 }
 
+export type DefaultModelSource = 'opencode-config' | 'opencode-recent' | 'opencode-provider-default'
+
 /**
  * Get the default model from OpenCode when no user preference is set.
  * Priority (matches OpenCode TUI behavior):
  * 1. OpenCode config.model setting
  * 2. User's recent models from TUI state (~/.local/state/opencode/model.json)
  * 3. First connected provider's default model from API
+ * Returns the model and its source.
  */
-async function getDefaultModel({
+export async function getDefaultModel({
   getClient,
   directory,
 }: {
   getClient: Awaited<ReturnType<typeof initializeOpencodeForDirectory>>
   directory: string
-}): Promise<{ providerID: string; modelID: string } | undefined> {
+}): Promise<{ providerID: string; modelID: string; source: DefaultModelSource } | undefined> {
   if (getClient instanceof Error) {
     return undefined
   }
@@ -242,7 +245,7 @@ async function getDefaultModel({
     const configModel = parseModelString(configResponse.data.model)
     if (configModel && isModelValid(configModel, connected, providers)) {
       sessionLogger.log(`[MODEL] Using config model: ${configModel.providerID}/${configModel.modelID}`)
-      return configModel
+      return { ...configModel, source: 'opencode-config' }
     }
     if (configModel) {
       sessionLogger.log(
@@ -258,7 +261,7 @@ async function getDefaultModel({
       sessionLogger.log(
         `[MODEL] Using recent TUI model: ${recentModel.providerID}/${recentModel.modelID}`,
       )
-      return recentModel
+      return { ...recentModel, source: 'opencode-recent' }
     }
   }
   if (recentModels.length > 0) {
@@ -277,7 +280,7 @@ async function getDefaultModel({
   }
 
   sessionLogger.log(`[MODEL] Using provider default: ${firstConnected}/${defaultModelId}`)
-  return { providerID: firstConnected, modelID: defaultModelId }
+  return { providerID: firstConnected, modelID: defaultModelId, source: 'opencode-provider-default' }
 }
 
 /**
