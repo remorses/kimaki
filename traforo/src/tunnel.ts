@@ -84,8 +84,8 @@ export default {
 }
 
 function extractTunnelId(host: string): string | null {
-  // Match: {tunnelId}-tunnel.kimaki.xyz or {tunnelId}-tunnel.localhost
-  const match = host.match(/^([a-z0-9-]+)-tunnel\./)
+  // Match: {tunnelId}-tunnel.kimaki.xyz, {tunnelId}-tunnel-preview.kimaki.xyz, or {tunnelId}-tunnel.localhost
+  const match = host.match(/^([a-z0-9-]+)-tunnel(?:-preview)?\./)
   if (!match) {
     return null
   }
@@ -316,19 +316,26 @@ export class Tunnel {
   // ============================================
 
   async webSocketMessage(ws: WebSocket, message: string | ArrayBuffer) {
-    if (typeof message !== 'string') {
-      return
-    }
-
     const attachment = ws.deserializeAttachment() as Attachment | undefined
     if (!attachment) {
       return
     }
 
     if (attachment.role === 'upstream') {
+      // Upstream messages are always JSON protocol messages (strings)
+      if (typeof message !== 'string') {
+        return
+      }
       this.handleUpstreamMessage(attachment.tunnelId, message)
     } else if (attachment.role === 'downstream') {
-      this.handleDownstreamMessage(attachment.tunnelId, ws, message)
+      // Downstream messages can be text or binary from user WebSockets
+      if (typeof message === 'string') {
+        this.handleDownstreamMessage(attachment.tunnelId, ws, message, false)
+      } else {
+        // Binary message - base64 encode and forward
+        const base64 = arrayBufferToBase64(message)
+        this.handleDownstreamMessage(attachment.tunnelId, ws, base64, true)
+      }
     }
   }
 
@@ -433,7 +440,8 @@ export class Tunnel {
   private handleDownstreamMessage(
     tunnelId: string,
     ws: WebSocket,
-    rawMessage: string
+    rawMessage: string,
+    binary: boolean
   ) {
     // Forward message from user WebSocket to upstream
     const upstream = this.getUpstream(tunnelId)
@@ -441,15 +449,7 @@ export class Tunnel {
       return
     }
 
-    // Try to parse to get connId for routing
-    let parsed: { connId?: string; data?: string }
-    try {
-      parsed = JSON.parse(rawMessage)
-    } catch {
-      return
-    }
-
-    // Find the connId for this downstream WebSocket
+    // Find the connId for this downstream WebSocket from its tags
     const tags = this.ctx.getTags(ws)
     const wsTag = tags.find((t) => t.startsWith('ws:'))
     if (!wsTag) {
@@ -457,11 +457,12 @@ export class Tunnel {
     }
     const connId = wsTag.replace('ws:', '')
 
-    // Forward as WsFrameMessage
+    // Forward as WsFrameMessage (rawMessage can be text or base64-encoded binary)
     const message: WsFrameMessage = {
       type: 'ws_frame',
       connId,
       data: rawMessage,
+      binary,
     }
 
     try {
