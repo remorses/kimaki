@@ -6,7 +6,21 @@
 import { spawn, type ChildProcess } from 'node:child_process'
 import fs from 'node:fs'
 import net from 'node:net'
-import { createOpencodeClient, type OpencodeClient } from '@opencode-ai/sdk'
+import os from 'node:os'
+import { createOpencodeClient, type OpencodeClient, type Config as SdkConfig } from '@opencode-ai/sdk'
+
+// SDK Config type is simplified; opencode accepts nested permission objects with path patterns
+type PermissionAction = 'ask' | 'allow' | 'deny'
+type PermissionRule = PermissionAction | Record<string, PermissionAction>
+type Config = Omit<SdkConfig, 'permission'> & {
+  permission?: {
+    edit?: PermissionRule
+    bash?: PermissionRule
+    external_directory?: PermissionRule
+    webfetch?: PermissionRule
+    [key: string]: PermissionRule | undefined
+  }
+}
 import {
   createOpencodeClient as createOpencodeClientV2,
   type OpencodeClient as OpencodeClientV2,
@@ -108,13 +122,13 @@ export async function initializeOpencodeForDirectory(directory: string): Promise
 
   const opencodeCommand = process.env.OPENCODE_PATH || 'opencode'
 
+  const tmpdir = os.tmpdir()
   const serverProcess = spawn(opencodeCommand, ['serve', '--port', port.toString()], {
     stdio: 'pipe',
     detached: false,
     cwd: directory,
     env: {
       ...process.env,
-      // SDK Config type is simplified; opencode accepts nested permission objects
       OPENCODE_CONFIG_CONTENT: JSON.stringify({
         $schema: 'https://opencode.ai/config.json',
         lsp: false,
@@ -126,16 +140,14 @@ export async function initializeOpencodeForDirectory(directory: string): Promise
             '*': 'ask',
             '/tmp': 'allow',
             '/tmp/*': 'allow',
-            '/private/var/folders/8w/*': 'allow',
-            '/private/var/folders/8w': 'allow',
             '/private/tmp': 'allow',
             '/private/tmp/*': 'allow',
-            'env:$TMPDIR': 'allow',
-            'env:$TMPDIR/*': 'allow',
+            [tmpdir]: 'allow',
+            [`${tmpdir}/*`]: 'allow',
           },
           webfetch: 'allow',
         },
-      }),
+      } satisfies Config),
       OPENCODE_PORT: port.toString(),
     },
   })
