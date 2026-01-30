@@ -104,7 +104,7 @@ importers:
         version: 3.0.2
       traforo:
         specifier: workspace:*
-        version: link:../tunnel
+        version: link:../traforo
       undici:
         specifier: ^7.16.0
         version: 7.16.0
@@ -165,7 +165,7 @@ importers:
         specifier: ^3.2.4
         version: 3.2.4(@types/node@24.3.0)(jiti@2.5.1)(tsx@4.20.5)
 
-  tunnel:
+  traforo:
     dependencies:
       cac:
         specifier: ^6.7.14
@@ -2370,7 +2370,7 @@ snapshots:
       '@vladfrangu/async_event_emitter': 2.4.6
       discord-api-types: 0.38.26
       tslib: 2.8.1
-      ws: 8.18.3
+      ws: 8.19.0
     transitivePeerDependencies:
       - bufferutil
       - utf-8-validate
