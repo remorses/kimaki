@@ -1868,7 +1868,7 @@ cli
       host?: string
       server?: string
     }) => {
-      const { runTunnel, parseCommandFromArgv, CLI_NAME } = await import('kimaki-tunnel/run-tunnel')
+      const { runTunnel, parseCommandFromArgv, CLI_NAME } = await import('traforo/run-tunnel')
 
       if (!options.port) {
         cliLogger.error('Error: --port is required')
