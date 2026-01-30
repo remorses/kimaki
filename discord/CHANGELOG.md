@@ -1,5 +1,18 @@
 # Changelog
 
+## 0.4.53
+
+### Patch Changes
+
+- feat: add **/login** command to authenticate with AI providers
+- feat: add **/resume-session** command to resume specific sessions from ID
+- feat: show **current model info** in `/model` command response
+- feat: show **task agent** name in Discord status/messages
+- feat: add **worktree toggle** instead of enable/disable commands
+- fix: **filter bash tools** by side effects to prevent accidental execution
+- refactor: switch to **@xmorse/cac** for CLI parsing and add **npx kimaki tunnel** command
+- refactor: consolidate resume commands to **/resume**
+
 ## 0.4.52
 
 ### Patch Changes

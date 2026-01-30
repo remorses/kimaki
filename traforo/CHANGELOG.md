@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.0.4
+
+### Patch Changes
+
+- feat: **nicer offline page** - show a better looking HTML page when tunnel is offline
+- fix: **client typings** - fix issue with client types export
+
 ## 0.0.3
 
 ### Bug Fixes
