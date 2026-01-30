@@ -65,13 +65,13 @@ export class TunnelClient {
     }
 
     const wsUrl = `${this.options.serverUrl}/traforo-upstream?_tunnelId=${this.options.tunnelId}`
-    console.log(`Connecting to ${wsUrl}...`)
+    // console.log(`Connecting to ${wsUrl}...`)
 
     return new Promise((resolve, reject) => {
       this.ws = new WebSocket(wsUrl)
 
       this.ws.on('open', () => {
-        console.log(`Connected! Tunnel URL: ${this.url}`)
+        console.log(`Connected with Traforo! Tunnel URL: ${this.url}`)
         resolve()
       })
 
