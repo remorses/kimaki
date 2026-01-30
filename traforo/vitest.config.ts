@@ -6,5 +6,8 @@ export default defineConfig({
     hookTimeout: 60_000,
     globals: false,
     include: ['src/**/*.test.ts'],
+    typecheck: {
+      tsconfig: './tsconfig.test.json',
+    },
   },
 })

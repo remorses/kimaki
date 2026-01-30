@@ -5,6 +5,9 @@
   "type": "module",
   "license": "MIT",
   "repository": "https://github.com/remorses/kimaki",
+  "engines": {
+    "node": ">=18.0.0"
+  },
   "bin": {
     "traforo": "./dist/cli.js"
   },
@@ -33,6 +36,7 @@
     "deploy:preview": "wrangler deploy --env preview",
     "typecheck": "tsc --noEmit",
     "typecheck:client": "tsc --noEmit -p tsconfig.client.json",
+    "typecheck:test": "tsc --noEmit -p tsconfig.test.json",
     "cli": "tsx src/cli.ts",
     "test": "vitest --run"
   },

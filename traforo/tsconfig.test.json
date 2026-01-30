@@ -1,0 +1,8 @@
+{
+  "extends": "./tsconfig.client.json",
+  "compilerOptions": {
+    "noEmit": true
+  },
+  "include": ["src/client.ts", "src/types.ts", "src/run-tunnel.ts", "src/cli.ts", "src/**/*.test.ts"],
+  "exclude": ["node_modules", "dist", "src/tunnel.ts"]
+}
