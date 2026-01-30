@@ -61,7 +61,7 @@ export class TunnelClient {
       throw new Error('Client is closed')
     }
 
-    const wsUrl = `${this.options.serverUrl}/upstream?_tunnelId=${this.options.tunnelId}`
+    const wsUrl = `${this.options.serverUrl}/traforo-upstream?_tunnelId=${this.options.tunnelId}`
     console.log(`Connecting to ${wsUrl}...`)
 
     return new Promise((resolve, reject) => {

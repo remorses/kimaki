@@ -102,7 +102,7 @@ export class Tunnel {
 
     // WebSocket upgrade requests
     if (isUpgrade) {
-      if (url.pathname === '/upstream') {
+      if (url.pathname === '/traforo-upstream') {
         return this.handleUpstreamConnection(tunnelId)
       }
       // User WebSocket connection to be proxied
@@ -110,7 +110,7 @@ export class Tunnel {
     }
 
     // Status endpoint
-    if (url.pathname === '/status') {
+    if (url.pathname === '/traforo-status') {
       const upstream = this.getUpstream(tunnelId)
       return Response.json({
         online: !!upstream,
