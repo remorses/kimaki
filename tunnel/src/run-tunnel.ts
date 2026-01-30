@@ -2,7 +2,7 @@ import { spawn, type ChildProcess } from 'node:child_process'
 import net from 'node:net'
 import { TunnelClient } from './client.js'
 
-export const CLI_NAME = 'kimaki-tunnel'
+export const CLI_NAME = 'traforo'
 
 export type RunTunnelOptions = {
   port: number

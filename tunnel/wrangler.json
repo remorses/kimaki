@@ -1,5 +1,5 @@
 {
-  "name": "kimaki-tunnel",
+  "name": "traforo",
   "main": "src/tunnel.ts",
   "compatibility_date": "2025-01-01",
   "durable_objects": {

@@ -84,9 +84,6 @@ importers:
       js-yaml:
         specifier: ^4.1.0
         version: 4.1.0
-      kimaki-tunnel:
-        specifier: workspace:*
-        version: link:../tunnel
       marked:
         specifier: ^16.3.0
         version: 16.3.0
@@ -105,6 +102,9 @@ importers:
       string-dedent:
         specifier: ^3.0.2
         version: 3.0.2
+      traforo:
+        specifier: workspace:*
+        version: link:../tunnel
       undici:
         specifier: ^7.16.0
         version: 7.16.0

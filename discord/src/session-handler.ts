@@ -210,10 +210,8 @@ export type DefaultModelSource = 'opencode-config' | 'opencode-recent' | 'openco
  */
 export async function getDefaultModel({
   getClient,
-  directory,
 }: {
   getClient: Awaited<ReturnType<typeof initializeOpencodeForDirectory>>
-  directory: string
 }): Promise<{ providerID: string; modelID: string; source: DefaultModelSource } | undefined> {
   if (getClient instanceof Error) {
     return undefined
@@ -221,7 +219,7 @@ export async function getDefaultModel({
 
   // Fetch connected providers to validate any model we return
   const providersResponse = await errore.tryAsync(() => {
-    return getClient().provider.list({ query: { directory } })
+    return getClient().provider.list({})
   })
   if (providersResponse instanceof Error) {
     sessionLogger.log(`[MODEL] Failed to fetch providers for default model:`, providersResponse.message)
@@ -239,7 +237,7 @@ export async function getDefaultModel({
 
   // 1. Check OpenCode config.model setting (highest priority after user preference)
   const configResponse = await errore.tryAsync(() => {
-    return getClient().config.get({ query: { directory } })
+    return getClient().config.get({})
   })
   if (!(configResponse instanceof Error) && configResponse.data?.model) {
     const configModel = parseModelString(configResponse.data.model)
@@ -1541,7 +1539,7 @@ export async function handleOpencodeSession({
       }
 
       // 4. Default model from OpenCode (like TUI does)
-      const defaultModel = await getDefaultModel({ getClient, directory: sdkDirectory })
+      const defaultModel = await getDefaultModel({ getClient })
       if (defaultModel) {
         sessionLogger.log(`[MODEL] Using default: ${defaultModel.providerID}/${defaultModel.modelID}`)
         return defaultModel

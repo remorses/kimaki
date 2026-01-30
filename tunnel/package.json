@@ -1,12 +1,17 @@
 {
-  "name": "kimaki-tunnel",
+  "name": "traforo",
   "version": "0.0.1",
   "description": "HTTP tunnel via Cloudflare Durable Objects and WebSockets",
   "type": "module",
-  "private": true,
+  "license": "MIT",
+  "repository": "https://github.com/remorses/kimaki",
   "bin": {
-    "kimaki-tunnel": "./src/cli.ts"
+    "traforo": "./src/cli.ts"
   },
+  "files": [
+    "src",
+    "dist"
+  ],
   "exports": {
     ".": "./src/tunnel.ts",
     "./client": "./src/client.ts",

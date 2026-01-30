@@ -72,12 +72,10 @@ async function getCurrentModelInfo({
   sessionId,
   channelId,
   getClient,
-  directory,
 }: {
   sessionId?: string
   channelId: string
   getClient: Awaited<ReturnType<typeof initializeOpencodeForDirectory>>
-  directory: string
 }): Promise<CurrentModelInfo> {
   if (getClient instanceof Error) {
     return { type: 'none' }
@@ -96,7 +94,7 @@ async function getCurrentModelInfo({
     ? getSessionAgent(sessionId) || getChannelAgent(channelId)
     : getChannelAgent(channelId)
   if (agentPreference) {
-    const agentsResponse = await getClient().app.agents({ query: { directory } })
+    const agentsResponse = await getClient().app.agents({})
     if (agentsResponse.data) {
       const agent = agentsResponse.data.find((a) => a.name === agentPreference)
       if (agent?.model) {
@@ -113,7 +111,7 @@ async function getCurrentModelInfo({
   }
 
   // 4. Get opencode default (config > recent > provider default)
-  const defaultModel = await getDefaultModel({ getClient, directory })
+  const defaultModel = await getDefaultModel({ getClient })
   if (defaultModel) {
     const model = `${defaultModel.providerID}/${defaultModel.modelID}`
     return { type: defaultModel.source, model }
@@ -241,7 +239,6 @@ export async function handleModelCommand({
       sessionId,
       channelId: targetChannelId,
       getClient,
-      directory: projectDirectory,
     })
 
     const currentModelText = (() => {
