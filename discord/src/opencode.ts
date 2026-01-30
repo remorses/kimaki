@@ -122,7 +122,8 @@ export async function initializeOpencodeForDirectory(directory: string): Promise
 
   const opencodeCommand = process.env.OPENCODE_PATH || 'opencode'
 
-  const tmpdir = os.tmpdir()
+  // Normalize path separators for cross-platform compatibility (Windows uses backslashes)
+  const tmpdir = os.tmpdir().replaceAll('\\', '/')
   const serverProcess = spawn(opencodeCommand, ['serve', '--port', port.toString()], {
     stdio: 'pipe',
     detached: false,
