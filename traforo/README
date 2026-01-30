@@ -1,0 +1,82 @@
+TRAFORO
+=======
+
+HTTP tunnel via Cloudflare Durable Objects and WebSockets.
+Expose local servers to the internet with a simple CLI.
+
+
+INSTALLATION
+------------
+
+    npm install -g traforo
+
+
+USAGE
+-----
+
+Expose a local server:
+
+    traforo -p 3000
+
+With a custom tunnel ID:
+
+    traforo -p 3000 -t my-app
+
+Run a command and tunnel it:
+
+    traforo -p 3000 -- next start
+    traforo -p 3000 -- pnpm dev
+    traforo -p 5173 -- vite
+
+The tunnel URL will be:
+
+    https://{tunnel-id}-tunnel.kimaki.xyz
+
+
+OPTIONS
+-------
+
+    -p, --port <port>       Local port to expose (required)
+    -t, --tunnel-id [id]    Tunnel ID (random if omitted)
+    -h, --host [host]       Local host (default: localhost)
+    -s, --server [url]      Custom tunnel server URL
+    --help                  Show help
+    --version               Show version
+
+
+HOW IT WORKS
+------------
+
+1. Local client connects to Cloudflare Durable Object via WebSocket
+2. HTTP requests to tunnel URL are forwarded to the DO
+3. DO sends requests over WebSocket to local client
+4. Local client makes request to localhost and returns response
+5. WebSocket connections from users are also proxied through
+
+
+API ENDPOINTS
+-------------
+
+    /traforo-status         Check if tunnel is online
+    /traforo-upstream       WebSocket endpoint for local client
+    /*                      All other paths proxied to local server
+
+
+LIBRARY USAGE
+-------------
+
+    import { TunnelClient } from 'traforo/client'
+    import { runTunnel } from 'traforo/run-tunnel'
+
+    const client = new TunnelClient({
+      localPort: 3000,
+      tunnelId: 'my-app',
+    })
+
+    await client.connect()
+
+
+LICENSE
+-------
+
+MIT
