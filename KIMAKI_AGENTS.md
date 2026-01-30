@@ -24,7 +24,7 @@ it is a package for using errors as values in ts.
 
 if I ask you questions about opencode you can opensrc it from anomalyco/opencode
 
-## discord messages
+## discord bot messages
  
 try to not use emojis in messages
 
