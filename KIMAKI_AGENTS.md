@@ -23,3 +23,9 @@ it is a package for using errors as values in ts.
 ## opencode
 
 if I ask you questions about opencode you can opensrc it from anomalyco/opencode
+
+## discord messages
+ 
+try to not use emojis in messages
+
+when creating system messages like replies to commands never add new line spaces between paragraphs or lines. put one line next to the one before.
