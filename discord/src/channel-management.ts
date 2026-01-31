@@ -4,7 +4,7 @@
 
 import { ChannelType, type CategoryChannel, type Guild, type TextChannel } from 'discord.js'
 import path from 'node:path'
-import { getDatabase, getChannelDirectory } from './database.js'
+import { getChannelDirectory, setChannelDirectory } from './database.js'
 
 export async function ensureKimakiCategory(
   guild: Guild,
@@ -86,11 +86,12 @@ export async function createProjectChannels({
     // Channel configuration is stored in SQLite, not in the topic
   })
 
-  getDatabase()
-    .prepare(
-      'INSERT OR REPLACE INTO channel_directories (channel_id, directory, channel_type, app_id) VALUES (?, ?, ?, ?)',
-    )
-    .run(textChannel.id, projectDirectory, 'text', appId)
+  await setChannelDirectory({
+    channelId: textChannel.id,
+    directory: projectDirectory,
+    channelType: 'text',
+    appId,
+  })
 
   let voiceChannelId: string | null = null
 
@@ -103,11 +104,12 @@ export async function createProjectChannels({
       parent: kimakiAudioCategory,
     })
 
-    getDatabase()
-      .prepare(
-        'INSERT OR REPLACE INTO channel_directories (channel_id, directory, channel_type, app_id) VALUES (?, ?, ?, ?)',
-      )
-      .run(voiceChannel.id, projectDirectory, 'voice', appId)
+    await setChannelDirectory({
+      channelId: voiceChannel.id,
+      directory: projectDirectory,
+      channelType: 'voice',
+      appId,
+    })
 
     voiceChannelId = voiceChannel.id
   }
@@ -130,23 +132,23 @@ export type ChannelWithTags = {
 export async function getChannelsWithDescriptions(guild: Guild): Promise<ChannelWithTags[]> {
   const channels: ChannelWithTags[] = []
 
-  guild.channels.cache
-    .filter((channel) => channel.isTextBased())
-    .forEach((channel) => {
-      const textChannel = channel as TextChannel
-      const description = textChannel.topic || null
+  const textChannels = guild.channels.cache.filter((channel) => channel.isTextBased())
 
-      // Get channel config from database instead of parsing XML from topic
-      const channelConfig = getChannelDirectory(textChannel.id)
+  for (const channel of textChannels.values()) {
+    const textChannel = channel as TextChannel
+    const description = textChannel.topic || null
 
-      channels.push({
-        id: textChannel.id,
-        name: textChannel.name,
-        description,
-        kimakiDirectory: channelConfig?.directory,
-        kimakiApp: channelConfig?.appId || undefined,
-      })
+    // Get channel config from database instead of parsing XML from topic
+    const channelConfig = await getChannelDirectory(textChannel.id)
+
+    channels.push({
+      id: textChannel.id,
+      name: textChannel.name,
+      description,
+      kimakiDirectory: channelConfig?.directory,
+      kimakiApp: channelConfig?.appId || undefined,
     })
+  }
 
   return channels
 }

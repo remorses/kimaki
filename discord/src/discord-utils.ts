@@ -325,15 +325,15 @@ export function escapeDiscordFormatting(text: string): string {
   return text.replace(/```/g, '\\`\\`\\`').replace(/````/g, '\\`\\`\\`\\`')
 }
 
-export function getKimakiMetadata(textChannel: TextChannel | null): {
+export async function getKimakiMetadata(textChannel: TextChannel | null): Promise<{
   projectDirectory?: string
   channelAppId?: string
-} {
+}> {
   if (!textChannel) {
     return {}
   }
 
-  const channelConfig = getChannelDirectory(textChannel.id)
+  const channelConfig = await getChannelDirectory(textChannel.id)
 
   if (!channelConfig) {
     return {}

@@ -9,7 +9,7 @@ import {
   ThreadAutoArchiveDuration,
   type ThreadChannel,
 } from 'discord.js'
-import { getDatabase } from '../database.js'
+import { getThreadSession, setThreadSession, setPartMessage } from '../database.js'
 import { initializeOpencodeForDirectory } from '../opencode.js'
 import { resolveTextChannel, getKimakiMetadata, sendThreadMessage } from '../discord-utils.js'
 import { collectLastAssistantParts } from '../message-formatting.js'
@@ -45,7 +45,7 @@ export async function handleForkCommand(interaction: ChatInputCommandInteraction
   }
 
   const textChannel = await resolveTextChannel(channel as ThreadChannel)
-  const { projectDirectory: directory } = getKimakiMetadata(textChannel)
+  const { projectDirectory: directory } = await getKimakiMetadata(textChannel)
 
   if (!directory) {
     await interaction.reply({
@@ -55,11 +55,9 @@ export async function handleForkCommand(interaction: ChatInputCommandInteraction
     return
   }
 
-  const row = getDatabase()
-    .prepare('SELECT session_id FROM thread_sessions WHERE thread_id = ?')
-    .get(channel.id) as { session_id: string } | undefined
+  const sessionId = await getThreadSession(channel.id)
 
-  if (!row?.session_id) {
+  if (!sessionId) {
     await interaction.reply({
       content: 'No active session in this thread',
       ephemeral: true,
@@ -69,8 +67,6 @@ export async function handleForkCommand(interaction: ChatInputCommandInteraction
 
   // Defer reply before API calls to avoid 3-second timeout
   await interaction.deferReply({ ephemeral: true })
-
-  const sessionId = row.session_id
 
   const getClient = await initializeOpencodeForDirectory(directory)
   if (getClient instanceof Error) {
@@ -218,9 +214,7 @@ export async function handleForkSelectMenu(
     // Add user to thread so it appears in their sidebar
     await thread.members.add(interaction.user.id)
 
-    getDatabase()
-      .prepare('INSERT OR REPLACE INTO thread_sessions (thread_id, session_id) VALUES (?, ?)')
-      .run(thread.id, forkedSession.id)
+    await setThreadSession(thread.id, forkedSession.id)
 
     sessionLogger.log(`Created forked session ${forkedSession.id} in thread ${thread.id}`)
 
@@ -243,15 +237,9 @@ export async function handleForkSelectMenu(
         const discordMessage = await sendThreadMessage(thread, content)
 
         // Store part-message mappings for future reference
-        const stmt = getDatabase().prepare(
-          'INSERT OR REPLACE INTO part_messages (part_id, message_id, thread_id) VALUES (?, ?, ?)',
-        )
-        const transaction = getDatabase().transaction((ids: string[]) => {
-          for (const partId of ids) {
-            stmt.run(partId, discordMessage.id, thread.id)
-          }
-        })
-        transaction(partIds)
+        for (const partId of partIds) {
+          await setPartMessage(partId, discordMessage.id, thread.id)
+        }
       }
     }
 

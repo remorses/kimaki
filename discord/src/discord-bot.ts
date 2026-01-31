@@ -3,7 +3,7 @@
 // and orchestrates the main event loop for the Kimaki bot.
 
 import {
-  getDatabase,
+  initDatabase,
   closeDatabase,
   getThreadWorktree,
   createPendingWorktree,
@@ -11,6 +11,9 @@ import {
   setWorktreeError,
   getChannelWorktreesEnabled,
   getChannelDirectory,
+  getThreadSession,
+  setThreadSession,
+  getPrisma,
 } from './database.js'
 import { initializeOpencodeForDirectory, getOpencodeServers, getOpencodeClientV2 } from './opencode.js'
 import { formatWorktreeName } from './commands/worktree.js'
@@ -40,7 +43,7 @@ import { getCompactSessionContext, getLastSessionId } from './markdown.js'
 import { handleOpencodeSession } from './session-handler.js'
 import { registerInteractionHandler } from './interaction-handler.js'
 
-export { getDatabase, closeDatabase, getChannelDirectory } from './database.js'
+export { initDatabase, closeDatabase, getChannelDirectory, getPrisma } from './database.js'
 export { initializeOpencodeForDirectory } from './opencode.js'
 export { escapeBackticksInCodeBlocks, splitMarkdownForDiscord } from './discord-utils.js'
 export { getOpencodeSystemMessage } from './system-message.js'
@@ -241,7 +244,7 @@ export async function startDiscordBot({
         let channelAppId: string | undefined
 
         if (parent) {
-          const channelConfig = getChannelDirectory(parent.id)
+          const channelConfig = await getChannelDirectory(parent.id)
           if (channelConfig) {
             projectDirectory = channelConfig.directory
             channelAppId = channelConfig.appId || undefined
@@ -249,7 +252,7 @@ export async function startDiscordBot({
         }
 
         // Check if this thread is a worktree thread
-        const worktreeInfo = getThreadWorktree(thread.id)
+        const worktreeInfo = await getThreadWorktree(thread.id)
         if (worktreeInfo) {
           if (worktreeInfo.status === 'pending') {
             await message.reply({
@@ -289,12 +292,10 @@ export async function startDiscordBot({
           return
         }
 
-        const row = getDatabase()
-          .prepare('SELECT session_id FROM thread_sessions WHERE thread_id = ?')
-          .get(thread.id) as { session_id: string } | undefined
+        const sessionId = await getThreadSession(thread.id)
 
         // No existing session - start a new one (e.g., replying to a notification thread)
-        if (!row) {
+        if (!sessionId) {
           discordLogger.log(`No session for thread ${thread.id}, starting new session`)
           
           if (!projectDirectory) {
@@ -324,7 +325,7 @@ export async function startDiscordBot({
           return
         }
 
-        voiceLogger.log(`[SESSION] Found session ${row.session_id} for thread ${thread.id}`)
+        voiceLogger.log(`[SESSION] Found session ${sessionId} for thread ${thread.id}`)
 
         let messageContent = message.content || ''
 
@@ -341,10 +342,10 @@ export async function startDiscordBot({
             const client = getClient()
 
             // get current session context (without system prompt, it would be duplicated)
-            if (row.session_id) {
+            if (sessionId) {
               const result = await getCompactSessionContext({
                 client,
-                sessionId: row.session_id,
+                sessionId: sessionId,
                 includeSystemPrompt: false,
                 maxMessages: 15,
               })
@@ -356,7 +357,7 @@ export async function startDiscordBot({
             // get last session context (with system prompt for project context)
             const lastSessionResult = await getLastSessionId({
               client,
-              excludeSessionId: row.session_id,
+              excludeSessionId: sessionId,
             })
             const lastSessionId = errore.unwrapOr(lastSessionResult, null)
             if (lastSessionId) {
@@ -409,7 +410,7 @@ export async function startDiscordBot({
           `[GUILD_TEXT] Message in text channel #${textChannel.name} (${textChannel.id})`,
         )
 
-        const channelConfig = getChannelDirectory(textChannel.id)
+        const channelConfig = await getChannelDirectory(textChannel.id)
 
         if (!channelConfig) {
           voiceLogger.log(`[IGNORED] Channel #${textChannel.name} has no project directory configured`)
@@ -447,7 +448,7 @@ export async function startDiscordBot({
           : message.content?.replace(/\s+/g, ' ').trim() || 'Claude Thread'
 
         // Check if worktrees should be enabled (CLI flag OR channel setting)
-        const shouldUseWorktrees = useWorktrees || getChannelWorktreesEnabled(textChannel.id)
+        const shouldUseWorktrees = useWorktrees || await getChannelWorktreesEnabled(textChannel.id)
 
         // Add worktree prefix if worktrees are enabled
         const threadName = shouldUseWorktrees
@@ -474,7 +475,7 @@ export async function startDiscordBot({
           discordLogger.log(`[WORKTREE] Creating worktree: ${worktreeName}`)
 
           // Store pending worktree immediately so bot knows about it
-          createPendingWorktree({
+          await createPendingWorktree({
             threadId: thread.id,
             worktreeName,
             projectDirectory,
@@ -484,7 +485,7 @@ export async function startDiscordBot({
           const getClient = await initializeOpencodeForDirectory(projectDirectory)
           if (getClient instanceof Error) {
             discordLogger.error(`[WORKTREE] Failed to init OpenCode: ${getClient.message}`)
-            setWorktreeError({ threadId: thread.id, errorMessage: getClient.message })
+            await setWorktreeError({ threadId: thread.id, errorMessage: getClient.message })
             await thread.send({
               content: `⚠️ Failed to create worktree: ${getClient.message}\nUsing main project directory instead.`,
               flags: SILENT_MESSAGE_FLAGS,
@@ -493,7 +494,7 @@ export async function startDiscordBot({
             const clientV2 = getOpencodeClientV2(projectDirectory)
             if (!clientV2) {
               discordLogger.error(`[WORKTREE] No v2 client for ${projectDirectory}`)
-              setWorktreeError({ threadId: thread.id, errorMessage: 'No OpenCode v2 client' })
+              await setWorktreeError({ threadId: thread.id, errorMessage: 'No OpenCode v2 client' })
             } else {
               const worktreeResult = await createWorktreeWithSubmodules({
                 clientV2,
@@ -504,13 +505,13 @@ export async function startDiscordBot({
               if (worktreeResult instanceof Error) {
                 const errMsg = worktreeResult.message
                 discordLogger.error(`[WORKTREE] Creation failed: ${errMsg}`)
-                setWorktreeError({ threadId: thread.id, errorMessage: errMsg })
+                await setWorktreeError({ threadId: thread.id, errorMessage: errMsg })
                 await thread.send({
                   content: `⚠️ Failed to create worktree: ${errMsg}\nUsing main project directory instead.`,
                   flags: SILENT_MESSAGE_FLAGS,
                 })
               } else {
-                setWorktreeReady({ threadId: thread.id, worktreeDirectory: worktreeResult.directory })
+                await setWorktreeReady({ threadId: thread.id, worktreeDirectory: worktreeResult.directory })
                 sessionDirectory = worktreeResult.directory
                 discordLogger.log(`[WORKTREE] Created: ${worktreeResult.directory} (branch: ${worktreeResult.branch})`)
               }
@@ -606,7 +607,7 @@ export async function startDiscordBot({
       }
 
       // Get directory from database
-      const channelConfig = getChannelDirectory(parent.id)
+      const channelConfig = await getChannelDirectory(parent.id)
 
       if (!channelConfig) {
         discordLogger.log(`[BOT_SESSION] No project directory configured for parent channel`)

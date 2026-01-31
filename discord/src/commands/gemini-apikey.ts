@@ -6,7 +6,7 @@ import {
   TextInputBuilder,
   TextInputStyle,
 } from 'discord.js'
-import { getDatabase } from '../database.js'
+import { setGeminiApiKey } from '../database.js'
 
 export async function handleGeminiApiKeyButton(
   interaction: ButtonInteraction,
@@ -68,9 +68,7 @@ export async function handleGeminiApiKeyModalSubmit(
     return
   }
 
-  getDatabase()
-    .prepare('INSERT OR REPLACE INTO bot_api_keys (app_id, gemini_api_key) VALUES (?, ?)')
-    .run(appId, apiKey)
+  await setGeminiApiKey(appId, apiKey)
 
   await interaction.editReply({
     content: 'Gemini API key saved. Voice messages can be transcribed now.',

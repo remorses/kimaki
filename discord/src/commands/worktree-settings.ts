@@ -33,7 +33,7 @@ export async function handleToggleWorktreesCommand({
   }
 
   const textChannel = channel as TextChannel
-  const metadata = getKimakiMetadata(textChannel)
+  const metadata = await getKimakiMetadata(textChannel)
 
   if (metadata.channelAppId && metadata.channelAppId !== appId) {
     await command.reply({
@@ -52,9 +52,9 @@ export async function handleToggleWorktreesCommand({
     return
   }
 
-  const wasEnabled = getChannelWorktreesEnabled(textChannel.id)
+  const wasEnabled = await getChannelWorktreesEnabled(textChannel.id)
   const nextEnabled = !wasEnabled
-  setChannelWorktreesEnabled(textChannel.id, nextEnabled)
+  await setChannelWorktreesEnabled(textChannel.id, nextEnabled)
 
   const nextLabel = nextEnabled ? 'enabled' : 'disabled'
 

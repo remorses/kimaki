@@ -2,7 +2,7 @@
 
 import { ChannelType, type ThreadChannel } from 'discord.js'
 import type { CommandContext } from './types.js'
-import { getDatabase } from '../database.js'
+import { getThreadSession } from '../database.js'
 import {
   resolveTextChannel,
   getKimakiMetadata,
@@ -48,11 +48,9 @@ export async function handleQueueCommand({ command }: CommandContext): Promise<v
     return
   }
 
-  const row = getDatabase()
-    .prepare('SELECT session_id FROM thread_sessions WHERE thread_id = ?')
-    .get(channel.id) as { session_id: string } | undefined
+  const sessionId = await getThreadSession(channel.id)
 
-  if (!row?.session_id) {
+  if (!sessionId) {
     await command.reply({
       content: 'No active session in this thread. Send a message directly instead.',
       ephemeral: true,
@@ -62,16 +60,16 @@ export async function handleQueueCommand({ command }: CommandContext): Promise<v
   }
 
   // Check if there's an active request running
-  const existingController = abortControllers.get(row.session_id)
+  const existingController = abortControllers.get(sessionId)
   const hasActiveRequest = Boolean(existingController && !existingController.signal.aborted)
   if (existingController && existingController.signal.aborted) {
-    abortControllers.delete(row.session_id)
+    abortControllers.delete(sessionId)
   }
 
   if (!hasActiveRequest) {
     // No active request, send immediately
     const textChannel = await resolveTextChannel(channel as ThreadChannel)
-    const { projectDirectory } = getKimakiMetadata(textChannel)
+    const { projectDirectory } = await getKimakiMetadata(textChannel)
 
     if (!projectDirectory) {
       await command.reply({

@@ -10,7 +10,6 @@ import fs from 'node:fs'
 import path from 'node:path'
 import { xdgState } from 'xdg-basedir'
 import {
-  getDatabase,
   getSessionModel,
   getChannelModel,
   getSessionAgent,
@@ -18,6 +17,10 @@ import {
   setSessionAgent,
   getThreadWorktree,
   getChannelVerbosity,
+  getThreadSession,
+  setThreadSession,
+  getPartMessageIds,
+  setPartMessage,
 } from './database.js'
 import {
   initializeOpencodeForDirectory,
@@ -405,7 +408,7 @@ export async function handleOpencodeSession({
   sessionLogger.log(`Using directory: ${directory}`)
 
   // Get worktree info early so we can use the correct directory for events and prompts
-  const worktreeInfo = getThreadWorktree(thread.id)
+  const worktreeInfo = await getThreadWorktree(thread.id)
   const worktreeDirectory =
     worktreeInfo?.status === 'ready' && worktreeInfo.worktree_directory
       ? worktreeInfo.worktree_directory
@@ -425,10 +428,7 @@ export async function handleOpencodeSession({
   const serverEntry = getOpencodeServers().get(directory)
   const port = serverEntry?.port
 
-  const row = getDatabase()
-    .prepare('SELECT session_id FROM thread_sessions WHERE thread_id = ?')
-    .get(thread.id) as { session_id: string } | undefined
-  let sessionId = row?.session_id
+  let sessionId = await getThreadSession(thread.id)
   let session
 
   if (sessionId) {
@@ -462,14 +462,12 @@ export async function handleOpencodeSession({
     throw new Error('Failed to create or get session')
   }
 
-  getDatabase()
-    .prepare('INSERT OR REPLACE INTO thread_sessions (thread_id, session_id) VALUES (?, ?)')
-    .run(thread.id, session.id)
+  await setThreadSession(thread.id, session.id)
   sessionLogger.log(`Stored session ${session.id} for thread ${thread.id}`)
 
   // Store agent preference if provided
   if (agent) {
-    setSessionAgent(session.id, agent)
+    await setSessionAgent(session.id, agent)
     sessionLogger.log(`Set agent preference for session ${session.id}: ${agent}`)
   }
 
@@ -579,13 +577,8 @@ export async function handleOpencodeSession({
   const events = eventsResult.stream
   sessionLogger.log(`Subscribed to OpenCode events`)
 
-  const sentPartIds = new Set<string>(
-    (
-      getDatabase()
-        .prepare('SELECT part_id FROM part_messages WHERE thread_id = ?')
-        .all(thread.id) as { part_id: string }[]
-    ).map((row) => row.part_id),
-  )
+  const existingPartIds = await getPartMessageIds(thread.id)
+  const sentPartIds = new Set<string>(existingPartIds)
 
   const partBuffer = new Map<string, Map<string, Part>>()
   let stopTyping: (() => void) | null = null
@@ -651,12 +644,12 @@ export async function handleOpencodeSession({
 
   // Read verbosity dynamically so mid-session /verbosity changes take effect immediately
   const verbosityChannelId = channelId || thread.parentId || thread.id
-  const getVerbosity = () => {
+  const getVerbosity = async () => {
     return getChannelVerbosity(verbosityChannelId)
   }
 
   const sendPartMessage = async (part: Part) => {
-    const verbosity = getVerbosity()
+    const verbosity = await getVerbosity()
     // In text-only mode, only send text parts (the ⬥ diamond messages)
     if (verbosity === 'text-only' && part.type !== 'text') {
       return
@@ -692,11 +685,7 @@ export async function handleOpencodeSession({
     hasSentParts = true
     sentPartIds.add(part.id)
 
-    getDatabase()
-      .prepare(
-        'INSERT OR REPLACE INTO part_messages (part_id, message_id, thread_id) VALUES (?, ?, ?)',
-      )
-      .run(part.id, sendResult.id, thread.id)
+    await setPartMessage(part.id, sendResult.id, thread.id)
   }
 
   const eventHandler = async () => {
@@ -881,7 +870,7 @@ export async function handleOpencodeSession({
             const label = `${agent}-${agentSpawnCounts[agent]}`
             subtaskSessions.set(childSessionId, { label, assistantMessageId: undefined })
             // Show task messages in tools-and-text and text-and-essential-tools modes
-            if (getVerbosity() !== 'text-only') {
+            if ((await getVerbosity()) !== 'text-only') {
               const taskDisplay = `┣ task **${description}**${agent ? ` _${agent}_` : ''}`
               await sendThreadMessage(thread, taskDisplay + '\n\n')
             }
@@ -893,8 +882,8 @@ export async function handleOpencodeSession({
 
       // Show large output notifications for tools that are visible in current verbosity mode
       if (part.type === 'tool' && part.state.status === 'completed') {
-        const showLargeOutput = (() => {
-          const verbosity = getVerbosity()
+        const showLargeOutput = await (async () => {
+          const verbosity = await getVerbosity()
           if (verbosity === 'text-only') {
             return false
           }
@@ -957,7 +946,7 @@ export async function handleOpencodeSession({
       part: Part,
       subtaskInfo: { label: string; assistantMessageId?: string },
     ) => {
-      const verbosity = getVerbosity()
+      const verbosity = await getVerbosity()
       // In text-only mode, skip all subtask output (they're tool-related)
       if (verbosity === 'text-only') {
         return
@@ -993,11 +982,7 @@ export async function handleOpencodeSession({
         return
       }
       sentPartIds.add(part.id)
-      getDatabase()
-        .prepare(
-          'INSERT OR REPLACE INTO part_messages (part_id, message_id, thread_id) VALUES (?, ?, ?)',
-        )
-        .run(part.id, sendResult.id, thread.id)
+      await setPartMessage(part.id, sendResult.id, thread.id)
     }
 
     const handlePartUpdated = async (part: Part) => {
@@ -1498,14 +1483,14 @@ export async function handleOpencodeSession({
     sessionLogger.log(`[PROMPT] Parts to send:`, parts.length)
 
     const agentPreference =
-      getSessionAgent(session.id) || (channelId ? getChannelAgent(channelId) : undefined)
+      (await getSessionAgent(session.id)) || (channelId ? await getChannelAgent(channelId) : undefined)
     if (agentPreference) {
       sessionLogger.log(`[AGENT] Using agent preference: ${agentPreference}`)
     }
 
     // Model priority: session model > agent model > channel model > default
-    const sessionModelPreference = getSessionModel(session.id)
-    const channelModelPreference = channelId ? getChannelModel(channelId) : undefined
+    const sessionModelPreference = await getSessionModel(session.id)
+    const channelModelPreference = channelId ? await getChannelModel(channelId) : undefined
     const modelParam = await (async () => {
       // 1. Session model preference (highest priority, explicit user override)
       if (sessionModelPreference) {

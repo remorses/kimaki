@@ -8,7 +8,7 @@ import {
 } from 'discord.js'
 import fs from 'node:fs'
 import type { CommandContext, AutocompleteContext } from './types.js'
-import { getDatabase, getChannelDirectory } from '../database.js'
+import { getChannelDirectory, setThreadSession, setPartMessage, getAllThreadSessionIds } from '../database.js'
 import { initializeOpencodeForDirectory } from '../opencode.js'
 import { sendThreadMessage, resolveTextChannel } from '../discord-utils.js'
 import { collectLastAssistantParts } from '../message-formatting.js'
@@ -41,7 +41,7 @@ export async function handleResumeCommand({ command, appId }: CommandContext): P
 
   const textChannel = channel as TextChannel
 
-  const channelConfig = getChannelDirectory(textChannel.id)
+  const channelConfig = await getChannelDirectory(textChannel.id)
   const projectDirectory = channelConfig?.directory
   const channelAppId = channelConfig?.appId || undefined
 
@@ -87,9 +87,7 @@ export async function handleResumeCommand({ command, appId }: CommandContext): P
     // Add user to thread so it appears in their sidebar
     await thread.members.add(command.user.id)
 
-    getDatabase()
-      .prepare('INSERT OR REPLACE INTO thread_sessions (thread_id, session_id) VALUES (?, ?)')
-      .run(thread.id, sessionId)
+    await setThreadSession(thread.id, sessionId)
 
     logger.log(`[RESUME] Created thread ${thread.id} for session ${sessionId}`)
 
@@ -121,17 +119,10 @@ export async function handleResumeCommand({ command, appId }: CommandContext): P
     if (content.trim()) {
       const discordMessage = await sendThreadMessage(thread, content)
 
-      const stmt = getDatabase().prepare(
-        'INSERT OR REPLACE INTO part_messages (part_id, message_id, thread_id) VALUES (?, ?, ?)',
-      )
-
-      const transaction = getDatabase().transaction((ids: string[]) => {
-        for (const partId of ids) {
-          stmt.run(partId, discordMessage.id, thread.id)
-        }
-      })
-
-      transaction(partIds)
+      // Store part-message mappings
+      for (const partId of partIds) {
+        await setPartMessage(partId, discordMessage.id, thread.id)
+      }
     }
 
     const messageCount = messages.length
@@ -161,7 +152,7 @@ export async function handleResumeAutocomplete({
       interaction.channel as TextChannel | ThreadChannel | null,
     )
     if (textChannel) {
-      const channelConfig = getChannelDirectory(textChannel.id)
+      const channelConfig = await getChannelDirectory(textChannel.id)
       if (channelConfig?.appId && channelConfig.appId !== appId) {
         await interaction.respond([])
         return
@@ -188,13 +179,7 @@ export async function handleResumeAutocomplete({
       return
     }
 
-    const existingSessionIds = new Set(
-      (
-        getDatabase().prepare('SELECT session_id FROM thread_sessions').all() as {
-          session_id: string
-        }[]
-      ).map((row) => row.session_id),
-    )
+    const existingSessionIds = new Set(await getAllThreadSessionIds())
 
     const sessions = sessionsResponse.data
       .filter((session) => !existingSessionIds.has(session.id))

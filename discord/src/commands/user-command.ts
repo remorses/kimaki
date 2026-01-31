@@ -6,7 +6,7 @@ import { ChannelType, type TextChannel, type ThreadChannel } from 'discord.js'
 import { handleOpencodeSession } from '../session-handler.js'
 import { SILENT_MESSAGE_FLAGS } from '../discord-utils.js'
 import { createLogger, LogPrefix } from '../logger.js'
-import { getDatabase, getChannelDirectory } from '../database.js'
+import { getChannelDirectory, getThreadSession } from '../database.js'
 import fs from 'node:fs'
 
 const userCommandLogger = createLogger(LogPrefix.USER_CMD)
@@ -54,11 +54,9 @@ export const handleUserCommand: CommandHandler = async ({ command, appId }: Comm
     textChannel = thread.parent as TextChannel | null
 
     // Verify this thread has an existing session
-    const row = getDatabase()
-      .prepare('SELECT session_id FROM thread_sessions WHERE thread_id = ?')
-      .get(thread.id) as { session_id: string } | undefined
+    const sessionId = await getThreadSession(thread.id)
 
-    if (!row) {
+    if (!sessionId) {
       await command.reply({
         content:
           'This thread does not have an active session. Use this command in a project channel to create a new thread.',
@@ -68,7 +66,7 @@ export const handleUserCommand: CommandHandler = async ({ command, appId }: Comm
     }
 
     if (textChannel) {
-      const channelConfig = getChannelDirectory(textChannel.id)
+      const channelConfig = await getChannelDirectory(textChannel.id)
       projectDirectory = channelConfig?.directory
       channelAppId = channelConfig?.appId || undefined
     }
@@ -76,7 +74,7 @@ export const handleUserCommand: CommandHandler = async ({ command, appId }: Comm
     // Running in a text channel - will create a new thread
     textChannel = channel as TextChannel
 
-    const channelConfig = getChannelDirectory(textChannel.id)
+    const channelConfig = await getChannelDirectory(textChannel.id)
     projectDirectory = channelConfig?.directory
     channelAppId = channelConfig?.appId || undefined
   }

@@ -2,7 +2,7 @@
 
 import { ChannelType, type ThreadChannel } from 'discord.js'
 import type { CommandContext } from './types.js'
-import { getDatabase } from '../database.js'
+import { getThreadSession } from '../database.js'
 import { initializeOpencodeForDirectory, getOpencodeClientV2 } from '../opencode.js'
 import { resolveTextChannel, getKimakiMetadata, SILENT_MESSAGE_FLAGS } from '../discord-utils.js'
 import { createLogger, LogPrefix } from '../logger.js'
@@ -37,7 +37,7 @@ export async function handleCompactCommand({ command }: CommandContext): Promise
   }
 
   const textChannel = await resolveTextChannel(channel as ThreadChannel)
-  const { projectDirectory: directory } = getKimakiMetadata(textChannel)
+  const { projectDirectory: directory } = await getKimakiMetadata(textChannel)
 
   if (!directory) {
     await command.reply({
@@ -48,11 +48,9 @@ export async function handleCompactCommand({ command }: CommandContext): Promise
     return
   }
 
-  const row = getDatabase()
-    .prepare('SELECT session_id FROM thread_sessions WHERE thread_id = ?')
-    .get(channel.id) as { session_id: string } | undefined
+  const sessionId = await getThreadSession(channel.id)
 
-  if (!row?.session_id) {
+  if (!sessionId) {
     await command.reply({
       content: 'No active session in this thread',
       ephemeral: true,
@@ -60,8 +58,6 @@ export async function handleCompactCommand({ command }: CommandContext): Promise
     })
     return
   }
-
-  const sessionId = row.session_id
 
   // Ensure server is running for this directory
   const getClient = await initializeOpencodeForDirectory(directory)

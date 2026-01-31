@@ -4,7 +4,7 @@ import { ChannelType, type TextChannel } from 'discord.js'
 import fs from 'node:fs'
 import path from 'node:path'
 import type { CommandContext, AutocompleteContext } from './types.js'
-import { getDatabase, getChannelDirectory } from '../database.js'
+import { getChannelDirectory } from '../database.js'
 import { initializeOpencodeForDirectory } from '../opencode.js'
 import { SILENT_MESSAGE_FLAGS } from '../discord-utils.js'
 import { handleOpencodeSession } from '../session-handler.js'
@@ -28,7 +28,7 @@ export async function handleSessionCommand({ command, appId }: CommandContext): 
 
   const textChannel = channel as TextChannel
 
-  const channelConfig = getChannelDirectory(textChannel.id)
+  const channelConfig = await getChannelDirectory(textChannel.id)
   const projectDirectory = channelConfig?.directory
   const channelAppId = channelConfig?.appId || undefined
 
@@ -101,7 +101,7 @@ async function handleAgentAutocomplete({ interaction, appId }: AutocompleteConte
   let projectDirectory: string | undefined
 
   if (interaction.channel && interaction.channel.type === ChannelType.GuildText) {
-    const channelConfig = getChannelDirectory(interaction.channel.id)
+    const channelConfig = await getChannelDirectory(interaction.channel.id)
     if (channelConfig) {
       if (channelConfig.appId && channelConfig.appId !== appId) {
         await interaction.respond([])
@@ -179,7 +179,7 @@ export async function handleSessionAutocomplete({
   let projectDirectory: string | undefined
 
   if (interaction.channel && interaction.channel.type === ChannelType.GuildText) {
-    const channelConfig = getChannelDirectory(interaction.channel.id)
+    const channelConfig = await getChannelDirectory(interaction.channel.id)
     if (channelConfig) {
       if (channelConfig.appId && channelConfig.appId !== appId) {
         await interaction.respond([])

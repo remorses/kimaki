@@ -19,7 +19,7 @@ import { deduplicateByKey, generateBotInstallUrl, abbreviatePath } from './utils
 import {
   getChannelsWithDescriptions,
   createDiscordClient,
-  getDatabase,
+  initDatabase,
   getChannelDirectory,
   startDiscordBot,
   initializeOpencodeForDirectory,
@@ -27,6 +27,17 @@ import {
   createProjectChannels,
   type ChannelWithTags,
 } from './discord-bot.js'
+import {
+  getBotToken,
+  setBotToken,
+  setGeminiApiKey,
+  setChannelDirectory,
+  findChannelsByDirectory,
+  findChannelByAppId,
+  getThreadSession,
+  getThreadIdBySessionId,
+  setPendingAutoStart,
+} from './database.js'
 import type { OpencodeClient, Command as OpencodeCommand } from '@opencode-ai/sdk'
 import {
   Events,
@@ -464,28 +475,32 @@ async function registerCommands({
  * Store channel-directory mappings in the database.
  * Called after Discord login to persist channel configurations.
  */
-function storeChannelDirectories({
+async function storeChannelDirectories({
   kimakiChannels,
-  db,
 }: {
   kimakiChannels: { guild: Guild; channels: ChannelWithTags[] }[]
-  db: ReturnType<typeof getDatabase>
-}): void {
+}): Promise<void> {
   for (const { guild, channels } of kimakiChannels) {
     for (const channel of channels) {
       if (channel.kimakiDirectory) {
-        db.prepare(
-          'INSERT OR IGNORE INTO channel_directories (channel_id, directory, channel_type, app_id) VALUES (?, ?, ?, ?)',
-        ).run(channel.id, channel.kimakiDirectory, 'text', channel.kimakiApp || null)
+        await setChannelDirectory({
+          channelId: channel.id,
+          directory: channel.kimakiDirectory,
+          channelType: 'text',
+          appId: channel.kimakiApp || null,
+        })
 
         const voiceChannel = guild.channels.cache.find(
           (ch) => ch.type === ChannelType.GuildVoice && ch.name === channel.name,
         )
 
         if (voiceChannel) {
-          db.prepare(
-            'INSERT OR IGNORE INTO channel_directories (channel_id, directory, channel_type, app_id) VALUES (?, ?, ?, ?)',
-          ).run(voiceChannel.id, channel.kimakiDirectory, 'voice', channel.kimakiApp || null)
+          await setChannelDirectory({
+            channelId: voiceChannel.id,
+            directory: channel.kimakiDirectory,
+            channelType: 'voice',
+            appId: channel.kimakiApp || null,
+          })
         }
       }
     }
@@ -676,13 +691,13 @@ async function run({ restart, addChannels, useWorktrees, enableVoiceChannels }: 
     }
   }
 
-  const db = getDatabase()
+  // Initialize database
+  await initDatabase()
+  
   let appId: string
   let token: string
 
-  const existingBot = db
-    .prepare('SELECT app_id, token FROM bot_tokens ORDER BY created_at DESC LIMIT 1')
-    .get() as { app_id: string; token: string } | undefined
+  const existingBot = await getBotToken()
 
   const shouldAddChannels = !existingBot?.token || forceSetup || Boolean(addChannels)
 
@@ -800,10 +815,7 @@ async function run({ restart, addChannels, useWorktrees, enableVoiceChannels }: 
 
     // Store API key in database
     if (geminiApiKey) {
-      db.prepare('INSERT OR REPLACE INTO bot_api_keys (app_id, gemini_api_key) VALUES (?, ?)').run(
-        appId,
-        geminiApiKey,
-      )
+      await setGeminiApiKey(appId, geminiApiKey)
       note('API key saved successfully', 'API Key Stored')
     }
 
@@ -910,10 +922,10 @@ async function run({ restart, addChannels, useWorktrees, enableVoiceChannels }: 
     cliLogger.error('Error: ' + (error instanceof Error ? error.message : String(error)))
     process.exit(EXIT_NO_RESTART)
   }
-  db.prepare('INSERT OR REPLACE INTO bot_tokens (app_id, token) VALUES (?, ?)').run(appId, token)
+  await setBotToken(appId, token)
 
   // Store channel-directory mappings
-  storeChannelDirectories({ kimakiChannels, db })
+  await storeChannelDirectories({ kimakiChannels })
 
   if (kimakiChannels.length > 0) {
     const channelList = kimakiChannels
@@ -1161,10 +1173,8 @@ cli
         }
 
         if (options.installUrl) {
-          const db = getDatabase()
-          const existingBot = db
-            .prepare('SELECT app_id FROM bot_tokens ORDER BY created_at DESC LIMIT 1')
-            .get() as { app_id: string } | undefined
+          await initDatabase()
+          const existingBot = await getBotToken()
 
           if (!existingBot) {
             cliLogger.error('No bot configured yet. Run `kimaki` first to set up.')
@@ -1216,20 +1226,16 @@ cli
         }
       }
 
-      const db = getDatabase()
+      await initDatabase()
 
-      const threadRow = db
-        .prepare('SELECT thread_id FROM thread_sessions WHERE session_id = ?')
-        .get(sessionId) as { thread_id: string } | undefined
+      const threadId = await getThreadIdBySessionId(sessionId)
 
-      if (!threadRow) {
+      if (!threadId) {
         cliLogger.error(`No Discord thread found for session: ${sessionId}`)
         process.exit(EXIT_NO_RESTART)
       }
 
-      const botRow = db
-        .prepare('SELECT app_id, token FROM bot_tokens ORDER BY created_at DESC LIMIT 1')
-        .get() as { app_id: string; token: string } | undefined
+      const botRow = await getBotToken()
 
       if (!botRow) {
         cliLogger.error('No bot credentials found. Run `kimaki` first to set up the bot.')
@@ -1239,7 +1245,7 @@ cli
       cliLogger.log(`Uploading ${resolvedFiles.length} file(s)...`)
 
       await uploadFilesToDiscord({
-        threadId: threadRow.thread_id,
+        threadId: threadId,
         botToken: botRow.token,
         files: resolvedFiles,
       })
@@ -1309,15 +1315,15 @@ cli
       let botToken: string | undefined
       let appId: string | undefined = optionAppId
 
+      // Initialize database first
+      await initDatabase()
+
       if (envToken) {
         botToken = envToken
         if (!appId) {
           // Try to get app_id from database if available (optional in CI)
           try {
-            const db = getDatabase()
-            const botRow = db
-              .prepare('SELECT app_id FROM bot_tokens ORDER BY created_at DESC LIMIT 1')
-              .get() as { app_id: string } | undefined
+            const botRow = await getBotToken()
             appId = botRow?.app_id
           } catch (error) {
             cliLogger.debug(
@@ -1329,10 +1335,7 @@ cli
       } else {
         // Fall back to database
         try {
-          const db = getDatabase()
-          const botRow = db
-            .prepare('SELECT app_id, token FROM bot_tokens ORDER BY created_at DESC LIMIT 1')
-            .get() as { app_id: string; token: string } | undefined
+          const botRow = await getBotToken()
 
           if (botRow) {
             botToken = botRow.token
@@ -1365,29 +1368,22 @@ cli
         // Check if channel already exists for this directory or a parent directory
         // This allows running from subfolders of a registered project
         try {
-          const db = getDatabase()
-
           // Helper to find channel for a path (prefers current bot's channel)
-          const findChannelForPath = (dirPath: string): { channel_id: string; directory: string } | undefined => {
-            const withAppId = db
-              .prepare(
-                'SELECT channel_id, directory FROM channel_directories WHERE directory = ? AND channel_type = ? AND app_id = ?',
-              )
-              .get(dirPath, 'text', appId) as { channel_id: string; directory: string } | undefined
-            if (withAppId) return withAppId
+          const findChannelForPath = async (dirPath: string): Promise<{ channel_id: string; directory: string } | undefined> => {
+            const withAppId = appId ? await findChannelsByDirectory({ directory: dirPath, channelType: 'text', appId }) : []
+            if (withAppId.length > 0) {
+              return withAppId[0]
+            }
 
-            return db
-              .prepare(
-                'SELECT channel_id, directory FROM channel_directories WHERE directory = ? AND channel_type = ?',
-              )
-              .get(dirPath, 'text') as { channel_id: string; directory: string } | undefined
+            const withoutAppId = await findChannelsByDirectory({ directory: dirPath, channelType: 'text' })
+            return withoutAppId[0]
           }
 
           // Try exact match first, then walk up parent directories
           let existingChannel: { channel_id: string; directory: string } | undefined
           let searchPath = absolutePath
           while (searchPath !== path.dirname(searchPath)) {
-            existingChannel = findChannelForPath(searchPath)
+            existingChannel = await findChannelForPath(searchPath)
             if (existingChannel) break
             searchPath = path.dirname(searchPath)
           }
@@ -1424,15 +1420,11 @@ cli
             // Get guild from existing channels or first available
             const guild = await (async () => {
               // Try to find a guild from existing channels belonging to this bot
-              const existingChannelRow = db
-                .prepare(
-                  'SELECT channel_id FROM channel_directories WHERE app_id = ? ORDER BY created_at DESC LIMIT 1',
-                )
-                .get(appId) as { channel_id: string } | undefined
+              const existingChannelId = appId ? await findChannelByAppId(appId) : undefined
 
-              if (existingChannelRow) {
+              if (existingChannelId) {
                 try {
-                  const ch = await client.channels.fetch(existingChannelRow.channel_id)
+                  const ch = await client.channels.fetch(existingChannelId)
                   if (ch && 'guild' in ch && ch.guild) {
                     return ch.guild
                   }
@@ -1491,7 +1483,7 @@ cli
         guild_id: string
       }
 
-      const channelConfig = getChannelDirectory(channelData.id)
+      const channelConfig = await getChannelDirectory(channelData.id)
 
       if (!channelConfig) {
         cliLogger.log('Channel not configured')
@@ -1666,6 +1658,9 @@ cli
           process.exit(EXIT_NO_RESTART)
         }
 
+        // Initialize database
+        await initDatabase()
+
         // Get bot token from env var or database
         const envToken = process.env.KIMAKI_BOT_TOKEN
         let botToken: string | undefined
@@ -1675,10 +1670,7 @@ cli
           botToken = envToken
           if (!appId) {
             try {
-              const db = getDatabase()
-              const botRow = db
-                .prepare('SELECT app_id FROM bot_tokens ORDER BY created_at DESC LIMIT 1')
-                .get() as { app_id: string } | undefined
+              const botRow = await getBotToken()
               appId = botRow?.app_id
             } catch (error) {
               cliLogger.debug(
@@ -1689,10 +1681,7 @@ cli
           }
         } else {
           try {
-            const db = getDatabase()
-            const botRow = db
-              .prepare('SELECT app_id, token FROM bot_tokens ORDER BY created_at DESC LIMIT 1')
-              .get() as { app_id: string; token: string } | undefined
+            const botRow = await getBotToken()
 
             if (botRow) {
               botToken = botRow.token
@@ -1747,16 +1736,11 @@ cli
           guild = foundGuild
         } else {
           // Auto-detect: prefer guild with existing channels for this bot, else first guild
-          const db = getDatabase()
-          const existingChannelRow = db
-            .prepare(
-              'SELECT channel_id FROM channel_directories WHERE app_id = ? ORDER BY created_at DESC LIMIT 1',
-            )
-            .get(appId) as { channel_id: string } | undefined
+          const existingChannelId = await findChannelByAppId(appId)
 
-          if (existingChannelRow) {
+          if (existingChannelId) {
             try {
-              const ch = await client.channels.fetch(existingChannelRow.channel_id)
+              const ch = await client.channels.fetch(existingChannelId)
               if (ch && 'guild' in ch && ch.guild) {
                 guild = ch.guild
               } else {
@@ -1791,12 +1775,11 @@ cli
         // Check if channel already exists in this guild
         cliLogger.log('Checking for existing channel...')
         try {
-          const db = getDatabase()
-          const existingChannels = db
-            .prepare(
-              'SELECT channel_id FROM channel_directories WHERE directory = ? AND channel_type = ? AND app_id = ?',
-            )
-            .all(absolutePath, 'text', appId) as { channel_id: string }[]
+          const existingChannels = await findChannelsByDirectory({
+            directory: absolutePath,
+            channelType: 'text',
+            appId,
+          })
 
           for (const existingChannel of existingChannels) {
             try {

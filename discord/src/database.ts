@@ -1,365 +1,31 @@
-// SQLite database manager for persistent bot state.
+// SQLite database manager for persistent bot state using Prisma.
 // Stores thread-session mappings, bot tokens, channel directories,
 // API keys, and model preferences in <dataDir>/discord-sessions.db.
 
-import Database from 'better-sqlite3'
-import fs from 'node:fs'
-import path from 'node:path'
-import * as errore from 'errore'
+import { getPrisma, getPrismaSync, closePrisma } from './db.js'
+import { getDefaultVerbosity } from './config.js'
 import { createLogger, LogPrefix } from './logger.js'
-import { getDataDir, getDefaultVerbosity } from './config.js'
 
 const dbLogger = createLogger(LogPrefix.DB)
 
-let db: Database.Database | null = null
+// Re-export Prisma utilities
+export { getPrisma, getPrismaSync, closePrisma }
 
-export function getDatabase(): Database.Database {
-  if (!db) {
-    const dataDir = getDataDir()
-
-    const mkdirError = errore.tryFn({
-      try: () => {
-        fs.mkdirSync(dataDir, { recursive: true })
-      },
-      catch: (e) => e as Error,
-    })
-    if (mkdirError instanceof Error) {
-      dbLogger.error(`Failed to create data directory ${dataDir}:`, mkdirError.message)
-    }
-
-    const dbPath = path.join(dataDir, 'discord-sessions.db')
-
-    dbLogger.log(`Opening database at: ${dbPath}`)
-    db = new Database(dbPath)
-
-    db.exec(`
-      CREATE TABLE IF NOT EXISTS thread_sessions (
-        thread_id TEXT PRIMARY KEY,
-        session_id TEXT NOT NULL,
-        created_at DATETIME DEFAULT CURRENT_TIMESTAMP
-      )
-    `)
-
-    db.exec(`
-      CREATE TABLE IF NOT EXISTS part_messages (
-        part_id TEXT PRIMARY KEY,
-        message_id TEXT NOT NULL,
-        thread_id TEXT NOT NULL,
-        created_at DATETIME DEFAULT CURRENT_TIMESTAMP
-      )
-    `)
-
-    db.exec(`
-      CREATE TABLE IF NOT EXISTS bot_tokens (
-        app_id TEXT PRIMARY KEY,
-        token TEXT NOT NULL,
-        created_at DATETIME DEFAULT CURRENT_TIMESTAMP
-      )
-    `)
-
-    db.exec(`
-      CREATE TABLE IF NOT EXISTS channel_directories (
-        channel_id TEXT PRIMARY KEY,
-        directory TEXT NOT NULL,
-        channel_type TEXT NOT NULL,
-        created_at DATETIME DEFAULT CURRENT_TIMESTAMP
-      )
-    `)
-
-    // Migration: add app_id column to channel_directories for multi-bot support
-    try {
-      db.exec(`ALTER TABLE channel_directories ADD COLUMN app_id TEXT`)
-    } catch (error) {
-      dbLogger.debug(
-        'Failed to add app_id column to channel_directories (likely exists):',
-        error instanceof Error ? error.message : String(error),
-      )
-    }
-
-    // Table for threads that should auto-start a session (created by CLI without --notify-only)
-    db.exec(`
-      CREATE TABLE IF NOT EXISTS pending_auto_start (
-        thread_id TEXT PRIMARY KEY,
-        created_at DATETIME DEFAULT CURRENT_TIMESTAMP
-      )
-    `)
-
-    db.exec(`
-      CREATE TABLE IF NOT EXISTS bot_api_keys (
-        app_id TEXT PRIMARY KEY,
-        gemini_api_key TEXT,
-        xai_api_key TEXT,
-        created_at DATETIME DEFAULT CURRENT_TIMESTAMP
-      )
-    `)
-
-    // Track worktrees created for threads (for /new-worktree command)
-    // status: 'pending' while creating, 'ready' when done, 'error' if failed
-    db.exec(`
-      CREATE TABLE IF NOT EXISTS thread_worktrees (
-        thread_id TEXT PRIMARY KEY,
-        worktree_name TEXT NOT NULL,
-        worktree_directory TEXT,
-        project_directory TEXT NOT NULL,
-        status TEXT DEFAULT 'pending',
-        error_message TEXT,
-        created_at DATETIME DEFAULT CURRENT_TIMESTAMP
-      )
-    `)
-
-    runModelMigrations(db)
-    runWorktreeSettingsMigrations(db)
-    runVerbosityMigrations(db)
-  }
-
-  return db
+/**
+ * Initialize the database. Must be called before using getPrismaSync().
+ * Returns the Prisma client.
+ */
+export async function initDatabase() {
+    const prisma = await getPrisma()
+    dbLogger.log('Database initialized')
+    return prisma
 }
 
 /**
- * Run migrations for model preferences tables.
- * Called on startup and can be called on-demand.
+ * Close the database connection.
  */
-export function runModelMigrations(database?: Database.Database): void {
-  const targetDb = database || getDatabase()
-
-  targetDb.exec(`
-    CREATE TABLE IF NOT EXISTS channel_models (
-      channel_id TEXT PRIMARY KEY,
-      model_id TEXT NOT NULL,
-      created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-      updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
-    )
-  `)
-
-  targetDb.exec(`
-    CREATE TABLE IF NOT EXISTS session_models (
-      session_id TEXT PRIMARY KEY,
-      model_id TEXT NOT NULL,
-      created_at DATETIME DEFAULT CURRENT_TIMESTAMP
-    )
-  `)
-
-  targetDb.exec(`
-    CREATE TABLE IF NOT EXISTS channel_agents (
-      channel_id TEXT PRIMARY KEY,
-      agent_name TEXT NOT NULL,
-      created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-      updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
-    )
-  `)
-
-  targetDb.exec(`
-    CREATE TABLE IF NOT EXISTS session_agents (
-      session_id TEXT PRIMARY KEY,
-      agent_name TEXT NOT NULL,
-      created_at DATETIME DEFAULT CURRENT_TIMESTAMP
-    )
-  `)
-
-  dbLogger.log('Model preferences migrations complete')
-}
-
-/**
- * Get the model preference for a channel.
- * @returns Model ID in format "provider_id/model_id" or undefined
- */
-export function getChannelModel(channelId: string): string | undefined {
-  const db = getDatabase()
-  const row = db
-    .prepare('SELECT model_id FROM channel_models WHERE channel_id = ?')
-    .get(channelId) as { model_id: string } | undefined
-  return row?.model_id
-}
-
-/**
- * Set the model preference for a channel.
- * @param modelId Model ID in format "provider_id/model_id"
- */
-export function setChannelModel(channelId: string, modelId: string): void {
-  const db = getDatabase()
-  db.prepare(
-    `INSERT INTO channel_models (channel_id, model_id, updated_at) 
-     VALUES (?, ?, CURRENT_TIMESTAMP)
-     ON CONFLICT(channel_id) DO UPDATE SET model_id = ?, updated_at = CURRENT_TIMESTAMP`,
-  ).run(channelId, modelId, modelId)
-}
-
-/**
- * Get the model preference for a session.
- * @returns Model ID in format "provider_id/model_id" or undefined
- */
-export function getSessionModel(sessionId: string): string | undefined {
-  const db = getDatabase()
-  const row = db
-    .prepare('SELECT model_id FROM session_models WHERE session_id = ?')
-    .get(sessionId) as { model_id: string } | undefined
-  return row?.model_id
-}
-
-/**
- * Set the model preference for a session.
- * @param modelId Model ID in format "provider_id/model_id"
- */
-export function setSessionModel(sessionId: string, modelId: string): void {
-  const db = getDatabase()
-  db.prepare(`INSERT OR REPLACE INTO session_models (session_id, model_id) VALUES (?, ?)`).run(
-    sessionId,
-    modelId,
-  )
-}
-
-/**
- * Clear the model preference for a session.
- * Used when switching agents so the agent's model takes effect.
- */
-export function clearSessionModel(sessionId: string): void {
-  const db = getDatabase()
-  db.prepare('DELETE FROM session_models WHERE session_id = ?').run(sessionId)
-}
-
-/**
- * Get the agent preference for a channel.
- */
-export function getChannelAgent(channelId: string): string | undefined {
-  const db = getDatabase()
-  const row = db
-    .prepare('SELECT agent_name FROM channel_agents WHERE channel_id = ?')
-    .get(channelId) as { agent_name: string } | undefined
-  return row?.agent_name
-}
-
-/**
- * Set the agent preference for a channel.
- */
-export function setChannelAgent(channelId: string, agentName: string): void {
-  const db = getDatabase()
-  db.prepare(
-    `INSERT INTO channel_agents (channel_id, agent_name, updated_at) 
-     VALUES (?, ?, CURRENT_TIMESTAMP)
-     ON CONFLICT(channel_id) DO UPDATE SET agent_name = ?, updated_at = CURRENT_TIMESTAMP`,
-  ).run(channelId, agentName, agentName)
-}
-
-/**
- * Get the agent preference for a session.
- */
-export function getSessionAgent(sessionId: string): string | undefined {
-  const db = getDatabase()
-  const row = db
-    .prepare('SELECT agent_name FROM session_agents WHERE session_id = ?')
-    .get(sessionId) as { agent_name: string } | undefined
-  return row?.agent_name
-}
-
-/**
- * Set the agent preference for a session.
- */
-export function setSessionAgent(sessionId: string, agentName: string): void {
-  const db = getDatabase()
-  db.prepare(`INSERT OR REPLACE INTO session_agents (session_id, agent_name) VALUES (?, ?)`).run(
-    sessionId,
-    agentName,
-  )
-}
-
-// Worktree status types
-export type WorktreeStatus = 'pending' | 'ready' | 'error'
-
-export type ThreadWorktree = {
-  thread_id: string
-  worktree_name: string
-  worktree_directory: string | null
-  project_directory: string
-  status: WorktreeStatus
-  error_message: string | null
-}
-
-/**
- * Get the worktree info for a thread.
- */
-export function getThreadWorktree(threadId: string): ThreadWorktree | undefined {
-  const db = getDatabase()
-  return db.prepare('SELECT * FROM thread_worktrees WHERE thread_id = ?').get(threadId) as
-    | ThreadWorktree
-    | undefined
-}
-
-/**
- * Create a pending worktree entry for a thread.
- */
-export function createPendingWorktree({
-  threadId,
-  worktreeName,
-  projectDirectory,
-}: {
-  threadId: string
-  worktreeName: string
-  projectDirectory: string
-}): void {
-  const db = getDatabase()
-  db.prepare(
-    `INSERT OR REPLACE INTO thread_worktrees (thread_id, worktree_name, project_directory, status) VALUES (?, ?, ?, 'pending')`,
-  ).run(threadId, worktreeName, projectDirectory)
-}
-
-/**
- * Mark a worktree as ready with its directory.
- */
-export function setWorktreeReady({
-  threadId,
-  worktreeDirectory,
-}: {
-  threadId: string
-  worktreeDirectory: string
-}): void {
-  const db = getDatabase()
-  db.prepare(
-    `UPDATE thread_worktrees SET worktree_directory = ?, status = 'ready' WHERE thread_id = ?`,
-  ).run(worktreeDirectory, threadId)
-}
-
-/**
- * Mark a worktree as failed with error message.
- */
-export function setWorktreeError({
-  threadId,
-  errorMessage,
-}: {
-  threadId: string
-  errorMessage: string
-}): void {
-  const db = getDatabase()
-  db.prepare(`UPDATE thread_worktrees SET status = 'error', error_message = ? WHERE thread_id = ?`).run(
-    errorMessage,
-    threadId,
-  )
-}
-
-/**
- * Delete the worktree info for a thread.
- */
-export function deleteThreadWorktree(threadId: string): void {
-  const db = getDatabase()
-  db.prepare('DELETE FROM thread_worktrees WHERE thread_id = ?').run(threadId)
-}
-
-/**
- * Run migrations for channel worktree settings table.
- * Called on startup. Allows per-channel opt-in for automatic worktree creation.
- */
-export function runWorktreeSettingsMigrations(database?: Database.Database): void {
-  const targetDb = database || getDatabase()
-
-  targetDb.exec(`
-    CREATE TABLE IF NOT EXISTS channel_worktrees (
-      channel_id TEXT PRIMARY KEY,
-      enabled INTEGER NOT NULL DEFAULT 0,
-      created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-      updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
-    )
-  `)
-
-  dbLogger.log('Channel worktree settings migrations complete')
+export async function closeDatabase() {
+    await closePrisma()
 }
 
 // Verbosity levels for controlling output detail
@@ -368,96 +34,650 @@ export function runWorktreeSettingsMigrations(database?: Database.Database): voi
 // - text-only: only shows text responses (⬥ diamond parts)
 export type VerbosityLevel = 'tools-and-text' | 'text-and-essential-tools' | 'text-only'
 
-export function runVerbosityMigrations(database?: Database.Database): void {
-  const targetDb = database || getDatabase()
+// Worktree status types
+export type WorktreeStatus = 'pending' | 'ready' | 'error'
 
-  targetDb.exec(`
-    CREATE TABLE IF NOT EXISTS channel_verbosity (
-      channel_id TEXT PRIMARY KEY,
-      verbosity TEXT NOT NULL DEFAULT 'tools-and-text',
-      updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
-    )
-  `)
-
-  dbLogger.log('Channel verbosity settings migrations complete')
+export type ThreadWorktree = {
+    thread_id: string
+    worktree_name: string
+    worktree_directory: string | null
+    project_directory: string
+    status: WorktreeStatus
+    error_message: string | null
 }
+
+// ============================================================================
+// Channel Model Functions
+// ============================================================================
+
+/**
+ * Get the model preference for a channel.
+ * @returns Model ID in format "provider_id/model_id" or undefined
+ */
+export async function getChannelModel(channelId: string): Promise<string | undefined> {
+    const prisma = await getPrisma()
+    const row = await prisma.channel_models.findUnique({
+        where: { channel_id: channelId },
+    })
+    return row?.model_id
+}
+
+/**
+ * Set the model preference for a channel.
+ * @param modelId Model ID in format "provider_id/model_id"
+ */
+export async function setChannelModel(channelId: string, modelId: string): Promise<void> {
+    const prisma = await getPrisma()
+    await prisma.channel_models.upsert({
+        where: { channel_id: channelId },
+        create: { channel_id: channelId, model_id: modelId },
+        update: { model_id: modelId, updated_at: new Date() },
+    })
+}
+
+// ============================================================================
+// Session Model Functions
+// ============================================================================
+
+/**
+ * Get the model preference for a session.
+ * @returns Model ID in format "provider_id/model_id" or undefined
+ */
+export async function getSessionModel(sessionId: string): Promise<string | undefined> {
+    const prisma = await getPrisma()
+    const row = await prisma.session_models.findUnique({
+        where: { session_id: sessionId },
+    })
+    return row?.model_id
+}
+
+/**
+ * Set the model preference for a session.
+ * @param modelId Model ID in format "provider_id/model_id"
+ */
+export async function setSessionModel(sessionId: string, modelId: string): Promise<void> {
+    const prisma = await getPrisma()
+    await prisma.session_models.upsert({
+        where: { session_id: sessionId },
+        create: { session_id: sessionId, model_id: modelId },
+        update: { model_id: modelId },
+    })
+}
+
+/**
+ * Clear the model preference for a session.
+ * Used when switching agents so the agent's model takes effect.
+ */
+export async function clearSessionModel(sessionId: string): Promise<void> {
+    const prisma = await getPrisma()
+    await prisma.session_models.deleteMany({
+        where: { session_id: sessionId },
+    })
+}
+
+// ============================================================================
+// Channel Agent Functions
+// ============================================================================
+
+/**
+ * Get the agent preference for a channel.
+ */
+export async function getChannelAgent(channelId: string): Promise<string | undefined> {
+    const prisma = await getPrisma()
+    const row = await prisma.channel_agents.findUnique({
+        where: { channel_id: channelId },
+    })
+    return row?.agent_name
+}
+
+/**
+ * Set the agent preference for a channel.
+ */
+export async function setChannelAgent(channelId: string, agentName: string): Promise<void> {
+    const prisma = await getPrisma()
+    await prisma.channel_agents.upsert({
+        where: { channel_id: channelId },
+        create: { channel_id: channelId, agent_name: agentName },
+        update: { agent_name: agentName, updated_at: new Date() },
+    })
+}
+
+// ============================================================================
+// Session Agent Functions
+// ============================================================================
+
+/**
+ * Get the agent preference for a session.
+ */
+export async function getSessionAgent(sessionId: string): Promise<string | undefined> {
+    const prisma = await getPrisma()
+    const row = await prisma.session_agents.findUnique({
+        where: { session_id: sessionId },
+    })
+    return row?.agent_name
+}
+
+/**
+ * Set the agent preference for a session.
+ */
+export async function setSessionAgent(sessionId: string, agentName: string): Promise<void> {
+    const prisma = await getPrisma()
+    await prisma.session_agents.upsert({
+        where: { session_id: sessionId },
+        create: { session_id: sessionId, agent_name: agentName },
+        update: { agent_name: agentName },
+    })
+}
+
+// ============================================================================
+// Thread Worktree Functions
+// ============================================================================
+
+/**
+ * Get the worktree info for a thread.
+ */
+export async function getThreadWorktree(threadId: string): Promise<ThreadWorktree | undefined> {
+    const prisma = await getPrisma()
+    const row = await prisma.thread_worktrees.findUnique({
+        where: { thread_id: threadId },
+    })
+    if (!row) {
+        return undefined
+    }
+    return {
+        thread_id: row.thread_id,
+        worktree_name: row.worktree_name,
+        worktree_directory: row.worktree_directory,
+        project_directory: row.project_directory,
+        status: row.status as WorktreeStatus,
+        error_message: row.error_message,
+    }
+}
+
+/**
+ * Create a pending worktree entry for a thread.
+ */
+export async function createPendingWorktree({
+    threadId,
+    worktreeName,
+    projectDirectory,
+}: {
+    threadId: string
+    worktreeName: string
+    projectDirectory: string
+}): Promise<void> {
+    const prisma = await getPrisma()
+    await prisma.thread_worktrees.upsert({
+        where: { thread_id: threadId },
+        create: {
+            thread_id: threadId,
+            worktree_name: worktreeName,
+            project_directory: projectDirectory,
+            status: 'pending',
+        },
+        update: {
+            worktree_name: worktreeName,
+            project_directory: projectDirectory,
+            status: 'pending',
+            worktree_directory: null,
+            error_message: null,
+        },
+    })
+}
+
+/**
+ * Mark a worktree as ready with its directory.
+ */
+export async function setWorktreeReady({
+    threadId,
+    worktreeDirectory,
+}: {
+    threadId: string
+    worktreeDirectory: string
+}): Promise<void> {
+    const prisma = await getPrisma()
+    await prisma.thread_worktrees.update({
+        where: { thread_id: threadId },
+        data: {
+            worktree_directory: worktreeDirectory,
+            status: 'ready',
+        },
+    })
+}
+
+/**
+ * Mark a worktree as failed with error message.
+ */
+export async function setWorktreeError({
+    threadId,
+    errorMessage,
+}: {
+    threadId: string
+    errorMessage: string
+}): Promise<void> {
+    const prisma = await getPrisma()
+    await prisma.thread_worktrees.update({
+        where: { thread_id: threadId },
+        data: {
+            status: 'error',
+            error_message: errorMessage,
+        },
+    })
+}
+
+/**
+ * Delete the worktree info for a thread.
+ */
+export async function deleteThreadWorktree(threadId: string): Promise<void> {
+    const prisma = await getPrisma()
+    await prisma.thread_worktrees.deleteMany({
+        where: { thread_id: threadId },
+    })
+}
+
+// ============================================================================
+// Channel Verbosity Functions
+// ============================================================================
 
 /**
  * Get the verbosity setting for a channel.
  * Falls back to the global default set via --verbosity CLI flag if no per-channel override exists.
  */
-export function getChannelVerbosity(channelId: string): VerbosityLevel {
-  const db = getDatabase()
-  const row = db
-    .prepare('SELECT verbosity FROM channel_verbosity WHERE channel_id = ?')
-    .get(channelId) as { verbosity: string } | undefined
-  if (row?.verbosity) {
-    return row.verbosity as VerbosityLevel
-  }
-  return getDefaultVerbosity()
+export async function getChannelVerbosity(channelId: string): Promise<VerbosityLevel> {
+    const prisma = await getPrisma()
+    const row = await prisma.channel_verbosity.findUnique({
+        where: { channel_id: channelId },
+    })
+    if (row?.verbosity) {
+        return row.verbosity as VerbosityLevel
+    }
+    return getDefaultVerbosity()
 }
 
 /**
  * Set the verbosity setting for a channel.
  */
-export function setChannelVerbosity(channelId: string, verbosity: VerbosityLevel): void {
-  const db = getDatabase()
-  db.prepare(
-    `INSERT INTO channel_verbosity (channel_id, verbosity, updated_at) 
-     VALUES (?, ?, CURRENT_TIMESTAMP)
-     ON CONFLICT(channel_id) DO UPDATE SET verbosity = ?, updated_at = CURRENT_TIMESTAMP`,
-  ).run(channelId, verbosity, verbosity)
+export async function setChannelVerbosity(channelId: string, verbosity: VerbosityLevel): Promise<void> {
+    const prisma = await getPrisma()
+    await prisma.channel_verbosity.upsert({
+        where: { channel_id: channelId },
+        create: { channel_id: channelId, verbosity },
+        update: { verbosity, updated_at: new Date() },
+    })
 }
+
+// ============================================================================
+// Channel Worktree Settings Functions
+// ============================================================================
 
 /**
  * Check if automatic worktree creation is enabled for a channel.
  */
-export function getChannelWorktreesEnabled(channelId: string): boolean {
-  const db = getDatabase()
-  const row = db
-    .prepare('SELECT enabled FROM channel_worktrees WHERE channel_id = ?')
-    .get(channelId) as { enabled: number } | undefined
-  return row?.enabled === 1
+export async function getChannelWorktreesEnabled(channelId: string): Promise<boolean> {
+    const prisma = await getPrisma()
+    const row = await prisma.channel_worktrees.findUnique({
+        where: { channel_id: channelId },
+    })
+    return row?.enabled === 1
 }
 
 /**
  * Enable or disable automatic worktree creation for a channel.
  */
-export function setChannelWorktreesEnabled(channelId: string, enabled: boolean): void {
-  const db = getDatabase()
-  db.prepare(
-    `INSERT INTO channel_worktrees (channel_id, enabled, updated_at) 
-     VALUES (?, ?, CURRENT_TIMESTAMP)
-     ON CONFLICT(channel_id) DO UPDATE SET enabled = ?, updated_at = CURRENT_TIMESTAMP`,
-  ).run(channelId, enabled ? 1 : 0, enabled ? 1 : 0)
+export async function setChannelWorktreesEnabled(channelId: string, enabled: boolean): Promise<void> {
+    const prisma = await getPrisma()
+    await prisma.channel_worktrees.upsert({
+        where: { channel_id: channelId },
+        create: { channel_id: channelId, enabled: enabled ? 1 : 0 },
+        update: { enabled: enabled ? 1 : 0, updated_at: new Date() },
+    })
 }
+
+// ============================================================================
+// Channel Directory Functions
+// ============================================================================
 
 /**
  * Get the directory and app_id for a channel from the database.
  * This is the single source of truth for channel-project mappings.
  */
-export function getChannelDirectory(channelId: string): {
-  directory: string
-  appId: string | null
-} | undefined {
-  const db = getDatabase()
-  const row = db
-    .prepare('SELECT directory, app_id FROM channel_directories WHERE channel_id = ?')
-    .get(channelId) as { directory: string; app_id: string | null } | undefined
+export async function getChannelDirectory(channelId: string): Promise<{
+    directory: string
+    appId: string | null
+} | undefined> {
+    const prisma = await getPrisma()
+    const row = await prisma.channel_directories.findUnique({
+        where: { channel_id: channelId },
+    })
 
-  if (!row) {
-    return undefined
-  }
+    if (!row) {
+        return undefined
+    }
 
-  return {
-    directory: row.directory,
-    appId: row.app_id,
-  }
+    return {
+        directory: row.directory,
+        appId: row.app_id,
+    }
 }
 
-export function closeDatabase(): void {
-  if (db) {
-    db.close()
-    db = null
-  }
+// ============================================================================
+// Thread Session Functions
+// ============================================================================
+
+/**
+ * Get the session ID for a thread.
+ */
+export async function getThreadSession(threadId: string): Promise<string | undefined> {
+    const prisma = await getPrisma()
+    const row = await prisma.thread_sessions.findUnique({
+        where: { thread_id: threadId },
+    })
+    return row?.session_id
+}
+
+/**
+ * Set the session ID for a thread.
+ */
+export async function setThreadSession(threadId: string, sessionId: string): Promise<void> {
+    const prisma = await getPrisma()
+    await prisma.thread_sessions.upsert({
+        where: { thread_id: threadId },
+        create: { thread_id: threadId, session_id: sessionId },
+        update: { session_id: sessionId },
+    })
+}
+
+/**
+ * Get the thread ID for a session.
+ */
+export async function getThreadIdBySessionId(sessionId: string): Promise<string | undefined> {
+    const prisma = await getPrisma()
+    const row = await prisma.thread_sessions.findFirst({
+        where: { session_id: sessionId },
+    })
+    return row?.thread_id
+}
+
+/**
+ * Get all session IDs that are associated with threads.
+ */
+export async function getAllThreadSessionIds(): Promise<string[]> {
+    const prisma = await getPrisma()
+    const rows = await prisma.thread_sessions.findMany({
+        select: { session_id: true },
+    })
+    return rows.map((row) => row.session_id).filter((id) => id !== '')
+}
+
+// ============================================================================
+// Part Messages Functions
+// ============================================================================
+
+/**
+ * Get all part IDs for a thread.
+ */
+export async function getPartMessageIds(threadId: string): Promise<string[]> {
+    const prisma = await getPrisma()
+    const rows = await prisma.part_messages.findMany({
+        where: { thread_id: threadId },
+        select: { part_id: true },
+    })
+    return rows.map((row) => row.part_id)
+}
+
+/**
+ * Store a part-message mapping.
+ */
+export async function setPartMessage(partId: string, messageId: string, threadId: string): Promise<void> {
+    const prisma = await getPrisma()
+    // Need to ensure thread exists first due to foreign key constraint
+    await prisma.thread_sessions.upsert({
+        where: { thread_id: threadId },
+        create: { thread_id: threadId, session_id: '' },
+        update: {},
+    })
+    await prisma.part_messages.upsert({
+        where: { part_id: partId },
+        create: { part_id: partId, message_id: messageId, thread_id: threadId },
+        update: { message_id: messageId, thread_id: threadId },
+    })
+}
+
+// ============================================================================
+// Bot Token Functions
+// ============================================================================
+
+/**
+ * Get the most recent bot token.
+ */
+export async function getBotToken(): Promise<{ app_id: string; token: string } | undefined> {
+    const prisma = await getPrisma()
+    const row = await prisma.bot_tokens.findFirst({
+        orderBy: { created_at: 'desc' },
+    })
+    if (!row) {
+        return undefined
+    }
+    return { app_id: row.app_id, token: row.token }
+}
+
+/**
+ * Store a bot token.
+ */
+export async function setBotToken(appId: string, token: string): Promise<void> {
+    const prisma = await getPrisma()
+    await prisma.bot_tokens.upsert({
+        where: { app_id: appId },
+        create: { app_id: appId, token },
+        update: { token },
+    })
+}
+
+// ============================================================================
+// Bot API Keys Functions
+// ============================================================================
+
+/**
+ * Get the Gemini API key for a bot.
+ */
+export async function getGeminiApiKey(appId: string): Promise<string | null> {
+    const prisma = await getPrisma()
+    const row = await prisma.bot_api_keys.findUnique({
+        where: { app_id: appId },
+    })
+    return row?.gemini_api_key ?? null
+}
+
+/**
+ * Set the Gemini API key for a bot.
+ */
+export async function setGeminiApiKey(appId: string, apiKey: string): Promise<void> {
+    const prisma = await getPrisma()
+    // Ensure bot_tokens exists first due to foreign key
+    await prisma.bot_tokens.upsert({
+        where: { app_id: appId },
+        create: { app_id: appId, token: '' },
+        update: {},
+    })
+    await prisma.bot_api_keys.upsert({
+        where: { app_id: appId },
+        create: { app_id: appId, gemini_api_key: apiKey },
+        update: { gemini_api_key: apiKey },
+    })
+}
+
+// ============================================================================
+// Channel Directory CRUD Functions
+// ============================================================================
+
+/**
+ * Store a channel-directory mapping.
+ */
+export async function setChannelDirectory({
+    channelId,
+    directory,
+    channelType,
+    appId,
+}: {
+    channelId: string
+    directory: string
+    channelType: 'text' | 'voice'
+    appId?: string | null
+}): Promise<void> {
+    const prisma = await getPrisma()
+    await prisma.channel_directories.upsert({
+        where: { channel_id: channelId },
+        create: {
+            channel_id: channelId,
+            directory,
+            channel_type: channelType,
+            app_id: appId ?? null,
+        },
+        update: {
+            directory,
+            channel_type: channelType,
+            app_id: appId ?? null,
+        },
+    })
+}
+
+/**
+ * Find channels by directory path.
+ */
+export async function findChannelsByDirectory({
+    directory,
+    channelType,
+    appId,
+}: {
+    directory?: string
+    channelType?: 'text' | 'voice'
+    appId?: string
+}): Promise<Array<{ channel_id: string; directory: string; channel_type: string }>> {
+    const prisma = await getPrisma()
+    const where: {
+        directory?: string
+        channel_type?: string
+        app_id?: string
+    } = {}
+    if (directory) {
+        where.directory = directory
+    }
+    if (channelType) {
+        where.channel_type = channelType
+    }
+    if (appId) {
+        where.app_id = appId
+    }
+    const rows = await prisma.channel_directories.findMany({
+        where,
+        select: { channel_id: true, directory: true, channel_type: true },
+    })
+    return rows
+}
+
+/**
+ * Get all distinct directories with text channels.
+ */
+export async function getAllTextChannelDirectories(): Promise<string[]> {
+    const prisma = await getPrisma()
+    const rows = await prisma.channel_directories.findMany({
+        where: { channel_type: 'text' },
+        select: { directory: true },
+        distinct: ['directory'],
+    })
+    return rows.map((row) => row.directory)
+}
+
+/**
+ * Delete all channel directories for a specific directory.
+ */
+export async function deleteChannelDirectoriesByDirectory(directory: string): Promise<void> {
+    const prisma = await getPrisma()
+    await prisma.channel_directories.deleteMany({
+        where: { directory },
+    })
+}
+
+/**
+ * Find a channel by app ID.
+ */
+export async function findChannelByAppId(appId: string): Promise<string | undefined> {
+    const prisma = await getPrisma()
+    const row = await prisma.channel_directories.findFirst({
+        where: { app_id: appId },
+        orderBy: { created_at: 'desc' },
+        select: { channel_id: true },
+    })
+    return row?.channel_id
+}
+
+/**
+ * Get the directory for a voice channel.
+ */
+export async function getVoiceChannelDirectory(channelId: string): Promise<string | undefined> {
+    const prisma = await getPrisma()
+    const row = await prisma.channel_directories.findFirst({
+        where: { channel_id: channelId, channel_type: 'voice' },
+    })
+    return row?.directory
+}
+
+/**
+ * Find the text channel ID that shares the same directory as a voice channel.
+ * Used to send error messages to text channels from voice handlers.
+ */
+export async function findTextChannelByVoiceChannel(voiceChannelId: string): Promise<string | undefined> {
+    const prisma = await getPrisma()
+    // First get the directory for the voice channel
+    const voiceChannel = await prisma.channel_directories.findFirst({
+        where: { channel_id: voiceChannelId, channel_type: 'voice' },
+    })
+    if (!voiceChannel) {
+        return undefined
+    }
+    // Then find the text channel with the same directory
+    const textChannel = await prisma.channel_directories.findFirst({
+        where: { directory: voiceChannel.directory, channel_type: 'text' },
+    })
+    return textChannel?.channel_id
+}
+
+// ============================================================================
+// Pending Auto Start Functions
+// ============================================================================
+
+/**
+ * Mark a thread for auto-start.
+ */
+export async function setPendingAutoStart(threadId: string): Promise<void> {
+    const prisma = await getPrisma()
+    // Ensure thread session exists first
+    await prisma.thread_sessions.upsert({
+        where: { thread_id: threadId },
+        create: { thread_id: threadId, session_id: '' },
+        update: {},
+    })
+    await prisma.pending_auto_start.upsert({
+        where: { thread_id: threadId },
+        create: { thread_id: threadId },
+        update: {},
+    })
+}
+
+/**
+ * Check and clear pending auto-start for a thread.
+ * Returns true if the thread was marked for auto-start.
+ */
+export async function checkAndClearPendingAutoStart(threadId: string): Promise<boolean> {
+    const prisma = await getPrisma()
+    const row = await prisma.pending_auto_start.findUnique({
+        where: { thread_id: threadId },
+    })
+    if (row) {
+        await prisma.pending_auto_start.delete({
+            where: { thread_id: threadId },
+        })
+        return true
+    }
+    return false
 }

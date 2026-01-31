@@ -11,14 +11,13 @@ import {
 } from 'discord.js'
 import crypto from 'node:crypto'
 import {
-  getDatabase,
   setChannelModel,
   setSessionModel,
-  runModelMigrations,
   getChannelModel,
   getSessionModel,
   getSessionAgent,
   getChannelAgent,
+  getThreadSession,
 } from '../database.js'
 import { initializeOpencodeForDirectory } from '../opencode.js'
 import { resolveTextChannel, getKimakiMetadata } from '../discord-utils.js'
@@ -83,7 +82,7 @@ async function getCurrentModelInfo({
 
   // 1. Check session model preference
   if (sessionId) {
-    const sessionModel = getSessionModel(sessionId)
+    const sessionModel = await getSessionModel(sessionId)
     if (sessionModel) {
       return { type: 'session', model: sessionModel }
     }
@@ -91,8 +90,8 @@ async function getCurrentModelInfo({
 
   // 2. Check agent's configured model
   const agentPreference = sessionId
-    ? getSessionAgent(sessionId) || getChannelAgent(channelId)
-    : getChannelAgent(channelId)
+    ? (await getSessionAgent(sessionId)) || (await getChannelAgent(channelId))
+    : await getChannelAgent(channelId)
   if (agentPreference) {
     const agentsResponse = await getClient().app.agents({})
     if (agentsResponse.data) {
@@ -105,7 +104,7 @@ async function getCurrentModelInfo({
   }
 
   // 3. Check channel model preference
-  const channelModel = getChannelModel(channelId)
+  const channelModel = await getChannelModel(channelId)
   if (channelModel) {
     return { type: 'channel', model: channelModel }
   }
@@ -137,9 +136,6 @@ export async function handleModelCommand({
   await interaction.deferReply({ ephemeral: true })
   modelLogger.log('[MODEL] Deferred reply')
 
-  // Ensure migrations are run
-  runModelMigrations()
-
   const channel = interaction.channel
 
   if (!channel) {
@@ -164,19 +160,16 @@ export async function handleModelCommand({
   if (isThread) {
     const thread = channel as ThreadChannel
     const textChannel = await resolveTextChannel(thread)
-    const metadata = getKimakiMetadata(textChannel)
+    const metadata = await getKimakiMetadata(textChannel)
     projectDirectory = metadata.projectDirectory
     channelAppId = metadata.channelAppId
     targetChannelId = textChannel?.id || channel.id
 
     // Get session ID for this thread
-    const row = getDatabase()
-      .prepare('SELECT session_id FROM thread_sessions WHERE thread_id = ?')
-      .get(thread.id) as { session_id: string } | undefined
-    sessionId = row?.session_id
+    sessionId = await getThreadSession(thread.id)
   } else if (channel.type === ChannelType.GuildText) {
     const textChannel = channel as TextChannel
-    const metadata = getKimakiMetadata(textChannel)
+    const metadata = await getKimakiMetadata(textChannel)
     projectDirectory = metadata.projectDirectory
     channelAppId = metadata.channelAppId
     targetChannelId = channel.id
@@ -468,7 +461,7 @@ export async function handleModelSelectMenu(
     // Store in appropriate table based on context
     if (context.isThread && context.sessionId) {
       // Store for session
-      setSessionModel(context.sessionId, fullModelId)
+      await setSessionModel(context.sessionId, fullModelId)
       modelLogger.log(`Set model ${fullModelId} for session ${context.sessionId}`)
 
       // Check if there's a running request and abort+retry with new model
@@ -494,7 +487,7 @@ export async function handleModelSelectMenu(
       }
     } else {
       // Store for channel
-      setChannelModel(context.channelId, fullModelId)
+      await setChannelModel(context.channelId, fullModelId)
       modelLogger.log(`Set model ${fullModelId} for channel ${context.channelId}`)
 
       await interaction.editReply({

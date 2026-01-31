@@ -31,7 +31,11 @@ import {
   type VoiceState,
 } from 'discord.js'
 import { createGenAIWorker, type GenAIWorker } from './genai-worker-wrapper.js'
-import { getDatabase } from './database.js'
+import {
+  getVoiceChannelDirectory,
+  getGeminiApiKey,
+  findTextChannelByVoiceChannel,
+} from './database.js'
 import {
   sendThreadMessage,
   escapeDiscordFormatting,
@@ -155,16 +159,13 @@ export async function setupVoiceHandling({
 }) {
   voiceLogger.log(`Setting up voice handling for guild ${guildId}, channel ${channelId}`)
 
-  const channelDirRow = getDatabase()
-    .prepare('SELECT directory FROM channel_directories WHERE channel_id = ? AND channel_type = ?')
-    .get(channelId, 'voice') as { directory: string } | undefined
+  const directory = await getVoiceChannelDirectory(channelId)
 
-  if (!channelDirRow) {
+  if (!directory) {
     voiceLogger.log(`Voice channel ${channelId} has no associated directory, skipping setup`)
     return
   }
 
-  const directory = channelDirRow.directory
   voiceLogger.log(`Found directory for voice channel: ${directory}`)
 
   const voiceData = voiceConnections.get(guildId)
@@ -175,16 +176,14 @@ export async function setupVoiceHandling({
 
   voiceData.userAudioStream = await createUserAudioLogStream(guildId, channelId)
 
-  const apiKeys = getDatabase()
-    .prepare('SELECT gemini_api_key FROM bot_api_keys WHERE app_id = ?')
-    .get(appId) as { gemini_api_key: string | null } | undefined
+  const geminiApiKey = await getGeminiApiKey(appId)
 
   const genAiWorker = await createGenAIWorker({
     directory,
     guildId,
     channelId,
     appId,
-    geminiApiKey: apiKeys?.gemini_api_key,
+    geminiApiKey,
     systemMessage: dedent`
     You are Kimaki, an AI similar to Jarvis: you help your user (an engineer) controlling his coding agent, just like Jarvis controls Ironman armor and machines. Speak fast.
 
@@ -254,17 +253,11 @@ export async function setupVoiceHandling({
     },
     async onError(error) {
       voiceLogger.error('GenAI worker error:', error)
-      const textChannelRow = getDatabase()
-        .prepare(
-          `SELECT cd2.channel_id FROM channel_directories cd1
-           JOIN channel_directories cd2 ON cd1.directory = cd2.directory
-           WHERE cd1.channel_id = ? AND cd1.channel_type = 'voice' AND cd2.channel_type = 'text'`,
-        )
-        .get(channelId) as { channel_id: string } | undefined
+      const textChannelId = await findTextChannelByVoiceChannel(channelId)
 
-      if (textChannelRow) {
+      if (textChannelId) {
         try {
-          const textChannel = await discordClient.channels.fetch(textChannelRow.channel_id)
+          const textChannel = await discordClient.channels.fetch(textChannelId)
           if (textChannel?.isTextBased() && 'send' in textChannel) {
             await textChannel.send({
               content: `⚠️ Voice session error: ${error}`,
@@ -483,12 +476,9 @@ export async function processVoiceAttachment({
 
   let geminiApiKey: string | undefined
   if (appId) {
-    const apiKeys = getDatabase()
-      .prepare('SELECT gemini_api_key FROM bot_api_keys WHERE app_id = ?')
-      .get(appId) as { gemini_api_key: string | null } | undefined
-
-    if (apiKeys?.gemini_api_key) {
-      geminiApiKey = apiKeys.gemini_api_key
+    const apiKey = await getGeminiApiKey(appId)
+    if (apiKey) {
+      geminiApiKey = apiKey
     }
   }
 

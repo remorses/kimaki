@@ -86,7 +86,7 @@ export async function handleMergeWorktreeCommand({ command, appId }: CommandCont
   const thread = channel as ThreadChannel
 
   // Get worktree info from database
-  const worktreeInfo = getThreadWorktree(thread.id)
+  const worktreeInfo = await getThreadWorktree(thread.id)
   if (!worktreeInfo) {
     await command.editReply('This thread is not associated with a worktree')
     return

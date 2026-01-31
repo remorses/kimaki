@@ -68,11 +68,11 @@ function deriveWorktreeNameFromThread(threadName: string): string {
 /**
  * Get project directory from database.
  */
-function getProjectDirectoryFromChannel(
+async function getProjectDirectoryFromChannel(
   channel: TextChannel,
   appId: string,
-): string | WorktreeError {
-  const channelConfig = getChannelDirectory(channel.id)
+): Promise<string | WorktreeError> {
+  const channelConfig = await getChannelDirectory(channel.id)
 
   if (!channelConfig) {
     return new WorktreeError('This channel is not configured with a project directory')
@@ -120,13 +120,13 @@ async function createWorktreeInBackground({
   if (worktreeResult instanceof Error) {
     const errorMsg = worktreeResult.message
     logger.error('[NEW-WORKTREE] Error:', worktreeResult)
-    setWorktreeError({ threadId: thread.id, errorMessage: errorMsg })
+    await setWorktreeError({ threadId: thread.id, errorMessage: errorMsg })
     await starterMessage.edit(`🌳 **Worktree: ${worktreeName}**\n❌ ${errorMsg}`)
     return
   }
 
   // Success - update database and edit starter message
-  setWorktreeReady({ threadId: thread.id, worktreeDirectory: worktreeResult.directory })
+  await setWorktreeReady({ threadId: thread.id, worktreeDirectory: worktreeResult.directory })
   const diffStatus = diff ? (worktreeResult.diffApplied ? '\n✅ Changes applied' : '\n⚠️ Failed to apply changes') : ''
   await starterMessage.edit(
     `🌳 **Worktree: ${worktreeName}**\n` +
@@ -179,7 +179,7 @@ export async function handleNewWorktreeCommand({
 
   const textChannel = channel as TextChannel
 
-  const projectDirectory = getProjectDirectoryFromChannel(textChannel, appId)
+  const projectDirectory = await getProjectDirectoryFromChannel(textChannel, appId)
   if (errore.isError(projectDirectory)) {
     await command.editReply(projectDirectory.message)
     return
@@ -251,7 +251,7 @@ export async function handleNewWorktreeCommand({
   const { thread, starterMessage } = result
 
   // Store pending worktree in database
-  createPendingWorktree({
+  await createPendingWorktree({
     threadId: thread.id,
     worktreeName,
     projectDirectory,
@@ -281,7 +281,7 @@ async function handleWorktreeInThread({
   thread,
 }: CommandContext & { thread: ThreadChannel }): Promise<void> {
   // Error if thread already has a worktree
-  if (getThreadWorktree(thread.id)) {
+  if (await getThreadWorktree(thread.id)) {
     await command.editReply('This thread already has a worktree attached.')
     return
   }
@@ -302,7 +302,7 @@ async function handleWorktreeInThread({
     return
   }
 
-  const projectDirectory = getProjectDirectoryFromChannel(parent as TextChannel, appId)
+  const projectDirectory = await getProjectDirectoryFromChannel(parent as TextChannel, appId)
   if (errore.isError(projectDirectory)) {
     await command.editReply(projectDirectory.message)
     return
@@ -349,7 +349,7 @@ async function handleWorktreeInThread({
   const hasDiff = diff && (diff.staged || diff.unstaged)
 
   // Store pending worktree in database for this existing thread
-  createPendingWorktree({
+  await createPendingWorktree({
     threadId: thread.id,
     worktreeName,
     projectDirectory,

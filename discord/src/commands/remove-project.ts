@@ -3,7 +3,7 @@
 import path from 'node:path'
 import * as errore from 'errore'
 import type { CommandContext, AutocompleteContext } from './types.js'
-import { getDatabase } from '../database.js'
+import { findChannelsByDirectory, deleteChannelDirectoriesByDirectory, getAllTextChannelDirectories } from '../database.js'
 import { createLogger, LogPrefix } from '../logger.js'
 import { abbreviatePath } from '../utils.js'
 
@@ -21,12 +21,8 @@ export async function handleRemoveProjectCommand({ command, appId }: CommandCont
   }
 
   try {
-    const db = getDatabase()
-
     // Get channel IDs for this directory
-    const channels = db
-      .prepare('SELECT channel_id, channel_type FROM channel_directories WHERE directory = ?')
-      .all(directory) as { channel_id: string; channel_type: string }[]
+    const channels = await findChannelsByDirectory({ directory })
 
     if (channels.length === 0) {
       await command.editReply(`No channels found for directory: \`${directory}\``)
@@ -36,7 +32,7 @@ export async function handleRemoveProjectCommand({ command, appId }: CommandCont
     const deletedChannels: string[] = []
     const failedChannels: string[] = []
 
-    for (const { channel_id, channel_type } of channels) {
+    for (const { channel_id, channel_type } of channels as Array<{ channel_id: string; channel_type: string }>) {
       const channel = await errore.tryAsync({
         try: () => guild.channels.fetch(channel_id),
         catch: (e) => e as Error,
@@ -62,7 +58,7 @@ export async function handleRemoveProjectCommand({ command, appId }: CommandCont
     }
 
     // Remove from database
-    db.prepare('DELETE FROM channel_directories WHERE directory = ?').run(directory)
+    await deleteChannelDirectoriesByDirectory(directory)
 
     const projectName = path.basename(directory)
     let message = `Removed project **${projectName}**\n`
@@ -99,14 +95,8 @@ export async function handleRemoveProjectAutocomplete({
   }
 
   try {
-    const db = getDatabase()
-
     // Get all directories with channels
-    const allChannels = db
-      .prepare(
-        'SELECT DISTINCT directory, channel_id FROM channel_directories WHERE channel_type = ?',
-      )
-      .all('text') as { directory: string; channel_id: string }[]
+    const allChannels = await findChannelsByDirectory({ channelType: 'text' }) as Array<{ directory: string; channel_id: string }>
 
     // Filter to only channels that exist in this guild
     const projectsInGuild: { directory: string; channelId: string }[] = []

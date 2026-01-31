@@ -47,7 +47,7 @@ export async function handleVerbosityCommand({
   })()
 
   const level = command.options.getString('level', true) as VerbosityLevel
-  const currentLevel = getChannelVerbosity(channelId)
+  const currentLevel = await getChannelVerbosity(channelId)
 
   if (currentLevel === level) {
     await command.reply({
@@ -57,7 +57,7 @@ export async function handleVerbosityCommand({
     return
   }
 
-  setChannelVerbosity(channelId, level)
+  await setChannelVerbosity(channelId, level)
   verbosityLogger.log(`[VERBOSITY] Set channel ${channelId} to ${level}`)
 
   const description = (() => {
