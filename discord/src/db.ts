@@ -18,14 +18,14 @@ let initPromise: Promise<PrismaClient> | null = null
  * Initializes the database on first call, running migrations if needed.
  */
 export function getPrisma(): Promise<PrismaClient> {
-    if (prismaInstance) {
-        return Promise.resolve(prismaInstance)
-    }
-    if (initPromise) {
-        return initPromise
-    }
-    initPromise = initializePrisma()
+  if (prismaInstance) {
+    return Promise.resolve(prismaInstance)
+  }
+  if (initPromise) {
     return initPromise
+  }
+  initPromise = initializePrisma()
+  return initPromise
 }
 
 /**
@@ -33,28 +33,33 @@ export function getPrisma(): Promise<PrismaClient> {
  * Use this only after getPrisma() has been awaited at least once.
  */
 export function getPrismaSync(): PrismaClient {
-    if (!prismaInstance) {
-        throw new Error('Prisma not initialized. Call getPrisma() first and await it.')
-    }
-    return prismaInstance
+  if (!prismaInstance) {
+    throw new Error(
+      'Prisma not initialized. Call getPrisma() first and await it.',
+    )
+  }
+  return prismaInstance
 }
 
 async function initializePrisma(): Promise<PrismaClient> {
-    const dataDir = getDataDir()
+  const dataDir = getDataDir()
 
-    try {
-        fs.mkdirSync(dataDir, { recursive: true })
-    } catch (e) {
-        dbLogger.error(`Failed to create data directory ${dataDir}:`, (e as Error).message)
-    }
+  try {
+    fs.mkdirSync(dataDir, { recursive: true })
+  } catch (e) {
+    dbLogger.error(
+      `Failed to create data directory ${dataDir}:`,
+      (e as Error).message,
+    )
+  }
 
-    const dbPath = path.join(dataDir, 'discord-sessions.db')
-    const exists = fs.existsSync(dbPath)
+  const dbPath = path.join(dataDir, 'discord-sessions.db')
+  const exists = fs.existsSync(dbPath)
 
-    dbLogger.log(`Opening database at: ${dbPath}`)
+  dbLogger.log(`Opening database at: ${dbPath}`)
 
-    const adapter = new PrismaLibSql({ url: `file:${dbPath}` })
-    const prisma = new PrismaClient({ adapter })
+  const adapter = new PrismaLibSql({ url: `file:${dbPath}` })
+  const prisma = new PrismaClient({ adapter })
 
   if (!exists) {
     dbLogger.log('New database, running schema migration...')
@@ -64,32 +69,32 @@ async function initializePrisma(): Promise<PrismaClient> {
   await migrateSchema(prisma)
   dbLogger.log('Schema migration complete')
 
-    prismaInstance = prisma
-    return prisma
+  prismaInstance = prisma
+  return prisma
 }
 
 async function migrateSchema(prisma: PrismaClient) {
-    const schemaPath = path.join(__dirname, 'schema.sql')
-    const sql = fs.readFileSync(schemaPath, 'utf-8')
-    const statements = sql
-        .split(';')
-        .map((s) => s.trim())
-        .filter(Boolean)
-    for (const statement of statements) {
-        await prisma.$executeRawUnsafe(statement)
-    }
+  const schemaPath = path.join(__dirname, 'schema.sql')
+  const sql = fs.readFileSync(schemaPath, 'utf-8')
+  const statements = sql
+    .split(';')
+    .map((s) => s.trim())
+    .filter(Boolean)
+  for (const statement of statements) {
+    await prisma.$executeRawUnsafe(statement)
+  }
 }
 
 /**
  * Close the Prisma connection.
  */
 export async function closePrisma(): Promise<void> {
-    if (prismaInstance) {
-        await prismaInstance.$disconnect()
-        prismaInstance = null
-        initPromise = null
-        dbLogger.log('Prisma connection closed')
-    }
+  if (prismaInstance) {
+    await prismaInstance.$disconnect()
+    prismaInstance = null
+    initPromise = null
+    dbLogger.log('Prisma connection closed')
+  }
 }
 
 /**
@@ -97,15 +102,15 @@ export async function closePrisma(): Promise<void> {
  * Used for custom database locations.
  */
 export async function createPrisma({
-    sqlitePath,
+  sqlitePath,
 }: {
-    sqlitePath: string
+  sqlitePath: string
 }): Promise<PrismaClient> {
-    const exists = fs.existsSync(sqlitePath)
-    const adapter = new PrismaLibSql({ url: `file:${sqlitePath}` })
-    const prisma = new PrismaClient({ adapter })
-    if (!exists) {
-        await migrateSchema(prisma)
-    }
-    return prisma
+  const exists = fs.existsSync(sqlitePath)
+  const adapter = new PrismaLibSql({ url: `file:${sqlitePath}` })
+  const prisma = new PrismaClient({ adapter })
+  if (!exists) {
+    await migrateSchema(prisma)
+  }
+  return prisma
 }
