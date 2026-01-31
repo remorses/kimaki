@@ -401,6 +401,10 @@ async function registerCommands({
       .setName('restart-opencode-server')
       .setDescription('Restart the opencode server for this channel only (fixes state/auth/plugins)')
       .toJSON(),
+    new SlashCommandBuilder()
+      .setName('sqlitedb')
+      .setDescription('Show the location of the SQLite database file')
+      .toJSON(),
   ]
 
   // Add user-defined commands with -cmd suffix
