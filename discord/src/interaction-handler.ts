@@ -37,7 +37,6 @@ import { handleUndoCommand, handleRedoCommand } from './commands/undo-redo.js'
 import { handleUserCommand } from './commands/user-command.js'
 import { handleVerbosityCommand } from './commands/verbosity.js'
 import { handleRestartOpencodeServerCommand } from './commands/restart-opencode-server.js'
-import { handleSqliteDbCommand } from './commands/sqlitedb.js'
 import { createLogger, LogPrefix } from './logger.js'
 
 const interactionLogger = createLogger(LogPrefix.INTERACTION)
@@ -174,10 +173,6 @@ export function registerInteractionHandler({
 
           case 'restart-opencode-server':
             await handleRestartOpencodeServerCommand({ command: interaction, appId })
-            return
-
-          case 'sqlitedb':
-            await handleSqliteDbCommand({ command: interaction, appId })
             return
         }
 
