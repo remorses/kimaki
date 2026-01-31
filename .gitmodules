@@ -1,3 +1,6 @@
 [submodule "errore"]
 	path = errore
 	url = https://github.com/remorses/errore.git
+[submodule "traforo"]
+	path = traforo
+	url = https://github.com/remorses/traforo.git
