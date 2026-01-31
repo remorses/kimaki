@@ -1280,6 +1280,12 @@ export async function handleOpencodeSession({
           )
           return
         }
+        if (!assistantMessageId) {
+          sessionLogger.log(
+            `[SESSION IDLE] Ignoring idle event for ${session.id} (no assistant output yet)`,
+          )
+          return
+        }
         sessionLogger.log(`[SESSION IDLE] Session ${session.id} is idle, ending stream`)
         sessionLogger.log(`[ABORT] reason=finished sessionId=${session.id} threadId=${thread.id} - session completed normally, received idle event after prompt resolved`)
         abortController.abort(new Error('finished'))
