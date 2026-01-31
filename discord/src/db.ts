@@ -56,11 +56,13 @@ async function initializePrisma(): Promise<PrismaClient> {
     const adapter = new PrismaLibSql({ url: `file:${dbPath}` })
     const prisma = new PrismaClient({ adapter })
 
-    if (!exists) {
-        dbLogger.log('New database, running schema migration...')
-        await migrateSchema(prisma)
-        dbLogger.log('Schema migration complete')
-    }
+  if (!exists) {
+    dbLogger.log('New database, running schema migration...')
+  } else {
+    dbLogger.log('Existing database, ensuring schema is up to date...')
+  }
+  await migrateSchema(prisma)
+  dbLogger.log('Schema migration complete')
 
     prismaInstance = prisma
     return prisma
