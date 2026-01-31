@@ -1175,7 +1175,7 @@ cli
             process.exit(EXIT_NO_RESTART)
           }
 
-          console.log(generateBotInstallUrl({ clientId: existingBot.app_id }))
+          cliLogger.log(generateBotInstallUrl({ clientId: existingBot.app_id }))
           process.exit(0)
         }
 
@@ -1644,7 +1644,7 @@ cli
 
       note(successMessage, '✅ Thread Created')
 
-      console.log(threadUrl)
+      cliLogger.log(threadUrl)
 
       process.exit(0)
     } catch (error) {
@@ -1852,7 +1852,7 @@ cli
           '✅ Success',
         )
 
-        console.log(channelUrl)
+        cliLogger.log(channelUrl)
         process.exit(0)
       } catch (error) {
         cliLogger.error('Error:', error instanceof Error ? error.message : String(error))
@@ -1907,7 +1907,7 @@ cli
   .action(() => {
     const dataDir = getDataDir()
     const dbPath = path.join(dataDir, 'discord-sessions.db')
-    console.log(dbPath)
+    cliLogger.log(dbPath)
   })
 
 cli.help()
