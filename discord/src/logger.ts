@@ -99,11 +99,15 @@ const noSpacing = { spacing: 0 }
 
 export function createLogger(prefix: LogPrefixType | string) {
   const paddedPrefix = padPrefix(prefix)
+  const log = (...args: unknown[]) => {
+    writeToFile('LOG', prefix, args)
+    clackLog.message(formatMessage(getTimestamp(), pc.cyan(paddedPrefix), args), {
+      ...noSpacing,
+      // symbol: `|`,
+    })
+  }
   return {
-    log: (...args: unknown[]) => {
-      writeToFile('INFO', prefix, args)
-      clackLog.step(formatMessage(getTimestamp(), pc.cyan(paddedPrefix), args), noSpacing)
-    },
+    log,
     error: (...args: unknown[]) => {
       writeToFile('ERROR', prefix, args)
       clackLog.error(formatMessage(getTimestamp(), pc.red(paddedPrefix), args), noSpacing)
@@ -116,12 +120,6 @@ export function createLogger(prefix: LogPrefixType | string) {
       writeToFile('INFO', prefix, args)
       clackLog.info(formatMessage(getTimestamp(), pc.blue(paddedPrefix), args), noSpacing)
     },
-    debug: (...args: unknown[]) => {
-      writeToFile('DEBUG', prefix, args)
-      clackLog.message(formatMessage(getTimestamp(), pc.cyan(paddedPrefix), args), {
-        ...noSpacing,
-        symbol: pc.cyan('│'),
-      })
-    },
+    debug: log,
   }
 }
