@@ -11,16 +11,19 @@ cli
   .option('-p, --port <port>', 'Local port to expose (required)')
   .option('-t, --tunnel-id [id]', 'Tunnel ID (random if omitted)')
   .option('-h, --host [host]', 'Local host (default: localhost)')
-  .option('-s, --server [url]', 'Tunnel server URL')
+  .option('-d, --domain [domain]', 'Base domain (default: kimaki.xyz)')
+  .option('-s, --server [url]', 'Tunnel server URL (overrides domain)')
   .example(`${CLI_NAME} -p 3000`)
   .example(`${CLI_NAME} -p 3000 -- next start`)
   .example(`${CLI_NAME} -p 3000 -- pnpm dev`)
   .example(`${CLI_NAME} -p 5173 -t my-app -- vite`)
+  .example(`${CLI_NAME} -p 3000 -d traforo.dev -- pnpm dev`)
   .action(
     async (options: {
       port?: string
       tunnelId?: string
       host?: string
+      domain?: string
       server?: string
     }) => {
       if (!options.port) {
@@ -39,6 +42,7 @@ cli
         port,
         tunnelId: options.tunnelId,
         localHost: options.host,
+        baseDomain: options.domain,
         serverUrl: options.server,
         command: command.length > 0 ? command : undefined,
       })

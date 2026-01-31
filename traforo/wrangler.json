@@ -18,6 +18,10 @@
   ],
   "routes": [
     {
+      "pattern": "*-tunnel.traforo.dev/*",
+      "zone_name": "traforo.dev"
+    },
+    {
       "pattern": "*-tunnel.kimaki.xyz/*",
       "zone_name": "kimaki.xyz"
     }
@@ -33,6 +37,10 @@
         ]
       },
       "routes": [
+        {
+          "pattern": "*-tunnel-preview.traforo.dev/*",
+          "zone_name": "traforo.dev"
+        },
         {
           "pattern": "*-tunnel-preview.kimaki.xyz/*",
           "zone_name": "kimaki.xyz"

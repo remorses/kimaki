@@ -8,6 +8,7 @@ export type RunTunnelOptions = {
   port: number
   tunnelId?: string
   localHost?: string
+  baseDomain?: string
   serverUrl?: string
   command?: string[]
 }
@@ -127,6 +128,7 @@ export async function runTunnel(options: RunTunnelOptions): Promise<void> {
     localPort: port,
     tunnelId,
     localHost,
+    ...(options.baseDomain && { baseDomain: options.baseDomain }),
     ...(options.serverUrl && { serverUrl: options.serverUrl }),
   })
 
