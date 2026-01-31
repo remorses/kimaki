@@ -1,6 +1,6 @@
-// Prefixed logging utility.
-// Uses picocolors for compact frequent logs (log, info, debug).
-// Uses @clack/prompts only for important events (warn, error) with visual distinction.
+// Prefixed logging utility using @clack/prompts for consistent visual style.
+// All log methods use clack's log.message() with appropriate symbols to prevent
+// output interleaving from concurrent async operations.
 
 import { log as clackLog } from '@clack/prompts'
 import fs from 'node:fs'
@@ -91,30 +91,37 @@ function padPrefix(prefix: string): string {
   return prefix.padEnd(MAX_PREFIX_LENGTH)
 }
 
+function formatMessage(timestamp: string, prefix: string, args: unknown[]): string {
+  return [pc.dim(timestamp), prefix, ...args.map(formatArg)].join(' ')
+}
+
+const noSpacing = { spacing: 0 }
+
 export function createLogger(prefix: LogPrefixType | string) {
   const paddedPrefix = padPrefix(prefix)
   return {
     log: (...args: unknown[]) => {
       writeToFile('INFO', prefix, args)
-      console.log(pc.dim(getTimestamp()), pc.cyan(paddedPrefix), ...args.map(formatArg))
+      clackLog.step(formatMessage(getTimestamp(), pc.cyan(paddedPrefix), args), noSpacing)
     },
     error: (...args: unknown[]) => {
       writeToFile('ERROR', prefix, args)
-      // use clack for errors - visually distinct
-      clackLog.error([paddedPrefix, ...args.map(formatArg)].join(' '))
+      clackLog.error(formatMessage(getTimestamp(), pc.red(paddedPrefix), args), noSpacing)
     },
     warn: (...args: unknown[]) => {
       writeToFile('WARN', prefix, args)
-      // use clack for warnings - visually distinct
-      clackLog.warn([paddedPrefix, ...args.map(formatArg)].join(' '))
+      clackLog.warn(formatMessage(getTimestamp(), pc.yellow(paddedPrefix), args), noSpacing)
     },
     info: (...args: unknown[]) => {
       writeToFile('INFO', prefix, args)
-      console.log(pc.dim(getTimestamp()), pc.blue(paddedPrefix), ...args.map(formatArg))
+      clackLog.info(formatMessage(getTimestamp(), pc.blue(paddedPrefix), args), noSpacing)
     },
     debug: (...args: unknown[]) => {
       writeToFile('DEBUG', prefix, args)
-      console.log(pc.dim(getTimestamp()), pc.dim(paddedPrefix), ...args.map(formatArg))
+      clackLog.message(formatMessage(getTimestamp(), pc.cyan(paddedPrefix), args), {
+        ...noSpacing,
+        symbol: pc.cyan('│'),
+      })
     },
   }
 }

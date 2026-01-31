@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.4.54
+
+### Patch Changes
+
+- feat: add **--domain** flag to tunnel command (defaults to `kimaki.xyz`)
+- update **traforo** dependency with parametrizable base domain support
+
 ## 0.4.53
 
 ### Patch Changes
