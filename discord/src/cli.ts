@@ -1870,14 +1870,12 @@ cli
   .option('-p, --port <port>', 'Local port to expose (required)')
   .option('-t, --tunnel-id [id]', 'Tunnel ID (random if omitted)')
   .option('-h, --host [host]', 'Local host (default: localhost)')
-  .option('-d, --domain [domain]', 'Base domain (default: kimaki.xyz)')
-  .option('-s, --server [url]', 'Tunnel server URL (overrides domain)')
+  .option('-s, --server [url]', 'Tunnel server URL')
   .action(
     async (options: {
       port?: string
       tunnelId?: string
       host?: string
-      domain?: string
       server?: string
     }) => {
       const { runTunnel, parseCommandFromArgv, CLI_NAME } = await import('traforo/run-tunnel')
@@ -1901,7 +1899,7 @@ cli
         port,
         tunnelId: options.tunnelId,
         localHost: options.host,
-        baseDomain: options.domain || 'kimaki.xyz',
+        baseDomain: 'kimaki.xyz',
         serverUrl: options.server,
         command: command.length > 0 ? command : undefined,
       })
