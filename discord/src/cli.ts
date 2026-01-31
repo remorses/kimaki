@@ -608,9 +608,14 @@ async function run({ restart, addChannels, useWorktrees, enableVoiceChannels }: 
   intro('🤖 Discord Bot Setup')
 
   // Step 0: Check if OpenCode CLI is available
-  const opencodeCheck = spawnSync('which', ['opencode'], { shell: true })
-
-  if (opencodeCheck.status !== 0) {
+  // Skip check if user set OPENCODE_PATH (for custom forks like shuvcode)
+  if (!process.env.OPENCODE_PATH) {
+    const opencodeCheck = spawnSync(
+      process.platform === 'win32' ? 'where' : 'which',
+      ['opencode'],
+      { shell: true }
+    )
+    if (opencodeCheck.status !== 0) {
     note('OpenCode CLI is required but not found in your PATH.', '⚠️  OpenCode Not Found')
 
     const shouldInstall = await confirm({
@@ -669,6 +674,7 @@ async function run({ restart, addChannels, useWorktrees, enableVoiceChannels }: 
       s.stop('Failed to install OpenCode CLI')
       cliLogger.error('Installation error:', error instanceof Error ? error.message : String(error))
       process.exit(EXIT_NO_RESTART)
+    }
     }
   }
 

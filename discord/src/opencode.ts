@@ -128,6 +128,7 @@ export async function initializeOpencodeForDirectory(directory: string): Promise
     stdio: 'pipe',
     detached: false,
     cwd: directory,
+    shell: true, // Required for .cmd files on Windows
     env: {
       ...process.env,
       OPENCODE_CONFIG_CONTENT: JSON.stringify({
