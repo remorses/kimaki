@@ -8,7 +8,7 @@ import {
 } from 'discord.js'
 import fs from 'node:fs'
 import type { CommandContext, AutocompleteContext } from './types.js'
-import { getChannelDirectory, setThreadSession, setPartMessage, getAllThreadSessionIds } from '../database.js'
+import { getChannelDirectory, setThreadSession, setPartMessagesBatch, getAllThreadSessionIds } from '../database.js'
 import { initializeOpencodeForDirectory } from '../opencode.js'
 import { sendThreadMessage, resolveTextChannel } from '../discord-utils.js'
 import { collectLastAssistantParts } from '../message-formatting.js'
@@ -119,10 +119,14 @@ export async function handleResumeCommand({ command, appId }: CommandContext): P
     if (content.trim()) {
       const discordMessage = await sendThreadMessage(thread, content)
 
-      // Store part-message mappings
-      for (const partId of partIds) {
-        await setPartMessage(partId, discordMessage.id, thread.id)
-      }
+      // Store part-message mappings atomically
+      await setPartMessagesBatch(
+        partIds.map((partId) => ({
+          partId,
+          messageId: discordMessage.id,
+          threadId: thread.id,
+        })),
+      )
     }
 
     const messageCount = messages.length

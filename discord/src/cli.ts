@@ -488,6 +488,7 @@ async function storeChannelDirectories({
           directory: channel.kimakiDirectory,
           channelType: 'text',
           appId: channel.kimakiApp || null,
+          skipIfExists: true,
         })
 
         const voiceChannel = guild.channels.cache.find(
@@ -500,6 +501,7 @@ async function storeChannelDirectories({
             directory: channel.kimakiDirectory,
             channelType: 'voice',
             appId: channel.kimakiApp || null,
+            skipIfExists: true,
           })
         }
       }
@@ -812,6 +814,9 @@ async function run({ restart, addChannels, useWorktrees, enableVoiceChannels }: 
     }
 
     const geminiApiKey = stripBracketedPaste(geminiApiKeyInput) || null
+
+    // Store bot token early so setGeminiApiKey can satisfy FK constraint
+    await setBotToken(appId, token)
 
     // Store API key in database
     if (geminiApiKey) {

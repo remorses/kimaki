@@ -427,20 +427,38 @@ export async function getPartMessageIds(threadId: string): Promise<string[]> {
 
 /**
  * Store a part-message mapping.
+ * Note: The thread must already have a session (via setThreadSession) before calling this.
  */
 export async function setPartMessage(partId: string, messageId: string, threadId: string): Promise<void> {
     const prisma = await getPrisma()
-    // Need to ensure thread exists first due to foreign key constraint
-    await prisma.thread_sessions.upsert({
-        where: { thread_id: threadId },
-        create: { thread_id: threadId, session_id: '' },
-        update: {},
-    })
     await prisma.part_messages.upsert({
         where: { part_id: partId },
         create: { part_id: partId, message_id: messageId, thread_id: threadId },
         update: { message_id: messageId, thread_id: threadId },
     })
+}
+
+/**
+ * Store multiple part-message mappings in a transaction.
+ * More efficient and atomic for batch operations.
+ * Note: The thread must already have a session (via setThreadSession) before calling this.
+ */
+export async function setPartMessagesBatch(
+    partMappings: Array<{ partId: string; messageId: string; threadId: string }>,
+): Promise<void> {
+    if (partMappings.length === 0) {
+        return
+    }
+    const prisma = await getPrisma()
+    await prisma.$transaction(
+        partMappings.map(({ partId, messageId, threadId }) => {
+            return prisma.part_messages.upsert({
+                where: { part_id: partId },
+                create: { part_id: partId, message_id: messageId, thread_id: threadId },
+                update: { message_id: messageId, thread_id: threadId },
+            })
+        }),
+    )
 }
 
 // ============================================================================
@@ -490,15 +508,10 @@ export async function getGeminiApiKey(appId: string): Promise<string | null> {
 
 /**
  * Set the Gemini API key for a bot.
+ * Note: The bot must already have a token (via setBotToken) before calling this.
  */
 export async function setGeminiApiKey(appId: string, apiKey: string): Promise<void> {
     const prisma = await getPrisma()
-    // Ensure bot_tokens exists first due to foreign key
-    await prisma.bot_tokens.upsert({
-        where: { app_id: appId },
-        create: { app_id: appId, token: '' },
-        update: {},
-    })
     await prisma.bot_api_keys.upsert({
         where: { app_id: appId },
         create: { app_id: appId, gemini_api_key: apiKey },
@@ -512,33 +525,56 @@ export async function setGeminiApiKey(appId: string, apiKey: string): Promise<vo
 
 /**
  * Store a channel-directory mapping.
+ * @param skipIfExists If true, behaves like INSERT OR IGNORE - skips if record exists.
+ *                     If false (default), behaves like INSERT OR REPLACE - updates if exists.
  */
 export async function setChannelDirectory({
     channelId,
     directory,
     channelType,
     appId,
+    skipIfExists = false,
 }: {
     channelId: string
     directory: string
     channelType: 'text' | 'voice'
     appId?: string | null
+    skipIfExists?: boolean
 }): Promise<void> {
     const prisma = await getPrisma()
-    await prisma.channel_directories.upsert({
-        where: { channel_id: channelId },
-        create: {
-            channel_id: channelId,
-            directory,
-            channel_type: channelType,
-            app_id: appId ?? null,
-        },
-        update: {
-            directory,
-            channel_type: channelType,
-            app_id: appId ?? null,
-        },
-    })
+    if (skipIfExists) {
+        // INSERT OR IGNORE semantics - only insert if not exists
+        const existing = await prisma.channel_directories.findUnique({
+            where: { channel_id: channelId },
+        })
+        if (existing) {
+            return
+        }
+        await prisma.channel_directories.create({
+            data: {
+                channel_id: channelId,
+                directory,
+                channel_type: channelType,
+                app_id: appId ?? null,
+            },
+        })
+    } else {
+        // INSERT OR REPLACE semantics - upsert
+        await prisma.channel_directories.upsert({
+            where: { channel_id: channelId },
+            create: {
+                channel_id: channelId,
+                directory,
+                channel_type: channelType,
+                app_id: appId ?? null,
+            },
+            update: {
+                directory,
+                channel_type: channelType,
+                app_id: appId ?? null,
+            },
+        })
+    }
 }
 
 /**
@@ -648,15 +684,10 @@ export async function findTextChannelByVoiceChannel(voiceChannelId: string): Pro
 
 /**
  * Mark a thread for auto-start.
+ * Note: The thread must already have a session (via setThreadSession) before calling this.
  */
 export async function setPendingAutoStart(threadId: string): Promise<void> {
     const prisma = await getPrisma()
-    // Ensure thread session exists first
-    await prisma.thread_sessions.upsert({
-        where: { thread_id: threadId },
-        create: { thread_id: threadId, session_id: '' },
-        update: {},
-    })
     await prisma.pending_auto_start.upsert({
         where: { thread_id: threadId },
         create: { thread_id: threadId },

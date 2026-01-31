@@ -9,7 +9,7 @@ import {
   ThreadAutoArchiveDuration,
   type ThreadChannel,
 } from 'discord.js'
-import { getThreadSession, setThreadSession, setPartMessage } from '../database.js'
+import { getThreadSession, setThreadSession, setPartMessagesBatch } from '../database.js'
 import { initializeOpencodeForDirectory } from '../opencode.js'
 import { resolveTextChannel, getKimakiMetadata, sendThreadMessage } from '../discord-utils.js'
 import { collectLastAssistantParts } from '../message-formatting.js'
@@ -236,10 +236,14 @@ export async function handleForkSelectMenu(
       if (content.trim()) {
         const discordMessage = await sendThreadMessage(thread, content)
 
-        // Store part-message mappings for future reference
-        for (const partId of partIds) {
-          await setPartMessage(partId, discordMessage.id, thread.id)
-        }
+        // Store part-message mappings atomically
+        await setPartMessagesBatch(
+          partIds.map((partId) => ({
+            partId,
+            messageId: discordMessage.id,
+            threadId: thread.id,
+          })),
+        )
       }
     }
 
