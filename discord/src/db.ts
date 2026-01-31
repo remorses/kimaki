@@ -4,6 +4,10 @@ import { PrismaLibSql } from '@prisma/adapter-libsql'
 import { PrismaClient, Prisma } from './generated/client.js'
 import { getDataDir } from './config.js'
 import { createLogger, LogPrefix } from './logger.js'
+import { fileURLToPath } from 'node:url'
+
+const __filename = fileURLToPath(import.meta.url)
+const __dirname = path.dirname(__filename)
 
 export type { Prisma }
 export { PrismaClient }
