@@ -1,21 +1,28 @@
-CREATE TABLE IF NOT EXISTS "thread_sessions" (
+-- CreateTable
+CREATE TABLE "thread_sessions" (
     "thread_id" TEXT NOT NULL PRIMARY KEY,
     "session_id" TEXT NOT NULL,
     "created_at" DATETIME DEFAULT CURRENT_TIMESTAMP
 );
-CREATE TABLE IF NOT EXISTS "part_messages" (
+
+-- CreateTable
+CREATE TABLE "part_messages" (
     "part_id" TEXT NOT NULL PRIMARY KEY,
     "message_id" TEXT NOT NULL,
     "thread_id" TEXT NOT NULL,
     "created_at" DATETIME DEFAULT CURRENT_TIMESTAMP,
     CONSTRAINT "part_messages_thread_id_fkey" FOREIGN KEY ("thread_id") REFERENCES "thread_sessions" ("thread_id") ON DELETE RESTRICT ON UPDATE CASCADE
 );
-CREATE TABLE IF NOT EXISTS "bot_tokens" (
+
+-- CreateTable
+CREATE TABLE "bot_tokens" (
     "app_id" TEXT NOT NULL PRIMARY KEY,
     "token" TEXT NOT NULL,
     "created_at" DATETIME DEFAULT CURRENT_TIMESTAMP
 );
-CREATE TABLE IF NOT EXISTS "channel_directories" (
+
+-- CreateTable
+CREATE TABLE "channel_directories" (
     "channel_id" TEXT NOT NULL PRIMARY KEY,
     "directory" TEXT NOT NULL,
     "channel_type" TEXT NOT NULL,
@@ -23,19 +30,25 @@ CREATE TABLE IF NOT EXISTS "channel_directories" (
     "created_at" DATETIME DEFAULT CURRENT_TIMESTAMP,
     CONSTRAINT "channel_directories_app_id_fkey" FOREIGN KEY ("app_id") REFERENCES "bot_tokens" ("app_id") ON DELETE SET NULL ON UPDATE CASCADE
 );
-CREATE TABLE IF NOT EXISTS "pending_auto_start" (
+
+-- CreateTable
+CREATE TABLE "pending_auto_start" (
     "thread_id" TEXT NOT NULL PRIMARY KEY,
     "created_at" DATETIME DEFAULT CURRENT_TIMESTAMP,
     CONSTRAINT "pending_auto_start_thread_id_fkey" FOREIGN KEY ("thread_id") REFERENCES "thread_sessions" ("thread_id") ON DELETE RESTRICT ON UPDATE CASCADE
 );
-CREATE TABLE IF NOT EXISTS "bot_api_keys" (
+
+-- CreateTable
+CREATE TABLE "bot_api_keys" (
     "app_id" TEXT NOT NULL PRIMARY KEY,
     "gemini_api_key" TEXT,
     "xai_api_key" TEXT,
     "created_at" DATETIME DEFAULT CURRENT_TIMESTAMP,
     CONSTRAINT "bot_api_keys_app_id_fkey" FOREIGN KEY ("app_id") REFERENCES "bot_tokens" ("app_id") ON DELETE RESTRICT ON UPDATE CASCADE
 );
-CREATE TABLE IF NOT EXISTS "thread_worktrees" (
+
+-- CreateTable
+CREATE TABLE "thread_worktrees" (
     "thread_id" TEXT NOT NULL PRIMARY KEY,
     "worktree_name" TEXT NOT NULL,
     "worktree_directory" TEXT,
@@ -45,38 +58,50 @@ CREATE TABLE IF NOT EXISTS "thread_worktrees" (
     "created_at" DATETIME DEFAULT CURRENT_TIMESTAMP,
     CONSTRAINT "thread_worktrees_thread_id_fkey" FOREIGN KEY ("thread_id") REFERENCES "thread_sessions" ("thread_id") ON DELETE RESTRICT ON UPDATE CASCADE
 );
-CREATE TABLE IF NOT EXISTS "channel_models" (
+
+-- CreateTable
+CREATE TABLE "channel_models" (
     "channel_id" TEXT NOT NULL PRIMARY KEY,
     "model_id" TEXT NOT NULL,
     "created_at" DATETIME DEFAULT CURRENT_TIMESTAMP,
     "updated_at" DATETIME DEFAULT CURRENT_TIMESTAMP,
     CONSTRAINT "channel_models_channel_id_fkey" FOREIGN KEY ("channel_id") REFERENCES "channel_directories" ("channel_id") ON DELETE RESTRICT ON UPDATE CASCADE
 );
-CREATE TABLE IF NOT EXISTS "session_models" (
+
+-- CreateTable
+CREATE TABLE "session_models" (
     "session_id" TEXT NOT NULL PRIMARY KEY,
     "model_id" TEXT NOT NULL,
     "created_at" DATETIME DEFAULT CURRENT_TIMESTAMP
 );
-CREATE TABLE IF NOT EXISTS "channel_agents" (
+
+-- CreateTable
+CREATE TABLE "channel_agents" (
     "channel_id" TEXT NOT NULL PRIMARY KEY,
     "agent_name" TEXT NOT NULL,
     "created_at" DATETIME DEFAULT CURRENT_TIMESTAMP,
     "updated_at" DATETIME DEFAULT CURRENT_TIMESTAMP,
     CONSTRAINT "channel_agents_channel_id_fkey" FOREIGN KEY ("channel_id") REFERENCES "channel_directories" ("channel_id") ON DELETE RESTRICT ON UPDATE CASCADE
 );
-CREATE TABLE IF NOT EXISTS "session_agents" (
+
+-- CreateTable
+CREATE TABLE "session_agents" (
     "session_id" TEXT NOT NULL PRIMARY KEY,
     "agent_name" TEXT NOT NULL,
     "created_at" DATETIME DEFAULT CURRENT_TIMESTAMP
 );
-CREATE TABLE IF NOT EXISTS "channel_worktrees" (
+
+-- CreateTable
+CREATE TABLE "channel_worktrees" (
     "channel_id" TEXT NOT NULL PRIMARY KEY,
     "enabled" INTEGER NOT NULL DEFAULT 0,
     "created_at" DATETIME DEFAULT CURRENT_TIMESTAMP,
     "updated_at" DATETIME DEFAULT CURRENT_TIMESTAMP,
     CONSTRAINT "channel_worktrees_channel_id_fkey" FOREIGN KEY ("channel_id") REFERENCES "channel_directories" ("channel_id") ON DELETE RESTRICT ON UPDATE CASCADE
 );
-CREATE TABLE IF NOT EXISTS "channel_verbosity" (
+
+-- CreateTable
+CREATE TABLE "channel_verbosity" (
     "channel_id" TEXT NOT NULL PRIMARY KEY,
     "verbosity" TEXT NOT NULL DEFAULT 'tools-and-text',
     "updated_at" DATETIME DEFAULT CURRENT_TIMESTAMP,

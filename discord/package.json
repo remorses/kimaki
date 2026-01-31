@@ -8,8 +8,11 @@
     "prepublishOnly": "pnpm tsc",
     "dev:bun": "DEBUG=1 bun --env-file .env src/cli.ts",
     "watch": "tsx scripts/watch-session.ts",
-    "generate": "prisma generate && pnpm generate:sql",
-    "generate:sql": "rm -f dev.db && prisma db push --url 'file:dev.db' --accept-data-loss && sqlite3 dev.db '.schema' > src/schema.sql",
+    "generate": "prisma generate",
+    "migrate:dev": "prisma migrate dev",
+    "migrate:deploy": "prisma migrate deploy",
+    "migrate:generate": "prisma migrate dev --create-only --url 'file:prisma/empty.db'",
+    "migrate:diff": "prisma migrate diff --from-migrations migrations --to-schema schema.prisma",
     "test:events": "tsx test-events.ts",
     "pcm-to-mp3": "bun scripts/pcm-to-mp3",
     "test:send": "tsx send-test-message.ts",
@@ -21,6 +24,7 @@
   "files": [
     "dist",
     "src",
+    "migrations",
     "bin.js"
   ],
   "devDependencies": {
