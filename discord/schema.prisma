@@ -1,0 +1,126 @@
+generator client {
+  provider = "prisma-client"
+  output   = "./src/generated"
+}
+
+datasource db {
+  provider = "sqlite"
+}
+
+model thread_sessions {
+  thread_id  String    @id
+  session_id String
+  created_at DateTime? @default(now())
+
+  part_messages      part_messages[]
+  pending_auto_start pending_auto_start?
+  thread_worktree    thread_worktrees?
+}
+
+model part_messages {
+  part_id    String    @id
+  message_id String
+  thread_id  String
+  created_at DateTime? @default(now())
+
+  thread thread_sessions @relation(fields: [thread_id], references: [thread_id])
+}
+
+model bot_tokens {
+  app_id     String    @id
+  token      String
+  created_at DateTime? @default(now())
+
+  api_keys bot_api_keys?
+  channels channel_directories[]
+}
+
+model channel_directories {
+  channel_id   String    @id
+  directory    String
+  channel_type String
+  app_id       String?
+  created_at   DateTime? @default(now())
+
+  bot               bot_tokens?        @relation(fields: [app_id], references: [app_id])
+  channel_model     channel_models?
+  channel_agent     channel_agents?
+  channel_worktree  channel_worktrees?
+  channel_verbosity channel_verbosity?
+}
+
+model pending_auto_start {
+  thread_id  String    @id
+  created_at DateTime? @default(now())
+
+  thread thread_sessions @relation(fields: [thread_id], references: [thread_id])
+}
+
+model bot_api_keys {
+  app_id         String    @id
+  gemini_api_key String?
+  xai_api_key    String?
+  created_at     DateTime? @default(now())
+
+  bot bot_tokens @relation(fields: [app_id], references: [app_id])
+}
+
+// status: 'pending' while creating, 'ready' when done, 'error' if failed
+model thread_worktrees {
+  thread_id          String    @id
+  worktree_name      String
+  worktree_directory String?
+  project_directory  String
+  status             String?   @default("pending")
+  error_message      String?
+  created_at         DateTime? @default(now())
+
+  thread thread_sessions @relation(fields: [thread_id], references: [thread_id])
+}
+
+model channel_models {
+  channel_id String    @id
+  model_id   String
+  created_at DateTime? @default(now())
+  updated_at DateTime? @default(now()) @updatedAt
+
+  channel channel_directories @relation(fields: [channel_id], references: [channel_id])
+}
+
+model session_models {
+  session_id String    @id
+  model_id   String
+  created_at DateTime? @default(now())
+}
+
+model channel_agents {
+  channel_id String    @id
+  agent_name String
+  created_at DateTime? @default(now())
+  updated_at DateTime? @default(now()) @updatedAt
+
+  channel channel_directories @relation(fields: [channel_id], references: [channel_id])
+}
+
+model session_agents {
+  session_id String    @id
+  agent_name String
+  created_at DateTime? @default(now())
+}
+
+model channel_worktrees {
+  channel_id String    @id
+  enabled    Int       @default(0)
+  created_at DateTime? @default(now())
+  updated_at DateTime? @default(now()) @updatedAt
+
+  channel channel_directories @relation(fields: [channel_id], references: [channel_id])
+}
+
+model channel_verbosity {
+  channel_id String    @id
+  verbosity  String    @default("tools-and-text")
+  updated_at DateTime? @default(now()) @updatedAt
+
+  channel channel_directories @relation(fields: [channel_id], references: [channel_id])
+}

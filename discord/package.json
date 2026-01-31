@@ -8,6 +8,8 @@
     "prepublishOnly": "pnpm tsc",
     "dev:bun": "DEBUG=1 bun --env-file .env src/cli.ts",
     "watch": "tsx scripts/watch-session.ts",
+    "generate": "prisma generate && pnpm generate:sql",
+    "generate:sql": "rm -f dev.db && prisma db push --url 'file:dev.db' --accept-data-loss && sqlite3 dev.db '.schema' > src/schema.sql",
     "test:events": "tsx test-events.ts",
     "pcm-to-mp3": "bun scripts/pcm-to-mp3",
     "test:send": "tsx send-test-message.ts",
@@ -22,6 +24,7 @@
     "bin.js"
   ],
   "devDependencies": {
+    "prisma": "^7.3.0",
     "@opencode-ai/plugin": "^1.1.12",
     "@types/better-sqlite3": "^7.6.13",
     "@types/bun": "latest",
@@ -32,6 +35,9 @@
     "tsx": "^4.20.5"
   },
   "dependencies": {
+    "@libsql/client": "^0.15.15",
+    "@prisma/adapter-libsql": "^7.3.0",
+    "@prisma/client": "^7.3.0",
     "@clack/prompts": "^1.0.0",
     "@discordjs/voice": "^0.19.0",
     "@google/genai": "^1.34.0",
