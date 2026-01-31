@@ -14,7 +14,6 @@ import {
   confirm,
   log,
   multiselect,
-  spinner,
 } from '@clack/prompts'
 import { deduplicateByKey, generateBotInstallUrl, abbreviatePath } from './utils.js'
 import {
@@ -627,15 +626,14 @@ async function run({ restart, addChannels, useWorktrees, enableVoiceChannels }: 
       process.exit(0)
     }
 
-    const s = spinner()
-    s.start('Installing OpenCode CLI...')
+    cliLogger.log('Installing OpenCode CLI...')
 
     try {
       execSync('curl -fsSL https://opencode.ai/install | bash', {
         stdio: 'inherit',
         shell: '/bin/bash',
       })
-      s.stop('OpenCode CLI installed successfully!')
+      cliLogger.log('OpenCode CLI installed successfully!')
 
       // The install script adds opencode to PATH via shell configuration
       // For the current process, we need to check common installation paths
@@ -671,7 +669,7 @@ async function run({ restart, addChannels, useWorktrees, enableVoiceChannels }: 
       // For subsequent spawn calls in this session, we can use the full path
       process.env.OPENCODE_PATH = installedPath
     } catch (error) {
-      s.stop('Failed to install OpenCode CLI')
+      cliLogger.log('Failed to install OpenCode CLI')
       cliLogger.error('Installation error:', error instanceof Error ? error.message : String(error))
       process.exit(EXIT_NO_RESTART)
     }
@@ -825,12 +823,10 @@ async function run({ restart, addChannels, useWorktrees, enableVoiceChannels }: 
     }
   }
 
-  const s = spinner()
-
   // Start OpenCode server EARLY - let it initialize in parallel with Discord login.
   // This is the biggest startup bottleneck (can take 1-30 seconds to spawn and wait for ready)
   const currentDir = process.cwd()
-  s.start('Starting OpenCode server...')
+  cliLogger.log('Starting OpenCode server...')
   const opencodePromise = initializeOpencodeForDirectory(currentDir).then((result) => {
     if (result instanceof Error) {
       throw new Error(result.message)
@@ -838,7 +834,7 @@ async function run({ restart, addChannels, useWorktrees, enableVoiceChannels }: 
     return result
   })
 
-  s.message('Connecting to Discord...')
+  cliLogger.log('Connecting to Discord...')
   const discordClient = await createDiscordClient()
 
   const guilds: Guild[] = []
@@ -908,9 +904,9 @@ async function run({ restart, addChannels, useWorktrees, enableVoiceChannels }: 
       discordClient.login(token).catch(reject)
     })
 
-    s.stop('Connected to Discord!')
+    cliLogger.log('Connected to Discord!')
   } catch (error) {
-    s.stop('Failed to connect to Discord')
+    cliLogger.log('Failed to connect to Discord')
     cliLogger.error('Error: ' + (error instanceof Error ? error.message : String(error)))
     process.exit(EXIT_NO_RESTART)
   }
@@ -936,9 +932,9 @@ async function run({ restart, addChannels, useWorktrees, enableVoiceChannels }: 
   // Quick start: if setup is already done, start bot immediately and background the rest
   const isQuickStart = existingBot && !forceSetup && !addChannels
   if (isQuickStart) {
-    s.start('Starting Discord bot...')
+    cliLogger.log('Starting Discord bot...')
     await startDiscordBot({ token, appId, discordClient, useWorktrees })
-    s.stop('Discord bot is running!')
+    cliLogger.log('Discord bot is running!')
 
     // Background: OpenCode init + slash command registration (non-blocking)
     void backgroundInit({ currentDir, token, appId })
@@ -950,11 +946,11 @@ async function run({ restart, addChannels, useWorktrees, enableVoiceChannels }: 
 
   // Full setup path: wait for OpenCode, show prompts, create channels if needed
   // Await the OpenCode server that was started in parallel with Discord login
-  s.start('Waiting for OpenCode server...')
+  cliLogger.log('Waiting for OpenCode server...')
   const getClient = await opencodePromise
-  s.stop('OpenCode server ready!')
+  cliLogger.log('OpenCode server ready!')
 
-  s.start('Fetching OpenCode data...')
+  cliLogger.log('Fetching OpenCode data...')
 
   // Fetch projects, commands, and agents in parallel
   const [projects, allUserCommands, allAgents] = await Promise.all([
@@ -962,7 +958,7 @@ async function run({ restart, addChannels, useWorktrees, enableVoiceChannels }: 
       .project.list({})
       .then((r) => r.data || [])
       .catch((error) => {
-        s.stop('Failed to fetch projects')
+        cliLogger.log('Failed to fetch projects')
         cliLogger.error('Error:', error instanceof Error ? error.message : String(error))
         discordClient.destroy()
         process.exit(EXIT_NO_RESTART)
@@ -989,7 +985,7 @@ async function run({ restart, addChannels, useWorktrees, enableVoiceChannels }: 
       }),
   ])
 
-  s.stop(`Found ${projects.length} OpenCode project(s)`)
+  cliLogger.log(`Found ${projects.length} OpenCode project(s)`)
 
   const existingDirs = kimakiChannels.flatMap(({ channels }) =>
     channels
@@ -1056,7 +1052,7 @@ async function run({ restart, addChannels, useWorktrees, enableVoiceChannels }: 
         targetGuild = guilds.find((g) => g.id === guildSelection[0])!
       }
 
-      s.start('Creating Discord channels...')
+      cliLogger.log('Creating Discord channels...')
 
       for (const projectId of selectedProjects) {
         const project = projects.find((p) => p.id === projectId)
@@ -1084,7 +1080,7 @@ async function run({ restart, addChannels, useWorktrees, enableVoiceChannels }: 
         }
       }
 
-      s.stop(`Created ${createdChannels.length} channel(s)`)
+      cliLogger.log(`Created ${createdChannels.length} channel(s)`)
 
       if (createdChannels.length > 0) {
         note(createdChannels.map((ch) => `#${ch.name}`).join('\n'), 'Created Channels')
@@ -1120,9 +1116,9 @@ async function run({ restart, addChannels, useWorktrees, enableVoiceChannels }: 
       )
     })
 
-  s.start('Starting Discord bot...')
+  cliLogger.log('Starting Discord bot...')
   await startDiscordBot({ token, appId, discordClient, useWorktrees })
-  s.stop('Discord bot is running!')
+  cliLogger.log('Discord bot is running!')
 
   showReadyMessage({ kimakiChannels, createdChannels, appId })
   outro('✨ Setup complete! Listening for new messages... do not close this process.')
@@ -1240,8 +1236,7 @@ cli
         process.exit(EXIT_NO_RESTART)
       }
 
-      const s = spinner()
-      s.start(`Uploading ${resolvedFiles.length} file(s)...`)
+      cliLogger.log(`Uploading ${resolvedFiles.length} file(s)...`)
 
       await uploadFilesToDiscord({
         threadId: threadRow.thread_id,
@@ -1249,7 +1244,7 @@ cli
         files: resolvedFiles,
       })
 
-      s.stop(`Uploaded ${resolvedFiles.length} file(s)!`)
+      cliLogger.log(`Uploaded ${resolvedFiles.length} file(s)!`)
 
       note(
         `Files uploaded to Discord thread!\n\nFiles: ${resolvedFiles.map((f) => path.basename(f)).join(', ')}`,
@@ -1356,8 +1351,6 @@ cli
         process.exit(EXIT_NO_RESTART)
       }
 
-      const s = spinner()
-
       // If --project provided, resolve to channel ID
       if (projectPath) {
         const absolutePath = path.resolve(projectPath)
@@ -1367,7 +1360,7 @@ cli
           process.exit(EXIT_NO_RESTART)
         }
 
-        s.start('Looking up channel for project...')
+        cliLogger.log('Looking up channel for project...')
 
         // Check if channel already exists for this directory or a parent directory
         // This allows running from subfolders of a registered project
@@ -1402,16 +1395,16 @@ cli
           if (existingChannel) {
             channelId = existingChannel.channel_id
             if (existingChannel.directory !== absolutePath) {
-              s.message(`Found parent project channel: ${existingChannel.directory}`)
+              cliLogger.log(`Found parent project channel: ${existingChannel.directory}`)
             } else {
-              s.message(`Found existing channel: ${channelId}`)
+              cliLogger.log(`Found existing channel: ${channelId}`)
             }
           } else {
             // Need to create a new channel
-            s.message('Creating new channel...')
+            cliLogger.log('Creating new channel...')
 
             if (!appId) {
-              s.stop('Missing app ID')
+              cliLogger.log('Missing app ID')
               cliLogger.error(
                 'App ID is required to create channels. Use --app-id or run `kimaki` first.',
               )
@@ -1466,17 +1459,17 @@ cli
             })
 
             channelId = textChannelId
-            s.message(`Created channel: ${channelId}`)
+            cliLogger.log(`Created channel: ${channelId}`)
 
             client.destroy()
           }
         } catch (e) {
-          s.stop('Failed to resolve project')
+          cliLogger.log('Failed to resolve project')
           throw e
         }
       }
 
-      s.start('Fetching channel info...')
+      cliLogger.log('Fetching channel info...')
 
       // Get channel info to extract directory from topic
       const channelResponse = await fetch(`https://discord.com/api/v10/channels/${channelId}`, {
@@ -1487,7 +1480,7 @@ cli
 
       if (!channelResponse.ok) {
         const error = await channelResponse.text()
-        s.stop('Failed to fetch channel')
+        cliLogger.log('Failed to fetch channel')
         throw new Error(`Discord API error: ${channelResponse.status} - ${error}`)
       }
 
@@ -1501,7 +1494,7 @@ cli
       const channelConfig = getChannelDirectory(channelData.id)
 
       if (!channelConfig) {
-        s.stop('Channel not configured')
+        cliLogger.log('Channel not configured')
         throw new Error(
           `Channel #${channelData.name} is not configured with a project directory. Run the bot first to sync channel data.`,
         )
@@ -1512,13 +1505,13 @@ cli
 
       // Verify app ID matches if both are present
       if (channelAppId && appId && channelAppId !== appId) {
-        s.stop('Channel belongs to different bot')
+        cliLogger.log('Channel belongs to different bot')
         throw new Error(
           `Channel belongs to a different bot (expected: ${appId}, got: ${channelAppId})`,
         )
       }
 
-      s.message('Creating starter message...')
+      cliLogger.log('Creating starter message...')
 
       // Discord has a 2000 character limit for messages.
       // If prompt exceeds this, send it as a file attachment instead.
@@ -1572,7 +1565,7 @@ cli
 
           if (!starterMessageResponse.ok) {
             const error = await starterMessageResponse.text()
-            s.stop('Failed to create message')
+            cliLogger.log('Failed to create message')
             throw new Error(`Discord API error: ${starterMessageResponse.status} - ${error}`)
           }
 
@@ -1600,14 +1593,14 @@ cli
 
         if (!starterMessageResponse.ok) {
           const error = await starterMessageResponse.text()
-          s.stop('Failed to create message')
+          cliLogger.log('Failed to create message')
           throw new Error(`Discord API error: ${starterMessageResponse.status} - ${error}`)
         }
 
         starterMessage = (await starterMessageResponse.json()) as { id: string }
       }
 
-      s.message('Creating thread...')
+      cliLogger.log('Creating thread...')
 
       // Create thread from the message
       const threadName = name || (prompt.length > 80 ? prompt.slice(0, 77) + '...' : prompt)
@@ -1628,13 +1621,13 @@ cli
 
       if (!threadResponse.ok) {
         const error = await threadResponse.text()
-        s.stop('Failed to create thread')
+        cliLogger.log('Failed to create thread')
         throw new Error(`Discord API error: ${threadResponse.status} - ${error}`)
       }
 
       const threadData = (await threadResponse.json()) as { id: string; name: string }
 
-      s.stop('Thread created!')
+      cliLogger.log('Thread created!')
 
       const threadUrl = `https://discord.com/channels/${channelData.guild_id}/${threadData.id}`
 
@@ -1724,8 +1717,7 @@ cli
           process.exit(EXIT_NO_RESTART)
         }
 
-        const s = spinner()
-        s.start('Connecting to Discord...')
+        cliLogger.log('Connecting to Discord...')
         const client = await createDiscordClient()
 
         await new Promise<void>((resolve, reject) => {
@@ -1736,7 +1728,7 @@ cli
           client.login(botToken)
         })
 
-        s.message('Finding guild...')
+        cliLogger.log('Finding guild...')
 
         // Find guild
         let guild: Guild
@@ -1747,7 +1739,7 @@ cli
           const guildId = rawGuildArg || String(options.guild)
           const foundGuild = client.guilds.cache.get(guildId)
           if (!foundGuild) {
-            s.stop('Guild not found')
+            cliLogger.log('Guild not found')
             cliLogger.error(`Guild not found: ${guildId}`)
             client.destroy()
             process.exit(EXIT_NO_RESTART)
@@ -1777,7 +1769,7 @@ cli
               )
               const firstGuild = client.guilds.cache.first()
               if (!firstGuild) {
-                s.stop('No guild found')
+                cliLogger.log('No guild found')
                 cliLogger.error('No guild found. Add the bot to a server first.')
                 client.destroy()
                 process.exit(EXIT_NO_RESTART)
@@ -1787,7 +1779,7 @@ cli
           } else {
             const firstGuild = client.guilds.cache.first()
             if (!firstGuild) {
-              s.stop('No guild found')
+              cliLogger.log('No guild found')
               cliLogger.error('No guild found. Add the bot to a server first.')
               client.destroy()
               process.exit(EXIT_NO_RESTART)
@@ -1797,7 +1789,7 @@ cli
         }
 
         // Check if channel already exists in this guild
-        s.message('Checking for existing channel...')
+        cliLogger.log('Checking for existing channel...')
         try {
           const db = getDatabase()
           const existingChannels = db
@@ -1810,7 +1802,7 @@ cli
             try {
               const ch = await client.channels.fetch(existingChannel.channel_id)
               if (ch && 'guild' in ch && ch.guild?.id === guild.id) {
-                s.stop('Channel already exists')
+                cliLogger.log('Channel already exists')
                 note(
                   `Channel already exists for this directory in ${guild.name}.\n\nChannel: <#${existingChannel.channel_id}>\nDirectory: ${absolutePath}`,
                   '⚠️  Already Exists',
@@ -1832,7 +1824,7 @@ cli
           )
         }
 
-        s.message(`Creating channels in ${guild.name}...`)
+        cliLogger.log(`Creating channels in ${guild.name}...`)
 
         const { textChannelId, voiceChannelId, channelName } = await createProjectChannels({
           guild,
@@ -1843,7 +1835,7 @@ cli
 
         client.destroy()
 
-        s.stop('Channels created!')
+        cliLogger.log('Channels created!')
 
         const channelUrl = `https://discord.com/channels/${guild.id}/${textChannelId}`
 
