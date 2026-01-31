@@ -21,6 +21,9 @@ import dedent from 'string-dedent'
 import {
   PermissionsBitField,
   Events,
+  ActionRowBuilder,
+  ButtonBuilder,
+  ButtonStyle,
   type Client,
   type Message,
   type ThreadChannel,
@@ -489,11 +492,34 @@ export async function processVoiceAttachment({
     }
   }
 
+  if (!geminiApiKey && !process.env.GEMINI_API_KEY) {
+    if (appId) {
+      const button = new ButtonBuilder()
+        .setCustomId(`gemini_apikey:${appId}`)
+        .setLabel('Set Gemini API Key')
+        .setStyle(ButtonStyle.Primary)
+
+      const row = new ActionRowBuilder<ButtonBuilder>().addComponents(button)
+
+      await thread.send({
+        content:
+          'Voice transcription requires a Gemini API key. Get one at https://aistudio.google.com/apikey. The key will be stored and used for future voice messages.',
+        components: [row],
+        flags: SILENT_MESSAGE_FLAGS,
+      })
+    } else {
+      await sendThreadMessage(
+        thread,
+        'Voice transcription requires a Gemini API key. Get one at https://aistudio.google.com/apikey and set it with /login in this channel.',
+      )
+    }
+    return null
+  }
+
   const transcription = await transcribeAudio({
     audio: audioBuffer,
     prompt: transcriptionPrompt,
     geminiApiKey,
-    directory: projectDirectory,
     currentSessionContext,
     lastSessionContext,
   })

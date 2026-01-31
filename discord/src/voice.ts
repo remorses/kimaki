@@ -6,8 +6,6 @@
 import { GoogleGenAI, Type, type Content, type Part, type Tool } from '@google/genai'
 import * as errore from 'errore'
 import { createLogger, LogPrefix } from './logger.js'
-import { glob } from 'glob'
-import { ripGrep } from 'ripgrep-js'
 import {
   ApiKeyMissingError,
   InvalidAudioFormatError,
@@ -15,8 +13,6 @@ import {
   EmptyTranscriptionError,
   NoResponseContentError,
   NoToolResponseError,
-  GrepSearchError,
-  GlobSearchError,
 } from './errors.js'
 
 const voiceLogger = createLogger(LogPrefix.VOICE)
@@ -32,85 +28,6 @@ export type TranscriptionToolRunner = ({
   | { type: 'toolResponse'; name: string; output: string }
   | { type: 'skip' }
 >
-
-function runGrep({ pattern, directory }: { pattern: string; directory: string }): Promise<GrepSearchError | string> {
-  return errore.tryAsync({
-    try: async () => {
-      const results = await ripGrep(directory, {
-        string: pattern,
-        globs: ['!node_modules/**', '!.git/**', '!dist/**', '!build/**'],
-      })
-
-      if (results.length === 0) {
-        return 'No matches found'
-      }
-
-      const output = results
-        .slice(0, 10)
-        .map((match) => {
-          return `${match.path.text}:${match.line_number}: ${match.lines.text.trim()}`
-        })
-        .join('\n')
-
-      return output.slice(0, 2000)
-    },
-    catch: (e) => new GrepSearchError({ pattern, cause: e }),
-  })
-}
-
-function runGlob({ pattern, directory }: { pattern: string; directory: string }): Promise<GlobSearchError | string> {
-  return errore.tryAsync({
-    try: async () => {
-      const files = await glob(pattern, {
-        cwd: directory,
-        nodir: false,
-        ignore: ['node_modules/**', '.git/**', 'dist/**', 'build/**'],
-        maxDepth: 10,
-      })
-
-      if (files.length === 0) {
-        return 'No files found'
-      }
-
-      return files.slice(0, 30).join('\n')
-    },
-    catch: (e) => new GlobSearchError({ pattern, cause: e }),
-  })
-}
-
-const grepToolDeclaration = {
-  name: 'grep',
-  description:
-    'Search for a pattern in file contents to verify if a technical term, function name, or variable exists in the code. Use this to check if transcribed words match actual code.',
-  parameters: {
-    type: Type.OBJECT,
-    properties: {
-      pattern: {
-        type: Type.STRING,
-        description:
-          'The search pattern (case-insensitive). Can be a word, function name, or partial match.',
-      },
-    },
-    required: ['pattern'],
-  },
-}
-
-const globToolDeclaration = {
-  name: 'glob',
-  description:
-    'Search for files by name pattern. Use this to verify if a filename or directory mentioned in the audio actually exists in the project.',
-  parameters: {
-    type: Type.OBJECT,
-    properties: {
-      pattern: {
-        type: Type.STRING,
-        description:
-          'The glob pattern to match files. Examples: "*.ts", "**/*.json", "**/config*", "src/**/*.tsx"',
-      },
-    },
-    required: ['pattern'],
-  },
-}
 
 const transcriptionResultToolDeclaration = {
   name: 'transcriptionResult',
@@ -129,45 +46,13 @@ const transcriptionResultToolDeclaration = {
   },
 }
 
-function createToolRunner({ directory }: { directory?: string }): TranscriptionToolRunner {
-  const hasDirectory = directory && directory.trim().length > 0
-
+function createToolRunner(): TranscriptionToolRunner {
   return async ({ name, args }) => {
     if (name === 'transcriptionResult') {
       return {
         type: 'result',
         transcription: args?.transcription || '',
       }
-    }
-
-    if (name === 'grep' && hasDirectory) {
-      const pattern = args?.pattern || ''
-      voiceLogger.log(`Grep search: "${pattern}"`)
-      const result = await runGrep({ pattern, directory })
-      const output = (() => {
-        if (result instanceof Error) {
-          voiceLogger.error('grep search failed:', result)
-          return 'grep search failed'
-        }
-        return result
-      })()
-      voiceLogger.log(`Grep result: ${output.slice(0, 100)}...`)
-      return { type: 'toolResponse', name: 'grep', output }
-    }
-
-    if (name === 'glob' && hasDirectory) {
-      const pattern = args?.pattern || ''
-      voiceLogger.log(`Glob search: "${pattern}"`)
-      const result = await runGlob({ pattern, directory })
-      const output = (() => {
-        if (result instanceof Error) {
-          voiceLogger.error('glob search failed:', result)
-          return 'glob search failed'
-        }
-        return result
-      })()
-      voiceLogger.log(`Glob result: ${output.slice(0, 100)}...`)
-      return { type: 'toolResponse', name: 'glob', output }
     }
 
     return { type: 'skip' }
@@ -342,7 +227,6 @@ export function transcribeAudio({
   language,
   temperature,
   geminiApiKey,
-  directory,
   currentSessionContext,
   lastSessionContext,
 }: {
@@ -351,7 +235,6 @@ export function transcribeAudio({
   language?: string
   temperature?: number
   geminiApiKey?: string
-  directory?: string
   currentSessionContext?: string
   lastSessionContext?: string
 }): Promise<TranscribeAudioErrors | string> {
@@ -432,13 +315,10 @@ REMEMBER: Call "transcriptionResult" tool with your transcription. This is manda
 
 Note: "critique" is a CLI tool for showing diffs in the browser.`
 
-  // const hasDirectory = directory && directory.trim().length > 0
   const tools = [
     {
       functionDeclarations: [
         transcriptionResultToolDeclaration,
-        // grep/glob disabled - was causing transcription to hang
-        // ...(hasDirectory ? [grepToolDeclaration, globToolDeclaration] : []),
       ],
     },
   ]
@@ -458,7 +338,7 @@ Note: "critique" is a CLI tool for showing diffs in the browser.`
     },
   ]
 
-  const toolRunner = createToolRunner({ directory })
+  const toolRunner = createToolRunner()
 
   return runTranscriptionLoop({
     genAI,

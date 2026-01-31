@@ -30,6 +30,10 @@ import {
   handleLoginMethodSelectMenu,
   handleApiKeyModalSubmit,
 } from './commands/login.js'
+import {
+  handleGeminiApiKeyButton,
+  handleGeminiApiKeyModalSubmit,
+} from './commands/gemini-apikey.js'
 import { handleAgentCommand, handleAgentSelectMenu, handleQuickAgentCommand } from './commands/agent.js'
 import { handleAskQuestionSelectMenu } from './commands/ask-question.js'
 import { handleQueueCommand, handleClearQueueCommand } from './commands/queue.js'
@@ -190,6 +194,16 @@ export function registerInteractionHandler({
         return
       }
 
+      if (interaction.isButton()) {
+        const customId = interaction.customId
+
+        if (customId.startsWith('gemini_apikey:')) {
+          await handleGeminiApiKeyButton(interaction)
+          return
+        }
+        return
+      }
+
       if (interaction.isStringSelectMenu()) {
         const customId = interaction.customId
 
@@ -240,6 +254,11 @@ export function registerInteractionHandler({
 
         if (customId.startsWith('login_apikey:')) {
           await handleApiKeyModalSubmit(interaction)
+          return
+        }
+
+        if (customId.startsWith('gemini_apikey_modal:')) {
+          await handleGeminiApiKeyModalSubmit(interaction)
           return
         }
         return
