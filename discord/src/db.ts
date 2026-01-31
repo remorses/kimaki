@@ -74,7 +74,7 @@ async function initializePrisma(): Promise<PrismaClient> {
 }
 
 async function migrateSchema(prisma: PrismaClient) {
-  const schemaPath = path.join(__dirname, 'schema.sql')
+  const schemaPath = path.join(__dirname, '../src/schema.sql')
   const sql = fs.readFileSync(schemaPath, 'utf-8')
   const statements = sql
     .split(';')
