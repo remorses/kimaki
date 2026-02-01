@@ -386,6 +386,7 @@ export async function handleOpencodeSession({
   channelId,
   command,
   agent,
+  username,
 }: {
   prompt: string
   thread: ThreadChannel
@@ -397,6 +398,8 @@ export async function handleOpencodeSession({
   command?: { name: string; arguments: string }
   /** Agent to use for this session */
   agent?: string
+  /** Discord username for synthetic context (not shown in TUI) */
+  username?: string
 }): Promise<{ sessionID: string; result: any; port?: number } | undefined> {
   voiceLogger.log(
     `[OPENCODE SESSION] Starting for thread ${thread.id} with prompt: "${prompt.slice(0, 50)}${prompt.length > 50 ? '...' : ''}"`,
@@ -1199,15 +1202,15 @@ export async function handleOpencodeSession({
       )
 
       setImmediate(() => {
-        const prefixedPrompt = `${nextMessage.prompt}\n<discord-user name="${nextMessage.username}" />`
         void errore
           .tryAsync(async () => {
             return handleOpencodeSession({
-              prompt: prefixedPrompt,
+              prompt: nextMessage.prompt,
               thread,
               projectDirectory: directory,
               images: nextMessage.images,
               channelId,
+              username: nextMessage.username,
             })
           })
           .then(async (result) => {
@@ -1418,13 +1421,13 @@ export async function handleOpencodeSession({
           // Send the queued message as a new prompt (recursive call)
           // Use setImmediate to avoid blocking and allow this finally to complete
           setImmediate(() => {
-            const prefixedPrompt = `${nextMessage.prompt}\n<discord-user name="${nextMessage.username}" />`
             handleOpencodeSession({
-              prompt: prefixedPrompt,
+              prompt: nextMessage.prompt,
               thread,
               projectDirectory,
               images: nextMessage.images,
               channelId,
+              username: nextMessage.username,
             }).catch(async (e) => {
               sessionLogger.error(`[QUEUE] Failed to process queued message:`, e)
               const errorMsg = e instanceof Error ? e.message : String(e)
@@ -1479,7 +1482,16 @@ export async function handleOpencodeSession({
       return `${prompt}\n\n**The following images are already included in this message as inline content (do not use Read tool on these):**\n${imageList}`
     })()
 
-    const parts = [{ type: 'text' as const, text: promptWithImagePaths }, ...images]
+    // Synthetic context for the model (hidden in TUI)
+    let syntheticContext = ''
+    if (username) {
+      syntheticContext += `<discord-user name="${username}" />`
+    }
+    const parts = [
+      { type: 'text' as const, text: promptWithImagePaths },
+      { type: 'text' as const, text: syntheticContext, synthetic: true },
+      ...images,
+    ]
     sessionLogger.log(`[PROMPT] Parts to send:`, parts.length)
 
     const agentPreference =

@@ -80,10 +80,6 @@ setGlobalDispatcher(new Agent({ headersTimeout: 0, bodyTimeout: 0, connections: 
 const discordLogger = createLogger(LogPrefix.DISCORD)
 const voiceLogger = createLogger(LogPrefix.VOICE)
 
-function prefixWithDiscordUser({ username, prompt }: { username: string; prompt: string }): string {
-  return `${prompt}\n<discord-user name="${username}" />`
-}
-
 type StartOptions = {
   token: string
   appId?: string
@@ -317,10 +313,11 @@ export async function startDiscordBot({
           }
 
           await handleOpencodeSession({
-            prompt: prefixWithDiscordUser({ username: message.member?.displayName || message.author.displayName, prompt }),
+            prompt,
             thread,
             projectDirectory,
             channelId: parent?.id || '',
+            username: message.member?.displayName || message.author.displayName,
           })
           return
         }
@@ -394,12 +391,13 @@ export async function startDiscordBot({
           ? `${messageContent}\n\n${textAttachmentsContent}`
           : messageContent
         await handleOpencodeSession({
-          prompt: prefixWithDiscordUser({ username: message.member?.displayName || message.author.displayName, prompt: promptWithAttachments }),
+          prompt: promptWithAttachments,
           thread,
           projectDirectory,
           originalMessage: message,
           images: fileAttachments,
           channelId: parent?.id,
+          username: message.member?.displayName || message.author.displayName,
         })
         return
       }
@@ -538,12 +536,13 @@ export async function startDiscordBot({
           ? `${messageContent}\n\n${textAttachmentsContent}`
           : messageContent
         await handleOpencodeSession({
-          prompt: prefixWithDiscordUser({ username: message.member?.displayName || message.author.displayName, prompt: promptWithAttachments }),
+          prompt: promptWithAttachments,
           thread,
           projectDirectory: sessionDirectory,
           originalMessage: message,
           images: fileAttachments,
           channelId: textChannel.id,
+          username: message.member?.displayName || message.author.displayName,
         })
       } else {
         discordLogger.log(`Channel type ${channel.type} is not supported`)
