@@ -139,7 +139,7 @@ export async function initializeOpencodeForDirectory(directory: string): Promise
         $schema: 'https://opencode.ai/config.json',
         lsp: false,
         formatter: false,
-        plugin: [path.join(__dirname, 'opencode-plugin.js')],
+        plugin: [new URL('../src/opencode-plugin.ts', import.meta.url).href],
         permission: {
           edit: 'allow',
           bash: 'allow',

@@ -6,7 +6,7 @@ import { createTwoFilesPatch } from 'diff'
 import { tool } from '@opencode-ai/plugin/tool'
 import type { Plugin } from '@opencode-ai/plugin'
 
-const plugin: Plugin = async ({ client, directory }) => {
+const kimakiPlugin: Plugin = async ({ client, directory }) => {
   return {
     tool: {
       messagediff: tool({
@@ -43,7 +43,8 @@ const plugin: Plugin = async ({ client, directory }) => {
               return 'No user messages found'
             }
 
-            const idx = args.index < 0 ? userMessages.length + args.index : args.index
+            const idx =
+              args.index < 0 ? userMessages.length + args.index : args.index
 
             const targetMessage = userMessages[idx]
             if (idx < 0 || idx >= userMessages.length || !targetMessage) {
@@ -65,19 +66,30 @@ const plugin: Plugin = async ({ client, directory }) => {
 
           // Generate unified patch from before/after content
           const patches = diffs.map((d) => {
-            return createTwoFilesPatch(`a/${d.file}`, `b/${d.file}`, d.before, d.after)
+            return createTwoFilesPatch(
+              `a/${d.file}`,
+              `b/${d.file}`,
+              d.before,
+              d.after,
+            )
           })
           const combinedPatch = patches.join('')
 
           const description =
-            args.index !== undefined ? `Message ${args.index} changes` : 'Session changes'
+            args.index !== undefined
+              ? `Message ${args.index} changes`
+              : 'Session changes'
 
           // Run critique with stdin
           return new Promise((resolve) => {
-            const proc = spawn('bunx', ['critique', '--stdin', '--web', description], {
-              cwd: directory,
-              stdio: ['pipe', 'pipe', 'pipe'],
-            })
+            const proc = spawn(
+              'bunx',
+              ['critique', '--stdin', '--web', description],
+              {
+                cwd: directory,
+                stdio: ['pipe', 'pipe', 'pipe'],
+              },
+            )
 
             let stdout = ''
             let stderr = ''
@@ -112,4 +124,4 @@ const plugin: Plugin = async ({ client, directory }) => {
   }
 }
 
-export default plugin
+export { kimakiPlugin }
