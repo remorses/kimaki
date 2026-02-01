@@ -11,7 +11,6 @@ model thread_sessions {
   thread_id  String    @id
   session_id String
   created_at DateTime? @default(now())
-  last_seen_at DateTime?
 
   part_messages      part_messages[]
   pending_auto_start pending_auto_start?

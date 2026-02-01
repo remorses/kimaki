@@ -2,17 +2,17 @@
 // Stores thread-session mappings, bot tokens, channel directories,
 // API keys, and model preferences in <dataDir>/discord-sessions.db.
 
-import { getPrisma, getPrismaSync, closePrisma } from './db.js'
+import { getPrisma, closePrisma } from './db.js'
 import { getDefaultVerbosity } from './config.js'
 import { createLogger, LogPrefix } from './logger.js'
 
 const dbLogger = createLogger(LogPrefix.DB)
 
 // Re-export Prisma utilities
-export { getPrisma, getPrismaSync, closePrisma }
+export { getPrisma, closePrisma }
 
 /**
- * Initialize the database. Must be called before using getPrismaSync().
+ * Initialize the database.
  * Returns the Prisma client.
  */
 export async function initDatabase() {
