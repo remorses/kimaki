@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.4.55
+
+### Patch Changes
+
+- feat: migrate database to **Prisma** for type-safe queries and better schema management
+- fix: restore **idempotent schema** initialization to ensure database consistency on startup
+- refactor: add **foreign key relations** to database schema
+
 ## 0.4.54
 
 ### Patch Changes
