@@ -42,7 +42,6 @@ The setup wizard will:
 2. **Configure Bot Settings** - Enable required intents (Message Content, Server Members)
 3. **Install to Your Server** - Generate an invite link with proper permissions
 4. **Select Projects** - Choose which OpenCode projects to add as Discord channels
-5. **Gemini API Key (Optional)** - For voice message transcription
 
 Keep the CLI running. It's the bridge between Discord and your machine.
 

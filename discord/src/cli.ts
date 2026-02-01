@@ -30,7 +30,6 @@ import {
 import {
   getBotToken,
   setBotToken,
-  setGeminiApiKey,
   setChannelDirectory,
   findChannelsByDirectory,
   findChannelByAppId,
@@ -794,35 +793,7 @@ async function run({ restart, addChannels, useWorktrees, enableVoiceChannels }: 
     }
     token = stripBracketedPaste(tokenInput)
 
-    note(`You can get a Gemini api Key at https://aistudio.google.com/apikey`, `Gemini API Key`)
-
-    const geminiApiKeyInput = await password({
-      message:
-        'Enter your Gemini API Key for voice channels and audio transcription (optional, press Enter to skip):',
-      validate(value) {
-        const cleaned = stripBracketedPaste(value)
-        if (cleaned && cleaned.length < 10) {
-          return 'Invalid API key format'
-        }
-        return undefined
-      },
-    })
-
-    if (isCancel(geminiApiKeyInput)) {
-      cancel('Setup cancelled')
-      process.exit(0)
-    }
-
-    const geminiApiKey = stripBracketedPaste(geminiApiKeyInput) || null
-
-    // Store bot token early so setGeminiApiKey can satisfy FK constraint
     await setBotToken(appId, token)
-
-    // Store API key in database
-    if (geminiApiKey) {
-      await setGeminiApiKey(appId, geminiApiKey)
-      note('API key saved successfully', 'API Key Stored')
-    }
 
     note(
       `Bot install URL:\n${generateBotInstallUrl({ clientId: appId })}\n\nYou MUST install the bot in your Discord server before continuing.`,
