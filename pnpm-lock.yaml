@@ -75,6 +75,9 @@ importers:
       better-sqlite3:
         specifier: ^12.3.0
         version: 12.3.0
+      diff:
+        specifier: ^8.0.3
+        version: 8.0.3
       discord.js:
         specifier: ^14.16.3
         version: 14.22.1
@@ -1576,6 +1579,10 @@ packages:
   detect-libc@2.1.2:
     resolution: {integrity: sha512-Btj2BOOO83o3WyH59e8MgXsxEQVcarkUOpEYrubB0urwnN10yQ364rsiByU11nZlqWYZm05i/of7io4mzihBtQ==}
     engines: {node: '>=8'}
+
+  diff@8.0.3:
+    resolution: {integrity: sha512-qejHi7bcSD4hQAZE0tNAawRK1ZtafHDmMTMkrrIGgSLl7hTnQHmKCeB45xAcbfTqK2zowkM3j3bHt/4b/ARbYQ==}
+    engines: {node: '>=0.3.1'}
 
   discord-api-types@0.38.26:
     resolution: {integrity: sha512-xpmPviHjIJ6dFu1eNwNDIGQ3N6qmPUUYFVAx/YZ64h7ZgPkTcKjnciD8bZe8Vbeji7yS5uYljyciunpq0J5NSw==}
@@ -3850,6 +3857,8 @@ snapshots:
   detect-libc@2.0.4: {}
 
   detect-libc@2.1.2: {}
+
+  diff@8.0.3: {}
 
   discord-api-types@0.38.26: {}
 

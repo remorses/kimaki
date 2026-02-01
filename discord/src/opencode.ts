@@ -7,6 +7,10 @@ import { spawn, type ChildProcess } from 'node:child_process'
 import fs from 'node:fs'
 import net from 'node:net'
 import os from 'node:os'
+import path from 'node:path'
+import { fileURLToPath } from 'node:url'
+
+const __dirname = path.dirname(fileURLToPath(import.meta.url))
 import { createOpencodeClient, type OpencodeClient, type Config as SdkConfig } from '@opencode-ai/sdk'
 
 // SDK Config type is simplified; opencode accepts nested permission objects with path patterns
@@ -135,6 +139,7 @@ export async function initializeOpencodeForDirectory(directory: string): Promise
         $schema: 'https://opencode.ai/config.json',
         lsp: false,
         formatter: false,
+        plugin: [path.join(__dirname, 'opencode-plugin.js')],
         permission: {
           edit: 'allow',
           bash: 'allow',
