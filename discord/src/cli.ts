@@ -255,6 +255,7 @@ async function registerCommands({
 
         return option
       })
+      .setDMPermission(false)
       .toJSON(),
     new SlashCommandBuilder()
       .setName('new-session')
@@ -281,6 +282,7 @@ async function registerCommands({
 
         return option
       })
+      .setDMPermission(false)
       .toJSON(),
     new SlashCommandBuilder()
       .setName('new-worktree')
@@ -293,14 +295,17 @@ async function registerCommands({
 
         return option
       })
+      .setDMPermission(false)
       .toJSON(),
     new SlashCommandBuilder()
       .setName('merge-worktree')
       .setDescription('Merge the worktree branch into the default branch')
+      .setDMPermission(false)
       .toJSON(),
     new SlashCommandBuilder()
       .setName('toggle-worktrees')
       .setDescription('Toggle automatic git worktree creation for new sessions in this channel')
+      .setDMPermission(false)
       .toJSON(),
     new SlashCommandBuilder()
       .setName('add-project')
@@ -314,6 +319,7 @@ async function registerCommands({
 
         return option
       })
+      .setDMPermission(false)
       .toJSON(),
     new SlashCommandBuilder()
       .setName('remove-project')
@@ -327,6 +333,7 @@ async function registerCommands({
 
         return option
       })
+      .setDMPermission(false)
       .toJSON(),
     new SlashCommandBuilder()
       .setName('create-new-project')
@@ -336,38 +343,47 @@ async function registerCommands({
 
         return option
       })
+      .setDMPermission(false)
       .toJSON(),
     new SlashCommandBuilder()
       .setName('abort')
       .setDescription('Abort the current OpenCode request in this thread')
+      .setDMPermission(false)
       .toJSON(),
     new SlashCommandBuilder()
       .setName('compact')
       .setDescription('Compact the session context by summarizing conversation history')
+      .setDMPermission(false)
       .toJSON(),
     new SlashCommandBuilder()
       .setName('stop')
       .setDescription('Abort the current OpenCode request in this thread')
+      .setDMPermission(false)
       .toJSON(),
     new SlashCommandBuilder()
       .setName('share')
       .setDescription('Share the current session as a public URL')
+      .setDMPermission(false)
       .toJSON(),
     new SlashCommandBuilder()
       .setName('fork')
       .setDescription('Fork the session from a past user message')
+      .setDMPermission(false)
       .toJSON(),
     new SlashCommandBuilder()
       .setName('model')
       .setDescription('Set the preferred model for this channel or session')
+      .setDMPermission(false)
       .toJSON(),
     new SlashCommandBuilder()
       .setName('login')
       .setDescription('Authenticate with an AI provider (OAuth or API key). Use this instead of /connect')
+      .setDMPermission(false)
       .toJSON(),
     new SlashCommandBuilder()
       .setName('agent')
       .setDescription('Set the preferred agent for this channel or session')
+      .setDMPermission(false)
       .toJSON(),
     new SlashCommandBuilder()
       .setName('queue')
@@ -377,18 +393,22 @@ async function registerCommands({
 
         return option
       })
+      .setDMPermission(false)
       .toJSON(),
     new SlashCommandBuilder()
       .setName('clear-queue')
       .setDescription('Clear all queued messages in this thread')
+      .setDMPermission(false)
       .toJSON(),
     new SlashCommandBuilder()
       .setName('undo')
       .setDescription('Undo the last assistant message (revert file changes)')
+      .setDMPermission(false)
       .toJSON(),
     new SlashCommandBuilder()
       .setName('redo')
       .setDescription('Redo previously undone changes')
+      .setDMPermission(false)
       .toJSON(),
     new SlashCommandBuilder()
       .setName('verbosity')
@@ -405,10 +425,12 @@ async function registerCommands({
           )
         return option
       })
+      .setDMPermission(false)
       .toJSON(),
     new SlashCommandBuilder()
       .setName('restart-opencode-server')
       .setDescription('Restart the opencode server for this channel only (fixes state/auth/plugins)')
+      .setDMPermission(false)
       .toJSON(),
   ]
 
@@ -434,6 +456,7 @@ async function registerCommands({
             .setRequired(false)
           return option
         })
+        .setDMPermission(false)
         .toJSON(),
     )
   }
@@ -452,6 +475,7 @@ async function registerCommands({
       new SlashCommandBuilder()
         .setName(commandName.slice(0, 32)) // Discord limits to 32 chars
         .setDescription(description.slice(0, 100))
+        .setDMPermission(false)
         .toJSON(),
     )
   }
@@ -1412,7 +1436,15 @@ cli
                 }
               }
               // Fall back to first guild the bot is in
-              const firstGuild = client.guilds.cache.first()
+              let firstGuild = client.guilds.cache.first()
+              if (!firstGuild) {
+                // Cache might be empty, try fetching guilds from API
+                const fetched = await client.guilds.fetch()
+                const firstOAuth2Guild = fetched.first()
+                if (firstOAuth2Guild) {
+                  firstGuild = await client.guilds.fetch(firstOAuth2Guild.id)
+                }
+              }
               if (!firstGuild) {
                 throw new Error('No guild found. Add the bot to a server first.')
               }
@@ -1727,7 +1759,15 @@ cli
                 'Failed to fetch existing channel while selecting guild:',
                 error instanceof Error ? error.message : String(error),
               )
-              const firstGuild = client.guilds.cache.first()
+              let firstGuild = client.guilds.cache.first()
+              if (!firstGuild) {
+                // Cache might be empty, try fetching guilds from API
+                const fetched = await client.guilds.fetch()
+                const firstOAuth2Guild = fetched.first()
+                if (firstOAuth2Guild) {
+                  firstGuild = await client.guilds.fetch(firstOAuth2Guild.id)
+                }
+              }
               if (!firstGuild) {
                 cliLogger.log('No guild found')
                 cliLogger.error('No guild found. Add the bot to a server first.')
@@ -1737,7 +1777,15 @@ cli
               guild = firstGuild
             }
           } else {
-            const firstGuild = client.guilds.cache.first()
+            let firstGuild = client.guilds.cache.first()
+            if (!firstGuild) {
+              // Cache might be empty, try fetching guilds from API
+              const fetched = await client.guilds.fetch()
+              const firstOAuth2Guild = fetched.first()
+              if (firstOAuth2Guild) {
+                firstGuild = await client.guilds.fetch(firstOAuth2Guild.id)
+              }
+            }
             if (!firstGuild) {
               cliLogger.log('No guild found')
               cliLogger.error('No guild found. Add the bot to a server first.')
