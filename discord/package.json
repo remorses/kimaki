@@ -5,7 +5,7 @@
   "version": "0.4.55",
   "scripts": {
     "dev": "tsx --env-file .env src/cli.ts",
-    "prepublishOnly": "pnpm tsc",
+    "prepublishOnly": "pnpm generate && pnpm tsc",
     "dev:bun": "DEBUG=1 bun --env-file .env src/cli.ts",
     "watch": "tsx scripts/watch-session.ts",
     "generate": "prisma generate && pnpm generate:sql",

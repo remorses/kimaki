@@ -31,8 +31,9 @@ model bot_tokens {
   token      String
   created_at DateTime? @default(now())
 
-  api_keys bot_api_keys?
-  channels channel_directories[]
+  api_keys     bot_api_keys?
+  channels     channel_directories[]
+  global_model global_models?
 }
 
 model channel_directories {
@@ -123,4 +124,13 @@ model channel_verbosity {
   updated_at DateTime? @default(now()) @updatedAt
 
   channel channel_directories @relation(fields: [channel_id], references: [channel_id])
+}
+
+model global_models {
+  app_id     String    @id
+  model_id   String
+  created_at DateTime? @default(now())
+  updated_at DateTime? @default(now()) @updatedAt
+
+  bot bot_tokens @relation(fields: [app_id], references: [app_id])
 }

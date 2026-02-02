@@ -10,8 +10,6 @@ import fs from 'node:fs'
 import path from 'node:path'
 import { xdgState } from 'xdg-basedir'
 import {
-  getSessionModel,
-  getChannelModel,
   getSessionAgent,
   getChannelAgent,
   setSessionAgent,
@@ -21,7 +19,9 @@ import {
   setThreadSession,
   getPartMessageIds,
   setPartMessage,
+  getChannelDirectory,
 } from './database.js'
+import { getCurrentModelInfo } from './commands/model.js'
 import {
   initializeOpencodeForDirectory,
   getOpencodeServers,
@@ -1500,57 +1500,22 @@ export async function handleOpencodeSession({
       sessionLogger.log(`[AGENT] Using agent preference: ${agentPreference}`)
     }
 
-    // Model priority: session model > agent model > channel model > default
-    const sessionModelPreference = await getSessionModel(session.id)
-    const channelModelPreference = channelId ? await getChannelModel(channelId) : undefined
-    const modelParam = await (async () => {
-      // 1. Session model preference (highest priority, explicit user override)
-      if (sessionModelPreference) {
-        const [providerID, ...modelParts] = sessionModelPreference.split('/')
-        const modelID = modelParts.join('/')
-        if (providerID && modelID) {
-          sessionLogger.log(`[MODEL] Using session preference: ${sessionModelPreference}`)
-          return { providerID, modelID }
-        }
+    // Model priority: session model > agent model > channel model > global model > default
+    const channelInfo = channelId ? await getChannelDirectory(channelId) : undefined
+    const modelInfo = await getCurrentModelInfo({
+      sessionId: session.id,
+      channelId,
+      appId: channelInfo?.appId ?? undefined,
+      agentPreference,
+      getClient,
+    })
+    const modelParam = (() => {
+      if (modelInfo.type === 'none') {
+        sessionLogger.log(`[MODEL] No model available (no preference, no default)`)
+        return undefined
       }
-
-      // 2. Agent's configured model
-      if (agentPreference) {
-        const agentsResponse = await errore.tryAsync(() => {
-          return getClient().app.agents({ query: { directory: sdkDirectory } })
-        })
-        if (!(agentsResponse instanceof Error) && agentsResponse.data) {
-          const agent = agentsResponse.data.find((a) => a.name === agentPreference)
-          if (agent?.model) {
-            sessionLogger.log(
-              `[MODEL] Using agent model: ${agent.model.providerID}/${agent.model.modelID}`,
-            )
-            return agent.model
-          }
-          sessionLogger.log(`[MODEL] Agent "${agentPreference}" has no model configured`)
-        }
-      }
-
-      // 3. Channel model preference
-      if (channelModelPreference) {
-        const [providerID, ...modelParts] = channelModelPreference.split('/')
-        const modelID = modelParts.join('/')
-        if (providerID && modelID) {
-          sessionLogger.log(`[MODEL] Using channel preference: ${channelModelPreference}`)
-          return { providerID, modelID }
-        }
-      }
-
-      // 4. Default model from OpenCode (like TUI does)
-      const defaultModel = await getDefaultModel({ getClient })
-      if (defaultModel) {
-        sessionLogger.log(`[MODEL] Using default: ${defaultModel.providerID}/${defaultModel.modelID}`)
-        return defaultModel
-      }
-
-      // No model available - this will likely cause an error from OpenCode
-      sessionLogger.log(`[MODEL] No model available (no preference, no default)`)
-      return undefined
+      sessionLogger.log(`[MODEL] Using ${modelInfo.type}: ${modelInfo.model}`)
+      return { providerID: modelInfo.providerID, modelID: modelInfo.modelID }
     })()
 
     // Fail early if no model available

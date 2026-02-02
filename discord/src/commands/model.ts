@@ -18,6 +18,8 @@ import {
   getSessionAgent,
   getChannelAgent,
   getThreadSession,
+  getGlobalModel,
+  setGlobalModel,
 } from '../database.js'
 import { initializeOpencodeForDirectory } from '../opencode.js'
 import { resolveTextChannel, getKimakiMetadata } from '../discord-utils.js'
@@ -38,6 +40,8 @@ const pendingModelContexts = new Map<
     providerId?: string
     providerName?: string
     thread?: ThreadChannel
+    appId?: string
+    selectedModelId?: string
   }
 >()
 
@@ -54,26 +58,49 @@ export type ProviderInfo = {
   >
 }
 
+export type ModelSource =
+  | 'session'
+  | 'agent'
+  | 'channel'
+  | 'global'
+  | 'opencode-config'
+  | 'opencode-recent'
+  | 'opencode-provider-default'
+
 export type CurrentModelInfo =
-  | { type: 'session'; model: string }
-  | { type: 'agent'; model: string; agentName: string }
-  | { type: 'channel'; model: string }
-  | { type: 'opencode-config'; model: string }
-  | { type: 'opencode-recent'; model: string }
-  | { type: 'opencode-provider-default'; model: string }
+  | { type: 'session'; model: string; providerID: string; modelID: string }
+  | { type: 'agent'; model: string; providerID: string; modelID: string; agentName: string }
+  | { type: 'channel'; model: string; providerID: string; modelID: string }
+  | { type: 'global'; model: string; providerID: string; modelID: string }
+  | { type: 'opencode-config'; model: string; providerID: string; modelID: string }
+  | { type: 'opencode-recent'; model: string; providerID: string; modelID: string }
+  | { type: 'opencode-provider-default'; model: string; providerID: string; modelID: string }
   | { type: 'none' }
+
+function parseModelId(modelString: string): { providerID: string; modelID: string } | undefined {
+  const [providerID, ...modelParts] = modelString.split('/')
+  const modelID = modelParts.join('/')
+  if (providerID && modelID) {
+    return { providerID, modelID }
+  }
+  return undefined
+}
 
 /**
  * Get the current model info for a channel/session, including where it comes from.
- * Priority: session > agent > channel > opencode default
+ * Priority: session > agent > channel > global > opencode default
  */
-async function getCurrentModelInfo({
+export async function getCurrentModelInfo({
   sessionId,
   channelId,
+  appId,
+  agentPreference,
   getClient,
 }: {
   sessionId?: string
-  channelId: string
+  channelId?: string
+  appId?: string
+  agentPreference?: string
   getClient: Awaited<ReturnType<typeof initializeOpencodeForDirectory>>
 }): Promise<CurrentModelInfo> {
   if (getClient instanceof Error) {
@@ -84,36 +111,66 @@ async function getCurrentModelInfo({
   if (sessionId) {
     const sessionModel = await getSessionModel(sessionId)
     if (sessionModel) {
-      return { type: 'session', model: sessionModel }
+      const parsed = parseModelId(sessionModel)
+      if (parsed) {
+        return { type: 'session', model: sessionModel, ...parsed }
+      }
     }
   }
 
   // 2. Check agent's configured model
-  const agentPreference = sessionId
-    ? (await getSessionAgent(sessionId)) || (await getChannelAgent(channelId))
-    : await getChannelAgent(channelId)
-  if (agentPreference) {
+  const effectiveAgent = agentPreference ?? (sessionId
+    ? (await getSessionAgent(sessionId)) || (channelId ? await getChannelAgent(channelId) : undefined)
+    : (channelId ? await getChannelAgent(channelId) : undefined))
+  if (effectiveAgent) {
     const agentsResponse = await getClient().app.agents({})
     if (agentsResponse.data) {
-      const agent = agentsResponse.data.find((a) => a.name === agentPreference)
+      const agent = agentsResponse.data.find((a) => a.name === effectiveAgent)
       if (agent?.model) {
         const model = `${agent.model.providerID}/${agent.model.modelID}`
-        return { type: 'agent', model, agentName: agentPreference }
+        return {
+          type: 'agent',
+          model,
+          providerID: agent.model.providerID,
+          modelID: agent.model.modelID,
+          agentName: effectiveAgent,
+        }
       }
     }
   }
 
   // 3. Check channel model preference
-  const channelModel = await getChannelModel(channelId)
-  if (channelModel) {
-    return { type: 'channel', model: channelModel }
+  if (channelId) {
+    const channelModel = await getChannelModel(channelId)
+    if (channelModel) {
+      const parsed = parseModelId(channelModel)
+      if (parsed) {
+        return { type: 'channel', model: channelModel, ...parsed }
+      }
+    }
   }
 
-  // 4. Get opencode default (config > recent > provider default)
+  // 4. Check global model preference
+  if (appId) {
+    const globalModel = await getGlobalModel(appId)
+    if (globalModel) {
+      const parsed = parseModelId(globalModel)
+      if (parsed) {
+        return { type: 'global', model: globalModel, ...parsed }
+      }
+    }
+  }
+
+  // 5. Get opencode default (config > recent > provider default)
   const defaultModel = await getDefaultModel({ getClient })
   if (defaultModel) {
     const model = `${defaultModel.providerID}/${defaultModel.modelID}`
-    return { type: defaultModel.source, model }
+    return {
+      type: defaultModel.source,
+      model,
+      providerID: defaultModel.providerID,
+      modelID: defaultModel.modelID,
+    }
   }
 
   return { type: 'none' }
@@ -231,6 +288,7 @@ export async function handleModelCommand({
     const currentModelInfo = await getCurrentModelInfo({
       sessionId,
       channelId: targetChannelId,
+      appId: channelAppId,
       getClient,
     })
 
@@ -242,6 +300,8 @@ export async function handleModelCommand({
           return `**Current (agent "${currentModelInfo.agentName}"):** \`${currentModelInfo.model}\``
         case 'channel':
           return `**Current (channel override):** \`${currentModelInfo.model}\``
+        case 'global':
+          return `**Current (global default):** \`${currentModelInfo.model}\``
         case 'opencode-config':
         case 'opencode-recent':
         case 'opencode-provider-default':
@@ -258,6 +318,7 @@ export async function handleModelCommand({
       sessionId: sessionId,
       isThread: isThread,
       thread: isThread ? (channel as ThreadChannel) : undefined,
+      appId: channelAppId,
     }
     const contextHash = crypto.randomBytes(8).toString('hex')
     pendingModelContexts.set(contextHash, context)
@@ -485,13 +546,112 @@ export async function handleModelSelectMenu(
           components: [],
         })
       }
+
+      // Clean up the context from memory
+      pendingModelContexts.delete(contextHash)
     } else {
-      // Store for channel
-      await setChannelModel(context.channelId, fullModelId)
-      modelLogger.log(`Set model ${fullModelId} for channel ${context.channelId}`)
+      // Channel context - show scope selection menu
+      context.selectedModelId = fullModelId
+      pendingModelContexts.set(contextHash, context)
+
+      const scopeOptions = [
+        {
+          label: 'This channel only',
+          value: 'channel',
+          description: 'Override for this channel only',
+        },
+        {
+          label: 'Global default',
+          value: 'global',
+          description: 'Set for this channel and as default for all others',
+        },
+      ]
+
+      const selectMenu = new StringSelectMenuBuilder()
+        .setCustomId(`model_scope:${contextHash}`)
+        .setPlaceholder('Apply to...')
+        .addOptions(scopeOptions)
+
+      const actionRow = new ActionRowBuilder<StringSelectMenuBuilder>().addComponents(selectMenu)
 
       await interaction.editReply({
-        content: `Model preference set for this channel:\n**${context.providerName}** / **${selectedModelId}**\n\`${fullModelId}\`\nAll new sessions in this channel will use this model.`,
+        content: `**Set Model Preference**\nModel: **${context.providerName}** / **${selectedModelId}**\n\`${fullModelId}\`\nApply to:`,
+        components: [actionRow],
+      })
+    }
+  } catch (error) {
+    modelLogger.error('Error saving model preference:', error)
+    await interaction.editReply({
+      content: `Failed to save model preference: ${error instanceof Error ? error.message : 'Unknown error'}`,
+      components: [],
+    })
+  }
+}
+
+/**
+ * Handle the scope select menu interaction.
+ * Applies the model to either the channel or globally.
+ */
+export async function handleModelScopeSelectMenu(
+  interaction: StringSelectMenuInteraction,
+): Promise<void> {
+  const customId = interaction.customId
+
+  if (!customId.startsWith('model_scope:')) {
+    return
+  }
+
+  // Defer update immediately
+  await interaction.deferUpdate()
+
+  const contextHash = customId.replace('model_scope:', '')
+  const context = pendingModelContexts.get(contextHash)
+
+  if (!context || !context.providerId || !context.providerName || !context.selectedModelId) {
+    await interaction.editReply({
+      content: 'Selection expired. Please run /model again.',
+      components: [],
+    })
+    return
+  }
+
+  const selectedScope = interaction.values[0]
+  if (!selectedScope) {
+    await interaction.editReply({
+      content: 'No scope selected',
+      components: [],
+    })
+    return
+  }
+
+  const modelId = context.selectedModelId
+  const modelDisplay = modelId.split('/')[1] || modelId
+
+  try {
+    if (selectedScope === 'global') {
+      if (!context.appId) {
+        await interaction.editReply({
+          content: 'Cannot set global model: channel is not linked to a bot',
+          components: [],
+        })
+        return
+      }
+      // Set both global default and current channel
+      await setGlobalModel(context.appId, modelId)
+      await setChannelModel(context.channelId, modelId)
+      modelLogger.log(`Set global model ${modelId} for app ${context.appId} and channel ${context.channelId}`)
+
+      await interaction.editReply({
+        content: `Model set for this channel and as global default:\n**${context.providerName}** / **${modelDisplay}**\n\`${modelId}\`\nAll channels will use this model (unless they have their own override).`,
+        components: [],
+      })
+    } else {
+      // channel scope
+      await setChannelModel(context.channelId, modelId)
+      modelLogger.log(`Set model ${modelId} for channel ${context.channelId}`)
+
+      await interaction.editReply({
+        content: `Model preference set for this channel:\n**${context.providerName}** / **${modelDisplay}**\n\`${modelId}\`\nAll new sessions in this channel will use this model.`,
         components: [],
       })
     }

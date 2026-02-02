@@ -23,6 +23,7 @@ import {
   handleModelCommand,
   handleProviderSelectMenu,
   handleModelSelectMenu,
+  handleModelScopeSelectMenu,
 } from './commands/model.js'
 import {
   handleLoginCommand,
@@ -219,6 +220,11 @@ export function registerInteractionHandler({
 
         if (customId.startsWith('model_select:')) {
           await handleModelSelectMenu(interaction)
+          return
+        }
+
+        if (customId.startsWith('model_scope:')) {
+          await handleModelScopeSelectMenu(interaction)
           return
         }
 

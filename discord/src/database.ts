@@ -76,6 +76,35 @@ export async function setChannelModel(channelId: string, modelId: string): Promi
 }
 
 // ============================================================================
+// Global Model Functions
+// ============================================================================
+
+/**
+ * Get the global default model for a bot.
+ * @returns Model ID in format "provider_id/model_id" or undefined
+ */
+export async function getGlobalModel(appId: string): Promise<string | undefined> {
+    const prisma = await getPrisma()
+    const row = await prisma.global_models.findUnique({
+        where: { app_id: appId },
+    })
+    return row?.model_id
+}
+
+/**
+ * Set the global default model for a bot.
+ * @param modelId Model ID in format "provider_id/model_id"
+ */
+export async function setGlobalModel(appId: string, modelId: string): Promise<void> {
+    const prisma = await getPrisma()
+    await prisma.global_models.upsert({
+        where: { app_id: appId },
+        create: { app_id: appId, model_id: modelId },
+        update: { model_id: modelId, updated_at: new Date() },
+    })
+}
+
+// ============================================================================
 // Session Model Functions
 // ============================================================================
 
