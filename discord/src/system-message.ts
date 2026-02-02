@@ -170,12 +170,7 @@ git -C ${worktree.mainRepoDirectory} checkout $DEFAULT_BRANCH && git -C ${worktr
 }
 ## showing diffs
 
-IMPORTANT: After editing files, use the \`messagediff\` tool to get a critique URL and share it with the user.
-
-- Use \`messagediff\` with no arguments to show all changes made during the session
-- Use \`messagediff\` with \`index: -1\` when you made incremental updates, so the user only sees the latest changes instead of the full session diff
-
-For git-based diffs (commits, branches), use the critique command instead:
+IMPORTANT: After editing any files, you MUST execute the critique command using the Bash tool to get a diff URL, then share that URL with the user.
 
 Typical usage examples:
 
