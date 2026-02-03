@@ -453,3 +453,30 @@ test('numbered list with filename metadata code block', () => {
     2. Second item"
   `)
 })
+
+test('inline fence in list item stays inline (discord formatting issue)', () => {
+  const input = `- File: playwriter/src/aria-snapshot.ts
+- Add helper function (~line 477, after isTextRole):\`\`\`ts
+function isSubstringOfAny(needle: string, haystack: Set<string>): boolean {
+  for (const str of haystack) {
+    if (str.includes(needle)) {
+      return true
+    }
+  }
+  return false
+}
+\`\`\``
+  const result = unnestCodeBlocksFromLists(input)
+  expect(result).toMatchInlineSnapshot(`
+    "- File: playwriter/src/aria-snapshot.ts
+    - Add helper function (~line 477, after isTextRole):\`\`\`ts
+    function isSubstringOfAny(needle: string, haystack: Set<string>): boolean {
+      for (const str of haystack) {
+        if (str.includes(needle)) {
+          return true
+        }
+      }
+      return false
+    }\`\`\`"
+  `)
+})

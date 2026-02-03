@@ -60,8 +60,25 @@ export function splitMarkdownForDiscord({
   const tokens = lexer.lex(content)
 
   const lines: LineInfo[] = []
+  const ensureNewlineBeforeCode = (): void => {
+    const last = lines[lines.length - 1]
+    if (!last) {
+      return
+    }
+    if (last.text.endsWith('\n')) {
+      return
+    }
+    lines.push({
+      text: '\n',
+      inCodeBlock: false,
+      lang: '',
+      isOpeningFence: false,
+      isClosingFence: false,
+    })
+  }
   for (const token of tokens) {
     if (token.type === 'code') {
+      ensureNewlineBeforeCode()
       const lang = token.lang || ''
       lines.push({
         text: '```' + lang + '\n',
