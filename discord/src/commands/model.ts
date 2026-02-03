@@ -288,7 +288,7 @@ export async function handleModelCommand({
     const currentModelInfo = await getCurrentModelInfo({
       sessionId,
       channelId: targetChannelId,
-      appId: channelAppId,
+      appId: channelAppId || appId,
       getClient,
     })
 
@@ -312,13 +312,14 @@ export async function handleModelCommand({
     })()
 
     // Store context with a short hash key to avoid customId length limits
+    // Use bot's appId if channel doesn't have one stored (older channels or channels migrated before appId tracking)
     const context = {
       dir: projectDirectory,
       channelId: targetChannelId,
       sessionId: sessionId,
       isThread: isThread,
       thread: isThread ? (channel as ThreadChannel) : undefined,
-      appId: channelAppId,
+      appId: channelAppId || appId,
     }
     const contextHash = crypto.randomBytes(8).toString('hex')
     pendingModelContexts.set(contextHash, context)
@@ -532,6 +533,7 @@ export async function handleModelSelectMenu(
           sessionId: context.sessionId,
           thread: context.thread,
           projectDirectory: context.dir,
+          appId: context.appId,
         })
       }
 

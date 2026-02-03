@@ -148,6 +148,7 @@ export async function handleCreateNewProjectCommand({
       thread,
       projectDirectory,
       channelId: textChannel.id,
+      appId,
     })
 
     logger.log(`Created new project ${channelName} at ${projectDirectory}`)

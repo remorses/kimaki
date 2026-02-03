@@ -117,6 +117,7 @@ export type QueuedMessage = {
   username: string
   queuedAt: number
   images?: DiscordFileAttachment[]
+  appId?: string
 }
 
 // Queue of messages waiting to be sent after current response finishes
@@ -294,10 +295,12 @@ export async function abortAndRetrySession({
   sessionId,
   thread,
   projectDirectory,
+  appId,
 }: {
   sessionId: string
   thread: ThreadChannel
   projectDirectory: string
+  appId?: string
 }): Promise<boolean> {
   const controller = abortControllers.get(sessionId)
 
@@ -360,6 +363,7 @@ export async function abortAndRetrySession({
           thread,
           projectDirectory,
           images,
+          appId,
         })
       })
       .then(async (result) => {
@@ -387,6 +391,7 @@ export async function handleOpencodeSession({
   command,
   agent,
   username,
+  appId,
 }: {
   prompt: string
   thread: ThreadChannel
@@ -400,6 +405,7 @@ export async function handleOpencodeSession({
   agent?: string
   /** Discord username for synthetic context (not shown in TUI) */
   username?: string
+  appId?: string
 }): Promise<{ sessionID: string; result: any; port?: number } | undefined> {
   voiceLogger.log(
     `[OPENCODE SESSION] Starting for thread ${thread.id} with prompt: "${prompt.slice(0, 50)}${prompt.length > 50 ? '...' : ''}"`,
@@ -1211,6 +1217,7 @@ export async function handleOpencodeSession({
               images: nextMessage.images,
               channelId,
               username: nextMessage.username,
+              appId: nextMessage.appId,
             })
           })
           .then(async (result) => {
@@ -1428,6 +1435,7 @@ export async function handleOpencodeSession({
               images: nextMessage.images,
               channelId,
               username: nextMessage.username,
+              appId: nextMessage.appId,
             }).catch(async (e) => {
               sessionLogger.error(`[QUEUE] Failed to process queued message:`, e)
               const errorMsg = e instanceof Error ? e.message : String(e)
@@ -1502,10 +1510,11 @@ export async function handleOpencodeSession({
 
     // Model priority: session model > agent model > channel model > global model > default
     const channelInfo = channelId ? await getChannelDirectory(channelId) : undefined
+    const resolvedAppId = channelInfo?.appId ?? appId
     const modelInfo = await getCurrentModelInfo({
       sessionId: session.id,
       channelId,
-      appId: channelInfo?.appId ?? undefined,
+      appId: resolvedAppId,
       agentPreference,
       getClient,
     })

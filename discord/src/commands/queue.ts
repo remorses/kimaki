@@ -20,7 +20,7 @@ import { createLogger, LogPrefix } from '../logger.js'
 
 const logger = createLogger(LogPrefix.QUEUE)
 
-export async function handleQueueCommand({ command }: CommandContext): Promise<void> {
+export async function handleQueueCommand({ command, appId }: CommandContext): Promise<void> {
   const message = command.options.getString('message', true)
   const channel = command.channel
 
@@ -92,6 +92,7 @@ export async function handleQueueCommand({ command }: CommandContext): Promise<v
       thread: channel as ThreadChannel,
       projectDirectory,
       channelId: textChannel?.id || channel.id,
+      appId,
     }).catch(async (e) => {
       logger.error(`[QUEUE] Failed to send message:`, e)
       const errorMsg = e instanceof Error ? e.message : String(e)
@@ -109,6 +110,7 @@ export async function handleQueueCommand({ command }: CommandContext): Promise<v
       userId: command.user.id,
       username: command.user.displayName,
       queuedAt: Date.now(),
+      appId,
     },
   })
 

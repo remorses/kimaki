@@ -1,35 +1,35 @@
-[Assistant]: Still not showing. The session might not have a `system` field and the first assistant message might not have `synthetic: true`. Let me add debug logging to see what's available:
+[Tool bash]: command=grep -A100 "^export type Config = {" node_modules/@opencode-ai/.ignored_sdk/dist/gen/types.gen.d.ts, description=find Config type, workdir=/Users/morse/Documents/GitHub/kimakivoice/discord
+[Tool bash]: command=grep -B5 -A30 "^export type AgentConfig" node_modules/@opencode-ai/.ignored_sdk/dist/gen/types.gen.d, description=find AgentConfig type, workdir=/Users/morse/Documents/GitHub/kimakivoice/discord
+[Assistant]: Found it! `AgentConfig` has a `prompt` field. Let me check if `config.get()` returns this:
 
-[Tool edit]: filePath=/Users/morse/Documents/GitHub/kimakivoice/discord/src/markdown.ts, oldString= // Get system prompt if requested
-if (includeSystemPrompt) {
-// try session.system fie, newString= // Get system prompt if requested
-if (includeSystemPrompt) {
-// try session.system fie
-[Tool edit]: filePath=/Users/morse/Documents/GitHub/kimakivoice/discord/src/markdown.ts, oldString= } else if (messages.length > 0) {
-// fallback: look for synthetic text part in first a, newString= } else if (messages.length > 0) {
-// fallback: look for synthetic text part in first a
-[Tool bash]: command=pnpm vitest run --testNamePattern "getCompactSessionContext generates" 2>&1 | tail -30, description=run test and check output, workdir=/Users/morse/Documents/GitHub/kimakivoice/discord, timeout=120000
-[Tool bash]: command=grep -i "session keys\|text parts" tmp/kimaki.log | tail -10, description=check debug output, workdir=/Users/morse/Documents/GitHub/kimakivoice/discord
-[Assistant]: Session doesn't have a `system` field. Let me fix the debug logging:
+[Tool bash]: command=grep -A20 "ConfigGetResponses" node_modules/@opencode-ai/.ignored_sdk/dist/gen/types.gen.d.ts, description=check ConfigGet response, workdir=/Users/morse/Documents/GitHub/kimakivoice/discord
+[Tool bash]: command=grep -A20 "AppAgentsResponses" node_modules/@opencode-ai/.ignored_sdk/dist/gen/types.gen.d.ts, description=check agents response, workdir=/Users/morse/Documents/GitHub/kimakivoice/discord
+[Tool bash]: command=grep -B2 -A30 "^export type Agent = {" node_modules/@opencode-ai/.ignored_sdk/dist/gen/types.gen.d.t, description=check Agent type, workdir=/Users/morse/Documents/GitHub/kimakivoice/discord
+[Assistant]: Found `Agent.prompt` and `AgentConfig.prompt` fields. Let me test if `app.agents()` returns useful prompt info:
 
-[Tool edit]: filePath=/Users/morse/Documents/GitHub/kimakivoice/discord/src/markdown.ts, oldString= const textParts = (firstAssistant.parts || []).filter((p) => p.type === 'text')
-, newString= const textParts = (firstAssistant.parts || []).filter((p) => p.type === 'text')
+[Tool bash]: command=cat > /tmp/test-agents.ts << 'EOF' import { OpencodeClient } from '@opencode-ai/sdk' async function, description=test agents and config api, workdir=/Users/morse/Documents/GitHub/kimakivoice/discord, timeout=30000
+[Tool bash]: command=cd discord && cat > /tmp/test-agents.ts << 'EOF' import { OpencodeClient } from '@opencode-ai/sdk', description=test agents api from discord dir, workdir=/Users/morse/Documents/GitHub/kimakivoice/discord, timeout=30000
+[Tool bash]: command=cat > discord/src/test-agents-api.ts << 'EOF' import { OpencodeClient } from '@opencode-ai/sdk' asy, description=test agents api, timeout=30000
+[Tool bash]: command=rm discord/src/test-agents-api.ts, description=cleanup test file
+[Assistant]: found `app.agents()` returns agent-specific prompts:
 
-[Tool bash]: command=pnpm vitest run --testNamePattern "getCompactSessionContext generates" 2>&1 && grep -i "text parts" , description=run test and check debug, workdir=/Users/morse/Documents/GitHub/kimakivoice/discord, timeout=120000
-[Assistant]: I see - the first assistant text part has **no `synthetic` field** (it's `undefined`), and it's only 44 chars. The session doesn't expose the system prompt.
+```
+plan: 2719 chars - "We are currently in the PLANNING phase..."
+explore: 871 chars - "You are a file search specialist..."
+title: 1508 chars - "You are a title generator..."
+```
 
-Let me remove debug logging and fix the test:
+**but** these are just agent prompts from config, not the full system prompt. the full system prompt opencode builds includes:
+- agents.md content
+- environment info
+- file tree
+- tool descriptions
 
-[Tool edit]: filePath=/Users/morse/Documents/GitHub/kimakivoice/discord/src/markdown.ts, oldString= // Get system prompt if requested
-if (includeSystemPrompt) {
-// try session.system fie, newString= // Get system prompt if requested
-// Note: OpenCode SDK doesn't expose system prompt directl
-[Tool edit]: filePath=/Users/morse/Documents/GitHub/kimakivoice/discord/src/markdown.ts, oldString= try {
-// fetch session info to get system prompt
-const sessionResponse = await client.sess, newString= try {
-const messagesResponse = await client.session.messages({
-[Tool edit]: filePath=/Users/morse/Documents/GitHub/kimakivoice/discord/src/markdown.test.ts, oldString= expect(context).toBeTruthy()
-expect(context.length).toBeGreaterThan(0)
-// should have tool cal, newString= expect(context).toBeTruthy()
-expect(context.length).toBeGreaterThan(0)
-// should have tool cal
+this full prompt is built dynamically and **not exposed via api**. we can only get the agent-specific custom prompts.
+
+**options:**
+1. use `app.agents()` to get agent prompts as partial context
+2. read the AGENTS.md file directly from the project directory (we have it)
+3. request opencode to expose the full system prompt in sdk
+
+want me to add AGENTS.md file reading as fallback context?

@@ -119,6 +119,7 @@ export const handleUserCommand: CommandHandler = async ({ command, appId }: Comm
         projectDirectory,
         channelId: textChannel?.id,
         command: commandPayload,
+        appId,
       })
     } else if (textChannel) {
       // Running in text channel - create a new thread
@@ -145,6 +146,7 @@ export const handleUserCommand: CommandHandler = async ({ command, appId }: Comm
         projectDirectory,
         channelId: textChannel.id,
         command: commandPayload,
+        appId,
       })
     }
   } catch (error) {

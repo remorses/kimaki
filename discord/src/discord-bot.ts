@@ -318,6 +318,7 @@ export async function startDiscordBot({
             projectDirectory,
             channelId: parent?.id || '',
             username: message.member?.displayName || message.author.displayName,
+            appId: currentAppId,
           })
           return
         }
@@ -398,6 +399,7 @@ export async function startDiscordBot({
           images: fileAttachments,
           channelId: parent?.id,
           username: message.member?.displayName || message.author.displayName,
+          appId: currentAppId,
         })
         return
       }
@@ -543,6 +545,7 @@ export async function startDiscordBot({
           images: fileAttachments,
           channelId: textChannel.id,
           username: message.member?.displayName || message.author.displayName,
+          appId: currentAppId,
         })
       } else {
         discordLogger.log(`Channel type ${channel.type} is not supported`)
@@ -639,6 +642,7 @@ export async function startDiscordBot({
         thread,
         projectDirectory,
         channelId: parent.id,
+        appId: currentAppId,
       })
     } catch (error) {
       voiceLogger.error('[BOT_SESSION] Error handling bot-initiated thread:', error)

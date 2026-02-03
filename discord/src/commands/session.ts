@@ -86,6 +86,7 @@ export async function handleSessionCommand({ command, appId }: CommandContext): 
       projectDirectory,
       channelId: textChannel.id,
       agent,
+      appId,
     })
   } catch (error) {
     logger.error('[SESSION] Error:', error)
