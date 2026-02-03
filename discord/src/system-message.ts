@@ -223,7 +223,7 @@ Only ask questions when the request is genuinely ambiguous with multiple valid a
 
 ## ending conversations with options
 
-After **completing** a task, use the question tool to offer follow-up options. The question tool must be called last, after all text parts.
+The question tool must be called last, after all text parts. Always use it when you ask questions.
 
 IMPORTANT: Do NOT use the question tool to ask permission before doing work. Do the work first, then offer follow-ups.
 
