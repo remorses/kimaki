@@ -82,11 +82,16 @@ export function getOpencodeSystemMessage({
   sessionId,
   channelId,
   worktree,
+  channelTopic,
 }: {
   sessionId: string
   channelId?: string
   worktree?: WorktreeInfo
+  channelTopic?: string
 }) {
+  const topicContext = channelTopic?.trim()
+    ? `\n\n<channel-topic>\n${channelTopic.trim()}\n</channel-topic>`
+    : ''
   return `
 The user is reading your messages from inside Discord, via kimaki.xyz
 
@@ -231,5 +236,9 @@ Examples:
 - After completing edits: offer "Commit changes?"
 - If a plan has multiple strategy of implementation show these as options
 - After a genuinely ambiguous request where you cannot infer intent: offer the different approaches
+
+
+
+${topicContext}
 `
 }

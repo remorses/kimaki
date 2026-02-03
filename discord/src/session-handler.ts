@@ -4,7 +4,7 @@
 
 import type { Part, PermissionRequest, QuestionRequest } from '@opencode-ai/sdk/v2'
 import type { DiscordFileAttachment } from './message-formatting.js'
-import type { Message, ThreadChannel } from 'discord.js'
+import { ChannelType, type Message, type ThreadChannel } from 'discord.js'
 import prettyMilliseconds from 'pretty-ms'
 import fs from 'node:fs'
 import path from 'node:path'
@@ -1544,6 +1544,25 @@ export async function handleOpencodeSession({
           }
         : undefined
 
+    const channelTopic = await (async () => {
+      if (thread.parent?.type === ChannelType.GuildText) {
+        return thread.parent.topic?.trim() || undefined
+      }
+      if (!channelId) {
+        return undefined
+      }
+      const fetched = await errore.tryAsync(() => {
+        return thread.guild.channels.fetch(channelId)
+      })
+      if (fetched instanceof Error || !fetched) {
+        return undefined
+      }
+      if (fetched.type !== ChannelType.GuildText) {
+        return undefined
+      }
+      return fetched.topic?.trim() || undefined
+    })()
+
     hasSentParts = false
 
     const response = command
@@ -1562,7 +1581,12 @@ export async function handleOpencodeSession({
           query: { directory: sdkDirectory },
           body: {
             parts,
-            system: getOpencodeSystemMessage({ sessionId: session.id, channelId, worktree }),
+            system: getOpencodeSystemMessage({
+              sessionId: session.id,
+              channelId,
+              worktree,
+              channelTopic,
+            }),
             model: modelParam,
             agent: agentPreference,
           },
