@@ -25,6 +25,7 @@ import {
   handleModelSelectMenu,
   handleModelScopeSelectMenu,
 } from './commands/model.js'
+import { handleUnsetModelCommand } from './commands/unset-model.js'
 import {
   handleLoginCommand,
   handleLoginProviderSelectMenu,
@@ -148,6 +149,10 @@ export function registerInteractionHandler({
             await handleModelCommand({ interaction, appId })
             return
 
+          case 'unset-model-override':
+            await handleUnsetModelCommand({ interaction, appId })
+            return
+
           case 'login':
             await handleLoginCommand({ interaction, appId })
             return
@@ -227,6 +232,8 @@ export function registerInteractionHandler({
           await handleModelScopeSelectMenu(interaction)
           return
         }
+
+
 
         if (customId.startsWith('agent_select:')) {
           await handleAgentSelectMenu(interaction)

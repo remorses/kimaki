@@ -376,6 +376,11 @@ async function registerCommands({
       .setDMPermission(false)
       .toJSON(),
     new SlashCommandBuilder()
+      .setName('unset-model-override')
+      .setDescription('Remove model override and use default instead')
+      .setDMPermission(false)
+      .toJSON(),
+    new SlashCommandBuilder()
       .setName('login')
       .setDescription('Authenticate with an AI provider (OAuth or API key). Use this instead of /connect')
       .setDMPermission(false)
