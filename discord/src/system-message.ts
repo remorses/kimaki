@@ -130,6 +130,14 @@ Use --notify-only to create a notification thread without starting an AI session
 
 npx -y kimaki send --channel ${channelId} --prompt "User cancelled subscription" --notify-only
 
+Use --worktree to create a git worktree for the session:
+
+npx -y kimaki send --channel ${channelId} --prompt "Add dark mode support" --worktree dark-mode
+
+Worktrees are useful for handing off parallel tasks that need to be isolated from each other (each session works on its own branch).
+
+**Important:** When using \`kimaki send\`, provide a super detailed prompt with all context needed. The new session has no memory of the current conversation, so include requirements, constraints, file paths, and any relevant details.
+
 This is useful for automation (cron jobs, GitHub webhooks, n8n, etc.)
 
 ### Session handoff
