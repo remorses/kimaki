@@ -20,6 +20,7 @@ type PendingPermissionContext = {
   permission: PermissionRequest
   requestIds: string[]
   directory: string
+  permissionDirectory: string
   thread: ThreadChannel
   contextHash: string
 }
@@ -35,11 +36,13 @@ export async function showPermissionDropdown({
   thread,
   permission,
   directory,
+  permissionDirectory,
   subtaskLabel,
 }: {
   thread: ThreadChannel
   permission: PermissionRequest
   directory: string
+  permissionDirectory: string
   subtaskLabel?: string
 }): Promise<{ messageId: string; contextHash: string }> {
   const contextHash = crypto.randomBytes(8).toString('hex')
@@ -48,6 +51,7 @@ export async function showPermissionDropdown({
     permission,
     requestIds: [permission.id],
     directory,
+    permissionDirectory,
     thread,
     contextHash,
   }
@@ -135,6 +139,7 @@ export async function handlePermissionSelectMenu(
       requestIds.map((requestId) => {
         return clientV2.permission.reply({
           requestID: requestId,
+          directory: context.permissionDirectory,
           reply: response,
         })
       }),

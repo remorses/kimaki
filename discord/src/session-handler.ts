@@ -1118,6 +1118,7 @@ export async function handleOpencodeSession({
         thread,
         permission,
         directory,
+        permissionDirectory: sdkDirectory,
         subtaskLabel,
       })
 
