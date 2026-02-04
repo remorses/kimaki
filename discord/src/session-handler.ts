@@ -92,6 +92,7 @@ export const pendingPermissions = new Map<
       permission: PermissionRequest
       messageId: string
       directory: string
+      permissionDirectory: string
       contextHash: string
       dedupeKey: string
     }
@@ -521,6 +522,7 @@ export async function handleOpencodeSession({
       const rejectResult = await errore.tryAsync(() => {
         return clientV2.permission.reply({
           requestID: permId,
+          directory: pendingPerm.permissionDirectory,
           reply: 'reject',
         })
       })
@@ -1090,6 +1092,7 @@ export async function handleOpencodeSession({
           permission,
           messageId: existingPending.messageId,
           directory,
+          permissionDirectory: existingPending.permissionDirectory,
           contextHash: existingPending.contextHash,
           dedupeKey,
         })
@@ -1129,6 +1132,7 @@ export async function handleOpencodeSession({
         permission,
         messageId,
         directory,
+        permissionDirectory: sdkDirectory,
         contextHash,
         dedupeKey,
       })
