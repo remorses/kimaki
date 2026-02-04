@@ -199,6 +199,9 @@ npx -y kimaki upload-to-discord --session <session-id> <file1> [file2...]
 # Start a session programmatically (useful for CI/automation)
 npx -y kimaki send --channel <channel-id> --prompt "your prompt"
 
+# Start a session in an isolated git worktree
+npx -y kimaki send --channel <channel-id> --prompt "your prompt" --worktree feature-name
+
 # Send notification without starting AI session (reply to start session later)
 npx -y kimaki send --channel <channel-id> --prompt "User cancelled subscription" --notify-only
 
@@ -251,6 +254,7 @@ npx -y kimaki send \
   --name <name>           # Optional: Thread name (defaults to prompt preview)
   --app-id <app-id>       # Optional: Bot application ID for validation
   --notify-only           # Optional: Create notification thread without starting AI session
+  --worktree <name>       # Optional: Create git worktree for isolated session
 ```
 
 ### Example: GitHub Actions on New Issues
