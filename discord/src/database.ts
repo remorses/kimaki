@@ -706,5 +706,3 @@ export async function findTextChannelByVoiceChannel(voiceChannelId: string): Pro
     })
     return textChannel?.channel_id
 }
-
-
