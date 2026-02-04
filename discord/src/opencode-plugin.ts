@@ -152,7 +152,7 @@ const kimakiPlugin: Plugin = async () => {
               const message = error instanceof Error ? error.message : String(error)
               return `Session is over 100000 characters, but failed to write full output: ${message}`
             }
-            const preview = result.slice(0, 100000)
+            const preview = result.split('\n').slice(0, 10).join('\n')
             return `${preview}\n\nFull session written to ${outputPath} to read in full.`
           }
           return result
