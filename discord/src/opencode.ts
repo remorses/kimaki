@@ -138,6 +138,7 @@ export async function initializeOpencodeForDirectory(
   // Normalize path separators for cross-platform compatibility (Windows uses backslashes)
   const tmpdir = os.tmpdir().replaceAll('\\', '/')
   const originalRepo = options?.originalRepoDirectory?.replaceAll('\\', '/')
+  const normalizedDirectory = directory.replaceAll('\\', '/')
 
   // Build external_directory permissions, optionally including original repo for worktrees
   const externalDirectoryPermissions: Record<string, PermissionAction> = {
@@ -148,6 +149,8 @@ export async function initializeOpencodeForDirectory(
     '/private/tmp/*': 'allow',
     [tmpdir]: 'allow',
     [`${tmpdir}/*`]: 'allow',
+    [normalizedDirectory]: 'allow',
+    [`${normalizedDirectory}/*`]: 'allow',
   }
   if (originalRepo) {
     externalDirectoryPermissions[originalRepo] = 'allow'
