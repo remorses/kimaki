@@ -72,6 +72,59 @@ async function getCurrentBranch(worktreeDir: string): Promise<string | null> {
   }
 }
 
+/**
+ * Get commit subjects between two refs for squash commit message.
+ * Returns array of commit subjects (first line of each commit message).
+ */
+async function getCommitSubjects(repoDir: string, baseRef: string, headRef: string): Promise<string[]> {
+  try {
+    const { stdout } = await execAsync(
+      `git -C "${repoDir}" log --format="%s" ${baseRef}..${headRef}`,
+    )
+    return stdout
+      .trim()
+      .split('\n')
+      .filter((s) => {
+        return s.length > 0
+      })
+  } catch (error) {
+    logger.warn(
+      `Failed to get commit subjects:`,
+      error instanceof Error ? error.message : String(error),
+    )
+    return []
+  }
+}
+
+/**
+ * Generate a squash commit message with worktree context and commit subjects.
+ */
+function generateSquashMessage(
+  branchName: string,
+  worktreeDir: string,
+  commitSubjects: string[],
+): string {
+  const lines: string[] = []
+
+  // Header with worktree info
+  lines.push(`worktree merge: ${branchName}`)
+  lines.push(``)
+  lines.push(`Worktree: ${worktreeDir}`)
+
+  // Add commit subjects if any
+  if (commitSubjects.length > 0) {
+    lines.push(``)
+    lines.push(`Commits:`)
+    for (const subject of commitSubjects) {
+      lines.push(`- ${subject}`)
+    }
+  }
+
+  return lines.join('\n')
+}
+
+
+
 export async function handleMergeWorktreeCommand({ command, appId }: CommandContext): Promise<void> {
   await command.deferReply({ ephemeral: false })
 
@@ -147,7 +200,23 @@ export async function handleMergeWorktreeCommand({ command, appId }: CommandCont
 
     logger.log(`Default branch: ${defaultBranch}, branch to merge: ${branchToMerge}`)
 
-    // 4. Merge default branch INTO worktree (handles diverged branches)
+    // 4. Get commit subjects BEFORE merging default branch in (so we capture original commits)
+    const mergeBase = await execAsync(`git -C "${worktreeDir}" merge-base ${defaultBranch} HEAD`)
+      .then(({ stdout }) => {
+        return stdout.trim()
+      })
+      .catch(() => {
+        return defaultBranch
+      })
+    const commitSubjects = await getCommitSubjects(worktreeDir, mergeBase, 'HEAD')
+    const squashMessage = generateSquashMessage(
+      worktreeInfo.worktree_name || branchToMerge,
+      worktreeDir,
+      commitSubjects,
+    )
+    logger.log(`Generated squash message:\n${squashMessage}`)
+
+    // 5. Merge default branch INTO worktree (handles diverged branches)
     logger.log(`Merging ${defaultBranch} into worktree at ${worktreeDir}`)
     try {
       await execAsync(`git -C "${worktreeDir}" merge ${defaultBranch} --no-edit`)
@@ -177,17 +246,69 @@ export async function handleMergeWorktreeCommand({ command, appId }: CommandCont
       throw new Error(`Merge conflict - resolve manually in worktree then retry`)
     }
 
-    // 5. Update default branch ref to point to current HEAD
-    // Use update-ref instead of fetch because fetch refuses if branch is checked out
-    logger.log(`Updating ${defaultBranch} to point to current HEAD`)
-    const { stdout: commitHash } = await execAsync(`git -C "${worktreeDir}" rev-parse HEAD`)
-    await execAsync(`git -C "${mainRepoDir}" update-ref refs/heads/${defaultBranch} ${commitHash.trim()}`)
+    // 6. Squash merge into default branch in main repo
+    // Save state, do merge, restore state
+    logger.log(`Squash merging ${branchToMerge} into ${defaultBranch} in main repo`)
 
-    // 6. Switch to detached HEAD at default branch (allows main to be checked out elsewhere)
+    // Save current state of main repo
+    const originalBranch = await getCurrentBranch(mainRepoDir)
+    const { stdout: originalHead } = await execAsync(`git -C "${mainRepoDir}" rev-parse HEAD`)
+    const originalHeadCommit = originalHead.trim()
+
+    // Check if main repo has uncommitted changes
+    const { stdout: mainStatus } = await execAsync(`git -C "${mainRepoDir}" status --porcelain`)
+    const mainHadChanges = mainStatus.trim().length > 0
+    if (mainHadChanges) {
+      await execAsync(`git -C "${mainRepoDir}" stash push -m "merge-worktree-temp"`)
+    }
+
+    try {
+      // Checkout default branch in main repo
+      await execAsync(`git -C "${mainRepoDir}" checkout ${defaultBranch}`)
+
+      // Squash merge the worktree branch
+      await execAsync(`git -C "${mainRepoDir}" merge --squash ${branchToMerge}`)
+
+      // Commit with descriptive message (escape quotes for shell)
+      const escapedMessage = squashMessage.replace(/"/g, '\\"')
+      await execAsync(`git -C "${mainRepoDir}" commit -m "${escapedMessage}"`)
+
+      logger.log(`Squash merge committed successfully`)
+    } finally {
+      // Restore original branch/HEAD state
+      if (originalBranch) {
+        await execAsync(`git -C "${mainRepoDir}" checkout ${originalBranch}`).catch((error) => {
+          logger.warn(
+            `Failed to restore original branch ${originalBranch}:`,
+            error instanceof Error ? error.message : String(error),
+          )
+        })
+      } else {
+        // Was detached, restore to original commit
+        await execAsync(`git -C "${mainRepoDir}" checkout ${originalHeadCommit}`).catch((error) => {
+          logger.warn(
+            `Failed to restore detached HEAD:`,
+            error instanceof Error ? error.message : String(error),
+          )
+        })
+      }
+
+      // Restore stashed changes if any
+      if (mainHadChanges) {
+        await execAsync(`git -C "${mainRepoDir}" stash pop`).catch((error) => {
+          logger.warn(
+            `Failed to restore stashed changes:`,
+            error instanceof Error ? error.message : String(error),
+          )
+        })
+      }
+    }
+
+    // 7. Switch to detached HEAD at default branch (allows main to be checked out elsewhere)
     logger.log(`Switching to detached HEAD at ${defaultBranch}`)
     await execAsync(`git -C "${worktreeDir}" checkout --detach ${defaultBranch}`)
 
-    // 7. Delete the merged branch (temp or original)
+    // 8. Delete the merged branch (temp or original)
     logger.log(`Deleting merged branch ${branchToMerge}`)
     await execAsync(`git -C "${worktreeDir}" branch -D ${branchToMerge}`).catch((error) => {
       logger.warn(
@@ -206,7 +327,7 @@ export async function handleMergeWorktreeCommand({ command, appId }: CommandCont
       })
     }
 
-    // 8. Remove worktree prefix from thread title (fire and forget with timeout)
+    // 9. Remove worktree prefix from thread title (fire and forget with timeout)
     void removeWorktreePrefixFromTitle(thread)
 
     const sourceDesc = isDetached ? 'detached commits' : `\`${branchToMerge}\``
