@@ -1288,6 +1288,8 @@ cli
   .option('--notify-only', 'Create notification thread without starting AI session')
   .option('--worktree [name]', 'Create git worktree for session (name optional, derives from thread name)')
   .option('-u, --user <username>', 'Discord username to add to thread')
+  .option('--agent <agent>', 'Agent to use for the session')
+  .option('--model <model>', 'Model to use (format: provider/model)')
   .action(
     async (options: {
       channel?: string
@@ -1298,6 +1300,8 @@ cli
       notifyOnly?: boolean
       worktree?: string | boolean
       user?: string
+      agent?: string
+      model?: string
     }) => {
       try {
         let { channel: channelId, prompt, name, appId: optionAppId, notifyOnly } = options
@@ -1566,13 +1570,15 @@ cli
         : baseThreadName
 
       // Embed marker for auto-start sessions (unless --notify-only)
-      // Bot parses this JSON to know it should start a session, optionally create a worktree, and set initial user
+      // Bot parses this YAML to know it should start a session, optionally create a worktree, and set initial user
       const embedMarker: ThreadStartMarker | undefined = notifyOnly
         ? undefined
         : {
             start: true,
             ...(worktreeName && { worktree: worktreeName }),
             ...(resolvedUser && { username: resolvedUser.username, userId: resolvedUser.id }),
+            ...(options.agent && { agent: options.agent }),
+            ...(options.model && { model: options.model }),
           }
       const autoStartEmbed = embedMarker
         ? [{ color: 0x2b2d31, footer: { text: yaml.dump(embedMarker) } }]

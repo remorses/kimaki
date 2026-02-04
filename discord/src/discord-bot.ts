@@ -718,6 +718,8 @@ export async function startDiscordBot({
         appId: currentAppId,
         username: marker.username,
         userId: marker.userId,
+        agent: marker.agent,
+        model: marker.model,
       })
     } catch (error) {
       voiceLogger.error('[BOT_SESSION] Error handling bot-initiated thread:', error)

@@ -390,6 +390,7 @@ export async function handleOpencodeSession({
   channelId,
   command,
   agent,
+  model,
   username,
   userId,
   appId,
@@ -404,6 +405,8 @@ export async function handleOpencodeSession({
   command?: { name: string; arguments: string }
   /** Agent to use for this session */
   agent?: string
+  /** Model override (format: provider/model) */
+  model?: string
   /** Discord username for synthetic context (not shown in TUI) */
   username?: string
   /** Discord user ID for system prompt examples */
@@ -1508,22 +1511,33 @@ export async function handleOpencodeSession({
     sessionLogger.log(`[PROMPT] Parts to send:`, parts.length)
 
     const agentPreference =
-      (await getSessionAgent(session.id)) || (channelId ? await getChannelAgent(channelId) : undefined)
+      agent || (await getSessionAgent(session.id)) || (channelId ? await getChannelAgent(channelId) : undefined)
     if (agentPreference) {
       sessionLogger.log(`[AGENT] Using agent preference: ${agentPreference}`)
     }
 
-    // Model priority: session model > agent model > channel model > global model > default
-    const channelInfo = channelId ? await getChannelDirectory(channelId) : undefined
-    const resolvedAppId = channelInfo?.appId ?? appId
-    const modelInfo = await getCurrentModelInfo({
-      sessionId: session.id,
-      channelId,
-      appId: resolvedAppId,
-      agentPreference,
-      getClient,
-    })
-    const modelParam = (() => {
+    // Model priority: explicit model param > session model > agent model > channel model > global model > default
+    const modelParam = await (async (): Promise<{ providerID: string; modelID: string } | undefined> => {
+      // Use explicit model override if provided
+      if (model) {
+        const [providerID, ...modelParts] = model.split('/')
+        const modelID = modelParts.join('/')
+        if (providerID && modelID) {
+          sessionLogger.log(`[MODEL] Using explicit model: ${model}`)
+          return { providerID, modelID }
+        }
+      }
+
+      // Fall back to model info resolution
+      const channelInfo = channelId ? await getChannelDirectory(channelId) : undefined
+      const resolvedAppId = channelInfo?.appId ?? appId
+      const modelInfo = await getCurrentModelInfo({
+        sessionId: session.id,
+        channelId,
+        appId: resolvedAppId,
+        agentPreference,
+        getClient,
+      })
       if (modelInfo.type === 'none') {
         sessionLogger.log(`[MODEL] No model available (no preference, no default)`)
         return undefined

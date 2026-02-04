@@ -78,7 +78,7 @@ export type WorktreeInfo = {
   mainRepoDirectory: string
 }
 
-/** JSON marker embedded in thread starter message footer for bot to parse */
+/** YAML marker embedded in thread starter message footer for bot to parse */
 export type ThreadStartMarker = {
   /** Whether to auto-start an AI session */
   start?: boolean
@@ -88,6 +88,10 @@ export type ThreadStartMarker = {
   username?: string
   /** Discord user ID who initiated the thread */
   userId?: string
+  /** Agent to use for the session */
+  agent?: string
+  /** Model to use (format: provider/model) */
+  model?: string
 }
 
 export function getOpencodeSystemMessage({
@@ -157,7 +161,7 @@ npx -y kimaki send --channel ${channelId} --prompt "Add dark mode support" --wor
 
 Worktrees are useful for handing off parallel tasks that need to be isolated from each other (each session works on its own branch).
 
-**Important:** When using \`kimaki send\`, provide a super detailed prompt with all context needed. The new session has no memory of the current conversation, so include requirements, constraints, file paths, and any relevant details.
+**Important:** When using \`kimaki send\`, provide a super detailed prompt with all context needed. The new session has no memory of the current conversation, so include requirements, constraints, file paths, and any relevant details. Use markdown formatting for readability: **bold** for keywords, \`code\` for paths/commands, lists for multiple items, and > quotes for context.
 
 This is useful for automation (cron jobs, GitHub webhooks, n8n, etc.)
 
