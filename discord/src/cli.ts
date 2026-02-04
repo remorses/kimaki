@@ -35,7 +35,6 @@ import {
   findChannelByAppId,
   getThreadSession,
   getThreadIdBySessionId,
-  setPendingAutoStart,
 } from './database.js'
 import type { OpencodeClient, Command as OpencodeCommand } from '@opencode-ai/sdk'
 import {

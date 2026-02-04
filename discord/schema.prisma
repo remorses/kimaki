@@ -12,9 +12,8 @@ model thread_sessions {
   session_id String
   created_at DateTime? @default(now())
 
-  part_messages      part_messages[]
-  pending_auto_start pending_auto_start?
-  thread_worktree    thread_worktrees?
+  part_messages   part_messages[]
+  thread_worktree thread_worktrees?
 }
 
 model part_messages {
@@ -48,13 +47,6 @@ model channel_directories {
   channel_agent     channel_agents?
   channel_worktree  channel_worktrees?
   channel_verbosity channel_verbosity?
-}
-
-model pending_auto_start {
-  thread_id  String    @id
-  created_at DateTime? @default(now())
-
-  thread thread_sessions @relation(fields: [thread_id], references: [thread_id])
 }
 
 model bot_api_keys {

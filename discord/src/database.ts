@@ -707,37 +707,4 @@ export async function findTextChannelByVoiceChannel(voiceChannelId: string): Pro
     return textChannel?.channel_id
 }
 
-// ============================================================================
-// Pending Auto Start Functions
-// ============================================================================
 
-/**
- * Mark a thread for auto-start.
- * Note: The thread must already have a session (via setThreadSession) before calling this.
- */
-export async function setPendingAutoStart(threadId: string): Promise<void> {
-    const prisma = await getPrisma()
-    await prisma.pending_auto_start.upsert({
-        where: { thread_id: threadId },
-        create: { thread_id: threadId },
-        update: {},
-    })
-}
-
-/**
- * Check and clear pending auto-start for a thread.
- * Returns true if the thread was marked for auto-start.
- */
-export async function checkAndClearPendingAutoStart(threadId: string): Promise<boolean> {
-    const prisma = await getPrisma()
-    const row = await prisma.pending_auto_start.findUnique({
-        where: { thread_id: threadId },
-    })
-    if (row) {
-        await prisma.pending_auto_start.delete({
-            where: { thread_id: threadId },
-        })
-        return true
-    }
-    return false
-}
