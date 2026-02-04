@@ -9,12 +9,12 @@
     "format": "prettier --write ."
   },
   "devDependencies": {
+    "oxfmt": "^0.24.0",
     "prettier": "^3.6.2",
     "tsx": "^4.20.5",
     "typescript": "^5.9.2",
     "vite": "^7.1.4",
     "vite-node": "^3.2.4",
-    "oxfmt": "^0.24.0",
     "vitest": "^3.2.4"
   },
   "overrides": {
@@ -24,7 +24,7 @@
   "author": "remorses <beats.by.morse@gmail.com>",
   "license": "",
   "dependencies": {
-    "@opencode-ai/sdk": "^1.1.3",
+    "@opencode-ai/sdk": "^1.1.51",
     "string-dedent": "^3.0.2",
     "tiny-jsonc": "^1.0.2"
   }

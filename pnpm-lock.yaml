@@ -9,8 +9,8 @@ importers:
   .:
     dependencies:
       '@opencode-ai/sdk':
-        specifier: ^1.1.3
-        version: 1.1.3
+        specifier: ^1.1.51
+        version: 1.1.51
       string-dedent:
         specifier: ^3.0.2
         version: 3.0.2
@@ -55,8 +55,8 @@ importers:
         specifier: ^0.15.15
         version: 0.15.15
       '@opencode-ai/sdk':
-        specifier: ^1.1.31
-        version: 1.1.31
+        specifier: ^1.1.51
+        version: 1.1.51
       '@prisma/adapter-libsql':
         specifier: ^7.3.0
         version: 7.3.0
@@ -128,8 +128,8 @@ importers:
         version: 4.2.1
     devDependencies:
       '@opencode-ai/plugin':
-        specifier: ^1.1.12
-        version: 1.1.12
+        specifier: ^1.1.51
+        version: 1.1.51
       '@types/better-sqlite3':
         specifier: ^7.6.13
         version: 7.6.13
@@ -966,17 +966,11 @@ packages:
   '@neon-rs/load@0.0.4':
     resolution: {integrity: sha512-kTPhdZyTQxB+2wpiRcFWrDcejc4JI6tkPuS7UZCG4l6Zvc5kU/gGQ/ozvHTh1XR5tS+UlfAfGuPajjzQjCiHCw==}
 
-  '@opencode-ai/plugin@1.1.12':
-    resolution: {integrity: sha512-L+sh6mDU1teVgjRbpNnJdQIv3EYx9v8X2ZgjCAtC/eyjERR5s1smvBmvvBCpJ+p5APWKD4nuDS0xtiJiUBFZKQ==}
+  '@opencode-ai/plugin@1.1.51':
+    resolution: {integrity: sha512-FMtwIEG1HdXaQ4qtzRelF++qjKL4QKtJOB5Atud0Xu5c9T48TGCDDQJONTAjgVleyq3bb73tUt+ACBK0QSEOyw==}
 
-  '@opencode-ai/sdk@1.1.12':
-    resolution: {integrity: sha512-M1c+525865g2C03iKaMdx3aUVC7oZSNbBGaTDjUN2UTIakdxqKHog0Hd8IA9WL8M0aU1QJ8+CnpvRT2Jt9kRNw==}
-
-  '@opencode-ai/sdk@1.1.3':
-    resolution: {integrity: sha512-P4ERbfuT7CilZYyB1l6J/DM6KD0i5V15O+xvsjUitxSS3S2Gr0YsA4bmXU+EsBQGHryUHc81bhJF49a8wSU+tw==}
-
-  '@opencode-ai/sdk@1.1.31':
-    resolution: {integrity: sha512-u273CSLeNEqmE3suulCrXDLzJzW1dfFeRheUjnfwSvmhSpf6UqM4em4MpV2CBB2WoyC0VvWg8rNwSkvDzPmEdw==}
+  '@opencode-ai/sdk@1.1.51':
+    resolution: {integrity: sha512-UL66X46AGgui5xURGEenXsIsgNVmgfkmJJeRtdeOMLhi/RcbTBikfPjjtmym3VLnqp855Wt7dZ/vAjOXqiUKXA==}
 
   '@opentelemetry/api@1.9.0':
     resolution: {integrity: sha512-3giAOQvZiH5F9bMlMiv8+GSPMeqg0dbaeo58/0SlA9sxSqZhnUtxzX9/2FzyhS9sWQf5S0GJE0AKBrFqjpeYcg==}
@@ -3285,16 +3279,12 @@ snapshots:
 
   '@neon-rs/load@0.0.4': {}
 
-  '@opencode-ai/plugin@1.1.12':
+  '@opencode-ai/plugin@1.1.51':
     dependencies:
-      '@opencode-ai/sdk': 1.1.12
+      '@opencode-ai/sdk': 1.1.51
       zod: 4.1.8
 
-  '@opencode-ai/sdk@1.1.12': {}
-
-  '@opencode-ai/sdk@1.1.3': {}
-
-  '@opencode-ai/sdk@1.1.31': {}
+  '@opencode-ai/sdk@1.1.51': {}
 
   '@opentelemetry/api@1.9.0': {}
 
@@ -4636,7 +4626,7 @@ snapshots:
 
   ref@1.3.5:
     dependencies:
-      bindings: 1.5.0
+      bindings: 1.2.1
       debug: 2.6.9
       nan: 2.25.0
     transitivePeerDependencies:
