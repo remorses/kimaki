@@ -5,6 +5,8 @@ import type { Plugin } from '@opencode-ai/plugin'
 import { tool } from '@opencode-ai/plugin/tool'
 import { createOpencodeClient } from '@opencode-ai/sdk'
 import { REST, Routes } from 'discord.js'
+import fs from 'node:fs'
+import path from 'node:path'
 import { getPrisma } from './database.js'
 import { setDataDir } from './config.js'
 import { ShareMarkdown } from './markdown.js'
@@ -138,6 +140,20 @@ const kimakiPlugin: Plugin = async () => {
           const result = await markdown.generate({ sessionID: sessionId })
           if (result instanceof Error) {
             return result.message
+          }
+          if (result.length > 100000) {
+            const safeId = sessionId.replace(/[^a-zA-Z0-9-_]/g, '_')
+            const outputDir = path.join(process.cwd(), 'tmp')
+            const outputPath = path.join(outputDir, `session-${safeId}.md`)
+            try {
+              fs.mkdirSync(outputDir, { recursive: true })
+              fs.writeFileSync(outputPath, result, 'utf8')
+            } catch (error) {
+              const message = error instanceof Error ? error.message : String(error)
+              return `Session is over 100000 characters, but failed to write full output: ${message}`
+            }
+            const preview = result.slice(0, 100000)
+            return `${preview}\n\nFull session written to ${outputPath} to read in full.`
           }
           return result
         },
