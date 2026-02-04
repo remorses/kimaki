@@ -3,6 +3,8 @@
 // Also handles capturing and applying git diffs when creating worktrees from threads.
 
 import { exec, spawn } from 'node:child_process'
+import fs from 'node:fs'
+import path from 'node:path'
 import { promisify } from 'node:util'
 import { createLogger, LogPrefix } from './logger.js'
 import type { getOpencodeClientV2 } from './opencode.js'
@@ -10,6 +12,82 @@ import type { getOpencodeClientV2 } from './opencode.js'
 export const execAsync = promisify(exec)
 
 const logger = createLogger(LogPrefix.WORKTREE)
+
+/**
+ * Get submodule paths from .gitmodules file.
+ * Returns empty array if no submodules or on error.
+ */
+async function getSubmodulePaths(directory: string): Promise<string[]> {
+  try {
+    const result = await execAsync(
+      'git config --file .gitmodules --get-regexp path',
+      { cwd: directory },
+    )
+    // Output format: "submodule.name.path value"
+    return result.stdout
+      .trim()
+      .split('\n')
+      .filter(Boolean)
+      .map((line) => {
+        return line.split(' ')[1]
+      })
+      .filter((p): p is string => {
+        return Boolean(p)
+      })
+  } catch {
+    return [] // No .gitmodules or no submodules
+  }
+}
+
+/**
+ * Remove broken submodule stubs created by git worktree.
+ * When git worktree add runs on a repo with submodules, it creates submodule
+ * directories with .git files pointing to ../.git/worktrees/<name>/modules/<submodule>
+ * but that path only has a config file, missing HEAD/objects/refs.
+ * This causes git commands to fail with "fatal: not a git repository".
+ */
+async function removeBrokenSubmoduleStubs(directory: string): Promise<void> {
+  const submodulePaths = await getSubmodulePaths(directory)
+
+  for (const subPath of submodulePaths) {
+    const fullPath = path.join(directory, subPath)
+    const gitFile = path.join(fullPath, '.git')
+
+    try {
+      const stat = await fs.promises.stat(gitFile)
+      if (!stat.isFile()) {
+        continue
+      }
+
+      // Read .git file to get gitdir path
+      const content = await fs.promises.readFile(gitFile, 'utf-8')
+      const match = content.match(/^gitdir:\s*(.+)$/m)
+      if (!match || !match[1]) {
+        continue
+      }
+
+      const gitdir = path.resolve(fullPath, match[1].trim())
+      const headFile = path.join(gitdir, 'HEAD')
+
+      // If HEAD doesn't exist, this is a broken stub
+      const headExists = await fs.promises
+        .access(headFile)
+        .then(() => {
+          return true
+        })
+        .catch(() => {
+          return false
+        })
+
+      if (!headExists) {
+        logger.log(`Removing broken submodule stub: ${subPath}`)
+        await fs.promises.rm(fullPath, { recursive: true, force: true })
+      }
+    } catch {
+      // Directory doesn't exist or other error, skip
+    }
+  }
+}
 
 type OpencodeClientV2 = NonNullable<ReturnType<typeof getOpencodeClientV2>>
 
@@ -61,7 +139,11 @@ export async function createWorktreeWithSubmodules({
     diffApplied = await applyGitDiff(worktreeDir, diff)
   }
 
-  // 3. Init submodules in new worktree (don't block on failure)
+  // 3. Remove broken submodule stubs before init
+  // git worktree creates stub directories with .git files pointing to incomplete gitdirs
+  await removeBrokenSubmoduleStubs(worktreeDir)
+
+  // 4. Init submodules in new worktree (don't block on failure)
   // Uses --init to initialize, --recursive for nested submodules.
   // Submodules will be checked out at the commit specified by the (possibly updated) index.
   try {
@@ -77,7 +159,7 @@ export async function createWorktreeWithSubmodules({
     )
   }
 
-  // 4. Install dependencies using ni (detects package manager from lockfile)
+  // 5. Install dependencies using ni (detects package manager from lockfile)
   try {
     logger.log(`Installing dependencies in ${worktreeDir}`)
     await execAsync('npx -y ni', {
