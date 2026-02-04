@@ -40,3 +40,7 @@ if I ask you questions about opencode you can opensrc it from anomalyco/opencode
 try to not use emojis in messages
 
 when creating system messages like replies to commands never add new line spaces between paragraphs or lines. put one line next to the one before.
+
+## AGENTS.md
+
+AGENTS.md is generated. only edit KIMAKI_AGENTS.md instead. pnpm agents.md will generate the file again.
