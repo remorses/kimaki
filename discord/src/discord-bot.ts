@@ -565,8 +565,7 @@ export async function startDiscordBot({
   })
 
   // Handle bot-initiated threads created by `kimaki send` (without --notify-only)
-  // Uses embed marker instead of database to avoid race conditions
-  const AUTO_START_MARKER = 'kimaki:start'
+  // Uses JSON embed marker to pass options (start, worktree name)
   discordClient.on(Events.ThreadCreate, async (thread, newlyCreated) => {
     try {
       if (!newlyCreated) {
@@ -592,12 +591,22 @@ export async function startDiscordBot({
         return
       }
 
-      // Check if starter message has the auto-start embed marker
-      const hasAutoStartMarker = starterMessage.embeds.some(
-        (embed) => embed.footer?.text === AUTO_START_MARKER,
-      )
-      if (!hasAutoStartMarker) {
-        return // Not a CLI-initiated auto-start thread
+      // Parse JSON marker from embed footer
+      // Format: { start: true, worktree?: string }
+      const embedFooter = starterMessage.embeds[0]?.footer?.text
+      if (!embedFooter) {
+        return
+      }
+
+      let marker: { start?: boolean; worktree?: string }
+      try {
+        marker = JSON.parse(embedFooter)
+      } catch {
+        return // Not a valid JSON marker
+      }
+
+      if (!marker.start) {
+        return // Not an auto-start thread
       }
 
       discordLogger.log(`[BOT_SESSION] Detected bot-initiated thread: ${thread.name}`)
@@ -633,6 +642,67 @@ export async function startDiscordBot({
         return
       }
 
+      // Create worktree if requested
+      const sessionDirectory: string = await (async () => {
+        if (!marker.worktree) {
+          return projectDirectory
+        }
+
+        discordLogger.log(`[BOT_SESSION] Creating worktree: ${marker.worktree}`)
+
+        await createPendingWorktree({
+          threadId: thread.id,
+          worktreeName: marker.worktree,
+          projectDirectory,
+        })
+
+        const getClient = await initializeOpencodeForDirectory(projectDirectory)
+        if (errore.isError(getClient)) {
+          discordLogger.error(`[BOT_SESSION] Failed to init OpenCode: ${getClient.message}`)
+          await setWorktreeError({ threadId: thread.id, errorMessage: getClient.message })
+          await thread.send({
+            content: `⚠️ Failed to create worktree: ${getClient.message}\nUsing main project directory instead.`,
+            flags: SILENT_MESSAGE_FLAGS,
+          })
+          return projectDirectory
+        }
+
+        const clientV2 = getOpencodeClientV2(projectDirectory)
+        if (!clientV2) {
+          discordLogger.error(`[BOT_SESSION] No v2 client for ${projectDirectory}`)
+          await setWorktreeError({ threadId: thread.id, errorMessage: 'No OpenCode v2 client' })
+          await thread.send({
+            content: `⚠️ Failed to create worktree: No OpenCode v2 client\nUsing main project directory instead.`,
+            flags: SILENT_MESSAGE_FLAGS,
+          })
+          return projectDirectory
+        }
+
+        const worktreeResult = await createWorktreeWithSubmodules({
+          clientV2,
+          directory: projectDirectory,
+          name: marker.worktree,
+        })
+
+        if (errore.isError(worktreeResult)) {
+          discordLogger.error(`[BOT_SESSION] Worktree creation failed: ${worktreeResult.message}`)
+          await setWorktreeError({ threadId: thread.id, errorMessage: worktreeResult.message })
+          await thread.send({
+            content: `⚠️ Failed to create worktree: ${worktreeResult.message}\nUsing main project directory instead.`,
+            flags: SILENT_MESSAGE_FLAGS,
+          })
+          return projectDirectory
+        }
+
+        await setWorktreeReady({ threadId: thread.id, worktreeDirectory: worktreeResult.directory })
+        discordLogger.log(`[BOT_SESSION] Worktree created: ${worktreeResult.directory}`)
+        await thread.send({
+          content: `🌳 **Worktree: ${marker.worktree}**\n📁 \`${worktreeResult.directory}\`\n🌿 Branch: \`${worktreeResult.branch}\``,
+          flags: SILENT_MESSAGE_FLAGS,
+        })
+        return worktreeResult.directory
+      })()
+
       discordLogger.log(
         `[BOT_SESSION] Starting session for thread ${thread.id} with prompt: "${prompt.slice(0, 50)}..."`,
       )
@@ -640,7 +710,7 @@ export async function startDiscordBot({
       await handleOpencodeSession({
         prompt,
         thread,
-        projectDirectory,
+        projectDirectory: sessionDirectory,
         channelId: parent.id,
         appId: currentAppId,
       })

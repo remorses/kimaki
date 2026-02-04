@@ -36,6 +36,8 @@ import {
   getThreadSession,
   getThreadIdBySessionId,
 } from './database.js'
+import { formatWorktreeName } from './commands/worktree.js'
+import { WORKTREE_PREFIX } from './commands/merge-worktree.js'
 import type { OpencodeClient, Command as OpencodeCommand } from '@opencode-ai/sdk'
 import {
   Events,
@@ -1282,6 +1284,7 @@ cli
   .option('-n, --name [name]', 'Thread name (optional, defaults to prompt preview)')
   .option('-a, --app-id [appId]', 'Bot application ID (required if no local database)')
   .option('--notify-only', 'Create notification thread without starting AI session')
+  .option('--worktree [name]', 'Create git worktree for session (name optional, derives from thread name)')
   .action(
     async (options: {
       channel?: string
@@ -1290,6 +1293,7 @@ cli
       name?: string
       appId?: string
       notifyOnly?: boolean
+      worktree?: string | boolean
     }) => {
       try {
         let { channel: channelId, prompt, name, appId: optionAppId, notifyOnly } = options
@@ -1311,6 +1315,11 @@ cli
 
         if (!prompt) {
           cliLogger.error('Prompt is required. Use --prompt <prompt>')
+          process.exit(EXIT_NO_RESTART)
+        }
+
+        if (options.worktree && notifyOnly) {
+          cliLogger.error('Cannot use --worktree with --notify-only')
           process.exit(EXIT_NO_RESTART)
         }
 
@@ -1475,20 +1484,14 @@ cli
 
       cliLogger.log('Fetching channel info...')
 
-      // Get channel info to extract directory from topic
-      const channelResponse = await fetch(`https://discord.com/api/v10/channels/${channelId}`, {
-        headers: {
-          Authorization: `Bot ${botToken}`,
-        },
-      })
-
-      if (!channelResponse.ok) {
-        const error = await channelResponse.text()
-        cliLogger.log('Failed to fetch channel')
-        throw new Error(`Discord API error: ${channelResponse.status} - ${error}`)
+      if (!channelId) {
+        throw new Error('Channel ID not resolved')
       }
 
-      const channelData = (await channelResponse.json()) as {
+      const rest = new REST().setToken(botToken)
+
+      // Get channel info to extract directory from topic
+      const channelData = (await rest.get(Routes.channel(channelId))) as {
         id: string
         name: string
         topic?: string
@@ -1522,12 +1525,23 @@ cli
       const DISCORD_MAX_LENGTH = 2000
       let starterMessage: { id: string }
 
+      // Compute thread name and worktree name early (needed for embed)
+      const baseThreadName = name || (prompt.length > 80 ? prompt.slice(0, 77) + '...' : prompt)
+      const worktreeName = options.worktree
+        ? formatWorktreeName(typeof options.worktree === 'string' ? options.worktree : baseThreadName)
+        : undefined
+      const threadName = worktreeName
+        ? `${WORKTREE_PREFIX}${baseThreadName}`
+        : baseThreadName
+
       // Embed marker for auto-start sessions (unless --notify-only)
-      // Bot checks for this embed footer to know it should start a session
-      const AUTO_START_MARKER = 'kimaki:start'
-      const autoStartEmbed = notifyOnly
+      // Bot parses this JSON to know it should start a session and optionally create a worktree
+      const embedMarker = notifyOnly
         ? undefined
-        : [{ color: 0x2b2d31, footer: { text: AUTO_START_MARKER } }]
+        : JSON.stringify({ start: true, ...(worktreeName && { worktree: worktreeName }) })
+      const autoStartEmbed = embedMarker
+        ? [{ color: 0x2b2d31, footer: { text: embedMarker } }]
+        : undefined
 
       if (prompt.length > DISCORD_MAX_LENGTH) {
         // Send as file attachment with a short summary
@@ -1543,7 +1557,8 @@ cli
         fs.writeFileSync(tmpFile, prompt)
 
         try {
-          // Create message with file attachment
+          // Using raw fetch for file uploads because discord.js REST client
+          // doesn't handle FormData/multipart file attachments correctly
           const formData = new FormData()
           formData.append(
             'payload_json',
@@ -1580,64 +1595,28 @@ cli
         }
       } else {
         // Normal case: send prompt inline
-        const starterMessageResponse = await fetch(
-          `https://discord.com/api/v10/channels/${channelId}/messages`,
-          {
-            method: 'POST',
-            headers: {
-              Authorization: `Bot ${botToken}`,
-              'Content-Type': 'application/json',
-            },
-            body: JSON.stringify({
-              content: prompt,
-              embeds: autoStartEmbed,
-            }),
-          },
-        )
-
-        if (!starterMessageResponse.ok) {
-          const error = await starterMessageResponse.text()
-          cliLogger.log('Failed to create message')
-          throw new Error(`Discord API error: ${starterMessageResponse.status} - ${error}`)
-        }
-
-        starterMessage = (await starterMessageResponse.json()) as { id: string }
+        starterMessage = (await rest.post(Routes.channelMessages(channelId), {
+          body: { content: prompt, embeds: autoStartEmbed },
+        })) as { id: string }
       }
 
       cliLogger.log('Creating thread...')
 
-      // Create thread from the message
-      const threadName = name || (prompt.length > 80 ? prompt.slice(0, 77) + '...' : prompt)
-      const threadResponse = await fetch(
-        `https://discord.com/api/v10/channels/${channelId}/messages/${starterMessage.id}/threads`,
-        {
-          method: 'POST',
-          headers: {
-            Authorization: `Bot ${botToken}`,
-            'Content-Type': 'application/json',
-          },
-          body: JSON.stringify({
-            name: threadName.slice(0, 100),
-            auto_archive_duration: 1440, // 1 day
-          }),
+      const threadData = (await rest.post(Routes.threads(channelId, starterMessage.id), {
+        body: {
+          name: threadName.slice(0, 100),
+          auto_archive_duration: 1440, // 1 day
         },
-      )
-
-      if (!threadResponse.ok) {
-        const error = await threadResponse.text()
-        cliLogger.log('Failed to create thread')
-        throw new Error(`Discord API error: ${threadResponse.status} - ${error}`)
-      }
-
-      const threadData = (await threadResponse.json()) as { id: string; name: string }
+      })) as { id: string; name: string }
 
       cliLogger.log('Thread created!')
 
       const threadUrl = `https://discord.com/channels/${channelData.guild_id}/${threadData.id}`
 
+      const worktreeNote = worktreeName ? `\nWorktree: ${worktreeName} (will be created by bot)` : ''
       const successMessage = notifyOnly
         ? `Thread: ${threadData.name}\nDirectory: ${projectDirectory}\n\nNotification created. Reply to start a session.\n\nURL: ${threadUrl}`
-        : `Thread: ${threadData.name}\nDirectory: ${projectDirectory}\n\nThe running bot will pick this up and start the session.\n\nURL: ${threadUrl}`
+        : `Thread: ${threadData.name}\nDirectory: ${projectDirectory}${worktreeNote}\n\nThe running bot will pick this up and start the session.\n\nURL: ${threadUrl}`
 
       note(successMessage, '✅ Thread Created')
 
