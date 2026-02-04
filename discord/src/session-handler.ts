@@ -428,7 +428,9 @@ export async function handleOpencodeSession({
     sessionLogger.log(`Using worktree directory for SDK calls: ${worktreeDirectory}`)
   }
 
-  const getClient = await initializeOpencodeForDirectory(directory)
+  // When in worktree, pass original repo directory so AI can access files there
+  const originalRepoDirectory = worktreeDirectory ? worktreeInfo?.project_directory : undefined
+  const getClient = await initializeOpencodeForDirectory(directory, { originalRepoDirectory })
   if (getClient instanceof Error) {
     await sendThreadMessage(thread, `✗ ${getClient.message}`)
     return
@@ -1586,6 +1588,7 @@ export async function handleOpencodeSession({
               channelId,
               worktree,
               channelTopic,
+              username,
             }),
             model: modelParam,
             agent: agentPreference,

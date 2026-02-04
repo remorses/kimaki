@@ -96,7 +96,15 @@ async function waitForServer(port: number, maxAttempts = 30): Promise<ServerStar
   return new ServerStartError({ port, reason: `Server did not start after ${maxAttempts} seconds` })
 }
 
-export async function initializeOpencodeForDirectory(directory: string): Promise<OpenCodeErrors | (() => OpencodeClient)> {
+/**
+ * Initialize OpenCode server for a directory.
+ * @param directory - The directory to run the server in (cwd)
+ * @param options.originalRepoDirectory - For worktrees: the original repo directory to allow access to
+ */
+export async function initializeOpencodeForDirectory(
+  directory: string,
+  options?: { originalRepoDirectory?: string },
+): Promise<OpenCodeErrors | (() => OpencodeClient)> {
   const existing = opencodeServers.get(directory)
   if (existing && !existing.process.killed) {
     opencodeLogger.log(
@@ -128,6 +136,23 @@ export async function initializeOpencodeForDirectory(directory: string): Promise
 
   // Normalize path separators for cross-platform compatibility (Windows uses backslashes)
   const tmpdir = os.tmpdir().replaceAll('\\', '/')
+  const originalRepo = options?.originalRepoDirectory?.replaceAll('\\', '/')
+
+  // Build external_directory permissions, optionally including original repo for worktrees
+  const externalDirectoryPermissions: Record<string, PermissionAction> = {
+    '*': 'ask',
+    '/tmp': 'allow',
+    '/tmp/*': 'allow',
+    '/private/tmp': 'allow',
+    '/private/tmp/*': 'allow',
+    [tmpdir]: 'allow',
+    [`${tmpdir}/*`]: 'allow',
+  }
+  if (originalRepo) {
+    externalDirectoryPermissions[originalRepo] = 'allow'
+    externalDirectoryPermissions[`${originalRepo}/*`] = 'allow'
+  }
+
   const serverProcess = spawn(opencodeCommand, ['serve', '--port', port.toString()], {
     stdio: 'pipe',
     detached: false,
@@ -143,15 +168,7 @@ export async function initializeOpencodeForDirectory(directory: string): Promise
         permission: {
           edit: 'allow',
           bash: 'allow',
-          external_directory: {
-            '*': 'ask',
-            '/tmp': 'allow',
-            '/tmp/*': 'allow',
-            '/private/tmp': 'allow',
-            '/private/tmp/*': 'allow',
-            [tmpdir]: 'allow',
-            [`${tmpdir}/*`]: 'allow',
-          },
+          external_directory: externalDirectoryPermissions,
           webfetch: 'allow',
         },
       } satisfies Config),
