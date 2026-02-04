@@ -78,16 +78,37 @@ export type WorktreeInfo = {
   mainRepoDirectory: string
 }
 
+/** JSON marker embedded in thread starter message footer for bot to parse */
+export type ThreadStartMarker = {
+  /** Whether to auto-start an AI session */
+  start?: boolean
+  /** Worktree name to create */
+  worktree?: string
+  /** Discord username who initiated the thread */
+  username?: string
+  /** Discord user ID who initiated the thread */
+  userId?: string
+}
+
 export function getOpencodeSystemMessage({
   sessionId,
   channelId,
+  guildId,
   worktree,
   channelTopic,
+  username,
+  userId,
 }: {
   sessionId: string
   channelId?: string
+  /** Discord server/guild ID for discord_list_users tool */
+  guildId?: string
   worktree?: WorktreeInfo
   channelTopic?: string
+  /** Current Discord username */
+  username?: string
+  /** Current Discord user ID, used in example commands */
+  userId?: string
 }) {
   const topicContext = channelTopic?.trim()
     ? `\n\n<channel-topic>\n${channelTopic.trim()}\n</channel-topic>`
@@ -102,7 +123,7 @@ Set \`hasSideEffect: true\` for any command that writes files, modifies repo sta
 Set \`hasSideEffect: false\` for read-only commands (e.g. ls, tree, cat, rg, grep, git status, git diff, pwd, whoami, etc).
 This is required to distinguish essential bash calls from read-only ones in low-verbosity mode.
 
-Your current OpenCode session ID is: ${sessionId}${channelId ? `\nYour current Discord channel ID is: ${channelId}` : ''}
+Your current OpenCode session ID is: ${sessionId}${channelId ? `\nYour current Discord channel ID is: ${channelId}` : ''}${guildId ? `\nYour current Discord guild ID is: ${guildId}` : ''}${userId ? `\nCurrent Discord user ID is: ${userId} (mention with <@${userId}>)` : ''}
 
 ## permissions
 
@@ -124,7 +145,7 @@ ${
 
 To start a new thread/session in this channel pro-grammatically, run:
 
-npx -y kimaki send --channel ${channelId} --prompt "your prompt here"
+npx -y kimaki send --channel ${channelId} --prompt "your prompt here"${username ? ` --user "${username}"` : ''}
 
 Use --notify-only to create a notification thread without starting an AI session:
 
@@ -132,7 +153,7 @@ npx -y kimaki send --channel ${channelId} --prompt "User cancelled subscription"
 
 Use --worktree to create a git worktree for the session:
 
-npx -y kimaki send --channel ${channelId} --prompt "Add dark mode support" --worktree dark-mode
+npx -y kimaki send --channel ${channelId} --prompt "Add dark mode support" --worktree dark-mode${username ? ` --user "${username}"` : ''}
 
 Worktrees are useful for handing off parallel tasks that need to be isolated from each other (each session works on its own branch).
 
@@ -145,7 +166,7 @@ This is useful for automation (cron jobs, GitHub webhooks, n8n, etc.)
 When you are approaching the **context window limit** or the user explicitly asks to **handoff to a new thread**, use the \`kimaki send\` command to start a fresh session with context:
 
 \`\`\`bash
-npx -y kimaki send --channel ${channelId} --prompt "Continuing from previous session: <summary of current task and state>"
+npx -y kimaki send --channel ${channelId} --prompt "Continuing from previous session: <summary of current task and state>"${username ? ` --user "${username}"` : ''}
 \`\`\`
 
 The command automatically handles long prompts (over 2000 chars) by sending them as file attachments.

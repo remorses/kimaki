@@ -24,7 +24,7 @@ import {
   splitMarkdownForDiscord,
   SILENT_MESSAGE_FLAGS,
 } from './discord-utils.js'
-import { getOpencodeSystemMessage } from './system-message.js'
+import { getOpencodeSystemMessage, type ThreadStartMarker } from './system-message.js'
 import { getFileAttachments, getTextAttachments } from './message-formatting.js'
 import {
   ensureKimakiCategory,
@@ -318,6 +318,7 @@ export async function startDiscordBot({
             projectDirectory,
             channelId: parent?.id || '',
             username: message.member?.displayName || message.author.displayName,
+            userId: message.author.id,
             appId: currentAppId,
           })
           return
@@ -399,6 +400,7 @@ export async function startDiscordBot({
           images: fileAttachments,
           channelId: parent?.id,
           username: message.member?.displayName || message.author.displayName,
+          userId: message.author.id,
           appId: currentAppId,
         })
         return
@@ -545,6 +547,7 @@ export async function startDiscordBot({
           images: fileAttachments,
           channelId: textChannel.id,
           username: message.member?.displayName || message.author.displayName,
+          userId: message.author.id,
           appId: currentAppId,
         })
       } else {
@@ -592,13 +595,12 @@ export async function startDiscordBot({
       }
 
       // Parse JSON marker from embed footer
-      // Format: { start: true, worktree?: string }
       const embedFooter = starterMessage.embeds[0]?.footer?.text
       if (!embedFooter) {
         return
       }
 
-      let marker: { start?: boolean; worktree?: string }
+      let marker: ThreadStartMarker
       try {
         marker = JSON.parse(embedFooter)
       } catch {
@@ -713,6 +715,8 @@ export async function startDiscordBot({
         projectDirectory: sessionDirectory,
         channelId: parent.id,
         appId: currentAppId,
+        username: marker.username,
+        userId: marker.userId,
       })
     } catch (error) {
       voiceLogger.error('[BOT_SESSION] Error handling bot-initiated thread:', error)

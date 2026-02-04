@@ -12,6 +12,7 @@ import { fileURLToPath } from 'node:url'
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 import { createOpencodeClient, type OpencodeClient, type Config as SdkConfig } from '@opencode-ai/sdk'
+import { getBotToken } from './database.js'
 
 // SDK Config type is simplified; opencode accepts nested permission objects with path patterns
 type PermissionAction = 'ask' | 'allow' | 'deny'
@@ -153,6 +154,10 @@ export async function initializeOpencodeForDirectory(
     externalDirectoryPermissions[`${originalRepo}/*`] = 'allow'
   }
 
+  // Get bot token for plugin to use Discord API
+  const botTokenFromDb = await getBotToken()
+  const kimakiBotToken = process.env.KIMAKI_BOT_TOKEN || botTokenFromDb?.token
+
   const serverProcess = spawn(opencodeCommand, ['serve', '--port', port.toString()], {
     stdio: 'pipe',
     detached: false,
@@ -173,6 +178,7 @@ export async function initializeOpencodeForDirectory(
         },
       } satisfies Config),
       OPENCODE_PORT: port.toString(),
+      ...(kimakiBotToken && { KIMAKI_BOT_TOKEN: kimakiBotToken }),
     },
   })
 

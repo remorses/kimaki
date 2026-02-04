@@ -38,6 +38,7 @@ import {
 } from './database.js'
 import { formatWorktreeName } from './commands/worktree.js'
 import { WORKTREE_PREFIX } from './commands/merge-worktree.js'
+import type { ThreadStartMarker } from './system-message.js'
 import type { OpencodeClient, Command as OpencodeCommand } from '@opencode-ai/sdk'
 import {
   Events,
@@ -1285,6 +1286,7 @@ cli
   .option('-a, --app-id [appId]', 'Bot application ID (required if no local database)')
   .option('--notify-only', 'Create notification thread without starting AI session')
   .option('--worktree [name]', 'Create git worktree for session (name optional, derives from thread name)')
+  .option('-u, --user <username>', 'Discord username to add to thread')
   .action(
     async (options: {
       channel?: string
@@ -1294,6 +1296,7 @@ cli
       appId?: string
       notifyOnly?: boolean
       worktree?: string | boolean
+      user?: string
     }) => {
       try {
         let { channel: channelId, prompt, name, appId: optionAppId, notifyOnly } = options
@@ -1518,6 +1521,33 @@ cli
         )
       }
 
+      // Resolve username to user ID if provided
+      const resolvedUser = await (async (): Promise<{ id: string; username: string } | undefined> => {
+        if (!options.user) {
+          return undefined
+        }
+        cliLogger.log(`Searching for user "${options.user}" in guild...`)
+        const searchResults = (await rest.get(Routes.guildMembersSearch(channelData.guild_id), {
+          query: new URLSearchParams({ query: options.user, limit: '10' }),
+        })) as Array<{ user: { id: string; username: string; global_name?: string }; nick?: string }>
+
+        // Find exact match by display name, nickname, or username
+        const exactMatch = searchResults.find((member) => {
+          const displayName = member.nick || member.user.global_name || member.user.username
+          return (
+            displayName.toLowerCase() === options.user!.toLowerCase() ||
+            member.user.username.toLowerCase() === options.user!.toLowerCase()
+          )
+        })
+        const member = exactMatch || searchResults[0]
+        if (!member) {
+          throw new Error(`User "${options.user}" not found in guild`)
+        }
+        const username = member.nick || member.user.global_name || member.user.username
+        cliLogger.log(`Found user: ${username} (${member.user.id})`)
+        return { id: member.user.id, username }
+      })()
+
       cliLogger.log('Creating starter message...')
 
       // Discord has a 2000 character limit for messages.
@@ -1535,12 +1565,16 @@ cli
         : baseThreadName
 
       // Embed marker for auto-start sessions (unless --notify-only)
-      // Bot parses this JSON to know it should start a session and optionally create a worktree
-      const embedMarker = notifyOnly
+      // Bot parses this JSON to know it should start a session, optionally create a worktree, and set initial user
+      const embedMarker: ThreadStartMarker | undefined = notifyOnly
         ? undefined
-        : JSON.stringify({ start: true, ...(worktreeName && { worktree: worktreeName }) })
+        : {
+            start: true,
+            ...(worktreeName && { worktree: worktreeName }),
+            ...(resolvedUser && { username: resolvedUser.username, userId: resolvedUser.id }),
+          }
       const autoStartEmbed = embedMarker
-        ? [{ color: 0x2b2d31, footer: { text: embedMarker } }]
+        ? [{ color: 0x2b2d31, footer: { text: JSON.stringify(embedMarker) } }]
         : undefined
 
       if (prompt.length > DISCORD_MAX_LENGTH) {
@@ -1610,6 +1644,12 @@ cli
       })) as { id: string; name: string }
 
       cliLogger.log('Thread created!')
+
+      // Add user to thread if specified
+      if (resolvedUser) {
+        cliLogger.log(`Adding user ${resolvedUser.username} to thread...`)
+        await rest.put(Routes.threadMembers(threadData.id, resolvedUser.id))
+      }
 
       const threadUrl = `https://discord.com/channels/${channelData.guild_id}/${threadData.id}`
 

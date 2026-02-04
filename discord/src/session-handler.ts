@@ -391,6 +391,7 @@ export async function handleOpencodeSession({
   command,
   agent,
   username,
+  userId,
   appId,
 }: {
   prompt: string
@@ -405,6 +406,8 @@ export async function handleOpencodeSession({
   agent?: string
   /** Discord username for synthetic context (not shown in TUI) */
   username?: string
+  /** Discord user ID for system prompt examples */
+  userId?: string
   appId?: string
 }): Promise<{ sessionID: string; result: any; port?: number } | undefined> {
   voiceLogger.log(
@@ -1586,9 +1589,11 @@ export async function handleOpencodeSession({
             system: getOpencodeSystemMessage({
               sessionId: session.id,
               channelId,
+              guildId: thread.guildId,
               worktree,
               channelTopic,
               username,
+              userId,
             }),
             model: modelParam,
             agent: agentPreference,
