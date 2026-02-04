@@ -14,6 +14,17 @@ The bot will wait 1000ms and then restart itself with the same arguments.
 
 this project uses sqlite to preserve state between runs. the database should never have breaking changes, new kimaki versions should keep working with old sqlite databases created by an older kimaki version. if this happens specifically ask the user how to proceed, asking if it is ok adding migration in startup so users with existing db can still use kimaki and will not break.
 
+
+you should prefer never deleting or adding new fields. we rely in a schema.sql generated inside src to initialize an update the database schema for users.
+
+if we added new fields on the schema then we would also need to update db.ts with manual sql migration code to keep existing users databases working.
+
+## prisma
+
+we use prisma to write type safe queries. after adding new tables you should also run the command `pnpm generate` inside discord to generate again the prisma code.
+
+database.ts has some functions that abstract complex prisma queries or inserts. ONLY add them there if they are very complex or used a lot. prefer inlining the prisma queries if possible
+
 ## errore
 
 errore is a submodule. should always be in main. make sure it is never in detached state.
