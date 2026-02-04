@@ -25,6 +25,7 @@ import {
   SILENT_MESSAGE_FLAGS,
 } from './discord-utils.js'
 import { getOpencodeSystemMessage, type ThreadStartMarker } from './system-message.js'
+import yaml from 'js-yaml'
 import { getFileAttachments, getTextAttachments } from './message-formatting.js'
 import {
   ensureKimakiCategory,
@@ -602,9 +603,9 @@ export async function startDiscordBot({
 
       let marker: ThreadStartMarker
       try {
-        marker = JSON.parse(embedFooter)
+        marker = yaml.load(embedFooter) as ThreadStartMarker
       } catch {
-        return // Not a valid JSON marker
+        return // Not a valid YAML marker
       }
 
       if (!marker.start) {

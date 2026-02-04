@@ -39,6 +39,7 @@ import {
 import { formatWorktreeName } from './commands/worktree.js'
 import { WORKTREE_PREFIX } from './commands/merge-worktree.js'
 import type { ThreadStartMarker } from './system-message.js'
+import yaml from 'js-yaml'
 import type { OpencodeClient, Command as OpencodeCommand } from '@opencode-ai/sdk'
 import {
   Events,
@@ -1574,7 +1575,7 @@ cli
             ...(resolvedUser && { username: resolvedUser.username, userId: resolvedUser.id }),
           }
       const autoStartEmbed = embedMarker
-        ? [{ color: 0x2b2d31, footer: { text: JSON.stringify(embedMarker) } }]
+        ? [{ color: 0x2b2d31, footer: { text: yaml.dump(embedMarker) } }]
         : undefined
 
       if (prompt.length > DISCORD_MAX_LENGTH) {
