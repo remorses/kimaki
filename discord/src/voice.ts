@@ -2,7 +2,7 @@
 // Transcribes voice messages with code-aware context.
 // Uses errore for type-safe error handling.
 
-import { GoogleGenAI, Type, type Content } from '@google/genai'
+import { GoogleGenAI, FunctionCallingConfigMode, Type, type Content } from '@google/genai'
 import * as errore from 'errore'
 import { createLogger, LogPrefix } from './logger.js'
 import {
@@ -68,6 +68,12 @@ async function runTranscriptionOnce({
               ],
             },
           ],
+          toolConfig: {
+            functionCallingConfig: {
+              mode: FunctionCallingConfigMode.ANY,
+              allowedFunctionNames: ['transcriptionResult'],
+            },
+          },
         },
       }),
     catch: (e) => new TranscriptionError({ reason: `API call failed: ${String(e)}`, cause: e }),
