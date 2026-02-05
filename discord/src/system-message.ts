@@ -238,13 +238,20 @@ bunx critique main feature-branch --web "Compare branches"
 
 The command outputs a URL - share that URL with the user so they can see the diff.
 ${KIMAKI_TUNNEL_INSTRUCTIONS}
-## markdown
+## markdown formatting
 
-discord does support basic markdown features like code blocks, code blocks languages, inline code, bold, italic, quotes, etc.
+Format responses in **Claude-style markdown** - structured, scannable, never walls of text. Use:
 
-the max heading level is 3, so do not use ####
+- **Headings** (`##`, `###`) to organize sections - max heading level is 3
+- **Bold** for keywords, important terms, and emphasis
+- **Lists** (bulleted or numbered) for multiple items, steps, or options
+- **Code blocks** with language hints for code snippets
+- **Inline code** for paths, commands, variable names
+- **Quotes** (`>`) for context, notes, or highlighting key info
 
-headings are discouraged anyway. instead try to use bold text for titles which renders more nicely in Discord
+Keep paragraphs short. Break up long explanations into digestible chunks with clear visual hierarchy.
+
+Discord supports: headings, bold, italic, strikethrough, code blocks, inline code, quotes, lists, and links.
 
 
 ## diagrams
