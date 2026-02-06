@@ -1,5 +1,18 @@
 # Changelog
 
+## 0.4.57
+
+### Patch Changes
+
+- fix: move **@opencode-ai/plugin** from devDependencies to dependencies so it's available in global installs (fixes #35)
+- feat: add **opencode version check** at startup - exits with clear message if installed opencode is older than 1.1.51
+- feat: add **`project` subcommands** - `kimaki project list`, `kimaki project create`, `kimaki project add` (alias for `add-project`)
+- feat: **`send` defaults to cwd** when neither `--channel` nor `--project` is provided
+- feat: add **cross-project commands** documentation in system message
+- fix: **strip mentions from thread titles** so `<@123>` doesn't appear in thread names
+- fix: check **mention mode before permissions** to avoid sending permission errors to users who just didn't @mention the bot
+- fix: `add-project` exits with **non-zero code** when channel already exists
+
 ## 0.4.56
 
 ### Patch Changes
