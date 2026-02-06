@@ -1,5 +1,6 @@
 <!-- This AGENTS.md file is generated. Look for an agents.md package.json script to see what files to update instead. -->
 
+after every change always run tsc inside discord to validate your changes. try to never use as any
 
 # restarting the discord bot
 

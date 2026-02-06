@@ -1,3 +1,4 @@
+after every change always run tsc inside discord to validate your changes. try to never use as any
 
 # restarting the discord bot
 
