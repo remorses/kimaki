@@ -35,11 +35,11 @@
   },
   "dependencies": {
     "@clack/prompts": "^1.0.0",
-    "@opencode-ai/plugin": "^1.1.51",
     "@discordjs/voice": "^0.19.0",
     "@google/genai": "^1.34.0",
     "@libsql/client": "^0.15.15",
-    "@opencode-ai/sdk": "^1.1.51",
+    "@opencode-ai/plugin": "^1.1.53",
+    "@opencode-ai/sdk": "^1.1.53",
     "@prisma/adapter-libsql": "^7.3.0",
     "@prisma/client": "^7.3.0",
     "@purinton/resampler": "^1.0.4",
