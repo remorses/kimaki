@@ -87,7 +87,7 @@ export async function showPermissionButtons({
   const subtaskLine = subtaskLabel ? `**From:** \`${subtaskLabel}\`\n` : ''
   const permissionMessage = await thread.send({
     content:
-      `⚠️ **Permission Required**\n\n` +
+      `⚠️ **Permission Required**\n` +
       subtaskLine +
       `**Type:** \`${permission.permission}\`\n` +
       (patternStr ? `**Pattern:** \`${patternStr}\`` : ''),
@@ -159,9 +159,9 @@ export async function handlePermissionButton(interaction: ButtonInteraction): Pr
     const patternStr = context.permission.patterns.join(', ')
     await interaction.editReply({
       content:
-        `⚠️ **Permission Required**\n\n` +
+        `⚠️ **Permission Required**\n` +
         `**Type:** \`${context.permission.permission}\`\n` +
-        (patternStr ? `**Pattern:** \`${patternStr}\`\n\n` : '\n') +
+        (patternStr ? `**Pattern:** \`${patternStr}\`\n` : '') +
         resultText,
       components: [], // Remove the buttons
     })
