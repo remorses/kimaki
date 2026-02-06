@@ -40,7 +40,9 @@ const kimakiPlugin: Plugin = async () => {
           query: tool.schema
             .string()
             .optional()
-            .describe('Search query to filter users by name (optional, returns first 20 if not provided)'),
+            .describe(
+              'Search query to filter users by name (optional, returns first 20 if not provided)',
+            ),
         },
         async execute({ guildId, query }) {
           type GuildMember = {
@@ -61,17 +63,22 @@ const kimakiPlugin: Plugin = async () => {
           })()
 
           if (members.length === 0) {
-            return query ? `No users found matching "${query}"` : 'No users found in guild'
+            return query
+              ? `No users found matching "${query}"`
+              : 'No users found in guild'
           }
 
           const userList = members
             .map((m) => {
-              const displayName = m.nick || m.user.global_name || m.user.username
+              const displayName =
+                m.nick || m.user.global_name || m.user.username
               return `- ${displayName} (ID: ${m.user.id}) - mention: <@${m.user.id}>`
             })
             .join('\n')
 
-          const header = query ? `Found ${members.length} users matching "${query}":` : `Found ${members.length} users:`
+          const header = query
+            ? `Found ${members.length} users matching "${query}":`
+            : `Found ${members.length} users:`
 
           return `${header}\n${userList}`
         },
@@ -111,7 +118,9 @@ const kimakiPlugin: Plugin = async () => {
               }
               const channelId = await (async () => {
                 try {
-                  const channel = (await rest.get(Routes.channel(threadId))) as {
+                  const channel = (await rest.get(
+                    Routes.channel(threadId),
+                  )) as {
                     id: string
                     parent_id?: string
                   }
@@ -128,7 +137,7 @@ const kimakiPlugin: Plugin = async () => {
       }),
       kimaki_read_session: tool({
         description:
-          'Read the full conversation of another OpenCode session as markdown, using Kimaki\'s markdown serializer.',
+          "Read the full conversation of another OpenCode session as markdown, using Kimaki's markdown serializer.",
         args: {
           sessionId: tool.schema.string().describe('Session ID to read'),
         },
@@ -149,7 +158,8 @@ const kimakiPlugin: Plugin = async () => {
               fs.mkdirSync(outputDir, { recursive: true })
               fs.writeFileSync(outputPath, result, 'utf8')
             } catch (error) {
-              const message = error instanceof Error ? error.message : String(error)
+              const message =
+                error instanceof Error ? error.message : String(error)
               return `Session is over 100000 characters, but failed to write full output: ${message}`
             }
             const preview = result.split('\n').slice(0, 10).join('\n')
@@ -173,13 +183,14 @@ const kimakiPlugin: Plugin = async () => {
             return 'Could not find thread for current session'
           }
 
-          await rest.patch(Routes.channel(row.thread_id), {
-            body: { archived: true },
-          })
+          await client?.session.abort({ path: { id: context.sessionID } })
 
-          if (client) {
-            await client.session.abort({ path: { id: context.sessionID } })
-          }
+          // close after we sent completed message
+          setTimeout(async () => {
+            await rest.patch(Routes.channel(row.thread_id), {
+              body: { archived: true },
+            })
+          }, 1000 * 1)
 
           return 'Thread archived and session stopped'
         },
