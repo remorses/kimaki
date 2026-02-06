@@ -38,7 +38,7 @@ import {
   pendingQuestionContexts,
 } from './commands/ask-question.js'
 import {
-  showPermissionDropdown,
+  showPermissionButtons,
   cleanupPermissionContext,
   addPermissionRequestToContext,
 } from './commands/permissions.js'
@@ -1122,7 +1122,7 @@ export async function handleOpencodeSession({
         stopTyping = null
       }
 
-      const { messageId, contextHash } = await showPermissionDropdown({
+      const { messageId, contextHash } = await showPermissionButtons({
         thread,
         permission,
         directory,

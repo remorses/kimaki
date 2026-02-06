@@ -15,7 +15,7 @@ import {
   handleRemoveProjectAutocomplete,
 } from './commands/remove-project.js'
 import { handleCreateNewProjectCommand } from './commands/create-new-project.js'
-import { handlePermissionSelectMenu } from './commands/permissions.js'
+import { handlePermissionButton } from './commands/permissions.js'
 import { handleAbortCommand } from './commands/abort.js'
 import { handleCompactCommand } from './commands/compact.js'
 import { handleShareCommand } from './commands/share.js'
@@ -217,6 +217,15 @@ export function registerInteractionHandler({
           await handleGeminiApiKeyButton(interaction)
           return
         }
+
+        if (
+          customId.startsWith('permission_once:') ||
+          customId.startsWith('permission_always:') ||
+          customId.startsWith('permission_reject:')
+        ) {
+          await handlePermissionButton(interaction)
+          return
+        }
         return
       }
 
@@ -252,11 +261,6 @@ export function registerInteractionHandler({
 
         if (customId.startsWith('ask_question:')) {
           await handleAskQuestionSelectMenu(interaction)
-          return
-        }
-
-        if (customId.startsWith('permission:')) {
-          await handlePermissionSelectMenu(interaction)
           return
         }
 

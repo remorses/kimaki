@@ -1,10 +1,11 @@
-// Permission dropdown handler - Shows dropdown for permission requests.
-// When OpenCode asks for permission, this module renders a dropdown
-// with Accept, Accept Always, and Deny options.
+// Permission button handler - Shows buttons for permission requests.
+// When OpenCode asks for permission, this module renders 3 buttons:
+// Accept, Accept Always, and Deny.
 
 import {
-  StringSelectMenuBuilder,
-  StringSelectMenuInteraction,
+  ButtonBuilder,
+  ButtonStyle,
+  type ButtonInteraction,
   ActionRowBuilder,
   type ThreadChannel,
 } from 'discord.js'
@@ -29,10 +30,11 @@ type PendingPermissionContext = {
 export const pendingPermissionContexts = new Map<string, PendingPermissionContext>()
 
 /**
- * Show permission dropdown for a permission request.
+ * Show permission buttons for a permission request.
+ * Displays 3 buttons in a row: Accept, Accept Always, Deny.
  * Returns the message ID and context hash for tracking.
  */
-export async function showPermissionDropdown({
+export async function showPermissionButtons({
   thread,
   permission,
   directory,
@@ -60,31 +62,27 @@ export async function showPermissionDropdown({
 
   const patternStr = permission.patterns.join(', ')
 
-  // Build dropdown options
-  const options = [
-    {
-      label: 'Accept',
-      value: 'once',
-      description: 'Allow this request only',
-    },
-    {
-      label: 'Accept Always',
-      value: 'always',
-      description: 'Auto-approve similar requests',
-    },
-    {
-      label: 'Deny',
-      value: 'reject',
-      description: 'Reject this permission request',
-    },
-  ]
+  // Build 3 buttons for permission actions
+  const acceptButton = new ButtonBuilder()
+    .setCustomId(`permission_once:${contextHash}`)
+    .setLabel('Accept')
+    .setStyle(ButtonStyle.Primary)
 
-  const selectMenu = new StringSelectMenuBuilder()
-    .setCustomId(`permission:${contextHash}`)
-    .setPlaceholder('Choose an action')
-    .addOptions(options)
+  const acceptAlwaysButton = new ButtonBuilder()
+    .setCustomId(`permission_always:${contextHash}`)
+    .setLabel('Accept Always')
+    .setStyle(ButtonStyle.Success)
 
-  const actionRow = new ActionRowBuilder<StringSelectMenuBuilder>().addComponents(selectMenu)
+  const denyButton = new ButtonBuilder()
+    .setCustomId(`permission_reject:${contextHash}`)
+    .setLabel('Deny')
+    .setStyle(ButtonStyle.Danger)
+
+  const actionRow = new ActionRowBuilder<ButtonBuilder>().addComponents(
+    acceptButton,
+    acceptAlwaysButton,
+    denyButton,
+  )
 
   const subtaskLine = subtaskLabel ? `**From:** \`${subtaskLabel}\`\n` : ''
   const permissionMessage = await thread.send({
@@ -97,24 +95,25 @@ export async function showPermissionDropdown({
     flags: NOTIFY_MESSAGE_FLAGS,
   })
 
-  logger.log(`Showed permission dropdown for ${permission.id}`)
+  logger.log(`Showed permission buttons for ${permission.id}`)
 
   return { messageId: permissionMessage.id, contextHash }
 }
 
 /**
- * Handle dropdown selection for permission.
+ * Handle button click for permission.
  */
-export async function handlePermissionSelectMenu(
-  interaction: StringSelectMenuInteraction,
-): Promise<void> {
+export async function handlePermissionButton(interaction: ButtonInteraction): Promise<void> {
   const customId = interaction.customId
 
-  if (!customId.startsWith('permission:')) {
+  // Extract action and hash from customId (e.g., "permission_once:abc123")
+  const [actionPart, contextHash] = customId.split(':')
+  if (!actionPart || !contextHash) {
     return
   }
 
-  const contextHash = customId.replace('permission:', '')
+  const response = actionPart.replace('permission_', '') as 'once' | 'always' | 'reject'
+
   const context = pendingPermissionContexts.get(contextHash)
 
   if (!context) {
@@ -126,8 +125,6 @@ export async function handlePermissionSelectMenu(
   }
 
   await interaction.deferUpdate()
-
-  const response = interaction.values[0] as 'once' | 'always' | 'reject'
 
   try {
     const clientV2 = getOpencodeClientV2(context.directory)
@@ -166,7 +163,7 @@ export async function handlePermissionSelectMenu(
         `**Type:** \`${context.permission.permission}\`\n` +
         (patternStr ? `**Pattern:** \`${patternStr}\`\n\n` : '\n') +
         resultText,
-      components: [], // Remove the dropdown
+      components: [], // Remove the buttons
     })
 
     logger.log(`Permission ${context.permission.id} ${response} (${requestIds.length} request(s))`)
