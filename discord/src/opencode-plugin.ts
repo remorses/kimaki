@@ -2,12 +2,18 @@
 // Provides tools for Discord integration like listing users for mentions.
 
 import type { Plugin } from '@opencode-ai/plugin'
-// Type-only import from subpath is fine (erased at runtime).
-// The value import of tool() fails in global npm installs (#35),
-// so we inline it below — it's just an identity function.
 import type { ToolContext } from '@opencode-ai/plugin/tool'
 import { z } from 'zod'
 
+// Inlined from '@opencode-ai/plugin/tool' because the subpath value import
+// fails at runtime in global npm installs (#35). Opencode loads this plugin
+// file in its own process and resolves modules from kimaki's install dir,
+// but the '/tool' subpath export isn't found by opencode's module resolver.
+// The type-only imports above are fine (erased at compile time).
+// The opencode docs recommend `import { tool } from '@opencode-ai/plugin'`
+// (main entry) but their index.d.ts uses `export * from "./tool"` which
+// doesn't re-export the tool function under nodenext resolution because
+// tool is a merged function+namespace declaration.
 function tool<Args extends z.ZodRawShape>(input: {
   description: string
   args: Args
