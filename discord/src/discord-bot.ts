@@ -27,7 +27,7 @@ import {
 } from './discord-utils.js'
 import { getOpencodeSystemMessage, type ThreadStartMarker } from './system-message.js'
 import yaml from 'js-yaml'
-import { getFileAttachments, getTextAttachments } from './message-formatting.js'
+import { getFileAttachments, getTextAttachments, resolveMentions } from './message-formatting.js'
 import {
   ensureKimakiCategory,
   ensureKimakiAudioCategory,
@@ -302,7 +302,7 @@ export async function startDiscordBot({
           }
 
           // Include starter message as context for the session
-          let prompt = message.content
+          let prompt = resolveMentions(message)
           const starterMessage = await thread.fetchStarterMessage().catch((error) => {
             discordLogger.warn(
               `[SESSION] Failed to fetch starter message for thread ${thread.id}:`,
@@ -311,7 +311,7 @@ export async function startDiscordBot({
             return null
           })
           if (starterMessage?.content && starterMessage.content !== message.content) {
-            prompt = `Context from thread:\n${starterMessage.content}\n\nUser request:\n${message.content}`
+            prompt = `Context from thread:\n${resolveMentions(starterMessage)}\n\nUser request:\n${prompt}`
           }
 
           await handleOpencodeSession({
@@ -328,7 +328,7 @@ export async function startDiscordBot({
 
         voiceLogger.log(`[SESSION] Found session ${sessionId} for thread ${thread.id}`)
 
-        let messageContent = message.content || ''
+        let messageContent = resolveMentions(message)
 
         let currentSessionContext: string | undefined
         let lastSessionContext: string | undefined
@@ -459,7 +459,7 @@ export async function startDiscordBot({
 
         const baseThreadName = hasVoice
           ? 'Voice Message'
-          : message.content?.replace(/\s+/g, ' ').trim() || 'Claude Thread'
+          : resolveMentions(message).replace(/\s+/g, ' ').trim() || 'Claude Thread'
 
         // Check if worktrees should be enabled (CLI flag OR channel setting)
         const shouldUseWorktrees = useWorktrees || await getChannelWorktreesEnabled(textChannel.id)
@@ -533,7 +533,7 @@ export async function startDiscordBot({
           }
         }
 
-        let messageContent = message.content || ''
+        let messageContent = resolveMentions(message)
 
         const transcription = await processVoiceAttachment({
           message,
@@ -625,7 +625,7 @@ export async function startDiscordBot({
 
       discordLogger.log(`[BOT_SESSION] Detected bot-initiated thread: ${thread.name}`)
 
-      const prompt = starterMessage.content.trim()
+      const prompt = resolveMentions(starterMessage).trim()
       if (!prompt) {
         discordLogger.log(`[BOT_SESSION] No prompt found in starter message`)
         return

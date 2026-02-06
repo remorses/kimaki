@@ -4,7 +4,7 @@
 
 import type { Part } from '@opencode-ai/sdk/v2'
 import type { FilePartInput } from '@opencode-ai/sdk'
-import type { Message } from 'discord.js'
+import type { Message, TextChannel } from 'discord.js'
 
 // Extended FilePartInput with original Discord URL for reference in prompts
 export type DiscordFileAttachment = FilePartInput & {
@@ -22,6 +22,34 @@ type GenericSessionMessage = {
 }
 
 const logger = createLogger(LogPrefix.FORMATTING)
+
+/**
+ * Resolves Discord mentions in message content to human-readable names.
+ * Replaces <@userId> with @displayName, <@&roleId> with @roleName, <#channelId> with #channelName.
+ */
+export function resolveMentions(message: Message): string {
+  let content = message.content || ''
+
+  // Replace user mentions <@userId> or <@!userId> with @displayName
+  for (const [userId, user] of message.mentions.users) {
+    const member = message.guild?.members.cache.get(userId)
+    const displayName = member?.displayName || user.displayName || user.username
+    content = content.replace(new RegExp(`<@!?${userId}>`, 'g'), `@${displayName}`)
+  }
+
+  // Replace role mentions <@&roleId> with @roleName
+  for (const [roleId, role] of message.mentions.roles) {
+    content = content.replace(new RegExp(`<@&${roleId}>`, 'g'), `@${role.name}`)
+  }
+
+  // Replace channel mentions <#channelId> with #channelName
+  for (const [channelId, channel] of message.mentions.channels) {
+    const name = 'name' in channel ? (channel as TextChannel).name : channelId
+    content = content.replace(new RegExp(`<#${channelId}>`, 'g'), `#${name}`)
+  }
+
+  return content
+}
 
 /**
  * Escapes Discord inline markdown characters so dynamic content
