@@ -8,7 +8,7 @@ import { getChannelMentionMode, setChannelMentionMode } from '../database.js'
 import { getKimakiMetadata } from '../discord-utils.js'
 import { createLogger, LogPrefix } from '../logger.js'
 
-const mentionModeLogger = createLogger(LogPrefix.COMMAND)
+const mentionModeLogger = createLogger(LogPrefix.CLI)
 
 /**
  * Handle the /toggle-mention-mode slash command.
