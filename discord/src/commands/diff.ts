@@ -1,6 +1,6 @@
 // /diff command - Show git diff as a shareable URL.
 
-import { ChannelType, type TextChannel, type ThreadChannel } from 'discord.js'
+import { ChannelType, EmbedBuilder, type TextChannel, type ThreadChannel } from 'discord.js'
 import { exec } from 'node:child_process'
 import { promisify } from 'node:util'
 import path from 'node:path'
@@ -94,15 +94,18 @@ export async function handleDiffCommand({ command }: CommandContext): Promise<vo
       return
     }
 
-    if (result.error || !result.url) {
+    if (result.error || !result.url || !result.id) {
       await command.editReply({
         content: result.error || 'No changes to show',
       })
       return
     }
 
+    const imageUrl = `https://critique.work/og/${result.id}.png`
+    const embed = new EmbedBuilder().setTitle(title).setURL(result.url).setImage(imageUrl)
+
     await command.editReply({
-      content: `[diff](${result.url})`,
+      embeds: [embed],
     })
     logger.log(`Diff shared: ${result.url}`)
   } catch (error) {

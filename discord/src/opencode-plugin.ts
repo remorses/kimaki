@@ -158,6 +158,32 @@ const kimakiPlugin: Plugin = async () => {
           return result
         },
       }),
+      kimaki_archive_thread: tool({
+        description:
+          'Archive the current Discord thread to hide it from the Discord left sidebar. Only call this when the user explicitly asks to close or archive the thread, typically after committing and pushing changes. This tool also aborts the current session, so it should ALWAYS be called as the last tool in your response.',
+        args: {},
+        async execute(_args, context) {
+          const prisma = await getPrisma()
+          const row = await prisma.thread_sessions.findFirst({
+            where: { session_id: context.sessionID },
+            select: { thread_id: true },
+          })
+
+          if (!row?.thread_id) {
+            return 'Could not find thread for current session'
+          }
+
+          await rest.patch(Routes.channel(row.thread_id), {
+            body: { archived: true },
+          })
+
+          if (client) {
+            await client.session.abort({ path: { id: context.sessionID } })
+          }
+
+          return 'Thread archived and session stopped'
+        },
+      }),
     },
   }
 }
