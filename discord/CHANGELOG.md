@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.4.58
+
+### Patch Changes
+
+- fix: **inline `tool()` helper** to avoid `@opencode-ai/plugin/tool` subpath import that fails in global npm installs (fixes #35)
+- fix: remove double newlines from permission request messages
+- fix: remove **opencode version check** at startup (replaced by background auto-upgrade)
+- feat: **auto-upgrade opencode** in background on bot startup
+- chore: update opencode deps to 1.1.53
+
 ## 0.4.57
 
 ### Patch Changes

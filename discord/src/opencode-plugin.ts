@@ -2,7 +2,19 @@
 // Provides tools for Discord integration like listing users for mentions.
 
 import type { Plugin } from '@opencode-ai/plugin'
-import { tool } from '@opencode-ai/plugin/tool'
+// Type-only import from subpath is fine (erased at runtime).
+// The value import of tool() fails in global npm installs (#35),
+// so we inline it below — it's just an identity function.
+import type { ToolContext } from '@opencode-ai/plugin/tool'
+import { z } from 'zod'
+
+function tool<Args extends z.ZodRawShape>(input: {
+  description: string
+  args: Args
+  execute(args: z.infer<z.ZodObject<Args>>, context: ToolContext): Promise<string>
+}) {
+  return input
+}
 import { createOpencodeClient } from '@opencode-ai/sdk'
 import { REST, Routes } from 'discord.js'
 import * as errore from 'errore'
@@ -47,8 +59,8 @@ const kimakiPlugin: Plugin = async () => {
         description:
           'Search for Discord users in a guild/server. Returns user IDs needed for mentions (<@userId>). Use the guildId from the system message.',
         args: {
-          guildId: tool.schema.string().describe('Discord guild/server ID'),
-          query: tool.schema
+          guildId: z.string().describe('Discord guild/server ID'),
+          query: z
             .string()
             .optional()
             .describe(
@@ -154,7 +166,7 @@ const kimakiPlugin: Plugin = async () => {
         description:
           "Read the full conversation of another OpenCode session as markdown, using Kimaki's markdown serializer.",
         args: {
-          sessionId: tool.schema.string().describe('Session ID to read'),
+          sessionId: z.string().describe('Session ID to read'),
         },
         async execute({ sessionId }) {
           if (!client) {
@@ -187,8 +199,8 @@ const kimakiPlugin: Plugin = async () => {
         description:
           'Mark the current Discord thread with emoji reactions and update the session title. Only pass emoji characters (e.g., "🚀", "🐛", "📦"). Do NOT use ✅ as it is reserved for "session completed" indicator. This lets users create custom tagging systems visible in both Discord and OpenCode.',
         args: {
-          emojis: tool.schema
-            .array(tool.schema.string())
+          emojis: z
+            .array(z.string())
             .describe(
               'Array of emoji characters to add as reactions and prepend to session title. Only emojis allowed, no text.',
             ),
