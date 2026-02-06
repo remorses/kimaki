@@ -1037,6 +1037,11 @@ export async function handleOpencodeSession({
       }
 
       const errorMessage = error?.data?.message || 'Unknown error'
+      // Skip abort errors - these are expected when operations are cancelled
+      if (errorMessage.includes('operation was aborted')) {
+        voiceLogger.log(`[SESSION] Operation aborted (expected behavior)`)
+        return
+      }
       sessionLogger.error(`Sending error to thread: ${errorMessage}`)
       await sendThreadMessage(thread, `✗ opencode session error: ${errorMessage}`)
 
