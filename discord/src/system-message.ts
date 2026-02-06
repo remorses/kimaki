@@ -179,6 +179,37 @@ Use this for handoff when:
 - User asks to "handoff", "continue in new thread", or "start fresh session"
 - You detect you're running low on context window space
 - A complex task would benefit from a clean slate with summarized context
+
+## cross-project commands
+
+When you need to work across multiple projects (e.g., update a dependency, fix a fork, or coordinate changes), use these commands:
+
+\`\`\`bash
+# List all registered projects with their channel IDs
+kimaki project list
+kimaki project list --json  # machine-readable output
+
+# Create a new project in ~/.kimaki/projects/<name> (folder + git init + Discord channel)
+kimaki project create my-new-app
+
+# Add an existing directory as a project
+kimaki project add /path/to/repo
+\`\`\`
+
+To send a task to another project:
+
+\`\`\`bash
+# Send to a specific channel
+kimaki send --channel <channel_id> --prompt "Update the API client to v2"
+
+# Or use --project to resolve from directory
+kimaki send --project /path/to/other-repo --prompt "Bump version to 1.2.0"
+\`\`\`
+
+Use cases:
+- **Updating a fork or dependency** the user maintains locally
+- **Coordinating changes** across related repos (e.g., SDK + docs)
+- **Delegating subtasks** to isolated sessions in other projects
 `
     : ''
 }${

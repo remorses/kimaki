@@ -1857,13 +1857,11 @@ cli
             try {
               const ch = await client.channels.fetch(existingChannel.channel_id)
               if (ch && 'guild' in ch && ch.guild?.id === guild.id) {
-                cliLogger.log('Channel already exists')
-                note(
-                  `Channel already exists for this directory in ${guild.name}.\n\nChannel: <#${existingChannel.channel_id}>\nDirectory: ${absolutePath}`,
-                  '⚠️  Already Exists',
-                )
                 client.destroy()
-                process.exit(0)
+                cliLogger.error(
+                  `Channel already exists for this directory in ${guild.name}. Channel ID: ${existingChannel.channel_id}`,
+                )
+                process.exit(EXIT_NO_RESTART)
               }
             } catch (error) {
               cliLogger.debug(
