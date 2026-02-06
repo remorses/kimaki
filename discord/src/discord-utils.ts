@@ -3,17 +3,42 @@
 // thread message sending, and channel metadata extraction from topic tags.
 
 import { ChannelType, type Message, type TextChannel, type ThreadChannel } from 'discord.js'
+import { REST, Routes } from 'discord.js'
 import { Lexer } from 'marked'
 import { formatMarkdownTables } from './format-tables.js'
 import { getChannelDirectory } from './database.js'
 import { limitHeadingDepth } from './limit-heading-depth.js'
 import { unnestCodeBlocksFromLists } from './unnest-code-blocks.js'
 import { createLogger, LogPrefix } from './logger.js'
+import * as errore from 'errore'
 import mime from 'mime'
 import fs from 'node:fs'
 import path from 'node:path'
 
 const discordLogger = createLogger(LogPrefix.DISCORD)
+
+/**
+ * React to a thread's starter message with an emoji.
+ * Thread ID equals the starter message ID in Discord.
+ */
+export async function reactToThread({
+  rest,
+  threadId,
+  emoji,
+}: {
+  rest: REST
+  threadId: string
+  emoji: string
+}): Promise<void> {
+  const result = await errore.tryAsync(() => {
+    return rest.put(
+      Routes.channelMessageOwnReaction(threadId, threadId, encodeURIComponent(emoji)),
+    )
+  })
+  if (result instanceof Error) {
+    discordLogger.warn(`Failed to react to thread ${threadId} with ${emoji}:`, result.message)
+  }
+}
 
 export const SILENT_MESSAGE_FLAGS = 4 | 4096
 // Same as SILENT but without SuppressNotifications - triggers badge/notification

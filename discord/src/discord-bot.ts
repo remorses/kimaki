@@ -24,6 +24,7 @@ import {
   escapeBackticksInCodeBlocks,
   splitMarkdownForDiscord,
   SILENT_MESSAGE_FLAGS,
+  reactToThread,
 } from './discord-utils.js'
 import { getOpencodeSystemMessage, type ThreadStartMarker } from './system-message.js'
 import yaml from 'js-yaml'
@@ -528,6 +529,8 @@ export async function startDiscordBot({
                 await setWorktreeReady({ threadId: thread.id, worktreeDirectory: worktreeResult.directory })
                 sessionDirectory = worktreeResult.directory
                 discordLogger.log(`[WORKTREE] Created: ${worktreeResult.directory} (branch: ${worktreeResult.branch})`)
+                // React with tree emoji to mark as worktree thread
+                await reactToThread({ rest: discordClient.rest, threadId: thread.id, emoji: '🌳' })
               }
             }
           }
@@ -710,6 +713,8 @@ export async function startDiscordBot({
 
         await setWorktreeReady({ threadId: thread.id, worktreeDirectory: worktreeResult.directory })
         discordLogger.log(`[BOT_SESSION] Worktree created: ${worktreeResult.directory}`)
+        // React with tree emoji to mark as worktree thread
+        await reactToThread({ rest: discordClient.rest, threadId: thread.id, emoji: '🌳' })
         await thread.send({
           content: `🌳 **Worktree: ${marker.worktree}**\n📁 \`${worktreeResult.directory}\`\n🌿 Branch: \`${worktreeResult.branch}\``,
           flags: SILENT_MESSAGE_FLAGS,

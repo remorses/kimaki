@@ -5,11 +5,22 @@ import type { Plugin } from '@opencode-ai/plugin'
 import { tool } from '@opencode-ai/plugin/tool'
 import { createOpencodeClient } from '@opencode-ai/sdk'
 import { REST, Routes } from 'discord.js'
+import * as errore from 'errore'
 import fs from 'node:fs'
 import path from 'node:path'
 import { getPrisma } from './database.js'
 import { setDataDir } from './config.js'
 import { ShareMarkdown } from './markdown.js'
+import { reactToThread } from './discord-utils.js'
+
+// Regex to match emoji characters (covers most common emojis)
+// Includes: emoji presentation sequences, skin tone modifiers, ZWJ sequences, regional indicators
+const EMOJI_REGEX =
+  /^(?:\p{Emoji_Presentation}|\p{Emoji}\uFE0F|\p{Regional_Indicator}{2}|\p{Emoji_Modifier_Base}\p{Emoji_Modifier}?|[\u{1F3FB}-\u{1F3FF}]|(?:\p{Emoji}(?:\u{200D}\p{Emoji})+))$/u
+
+function isEmoji(str: string): boolean {
+  return EMOJI_REGEX.test(str)
+}
 
 const kimakiPlugin: Plugin = async () => {
   const botToken = process.env.KIMAKI_BOT_TOKEN
@@ -117,17 +128,21 @@ const kimakiPlugin: Plugin = async () => {
                 return `- ${session.id} | ${session.title || 'Untitled Session'} | cwd: ${session.directory} | updated ${updatedAt} | source: ${origin}`
               }
               const channelId = await (async () => {
-                try {
-                  const channel = (await rest.get(
-                    Routes.channel(threadId),
-                  )) as {
-                    id: string
-                    parent_id?: string
-                  }
-                  return channel.parent_id || channel.id
-                } catch {
+                const result = await errore.tryAsync({
+                  try: async () => {
+                    const channel = (await rest.get(Routes.channel(threadId))) as {
+                      id: string
+                      parent_id?: string
+                    }
+                    return channel.parent_id || channel.id
+                  },
+                  catch: (e) => new Error(`Failed to get channel ${threadId}`, { cause: e }),
+                })
+                if (errore.isError(result)) {
+                  console.warn(`[kimaki_list_sessions] ${result.message}`)
                   return threadId
                 }
+                return result
               })()
               return `- ${session.id} | ${session.title || 'Untitled Session'} | cwd: ${session.directory} | updated ${updatedAt} | source: ${origin} | thread: ${threadId} | channel: ${channelId}`
             }),
@@ -168,6 +183,80 @@ const kimakiPlugin: Plugin = async () => {
           return result
         },
       }),
+      kimaki_mark_thread: tool({
+        description:
+          'Mark the current Discord thread with emoji reactions and update the session title. Only pass emoji characters (e.g., "🚀", "🐛", "📦"). Do NOT use ✅ as it is reserved for "session completed" indicator. This lets users create custom tagging systems visible in both Discord and OpenCode.',
+        args: {
+          emojis: tool.schema
+            .array(tool.schema.string())
+            .describe(
+              'Array of emoji characters to add as reactions and prepend to session title. Only emojis allowed, no text.',
+            ),
+        },
+        async execute({ emojis }, context) {
+          if (!emojis || emojis.length === 0) {
+            return 'No emojis provided'
+          }
+
+          // Validate all inputs are emojis
+          const invalidEmojis = emojis.filter((e) => {
+            return !isEmoji(e)
+          })
+          if (invalidEmojis.length > 0) {
+            throw new Error(
+              `Invalid emoji characters: ${invalidEmojis.join(', ')}. Only emoji characters are allowed.`,
+            )
+          }
+
+          const prisma = await getPrisma()
+          const row = await prisma.thread_sessions.findFirst({
+            where: { session_id: context.sessionID },
+            select: { thread_id: true },
+          })
+
+          if (!row?.thread_id) {
+            return 'Could not find thread for current session'
+          }
+
+          // Add reactions to thread starter message (reactToThread handles errors internally)
+          const addedEmojis: string[] = []
+          for (const emoji of emojis) {
+            await reactToThread({ rest, threadId: row.thread_id, emoji })
+            addedEmojis.push(emoji)
+          }
+
+          // Update session title with emoji prefix
+          if (client && addedEmojis.length > 0) {
+            const updateResult = await errore.tryAsync({
+              try: async () => {
+                const sessionResponse = await client.session.get({
+                  path: { id: context.sessionID },
+                })
+                if (sessionResponse.data) {
+                  const currentTitle = sessionResponse.data.title || ''
+                  const emojiPrefix = addedEmojis.join('')
+                  // Avoid duplicating emojis if they're already at the start
+                  const newTitle = currentTitle.startsWith(emojiPrefix)
+                    ? currentTitle
+                    : `${emojiPrefix} ${currentTitle}`.trim()
+                  await client.session.update({
+                    path: { id: context.sessionID },
+                    body: { title: newTitle },
+                  })
+                }
+              },
+              catch: (e) => new Error('Failed to update session title', { cause: e }),
+            })
+            if (errore.isError(updateResult)) {
+              console.warn(`[kimaki_mark_thread] ${updateResult.message}`)
+            }
+          }
+
+          return addedEmojis.length > 0
+            ? `Marked thread with: ${addedEmojis.join(' ')}`
+            : 'Failed to add any emoji reactions'
+        },
+      }),
       kimaki_archive_thread: tool({
         description:
           'Archive the current Discord thread to hide it from the Discord left sidebar. Only call this when the user explicitly asks to close or archive the thread, typically after committing and pushing changes. This tool also aborts the current session, so it should ALWAYS be called as the last tool in your response.',
@@ -181,6 +270,34 @@ const kimakiPlugin: Plugin = async () => {
 
           if (!row?.thread_id) {
             return 'Could not find thread for current session'
+          }
+
+          // React with folder emoji on the thread starter message
+          await reactToThread({ rest, threadId: row.thread_id, emoji: '📁' })
+
+          // Update session title with folder emoji prefix
+          if (client) {
+            const updateResult = await errore.tryAsync({
+              try: async () => {
+                const sessionResponse = await client.session.get({
+                  path: { id: context.sessionID },
+                })
+                if (sessionResponse.data) {
+                  const currentTitle = sessionResponse.data.title || ''
+                  const newTitle = currentTitle.startsWith('📁')
+                    ? currentTitle
+                    : `📁 ${currentTitle}`.trim()
+                  await client.session.update({
+                    path: { id: context.sessionID },
+                    body: { title: newTitle },
+                  })
+                }
+              },
+              catch: (e) => new Error('Failed to update session title', { cause: e }),
+            })
+            if (errore.isError(updateResult)) {
+              console.warn(`[kimaki_archive_thread] ${updateResult.message}`)
+            }
           }
 
           await client?.session.abort({ path: { id: context.sessionID } })

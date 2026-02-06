@@ -2,7 +2,7 @@
 // Uses OpenCode SDK v2 to create worktrees with kimaki- prefix
 // Creates thread immediately, then worktree in background so user can type
 
-import { ChannelType, type TextChannel, type ThreadChannel, type Message } from 'discord.js'
+import { ChannelType, REST, type TextChannel, type ThreadChannel, type Message } from 'discord.js'
 import fs from 'node:fs'
 import type { CommandContext } from './types.js'
 import {
@@ -13,7 +13,7 @@ import {
   getThreadWorktree,
 } from '../database.js'
 import { initializeOpencodeForDirectory, getOpencodeClientV2 } from '../opencode.js'
-import { SILENT_MESSAGE_FLAGS } from '../discord-utils.js'
+import { SILENT_MESSAGE_FLAGS, reactToThread } from '../discord-utils.js'
 import { createLogger, LogPrefix } from '../logger.js'
 import { createWorktreeWithSubmodules, captureGitDiff, type CapturedDiff } from '../worktree-utils.js'
 import { WORKTREE_PREFIX } from './merge-worktree.js'
@@ -100,6 +100,7 @@ async function createWorktreeInBackground({
   projectDirectory,
   clientV2,
   diff,
+  rest,
 }: {
   thread: ThreadChannel
   starterMessage: Message
@@ -107,6 +108,7 @@ async function createWorktreeInBackground({
   projectDirectory: string
   clientV2: ReturnType<typeof getOpencodeClientV2> & {}
   diff?: CapturedDiff | null
+  rest: REST
 }): Promise<void> {
   // Create worktree using SDK v2, apply diff, then init submodules
   logger.log(`Creating worktree "${worktreeName}" for project ${projectDirectory}`)
@@ -127,6 +129,10 @@ async function createWorktreeInBackground({
 
   // Success - update database and edit starter message
   await setWorktreeReady({ threadId: thread.id, worktreeDirectory: worktreeResult.directory })
+
+  // React with tree emoji to mark as worktree thread
+  await reactToThread({ rest, threadId: thread.id, emoji: '🌳' })
+
   const diffStatus = diff ? (worktreeResult.diffApplied ? '\n✅ Changes applied' : '\n⚠️ Failed to apply changes') : ''
   await starterMessage.edit(
     `🌳 **Worktree: ${worktreeName}**\n` +
@@ -266,6 +272,7 @@ export async function handleNewWorktreeCommand({
     worktreeName,
     projectDirectory,
     clientV2,
+    rest: command.client.rest,
   }).catch((e) => {
     logger.error('[NEW-WORKTREE] Background error:', e)
   })
@@ -372,6 +379,7 @@ async function handleWorktreeInThread({
     projectDirectory,
     clientV2,
     diff,
+    rest: command.client.rest,
   }).catch((e) => {
     logger.error('[NEW-WORKTREE] Background error:', e)
   })
