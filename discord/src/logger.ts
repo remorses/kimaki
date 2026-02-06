@@ -19,6 +19,7 @@ export const LogPrefix = {
   COMPACT: 'COMPACT',
   CREATE_PROJECT: 'NEW_PROJ',
   DB: 'DB',
+  DIFF: 'DIFF',
   DISCORD: 'DISCORD',
   FORK: 'FORK',
   FORMATTING: 'FORMAT',
