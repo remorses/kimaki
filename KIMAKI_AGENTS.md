@@ -21,7 +21,20 @@ if we added new fields on the schema then we would also need to update db.ts wit
 
 ## prisma
 
-we use prisma to write type safe queries. after adding new tables you should also run the command `pnpm generate` inside discord to generate again the prisma code.
+we use prisma to write type safe queries. the database schema is defined in `discord/schema.prisma`.
+
+`discord/src/schema.sql` is **generated** from the prisma schema - never edit it directly. to regenerate it after modifying schema.prisma:
+
+```bash
+cd discord && pnpm generate
+```
+
+this runs `prisma generate` (for the client) and `pnpm generate:sql` (which creates a temp sqlite db and extracts the schema).
+
+when adding new tables:
+1. add the model to `discord/schema.prisma`
+2. run `pnpm generate` inside discord folder
+3. add getter/setter functions in `database.ts` if needed
 
 database.ts has some functions that abstract complex prisma queries or inserts. ONLY add them there if they are very complex or used a lot. prefer inlining the prisma queries if possible
 

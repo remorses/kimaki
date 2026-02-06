@@ -42,11 +42,12 @@ model channel_directories {
   app_id       String?
   created_at   DateTime? @default(now())
 
-  bot               bot_tokens?        @relation(fields: [app_id], references: [app_id])
-  channel_model     channel_models?
-  channel_agent     channel_agents?
-  channel_worktree  channel_worktrees?
-  channel_verbosity channel_verbosity?
+  bot                  bot_tokens?           @relation(fields: [app_id], references: [app_id])
+  channel_model        channel_models?
+  channel_agent        channel_agents?
+  channel_worktree     channel_worktrees?
+  channel_verbosity    channel_verbosity?
+  channel_mention_mode channel_mention_mode?
 }
 
 model bot_api_keys {
@@ -113,6 +114,15 @@ model channel_worktrees {
 model channel_verbosity {
   channel_id String    @id
   verbosity  String    @default("tools-and-text")
+  updated_at DateTime? @default(now()) @updatedAt
+
+  channel channel_directories @relation(fields: [channel_id], references: [channel_id])
+}
+
+model channel_mention_mode {
+  channel_id String    @id
+  enabled    Int       @default(0)
+  created_at DateTime? @default(now())
   updated_at DateTime? @default(now()) @updatedAt
 
   channel channel_directories @relation(fields: [channel_id], references: [channel_id])

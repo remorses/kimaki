@@ -10,6 +10,7 @@ import {
   setWorktreeReady,
   setWorktreeError,
   getChannelWorktreesEnabled,
+  getChannelMentionMode,
   getChannelDirectory,
   getThreadSession,
   setThreadSession,
@@ -428,6 +429,16 @@ export async function startDiscordBot({
             `[IGNORED] Channel belongs to different bot app (expected: ${currentAppId}, got: ${channelAppId})`,
           )
           return
+        }
+
+        // Check mention mode - if enabled, only respond when bot is @mentioned
+        const mentionModeEnabled = await getChannelMentionMode(textChannel.id)
+        if (mentionModeEnabled) {
+          const botMentioned = discordClient.user && message.mentions.has(discordClient.user.id)
+          if (!botMentioned) {
+            voiceLogger.log(`[IGNORED] Mention mode enabled, bot not mentioned`)
+            return
+          }
         }
 
         discordLogger.log(`DIRECTORY: Found kimaki.directory: ${projectDirectory}`)

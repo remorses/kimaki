@@ -58,6 +58,18 @@ export function setDefaultVerbosity(level: VerbosityLevel): void {
   defaultVerbosity = level
 }
 
+// Default mention mode for channels that haven't set a per-channel override.
+// Set via --mention-mode CLI flag at startup.
+let defaultMentionMode = false
+
+export function getDefaultMentionMode(): boolean {
+  return defaultMentionMode
+}
+
+export function setDefaultMentionMode(enabled: boolean): void {
+  defaultMentionMode = enabled
+}
+
 const DEFAULT_LOCK_PORT = 29988
 
 /**

@@ -16,11 +16,29 @@ The bot will wait 1000ms and then restart itself with the same arguments.
 
 this project uses sqlite to preserve state between runs. the database should never have breaking changes, new kimaki versions should keep working with old sqlite databases created by an older kimaki version. if this happens specifically ask the user how to proceed, asking if it is ok adding migration in startup so users with existing db can still use kimaki and will not break.
 
-we use prisma to write type safe queries. after adding new tables you should also run the command `pnpm generate` inside discord to generate again the prisma code.
 
 you should prefer never deleting or adding new fields. we rely in a schema.sql generated inside src to initialize an update the database schema for users.
 
 if we added new fields on the schema then we would also need to update db.ts with manual sql migration code to keep existing users databases working.
+
+## prisma
+
+we use prisma to write type safe queries. the database schema is defined in `discord/schema.prisma`.
+
+`discord/src/schema.sql` is **generated** from the prisma schema - never edit it directly. to regenerate it after modifying schema.prisma:
+
+```bash
+cd discord && pnpm generate
+```
+
+this runs `prisma generate` (for the client) and `pnpm generate:sql` (which creates a temp sqlite db and extracts the schema).
+
+when adding new tables:
+1. add the model to `discord/schema.prisma`
+2. run `pnpm generate` inside discord folder
+3. add getter/setter functions in `database.ts` if needed
+
+database.ts has some functions that abstract complex prisma queries or inserts. ONLY add them there if they are very complex or used a lot. prefer inlining the prisma queries if possible
 
 ## errore
 
@@ -32,11 +50,15 @@ it is a package for using errors as values in ts.
 
 if I ask you questions about opencode you can opensrc it from anomalyco/opencode
 
-## discord messages
+## discord bot messages
  
 try to not use emojis in messages
 
 when creating system messages like replies to commands never add new line spaces between paragraphs or lines. put one line next to the one before.
+
+## AGENTS.md
+
+AGENTS.md is generated. only edit KIMAKI_AGENTS.md instead. pnpm agents.md will generate the file again.
 
 # core guidelines
 
@@ -539,26 +561,3 @@ const jsonSchema = toJSONSchema(mySchema, {
 });
 ```
 
-
-<!-- opensrc:start -->
-
-## Source Code Reference
-
-Source code for dependencies is available in `opensrc/` for deeper understanding of implementation details.
-
-See `opensrc/sources.json` for the list of available packages and their versions.
-
-Use this source code when you need to understand how a package works internally, not just its types/interface.
-
-### Fetching Additional Source Code
-
-To fetch source code for a package or repository you need to understand, run:
-
-```bash
-npx opensrc <package>           # npm package (e.g., npx opensrc zod)
-npx opensrc pypi:<package>      # Python package (e.g., npx opensrc pypi:requests)
-npx opensrc crates:<package>    # Rust crate (e.g., npx opensrc crates:serde)
-npx opensrc <owner>/<repo>      # GitHub repo (e.g., npx opensrc vercel/ai)
-```
-
-<!-- opensrc:end -->

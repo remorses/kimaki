@@ -59,7 +59,7 @@ import { createLogger, LogPrefix } from './logger.js'
 import { uploadFilesToDiscord } from './discord-utils.js'
 import { spawn, spawnSync, execSync, type ExecSyncOptions } from 'node:child_process'
 import http from 'node:http'
-import { setDataDir, getDataDir, getLockPort, setDefaultVerbosity } from './config.js'
+import { setDataDir, getDataDir, getLockPort, setDefaultVerbosity, setDefaultMentionMode } from './config.js'
 import { sanitizeAgentName } from './commands/agent.js'
 
 const cliLogger = createLogger(LogPrefix.CLI)
@@ -308,6 +308,11 @@ async function registerCommands({
     new SlashCommandBuilder()
       .setName('toggle-worktrees')
       .setDescription('Toggle automatic git worktree creation for new sessions in this channel')
+      .setDMPermission(false)
+      .toJSON(),
+    new SlashCommandBuilder()
+      .setName('toggle-mention-mode')
+      .setDescription('Toggle mention-only mode (bot only responds when @mentioned)')
       .setDMPermission(false)
       .toJSON(),
     new SlashCommandBuilder()
@@ -1154,6 +1159,7 @@ cli
   .option('--use-worktrees', 'Create git worktrees for all new sessions started from channel messages')
   .option('--enable-voice-channels', 'Create voice channels for projects (disabled by default)')
   .option('--verbosity <level>', 'Default verbosity for all channels (tools-and-text, text-and-essential-tools, or text-only)')
+  .option('--mention-mode', 'Bot only responds when @mentioned (default for all channels)')
   .action(
     async (options: {
       restart?: boolean
@@ -1163,6 +1169,7 @@ cli
       useWorktrees?: boolean
       enableVoiceChannels?: boolean
       verbosity?: string
+      mentionMode?: boolean
     }) => {
       try {
         // Set data directory early, before any database access
@@ -1179,6 +1186,11 @@ cli
           }
           setDefaultVerbosity(options.verbosity as 'tools-and-text' | 'text-and-essential-tools' | 'text-only')
           cliLogger.log(`Default verbosity: ${options.verbosity}`)
+        }
+
+        if (options.mentionMode) {
+          setDefaultMentionMode(true)
+          cliLogger.log('Default mention mode: enabled (bot only responds when @mentioned)')
         }
 
         if (options.installUrl) {

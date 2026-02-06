@@ -78,6 +78,13 @@ CREATE TABLE IF NOT EXISTS "channel_verbosity" (
     "updated_at" DATETIME DEFAULT CURRENT_TIMESTAMP,
     CONSTRAINT "channel_verbosity_channel_id_fkey" FOREIGN KEY ("channel_id") REFERENCES "channel_directories" ("channel_id") ON DELETE RESTRICT ON UPDATE CASCADE
 );
+CREATE TABLE IF NOT EXISTS "channel_mention_mode" (
+    "channel_id" TEXT NOT NULL PRIMARY KEY,
+    "enabled" INTEGER NOT NULL DEFAULT 0,
+    "created_at" DATETIME DEFAULT CURRENT_TIMESTAMP,
+    "updated_at" DATETIME DEFAULT CURRENT_TIMESTAMP,
+    CONSTRAINT "channel_mention_mode_channel_id_fkey" FOREIGN KEY ("channel_id") REFERENCES "channel_directories" ("channel_id") ON DELETE RESTRICT ON UPDATE CASCADE
+);
 CREATE TABLE IF NOT EXISTS "global_models" (
     "app_id" TEXT NOT NULL PRIMARY KEY,
     "model_id" TEXT NOT NULL,

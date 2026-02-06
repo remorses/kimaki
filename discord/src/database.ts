@@ -3,7 +3,7 @@
 // API keys, and model preferences in <dataDir>/discord-sessions.db.
 
 import { getPrisma, closePrisma } from './db.js'
-import { getDefaultVerbosity } from './config.js'
+import { getDefaultVerbosity, getDefaultMentionMode } from './config.js'
 import { createLogger, LogPrefix } from './logger.js'
 
 const dbLogger = createLogger(LogPrefix.DB)
@@ -332,6 +332,37 @@ export async function setChannelVerbosity(channelId: string, verbosity: Verbosit
         where: { channel_id: channelId },
         create: { channel_id: channelId, verbosity },
         update: { verbosity, updated_at: new Date() },
+    })
+}
+
+// ============================================================================
+// Channel Mention Mode Functions
+// ============================================================================
+
+/**
+ * Get the mention mode setting for a channel.
+ * Falls back to the global default set via --mention-mode CLI flag if no per-channel override exists.
+ */
+export async function getChannelMentionMode(channelId: string): Promise<boolean> {
+    const prisma = await getPrisma()
+    const row = await prisma.channel_mention_mode.findUnique({
+        where: { channel_id: channelId },
+    })
+    if (row) {
+        return row.enabled === 1
+    }
+    return getDefaultMentionMode()
+}
+
+/**
+ * Set the mention mode setting for a channel.
+ */
+export async function setChannelMentionMode(channelId: string, enabled: boolean): Promise<void> {
+    const prisma = await getPrisma()
+    await prisma.channel_mention_mode.upsert({
+        where: { channel_id: channelId },
+        create: { channel_id: channelId, enabled: enabled ? 1 : 0 },
+        update: { enabled: enabled ? 1 : 0, updated_at: new Date() },
     })
 }
 
