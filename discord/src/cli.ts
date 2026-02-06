@@ -35,6 +35,7 @@ import {
   findChannelByAppId,
   getThreadSession,
   getThreadIdBySessionId,
+  getPrisma,
 } from './database.js'
 import { formatWorktreeName } from './commands/worktree.js'
 import { WORKTREE_PREFIX } from './commands/merge-worktree.js'
@@ -59,7 +60,7 @@ import { createLogger, LogPrefix } from './logger.js'
 import { uploadFilesToDiscord } from './discord-utils.js'
 import { spawn, spawnSync, execSync, type ExecSyncOptions } from 'node:child_process'
 import http from 'node:http'
-import { setDataDir, getDataDir, getLockPort, setDefaultVerbosity, setDefaultMentionMode } from './config.js'
+import { setDataDir, getDataDir, getLockPort, setDefaultVerbosity, setDefaultMentionMode, getProjectsDir } from './config.js'
 import { sanitizeAgentName } from './commands/agent.js'
 
 const cliLogger = createLogger(LogPrefix.CLI)
@@ -1334,10 +1335,8 @@ cli
           }
         }
 
-        if (!channelId && !projectPath) {
-          cliLogger.error('Either --channel or --project is required')
-          process.exit(EXIT_NO_RESTART)
-        }
+        // Default to current directory if neither --channel nor --project provided
+        const resolvedProjectPath = projectPath || (!channelId ? '.' : undefined)
 
         if (!prompt) {
           cliLogger.error('Prompt is required. Use --prompt <prompt>')
@@ -1393,9 +1392,9 @@ cli
         process.exit(EXIT_NO_RESTART)
       }
 
-      // If --project provided, resolve to channel ID
-      if (projectPath) {
-        const absolutePath = path.resolve(projectPath)
+      // If --project provided (or defaulting to cwd), resolve to channel ID
+      if (resolvedProjectPath) {
+        const absolutePath = path.resolve(resolvedProjectPath)
 
         if (!fs.existsSync(absolutePath)) {
           cliLogger.error(`Directory does not exist: ${absolutePath}`)
@@ -1695,7 +1694,8 @@ cli
   })
 
 cli
-  .command('add-project [directory]', 'Create Discord channels for a project directory (e.g. ./folder)')
+  .command('project add [directory]', 'Create Discord channels for a project directory (e.g. ./folder)')
+  .alias('add-project')
   .option('-g, --guild <guildId>', 'Discord guild/server ID (auto-detects if bot is in only one server)')
   .option('-a, --app-id <appId>', 'Bot application ID (reads from database if available)')
   .action(
@@ -1955,6 +1955,150 @@ cli
     const dataDir = getDataDir()
     const dbPath = path.join(dataDir, 'discord-sessions.db')
     cliLogger.log(dbPath)
+  })
+
+cli
+  .command('project list', 'List all registered projects with their Discord channels')
+  .option('--json', 'Output as JSON')
+  .action(async (options: { json?: boolean }) => {
+    try {
+      await initDatabase()
+
+      const prisma = await getPrisma()
+      const channels = await prisma.channel_directories.findMany({
+        where: { channel_type: 'text' },
+        orderBy: { created_at: 'desc' },
+      })
+
+      if (options.json) {
+        const output = channels.map((ch) => ({
+          channel_id: ch.channel_id,
+          directory: ch.directory,
+          app_id: ch.app_id,
+        }))
+        console.log(JSON.stringify(output, null, 2))
+        process.exit(0)
+      }
+
+      if (channels.length === 0) {
+        cliLogger.log('No projects registered')
+        process.exit(0)
+      }
+
+      for (const ch of channels) {
+        const name = path.basename(ch.directory)
+        console.log(`\n📁 ${name}`)
+        console.log(`   Directory: ${ch.directory}`)
+        console.log(`   Channel ID: ${ch.channel_id}`)
+        if (ch.app_id) {
+          console.log(`   Bot App ID: ${ch.app_id}`)
+        }
+      }
+
+      process.exit(0)
+    } catch (error) {
+      cliLogger.error('Error:', error instanceof Error ? error.message : String(error))
+      process.exit(EXIT_NO_RESTART)
+    }
+  })
+
+cli
+  .command('project create <name>', 'Create a new project folder with git and Discord channels')
+  .option('-g, --guild <guildId>', 'Discord guild ID')
+  .action(async (name: string, options: { guild?: string }) => {
+    try {
+      const sanitizedName = name
+        .toLowerCase()
+        .replace(/[^a-z0-9-]/g, '-')
+        .replace(/-+/g, '-')
+        .replace(/^-|-$/g, '')
+        .slice(0, 100)
+
+      if (!sanitizedName) {
+        cliLogger.error('Invalid project name')
+        process.exit(EXIT_NO_RESTART)
+      }
+
+      await initDatabase()
+
+      const botRow = await getBotToken()
+      if (!botRow) {
+        cliLogger.error('No bot configured. Run `kimaki` first.')
+        process.exit(EXIT_NO_RESTART)
+      }
+
+      const { app_id: appId, token: botToken } = botRow
+
+      const projectsDir = getProjectsDir()
+      const projectDirectory = path.join(projectsDir, sanitizedName)
+
+      if (!fs.existsSync(projectsDir)) {
+        fs.mkdirSync(projectsDir, { recursive: true })
+      }
+
+      if (fs.existsSync(projectDirectory)) {
+        cliLogger.error(`Directory already exists: ${projectDirectory}`)
+        process.exit(EXIT_NO_RESTART)
+      }
+
+      fs.mkdirSync(projectDirectory, { recursive: true })
+      cliLogger.log(`Created: ${projectDirectory}`)
+
+      execSync('git init', { cwd: projectDirectory, stdio: 'pipe' })
+      cliLogger.log('Initialized git')
+
+      cliLogger.log('Connecting to Discord...')
+      const client = await createDiscordClient()
+
+      await new Promise<void>((resolve, reject) => {
+        client.once(Events.ClientReady, () => {
+          resolve()
+        })
+        client.once(Events.Error, reject)
+        client.login(botToken).catch(reject)
+      })
+
+      let guild: Guild
+      if (options.guild) {
+        const found = client.guilds.cache.get(options.guild)
+        if (!found) {
+          cliLogger.error(`Guild not found: ${options.guild}`)
+          client.destroy()
+          process.exit(EXIT_NO_RESTART)
+        }
+        guild = found
+      } else {
+        const first = client.guilds.cache.first()
+        if (!first) {
+          cliLogger.error('No guild found. Add the bot to a server first.')
+          client.destroy()
+          process.exit(EXIT_NO_RESTART)
+        }
+        guild = first
+      }
+
+      const { textChannelId, channelName } = await createProjectChannels({
+        guild,
+        projectDirectory,
+        appId,
+        botName: client.user?.username,
+      })
+
+      client.destroy()
+
+      const channelUrl = `https://discord.com/channels/${guild.id}/${textChannelId}`
+
+      note(
+        `Created project: ${sanitizedName}\n\nDirectory: ${projectDirectory}\nChannel: #${channelName}\nURL: ${channelUrl}`,
+        '✅ Success',
+      )
+
+      cliLogger.log(channelUrl)
+      process.exit(0)
+    } catch (error) {
+      cliLogger.error('Error:', error instanceof Error ? error.message : String(error))
+      process.exit(EXIT_NO_RESTART)
+    }
   })
 
 cli.help()
