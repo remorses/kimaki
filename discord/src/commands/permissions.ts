@@ -66,7 +66,7 @@ export async function showPermissionButtons({
   const acceptButton = new ButtonBuilder()
     .setCustomId(`permission_once:${contextHash}`)
     .setLabel('Accept')
-    .setStyle(ButtonStyle.Primary)
+    .setStyle(ButtonStyle.Success)
 
   const acceptAlwaysButton = new ButtonBuilder()
     .setCustomId(`permission_always:${contextHash}`)
@@ -76,7 +76,7 @@ export async function showPermissionButtons({
   const denyButton = new ButtonBuilder()
     .setCustomId(`permission_reject:${contextHash}`)
     .setLabel('Deny')
-    .setStyle(ButtonStyle.Danger)
+    .setStyle(ButtonStyle.Secondary)
 
   const actionRow = new ActionRowBuilder<ButtonBuilder>().addComponents(
     acceptButton,
