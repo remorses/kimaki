@@ -57,7 +57,7 @@ import fs from 'node:fs'
 import * as errore from 'errore'
 
 import { createLogger, LogPrefix } from './logger.js'
-import { uploadFilesToDiscord } from './discord-utils.js'
+import { uploadFilesToDiscord, stripMentions } from './discord-utils.js'
 import { spawn, spawnSync, execSync, type ExecSyncOptions } from 'node:child_process'
 import http from 'node:http'
 import { setDataDir, getDataDir, getLockPort, setDefaultVerbosity, setDefaultMentionMode, getProjectsDir } from './config.js'
@@ -1578,7 +1578,8 @@ cli
       let starterMessage: { id: string }
 
       // Compute thread name and worktree name early (needed for embed)
-      const baseThreadName = name || (prompt.length > 80 ? prompt.slice(0, 77) + '...' : prompt)
+      const cleanPrompt = stripMentions(prompt)
+      const baseThreadName = name || (cleanPrompt.length > 80 ? cleanPrompt.slice(0, 77) + '...' : cleanPrompt)
       const worktreeName = options.worktree
         ? formatWorktreeName(typeof options.worktree === 'string' ? options.worktree : baseThreadName)
         : undefined

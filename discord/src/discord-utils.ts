@@ -40,6 +40,16 @@ export async function reactToThread({
   }
 }
 
+/** Remove Discord mentions from text so they don't appear in thread titles */
+export function stripMentions(text: string): string {
+  return text
+    .replace(/<@!?\d+>/g, '') // user mentions
+    .replace(/<@&\d+>/g, '') // role mentions
+    .replace(/<#\d+>/g, '') // channel mentions
+    .replace(/\s+/g, ' ')
+    .trim()
+}
+
 export const SILENT_MESSAGE_FLAGS = 4 | 4096
 // Same as SILENT but without SuppressNotifications - triggers badge/notification
 export const NOTIFY_MESSAGE_FLAGS = 4

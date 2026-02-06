@@ -25,6 +25,7 @@ import {
   splitMarkdownForDiscord,
   SILENT_MESSAGE_FLAGS,
   reactToThread,
+  stripMentions,
 } from './discord-utils.js'
 import { getOpencodeSystemMessage, type ThreadStartMarker } from './system-message.js'
 import yaml from 'js-yaml'
@@ -194,6 +195,22 @@ export async function startDiscordBot({
         }
       }
 
+      // Check mention mode BEFORE permission check for text channels.
+      // When mention mode is enabled, users without Kimaki role can message
+      // without getting a permission error - we just silently ignore.
+      const channel = message.channel
+      if (channel.type === ChannelType.GuildText) {
+        const textChannel = channel as TextChannel
+        const mentionModeEnabled = await getChannelMentionMode(textChannel.id)
+        if (mentionModeEnabled) {
+          const botMentioned = discordClient.user && message.mentions.has(discordClient.user.id)
+          if (!botMentioned) {
+            voiceLogger.log(`[IGNORED] Mention mode enabled, bot not mentioned`)
+            return
+          }
+        }
+      }
+
       if (message.guild && message.member) {
         // Check for "no-kimaki" role first - blocks user regardless of other permissions.
         // This implements the "four-eyes principle": even owners must remove this role
@@ -227,7 +244,6 @@ export async function startDiscordBot({
         }
       }
 
-      const channel = message.channel
       const isThread = [
         ChannelType.PublicThread,
         ChannelType.PrivateThread,
@@ -432,15 +448,8 @@ export async function startDiscordBot({
           return
         }
 
-        // Check mention mode - if enabled, only respond when bot is @mentioned
-        const mentionModeEnabled = await getChannelMentionMode(textChannel.id)
-        if (mentionModeEnabled) {
-          const botMentioned = discordClient.user && message.mentions.has(discordClient.user.id)
-          if (!botMentioned) {
-            voiceLogger.log(`[IGNORED] Mention mode enabled, bot not mentioned`)
-            return
-          }
-        }
+        // Note: Mention mode is checked early in the handler (before permission check)
+        // to avoid sending permission errors to users who just didn't @mention the bot.
 
         discordLogger.log(`DIRECTORY: Found kimaki.directory: ${projectDirectory}`)
         if (channelAppId) {
@@ -460,7 +469,7 @@ export async function startDiscordBot({
 
         const baseThreadName = hasVoice
           ? 'Voice Message'
-          : resolveMentions(message).replace(/\s+/g, ' ').trim() || 'Claude Thread'
+          : stripMentions(message.content || '').replace(/\s+/g, ' ').trim() || 'Claude Thread'
 
         // Check if worktrees should be enabled (CLI flag OR channel setting)
         const shouldUseWorktrees = useWorktrees || await getChannelWorktreesEnabled(textChannel.id)
