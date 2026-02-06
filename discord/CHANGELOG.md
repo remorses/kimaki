@@ -1,5 +1,19 @@
 # Changelog
 
+## 0.4.56
+
+### Patch Changes
+
+- feat: add **emoji reactions** for thread marking (✅ for completion, 🌳 for worktrees)
+- feat: add **archive thread** tool to close threads and remove them from Discord sidebar
+- feat: add **/diff** command to view and share git diffs via web interface
+- feat: enhance **permission buttons** with better styling (Success/Secondary/Danger)
+- feat: change **default verbosity** to `text-and-essential-tools` to reduce noise
+- fix: **resolve Discord mentions** to usernames in prompts and thread titles
+- fix: skip logging **abort errors** as they are expected behavior
+- fix: ensure **permission buttons** work correctly by removing dead code
+- fix: proper handling of **thread closing** with timeouts
+
 ## 0.4.55
 
 ### Patch Changes
