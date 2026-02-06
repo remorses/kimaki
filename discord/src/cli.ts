@@ -75,6 +75,19 @@ function stripBracketedPaste(value: string | undefined): string {
   return value.replace(/\x1b\[200~/g, '').replace(/\x1b\[201~/g, '').trim()
 }
 
+// Run opencode upgrade in the background so the user always has the latest version.
+// Fire-and-forget: errors are silently ignored since this is non-critical.
+function backgroundUpgradeOpencode() {
+  const opencodeCommand = process.env.OPENCODE_PATH || 'opencode'
+  const child = spawn(opencodeCommand, ['upgrade'], {
+    shell: true,
+    stdio: 'ignore',
+    detached: true,
+  })
+  child.unref()
+  cliLogger.debug('Started background opencode upgrade')
+}
+
 // Spawn caffeinate on macOS to prevent system sleep while bot is running.
 // Not detached, so it dies automatically with the parent process.
 function startCaffeinate() {
@@ -764,6 +777,8 @@ async function run({ restart, addChannels, useWorktrees, enableVoiceChannels }: 
       }
     }
   }
+
+  backgroundUpgradeOpencode()
 
   // Initialize database
   await initDatabase()
