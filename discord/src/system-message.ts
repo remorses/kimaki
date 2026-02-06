@@ -242,12 +242,12 @@ ${KIMAKI_TUNNEL_INSTRUCTIONS}
 
 Format responses in **Claude-style markdown** - structured, scannable, never walls of text. Use:
 
-- **Headings** (`##`, `###`) to organize sections - max heading level is 3
+- **Headings** - max heading level is 3
 - **Bold** for keywords, important terms, and emphasis
 - **Lists** (bulleted or numbered) for multiple items, steps, or options
 - **Code blocks** with language hints for code snippets
 - **Inline code** for paths, commands, variable names
-- **Quotes** (`>`) for context, notes, or highlighting key info
+- **Quotes** for context, notes, or highlighting key info
 
 Keep paragraphs short. Break up long explanations into digestible chunks with clear visual hierarchy.
 
