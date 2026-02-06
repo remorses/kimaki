@@ -358,19 +358,19 @@ export function formatPart(part: Part, prefix?: string): string {
   const pfx = prefix ? `${prefix} ⋅ ` : ''
 
   if (part.type === 'text') {
-    if (!part.text?.trim()) return ''
+    const text = part.text?.trim()
+    if (!text) return ''
     // For subtask text, always use bullet with prefix
     if (prefix) {
-      return `⬥ ${pfx}${part.text.trim()}`
+      return `⬥ ${pfx}${text}`
     }
-    const trimmed = part.text.trimStart()
-    const firstChar = trimmed[0] || ''
+    const firstChar = text[0] || ''
     const markdownStarters = ['#', '*', '_', '-', '>', '`', '[', '|']
-    const startsWithMarkdown = markdownStarters.includes(firstChar) || /^\d+\./.test(trimmed)
+    const startsWithMarkdown = markdownStarters.includes(firstChar) || /^\d+\./.test(text)
     if (startsWithMarkdown) {
-      return `\n${part.text}`
+      return `\n${text}`
     }
-    return `⬥ ${part.text}`
+    return `⬥ ${text}`
   }
 
   if (part.type === 'reasoning') {
