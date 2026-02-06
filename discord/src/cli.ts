@@ -675,7 +675,7 @@ async function run({ restart, addChannels, useWorktrees, enableVoiceChannels }: 
       { shell: true }
     )
     if (opencodeCheck.status !== 0) {
-    note('OpenCode CLI is required but not found in your PATH.', '⚠️  OpenCode Not Found')
+      note('OpenCode CLI is required but not found in your PATH.', '⚠️  OpenCode Not Found')
 
     const shouldInstall = await confirm({
       message: 'Would you like to install OpenCode right now?',
@@ -733,6 +733,35 @@ async function run({ restart, addChannels, useWorktrees, enableVoiceChannels }: 
       cliLogger.error('Installation error:', error instanceof Error ? error.message : String(error))
       process.exit(EXIT_NO_RESTART)
     }
+    } else {
+      // OpenCode found, check version is recent enough for plugin support
+      const opencodeCommand = process.env.OPENCODE_PATH || 'opencode'
+      const versionCheck = spawnSync(opencodeCommand, ['--version'], {
+        shell: true,
+        encoding: 'utf-8',
+      })
+      const version = versionCheck.stdout?.trim()
+      if (version) {
+        const [major, minor, patch] = version.split('.').map(Number)
+        // Minimum version 1.1.51 required for plugin API (@opencode-ai/plugin/tool subpath)
+        const MIN_MAJOR = 1
+        const MIN_MINOR = 1
+        const MIN_PATCH = 51
+        const tooOld =
+          (major || 0) < MIN_MAJOR ||
+          ((major || 0) === MIN_MAJOR && (minor || 0) < MIN_MINOR) ||
+          ((major || 0) === MIN_MAJOR && (minor || 0) === MIN_MINOR && (patch || 0) < MIN_PATCH)
+        if (tooOld) {
+          note(
+            `Installed OpenCode version ${version} is too old.\n` +
+              `Kimaki requires OpenCode >= ${MIN_MAJOR}.${MIN_MINOR}.${MIN_PATCH}.\n` +
+              `Please update: curl -fsSL https://opencode.ai/install | bash`,
+            'OpenCode Update Required',
+          )
+          process.exit(EXIT_NO_RESTART)
+        }
+        cliLogger.log(`OpenCode version: ${version}`)
+      }
     }
   }
 
