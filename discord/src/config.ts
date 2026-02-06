@@ -48,7 +48,7 @@ export function getProjectsDir(): string {
 // Set via --verbosity CLI flag at startup.
 import type { VerbosityLevel } from './database.js'
 
-let defaultVerbosity: VerbosityLevel = 'tools-and-text'
+let defaultVerbosity: VerbosityLevel = 'text-and-essential-tools'
 
 export function getDefaultVerbosity(): VerbosityLevel {
   return defaultVerbosity

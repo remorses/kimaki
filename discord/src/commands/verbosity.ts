@@ -1,6 +1,7 @@
 // /verbosity command.
 // Sets the output verbosity level for sessions in a channel.
-// 'tools-and-text' (default): shows all output including tool executions
+// 'text-and-essential-tools' (default): shows text and essential tools (edits, custom MCP tools)
+// 'tools-and-text': shows all output including tool executions
 // 'text-only': only shows text responses (⬥ diamond parts)
 
 import { ChatInputCommandInteraction, ChannelType, type TextChannel, type ThreadChannel } from 'discord.js'
