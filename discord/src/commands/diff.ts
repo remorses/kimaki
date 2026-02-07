@@ -7,8 +7,9 @@ import path from 'node:path'
 import type { CommandContext } from './types.js'
 import { resolveTextChannel, getKimakiMetadata, SILENT_MESSAGE_FLAGS } from '../discord-utils.js'
 import { createLogger, LogPrefix } from '../logger.js'
+import { execAsync } from '../worktree-utils.js'
 
-const execAsync = promisify(exec)
+
 const logger = createLogger(LogPrefix.DIFF)
 
 export async function handleDiffCommand({ command }: CommandContext): Promise<void> {

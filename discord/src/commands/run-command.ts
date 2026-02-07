@@ -8,6 +8,7 @@ import type { CommandContext } from './types.js'
 import { resolveTextChannel, getKimakiMetadata, SILENT_MESSAGE_FLAGS } from '../discord-utils.js'
 import { createLogger, LogPrefix } from '../logger.js'
 import { execAsync } from '../worktree-utils.js'
+import { stripAnsi } from '../utils.js'
 
 const logger = createLogger(LogPrefix.INTERACTION)
 
@@ -15,8 +16,8 @@ const MAX_OUTPUT_CHARS = 1900
 
 export async function runShellCommand({ command, directory }: { command: string; directory: string }): Promise<string> {
   try {
-    const { stdout, stderr } = await execAsync(command, { cwd: directory, timeout: 30_000 })
-    const output = [stdout, stderr].filter(Boolean).join('\n').trim()
+    const { stdout, stderr } = await execAsync(command, { cwd: directory })
+    const output = stripAnsi([stdout, stderr].filter(Boolean).join('\n').trim())
 
     const header = `Ran \`${command}\` in \`${directory}\``
     if (!output) {
@@ -25,7 +26,7 @@ export async function runShellCommand({ command, directory }: { command: string;
     return formatOutput(output, header)
   } catch (error) {
     const execError = error as { stdout?: string; stderr?: string; message?: string }
-    const output = [execError.stdout, execError.stderr].filter(Boolean).join('\n').trim()
+    const output = stripAnsi([execError.stdout, execError.stderr].filter(Boolean).join('\n').trim())
     logger.error(`[RUN-COMMAND] Failed to run "${command}":`, error)
 
     const header = `\`${command}\` failed`

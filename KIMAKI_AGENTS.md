@@ -1,5 +1,7 @@
 after every change always run tsc inside discord to validate your changes. try to never use as any
 
+do not use spawnSync. use our util execAsync. which uses spawn under the hood
+
 # restarting the discord bot
 
 ONLY restart the discord bot if the user explicitly asks for it.
