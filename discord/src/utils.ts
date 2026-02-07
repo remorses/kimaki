@@ -30,6 +30,7 @@ export function generateBotInstallUrl({
     PermissionsBitField.Flags.Connect,
     PermissionsBitField.Flags.Speak,
     PermissionsBitField.Flags.ManageRoles,
+    PermissionsBitField.Flags.ManageEvents,
   ],
   scopes = ['bot'],
   guildId,
