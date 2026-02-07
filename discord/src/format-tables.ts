@@ -86,9 +86,11 @@ export function buildTableComponents(
         children.push({ type: 14, divider: true, spacing: SeparatorSpacingSize.Small })
       }
       const row = chunkRows[i]!
+      const maxKeyLen = Math.max(...headers.map((h) => h.length))
       const lines = headers.map((key, j) => {
         const value = row[j] || ''
-        return `**${key}** ${value}`
+        const paddedKey = key.padEnd(maxKeyLen)
+        return `**\`${paddedKey}\`** ${value}`
       })
       children.push({ type: 10, content: lines.join('\n') })
     }

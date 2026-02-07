@@ -34,8 +34,8 @@ describe('buildTableComponents', () => {
             {
               "components": [
                 {
-                  "content": "**Name** Alice
-      **Age** 30",
+                  "content": "**\`Name\`** Alice
+      **\`Age \`** 30",
                   "type": 10,
                 },
                 {
@@ -44,8 +44,8 @@ describe('buildTableComponents', () => {
                   "type": 14,
                 },
                 {
-                  "content": "**Name** Bob
-      **Age** 25",
+                  "content": "**\`Name\`** Bob
+      **\`Age \`** 25",
                   "type": 10,
                 },
               ],
@@ -87,8 +87,8 @@ describe('buildTableComponents', () => {
     expect(children).toHaveLength(1)
     expect(children[0]!.type).toBe(10)
     expect(children[0]!.content).toMatchInlineSnapshot(`
-      "**Method** GET
-      **Endpoint** /api/users"
+      "**\`Method  \`** GET
+      **\`Endpoint\`** /api/users"
     `)
   })
 
@@ -120,8 +120,8 @@ describe('buildTableComponents', () => {
     const result = buildTableComponents(table)
     const children = getContainerChildren(result)
     expect(children[0]!.content).toMatchInlineSnapshot(`
-      "**Header** Bold text
-      **Value** Normal"
+      "**\`Header\`** Bold text
+      **\`Value \`** Normal"
     `)
   })
 })
