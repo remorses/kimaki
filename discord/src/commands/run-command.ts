@@ -19,17 +19,18 @@ export async function runShellCommand({ command, directory }: { command: string;
     const { stdout, stderr } = await execAsync(command, { cwd: directory })
     const output = stripAnsi([stdout, stderr].filter(Boolean).join('\n').trim())
 
-    const header = `Ran \`${command}\` in \`${directory}\``
+    const header = `\`${command}\` exited with 0`
     if (!output) {
       return header
     }
     return formatOutput(output, header)
   } catch (error) {
-    const execError = error as { stdout?: string; stderr?: string; message?: string }
+    const execError = error as { stdout?: string; stderr?: string; message?: string; code?: number | string }
     const output = stripAnsi([execError.stdout, execError.stderr].filter(Boolean).join('\n').trim())
-    logger.error(`[RUN-COMMAND] Failed to run "${command}":`, error)
+    const exitCode = execError.code ?? 1
+    logger.error(`[RUN-COMMAND] Command "${command}" exited with ${exitCode}:`, error)
 
-    const header = `\`${command}\` failed`
+    const header = `\`${command}\` exited with ${exitCode}`
     return formatOutput(output || execError.message || 'Unknown error', header)
   }
 }

@@ -298,8 +298,9 @@ export async function startDiscordBot({
         if (message.content?.startsWith('!') && projectDirectory) {
           const shellCmd = message.content.slice(1).trim()
           if (shellCmd) {
+            const loadingReply = await message.reply({ content: `Running \`${shellCmd}\`...` })
             const result = await runShellCommand({ command: shellCmd, directory: projectDirectory })
-            await message.reply({ content: result })
+            await loadingReply.edit({ content: result })
             return
           }
         }
@@ -466,8 +467,9 @@ export async function startDiscordBot({
         if (message.content?.startsWith('!')) {
           const shellCmd = message.content.slice(1).trim()
           if (shellCmd) {
+            const loadingReply = await message.reply({ content: `Running \`${shellCmd}\`...` })
             const result = await runShellCommand({ command: shellCmd, directory: projectDirectory })
-            await message.reply({ content: result })
+            await loadingReply.edit({ content: result })
             return
           }
         }
