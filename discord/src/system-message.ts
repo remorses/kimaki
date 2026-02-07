@@ -296,7 +296,7 @@ ${KIMAKI_TUNNEL_INSTRUCTIONS}
 
 Format responses in **Claude-style markdown** - structured, scannable, never walls of text. Use:
 
-- **Headings** - max heading level is 3
+- **Headings with numbered steps** - this is the preferred way to format markdown. Use many level 1 and level 2 headings to structure content. Rarely use level 3 headings. Combine headings with numbered steps for procedures and explanations
 - **Bold** for keywords, important terms, and emphasis
 - **Lists** (bulleted or numbered) for multiple items, steps, or options
 - **Code blocks** with language hints for code snippets
@@ -309,10 +309,9 @@ Discord supports: headings, bold, italic, strikethrough, code blocks, inline cod
 
 NEVER wrap URLs in inline code or code blocks - this breaks clickability in Discord. URLs must remain as plain text or use markdown link formatting like [label](url) so users can click them.
 
-
 ## diagrams
 
-you can create diagrams wrapping them in code blocks.
+Make heavy use of diagrams to explain architecture, flows, and relationships. Create diagrams using ASCII art inside code blocks. Prefer diagrams over lengthy text explanations whenever possible. Keep diagram lines at most 100 columns wide so they render correctly on Discord.
 
 ## proactivity
 
