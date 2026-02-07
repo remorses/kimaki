@@ -1,10 +1,12 @@
 // /upgrade-and-restart command - Upgrade kimaki to the latest version and restart the bot.
-// Checks npm for a newer version, installs it globally, then restarts via SIGUSR2.
+// Checks npm for a newer version, installs it globally, then spawns a new kimaki process.
+// The new process kills the old one on startup (kimaki's single-instance lock).
 
 import type { CommandContext } from './types.js'
 import { SILENT_MESSAGE_FLAGS } from '../discord-utils.js'
 import { createLogger, LogPrefix } from '../logger.js'
 import { getCurrentVersion, upgrade } from '../upgrade.js'
+import { spawn } from 'node:child_process'
 
 const logger = createLogger(LogPrefix.CLI)
 
@@ -28,10 +30,13 @@ export async function handleUpgradeAndRestartCommand({ command }: CommandContext
       content: `Upgraded kimaki **v${currentVersion}** -> **v${newVersion}**. Restarting bot...`,
     })
 
-    // Give Discord a moment to deliver the message, then restart
-    setTimeout(() => {
-      process.kill(process.pid, 'SIGUSR2')
-    }, 1000)
+    const child = spawn('kimaki', process.argv.slice(2), {
+      shell: true,
+      stdio: 'ignore',
+      detached: true,
+    })
+    child.unref()
+    logger.debug('Started new background kimaki')
   } catch (error) {
     logger.error('[UPGRADE] Failed:', error)
     await command.editReply({
