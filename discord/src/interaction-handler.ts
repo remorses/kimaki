@@ -46,6 +46,7 @@ import { handleUserCommand } from './commands/user-command.js'
 import { handleVerbosityCommand } from './commands/verbosity.js'
 import { handleRestartOpencodeServerCommand } from './commands/restart-opencode-server.js'
 import { handleRunCommand } from './commands/run-command.js'
+import { handleUpgradeAndRestartCommand } from './commands/upgrade.js'
 import { hasKimakiBotPermission } from './discord-utils.js'
 import { createLogger, LogPrefix } from './logger.js'
 
@@ -207,6 +208,10 @@ export function registerInteractionHandler({
 
           case 'run-shell-command':
             await handleRunCommand({ command: interaction, appId })
+            return
+
+          case 'upgrade-and-restart':
+            await handleUpgradeAndRestartCommand({ command: interaction, appId })
             return
         }
 

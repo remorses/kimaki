@@ -64,6 +64,7 @@ import http from 'node:http'
 import { setDataDir, getDataDir, getLockPort, setDefaultVerbosity, setDefaultMentionMode, getProjectsDir } from './config.js'
 import { sanitizeAgentName } from './commands/agent.js'
 import { execAsync } from './worktree-utils.js'
+import { backgroundUpgradeKimaki, upgrade, getCurrentVersion } from './upgrade.js'
 
 const cliLogger = createLogger(LogPrefix.CLI)
 
@@ -589,6 +590,11 @@ async function registerCommands({
       })
       .setDMPermission(false)
       .toJSON(),
+    new SlashCommandBuilder()
+      .setName('upgrade-and-restart')
+      .setDescription('Upgrade kimaki to the latest version and restart the bot')
+      .setDMPermission(false)
+      .toJSON(),
   ]
 
   // Add user-defined commands with -cmd suffix
@@ -838,6 +844,7 @@ async function run({ restart, addChannels, useWorktrees, enableVoiceChannels }: 
   })
 
   backgroundUpgradeOpencode()
+  backgroundUpgradeKimaki()
 
   // Initialize database
   await initDatabase()
@@ -2298,6 +2305,27 @@ cli
       process.exit(0)
     } catch (error) {
       cliLogger.error('Error:', error instanceof Error ? error.message : String(error))
+      process.exit(EXIT_NO_RESTART)
+    }
+  })
+
+cli
+  .command('upgrade', 'Upgrade kimaki to the latest version')
+  .action(async () => {
+    try {
+      const current = getCurrentVersion()
+      cliLogger.log(`Current version: v${current}`)
+
+      const newVersion = await upgrade()
+      if (!newVersion) {
+        cliLogger.log('Already on latest version')
+        process.exit(0)
+      }
+
+      cliLogger.log(`Upgraded to v${newVersion}`)
+      process.exit(0)
+    } catch (error) {
+      cliLogger.error('Upgrade failed:', error instanceof Error ? error.message : String(error))
       process.exit(EXIT_NO_RESTART)
     }
   })
