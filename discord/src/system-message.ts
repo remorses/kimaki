@@ -159,6 +159,10 @@ Use --worktree to create a git worktree for the session:
 
 npx -y kimaki send --channel ${channelId} --prompt "Add dark mode support" --worktree dark-mode${username ? ` --user "${username}"` : ''}
 
+Use --agent to specify which agent to use for the session:
+
+npx -y kimaki send --channel ${channelId} --prompt "Plan the refactor of the auth module" --agent plan${username ? ` --user "${username}"` : ''}
+
 Worktrees are useful for handing off parallel tasks that need to be isolated from each other (each session works on its own branch).
 
 **Important:** When using \`kimaki send\`, provide a super detailed prompt with all context needed. The new session has no memory of the current conversation, so include requirements, constraints, file paths, and any relevant details. Use markdown formatting for readability: **bold** for keywords, \`code\` for paths/commands, lists for multiple items, and > quotes for context.
