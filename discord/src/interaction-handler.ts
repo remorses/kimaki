@@ -2,7 +2,7 @@
 // Processes all slash commands (/session, /resume, /fork, /model, /abort, etc.)
 // and manages autocomplete, select menu interactions for the bot.
 
-import { Events, type Client, type Interaction } from 'discord.js'
+import { Events, type Client, type GuildMember, type Interaction } from 'discord.js'
 import { handleSessionCommand, handleSessionAutocomplete } from './commands/session.js'
 import { handleNewWorktreeCommand } from './commands/worktree.js'
 import { handleMergeWorktreeCommand } from './commands/merge-worktree.js'
@@ -45,6 +45,8 @@ import { handleUndoCommand, handleRedoCommand } from './commands/undo-redo.js'
 import { handleUserCommand } from './commands/user-command.js'
 import { handleVerbosityCommand } from './commands/verbosity.js'
 import { handleRestartOpencodeServerCommand } from './commands/restart-opencode-server.js'
+import { handleRunCommand } from './commands/run-command.js'
+import { hasKimakiBotPermission } from './discord-utils.js'
 import { createLogger, LogPrefix } from './logger.js'
 
 const interactionLogger = createLogger(LogPrefix.INTERACTION)
@@ -96,6 +98,14 @@ export function registerInteractionHandler({
 
       if (interaction.isChatInputCommand()) {
         interactionLogger.log(`[COMMAND] Processing: ${interaction.commandName}`)
+
+        if (!hasKimakiBotPermission(interaction.member as GuildMember | null)) {
+          await interaction.reply({
+            content: `You don't have permission to use this command.\nTo use Kimaki, ask a server admin to give you the **Kimaki** role.`,
+            ephemeral: true,
+          })
+          return
+        }
 
         switch (interaction.commandName) {
           case 'new-session':
@@ -194,6 +204,10 @@ export function registerInteractionHandler({
           case 'restart-opencode-server':
             await handleRestartOpencodeServerCommand({ command: interaction, appId })
             return
+
+          case 'run-shell-command':
+            await handleRunCommand({ command: interaction, appId })
+            return
         }
 
         // Handle quick agent commands (ending with -agent suffix, but not the base /agent command)
@@ -211,6 +225,14 @@ export function registerInteractionHandler({
       }
 
       if (interaction.isButton()) {
+        if (!hasKimakiBotPermission(interaction.member as GuildMember | null)) {
+          await interaction.reply({
+            content: `You don't have permission to use this.\nTo use Kimaki, ask a server admin to give you the **Kimaki** role.`,
+            ephemeral: true,
+          })
+          return
+        }
+
         const customId = interaction.customId
 
         if (customId.startsWith('gemini_apikey:')) {
@@ -230,6 +252,14 @@ export function registerInteractionHandler({
       }
 
       if (interaction.isStringSelectMenu()) {
+        if (!hasKimakiBotPermission(interaction.member as GuildMember | null)) {
+          await interaction.reply({
+            content: `You don't have permission to use this.\nTo use Kimaki, ask a server admin to give you the **Kimaki** role.`,
+            ephemeral: true,
+          })
+          return
+        }
+
         const customId = interaction.customId
 
         if (customId.startsWith('fork_select:')) {
@@ -277,6 +307,14 @@ export function registerInteractionHandler({
       }
 
       if (interaction.isModalSubmit()) {
+        if (!hasKimakiBotPermission(interaction.member as GuildMember | null)) {
+          await interaction.reply({
+            content: `You don't have permission to use this.\nTo use Kimaki, ask a server admin to give you the **Kimaki** role.`,
+            ephemeral: true,
+          })
+          return
+        }
+
         const customId = interaction.customId
 
         if (customId.startsWith('login_apikey:')) {

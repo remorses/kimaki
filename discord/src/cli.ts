@@ -465,6 +465,18 @@ async function registerCommands({
       .setDescription('Restart the opencode server for this channel only (fixes state/auth/plugins)')
       .setDMPermission(false)
       .toJSON(),
+    new SlashCommandBuilder()
+      .setName('run-shell-command')
+      .setDescription('Run a shell command in the project directory (e.g. zed ., code .)')
+      .addStringOption((option) => {
+        option
+          .setName('command')
+          .setDescription('Command to run')
+          .setRequired(true)
+        return option
+      })
+      .setDMPermission(false)
+      .toJSON(),
   ]
 
   // Add user-defined commands with -cmd suffix
