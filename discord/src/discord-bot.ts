@@ -206,7 +206,8 @@ export async function startDiscordBot({
         const mentionModeEnabled = await getChannelMentionMode(textChannel.id)
         if (mentionModeEnabled) {
           const botMentioned = discordClient.user && message.mentions.has(discordClient.user.id)
-          if (!botMentioned) {
+          const isShellCommand = message.content?.startsWith('!')
+          if (!botMentioned && !isShellCommand) {
             voiceLogger.log(`[IGNORED] Mention mode enabled, bot not mentioned`)
             return
           }
@@ -295,11 +296,15 @@ export async function startDiscordBot({
         }
 
         // ! prefix runs a shell command instead of starting/continuing a session
+        // Use worktree directory if available, so commands run in the worktree cwd
         if (message.content?.startsWith('!') && projectDirectory) {
           const shellCmd = message.content.slice(1).trim()
           if (shellCmd) {
+            const shellDir = worktreeInfo?.status === 'ready' && worktreeInfo.worktree_directory
+              ? worktreeInfo.worktree_directory
+              : projectDirectory
             const loadingReply = await message.reply({ content: `Running \`${shellCmd}\`...` })
-            const result = await runShellCommand({ command: shellCmd, directory: projectDirectory })
+            const result = await runShellCommand({ command: shellCmd, directory: shellDir })
             await loadingReply.edit({ content: result })
             return
           }
