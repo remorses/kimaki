@@ -24,7 +24,6 @@
     "bin.js"
   ],
   "devDependencies": {
-    "@types/better-sqlite3": "^7.6.13",
     "@types/bun": "latest",
     "@types/heic-convert": "^2.1.0",
     "@types/js-yaml": "^4.0.9",
@@ -45,9 +44,8 @@
     "@purinton/resampler": "^1.0.4",
     "@xmorse/cac": "^6.0.7",
     "ai": "^5.0.114",
-    "better-sqlite3": "^12.3.0",
     "diff": "^8.0.3",
-    "discord.js": "^14.16.3",
+    "discord.js": "^14.25.1",
     "domhandler": "^5.0.3",
     "errore": "workspace:^",
     "glob": "^13.0.0",
