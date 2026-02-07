@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.4.59
+
+### Patch Changes
+
+- feat: **render tables as Discord Components V2** instead of code blocks for better readability
+- feat: move session **list/read commands to CLI** (`kimaki session list`, `kimaki session read`) to save token usage
+- feat: rename **add-project** CLI references to **project add**
+- style: simplify **table keys** to bold only
+
 ## 0.4.58
 
 ### Patch Changes
