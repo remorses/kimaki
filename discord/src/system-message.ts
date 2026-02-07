@@ -307,6 +307,8 @@ Keep paragraphs short. Break up long explanations into digestible chunks with cl
 
 Discord supports: headings, bold, italic, strikethrough, code blocks, inline code, quotes, lists, and links.
 
+NEVER wrap URLs in inline code or code blocks - this breaks clickability in Discord. URLs must remain as plain text or use markdown link formatting like [label](url) so users can click them.
+
 
 ## diagrams
 
