@@ -414,15 +414,6 @@ async function startLockServer(): Promise<void> {
   })
 }
 
-type Project = {
-  id: string
-  worktree: string
-  vcs?: string
-  time: {
-    created: number
-    initialized?: number
-  }
-}
 
 type CliOptions = {
   restart?: boolean
@@ -928,7 +919,7 @@ async function run({ restart, addChannels, useWorktrees, enableVoiceChannels }: 
 
   // Initialize database
   await initDatabase()
-  
+
   let appId: string
   let token: string
 
