@@ -24,11 +24,8 @@ function tool<Args extends z.ZodRawShape>(input: {
 import { createOpencodeClient } from '@opencode-ai/sdk'
 import { REST, Routes } from 'discord.js'
 import * as errore from 'errore'
-import fs from 'node:fs'
-import path from 'node:path'
 import { getPrisma } from './database.js'
 import { setDataDir } from './config.js'
-import { ShareMarkdown } from './markdown.js'
 import { reactToThread } from './discord-utils.js'
 
 // Regex to match emoji characters (covers most common emojis)
@@ -110,95 +107,6 @@ const kimakiPlugin: Plugin = async () => {
             : `Found ${members.length} users:`
 
           return `${header}\n${userList}`
-        },
-      }),
-      kimaki_list_sessions: tool({
-        description:
-          'List other OpenCode sessions in this project, showing IDs, titles, and whether they were started by Kimaki.',
-        args: {},
-        async execute() {
-          if (!client) {
-            return 'OpenCode client not available in plugin (missing OPENCODE_PORT)'
-          }
-          const sessionsResponse = await client.session.list()
-          const sessions = sessionsResponse.data || []
-          if (sessions.length === 0) {
-            return 'No sessions found'
-          }
-          const prisma = await getPrisma()
-          const threadSessions = await prisma.thread_sessions.findMany({
-            select: { thread_id: true, session_id: true },
-          })
-          const sessionToThread = new Map(
-            threadSessions
-              .filter((row) => row.session_id !== '')
-              .map((row) => {
-                return [row.session_id, row.thread_id]
-              }),
-          )
-          const lines = await Promise.all(
-            sessions.map(async (session) => {
-              const threadId = sessionToThread.get(session.id)
-              const startedWithKimaki = Boolean(threadId)
-              const origin = startedWithKimaki ? 'kimaki' : 'opencode'
-              const updatedAt = new Date(session.time.updated).toISOString()
-              if (!threadId) {
-                return `- ${session.id} | ${session.title || 'Untitled Session'} | cwd: ${session.directory} | updated ${updatedAt} | source: ${origin}`
-              }
-              const channelId = await (async () => {
-                const result = await errore.tryAsync({
-                  try: async () => {
-                    const channel = (await rest.get(Routes.channel(threadId))) as {
-                      id: string
-                      parent_id?: string
-                    }
-                    return channel.parent_id || channel.id
-                  },
-                  catch: (e) => new Error(`Failed to get channel ${threadId}`, { cause: e }),
-                })
-                if (errore.isError(result)) {
-                  console.warn(`[kimaki_list_sessions] ${result.message}`)
-                  return threadId
-                }
-                return result
-              })()
-              return `- ${session.id} | ${session.title || 'Untitled Session'} | cwd: ${session.directory} | updated ${updatedAt} | source: ${origin} | thread: ${threadId} | channel: ${channelId}`
-            }),
-          )
-          return lines.join('\n')
-        },
-      }),
-      kimaki_read_session: tool({
-        description:
-          "Read the full conversation of another OpenCode session as markdown, using Kimaki's markdown serializer.",
-        args: {
-          sessionId: z.string().describe('Session ID to read'),
-        },
-        async execute({ sessionId }) {
-          if (!client) {
-            return 'OpenCode client not available in plugin (missing OPENCODE_PORT)'
-          }
-          const markdown = new ShareMarkdown(client)
-          const result = await markdown.generate({ sessionID: sessionId })
-          if (result instanceof Error) {
-            return result.message
-          }
-          if (result.length > 100000) {
-            const safeId = sessionId.replace(/[^a-zA-Z0-9-_]/g, '_')
-            const outputDir = path.join(process.cwd(), 'tmp')
-            const outputPath = path.join(outputDir, `session-${safeId}.md`)
-            try {
-              fs.mkdirSync(outputDir, { recursive: true })
-              fs.writeFileSync(outputPath, result, 'utf8')
-            } catch (error) {
-              const message =
-                error instanceof Error ? error.message : String(error)
-              return `Session is over 100000 characters, but failed to write full output: ${message}`
-            }
-            const preview = result.split('\n').slice(0, 10).join('\n')
-            return `${preview}\n\nFull session written to ${outputPath} to read in full.`
-          }
-          return result
         },
       }),
       kimaki_mark_thread: tool({

@@ -180,6 +180,25 @@ Use this for handoff when:
 - You detect you're running low on context window space
 - A complex task would benefit from a clean slate with summarized context
 
+## reading other sessions
+
+To list all sessions in this project (shows which were started via kimaki):
+
+\`\`\`bash
+kimaki session list
+kimaki session list --json  # machine-readable output
+kimaki session list --project /path/to/project  # specific project
+\`\`\`
+
+To read a session's full conversation as markdown, pipe to a file and grep it to avoid wasting context.
+Logs go to stderr, so redirect stderr to hide them:
+
+\`\`\`bash
+kimaki session read <sessionId> > ./tmp/session.md 2>/dev/null
+\`\`\`
+
+Then use grep/read tools on the file to find what you need.
+
 ## cross-project commands
 
 When you need to work across multiple projects (e.g., update a dependency, fix a fork, or coordinate changes), use these commands:

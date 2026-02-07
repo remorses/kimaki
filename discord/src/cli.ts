@@ -37,6 +37,7 @@ import {
   getThreadIdBySessionId,
   getPrisma,
 } from './database.js'
+import { ShareMarkdown } from './markdown.js'
 import { formatWorktreeName } from './commands/worktree.js'
 import { WORKTREE_PREFIX } from './commands/merge-worktree.js'
 import type { ThreadStartMarker } from './system-message.js'
@@ -2108,6 +2109,105 @@ cli
       )
 
       cliLogger.log(channelUrl)
+      process.exit(0)
+    } catch (error) {
+      cliLogger.error('Error:', error instanceof Error ? error.message : String(error))
+      process.exit(EXIT_NO_RESTART)
+    }
+  })
+
+cli
+  .command('session list', 'List all OpenCode sessions, marking which were started via Kimaki')
+  .option('--project <path>', 'Project directory to list sessions for (defaults to cwd)')
+  .option('--json', 'Output as JSON')
+  .action(async (options: { project?: string; json?: boolean }) => {
+    try {
+      const projectDirectory = path.resolve(options.project || '.')
+
+      await initDatabase()
+
+      cliLogger.log('Connecting to OpenCode server...')
+      const getClient = await initializeOpencodeForDirectory(projectDirectory)
+      if (getClient instanceof Error) {
+        cliLogger.error('Failed to connect to OpenCode:', getClient.message)
+        process.exit(EXIT_NO_RESTART)
+      }
+
+      const sessionsResponse = await getClient().session.list()
+      const sessions = sessionsResponse.data || []
+
+      if (sessions.length === 0) {
+        cliLogger.log('No sessions found')
+        process.exit(0)
+      }
+
+      // Look up which sessions were started via kimaki (have a thread mapping)
+      const prisma = await getPrisma()
+      const threadSessions = await prisma.thread_sessions.findMany({
+        select: { thread_id: true, session_id: true },
+      })
+      const sessionToThread = new Map(
+        threadSessions
+          .filter((row) => row.session_id !== '')
+          .map((row) => [row.session_id, row.thread_id]),
+      )
+
+      if (options.json) {
+        const output = sessions.map((session) => ({
+          id: session.id,
+          title: session.title || 'Untitled Session',
+          directory: session.directory,
+          updated: new Date(session.time.updated).toISOString(),
+          source: sessionToThread.has(session.id) ? 'kimaki' : 'opencode',
+          threadId: sessionToThread.get(session.id) || null,
+        }))
+        console.log(JSON.stringify(output, null, 2))
+        process.exit(0)
+      }
+
+      for (const session of sessions) {
+        const threadId = sessionToThread.get(session.id)
+        const source = threadId ? '(kimaki)' : '(opencode)'
+        const updatedAt = new Date(session.time.updated).toISOString()
+        const threadInfo = threadId ? ` | thread: ${threadId}` : ''
+        console.log(
+          `${session.id} | ${session.title || 'Untitled Session'} | ${session.directory} | ${updatedAt} | ${source}${threadInfo}`,
+        )
+      }
+
+      process.exit(0)
+    } catch (error) {
+      cliLogger.error('Error:', error instanceof Error ? error.message : String(error))
+      process.exit(EXIT_NO_RESTART)
+    }
+  })
+
+cli
+  .command('session read <sessionId>', 'Read a session conversation as markdown (pipe to file to grep)')
+  .option('--project <path>', 'Project directory (defaults to cwd)')
+  .action(async (sessionId: string, options: { project?: string }) => {
+    try {
+      const projectDirectory = path.resolve(options.project || '.')
+
+      await initDatabase()
+
+      cliLogger.log('Connecting to OpenCode server...')
+      const getClient = await initializeOpencodeForDirectory(projectDirectory)
+      if (getClient instanceof Error) {
+        cliLogger.error('Failed to connect to OpenCode:', getClient.message)
+        process.exit(EXIT_NO_RESTART)
+      }
+
+      const markdown = new ShareMarkdown(getClient())
+      const result = await markdown.generate({ sessionID: sessionId })
+      if (result instanceof Error) {
+        cliLogger.error(result.message)
+        process.exit(EXIT_NO_RESTART)
+      }
+
+      // Print to stdout so it can be piped: kimaki session read <id> > ./tmp/session.md
+      process.stdout.write(result)
+
       process.exit(0)
     } catch (error) {
       cliLogger.error('Error:', error instanceof Error ? error.message : String(error))
