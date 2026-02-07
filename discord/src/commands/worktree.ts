@@ -131,7 +131,7 @@ async function createWorktreeInBackground({
   await setWorktreeReady({ threadId: thread.id, worktreeDirectory: worktreeResult.directory })
 
   // React with tree emoji to mark as worktree thread
-  await reactToThread({ rest, threadId: thread.id, emoji: '🌳' })
+  await reactToThread({ rest, threadId: thread.id, channelId: thread.parentId || undefined, emoji: '🌳' })
 
   const diffStatus = diff ? (worktreeResult.diffApplied ? '\n✅ Changes applied' : '\n⚠️ Failed to apply changes') : ''
   await starterMessage.edit(
