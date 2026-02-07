@@ -467,7 +467,7 @@ async function registerCommands({
       .toJSON(),
     new SlashCommandBuilder()
       .setName('run-shell-command')
-      .setDescription('Run a shell command in the project directory (e.g. zed ., code .)')
+      .setDescription('Run a shell command in the project directory. Tip: prefix messages with ! as shortcut')
       .addStringOption((option) => {
         option
           .setName('command')

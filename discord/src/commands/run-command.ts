@@ -1,5 +1,7 @@
 // /run-shell-command command - Run an arbitrary shell command in the project directory.
 // Resolves the project directory from the channel and executes the command with it as cwd.
+// Also used by the ! prefix shortcut in discord messages (e.g. "!ls -la").
+// Messages starting with ! are intercepted before session handling and routed here.
 
 import { ChannelType, type TextChannel, type ThreadChannel } from 'discord.js'
 import type { CommandContext } from './types.js'
@@ -10,6 +12,26 @@ import { execAsync } from '../worktree-utils.js'
 const logger = createLogger(LogPrefix.INTERACTION)
 
 const MAX_OUTPUT_CHARS = 1900
+
+export async function runShellCommand({ command, directory }: { command: string; directory: string }): Promise<string> {
+  try {
+    const { stdout, stderr } = await execAsync(command, { cwd: directory, timeout: 30_000 })
+    const output = [stdout, stderr].filter(Boolean).join('\n').trim()
+
+    const header = `Ran \`${command}\` in \`${directory}\``
+    if (!output) {
+      return header
+    }
+    return formatOutput(output, header)
+  } catch (error) {
+    const execError = error as { stdout?: string; stderr?: string; message?: string }
+    const output = [execError.stdout, execError.stderr].filter(Boolean).join('\n').trim()
+    logger.error(`[RUN-COMMAND] Failed to run "${command}":`, error)
+
+    const header = `\`${command}\` failed`
+    return formatOutput(output || execError.message || 'Unknown error', header)
+  }
+}
 
 export async function handleRunCommand({ command }: CommandContext): Promise<void> {
   const channel = command.channel
@@ -56,29 +78,10 @@ export async function handleRunCommand({ command }: CommandContext): Promise<voi
 
   const input = command.options.getString('command', true)
 
-  await command.deferReply({ flags: SILENT_MESSAGE_FLAGS })
+  await command.deferReply()
 
-  try {
-    const { stdout, stderr } = await execAsync(input, { cwd: directory, timeout: 30_000 })
-    const output = [stdout, stderr].filter(Boolean).join('\n').trim()
-
-    const header = `Ran \`${input}\` in \`${directory}\``
-    if (!output) {
-      await command.editReply({ content: header })
-      return
-    }
-
-    const codeBlock = formatOutput(output, header)
-    await command.editReply({ content: codeBlock })
-  } catch (error) {
-    const execError = error as { stdout?: string; stderr?: string; message?: string }
-    const output = [execError.stdout, execError.stderr].filter(Boolean).join('\n').trim()
-    logger.error(`[RUN-COMMAND] Failed to run "${input}":`, error)
-
-    const header = `\`${input}\` failed`
-    const codeBlock = formatOutput(output || execError.message || 'Unknown error', header)
-    await command.editReply({ content: codeBlock })
-  }
+  const result = await runShellCommand({ command: input, directory })
+  await command.editReply({ content: result })
 }
 
 function formatOutput(output: string, header: string): string {

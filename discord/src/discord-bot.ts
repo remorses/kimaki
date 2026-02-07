@@ -47,6 +47,7 @@ import {
 } from './voice-handler.js'
 import { getCompactSessionContext, getLastSessionId } from './markdown.js'
 import { handleOpencodeSession } from './session-handler.js'
+import { runShellCommand } from './commands/run-command.js'
 import { registerInteractionHandler } from './interaction-handler.js'
 
 export { initDatabase, closeDatabase, getChannelDirectory, getPrisma } from './database.js'
@@ -293,6 +294,16 @@ export async function startDiscordBot({
           return
         }
 
+        // ! prefix runs a shell command instead of starting/continuing a session
+        if (message.content?.startsWith('!') && projectDirectory) {
+          const shellCmd = message.content.slice(1).trim()
+          if (shellCmd) {
+            const result = await runShellCommand({ command: shellCmd, directory: projectDirectory })
+            await message.reply({ content: result })
+            return
+          }
+        }
+
         const sessionId = await getThreadSession(thread.id)
 
         // No existing session - start a new one (e.g., replying to a notification thread)
@@ -449,6 +460,16 @@ export async function startDiscordBot({
             flags: SILENT_MESSAGE_FLAGS,
           })
           return
+        }
+
+        // ! prefix runs a shell command instead of starting a session
+        if (message.content?.startsWith('!')) {
+          const shellCmd = message.content.slice(1).trim()
+          if (shellCmd) {
+            const result = await runShellCommand({ command: shellCmd, directory: projectDirectory })
+            await message.reply({ content: result })
+            return
+          }
         }
 
         const hasVoice = message.attachments.some((a) => a.contentType?.startsWith('audio/'))
