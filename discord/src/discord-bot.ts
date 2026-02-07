@@ -26,6 +26,8 @@ import {
   SILENT_MESSAGE_FLAGS,
   reactToThread,
   stripMentions,
+  hasKimakiBotPermission,
+  hasNoKimakiRole,
 } from './discord-utils.js'
 import { getOpencodeSystemMessage, type ThreadStartMarker } from './system-message.js'
 import yaml from 'js-yaml'
@@ -65,7 +67,6 @@ import {
   Events,
   GatewayIntentBits,
   Partials,
-  PermissionsBitField,
   ThreadAutoArchiveDuration,
   type Message,
   type TextChannel,
@@ -212,13 +213,7 @@ export async function startDiscordBot({
       }
 
       if (message.guild && message.member) {
-        // Check for "no-kimaki" role first - blocks user regardless of other permissions.
-        // This implements the "four-eyes principle": even owners must remove this role
-        // to use the bot, adding friction to prevent accidental usage.
-        const hasNoKimakiRole = message.member.roles.cache.some(
-          (role) => role.name.toLowerCase() === 'no-kimaki',
-        )
-        if (hasNoKimakiRole) {
+        if (hasNoKimakiRole(message.member)) {
           await message.reply({
             content: `You have the **no-kimaki** role which blocks bot access.\nRemove this role to use Kimaki.`,
             flags: SILENT_MESSAGE_FLAGS,
@@ -226,16 +221,7 @@ export async function startDiscordBot({
           return
         }
 
-        const isOwner = message.member.id === message.guild.ownerId
-        const isAdmin = message.member.permissions.has(PermissionsBitField.Flags.Administrator)
-        const canManageServer = message.member.permissions.has(
-          PermissionsBitField.Flags.ManageGuild,
-        )
-        const hasKimakiRole = message.member.roles.cache.some(
-          (role) => role.name.toLowerCase() === 'kimaki',
-        )
-
-        if (!isOwner && !isAdmin && !canManageServer && !hasKimakiRole) {
+        if (!hasKimakiBotPermission(message.member)) {
           await message.reply({
             content: `You don't have permission to start sessions.\nTo use Kimaki, ask a server admin to give you the **Kimaki** role.`,
             flags: SILENT_MESSAGE_FLAGS,

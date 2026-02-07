@@ -2,7 +2,7 @@
 // Handles markdown splitting for Discord's 2000-char limit, code block escaping,
 // thread message sending, and channel metadata extraction from topic tags.
 
-import { ChannelType, MessageFlags, type Message, type TextChannel, type ThreadChannel } from 'discord.js'
+import { ChannelType, MessageFlags, PermissionsBitField, type GuildMember, type Message, type TextChannel, type ThreadChannel } from 'discord.js'
 import { REST, Routes } from 'discord.js'
 import { Lexer } from 'marked'
 import { splitTablesFromMarkdown } from './format-tables.js'
@@ -16,6 +16,44 @@ import fs from 'node:fs'
 import path from 'node:path'
 
 const discordLogger = createLogger(LogPrefix.DISCORD)
+
+/**
+ * Centralized permission check for Kimaki bot access.
+ * Returns true if the member has permission to use the bot:
+ * - Server owner, Administrator, Manage Server, or "Kimaki" role (case-insensitive).
+ * Returns false if member is null or has the "no-kimaki" role (overrides all).
+ */
+export function hasKimakiBotPermission(member: GuildMember | null): boolean {
+  if (!member) {
+    return false
+  }
+  const hasNoKimakiRole = member.roles.cache.some(
+    (role) => role.name.toLowerCase() === 'no-kimaki',
+  )
+  if (hasNoKimakiRole) {
+    return false
+  }
+  const isOwner = member.id === member.guild.ownerId
+  const isAdmin = member.permissions.has(PermissionsBitField.Flags.Administrator)
+  const canManageServer = member.permissions.has(PermissionsBitField.Flags.ManageGuild)
+  const hasKimakiRole = member.roles.cache.some(
+    (role) => role.name.toLowerCase() === 'kimaki',
+  )
+  return isOwner || isAdmin || canManageServer || hasKimakiRole
+}
+
+/**
+ * Check if the member has the "no-kimaki" role that blocks bot access.
+ * Separate from hasKimakiBotPermission so callers can show a specific error message.
+ */
+export function hasNoKimakiRole(member: GuildMember | null): boolean {
+  if (!member) {
+    return false
+  }
+  return member.roles.cache.some(
+    (role) => role.name.toLowerCase() === 'no-kimaki',
+  )
+}
 
 /**
  * React to a thread's starter message with an emoji.

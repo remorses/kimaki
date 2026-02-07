@@ -19,7 +19,6 @@ import { Transform, type TransformCallback } from 'node:stream'
 import * as prism from 'prism-media'
 import dedent from 'string-dedent'
 import {
-  PermissionsBitField,
   Events,
   ActionRowBuilder,
   ButtonBuilder,
@@ -40,6 +39,7 @@ import {
   sendThreadMessage,
   escapeDiscordFormatting,
   SILENT_MESSAGE_FLAGS,
+  hasKimakiBotPermission,
 } from './discord-utils.js'
 import { transcribeAudio } from './voice.js'
 import { FetchError } from './errors.js'
@@ -576,19 +576,15 @@ export function registerVoiceStateHandler({
       const member = newState.member || oldState.member
       if (!member) return
 
-      const guild = newState.guild || oldState.guild
-      const isOwner = member.id === guild.ownerId
-      const isAdmin = member.permissions.has(PermissionsBitField.Flags.Administrator)
-      const canManageServer = member.permissions.has(PermissionsBitField.Flags.ManageGuild)
-      const hasKimakiRole = member.roles.cache.some((role) => role.name.toLowerCase() === 'kimaki')
-
-      if (!isOwner && !isAdmin && !canManageServer && !hasKimakiRole) {
+      if (!hasKimakiBotPermission(member)) {
         return
       }
 
+      const guild = newState.guild || oldState.guild
+
       if (oldState.channelId !== null && newState.channelId === null) {
         voiceLogger.log(
-          `Admin user ${member.user.tag} left voice channel: ${oldState.channel?.name}`,
+          `Permitted user ${member.user.tag} left voice channel: ${oldState.channel?.name}`,
         )
 
         const guildId = guild.id
@@ -598,24 +594,21 @@ export function registerVoiceStateHandler({
           const voiceChannel = oldState.channel as VoiceChannel
           if (!voiceChannel) return
 
-          const hasOtherAdmins = voiceChannel.members.some((m) => {
-            if (m.id === member.id || m.user.bot) return false
-            return (
-              m.id === guild.ownerId ||
-              m.permissions.has(PermissionsBitField.Flags.Administrator) ||
-              m.permissions.has(PermissionsBitField.Flags.ManageGuild) ||
-              m.roles.cache.some((role) => role.name.toLowerCase() === 'kimaki')
-            )
+          const hasOtherPermittedUsers = voiceChannel.members.some((m) => {
+            if (m.id === member.id || m.user.bot) {
+              return false
+            }
+            return hasKimakiBotPermission(m)
           })
 
-          if (!hasOtherAdmins) {
+          if (!hasOtherPermittedUsers) {
             voiceLogger.log(
-              `No other admins in channel, bot leaving voice channel in guild: ${guild.name}`,
+              `No other permitted users in channel, bot leaving voice channel in guild: ${guild.name}`,
             )
 
             await cleanupVoiceConnection(guildId)
           } else {
-            voiceLogger.log(`Other admins still in channel, bot staying in voice channel`)
+            voiceLogger.log(`Other permitted users still in channel, bot staying in voice channel`)
           }
         }
         return
@@ -627,7 +620,7 @@ export function registerVoiceStateHandler({
         oldState.channelId !== newState.channelId
       ) {
         voiceLogger.log(
-          `Admin user ${member.user.tag} moved from ${oldState.channel?.name} to ${newState.channel?.name}`,
+          `Permitted user ${member.user.tag} moved from ${oldState.channel?.name} to ${newState.channel?.name}`,
         )
 
         const guildId = guild.id
@@ -636,17 +629,14 @@ export function registerVoiceStateHandler({
         if (voiceData && voiceData.connection.joinConfig.channelId === oldState.channelId) {
           const oldVoiceChannel = oldState.channel as VoiceChannel
           if (oldVoiceChannel) {
-            const hasOtherAdmins = oldVoiceChannel.members.some((m) => {
-              if (m.id === member.id || m.user.bot) return false
-              return (
-                m.id === guild.ownerId ||
-                m.permissions.has(PermissionsBitField.Flags.Administrator) ||
-                m.permissions.has(PermissionsBitField.Flags.ManageGuild) ||
-                m.roles.cache.some((role) => role.name.toLowerCase() === 'kimaki')
-              )
+            const hasOtherPermittedUsers = oldVoiceChannel.members.some((m) => {
+              if (m.id === member.id || m.user.bot) {
+                return false
+              }
+              return hasKimakiBotPermission(m)
             })
 
-            if (!hasOtherAdmins) {
+            if (!hasOtherPermittedUsers) {
               voiceLogger.log(`Following admin to new channel: ${newState.channel?.name}`)
               const voiceChannel = newState.channel as VoiceChannel
               if (voiceChannel) {
@@ -657,7 +647,7 @@ export function registerVoiceStateHandler({
                 })
               }
             } else {
-              voiceLogger.log(`Other admins still in old channel, bot staying put`)
+              voiceLogger.log(`Other permitted users still in old channel, bot staying put`)
             }
           }
         }
@@ -665,7 +655,7 @@ export function registerVoiceStateHandler({
 
       if (oldState.channelId === null && newState.channelId !== null) {
         voiceLogger.log(
-          `Admin user ${member.user.tag} (Owner: ${isOwner}, Admin: ${isAdmin}) joined voice channel: ${newState.channel?.name}`,
+          `Permitted user ${member.user.tag} joined voice channel: ${newState.channel?.name}`,
         )
       }
 
