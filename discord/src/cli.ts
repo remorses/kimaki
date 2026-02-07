@@ -63,6 +63,7 @@ import { spawn, spawnSync, execSync, type ExecSyncOptions } from 'node:child_pro
 import http from 'node:http'
 import { setDataDir, getDataDir, getLockPort, setDefaultVerbosity, setDefaultMentionMode, getProjectsDir } from './config.js'
 import { sanitizeAgentName } from './commands/agent.js'
+import { execAsync } from './worktree-utils.js'
 
 const cliLogger = createLogger(LogPrefix.CLI)
 
@@ -77,6 +78,117 @@ function stripBracketedPaste(value: string | undefined): string {
 }
 
 const EXIT_NO_RESTART = 64
+
+// Detect if a CLI tool is installed, prompt to install if missing.
+// Uses official install scripts with platform-specific commands for Unix vs Windows.
+// Sets process.env[envPathKey] to the found binary path for the current session.
+// After install, re-checks PATH first, then falls back to common install locations.
+async function ensureCommandAvailable({
+  name,
+  envPathKey,
+  installUnix,
+  installWindows,
+  possiblePathsUnix,
+  possiblePathsWindows,
+}: {
+  name: string
+  envPathKey: string
+  installUnix: string
+  installWindows: string
+  possiblePathsUnix: string[]
+  possiblePathsWindows: string[]
+}): Promise<void> {
+  if (process.env[envPathKey]) {
+    return
+  }
+
+  const isWindows = process.platform === 'win32'
+  const whichCmd = isWindows ? 'where' : 'which'
+  const isInstalled = await execAsync(`${whichCmd} ${name}`, { env: process.env }).then(
+    () => { return true },
+    () => { return false },
+  )
+
+  if (isInstalled) {
+    return
+  }
+
+  note(`${name} is required but not found in your PATH.`, `${name} Not Found`)
+
+  const shouldInstall = await confirm({
+    message: `Would you like to install ${name} right now?`,
+  })
+
+  if (isCancel(shouldInstall) || !shouldInstall) {
+    cancel(`${name} is required to run this bot`)
+    process.exit(EXIT_NO_RESTART)
+  }
+
+  cliLogger.log(`Installing ${name}...`)
+
+  try {
+    // Use explicit shell invocation to avoid Node shell-mode quirks on Windows.
+    // PowerShell needs -NoProfile and -ExecutionPolicy Bypass for install scripts.
+    // Unix uses login shell (-l) so install scripts can update PATH in shell config.
+    const cmd = isWindows ? 'powershell.exe' : '/bin/bash'
+    const args = isWindows
+      ? ['-NoProfile', '-ExecutionPolicy', 'Bypass', '-Command', installWindows]
+      : ['-lc', installUnix]
+    await new Promise<void>((resolve, reject) => {
+      const child = spawn(cmd, args, { stdio: 'inherit', env: process.env })
+      child.on('close', (code) => {
+        if (code === 0) {
+          resolve()
+        } else {
+          reject(new Error(`${name} install exited with code ${code}`))
+        }
+      })
+      child.on('error', reject)
+    })
+    cliLogger.log(`${name} installed successfully!`)
+  } catch (error) {
+    cliLogger.log(`Failed to install ${name}`)
+    cliLogger.error('Installation error:', error instanceof Error ? error.message : String(error))
+    process.exit(EXIT_NO_RESTART)
+  }
+
+  // After install, re-check PATH first (install script may have added it)
+  const foundInPath = await execAsync(`${whichCmd} ${name}`, { env: process.env }).then(
+    (result) => { return result.stdout.trim() },
+    () => { return '' },
+  )
+  if (foundInPath) {
+    process.env[envPathKey] = foundInPath
+    return
+  }
+
+  // Fall back to probing common install locations
+  const home = process.env.HOME || process.env.USERPROFILE || ''
+  const accessFlag = isWindows ? fs.constants.F_OK : fs.constants.X_OK
+  const possiblePaths = (isWindows ? possiblePathsWindows : possiblePathsUnix)
+    .filter((p) => { return !p.startsWith('~') || home })
+    .map((p) => { return p.replace('~', home) })
+
+  const installedPath = possiblePaths.find((p) => {
+    try {
+      fs.accessSync(p, accessFlag)
+      return true
+    } catch {
+      return false
+    }
+  })
+
+  if (!installedPath) {
+    note(
+      `${name} was installed but may not be available in this session.\n` +
+        'Please restart your terminal and run this command again.',
+      'Restart Required',
+    )
+    process.exit(EXIT_NO_RESTART)
+  }
+
+  process.env[envPathKey] = installedPath
+}
 
 // Run opencode upgrade in the background so the user always has the latest version.
 // Fire-and-forget: errors are silently ignored since this is non-critical.
@@ -692,75 +804,38 @@ async function run({ restart, addChannels, useWorktrees, enableVoiceChannels }: 
 
   intro('🤖 Discord Bot Setup')
 
-  // Step 0: Check if OpenCode CLI is available
-  // Skip check if user set OPENCODE_PATH (for custom forks like shuvcode)
-  if (!process.env.OPENCODE_PATH) {
-    const opencodeCheck = spawnSync(
-      process.platform === 'win32' ? 'where' : 'which',
-      ['opencode'],
-      { shell: true }
-    )
-    if (opencodeCheck.status !== 0) {
-      note('OpenCode CLI is required but not found in your PATH.', '⚠️  OpenCode Not Found')
+  // Step 0: Ensure required CLI tools are installed (OpenCode + Bun)
+  await ensureCommandAvailable({
+    name: 'opencode',
+    envPathKey: 'OPENCODE_PATH',
+    installUnix: 'curl -fsSL https://opencode.ai/install | bash',
+    installWindows: 'irm https://opencode.ai/install.ps1 | iex',
+    possiblePathsUnix: [
+      '~/.local/bin/opencode',
+      '~/.opencode/bin/opencode',
+      '/usr/local/bin/opencode',
+      '/opt/opencode/bin/opencode',
+    ],
+    possiblePathsWindows: [
+      '~\\.local\\bin\\opencode.exe',
+      '~\\AppData\\Local\\opencode\\opencode.exe',
+      '~\\.opencode\\bin\\opencode.exe',
+    ],
+  })
 
-    const shouldInstall = await confirm({
-      message: 'Would you like to install OpenCode right now?',
-    })
-
-    if (isCancel(shouldInstall) || !shouldInstall) {
-      cancel('OpenCode CLI is required to run this bot')
-      process.exit(0)
-    }
-
-    cliLogger.log('Installing OpenCode CLI...')
-
-    try {
-      execSync('curl -fsSL https://opencode.ai/install | bash', {
-        stdio: 'inherit',
-        shell: '/bin/bash',
-      })
-      cliLogger.log('OpenCode CLI installed successfully!')
-
-      // The install script adds opencode to PATH via shell configuration
-      // For the current process, we need to check common installation paths
-      const possiblePaths = [
-        `${process.env.HOME}/.local/bin/opencode`,
-        `${process.env.HOME}/.opencode/bin/opencode`,
-        '/usr/local/bin/opencode',
-        '/opt/opencode/bin/opencode',
-      ]
-
-      const installedPath = possiblePaths.find((p) => {
-        try {
-          fs.accessSync(p, fs.constants.F_OK)
-          return true
-        } catch (error) {
-          cliLogger.debug(
-            `OpenCode path not found at ${p}:`,
-            error instanceof Error ? error.message : String(error),
-          )
-          return false
-        }
-      })
-
-      if (!installedPath) {
-        note(
-          'OpenCode was installed but may not be available in this session.\n' +
-            'Please restart your terminal and run this command again.',
-          '⚠️  Restart Required',
-        )
-        process.exit(0)
-      }
-
-      // For subsequent spawn calls in this session, we can use the full path
-      process.env.OPENCODE_PATH = installedPath
-    } catch (error) {
-      cliLogger.log('Failed to install OpenCode CLI')
-      cliLogger.error('Installation error:', error instanceof Error ? error.message : String(error))
-      process.exit(EXIT_NO_RESTART)
-    }
-    }
-  }
+  await ensureCommandAvailable({
+    name: 'bun',
+    envPathKey: 'BUN_PATH',
+    installUnix: 'curl -fsSL https://bun.sh/install | bash',
+    installWindows: 'irm bun.sh/install.ps1 | iex',
+    possiblePathsUnix: [
+      '~/.bun/bin/bun',
+      '/usr/local/bin/bun',
+    ],
+    possiblePathsWindows: [
+      '~\\.bun\\bin\\bun.exe',
+    ],
+  })
 
   backgroundUpgradeOpencode()
 
