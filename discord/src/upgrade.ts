@@ -3,6 +3,7 @@
 // and runs the global upgrade command. Used by both CLI `kimaki upgrade` and
 // the Discord `/upgrade-and-restart` command, plus background auto-upgrade on startup.
 
+import fs from 'node:fs'
 import { createRequire } from 'node:module'
 import { createLogger, LogPrefix } from './logger.js'
 import { execAsync } from './worktree-utils.js'
@@ -11,6 +12,16 @@ const logger = createLogger(LogPrefix.CLI)
 
 type Pm = 'bun' | 'pnpm' | 'npm'
 
+// Detects which package manager globally installed kimaki, used to run the
+// correct `<pm> i -g kimaki@latest` upgrade command.
+//
+// Detection order:
+// 1. npm_config_user_agent — set by npx/bunx/pnpm dlx, reliable for those cases
+// 2. Realpath of the running script — resolve symlinks and check if the path
+//    lives under a known PM global directory (e.g. ~/.bun, ~/Library/pnpm,
+//    /usr/local/lib/node_modules). Inspired by sindresorhus/global-directory.
+// 3. process.versions.bun — if the runtime itself is Bun, likely bun ecosystem
+// 4. Default to npm — safest fallback since npm is the most common global installer
 export function detectPm(): Pm {
   const ua = process.env.npm_config_user_agent
   if (ua?.startsWith('bun/')) {
@@ -23,18 +34,38 @@ export function detectPm(): Pm {
     return 'npm'
   }
 
-  const exec = process.execPath.toLowerCase()
-  if (exec.includes('bun')) {
-    return 'bun'
-  }
-  if (exec.includes('pnpm')) {
-    return 'pnpm'
-  }
-  if (exec.includes('npm')) {
-    return 'npm'
+  const scriptPath = resolveScriptRealpath()
+  if (scriptPath) {
+    const p = scriptPath.toLowerCase()
+    // bun global installs live under ~/.bun or $BUN_INSTALL
+    if (p.includes('.bun/') || p.includes('/bun/install/')) {
+      return 'bun'
+    }
+    // pnpm global installs live under ~/Library/pnpm, ~/.local/share/pnpm, or $PNPM_HOME
+    if (p.includes('/pnpm/')) {
+      return 'pnpm'
+    }
+    // npm global installs typically live under lib/node_modules/kimaki without
+    // any pnpm or bun path segments, so if we reach here it's likely npm
   }
 
-  return 'bun'
+  if (process.versions.bun) {
+    return 'bun'
+  }
+
+  return 'npm'
+}
+
+function resolveScriptRealpath(): string | null {
+  try {
+    const script = process.argv[1]
+    if (!script) {
+      return null
+    }
+    return fs.realpathSync(script)
+  } catch {
+    return null
+  }
 }
 
 export function getCurrentVersion(): string {
