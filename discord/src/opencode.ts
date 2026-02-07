@@ -13,7 +13,7 @@ import { fileURLToPath } from 'node:url'
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 import { createOpencodeClient, type OpencodeClient, type Config as SdkConfig } from '@opencode-ai/sdk'
 import { getBotToken } from './database.js'
-import { getDataDir } from './config.js'
+import { getDataDir, getLockPort } from './config.js'
 
 // SDK Config type is simplified; opencode accepts nested permission objects with path patterns
 type PermissionAction = 'ask' | 'allow' | 'deny'
@@ -184,6 +184,7 @@ export async function initializeOpencodeForDirectory(
       OPENCODE_PORT: port.toString(),
       KIMAKI_DATA_DIR: getDataDir(),
       ...(kimakiBotToken && { KIMAKI_BOT_TOKEN: kimakiBotToken }),
+      KIMAKI_LOCK_PORT: getLockPort().toString(),
     },
   })
 

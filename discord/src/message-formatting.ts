@@ -345,6 +345,12 @@ export function getToolSummaryText(part: Part): string {
     return name ? `_${escapeInlineMarkdown(name)}_` : ''
   }
 
+  // File upload tool - show the prompt
+  if (part.tool.endsWith('kimaki_file_upload')) {
+    const prompt = (part.state.input?.prompt as string) || ''
+    return prompt ? `*${escapeInlineMarkdown(prompt.slice(0, 60))}*` : ''
+  }
+
   if (!part.state.input) return ''
 
   const inputFields = Object.entries(part.state.input)
@@ -435,6 +441,11 @@ export function formatPart(
 
     // Question tool is handled via Discord dropdowns, not text
     if (part.tool === 'question') {
+      return ''
+    }
+
+    // File upload tool is handled via Discord button + modal, not text
+    if (part.tool.endsWith('kimaki_file_upload')) {
       return ''
     }
 

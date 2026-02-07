@@ -142,6 +142,10 @@ Only users with these Discord permissions can send messages to the bot:
 To upload files to the Discord thread (images, screenshots, long files that would clutter the chat), run:
 
 npx -y kimaki upload-to-discord --session ${sessionId} <file1> [file2] ...
+
+## requesting files from the user
+
+To ask the user to upload files from their device, use the \`kimaki_file_upload\` tool. This shows a native file picker dialog in Discord. The files are downloaded to the project's \`uploads/\` directory and the tool returns the local file paths.
 ${
   channelId
     ? `

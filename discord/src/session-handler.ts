@@ -42,6 +42,7 @@ import {
   cleanupPermissionContext,
   addPermissionRequestToContext,
 } from './commands/permissions.js'
+import { cancelPendingFileUpload } from './commands/file-upload.js'
 import * as errore from 'errore'
 
 const sessionLogger = createLogger(LogPrefix.SESSION)
@@ -547,6 +548,12 @@ export async function handleOpencodeSession({
   const questionAnswered = await cancelPendingQuestion(thread.id, prompt)
   if (questionAnswered) {
     sessionLogger.log(`[QUESTION] Answered pending question with user message`)
+  }
+
+  // Cancel any pending file upload (resolves with empty array so plugin tool unblocks)
+  const fileUploadCancelled = await cancelPendingFileUpload(thread.id)
+  if (fileUploadCancelled) {
+    sessionLogger.log(`[FILE-UPLOAD] Cancelled pending file upload due to new message`)
   }
 
   const abortController = new AbortController()

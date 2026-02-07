@@ -183,6 +183,78 @@ const kimakiPlugin: Plugin = async () => {
             : 'Failed to add any emoji reactions'
         },
       }),
+      kimaki_file_upload: tool({
+        description:
+          'Prompt the Discord user to upload files using a native file picker modal. ' +
+          'The user sees a button, clicks it, and gets a file upload dialog. ' +
+          'Returns the local file paths of downloaded files in the project directory. ' +
+          'Use this when you need the user to provide files (images, documents, configs, etc.). ' +
+          'IMPORTANT: Always call this tool last in your message, after all text parts.',
+        args: {
+          prompt: z
+            .string()
+            .describe('Message shown to the user explaining what files to upload'),
+          maxFiles: z
+            .number()
+            .min(1)
+            .max(10)
+            .optional()
+            .describe('Maximum number of files the user can upload (1-10, default 5)'),
+        },
+        async execute({ prompt, maxFiles }, context) {
+          const lockPort = process.env.KIMAKI_LOCK_PORT
+          if (!lockPort) {
+            return 'File upload not available: bot communication port not configured'
+          }
+
+          const prisma = await getPrisma()
+          const row = await prisma.thread_sessions.findFirst({
+            where: { session_id: context.sessionID },
+            select: { thread_id: true },
+          })
+
+          if (!row?.thread_id) {
+            return 'Could not find thread for current session'
+          }
+
+          let response: Response
+          try {
+            response = await fetch(`http://127.0.0.1:${lockPort}/file-upload`, {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({
+                sessionId: context.sessionID,
+                threadId: row.thread_id,
+                directory: context.directory,
+                prompt,
+                maxFiles: maxFiles || 5,
+              }),
+              // 6 minute timeout - slightly longer than bot-side 5min TTL so
+              // the bot resolves first and we get a clean empty-array response
+              // instead of a network timeout error
+              signal: AbortSignal.timeout(6 * 60 * 1000),
+            })
+          } catch (err) {
+            if (err instanceof Error && err.name === 'TimeoutError') {
+              return 'File upload timed out - user did not upload files within the time limit'
+            }
+            return `File upload failed: ${err instanceof Error ? err.message : String(err)}`
+          }
+
+          const result = await response.json() as { filePaths?: string[]; error?: string }
+
+          if (!response.ok || result.error) {
+            return `File upload failed: ${result.error || 'Unknown error'}`
+          }
+
+          const filePaths = result.filePaths || []
+          if (filePaths.length === 0) {
+            return 'No files were uploaded (user may have cancelled or sent a new message)'
+          }
+
+          return `Files uploaded successfully:\n${filePaths.join('\n')}`
+        },
+      }),
       kimaki_archive_thread: tool({
         description:
           'Archive the current Discord thread to hide it from the Discord left sidebar. Only call this when the user explicitly asks to close or archive the thread, typically after committing and pushing changes. This tool also aborts the current session, so it should ALWAYS be called as the last tool in your response.',

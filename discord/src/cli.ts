@@ -63,6 +63,10 @@ import { spawn, spawnSync, execSync, type ExecSyncOptions } from 'node:child_pro
 import http from 'node:http'
 import { setDataDir, getDataDir, getLockPort, setDefaultVerbosity, setDefaultMentionMode, getProjectsDir } from './config.js'
 import { sanitizeAgentName } from './commands/agent.js'
+import {
+  showFileUploadButton,
+  type FileUploadRequest,
+} from './commands/file-upload.js'
 import { execAsync } from './worktree-utils.js'
 import { backgroundUpgradeKimaki, upgrade, getCurrentVersion } from './upgrade.js'
 
@@ -306,10 +310,91 @@ async function checkSingleInstance(): Promise<void> {
   }
 }
 
+// Module-level reference to the Discord client, set after login.
+// Used by the lock server to handle file upload requests from the plugin process.
+let discordClientRef: import('discord.js').Client | null = null
+
+export function setDiscordClientRef(client: import('discord.js').Client) {
+  discordClientRef = client
+}
+
 async function startLockServer(): Promise<void> {
   const lockPort = getLockPort()
   return new Promise((resolve, reject) => {
-    const server = http.createServer((req, res) => {
+    const server = http.createServer(async (req, res) => {
+      // POST /file-upload - handle file upload requests from the opencode plugin
+      if (req.method === 'POST' && req.url === '/file-upload') {
+        if (!discordClientRef) {
+          res.writeHead(503, { 'Content-Type': 'application/json' })
+          res.end(JSON.stringify({ error: 'Discord client not ready' }))
+          return
+        }
+
+        let body = ''
+        req.on('data', (chunk: Buffer) => {
+          body += chunk.toString()
+        })
+
+        // Track if the client (plugin) disconnected so we don't write to closed socket.
+        // Use res.on('close') not req.on('close') because req 'close' fires after body
+        // is received (normal flow), while res 'close' fires on socket teardown.
+        let clientDisconnected = false
+        res.on('close', () => {
+          if (!res.writableFinished) {
+            clientDisconnected = true
+          }
+        })
+
+        req.on('end', async () => {
+          try {
+            const parsed = JSON.parse(body)
+            // Validate required fields
+            const request: FileUploadRequest = {
+              sessionId: String(parsed.sessionId || ''),
+              threadId: String(parsed.threadId || ''),
+              directory: String(parsed.directory || ''),
+              prompt: String(parsed.prompt || 'Please upload files'),
+              maxFiles: Math.min(10, Math.max(1, Number(parsed.maxFiles) || 5)),
+            }
+            if (!request.sessionId || !request.threadId || !request.directory) {
+              res.writeHead(400, { 'Content-Type': 'application/json' })
+              res.end(JSON.stringify({ error: 'Missing required fields: sessionId, threadId, directory' }))
+              return
+            }
+
+            const thread = await discordClientRef!.channels.fetch(request.threadId)
+            if (!thread || !thread.isThread()) {
+              res.writeHead(404, { 'Content-Type': 'application/json' })
+              res.end(JSON.stringify({ error: 'Thread not found' }))
+              return
+            }
+
+            const filePaths = await showFileUploadButton({
+              thread,
+              sessionId: request.sessionId,
+              directory: request.directory,
+              prompt: request.prompt,
+              maxFiles: request.maxFiles,
+            })
+
+            if (clientDisconnected) {
+              return
+            }
+            res.writeHead(200, { 'Content-Type': 'application/json' })
+            res.end(JSON.stringify({ filePaths }))
+          } catch (err) {
+            const message = err instanceof Error ? err.message : String(err)
+            cliLogger.error('[FILE-UPLOAD] Error handling request:', message)
+            if (clientDisconnected) {
+              return
+            }
+            res.writeHead(500, { 'Content-Type': 'application/json' })
+            res.end(JSON.stringify({ error: message }))
+          }
+        })
+        return
+      }
+
       res.writeHead(200)
       res.end('kimaki')
     })
@@ -1047,6 +1132,7 @@ async function run({ restart, addChannels, useWorktrees, enableVoiceChannels }: 
     })
 
     cliLogger.log('Connected to Discord!')
+    setDiscordClientRef(discordClient)
   } catch (error) {
     cliLogger.log('Failed to connect to Discord')
     cliLogger.error('Error: ' + (error instanceof Error ? error.message : String(error)))

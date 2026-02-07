@@ -40,6 +40,7 @@ import {
 } from './commands/gemini-apikey.js'
 import { handleAgentCommand, handleAgentSelectMenu, handleQuickAgentCommand } from './commands/agent.js'
 import { handleAskQuestionSelectMenu } from './commands/ask-question.js'
+import { handleFileUploadButton, handleFileUploadModalSubmit } from './commands/file-upload.js'
 import { handleQueueCommand, handleClearQueueCommand } from './commands/queue.js'
 import { handleUndoCommand, handleRedoCommand } from './commands/undo-redo.js'
 import { handleUserCommand } from './commands/user-command.js'
@@ -253,6 +254,11 @@ export function registerInteractionHandler({
           await handlePermissionButton(interaction)
           return
         }
+
+        if (customId.startsWith('file_upload_btn:')) {
+          await handleFileUploadButton(interaction)
+          return
+        }
         return
       }
 
@@ -329,6 +335,11 @@ export function registerInteractionHandler({
 
         if (customId.startsWith('gemini_apikey_modal:')) {
           await handleGeminiApiKeyModalSubmit(interaction)
+          return
+        }
+
+        if (customId.startsWith('file_upload_modal:')) {
+          await handleFileUploadModalSubmit(interaction)
           return
         }
         return
