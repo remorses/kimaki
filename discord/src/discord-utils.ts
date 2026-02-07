@@ -62,15 +62,41 @@ export function hasNoKimakiRole(member: GuildMember | null): boolean {
 export async function reactToThread({
   rest,
   threadId,
+  channelId,
   emoji,
 }: {
   rest: REST
   threadId: string
+  /** Parent channel ID where the thread starter message lives.
+   * If not provided, fetches the thread info from Discord API to resolve it. */
+  channelId?: string
   emoji: string
 }): Promise<void> {
+  const parentChannelId = await (async () => {
+    if (channelId) {
+      return channelId
+    }
+    // Fetch the thread to get its parent channel ID
+    const threadResult = await errore.tryAsync(() => {
+      return rest.get(Routes.channel(threadId)) as Promise<{ parent_id?: string }>
+    })
+    if (threadResult instanceof Error) {
+      discordLogger.warn(`Failed to fetch thread ${threadId}:`, threadResult.message)
+      return null
+    }
+    return threadResult.parent_id || null
+  })()
+
+  if (!parentChannelId) {
+    discordLogger.warn(`Could not resolve parent channel for thread ${threadId}`)
+    return
+  }
+
+  // React to the thread starter message in the parent channel.
+  // Thread ID equals the starter message ID for threads created from messages.
   const result = await errore.tryAsync(() => {
     return rest.put(
-      Routes.channelMessageOwnReaction(threadId, threadId, encodeURIComponent(emoji)),
+      Routes.channelMessageOwnReaction(parentChannelId, threadId, encodeURIComponent(emoji)),
     )
   })
   if (result instanceof Error) {
