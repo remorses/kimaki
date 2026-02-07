@@ -58,3 +58,9 @@ when creating system messages like replies to commands never add new line spaces
 ## AGENTS.md
 
 AGENTS.md is generated. only edit KIMAKI_AGENTS.md instead. pnpm agents.md will generate the file again.
+
+## logging
+
+always try to use logger instead of console. so logs in the cli look uniform and pretty
+
+for the log prefixes always use short names
