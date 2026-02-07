@@ -310,13 +310,8 @@ async function checkSingleInstance(): Promise<void> {
   }
 }
 
-// Module-level reference to the Discord client, set after login.
-// Used by the lock server to handle file upload requests from the plugin process.
+// Set after Discord login. Used by the lock server /file-upload route.
 let discordClientRef: import('discord.js').Client | null = null
-
-export function setDiscordClientRef(client: import('discord.js').Client) {
-  discordClientRef = client
-}
 
 async function startLockServer(): Promise<void> {
   const lockPort = getLockPort()
@@ -1132,7 +1127,7 @@ async function run({ restart, addChannels, useWorktrees, enableVoiceChannels }: 
     })
 
     cliLogger.log('Connected to Discord!')
-    setDiscordClientRef(discordClient)
+    discordClientRef = discordClient
   } catch (error) {
     cliLogger.log('Failed to connect to Discord')
     cliLogger.error('Error: ' + (error instanceof Error ? error.message : String(error)))
