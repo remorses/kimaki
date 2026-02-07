@@ -2,6 +2,8 @@
 
 after every change always run tsc inside discord to validate your changes. try to never use as any
 
+do not use spawnSync. use our util execAsync. which uses spawn under the hood
+
 # restarting the discord bot
 
 ONLY restart the discord bot if the user explicitly asks for it.
@@ -60,6 +62,21 @@ when creating system messages like replies to commands never add new line spaces
 ## AGENTS.md
 
 AGENTS.md is generated. only edit KIMAKI_AGENTS.md instead. pnpm agents.md will generate the file again.
+
+## resolving project directories in commands
+
+use `resolveWorkingDirectory({ channel })` from `discord-utils.ts` to get directory paths in slash commands. it returns:
+- `projectDirectory`: base project dir, used for `initializeOpencodeForDirectory` (server is keyed by this)
+- `workingDirectory`: worktree dir if thread has an active worktree, otherwise same as `projectDirectory`. use this for `cwd` in shell commands and for SDK `directory` params
+- `channelAppId`: optional app ID from channel metadata
+
+never call `getKimakiMetadata` + manual `getThreadWorktree` check in commands. the util handles both. if you need to encode a directory in a discord customId for later use with `initializeOpencodeForDirectory`, always use `projectDirectory` not `workingDirectory`.
+
+## logging
+
+always try to use logger instead of console. so logs in the cli look uniform and pretty
+
+for the log prefixes always use short names
 
 # core guidelines
 
@@ -562,26 +579,3 @@ const jsonSchema = toJSONSchema(mySchema, {
 });
 ```
 
-
-<!-- opensrc:start -->
-
-## Source Code Reference
-
-Source code for dependencies is available in `opensrc/` for deeper understanding of implementation details.
-
-See `opensrc/sources.json` for the list of available packages and their versions.
-
-Use this source code when you need to understand how a package works internally, not just its types/interface.
-
-### Fetching Additional Source Code
-
-To fetch source code for a package or repository you need to understand, run:
-
-```bash
-npx opensrc <package>           # npm package (e.g., npx opensrc zod)
-npx opensrc pypi:<package>      # Python package (e.g., npx opensrc pypi:requests)
-npx opensrc crates:<package>    # Rust crate (e.g., npx opensrc crates:serde)
-npx opensrc <owner>/<repo>      # GitHub repo (e.g., npx opensrc vercel/ai)
-```
-
-<!-- opensrc:end -->

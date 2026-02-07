@@ -11,7 +11,7 @@ import {
 } from 'discord.js'
 import { getThreadSession, setThreadSession, setPartMessagesBatch } from '../database.js'
 import { initializeOpencodeForDirectory } from '../opencode.js'
-import { resolveTextChannel, getKimakiMetadata, sendThreadMessage } from '../discord-utils.js'
+import { resolveWorkingDirectory, resolveTextChannel, sendThreadMessage } from '../discord-utils.js'
 import { collectLastAssistantParts } from '../message-formatting.js'
 import { createLogger, LogPrefix } from '../logger.js'
 import * as errore from 'errore'
@@ -44,16 +44,17 @@ export async function handleForkCommand(interaction: ChatInputCommandInteraction
     return
   }
 
-  const textChannel = await resolveTextChannel(channel as ThreadChannel)
-  const { projectDirectory: directory } = await getKimakiMetadata(textChannel)
+  const resolved = await resolveWorkingDirectory({ channel: channel as ThreadChannel })
 
-  if (!directory) {
+  if (!resolved) {
     await interaction.reply({
       content: 'Could not determine project directory for this channel',
       ephemeral: true,
     })
     return
   }
+
+  const { projectDirectory, workingDirectory } = resolved
 
   const sessionId = await getThreadSession(channel.id)
 
@@ -68,7 +69,7 @@ export async function handleForkCommand(interaction: ChatInputCommandInteraction
   // Defer reply before API calls to avoid 3-second timeout
   await interaction.deferReply({ ephemeral: true })
 
-  const getClient = await initializeOpencodeForDirectory(directory)
+  const getClient = await initializeOpencodeForDirectory(projectDirectory)
   if (getClient instanceof Error) {
     await interaction.editReply({
       content: `Failed to load messages: ${getClient.message}`,
@@ -113,7 +114,9 @@ export async function handleForkCommand(interaction: ChatInputCommandInteraction
       }
     })
 
-    const encodedDir = Buffer.from(directory).toString('base64')
+    // Encode projectDirectory (not workingDirectory) because handleForkSelectMenu
+    // uses it for initializeOpencodeForDirectory which is keyed by base project dir
+    const encodedDir = Buffer.from(projectDirectory).toString('base64')
 
     const selectMenu = new StringSelectMenuBuilder()
       .setCustomId(`fork_select:${sessionId}:${encodedDir}`)

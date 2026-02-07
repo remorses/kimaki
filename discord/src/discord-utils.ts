@@ -6,7 +6,7 @@ import { ChannelType, MessageFlags, PermissionsBitField, type GuildMember, type 
 import { REST, Routes } from 'discord.js'
 import { Lexer } from 'marked'
 import { splitTablesFromMarkdown } from './format-tables.js'
-import { getChannelDirectory } from './database.js'
+import { getChannelDirectory, getThreadWorktree } from './database.js'
 import { limitHeadingDepth } from './limit-heading-depth.js'
 import { unnestCodeBlocksFromLists } from './unnest-code-blocks.js'
 import { createLogger, LogPrefix } from './logger.js'
@@ -484,6 +484,52 @@ export async function getKimakiMetadata(textChannel: TextChannel | null): Promis
   return {
     projectDirectory: channelConfig.directory,
     channelAppId: channelConfig.appId || undefined,
+  }
+}
+
+/**
+ * Resolve the working directory for a channel or thread.
+ * Returns both the base project directory (for server init) and the working directory
+ * (worktree directory if in a worktree thread, otherwise same as projectDirectory).
+ * This prevents commands from accidentally running in the base project dir when a
+ * worktree is active — the bug that caused /diff, /compact, etc. to use wrong cwd.
+ */
+export async function resolveWorkingDirectory({
+  channel,
+}: {
+  channel: TextChannel | ThreadChannel
+}): Promise<{
+  projectDirectory: string
+  workingDirectory: string
+  channelAppId?: string
+} | undefined> {
+  const isThread = [
+    ChannelType.PublicThread,
+    ChannelType.PrivateThread,
+    ChannelType.AnnouncementThread,
+  ].includes(channel.type)
+
+  const textChannel = isThread
+    ? await resolveTextChannel(channel as ThreadChannel)
+    : (channel as TextChannel)
+
+  const metadata = await getKimakiMetadata(textChannel)
+  if (!metadata.projectDirectory) {
+    return undefined
+  }
+
+  let workingDirectory = metadata.projectDirectory
+  if (isThread) {
+    const worktreeInfo = await getThreadWorktree(channel.id)
+    if (worktreeInfo?.status === 'ready' && worktreeInfo.worktree_directory) {
+      workingDirectory = worktreeInfo.worktree_directory
+    }
+  }
+
+  return {
+    projectDirectory: metadata.projectDirectory,
+    workingDirectory,
+    channelAppId: metadata.channelAppId,
   }
 }
 

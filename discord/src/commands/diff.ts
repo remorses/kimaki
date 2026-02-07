@@ -1,11 +1,9 @@
 // /diff command - Show git diff as a shareable URL.
 
 import { ChannelType, EmbedBuilder, type TextChannel, type ThreadChannel } from 'discord.js'
-import { exec } from 'node:child_process'
-import { promisify } from 'node:util'
 import path from 'node:path'
 import type { CommandContext } from './types.js'
-import { resolveTextChannel, getKimakiMetadata, SILENT_MESSAGE_FLAGS } from '../discord-utils.js'
+import { resolveWorkingDirectory, SILENT_MESSAGE_FLAGS } from '../discord-utils.js'
 import { createLogger, LogPrefix } from '../logger.js'
 import { execAsync } from '../worktree-utils.js'
 
@@ -41,12 +39,9 @@ export async function handleDiffCommand({ command }: CommandContext): Promise<vo
     return
   }
 
-  const textChannel = isThread
-    ? await resolveTextChannel(channel as ThreadChannel)
-    : (channel as TextChannel)
-  const { projectDirectory: directory } = await getKimakiMetadata(textChannel)
+  const resolved = await resolveWorkingDirectory({ channel: channel as TextChannel | ThreadChannel })
 
-  if (!directory) {
+  if (!resolved) {
     await command.reply({
       content: 'Could not determine project directory for this channel',
       ephemeral: true,
@@ -55,13 +50,15 @@ export async function handleDiffCommand({ command }: CommandContext): Promise<vo
     return
   }
 
+  const { workingDirectory } = resolved
+
   await command.deferReply({ flags: SILENT_MESSAGE_FLAGS })
 
   try {
-    const projectName = path.basename(directory)
+    const projectName = path.basename(workingDirectory)
     const title = `${projectName}: Discord /diff`
     const { stdout, stderr } = await execAsync(`bunx critique --web "${title}" --json`, {
-      cwd: directory,
+      cwd: workingDirectory,
       timeout: 30000,
     })
 

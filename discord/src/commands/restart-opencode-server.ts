@@ -4,7 +4,7 @@
 import { ChannelType, type ThreadChannel, type TextChannel } from 'discord.js'
 import type { CommandContext } from './types.js'
 import { restartOpencodeServer } from '../opencode.js'
-import { resolveTextChannel, getKimakiMetadata, SILENT_MESSAGE_FLAGS } from '../discord-utils.js'
+import { resolveWorkingDirectory, SILENT_MESSAGE_FLAGS } from '../discord-utils.js'
 import { createLogger, LogPrefix } from '../logger.js'
 
 const logger = createLogger(LogPrefix.OPENCODE)
@@ -27,21 +27,9 @@ export async function handleRestartOpencodeServerCommand({ command, appId }: Com
     ChannelType.AnnouncementThread,
   ].includes(channel.type)
 
-  let projectDirectory: string | undefined
-  let channelAppId: string | undefined
+  const isTextChannel = channel.type === ChannelType.GuildText
 
-  if (isThread) {
-    const thread = channel as ThreadChannel
-    const textChannel = await resolveTextChannel(thread)
-    const metadata = await getKimakiMetadata(textChannel)
-    projectDirectory = metadata.projectDirectory
-    channelAppId = metadata.channelAppId
-  } else if (channel.type === ChannelType.GuildText) {
-    const textChannel = channel as TextChannel
-    const metadata = await getKimakiMetadata(textChannel)
-    projectDirectory = metadata.projectDirectory
-    channelAppId = metadata.channelAppId
-  } else {
+  if (!isThread && !isTextChannel) {
     await command.reply({
       content: 'This command can only be used in text channels or threads',
       ephemeral: true,
@@ -50,18 +38,22 @@ export async function handleRestartOpencodeServerCommand({ command, appId }: Com
     return
   }
 
-  if (channelAppId && channelAppId !== appId) {
+  const resolved = await resolveWorkingDirectory({ channel: channel as TextChannel | ThreadChannel })
+
+  if (!resolved) {
     await command.reply({
-      content: 'This channel is not configured for this bot',
+      content: 'Could not determine project directory for this channel',
       ephemeral: true,
       flags: SILENT_MESSAGE_FLAGS,
     })
     return
   }
 
-  if (!projectDirectory) {
+  const { projectDirectory, channelAppId } = resolved
+
+  if (channelAppId && channelAppId !== appId) {
     await command.reply({
-      content: 'Could not determine project directory for this channel',
+      content: 'This channel is not configured for this bot',
       ephemeral: true,
       flags: SILENT_MESSAGE_FLAGS,
     })

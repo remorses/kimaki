@@ -4,8 +4,7 @@ import { ChannelType, type ThreadChannel } from 'discord.js'
 import type { CommandContext } from './types.js'
 import { getThreadSession } from '../database.js'
 import {
-  resolveTextChannel,
-  getKimakiMetadata,
+  resolveWorkingDirectory,
   sendThreadMessage,
   SILENT_MESSAGE_FLAGS,
 } from '../discord-utils.js'
@@ -68,10 +67,9 @@ export async function handleQueueCommand({ command, appId }: CommandContext): Pr
 
   if (!hasActiveRequest) {
     // No active request, send immediately
-    const textChannel = await resolveTextChannel(channel as ThreadChannel)
-    const { projectDirectory } = await getKimakiMetadata(textChannel)
+    const resolved = await resolveWorkingDirectory({ channel: channel as ThreadChannel })
 
-    if (!projectDirectory) {
+    if (!resolved) {
       await command.reply({
         content: 'Could not determine project directory',
         ephemeral: true,
@@ -90,8 +88,8 @@ export async function handleQueueCommand({ command, appId }: CommandContext): Pr
     handleOpencodeSession({
       prompt: message,
       thread: channel as ThreadChannel,
-      projectDirectory,
-      channelId: textChannel?.id || channel.id,
+      projectDirectory: resolved.projectDirectory,
+      channelId: (channel as ThreadChannel).parentId || channel.id,
       appId,
     }).catch(async (e) => {
       logger.error(`[QUEUE] Failed to send message:`, e)

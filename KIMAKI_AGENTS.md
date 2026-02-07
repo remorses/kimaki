@@ -61,6 +61,15 @@ when creating system messages like replies to commands never add new line spaces
 
 AGENTS.md is generated. only edit KIMAKI_AGENTS.md instead. pnpm agents.md will generate the file again.
 
+## resolving project directories in commands
+
+use `resolveWorkingDirectory({ channel })` from `discord-utils.ts` to get directory paths in slash commands. it returns:
+- `projectDirectory`: base project dir, used for `initializeOpencodeForDirectory` (server is keyed by this)
+- `workingDirectory`: worktree dir if thread has an active worktree, otherwise same as `projectDirectory`. use this for `cwd` in shell commands and for SDK `directory` params
+- `channelAppId`: optional app ID from channel metadata
+
+never call `getKimakiMetadata` + manual `getThreadWorktree` check in commands. the util handles both. if you need to encode a directory in a discord customId for later use with `initializeOpencodeForDirectory`, always use `projectDirectory` not `workingDirectory`.
+
 ## logging
 
 always try to use logger instead of console. so logs in the cli look uniform and pretty

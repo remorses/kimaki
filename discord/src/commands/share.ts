@@ -1,12 +1,11 @@
 // /share command - Share the current session as a public URL.
 
-import { ChannelType, type ThreadChannel } from 'discord.js'
+import { ChannelType, type TextChannel, type ThreadChannel } from 'discord.js'
 import type { CommandContext } from './types.js'
 import { getThreadSession } from '../database.js'
 import { initializeOpencodeForDirectory } from '../opencode.js'
-import { resolveTextChannel, getKimakiMetadata, SILENT_MESSAGE_FLAGS } from '../discord-utils.js'
+import { resolveWorkingDirectory, SILENT_MESSAGE_FLAGS } from '../discord-utils.js'
 import { createLogger, LogPrefix } from '../logger.js'
-import * as errore from 'errore'
 
 const logger = createLogger(LogPrefix.SHARE)
 
@@ -37,10 +36,9 @@ export async function handleShareCommand({ command }: CommandContext): Promise<v
     return
   }
 
-  const textChannel = await resolveTextChannel(channel as ThreadChannel)
-  const { projectDirectory: directory } = await getKimakiMetadata(textChannel)
+  const resolved = await resolveWorkingDirectory({ channel: channel as TextChannel | ThreadChannel })
 
-  if (!directory) {
+  if (!resolved) {
     await command.reply({
       content: 'Could not determine project directory for this channel',
       ephemeral: true,
@@ -48,6 +46,8 @@ export async function handleShareCommand({ command }: CommandContext): Promise<v
     })
     return
   }
+
+  const { projectDirectory } = resolved
 
   const sessionId = await getThreadSession(channel.id)
 
@@ -60,7 +60,7 @@ export async function handleShareCommand({ command }: CommandContext): Promise<v
     return
   }
 
-  const getClient = await initializeOpencodeForDirectory(directory)
+  const getClient = await initializeOpencodeForDirectory(projectDirectory)
   if (getClient instanceof Error) {
     await command.reply({
       content: `Failed to share session: ${getClient.message}`,

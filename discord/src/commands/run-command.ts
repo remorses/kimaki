@@ -5,8 +5,7 @@
 
 import { ChannelType, type TextChannel, type ThreadChannel } from 'discord.js'
 import type { CommandContext } from './types.js'
-import { resolveTextChannel, getKimakiMetadata, SILENT_MESSAGE_FLAGS } from '../discord-utils.js'
-import { getThreadWorktree } from '../database.js'
+import { resolveWorkingDirectory, SILENT_MESSAGE_FLAGS } from '../discord-utils.js'
 import { createLogger, LogPrefix } from '../logger.js'
 import { execAsync } from '../worktree-utils.js'
 import { stripAnsi } from '../utils.js'
@@ -65,12 +64,9 @@ export async function handleRunCommand({ command }: CommandContext): Promise<voi
     return
   }
 
-  const textChannel = isThread
-    ? await resolveTextChannel(channel as ThreadChannel)
-    : (channel as TextChannel)
-  const { projectDirectory } = await getKimakiMetadata(textChannel)
+  const resolved = await resolveWorkingDirectory({ channel: channel as TextChannel | ThreadChannel })
 
-  if (!projectDirectory) {
+  if (!resolved) {
     await command.reply({
       content: 'Could not determine project directory for this channel.',
       ephemeral: true,
@@ -79,20 +75,11 @@ export async function handleRunCommand({ command }: CommandContext): Promise<voi
     return
   }
 
-  // Use worktree directory if this thread has an active worktree
-  let directory = projectDirectory
-  if (isThread) {
-    const worktreeInfo = await getThreadWorktree(channel.id)
-    if (worktreeInfo?.status === 'ready' && worktreeInfo.worktree_directory) {
-      directory = worktreeInfo.worktree_directory
-    }
-  }
-
   const input = command.options.getString('command', true)
 
   await command.deferReply()
 
-  const result = await runShellCommand({ command: input, directory })
+  const result = await runShellCommand({ command: input, directory: resolved.workingDirectory })
   await command.editReply({ content: result })
 }
 

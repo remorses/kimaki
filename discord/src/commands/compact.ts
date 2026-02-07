@@ -1,10 +1,10 @@
 // /compact command - Trigger context compaction (summarization) for the current session.
 
-import { ChannelType, type ThreadChannel } from 'discord.js'
+import { ChannelType, type TextChannel, type ThreadChannel } from 'discord.js'
 import type { CommandContext } from './types.js'
 import { getThreadSession } from '../database.js'
 import { initializeOpencodeForDirectory, getOpencodeClientV2 } from '../opencode.js'
-import { resolveTextChannel, getKimakiMetadata, SILENT_MESSAGE_FLAGS } from '../discord-utils.js'
+import { resolveWorkingDirectory, SILENT_MESSAGE_FLAGS } from '../discord-utils.js'
 import { createLogger, LogPrefix } from '../logger.js'
 
 const logger = createLogger(LogPrefix.COMPACT)
@@ -36,10 +36,9 @@ export async function handleCompactCommand({ command }: CommandContext): Promise
     return
   }
 
-  const textChannel = await resolveTextChannel(channel as ThreadChannel)
-  const { projectDirectory: directory } = await getKimakiMetadata(textChannel)
+  const resolved = await resolveWorkingDirectory({ channel: channel as TextChannel | ThreadChannel })
 
-  if (!directory) {
+  if (!resolved) {
     await command.reply({
       content: 'Could not determine project directory for this channel',
       ephemeral: true,
@@ -47,6 +46,8 @@ export async function handleCompactCommand({ command }: CommandContext): Promise
     })
     return
   }
+
+  const { projectDirectory, workingDirectory } = resolved
 
   const sessionId = await getThreadSession(channel.id)
 
@@ -59,8 +60,8 @@ export async function handleCompactCommand({ command }: CommandContext): Promise
     return
   }
 
-  // Ensure server is running for this directory
-  const getClient = await initializeOpencodeForDirectory(directory)
+  // Ensure server is running for the base project directory
+  const getClient = await initializeOpencodeForDirectory(projectDirectory)
   if (getClient instanceof Error) {
     await command.reply({
       content: `Failed to compact: ${getClient.message}`,
@@ -70,7 +71,7 @@ export async function handleCompactCommand({ command }: CommandContext): Promise
     return
   }
 
-  const clientV2 = getOpencodeClientV2(directory)
+  const clientV2 = getOpencodeClientV2(projectDirectory)
   if (!clientV2) {
     await command.reply({
       content: 'Failed to get OpenCode client',
@@ -87,7 +88,7 @@ export async function handleCompactCommand({ command }: CommandContext): Promise
     // Get session messages to find the model from the last user message
     const messagesResult = await clientV2.session.messages({
       sessionID: sessionId,
-      directory,
+      directory: workingDirectory,
     })
 
     if (messagesResult.error || !messagesResult.data) {
@@ -114,7 +115,7 @@ export async function handleCompactCommand({ command }: CommandContext): Promise
 
     const result = await clientV2.session.summarize({
       sessionID: sessionId,
-      directory,
+      directory: workingDirectory,
       providerID,
       modelID,
       auto: false,
