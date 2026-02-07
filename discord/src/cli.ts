@@ -2402,5 +2402,82 @@ cli
     }
   })
 
+cli
+  .command('worktree merge', 'Merge worktree branch into default branch using worktrunk-style pipeline')
+  .option('-d, --directory <path>', 'Worktree directory (defaults to cwd)')
+  .option('-m, --main-repo <path>', 'Main repository directory (auto-detected from worktree)')
+  .option('-n, --name <name>', 'Worktree/branch name (auto-detected from branch)')
+  .action(async (options: { directory?: string; mainRepo?: string; name?: string }) => {
+    try {
+      const { mergeWorktree } = await import('./worktree-utils.js')
+      const worktreeDir = path.resolve(options.directory || '.')
+
+      // Auto-detect main repo: find the main worktree's toplevel.
+      // For linked worktrees, --git-common-dir points to the shared .git,
+      // and the main worktree's toplevel is one level up from that (non-bare)
+      // or the dir itself (bare). We use git's worktree list to get the
+      // main worktree path reliably.
+      let mainRepoDir = options.mainRepo
+      if (!mainRepoDir) {
+        try {
+          // `git worktree list --porcelain` first line is always the main worktree
+          const { stdout } = await execAsync(
+            `git -C "${worktreeDir}" worktree list --porcelain`,
+          )
+          const firstLine = stdout.split('\n')[0] || ''
+          // Format: "worktree /path/to/main"
+          mainRepoDir = firstLine.replace(/^worktree\s+/, '').trim()
+        } catch {
+          // Fallback: derive from git common dir
+          const { stdout: commonDir } = await execAsync(
+            `git -C "${worktreeDir}" rev-parse --git-common-dir`,
+          )
+          const resolved = path.isAbsolute(commonDir.trim())
+            ? commonDir.trim()
+            : path.resolve(worktreeDir, commonDir.trim())
+          mainRepoDir = path.dirname(resolved)
+        }
+      }
+
+      // Auto-detect branch name if not provided
+      let worktreeName = options.name
+      if (!worktreeName) {
+        try {
+          const { stdout } = await execAsync(`git -C "${worktreeDir}" symbolic-ref --short HEAD`)
+          worktreeName = stdout.trim()
+        } catch {
+          worktreeName = path.basename(worktreeDir)
+        }
+      }
+
+      cliLogger.log(`Worktree: ${worktreeDir}`)
+      cliLogger.log(`Main repo: ${mainRepoDir}`)
+      cliLogger.log(`Branch: ${worktreeName}`)
+
+      const result = await mergeWorktree({
+        worktreeDir,
+        mainRepoDir,
+        worktreeName,
+        onProgress: (msg) => {
+          cliLogger.log(msg)
+        },
+      })
+
+      if (result.success) {
+        cliLogger.log(`Merged ${result.branchName} into ${result.defaultBranch} @ ${result.shortSha} (${result.commitCount} commit${result.commitCount === 1 ? '' : 's'})`)
+        process.exit(0)
+      } else {
+        cliLogger.error(`Merge failed: ${result.error}`)
+        if (result.conflictType === 'rebase') {
+          cliLogger.log('Resolve the rebase conflicts, then run this command again.')
+        }
+        process.exit(1)
+      }
+    } catch (error) {
+      cliLogger.error('Merge failed:', error instanceof Error ? error.message : String(error))
+      process.exit(EXIT_NO_RESTART)
+    }
+  })
+
 cli.help()
 cli.parse()
