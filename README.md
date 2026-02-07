@@ -206,7 +206,7 @@ npx -y kimaki send --channel <channel-id> --prompt "your prompt" --worktree feat
 npx -y kimaki send --channel <channel-id> --prompt "User cancelled subscription" --notify-only
 
 # Create Discord channels for a project directory (without starting a session)
-npx -y kimaki add-project [directory]
+npx -y kimaki project add [directory]
 ```
 
 ## Add Project Channels
@@ -215,16 +215,16 @@ Create Discord channels for a project directory without starting a session. Usef
 
 ```bash
 # Add current directory as a project
-npx -y kimaki add-project
+npx -y kimaki project add
 
 # Add a specific directory
-npx -y kimaki add-project /path/to/project
+npx -y kimaki project add /path/to/project
 
 # Specify guild when bot is in multiple servers
-npx -y kimaki add-project ./myproject --guild 123456789
+npx -y kimaki project add ./myproject --guild 123456789
 
 # In CI with env var for bot token
-KIMAKI_BOT_TOKEN=xxx npx -y kimaki add-project --app-id 987654321
+KIMAKI_BOT_TOKEN=xxx npx -y kimaki project add --app-id 987654321
 ```
 
 ### Options
