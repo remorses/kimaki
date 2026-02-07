@@ -2,10 +2,10 @@
 // Handles markdown splitting for Discord's 2000-char limit, code block escaping,
 // thread message sending, and channel metadata extraction from topic tags.
 
-import { ChannelType, type Message, type TextChannel, type ThreadChannel } from 'discord.js'
+import { ChannelType, MessageFlags, type Message, type TextChannel, type ThreadChannel } from 'discord.js'
 import { REST, Routes } from 'discord.js'
 import { Lexer } from 'marked'
-import { formatMarkdownTables } from './format-tables.js'
+import { splitTablesFromMarkdown } from './format-tables.js'
 import { getChannelDirectory } from './database.js'
 import { limitHeadingDepth } from './limit-heading-depth.js'
 import { unnestCodeBlocksFromLists } from './unnest-code-blocks.js'
@@ -314,31 +314,57 @@ export async function sendThreadMessage(
 ): Promise<Message> {
   const MAX_LENGTH = 2000
 
-  content = formatMarkdownTables(content)
-  content = unnestCodeBlocksFromLists(content)
-  content = limitHeadingDepth(content)
-  content = escapeBackticksInCodeBlocks(content)
-
-  // If custom flags provided, send as single message (no chunking)
-  if (options?.flags !== undefined) {
-    return thread.send({ content, flags: options.flags })
-  }
-
-  const chunks = splitMarkdownForDiscord({ content, maxLength: MAX_LENGTH })
-
-  if (chunks.length > 1) {
-    discordLogger.log(`MESSAGE: Splitting ${content.length} chars into ${chunks.length} messages`)
-  }
+  // Split content into text and CV2 component segments (tables → Container components)
+  const segments = splitTablesFromMarkdown(content)
+  const baseFlags = options?.flags ?? SILENT_MESSAGE_FLAGS
 
   let firstMessage: Message | undefined
-  for (let i = 0; i < chunks.length; i++) {
-    const chunk = chunks[i]
-    if (!chunk) {
+
+  for (const segment of segments) {
+    if (segment.type === 'components') {
+      const message = await thread.send({
+        components: segment.components,
+        flags: MessageFlags.IsComponentsV2 | baseFlags,
+      })
+      if (!firstMessage) {
+        firstMessage = message
+      }
       continue
     }
-    const message = await thread.send({ content: chunk, flags: SILENT_MESSAGE_FLAGS })
-    if (i === 0) {
-      firstMessage = message
+
+    // Apply text transformations to text segments
+    let text = segment.text
+    text = unnestCodeBlocksFromLists(text)
+    text = limitHeadingDepth(text)
+    text = escapeBackticksInCodeBlocks(text)
+
+    if (!text.trim()) {
+      continue
+    }
+
+    // If custom flags provided, send as single message (no chunking)
+    if (options?.flags !== undefined) {
+      const message = await thread.send({ content: text, flags: options.flags })
+      if (!firstMessage) {
+        firstMessage = message
+      }
+      continue
+    }
+
+    const chunks = splitMarkdownForDiscord({ content: text, maxLength: MAX_LENGTH })
+
+    if (chunks.length > 1) {
+      discordLogger.log(`MESSAGE: Splitting ${text.length} chars into ${chunks.length} messages`)
+    }
+
+    for (const chunk of chunks) {
+      if (!chunk) {
+        continue
+      }
+      const message = await thread.send({ content: chunk, flags: SILENT_MESSAGE_FLAGS })
+      if (!firstMessage) {
+        firstMessage = message
+      }
     }
   }
 

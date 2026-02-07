@@ -1,440 +1,214 @@
-import { test, expect } from 'vitest'
-import { formatMarkdownTables } from './format-tables.js'
+import { test, expect, describe } from 'vitest'
+import { splitTablesFromMarkdown, buildTableComponents, type ContentSegment } from './format-tables.js'
+import { Lexer, type Tokens } from 'marked'
 
-test('formats simple table', () => {
-  const input = `| Name | Age |
+function parseTable(markdown: string): Tokens.Table {
+  const lexer = new Lexer()
+  const tokens = lexer.lex(markdown)
+  return tokens.find((t) => t.type === 'table') as Tokens.Table
+}
+
+/** Extract the first container's children from buildTableComponents result */
+function getContainerChildren(
+  segments: ContentSegment[],
+): { type: number; content?: string; divider?: boolean; spacing?: number }[] {
+  const seg = segments[0]!
+  if (seg.type !== 'components') {
+    throw new Error('Expected components segment')
+  }
+  const container = seg.components[0] as { type: number; components: unknown[] }
+  return container.components as { type: number; content?: string; divider?: boolean; spacing?: number }[]
+}
+
+describe('buildTableComponents', () => {
+  test('builds container with key-value TextDisplays', () => {
+    const table = parseTable(`| Name | Age |
 | --- | --- |
 | Alice | 30 |
-| Bob | 25 |`
-  const result = formatMarkdownTables(input)
-  expect(result).toMatchInlineSnapshot(`
-    "\`\`\`
-    Name  Age
-    ----- ---
-    Alice 30 
-    Bob   25 
-    \`\`\`
-    "
-  `)
-})
+| Bob | 25 |`)
+    const result = buildTableComponents(table)
+    expect(result).toMatchInlineSnapshot(`
+      [
+        {
+          "components": [
+            {
+              "components": [
+                {
+                  "content": "**Name** Alice
+      **Age** 30",
+                  "type": 10,
+                },
+                {
+                  "divider": true,
+                  "spacing": 1,
+                  "type": 14,
+                },
+                {
+                  "content": "**Name** Bob
+      **Age** 25",
+                  "type": 10,
+                },
+              ],
+              "type": 17,
+            },
+          ],
+          "type": "components",
+        },
+      ]
+    `)
+  })
 
-test('formats table with varying column widths', () => {
-  const input = `| Item | Quantity | Price |
-| --- | --- | --- |
-| Apples | 10 | $5 |
-| Oranges | 3 | $2 |
-| Bananas with long name | 100 | $15.99 |`
-  const result = formatMarkdownTables(input)
-  expect(result).toMatchInlineSnapshot(`
-    "\`\`\`
-    Item                   Quantity Price 
-    ---------------------- -------- ------
-    Apples                 10       $5    
-    Oranges                3        $2    
-    Bananas with long name 100      $15.99
-    \`\`\`
-    "
-  `)
-})
+  test('adds separators between row groups', () => {
+    const table = parseTable(`| Key | Value |
+| --- | --- |
+| a | 1 |
+| b | 2 |
+| c | 3 |`)
+    const result = buildTableComponents(table)
+    const types = getContainerChildren(result).map((c) => c.type)
+    // type 10 = TextDisplay, type 14 = Separator
+    expect(types).toMatchInlineSnapshot(`
+      [
+        10,
+        14,
+        10,
+        14,
+        10,
+      ]
+    `)
+  })
 
-test('strips bold formatting from cells', () => {
-  const input = `| Header | Value |
+  test('single-row table has one TextDisplay, no separators', () => {
+    const table = parseTable(`| Method | Endpoint |
+| --- | --- |
+| GET | /api/users |`)
+    const result = buildTableComponents(table)
+    const children = getContainerChildren(result)
+    expect(children).toHaveLength(1)
+    expect(children[0]!.type).toBe(10)
+    expect(children[0]!.content).toMatchInlineSnapshot(`
+      "**Method** GET
+      **Endpoint** /api/users"
+    `)
+  })
+
+  test('splits large table into multiple container segments', () => {
+    // 25 rows: exceeds 19 rows per container, so splits into 2 containers
+    const headers = '| A | B |'
+    const sep = '| --- | --- |'
+    const rows = Array.from({ length: 25 }, (_, i) => {
+      return `| ${i}a | ${i}b |`
+    }).join('\n')
+    const table = parseTable(`${headers}\n${sep}\n${rows}`)
+    const result = buildTableComponents(table)
+    expect(result).toHaveLength(2)
+    expect(result[0]!.type).toBe('components')
+    expect(result[1]!.type).toBe('components')
+    // First container has 19 rows (19 TDs + 18 seps = 37 children)
+    const firstChildren = getContainerChildren([result[0]!])
+    expect(firstChildren).toHaveLength(19 + 18)
+    // Second container has 6 rows (6 TDs + 5 seps = 11 children)
+    const secondChildren = getContainerChildren([result[1]!])
+    expect(secondChildren).toHaveLength(6 + 5)
+  })
+
+  test('strips formatting from cells', () => {
+    const table = parseTable(`| Header | Value |
 | --- | --- |
 | **Bold text** | Normal |
-| Mixed **bold** text | Another |`
-  const result = formatMarkdownTables(input)
-  expect(result).toMatchInlineSnapshot(`
-    "\`\`\`
-    Header          Value  
-    --------------- -------
-    Bold text       Normal 
-    Mixed bold text Another
-    \`\`\`
-    "
-  `)
+| *Italic* | \`code\` |`)
+    const result = buildTableComponents(table)
+    const children = getContainerChildren(result)
+    expect(children[0]!.content).toMatchInlineSnapshot(`
+      "**Header** Bold text
+      **Value** Normal"
+    `)
+  })
 })
 
-test('strips italic formatting from cells', () => {
-  const input = `| Header | Value |
+describe('splitTablesFromMarkdown', () => {
+  test('returns single text segment for content without tables', () => {
+    const result = splitTablesFromMarkdown('Just some text.\n\nMore text.')
+    expect(result).toHaveLength(1)
+    expect(result[0]!.type).toBe('text')
+  })
+
+  test('returns single components segment for table-only content', () => {
+    const result = splitTablesFromMarkdown(`| A | B |
 | --- | --- |
-| *Italic text* | Normal |
-| _Also italic_ | Another |`
-  const result = formatMarkdownTables(input)
-  expect(result).toMatchInlineSnapshot(`
-    "\`\`\`
-    Header      Value  
-    ----------- -------
-    Italic text Normal 
-    Also italic Another
-    \`\`\`
-    "
-  `)
-})
+| 1 | 2 |`)
+    expect(result).toHaveLength(1)
+    expect(result[0]!.type).toBe('components')
+  })
 
-test('extracts URL from links', () => {
-  const input = `| Name | Link |
-| --- | --- |
-| Google | [Click here](https://google.com) |
-| GitHub | [GitHub Home](https://github.com) |`
-  const result = formatMarkdownTables(input)
-  expect(result).toMatchInlineSnapshot(`
-    "\`\`\`
-    Name   Link              
-    ------ ------------------
-    Google https://google.com
-    GitHub https://github.com
-    \`\`\`
-    "
-  `)
-})
-
-test('handles inline code in cells', () => {
-  const input = `| Function | Description |
-| --- | --- |
-| \`console.log\` | Logs to console |
-| \`Array.map\` | Maps array items |`
-  const result = formatMarkdownTables(input)
-  expect(result).toMatchInlineSnapshot(`
-    "\`\`\`
-    Function    Description     
-    ----------- ----------------
-    console.log Logs to console 
-    Array.map   Maps array items
-    \`\`\`
-    "
-  `)
-})
-
-test('handles mixed formatting in single cell', () => {
-  const input = `| Description |
-| --- |
-| This has **bold**, *italic*, and \`code\` |
-| Also [a link](https://example.com) here |`
-  const result = formatMarkdownTables(input)
-  expect(result).toMatchInlineSnapshot(`
-    "\`\`\`
-    Description                    
-    -------------------------------
-    This has bold, italic, and code
-    Also https://example.com here  
-    \`\`\`
-    "
-  `)
-})
-
-test('handles strikethrough text', () => {
-  const input = `| Status | Item |
-| --- | --- |
-| Done | ~~Deleted item~~ |
-| Active | Normal item |`
-  const result = formatMarkdownTables(input)
-  expect(result).toMatchInlineSnapshot(`
-    "\`\`\`
-    Status Item        
-    ------ ------------
-    Done   Deleted item
-    Active Normal item 
-    \`\`\`
-    "
-  `)
-})
-
-test('preserves content before table', () => {
-  const input = `Here is some text before the table.
-
-| Col A | Col B |
-| --- | --- |
-| 1 | 2 |`
-  const result = formatMarkdownTables(input)
-  expect(result).toMatchInlineSnapshot(`
-    "Here is some text before the table.
-
-    \`\`\`
-    Col A Col B
-    ----- -----
-    1     2    
-    \`\`\`
-    "
-  `)
-})
-
-test('preserves content after table', () => {
-  const input = `| Col A | Col B |
-| --- | --- |
-| 1 | 2 |
-
-And here is text after.`
-  const result = formatMarkdownTables(input)
-  expect(result).toMatchInlineSnapshot(`
-    "\`\`\`
-    Col A Col B
-    ----- -----
-    1     2    
-    \`\`\`
-    And here is text after."
-  `)
-})
-
-test('preserves content before and after table', () => {
-  const input = `Some intro text.
-
-| Name | Value |
-| --- | --- |
-| Key | 123 |
-
-Some outro text.`
-  const result = formatMarkdownTables(input)
-  expect(result).toMatchInlineSnapshot(`
-    "Some intro text.
-
-    \`\`\`
-    Name Value
-    ---- -----
-    Key  123  
-    \`\`\`
-    Some outro text."
-  `)
-})
-
-test('handles multiple tables in same content', () => {
-  const input = `First table:
-
-| A | B |
-| --- | --- |
-| 1 | 2 |
-
-Some text between.
-
-Second table:
-
-| X | Y | Z |
-| --- | --- | --- |
-| a | b | c |`
-  const result = formatMarkdownTables(input)
-  expect(result).toMatchInlineSnapshot(`
-    "First table:
-
-    \`\`\`
-    A B
-    - -
-    1 2
-    \`\`\`
-    Some text between.
-
-    Second table:
-
-    \`\`\`
-    X Y Z
-    - - -
-    a b c
-    \`\`\`
-    "
-  `)
-})
-
-test('handles empty cells', () => {
-  const input = `| Name | Optional |
-| --- | --- |
-| Alice | |
-| | Bob |
-| | |`
-  const result = formatMarkdownTables(input)
-  expect(result).toMatchInlineSnapshot(`
-    "\`\`\`
-    Name  Optional
-    ----- --------
-    Alice         
-          Bob     
-                  
-    \`\`\`
-    "
-  `)
-})
-
-test('handles single column table', () => {
-  const input = `| Items |
-| --- |
-| Apple |
-| Banana |
-| Cherry |`
-  const result = formatMarkdownTables(input)
-  expect(result).toMatchInlineSnapshot(`
-    "\`\`\`
-    Items 
-    ------
-    Apple 
-    Banana
-    Cherry
-    \`\`\`
-    "
-  `)
-})
-
-test('handles single row table', () => {
-  const input = `| A | B | C | D |
-| --- | --- | --- | --- |
-| 1 | 2 | 3 | 4 |`
-  const result = formatMarkdownTables(input)
-  expect(result).toMatchInlineSnapshot(`
-    "\`\`\`
-    A B C D
-    - - - -
-    1 2 3 4
-    \`\`\`
-    "
-  `)
-})
-
-test('handles nested formatting', () => {
-  const input = `| Description |
-| --- |
-| **Bold with *nested italic* inside** |
-| *Italic with **nested bold** inside* |`
-  const result = formatMarkdownTables(input)
-  expect(result).toMatchInlineSnapshot(`
-    "\`\`\`
-    Description                   
-    ------------------------------
-    Bold with nested italic inside
-    Italic with nested bold inside
-    \`\`\`
-    "
-  `)
-})
-
-test('handles image references', () => {
-  const input = `| Icon | Name |
-| --- | --- |
-| ![alt](https://example.com/icon.png) | Item 1 |
-| ![](https://cdn.test.com/img.jpg) | Item 2 |`
-  const result = formatMarkdownTables(input)
-  expect(result).toMatchInlineSnapshot(`
-    "\`\`\`
-    Icon                         Name  
-    ---------------------------- ------
-    https://example.com/icon.png Item 1
-    https://cdn.test.com/img.jpg Item 2
-    \`\`\`
-    "
-  `)
-})
-
-test('preserves code blocks alongside tables', () => {
-  const input = `Some code:
-
-\`\`\`js
-const x = 1
-\`\`\`
-
-A table:
+  test('splits text before and after table into separate segments', () => {
+    const result = splitTablesFromMarkdown(`Text before.
 
 | Key | Value |
 | --- | --- |
 | a | 1 |
 
-More code:
+Text after.`)
+    expect(result).toHaveLength(3)
+    expect(result[0]!.type).toBe('text')
+    expect(result[1]!.type).toBe('components')
+    expect(result[2]!.type).toBe('text')
+  })
 
-\`\`\`python
-print("hello")
-\`\`\``
-  const result = formatMarkdownTables(input)
-  expect(result).toMatchInlineSnapshot(`
-    "Some code:
+  test('handles multiple tables with text between', () => {
+    const result = splitTablesFromMarkdown(`First table:
 
-    \`\`\`js
-    const x = 1
-    \`\`\`
+| A | B |
+| --- | --- |
+| 1 | 2 |
 
-    A table:
+Middle text.
 
-    \`\`\`
-    Key Value
-    --- -----
-    a   1    
-    \`\`\`
-    More code:
+| X | Y |
+| --- | --- |
+| a | b |`)
+    expect(result).toHaveLength(4)
+    expect(result.map((s) => s.type)).toMatchInlineSnapshot(`
+      [
+        "text",
+        "components",
+        "text",
+        "components",
+      ]
+    `)
+  })
 
-    \`\`\`python
-    print("hello")
-    \`\`\`"
-  `)
-})
+  test('splits oversized table into multiple component segments', () => {
+    const headers = '| A | B |'
+    const sep = '| --- | --- |'
+    const rows = Array.from({ length: 25 }, (_, i) => {
+      return `| ${i}a | ${i}b |`
+    }).join('\n')
+    const result = splitTablesFromMarkdown(`${headers}\n${sep}\n${rows}`)
+    // 25 rows splits into 2 container segments
+    expect(result).toHaveLength(2)
+    expect(result.every((s) => s.type === 'components')).toBe(true)
+  })
 
-test('handles content without tables', () => {
-  const input = `Just some regular markdown.
+  test('preserves code blocks alongside tables', () => {
+    const result = splitTablesFromMarkdown(`Some code:
 
-- List item 1
-- List item 2
+\`\`\`js
+const x = 1
+\`\`\`
 
-**Bold text** and *italic*.`
-  const result = formatMarkdownTables(input)
-  expect(result).toMatchInlineSnapshot(`
-    "Just some regular markdown.
+| Key | Value |
+| --- | --- |
+| a | 1 |
 
-    - List item 1
-    - List item 2
-
-    **Bold text** and *italic*."
-  `)
-})
-
-test('handles complex real-world table', () => {
-  const input = `## API Endpoints
-
-| Method | Endpoint | Description | Auth |
-| --- | --- | --- | --- |
-| GET | \`/api/users\` | List all users | [Bearer token](https://docs.example.com/auth) |
-| POST | \`/api/users\` | Create **new** user | Required |
-| DELETE | \`/api/users/:id\` | ~~Remove~~ *Deactivate* user | Admin only |`
-  const result = formatMarkdownTables(input)
-  expect(result).toMatchInlineSnapshot(`
-    "## API Endpoints
-
-    \`\`\`
-    Method Endpoint       Description            Auth                         
-    ------ -------------- ---------------------- -----------------------------
-    GET    /api/users     List all users         https://docs.example.com/auth
-    POST   /api/users     Create new user        Required                     
-    DELETE /api/users/:id Remove Deactivate user Admin only                   
-    \`\`\`
-    "
-  `)
-})
-
-test('handles unicode content', () => {
-  const input = `| Emoji | Name | Country |
-| --- | --- | --- |
-| 🍎 | Apple | 日本 |
-| 🍊 | Orange | España |
-| 🍌 | Banana | Ελλάδα |`
-  const result = formatMarkdownTables(input)
-  expect(result).toMatchInlineSnapshot(`
-    "\`\`\`
-    Emoji Name   Country
-    ----- ------ -------
-    🍎    Apple  日本     
-    🍊    Orange España 
-    🍌    Banana Ελλάδα 
-    \`\`\`
-    "
-  `)
-})
-
-test('handles numbers and special characters', () => {
-  const input = `| Price | Discount | Final |
-| --- | --- | --- |
-| $100.00 | -15% | $85.00 |
-| €50,00 | -10% | €45,00 |
-| £75.99 | N/A | £75.99 |`
-  const result = formatMarkdownTables(input)
-  expect(result).toMatchInlineSnapshot(`
-    "\`\`\`
-    Price   Discount Final 
-    ------- -------- ------
-    $100.00 -15%     $85.00
-    €50,00  -10%     €45,00
-    £75.99  N/A      £75.99
-    \`\`\`
-    "
-  `)
+Done.`)
+    const types = result.map((s) => s.type)
+    expect(types).toMatchInlineSnapshot(`
+      [
+        "text",
+        "components",
+        "text",
+      ]
+    `)
+  })
 })
