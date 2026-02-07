@@ -315,7 +315,7 @@ export async function startDiscordBot({
         // No existing session - start a new one (e.g., replying to a notification thread)
         if (!sessionId) {
           discordLogger.log(`No session for thread ${thread.id}, starting new session`)
-          
+
           if (!projectDirectory) {
             discordLogger.log(`Cannot start session: no project directory for thread ${thread.id}`)
             return
@@ -483,7 +483,7 @@ export async function startDiscordBot({
 
         const baseThreadName = hasVoice
           ? 'Voice Message'
-          : stripMentions(message.content || '').replace(/\s+/g, ' ').trim() || 'Claude Thread'
+          : stripMentions(message.content || '').replace(/\s+/g, ' ').trim() || 'kimaki thread'
 
         // Check if worktrees should be enabled (CLI flag OR channel setting)
         const shouldUseWorktrees = useWorktrees || await getChannelWorktreesEnabled(textChannel.id)
