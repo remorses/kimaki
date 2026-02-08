@@ -58,7 +58,7 @@ const __filename = fileURLToPath(import.meta.url)
 const __dirname = dirname(__filename)
 const isDev = !__dirname.includes('node_modules')
 
-const logFilePath = path.join(__dirname, '..', 'tmp', 'kimaki.log')
+const logFilePath = path.join(__dirname, '..', 'kimaki.log')
 
 // reset log file on startup in dev mode
 if (isDev) {

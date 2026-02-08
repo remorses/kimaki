@@ -18,3 +18,4 @@ __snapshots__
 traforo/dist/
 skills/jitter/dist/
 bin-local.sh
+kimaki.log

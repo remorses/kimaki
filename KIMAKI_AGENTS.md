@@ -97,3 +97,5 @@ the implementation is in `discord/src/heap-monitor.ts`.
 always try to use logger instead of console. so logs in the cli look uniform and pretty
 
 for the log prefixes always use short names
+
+kimaki will also output logs to the file discord/kimaki.log

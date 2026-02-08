@@ -100,6 +100,8 @@ always try to use logger instead of console. so logs in the cli look uniform and
 
 for the log prefixes always use short names
 
+kimaki will also output logs to the file discord/kimaki.log
+
 # core guidelines
 
 when summarizing changes at the end of the message, be super short, a few words and in bullet points, use bold text to highlight important keywords. use markdown.
