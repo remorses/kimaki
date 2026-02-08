@@ -115,6 +115,55 @@ export class OpenCodeApiError extends createTaggedError({
 }) {}
 
 // ═══════════════════════════════════════════════════════════════════════════
+// MERGE/WORKTREE ERRORS
+// ═══════════════════════════════════════════════════════════════════════════
+
+export class DirtyWorktreeError extends createTaggedError({
+  name: 'DirtyWorktreeError',
+  message: 'Uncommitted changes in worktree. Commit all changes before merging.',
+}) {}
+
+export class NothingToMergeError extends createTaggedError({
+  name: 'NothingToMergeError',
+  message: 'No commits to merge -- branch is already up to date with $target',
+}) {}
+
+export class SquashError extends createTaggedError({
+  name: 'SquashError',
+  message: 'Squash failed: $reason',
+}) {}
+
+export class RebaseConflictError extends createTaggedError({
+  name: 'RebaseConflictError',
+  message: 'Rebase conflict while rebasing onto $target. Resolve conflicts, then run merge again.',
+}) {}
+
+export class RebaseError extends createTaggedError({
+  name: 'RebaseError',
+  message: 'Rebase onto $target failed',
+}) {}
+
+export class NotFastForwardError extends createTaggedError({
+  name: 'NotFastForwardError',
+  message: 'Cannot fast-forward: $target has commits not in this branch',
+}) {}
+
+export class ConflictingFilesError extends createTaggedError({
+  name: 'ConflictingFilesError',
+  message: 'Cannot merge: $target worktree has uncommitted changes in overlapping files',
+}) {}
+
+export class PushError extends createTaggedError({
+  name: 'PushError',
+  message: 'Push to $target failed',
+}) {}
+
+export class GitCommandError extends createTaggedError({
+  name: 'GitCommandError',
+  message: 'Git command failed: $command',
+}) {}
+
+// ═══════════════════════════════════════════════════════════════════════════
 // UNION TYPES - For function signatures
 // ═══════════════════════════════════════════════════════════════════════════
 
@@ -136,3 +185,14 @@ export type SessionErrors =
   | SessionNotFoundError
   | MessagesNotFoundError
   | OpenCodeApiError
+
+export type MergeWorktreeErrors =
+  | DirtyWorktreeError
+  | NothingToMergeError
+  | SquashError
+  | RebaseConflictError
+  | RebaseError
+  | NotFastForwardError
+  | ConflictingFilesError
+  | PushError
+  | GitCommandError

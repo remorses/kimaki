@@ -2454,6 +2454,8 @@ cli
       cliLogger.log(`Main repo: ${mainRepoDir}`)
       cliLogger.log(`Branch: ${worktreeName}`)
 
+      const { RebaseConflictError } = await import('./errors.js')
+
       const result = await mergeWorktree({
         worktreeDir,
         mainRepoDir,
@@ -2463,16 +2465,16 @@ cli
         },
       })
 
-      if (result.success) {
-        cliLogger.log(`Merged ${result.branchName} into ${result.defaultBranch} @ ${result.shortSha} (${result.commitCount} commit${result.commitCount === 1 ? '' : 's'})`)
-        process.exit(0)
-      } else {
-        cliLogger.error(`Merge failed: ${result.error}`)
-        if (result.conflictType === 'rebase') {
+      if (result instanceof Error) {
+        cliLogger.error(`Merge failed: ${result.message}`)
+        if (result instanceof RebaseConflictError) {
           cliLogger.log('Resolve the rebase conflicts, then run this command again.')
         }
         process.exit(1)
       }
+
+      cliLogger.log(`Merged ${result.branchName} into ${result.defaultBranch} @ ${result.shortSha} (${result.commitCount} commit${result.commitCount === 1 ? '' : 's'})`)
+      process.exit(0)
     } catch (error) {
       cliLogger.error('Merge failed:', error instanceof Error ? error.message : String(error))
       process.exit(EXIT_NO_RESTART)
