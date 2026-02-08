@@ -1040,19 +1040,22 @@ export async function handleOpencodeSession({
       error,
     }: {
       sessionID?: string
-      error?: { data?: { message?: string } }
+      error?: { data?: { message?: string }; name?: string }
     }) => {
       if (!sessionID || sessionID !== session.id) {
-        voiceLogger.log(
-          `[SESSION ERROR IGNORED] Error for different session (expected: ${session.id}, got: ${sessionID})`,
+        sessionLogger.log(
+          `Ignoring error for different session (expected: ${session.id}, got: ${sessionID})`,
         )
         return
       }
 
       const errorMessage = error?.data?.message || 'Unknown error'
       // Skip abort errors - these are expected when operations are cancelled
-      if (errorMessage.includes('operation was aborted')) {
-        voiceLogger.log(`[SESSION] Operation aborted (expected behavior)`)
+      if (
+        errorMessage.includes('operation was aborted') ||
+        error?.name === 'MessageAbortedError'
+      ) {
+        sessionLogger.log(`Operation aborted (expected)`)
         return
       }
       sessionLogger.error(`Sending error to thread: ${errorMessage}`)
@@ -1336,7 +1339,6 @@ export async function handleOpencodeSession({
             await handlePartUpdated(event.properties.part)
             break
           case 'session.error':
-            sessionLogger.error(`ERROR:`, event.properties)
             await handleSessionError(event.properties)
             break
           case 'permission.asked':
