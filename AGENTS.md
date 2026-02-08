@@ -72,6 +72,28 @@ use `resolveWorkingDirectory({ channel })` from `discord-utils.ts` to get direct
 
 never call `getKimakiMetadata` + manual `getThreadWorktree` check in commands. the util handles both. if you need to encode a directory in a discord customId for later use with `initializeOpencodeForDirectory`, always use `projectDirectory` not `workingDirectory`.
 
+## heap snapshots and memory debugging
+
+kimaki has a built-in heap monitor that runs every 30s and checks V8 heap usage.
+
+- **85% heap used**: writes a `.heapsnapshot` file to `~/.kimaki/heap-snapshots/`
+
+to manually trigger a heap snapshot at any time:
+
+```bash
+kill -SIGUSR1 <PID>
+```
+
+snapshots are saved as `heap-<date>-<sizeMB>MB.heapsnapshot` in `~/.kimaki/heap-snapshots/`.
+open them in Chrome DevTools (Memory tab > Load) to inspect what is holding memory.
+there is a 5 minute cooldown between automatic snapshots to avoid disk spam.
+
+signal summary:
+- `SIGUSR1`: write heap snapshot to disk
+- `SIGUSR2`: graceful restart (existing)
+
+the implementation is in `discord/src/heap-monitor.ts`.
+
 ## logging
 
 always try to use logger instead of console. so logs in the cli look uniform and pretty
@@ -579,26 +601,3 @@ const jsonSchema = toJSONSchema(mySchema, {
 });
 ```
 
-
-<!-- opensrc:start -->
-
-## Source Code Reference
-
-Source code for dependencies is available in `opensrc/` for deeper understanding of implementation details.
-
-See `opensrc/sources.json` for the list of available packages and their versions.
-
-Use this source code when you need to understand how a package works internally, not just its types/interface.
-
-### Fetching Additional Source Code
-
-To fetch source code for a package or repository you need to understand, run:
-
-```bash
-npx opensrc <package>           # npm package (e.g., npx opensrc zod)
-npx opensrc pypi:<package>      # Python package (e.g., npx opensrc pypi:requests)
-npx opensrc crates:<package>    # Rust crate (e.g., npx opensrc crates:serde)
-npx opensrc <owner>/<repo>      # GitHub repo (e.g., npx opensrc vercel/ai)
-```
-
-<!-- opensrc:end -->

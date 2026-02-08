@@ -76,6 +76,7 @@ import {
 import fs from 'node:fs'
 import * as errore from 'errore'
 import { createLogger, LogPrefix } from './logger.js'
+import { writeHeapSnapshot, startHeapMonitor } from './heap-monitor.js'
 import { setGlobalDispatcher, Agent } from 'undici'
 
 // Increase connection pool to prevent deadlock when multiple sessions have open SSE streams.
@@ -776,6 +777,8 @@ export async function startDiscordBot({
 
   await discordClient.login(token)
 
+  startHeapMonitor()
+
   const handleShutdown = async (signal: string, { skipExit = false } = {}) => {
     discordLogger.log(`Received ${signal}, cleaning up...`)
 
@@ -842,6 +845,11 @@ export async function startDiscordBot({
       voiceLogger.error('[SIGINT] Error during shutdown:', error)
       process.exit(1)
     }
+  })
+
+  process.on('SIGUSR1', () => {
+    discordLogger.log('Received SIGUSR1, writing heap snapshot...')
+    writeHeapSnapshot()
   })
 
   process.on('SIGUSR2', async () => {

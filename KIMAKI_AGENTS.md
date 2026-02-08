@@ -70,6 +70,28 @@ use `resolveWorkingDirectory({ channel })` from `discord-utils.ts` to get direct
 
 never call `getKimakiMetadata` + manual `getThreadWorktree` check in commands. the util handles both. if you need to encode a directory in a discord customId for later use with `initializeOpencodeForDirectory`, always use `projectDirectory` not `workingDirectory`.
 
+## heap snapshots and memory debugging
+
+kimaki has a built-in heap monitor that runs every 30s and checks V8 heap usage.
+
+- **85% heap used**: writes a `.heapsnapshot` file to `~/.kimaki/heap-snapshots/`
+
+to manually trigger a heap snapshot at any time:
+
+```bash
+kill -SIGUSR1 <PID>
+```
+
+snapshots are saved as `heap-<date>-<sizeMB>MB.heapsnapshot` in `~/.kimaki/heap-snapshots/`.
+open them in Chrome DevTools (Memory tab > Load) to inspect what is holding memory.
+there is a 5 minute cooldown between automatic snapshots to avoid disk spam.
+
+signal summary:
+- `SIGUSR1`: write heap snapshot to disk
+- `SIGUSR2`: graceful restart (existing)
+
+the implementation is in `discord/src/heap-monitor.ts`.
+
 ## logging
 
 always try to use logger instead of console. so logs in the cli look uniform and pretty

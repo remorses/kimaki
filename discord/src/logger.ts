@@ -25,6 +25,7 @@ export const LogPrefix = {
   FORK: 'FORK',
   FORMATTING: 'FORMAT',
   GENAI: 'GENAI',
+  HEAP: 'HEAP',
   GENAI_WORKER: 'GENAI_W',
   INTERACTION: 'INTERACT',
   LOGIN: 'LOGIN',
