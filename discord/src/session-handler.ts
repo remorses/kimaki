@@ -41,6 +41,7 @@ import {
   showPermissionButtons,
   cleanupPermissionContext,
   addPermissionRequestToContext,
+  arePatternsCoveredBy,
 } from './commands/permissions.js'
 import { cancelPendingFileUpload } from './commands/file-upload.js'
 import * as errore from 'errore'
@@ -1088,7 +1089,19 @@ export async function handleOpencodeSession({
       const threadPermissions = pendingPermissions.get(thread.id)
       const existingPending = threadPermissions
         ? Array.from(threadPermissions.values()).find((pending) => {
-            return pending.dedupeKey === dedupeKey
+            if (pending.dedupeKey === dedupeKey) {
+              return true
+            }
+            if (pending.directory !== directory) {
+              return false
+            }
+            if (pending.permission.permission !== permission.permission) {
+              return false
+            }
+            return arePatternsCoveredBy({
+              patterns: permission.patterns,
+              coveringPatterns: pending.permission.patterns,
+            })
           })
         : undefined
 

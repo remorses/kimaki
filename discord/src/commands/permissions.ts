@@ -17,6 +17,45 @@ import { createLogger, LogPrefix } from '../logger.js'
 
 const logger = createLogger(LogPrefix.PERMISSIONS)
 
+function wildcardMatch({ value, pattern }: { value: string; pattern: string }): boolean {
+  let escapedPattern = pattern
+    .replace(/[.+^${}()|[\]\\]/g, '\\$&')
+    .replace(/\*/g, '.*')
+    .replace(/\?/g, '.')
+
+  if (escapedPattern.endsWith(' .*')) {
+    escapedPattern = escapedPattern.slice(0, -3) + '( .*)?'
+  }
+
+  return new RegExp(`^${escapedPattern}$`, 's').test(value)
+}
+
+export function arePatternsCoveredBy({
+  patterns,
+  coveringPatterns,
+}: {
+  patterns: string[]
+  coveringPatterns: string[]
+}): boolean {
+  return patterns.every((pattern) => {
+    return coveringPatterns.some((coveringPattern) => {
+      return wildcardMatch({ value: pattern, pattern: coveringPattern })
+    })
+  })
+}
+
+export function compactPermissionPatterns(patterns: string[]): string[] {
+  const uniquePatterns = Array.from(new Set(patterns))
+  return uniquePatterns.filter((pattern, index) => {
+    return !uniquePatterns.some((candidate, candidateIndex) => {
+      if (candidateIndex === index) {
+        return false
+      }
+      return wildcardMatch({ value: pattern, pattern: candidate })
+    })
+  })
+}
+
 type PendingPermissionContext = {
   permission: PermissionRequest
   requestIds: string[]
@@ -60,7 +99,7 @@ export async function showPermissionButtons({
 
   pendingPermissionContexts.set(contextHash, context)
 
-  const patternStr = permission.patterns.join(', ')
+  const patternStr = compactPermissionPatterns(permission.patterns).join(', ')
 
   // Build 3 buttons for permission actions
   const acceptButton = new ButtonBuilder()
@@ -156,7 +195,7 @@ export async function handlePermissionButton(interaction: ButtonInteraction): Pr
       }
     })()
 
-    const patternStr = context.permission.patterns.join(', ')
+    const patternStr = compactPermissionPatterns(context.permission.patterns).join(', ')
     await interaction.editReply({
       content:
         `⚠️ **Permission Required**\n` +
