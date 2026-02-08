@@ -114,17 +114,7 @@ export async function handleMergeWorktreeCommand({ command, appId }: CommandCont
 
   if (result instanceof Error) {
     if (result instanceof DirtyWorktreeError) {
-      await command.editReply('Uncommitted changes detected. Asking the model to commit them...')
-      await sendPromptToModel({
-        prompt: [
-          'There are uncommitted changes in the worktree that need to be committed before merging.',
-          'Please commit all changes with a descriptive commit message, then run `/merge-worktree` again.',
-        ].join('\n'),
-        thread,
-        projectDirectory: worktreeInfo.project_directory,
-        command,
-        appId,
-      })
+      await command.editReply('Merge failed: uncommitted changes in the worktree. Commit changes first, then run `/merge-worktree` again.')
       return
     }
 
