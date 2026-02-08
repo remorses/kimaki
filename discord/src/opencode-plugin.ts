@@ -305,7 +305,7 @@ const kimakiPlugin: Plugin = async () => {
             await rest.patch(Routes.channel(row.thread_id), {
               body: { archived: true },
             })
-          }, 1000 * 1)
+          }, 10)
 
           return 'Thread archived and session stopped'
         },
