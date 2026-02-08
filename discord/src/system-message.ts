@@ -169,6 +169,16 @@ npx -y kimaki send --channel ${channelId} --prompt "Plan the refactor of the aut
 
 Worktrees are useful for handing off parallel tasks that need to be isolated from each other (each session works on its own branch).
 
+## creating worktrees
+
+When the user asks to "create a worktree" or "make a worktree", they mean you should use the kimaki CLI to create it. Do NOT use raw \`git worktree add\` commands. Instead use:
+
+\`\`\`bash
+npx -y kimaki send --channel ${channelId} --prompt "your task description" --worktree worktree-name${username ? ` --user "${username}"` : ''}
+\`\`\`
+
+This creates a new Discord thread with an isolated git worktree and starts a session in it. The worktree name should be kebab-case and descriptive of the task.
+
 **Important:** When using \`kimaki send\`, provide a super detailed prompt with all context needed. The new session has no memory of the current conversation, so include requirements, constraints, file paths, and any relevant details. Use markdown formatting for readability: **bold** for keywords, \`code\` for paths/commands, lists for multiple items, and > quotes for context.
 
 This is useful for automation (cron jobs, GitHub webhooks, n8n, etc.)
