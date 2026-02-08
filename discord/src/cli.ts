@@ -1348,6 +1348,7 @@ cli
   .option('--enable-voice-channels', 'Create voice channels for projects (disabled by default)')
   .option('--verbosity <level>', 'Default verbosity for all channels (tools-and-text, text-and-essential-tools, or text-only)')
   .option('--mention-mode', 'Bot only responds when @mentioned (default for all channels)')
+  .option('--auto-restart', 'Automatically restart the bot on crash or OOM kill')
   .action(
     async (options: {
       restart?: boolean
@@ -1358,6 +1359,7 @@ cli
       enableVoiceChannels?: boolean
       verbosity?: string
       mentionMode?: boolean
+      autoRestart?: boolean
     }) => {
       try {
         // Set data directory early, before any database access
@@ -2481,5 +2483,6 @@ cli
     }
   })
 
+cli.version(getCurrentVersion())
 cli.help()
 cli.parse()

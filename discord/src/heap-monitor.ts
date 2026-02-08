@@ -73,7 +73,11 @@ function checkHeapUsage(): void {
     const now = Date.now()
     if (now - lastSnapshotTime >= SNAPSHOT_COOLDOWN_MS) {
       lastSnapshotTime = now
-      writeHeapSnapshot()
+      try {
+        writeHeapSnapshot()
+      } catch (e) {
+        logger.error('Failed to write heap snapshot:', e instanceof Error ? e.message : String(e))
+      }
     } else {
       logger.log('Snapshot cooldown active, skipping')
     }

@@ -849,7 +849,11 @@ export async function startDiscordBot({
 
   process.on('SIGUSR1', () => {
     discordLogger.log('Received SIGUSR1, writing heap snapshot...')
-    writeHeapSnapshot()
+    try {
+      writeHeapSnapshot()
+    } catch (e) {
+      discordLogger.error('Failed to write heap snapshot:', e instanceof Error ? e.message : String(e))
+    }
   })
 
   process.on('SIGUSR2', async () => {
@@ -860,11 +864,14 @@ export async function startDiscordBot({
       voiceLogger.error('[SIGUSR2] Error during shutdown:', error)
     }
     const { spawn } = await import('node:child_process')
+    // Strip __KIMAKI_CHILD so the new process goes through the respawn wrapper in bin.js
+    const env = { ...process.env }
+    delete env.__KIMAKI_CHILD
     spawn(process.argv[0]!, [...process.execArgv, ...process.argv.slice(1)], {
       stdio: 'inherit',
       detached: true,
       cwd: process.cwd(),
-      env: process.env,
+      env,
     }).unref()
     process.exit(0)
   })
