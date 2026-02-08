@@ -82,6 +82,8 @@ export type WorktreeInfo = {
 export type ThreadStartMarker = {
   /** Whether to auto-start an AI session */
   start?: boolean
+  /** Marker for CLI-injected prompt into an existing thread */
+  cliThreadPrompt?: boolean
   /** Worktree name to create */
   worktree?: string
   /** Discord username who initiated the thread */
@@ -155,6 +157,14 @@ To start a new thread/session in this channel pro-grammatically, run:
 
 npx -y kimaki send --channel ${channelId} --prompt "your prompt here"${username ? ` --user "${username}"` : ''}
 
+To send a prompt to an existing thread instead of creating a new one:
+
+npx -y kimaki send --thread <thread_id> --prompt "follow-up prompt"
+
+To send to the thread associated with a known session:
+
+npx -y kimaki send --session <session_id> --prompt "follow-up prompt"
+
 Use --notify-only to create a notification thread without starting an AI session:
 
 npx -y kimaki send --channel ${channelId} --prompt "User cancelled subscription" --notify-only
@@ -162,6 +172,11 @@ npx -y kimaki send --channel ${channelId} --prompt "User cancelled subscription"
 Use --worktree to create a git worktree for the session:
 
 npx -y kimaki send --channel ${channelId} --prompt "Add dark mode support" --worktree dark-mode${username ? ` --user "${username}"` : ''}
+
+Important: 
+- The prompt passed to \`--worktree\` is the task for the new thread running inside that worktree.
+- Do NOT tell that prompt to "create a new worktree" again, or it can create recursive worktree threads.
+- Ask the new session to operate on its current checkout only (e.g. "validate current worktree", "run checks in this repo").
 
 Use --agent to specify which agent to use for the session:
 
@@ -178,6 +193,10 @@ npx -y kimaki send --channel ${channelId} --prompt "your task description" --wor
 \`\`\`
 
 This creates a new Discord thread with an isolated git worktree and starts a session in it. The worktree name should be kebab-case and descriptive of the task.
+
+Critical recursion guard:
+- If you already are in a worktree thread, do not create another worktree unless the user explicitly asks for a nested worktree.
+- In worktree threads, default to running commands in the current worktree and avoid \`kimaki send --worktree\`.
 
 **Important:** When using \`kimaki send\`, provide a super detailed prompt with all context needed. The new session has no memory of the current conversation, so include requirements, constraints, file paths, and any relevant details. Use markdown formatting for readability: **bold** for keywords, \`code\` for paths/commands, lists for multiple items, and > quotes for context.
 
@@ -258,6 +277,9 @@ This session is running inside a git worktree.
 - **Worktree path:** \`${worktree.worktreeDirectory}\`
 - **Branch:** \`${worktree.branch}\`
 - **Main repo:** \`${worktree.mainRepoDirectory}\`
+
+This thread already has a worktree. Do not create another worktree by default.
+If the user asks for checks/validation, run them in this existing worktree.
 
 Before finishing a task, ask the user if they want to merge changes back to the main branch.
 

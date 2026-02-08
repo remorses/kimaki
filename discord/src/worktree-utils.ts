@@ -1,15 +1,17 @@
 // Worktree utility functions.
-// Wrapper for OpenCode worktree creation that also initializes git submodules.
+// Wrapper for git worktree creation that initializes and validates submodules.
 // Also handles capturing and applying git diffs when creating worktrees from threads.
 
+import crypto from 'node:crypto'
 import { exec, spawn } from 'node:child_process'
 import fs from 'node:fs'
+import os from 'node:os'
 import path from 'node:path'
 import { promisify } from 'node:util'
 import { createLogger, LogPrefix } from './logger.js'
-import type { getOpencodeClientV2 } from './opencode.js'
 
 const DEFAULT_EXEC_TIMEOUT_MS = 10_000
+const SUBMODULE_INIT_TIMEOUT_MS = 20 * 60_000
 
 const _execAsync = promisify(exec)
 
@@ -31,6 +33,41 @@ export function execAsync(
 }
 
 const logger = createLogger(LogPrefix.WORKTREE)
+
+type CommandError = Error & {
+  cmd?: string
+  stderr?: string
+  stdout?: string
+  signal?: NodeJS.Signals
+  killed?: boolean
+}
+
+function formatCommandError(error: unknown): string {
+  if (!(error instanceof Error)) {
+    return String(error)
+  }
+
+  const commandError = error as CommandError
+  const details: string[] = [commandError.message]
+
+  if (commandError.cmd) {
+    details.push(`cmd=${commandError.cmd}`)
+  }
+  if (commandError.signal) {
+    details.push(`signal=${commandError.signal}`)
+  }
+  if (commandError.killed) {
+    details.push('process=killed')
+  }
+  if (commandError.stderr?.trim()) {
+    details.push(`stderr=${commandError.stderr.trim()}`)
+  }
+  if (commandError.stdout?.trim()) {
+    details.push(`stdout=${commandError.stdout.trim()}`)
+  }
+
+  return details.join(' | ')
+}
 
 /**
  * Get submodule paths from .gitmodules file.
@@ -108,46 +145,164 @@ async function removeBrokenSubmoduleStubs(directory: string): Promise<void> {
   }
 }
 
-type OpencodeClientV2 = NonNullable<ReturnType<typeof getOpencodeClientV2>>
+function parseSubmoduleGitdir(gitFileContent: string): string | Error {
+  const match = gitFileContent.match(/^gitdir:\s*(.+)$/m)
+  const gitdir = match?.[1]?.trim()
+  if (!gitdir) {
+    return new Error('Missing gitdir pointer')
+  }
+  return gitdir
+}
+
+async function validateSubmodulePointers(directory: string): Promise<void | Error> {
+  const submodulePaths = await getSubmodulePaths(directory)
+  if (submodulePaths.length === 0) {
+    return
+  }
+
+  const validationIssues: string[] = []
+
+  await Promise.all(
+    submodulePaths.map(async (submodulePath) => {
+      const submoduleDir = path.join(directory, submodulePath)
+      const submoduleGitFile = path.join(submoduleDir, '.git')
+
+      const gitFileExists = await fs.promises.access(submoduleGitFile).then(() => {
+        return true
+      }).catch(() => {
+        return false
+      })
+      if (!gitFileExists) {
+        validationIssues.push(`${submodulePath}: missing .git file`)
+        return
+      }
+
+      const gitFileContentResult = await errore.tryAsync({
+        try: () => fs.promises.readFile(submoduleGitFile, 'utf-8'),
+        catch: (e) => new Error(`Failed to read .git for ${submodulePath}`, { cause: e }),
+      })
+      if (gitFileContentResult instanceof Error) {
+        validationIssues.push(`${submodulePath}: ${gitFileContentResult.message}`)
+        return
+      }
+
+      const parsedGitdir = parseSubmoduleGitdir(gitFileContentResult)
+      if (parsedGitdir instanceof Error) {
+        validationIssues.push(`${submodulePath}: ${parsedGitdir.message}`)
+        return
+      }
+
+      const resolvedGitdir = path.resolve(submoduleDir, parsedGitdir)
+      const headPath = path.join(resolvedGitdir, 'HEAD')
+      const headExists = await fs.promises.access(headPath).then(() => {
+        return true
+      }).catch(() => {
+        return false
+      })
+      if (!headExists) {
+        validationIssues.push(`${submodulePath}: gitdir missing HEAD (${resolvedGitdir})`)
+      }
+    }),
+  )
+
+  const submoduleStatusResult = await errore.tryAsync({
+    try: () => execAsync('git submodule status --recursive', { cwd: directory, timeout: SUBMODULE_INIT_TIMEOUT_MS }),
+    catch: (e) => new Error('git submodule status --recursive failed', { cause: e }),
+  })
+  if (submoduleStatusResult instanceof Error) {
+    validationIssues.push(submoduleStatusResult.message)
+  }
+
+  if (validationIssues.length === 0) {
+    return
+  }
+
+  return new Error(`Submodule validation failed: ${validationIssues.join('; ')}`)
+}
 
 type WorktreeResult = {
   directory: string
   branch: string
 }
 
+async function resolveDefaultWorktreeTarget(directory: string): Promise<string> {
+  const remoteHead = await execAsync('git symbolic-ref refs/remotes/origin/HEAD', {
+    cwd: directory,
+  }).catch(() => {
+    return null
+  })
+
+  const remoteRef = remoteHead?.stdout.trim()
+  if (remoteRef?.startsWith('refs/remotes/')) {
+    return remoteRef.replace('refs/remotes/', '')
+  }
+
+  const hasMain = await execAsync('git show-ref --verify --quiet refs/heads/main', {
+    cwd: directory,
+  }).then(() => {
+    return true
+  }).catch(() => {
+    return false
+  })
+  if (hasMain) {
+    return 'main'
+  }
+
+  const hasMaster = await execAsync('git show-ref --verify --quiet refs/heads/master', {
+    cwd: directory,
+  }).then(() => {
+    return true
+  }).catch(() => {
+    return false
+  })
+  if (hasMaster) {
+    return 'master'
+  }
+
+  return 'HEAD'
+}
+
+function getManagedWorktreeDirectory({ directory, name }: { directory: string; name: string }): string {
+  const projectHash = crypto.createHash('sha1').update(directory).digest('hex')
+  const safeName = name.replaceAll('/', '-')
+  return path.join(os.homedir(), '.local', 'share', 'opencode', 'worktree', projectHash, safeName)
+}
+
 /**
- * Create a worktree using OpenCode SDK and initialize git submodules.
+ * Create a worktree using git and initialize git submodules.
  * This wrapper ensures submodules are properly set up in new worktrees.
  *
  * If diff is provided, it's applied BEFORE submodule update to ensure
  * any submodule pointer changes in the diff are respected.
  */
 export async function createWorktreeWithSubmodules({
-  clientV2,
   directory,
   name,
   diff,
 }: {
-  clientV2: OpencodeClientV2
   directory: string
   name: string
   diff?: CapturedDiff | null
 }): Promise<WorktreeResult & { diffApplied: boolean } | Error> {
-  // 1. Create worktree via OpenCode SDK
-  const response = await clientV2.worktree.create({
-    directory,
-    worktreeCreateInput: { name },
+  // 1. Create worktree via git (checked out immediately).
+  const worktreeDir = getManagedWorktreeDirectory({ directory, name })
+  const targetRef = await resolveDefaultWorktreeTarget(directory)
+
+  if (fs.existsSync(worktreeDir)) {
+    return new Error(`Worktree directory already exists: ${worktreeDir}`)
+  }
+
+  await fs.promises.mkdir(path.dirname(worktreeDir), { recursive: true })
+
+  const createCommand = `git worktree add ${JSON.stringify(worktreeDir)} -B ${JSON.stringify(name)} ${JSON.stringify(targetRef)}`
+  const createResult = await errore.tryAsync({
+    try: () => execAsync(createCommand, { cwd: directory, timeout: SUBMODULE_INIT_TIMEOUT_MS }),
+    catch: (e) => new Error(`git worktree add failed: ${formatCommandError(e)}`, { cause: e }),
   })
-
-  if (response.error) {
-    return new Error(`SDK error: ${JSON.stringify(response.error)}`)
+  if (createResult instanceof Error) {
+    return createResult
   }
 
-  if (!response.data) {
-    return new Error('No worktree data returned from SDK')
-  }
-
-  const worktreeDir = response.data.directory
   let diffApplied = false
 
   // 2. Apply diff BEFORE submodule update (if provided)
@@ -162,20 +317,35 @@ export async function createWorktreeWithSubmodules({
   // git worktree creates stub directories with .git files pointing to incomplete gitdirs
   await removeBrokenSubmoduleStubs(worktreeDir)
 
-  // 4. Init submodules in new worktree (don't block on failure)
+  // 4. Init submodules in new worktree
   // Uses --init to initialize, --recursive for nested submodules.
   // Submodules will be checked out at the commit specified by the (possibly updated) index.
   try {
-    logger.log(`Initializing submodules in ${worktreeDir}`)
+    logger.log(`Initializing submodules in ${worktreeDir} (timeout=${SUBMODULE_INIT_TIMEOUT_MS}ms)`)
     await execAsync('git submodule update --init --recursive', {
       cwd: worktreeDir,
+      timeout: SUBMODULE_INIT_TIMEOUT_MS,
     })
     logger.log(`Submodules initialized in ${worktreeDir}`)
   } catch (e) {
-    // Log but don't fail - submodules might not exist
-    logger.warn(
-      `Failed to init submodules in ${worktreeDir}: ${e instanceof Error ? e.message : String(e)}`,
-    )
+    const errorMessage = formatCommandError(e)
+    logger.error('Submodule initialization failed', {
+      worktreeDir,
+      timeoutMs: SUBMODULE_INIT_TIMEOUT_MS,
+      command: 'git submodule update --init --recursive',
+      error: errorMessage,
+    })
+    return new Error(`Submodule initialization failed: ${errorMessage}`)
+  }
+
+  // 4.5 Validate submodule pointers and git metadata before marking ready.
+  const submoduleValidationError = await validateSubmodulePointers(worktreeDir)
+  if (submoduleValidationError instanceof Error) {
+    logger.error('Submodule validation failed after init', {
+      worktreeDir,
+      error: submoduleValidationError.message,
+    })
+    return submoduleValidationError
   }
 
   // 5. Install dependencies using ni (detects package manager from lockfile)
@@ -192,7 +362,7 @@ export async function createWorktreeWithSubmodules({
     )
   }
 
-  return { ...response.data, diffApplied }
+  return { directory: worktreeDir, branch: name, diffApplied }
 }
 
 /**

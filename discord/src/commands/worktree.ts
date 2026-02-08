@@ -12,10 +12,9 @@ import {
   getChannelDirectory,
   getThreadWorktree,
 } from '../database.js'
-import { initializeOpencodeForDirectory, getOpencodeClientV2 } from '../opencode.js'
 import { SILENT_MESSAGE_FLAGS, reactToThread } from '../discord-utils.js'
 import { createLogger, LogPrefix } from '../logger.js'
-import { createWorktreeWithSubmodules, captureGitDiff, type CapturedDiff } from '../worktree-utils.js'
+import { createWorktreeWithSubmodules, captureGitDiff, execAsync, type CapturedDiff } from '../worktree-utils.js'
 import { WORKTREE_PREFIX } from './merge-worktree.js'
 import * as errore from 'errore'
 
@@ -98,7 +97,6 @@ async function createWorktreeInBackground({
   starterMessage,
   worktreeName,
   projectDirectory,
-  clientV2,
   diff,
   rest,
 }: {
@@ -106,14 +104,12 @@ async function createWorktreeInBackground({
   starterMessage: Message
   worktreeName: string
   projectDirectory: string
-  clientV2: ReturnType<typeof getOpencodeClientV2> & {}
   diff?: CapturedDiff | null
   rest: REST
 }): Promise<void> {
-  // Create worktree using SDK v2, apply diff, then init submodules
+  // Create worktree using git, apply diff, then init submodules
   logger.log(`Creating worktree "${worktreeName}" for project ${projectDirectory}`)
   const worktreeResult = await createWorktreeWithSubmodules({
-    clientV2,
     directory: projectDirectory,
     name: worktreeName,
     diff,
@@ -140,6 +136,38 @@ async function createWorktreeInBackground({
     `🌿 Branch: \`${worktreeResult.branch}\`` +
     diffStatus
   )
+}
+
+async function findExistingWorktreePath({
+  projectDirectory,
+  worktreeName,
+}: {
+  projectDirectory: string
+  worktreeName: string
+}): Promise<string | undefined | Error> {
+  const listResult = await errore.tryAsync({
+    try: () => execAsync('git worktree list --porcelain', { cwd: projectDirectory }),
+    catch: (e) => new WorktreeError('Failed to list worktrees', { cause: e }),
+  })
+  if (errore.isError(listResult)) {
+    return listResult
+  }
+
+  const lines = listResult.stdout.split('\n')
+  let currentPath = ''
+  const branchRef = `refs/heads/${worktreeName}`
+
+  for (const line of lines) {
+    if (line.startsWith('worktree ')) {
+      currentPath = line.slice('worktree '.length)
+      continue
+    }
+    if (line.startsWith('branch ') && line.slice('branch '.length) === branchRef) {
+      return currentPath || undefined
+    }
+  }
+
+  return undefined
 }
 
 export async function handleNewWorktreeCommand({
@@ -191,36 +219,11 @@ export async function handleNewWorktreeCommand({
     return
   }
 
-  // Initialize opencode and check if worktree already exists
-  const getClient = await initializeOpencodeForDirectory(projectDirectory)
-  if (errore.isError(getClient)) {
-    await command.editReply(`Failed to initialize OpenCode: ${getClient.message}`)
+  const existingWorktree = await findExistingWorktreePath({ projectDirectory, worktreeName })
+  if (errore.isError(existingWorktree)) {
+    await command.editReply(existingWorktree.message)
     return
   }
-
-  const clientV2 = getOpencodeClientV2(projectDirectory)
-  if (!clientV2) {
-    await command.editReply('Failed to get OpenCode client')
-    return
-  }
-
-  // Check if worktree with this name already exists
-  // SDK returns array of directory paths like "~/.opencode/worktree/abc/kimaki-my-feature"
-  const listResult = await errore.tryAsync({
-    try: async () => {
-      const response = await clientV2.worktree.list({ directory: projectDirectory })
-      return response.data || []
-    },
-    catch: (e) => new WorktreeError('Failed to list worktrees', { cause: e }),
-  })
-
-  if (errore.isError(listResult)) {
-    await command.editReply(listResult.message)
-    return
-  }
-
-  // Check if any worktree path ends with our name
-  const existingWorktree = listResult.find((dir) => dir.endsWith(`/${worktreeName}`))
   if (existingWorktree) {
     await command.editReply(`Worktree \`${worktreeName}\` already exists at \`${existingWorktree}\``)
     return
@@ -271,7 +274,6 @@ export async function handleNewWorktreeCommand({
     starterMessage,
     worktreeName,
     projectDirectory,
-    clientV2,
     rest: command.client.rest,
   }).catch((e) => {
     logger.error('[NEW-WORKTREE] Background error:', e)
@@ -315,34 +317,11 @@ async function handleWorktreeInThread({
     return
   }
 
-  // Initialize opencode
-  const getClient = await initializeOpencodeForDirectory(projectDirectory)
-  if (errore.isError(getClient)) {
-    await command.editReply(`Failed to initialize OpenCode: ${getClient.message}`)
+  const existingWorktreePath = await findExistingWorktreePath({ projectDirectory, worktreeName })
+  if (errore.isError(existingWorktreePath)) {
+    await command.editReply(existingWorktreePath.message)
     return
   }
-
-  const clientV2 = getOpencodeClientV2(projectDirectory)
-  if (!clientV2) {
-    await command.editReply('Failed to get OpenCode client')
-    return
-  }
-
-  // Check if worktree with this name already exists
-  const listResult = await errore.tryAsync({
-    try: async () => {
-      const response = await clientV2.worktree.list({ directory: projectDirectory })
-      return response.data || []
-    },
-    catch: (e) => new WorktreeError('Failed to list worktrees', { cause: e }),
-  })
-
-  if (errore.isError(listResult)) {
-    await command.editReply(listResult.message)
-    return
-  }
-
-  const existingWorktreePath = listResult.find((dir) => dir.endsWith(`/${worktreeName}`))
   if (existingWorktreePath) {
     await command.editReply(
       `Worktree \`${worktreeName}\` already exists at \`${existingWorktreePath}\``,
@@ -377,7 +356,6 @@ async function handleWorktreeInThread({
     starterMessage: statusMessage,
     worktreeName,
     projectDirectory,
-    clientV2,
     diff,
     rest: command.client.rest,
   }).catch((e) => {

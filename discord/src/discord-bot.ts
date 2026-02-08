@@ -16,7 +16,7 @@ import {
   setThreadSession,
   getPrisma,
 } from './database.js'
-import { initializeOpencodeForDirectory, getOpencodeServers, getOpencodeClientV2 } from './opencode.js'
+import { initializeOpencodeForDirectory, getOpencodeServers } from './opencode.js'
 import { formatWorktreeName } from './commands/worktree.js'
 import { WORKTREE_PREFIX } from './commands/merge-worktree.js'
 import { createWorktreeWithSubmodules } from './worktree-utils.js'
@@ -29,7 +29,10 @@ import {
   hasKimakiBotPermission,
   hasNoKimakiRole,
 } from './discord-utils.js'
-import { getOpencodeSystemMessage, type ThreadStartMarker } from './system-message.js'
+import {
+  getOpencodeSystemMessage,
+  type ThreadStartMarker,
+} from './system-message.js'
 import yaml from 'js-yaml'
 import { getFileAttachments, getTextAttachments, resolveMentions } from './message-formatting.js'
 import {
@@ -86,6 +89,25 @@ setGlobalDispatcher(new Agent({ headersTimeout: 0, bodyTimeout: 0, connections: 
 
 const discordLogger = createLogger(LogPrefix.DISCORD)
 const voiceLogger = createLogger(LogPrefix.VOICE)
+
+function parseEmbedFooterMarker<T extends Record<string, unknown>>({
+  footer,
+}: {
+  footer: string | undefined
+}): T | undefined {
+  if (!footer) {
+    return undefined
+  }
+  try {
+    const parsed = yaml.load(footer)
+    if (!parsed || typeof parsed !== 'object') {
+      return undefined
+    }
+    return parsed as T
+  } catch {
+    return undefined
+  }
+}
 
 type StartOptions = {
   token: string
@@ -172,7 +194,13 @@ export async function startDiscordBot({
 
   discordClient.on(Events.MessageCreate, async (message: Message) => {
     try {
-      if (message.author?.bot) {
+      const isSelfBotMessage = Boolean(discordClient.user && message.author?.id === discordClient.user.id)
+      const promptMarker = parseEmbedFooterMarker<ThreadStartMarker>({
+        footer: message.embeds[0]?.footer?.text,
+      })
+      const isCliInjectedPrompt = Boolean(isSelfBotMessage && promptMarker?.cliThreadPrompt)
+
+      if (message.author?.bot && !isCliInjectedPrompt) {
         return
       }
 
@@ -202,7 +230,7 @@ export async function startDiscordBot({
       // When mention mode is enabled, users without Kimaki role can message
       // without getting a permission error - we just silently ignore.
       const channel = message.channel
-      if (channel.type === ChannelType.GuildText) {
+      if (channel.type === ChannelType.GuildText && !isCliInjectedPrompt) {
         const textChannel = channel as TextChannel
         const mentionModeEnabled = await getChannelMentionMode(textChannel.id)
         if (mentionModeEnabled) {
@@ -215,7 +243,7 @@ export async function startDiscordBot({
         }
       }
 
-      if (message.guild && message.member) {
+      if (!isCliInjectedPrompt && message.guild && message.member) {
         if (hasNoKimakiRole(message.member)) {
           await message.reply({
             content: `You have the **no-kimaki** role which blocks bot access.\nRemove this role to use Kimaki.`,
@@ -350,6 +378,9 @@ export async function startDiscordBot({
         voiceLogger.log(`[SESSION] Found session ${sessionId} for thread ${thread.id}`)
 
         let messageContent = resolveMentions(message)
+        if (isCliInjectedPrompt) {
+          messageContent = message.content || ''
+        }
 
         let currentSessionContext: string | undefined
         let lastSessionContext: string | undefined
@@ -422,8 +453,10 @@ export async function startDiscordBot({
           originalMessage: message,
           images: fileAttachments,
           channelId: parent?.id,
-          username: message.member?.displayName || message.author.displayName,
-          userId: message.author.id,
+          username: isCliInjectedPrompt
+            ? 'kimaki-cli'
+            : message.member?.displayName || message.author.displayName,
+          userId: isCliInjectedPrompt ? undefined : message.author.id,
           appId: currentAppId,
         })
         return
@@ -520,43 +553,25 @@ export async function startDiscordBot({
             projectDirectory,
           })
 
-          // Initialize OpenCode and create worktree
-          const getClient = await initializeOpencodeForDirectory(projectDirectory)
-          if (getClient instanceof Error) {
-            discordLogger.error(`[WORKTREE] Failed to init OpenCode: ${getClient.message}`)
-            await setWorktreeError({ threadId: thread.id, errorMessage: getClient.message })
+          const worktreeResult = await createWorktreeWithSubmodules({
+            directory: projectDirectory,
+            name: worktreeName,
+          })
+
+          if (worktreeResult instanceof Error) {
+            const errMsg = worktreeResult.message
+            discordLogger.error(`[WORKTREE] Creation failed: ${errMsg}`)
+            await setWorktreeError({ threadId: thread.id, errorMessage: errMsg })
             await thread.send({
-              content: `⚠️ Failed to create worktree: ${getClient.message}\nUsing main project directory instead.`,
+              content: `⚠️ Failed to create worktree: ${errMsg}\nUsing main project directory instead.`,
               flags: SILENT_MESSAGE_FLAGS,
             })
           } else {
-            const clientV2 = getOpencodeClientV2(projectDirectory)
-            if (!clientV2) {
-              discordLogger.error(`[WORKTREE] No v2 client for ${projectDirectory}`)
-              await setWorktreeError({ threadId: thread.id, errorMessage: 'No OpenCode v2 client' })
-            } else {
-              const worktreeResult = await createWorktreeWithSubmodules({
-                clientV2,
-                directory: projectDirectory,
-                name: worktreeName,
-              })
-
-              if (worktreeResult instanceof Error) {
-                const errMsg = worktreeResult.message
-                discordLogger.error(`[WORKTREE] Creation failed: ${errMsg}`)
-                await setWorktreeError({ threadId: thread.id, errorMessage: errMsg })
-                await thread.send({
-                  content: `⚠️ Failed to create worktree: ${errMsg}\nUsing main project directory instead.`,
-                  flags: SILENT_MESSAGE_FLAGS,
-                })
-              } else {
-                await setWorktreeReady({ threadId: thread.id, worktreeDirectory: worktreeResult.directory })
-                sessionDirectory = worktreeResult.directory
-                discordLogger.log(`[WORKTREE] Created: ${worktreeResult.directory} (branch: ${worktreeResult.branch})`)
-                // React with tree emoji to mark as worktree thread
-                await reactToThread({ rest: discordClient.rest, threadId: thread.id, channelId: thread.parentId || undefined, emoji: '🌳' })
-              }
-            }
+            await setWorktreeReady({ threadId: thread.id, worktreeDirectory: worktreeResult.directory })
+            sessionDirectory = worktreeResult.directory
+            discordLogger.log(`[WORKTREE] Created: ${worktreeResult.directory} (branch: ${worktreeResult.branch})`)
+            // React with tree emoji to mark as worktree thread
+            await reactToThread({ rest: discordClient.rest, threadId: thread.id, channelId: thread.parentId || undefined, emoji: '🌳' })
           }
         }
 
@@ -639,11 +654,9 @@ export async function startDiscordBot({
         return
       }
 
-      let marker: ThreadStartMarker
-      try {
-        marker = yaml.load(embedFooter) as ThreadStartMarker
-      } catch {
-        return // Not a valid YAML marker
+      const marker = parseEmbedFooterMarker<ThreadStartMarker>({ footer: embedFooter })
+      if (!marker) {
+        return
       }
 
       if (!marker.start) {
@@ -691,36 +704,20 @@ export async function startDiscordBot({
 
         discordLogger.log(`[BOT_SESSION] Creating worktree: ${marker.worktree}`)
 
+        const worktreeStatusMessage = await thread.send({
+          content: `🌳 Creating worktree: ${marker.worktree}\n⏳ Setting up (this can take a bit)...`,
+          flags: SILENT_MESSAGE_FLAGS,
+        }).catch(() => {
+          return null
+        })
+
         await createPendingWorktree({
           threadId: thread.id,
           worktreeName: marker.worktree,
           projectDirectory,
         })
 
-        const getClient = await initializeOpencodeForDirectory(projectDirectory)
-        if (errore.isError(getClient)) {
-          discordLogger.error(`[BOT_SESSION] Failed to init OpenCode: ${getClient.message}`)
-          await setWorktreeError({ threadId: thread.id, errorMessage: getClient.message })
-          await thread.send({
-            content: `⚠️ Failed to create worktree: ${getClient.message}\nUsing main project directory instead.`,
-            flags: SILENT_MESSAGE_FLAGS,
-          })
-          return projectDirectory
-        }
-
-        const clientV2 = getOpencodeClientV2(projectDirectory)
-        if (!clientV2) {
-          discordLogger.error(`[BOT_SESSION] No v2 client for ${projectDirectory}`)
-          await setWorktreeError({ threadId: thread.id, errorMessage: 'No OpenCode v2 client' })
-          await thread.send({
-            content: `⚠️ Failed to create worktree: No OpenCode v2 client\nUsing main project directory instead.`,
-            flags: SILENT_MESSAGE_FLAGS,
-          })
-          return projectDirectory
-        }
-
         const worktreeResult = await createWorktreeWithSubmodules({
-          clientV2,
           directory: projectDirectory,
           name: marker.worktree,
         })
@@ -728,10 +725,13 @@ export async function startDiscordBot({
         if (errore.isError(worktreeResult)) {
           discordLogger.error(`[BOT_SESSION] Worktree creation failed: ${worktreeResult.message}`)
           await setWorktreeError({ threadId: thread.id, errorMessage: worktreeResult.message })
-          await thread.send({
+          await (worktreeStatusMessage?.edit({
             content: `⚠️ Failed to create worktree: ${worktreeResult.message}\nUsing main project directory instead.`,
             flags: SILENT_MESSAGE_FLAGS,
-          })
+          }) || thread.send({
+            content: `⚠️ Failed to create worktree: ${worktreeResult.message}\nUsing main project directory instead.`,
+            flags: SILENT_MESSAGE_FLAGS,
+          }))
           return projectDirectory
         }
 
@@ -739,10 +739,13 @@ export async function startDiscordBot({
         discordLogger.log(`[BOT_SESSION] Worktree created: ${worktreeResult.directory}`)
         // React with tree emoji to mark as worktree thread
         await reactToThread({ rest: discordClient.rest, threadId: thread.id, channelId: thread.parentId || undefined, emoji: '🌳' })
-        await thread.send({
-          content: `🌳 **Worktree: ${marker.worktree}**\n📁 \`${worktreeResult.directory}\`\n🌿 Branch: \`${worktreeResult.branch}\``,
+        await (worktreeStatusMessage?.edit({
+          content: `🌳 **Worktree ready: ${marker.worktree}**\n📁 \`${worktreeResult.directory}\`\n🌿 Branch: \`${worktreeResult.branch}\``,
           flags: SILENT_MESSAGE_FLAGS,
-        })
+        }) || thread.send({
+          content: `🌳 **Worktree ready: ${marker.worktree}**\n📁 \`${worktreeResult.directory}\`\n🌿 Branch: \`${worktreeResult.branch}\``,
+          flags: SILENT_MESSAGE_FLAGS,
+        }))
         return worktreeResult.directory
       })()
 
