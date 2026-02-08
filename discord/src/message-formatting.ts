@@ -388,20 +388,15 @@ export function formatTodoList(part: Part): string {
   return `${num} **${escapeInlineMarkdown(content)}**`
 }
 
-export function formatPart(
-  part: Part,
-  prefix?: string,
-  options?: { suppressTextPrefix?: boolean },
-): string {
+export function formatPart(part: Part, prefix?: string): string {
   const pfx = prefix ? `${prefix} ⋅ ` : ''
 
   if (part.type === 'text') {
     const text = part.text?.trim()
     if (!text) return ''
-    const prefixTextWithDiamond = !options?.suppressTextPrefix
     // For subtask text, always use bullet with prefix
     if (prefix) {
-      return prefixTextWithDiamond ? `⬥ ${pfx}${text}` : `${pfx}${text}`
+      return `⬥ ${pfx}${text}`
     }
     const firstChar = text[0] || ''
     const markdownStarters = ['#', '*', '_', '-', '>', '`', '[', '|']
@@ -409,7 +404,7 @@ export function formatPart(
     if (startsWithMarkdown) {
       return `\n${text}`
     }
-    return prefixTextWithDiamond ? `⬥ ${text}` : text
+    return `⬥ ${text}`
   }
 
   if (part.type === 'reasoning') {

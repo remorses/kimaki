@@ -622,7 +622,7 @@ export async function handleOpencodeSession({
   let hasSentParts = false
   let promptResolved = false
   let hasReceivedEvent = false
-  let lastSentPart: { type: Part['type']; messageID: string } | null = null
+
 
   function startTyping(): () => void {
     if (abortController.signal.aborted) {
@@ -692,11 +692,7 @@ export async function handleOpencodeSession({
       }
     }
 
-    const suppressTextPrefix =
-      part.type === 'text' &&
-      lastSentPart?.type === 'text' &&
-      lastSentPart.messageID === part.messageID
-    const content = formatPart(part, undefined, { suppressTextPrefix }) + '\n\n'
+    const content = formatPart(part) + '\n\n'
     if (!content.trim() || content.length === 0) {
       // discordLogger.log(`SKIP: Part ${part.id} has no content`)
       return
@@ -715,8 +711,6 @@ export async function handleOpencodeSession({
     }
     hasSentParts = true
     sentPartIds.add(part.id)
-    lastSentPart = { type: part.type, messageID: part.messageID }
-
     await setPartMessage(part.id, sendResult.id, thread.id)
   }
 
