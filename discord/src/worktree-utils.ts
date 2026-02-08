@@ -533,7 +533,12 @@ export async function mergeWorktree({ worktreeDir, mainRepoDir, worktreeName, on
     return new DirtyWorktreeError()
   }
 
-  // ── Step 2: Squash all commits into one ──
+  // ── Step 2: Squash + Step 3: Rebase ──
+  // If already rebased onto target, skip squash+rebase entirely.
+  // This happens on retry after the model resolved a rebase conflict --
+  // the previous run already squashed, and the model completed the rebase.
+  const alreadyRebased = await isRebasedOnto(worktreeDir, defaultBranch)
+
   const mergeBaseResult = await git(worktreeDir, `merge-base HEAD "${defaultBranch}"`)
   const mergeBase = mergeBaseResult instanceof Error ? defaultBranch : mergeBaseResult
 
@@ -549,40 +554,40 @@ export async function mergeWorktree({ worktreeDir, mainRepoDir, worktreeName, on
     return new NothingToMergeError({ target: defaultBranch })
   }
 
-  // Squash into single commit with full commit messages
-  log(commitCount > 1 ? `Squashing ${commitCount} commits...` : 'Preparing merge commit...')
+  if (!alreadyRebased) {
+    // Squash into single commit with full commit messages
+    log(commitCount > 1 ? `Squashing ${commitCount} commits...` : 'Preparing merge commit...')
 
-  const SEP = '---KIMAKI-COMMIT-SEP---'
-  const logRange = `${mergeBase}..HEAD`
-  const messagesResult = await git(worktreeDir, `log --format="%B${SEP}" --reverse "${logRange}"`)
-  if (messagesResult instanceof Error) {
-    await cleanupTempBranch()
-    return new SquashError({ reason: 'Failed to read commit messages', cause: messagesResult })
-  }
+    const SEP = '---KIMAKI-COMMIT-SEP---'
+    const logRange = `${mergeBase}..HEAD`
+    const messagesResult = await git(worktreeDir, `log --format="%B${SEP}" --reverse "${logRange}"`)
+    if (messagesResult instanceof Error) {
+      await cleanupTempBranch()
+      return new SquashError({ reason: 'Failed to read commit messages', cause: messagesResult })
+    }
 
-  const commitMessages = messagesResult.split(SEP).map((m) => {
-    return m.trim()
-  }).filter(Boolean)
+    const commitMessages = messagesResult.split(SEP).map((m) => {
+      return m.trim()
+    }).filter(Boolean)
 
-  const squashMessage = buildSquashMessage({ branchName: worktreeName || branchName, commitMessages })
+    const squashMessage = buildSquashMessage({ branchName: worktreeName || branchName, commitMessages })
 
-  const resetResult = await git(worktreeDir, `reset --soft "${mergeBase}"`)
-  if (resetResult instanceof Error) {
-    await cleanupTempBranch()
-    return new SquashError({ reason: 'git reset --soft failed', cause: resetResult })
-  }
+    const resetResult = await git(worktreeDir, `reset --soft "${mergeBase}"`)
+    if (resetResult instanceof Error) {
+      await cleanupTempBranch()
+      return new SquashError({ reason: 'git reset --soft failed', cause: resetResult })
+    }
 
-  const commitResult = await errore.tryAsync({
-    try: () => runGitWithStdin(['commit', '-m', squashMessage, '--'], worktreeDir, ''),
-    catch: (e) => new SquashError({ reason: 'git commit failed after reset', cause: e }),
-  })
-  if (commitResult instanceof Error) {
-    await cleanupTempBranch()
-    return commitResult
-  }
+    const commitResult = await errore.tryAsync({
+      try: () => runGitWithStdin(['commit', '-m', squashMessage, '--'], worktreeDir, ''),
+      catch: (e) => new SquashError({ reason: 'git commit failed after reset', cause: e }),
+    })
+    if (commitResult instanceof Error) {
+      await cleanupTempBranch()
+      return commitResult
+    }
 
-  // ── Step 3: Rebase onto target ──
-  if (!await isRebasedOnto(worktreeDir, defaultBranch)) {
+    // Rebase onto target
     log(`Rebasing onto ${defaultBranch}...`)
     const rebaseResult = await git(worktreeDir, `rebase "${defaultBranch}"`, { timeout: 60_000 })
     if (rebaseResult instanceof Error) {
