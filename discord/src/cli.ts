@@ -82,6 +82,87 @@ function stripBracketedPaste(value: string | undefined): string {
   return value.replace(/\x1b\[200~/g, '').replace(/\x1b\[201~/g, '').trim()
 }
 
+function getRawCliOptionValue({ keys }: { keys: string[] }): string | undefined {
+  const index = process.argv.findIndex((arg) => keys.includes(arg))
+  if (index === -1) {
+    return undefined
+  }
+  return process.argv[index + 1]
+}
+
+function isThreadChannelType(type: number): boolean {
+  return [
+    ChannelType.PublicThread,
+    ChannelType.PrivateThread,
+    ChannelType.AnnouncementThread,
+  ].includes(type)
+}
+
+async function sendDiscordMessageWithOptionalAttachment({
+  channelId,
+  prompt,
+  botToken,
+  embeds,
+  rest,
+}: {
+  channelId: string
+  prompt: string
+  botToken: string
+  embeds?: Array<{ color: number; footer: { text: string } }>
+  rest: REST
+}): Promise<{ id: string }> {
+  const discordMaxLength = 2000
+  if (prompt.length <= discordMaxLength) {
+    return (await rest.post(Routes.channelMessages(channelId), {
+      body: { content: prompt, embeds },
+    })) as { id: string }
+  }
+
+  const preview = prompt.slice(0, 100).replace(/\n/g, ' ')
+  const summaryContent = `Prompt attached as file (${prompt.length} chars)\n\n> ${preview}...`
+
+  const tmpDir = path.join(process.cwd(), 'tmp')
+  if (!fs.existsSync(tmpDir)) {
+    fs.mkdirSync(tmpDir, { recursive: true })
+  }
+  const tmpFile = path.join(tmpDir, `prompt-${Date.now()}.md`)
+  fs.writeFileSync(tmpFile, prompt)
+
+  try {
+    const formData = new FormData()
+    formData.append(
+      'payload_json',
+      JSON.stringify({
+        content: summaryContent,
+        attachments: [{ id: 0, filename: 'prompt.md' }],
+        embeds,
+      }),
+    )
+    const buffer = fs.readFileSync(tmpFile)
+    formData.append('files[0]', new Blob([buffer], { type: 'text/markdown' }), 'prompt.md')
+
+    const starterMessageResponse = await fetch(
+      `https://discord.com/api/v10/channels/${channelId}/messages`,
+      {
+        method: 'POST',
+        headers: {
+          Authorization: `Bot ${botToken}`,
+        },
+        body: formData,
+      },
+    )
+
+    if (!starterMessageResponse.ok) {
+      const error = await starterMessageResponse.text()
+      throw new Error(`Discord API error: ${starterMessageResponse.status} - ${error}`)
+    }
+
+    return (await starterMessageResponse.json()) as { id: string }
+  } finally {
+    fs.unlinkSync(tmpFile)
+  }
+}
+
 const EXIT_NO_RESTART = 64
 
 // Detect if a CLI tool is installed, prompt to install if missing.
@@ -1480,7 +1561,7 @@ cli
 cli
   .command(
     'send',
-    'Send a message to Discord channel, creating a thread. Use --notify-only to skip AI session.',
+    'Send a message to a Discord channel/thread. Default creates a thread; use --thread/--session to continue existing.',
   )
   .alias('start-session') // backwards compatibility
   .option('-c, --channel <channelId>', 'Discord channel ID')
@@ -1493,6 +1574,8 @@ cli
   .option('-u, --user <username>', 'Discord username to add to thread')
   .option('--agent <agent>', 'Agent to use for the session')
   .option('--model <model>', 'Model to use (format: provider/model)')
+  .option('--thread <threadId>', 'Post prompt to an existing thread')
+  .option('--session <sessionId>', 'Post prompt to thread mapped to an existing session')
   .action(
     async (options: {
       channel?: string
@@ -1505,31 +1588,95 @@ cli
       user?: string
       agent?: string
       model?: string
+      thread?: string
+      session?: string
     }) => {
       try {
-        let { channel: channelId, prompt, name, appId: optionAppId, notifyOnly } = options
+        let {
+          channel: channelId,
+          prompt,
+          name,
+          appId: optionAppId,
+          notifyOnly,
+          thread: threadId,
+          session: sessionId,
+        } = options
         const { project: projectPath } = options
 
         // Get raw channel ID from argv to prevent JS number precision loss on large Discord IDs
         // cac parses large numbers and loses precision, so we extract the original string value
         if (channelId) {
-          const channelArgIndex = process.argv.findIndex((arg) => arg === '--channel' || arg === '-c')
-          if (channelArgIndex !== -1 && process.argv[channelArgIndex + 1]) {
-            channelId = process.argv[channelArgIndex + 1]
+          const rawChannelId = getRawCliOptionValue({ keys: ['--channel', '-c'] })
+          if (rawChannelId) {
+            channelId = rawChannelId
           }
         }
 
+        if (threadId) {
+          const rawThreadId = getRawCliOptionValue({ keys: ['--thread'] })
+          if (rawThreadId) {
+            threadId = rawThreadId
+          }
+        }
+
+        if (sessionId) {
+          const rawSessionId = getRawCliOptionValue({ keys: ['--session'] })
+          if (rawSessionId) {
+            sessionId = rawSessionId
+          }
+        }
+
+        const existingThreadMode = Boolean(threadId || sessionId)
+
+        if (threadId && sessionId) {
+          cliLogger.error('Use either --thread or --session, not both')
+          process.exit(EXIT_NO_RESTART)
+        }
+
+        if (existingThreadMode && (channelId || projectPath)) {
+          cliLogger.error('Cannot combine --thread/--session with --channel/--project')
+          process.exit(EXIT_NO_RESTART)
+        }
+
         // Default to current directory if neither --channel nor --project provided
-        const resolvedProjectPath = projectPath || (!channelId ? '.' : undefined)
+        const resolvedProjectPath = existingThreadMode
+          ? undefined
+          : projectPath || (!channelId ? '.' : undefined)
 
         if (!prompt) {
           cliLogger.error('Prompt is required. Use --prompt <prompt>')
           process.exit(EXIT_NO_RESTART)
         }
 
-        if (options.worktree && notifyOnly) {
+        if (!existingThreadMode && options.worktree && notifyOnly) {
           cliLogger.error('Cannot use --worktree with --notify-only')
           process.exit(EXIT_NO_RESTART)
+        }
+
+        if (existingThreadMode) {
+          const incompatibleFlags: string[] = []
+          if (notifyOnly) {
+            incompatibleFlags.push('--notify-only')
+          }
+          if (options.worktree) {
+            incompatibleFlags.push('--worktree')
+          }
+          if (name) {
+            incompatibleFlags.push('--name')
+          }
+          if (options.user) {
+            incompatibleFlags.push('--user')
+          }
+          if (options.agent) {
+            incompatibleFlags.push('--agent')
+          }
+          if (options.model) {
+            incompatibleFlags.push('--model')
+          }
+          if (incompatibleFlags.length > 0) {
+            cliLogger.error(`Incompatible options with --thread/--session: ${incompatibleFlags.join(', ')}`)
+            process.exit(EXIT_NO_RESTART)
+          }
         }
 
       // Get bot token from env var or database
@@ -1691,13 +1838,73 @@ cli
         }
       }
 
+      const rest = new REST().setToken(botToken)
+
+      if (existingThreadMode) {
+        const targetThreadId = await (async (): Promise<string> => {
+          if (threadId) {
+            return threadId
+          }
+          if (!sessionId) {
+            throw new Error('Thread ID not resolved')
+          }
+          const resolvedThreadId = await getThreadIdBySessionId(sessionId)
+          if (!resolvedThreadId) {
+            throw new Error(`No Discord thread found for session: ${sessionId}`)
+          }
+          return resolvedThreadId
+        })()
+
+        const threadData = (await rest.get(Routes.channel(targetThreadId))) as {
+          id: string
+          name: string
+          type: number
+          parent_id?: string
+          guild_id: string
+        }
+
+        if (!isThreadChannelType(threadData.type)) {
+          throw new Error(`Channel is not a thread: ${targetThreadId}`)
+        }
+
+        if (!threadData.parent_id) {
+          throw new Error(`Thread has no parent channel: ${targetThreadId}`)
+        }
+
+        const channelConfig = await getChannelDirectory(threadData.parent_id)
+        if (!channelConfig) {
+          throw new Error('Thread parent channel is not configured with a project directory')
+        }
+
+        const channelAppId = channelConfig.appId || undefined
+        if (channelAppId && appId && channelAppId !== appId) {
+          throw new Error(
+            `Thread belongs to a different bot (expected: ${appId}, got: ${channelAppId})`,
+          )
+        }
+
+        const threadPromptMarker: ThreadStartMarker = { cliThreadPrompt: true }
+        const promptEmbed = [{ color: 0x2b2d31, footer: { text: yaml.dump(threadPromptMarker) } }]
+
+        await sendDiscordMessageWithOptionalAttachment({
+          channelId: targetThreadId,
+          prompt,
+          botToken,
+          embeds: promptEmbed,
+          rest,
+        })
+
+        const threadUrl = `https://discord.com/channels/${threadData.guild_id}/${threadData.id}`
+        note(`Prompt sent to thread: ${threadData.name}\n\nURL: ${threadUrl}`, '✅ Message Sent')
+        cliLogger.log(threadUrl)
+        process.exit(0)
+      }
+
       cliLogger.log('Fetching channel info...')
 
       if (!channelId) {
         throw new Error('Channel ID not resolved')
       }
-
-      const rest = new REST().setToken(botToken)
 
       // Get channel info to extract directory from topic
       const channelData = (await rest.get(Routes.channel(channelId))) as {
@@ -1756,11 +1963,6 @@ cli
 
       cliLogger.log('Creating starter message...')
 
-      // Discord has a 2000 character limit for messages.
-      // If prompt exceeds this, send it as a file attachment instead.
-      const DISCORD_MAX_LENGTH = 2000
-      let starterMessage: { id: string }
-
       // Compute thread name and worktree name early (needed for embed)
       const cleanPrompt = stripMentions(prompt)
       const baseThreadName = name || (cleanPrompt.length > 80 ? cleanPrompt.slice(0, 77) + '...' : cleanPrompt)
@@ -1786,62 +1988,13 @@ cli
         ? [{ color: 0x2b2d31, footer: { text: yaml.dump(embedMarker) } }]
         : undefined
 
-      if (prompt.length > DISCORD_MAX_LENGTH) {
-        // Send as file attachment with a short summary
-        const preview = prompt.slice(0, 100).replace(/\n/g, ' ')
-        const summaryContent = `📄 **Prompt attached as file** (${prompt.length} chars)\n\n> ${preview}...`
-
-        // Write prompt to a temp file
-        const tmpDir = path.join(process.cwd(), 'tmp')
-        if (!fs.existsSync(tmpDir)) {
-          fs.mkdirSync(tmpDir, { recursive: true })
-        }
-        const tmpFile = path.join(tmpDir, `prompt-${Date.now()}.md`)
-        fs.writeFileSync(tmpFile, prompt)
-
-        try {
-          // Using raw fetch for file uploads because discord.js REST client
-          // doesn't handle FormData/multipart file attachments correctly
-          const formData = new FormData()
-          formData.append(
-            'payload_json',
-            JSON.stringify({
-              content: summaryContent,
-              attachments: [{ id: 0, filename: 'prompt.md' }],
-              embeds: autoStartEmbed,
-            }),
-          )
-          const buffer = fs.readFileSync(tmpFile)
-          formData.append('files[0]', new Blob([buffer], { type: 'text/markdown' }), 'prompt.md')
-
-          const starterMessageResponse = await fetch(
-            `https://discord.com/api/v10/channels/${channelId}/messages`,
-            {
-              method: 'POST',
-              headers: {
-                Authorization: `Bot ${botToken}`,
-              },
-              body: formData,
-            },
-          )
-
-          if (!starterMessageResponse.ok) {
-            const error = await starterMessageResponse.text()
-            cliLogger.log('Failed to create message')
-            throw new Error(`Discord API error: ${starterMessageResponse.status} - ${error}`)
-          }
-
-          starterMessage = (await starterMessageResponse.json()) as { id: string }
-        } finally {
-          // Clean up temp file
-          fs.unlinkSync(tmpFile)
-        }
-      } else {
-        // Normal case: send prompt inline
-        starterMessage = (await rest.post(Routes.channelMessages(channelId), {
-          body: { content: prompt, embeds: autoStartEmbed },
-        })) as { id: string }
-      }
+      const starterMessage = await sendDiscordMessageWithOptionalAttachment({
+        channelId,
+        prompt,
+        botToken,
+        embeds: autoStartEmbed,
+        rest,
+      })
 
       cliLogger.log('Creating thread...')
 

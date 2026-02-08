@@ -199,6 +199,12 @@ npx -y kimaki upload-to-discord --session <session-id> <file1> [file2...]
 # Start a session programmatically (useful for CI/automation)
 npx -y kimaki send --channel <channel-id> --prompt "your prompt"
 
+# Continue an existing thread by ID
+npx -y kimaki send --thread <thread-id> --prompt "follow-up prompt"
+
+# Continue a thread by mapped session ID
+npx -y kimaki send --session <session-id> --prompt "follow-up prompt"
+
 # Start a session in an isolated git worktree
 npx -y kimaki send --channel <channel-id> --prompt "your prompt" --worktree feature-name
 
@@ -255,7 +261,12 @@ npx -y kimaki send \
   --app-id <app-id>       # Optional: Bot application ID for validation
   --notify-only           # Optional: Create notification thread without starting AI session
   --worktree <name>       # Optional: Create git worktree for isolated session
+  --thread <thread-id>    # Optional: Send prompt to existing thread (no new thread)
+  --session <session-id>  # Optional: Resolve thread from session and send prompt
 ```
+
+Use either `--channel/--project` (create new thread) or `--thread/--session`
+(send to existing thread), not both.
 
 ### Example: GitHub Actions on New Issues
 
