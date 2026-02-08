@@ -75,3 +75,5 @@ never call `getKimakiMetadata` + manual `getThreadWorktree` check in commands. t
 always try to use logger instead of console. so logs in the cli look uniform and pretty
 
 for the log prefixes always use short names
+
+for checkout validation requests, prefer non-recursive checks unless the user asks otherwise.
