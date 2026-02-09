@@ -2,7 +2,7 @@
 // Main CLI entrypoint for the Kimaki Discord bot.
 // Handles interactive setup, Discord OAuth, slash command registration,
 // project channel creation, and launching the bot with opencode integration.
-import { cac } from '@xmorse/cac'
+import { goke } from 'goke'
 import {
   intro,
   outro,
@@ -80,14 +80,6 @@ function stripBracketedPaste(value: string | undefined): string {
     return ''
   }
   return value.replace(/\x1b\[200~/g, '').replace(/\x1b\[201~/g, '').trim()
-}
-
-function getRawCliOptionValue({ keys }: { keys: string[] }): string | undefined {
-  const index = process.argv.findIndex((arg) => keys.includes(arg))
-  if (index === -1) {
-    return undefined
-  }
-  return process.argv[index + 1]
 }
 
 function isThreadChannelType(type: number): boolean {
@@ -308,7 +300,7 @@ function startCaffeinate() {
     cliLogger.warn('Failed to spawn caffeinate:', err instanceof Error ? err.message : String(err))
   }
 }
-const cli = cac('kimaki')
+const cli = goke('kimaki')
 
 process.title = 'kimaki'
 
@@ -1603,29 +1595,6 @@ cli
         } = options
         const { project: projectPath } = options
 
-        // Get raw channel ID from argv to prevent JS number precision loss on large Discord IDs
-        // cac parses large numbers and loses precision, so we extract the original string value
-        if (channelId) {
-          const rawChannelId = getRawCliOptionValue({ keys: ['--channel', '-c'] })
-          if (rawChannelId) {
-            channelId = rawChannelId
-          }
-        }
-
-        if (threadId) {
-          const rawThreadId = getRawCliOptionValue({ keys: ['--thread'] })
-          if (rawThreadId) {
-            threadId = rawThreadId
-          }
-        }
-
-        if (sessionId) {
-          const rawSessionId = getRawCliOptionValue({ keys: ['--session'] })
-          if (rawSessionId) {
-            sessionId = rawSessionId
-          }
-        }
-
         const existingThreadMode = Boolean(threadId || sessionId)
 
         if (threadId && sessionId) {
@@ -2116,10 +2085,7 @@ cli
         // Find guild
         let guild: Guild
         if (options.guild) {
-          // Get raw guild ID from argv to avoid cac's number coercion losing precision on large IDs
-          const guildArgIndex = process.argv.findIndex((arg) => arg === '-g' || arg === '--guild')
-          const rawGuildArg = guildArgIndex >= 0 ? process.argv[guildArgIndex + 1] : undefined
-          const guildId = rawGuildArg || String(options.guild)
+          const guildId = String(options.guild)
           const foundGuild = client.guilds.cache.get(guildId)
           if (!foundGuild) {
             cliLogger.log('Guild not found')

@@ -42,13 +42,13 @@
     "@prisma/adapter-libsql": "^7.3.0",
     "@prisma/client": "^7.3.0",
     "@purinton/resampler": "^1.0.4",
-    "@xmorse/cac": "^6.0.7",
     "ai": "^5.0.114",
     "diff": "^8.0.3",
     "discord.js": "^14.25.1",
     "domhandler": "^5.0.3",
     "errore": "workspace:^",
     "glob": "^13.0.0",
+    "goke": "^6.1.1",
     "htmlparser2": "^10.0.0",
     "js-yaml": "^4.1.0",
     "marked": "^16.3.0",
@@ -60,7 +60,7 @@
     "traforo": "workspace:*",
     "undici": "^7.16.0",
     "xdg-basedir": "^5.1.0",
-    "zod": "^4.2.1"
+    "zod": "^4.3.6"
   },
   "optionalDependencies": {
     "@discordjs/opus": "^0.10.0",
