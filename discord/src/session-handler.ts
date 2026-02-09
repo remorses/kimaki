@@ -101,6 +101,20 @@ export const pendingPermissions = new Map<
   > // permissionId -> data
 >()
 
+async function removeBotErrorReaction({ message }: { message: Message }): Promise<void> {
+  const botUserId = message.client.user?.id
+  if (!botUserId) {
+    return
+  }
+  const errorReaction = message.reactions.cache.find((reaction) => {
+    return reaction.emoji.name === '❌'
+  })
+  if (!errorReaction) {
+    return
+  }
+  await errorReaction.users.remove(botUserId)
+}
+
 function buildPermissionDedupeKey({
   permission,
   directory,
@@ -1060,7 +1074,6 @@ export async function handleOpencodeSession({
         return
       }
       const reactionResult = await errore.tryAsync(async () => {
-        await originalMessage.reactions.removeAll()
         await originalMessage.react('❌')
       })
       if (reactionResult instanceof Error) {
@@ -1669,8 +1682,7 @@ export async function handleOpencodeSession({
 
     if (originalMessage) {
       const reactionResult = await errore.tryAsync(async () => {
-        await originalMessage.reactions.removeAll()
-        await originalMessage.react('✅')
+        await removeBotErrorReaction({ message: originalMessage })
       })
       if (reactionResult instanceof Error) {
         discordLogger.log(`Could not update reactions:`, reactionResult)
@@ -1704,7 +1716,6 @@ export async function handleOpencodeSession({
 
   if (originalMessage) {
     const reactionResult = await errore.tryAsync(async () => {
-      await originalMessage.reactions.removeAll()
       await originalMessage.react('❌')
     })
     if (reactionResult instanceof Error) {
