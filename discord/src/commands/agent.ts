@@ -11,7 +11,7 @@ import {
   type TextChannel,
 } from 'discord.js'
 import crypto from 'node:crypto'
-import { setChannelAgent, setSessionAgent, clearSessionModel, getThreadSession } from '../database.js'
+import { setChannelAgent, setSessionAgent, clearSessionModel, getThreadSession, getSessionAgent, getChannelAgent } from '../database.js'
 import { initializeOpencodeForDirectory } from '../opencode.js'
 import { resolveTextChannel, getKimakiMetadata } from '../discord-utils.js'
 import { createLogger, LogPrefix } from '../logger.js'
@@ -37,6 +37,37 @@ export type AgentCommandContext = {
   channelId: string
   sessionId?: string
   isThread: boolean
+}
+
+export type CurrentAgentInfo =
+  | { type: 'session'; agent: string }
+  | { type: 'channel'; agent: string }
+  | { type: 'none' }
+
+/**
+ * Get the current agent info for a channel/session, including where it comes from.
+ * Priority: session > channel > none
+ */
+export async function getCurrentAgentInfo({
+  sessionId,
+  channelId,
+}: {
+  sessionId?: string
+  channelId?: string
+}): Promise<CurrentAgentInfo> {
+  if (sessionId) {
+    const sessionAgent = await getSessionAgent(sessionId)
+    if (sessionAgent) {
+      return { type: 'session', agent: sessionAgent }
+    }
+  }
+  if (channelId) {
+    const channelAgent = await getChannelAgent(channelId)
+    if (channelAgent) {
+      return { type: 'channel', agent: channelAgent }
+    }
+  }
+  return { type: 'none' }
 }
 
 /**
@@ -183,6 +214,22 @@ export async function handleAgentCommand({
       return
     }
 
+    const currentAgentInfo = await getCurrentAgentInfo({
+      sessionId: context.sessionId,
+      channelId: context.channelId,
+    })
+
+    const currentAgentText = (() => {
+      switch (currentAgentInfo.type) {
+        case 'session':
+          return `**Current (session override):** \`${currentAgentInfo.agent}\``
+        case 'channel':
+          return `**Current (channel override):** \`${currentAgentInfo.agent}\``
+        case 'none':
+          return '**Current:** none'
+      }
+    })()
+
     const contextHash = crypto.randomBytes(8).toString('hex')
     pendingAgentContexts.set(contextHash, context)
 
@@ -200,7 +247,7 @@ export async function handleAgentCommand({
     const actionRow = new ActionRowBuilder<StringSelectMenuBuilder>().addComponents(selectMenu)
 
     await interaction.editReply({
-      content: '**Set Agent Preference**\nSelect an agent:',
+      content: `**Set Agent Preference**\n${currentAgentText}\nSelect an agent:`,
       components: [actionRow],
     })
   } catch (error) {
