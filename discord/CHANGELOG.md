@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.4.60
+
+### Patch Changes
+
+- feat: **show current agent** in /agent command reply
+- fix: **harden schema migration** SQL parsing to prevent startup crashes on malformed SQL
+- fix: **keep only error reaction** on thread messages to reduce visual noise
+- refactor: **reuse thread archive flow** in CLI and plugin for consistent behavior
+- chore: **migrate CLI parser** to goke for better argument handling
+
 ## 0.4.59
 
 ### Patch Changes
