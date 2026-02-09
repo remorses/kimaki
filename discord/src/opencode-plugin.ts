@@ -26,7 +26,7 @@ import { REST, Routes } from 'discord.js'
 import * as errore from 'errore'
 import { getPrisma } from './database.js'
 import { setDataDir } from './config.js'
-import { reactToThread } from './discord-utils.js'
+import { archiveThread, reactToThread } from './discord-utils.js'
 
 // Regex to match emoji characters (covers most common emojis)
 // Includes: emoji presentation sequences, skin tone modifiers, ZWJ sequences, regional indicators
@@ -270,42 +270,13 @@ const kimakiPlugin: Plugin = async () => {
             return 'Could not find thread for current session'
           }
 
-          // React with folder emoji on the thread starter message
-          await reactToThread({ rest, threadId: row.thread_id, emoji: '📁' })
-
-          // Update session title with folder emoji prefix
-          if (client) {
-            const updateResult = await errore.tryAsync({
-              try: async () => {
-                const sessionResponse = await client.session.get({
-                  path: { id: context.sessionID },
-                })
-                if (sessionResponse.data) {
-                  const currentTitle = sessionResponse.data.title || ''
-                  const newTitle = currentTitle.startsWith('📁')
-                    ? currentTitle
-                    : `📁 ${currentTitle}`.trim()
-                  await client.session.update({
-                    path: { id: context.sessionID },
-                    body: { title: newTitle },
-                  })
-                }
-              },
-              catch: (e) => new Error('Failed to update session title', { cause: e }),
-            })
-            if (errore.isError(updateResult)) {
-              console.warn(`[kimaki_archive_thread] ${updateResult.message}`)
-            }
-          }
-
-          await client?.session.abort({ path: { id: context.sessionID } })
-
-          // close after we sent completed message
-          setTimeout(async () => {
-            await rest.patch(Routes.channel(row.thread_id), {
-              body: { archived: true },
-            })
-          }, 2000)
+          await archiveThread({
+            rest,
+            threadId: row.thread_id,
+            sessionId: context.sessionID,
+            client,
+            archiveDelay: 2000,
+          })
 
           return 'Thread archived and session stopped'
         },

@@ -58,7 +58,7 @@ import fs from 'node:fs'
 import * as errore from 'errore'
 
 import { createLogger, LogPrefix } from './logger.js'
-import { uploadFilesToDiscord, stripMentions } from './discord-utils.js'
+import { archiveThread, uploadFilesToDiscord, stripMentions } from './discord-utils.js'
 import { spawn, spawnSync, execSync, type ExecSyncOptions } from 'node:child_process'
 import http from 'node:http'
 import { setDataDir, getDataDir, getLockPort, setDefaultVerbosity, setDefaultMentionMode, getProjectsDir } from './config.js'
@@ -2495,6 +2495,70 @@ cli
       // Print to stdout so it can be piped: kimaki session read <id> > ./tmp/session.md
       process.stdout.write(result)
 
+      process.exit(0)
+    } catch (error) {
+      cliLogger.error('Error:', error instanceof Error ? error.message : String(error))
+      process.exit(EXIT_NO_RESTART)
+    }
+  })
+
+cli
+  .command('session archive <threadId>', 'Archive a Discord thread and stop its mapped OpenCode session')
+  .action(async (threadId: string) => {
+    try {
+      await initDatabase()
+
+      const envToken = process.env.KIMAKI_BOT_TOKEN
+      const botToken = envToken || (await getBotToken())?.token
+
+      if (!botToken) {
+        cliLogger.error(
+          'No bot token found. Set KIMAKI_BOT_TOKEN env var or run `kimaki` first to set up.',
+        )
+        process.exit(EXIT_NO_RESTART)
+      }
+
+      const rest = new REST().setToken(botToken)
+      const threadData = (await rest.get(Routes.channel(threadId))) as {
+        id: string
+        type: number
+        name?: string
+        parent_id?: string
+      }
+
+      if (!isThreadChannelType(threadData.type)) {
+        cliLogger.error(`Channel is not a thread: ${threadId}`)
+        process.exit(EXIT_NO_RESTART)
+      }
+
+      const sessionId = await getThreadSession(threadId)
+      let client: OpencodeClient | null = null
+      if (sessionId && threadData.parent_id) {
+        const channelConfig = await getChannelDirectory(threadData.parent_id)
+        if (!channelConfig) {
+          cliLogger.warn(`No channel directory mapping found for parent channel ${threadData.parent_id}`)
+        } else {
+          const getClient = await initializeOpencodeForDirectory(channelConfig.directory)
+          if (getClient instanceof Error) {
+            cliLogger.warn(`Could not initialize OpenCode for ${channelConfig.directory}: ${getClient.message}`)
+          } else {
+            client = getClient()
+          }
+        }
+      } else {
+        cliLogger.warn(`No mapped OpenCode session found for thread ${threadId}`)
+      }
+
+      await archiveThread({
+        rest,
+        threadId,
+        parentChannelId: threadData.parent_id,
+        sessionId,
+        client,
+      })
+
+      const threadLabel = threadData.name || threadId
+      note(`Archived thread: ${threadLabel}\nThread ID: ${threadId}`, '✅ Archived')
       process.exit(0)
     } catch (error) {
       cliLogger.error('Error:', error instanceof Error ? error.message : String(error))

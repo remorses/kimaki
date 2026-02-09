@@ -4,6 +4,7 @@
 
 import { ChannelType, MessageFlags, PermissionsBitField, type GuildMember, type Message, type TextChannel, type ThreadChannel } from 'discord.js'
 import { REST, Routes } from 'discord.js'
+import type { OpencodeClient } from '@opencode-ai/sdk'
 import { Lexer } from 'marked'
 import { splitTablesFromMarkdown } from './format-tables.js'
 import { getChannelDirectory, getThreadWorktree } from './database.js'
@@ -102,6 +103,76 @@ export async function reactToThread({
   if (result instanceof Error) {
     discordLogger.warn(`Failed to react to thread ${threadId} with ${emoji}:`, result.message)
   }
+}
+
+export async function archiveThread({
+  rest,
+  threadId,
+  parentChannelId,
+  sessionId,
+  client,
+  archiveDelay = 0,
+}: {
+  rest: REST
+  threadId: string
+  parentChannelId?: string
+  sessionId?: string
+  client?: OpencodeClient | null
+  archiveDelay?: number
+}): Promise<void> {
+  await reactToThread({
+    rest,
+    threadId,
+    channelId: parentChannelId,
+    emoji: '📁',
+  })
+
+  if (client && sessionId) {
+    const updateResult = await errore.tryAsync({
+      try: async () => {
+        const sessionResponse = await client.session.get({
+          path: { id: sessionId },
+        })
+        if (!sessionResponse.data) {
+          return
+        }
+        const currentTitle = sessionResponse.data.title || ''
+        const newTitle = currentTitle.startsWith('📁')
+          ? currentTitle
+          : `📁 ${currentTitle}`.trim()
+        await client.session.update({
+          path: { id: sessionId },
+          body: { title: newTitle },
+        })
+      },
+      catch: (e) => new Error('Failed to update session title', { cause: e }),
+    })
+    if (updateResult instanceof Error) {
+      discordLogger.warn(`[archive-thread] ${updateResult.message}`)
+    }
+
+    const abortResult = await errore.tryAsync({
+      try: async () => {
+        await client.session.abort({ path: { id: sessionId } })
+      },
+      catch: (e) => new Error('Failed to abort session', { cause: e }),
+    })
+    if (abortResult instanceof Error) {
+      discordLogger.warn(`[archive-thread] ${abortResult.message}`)
+    }
+  }
+
+  if (archiveDelay > 0) {
+    await new Promise<void>((resolve) => {
+      setTimeout(() => {
+        resolve()
+      }, archiveDelay)
+    })
+  }
+
+  await rest.patch(Routes.channel(threadId), {
+    body: { archived: true },
+  })
 }
 
 /** Remove Discord mentions from text so they don't appear in thread titles */

@@ -12,6 +12,9 @@ function createCliForIdParsing() {
     .option('--session <sessionId>', 'Session ID')
 
   cli
+    .command('session archive <threadId>', 'Archive a thread')
+
+  cli
     .command('add-project', 'Add a project')
     .option('-g, --guild <guildId>', 'Discord guild/server ID')
 
@@ -46,5 +49,17 @@ describe('goke CLI ID parsing', () => {
 
     expect(result.options.guild).toBe(guildId)
     expect(typeof result.options.guild).toBe('string')
+  })
+
+  test('keeps session archive thread ID as string', () => {
+    const cli = createCliForIdParsing()
+    const threadId = '0098765432109876543'
+
+    const result = cli.parse(['node', 'kimaki', 'session', 'archive', threadId], {
+      run: false,
+    })
+
+    expect(result.args[0]).toBe(threadId)
+    expect(typeof result.args[0]).toBe('string')
   })
 })
