@@ -88,8 +88,8 @@ importers:
         specifier: ^13.0.0
         version: 13.0.0
       goke:
-        specifier: ^6.1.1
-        version: 6.1.1
+        specifier: ^6.1.2
+        version: 6.1.2
       htmlparser2:
         specifier: ^10.0.0
         version: 10.0.0
@@ -1763,8 +1763,8 @@ packages:
     resolution: {integrity: sha512-nFR0zLpU2YCaRxwoCJvL6UvCH2JFyFVIvwTLsIf21AuHlMskA1hhTdk+LlYJtOlYt9v6dvszD2BGRqBL+iQK9Q==}
     deprecated: Old versions of glob are not supported, and contain widely publicized security vulnerabilities, which have been fixed in the current version. Please update. Support for old versions may be purchased (at exorbitant rates) by contacting i@izs.me
 
-  goke@6.1.1:
-    resolution: {integrity: sha512-rS02JY5pnqmGCQTgUb5sKMEMZilMvy4NS1j7GzPNGSLzUejFsTmEzv/fwiaYsoXKSWetfbbbcEmtuU1rXTZr9w==}
+  goke@6.1.2:
+    resolution: {integrity: sha512-DZAr2p9lEF9u2TV+GxS1wrc4ffxjoqNSKlBzvWbemeVxcxpju3qwKvMUC/fsoshan587zqH4d+qAceiU71Lpwg==}
     engines: {node: '>=18'}
 
   google-auth-library@10.5.0:
@@ -4137,7 +4137,7 @@ snapshots:
       path-is-absolute: 1.0.1
     optional: true
 
-  goke@6.1.1:
+  goke@6.1.2:
     dependencies:
       picocolors: 1.1.1
 
