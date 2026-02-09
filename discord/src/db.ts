@@ -66,8 +66,17 @@ async function migrateSchema(prisma: PrismaClient): Promise<void> {
   const sql = fs.readFileSync(schemaPath, 'utf-8')
   const statements = sql
     .split(';')
-    .map((statement) => statement.trim())
-    .filter(Boolean)
+    .map((s) =>
+      s
+        .split('\n')
+        .filter((line) => !line.trimStart().startsWith('--'))
+        .join('\n')
+        .trim(),
+    )
+    .filter((s) => s.length > 0 && !/^CREATE\s+TABLE\s+["']?sqlite_sequence["']?\s*\(/i.test(s))
+    // Make CREATE INDEX idempotent
+    .map((s) => s.replace(/^CREATE\s+UNIQUE\s+INDEX\b(?!\s+IF)/i, 'CREATE UNIQUE INDEX IF NOT EXISTS')
+                 .replace(/^CREATE\s+INDEX\b(?!\s+IF)/i, 'CREATE INDEX IF NOT EXISTS'))
   for (const statement of statements) {
     await prisma.$executeRawUnsafe(statement)
   }
