@@ -623,6 +623,64 @@ export async function handleOpencodeSession({
     sessionLogger.log(`[FILE-UPLOAD] Cancelled pending file upload due to new message`)
   }
 
+  // Snapshot model+agent early so user changes (e.g. /agent) during the async gap
+  // (debounce, previous handler wait, event subscribe) don't affect this request.
+  // The model chosen at message-send time is the one used for the prompt.
+  const earlyAgentResult = await errore.tryAsync(() => {
+    return resolveValidatedAgentPreference({
+      agent,
+      sessionId: session.id,
+      channelId,
+      getClient,
+    })
+  })
+  if (earlyAgentResult instanceof Error) {
+    await sendThreadMessage(thread, `Failed to resolve agent: ${earlyAgentResult.message}`)
+    return
+  }
+  const earlyAgentPreference = earlyAgentResult
+  if (earlyAgentPreference) {
+    sessionLogger.log(`[AGENT] Resolved agent preference early: ${earlyAgentPreference}`)
+  }
+
+  const earlyModelResult = await errore.tryAsync(async () => {
+    if (model) {
+      const [providerID, ...modelParts] = model.split('/')
+      const modelID = modelParts.join('/')
+      if (providerID && modelID) {
+        sessionLogger.log(`[MODEL] Using explicit model (early): ${model}`)
+        return { providerID, modelID }
+      }
+    }
+    const channelInfo = channelId ? await getChannelDirectory(channelId) : undefined
+    const resolvedAppId = channelInfo?.appId ?? appId
+    const modelInfo = await getCurrentModelInfo({
+      sessionId: session.id,
+      channelId,
+      appId: resolvedAppId,
+      agentPreference: earlyAgentPreference,
+      getClient,
+    })
+    if (modelInfo.type === 'none') {
+      sessionLogger.log(`[MODEL] No model available (early resolution)`)
+      return undefined
+    }
+    sessionLogger.log(`[MODEL] Resolved ${modelInfo.type} early: ${modelInfo.model}`)
+    return { providerID: modelInfo.providerID, modelID: modelInfo.modelID }
+  })
+  if (earlyModelResult instanceof Error) {
+    await sendThreadMessage(thread, `Failed to resolve model: ${earlyModelResult.message}`)
+    return
+  }
+  const earlyModelParam = earlyModelResult
+  if (!earlyModelParam) {
+    await sendThreadMessage(
+      thread,
+      'No AI provider connected. Configure a provider in OpenCode with `/connect` command.',
+    )
+    return
+  }
+
   const abortController = new AbortController()
   abortControllers.set(session.id, abortController)
 
@@ -1615,52 +1673,9 @@ export async function handleOpencodeSession({
     ]
     sessionLogger.log(`[PROMPT] Parts to send:`, parts.length)
 
-    const agentPreference = await resolveValidatedAgentPreference({
-      agent,
-      sessionId: session.id,
-      channelId,
-      getClient,
-    })
-    if (agentPreference) {
-      sessionLogger.log(`[AGENT] Using agent preference: ${agentPreference}`)
-    }
-
-    // Model priority: explicit model param > session model > agent model > channel model > global model > default
-    const modelParam = await (async (): Promise<{ providerID: string; modelID: string } | undefined> => {
-      // Use explicit model override if provided
-      if (model) {
-        const [providerID, ...modelParts] = model.split('/')
-        const modelID = modelParts.join('/')
-        if (providerID && modelID) {
-          sessionLogger.log(`[MODEL] Using explicit model: ${model}`)
-          return { providerID, modelID }
-        }
-      }
-
-      // Fall back to model info resolution
-      const channelInfo = channelId ? await getChannelDirectory(channelId) : undefined
-      const resolvedAppId = channelInfo?.appId ?? appId
-      const modelInfo = await getCurrentModelInfo({
-        sessionId: session.id,
-        channelId,
-        appId: resolvedAppId,
-        agentPreference,
-        getClient,
-      })
-      if (modelInfo.type === 'none') {
-        sessionLogger.log(`[MODEL] No model available (no preference, no default)`)
-        return undefined
-      }
-      sessionLogger.log(`[MODEL] Using ${modelInfo.type}: ${modelInfo.model}`)
-      return { providerID: modelInfo.providerID, modelID: modelInfo.modelID }
-    })()
-
-    // Fail early if no model available
-    if (!modelParam) {
-      throw new Error(
-        'No AI provider connected. Configure a provider in OpenCode with `/connect` command.',
-      )
-    }
+    // Use model+agent snapshotted at message arrival (before debounce/subscribe gap)
+    const agentPreference = earlyAgentPreference
+    const modelParam = earlyModelParam
 
     // Build worktree info for system message (worktreeInfo was fetched at the start)
     const worktree: WorktreeInfo | undefined =
