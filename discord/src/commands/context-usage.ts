@@ -10,6 +10,20 @@ import * as errore from 'errore'
 
 const logger = createLogger(LogPrefix.SESSION)
 
+function getTokenTotal({
+  input,
+  output,
+  reasoning,
+  cache,
+}: {
+  input: number
+  output: number
+  reasoning: number
+  cache: { read: number; write: number }
+}): number {
+  return input + output + reasoning + cache.read + cache.write
+}
+
 export async function handleContextUsageCommand({ command }: CommandContext): Promise<void> {
   const channel = command.channel
 
@@ -89,17 +103,19 @@ export async function handleContextUsageCommand({ command }: CommandContext): Pr
       return
     }
 
-    const lastAssistant = assistantMessages[assistantMessages.length - 1]!
-    if (lastAssistant.info.role !== 'assistant') {
-      await command.editReply({
-        content: 'No assistant messages in this session yet',
+    const lastAssistant = [...assistantMessages]
+      .reverse()
+      .find((m) => {
+        if (m.info.role !== 'assistant') {
+          return false
+        }
+        if (!('tokens' in m.info) || !m.info.tokens) {
+          return false
+        }
+        return getTokenTotal(m.info.tokens) > 0
       })
-      return
-    }
 
-    // Defensive check: tokens field may be missing on old/malformed messages
-    // (same guard as session-handler.ts:1484)
-    if (!('tokens' in lastAssistant.info) || !lastAssistant.info.tokens) {
+    if (!lastAssistant || lastAssistant.info.role !== 'assistant') {
       await command.editReply({
         content: 'Token usage not available for this session yet',
       })
@@ -107,12 +123,7 @@ export async function handleContextUsageCommand({ command }: CommandContext): Pr
     }
 
     const { tokens, modelID, providerID } = lastAssistant.info
-    const totalTokens =
-      tokens.input +
-      tokens.output +
-      tokens.reasoning +
-      tokens.cache.read +
-      tokens.cache.write
+    const totalTokens = getTokenTotal(tokens)
 
     // Sum cost across all assistant messages for accurate session total
     // (AssistantMessage.cost is per-message, not cumulative)
