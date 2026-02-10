@@ -1599,6 +1599,7 @@ cli
   .option('--model <model>', 'Model to use (format: provider/model)')
   .option('--thread <threadId>', 'Post prompt to an existing thread')
   .option('--session <sessionId>', 'Post prompt to thread mapped to an existing session')
+  .option('--wait', 'Wait for session to complete, then print session text to stdout')
   .action(
     async (options: {
       channel?: string
@@ -1613,6 +1614,7 @@ cli
       model?: string
       thread?: string
       session?: string
+      wait?: boolean
     }) => {
       try {
         let {
@@ -1650,6 +1652,11 @@ cli
 
         if (!existingThreadMode && options.worktree && notifyOnly) {
           cliLogger.error('Cannot use --worktree with --notify-only')
+          process.exit(EXIT_NO_RESTART)
+        }
+
+        if (options.wait && notifyOnly) {
+          cliLogger.error('Cannot use --wait with --notify-only')
           process.exit(EXIT_NO_RESTART)
         }
 
@@ -1886,9 +1893,12 @@ cli
         const threadPromptMarker: ThreadStartMarker = { cliThreadPrompt: true }
         const promptEmbed = [{ color: 0x2b2d31, footer: { text: yaml.dump(threadPromptMarker) } }]
 
+        // Prefix the prompt so it's clear who sent it (matches /queue format)
+        const prefixedPrompt = `» **kimaki-cli:** ${prompt}`
+
         await sendDiscordMessageWithOptionalAttachment({
           channelId: targetThreadId,
-          prompt,
+          prompt: prefixedPrompt,
           botToken,
           embeds: promptEmbed,
           rest,
@@ -1897,6 +1907,15 @@ cli
         const threadUrl = `https://discord.com/channels/${threadData.guild_id}/${threadData.id}`
         note(`Prompt sent to thread: ${threadData.name}\n\nURL: ${threadUrl}`, '✅ Message Sent')
         cliLogger.log(threadUrl)
+
+        if (options.wait) {
+          const { waitAndOutputSession } = await import('./wait-session.js')
+          await waitAndOutputSession({
+            threadId: targetThreadId,
+            projectDirectory: channelConfig.directory,
+          })
+        }
+
         process.exit(0)
       }
 
@@ -2023,6 +2042,14 @@ cli
       note(successMessage, '✅ Thread Created')
 
       cliLogger.log(threadUrl)
+
+      if (options.wait) {
+        const { waitAndOutputSession } = await import('./wait-session.js')
+        await waitAndOutputSession({
+          threadId: threadData.id,
+          projectDirectory,
+        })
+      }
 
       process.exit(0)
     } catch (error) {

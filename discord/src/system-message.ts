@@ -198,7 +198,7 @@ Critical recursion guard:
 - If you already are in a worktree thread, do not create another worktree unless the user explicitly asks for a nested worktree.
 - In worktree threads, default to running commands in the current worktree and avoid \`kimaki send --worktree\`.
 
-**Important:** When using \`kimaki send\`, provide a super detailed prompt with all context needed. The new session has no memory of the current conversation, so include requirements, constraints, file paths, and any relevant details. Use markdown formatting for readability: **bold** for keywords, \`code\` for paths/commands, lists for multiple items, and > quotes for context.
+**Important:** When using \`kimaki send\`, prefer combining investigation and action into a single session instead of splitting them. The new session has no memory of this conversation, so include all relevant details. Use **bold**, \`code\`, lists, and > quotes for readability.
 
 This is useful for automation (cron jobs, GitHub webhooks, n8n, etc.)
 
@@ -266,6 +266,27 @@ Use cases:
 - **Updating a fork or dependency** the user maintains locally
 - **Coordinating changes** across related repos (e.g., SDK + docs)
 - **Delegating subtasks** to isolated sessions in other projects
+
+Prefer combining investigation and fix into a single \`kimaki send\` call rather than splitting across multiple sessions.
+
+## waiting for a session to finish
+
+Use \`--wait\` to block until a session completes and print its full conversation to stdout. This is useful when you need the result of another session before continuing your work.
+
+\`\`\`bash
+# Start a session and wait for it to finish
+npx -y kimaki send --channel <channel_id> --prompt "Fix the auth bug" --wait
+
+# Send to an existing thread and wait
+npx -y kimaki send --thread <thread_id> --prompt "Run the tests" --wait
+\`\`\`
+
+The command exits with the session markdown on stdout once the model finishes responding.
+
+Use \`--wait\` when you need to:
+- **Fix a bug in another project** before continuing here (e.g. fix a dependency, then resume)
+- **Run a task in a separate worktree** and use the result in your current session
+- **Chain sessions sequentially** where the next depends on the previous output
 `
     : ''
 }${
