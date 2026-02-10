@@ -499,6 +499,8 @@ type CliOptions = {
 // Commands to skip when registering user commands (reserved names)
 const SKIP_USER_COMMANDS = ['init']
 
+import { registeredUserCommands } from './config.js'
+
 type AgentInfo = {
   name: string
   description?: string
@@ -691,6 +693,26 @@ async function registerCommands({
       .setDMPermission(false)
       .toJSON(),
     new SlashCommandBuilder()
+      .setName('queue-command')
+      .setDescription('Queue a user command to run after the current response finishes')
+      .addStringOption((option) => {
+        option
+          .setName('command')
+          .setDescription('The command to run')
+          .setRequired(true)
+          .setAutocomplete(true)
+        return option
+      })
+      .addStringOption((option) => {
+        option
+          .setName('arguments')
+          .setDescription('Arguments to pass to the command')
+          .setRequired(false)
+        return option
+      })
+      .setDMPermission(false)
+      .toJSON(),
+    new SlashCommandBuilder()
       .setName('undo')
       .setDescription('Undo the last assistant message (revert file changes)')
       .setDMPermission(false)
@@ -735,6 +757,11 @@ async function registerCommands({
       .setDMPermission(false)
       .toJSON(),
     new SlashCommandBuilder()
+      .setName('context-usage')
+      .setDescription('Show token usage and context window percentage for this session')
+      .setDMPermission(false)
+      .toJSON(),
+    new SlashCommandBuilder()
       .setName('upgrade-and-restart')
       .setDescription('Upgrade kimaki to the latest version and restart the bot')
       .setDMPermission(false)
@@ -742,6 +769,8 @@ async function registerCommands({
   ]
 
   // Add user-defined commands with -cmd suffix
+  // Also populate registeredUserCommands for /queue-command autocomplete
+  registeredUserCommands.length = 0
   for (const cmd of userCommands) {
     if (SKIP_USER_COMMANDS.includes(cmd.name)) {
       continue
@@ -752,6 +781,8 @@ async function registerCommands({
     const sanitizedName = cmd.name.toLowerCase().replace(/:/g, '-')
     const commandName = `${sanitizedName}-cmd`
     const description = cmd.description || `Run /${cmd.name} command`
+
+    registeredUserCommands.push({ name: cmd.name, description })
 
     commands.push(
       new SlashCommandBuilder()

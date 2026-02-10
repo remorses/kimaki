@@ -41,12 +41,13 @@ import {
 import { handleAgentCommand, handleAgentSelectMenu, handleQuickAgentCommand } from './commands/agent.js'
 import { handleAskQuestionSelectMenu } from './commands/ask-question.js'
 import { handleFileUploadButton, handleFileUploadModalSubmit } from './commands/file-upload.js'
-import { handleQueueCommand, handleClearQueueCommand } from './commands/queue.js'
+import { handleQueueCommand, handleClearQueueCommand, handleQueueCommandCommand, handleQueueCommandAutocomplete } from './commands/queue.js'
 import { handleUndoCommand, handleRedoCommand } from './commands/undo-redo.js'
 import { handleUserCommand } from './commands/user-command.js'
 import { handleVerbosityCommand } from './commands/verbosity.js'
 import { handleRestartOpencodeServerCommand } from './commands/restart-opencode-server.js'
 import { handleRunCommand } from './commands/run-command.js'
+import { handleContextUsageCommand } from './commands/context-usage.js'
 import { handleUpgradeAndRestartCommand } from './commands/upgrade.js'
 import { hasKimakiBotPermission } from './discord-utils.js'
 import { createLogger, LogPrefix } from './logger.js'
@@ -90,6 +91,10 @@ export function registerInteractionHandler({
 
           case 'remove-project':
             await handleRemoveProjectAutocomplete({ interaction, appId })
+            return
+
+          case 'queue-command':
+            await handleQueueCommandAutocomplete({ interaction, appId })
             return
 
           default:
@@ -191,6 +196,10 @@ export function registerInteractionHandler({
             await handleClearQueueCommand({ command: interaction, appId })
             return
 
+          case 'queue-command':
+            await handleQueueCommandCommand({ command: interaction, appId })
+            return
+
           case 'undo':
             await handleUndoCommand({ command: interaction, appId })
             return
@@ -209,6 +218,10 @@ export function registerInteractionHandler({
 
           case 'run-shell-command':
             await handleRunCommand({ command: interaction, appId })
+            return
+
+          case 'context-usage':
+            await handleContextUsageCommand({ command: interaction, appId })
             return
 
           case 'upgrade-and-restart':
