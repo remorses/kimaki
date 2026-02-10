@@ -70,6 +70,11 @@ export function setDefaultMentionMode(enabled: boolean): void {
   defaultMentionMode = enabled
 }
 
+// Registered user commands, populated by registerCommands() in cli.ts.
+// Stored here (not cli.ts) to avoid circular imports since commands/ modules need this.
+export type RegisteredUserCommand = { name: string; description: string }
+export const registeredUserCommands: RegisteredUserCommand[] = []
+
 const DEFAULT_LOCK_PORT = 29988
 
 /**

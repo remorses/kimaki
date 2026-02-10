@@ -135,6 +135,8 @@ export type QueuedMessage = {
   queuedAt: number
   images?: DiscordFileAttachment[]
   appId?: string
+  /** If set, uses session.command API instead of session.prompt */
+  command?: { name: string; arguments: string }
 }
 
 // Queue of messages waiting to be sent after current response finishes
@@ -1306,9 +1308,12 @@ export async function handleOpencodeSession({
         `[QUEUE] Question shown but queue has messages, processing from ${nextMessage.username}`,
       )
 
+      const displayText = nextMessage.command
+        ? `/${nextMessage.command.name}${nextMessage.command.arguments ? ` ${nextMessage.command.arguments.slice(0, 120)}` : ''}`
+        : `${nextMessage.prompt.slice(0, 150)}${nextMessage.prompt.length > 150 ? '...' : ''}`
       await sendThreadMessage(
         thread,
-        `» **${nextMessage.username}:** ${nextMessage.prompt.slice(0, 150)}${nextMessage.prompt.length > 150 ? '...' : ''}`,
+        `» **${nextMessage.username}:** ${displayText}`,
       )
 
       setImmediate(() => {
@@ -1322,6 +1327,7 @@ export async function handleOpencodeSession({
               channelId,
               username: nextMessage.username,
               appId: nextMessage.appId,
+              command: nextMessage.command,
             })
           })
           .then(async (result) => {
@@ -1523,9 +1529,12 @@ export async function handleOpencodeSession({
           sessionLogger.log(`[QUEUE] Processing queued message from ${nextMessage.username}`)
 
           // Show that queued message is being sent
+          const displayText = nextMessage.command
+            ? `/${nextMessage.command.name}${nextMessage.command.arguments ? ` ${nextMessage.command.arguments.slice(0, 120)}` : ''}`
+            : `${nextMessage.prompt.slice(0, 150)}${nextMessage.prompt.length > 150 ? '...' : ''}`
           await sendThreadMessage(
             thread,
-            `» **${nextMessage.username}:** ${nextMessage.prompt.slice(0, 150)}${nextMessage.prompt.length > 150 ? '...' : ''}`,
+            `» **${nextMessage.username}:** ${displayText}`,
           )
 
           // Send the queued message as a new prompt (recursive call)
@@ -1539,6 +1548,7 @@ export async function handleOpencodeSession({
               channelId,
               username: nextMessage.username,
               appId: nextMessage.appId,
+              command: nextMessage.command,
             }).catch(async (e) => {
               sessionLogger.error(`[QUEUE] Failed to process queued message:`, e)
               const errorMsg = e instanceof Error ? e.message : String(e)
