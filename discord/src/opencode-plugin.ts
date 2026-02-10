@@ -275,7 +275,7 @@ const kimakiPlugin: Plugin = async () => {
             threadId: row.thread_id,
             sessionId: context.sessionID,
             client,
-            archiveDelay: 2000,
+            archiveDelay: 3000,
           })
 
           return 'Thread archived and session stopped'
