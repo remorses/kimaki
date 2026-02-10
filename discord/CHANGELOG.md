@@ -1,5 +1,20 @@
 # Changelog
 
+## 0.4.61
+
+### Patch Changes
+
+- feat: add **/context-usage** slash command to show token usage and context window percentage
+- feat: add **/queue-command** slash command for queuing user commands
+- feat: add **--wait flag** to `kimaki send` command
+- feat: add **open-in-discord** subcommand to `kimaki project`
+- feat: **improve quick agent command replies** with context and validation
+- perf: **speed up agent quick commands** by skipping OpenCode server check
+- fix: **show context percentage** for large tool outputs
+- fix: **snapshot model and agent** at message arrival to prevent race conditions with `/agent` command
+- fix: **fail fast** on invalid session agent
+- refactor: **remove context usage breakdown** line from `/context-usage` command
+
 ## 0.4.60
 
 ### Patch Changes
