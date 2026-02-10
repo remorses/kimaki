@@ -167,15 +167,6 @@ export async function handleContextUsageCommand({ command }: CommandContext): Pr
     }
     lines.push(`**Session cost:** ${formattedCost}`)
 
-    // Token breakdown
-    lines.push(
-      `**Breakdown:** input ${tokens.input.toLocaleString('en-US')}` +
-      ` / output ${tokens.output.toLocaleString('en-US')}` +
-      (tokens.reasoning > 0 ? ` / reasoning ${tokens.reasoning.toLocaleString('en-US')}` : '') +
-      (tokens.cache.read > 0 ? ` / cache read ${tokens.cache.read.toLocaleString('en-US')}` : '') +
-      (tokens.cache.write > 0 ? ` / cache write ${tokens.cache.write.toLocaleString('en-US')}` : ''),
-    )
-
     await command.editReply({ content: lines.join('\n') })
     logger.log(`Context usage shown for session ${sessionId}: ${totalTokens} tokens`)
   } catch (error) {
