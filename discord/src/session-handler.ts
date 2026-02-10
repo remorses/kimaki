@@ -219,6 +219,56 @@ function isModelValid(
   return isConnected && !!modelExists
 }
 
+async function resolveValidatedAgentPreference({
+  agent,
+  sessionId,
+  channelId,
+  getClient,
+}: {
+  agent?: string
+  sessionId: string
+  channelId?: string
+  getClient: Awaited<ReturnType<typeof initializeOpencodeForDirectory>>
+}): Promise<string | undefined> {
+  const agentPreference =
+    agent || (await getSessionAgent(sessionId)) || (channelId ? await getChannelAgent(channelId) : undefined)
+  if (!agentPreference) {
+    return undefined
+  }
+
+  if (getClient instanceof Error) {
+    return agentPreference
+  }
+
+  const agentsResponse = await errore.tryAsync(() => {
+    return getClient().app.agents({})
+  })
+  if (agentsResponse instanceof Error) {
+    throw new Error(`Failed to validate agent "${agentPreference}"`, { cause: agentsResponse })
+  }
+
+  const availableAgents = agentsResponse.data || []
+  const hasAgent = availableAgents.some((availableAgent) => {
+    return availableAgent.name === agentPreference
+  })
+  if (hasAgent) {
+    return agentPreference
+  }
+
+  const availableAgentNames = availableAgents
+    .map((availableAgent) => {
+      return availableAgent.name
+    })
+    .slice(0, 20)
+  const availableAgentsMessage =
+    availableAgentNames.length > 0
+      ? `Available agents: ${availableAgentNames.join(', ')}`
+      : 'No agents are available in this project.'
+  throw new Error(
+    `Agent "${agentPreference}" not found. ${availableAgentsMessage} Use /agent to choose a valid one.`,
+  )
+}
+
 export type DefaultModelSource = 'opencode-config' | 'opencode-recent' | 'opencode-provider-default'
 
 /**
@@ -1555,8 +1605,12 @@ export async function handleOpencodeSession({
     ]
     sessionLogger.log(`[PROMPT] Parts to send:`, parts.length)
 
-    const agentPreference =
-      agent || (await getSessionAgent(session.id)) || (channelId ? await getChannelAgent(channelId) : undefined)
+    const agentPreference = await resolveValidatedAgentPreference({
+      agent,
+      sessionId: session.id,
+      channelId,
+      getClient,
+    })
     if (agentPreference) {
       sessionLogger.log(`[AGENT] Using agent preference: ${agentPreference}`)
     }
