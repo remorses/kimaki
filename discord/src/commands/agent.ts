@@ -15,6 +15,7 @@ import { setChannelAgent, setSessionAgent, clearSessionModel, getThreadSession, 
 import { initializeOpencodeForDirectory } from '../opencode.js'
 import { resolveTextChannel, getKimakiMetadata } from '../discord-utils.js'
 import { createLogger, LogPrefix } from '../logger.js'
+import { getCurrentModelInfo } from './model.js'
 import * as errore from 'errore'
 
 const agentLogger = createLogger(LogPrefix.AGENT)
@@ -363,15 +364,39 @@ export async function handleQuickAgentCommand({
       return
     }
 
+    // Check current agent before switching
+    const previousAgent = await getCurrentAgentInfo({
+      sessionId: context.sessionId,
+      channelId: context.channelId,
+    })
+    const previousAgentName = previousAgent.type !== 'none' ? previousAgent.agent : undefined
+
+    if (previousAgentName === matchingAgent.name) {
+      await command.editReply({
+        content: `Already using **${matchingAgent.name}** agent`,
+      })
+      return
+    }
+
     await setAgentForContext({ context, agentName: matchingAgent.name })
+
+    // Get the model that will be used with the new agent
+    const modelInfo = await getCurrentModelInfo({
+      sessionId: context.sessionId,
+      channelId: context.channelId,
+      agentPreference: matchingAgent.name,
+      getClient,
+    })
+    const modelText = modelInfo.type !== 'none' ? `\nModel: \`${modelInfo.model}\`` : ''
+    const previousText = previousAgentName ? ` (was **${previousAgentName}**)` : ''
 
     if (context.isThread && context.sessionId) {
       await command.editReply({
-        content: `Switched to **${matchingAgent.name}** agent for this session`,
+        content: `Switched to **${matchingAgent.name}** agent for this session${previousText}${modelText}`,
       })
     } else {
       await command.editReply({
-        content: `Switched to **${matchingAgent.name}** agent for this channel\nAll new sessions will use this agent.`,
+        content: `Switched to **${matchingAgent.name}** agent for this channel${previousText}\nAll new sessions will use this agent.${modelText}`,
       })
     }
   } catch (error) {
