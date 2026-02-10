@@ -15,8 +15,6 @@ import { setChannelAgent, setSessionAgent, clearSessionModel, getThreadSession, 
 import { initializeOpencodeForDirectory } from '../opencode.js'
 import { resolveTextChannel, getKimakiMetadata } from '../discord-utils.js'
 import { createLogger, LogPrefix } from '../logger.js'
-import { getCurrentModelInfo } from './model.js'
-import * as errore from 'errore'
 
 const agentLogger = createLogger(LogPrefix.AGENT)
 
@@ -318,6 +316,12 @@ export async function handleAgentSelectMenu(
 /**
  * Handle quick agent commands like /plan-agent, /build-agent.
  * These instantly switch to the specified agent without showing a dropdown.
+ *
+ * Optimized for speed: skips opencode server entirely.
+ * The agent name is already validated at command registration time (cli.ts registers
+ * commands from the agents list), so we trust the command name directly instead of
+ * calling initializeOpencodeForDirectory + app.agents() to re-validate.
+ * This eliminates two HTTP round-trips (~400-1000ms) that the old implementation had.
  */
 export async function handleQuickAgentCommand({
   command,
@@ -326,10 +330,10 @@ export async function handleQuickAgentCommand({
   command: ChatInputCommandInteraction
   appId: string
 }): Promise<void> {
-  await command.deferReply({ ephemeral: true })
-
   // Extract agent name from command: "plan-agent" → "plan"
   const sanitizedAgentName = command.commandName.replace(/-agent$/, '')
+
+  await command.deferReply({ ephemeral: true })
 
   const context = await resolveAgentCommandContext({ interaction: command, appId })
   if (!context) {
@@ -337,66 +341,33 @@ export async function handleQuickAgentCommand({
   }
 
   try {
-    const getClient = await initializeOpencodeForDirectory(context.dir)
-    if (getClient instanceof Error) {
-      await command.editReply({ content: getClient.message })
-      return
-    }
-
-    const agentsResponse = await getClient().app.agents({
-      query: { directory: context.dir },
-    })
-
-    if (!agentsResponse.data || agentsResponse.data.length === 0) {
-      await command.editReply({ content: 'No agents available in this project' })
-      return
-    }
-
-    // Find the agent matching the sanitized command name
-    const matchingAgent = agentsResponse.data.find(
-      (a) => sanitizeAgentName(a.name) === sanitizedAgentName
-    )
-
-    if (!matchingAgent) {
-      await command.editReply({
-        content: `Agent not found. Available agents: ${agentsResponse.data.map((a) => a.name).join(', ')}`,
-      })
-      return
-    }
-
-    // Check current agent before switching
+    // Check current agent and set new one.
+    // getCurrentAgentInfo is fast (DB only), use it for the "was X" text.
     const previousAgent = await getCurrentAgentInfo({
       sessionId: context.sessionId,
       channelId: context.channelId,
     })
     const previousAgentName = previousAgent.type !== 'none' ? previousAgent.agent : undefined
 
-    if (previousAgentName === matchingAgent.name) {
+    if (previousAgentName === sanitizedAgentName) {
       await command.editReply({
-        content: `Already using **${matchingAgent.name}** agent`,
+        content: `Already using **${sanitizedAgentName}** agent`,
       })
       return
     }
 
-    await setAgentForContext({ context, agentName: matchingAgent.name })
+    // Set the agent preference (DB write only, no HTTP calls)
+    await setAgentForContext({ context, agentName: sanitizedAgentName })
 
-    // Get the model that will be used with the new agent
-    const modelInfo = await getCurrentModelInfo({
-      sessionId: context.sessionId,
-      channelId: context.channelId,
-      agentPreference: matchingAgent.name,
-      getClient,
-    })
-    const modelText = modelInfo.type !== 'none' ? `\nModel: \`${modelInfo.model}\`` : ''
     const previousText = previousAgentName ? ` (was **${previousAgentName}**)` : ''
 
     if (context.isThread && context.sessionId) {
       await command.editReply({
-        content: `Switched to **${matchingAgent.name}** agent for this session${previousText}${modelText}`,
+        content: `Switched to **${sanitizedAgentName}** agent for this session${previousText}`,
       })
     } else {
       await command.editReply({
-        content: `Switched to **${matchingAgent.name}** agent for this channel${previousText}\nAll new sessions will use this agent.${modelText}`,
+        content: `Switched to **${sanitizedAgentName}** agent for this channel${previousText}\nAll new sessions will use this agent.`,
       })
     }
   } catch (error) {
