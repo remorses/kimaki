@@ -733,13 +733,14 @@ export async function handleOpencodeSession({
 
   const partBuffer = new Map<string, Map<string, Part>>()
   let stopTyping: (() => void) | null = null
-  let usedModel: string | undefined
-  let usedProviderID: string | undefined
+  let usedModel: string | undefined = earlyModelParam.modelID
+  let usedProviderID: string | undefined = earlyModelParam.providerID
   let usedAgent: string | undefined
   let tokensUsedInSession = 0
   let lastDisplayedContextPercentage = 0
   let lastRateLimitDisplayTime = 0
   let modelContextLimit: number | undefined
+  let modelContextLimitKey: string | undefined
   let assistantMessageId: string | undefined
   let handlerPromise: Promise<void> | null = null
 
@@ -899,6 +900,36 @@ export async function handleOpencodeSession({
       }
     }
 
+    const ensureModelContextLimit = async () => {
+      if (!usedProviderID || !usedModel) {
+        return
+      }
+
+      const key = `${usedProviderID}/${usedModel}`
+      if (modelContextLimit && modelContextLimitKey === key) {
+        return
+      }
+
+      const providersResponse = await errore.tryAsync(() => {
+        return getClient().provider.list({
+          query: { directory: sdkDirectory },
+        })
+      })
+      if (providersResponse instanceof Error) {
+        sessionLogger.error('Failed to fetch provider info for context limit:', providersResponse)
+        return
+      }
+
+      const provider = providersResponse.data?.all?.find((p) => p.id === usedProviderID)
+      const model = provider?.models?.[usedModel]
+      if (!model?.limit?.context) {
+        return
+      }
+
+      modelContextLimit = model.limit.context
+      modelContextLimitKey = key
+    }
+
     const handleMessageUpdated = async (msg: {
       id: string
       sessionID: string
@@ -953,22 +984,7 @@ export async function handleOpencodeSession({
         return
       }
 
-      if (!modelContextLimit) {
-        const providersResponse = await errore.tryAsync(() => {
-          return getClient().provider.list({
-            query: { directory: sdkDirectory },
-          })
-        })
-        if (providersResponse instanceof Error) {
-          sessionLogger.error('Failed to fetch provider info for context limit:', providersResponse)
-        } else {
-          const provider = providersResponse.data?.all?.find((p) => p.id === usedProviderID)
-          const model = provider?.models?.[usedModel]
-          if (model?.limit?.context) {
-            modelContextLimit = model.limit.context
-          }
-        }
-      }
+      await ensureModelContextLimit()
 
       if (!modelContextLimit) {
         return
@@ -1048,6 +1064,7 @@ export async function handleOpencodeSession({
           const outputTokens = Math.ceil(output.length / 4)
           const largeOutputThreshold = 3000
           if (outputTokens >= largeOutputThreshold) {
+            await ensureModelContextLimit()
             const formattedTokens =
               outputTokens >= 1000 ? `${(outputTokens / 1000).toFixed(1)}k` : String(outputTokens)
             const percentageSuffix = (() => {
