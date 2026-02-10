@@ -2013,122 +2013,103 @@ cli
         appId?: string
       },
     ) => {
-      try {
-        const absolutePath = path.resolve(directory || '.')
+      const absolutePath = path.resolve(directory || '.')
 
-        if (!fs.existsSync(absolutePath)) {
-          cliLogger.error(`Directory does not exist: ${absolutePath}`)
-          process.exit(EXIT_NO_RESTART)
-        }
+      if (!fs.existsSync(absolutePath)) {
+        cliLogger.error(`Directory does not exist: ${absolutePath}`)
+        process.exit(EXIT_NO_RESTART)
+      }
 
-        // Initialize database
-        await initDatabase()
+      // Initialize database
+      await initDatabase()
 
-        // Get bot token from env var or database
-        const envToken = process.env.KIMAKI_BOT_TOKEN
-        let botToken: string | undefined
-        let appId: string | undefined = options.appId
+      // Get bot token from env var or database
+      const envToken = process.env.KIMAKI_BOT_TOKEN
+      let botToken: string | undefined
+      let appId: string | undefined = options.appId
 
-        if (envToken) {
-          botToken = envToken
-          if (!appId) {
-            try {
-              const botRow = await getBotToken()
-              appId = botRow?.app_id
-            } catch (error) {
-              cliLogger.debug(
-                'Database lookup failed while resolving app ID:',
-                error instanceof Error ? error.message : String(error),
-              )
-            }
-          }
-        } else {
+      if (envToken) {
+        botToken = envToken
+        if (!appId) {
           try {
             const botRow = await getBotToken()
-
-            if (botRow) {
-              botToken = botRow.token
-              appId = appId || botRow.app_id
-            }
-          } catch (e) {
-            cliLogger.error('Database error:', e instanceof Error ? e.message : String(e))
+            appId = botRow?.app_id
+          } catch (error) {
+            cliLogger.debug(
+              'Database lookup failed while resolving app ID:',
+              error instanceof Error ? error.message : String(error),
+            )
           }
         }
+      } else {
+        try {
+          const botRow = await getBotToken()
 
-        if (!botToken) {
-          cliLogger.error(
-            'No bot token found. Set KIMAKI_BOT_TOKEN env var or run `kimaki` first to set up.',
-          )
-          process.exit(EXIT_NO_RESTART)
+          if (botRow) {
+            botToken = botRow.token
+            appId = appId || botRow.app_id
+          }
+        } catch (e) {
+          cliLogger.error('Database error:', e instanceof Error ? e.message : String(e))
         }
+      }
 
-        if (!appId) {
-          cliLogger.error(
-            'App ID is required to create channels. Use --app-id or run `kimaki` first.',
-          )
-          process.exit(EXIT_NO_RESTART)
-        }
+      if (!botToken) {
+        cliLogger.error(
+          'No bot token found. Set KIMAKI_BOT_TOKEN env var or run `kimaki` first to set up.',
+        )
+        process.exit(EXIT_NO_RESTART)
+      }
 
-        cliLogger.log('Connecting to Discord...')
-        const client = await createDiscordClient()
+      if (!appId) {
+        cliLogger.error(
+          'App ID is required to create channels. Use --app-id or run `kimaki` first.',
+        )
+        process.exit(EXIT_NO_RESTART)
+      }
 
-        await new Promise<void>((resolve, reject) => {
-          client.once(Events.ClientReady, () => {
-            resolve()
-          })
-          client.once(Events.Error, reject)
-          client.login(botToken)
+      cliLogger.log('Connecting to Discord...')
+      const client = await createDiscordClient()
+
+      await new Promise<void>((resolve, reject) => {
+        client.once(Events.ClientReady, () => {
+          resolve()
         })
+        client.once(Events.Error, reject)
+        client.login(botToken)
+      })
 
-        cliLogger.log('Finding guild...')
+      cliLogger.log('Finding guild...')
 
-        // Find guild
-        let guild: Guild
-        if (options.guild) {
-          const guildId = String(options.guild)
-          const foundGuild = client.guilds.cache.get(guildId)
-          if (!foundGuild) {
-            cliLogger.log('Guild not found')
-            cliLogger.error(`Guild not found: ${guildId}`)
-            client.destroy()
-            process.exit(EXIT_NO_RESTART)
-          }
-          guild = foundGuild
-        } else {
-          // Auto-detect: prefer guild with existing channels for this bot, else first guild
-          const existingChannelId = await findChannelByAppId(appId)
+      // Find guild
+      let guild: Guild
+      if (options.guild) {
+        const guildId = String(options.guild)
+        const foundGuild = client.guilds.cache.get(guildId)
+        if (!foundGuild) {
+          cliLogger.log('Guild not found')
+          cliLogger.error(`Guild not found: ${guildId}`)
+          client.destroy()
+          process.exit(EXIT_NO_RESTART)
+        }
+        guild = foundGuild
+      } else {
+        // Auto-detect: prefer guild with existing channels for this bot, else first guild
+        const existingChannelId = await findChannelByAppId(appId)
 
-          if (existingChannelId) {
-            try {
-              const ch = await client.channels.fetch(existingChannelId)
-              if (ch && 'guild' in ch && ch.guild) {
-                guild = ch.guild
-              } else {
-                throw new Error('Channel has no guild')
-              }
-            } catch (error) {
-              cliLogger.debug(
-                'Failed to fetch existing channel while selecting guild:',
-                error instanceof Error ? error.message : String(error),
-              )
-              let firstGuild = client.guilds.cache.first()
-              if (!firstGuild) {
-                // Cache might be empty, try fetching guilds from API
-                const fetched = await client.guilds.fetch()
-                const firstOAuth2Guild = fetched.first()
-                if (firstOAuth2Guild) {
-                  firstGuild = await client.guilds.fetch(firstOAuth2Guild.id)
-                }
-              }
-              if (!firstGuild) {
-                cliLogger.log('No guild found')
-                cliLogger.error('No guild found. Add the bot to a server first.')
-                client.destroy()
-                process.exit(EXIT_NO_RESTART)
-              }
-              guild = firstGuild
+        if (existingChannelId) {
+          try {
+            const ch = await client.channels.fetch(existingChannelId)
+            if (ch && 'guild' in ch && ch.guild) {
+              guild = ch.guild
+            } else {
+              throw new Error('Channel has no guild')
             }
-          } else {
+          } catch (error) {
+            cliLogger.debug(
+              'Failed to fetch existing channel while selecting guild:',
+              error instanceof Error ? error.message : String(error),
+            )
             let firstGuild = client.guilds.cache.first()
             if (!firstGuild) {
               // Cache might be empty, try fetching guilds from API
@@ -2146,67 +2127,81 @@ cli
             }
             guild = firstGuild
           }
-        }
-
-        // Check if channel already exists in this guild
-        cliLogger.log('Checking for existing channel...')
-        try {
-          const existingChannels = await findChannelsByDirectory({
-            directory: absolutePath,
-            channelType: 'text',
-            appId,
-          })
-
-          for (const existingChannel of existingChannels) {
-            try {
-              const ch = await client.channels.fetch(existingChannel.channel_id)
-              if (ch && 'guild' in ch && ch.guild?.id === guild.id) {
-                client.destroy()
-                cliLogger.error(
-                  `Channel already exists for this directory in ${guild.name}. Channel ID: ${existingChannel.channel_id}`,
-                )
-                process.exit(EXIT_NO_RESTART)
-              }
-            } catch (error) {
-              cliLogger.debug(
-                `Failed to fetch channel ${existingChannel.channel_id} while checking existing channels:`,
-                error instanceof Error ? error.message : String(error),
-              )
+        } else {
+          let firstGuild = client.guilds.cache.first()
+          if (!firstGuild) {
+            // Cache might be empty, try fetching guilds from API
+            const fetched = await client.guilds.fetch()
+            const firstOAuth2Guild = fetched.first()
+            if (firstOAuth2Guild) {
+              firstGuild = await client.guilds.fetch(firstOAuth2Guild.id)
             }
           }
-        } catch (error) {
-          cliLogger.debug(
-            'Database lookup failed while checking existing channels:',
-            error instanceof Error ? error.message : String(error),
-          )
+          if (!firstGuild) {
+            cliLogger.log('No guild found')
+            cliLogger.error('No guild found. Add the bot to a server first.')
+            client.destroy()
+            process.exit(EXIT_NO_RESTART)
+          }
+          guild = firstGuild
         }
+      }
 
-        cliLogger.log(`Creating channels in ${guild.name}...`)
-
-        const { textChannelId, voiceChannelId, channelName } = await createProjectChannels({
-          guild,
-          projectDirectory: absolutePath,
+      // Check if channel already exists in this guild
+      cliLogger.log('Checking for existing channel...')
+      try {
+        const existingChannels = await findChannelsByDirectory({
+          directory: absolutePath,
+          channelType: 'text',
           appId,
-          botName: client.user?.username,
         })
 
-        client.destroy()
-
-        cliLogger.log('Channels created!')
-
-        const channelUrl = `https://discord.com/channels/${guild.id}/${textChannelId}`
-
-        note(
-          `Created channels for project:\n\n📝 Text: #${channelName}\n🔊 Voice: #${channelName}\n📁 Directory: ${absolutePath}\n\nURL: ${channelUrl}`,
-          '✅ Success',
-        )
-
-        cliLogger.log(channelUrl)
-        process.exit(0)
+        for (const existingChannel of existingChannels) {
+          try {
+            const ch = await client.channels.fetch(existingChannel.channel_id)
+            if (ch && 'guild' in ch && ch.guild?.id === guild.id) {
+              client.destroy()
+              cliLogger.error(
+                `Channel already exists for this directory in ${guild.name}. Channel ID: ${existingChannel.channel_id}`,
+              )
+              process.exit(EXIT_NO_RESTART)
+            }
+          } catch (error) {
+            cliLogger.debug(
+              `Failed to fetch channel ${existingChannel.channel_id} while checking existing channels:`,
+              error instanceof Error ? error.message : String(error),
+            )
+          }
+        }
       } catch (error) {
-        cliLogger.error('Error:', error instanceof Error ? error.message : String(error))
-        process.exit(EXIT_NO_RESTART)
+        cliLogger.debug(
+          'Database lookup failed while checking existing channels:',
+          error instanceof Error ? error.message : String(error),
+        )
       }
+
+      cliLogger.log(`Creating channels in ${guild.name}...`)
+
+      const { textChannelId, voiceChannelId, channelName } = await createProjectChannels({
+        guild,
+        projectDirectory: absolutePath,
+        appId,
+        botName: client.user?.username,
+      })
+
+      client.destroy()
+
+      cliLogger.log('Channels created!')
+
+      const channelUrl = `https://discord.com/channels/${guild.id}/${textChannelId}`
+
+      note(
+        `Created channels for project:\n\n📝 Text: #${channelName}\n🔊 Voice: #${channelName}\n📁 Directory: ${absolutePath}\n\nURL: ${channelUrl}`,
+        '✅ Success',
+      )
+
+      cliLogger.log(channelUrl)
+      process.exit(0)
     },
   )
 
@@ -2214,144 +2209,200 @@ cli
   .command('project list', 'List all registered projects with their Discord channels')
   .option('--json', 'Output as JSON')
   .action(async (options: { json?: boolean }) => {
-    try {
-      await initDatabase()
+    await initDatabase()
 
-      const prisma = await getPrisma()
-      const channels = await prisma.channel_directories.findMany({
-        where: { channel_type: 'text' },
-        orderBy: { created_at: 'desc' },
-      })
+    const prisma = await getPrisma()
+    const channels = await prisma.channel_directories.findMany({
+      where: { channel_type: 'text' },
+      orderBy: { created_at: 'desc' },
+    })
 
-      if (options.json) {
-        const output = channels.map((ch) => ({
-          channel_id: ch.channel_id,
-          directory: ch.directory,
-          app_id: ch.app_id,
-        }))
-        console.log(JSON.stringify(output, null, 2))
-        process.exit(0)
-      }
-
-      if (channels.length === 0) {
-        cliLogger.log('No projects registered')
-        process.exit(0)
-      }
-
-      for (const ch of channels) {
-        const name = path.basename(ch.directory)
-        console.log(`\n📁 ${name}`)
-        console.log(`   Directory: ${ch.directory}`)
-        console.log(`   Channel ID: ${ch.channel_id}`)
-        if (ch.app_id) {
-          console.log(`   Bot App ID: ${ch.app_id}`)
-        }
-      }
-
+    if (options.json) {
+      const output = channels.map((ch) => ({
+        channel_id: ch.channel_id,
+        directory: ch.directory,
+        app_id: ch.app_id,
+      }))
+      console.log(JSON.stringify(output, null, 2))
       process.exit(0)
-    } catch (error) {
-      cliLogger.error('Error:', error instanceof Error ? error.message : String(error))
+    }
+
+    if (channels.length === 0) {
+      cliLogger.log('No projects registered')
+      process.exit(0)
+    }
+
+    for (const ch of channels) {
+      const name = path.basename(ch.directory)
+      console.log(`\n📁 ${name}`)
+      console.log(`   Directory: ${ch.directory}`)
+      console.log(`   Channel ID: ${ch.channel_id}`)
+      if (ch.app_id) {
+        console.log(`   Bot App ID: ${ch.app_id}`)
+      }
+    }
+
+    process.exit(0)
+  })
+
+cli
+  .command('project open-in-discord', 'Open the current project channel in Discord')
+  .action(async () => {
+    await initDatabase()
+
+    const botRow = await getBotToken()
+    if (!botRow) {
+      cliLogger.error('No bot configured. Run `kimaki` first.')
       process.exit(EXIT_NO_RESTART)
     }
+
+    const { app_id: appId, token: botToken } = botRow
+    const absolutePath = path.resolve('.')
+
+    // Walk up parent directories to find a matching channel
+    const findChannelForPath = async (dirPath: string): Promise<{ channel_id: string; directory: string } | undefined> => {
+      const withAppId = appId ? await findChannelsByDirectory({ directory: dirPath, channelType: 'text', appId }) : []
+      if (withAppId.length > 0) {
+        return withAppId[0]
+      }
+      const withoutAppId = await findChannelsByDirectory({ directory: dirPath, channelType: 'text' })
+      return withoutAppId[0]
+    }
+
+    let existingChannel: { channel_id: string; directory: string } | undefined
+    let searchPath = absolutePath
+    do {
+      existingChannel = await findChannelForPath(searchPath)
+      if (existingChannel) {
+        break
+      }
+      const parent = path.dirname(searchPath)
+      if (parent === searchPath) {
+        break
+      }
+      searchPath = parent
+    } while (true)
+
+    if (!existingChannel) {
+      cliLogger.error(`No project channel found for ${absolutePath}`)
+      process.exit(EXIT_NO_RESTART)
+    }
+
+    // Fetch channel from Discord to get guild_id
+    const rest = new REST().setToken(botToken)
+    const channelData = (await rest.get(Routes.channel(existingChannel.channel_id))) as {
+      id: string
+      guild_id: string
+    }
+
+    const channelUrl = `https://discord.com/channels/${channelData.guild_id}/${channelData.id}`
+    cliLogger.log(channelUrl)
+
+    // Open in browser if running in a TTY
+    if (process.stdout.isTTY) {
+      if (process.platform === 'win32') {
+        spawn('cmd', ['/c', 'start', '', channelUrl], { detached: true, stdio: 'ignore' }).unref()
+      } else {
+        const openCmd = process.platform === 'darwin' ? 'open' : 'xdg-open'
+        spawn(openCmd, [channelUrl], { detached: true, stdio: 'ignore' }).unref()
+      }
+    }
+
+    process.exit(0)
   })
 
 cli
   .command('project create <name>', 'Create a new project folder with git and Discord channels')
   .option('-g, --guild <guildId>', 'Discord guild ID')
   .action(async (name: string, options: { guild?: string }) => {
-    try {
-      const sanitizedName = name
-        .toLowerCase()
-        .replace(/[^a-z0-9-]/g, '-')
-        .replace(/-+/g, '-')
-        .replace(/^-|-$/g, '')
-        .slice(0, 100)
+    const sanitizedName = name
+      .toLowerCase()
+      .replace(/[^a-z0-9-]/g, '-')
+      .replace(/-+/g, '-')
+      .replace(/^-|-$/g, '')
+      .slice(0, 100)
 
-      if (!sanitizedName) {
-        cliLogger.error('Invalid project name')
-        process.exit(EXIT_NO_RESTART)
-      }
-
-      await initDatabase()
-
-      const botRow = await getBotToken()
-      if (!botRow) {
-        cliLogger.error('No bot configured. Run `kimaki` first.')
-        process.exit(EXIT_NO_RESTART)
-      }
-
-      const { app_id: appId, token: botToken } = botRow
-
-      const projectsDir = getProjectsDir()
-      const projectDirectory = path.join(projectsDir, sanitizedName)
-
-      if (!fs.existsSync(projectsDir)) {
-        fs.mkdirSync(projectsDir, { recursive: true })
-      }
-
-      if (fs.existsSync(projectDirectory)) {
-        cliLogger.error(`Directory already exists: ${projectDirectory}`)
-        process.exit(EXIT_NO_RESTART)
-      }
-
-      fs.mkdirSync(projectDirectory, { recursive: true })
-      cliLogger.log(`Created: ${projectDirectory}`)
-
-      execSync('git init', { cwd: projectDirectory, stdio: 'pipe' })
-      cliLogger.log('Initialized git')
-
-      cliLogger.log('Connecting to Discord...')
-      const client = await createDiscordClient()
-
-      await new Promise<void>((resolve, reject) => {
-        client.once(Events.ClientReady, () => {
-          resolve()
-        })
-        client.once(Events.Error, reject)
-        client.login(botToken).catch(reject)
-      })
-
-      let guild: Guild
-      if (options.guild) {
-        const found = client.guilds.cache.get(options.guild)
-        if (!found) {
-          cliLogger.error(`Guild not found: ${options.guild}`)
-          client.destroy()
-          process.exit(EXIT_NO_RESTART)
-        }
-        guild = found
-      } else {
-        const first = client.guilds.cache.first()
-        if (!first) {
-          cliLogger.error('No guild found. Add the bot to a server first.')
-          client.destroy()
-          process.exit(EXIT_NO_RESTART)
-        }
-        guild = first
-      }
-
-      const { textChannelId, channelName } = await createProjectChannels({
-        guild,
-        projectDirectory,
-        appId,
-        botName: client.user?.username,
-      })
-
-      client.destroy()
-
-      const channelUrl = `https://discord.com/channels/${guild.id}/${textChannelId}`
-
-      note(
-        `Created project: ${sanitizedName}\n\nDirectory: ${projectDirectory}\nChannel: #${channelName}\nURL: ${channelUrl}`,
-        '✅ Success',
-      )
-
-      cliLogger.log(channelUrl)
-      process.exit(0)
-    } catch (error) {
-      cliLogger.error('Error:', error instanceof Error ? error.message : String(error))
+    if (!sanitizedName) {
+      cliLogger.error('Invalid project name')
       process.exit(EXIT_NO_RESTART)
     }
+
+    await initDatabase()
+
+    const botRow = await getBotToken()
+    if (!botRow) {
+      cliLogger.error('No bot configured. Run `kimaki` first.')
+      process.exit(EXIT_NO_RESTART)
+    }
+
+    const { app_id: appId, token: botToken } = botRow
+
+    const projectsDir = getProjectsDir()
+    const projectDirectory = path.join(projectsDir, sanitizedName)
+
+    if (!fs.existsSync(projectsDir)) {
+      fs.mkdirSync(projectsDir, { recursive: true })
+    }
+
+    if (fs.existsSync(projectDirectory)) {
+      cliLogger.error(`Directory already exists: ${projectDirectory}`)
+      process.exit(EXIT_NO_RESTART)
+    }
+
+    fs.mkdirSync(projectDirectory, { recursive: true })
+    cliLogger.log(`Created: ${projectDirectory}`)
+
+    execSync('git init', { cwd: projectDirectory, stdio: 'pipe' })
+    cliLogger.log('Initialized git')
+
+    cliLogger.log('Connecting to Discord...')
+    const client = await createDiscordClient()
+
+    await new Promise<void>((resolve, reject) => {
+      client.once(Events.ClientReady, () => {
+        resolve()
+      })
+      client.once(Events.Error, reject)
+      client.login(botToken).catch(reject)
+    })
+
+    let guild: Guild
+    if (options.guild) {
+      const found = client.guilds.cache.get(options.guild)
+      if (!found) {
+        cliLogger.error(`Guild not found: ${options.guild}`)
+        client.destroy()
+        process.exit(EXIT_NO_RESTART)
+      }
+      guild = found
+    } else {
+      const first = client.guilds.cache.first()
+      if (!first) {
+        cliLogger.error('No guild found. Add the bot to a server first.')
+        client.destroy()
+        process.exit(EXIT_NO_RESTART)
+      }
+      guild = first
+    }
+
+    const { textChannelId, channelName } = await createProjectChannels({
+      guild,
+      projectDirectory,
+      appId,
+      botName: client.user?.username,
+    })
+
+    client.destroy()
+
+    const channelUrl = `https://discord.com/channels/${guild.id}/${textChannelId}`
+
+    note(
+      `Created project: ${sanitizedName}\n\nDirectory: ${projectDirectory}\nChannel: #${channelName}\nURL: ${channelUrl}`,
+      '✅ Success',
+    )
+
+    cliLogger.log(channelUrl)
+    process.exit(0)
   })
 
 cli
