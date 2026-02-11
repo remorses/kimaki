@@ -165,7 +165,9 @@ export async function handleContextUsageCommand({ command }: CommandContext): Pr
     if (modelID) {
       lines.push(`**Model:** ${modelID}`)
     }
-    lines.push(`**Session cost:** ${formattedCost}`)
+    if (totalCost > 0) {
+      lines.push(`**Session cost:** ${formattedCost}`)
+    }
 
     await command.editReply({ content: lines.join('\n') })
     logger.log(`Context usage shown for session ${sessionId}: ${totalTokens} tokens`)
