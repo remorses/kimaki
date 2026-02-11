@@ -1593,7 +1593,7 @@ export async function handleOpencodeSession({
         const projectInfo = branchName ? `${folderName} ⋅ ${branchName} ⋅ ` : `${folderName} ⋅ `
         await sendThreadMessage(
           thread,
-          `_${projectInfo}${sessionDuration}${contextInfo}_${attachCommand}${modelInfo}${agentInfo}`,
+          `*${projectInfo}${sessionDuration}${contextInfo}${attachCommand}${modelInfo}${agentInfo}*`,
           { flags: NOTIFY_MESSAGE_FLAGS },
         )
         sessionLogger.log(
