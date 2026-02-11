@@ -44,6 +44,7 @@ import {
   arePatternsCoveredBy,
 } from './commands/permissions.js'
 import { cancelPendingFileUpload } from './commands/file-upload.js'
+import { execAsync } from './worktree-utils.js'
 import * as errore from 'errore'
 
 const sessionLogger = createLogger(LogPrefix.SESSION)
@@ -1543,6 +1544,11 @@ export async function handleOpencodeSession({
         const agentInfo =
           usedAgent && usedAgent.toLowerCase() !== 'build' ? ` ⋅ **${usedAgent}**` : ''
         let contextInfo = ''
+        const folderName = path.basename(sdkDirectory)
+        const branchResult = await errore.tryAsync(() => {
+          return execAsync('git symbolic-ref --short HEAD', { cwd: sdkDirectory })
+        })
+        const branchName = branchResult instanceof Error ? '' : branchResult.stdout.trim()
 
         const contextResult = await errore.tryAsync(async () => {
           // Fetch final token count from API since message.updated events can arrive
@@ -1584,9 +1590,10 @@ export async function handleOpencodeSession({
           sessionLogger.error('Failed to fetch provider info for context percentage:', contextResult)
         }
 
+        const projectInfo = branchName ? `${folderName} ⋅ ${branchName} ⋅ ` : `${folderName} ⋅ `
         await sendThreadMessage(
           thread,
-          `_Completed in ${sessionDuration}${contextInfo}_${attachCommand}${modelInfo}${agentInfo}`,
+          `_${projectInfo}${sessionDuration}${contextInfo}_${attachCommand}${modelInfo}${agentInfo}`,
           { flags: NOTIFY_MESSAGE_FLAGS },
         )
         sessionLogger.log(
