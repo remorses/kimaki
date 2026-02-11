@@ -52,6 +52,11 @@ async function initializePrisma(): Promise<PrismaClient> {
   const adapter = new PrismaLibSql({ url: `file:${dbPath}` })
   const prisma = new PrismaClient({ adapter })
 
+  // WAL mode allows concurrent reads while writing instead of blocking.
+  // busy_timeout makes SQLite retry for 5s instead of immediately failing with SQLITE_BUSY.
+  await prisma.$executeRawUnsafe('PRAGMA journal_mode = WAL')
+  await prisma.$executeRawUnsafe('PRAGMA busy_timeout = 5000')
+
   // Always run migrations - schema.sql uses IF NOT EXISTS so it's idempotent
   dbLogger.log(exists ? 'Existing database, running migrations...' : 'New database, running schema setup...')
   await migrateSchema(prisma)
