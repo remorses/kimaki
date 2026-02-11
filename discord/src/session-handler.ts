@@ -705,7 +705,7 @@ export async function handleOpencodeSession({
     await Promise.race([
       previousHandler,
       new Promise((resolve) => {
-        setTimeout(resolve, 1500)
+        setTimeout(resolve, 2500)
       }),
     ])
   }
