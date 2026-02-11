@@ -156,10 +156,7 @@ export async function handlePermissionButton(interaction: ButtonInteraction): Pr
   const context = pendingPermissionContexts.get(contextHash)
 
   if (!context) {
-    await interaction.reply({
-      content: 'This permission request has expired or was already handled.',
-      ephemeral: true,
-    })
+    await interaction.update({ components: [] })
     return
   }
 
