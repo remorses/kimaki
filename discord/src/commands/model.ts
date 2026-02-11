@@ -23,7 +23,7 @@ import {
 } from '../database.js'
 import { initializeOpencodeForDirectory } from '../opencode.js'
 import { resolveTextChannel, getKimakiMetadata } from '../discord-utils.js'
-import { abortAndRetrySession, getDefaultModel, type DefaultModelSource } from '../session-handler.js'
+import { abortAndRetrySession, getDefaultModel } from '../session-handler.js'
 import { createLogger, LogPrefix } from '../logger.js'
 import * as errore from 'errore'
 
@@ -520,67 +520,44 @@ export async function handleModelSelectMenu(
   const fullModelId = `${context.providerId}/${selectedModelId}`
 
   try {
-    // Store in appropriate table based on context
-    if (context.isThread && context.sessionId) {
-      // Store for session
-      await setSessionModel(context.sessionId, fullModelId)
-      modelLogger.log(`Set model ${fullModelId} for session ${context.sessionId}`)
+    // Always show scope selection menu
+    context.selectedModelId = fullModelId
+    pendingModelContexts.set(contextHash, context)
 
-      // Check if there's a running request and abort+retry with new model
-      let retried = false
-      if (context.thread) {
-        retried = await abortAndRetrySession({
-          sessionId: context.sessionId,
-          thread: context.thread,
-          projectDirectory: context.dir,
-          appId: context.appId,
-        })
-      }
+    const scopeOptions = [
+      // Show "this session" option when in a thread with an active session
+      ...(context.isThread && context.sessionId
+        ? [
+            {
+              label: 'This session only',
+              value: 'session',
+              description: 'Override for this session only',
+            },
+          ]
+        : []),
+      {
+        label: 'This channel only',
+        value: 'channel',
+        description: 'Override for this channel only',
+      },
+      {
+        label: 'Global default',
+        value: 'global',
+        description: 'Set for this channel and as default for all others',
+      },
+    ]
 
-      if (retried) {
-        await interaction.editReply({
-          content: `Model changed for this session:\n**${context.providerName}** / **${selectedModelId}**\n\`${fullModelId}\`\n_Retrying current request with new model..._`,
-          components: [],
-        })
-      } else {
-        await interaction.editReply({
-          content: `Model preference set for this session:\n**${context.providerName}** / **${selectedModelId}**\n\`${fullModelId}\``,
-          components: [],
-        })
-      }
+    const selectMenu = new StringSelectMenuBuilder()
+      .setCustomId(`model_scope:${contextHash}`)
+      .setPlaceholder('Apply to...')
+      .addOptions(scopeOptions)
 
-      // Clean up the context from memory
-      pendingModelContexts.delete(contextHash)
-    } else {
-      // Channel context - show scope selection menu
-      context.selectedModelId = fullModelId
-      pendingModelContexts.set(contextHash, context)
+    const actionRow = new ActionRowBuilder<StringSelectMenuBuilder>().addComponents(selectMenu)
 
-      const scopeOptions = [
-        {
-          label: 'This channel only',
-          value: 'channel',
-          description: 'Override for this channel only',
-        },
-        {
-          label: 'Global default',
-          value: 'global',
-          description: 'Set for this channel and as default for all others',
-        },
-      ]
-
-      const selectMenu = new StringSelectMenuBuilder()
-        .setCustomId(`model_scope:${contextHash}`)
-        .setPlaceholder('Apply to...')
-        .addOptions(scopeOptions)
-
-      const actionRow = new ActionRowBuilder<StringSelectMenuBuilder>().addComponents(selectMenu)
-
-      await interaction.editReply({
-        content: `**Set Model Preference**\nModel: **${context.providerName}** / **${selectedModelId}**\n\`${fullModelId}\`\nApply to:`,
-        components: [actionRow],
-      })
-    }
+    await interaction.editReply({
+      content: `**Set Model Preference**\nModel: **${context.providerName}** / **${selectedModelId}**\n\`${fullModelId}\`\nApply to:`,
+      components: [actionRow],
+    })
   } catch (error) {
     modelLogger.error('Error saving model preference:', error)
     await interaction.editReply({
@@ -630,15 +607,42 @@ export async function handleModelScopeSelectMenu(
   const modelDisplay = modelId.split('/')[1] || modelId
 
   try {
-    if (selectedScope === 'global') {
+    if (selectedScope === 'session') {
+      if (!context.sessionId) {
+        pendingModelContexts.delete(contextHash)
+        await interaction.editReply({
+          content: 'No active session in this thread. Please run /model in a thread with a session.',
+          components: [],
+        })
+        return
+      }
+      await setSessionModel(context.sessionId, modelId)
+      modelLogger.log(`Set model ${modelId} for session ${context.sessionId}`)
+
+      let retried = false
+      if (context.thread) {
+        retried = await abortAndRetrySession({
+          sessionId: context.sessionId,
+          thread: context.thread,
+          projectDirectory: context.dir,
+          appId: context.appId,
+        })
+      }
+
+      const retryNote = retried ? '\n_Retrying current request with new model..._' : ''
+      await interaction.editReply({
+        content: `Model set for this session:\n**${context.providerName}** / **${modelDisplay}**\n\`${modelId}\`${retryNote}`,
+        components: [],
+      })
+    } else if (selectedScope === 'global') {
       if (!context.appId) {
+        pendingModelContexts.delete(contextHash)
         await interaction.editReply({
           content: 'Cannot set global model: channel is not linked to a bot',
           components: [],
         })
         return
       }
-      // Set both global default and current channel
       await setGlobalModel(context.appId, modelId)
       await setChannelModel(context.channelId, modelId)
       modelLogger.log(`Set global model ${modelId} for app ${context.appId} and channel ${context.channelId}`)
