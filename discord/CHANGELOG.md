@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.4.62
+
+### Patch Changes
+
+- feat: **show project folder and git branch** in session completion message for better context
+- feat: **unify /model scope selection** for threads and channels - consistent UX
+- feat: **enable SQLite WAL mode** with busy_timeout for better concurrency
+- fix: **hide session cost line** in /context-usage when cost is zero
+
 ## 0.4.61
 
 ### Patch Changes
