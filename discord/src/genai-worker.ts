@@ -13,7 +13,7 @@ import type { Session } from '@google/genai'
 import { getTools } from './tools.js'
 import { mkdir } from 'node:fs/promises'
 import type { WorkerInMessage, WorkerOutMessage } from './worker-types.js'
-import { createLogger, LogPrefix } from './logger.js'
+import { createLogger, formatErrorWithStack, LogPrefix } from './logger.js'
 
 if (!parentPort) {
   throw new Error('This module must be run as a worker thread')
@@ -41,8 +41,9 @@ process.on('uncaughtException', (error) => {
 })
 
 process.on('unhandledRejection', (reason, promise) => {
-  workerLogger.error('Unhandled rejection in worker:', reason, 'at promise:', promise)
-  sendError(`Worker unhandled rejection: ${reason}`)
+  const formattedReason = formatErrorWithStack(reason)
+  workerLogger.error('Unhandled rejection in worker:', formattedReason, 'at promise:', promise)
+  sendError(`Worker unhandled rejection: ${formattedReason}`)
 })
 
 // Audio configuration

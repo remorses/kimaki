@@ -76,6 +76,18 @@ function formatArg(arg: unknown): string {
   return util.inspect(arg, { colors: true, depth: 4 })
 }
 
+export function formatErrorWithStack(error: unknown): string {
+  if (error instanceof Error) {
+    return error.stack ?? `${error.name}: ${error.message}`
+  }
+  if (typeof error === 'string') {
+    return error
+  }
+
+  // Keep this stable and safe for unknown values (handles circular structures).
+  return util.inspect(error, { colors: false, depth: 4 })
+}
+
 function writeToFile(level: string, prefix: string, args: unknown[]) {
   if (!isDev) {
     return

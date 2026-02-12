@@ -57,7 +57,7 @@ import path from 'node:path'
 import fs from 'node:fs'
 import * as errore from 'errore'
 
-import { createLogger, LogPrefix } from './logger.js'
+import { createLogger, formatErrorWithStack, LogPrefix } from './logger.js'
 import { archiveThread, uploadFilesToDiscord, stripMentions } from './discord-utils.js'
 import { spawn, spawnSync, execSync, type ExecSyncOptions } from 'node:child_process'
 import http from 'node:http'
@@ -1510,7 +1510,7 @@ cli
           enableVoiceChannels: options.enableVoiceChannels,
         })
       } catch (error) {
-        cliLogger.error('Unhandled error:', error instanceof Error ? error.message : String(error))
+        cliLogger.error('Unhandled error:', formatErrorWithStack(error))
         process.exit(EXIT_NO_RESTART)
       }
     },

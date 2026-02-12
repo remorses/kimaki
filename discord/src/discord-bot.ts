@@ -78,7 +78,7 @@ import {
 } from 'discord.js'
 import fs from 'node:fs'
 import * as errore from 'errore'
-import { createLogger, LogPrefix } from './logger.js'
+import { createLogger, formatErrorWithStack, LogPrefix } from './logger.js'
 import { writeHeapSnapshot, startHeapMonitor } from './heap-monitor.js'
 import { setGlobalDispatcher, Agent } from 'undici'
 
@@ -884,6 +884,6 @@ export async function startDiscordBot({
       discordLogger.log('Ignoring unhandled rejection during shutdown:', reason)
       return
     }
-    discordLogger.error('Unhandled Rejection at:', promise, 'reason:', reason)
+    discordLogger.error('Unhandled rejection:', formatErrorWithStack(reason), 'at promise:', promise)
   })
 }
