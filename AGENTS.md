@@ -43,6 +43,8 @@ when adding new tables:
 
 database.ts has some functions that abstract complex prisma queries or inserts. ONLY add them there if they are very complex or used a lot. prefer inlining the prisma queries if possible
 
+prisma version in package.json MUST be pinned. no ^. this makes sure the generated prisma code is compatible with the prisma client used in the npm package
+
 ## errore
 
 errore is a submodule. should always be in main. make sure it is never in detached state.
@@ -101,6 +103,7 @@ always try to use logger instead of console. so logs in the cli look uniform and
 for the log prefixes always use short names
 
 kimaki will also output logs to the file discord/kimaki.log
+for checkout validation requests, prefer non-recursive checks unless the user asks otherwise.
 
 # core guidelines
 
@@ -471,10 +474,7 @@ changelogs.md
 # writing docs
 
 when generating a .md or .mdx file to document things, always add a frontmatter with title and description. also add a prompt field with the exact prompt used to generate the doc. use @ to reference files and urls and provide any context necessary to be able to recreate this file from scratch using a model. if you used urls also reference them. reference all files you had to read to create the doc. use yaml | syntax to add this prompt and never go over the column width of 80
-# cac for cli development
-
-the cli uses cac npm package.
-
+goke.md
 # styling
 
 - always use tailwind for styling. prefer using simple styles using flex and gap. margins should be avoided, instead use flexbox gaps, grid gaps, or separate spacing divs.
@@ -603,26 +603,3 @@ const jsonSchema = toJSONSchema(mySchema, {
 });
 ```
 
-
-<!-- opensrc:start -->
-
-## Source Code Reference
-
-Source code for dependencies is available in `opensrc/` for deeper understanding of implementation details.
-
-See `opensrc/sources.json` for the list of available packages and their versions.
-
-Use this source code when you need to understand how a package works internally, not just its types/interface.
-
-### Fetching Additional Source Code
-
-To fetch source code for a package or repository you need to understand, run:
-
-```bash
-npx opensrc <package>           # npm package (e.g., npx opensrc zod)
-npx opensrc pypi:<package>      # Python package (e.g., npx opensrc pypi:requests)
-npx opensrc crates:<package>    # Rust crate (e.g., npx opensrc crates:serde)
-npx opensrc <owner>/<repo>      # GitHub repo (e.g., npx opensrc vercel/ai)
-```
-
-<!-- opensrc:end -->

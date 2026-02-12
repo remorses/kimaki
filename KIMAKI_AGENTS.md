@@ -41,6 +41,8 @@ when adding new tables:
 
 database.ts has some functions that abstract complex prisma queries or inserts. ONLY add them there if they are very complex or used a lot. prefer inlining the prisma queries if possible
 
+prisma version in package.json MUST be pinned. no ^. this makes sure the generated prisma code is compatible with the prisma client used in the npm package
+
 ## errore
 
 errore is a submodule. should always be in main. make sure it is never in detached state.
