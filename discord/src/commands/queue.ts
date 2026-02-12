@@ -224,7 +224,7 @@ export async function handleQueueCommandCommand({ command, appId }: CommandConte
   }
 
   const commandPayload = { name: commandName, arguments: args }
-  const displayText = `/${commandName}${args ? ` ${args.slice(0, 100)}` : ''}`
+  const displayText = `/${commandName}`
 
   // Check if there's an active request running
   const existingController = abortControllers.get(sessionId)

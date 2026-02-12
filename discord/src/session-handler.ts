@@ -1385,7 +1385,7 @@ export async function handleOpencodeSession({
       )
 
       const displayText = nextMessage.command
-        ? `/${nextMessage.command.name}${nextMessage.command.arguments ? ` ${nextMessage.command.arguments.slice(0, 120)}` : ''}`
+        ? `/${nextMessage.command.name}`
         : `${nextMessage.prompt.slice(0, 150)}${nextMessage.prompt.length > 150 ? '...' : ''}`
       await sendThreadMessage(
         thread,
@@ -1611,8 +1611,8 @@ export async function handleOpencodeSession({
           sessionLogger.log(`[QUEUE] Processing queued message from ${nextMessage.username}`)
 
           // Show that queued message is being sent
-          const displayText = nextMessage.command
-            ? `/${nextMessage.command.name}${nextMessage.command.arguments ? ` ${nextMessage.command.arguments.slice(0, 120)}` : ''}`
+           const displayText = nextMessage.command
+            ? `/${nextMessage.command.name}`
             : `${nextMessage.prompt.slice(0, 150)}${nextMessage.prompt.length > 150 ? '...' : ''}`
           await sendThreadMessage(
             thread,

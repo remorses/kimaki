@@ -4,7 +4,7 @@
 import type { CommandContext, CommandHandler } from './types.js'
 import { ChannelType, type TextChannel, type ThreadChannel } from 'discord.js'
 import { handleOpencodeSession } from '../session-handler.js'
-import { SILENT_MESSAGE_FLAGS } from '../discord-utils.js'
+import { sendThreadMessage, SILENT_MESSAGE_FLAGS } from '../discord-utils.js'
 import { createLogger, LogPrefix } from '../logger.js'
 import { getChannelDirectory, getThreadSession } from '../database.js'
 import fs from 'node:fs'
@@ -18,7 +18,7 @@ export const handleUserCommand: CommandHandler = async ({ command, appId }: Comm
   const args = command.options.getString('arguments') || ''
 
   userCommandLogger.log(
-    `Executing /${commandName} (from /${discordCommandName}) with args: ${args}`,
+    `Executing /${commandName} (from /${discordCommandName}) argsLength=${args.length}`,
   )
 
   const channel = command.channel
@@ -124,11 +124,11 @@ export const handleUserCommand: CommandHandler = async ({ command, appId }: Comm
     } else if (textChannel) {
       // Running in text channel - create a new thread
       const starterMessage = await textChannel.send({
-        content: `**/${commandName}**${args ? ` ${args.slice(0, 200)}${args.length > 200 ? '…' : ''}` : ''}`,
+        content: `**/${commandName}**`,
         flags: SILENT_MESSAGE_FLAGS,
       })
 
-      const threadName = `/${commandName} ${args.slice(0, 80)}${args.length > 80 ? '…' : ''}`
+      const threadName = `/${commandName}`
       const newThread = await starterMessage.startThread({
         name: threadName.slice(0, 100),
         autoArchiveDuration: 1440,
@@ -137,6 +137,14 @@ export const handleUserCommand: CommandHandler = async ({ command, appId }: Comm
 
       // Add user to thread so it appears in their sidebar
       await newThread.members.add(command.user.id)
+
+      if (args) {
+        const argsPreview = args.length > 1800 ? `${args.slice(0, 1800)}\n... truncated` : args
+        await sendThreadMessage(
+          newThread,
+          `Args: ${argsPreview}`,
+        )
+      }
 
       await command.editReply(`Started /${commandName} in ${newThread.toString()}`)
 

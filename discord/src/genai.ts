@@ -5,7 +5,7 @@
 import { GoogleGenAI, LiveServerMessage, MediaResolution, Modality, Session } from '@google/genai'
 import type { CallableTool } from '@google/genai'
 import { writeFile } from 'fs'
-import type { Tool as AITool } from 'ai'
+import type { AnyTool } from './ai-tool.js'
 
 import { createLogger, LogPrefix } from './logger.js'
 import { aiToolToCallableTool } from './ai-tool-to-genai.js'
@@ -112,7 +112,7 @@ export async function startGenAiSession({
   onAssistantStopSpeaking?: () => void
   onAssistantInterruptSpeaking?: () => void
   systemMessage?: string
-  tools?: Record<string, AITool<any, any>>
+  tools?: Record<string, AnyTool>
   geminiApiKey?: string | null
 } = {}) {
   let session: Session | undefined = undefined
