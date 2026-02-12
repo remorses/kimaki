@@ -3,7 +3,7 @@ import path from 'node:path'
 import { PrismaLibSql } from '@prisma/adapter-libsql'
 import { PrismaClient, Prisma } from './generated/client.js'
 import { getDataDir } from './config.js'
-import { createLogger, LogPrefix } from './logger.js'
+import { createLogger, formatErrorWithStack, LogPrefix } from './logger.js'
 import { fileURLToPath } from 'node:url'
 
 const __filename = fileURLToPath(import.meta.url)
@@ -52,15 +52,20 @@ async function initializePrisma(): Promise<PrismaClient> {
   const adapter = new PrismaLibSql({ url: `file:${dbPath}` })
   const prisma = new PrismaClient({ adapter })
 
-  // WAL mode allows concurrent reads while writing instead of blocking.
-  // busy_timeout makes SQLite retry for 5s instead of immediately failing with SQLITE_BUSY.
-  await prisma.$executeRawUnsafe('PRAGMA journal_mode = WAL')
-  await prisma.$executeRawUnsafe('PRAGMA busy_timeout = 5000')
+  try {
+    // WAL mode allows concurrent reads while writing instead of blocking.
+    // busy_timeout makes SQLite retry for 5s instead of immediately failing with SQLITE_BUSY.
+    await prisma.$executeRawUnsafe('PRAGMA journal_mode = WAL')
+    await prisma.$executeRawUnsafe('PRAGMA busy_timeout = 5000')
 
-  // Always run migrations - schema.sql uses IF NOT EXISTS so it's idempotent
-  dbLogger.log(exists ? 'Existing database, running migrations...' : 'New database, running schema setup...')
-  await migrateSchema(prisma)
-  dbLogger.log('Schema migration complete')
+    // Always run migrations - schema.sql uses IF NOT EXISTS so it's idempotent
+    dbLogger.log(exists ? 'Existing database, running migrations...' : 'New database, running schema setup...')
+    await migrateSchema(prisma)
+    dbLogger.log('Schema migration complete')
+  } catch (error) {
+    dbLogger.error('Prisma init failed:', formatErrorWithStack(error))
+    throw error
+  }
 
   prismaInstance = prisma
   return prisma
@@ -98,5 +103,3 @@ export async function closePrisma(): Promise<void> {
     dbLogger.log('Prisma connection closed')
   }
 }
-
-
