@@ -2,7 +2,7 @@
 // Provides tools for managing OpenCode sessions (create, submit, abort),
 // listing chats, searching files, and reading session messages.
 
-import { tool } from 'ai'
+import { tool } from './ai-tool.js'
 import { z } from 'zod'
 import { spawn, type ChildProcess } from 'node:child_process'
 import net from 'node:net'

@@ -2,8 +2,6 @@
 // Defines the protocol between main thread and GenAI worker for
 // audio streaming, tool calls, and session lifecycle management.
 
-import type { Tool as AITool } from 'ai'
-
 // Messages sent from main thread to worker
 export type WorkerInMessage =
   | {
@@ -53,8 +51,8 @@ export type WorkerOutMessage =
       type: 'toolCallCompleted'
       sessionId: string
       messageId: string
-      data?: any
-      error?: any
+      data?: unknown
+      error?: unknown
       markdown?: string
     }
   | {

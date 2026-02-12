@@ -4,7 +4,6 @@
 
 import { RealtimeClient } from '@openai/realtime-api-beta'
 import { writeFile } from 'fs'
-import type { Tool } from 'ai'
 import { createLogger, LogPrefix } from './logger.js'
 
 const openaiLogger = createLogger(LogPrefix.OPENAI)

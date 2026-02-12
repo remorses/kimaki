@@ -245,8 +245,18 @@ export async function setupVoiceHandling({
       connection.setSpeaking(false)
     },
     onToolCallCompleted(params) {
+      const errorText: string | undefined = (() => {
+        if (!params.error) {
+          return undefined
+        }
+        if (params.error instanceof Error) {
+          return params.error.message
+        }
+        return String(params.error)
+      })()
+
       const text = params.error
-        ? `<systemMessage>\nThe coding agent encountered an error while processing session ${params.sessionId}: ${params.error?.message || String(params.error)}\n</systemMessage>`
+        ? `<systemMessage>\nThe coding agent encountered an error while processing session ${params.sessionId}: ${errorText || 'Unknown error'}\n</systemMessage>`
         : `<systemMessage>\nThe coding agent finished working on session ${params.sessionId}\n\nHere's what the assistant wrote:\n${params.markdown}\n</systemMessage>`
 
       genAiWorker.sendTextInput(text)

@@ -4,7 +4,6 @@
 
 import { Worker } from 'node:worker_threads'
 import type { WorkerInMessage, WorkerOutMessage } from './worker-types.js'
-import type { Tool as AITool } from 'ai'
 import { createLogger, LogPrefix } from './logger.js'
 
 const genaiWorkerLogger = createLogger(LogPrefix.GENAI_WORKER)
@@ -24,8 +23,8 @@ export interface GenAIWorkerOptions {
   onToolCallCompleted?: (params: {
     sessionId: string
     messageId: string
-    data?: any
-    error?: any
+    data?: unknown
+    error?: unknown
     markdown?: string
   }) => void
   onError?: (error: string) => void

@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { tool } from 'ai'
+import { tool } from './ai-tool.js'
 import { z } from 'zod'
 import { Type } from '@google/genai'
 import type { FunctionDeclaration, FunctionCall } from '@google/genai'

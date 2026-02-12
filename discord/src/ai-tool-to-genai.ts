@@ -1,12 +1,11 @@
-// AI SDK to Google GenAI tool converter.
-// Transforms Vercel AI SDK tool definitions into Google GenAI CallableTool format
+// Tool definition to Google GenAI tool converter.
+// Transforms Kimaki's minimal Tool definitions into Google GenAI CallableTool format
 // for use with Gemini's function calling in the voice assistant.
 
 import type { AnyTool } from './ai-tool.js'
 import type {
   FunctionDeclaration,
   Schema,
-  Type as GenAIType,
   Tool as GenAITool,
   CallableTool,
   FunctionCall,
@@ -14,6 +13,7 @@ import type {
 } from '@google/genai'
 import { Type } from '@google/genai'
 import { z, toJSONSchema } from 'zod'
+import type { JSONSchema7, JSONSchema7Definition } from 'json-schema'
 
 /**
  * Convert JSON Schema to GenAI Schema format
@@ -24,12 +24,32 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null
 }
 
-function jsonSchemaToGenAISchema(jsonSchema: unknown): Schema {
+function jsonSchemaToGenAISchema(jsonSchema: JSONSchema7Definition): Schema {
   const schema: Schema = {}
 
-  // Map JSON Schema type to GenAI Type
-  if (isRecord(jsonSchema) && typeof jsonSchema.type === 'string') {
-    switch (jsonSchema.type) {
+  if (typeof jsonSchema === 'boolean') {
+    return schema
+  }
+
+  const jsonSchemaType: string | undefined = (() => {
+    if (!jsonSchema.type) {
+      return undefined
+    }
+    if (typeof jsonSchema.type === 'string') {
+      return jsonSchema.type
+    }
+    if (Array.isArray(jsonSchema.type)) {
+      return jsonSchema.type.find((t) => t !== 'null') || jsonSchema.type[0]
+    }
+    return undefined
+  })()
+
+  if (Array.isArray(jsonSchema.type) && jsonSchema.type.includes('null')) {
+    schema.nullable = true
+  }
+
+  if (jsonSchemaType) {
+    switch (jsonSchemaType) {
       case 'string':
         schema.type = Type.STRING
         break
@@ -44,10 +64,19 @@ function jsonSchemaToGenAISchema(jsonSchema: unknown): Schema {
       case 'boolean':
         schema.type = Type.BOOLEAN
         break
-      case 'array':
+      case 'array': {
         schema.type = Type.ARRAY
-        if (isRecord(jsonSchema) && jsonSchema.items) {
-          schema.items = jsonSchemaToGenAISchema(jsonSchema.items)
+        const itemsSchema: JSONSchema7Definition | undefined = (() => {
+          if (!jsonSchema.items) {
+            return undefined
+          }
+          if (Array.isArray(jsonSchema.items)) {
+            return jsonSchema.items[0]
+          }
+          return jsonSchema.items
+        })()
+        if (itemsSchema) {
+          schema.items = jsonSchemaToGenAISchema(itemsSchema)
         }
         if (typeof jsonSchema.minItems === 'number') {
           schema.minItems = String(jsonSchema.minItems)
@@ -56,64 +85,56 @@ function jsonSchemaToGenAISchema(jsonSchema: unknown): Schema {
           schema.maxItems = String(jsonSchema.maxItems)
         }
         break
+      }
       case 'object':
         schema.type = Type.OBJECT
-        if (isRecord(jsonSchema) && isRecord(jsonSchema.properties)) {
-          schema.properties = {}
-          for (const [key, value] of Object.entries(jsonSchema.properties)) {
-            schema.properties[key] = jsonSchemaToGenAISchema(value)
-          }
+        if (jsonSchema.properties) {
+          schema.properties = Object.fromEntries(
+            Object.entries(jsonSchema.properties).map(([key, value]) => [
+              key,
+              jsonSchemaToGenAISchema(value),
+            ]),
+          )
         }
         if (Array.isArray(jsonSchema.required)) {
-          schema.required = jsonSchema.required.filter((x): x is string => typeof x === 'string')
+          schema.required = jsonSchema.required
         }
-        // Note: GenAI Schema doesn't have additionalProperties field
-        // We skip it for now
-        break
-      default:
-        // For unknown types, omit `type` so GenAI can interpret defaults.
         break
     }
   }
 
-  // Copy over common properties
-  if (isRecord(jsonSchema) && typeof jsonSchema.description === 'string') {
+  if (typeof jsonSchema.description === 'string') {
     schema.description = jsonSchema.description
   }
-  if (isRecord(jsonSchema) && Array.isArray(jsonSchema.enum)) {
+  if (Array.isArray(jsonSchema.enum)) {
     schema.enum = jsonSchema.enum.map((x) => String(x))
   }
-  if (isRecord(jsonSchema) && 'default' in jsonSchema) {
-    schema.default = jsonSchema.default
+  if ('default' in jsonSchema) {
+    schema.default = jsonSchema.default as unknown
   }
-  if (isRecord(jsonSchema) && 'example' in jsonSchema) {
-    schema.example = jsonSchema.example
-  }
-  if (isRecord(jsonSchema) && jsonSchema.nullable === true) {
-    schema.nullable = true
+  if (Array.isArray(jsonSchema.examples) && jsonSchema.examples.length > 0) {
+    schema.example = jsonSchema.examples[0] as unknown
   }
 
-  // Handle anyOf/oneOf as anyOf in GenAI
-  if (isRecord(jsonSchema) && Array.isArray(jsonSchema.anyOf)) {
+  if (Array.isArray(jsonSchema.anyOf)) {
     schema.anyOf = jsonSchema.anyOf.map((s) => jsonSchemaToGenAISchema(s))
-  } else if (isRecord(jsonSchema) && Array.isArray(jsonSchema.oneOf)) {
+  } else if (Array.isArray(jsonSchema.oneOf)) {
     schema.anyOf = jsonSchema.oneOf.map((s) => jsonSchemaToGenAISchema(s))
   }
 
-  // Handle number/string specific properties
-  if (isRecord(jsonSchema) && typeof jsonSchema.minimum === 'number') {
+  if (typeof jsonSchema.minimum === 'number') {
     schema.minimum = jsonSchema.minimum
   }
-  if (isRecord(jsonSchema) && typeof jsonSchema.maximum === 'number') {
+  if (typeof jsonSchema.maximum === 'number') {
     schema.maximum = jsonSchema.maximum
   }
-  if (isRecord(jsonSchema) && typeof jsonSchema.minLength === 'number') {
+  if (typeof jsonSchema.minLength === 'number') {
     schema.minLength = String(jsonSchema.minLength)
   }
-  if (isRecord(jsonSchema) && typeof jsonSchema.maxLength === 'number') {
+  if (typeof jsonSchema.maxLength === 'number') {
     schema.maxLength = String(jsonSchema.maxLength)
   }
-  if (isRecord(jsonSchema) && typeof jsonSchema.pattern === 'string') {
+  if (typeof jsonSchema.pattern === 'string') {
     schema.pattern = jsonSchema.pattern
   }
 
@@ -129,11 +150,11 @@ export function aiToolToGenAIFunction(tool: AnyTool): FunctionDeclaration {
 
   // Get the tool name from the schema or generate one
   let toolName = 'tool'
-  let jsonSchema: unknown = {}
+  let jsonSchema: JSONSchema7 = {}
 
   if (inputSchema) {
     // Convert Zod schema to JSON Schema
-    jsonSchema = toJSONSchema(inputSchema)
+    jsonSchema = toJSONSchema(inputSchema) as JSONSchema7
 
     // Extract name from Zod description if available
     const description = inputSchema.description
@@ -149,19 +170,9 @@ export function aiToolToGenAIFunction(tool: AnyTool): FunctionDeclaration {
   const genAISchema = jsonSchemaToGenAISchema(jsonSchema)
 
   // Create the FunctionDeclaration
-  const jsonSchemaDescription: string | undefined = (() => {
-    if (!isRecord(jsonSchema)) {
-      return undefined
-    }
-    if (typeof jsonSchema.description !== 'string') {
-      return undefined
-    }
-    return jsonSchema.description
-  })()
-
   const functionDeclaration: FunctionDeclaration = {
     name: toolName,
-    description: tool.description || jsonSchemaDescription || 'Tool function',
+    description: tool.description || jsonSchema.description || 'Tool function',
     parameters: genAISchema,
   }
 
@@ -240,7 +251,7 @@ export function aiToolToCallableTool(
   }
 }
 
-export function extractSchemaFromTool(tool: AnyTool): unknown {
+export function extractSchemaFromTool(tool: AnyTool): JSONSchema7 {
   const inputSchema = tool.inputSchema as z.ZodType<unknown>
 
   if (!inputSchema) {
@@ -248,7 +259,7 @@ export function extractSchemaFromTool(tool: AnyTool): unknown {
   }
 
   // Convert Zod schema to JSON Schema
-  return toJSONSchema(inputSchema)
+  return toJSONSchema(inputSchema) as JSONSchema7
 }
 
 /**
