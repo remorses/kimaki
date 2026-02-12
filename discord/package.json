@@ -21,6 +21,7 @@
   "files": [
     "dist",
     "src",
+    "schema.prisma",
     "bin.js"
   ],
   "devDependencies": {
