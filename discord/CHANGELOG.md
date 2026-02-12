@@ -1,5 +1,16 @@
 # Changelog
 
+## 0.4.63
+
+### Patch Changes
+
+- fix: **pin Prisma to 7.3.0** to avoid startup crash in fresh installs (Prisma 7.4.x `reading 'graph'`)
+- fix: **print stack traces** for unhandled errors and Prisma init failures to make install-time crashes debuggable
+- fix: **avoid echoing shell command args** back into the channel
+- fix: **remove expired permission messages** by silently removing buttons
+- refactor: **remove Vercel AI SDK tool helper dependency** (keep a minimal local tool definition)
+- style: use `*italic*` instead of `_italic_` in session completion messages
+
 ## 0.4.62
 
 ### Patch Changes

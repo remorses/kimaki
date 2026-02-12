@@ -2,7 +2,7 @@
   "name": "kimaki",
   "module": "index.ts",
   "type": "module",
-  "version": "0.4.62",
+  "version": "0.4.63",
   "scripts": {
     "dev": "tsx --env-file .env src/cli.ts",
     "prepublishOnly": "pnpm generate && pnpm tsc",
@@ -31,7 +31,7 @@
     "@types/json-schema": "^7.0.15",
     "@types/ms": "^2.1.0",
     "@types/node": "^24.3.0",
-    "prisma": "^7.3.0",
+    "prisma": "7.3.0",
     "tsx": "^4.20.5"
   },
   "dependencies": {
@@ -41,8 +41,8 @@
     "@libsql/client": "^0.15.15",
     "@opencode-ai/plugin": "^1.1.53",
     "@opencode-ai/sdk": "^1.1.53",
-    "@prisma/adapter-libsql": "^7.3.0",
-    "@prisma/client": "^7.3.0",
+    "@prisma/adapter-libsql": "7.3.0",
+    "@prisma/client": "7.3.0",
     "@purinton/resampler": "^1.0.4",
     "diff": "^8.0.3",
     "discord.js": "^14.25.1",
