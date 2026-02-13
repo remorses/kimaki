@@ -54,7 +54,7 @@ export async function handleForkCommand(interaction: ChatInputCommandInteraction
     return
   }
 
-  const { projectDirectory, workingDirectory } = resolved
+  const { projectDirectory } = resolved
 
   const sessionId = await getThreadSession(channel.id)
 
@@ -114,12 +114,11 @@ export async function handleForkCommand(interaction: ChatInputCommandInteraction
       }
     })
 
-    // Encode projectDirectory (not workingDirectory) because handleForkSelectMenu
-    // uses it for initializeOpencodeForDirectory which is keyed by base project dir
-    const encodedDir = Buffer.from(projectDirectory).toString('base64')
-
     const selectMenu = new StringSelectMenuBuilder()
-      .setCustomId(`fork_select:${sessionId}:${encodedDir}`)
+      // Discord component custom_id max length is 100 chars.
+      // Avoid embedding long directory paths (or base64 of them) in the custom ID.
+      // handleForkSelectMenu resolves the directory from the current thread instead.
+      .setCustomId(`fork_select:${sessionId}`)
       .setPlaceholder('Select a message to fork from')
       .addOptions(options)
 
@@ -147,16 +146,14 @@ export async function handleForkSelectMenu(
     return
   }
 
-  const [, sessionId, encodedDir] = customId.split(':')
-  if (!sessionId || !encodedDir) {
+  const [, sessionId] = customId.split(':')
+  if (!sessionId) {
     await interaction.reply({
       content: 'Invalid selection data',
       ephemeral: true,
     })
     return
   }
-
-  const directory = Buffer.from(encodedDir, 'base64').toString('utf-8')
   const selectedMessageId = interaction.values[0]
 
   if (!selectedMessageId) {
@@ -169,7 +166,21 @@ export async function handleForkSelectMenu(
 
   await interaction.deferReply({ ephemeral: false })
 
-  const getClient = await initializeOpencodeForDirectory(directory)
+  const threadChannel = interaction.channel
+  if (!threadChannel) {
+    await interaction.editReply('Could not access thread channel')
+    return
+  }
+
+  const resolved = await resolveWorkingDirectory({ channel: threadChannel as ThreadChannel })
+  if (!resolved) {
+    await interaction.editReply('Could not determine project directory for this channel')
+    return
+  }
+
+  const { projectDirectory } = resolved
+
+  const getClient = await initializeOpencodeForDirectory(projectDirectory)
   if (getClient instanceof Error) {
     await interaction.editReply(`Failed to fork session: ${getClient.message}`)
     return
