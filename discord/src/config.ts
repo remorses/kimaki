@@ -70,6 +70,18 @@ export function setDefaultMentionMode(enabled: boolean): void {
   defaultMentionMode = enabled
 }
 
+// Whether critique (diff upload to critique.work) is enabled in system prompts.
+// Enabled by default, disabled via --no-critique CLI flag.
+let critiqueEnabled = true
+
+export function getCritiqueEnabled(): boolean {
+  return critiqueEnabled
+}
+
+export function setCritiqueEnabled(enabled: boolean): void {
+  critiqueEnabled = enabled
+}
+
 // Registered user commands, populated by registerCommands() in cli.ts.
 // Stored here (not cli.ts) to avoid circular imports since commands/ modules need this.
 export type RegisteredUserCommand = { name: string; description: string }

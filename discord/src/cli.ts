@@ -61,7 +61,7 @@ import { createLogger, formatErrorWithStack, LogPrefix } from './logger.js'
 import { archiveThread, uploadFilesToDiscord, stripMentions } from './discord-utils.js'
 import { spawn, spawnSync, execSync, type ExecSyncOptions } from 'node:child_process'
 import http from 'node:http'
-import { setDataDir, getDataDir, getLockPort, setDefaultVerbosity, setDefaultMentionMode, getProjectsDir } from './config.js'
+import { setDataDir, getDataDir, getLockPort, setDefaultVerbosity, setDefaultMentionMode, setCritiqueEnabled, getProjectsDir } from './config.js'
 import { sanitizeAgentName } from './commands/agent.js'
 import {
   showFileUploadButton,
@@ -1452,6 +1452,7 @@ cli
   .option('--enable-voice-channels', 'Create voice channels for projects (disabled by default)')
   .option('--verbosity <level>', 'Default verbosity for all channels (tools-and-text, text-and-essential-tools, or text-only)')
   .option('--mention-mode', 'Bot only responds when @mentioned (default for all channels)')
+  .option('--no-critique', 'Disable automatic diff upload to critique.work in system prompts')
   .option('--auto-restart', 'Automatically restart the bot on crash or OOM kill')
   .action(
     async (options: {
@@ -1463,6 +1464,7 @@ cli
       enableVoiceChannels?: boolean
       verbosity?: string
       mentionMode?: boolean
+      noCritique?: boolean
       autoRestart?: boolean
     }) => {
       try {
@@ -1485,6 +1487,11 @@ cli
         if (options.mentionMode) {
           setDefaultMentionMode(true)
           cliLogger.log('Default mention mode: enabled (bot only responds when @mentioned)')
+        }
+
+        if (options.noCritique) {
+          setCritiqueEnabled(false)
+          cliLogger.log('Critique disabled: diffs will not be auto-uploaded to critique.work')
         }
 
         if (options.installUrl) {

@@ -2,6 +2,53 @@
 // Creates the system message injected into every OpenCode session,
 // including Discord-specific formatting rules, diff commands, and permissions info.
 
+import { getCritiqueEnabled } from './config.js'
+
+const CRITIQUE_INSTRUCTIONS = `
+## showing diffs
+
+IMPORTANT: After editing any files, you MUST execute the critique command using the Bash tool to get a diff URL, then share that URL with the user.
+
+Typical usage examples:
+
+# Share working tree changes
+bunx critique --web "Describe pending changes"
+
+# Share staged changes
+bunx critique --staged --web "Describe staged changes"
+
+# Share changes since base branch (use when you're on a feature branch)
+bunx critique main --web "Describe branch changes"
+
+# Share new-branch changes compared to main
+bunx critique main...new-branch --web "Describe branch changes"
+
+# Share a single commit
+bunx critique --commit HEAD --web "Describe latest commit"
+
+If there are other unrelated changes in the working directory, filter to only show the files you edited:
+
+# Share only specific files
+bunx critique --web "Fix database connection retry" --filter "path/to/file1.ts" --filter "path/to/file2.ts"
+
+Do this in case you committed the changes yourself (only if the user asks so, never commit otherwise).
+
+To compare two branches:
+
+bunx critique main feature-branch --web "Compare branches"
+
+The command outputs a URL - share that URL with the user so they can see the diff.
+
+### about critique
+
+critique is an open source tool (MIT license) at https://github.com/remorses/critique.
+Each diff URL is unique and unguessable, only the person who created it can share it.
+No code is stored permanently, diffs are ephemeral. The tool and website are fully open source.
+If the user asks about critique or expresses concern about their code being uploaded,
+reassure them: their data is safe, URLs are unique and not indexed, and they can disable
+this feature by restarting kimaki with the \`--no-critique\` flag.
+`
+
 const KIMAKI_TUNNEL_INSTRUCTIONS = `
 ## running dev servers with tunnel access
 
@@ -315,39 +362,7 @@ git -C ${worktree.mainRepoDirectory} checkout $DEFAULT_BRANCH && git -C ${worktr
 `
     : ''
 }
-## showing diffs
-
-IMPORTANT: After editing any files, you MUST execute the critique command using the Bash tool to get a diff URL, then share that URL with the user.
-
-Typical usage examples:
-
-# Share working tree changes
-bunx critique --web "Describe pending changes"
-
-# Share staged changes
-bunx critique --staged --web "Describe staged changes"
-
-# Share changes since base branch (use when you're on a feature branch)
-bunx critique main --web "Describe branch changes"
-
-# Share new-branch changes compared to main
-bunx critique main...new-branch --web "Describe branch changes"
-
-# Share a single commit
-bunx critique --commit HEAD --web "Describe latest commit"
-
-If there are other unrelated changes in the working directory, filter to only show the files you edited:
-
-# Share only specific files
-bunx critique --web "Fix database connection retry" --filter "path/to/file1.ts" --filter "path/to/file2.ts"
-
-Do this in case you committed the changes yourself (only if the user asks so, never commit otherwise).
-
-To compare two branches:
-
-bunx critique main feature-branch --web "Compare branches"
-
-The command outputs a URL - share that URL with the user so they can see the diff.
+${getCritiqueEnabled() ? CRITIQUE_INSTRUCTIONS : ''}
 ${KIMAKI_TUNNEL_INSTRUCTIONS}
 ## markdown formatting
 
