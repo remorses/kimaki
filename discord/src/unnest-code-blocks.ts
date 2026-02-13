@@ -13,13 +13,28 @@ export function unnestCodeBlocksFromLists(markdown: string): string {
   const tokens = lexer.lex(markdown)
 
   const result: string[] = []
-  for (const token of tokens) {
-    if (token.type === 'list') {
-      const segments = processListToken(token as Tokens.List)
-      result.push(renderSegments(segments))
-    } else {
-      result.push(token.raw)
+
+  for (let i = 0; i < tokens.length; i++) {
+    const token = tokens[i]!
+    const next = tokens[i + 1]
+
+    const chunk = (() => {
+      if (token.type === 'list') {
+        const segments = processListToken(token as Tokens.List)
+        return renderSegments(segments)
+      }
+      return token.raw
+    })()
+
+    if (!chunk) {
+      continue
     }
+
+    const nextRaw = next?.raw ?? ''
+    const needsNewline =
+      nextRaw && !chunk.endsWith('\n') && typeof nextRaw === 'string' && !nextRaw.startsWith('\n')
+
+    result.push(needsNewline ? chunk + '\n' : chunk)
   }
   return result.join('')
 }
@@ -64,13 +79,30 @@ function processListItem(item: Tokens.ListItem, prefix: string): Segment[] {
         content: '```' + lang + '\n' + codeToken.text + '\n```\n',
       })
       seenCodeBlock = true
-    } else if (token.type === 'list') {
+      continue
+    }
+
+    if (token.type === 'list') {
       flushText()
       // Recursively process nested list - segments bubble up
       const nestedSegments = processListToken(token as Tokens.List)
       segments.push(...nestedSegments)
-    } else {
-      currentText.push(extractText(token))
+      continue
+    }
+
+    // marked sometimes flattens fenced code blocks into non-code tokens (e.g. text/paragraph)
+    // depending on indentation and list-item structure. Split out any fenced blocks that start
+    // at the beginning of a line so we can hoist them for Discord.
+    const raw = extractText(token)
+    const parts = splitOutFencedCodeBlocks(raw)
+    for (const part of parts) {
+      if (part.type === 'code') {
+        flushText()
+        segments.push({ type: 'code', content: ensureTrailingNewline(part.content) })
+        seenCodeBlock = true
+        continue
+      }
+      currentText.push(part.content)
     }
   }
 
@@ -92,16 +124,59 @@ function processListItem(item: Tokens.ListItem, prefix: string): Segment[] {
 }
 
 function extractText(token: Token): string {
+  // Prefer raw to preserve newlines and markdown markers.
+  if ('raw' in token && typeof token.raw === 'string') {
+    return token.raw
+  }
+
   if (token.type === 'text') {
     return (token as Tokens.Text).text
   }
-  if (token.type === 'space') {
-    return ''
-  }
-  if ('raw' in token) {
-    return token.raw
-  }
+
   return ''
+}
+
+type FencedSplitPart =
+  | { type: 'text'; content: string }
+  | { type: 'code'; content: string }
+
+function ensureTrailingNewline(text: string): string {
+  if (text.endsWith('\n')) {
+    return text
+  }
+  return text + '\n'
+}
+
+function splitOutFencedCodeBlocks(text: string): FencedSplitPart[] {
+  // Only treat fences that start at the beginning of a line (CommonMark-style).
+  // This avoids mis-detecting inline "```" sequences inside regular text.
+  const fenceRegex = /^ {0,3}```[^\n]*\n[\s\S]*?\n {0,3}```[^\n]*\n?/gm
+
+  const parts: FencedSplitPart[] = []
+  let lastIndex = 0
+
+  while (true) {
+    const match = fenceRegex.exec(text)
+    if (!match) {
+      break
+    }
+
+    const start = match.index
+    const matched = match[0]
+    const end = start + matched.length
+
+    if (start > lastIndex) {
+      parts.push({ type: 'text', content: text.slice(lastIndex, start) })
+    }
+    parts.push({ type: 'code', content: matched })
+    lastIndex = end
+  }
+
+  if (lastIndex < text.length) {
+    parts.push({ type: 'text', content: text.slice(lastIndex) })
+  }
+
+  return parts.length > 0 ? parts : [{ type: 'text', content: text }]
 }
 
 function renderSegments(segments: Segment[]): string {

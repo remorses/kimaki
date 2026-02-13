@@ -477,6 +477,61 @@ function isSubstringOfAny(needle: string, haystack: Set<string>): boolean {
         }
       }
       return false
-    }\`\`\`"
+    }
+    \`\`\`"
   `)
+})
+
+test('numbered list with ) delimiter and code block after continuation text', () => {
+  const input = `What to test (no mocks, real processes):
+
+1) **"Older client must not kill newer server"**
+- Start a tiny HTTP server on an ephemeral port that serves \`/version\` as something **higher than** our current version.
+- Run \`ensureRelayServer({ restartOnVersionMismatch: true })\` pointed at that port.
+- Assert:
+  - the server is **still listening** afterward (port not killed)
+  - no relay is spawned / no kill attempted
+This directly exercises:
+\`\`\`ts
+if (serverVersion !== null && compareVersions(serverVersion, VERSION) > 0) return
+\`\`\`
+
+2) **"Newer client may restart older server (when allowed)"**
+- Start a tiny HTTP server that returns a **lower** \`/version\`.
+- Call \`ensureRelayServer({ restartOnVersionMismatch: true })\`.
+- Assert the old server gets killed (port frees).`
+  const result = unnestCodeBlocksFromLists(input)
+
+  expect('\n' + result).toMatchInlineSnapshot(`
+    "
+    What to test (no mocks, real processes):
+
+    1) **"Older client must not kill newer server"**
+    - Start a tiny HTTP server on an ephemeral port that serves \`/version\` as something **higher than** our current version.
+    - Run \`ensureRelayServer({ restartOnVersionMismatch: true })\` pointed at that port.
+    - Assert:
+      - the server is **still listening** afterward (port not killed)
+      - no relay is spawned / no kill attempted
+    This directly exercises:
+    \`\`\`ts
+    if (serverVersion !== null && compareVersions(serverVersion, VERSION) > 0) return
+    \`\`\`
+
+    2) **"Newer client may restart older server (when allowed)"**
+    - Start a tiny HTTP server that returns a **lower** \`/version\`.
+    - Call \`ensureRelayServer({ restartOnVersionMismatch: true })\`.
+    - Assert the old server gets killed (port frees)."
+  `)
+
+  // Desired Discord formatting:
+  // - Preserve newline between the "1) ..." line and the nested "- Start..." list
+  // - Keep fenced code blocks on their own lines (not glued to surrounding text)
+  expect(result).toContain('1) **"Older client must not kill newer server"**\n')
+  expect(result).toContain('\n- Start a tiny HTTP server')
+  expect(result).toContain('\nThis directly exercises:\n')
+  expect(result).toMatch(/\n```ts\n[\s\S]*\n```\n/)
+
+  // Regression: these are the two failure modes seen in the session message
+  expect(result).not.toContain('**"Older client must not kill newer server"**- Start')
+  expect(result).not.toContain('exercises:```')
 })
