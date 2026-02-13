@@ -2609,13 +2609,24 @@ cli
         process.exit(0)
       }
 
-      // Session not found in current project, search across all projects
+      // Session not found in current project, search across all projects.
+      // project.list() returns all known projects globally from any OpenCode server,
+      // but session.list/get are scoped to the server's own project. So we try each.
       cliLogger.log('Session not in current project, searching all projects...')
       const projectsResponse = await getClient().project.list({})
       const projects = projectsResponse.data || []
-      const otherProjects = projects.filter((p) => {
-        return path.resolve(p.worktree) !== projectDirectory
-      })
+      const otherProjects = projects
+        .filter((p) => path.resolve(p.worktree) !== projectDirectory)
+        .filter((p) => {
+          try {
+            fs.accessSync(p.worktree, fs.constants.R_OK)
+            return true
+          } catch {
+            return false
+          }
+        })
+        // Sort by most recently created first to find sessions faster
+        .sort((a, b) => b.time.created - a.time.created)
 
       for (const project of otherProjects) {
         const dir = project.worktree
