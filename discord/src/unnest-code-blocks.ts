@@ -60,8 +60,9 @@ function processListItem(item: Tokens.ListItem, prefix: string): Segment[] {
   let seenCodeBlock = false
 
   const flushText = (): void => {
-    const text = currentText.join('').trim()
-    if (text) {
+    const rawText = currentText.join('')
+    const text = rawText.trimEnd()
+    if (text.trim()) {
       // After a code block, use '-' as continuation prefix to avoid repeating numbers
       const effectivePrefix = seenCodeBlock ? '- ' : prefix
       segments.push({ type: 'list-item', prefix: effectivePrefix, content: text })
@@ -90,20 +91,7 @@ function processListItem(item: Tokens.ListItem, prefix: string): Segment[] {
       continue
     }
 
-    // marked sometimes flattens fenced code blocks into non-code tokens (e.g. text/paragraph)
-    // depending on indentation and list-item structure. Split out any fenced blocks that start
-    // at the beginning of a line so we can hoist them for Discord.
-    const raw = extractText(token)
-    const parts = splitOutFencedCodeBlocks(raw)
-    for (const part of parts) {
-      if (part.type === 'code') {
-        flushText()
-        segments.push({ type: 'code', content: ensureTrailingNewline(part.content) })
-        seenCodeBlock = true
-        continue
-      }
-      currentText.push(part.content)
-    }
+    currentText.push(extractText(token))
   }
 
   flushText()
@@ -134,49 +122,6 @@ function extractText(token: Token): string {
   }
 
   return ''
-}
-
-type FencedSplitPart =
-  | { type: 'text'; content: string }
-  | { type: 'code'; content: string }
-
-function ensureTrailingNewline(text: string): string {
-  if (text.endsWith('\n')) {
-    return text
-  }
-  return text + '\n'
-}
-
-function splitOutFencedCodeBlocks(text: string): FencedSplitPart[] {
-  // Only treat fences that start at the beginning of a line (CommonMark-style).
-  // This avoids mis-detecting inline "```" sequences inside regular text.
-  const fenceRegex = /^ {0,3}```[^\n]*\n[\s\S]*?\n {0,3}```[^\n]*\n?/gm
-
-  const parts: FencedSplitPart[] = []
-  let lastIndex = 0
-
-  while (true) {
-    const match = fenceRegex.exec(text)
-    if (!match) {
-      break
-    }
-
-    const start = match.index
-    const matched = match[0]
-    const end = start + matched.length
-
-    if (start > lastIndex) {
-      parts.push({ type: 'text', content: text.slice(lastIndex, start) })
-    }
-    parts.push({ type: 'code', content: matched })
-    lastIndex = end
-  }
-
-  if (lastIndex < text.length) {
-    parts.push({ type: 'text', content: text.slice(lastIndex) })
-  }
-
-  return parts.length > 0 ? parts : [{ type: 'text', content: text }]
 }
 
 function renderSegments(segments: Segment[]): string {

@@ -2601,17 +2601,39 @@ cli
         process.exit(EXIT_NO_RESTART)
       }
 
+      // Try current project first (fast path)
       const markdown = new ShareMarkdown(getClient())
       const result = await markdown.generate({ sessionID: sessionId })
-      if (result instanceof Error) {
-        cliLogger.error(result.message)
-        process.exit(EXIT_NO_RESTART)
+      if (!(result instanceof Error)) {
+        process.stdout.write(result)
+        process.exit(0)
       }
 
-      // Print to stdout so it can be piped: kimaki session read <id> > ./tmp/session.md
-      process.stdout.write(result)
+      // Session not found in current project, search across all projects
+      cliLogger.log('Session not in current project, searching all projects...')
+      const projectsResponse = await getClient().project.list({})
+      const projects = projectsResponse.data || []
+      const otherProjects = projects.filter((p) => {
+        return path.resolve(p.worktree) !== projectDirectory
+      })
 
-      process.exit(0)
+      for (const project of otherProjects) {
+        const dir = project.worktree
+        cliLogger.log(`Trying project: ${dir}`)
+        const otherClient = await initializeOpencodeForDirectory(dir)
+        if (otherClient instanceof Error) {
+          continue
+        }
+        const otherMarkdown = new ShareMarkdown(otherClient())
+        const otherResult = await otherMarkdown.generate({ sessionID: sessionId })
+        if (!(otherResult instanceof Error)) {
+          process.stdout.write(otherResult)
+          process.exit(0)
+        }
+      }
+
+      cliLogger.error(`Session ${sessionId} not found in any project`)
+      process.exit(EXIT_NO_RESTART)
     } catch (error) {
       cliLogger.error('Error:', error instanceof Error ? error.message : String(error))
       process.exit(EXIT_NO_RESTART)
