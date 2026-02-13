@@ -72,6 +72,17 @@ use `resolveWorkingDirectory({ channel })` from `discord-utils.ts` to get direct
 
 never call `getKimakiMetadata` + manual `getThreadWorktree` check in commands. the util handles both. if you need to encode a directory in a discord customId for later use with `initializeOpencodeForDirectory`, always use `projectDirectory` not `workingDirectory`.
 
+## discord component custom ids
+
+discord message components (buttons, select menus, modals) enforce a strict `custom_id` max length of **100 chars**.
+
+never embed long strings in `custom_id` (absolute paths, base64 of paths, serialized json, session transcripts, etc) or the builder will throw errors like `Invalid string length`.
+
+instead:
+- store only short identifiers in `custom_id` (eg `contextHash`, a db id, or a session id)
+- resolve anything else at interaction time (eg call `resolveWorkingDirectory({ channel })` from the thread)
+- if you need extra context, store it server-side keyed by the short hash/id rather than encoding it into `custom_id`
+
 ## heap snapshots and memory debugging
 
 kimaki has a built-in heap monitor that runs every 30s and checks V8 heap usage.
