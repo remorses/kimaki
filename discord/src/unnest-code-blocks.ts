@@ -59,13 +59,19 @@ function processListItem(item: Tokens.ListItem, prefix: string): Segment[] {
   // Track if we've seen a code block - text after code uses continuation prefix
   let seenCodeBlock = false
 
+  const taskMarker = item.task ? (item.checked ? '[x] ' : '[ ] ') : ''
+  let wroteFirstListItem = false
+
   const flushText = (): void => {
     const rawText = currentText.join('')
     const text = rawText.trimEnd()
     if (text.trim()) {
       // After a code block, use '-' as continuation prefix to avoid repeating numbers
       const effectivePrefix = seenCodeBlock ? '- ' : prefix
-      segments.push({ type: 'list-item', prefix: effectivePrefix, content: text })
+      const marker = !wroteFirstListItem ? taskMarker : ''
+      const normalizedText = text.replace(/^\s+/, '')
+      segments.push({ type: 'list-item', prefix: effectivePrefix, content: marker + normalizedText })
+      wroteFirstListItem = true
     }
     currentText = []
   }

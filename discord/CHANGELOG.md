@@ -1,5 +1,16 @@
 # Changelog
 
+## 0.4.64
+
+### Patch Changes
+
+- feat: **search across all projects** in `kimaki session read` when session not found in current project
+- feat: add **--no-critique flag** to disable automatic diff uploads to critique.work (addresses #37)
+- fix: **improved Discord markdown rendering** - prevent list/code block concatenation that breaks Discord parsing
+- fix: **silently remove permission buttons** on auto-reject instead of sending warning message
+- fix: **abort all active sessions** before restarting OpenCode server to prevent orphaned requests
+- refactor: **rely on marked AST** for list/code formatting instead of regex splitting
+
 ## 0.4.63
 
 ### Patch Changes

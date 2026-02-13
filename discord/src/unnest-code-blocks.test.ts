@@ -1,6 +1,13 @@
 import { test, expect } from 'vitest'
 import { unnestCodeBlocksFromLists } from './unnest-code-blocks.js'
 
+// Discord markdown quirks (as of 2026-02):
+// - Fenced code blocks nested inside list indentation often don't render at all.
+//   (Discord effectively wants fences at the start of the line.)
+// - If a list line is accidentally concatenated with the next list marker or a fence,
+//   e.g. `**Title**- bullet` or `Text:```ts`, Discord won't parse it as a list/code block.
+// These tests lock down that `unnestCodeBlocksFromLists()` produces Discord-friendly output.
+
 test('basic - single item with code block', () => {
   const input = `- Item 1
   \`\`\`js
@@ -534,4 +541,137 @@ if (serverVersion !== null && compareVersions(serverVersion, VERSION) > 0) retur
   // Regression: these are the two failure modes seen in the session message
   expect(result).not.toContain('**"Older client must not kill newer server"**- Start')
   expect(result).not.toContain('exercises:```')
+})
+
+test('unordered list with blank line before fenced code block', () => {
+  const input = `- Item with spacing
+
+  \`\`\`ts
+  const x = 1
+  \`\`\`
+- Next item`
+  const result = unnestCodeBlocksFromLists(input)
+  expect('\n' + result).toMatchInlineSnapshot(`
+    "
+    - Item with spacing
+
+    \`\`\`ts
+    const x = 1
+    \`\`\`
+    - Next item"
+  `)
+})
+
+test('ordered list item containing fenced code and trailing paragraph', () => {
+  const input = `1) Item title
+   \`\`\`js
+   console.log('hi')
+   \`\`\`
+   trailing text
+2) Second item`
+  const result = unnestCodeBlocksFromLists(input)
+  expect('\n' + result).toMatchInlineSnapshot(`
+    "
+    1. Item title
+
+    \`\`\`js
+    console.log('hi')
+    \`\`\`
+    - trailing text
+    2) Second item"
+  `)
+})
+
+test('two top-level lists back-to-back (ensure newline between them)', () => {
+  const input = `- a
+- b
+1) c
+- d`
+  const result = unnestCodeBlocksFromLists(input)
+  expect('\n' + result).toMatchInlineSnapshot(`
+    "
+    - a
+    - b
+    1) c
+    - d"
+  `)
+})
+
+test('top-level list followed by top-level fenced code then paragraph', () => {
+  const input = `- Item
+\`\`\`ts
+type X = { a: 1 }
+\`\`\`
+After.`
+  const result = unnestCodeBlocksFromLists(input)
+  expect('\n' + result).toMatchInlineSnapshot(`
+    "
+    - Item
+    \`\`\`ts
+    type X = { a: 1 }
+    \`\`\`
+    After."
+  `)
+})
+
+test('task list item with fenced code', () => {
+  const input = `- [ ] Do thing
+  \`\`\`sh
+  echo hi
+  \`\`\``
+  const result = unnestCodeBlocksFromLists(input)
+  expect('\n' + result).toMatchInlineSnapshot(`
+    "
+    - [ ] Do thing
+
+    \`\`\`sh
+    echo hi
+    \`\`\`"
+  `)
+})
+
+test('fenced code block indented more than list marker', () => {
+  const input = `- Item
+    \`\`\`ts
+    const x = 1
+    \`\`\`
+- Next`
+  const result = unnestCodeBlocksFromLists(input)
+  expect('\n' + result).toMatchInlineSnapshot(`
+    "
+    - Item
+
+    \`\`\`ts
+    const x = 1
+    \`\`\`
+    - Next"
+  `)
+})
+
+test('ordered list with multiple paragraphs and code', () => {
+  const input = `1) Title
+   First paragraph.
+
+   Second paragraph.
+
+   \`\`\`ts
+   const x = 1
+   \`\`\`
+
+   After code.
+2) Next`
+  const result = unnestCodeBlocksFromLists(input)
+  expect('\n' + result).toMatchInlineSnapshot(`
+    "
+    1. Title
+    First paragraph.
+
+    Second paragraph.
+
+    \`\`\`ts
+    const x = 1
+    \`\`\`
+    - After code.
+    2) Next"
+  `)
 })
