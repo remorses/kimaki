@@ -579,13 +579,19 @@ export async function handleOpencodeSession({
   const threadPermissions = pendingPermissions.get(thread.id)
   if (threadPermissions && threadPermissions.size > 0) {
     const clientV2 = getOpencodeClientV2(directory)
-    let rejectedCount = 0
     for (const [permId, pendingPerm] of threadPermissions) {
       sessionLogger.log(`[PERMISSION] Auto-rejecting permission ${permId} due to new message`)
+      // Remove the permission buttons from the Discord message
+      const removeButtonsResult = await errore.tryAsync(async () => {
+        const msg = await thread.messages.fetch(pendingPerm.messageId)
+        await msg.edit({ components: [] })
+      })
+      if (removeButtonsResult instanceof Error) {
+        sessionLogger.log(`[PERMISSION] Failed to remove buttons for ${permId}:`, removeButtonsResult)
+      }
       if (!clientV2) {
         sessionLogger.log(`[PERMISSION] OpenCode v2 client unavailable for permission ${permId}`)
         cleanupPermissionContext(pendingPerm.contextHash)
-        rejectedCount++
         continue
       }
       const rejectResult = await errore.tryAsync(() => {
@@ -597,19 +603,10 @@ export async function handleOpencodeSession({
       })
       if (rejectResult instanceof Error) {
         sessionLogger.log(`[PERMISSION] Failed to auto-reject permission ${permId}:`, rejectResult)
-      } else {
-        rejectedCount++
       }
       cleanupPermissionContext(pendingPerm.contextHash)
     }
     pendingPermissions.delete(thread.id)
-    if (rejectedCount > 0) {
-      const plural = rejectedCount > 1 ? 's' : ''
-      await sendThreadMessage(
-        thread,
-        `⚠️ ${rejectedCount} pending permission request${plural} auto-rejected due to new message`,
-      )
-    }
   }
 
   // Answer any pending question tool with the user's message (silently, no thread message)
