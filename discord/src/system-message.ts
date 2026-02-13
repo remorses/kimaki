@@ -210,9 +210,13 @@ To send a prompt to an existing thread instead of creating a new one:
 
 npx -y kimaki send --thread <thread_id> --prompt "follow-up prompt"
 
+Use this when you already have the Discord thread ID.
+
 To send to the thread associated with a known session:
 
 npx -y kimaki send --session <session_id> --prompt "follow-up prompt"
+
+Use this when you have the OpenCode session ID.
 
 Use --notify-only to create a notification thread without starting an AI session:
 
