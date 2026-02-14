@@ -323,6 +323,41 @@ Use `--notify-only` for notifications that don't need immediate AI response (e.g
 
 **Graceful Restart** - Send `SIGUSR2` to restart the bot with new code without losing connections.
 
+## Tool Permissions
+
+When the AI agent tries to run a tool that requires approval (like executing shell commands or accessing files outside the project), Kimaki shows a permission prompt directly in the Discord thread with three buttons:
+
+- **Accept** - approve this one request
+- **Accept Always** - auto-approve similar requests for the rest of the session
+- **Deny** - block the request
+
+By default, most tools run without asking. The main exception is `external_directory` - any tool that touches paths outside the project directory will prompt for approval.
+
+You can customize permissions in your project's `opencode.json`:
+
+```json
+{
+  "$schema": "https://opencode.ai/config.json",
+  "permission": {
+    "bash": {
+      "*": "ask",
+      "git *": "allow",
+      "npm *": "allow",
+      "rm *": "deny"
+    },
+    "external_directory": {
+      "~/other-project/**": "allow"
+    }
+  }
+}
+```
+
+Each permission resolves to `"allow"` (run automatically), `"ask"` (show buttons in Discord), or `"deny"` (block).
+
+**Note:** If you change `opencode.json` while the bot is running, you need to restart the OpenCode server for the new permissions to take effect. Use the `/restart-opencode-server` command in Discord or restart Kimaki.
+
+See the full [OpenCode Permissions documentation](https://opencode.ai/docs/permissions/) for all available permissions, granular pattern matching, and per-agent overrides.
+
 ## Model & Agent Configuration
 
 Set the AI model in your project's `opencode.json`:
