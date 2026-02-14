@@ -1535,7 +1535,7 @@ export async function handleOpencodeSession({
 
       const abortReason = (abortController.signal.reason as Error)?.message
       if (!abortController.signal.aborted || abortReason === 'finished') {
-        const sessionDuration = prettyMilliseconds(Date.now() - sessionStartTime)
+        const sessionDuration = prettyMilliseconds(Date.now() - sessionStartTime, { secondsDecimalDigits: 0 })
         const attachCommand = port ? ` ⋅ ${session.id}` : ''
         const modelInfo = usedModel ? ` ⋅ ${usedModel}` : ''
         const agentInfo =
