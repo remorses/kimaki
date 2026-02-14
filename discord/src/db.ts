@@ -38,7 +38,10 @@ async function initializePrisma(): Promise<PrismaClient> {
   try {
     fs.mkdirSync(dataDir, { recursive: true })
   } catch (e) {
-    dbLogger.error(`Failed to create data directory ${dataDir}:`, (e as Error).message)
+    dbLogger.error(
+      `Failed to create data directory ${dataDir}:`,
+      (e as Error).message,
+    )
   }
 
   const dbPath = path.join(dataDir, 'discord-sessions.db')
@@ -56,9 +59,7 @@ async function initializePrisma(): Promise<PrismaClient> {
     await prisma.$executeRawUnsafe('PRAGMA busy_timeout = 5000')
 
     // Always run migrations - schema.sql uses IF NOT EXISTS so it's idempotent
-    dbLogger.log(
-      exists ? 'Existing database, running migrations...' : 'New database, running schema setup...',
-    )
+    dbLogger.log(exists ? 'Existing database, running migrations...' : 'New database, running schema setup...')
     await migrateSchema(prisma)
     dbLogger.log('Schema migration complete')
   } catch (error) {
@@ -84,11 +85,8 @@ async function migrateSchema(prisma: PrismaClient): Promise<void> {
     )
     .filter((s) => s.length > 0 && !/^CREATE\s+TABLE\s+["']?sqlite_sequence["']?\s*\(/i.test(s))
     // Make CREATE INDEX idempotent
-    .map((s) =>
-      s
-        .replace(/^CREATE\s+UNIQUE\s+INDEX\b(?!\s+IF)/i, 'CREATE UNIQUE INDEX IF NOT EXISTS')
-        .replace(/^CREATE\s+INDEX\b(?!\s+IF)/i, 'CREATE INDEX IF NOT EXISTS'),
-    )
+    .map((s) => s.replace(/^CREATE\s+UNIQUE\s+INDEX\b(?!\s+IF)/i, 'CREATE UNIQUE INDEX IF NOT EXISTS')
+                 .replace(/^CREATE\s+INDEX\b(?!\s+IF)/i, 'CREATE INDEX IF NOT EXISTS'))
   for (const statement of statements) {
     await prisma.$executeRawUnsafe(statement)
   }

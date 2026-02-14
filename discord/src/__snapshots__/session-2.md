@@ -8,10 +8,12 @@
 
 what model are you
 
+
 ### 🤖 Assistant (gpt-5.2-codex)
 
 **Started using openai/gpt-5.2-codex**
 
 I’m running `openai/gpt-5.2-codex`.
 
-_Completed in 2.1s_
+
+*Completed in 2.1s*

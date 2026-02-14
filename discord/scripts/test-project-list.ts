@@ -16,14 +16,10 @@ async function testProjectList() {
   console.log(`Total projects from OpenCode: ${projects.length}`)
 
   // Filter like add-project.ts does
-  const testProjects = projects.filter((p) =>
-    path.basename(p.worktree).startsWith('opencode-test-'),
-  )
+  const testProjects = projects.filter((p) => path.basename(p.worktree).startsWith('opencode-test-'))
   console.log(`\nFiltered out (opencode-test-*): ${testProjects.length}`)
 
-  const tempProjects = projects.filter(
-    (p) => p.worktree.includes('/var/folders/') || p.worktree.includes('/tmp/'),
-  )
+  const tempProjects = projects.filter((p) => p.worktree.includes('/var/folders/') || p.worktree.includes('/tmp/'))
   console.log(`Temp directories: ${tempProjects.length}`)
 
   const githubProjects = projects.filter((p) => p.worktree.includes('/Documents/GitHub/'))

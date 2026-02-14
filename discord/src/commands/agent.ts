@@ -11,14 +11,7 @@ import {
   type TextChannel,
 } from 'discord.js'
 import crypto from 'node:crypto'
-import {
-  setChannelAgent,
-  setSessionAgent,
-  clearSessionModel,
-  getThreadSession,
-  getSessionAgent,
-  getChannelAgent,
-} from '../database.js'
+import { setChannelAgent, setSessionAgent, clearSessionModel, getThreadSession, getSessionAgent, getChannelAgent } from '../database.js'
 import { initializeOpencodeForDirectory } from '../opencode.js'
 import { resolveTextChannel, getKimakiMetadata } from '../discord-utils.js'
 import { createLogger, LogPrefix } from '../logger.js'
@@ -81,11 +74,7 @@ export async function getCurrentAgentInfo({
  * Lowercase, alphanumeric and hyphens only.
  */
 export function sanitizeAgentName(name: string): string {
-  return name
-    .toLowerCase()
-    .replace(/[^a-z0-9-]/g, '-')
-    .replace(/-+/g, '-')
-    .replace(/^-|-$/g, '')
+  return name.toLowerCase().replace(/[^a-z0-9-]/g, '-').replace(/-+/g, '-').replace(/^-|-$/g, '')
 }
 
 /**
@@ -175,9 +164,7 @@ export async function setAgentForContext({
     await setSessionAgent(context.sessionId, agentName)
     // Clear session model so the new agent's model takes effect
     await clearSessionModel(context.sessionId)
-    agentLogger.log(
-      `Set agent ${agentName} for session ${context.sessionId} (cleared session model)`,
-    )
+    agentLogger.log(`Set agent ${agentName} for session ${context.sessionId} (cleared session model)`)
   } else {
     await setChannelAgent(context.channelId, agentName)
     agentLogger.log(`Set agent ${agentName} for channel ${context.channelId}`)

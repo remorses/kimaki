@@ -8,12 +8,7 @@ import {
 } from 'discord.js'
 import fs from 'node:fs'
 import type { CommandContext, AutocompleteContext } from './types.js'
-import {
-  getChannelDirectory,
-  setThreadSession,
-  setPartMessagesBatch,
-  getAllThreadSessionIds,
-} from '../database.js'
+import { getChannelDirectory, setThreadSession, setPartMessagesBatch, getAllThreadSessionIds } from '../database.js'
 import { initializeOpencodeForDirectory } from '../opencode.js'
 import { sendThreadMessage, resolveTextChannel } from '../discord-utils.js'
 import { collectLastAssistantParts } from '../message-formatting.js'

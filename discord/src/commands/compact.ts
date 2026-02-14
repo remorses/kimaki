@@ -36,9 +36,7 @@ export async function handleCompactCommand({ command }: CommandContext): Promise
     return
   }
 
-  const resolved = await resolveWorkingDirectory({
-    channel: channel as TextChannel | ThreadChannel,
-  })
+  const resolved = await resolveWorkingDirectory({ channel: channel as TextChannel | ThreadChannel })
 
   if (!resolved) {
     await command.reply({
@@ -125,10 +123,9 @@ export async function handleCompactCommand({ command }: CommandContext): Promise
 
     if (result.error) {
       logger.error('[COMPACT] Error:', result.error)
-      const errorMessage =
-        'data' in result.error && result.error.data
-          ? (result.error.data as { message?: string }).message || 'Unknown error'
-          : 'Unknown error'
+      const errorMessage = 'data' in result.error && result.error.data
+        ? (result.error.data as { message?: string }).message || 'Unknown error'
+        : 'Unknown error'
       await command.editReply({
         content: `Failed to compact: ${errorMessage}`,
       })

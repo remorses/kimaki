@@ -3,20 +3,13 @@
 import path from 'node:path'
 import * as errore from 'errore'
 import type { CommandContext, AutocompleteContext } from './types.js'
-import {
-  findChannelsByDirectory,
-  deleteChannelDirectoriesByDirectory,
-  getAllTextChannelDirectories,
-} from '../database.js'
+import { findChannelsByDirectory, deleteChannelDirectoriesByDirectory, getAllTextChannelDirectories } from '../database.js'
 import { createLogger, LogPrefix } from '../logger.js'
 import { abbreviatePath } from '../utils.js'
 
 const logger = createLogger(LogPrefix.REMOVE_PROJECT)
 
-export async function handleRemoveProjectCommand({
-  command,
-  appId,
-}: CommandContext): Promise<void> {
+export async function handleRemoveProjectCommand({ command, appId }: CommandContext): Promise<void> {
   await command.deferReply({ ephemeral: false })
 
   const directory = command.options.getString('project', true)
@@ -39,21 +32,18 @@ export async function handleRemoveProjectCommand({
     const deletedChannels: string[] = []
     const failedChannels: string[] = []
 
-    for (const { channel_id, channel_type } of channels as Array<{
-      channel_id: string
-      channel_type: string
-    }>) {
+    for (const { channel_id, channel_type } of channels as Array<{ channel_id: string; channel_type: string }>) {
       const channel = await errore.tryAsync({
         try: () => guild.channels.fetch(channel_id),
         catch: (e) => e as Error,
       })
-
+      
       if (channel instanceof Error) {
         logger.error(`Failed to fetch channel ${channel_id}:`, channel)
         failedChannels.push(`${channel_type}: ${channel_id}`)
         continue
       }
-
+      
       if (channel) {
         try {
           await channel.delete(`Removed by /remove-project command`)
@@ -106,10 +96,7 @@ export async function handleRemoveProjectAutocomplete({
 
   try {
     // Get all directories with channels
-    const allChannels = (await findChannelsByDirectory({ channelType: 'text' })) as Array<{
-      directory: string
-      channel_id: string
-    }>
+    const allChannels = await findChannelsByDirectory({ channelType: 'text' }) as Array<{ directory: string; channel_id: string }>
 
     // Filter to only channels that exist in this guild
     const projectsInGuild: { directory: string; channelId: string }[] = []

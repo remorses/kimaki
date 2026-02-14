@@ -350,8 +350,8 @@ Use \`--wait\` when you need to:
 `
     : ''
 }${
-    worktree
-      ? `
+  worktree
+    ? `
 ## worktree
 
 This session is running inside a git worktree.
@@ -373,8 +373,8 @@ DEFAULT_BRANCH=$(git -C ${worktree.mainRepoDirectory} symbolic-ref refs/remotes/
 git -C ${worktree.mainRepoDirectory} checkout $DEFAULT_BRANCH && git -C ${worktree.mainRepoDirectory} merge ${worktree.branch}
 \`\`\`
 `
-      : ''
-  }
+    : ''
+}
 ${getCritiqueEnabled() ? CRITIQUE_INSTRUCTIONS : ''}
 ${KIMAKI_TUNNEL_INSTRUCTIONS}
 ## markdown formatting

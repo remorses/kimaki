@@ -14,12 +14,7 @@ import {
 } from '../database.js'
 import { SILENT_MESSAGE_FLAGS, reactToThread } from '../discord-utils.js'
 import { createLogger, LogPrefix } from '../logger.js'
-import {
-  createWorktreeWithSubmodules,
-  captureGitDiff,
-  execAsync,
-  type CapturedDiff,
-} from '../worktree-utils.js'
+import { createWorktreeWithSubmodules, captureGitDiff, execAsync, type CapturedDiff } from '../worktree-utils.js'
 import { WORKTREE_PREFIX } from './merge-worktree.js'
 import * as errore from 'errore'
 
@@ -132,23 +127,14 @@ async function createWorktreeInBackground({
   await setWorktreeReady({ threadId: thread.id, worktreeDirectory: worktreeResult.directory })
 
   // React with tree emoji to mark as worktree thread
-  await reactToThread({
-    rest,
-    threadId: thread.id,
-    channelId: thread.parentId || undefined,
-    emoji: '🌳',
-  })
+  await reactToThread({ rest, threadId: thread.id, channelId: thread.parentId || undefined, emoji: '🌳' })
 
-  const diffStatus = diff
-    ? worktreeResult.diffApplied
-      ? '\n✅ Changes applied'
-      : '\n⚠️ Failed to apply changes'
-    : ''
+  const diffStatus = diff ? (worktreeResult.diffApplied ? '\n✅ Changes applied' : '\n⚠️ Failed to apply changes') : ''
   await starterMessage.edit(
     `🌳 **Worktree: ${worktreeName}**\n` +
-      `📁 \`${worktreeResult.directory}\`\n` +
-      `🌿 Branch: \`${worktreeResult.branch}\`` +
-      diffStatus,
+    `📁 \`${worktreeResult.directory}\`\n` +
+    `🌿 Branch: \`${worktreeResult.branch}\`` +
+    diffStatus
   )
 }
 
@@ -184,7 +170,10 @@ async function findExistingWorktreePath({
   return undefined
 }
 
-export async function handleNewWorktreeCommand({ command, appId }: CommandContext): Promise<void> {
+export async function handleNewWorktreeCommand({
+  command,
+  appId,
+}: CommandContext): Promise<void> {
   await command.deferReply({ ephemeral: false })
 
   const channel = command.channel
@@ -236,9 +225,7 @@ export async function handleNewWorktreeCommand({ command, appId }: CommandContex
     return
   }
   if (existingWorktree) {
-    await command.editReply(
-      `Worktree \`${worktreeName}\` already exists at \`${existingWorktree}\``,
-    )
+    await command.editReply(`Worktree \`${worktreeName}\` already exists at \`${existingWorktree}\``)
     return
   }
 
@@ -310,9 +297,7 @@ async function handleWorktreeInThread({
 
   // Get worktree name from parameter or derive from thread name
   const rawName = command.options.getString('name')
-  const worktreeName = rawName
-    ? formatWorktreeName(rawName)
-    : deriveWorktreeNameFromThread(thread.name)
+  const worktreeName = rawName ? formatWorktreeName(rawName) : deriveWorktreeNameFromThread(thread.name)
 
   if (!worktreeName) {
     await command.editReply('Invalid worktree name. Please provide a name or rename the thread.')

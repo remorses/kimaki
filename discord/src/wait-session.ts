@@ -56,9 +56,7 @@ export async function waitForSessionComplete({
 
   const getClient = await initializeOpencodeForDirectory(projectDirectory)
   if (getClient instanceof Error) {
-    throw new Error(`Failed to connect to OpenCode server: ${getClient.message}`, {
-      cause: getClient,
-    })
+    throw new Error(`Failed to connect to OpenCode server: ${getClient.message}`, { cause: getClient })
   }
 
   while (Date.now() - startTime < timeoutMs) {
@@ -68,13 +66,11 @@ export async function waitForSessionComplete({
     const messages = messagesResponse.data || []
 
     // Find the last assistant message
-    const lastAssistant = [...messages].reverse().find((m) => m.info.role === 'assistant')
+    const lastAssistant = [...messages]
+      .reverse()
+      .find((m) => m.info.role === 'assistant')
 
-    if (
-      lastAssistant &&
-      lastAssistant.info.role === 'assistant' &&
-      lastAssistant.info.time.completed
-    ) {
+    if (lastAssistant && lastAssistant.info.role === 'assistant' && lastAssistant.info.time.completed) {
       waitLogger.log(`Session ${sessionId} completed`)
       return
     }
@@ -84,9 +80,7 @@ export async function waitForSessionComplete({
     })
   }
 
-  throw new Error(
-    `Timed out waiting for session completion (session: ${sessionId}, timeout: ${timeoutMs}ms)`,
-  )
+  throw new Error(`Timed out waiting for session completion (session: ${sessionId}, timeout: ${timeoutMs}ms)`)
 }
 
 /**
@@ -113,9 +107,7 @@ export async function waitAndOutputSession({
   waitLogger.log('Generating session output...')
   const getClient = await initializeOpencodeForDirectory(projectDirectory)
   if (getClient instanceof Error) {
-    throw new Error(`Failed to connect to OpenCode server: ${getClient.message}`, {
-      cause: getClient,
-    })
+    throw new Error(`Failed to connect to OpenCode server: ${getClient.message}`, { cause: getClient })
   }
 
   const markdown = new ShareMarkdown(getClient())

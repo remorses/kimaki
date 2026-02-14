@@ -286,7 +286,9 @@ export async function handleFileUploadModalSubmit(
     })
     updateButtonMessage(
       context,
-      downloadedPaths.length > 0 ? `Uploaded: ${fileNames.join(', ')}` : '_Upload failed_',
+      downloadedPaths.length > 0
+        ? `Uploaded: ${fileNames.join(', ')}`
+        : '_Upload failed_',
     )
 
     const summary = (() => {

@@ -8,7 +8,9 @@ import {
 } from 'discord.js'
 import { setGeminiApiKey } from '../database.js'
 
-export async function handleGeminiApiKeyButton(interaction: ButtonInteraction): Promise<void> {
+export async function handleGeminiApiKeyButton(
+  interaction: ButtonInteraction,
+): Promise<void> {
   const customId = interaction.customId
   if (!customId.startsWith('gemini_apikey:')) {
     return

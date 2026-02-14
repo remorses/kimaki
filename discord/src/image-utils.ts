@@ -122,9 +122,7 @@ export async function processImage(
       .jpeg({ quality: 85 })
       .toBuffer()
 
-    logger.log(
-      `Resized image: ${width}x${height} → max ${MAX_DIMENSION}px (${outputBuffer.length} bytes)`,
-    )
+    logger.log(`Resized image: ${width}x${height} → max ${MAX_DIMENSION}px (${outputBuffer.length} bytes)`)
 
     return { buffer: outputBuffer, mime: 'image/jpeg' }
   } catch (error) {

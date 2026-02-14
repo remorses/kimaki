@@ -119,14 +119,9 @@ export async function getCurrentModelInfo({
   }
 
   // 2. Check agent's configured model
-  const effectiveAgent =
-    agentPreference ??
-    (sessionId
-      ? (await getSessionAgent(sessionId)) ||
-        (channelId ? await getChannelAgent(channelId) : undefined)
-      : channelId
-        ? await getChannelAgent(channelId)
-        : undefined)
+  const effectiveAgent = agentPreference ?? (sessionId
+    ? (await getSessionAgent(sessionId)) || (channelId ? await getChannelAgent(channelId) : undefined)
+    : (channelId ? await getChannelAgent(channelId) : undefined))
   if (effectiveAgent) {
     const agentsResponse = await getClient().app.agents({})
     if (agentsResponse.data) {
@@ -616,8 +611,7 @@ export async function handleModelScopeSelectMenu(
       if (!context.sessionId) {
         pendingModelContexts.delete(contextHash)
         await interaction.editReply({
-          content:
-            'No active session in this thread. Please run /model in a thread with a session.',
+          content: 'No active session in this thread. Please run /model in a thread with a session.',
           components: [],
         })
         return
@@ -651,9 +645,7 @@ export async function handleModelScopeSelectMenu(
       }
       await setGlobalModel(context.appId, modelId)
       await setChannelModel(context.channelId, modelId)
-      modelLogger.log(
-        `Set global model ${modelId} for app ${context.appId} and channel ${context.channelId}`,
-      )
+      modelLogger.log(`Set global model ${modelId} for app ${context.appId} and channel ${context.channelId}`)
 
       await interaction.editReply({
         content: `Model set for this channel and as global default:\n**${context.providerName}** / **${modelDisplay}**\n\`${modelId}\`\nAll channels will use this model (unless they have their own override).`,

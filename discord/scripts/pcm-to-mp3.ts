@@ -55,7 +55,16 @@ async function findAudioFiles(dir: string): Promise<string[]> {
   const files: string[] = []
   const entries = await fs.promises.readdir(dir, { withFileTypes: true })
 
-  const audioExtensions = ['.pcm', '.wav', '.flac', '.ogg', '.m4a', '.aac', '.wma', '.opus']
+  const audioExtensions = [
+    '.pcm',
+    '.wav',
+    '.flac',
+    '.ogg',
+    '.m4a',
+    '.aac',
+    '.wma',
+    '.opus',
+  ]
 
   for (const entry of entries) {
     const fullPath = path.join(dir, entry.name)
@@ -65,7 +74,9 @@ async function findAudioFiles(dir: string): Promise<string[]> {
       files.push(...subFiles)
     } else if (entry.isFile() && !entry.name.endsWith('.mp3')) {
       const ext = path.extname(entry.name).toLowerCase()
-      const hasAudioExtension = audioExtensions.some((audioExt) => entry.name.includes(audioExt))
+      const hasAudioExtension = audioExtensions.some((audioExt) =>
+        entry.name.includes(audioExt),
+      )
 
       if (hasAudioExtension || ext === '.pcm') {
         files.push(fullPath)

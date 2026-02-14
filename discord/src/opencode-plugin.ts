@@ -89,12 +89,15 @@ const kimakiPlugin: Plugin = async () => {
           })()
 
           if (members.length === 0) {
-            return query ? `No users found matching "${query}"` : 'No users found in guild'
+            return query
+              ? `No users found matching "${query}"`
+              : 'No users found in guild'
           }
 
           const userList = members
             .map((m) => {
-              const displayName = m.nick || m.user.global_name || m.user.username
+              const displayName =
+                m.nick || m.user.global_name || m.user.username
               return `- ${displayName} (ID: ${m.user.id}) - mention: <@${m.user.id}>`
             })
             .join('\n')
@@ -188,7 +191,9 @@ const kimakiPlugin: Plugin = async () => {
           'Use this when you need the user to provide files (images, documents, configs, etc.). ' +
           'IMPORTANT: Always call this tool last in your message, after all text parts.',
         args: {
-          prompt: z.string().describe('Message shown to the user explaining what files to upload'),
+          prompt: z
+            .string()
+            .describe('Message shown to the user explaining what files to upload'),
           maxFiles: z
             .number()
             .min(1)
@@ -236,7 +241,7 @@ const kimakiPlugin: Plugin = async () => {
             return `File upload failed: ${err instanceof Error ? err.message : String(err)}`
           }
 
-          const result = (await response.json()) as { filePaths?: string[]; error?: string }
+          const result = await response.json() as { filePaths?: string[]; error?: string }
 
           if (!response.ok || result.error) {
             return `File upload failed: ${result.error || 'Unknown error'}`

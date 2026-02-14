@@ -51,9 +51,7 @@ export async function handleContextUsageCommand({ command }: CommandContext): Pr
     return
   }
 
-  const resolved = await resolveWorkingDirectory({
-    channel: channel as TextChannel | ThreadChannel,
-  })
+  const resolved = await resolveWorkingDirectory({ channel: channel as TextChannel | ThreadChannel })
 
   if (!resolved) {
     await command.reply({
@@ -105,15 +103,17 @@ export async function handleContextUsageCommand({ command }: CommandContext): Pr
       return
     }
 
-    const lastAssistant = [...assistantMessages].reverse().find((m) => {
-      if (m.info.role !== 'assistant') {
-        return false
-      }
-      if (!('tokens' in m.info) || !m.info.tokens) {
-        return false
-      }
-      return getTokenTotal(m.info.tokens) > 0
-    })
+    const lastAssistant = [...assistantMessages]
+      .reverse()
+      .find((m) => {
+        if (m.info.role !== 'assistant') {
+          return false
+        }
+        if (!('tokens' in m.info) || !m.info.tokens) {
+          return false
+        }
+        return getTokenTotal(m.info.tokens) > 0
+      })
 
     if (!lastAssistant || lastAssistant.info.role !== 'assistant') {
       await command.editReply({
@@ -157,9 +157,7 @@ export async function handleContextUsageCommand({ command }: CommandContext): Pr
     if (contextLimit) {
       const percentage = Math.round((totalTokens / contextLimit) * 100)
       const formattedLimit = contextLimit.toLocaleString('en-US')
-      lines.push(
-        `**Context usage:** ${formattedTokens} / ${formattedLimit} tokens (${percentage}%)`,
-      )
+      lines.push(`**Context usage:** ${formattedTokens} / ${formattedLimit} tokens (${percentage}%)`)
     } else {
       lines.push(`**Context usage:** ${formattedTokens} tokens (context limit unavailable)`)
     }

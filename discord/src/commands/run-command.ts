@@ -14,13 +14,7 @@ const logger = createLogger(LogPrefix.INTERACTION)
 
 const MAX_OUTPUT_CHARS = 1900
 
-export async function runShellCommand({
-  command,
-  directory,
-}: {
-  command: string
-  directory: string
-}): Promise<string> {
+export async function runShellCommand({ command, directory }: { command: string; directory: string }): Promise<string> {
   try {
     const { stdout, stderr } = await execAsync(command, { cwd: directory })
     const output = stripAnsi([stdout, stderr].filter(Boolean).join('\n').trim())
@@ -31,12 +25,7 @@ export async function runShellCommand({
     }
     return formatOutput(output, header)
   } catch (error) {
-    const execError = error as {
-      stdout?: string
-      stderr?: string
-      message?: string
-      code?: number | string
-    }
+    const execError = error as { stdout?: string; stderr?: string; message?: string; code?: number | string }
     const output = stripAnsi([execError.stdout, execError.stderr].filter(Boolean).join('\n').trim())
     const exitCode = execError.code ?? 1
     logger.error(`[RUN-COMMAND] Command "${command}" exited with ${exitCode}:`, error)
@@ -75,9 +64,7 @@ export async function handleRunCommand({ command }: CommandContext): Promise<voi
     return
   }
 
-  const resolved = await resolveWorkingDirectory({
-    channel: channel as TextChannel | ThreadChannel,
-  })
+  const resolved = await resolveWorkingDirectory({ channel: channel as TextChannel | ThreadChannel })
 
   if (!resolved) {
     await command.reply({
@@ -100,7 +87,8 @@ function formatOutput(output: string, header: string): string {
   // Reserve space for header + newline + code block delimiters (```\n...\n```)
   const overhead = header.length + 1 + 3 + 1 + 1 + 3 // header\n```\n...\n```
   const maxContent = MAX_OUTPUT_CHARS - overhead
-  const truncated =
-    output.length > maxContent ? output.slice(0, maxContent - 14) + '\n... truncated' : output
+  const truncated = output.length > maxContent
+    ? output.slice(0, maxContent - 14) + '\n... truncated'
+    : output
   return `${header}\n\`\`\`\n${truncated}\n\`\`\``
 }

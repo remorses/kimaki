@@ -46,7 +46,9 @@ async function waitForServer(port: number, maxAttempts = 30): Promise<boolean> {
     }
     await new Promise((resolve) => setTimeout(resolve, 1000))
   }
-  throw new Error(`Server did not start on port ${port} after ${maxAttempts} seconds`)
+  throw new Error(
+    `Server did not start on port ${port} after ${maxAttempts} seconds`,
+  )
 }
 
 async function getLastSessionMessages() {
@@ -55,20 +57,24 @@ async function getLastSessionMessages() {
   const baseUrl = `http://localhost:${port}`
 
   console.log(`Starting OpenCode server on port ${port}...`)
-
+  
   const opencodeCommand = process.env.OPENCODE_PATH || 'opencode'
   const directory = process.cwd()
 
   // Start the OpenCode server
-  const serverProcess = spawn(opencodeCommand, ['serve', '--port', port.toString()], {
-    stdio: 'pipe',
-    detached: false,
-    cwd: directory,
-    env: {
-      ...process.env,
-      OPENCODE_PORT: port.toString(),
+  const serverProcess = spawn(
+    opencodeCommand,
+    ['serve', '--port', port.toString()],
+    {
+      stdio: 'pipe',
+      detached: false,
+      cwd: directory,
+      env: {
+        ...process.env,
+        OPENCODE_PORT: port.toString(),
+      },
     },
-  })
+  )
 
   serverProcess.stdout?.on('data', (data) => {
     console.log(`[opencode]: ${data.toString().trim()}`)
@@ -112,7 +118,9 @@ async function getLastSessionMessages() {
       return
     }
 
-    const projectSessions = sessionsResponse.data.filter((s) => s.projectID === currentProject.id)
+    const projectSessions = sessionsResponse.data.filter(
+      (s) => s.projectID === currentProject.id,
+    )
 
     if (projectSessions.length === 0) {
       console.log('No sessions found for the current project')
@@ -120,28 +128,33 @@ async function getLastSessionMessages() {
     }
 
     // Sort sessions by update time and get the latest one
-    const latestSession = projectSessions.sort((a, b) => b.time.updated - a.time.updated)[0]
+    const latestSession = projectSessions.sort(
+      (a, b) => b.time.updated - a.time.updated,
+    )[0]
 
     console.log(`Latest Session: "${latestSession.title}"`)
     console.log(`Session ID: ${latestSession.id}`)
-    console.log(`Last Updated: ${new Date(latestSession.time.updated).toLocaleString()}\n`)
+    console.log(
+      `Last Updated: ${new Date(latestSession.time.updated).toLocaleString()}\n`,
+    )
 
     // Get messages for the session
     const messagesResponse = await client.session.messages({
       path: { id: latestSession.id },
     })
-
+    
     if (!messagesResponse.data) {
       console.error('Failed to fetch session messages')
       return
     }
-
+    
     const messages = messagesResponse.data
     console.log(`Found ${messages.length} message(s) in the session\n`)
-
+    
     // Log the messages as prettified JSON
     console.log('=== Session Messages (JSON) ===\n')
     console.log(JSON.stringify(messages, null, 2))
+
   } catch (error) {
     console.error('Error fetching session messages:', error)
     serverProcess.kill()

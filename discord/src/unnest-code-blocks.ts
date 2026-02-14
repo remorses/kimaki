@@ -70,11 +70,7 @@ function processListItem(item: Tokens.ListItem, prefix: string): Segment[] {
       const effectivePrefix = seenCodeBlock ? '- ' : prefix
       const marker = !wroteFirstListItem ? taskMarker : ''
       const normalizedText = text.replace(/^\s+/, '')
-      segments.push({
-        type: 'list-item',
-        prefix: effectivePrefix,
-        content: marker + normalizedText,
-      })
+      segments.push({ type: 'list-item', prefix: effectivePrefix, content: marker + normalizedText })
       wroteFirstListItem = true
     }
     currentText = []

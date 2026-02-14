@@ -11,7 +11,8 @@ function createCliForIdParsing() {
     .option('--thread <threadId>', 'Thread ID')
     .option('--session <sessionId>', 'Session ID')
 
-  cli.command('session archive <threadId>', 'Archive a thread')
+  cli
+    .command('session archive <threadId>', 'Archive a thread')
 
   cli
     .command('add-project', 'Add a project')
@@ -27,9 +28,7 @@ describe('goke CLI ID parsing', () => {
     const threadId = '9876543210987654321'
     const sessionId = '1111222233334444555'
 
-    const channelResult = cli.parse(['node', 'kimaki', 'send', '--channel', channelId], {
-      run: false,
-    })
+    const channelResult = cli.parse(['node', 'kimaki', 'send', '--channel', channelId], { run: false })
     expect(channelResult.options.channel).toBe(channelId)
     expect(typeof channelResult.options.channel).toBe('string')
 
@@ -37,9 +36,7 @@ describe('goke CLI ID parsing', () => {
     expect(threadResult.options.thread).toBe(threadId)
     expect(typeof threadResult.options.thread).toBe('string')
 
-    const sessionResult = cli.parse(['node', 'kimaki', 'send', '--session', sessionId], {
-      run: false,
-    })
+    const sessionResult = cli.parse(['node', 'kimaki', 'send', '--session', sessionId], { run: false })
     expect(sessionResult.options.session).toBe(sessionId)
     expect(typeof sessionResult.options.session).toBe('string')
   })

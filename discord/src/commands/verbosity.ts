@@ -4,12 +4,7 @@
 // 'tools-and-text': shows all output including tool executions
 // 'text-only': only shows text responses (⬥ diamond parts)
 
-import {
-  ChatInputCommandInteraction,
-  ChannelType,
-  type TextChannel,
-  type ThreadChannel,
-} from 'discord.js'
+import { ChatInputCommandInteraction, ChannelType, type TextChannel, type ThreadChannel } from 'discord.js'
 import { getChannelVerbosity, setChannelVerbosity, type VerbosityLevel } from '../database.js'
 import { createLogger, LogPrefix } from '../logger.js'
 
