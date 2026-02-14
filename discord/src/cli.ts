@@ -15,7 +15,11 @@ import {
   log,
   multiselect,
 } from '@clack/prompts'
-import { deduplicateByKey, generateBotInstallUrl, abbreviatePath } from './utils.js'
+import {
+  deduplicateByKey,
+  generateBotInstallUrl,
+  abbreviatePath,
+} from './utils.js'
 import {
   getChannelsWithDescriptions,
   createDiscordClient,
@@ -42,7 +46,10 @@ import { formatWorktreeName } from './commands/worktree.js'
 import { WORKTREE_PREFIX } from './commands/merge-worktree.js'
 import type { ThreadStartMarker } from './system-message.js'
 import yaml from 'js-yaml'
-import type { OpencodeClient, Command as OpencodeCommand } from '@opencode-ai/sdk'
+import type {
+  OpencodeClient,
+  Command as OpencodeCommand,
+} from '@opencode-ai/sdk'
 import {
   Events,
   ChannelType,
@@ -58,17 +65,38 @@ import fs from 'node:fs'
 import * as errore from 'errore'
 
 import { createLogger, formatErrorWithStack, LogPrefix } from './logger.js'
-import { archiveThread, uploadFilesToDiscord, stripMentions } from './discord-utils.js'
-import { spawn, spawnSync, execSync, type ExecSyncOptions } from 'node:child_process'
+import {
+  archiveThread,
+  uploadFilesToDiscord,
+  stripMentions,
+} from './discord-utils.js'
+import {
+  spawn,
+  spawnSync,
+  execSync,
+  type ExecSyncOptions,
+} from 'node:child_process'
 import http from 'node:http'
-import { setDataDir, getDataDir, getLockPort, setDefaultVerbosity, setDefaultMentionMode, setCritiqueEnabled, getProjectsDir } from './config.js'
+import {
+  setDataDir,
+  getDataDir,
+  getLockPort,
+  setDefaultVerbosity,
+  setDefaultMentionMode,
+  setCritiqueEnabled,
+  getProjectsDir,
+} from './config.js'
 import { sanitizeAgentName } from './commands/agent.js'
 import {
   showFileUploadButton,
   type FileUploadRequest,
 } from './commands/file-upload.js'
 import { execAsync } from './worktree-utils.js'
-import { backgroundUpgradeKimaki, upgrade, getCurrentVersion } from './upgrade.js'
+import {
+  backgroundUpgradeKimaki,
+  upgrade,
+  getCurrentVersion,
+} from './upgrade.js'
 
 const cliLogger = createLogger(LogPrefix.CLI)
 
@@ -79,7 +107,10 @@ function stripBracketedPaste(value: string | undefined): string {
   if (!value) {
     return ''
   }
-  return value.replace(/\x1b\[200~/g, '').replace(/\x1b\[201~/g, '').trim()
+  return value
+    .replace(/\x1b\[200~/g, '')
+    .replace(/\x1b\[201~/g, '')
+    .trim()
 }
 
 function isThreadChannelType(type: number): boolean {
@@ -131,7 +162,11 @@ async function sendDiscordMessageWithOptionalAttachment({
       }),
     )
     const buffer = fs.readFileSync(tmpFile)
-    formData.append('files[0]', new Blob([buffer], { type: 'text/markdown' }), 'prompt.md')
+    formData.append(
+      'files[0]',
+      new Blob([buffer], { type: 'text/markdown' }),
+      'prompt.md',
+    )
 
     const starterMessageResponse = await fetch(
       `https://discord.com/api/v10/channels/${channelId}/messages`,
@@ -146,7 +181,9 @@ async function sendDiscordMessageWithOptionalAttachment({
 
     if (!starterMessageResponse.ok) {
       const error = await starterMessageResponse.text()
-      throw new Error(`Discord API error: ${starterMessageResponse.status} - ${error}`)
+      throw new Error(
+        `Discord API error: ${starterMessageResponse.status} - ${error}`,
+      )
     }
 
     return (await starterMessageResponse.json()) as { id: string }
@@ -182,9 +219,15 @@ async function ensureCommandAvailable({
 
   const isWindows = process.platform === 'win32'
   const whichCmd = isWindows ? 'where' : 'which'
-  const isInstalled = await execAsync(`${whichCmd} ${name}`, { env: process.env }).then(
-    () => { return true },
-    () => { return false },
+  const isInstalled = await execAsync(`${whichCmd} ${name}`, {
+    env: process.env,
+  }).then(
+    () => {
+      return true
+    },
+    () => {
+      return false
+    },
   )
 
   if (isInstalled) {
@@ -226,14 +269,23 @@ async function ensureCommandAvailable({
     cliLogger.log(`${name} installed successfully!`)
   } catch (error) {
     cliLogger.log(`Failed to install ${name}`)
-    cliLogger.error('Installation error:', error instanceof Error ? error.message : String(error))
+    cliLogger.error(
+      'Installation error:',
+      error instanceof Error ? error.message : String(error),
+    )
     process.exit(EXIT_NO_RESTART)
   }
 
   // After install, re-check PATH first (install script may have added it)
-  const foundInPath = await execAsync(`${whichCmd} ${name}`, { env: process.env }).then(
-    (result) => { return result.stdout.trim() },
-    () => { return '' },
+  const foundInPath = await execAsync(`${whichCmd} ${name}`, {
+    env: process.env,
+  }).then(
+    (result) => {
+      return result.stdout.trim()
+    },
+    () => {
+      return ''
+    },
   )
   if (foundInPath) {
     process.env[envPathKey] = foundInPath
@@ -244,8 +296,12 @@ async function ensureCommandAvailable({
   const home = process.env.HOME || process.env.USERPROFILE || ''
   const accessFlag = isWindows ? fs.constants.F_OK : fs.constants.X_OK
   const possiblePaths = (isWindows ? possiblePathsWindows : possiblePathsUnix)
-    .filter((p) => { return !p.startsWith('~') || home })
-    .map((p) => { return p.replace('~', home) })
+    .filter((p) => {
+      return !p.startsWith('~') || home
+    })
+    .map((p) => {
+      return p.replace('~', home)
+    })
 
   const installedPath = possiblePaths.find((p) => {
     try {
@@ -297,7 +353,10 @@ function startCaffeinate() {
     })
     cliLogger.log('Started caffeinate to prevent system sleep')
   } catch (err) {
-    cliLogger.warn('Failed to spawn caffeinate:', err instanceof Error ? err.message : String(err))
+    cliLogger.warn(
+      'Failed to spawn caffeinate:',
+      err instanceof Error ? err.message : String(err),
+    )
   }
 }
 const cli = goke('kimaki')
@@ -336,10 +395,14 @@ async function killProcessOnPort(port: number): Promise<boolean> {
       }
     } else {
       // Unix: use lsof with -sTCP:LISTEN to only find the listening process
-      const result = spawnSync('lsof', ['-i', `:${port}`, '-sTCP:LISTEN', '-t'], {
-        shell: false,
-        encoding: 'utf-8',
-      })
+      const result = spawnSync(
+        'lsof',
+        ['-i', `:${port}`, '-sTCP:LISTEN', '-t'],
+        {
+          shell: false,
+          encoding: 'utf-8',
+        },
+      )
       const pids = result.stdout
         ?.trim()
         .split('\n')
@@ -367,7 +430,9 @@ async function checkSingleInstance(): Promise<void> {
       signal: AbortSignal.timeout(1000),
     })
     if (response.ok) {
-      cliLogger.log(`Another kimaki instance detected for data dir: ${getDataDir()}`)
+      cliLogger.log(
+        `Another kimaki instance detected for data dir: ${getDataDir()}`,
+      )
       await killProcessOnPort(lockPort)
       // Wait a moment for port to be released
       await new Promise((resolve) => {
@@ -426,11 +491,18 @@ async function startLockServer(): Promise<void> {
             }
             if (!request.sessionId || !request.threadId || !request.directory) {
               res.writeHead(400, { 'Content-Type': 'application/json' })
-              res.end(JSON.stringify({ error: 'Missing required fields: sessionId, threadId, directory' }))
+              res.end(
+                JSON.stringify({
+                  error:
+                    'Missing required fields: sessionId, threadId, directory',
+                }),
+              )
               return
             }
 
-            const thread = await discordClientRef!.channels.fetch(request.threadId)
+            const thread = await discordClientRef!.channels.fetch(
+              request.threadId,
+            )
             if (!thread || !thread.isThread()) {
               res.writeHead(404, { 'Content-Type': 'application/json' })
               res.end(JSON.stringify({ error: 'Thread not found' }))
@@ -487,7 +559,6 @@ async function startLockServer(): Promise<void> {
   })
 }
 
-
 type CliOptions = {
   restart?: boolean
   addChannels?: boolean
@@ -538,14 +609,19 @@ async function registerCommands({
       .setName('new-session')
       .setDescription('Start a new OpenCode session')
       .addStringOption((option) => {
-        option.setName('prompt').setDescription('Prompt content for the session').setRequired(true)
+        option
+          .setName('prompt')
+          .setDescription('Prompt content for the session')
+          .setRequired(true)
 
         return option
       })
       .addStringOption((option) => {
         option
           .setName('files')
-          .setDescription('Files to mention (comma or space separated; autocomplete)')
+          .setDescription(
+            'Files to mention (comma or space separated; autocomplete)',
+          )
           .setAutocomplete(true)
           .setMaxLength(6000)
 
@@ -563,11 +639,15 @@ async function registerCommands({
       .toJSON(),
     new SlashCommandBuilder()
       .setName('new-worktree')
-      .setDescription('Create a new git worktree (in thread: uses thread name if no name given)')
+      .setDescription(
+        'Create a new git worktree (in thread: uses thread name if no name given)',
+      )
       .addStringOption((option) => {
         option
           .setName('name')
-          .setDescription('Name for worktree (optional in threads - uses thread name)')
+          .setDescription(
+            'Name for worktree (optional in threads - uses thread name)',
+          )
           .setRequired(false)
 
         return option
@@ -581,21 +661,29 @@ async function registerCommands({
       .toJSON(),
     new SlashCommandBuilder()
       .setName('toggle-worktrees')
-      .setDescription('Toggle automatic git worktree creation for new sessions in this channel')
+      .setDescription(
+        'Toggle automatic git worktree creation for new sessions in this channel',
+      )
       .setDMPermission(false)
       .toJSON(),
     new SlashCommandBuilder()
       .setName('toggle-mention-mode')
-      .setDescription('Toggle mention-only mode (bot only responds when @mentioned)')
+      .setDescription(
+        'Toggle mention-only mode (bot only responds when @mentioned)',
+      )
       .setDMPermission(false)
       .toJSON(),
     new SlashCommandBuilder()
       .setName('add-project')
-      .setDescription('Create Discord channels for a project. Use `npx kimaki project add` for unlisted projects')
+      .setDescription(
+        'Create Discord channels for a project. Use `npx kimaki project add` for unlisted projects',
+      )
       .addStringOption((option) => {
         option
           .setName('project')
-          .setDescription('Recent OpenCode projects. Use `npx kimaki project add` if not listed')
+          .setDescription(
+            'Recent OpenCode projects. Use `npx kimaki project add` if not listed',
+          )
           .setRequired(true)
           .setAutocomplete(true)
 
@@ -619,9 +707,14 @@ async function registerCommands({
       .toJSON(),
     new SlashCommandBuilder()
       .setName('create-new-project')
-      .setDescription('Create a new project folder, initialize git, and start a session')
+      .setDescription(
+        'Create a new project folder, initialize git, and start a session',
+      )
       .addStringOption((option) => {
-        option.setName('name').setDescription('Name for the new project folder').setRequired(true)
+        option
+          .setName('name')
+          .setDescription('Name for the new project folder')
+          .setRequired(true)
 
         return option
       })
@@ -634,7 +727,9 @@ async function registerCommands({
       .toJSON(),
     new SlashCommandBuilder()
       .setName('compact')
-      .setDescription('Compact the session context by summarizing conversation history')
+      .setDescription(
+        'Compact the session context by summarizing conversation history',
+      )
       .setDMPermission(false)
       .toJSON(),
     new SlashCommandBuilder()
@@ -663,13 +758,27 @@ async function registerCommands({
       .setDMPermission(false)
       .toJSON(),
     new SlashCommandBuilder()
+      .setName('thinking')
+      .setDescription('Set the thinking level for the current model')
+      .addStringOption((option) => {
+        option
+          .setName('value')
+          .setDescription('Thinking value (leave empty to choose from a menu)')
+          .setRequired(false)
+        return option
+      })
+      .setDMPermission(false)
+      .toJSON(),
+    new SlashCommandBuilder()
       .setName('unset-model-override')
       .setDescription('Remove model override and use default instead')
       .setDMPermission(false)
       .toJSON(),
     new SlashCommandBuilder()
       .setName('login')
-      .setDescription('Authenticate with an AI provider (OAuth or API key). Use this instead of /connect')
+      .setDescription(
+        'Authenticate with an AI provider (OAuth or API key). Use this instead of /connect',
+      )
       .setDMPermission(false)
       .toJSON(),
     new SlashCommandBuilder()
@@ -679,9 +788,14 @@ async function registerCommands({
       .toJSON(),
     new SlashCommandBuilder()
       .setName('queue')
-      .setDescription('Queue a message to be sent after the current response finishes')
+      .setDescription(
+        'Queue a message to be sent after the current response finishes',
+      )
       .addStringOption((option) => {
-        option.setName('message').setDescription('The message to queue').setRequired(true)
+        option
+          .setName('message')
+          .setDescription('The message to queue')
+          .setRequired(true)
 
         return option
       })
@@ -694,7 +808,9 @@ async function registerCommands({
       .toJSON(),
     new SlashCommandBuilder()
       .setName('queue-command')
-      .setDescription('Queue a user command to run after the current response finishes')
+      .setDescription(
+        'Queue a user command to run after the current response finishes',
+      )
       .addStringOption((option) => {
         option
           .setName('command')
@@ -732,7 +848,10 @@ async function registerCommands({
           .setRequired(true)
           .addChoices(
             { name: 'tools-and-text (default)', value: 'tools-and-text' },
-            { name: 'text-and-essential-tools', value: 'text-and-essential-tools' },
+            {
+              name: 'text-and-essential-tools',
+              value: 'text-and-essential-tools',
+            },
             { name: 'text-only', value: 'text-only' },
           )
         return option
@@ -741,12 +860,16 @@ async function registerCommands({
       .toJSON(),
     new SlashCommandBuilder()
       .setName('restart-opencode-server')
-      .setDescription('Restart the opencode server for this channel only (fixes state/auth/plugins)')
+      .setDescription(
+        'Restart the opencode server for this channel only (fixes state/auth/plugins)',
+      )
       .setDMPermission(false)
       .toJSON(),
     new SlashCommandBuilder()
       .setName('run-shell-command')
-      .setDescription('Run a shell command in the project directory. Tip: prefix messages with ! as shortcut')
+      .setDescription(
+        'Run a shell command in the project directory. Tip: prefix messages with ! as shortcut',
+      )
       .addStringOption((option) => {
         option
           .setName('command')
@@ -758,12 +881,16 @@ async function registerCommands({
       .toJSON(),
     new SlashCommandBuilder()
       .setName('context-usage')
-      .setDescription('Show token usage and context window percentage for this session')
+      .setDescription(
+        'Show token usage and context window percentage for this session',
+      )
       .setDMPermission(false)
       .toJSON(),
     new SlashCommandBuilder()
       .setName('upgrade-and-restart')
-      .setDescription('Upgrade kimaki to the latest version and restart the bot')
+      .setDescription(
+        'Upgrade kimaki to the latest version and restart the bot',
+      )
       .setDMPermission(false)
       .toJSON(),
   ]
@@ -826,9 +953,13 @@ async function registerCommands({
       body: commands,
     })) as any[]
 
-    cliLogger.info(`COMMANDS: Successfully registered ${data.length} slash commands`)
+    cliLogger.info(
+      `COMMANDS: Successfully registered ${data.length} slash commands`,
+    )
   } catch (error) {
-    cliLogger.error('COMMANDS: Failed to register slash commands: ' + String(error))
+    cliLogger.error(
+      'COMMANDS: Failed to register slash commands: ' + String(error),
+    )
     throw error
   }
 }
@@ -854,7 +985,8 @@ async function storeChannelDirectories({
         })
 
         const voiceChannel = guild.channels.cache.find(
-          (ch) => ch.type === ChannelType.GuildVoice && ch.name === channel.name,
+          (ch) =>
+            ch.type === ChannelType.GuildVoice && ch.name === channel.name,
         )
 
         if (voiceChannel) {
@@ -906,7 +1038,10 @@ function showReadyMessage({
 
   if (allChannels.length > 0) {
     const channelLinks = allChannels
-      .map((ch) => `• #${ch.name}: https://discord.com/channels/${ch.guildId}/${ch.id}`)
+      .map(
+        (ch) =>
+          `• #${ch.name}: https://discord.com/channels/${ch.guildId}/${ch.id}`,
+      )
       .join('\n')
 
     note(
@@ -978,7 +1113,12 @@ async function backgroundInit({
   }
 }
 
-async function run({ restart, addChannels, useWorktrees, enableVoiceChannels }: CliOptions) {
+async function run({
+  restart,
+  addChannels,
+  useWorktrees,
+  enableVoiceChannels,
+}: CliOptions) {
   startCaffeinate()
 
   const forceSetup = Boolean(restart)
@@ -1009,13 +1149,8 @@ async function run({ restart, addChannels, useWorktrees, enableVoiceChannels }: 
     envPathKey: 'BUN_PATH',
     installUnix: 'curl -fsSL https://bun.sh/install | bash',
     installWindows: 'irm bun.sh/install.ps1 | iex',
-    possiblePathsUnix: [
-      '~/.bun/bin/bun',
-      '/usr/local/bin/bun',
-    ],
-    possiblePathsWindows: [
-      '~\\.bun\\bin\\bun.exe',
-    ],
+    possiblePathsUnix: ['~/.bun/bin/bun', '/usr/local/bin/bun'],
+    possiblePathsWindows: ['~\\.bun\\bin\\bun.exe'],
   })
 
   backgroundUpgradeOpencode()
@@ -1029,7 +1164,8 @@ async function run({ restart, addChannels, useWorktrees, enableVoiceChannels }: 
 
   const existingBot = await getBotToken()
 
-  const shouldAddChannels = !existingBot?.token || forceSetup || Boolean(addChannels)
+  const shouldAddChannels =
+    !existingBot?.token || forceSetup || Boolean(addChannels)
 
   if (existingBot && !forceSetup) {
     appId = existingBot.app_id
@@ -1104,7 +1240,8 @@ async function run({ restart, addChannels, useWorktrees, enableVoiceChannels }: 
       'Step 3: Get Bot Token',
     )
     const tokenInput = await password({
-      message: 'Enter your Discord Bot Token (from "Bot" section - click "Reset Token" if needed):',
+      message:
+        'Enter your Discord Bot Token (from "Bot" section - click "Reset Token" if needed):',
       validate(value) {
         const cleaned = stripBracketedPaste(value)
         if (!cleaned) {
@@ -1144,12 +1281,14 @@ async function run({ restart, addChannels, useWorktrees, enableVoiceChannels }: 
   // This is the biggest startup bottleneck (can take 1-30 seconds to spawn and wait for ready)
   const currentDir = process.cwd()
   cliLogger.log('Starting OpenCode server...')
-  const opencodePromise = initializeOpencodeForDirectory(currentDir).then((result) => {
-    if (result instanceof Error) {
-      throw new Error(result.message)
-    }
-    return result
-  })
+  const opencodePromise = initializeOpencodeForDirectory(currentDir).then(
+    (result) => {
+      if (result instanceof Error) {
+        throw new Error(result.message)
+      }
+      return result
+    },
+  )
 
   cliLogger.log('Connecting to Discord...')
   const discordClient = await createDiscordClient()
@@ -1170,12 +1309,16 @@ async function run({ restart, addChannels, useWorktrees, enableVoiceChannels }: 
             guild.roles
               .fetch()
               .then(async (roles) => {
-                const existingRole = roles.find((role) => role.name.toLowerCase() === 'kimaki')
+                const existingRole = roles.find(
+                  (role) => role.name.toLowerCase() === 'kimaki',
+                )
                 if (existingRole) {
                   // Move to bottom if not already there
                   if (existingRole.position > 1) {
                     await existingRole.setPosition(1)
-                    cliLogger.info(`Moved "Kimaki" role to bottom in ${guild.name}`)
+                    cliLogger.info(
+                      `Moved "Kimaki" role to bottom in ${guild.name}`,
+                    )
                   }
                   return
                 }
@@ -1199,7 +1342,8 @@ async function run({ restart, addChannels, useWorktrees, enableVoiceChannels }: 
 
             const channels = await getChannelsWithDescriptions(guild)
             const kimakiChans = channels.filter(
-              (ch) => ch.kimakiDirectory && (!ch.kimakiApp || ch.kimakiApp === appId),
+              (ch) =>
+                ch.kimakiDirectory && (!ch.kimakiApp || ch.kimakiApp === appId),
             )
 
             return { guild, channels: kimakiChans }
@@ -1225,7 +1369,9 @@ async function run({ restart, addChannels, useWorktrees, enableVoiceChannels }: 
     discordClientRef = discordClient
   } catch (error) {
     cliLogger.log('Failed to connect to Discord')
-    cliLogger.error('Error: ' + (error instanceof Error ? error.message : String(error)))
+    cliLogger.error(
+      'Error: ' + (error instanceof Error ? error.message : String(error)),
+    )
     process.exit(EXIT_NO_RESTART)
   }
   await setBotToken(appId, token)
@@ -1238,7 +1384,11 @@ async function run({ restart, addChannels, useWorktrees, enableVoiceChannels }: 
       .flatMap(({ guild, channels }) =>
         channels.map((ch) => {
           const appInfo =
-            ch.kimakiApp === appId ? ' (this bot)' : ch.kimakiApp ? ` (app: ${ch.kimakiApp})` : ''
+            ch.kimakiApp === appId
+              ? ' (this bot)'
+              : ch.kimakiApp
+                ? ` (app: ${ch.kimakiApp})`
+                : ''
           return `#${ch.name} in ${guild.name}: ${ch.kimakiDirectory}${appInfo}`
         }),
       )
@@ -1277,7 +1427,10 @@ async function run({ restart, addChannels, useWorktrees, enableVoiceChannels }: 
       .then((r) => r.data || [])
       .catch((error) => {
         cliLogger.log('Failed to fetch projects')
-        cliLogger.error('Error:', error instanceof Error ? error.message : String(error))
+        cliLogger.error(
+          'Error:',
+          error instanceof Error ? error.message : String(error),
+        )
         discordClient.destroy()
         process.exit(EXIT_NO_RESTART)
       }),
@@ -1326,10 +1479,16 @@ async function run({ restart, addChannels, useWorktrees, enableVoiceChannels }: 
   )
 
   if (availableProjects.length === 0) {
-    note('All OpenCode projects already have Discord channels', 'No New Projects')
+    note(
+      'All OpenCode projects already have Discord channels',
+      'No New Projects',
+    )
   }
 
-  if ((!existingDirs?.length && availableProjects.length > 0) || shouldAddChannels) {
+  if (
+    (!existingDirs?.length && availableProjects.length > 0) ||
+    shouldAddChannels
+  ) {
     const selectedProjects = await multiselect({
       message: 'Select projects to create Discord channels for:',
       options: availableProjects.map((project) => ({
@@ -1401,7 +1560,10 @@ async function run({ restart, addChannels, useWorktrees, enableVoiceChannels }: 
       cliLogger.log(`Created ${createdChannels.length} channel(s)`)
 
       if (createdChannels.length > 0) {
-        note(createdChannels.map((ch) => `#${ch.name}`).join('\n'), 'Created Channels')
+        note(
+          createdChannels.map((ch) => `#${ch.name}`).join('\n'),
+          'Created Channels',
+        )
       }
     }
   }
@@ -1413,7 +1575,9 @@ async function run({ restart, addChannels, useWorktrees, enableVoiceChannels }: 
 
   if (registrableCommands.length > 0) {
     const commandList = registrableCommands
-      .map((cmd) => `  /${cmd.name}-cmd - ${cmd.description || 'No description'}`)
+      .map(
+        (cmd) => `  /${cmd.name}-cmd - ${cmd.description || 'No description'}`,
+      )
       .join('\n')
 
     note(
@@ -1423,7 +1587,12 @@ async function run({ restart, addChannels, useWorktrees, enableVoiceChannels }: 
   }
 
   cliLogger.log('Registering slash commands asynchronously...')
-  void registerCommands({ token, appId, userCommands: allUserCommands, agents: allAgents })
+  void registerCommands({
+    token,
+    appId,
+    userCommands: allUserCommands,
+    agents: allAgents,
+  })
     .then(() => {
       cliLogger.log('Slash commands registered!')
     })
@@ -1439,21 +1608,47 @@ async function run({ restart, addChannels, useWorktrees, enableVoiceChannels }: 
   cliLogger.log('Discord bot is running!')
 
   showReadyMessage({ kimakiChannels, createdChannels, appId })
-  outro('✨ Setup complete! Listening for new messages... do not close this process.')
+  outro(
+    '✨ Setup complete! Listening for new messages... do not close this process.',
+  )
 }
 
 cli
   .command('', 'Set up and run the Kimaki Discord bot')
   .option('--restart', 'Prompt for new credentials even if saved')
-  .option('--add-channels', 'Select OpenCode projects to create Discord channels before starting')
-  .option('--data-dir <path>', 'Data directory for config and database (default: ~/.kimaki)')
+  .option(
+    '--add-channels',
+    'Select OpenCode projects to create Discord channels before starting',
+  )
+  .option(
+    '--data-dir <path>',
+    'Data directory for config and database (default: ~/.kimaki)',
+  )
   .option('--install-url', 'Print the bot install URL and exit')
-  .option('--use-worktrees', 'Create git worktrees for all new sessions started from channel messages')
-  .option('--enable-voice-channels', 'Create voice channels for projects (disabled by default)')
-  .option('--verbosity <level>', 'Default verbosity for all channels (tools-and-text, text-and-essential-tools, or text-only)')
-  .option('--mention-mode', 'Bot only responds when @mentioned (default for all channels)')
-  .option('--no-critique', 'Disable automatic diff upload to critique.work in system prompts')
-  .option('--auto-restart', 'Automatically restart the bot on crash or OOM kill')
+  .option(
+    '--use-worktrees',
+    'Create git worktrees for all new sessions started from channel messages',
+  )
+  .option(
+    '--enable-voice-channels',
+    'Create voice channels for projects (disabled by default)',
+  )
+  .option(
+    '--verbosity <level>',
+    'Default verbosity for all channels (tools-and-text, text-and-essential-tools, or text-only)',
+  )
+  .option(
+    '--mention-mode',
+    'Bot only responds when @mentioned (default for all channels)',
+  )
+  .option(
+    '--no-critique',
+    'Disable automatic diff upload to critique.work in system prompts',
+  )
+  .option(
+    '--auto-restart',
+    'Automatically restart the bot on crash or OOM kill',
+  )
   .action(
     async (options: {
       restart?: boolean
@@ -1475,23 +1670,38 @@ cli
         }
 
         if (options.verbosity) {
-          const validLevels = ['tools-and-text', 'text-and-essential-tools', 'text-only']
+          const validLevels = [
+            'tools-and-text',
+            'text-and-essential-tools',
+            'text-only',
+          ]
           if (!validLevels.includes(options.verbosity)) {
-            cliLogger.error(`Invalid verbosity level: ${options.verbosity}. Use one of: ${validLevels.join(', ')}`)
+            cliLogger.error(
+              `Invalid verbosity level: ${options.verbosity}. Use one of: ${validLevels.join(', ')}`,
+            )
             process.exit(EXIT_NO_RESTART)
           }
-          setDefaultVerbosity(options.verbosity as 'tools-and-text' | 'text-and-essential-tools' | 'text-only')
+          setDefaultVerbosity(
+            options.verbosity as
+              | 'tools-and-text'
+              | 'text-and-essential-tools'
+              | 'text-only',
+          )
           cliLogger.log(`Default verbosity: ${options.verbosity}`)
         }
 
         if (options.mentionMode) {
           setDefaultMentionMode(true)
-          cliLogger.log('Default mention mode: enabled (bot only responds when @mentioned)')
+          cliLogger.log(
+            'Default mention mode: enabled (bot only responds when @mentioned)',
+          )
         }
 
         if (options.noCritique) {
           setCritiqueEnabled(false)
-          cliLogger.log('Critique disabled: diffs will not be auto-uploaded to critique.work')
+          cliLogger.log(
+            'Critique disabled: diffs will not be auto-uploaded to critique.work',
+          )
         }
 
         if (options.installUrl) {
@@ -1499,7 +1709,9 @@ cli
           const existingBot = await getBotToken()
 
           if (!existingBot) {
-            cliLogger.error('No bot configured yet. Run `kimaki` first to set up.')
+            cliLogger.error(
+              'No bot configured yet. Run `kimaki` first to set up.',
+            )
             process.exit(EXIT_NO_RESTART)
           }
 
@@ -1524,7 +1736,10 @@ cli
   )
 
 cli
-  .command('upload-to-discord [...files]', 'Upload files to a Discord thread for a session')
+  .command(
+    'upload-to-discord [...files]',
+    'Upload files to a Discord thread for a session',
+  )
   .option('-s, --session <sessionId>', 'OpenCode session ID')
   .action(async (files: string[], options: { session?: string }) => {
     try {
@@ -1560,7 +1775,9 @@ cli
       const botRow = await getBotToken()
 
       if (!botRow) {
-        cliLogger.error('No bot credentials found. Run `kimaki` first to set up the bot.')
+        cliLogger.error(
+          'No bot credentials found. Run `kimaki` first to set up the bot.',
+        )
         process.exit(EXIT_NO_RESTART)
       }
 
@@ -1581,12 +1798,13 @@ cli
 
       process.exit(0)
     } catch (error) {
-      cliLogger.error('Error:', error instanceof Error ? error.message : String(error))
+      cliLogger.error(
+        'Error:',
+        error instanceof Error ? error.message : String(error),
+      )
       process.exit(EXIT_NO_RESTART)
     }
   })
-
-
 
 cli
   .command(
@@ -1595,18 +1813,39 @@ cli
   )
   .alias('start-session') // backwards compatibility
   .option('-c, --channel <channelId>', 'Discord channel ID')
-  .option('-d, --project <path>', 'Project directory (alternative to --channel)')
+  .option(
+    '-d, --project <path>',
+    'Project directory (alternative to --channel)',
+  )
   .option('-p, --prompt <prompt>', 'Message content')
-  .option('-n, --name [name]', 'Thread name (optional, defaults to prompt preview)')
-  .option('-a, --app-id [appId]', 'Bot application ID (required if no local database)')
-  .option('--notify-only', 'Create notification thread without starting AI session')
-  .option('--worktree [name]', 'Create git worktree for session (name optional, derives from thread name)')
+  .option(
+    '-n, --name [name]',
+    'Thread name (optional, defaults to prompt preview)',
+  )
+  .option(
+    '-a, --app-id [appId]',
+    'Bot application ID (required if no local database)',
+  )
+  .option(
+    '--notify-only',
+    'Create notification thread without starting AI session',
+  )
+  .option(
+    '--worktree [name]',
+    'Create git worktree for session (name optional, derives from thread name)',
+  )
   .option('-u, --user <username>', 'Discord username to add to thread')
   .option('--agent <agent>', 'Agent to use for the session')
   .option('--model <model>', 'Model to use (format: provider/model)')
   .option('--thread <threadId>', 'Post prompt to an existing thread')
-  .option('--session <sessionId>', 'Post prompt to thread mapped to an existing session')
-  .option('--wait', 'Wait for session to complete, then print session text to stdout')
+  .option(
+    '--session <sessionId>',
+    'Post prompt to thread mapped to an existing session',
+  )
+  .option(
+    '--wait',
+    'Wait for session to complete, then print session text to stdout',
+  )
   .action(
     async (options: {
       channel?: string
@@ -1643,7 +1882,9 @@ cli
         }
 
         if (existingThreadMode && (channelId || projectPath)) {
-          cliLogger.error('Cannot combine --thread/--session with --channel/--project')
+          cliLogger.error(
+            'Cannot combine --thread/--session with --channel/--project',
+          )
           process.exit(EXIT_NO_RESTART)
         }
 
@@ -1688,388 +1929,469 @@ cli
             incompatibleFlags.push('--model')
           }
           if (incompatibleFlags.length > 0) {
-            cliLogger.error(`Incompatible options with --thread/--session: ${incompatibleFlags.join(', ')}`)
+            cliLogger.error(
+              `Incompatible options with --thread/--session: ${incompatibleFlags.join(', ')}`,
+            )
             process.exit(EXIT_NO_RESTART)
           }
         }
 
-      // Get bot token from env var or database
-      const envToken = process.env.KIMAKI_BOT_TOKEN
-      let botToken: string | undefined
-      let appId: string | undefined = optionAppId
+        // Get bot token from env var or database
+        const envToken = process.env.KIMAKI_BOT_TOKEN
+        let botToken: string | undefined
+        let appId: string | undefined = optionAppId
 
-      // Initialize database first
-      await initDatabase()
+        // Initialize database first
+        await initDatabase()
 
-      if (envToken) {
-        botToken = envToken
-        if (!appId) {
-          // Try to get app_id from database if available (optional in CI)
+        if (envToken) {
+          botToken = envToken
+          if (!appId) {
+            // Try to get app_id from database if available (optional in CI)
+            try {
+              const botRow = await getBotToken()
+              appId = botRow?.app_id
+            } catch (error) {
+              cliLogger.debug(
+                'Database lookup failed while resolving app ID:',
+                error instanceof Error ? error.message : String(error),
+              )
+            }
+          }
+        } else {
+          // Fall back to database
           try {
             const botRow = await getBotToken()
-            appId = botRow?.app_id
-          } catch (error) {
-            cliLogger.debug(
-              'Database lookup failed while resolving app ID:',
-              error instanceof Error ? error.message : String(error),
+
+            if (botRow) {
+              botToken = botRow.token
+              appId = appId || botRow.app_id
+            }
+          } catch (e) {
+            // Database error - will fall through to the check below
+            cliLogger.error(
+              'Database error:',
+              e instanceof Error ? e.message : String(e),
             )
           }
         }
-      } else {
-        // Fall back to database
-        try {
-          const botRow = await getBotToken()
 
-          if (botRow) {
-            botToken = botRow.token
-            appId = appId || botRow.app_id
-          }
-        } catch (e) {
-          // Database error - will fall through to the check below
-          cliLogger.error('Database error:', e instanceof Error ? e.message : String(e))
-        }
-      }
-
-      if (!botToken) {
-        cliLogger.error(
-          'No bot token found. Set KIMAKI_BOT_TOKEN env var or run `kimaki` first to set up.',
-        )
-        process.exit(EXIT_NO_RESTART)
-      }
-
-      // If --project provided (or defaulting to cwd), resolve to channel ID
-      if (resolvedProjectPath) {
-        const absolutePath = path.resolve(resolvedProjectPath)
-
-        if (!fs.existsSync(absolutePath)) {
-          cliLogger.error(`Directory does not exist: ${absolutePath}`)
+        if (!botToken) {
+          cliLogger.error(
+            'No bot token found. Set KIMAKI_BOT_TOKEN env var or run `kimaki` first to set up.',
+          )
           process.exit(EXIT_NO_RESTART)
         }
 
-        cliLogger.log('Looking up channel for project...')
+        // If --project provided (or defaulting to cwd), resolve to channel ID
+        if (resolvedProjectPath) {
+          const absolutePath = path.resolve(resolvedProjectPath)
 
-        // Check if channel already exists for this directory or a parent directory
-        // This allows running from subfolders of a registered project
-        try {
-          // Helper to find channel for a path (prefers current bot's channel)
-          const findChannelForPath = async (dirPath: string): Promise<{ channel_id: string; directory: string } | undefined> => {
-            const withAppId = appId ? await findChannelsByDirectory({ directory: dirPath, channelType: 'text', appId }) : []
-            if (withAppId.length > 0) {
-              return withAppId[0]
-            }
-
-            const withoutAppId = await findChannelsByDirectory({ directory: dirPath, channelType: 'text' })
-            return withoutAppId[0]
+          if (!fs.existsSync(absolutePath)) {
+            cliLogger.error(`Directory does not exist: ${absolutePath}`)
+            process.exit(EXIT_NO_RESTART)
           }
 
-          // Try exact match first, then walk up parent directories
-          let existingChannel: { channel_id: string; directory: string } | undefined
-          let searchPath = absolutePath
-          while (searchPath !== path.dirname(searchPath)) {
-            existingChannel = await findChannelForPath(searchPath)
-            if (existingChannel) break
-            searchPath = path.dirname(searchPath)
-          }
+          cliLogger.log('Looking up channel for project...')
 
-          if (existingChannel) {
-            channelId = existingChannel.channel_id
-            if (existingChannel.directory !== absolutePath) {
-              cliLogger.log(`Found parent project channel: ${existingChannel.directory}`)
-            } else {
-              cliLogger.log(`Found existing channel: ${channelId}`)
-            }
-          } else {
-            // Need to create a new channel
-            cliLogger.log('Creating new channel...')
+          // Check if channel already exists for this directory or a parent directory
+          // This allows running from subfolders of a registered project
+          try {
+            // Helper to find channel for a path (prefers current bot's channel)
+            const findChannelForPath = async (
+              dirPath: string,
+            ): Promise<
+              { channel_id: string; directory: string } | undefined
+            > => {
+              const withAppId = appId
+                ? await findChannelsByDirectory({
+                    directory: dirPath,
+                    channelType: 'text',
+                    appId,
+                  })
+                : []
+              if (withAppId.length > 0) {
+                return withAppId[0]
+              }
 
-            if (!appId) {
-              cliLogger.log('Missing app ID')
-              cliLogger.error(
-                'App ID is required to create channels. Use --app-id or run `kimaki` first.',
-              )
-              process.exit(EXIT_NO_RESTART)
-            }
-
-            const client = await createDiscordClient()
-
-            await new Promise<void>((resolve, reject) => {
-              client.once(Events.ClientReady, () => {
-                resolve()
+              const withoutAppId = await findChannelsByDirectory({
+                directory: dirPath,
+                channelType: 'text',
               })
-              client.once(Events.Error, reject)
-              client.login(botToken)
-            })
+              return withoutAppId[0]
+            }
 
-            // Get guild from existing channels or first available
-            const guild = await (async () => {
-              // Try to find a guild from existing channels belonging to this bot
-              const existingChannelId = appId ? await findChannelByAppId(appId) : undefined
+            // Try exact match first, then walk up parent directories
+            let existingChannel:
+              | { channel_id: string; directory: string }
+              | undefined
+            let searchPath = absolutePath
+            while (searchPath !== path.dirname(searchPath)) {
+              existingChannel = await findChannelForPath(searchPath)
+              if (existingChannel) break
+              searchPath = path.dirname(searchPath)
+            }
 
-              if (existingChannelId) {
-                try {
-                  const ch = await client.channels.fetch(existingChannelId)
-                  if (ch && 'guild' in ch && ch.guild) {
-                    return ch.guild
+            if (existingChannel) {
+              channelId = existingChannel.channel_id
+              if (existingChannel.directory !== absolutePath) {
+                cliLogger.log(
+                  `Found parent project channel: ${existingChannel.directory}`,
+                )
+              } else {
+                cliLogger.log(`Found existing channel: ${channelId}`)
+              }
+            } else {
+              // Need to create a new channel
+              cliLogger.log('Creating new channel...')
+
+              if (!appId) {
+                cliLogger.log('Missing app ID')
+                cliLogger.error(
+                  'App ID is required to create channels. Use --app-id or run `kimaki` first.',
+                )
+                process.exit(EXIT_NO_RESTART)
+              }
+
+              const client = await createDiscordClient()
+
+              await new Promise<void>((resolve, reject) => {
+                client.once(Events.ClientReady, () => {
+                  resolve()
+                })
+                client.once(Events.Error, reject)
+                client.login(botToken)
+              })
+
+              // Get guild from existing channels or first available
+              const guild = await (async () => {
+                // Try to find a guild from existing channels belonging to this bot
+                const existingChannelId = appId
+                  ? await findChannelByAppId(appId)
+                  : undefined
+
+                if (existingChannelId) {
+                  try {
+                    const ch = await client.channels.fetch(existingChannelId)
+                    if (ch && 'guild' in ch && ch.guild) {
+                      return ch.guild
+                    }
+                  } catch (error) {
+                    cliLogger.debug(
+                      'Failed to fetch existing channel while selecting guild:',
+                      error instanceof Error ? error.message : String(error),
+                    )
                   }
-                } catch (error) {
-                  cliLogger.debug(
-                    'Failed to fetch existing channel while selecting guild:',
-                    error instanceof Error ? error.message : String(error),
+                }
+                // Fall back to first guild the bot is in
+                let firstGuild = client.guilds.cache.first()
+                if (!firstGuild) {
+                  // Cache might be empty, try fetching guilds from API
+                  const fetched = await client.guilds.fetch()
+                  const firstOAuth2Guild = fetched.first()
+                  if (firstOAuth2Guild) {
+                    firstGuild = await client.guilds.fetch(firstOAuth2Guild.id)
+                  }
+                }
+                if (!firstGuild) {
+                  throw new Error(
+                    'No guild found. Add the bot to a server first.',
                   )
                 }
-              }
-              // Fall back to first guild the bot is in
-              let firstGuild = client.guilds.cache.first()
-              if (!firstGuild) {
-                // Cache might be empty, try fetching guilds from API
-                const fetched = await client.guilds.fetch()
-                const firstOAuth2Guild = fetched.first()
-                if (firstOAuth2Guild) {
-                  firstGuild = await client.guilds.fetch(firstOAuth2Guild.id)
-                }
-              }
-              if (!firstGuild) {
-                throw new Error('No guild found. Add the bot to a server first.')
-              }
-              return firstGuild
-            })()
+                return firstGuild
+              })()
 
-            const { textChannelId } = await createProjectChannels({
-              guild,
-              projectDirectory: absolutePath,
-              appId,
-              botName: client.user?.username,
-            })
+              const { textChannelId } = await createProjectChannels({
+                guild,
+                projectDirectory: absolutePath,
+                appId,
+                botName: client.user?.username,
+              })
 
-            channelId = textChannelId
-            cliLogger.log(`Created channel: ${channelId}`)
+              channelId = textChannelId
+              cliLogger.log(`Created channel: ${channelId}`)
 
-            client.destroy()
+              client.destroy()
+            }
+          } catch (e) {
+            cliLogger.log('Failed to resolve project')
+            throw e
           }
-        } catch (e) {
-          cliLogger.log('Failed to resolve project')
-          throw e
         }
-      }
 
-      const rest = new REST().setToken(botToken)
+        const rest = new REST().setToken(botToken)
 
-      if (existingThreadMode) {
-        const targetThreadId = await (async (): Promise<string> => {
-          if (threadId) {
-            return threadId
-          }
-          if (!sessionId) {
-            throw new Error('Thread ID not resolved')
-          }
-          const resolvedThreadId = await getThreadIdBySessionId(sessionId)
-          if (!resolvedThreadId) {
-            throw new Error(`No Discord thread found for session: ${sessionId}`)
-          }
-          return resolvedThreadId
-        })()
+        if (existingThreadMode) {
+          const targetThreadId = await (async (): Promise<string> => {
+            if (threadId) {
+              return threadId
+            }
+            if (!sessionId) {
+              throw new Error('Thread ID not resolved')
+            }
+            const resolvedThreadId = await getThreadIdBySessionId(sessionId)
+            if (!resolvedThreadId) {
+              throw new Error(
+                `No Discord thread found for session: ${sessionId}`,
+              )
+            }
+            return resolvedThreadId
+          })()
 
-        const threadData = (await rest.get(Routes.channel(targetThreadId))) as {
+          const threadData = (await rest.get(
+            Routes.channel(targetThreadId),
+          )) as {
+            id: string
+            name: string
+            type: number
+            parent_id?: string
+            guild_id: string
+          }
+
+          if (!isThreadChannelType(threadData.type)) {
+            throw new Error(`Channel is not a thread: ${targetThreadId}`)
+          }
+
+          if (!threadData.parent_id) {
+            throw new Error(`Thread has no parent channel: ${targetThreadId}`)
+          }
+
+          const channelConfig = await getChannelDirectory(threadData.parent_id)
+          if (!channelConfig) {
+            throw new Error(
+              'Thread parent channel is not configured with a project directory',
+            )
+          }
+
+          const channelAppId = channelConfig.appId || undefined
+          if (channelAppId && appId && channelAppId !== appId) {
+            throw new Error(
+              `Thread belongs to a different bot (expected: ${appId}, got: ${channelAppId})`,
+            )
+          }
+
+          const threadPromptMarker: ThreadStartMarker = {
+            cliThreadPrompt: true,
+          }
+          const promptEmbed = [
+            {
+              color: 0x2b2d31,
+              footer: { text: yaml.dump(threadPromptMarker) },
+            },
+          ]
+
+          // Prefix the prompt so it's clear who sent it (matches /queue format)
+          const prefixedPrompt = `» **kimaki-cli:** ${prompt}`
+
+          await sendDiscordMessageWithOptionalAttachment({
+            channelId: targetThreadId,
+            prompt: prefixedPrompt,
+            botToken,
+            embeds: promptEmbed,
+            rest,
+          })
+
+          const threadUrl = `https://discord.com/channels/${threadData.guild_id}/${threadData.id}`
+          note(
+            `Prompt sent to thread: ${threadData.name}\n\nURL: ${threadUrl}`,
+            '✅ Message Sent',
+          )
+          cliLogger.log(threadUrl)
+
+          if (options.wait) {
+            const { waitAndOutputSession } = await import('./wait-session.js')
+            await waitAndOutputSession({
+              threadId: targetThreadId,
+              projectDirectory: channelConfig.directory,
+            })
+          }
+
+          process.exit(0)
+        }
+
+        cliLogger.log('Fetching channel info...')
+
+        if (!channelId) {
+          throw new Error('Channel ID not resolved')
+        }
+
+        // Get channel info to extract directory from topic
+        const channelData = (await rest.get(Routes.channel(channelId))) as {
           id: string
           name: string
-          type: number
-          parent_id?: string
+          topic?: string
           guild_id: string
         }
 
-        if (!isThreadChannelType(threadData.type)) {
-          throw new Error(`Channel is not a thread: ${targetThreadId}`)
-        }
+        const channelConfig = await getChannelDirectory(channelData.id)
 
-        if (!threadData.parent_id) {
-          throw new Error(`Thread has no parent channel: ${targetThreadId}`)
-        }
-
-        const channelConfig = await getChannelDirectory(threadData.parent_id)
         if (!channelConfig) {
-          throw new Error('Thread parent channel is not configured with a project directory')
-        }
-
-        const channelAppId = channelConfig.appId || undefined
-        if (channelAppId && appId && channelAppId !== appId) {
+          cliLogger.log('Channel not configured')
           throw new Error(
-            `Thread belongs to a different bot (expected: ${appId}, got: ${channelAppId})`,
+            `Channel #${channelData.name} is not configured with a project directory. Run the bot first to sync channel data.`,
           )
         }
 
-        const threadPromptMarker: ThreadStartMarker = { cliThreadPrompt: true }
-        const promptEmbed = [{ color: 0x2b2d31, footer: { text: yaml.dump(threadPromptMarker) } }]
+        const projectDirectory = channelConfig.directory
+        const channelAppId = channelConfig.appId || undefined
 
-        // Prefix the prompt so it's clear who sent it (matches /queue format)
-        const prefixedPrompt = `» **kimaki-cli:** ${prompt}`
+        // Verify app ID matches if both are present
+        if (channelAppId && appId && channelAppId !== appId) {
+          cliLogger.log('Channel belongs to different bot')
+          throw new Error(
+            `Channel belongs to a different bot (expected: ${appId}, got: ${channelAppId})`,
+          )
+        }
 
-        await sendDiscordMessageWithOptionalAttachment({
-          channelId: targetThreadId,
-          prompt: prefixedPrompt,
+        // Resolve username to user ID if provided
+        const resolvedUser = await (async (): Promise<
+          { id: string; username: string } | undefined
+        > => {
+          if (!options.user) {
+            return undefined
+          }
+          cliLogger.log(`Searching for user "${options.user}" in guild...`)
+          const searchResults = (await rest.get(
+            Routes.guildMembersSearch(channelData.guild_id),
+            {
+              query: new URLSearchParams({ query: options.user, limit: '10' }),
+            },
+          )) as Array<{
+            user: { id: string; username: string; global_name?: string }
+            nick?: string
+          }>
+
+          // Find exact match by display name, nickname, or username
+          const exactMatch = searchResults.find((member) => {
+            const displayName =
+              member.nick || member.user.global_name || member.user.username
+            return (
+              displayName.toLowerCase() === options.user!.toLowerCase() ||
+              member.user.username.toLowerCase() === options.user!.toLowerCase()
+            )
+          })
+          const member = exactMatch || searchResults[0]
+          if (!member) {
+            throw new Error(`User "${options.user}" not found in guild`)
+          }
+          const username =
+            member.nick || member.user.global_name || member.user.username
+          cliLogger.log(`Found user: ${username} (${member.user.id})`)
+          return { id: member.user.id, username }
+        })()
+
+        cliLogger.log('Creating starter message...')
+
+        // Compute thread name and worktree name early (needed for embed)
+        const cleanPrompt = stripMentions(prompt)
+        const baseThreadName =
+          name ||
+          (cleanPrompt.length > 80
+            ? cleanPrompt.slice(0, 77) + '...'
+            : cleanPrompt)
+        const worktreeName = options.worktree
+          ? formatWorktreeName(
+              typeof options.worktree === 'string'
+                ? options.worktree
+                : baseThreadName,
+            )
+          : undefined
+        const threadName = worktreeName
+          ? `${WORKTREE_PREFIX}${baseThreadName}`
+          : baseThreadName
+
+        // Embed marker for auto-start sessions (unless --notify-only)
+        // Bot parses this YAML to know it should start a session, optionally create a worktree, and set initial user
+        const embedMarker: ThreadStartMarker | undefined = notifyOnly
+          ? undefined
+          : {
+              start: true,
+              ...(worktreeName && { worktree: worktreeName }),
+              ...(resolvedUser && {
+                username: resolvedUser.username,
+                userId: resolvedUser.id,
+              }),
+              ...(options.agent && { agent: options.agent }),
+              ...(options.model && { model: options.model }),
+            }
+        const autoStartEmbed = embedMarker
+          ? [{ color: 0x2b2d31, footer: { text: yaml.dump(embedMarker) } }]
+          : undefined
+
+        const starterMessage = await sendDiscordMessageWithOptionalAttachment({
+          channelId,
+          prompt,
           botToken,
-          embeds: promptEmbed,
+          embeds: autoStartEmbed,
           rest,
         })
 
-        const threadUrl = `https://discord.com/channels/${threadData.guild_id}/${threadData.id}`
-        note(`Prompt sent to thread: ${threadData.name}\n\nURL: ${threadUrl}`, '✅ Message Sent')
+        cliLogger.log('Creating thread...')
+
+        const threadData = (await rest.post(
+          Routes.threads(channelId, starterMessage.id),
+          {
+            body: {
+              name: threadName.slice(0, 100),
+              auto_archive_duration: 1440, // 1 day
+            },
+          },
+        )) as { id: string; name: string }
+
+        cliLogger.log('Thread created!')
+
+        // Add user to thread if specified
+        if (resolvedUser) {
+          cliLogger.log(`Adding user ${resolvedUser.username} to thread...`)
+          await rest.put(Routes.threadMembers(threadData.id, resolvedUser.id))
+        }
+
+        const threadUrl = `https://discord.com/channels/${channelData.guild_id}/${threadData.id}`
+
+        const worktreeNote = worktreeName
+          ? `\nWorktree: ${worktreeName} (will be created by bot)`
+          : ''
+        const successMessage = notifyOnly
+          ? `Thread: ${threadData.name}\nDirectory: ${projectDirectory}\n\nNotification created. Reply to start a session.\n\nURL: ${threadUrl}`
+          : `Thread: ${threadData.name}\nDirectory: ${projectDirectory}${worktreeNote}\n\nThe running bot will pick this up and start the session.\n\nURL: ${threadUrl}`
+
+        note(successMessage, '✅ Thread Created')
+
         cliLogger.log(threadUrl)
 
         if (options.wait) {
           const { waitAndOutputSession } = await import('./wait-session.js')
           await waitAndOutputSession({
-            threadId: targetThreadId,
-            projectDirectory: channelConfig.directory,
+            threadId: threadData.id,
+            projectDirectory,
           })
         }
 
         process.exit(0)
-      }
-
-      cliLogger.log('Fetching channel info...')
-
-      if (!channelId) {
-        throw new Error('Channel ID not resolved')
-      }
-
-      // Get channel info to extract directory from topic
-      const channelData = (await rest.get(Routes.channel(channelId))) as {
-        id: string
-        name: string
-        topic?: string
-        guild_id: string
-      }
-
-      const channelConfig = await getChannelDirectory(channelData.id)
-
-      if (!channelConfig) {
-        cliLogger.log('Channel not configured')
-        throw new Error(
-          `Channel #${channelData.name} is not configured with a project directory. Run the bot first to sync channel data.`,
+      } catch (error) {
+        cliLogger.error(
+          'Error:',
+          error instanceof Error ? error.message : String(error),
         )
+        process.exit(EXIT_NO_RESTART)
       }
-
-      const projectDirectory = channelConfig.directory
-      const channelAppId = channelConfig.appId || undefined
-
-      // Verify app ID matches if both are present
-      if (channelAppId && appId && channelAppId !== appId) {
-        cliLogger.log('Channel belongs to different bot')
-        throw new Error(
-          `Channel belongs to a different bot (expected: ${appId}, got: ${channelAppId})`,
-        )
-      }
-
-      // Resolve username to user ID if provided
-      const resolvedUser = await (async (): Promise<{ id: string; username: string } | undefined> => {
-        if (!options.user) {
-          return undefined
-        }
-        cliLogger.log(`Searching for user "${options.user}" in guild...`)
-        const searchResults = (await rest.get(Routes.guildMembersSearch(channelData.guild_id), {
-          query: new URLSearchParams({ query: options.user, limit: '10' }),
-        })) as Array<{ user: { id: string; username: string; global_name?: string }; nick?: string }>
-
-        // Find exact match by display name, nickname, or username
-        const exactMatch = searchResults.find((member) => {
-          const displayName = member.nick || member.user.global_name || member.user.username
-          return (
-            displayName.toLowerCase() === options.user!.toLowerCase() ||
-            member.user.username.toLowerCase() === options.user!.toLowerCase()
-          )
-        })
-        const member = exactMatch || searchResults[0]
-        if (!member) {
-          throw new Error(`User "${options.user}" not found in guild`)
-        }
-        const username = member.nick || member.user.global_name || member.user.username
-        cliLogger.log(`Found user: ${username} (${member.user.id})`)
-        return { id: member.user.id, username }
-      })()
-
-      cliLogger.log('Creating starter message...')
-
-      // Compute thread name and worktree name early (needed for embed)
-      const cleanPrompt = stripMentions(prompt)
-      const baseThreadName = name || (cleanPrompt.length > 80 ? cleanPrompt.slice(0, 77) + '...' : cleanPrompt)
-      const worktreeName = options.worktree
-        ? formatWorktreeName(typeof options.worktree === 'string' ? options.worktree : baseThreadName)
-        : undefined
-      const threadName = worktreeName
-        ? `${WORKTREE_PREFIX}${baseThreadName}`
-        : baseThreadName
-
-      // Embed marker for auto-start sessions (unless --notify-only)
-      // Bot parses this YAML to know it should start a session, optionally create a worktree, and set initial user
-      const embedMarker: ThreadStartMarker | undefined = notifyOnly
-        ? undefined
-        : {
-            start: true,
-            ...(worktreeName && { worktree: worktreeName }),
-            ...(resolvedUser && { username: resolvedUser.username, userId: resolvedUser.id }),
-            ...(options.agent && { agent: options.agent }),
-            ...(options.model && { model: options.model }),
-          }
-      const autoStartEmbed = embedMarker
-        ? [{ color: 0x2b2d31, footer: { text: yaml.dump(embedMarker) } }]
-        : undefined
-
-      const starterMessage = await sendDiscordMessageWithOptionalAttachment({
-        channelId,
-        prompt,
-        botToken,
-        embeds: autoStartEmbed,
-        rest,
-      })
-
-      cliLogger.log('Creating thread...')
-
-      const threadData = (await rest.post(Routes.threads(channelId, starterMessage.id), {
-        body: {
-          name: threadName.slice(0, 100),
-          auto_archive_duration: 1440, // 1 day
-        },
-      })) as { id: string; name: string }
-
-      cliLogger.log('Thread created!')
-
-      // Add user to thread if specified
-      if (resolvedUser) {
-        cliLogger.log(`Adding user ${resolvedUser.username} to thread...`)
-        await rest.put(Routes.threadMembers(threadData.id, resolvedUser.id))
-      }
-
-      const threadUrl = `https://discord.com/channels/${channelData.guild_id}/${threadData.id}`
-
-      const worktreeNote = worktreeName ? `\nWorktree: ${worktreeName} (will be created by bot)` : ''
-      const successMessage = notifyOnly
-        ? `Thread: ${threadData.name}\nDirectory: ${projectDirectory}\n\nNotification created. Reply to start a session.\n\nURL: ${threadUrl}`
-        : `Thread: ${threadData.name}\nDirectory: ${projectDirectory}${worktreeNote}\n\nThe running bot will pick this up and start the session.\n\nURL: ${threadUrl}`
-
-      note(successMessage, '✅ Thread Created')
-
-      cliLogger.log(threadUrl)
-
-      if (options.wait) {
-        const { waitAndOutputSession } = await import('./wait-session.js')
-        await waitAndOutputSession({
-          threadId: threadData.id,
-          projectDirectory,
-        })
-      }
-
-      process.exit(0)
-    } catch (error) {
-      cliLogger.error('Error:', error instanceof Error ? error.message : String(error))
-      process.exit(EXIT_NO_RESTART)
-    }
-  })
+    },
+  )
 
 cli
-  .command('project add [directory]', 'Create Discord channels for a project directory (replaces legacy add-project)')
+  .command(
+    'project add [directory]',
+    'Create Discord channels for a project directory (replaces legacy add-project)',
+  )
   .alias('add-project')
-  .option('-g, --guild <guildId>', 'Discord guild/server ID (auto-detects if bot is in only one server)')
-  .option('-a, --app-id <appId>', 'Bot application ID (reads from database if available)')
+  .option(
+    '-g, --guild <guildId>',
+    'Discord guild/server ID (auto-detects if bot is in only one server)',
+  )
+  .option(
+    '-a, --app-id <appId>',
+    'Bot application ID (reads from database if available)',
+  )
   .action(
     async (
       directory: string | undefined,
@@ -2115,7 +2437,10 @@ cli
             appId = appId || botRow.app_id
           }
         } catch (e) {
-          cliLogger.error('Database error:', e instanceof Error ? e.message : String(e))
+          cliLogger.error(
+            'Database error:',
+            e instanceof Error ? e.message : String(e),
+          )
         }
       }
 
@@ -2247,12 +2572,13 @@ cli
 
       cliLogger.log(`Creating channels in ${guild.name}...`)
 
-      const { textChannelId, voiceChannelId, channelName } = await createProjectChannels({
-        guild,
-        projectDirectory: absolutePath,
-        appId,
-        botName: client.user?.username,
-      })
+      const { textChannelId, voiceChannelId, channelName } =
+        await createProjectChannels({
+          guild,
+          projectDirectory: absolutePath,
+          appId,
+          botName: client.user?.username,
+        })
 
       client.destroy()
 
@@ -2271,7 +2597,10 @@ cli
   )
 
 cli
-  .command('project list', 'List all registered projects with their Discord channels')
+  .command(
+    'project list',
+    'List all registered projects with their Discord channels',
+  )
   .option('--json', 'Output as JSON')
   .action(async (options: { json?: boolean }) => {
     await initDatabase()
@@ -2311,7 +2640,10 @@ cli
   })
 
 cli
-  .command('project open-in-discord', 'Open the current project channel in Discord')
+  .command(
+    'project open-in-discord',
+    'Open the current project channel in Discord',
+  )
   .action(async () => {
     await initDatabase()
 
@@ -2325,12 +2657,23 @@ cli
     const absolutePath = path.resolve('.')
 
     // Walk up parent directories to find a matching channel
-    const findChannelForPath = async (dirPath: string): Promise<{ channel_id: string; directory: string } | undefined> => {
-      const withAppId = appId ? await findChannelsByDirectory({ directory: dirPath, channelType: 'text', appId }) : []
+    const findChannelForPath = async (
+      dirPath: string,
+    ): Promise<{ channel_id: string; directory: string } | undefined> => {
+      const withAppId = appId
+        ? await findChannelsByDirectory({
+            directory: dirPath,
+            channelType: 'text',
+            appId,
+          })
+        : []
       if (withAppId.length > 0) {
         return withAppId[0]
       }
-      const withoutAppId = await findChannelsByDirectory({ directory: dirPath, channelType: 'text' })
+      const withoutAppId = await findChannelsByDirectory({
+        directory: dirPath,
+        channelType: 'text',
+      })
       return withoutAppId[0]
     }
 
@@ -2355,7 +2698,9 @@ cli
 
     // Fetch channel from Discord to get guild_id
     const rest = new REST().setToken(botToken)
-    const channelData = (await rest.get(Routes.channel(existingChannel.channel_id))) as {
+    const channelData = (await rest.get(
+      Routes.channel(existingChannel.channel_id),
+    )) as {
       id: string
       guild_id: string
     }
@@ -2366,10 +2711,16 @@ cli
     // Open in browser if running in a TTY
     if (process.stdout.isTTY) {
       if (process.platform === 'win32') {
-        spawn('cmd', ['/c', 'start', '', channelUrl], { detached: true, stdio: 'ignore' }).unref()
+        spawn('cmd', ['/c', 'start', '', channelUrl], {
+          detached: true,
+          stdio: 'ignore',
+        }).unref()
       } else {
         const openCmd = process.platform === 'darwin' ? 'open' : 'xdg-open'
-        spawn(openCmd, [channelUrl], { detached: true, stdio: 'ignore' }).unref()
+        spawn(openCmd, [channelUrl], {
+          detached: true,
+          stdio: 'ignore',
+        }).unref()
       }
     }
 
@@ -2377,7 +2728,10 @@ cli
   })
 
 cli
-  .command('project create <name>', 'Create a new project folder with git and Discord channels')
+  .command(
+    'project create <name>',
+    'Create a new project folder with git and Discord channels',
+  )
   .option('-g, --guild <guildId>', 'Discord guild ID')
   .action(async (name: string, options: { guild?: string }) => {
     const sanitizedName = name
@@ -2483,7 +2837,9 @@ cli
       host?: string
       server?: string
     }) => {
-      const { runTunnel, parseCommandFromArgv, CLI_NAME } = await import('traforo/run-tunnel')
+      const { runTunnel, parseCommandFromArgv, CLI_NAME } = await import(
+        'traforo/run-tunnel'
+      )
 
       if (!options.port) {
         cliLogger.error('Error: --port is required')
@@ -2508,7 +2864,7 @@ cli
         serverUrl: options.server,
         command: command.length > 0 ? command : undefined,
       })
-    }
+    },
   )
 
 cli
@@ -2520,8 +2876,14 @@ cli
   })
 
 cli
-  .command('session list', 'List all OpenCode sessions, marking which were started via Kimaki')
-  .option('--project <path>', 'Project directory to list sessions for (defaults to cwd)')
+  .command(
+    'session list',
+    'List all OpenCode sessions, marking which were started via Kimaki',
+  )
+  .option(
+    '--project <path>',
+    'Project directory to list sessions for (defaults to cwd)',
+  )
   .option('--json', 'Output as JSON')
   .action(async (options: { project?: string; json?: boolean }) => {
     try {
@@ -2580,13 +2942,19 @@ cli
 
       process.exit(0)
     } catch (error) {
-      cliLogger.error('Error:', error instanceof Error ? error.message : String(error))
+      cliLogger.error(
+        'Error:',
+        error instanceof Error ? error.message : String(error),
+      )
       process.exit(EXIT_NO_RESTART)
     }
   })
 
 cli
-  .command('session read <sessionId>', 'Read a session conversation as markdown (pipe to file to grep)')
+  .command(
+    'session read <sessionId>',
+    'Read a session conversation as markdown (pipe to file to grep)',
+  )
   .option('--project <path>', 'Project directory (defaults to cwd)')
   .action(async (sessionId: string, options: { project?: string }) => {
     try {
@@ -2636,7 +3004,9 @@ cli
           continue
         }
         const otherMarkdown = new ShareMarkdown(otherClient())
-        const otherResult = await otherMarkdown.generate({ sessionID: sessionId })
+        const otherResult = await otherMarkdown.generate({
+          sessionID: sessionId,
+        })
         if (!(otherResult instanceof Error)) {
           process.stdout.write(otherResult)
           process.exit(0)
@@ -2646,13 +3016,19 @@ cli
       cliLogger.error(`Session ${sessionId} not found in any project`)
       process.exit(EXIT_NO_RESTART)
     } catch (error) {
-      cliLogger.error('Error:', error instanceof Error ? error.message : String(error))
+      cliLogger.error(
+        'Error:',
+        error instanceof Error ? error.message : String(error),
+      )
       process.exit(EXIT_NO_RESTART)
     }
   })
 
 cli
-  .command('session archive <threadId>', 'Archive a Discord thread and stop its mapped OpenCode session')
+  .command(
+    'session archive <threadId>',
+    'Archive a Discord thread and stop its mapped OpenCode session',
+  )
   .action(async (threadId: string) => {
     try {
       await initDatabase()
@@ -2685,17 +3061,25 @@ cli
       if (sessionId && threadData.parent_id) {
         const channelConfig = await getChannelDirectory(threadData.parent_id)
         if (!channelConfig) {
-          cliLogger.warn(`No channel directory mapping found for parent channel ${threadData.parent_id}`)
+          cliLogger.warn(
+            `No channel directory mapping found for parent channel ${threadData.parent_id}`,
+          )
         } else {
-          const getClient = await initializeOpencodeForDirectory(channelConfig.directory)
+          const getClient = await initializeOpencodeForDirectory(
+            channelConfig.directory,
+          )
           if (getClient instanceof Error) {
-            cliLogger.warn(`Could not initialize OpenCode for ${channelConfig.directory}: ${getClient.message}`)
+            cliLogger.warn(
+              `Could not initialize OpenCode for ${channelConfig.directory}: ${getClient.message}`,
+            )
           } else {
             client = getClient()
           }
         }
       } else {
-        cliLogger.warn(`No mapped OpenCode session found for thread ${threadId}`)
+        cliLogger.warn(
+          `No mapped OpenCode session found for thread ${threadId}`,
+        )
       }
 
       await archiveThread({
@@ -2707,10 +3091,16 @@ cli
       })
 
       const threadLabel = threadData.name || threadId
-      note(`Archived thread: ${threadLabel}\nThread ID: ${threadId}`, '✅ Archived')
+      note(
+        `Archived thread: ${threadLabel}\nThread ID: ${threadId}`,
+        '✅ Archived',
+      )
       process.exit(0)
     } catch (error) {
-      cliLogger.error('Error:', error instanceof Error ? error.message : String(error))
+      cliLogger.error(
+        'Error:',
+        error instanceof Error ? error.message : String(error),
+      )
       process.exit(EXIT_NO_RESTART)
     }
   })
@@ -2731,89 +3121,116 @@ cli
       cliLogger.log(`Upgraded to v${newVersion}`)
       process.exit(0)
     } catch (error) {
-      cliLogger.error('Upgrade failed:', error instanceof Error ? error.message : String(error))
+      cliLogger.error(
+        'Upgrade failed:',
+        error instanceof Error ? error.message : String(error),
+      )
       process.exit(EXIT_NO_RESTART)
     }
   })
 
 cli
-  .command('worktree merge', 'Merge worktree branch into default branch using worktrunk-style pipeline')
+  .command(
+    'worktree merge',
+    'Merge worktree branch into default branch using worktrunk-style pipeline',
+  )
   .option('-d, --directory <path>', 'Worktree directory (defaults to cwd)')
-  .option('-m, --main-repo <path>', 'Main repository directory (auto-detected from worktree)')
-  .option('-n, --name <name>', 'Worktree/branch name (auto-detected from branch)')
-  .action(async (options: { directory?: string; mainRepo?: string; name?: string }) => {
-    try {
-      const { mergeWorktree } = await import('./worktree-utils.js')
-      const worktreeDir = path.resolve(options.directory || '.')
+  .option(
+    '-m, --main-repo <path>',
+    'Main repository directory (auto-detected from worktree)',
+  )
+  .option(
+    '-n, --name <name>',
+    'Worktree/branch name (auto-detected from branch)',
+  )
+  .action(
+    async (options: {
+      directory?: string
+      mainRepo?: string
+      name?: string
+    }) => {
+      try {
+        const { mergeWorktree } = await import('./worktree-utils.js')
+        const worktreeDir = path.resolve(options.directory || '.')
 
-      // Auto-detect main repo: find the main worktree's toplevel.
-      // For linked worktrees, --git-common-dir points to the shared .git,
-      // and the main worktree's toplevel is one level up from that (non-bare)
-      // or the dir itself (bare). We use git's worktree list to get the
-      // main worktree path reliably.
-      let mainRepoDir = options.mainRepo
-      if (!mainRepoDir) {
-        try {
-          // `git worktree list --porcelain` first line is always the main worktree
-          const { stdout } = await execAsync(
-            `git -C "${worktreeDir}" worktree list --porcelain`,
-          )
-          const firstLine = stdout.split('\n')[0] || ''
-          // Format: "worktree /path/to/main"
-          mainRepoDir = firstLine.replace(/^worktree\s+/, '').trim()
-        } catch {
-          // Fallback: derive from git common dir
-          const { stdout: commonDir } = await execAsync(
-            `git -C "${worktreeDir}" rev-parse --git-common-dir`,
-          )
-          const resolved = path.isAbsolute(commonDir.trim())
-            ? commonDir.trim()
-            : path.resolve(worktreeDir, commonDir.trim())
-          mainRepoDir = path.dirname(resolved)
+        // Auto-detect main repo: find the main worktree's toplevel.
+        // For linked worktrees, --git-common-dir points to the shared .git,
+        // and the main worktree's toplevel is one level up from that (non-bare)
+        // or the dir itself (bare). We use git's worktree list to get the
+        // main worktree path reliably.
+        let mainRepoDir = options.mainRepo
+        if (!mainRepoDir) {
+          try {
+            // `git worktree list --porcelain` first line is always the main worktree
+            const { stdout } = await execAsync(
+              `git -C "${worktreeDir}" worktree list --porcelain`,
+            )
+            const firstLine = stdout.split('\n')[0] || ''
+            // Format: "worktree /path/to/main"
+            mainRepoDir = firstLine.replace(/^worktree\s+/, '').trim()
+          } catch {
+            // Fallback: derive from git common dir
+            const { stdout: commonDir } = await execAsync(
+              `git -C "${worktreeDir}" rev-parse --git-common-dir`,
+            )
+            const resolved = path.isAbsolute(commonDir.trim())
+              ? commonDir.trim()
+              : path.resolve(worktreeDir, commonDir.trim())
+            mainRepoDir = path.dirname(resolved)
+          }
         }
-      }
 
-      // Auto-detect branch name if not provided
-      let worktreeName = options.name
-      if (!worktreeName) {
-        try {
-          const { stdout } = await execAsync(`git -C "${worktreeDir}" symbolic-ref --short HEAD`)
-          worktreeName = stdout.trim()
-        } catch {
-          worktreeName = path.basename(worktreeDir)
+        // Auto-detect branch name if not provided
+        let worktreeName = options.name
+        if (!worktreeName) {
+          try {
+            const { stdout } = await execAsync(
+              `git -C "${worktreeDir}" symbolic-ref --short HEAD`,
+            )
+            worktreeName = stdout.trim()
+          } catch {
+            worktreeName = path.basename(worktreeDir)
+          }
         }
-      }
 
-      cliLogger.log(`Worktree: ${worktreeDir}`)
-      cliLogger.log(`Main repo: ${mainRepoDir}`)
-      cliLogger.log(`Branch: ${worktreeName}`)
+        cliLogger.log(`Worktree: ${worktreeDir}`)
+        cliLogger.log(`Main repo: ${mainRepoDir}`)
+        cliLogger.log(`Branch: ${worktreeName}`)
 
-      const { RebaseConflictError } = await import('./errors.js')
+        const { RebaseConflictError } = await import('./errors.js')
 
-      const result = await mergeWorktree({
-        worktreeDir,
-        mainRepoDir,
-        worktreeName,
-        onProgress: (msg) => {
-          cliLogger.log(msg)
-        },
-      })
+        const result = await mergeWorktree({
+          worktreeDir,
+          mainRepoDir,
+          worktreeName,
+          onProgress: (msg) => {
+            cliLogger.log(msg)
+          },
+        })
 
-      if (result instanceof Error) {
-        cliLogger.error(`Merge failed: ${result.message}`)
-        if (result instanceof RebaseConflictError) {
-          cliLogger.log('Resolve the rebase conflicts, then run this command again.')
+        if (result instanceof Error) {
+          cliLogger.error(`Merge failed: ${result.message}`)
+          if (result instanceof RebaseConflictError) {
+            cliLogger.log(
+              'Resolve the rebase conflicts, then run this command again.',
+            )
+          }
+          process.exit(1)
         }
-        process.exit(1)
-      }
 
-      cliLogger.log(`Merged ${result.branchName} into ${result.defaultBranch} @ ${result.shortSha} (${result.commitCount} commit${result.commitCount === 1 ? '' : 's'})`)
-      process.exit(0)
-    } catch (error) {
-      cliLogger.error('Merge failed:', error instanceof Error ? error.message : String(error))
-      process.exit(EXIT_NO_RESTART)
-    }
-  })
+        cliLogger.log(
+          `Merged ${result.branchName} into ${result.defaultBranch} @ ${result.shortSha} (${result.commitCount} commit${result.commitCount === 1 ? '' : 's'})`,
+        )
+        process.exit(0)
+      } catch (error) {
+        cliLogger.error(
+          'Merge failed:',
+          error instanceof Error ? error.message : String(error),
+        )
+        process.exit(EXIT_NO_RESTART)
+      }
+    },
+  )
 
 cli.version(getCurrentVersion())
 cli.help()

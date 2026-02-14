@@ -40,6 +40,7 @@ export const LogPrefix = {
   SESSION: 'SESSION',
   SHARE: 'SHARE',
   TOOLS: 'TOOLS',
+  THINKING: 'THINK',
   UNDO_REDO: 'UNDO',
   USER_CMD: 'USER_CMD',
   VERBOSITY: 'VERBOSE',
@@ -52,7 +53,9 @@ export const LogPrefix = {
 export type LogPrefixType = (typeof LogPrefix)[keyof typeof LogPrefix]
 
 // compute max length from all known prefixes for alignment
-const MAX_PREFIX_LENGTH = Math.max(...Object.values(LogPrefix).map((p) => p.length))
+const MAX_PREFIX_LENGTH = Math.max(
+  ...Object.values(LogPrefix).map((p) => p.length),
+)
 
 const __filename = fileURLToPath(import.meta.url)
 const __dirname = dirname(__filename)
@@ -66,7 +69,10 @@ if (isDev) {
   if (!fs.existsSync(logDir)) {
     fs.mkdirSync(logDir, { recursive: true })
   }
-  fs.writeFileSync(logFilePath, `--- kimaki log started at ${new Date().toISOString()} ---\n`)
+  fs.writeFileSync(
+    logFilePath,
+    `--- kimaki log started at ${new Date().toISOString()} ---\n`,
+  )
 }
 
 function formatArg(arg: unknown): string {
@@ -106,7 +112,11 @@ function padPrefix(prefix: string): string {
   return prefix.padEnd(MAX_PREFIX_LENGTH)
 }
 
-function formatMessage(timestamp: string, prefix: string, args: unknown[]): string {
+function formatMessage(
+  timestamp: string,
+  prefix: string,
+  args: unknown[],
+): string {
   return [pc.dim(timestamp), prefix, ...args.map(formatArg)].join(' ')
 }
 
@@ -116,24 +126,36 @@ export function createLogger(prefix: LogPrefixType | string) {
   const paddedPrefix = padPrefix(prefix)
   const log = (...args: unknown[]) => {
     writeToFile('LOG', prefix, args)
-    clackLog.message(formatMessage(getTimestamp(), pc.cyan(paddedPrefix), args), {
-      ...noSpacing,
-      // symbol: `|`,
-    })
+    clackLog.message(
+      formatMessage(getTimestamp(), pc.cyan(paddedPrefix), args),
+      {
+        ...noSpacing,
+        // symbol: `|`,
+      },
+    )
   }
   return {
     log,
     error: (...args: unknown[]) => {
       writeToFile('ERROR', prefix, args)
-      clackLog.error(formatMessage(getTimestamp(), pc.red(paddedPrefix), args), noSpacing)
+      clackLog.error(
+        formatMessage(getTimestamp(), pc.red(paddedPrefix), args),
+        noSpacing,
+      )
     },
     warn: (...args: unknown[]) => {
       writeToFile('WARN', prefix, args)
-      clackLog.warn(formatMessage(getTimestamp(), pc.yellow(paddedPrefix), args), noSpacing)
+      clackLog.warn(
+        formatMessage(getTimestamp(), pc.yellow(paddedPrefix), args),
+        noSpacing,
+      )
     },
     info: (...args: unknown[]) => {
       writeToFile('INFO', prefix, args)
-      clackLog.info(formatMessage(getTimestamp(), pc.blue(paddedPrefix), args), noSpacing)
+      clackLog.info(
+        formatMessage(getTimestamp(), pc.blue(paddedPrefix), args),
+        noSpacing,
+      )
     },
     debug: log,
   }

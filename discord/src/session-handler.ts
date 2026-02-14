@@ -2,7 +2,11 @@
 // Creates, maintains, and sends prompts to OpenCode sessions from Discord threads.
 // Handles streaming events, permissions, abort signals, and message queuing.
 
-import type { Part, PermissionRequest, QuestionRequest } from '@opencode-ai/sdk/v2'
+import type {
+  Part,
+  PermissionRequest,
+  QuestionRequest,
+} from '@opencode-ai/sdk/v2'
 import type { DiscordFileAttachment } from './message-formatting.js'
 import { ChannelType, type Message, type ThreadChannel } from 'discord.js'
 import prettyMilliseconds from 'pretty-ms'
@@ -11,6 +15,7 @@ import path from 'node:path'
 import { xdgState } from 'xdg-basedir'
 import {
   getSessionAgent,
+  getSessionThinking,
   getChannelAgent,
   setSessionAgent,
   getThreadWorktree,
@@ -27,9 +32,16 @@ import {
   getOpencodeServers,
   getOpencodeClientV2,
 } from './opencode.js'
-import { sendThreadMessage, NOTIFY_MESSAGE_FLAGS, SILENT_MESSAGE_FLAGS } from './discord-utils.js'
+import {
+  sendThreadMessage,
+  NOTIFY_MESSAGE_FLAGS,
+  SILENT_MESSAGE_FLAGS,
+} from './discord-utils.js'
 import { formatPart } from './message-formatting.js'
-import { getOpencodeSystemMessage, type WorktreeInfo } from './system-message.js'
+import {
+  getOpencodeSystemMessage,
+  type WorktreeInfo,
+} from './system-message.js'
 import { createLogger, LogPrefix } from './logger.js'
 import { isAbortError } from './utils.js'
 import {
@@ -44,6 +56,10 @@ import {
   arePatternsCoveredBy,
 } from './commands/permissions.js'
 import { cancelPendingFileUpload } from './commands/file-upload.js'
+import {
+  getThinkingValuesForModel,
+  matchThinkingValue,
+} from './thinking-utils.js'
 import { execAsync } from './worktree-utils.js'
 import * as errore from 'errore'
 
@@ -102,7 +118,11 @@ export const pendingPermissions = new Map<
   > // permissionId -> data
 >()
 
-async function removeBotErrorReaction({ message }: { message: Message }): Promise<void> {
+async function removeBotErrorReaction({
+  message,
+}: {
+  message: Message
+}): Promise<void> {
   const botUserId = message.client.user?.id
   if (!botUserId) {
     return
@@ -173,7 +193,10 @@ export function clearQueue(threadId: string): void {
  * Returns all recent models so we can iterate until finding a valid one.
  * See: opensrc/repos/github.com/sst/opencode/packages/opencode/src/global/index.ts
  */
-function getRecentModelsFromTuiState(): Array<{ providerID: string; modelID: string }> {
+function getRecentModelsFromTuiState(): Array<{
+  providerID: string
+  modelID: string
+}> {
   if (!xdgState) {
     return []
   }
@@ -199,7 +222,9 @@ function getRecentModelsFromTuiState(): Array<{ providerID: string; modelID: str
 /**
  * Parse a model string in format "provider/model" into providerID and modelID.
  */
-function parseModelString(model: string): { providerID: string; modelID: string } | undefined {
+function parseModelString(
+  model: string,
+): { providerID: string; modelID: string } | undefined {
   const [providerID, ...modelParts] = model.split('/')
   const modelID = modelParts.join('/')
   if (!providerID || !modelID) {
@@ -222,6 +247,19 @@ function isModelValid(
   return isConnected && !!modelExists
 }
 
+async function getCurrentThinkingPreference({
+  sessionId,
+}: {
+  sessionId: string
+}): Promise<string | undefined> {
+  const sessionThinking = await getSessionThinking(sessionId)
+  if (sessionThinking) {
+    return sessionThinking
+  }
+
+  return undefined
+}
+
 async function resolveValidatedAgentPreference({
   agent,
   sessionId,
@@ -234,7 +272,9 @@ async function resolveValidatedAgentPreference({
   getClient: Awaited<ReturnType<typeof initializeOpencodeForDirectory>>
 }): Promise<string | undefined> {
   const agentPreference =
-    agent || (await getSessionAgent(sessionId)) || (channelId ? await getChannelAgent(channelId) : undefined)
+    agent ||
+    (await getSessionAgent(sessionId)) ||
+    (channelId ? await getChannelAgent(channelId) : undefined)
   if (!agentPreference) {
     return undefined
   }
@@ -247,7 +287,9 @@ async function resolveValidatedAgentPreference({
     return getClient().app.agents({})
   })
   if (agentsResponse instanceof Error) {
-    throw new Error(`Failed to validate agent "${agentPreference}"`, { cause: agentsResponse })
+    throw new Error(`Failed to validate agent "${agentPreference}"`, {
+      cause: agentsResponse,
+    })
   }
 
   const availableAgents = agentsResponse.data || []
@@ -272,7 +314,10 @@ async function resolveValidatedAgentPreference({
   )
 }
 
-export type DefaultModelSource = 'opencode-config' | 'opencode-recent' | 'opencode-provider-default'
+export type DefaultModelSource =
+  | 'opencode-config'
+  | 'opencode-recent'
+  | 'opencode-provider-default'
 
 /**
  * Get the default model from OpenCode when no user preference is set.
@@ -286,7 +331,10 @@ export async function getDefaultModel({
   getClient,
 }: {
   getClient: Awaited<ReturnType<typeof initializeOpencodeForDirectory>>
-}): Promise<{ providerID: string; modelID: string; source: DefaultModelSource } | undefined> {
+}): Promise<
+  | { providerID: string; modelID: string; source: DefaultModelSource }
+  | undefined
+> {
   if (getClient instanceof Error) {
     return undefined
   }
@@ -296,14 +344,21 @@ export async function getDefaultModel({
     return getClient().provider.list({})
   })
   if (providersResponse instanceof Error) {
-    sessionLogger.log(`[MODEL] Failed to fetch providers for default model:`, providersResponse.message)
+    sessionLogger.log(
+      `[MODEL] Failed to fetch providers for default model:`,
+      providersResponse.message,
+    )
     return undefined
   }
   if (!providersResponse.data) {
     return undefined
   }
 
-  const { connected, default: defaults, all: providers } = providersResponse.data
+  const {
+    connected,
+    default: defaults,
+    all: providers,
+  } = providersResponse.data
   if (connected.length === 0) {
     sessionLogger.log(`[MODEL] No connected providers found`)
     return undefined
@@ -316,7 +371,9 @@ export async function getDefaultModel({
   if (!(configResponse instanceof Error) && configResponse.data?.model) {
     const configModel = parseModelString(configResponse.data.model)
     if (configModel && isModelValid(configModel, connected, providers)) {
-      sessionLogger.log(`[MODEL] Using config model: ${configModel.providerID}/${configModel.modelID}`)
+      sessionLogger.log(
+        `[MODEL] Using config model: ${configModel.providerID}/${configModel.modelID}`,
+      )
       return { ...configModel, source: 'opencode-config' }
     }
     if (configModel) {
@@ -351,8 +408,14 @@ export async function getDefaultModel({
     return undefined
   }
 
-  sessionLogger.log(`[MODEL] Using provider default: ${firstConnected}/${defaultModelId}`)
-  return { providerID: firstConnected, modelID: defaultModelId, source: 'opencode-provider-default' }
+  sessionLogger.log(
+    `[MODEL] Using provider default: ${firstConnected}/${defaultModelId}`,
+  )
+  return {
+    providerID: firstConnected,
+    modelID: defaultModelId,
+    source: 'opencode-provider-default',
+  }
 }
 
 /**
@@ -375,28 +438,42 @@ export async function abortAndRetrySession({
   const controller = abortControllers.get(sessionId)
 
   if (!controller) {
-    sessionLogger.log(`[ABORT+RETRY] No active request for session ${sessionId}`)
+    sessionLogger.log(
+      `[ABORT+RETRY] No active request for session ${sessionId}`,
+    )
     return false
   }
 
-  sessionLogger.log(`[ABORT+RETRY] Aborting session ${sessionId} for model change`)
+  sessionLogger.log(
+    `[ABORT+RETRY] Aborting session ${sessionId} for model change`,
+  )
 
   // Abort with special reason so we don't show "completed" message
-  sessionLogger.log(`[ABORT] reason=model-change sessionId=${sessionId} - user changed model mid-request, will retry with new model`)
+  sessionLogger.log(
+    `[ABORT] reason=model-change sessionId=${sessionId} - user changed model mid-request, will retry with new model`,
+  )
   controller.abort(new Error('model-change'))
 
   // Also call the API abort endpoint
   const getClient = await initializeOpencodeForDirectory(projectDirectory)
   if (getClient instanceof Error) {
-    sessionLogger.error(`[ABORT+RETRY] Failed to initialize OpenCode client:`, getClient.message)
+    sessionLogger.error(
+      `[ABORT+RETRY] Failed to initialize OpenCode client:`,
+      getClient.message,
+    )
     return false
   }
-  sessionLogger.log(`[ABORT-API] reason=model-change sessionId=${sessionId} - sending API abort for model change retry`)
+  sessionLogger.log(
+    `[ABORT-API] reason=model-change sessionId=${sessionId} - sending API abort for model change retry`,
+  )
   const abortResult = await errore.tryAsync(() => {
     return getClient().session.abort({ path: { id: sessionId } })
   })
   if (abortResult instanceof Error) {
-    sessionLogger.log(`[ABORT-API] API abort call failed (may already be done):`, abortResult)
+    sessionLogger.log(
+      `[ABORT-API] API abort call failed (may already be done):`,
+      abortResult,
+    )
   }
 
   // Small delay to let the abort propagate
@@ -405,13 +482,21 @@ export async function abortAndRetrySession({
   })
 
   // Fetch last user message from API
-  sessionLogger.log(`[ABORT+RETRY] Fetching last user message for session ${sessionId}`)
-  const messagesResponse = await getClient().session.messages({ path: { id: sessionId } })
+  sessionLogger.log(
+    `[ABORT+RETRY] Fetching last user message for session ${sessionId}`,
+  )
+  const messagesResponse = await getClient().session.messages({
+    path: { id: sessionId },
+  })
   const messages = messagesResponse.data || []
-  const lastUserMessage = [...messages].reverse().find((m) => m.info.role === 'user')
+  const lastUserMessage = [...messages]
+    .reverse()
+    .find((m) => m.info.role === 'user')
 
   if (!lastUserMessage) {
-    sessionLogger.log(`[ABORT+RETRY] No user message found in session ${sessionId}`)
+    sessionLogger.log(
+      `[ABORT+RETRY] No user message found in session ${sessionId}`,
+    )
     return false
   }
 
@@ -420,9 +505,13 @@ export async function abortAndRetrySession({
     | { type: 'text'; text: string }
     | undefined
   const prompt = textPart?.text || ''
-  const images = lastUserMessage.parts.filter((p) => p.type === 'file') as DiscordFileAttachment[]
+  const images = lastUserMessage.parts.filter(
+    (p) => p.type === 'file',
+  ) as DiscordFileAttachment[]
 
-  sessionLogger.log(`[ABORT+RETRY] Re-triggering session ${sessionId} with new model`)
+  sessionLogger.log(
+    `[ABORT+RETRY] Re-triggering session ${sessionId} with new model`,
+  )
 
   // Use setImmediate to avoid blocking
   setImmediate(() => {
@@ -501,12 +590,18 @@ export async function handleOpencodeSession({
   // Use worktree directory for SDK calls if available, otherwise project directory
   const sdkDirectory = worktreeDirectory || directory
   if (worktreeDirectory) {
-    sessionLogger.log(`Using worktree directory for SDK calls: ${worktreeDirectory}`)
+    sessionLogger.log(
+      `Using worktree directory for SDK calls: ${worktreeDirectory}`,
+    )
   }
 
   // When in worktree, pass original repo directory so AI can access files there
-  const originalRepoDirectory = worktreeDirectory ? worktreeInfo?.project_directory : undefined
-  const getClient = await initializeOpencodeForDirectory(directory, { originalRepoDirectory })
+  const originalRepoDirectory = worktreeDirectory
+    ? worktreeInfo?.project_directory
+    : undefined
+  const getClient = await initializeOpencodeForDirectory(directory, {
+    originalRepoDirectory,
+  })
   if (getClient instanceof Error) {
     await sendThreadMessage(thread, `✗ ${getClient.message}`)
     return
@@ -527,7 +622,9 @@ export async function handleOpencodeSession({
       })
     })
     if (sessionResponse instanceof Error) {
-      voiceLogger.log(`[SESSION] Session ${sessionId} not found, will create new one`)
+      voiceLogger.log(
+        `[SESSION] Session ${sessionId} not found, will create new one`,
+      )
     } else {
       session = sessionResponse.data
       sessionLogger.log(`Successfully reused session ${sessionId}`)
@@ -535,8 +632,11 @@ export async function handleOpencodeSession({
   }
 
   if (!session) {
-    const sessionTitle = prompt.length > 80 ? prompt.slice(0, 77) + '...' : prompt.slice(0, 80)
-    voiceLogger.log(`[SESSION] Creating new session with title: "${sessionTitle}"`)
+    const sessionTitle =
+      prompt.length > 80 ? prompt.slice(0, 77) + '...' : prompt.slice(0, 80)
+    voiceLogger.log(
+      `[SESSION] Creating new session with title: "${sessionTitle}"`,
+    )
     const sessionResponse = await getClient().session.create({
       body: { title: sessionTitle },
       query: { directory: sdkDirectory },
@@ -555,15 +655,23 @@ export async function handleOpencodeSession({
   // Store agent preference if provided
   if (agent) {
     await setSessionAgent(session.id, agent)
-    sessionLogger.log(`Set agent preference for session ${session.id}: ${agent}`)
+    sessionLogger.log(
+      `Set agent preference for session ${session.id}: ${agent}`,
+    )
   }
 
   const existingController = abortControllers.get(session.id)
   if (existingController) {
-    voiceLogger.log(`[ABORT] Cancelling existing request for session: ${session.id}`)
-    sessionLogger.log(`[ABORT] reason=new-request sessionId=${session.id} threadId=${thread.id} - new user message arrived while previous request was still running`)
+    voiceLogger.log(
+      `[ABORT] Cancelling existing request for session: ${session.id}`,
+    )
+    sessionLogger.log(
+      `[ABORT] reason=new-request sessionId=${session.id} threadId=${thread.id} - new user message arrived while previous request was still running`,
+    )
     existingController.abort(new Error('New request started'))
-    sessionLogger.log(`[ABORT-API] reason=new-request sessionId=${session.id} - sending API abort because new message arrived`)
+    sessionLogger.log(
+      `[ABORT-API] reason=new-request sessionId=${session.id} - sending API abort because new message arrived`,
+    )
     const abortResult = await errore.tryAsync(() => {
       return getClient().session.abort({
         path: { id: session.id },
@@ -571,7 +679,10 @@ export async function handleOpencodeSession({
       })
     })
     if (abortResult instanceof Error) {
-      sessionLogger.log(`[ABORT-API] Server abort failed (may be already done):`, abortResult)
+      sessionLogger.log(
+        `[ABORT-API] Server abort failed (may be already done):`,
+        abortResult,
+      )
     }
   }
 
@@ -580,17 +691,24 @@ export async function handleOpencodeSession({
   if (threadPermissions && threadPermissions.size > 0) {
     const clientV2 = getOpencodeClientV2(directory)
     for (const [permId, pendingPerm] of threadPermissions) {
-      sessionLogger.log(`[PERMISSION] Auto-rejecting permission ${permId} due to new message`)
+      sessionLogger.log(
+        `[PERMISSION] Auto-rejecting permission ${permId} due to new message`,
+      )
       // Remove the permission buttons from the Discord message
       const removeButtonsResult = await errore.tryAsync(async () => {
         const msg = await thread.messages.fetch(pendingPerm.messageId)
         await msg.edit({ components: [] })
       })
       if (removeButtonsResult instanceof Error) {
-        sessionLogger.log(`[PERMISSION] Failed to remove buttons for ${permId}:`, removeButtonsResult)
+        sessionLogger.log(
+          `[PERMISSION] Failed to remove buttons for ${permId}:`,
+          removeButtonsResult,
+        )
       }
       if (!clientV2) {
-        sessionLogger.log(`[PERMISSION] OpenCode v2 client unavailable for permission ${permId}`)
+        sessionLogger.log(
+          `[PERMISSION] OpenCode v2 client unavailable for permission ${permId}`,
+        )
         cleanupPermissionContext(pendingPerm.contextHash)
         continue
       }
@@ -602,7 +720,10 @@ export async function handleOpencodeSession({
         })
       })
       if (rejectResult instanceof Error) {
-        sessionLogger.log(`[PERMISSION] Failed to auto-reject permission ${permId}:`, rejectResult)
+        sessionLogger.log(
+          `[PERMISSION] Failed to auto-reject permission ${permId}:`,
+          rejectResult,
+        )
       }
       cleanupPermissionContext(pendingPerm.contextHash)
     }
@@ -618,7 +739,9 @@ export async function handleOpencodeSession({
   // Cancel any pending file upload (resolves with empty array so plugin tool unblocks)
   const fileUploadCancelled = await cancelPendingFileUpload(thread.id)
   if (fileUploadCancelled) {
-    sessionLogger.log(`[FILE-UPLOAD] Cancelled pending file upload due to new message`)
+    sessionLogger.log(
+      `[FILE-UPLOAD] Cancelled pending file upload due to new message`,
+    )
   }
 
   // Snapshot model+agent early so user changes (e.g. /agent) during the async gap
@@ -633,12 +756,17 @@ export async function handleOpencodeSession({
     })
   })
   if (earlyAgentResult instanceof Error) {
-    await sendThreadMessage(thread, `Failed to resolve agent: ${earlyAgentResult.message}`)
+    await sendThreadMessage(
+      thread,
+      `Failed to resolve agent: ${earlyAgentResult.message}`,
+    )
     return
   }
   const earlyAgentPreference = earlyAgentResult
   if (earlyAgentPreference) {
-    sessionLogger.log(`[AGENT] Resolved agent preference early: ${earlyAgentPreference}`)
+    sessionLogger.log(
+      `[AGENT] Resolved agent preference early: ${earlyAgentPreference}`,
+    )
   }
 
   const earlyModelResult = await errore.tryAsync(async () => {
@@ -650,7 +778,9 @@ export async function handleOpencodeSession({
         return { providerID, modelID }
       }
     }
-    const channelInfo = channelId ? await getChannelDirectory(channelId) : undefined
+    const channelInfo = channelId
+      ? await getChannelDirectory(channelId)
+      : undefined
     const resolvedAppId = channelInfo?.appId ?? appId
     const modelInfo = await getCurrentModelInfo({
       sessionId: session.id,
@@ -663,11 +793,16 @@ export async function handleOpencodeSession({
       sessionLogger.log(`[MODEL] No model available (early resolution)`)
       return undefined
     }
-    sessionLogger.log(`[MODEL] Resolved ${modelInfo.type} early: ${modelInfo.model}`)
+    sessionLogger.log(
+      `[MODEL] Resolved ${modelInfo.type} early: ${modelInfo.model}`,
+    )
     return { providerID: modelInfo.providerID, modelID: modelInfo.modelID }
   })
   if (earlyModelResult instanceof Error) {
-    await sendThreadMessage(thread, `Failed to resolve model: ${earlyModelResult.message}`)
+    await sendThreadMessage(
+      thread,
+      `Failed to resolve model: ${earlyModelResult.message}`,
+    )
     return
   }
   const earlyModelParam = earlyModelResult
@@ -679,6 +814,61 @@ export async function handleOpencodeSession({
     return
   }
 
+  const earlyThinkingResult = await errore.tryAsync(async () => {
+    const preferredThinking = await getCurrentThinkingPreference({
+      sessionId: session.id,
+    })
+    if (!preferredThinking) {
+      return undefined
+    }
+
+    const providersResponse = await getClient().provider.list({
+      query: { directory: sdkDirectory },
+    })
+    if (!providersResponse.data) {
+      return undefined
+    }
+
+    const availableThinkingValues = getThinkingValuesForModel({
+      providers: providersResponse.data.all,
+      providerId: earlyModelParam.providerID,
+      modelId: earlyModelParam.modelID,
+    })
+    if (availableThinkingValues.length === 0) {
+      sessionLogger.log(
+        `[THINK] Model ${earlyModelParam.providerID}/${earlyModelParam.modelID} does not expose variants; ignoring preference`,
+      )
+      return undefined
+    }
+
+    const matchedThinkingValue = matchThinkingValue({
+      requestedValue: preferredThinking,
+      availableValues: availableThinkingValues,
+    })
+    if (!matchedThinkingValue) {
+      sessionLogger.log(
+        `[THINK] Preference ${preferredThinking} is invalid for ${earlyModelParam.providerID}/${earlyModelParam.modelID}; ignoring`,
+      )
+      return undefined
+    }
+
+    return matchedThinkingValue
+  })
+  const earlyThinkingValue = (() => {
+    if (!(earlyThinkingResult instanceof Error)) {
+      return earlyThinkingResult
+    }
+    sessionLogger.warn(
+      `[THINK] Failed to resolve thinking level, continuing without variant: ${earlyThinkingResult.message}`,
+    )
+    return undefined
+  })()
+  if (earlyThinkingValue) {
+    sessionLogger.log(
+      `[THINK] Resolved thinking level early: ${earlyThinkingValue}`,
+    )
+  }
+
   const abortController = new AbortController()
   abortControllers.set(session.id, abortController)
 
@@ -687,7 +877,9 @@ export async function handleOpencodeSession({
       setTimeout(resolve, 200)
     })
     if (abortController.signal.aborted) {
-      sessionLogger.log(`[DEBOUNCE] Request was superseded during wait, exiting`)
+      sessionLogger.log(
+        `[DEBOUNCE] Request was superseded during wait, exiting`,
+      )
       return
     }
   }
@@ -747,7 +939,6 @@ export async function handleOpencodeSession({
   let promptResolved = false
   let hasReceivedEvent = false
 
-
   function startTyping(): () => void {
     if (abortController.signal.aborted) {
       discordLogger.log(`Not starting typing, already aborted`)
@@ -758,18 +949,22 @@ export async function handleOpencodeSession({
       typingInterval = null
     }
 
-    void errore.tryAsync(() => thread.sendTyping()).then((result) => {
-      if (result instanceof Error) {
-        discordLogger.log(`Failed to send initial typing: ${result}`)
-      }
-    })
-
-    typingInterval = setInterval(() => {
-      void errore.tryAsync(() => thread.sendTyping()).then((result) => {
+    void errore
+      .tryAsync(() => thread.sendTyping())
+      .then((result) => {
         if (result instanceof Error) {
-          discordLogger.log(`Failed to send periodic typing: ${result}`)
+          discordLogger.log(`Failed to send initial typing: ${result}`)
         }
       })
+
+    typingInterval = setInterval(() => {
+      void errore
+        .tryAsync(() => thread.sendTyping())
+        .then((result) => {
+          if (result instanceof Error) {
+            discordLogger.log(`Failed to send periodic typing: ${result}`)
+          }
+        })
     }, 8000)
 
     if (!abortController.signal.aborted) {
@@ -840,12 +1035,16 @@ export async function handleOpencodeSession({
 
   const eventHandler = async () => {
     // Subtask tracking: child sessionId → { label, assistantMessageId }
-    const subtaskSessions = new Map<string, { label: string; assistantMessageId?: string }>()
+    const subtaskSessions = new Map<
+      string,
+      { label: string; assistantMessageId?: string }
+    >()
     // Counts spawned tasks per agent type: "explore" → 2
     const agentSpawnCounts: Record<string, number> = {}
 
     const storePart = (part: Part) => {
-      const messageParts = partBuffer.get(part.messageID) || new Map<string, Part>()
+      const messageParts =
+        partBuffer.get(part.messageID) || new Map<string, Part>()
       messageParts.set(part.id, part)
       partBuffer.set(part.messageID, messageParts)
     }
@@ -854,7 +1053,13 @@ export async function handleOpencodeSession({
       return Array.from(partBuffer.get(messageID)?.values() ?? [])
     }
 
-    const shouldSendPart = ({ part, force }: { part: Part; force: boolean }) => {
+    const shouldSendPart = ({
+      part,
+      force,
+    }: {
+      part: Part
+      force: boolean
+    }) => {
       if (part.type === 'step-start' || part.type === 'step-finish') {
         return false
       }
@@ -914,11 +1119,16 @@ export async function handleOpencodeSession({
         })
       })
       if (providersResponse instanceof Error) {
-        sessionLogger.error('Failed to fetch provider info for context limit:', providersResponse)
+        sessionLogger.error(
+          'Failed to fetch provider info for context limit:',
+          providersResponse,
+        )
         return
       }
 
-      const provider = providersResponse.data?.all?.find((p) => p.id === usedProviderID)
+      const provider = providersResponse.data?.all?.find(
+        (p) => p.id === usedProviderID,
+      )
       const model = provider?.models?.[usedModel]
       if (!model?.limit?.context) {
         return
@@ -988,9 +1198,14 @@ export async function handleOpencodeSession({
         return
       }
 
-      const currentPercentage = Math.floor((tokensUsedInSession / modelContextLimit) * 100)
+      const currentPercentage = Math.floor(
+        (tokensUsedInSession / modelContextLimit) * 100,
+      )
       const thresholdCrossed = Math.floor(currentPercentage / 10) * 10
-      if (thresholdCrossed <= lastDisplayedContextPercentage || thresholdCrossed < 10) {
+      if (
+        thresholdCrossed <= lastDisplayedContextPercentage ||
+        thresholdCrossed < 10
+      ) {
         return
       }
       lastDisplayedContextPercentage = thresholdCrossed
@@ -999,9 +1214,13 @@ export async function handleOpencodeSession({
     }
 
     const handleMainPart = async (part: Part) => {
-      const isActiveMessage = assistantMessageId ? part.messageID === assistantMessageId : false
+      const isActiveMessage = assistantMessageId
+        ? part.messageID === assistantMessageId
+        : false
       const allowEarlyProcessing =
-        !assistantMessageId && part.type === 'tool' && part.state.status === 'running'
+        !assistantMessageId &&
+        part.type === 'tool' &&
+        part.state.status === 'running'
       if (!isActiveMessage && !allowEarlyProcessing) {
         if (part.type !== 'step-start') {
           return
@@ -1012,7 +1231,8 @@ export async function handleOpencodeSession({
         const hasPendingQuestion = [...pendingQuestionContexts.values()].some(
           (ctx) => ctx.thread.id === thread.id,
         )
-        const hasPendingPermission = (pendingPermissions.get(thread.id)?.size ?? 0) > 0
+        const hasPendingPermission =
+          (pendingPermissions.get(thread.id)?.size ?? 0) > 0
         if (!hasPendingQuestion && !hasPendingPermission) {
           stopTyping = startTyping()
         }
@@ -1029,11 +1249,15 @@ export async function handleOpencodeSession({
         if (part.tool === 'task' && !sentPartIds.has(part.id)) {
           const description = (part.state.input?.description as string) || ''
           const agent = (part.state.input?.subagent_type as string) || 'task'
-          const childSessionId = (part.state.metadata?.sessionId as string) || ''
+          const childSessionId =
+            (part.state.metadata?.sessionId as string) || ''
           if (description && childSessionId) {
             agentSpawnCounts[agent] = (agentSpawnCounts[agent] || 0) + 1
             const label = `${agent}-${agentSpawnCounts[agent]}`
-            subtaskSessions.set(childSessionId, { label, assistantMessageId: undefined })
+            subtaskSessions.set(childSessionId, {
+              label,
+              assistantMessageId: undefined,
+            })
             // Show task messages in tools-and-text and text-and-essential-tools modes
             if ((await getVerbosity()) !== 'text-only') {
               const taskDisplay = `┣ task **${description}**${agent ? ` _${agent}_` : ''}`
@@ -1064,7 +1288,9 @@ export async function handleOpencodeSession({
           if (outputTokens >= largeOutputThreshold) {
             await ensureModelContextLimit()
             const formattedTokens =
-              outputTokens >= 1000 ? `${(outputTokens / 1000).toFixed(1)}k` : String(outputTokens)
+              outputTokens >= 1000
+                ? `${(outputTokens / 1000).toFixed(1)}k`
+                : String(outputTokens)
             const percentageSuffix = (() => {
               if (!modelContextLimit) {
                 return ''
@@ -1101,7 +1327,8 @@ export async function handleOpencodeSession({
           const hasPendingQuestion = [...pendingQuestionContexts.values()].some(
             (ctx) => ctx.thread.id === thread.id,
           )
-          const hasPendingPermission = (pendingPermissions.get(thread.id)?.size ?? 0) > 0
+          const hasPendingPermission =
+            (pendingPermissions.get(thread.id)?.size ?? 0) > 0
           if (hasPendingQuestion || hasPendingPermission) return
           stopTyping = startTyping()
         }, 300)
@@ -1132,7 +1359,10 @@ export async function handleOpencodeSession({
       if (part.type === 'text') {
         return
       }
-      if (!subtaskInfo.assistantMessageId || part.messageID !== subtaskInfo.assistantMessageId) {
+      if (
+        !subtaskInfo.assistantMessageId ||
+        part.messageID !== subtaskInfo.assistantMessageId
+      ) {
         return
       }
 
@@ -1144,7 +1374,10 @@ export async function handleOpencodeSession({
         return sendThreadMessage(thread, content + '\n\n')
       })
       if (sendResult instanceof Error) {
-        discordLogger.error(`ERROR: Failed to send subtask part ${part.id}:`, sendResult)
+        discordLogger.error(
+          `ERROR: Failed to send subtask part ${part.id}:`,
+          sendResult,
+        )
         return
       }
       sentPartIds.add(part.id)
@@ -1193,7 +1426,10 @@ export async function handleOpencodeSession({
         return
       }
       sessionLogger.error(`Sending error to thread: ${errorMessage}`)
-      await sendThreadMessage(thread, `✗ opencode session error: ${errorMessage}`)
+      await sendThreadMessage(
+        thread,
+        `✗ opencode session error: ${errorMessage}`,
+      )
 
       if (!originalMessage) {
         return
@@ -1407,7 +1643,10 @@ export async function handleOpencodeSession({
             if (!(result instanceof Error)) {
               return
             }
-            sessionLogger.error(`[QUEUE] Failed to process queued message:`, result)
+            sessionLogger.error(
+              `[QUEUE] Failed to process queued message:`,
+              result,
+            )
             await sendThreadMessage(
               thread,
               `✗ Queued message failed: ${result.message.slice(0, 200)}`,
@@ -1418,7 +1657,10 @@ export async function handleOpencodeSession({
 
     const handleSessionStatus = async (properties: {
       sessionID: string
-      status: { type: 'idle' } | { type: 'retry'; attempt: number; message: string; next: number } | { type: 'busy' }
+      status:
+        | { type: 'idle' }
+        | { type: 'retry'; attempt: number; message: string; next: number }
+        | { type: 'busy' }
     }) => {
       if (properties.sessionID !== session.id) {
         return
@@ -1464,8 +1706,12 @@ export async function handleOpencodeSession({
           )
           return
         }
-        sessionLogger.log(`[SESSION IDLE] Session ${session.id} is idle, ending stream`)
-        sessionLogger.log(`[ABORT] reason=finished sessionId=${session.id} threadId=${thread.id} - session completed normally, received idle event after prompt resolved`)
+        sessionLogger.log(
+          `[SESSION IDLE] Session ${session.id} is idle, ending stream`,
+        )
+        sessionLogger.log(
+          `[ABORT] reason=finished sessionId=${session.id} threadId=${thread.id} - session completed normally, received idle event after prompt resolved`,
+        )
         abortController.abort(new Error('finished'))
         return
       }
@@ -1511,7 +1757,9 @@ export async function handleOpencodeSession({
       }
     } catch (e) {
       if (isAbortError(e, abortController.signal)) {
-        sessionLogger.log('AbortController aborted event handling (normal exit)')
+        sessionLogger.log(
+          'AbortController aborted event handling (normal exit)',
+        )
         return
       }
       sessionLogger.error(`Unexpected error in event handling code`, e)
@@ -1535,17 +1783,24 @@ export async function handleOpencodeSession({
 
       const abortReason = (abortController.signal.reason as Error)?.message
       if (!abortController.signal.aborted || abortReason === 'finished') {
-        const sessionDuration = prettyMilliseconds(Date.now() - sessionStartTime)
+        const sessionDuration = prettyMilliseconds(
+          Date.now() - sessionStartTime,
+        )
         const attachCommand = port ? ` ⋅ ${session.id}` : ''
         const modelInfo = usedModel ? ` ⋅ ${usedModel}` : ''
         const agentInfo =
-          usedAgent && usedAgent.toLowerCase() !== 'build' ? ` ⋅ **${usedAgent}**` : ''
+          usedAgent && usedAgent.toLowerCase() !== 'build'
+            ? ` ⋅ **${usedAgent}**`
+            : ''
         let contextInfo = ''
         const folderName = path.basename(sdkDirectory)
         const branchResult = await errore.tryAsync(() => {
-          return execAsync('git symbolic-ref --short HEAD', { cwd: sdkDirectory })
+          return execAsync('git symbolic-ref --short HEAD', {
+            cwd: sdkDirectory,
+          })
         })
-        const branchName = branchResult instanceof Error ? '' : branchResult.stdout.trim()
+        const branchName =
+          branchResult instanceof Error ? '' : branchResult.stdout.trim()
 
         const contextResult = await errore.tryAsync(async () => {
           // Fetch final token count from API since message.updated events can arrive
@@ -1575,19 +1830,30 @@ export async function handleOpencodeSession({
             }
           }
 
-          const providersResponse = await getClient().provider.list({ query: { directory: sdkDirectory } })
-          const provider = providersResponse.data?.all?.find((p) => p.id === usedProviderID)
+          const providersResponse = await getClient().provider.list({
+            query: { directory: sdkDirectory },
+          })
+          const provider = providersResponse.data?.all?.find(
+            (p) => p.id === usedProviderID,
+          )
           const model = provider?.models?.[usedModel || '']
           if (model?.limit?.context) {
-            const percentage = Math.round((tokensUsedInSession / model.limit.context) * 100)
+            const percentage = Math.round(
+              (tokensUsedInSession / model.limit.context) * 100,
+            )
             contextInfo = ` ⋅ ${percentage}%`
           }
         })
         if (contextResult instanceof Error) {
-          sessionLogger.error('Failed to fetch provider info for context percentage:', contextResult)
+          sessionLogger.error(
+            'Failed to fetch provider info for context percentage:',
+            contextResult,
+          )
         }
 
-        const projectInfo = branchName ? `${folderName} ⋅ ${branchName} ⋅ ` : `${folderName} ⋅ `
+        const projectInfo = branchName
+          ? `${folderName} ⋅ ${branchName} ⋅ `
+          : `${folderName} ⋅ `
         await sendThreadMessage(
           thread,
           `*${projectInfo}${sessionDuration}${contextInfo}${attachCommand}${modelInfo}${agentInfo}*`,
@@ -1605,10 +1871,12 @@ export async function handleOpencodeSession({
             messageQueue.delete(thread.id)
           }
 
-          sessionLogger.log(`[QUEUE] Processing queued message from ${nextMessage.username}`)
+          sessionLogger.log(
+            `[QUEUE] Processing queued message from ${nextMessage.username}`,
+          )
 
           // Show that queued message is being sent
-           const displayText = nextMessage.command
+          const displayText = nextMessage.command
             ? `/${nextMessage.command.name}`
             : `${nextMessage.prompt.slice(0, 150)}${nextMessage.prompt.length > 150 ? '...' : ''}`
           await sendThreadMessage(
@@ -1629,9 +1897,15 @@ export async function handleOpencodeSession({
               appId: nextMessage.appId,
               command: nextMessage.command,
             }).catch(async (e) => {
-              sessionLogger.error(`[QUEUE] Failed to process queued message:`, e)
+              sessionLogger.error(
+                `[QUEUE] Failed to process queued message:`,
+                e,
+              )
               const errorMsg = e instanceof Error ? e.message : String(e)
-              await sendThreadMessage(thread, `✗ Queued message failed: ${errorMsg.slice(0, 200)}`)
+              await sendThreadMessage(
+                thread,
+                `✗ Queued message failed: ${errorMsg.slice(0, 200)}`,
+              )
             })
           })
         }
@@ -1643,15 +1917,17 @@ export async function handleOpencodeSession({
     }
   }
 
-  const promptResult: Error | { sessionID: string; result: any; port?: number } | undefined =
-    await errore.tryAsync(async () => {
-      const newHandlerPromise = eventHandler().finally(() => {
-        if (activeEventHandlers.get(thread.id) === newHandlerPromise) {
-          activeEventHandlers.delete(thread.id)
-        }
-      })
-      activeEventHandlers.set(thread.id, newHandlerPromise)
-      handlerPromise = newHandlerPromise
+  const promptResult:
+    | Error
+    | { sessionID: string; result: any; port?: number }
+    | undefined = await errore.tryAsync(async () => {
+    const newHandlerPromise = eventHandler().finally(() => {
+      if (activeEventHandlers.get(thread.id) === newHandlerPromise) {
+        activeEventHandlers.delete(thread.id)
+      }
+    })
+    activeEventHandlers.set(thread.id, newHandlerPromise)
+    handlerPromise = newHandlerPromise
 
     if (abortController.signal.aborted) {
       sessionLogger.log(`[DEBOUNCE] Aborted before prompt, exiting`)
@@ -1729,34 +2005,40 @@ export async function handleOpencodeSession({
 
     hasSentParts = false
 
+    const commandBody = {
+      command: command?.name || '',
+      arguments: command?.arguments || '',
+      agent: agentPreference,
+      variant: earlyThinkingValue,
+    }
+
+    const promptBody = {
+      parts,
+      system: getOpencodeSystemMessage({
+        sessionId: session.id,
+        channelId,
+        guildId: thread.guildId,
+        worktree,
+        channelTopic,
+        username,
+        userId,
+      }),
+      model: modelParam,
+      agent: agentPreference,
+      variant: earlyThinkingValue,
+    }
+
     const response = command
       ? await getClient().session.command({
           path: { id: session.id },
           query: { directory: sdkDirectory },
-          body: {
-            command: command.name,
-            arguments: command.arguments,
-            agent: agentPreference,
-          },
+          body: commandBody,
           signal: abortController.signal,
         })
       : await getClient().session.prompt({
           path: { id: session.id },
           query: { directory: sdkDirectory },
-          body: {
-            parts,
-            system: getOpencodeSystemMessage({
-              sessionId: session.id,
-              channelId,
-              guildId: thread.guildId,
-              worktree,
-              channelTopic,
-              username,
-              userId,
-            }),
-            model: modelParam,
-            agent: agentPreference,
-          },
+          body: promptBody,
           signal: abortController.signal,
         })
 
@@ -1764,16 +2046,27 @@ export async function handleOpencodeSession({
       const errorMessage = (() => {
         const err = response.error
         if (err && typeof err === 'object') {
-          if ('data' in err && err.data && typeof err.data === 'object' && 'message' in err.data) {
+          if (
+            'data' in err &&
+            err.data &&
+            typeof err.data === 'object' &&
+            'message' in err.data
+          ) {
             return String(err.data.message)
           }
-          if ('errors' in err && Array.isArray(err.errors) && err.errors.length > 0) {
+          if (
+            'errors' in err &&
+            Array.isArray(err.errors) &&
+            err.errors.length > 0
+          ) {
             return JSON.stringify(err.errors)
           }
         }
         return JSON.stringify(err)
       })()
-      throw new Error(`OpenCode API error (${response.response.status}): ${errorMessage}`)
+      throw new Error(
+        `OpenCode API error (${response.response.status}): ${errorMessage}`,
+      )
     }
 
     promptResolved = true
@@ -1805,13 +2098,16 @@ export async function handleOpencodeSession({
     return promptResult
   }
 
-  const promptError: Error = promptResult instanceof Error ? promptResult : new Error('Unknown error')
+  const promptError: Error =
+    promptResult instanceof Error ? promptResult : new Error('Unknown error')
   if (isAbortError(promptError, abortController.signal)) {
     return
   }
 
   sessionLogger.error(`ERROR: Failed to send prompt:`, promptError)
-  sessionLogger.log(`[ABORT] reason=error sessionId=${session.id} threadId=${thread.id} - prompt failed with error: ${(promptError as Error).message}`)
+  sessionLogger.log(
+    `[ABORT] reason=error sessionId=${session.id} threadId=${thread.id} - prompt failed with error: ${(promptError as Error).message}`,
+  )
   abortController.abort(new Error('error'))
 
   if (originalMessage) {
