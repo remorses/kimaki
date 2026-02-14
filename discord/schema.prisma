@@ -87,6 +87,12 @@ model session_models {
   created_at DateTime? @default(now())
 }
 
+model session_thinking {
+  session_id     String    @id
+  thinking_value String
+  created_at     DateTime? @default(now())
+}
+
 model channel_agents {
   channel_id String    @id
   agent_name String

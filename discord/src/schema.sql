@@ -53,6 +53,11 @@ CREATE TABLE IF NOT EXISTS "session_models" (
     "model_id" TEXT NOT NULL,
     "created_at" DATETIME DEFAULT CURRENT_TIMESTAMP
 );
+CREATE TABLE IF NOT EXISTS "session_thinking" (
+    "session_id" TEXT NOT NULL PRIMARY KEY,
+    "thinking_value" TEXT NOT NULL,
+    "created_at" DATETIME DEFAULT CURRENT_TIMESTAMP
+);
 CREATE TABLE IF NOT EXISTS "channel_agents" (
     "channel_id" TEXT NOT NULL PRIMARY KEY,
     "agent_name" TEXT NOT NULL,
