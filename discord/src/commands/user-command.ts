@@ -140,10 +140,7 @@ export const handleUserCommand: CommandHandler = async ({ command, appId }: Comm
 
       if (args) {
         const argsPreview = args.length > 1800 ? `${args.slice(0, 1800)}\n... truncated` : args
-        await sendThreadMessage(
-          newThread,
-          `Args: ${argsPreview}`,
-        )
+        await sendThreadMessage(newThread, `Args: ${argsPreview}`)
       }
 
       await command.editReply(`Started /${commandName} in ${newThread.toString()}`)

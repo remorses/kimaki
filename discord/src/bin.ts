@@ -44,7 +44,10 @@ if (process.env.__KIMAKI_CHILD || isSubcommand || !hasAutoRestart) {
 
       const now = Date.now()
       restartTimestamps.push(now)
-      while (restartTimestamps.length > 0 && restartTimestamps[0]! < now - RAPID_RESTART_WINDOW_MS) {
+      while (
+        restartTimestamps.length > 0 &&
+        restartTimestamps[0]! < now - RAPID_RESTART_WINDOW_MS
+      ) {
         restartTimestamps.shift()
       }
 

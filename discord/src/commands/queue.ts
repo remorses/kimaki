@@ -287,10 +287,14 @@ export async function handleQueueCommandCommand({ command, appId }: CommandConte
     flags: SILENT_MESSAGE_FLAGS,
   })
 
-  logger.log(`[QUEUE] User ${command.user.displayName} queued command /${commandName} in thread ${channel.id}`)
+  logger.log(
+    `[QUEUE] User ${command.user.displayName} queued command /${commandName} in thread ${channel.id}`,
+  )
 }
 
-export async function handleQueueCommandAutocomplete({ interaction }: AutocompleteContext): Promise<void> {
+export async function handleQueueCommandAutocomplete({
+  interaction,
+}: AutocompleteContext): Promise<void> {
   const focused = interaction.options.getFocused(true)
 
   if (focused.name !== 'command') {

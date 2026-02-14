@@ -40,7 +40,6 @@ async function runTranscriptionOnce({
 
         contents: initialContents,
         config: {
-
           temperature,
           maxOutputTokens: 2048,
           thinkingConfig: {

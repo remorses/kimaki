@@ -270,7 +270,10 @@ export function parseAskUserQuestionTool(part: {
  * Cancel a pending question for a thread (e.g., when user sends a new message).
  * Sends the user's message as the answer to OpenCode so the model sees their actual response.
  */
-export async function cancelPendingQuestion(threadId: string, userMessage?: string): Promise<boolean> {
+export async function cancelPendingQuestion(
+  threadId: string,
+  userMessage?: string,
+): Promise<boolean> {
   // Find pending question for this thread
   let contextHash: string | undefined
   let context: PendingQuestionContext | undefined

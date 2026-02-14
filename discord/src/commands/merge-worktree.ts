@@ -39,7 +39,13 @@ async function removeWorktreePrefixFromTitle(thread: ThreadChannel): Promise<voi
  * Send a prompt to the AI model in the thread.
  * If a session is actively streaming, queues it. Otherwise sends directly.
  */
-async function sendPromptToModel({ prompt, thread, projectDirectory, command, appId }: {
+async function sendPromptToModel({
+  prompt,
+  thread,
+  projectDirectory,
+  command,
+  appId,
+}: {
   prompt: string
   thread: ThreadChannel
   projectDirectory: string
@@ -76,11 +82,17 @@ async function sendPromptToModel({ prompt, thread, projectDirectory, command, ap
     appId,
   }).catch((e) => {
     logger.error(`[merge] Failed to send prompt to model:`, e)
-    sendThreadMessage(thread, `Failed to send prompt: ${e instanceof Error ? e.message : String(e)}`).catch(() => {})
+    sendThreadMessage(
+      thread,
+      `Failed to send prompt: ${e instanceof Error ? e.message : String(e)}`,
+    ).catch(() => {})
   })
 }
 
-export async function handleMergeWorktreeCommand({ command, appId }: CommandContext): Promise<void> {
+export async function handleMergeWorktreeCommand({
+  command,
+  appId,
+}: CommandContext): Promise<void> {
   await command.deferReply({ ephemeral: false })
 
   const channel = command.channel
@@ -114,7 +126,9 @@ export async function handleMergeWorktreeCommand({ command, appId }: CommandCont
 
   if (result instanceof Error) {
     if (result instanceof DirtyWorktreeError) {
-      await command.editReply('Merge failed: uncommitted changes in the worktree. Commit changes first, then run `/merge-worktree` again.')
+      await command.editReply(
+        'Merge failed: uncommitted changes in the worktree. Commit changes first, then run `/merge-worktree` again.',
+      )
       return
     }
 

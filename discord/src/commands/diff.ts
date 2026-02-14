@@ -7,7 +7,6 @@ import { resolveWorkingDirectory, SILENT_MESSAGE_FLAGS } from '../discord-utils.
 import { createLogger, LogPrefix } from '../logger.js'
 import { execAsync } from '../worktree-utils.js'
 
-
 const logger = createLogger(LogPrefix.DIFF)
 
 export async function handleDiffCommand({ command }: CommandContext): Promise<void> {
@@ -39,7 +38,9 @@ export async function handleDiffCommand({ command }: CommandContext): Promise<vo
     return
   }
 
-  const resolved = await resolveWorkingDirectory({ channel: channel as TextChannel | ThreadChannel })
+  const resolved = await resolveWorkingDirectory({
+    channel: channel as TextChannel | ThreadChannel,
+  })
 
   if (!resolved) {
     await command.reply({

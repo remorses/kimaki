@@ -2,7 +2,15 @@
 // Handles markdown splitting for Discord's 2000-char limit, code block escaping,
 // thread message sending, and channel metadata extraction from topic tags.
 
-import { ChannelType, MessageFlags, PermissionsBitField, type GuildMember, type Message, type TextChannel, type ThreadChannel } from 'discord.js'
+import {
+  ChannelType,
+  MessageFlags,
+  PermissionsBitField,
+  type GuildMember,
+  type Message,
+  type TextChannel,
+  type ThreadChannel,
+} from 'discord.js'
 import { REST, Routes } from 'discord.js'
 import type { OpencodeClient } from '@opencode-ai/sdk'
 import { Lexer } from 'marked'
@@ -28,18 +36,14 @@ export function hasKimakiBotPermission(member: GuildMember | null): boolean {
   if (!member) {
     return false
   }
-  const hasNoKimakiRole = member.roles.cache.some(
-    (role) => role.name.toLowerCase() === 'no-kimaki',
-  )
+  const hasNoKimakiRole = member.roles.cache.some((role) => role.name.toLowerCase() === 'no-kimaki')
   if (hasNoKimakiRole) {
     return false
   }
   const isOwner = member.id === member.guild.ownerId
   const isAdmin = member.permissions.has(PermissionsBitField.Flags.Administrator)
   const canManageServer = member.permissions.has(PermissionsBitField.Flags.ManageGuild)
-  const hasKimakiRole = member.roles.cache.some(
-    (role) => role.name.toLowerCase() === 'kimaki',
-  )
+  const hasKimakiRole = member.roles.cache.some((role) => role.name.toLowerCase() === 'kimaki')
   return isOwner || isAdmin || canManageServer || hasKimakiRole
 }
 
@@ -51,9 +55,7 @@ export function hasNoKimakiRole(member: GuildMember | null): boolean {
   if (!member) {
     return false
   }
-  return member.roles.cache.some(
-    (role) => role.name.toLowerCase() === 'no-kimaki',
-  )
+  return member.roles.cache.some((role) => role.name.toLowerCase() === 'no-kimaki')
 }
 
 /**
@@ -137,9 +139,7 @@ export async function archiveThread({
           return
         }
         const currentTitle = sessionResponse.data.title || ''
-        const newTitle = currentTitle.startsWith('📁')
-          ? currentTitle
-          : `📁 ${currentTitle}`.trim()
+        const newTitle = currentTitle.startsWith('📁') ? currentTitle : `📁 ${currentTitle}`.trim()
         await client.session.update({
           path: { id: sessionId },
           body: { title: newTitle },
@@ -569,11 +569,14 @@ export async function resolveWorkingDirectory({
   channel,
 }: {
   channel: TextChannel | ThreadChannel
-}): Promise<{
-  projectDirectory: string
-  workingDirectory: string
-  channelAppId?: string
-} | undefined> {
+}): Promise<
+  | {
+      projectDirectory: string
+      workingDirectory: string
+      channelAppId?: string
+    }
+  | undefined
+> {
   const isThread = [
     ChannelType.PublicThread,
     ChannelType.PrivateThread,

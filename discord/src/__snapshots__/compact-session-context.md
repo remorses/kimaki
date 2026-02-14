@@ -26,6 +26,7 @@ title: 1508 chars - "You are a title generator..."
 ```
 
 **but** these are just agent prompts from config, not the full system prompt. the full system prompt opencode builds includes:
+
 - agents.md content
 - environment info
 - file tree
@@ -34,6 +35,7 @@ title: 1508 chars - "You are a title generator..."
 this full prompt is built dynamically and **not exposed via api**. we can only get the agent-specific custom prompts.
 
 **options:**
+
 1. use `app.agents()` to get agent prompts as partial context
 2. read the AGENTS.md file directly from the project directory (we have it)
 3. request opencode to expose the full system prompt in sdk

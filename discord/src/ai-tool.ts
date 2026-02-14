@@ -17,10 +17,7 @@ type BivariantCallback<Args extends unknown[], Return> = {
 export type Tool<Input, Output> = {
   description?: string
   inputSchema: z.ZodType<Input>
-  execute?: BivariantCallback<
-    [input: Input, options: ToolExecuteOptions],
-    Promise<Output> | Output
-  >
+  execute?: BivariantCallback<[input: Input, options: ToolExecuteOptions], Promise<Output> | Output>
 }
 
 export type AnyTool = {

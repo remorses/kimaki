@@ -181,10 +181,7 @@ export type OpenCodeErrors =
   | ServerNotFoundError
   | ServerNotReadyError
 
-export type SessionErrors =
-  | SessionNotFoundError
-  | MessagesNotFoundError
-  | OpenCodeApiError
+export type SessionErrors = SessionNotFoundError | MessagesNotFoundError | OpenCodeApiError
 
 export type MergeWorktreeErrors =
   | DirtyWorktreeError

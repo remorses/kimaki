@@ -11,7 +11,11 @@ import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
-import { createOpencodeClient, type OpencodeClient, type Config as SdkConfig } from '@opencode-ai/sdk'
+import {
+  createOpencodeClient,
+  type OpencodeClient,
+  type Config as SdkConfig,
+} from '@opencode-ai/sdk'
 import { getBotToken } from './database.js'
 import { getDataDir, getLockPort } from './config.js'
 
@@ -296,7 +300,9 @@ export async function restartOpencodeServer(directory: string): Promise<OpenCode
   const existing = opencodeServers.get(directory)
 
   if (existing) {
-    opencodeLogger.log(`Killing existing server for directory: ${directory} (pid: ${existing.process.pid})`)
+    opencodeLogger.log(
+      `Killing existing server for directory: ${directory} (pid: ${existing.process.pid})`,
+    )
     // Reset retry count so the exit handler doesn't auto-restart
     serverRetryCount.set(directory, 999)
     existing.process.kill('SIGTERM')

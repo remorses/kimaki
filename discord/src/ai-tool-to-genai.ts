@@ -182,10 +182,7 @@ export function aiToolToGenAIFunction(tool: AnyTool): FunctionDeclaration {
 /**
  * Convert AI SDK Tool to GenAI CallableTool
  */
-export function aiToolToCallableTool(
-  tool: AnyTool,
-  name: string,
-): CallableTool & { name: string } {
+export function aiToolToCallableTool(tool: AnyTool, name: string): CallableTool & { name: string } {
   const toolName = name || 'tool'
 
   return {

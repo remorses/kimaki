@@ -1,5 +1,9 @@
 import { test, expect, describe } from 'vitest'
-import { splitTablesFromMarkdown, buildTableComponents, type ContentSegment } from './format-tables.js'
+import {
+  splitTablesFromMarkdown,
+  buildTableComponents,
+  type ContentSegment,
+} from './format-tables.js'
 import { Lexer, type Tokens } from 'marked'
 
 function parseTable(markdown: string): Tokens.Table {
@@ -17,7 +21,12 @@ function getContainerChildren(
     throw new Error('Expected components segment')
   }
   const container = seg.components[0] as { type: number; components: unknown[] }
-  return container.components as { type: number; content?: string; divider?: boolean; spacing?: number }[]
+  return container.components as {
+    type: number
+    content?: string
+    divider?: boolean
+    spacing?: number
+  }[]
 }
 
 describe('buildTableComponents', () => {

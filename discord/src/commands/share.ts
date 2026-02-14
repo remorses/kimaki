@@ -36,7 +36,9 @@ export async function handleShareCommand({ command }: CommandContext): Promise<v
     return
   }
 
-  const resolved = await resolveWorkingDirectory({ channel: channel as TextChannel | ThreadChannel })
+  const resolved = await resolveWorkingDirectory({
+    channel: channel as TextChannel | ThreadChannel,
+  })
 
   if (!resolved) {
     await command.reply({

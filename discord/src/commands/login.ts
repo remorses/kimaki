@@ -549,9 +549,7 @@ async function startOAuthFlow(
 /**
  * Handle API key modal submission.
  */
-export async function handleApiKeyModalSubmit(
-  interaction: ModalSubmitInteraction,
-): Promise<void> {
+export async function handleApiKeyModalSubmit(interaction: ModalSubmitInteraction): Promise<void> {
   const customId = interaction.customId
 
   if (!customId.startsWith('login_apikey:')) {

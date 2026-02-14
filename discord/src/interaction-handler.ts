@@ -38,10 +38,19 @@ import {
   handleGeminiApiKeyButton,
   handleGeminiApiKeyModalSubmit,
 } from './commands/gemini-apikey.js'
-import { handleAgentCommand, handleAgentSelectMenu, handleQuickAgentCommand } from './commands/agent.js'
+import {
+  handleAgentCommand,
+  handleAgentSelectMenu,
+  handleQuickAgentCommand,
+} from './commands/agent.js'
 import { handleAskQuestionSelectMenu } from './commands/ask-question.js'
 import { handleFileUploadButton, handleFileUploadModalSubmit } from './commands/file-upload.js'
-import { handleQueueCommand, handleClearQueueCommand, handleQueueCommandCommand, handleQueueCommandAutocomplete } from './commands/queue.js'
+import {
+  handleQueueCommand,
+  handleClearQueueCommand,
+  handleQueueCommandCommand,
+  handleQueueCommandAutocomplete,
+} from './commands/queue.js'
 import { handleUndoCommand, handleRedoCommand } from './commands/undo-redo.js'
 import { handleUserCommand } from './commands/user-command.js'
 import { handleVerbosityCommand } from './commands/verbosity.js'
@@ -305,8 +314,6 @@ export function registerInteractionHandler({
           await handleModelScopeSelectMenu(interaction)
           return
         }
-
-
 
         if (customId.startsWith('agent_select:')) {
           await handleAgentSelectMenu(interaction)

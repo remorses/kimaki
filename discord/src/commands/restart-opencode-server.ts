@@ -13,7 +13,10 @@ import * as errore from 'errore'
 
 const logger = createLogger(LogPrefix.OPENCODE)
 
-export async function handleRestartOpencodeServerCommand({ command, appId }: CommandContext): Promise<void> {
+export async function handleRestartOpencodeServerCommand({
+  command,
+  appId,
+}: CommandContext): Promise<void> {
   const channel = command.channel
 
   if (!channel) {
@@ -42,7 +45,9 @@ export async function handleRestartOpencodeServerCommand({ command, appId }: Com
     return
   }
 
-  const resolved = await resolveWorkingDirectory({ channel: channel as TextChannel | ThreadChannel })
+  const resolved = await resolveWorkingDirectory({
+    channel: channel as TextChannel | ThreadChannel,
+  })
 
   if (!resolved) {
     await command.reply({
@@ -127,7 +132,10 @@ export async function handleRestartOpencodeServerCommand({ command, appId }: Com
     return
   }
 
-  const abortMsg = abortedCount > 0 ? ` (aborted ${abortedCount} active session${abortedCount > 1 ? 's' : ''})` : ''
+  const abortMsg =
+    abortedCount > 0
+      ? ` (aborted ${abortedCount} active session${abortedCount > 1 ? 's' : ''})`
+      : ''
   await command.editReply({
     content: `Opencode server **restarted** successfully${abortMsg}`,
   })

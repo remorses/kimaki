@@ -246,7 +246,9 @@ export async function getFileAttachments(message: Message): Promise<DiscordFileA
       const base64 = buffer.toString('base64')
       const dataUrl = `data:${mime};base64,${base64}`
 
-      logger.log(`Attachment ${attachment.name}: ${rawBuffer.length} → ${buffer.length} bytes, ${mime}`)
+      logger.log(
+        `Attachment ${attachment.name}: ${rawBuffer.length} → ${buffer.length} bytes, ${mime}`,
+      )
 
       return {
         type: 'file' as const,
