@@ -61,7 +61,7 @@ import { createLogger, formatErrorWithStack, LogPrefix } from './logger.js'
 import { archiveThread, uploadFilesToDiscord, stripMentions } from './discord-utils.js'
 import { spawn, spawnSync, execSync, type ExecSyncOptions } from 'node:child_process'
 import http from 'node:http'
-import { setDataDir, getDataDir, getLockPort, setDefaultVerbosity, setDefaultMentionMode, setCritiqueEnabled, getProjectsDir } from './config.js'
+import { setDataDir, getDataDir, getLockPort, setDefaultVerbosity, setDefaultMentionMode, setCritiqueEnabled, getProjectsDir, setQueueConfig, type QueueMode } from './config.js'
 import { sanitizeAgentName } from './commands/agent.js'
 import {
   showFileUploadButton,
@@ -90,6 +90,9 @@ function isThreadChannelType(type: number): boolean {
   ].includes(type)
 }
 
+function isQueueMode(value: string): value is QueueMode {
+  return value === 'interrupt-and-consume' || value === 'queue'
+}
 async function sendDiscordMessageWithOptionalAttachment({
   channelId,
   prompt,
@@ -1452,6 +1455,8 @@ cli
   .option('--enable-voice-channels', 'Create voice channels for projects (disabled by default)')
   .option('--verbosity <level>', 'Default verbosity for all channels (tools-and-text, text-and-essential-tools, or text-only)')
   .option('--mention-mode', 'Bot only responds when @mentioned (default for all channels)')
+  .option('--queue-mode <mode>', 'Message behavior in active threads: interrupt-and-consume or queue')
+  .option('--queue-interrupt-override <keyword>', 'Exact message keyword that interrupts and is never forwarded')
   .option('--no-critique', 'Disable automatic diff upload to critique.work in system prompts')
   .option('--auto-restart', 'Automatically restart the bot on crash or OOM kill')
   .action(
@@ -1464,6 +1469,8 @@ cli
       enableVoiceChannels?: boolean
       verbosity?: string
       mentionMode?: boolean
+      queueMode?: string
+      queueInterruptOverride?: string
       noCritique?: boolean
       autoRestart?: boolean
     }) => {
@@ -1489,6 +1496,14 @@ cli
           cliLogger.log('Default mention mode: enabled (bot only responds when @mentioned)')
         }
 
+        const queueMode = options.queueMode || 'interrupt-and-consume'
+        if (!isQueueMode(queueMode)) {
+          cliLogger.error(`Invalid queue mode: ${queueMode}. Use one of: interrupt-and-consume, queue`)
+          process.exit(EXIT_NO_RESTART)
+        }
+        setQueueConfig({ mode: queueMode, interruptOverride: options.queueInterruptOverride })
+        const queueOverrideLog = options.queueInterruptOverride ? `, interrupt override: ${options.queueInterruptOverride}` : ''
+        cliLogger.log(`Queue mode: ${queueMode}${queueOverrideLog}`)
         if (options.noCritique) {
           setCritiqueEnabled(false)
           cliLogger.log('Critique disabled: diffs will not be auto-uploaded to critique.work')

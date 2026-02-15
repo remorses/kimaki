@@ -82,6 +82,28 @@ export function setCritiqueEnabled(enabled: boolean): void {
   critiqueEnabled = enabled
 }
 
+export type QueueMode = 'interrupt-and-consume' | 'queue'
+
+export type QueueConfig = {
+  mode: QueueMode
+  interruptOverride?: string
+}
+
+let queueConfig: QueueConfig = {
+  mode: 'interrupt-and-consume',
+}
+
+export function getQueueConfig(): QueueConfig {
+  return { ...queueConfig }
+}
+
+export function setQueueConfig(nextConfig: QueueConfig): void {
+  queueConfig = {
+    mode: nextConfig.mode,
+    interruptOverride: nextConfig.interruptOverride?.trim() || undefined,
+  }
+}
+
 // Registered user commands, populated by registerCommands() in cli.ts.
 // Stored here (not cli.ts) to avoid circular imports since commands/ modules need this.
 export type RegisteredUserCommand = { name: string; description: string }

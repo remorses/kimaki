@@ -49,8 +49,10 @@ import {
   registerVoiceStateHandler,
 } from './voice-handler.js'
 import { getCompactSessionContext, getLastSessionId } from './markdown.js'
-import { handleOpencodeSession } from './session-handler.js'
+import { addToQueue, abortControllers, handleOpencodeSession } from './session-handler.js'
 import { runShellCommand } from './commands/run-command.js'
+import { getQueueConfig } from './config.js'
+import { getMessageSendAction } from './message-send-routing.js'
 import { registerInteractionHandler } from './interaction-handler.js'
 
 export { initDatabase, closeDatabase, getChannelDirectory, getPrisma } from './database.js'
@@ -446,6 +448,82 @@ export async function startDiscordBot({
         const promptWithAttachments = textAttachmentsContent
           ? `${messageContent}\n\n${textAttachmentsContent}`
           : messageContent
+
+        const existingController = abortControllers.get(sessionId)
+        const hasActiveRequest = Boolean(existingController && !existingController.signal.aborted)
+        if (existingController?.signal.aborted) {
+          abortControllers.delete(sessionId)
+        }
+
+        const queueConfig = getQueueConfig()
+        const action = getMessageSendAction({ queueConfig, messageContent, hasActiveRequest })
+
+        if (action === 'interrupt-and-consume') {
+          if (existingController && !existingController.signal.aborted) {
+            voiceLogger.log(`[ABORT] reason=interrupt-override sessionId=${sessionId} threadId=${thread.id}`)
+            existingController.abort(new Error('Interrupt override message'))
+            abortControllers.delete(sessionId)
+          }
+
+          if (!projectDirectory) {
+            await message.reply({ content: 'Interrupt keyword consumed. No project directory found for this thread.', flags: SILENT_MESSAGE_FLAGS })
+            return
+          }
+
+          const worktreeDirectory = worktreeInfo?.status === 'ready' && worktreeInfo.worktree_directory
+            ? worktreeInfo.worktree_directory
+            : undefined
+          const sdkDirectory = worktreeDirectory || projectDirectory
+          const getClient = await initializeOpencodeForDirectory(projectDirectory)
+
+          if (getClient instanceof Error) {
+            await message.reply({ content: `Interrupt keyword consumed. Failed to reach OpenCode: ${getClient.message}`, flags: SILENT_MESSAGE_FLAGS })
+            return
+          }
+
+          const interruptResult = await errore.tryAsync(() => {
+            return getClient().session.command({
+              path: { id: sessionId },
+              query: { directory: sdkDirectory },
+              body: { command: 'session.interrupt', arguments: '' },
+            })
+          })
+
+          if (interruptResult instanceof Error) {
+            await message.reply({ content: `Interrupt keyword consumed. Failed to interrupt session: ${interruptResult.message}`, flags: SILENT_MESSAGE_FLAGS })
+            return
+          }
+
+          await message.reply({
+            content: hasActiveRequest ? 'Interrupted current request.' : 'Interrupt keyword consumed. No active request was running.',
+            flags: SILENT_MESSAGE_FLAGS,
+          })
+          return
+        }
+
+        if (action === 'queue') {
+          const queuedBy = isCliInjectedPrompt
+            ? 'kimaki-cli'
+            : message.member?.displayName || message.author.displayName
+          const queuePosition = addToQueue({
+            threadId: thread.id,
+            message: {
+              prompt: promptWithAttachments,
+              userId: message.author.id,
+              username: queuedBy,
+              queuedAt: Date.now(),
+              images: fileAttachments,
+              appId: currentAppId,
+            },
+          })
+
+          await message.reply({
+            content: `Queued message (position: ${queuePosition}). It will run after the current response.`,
+            flags: SILENT_MESSAGE_FLAGS,
+          })
+          return
+        }
+
         await handleOpencodeSession({
           prompt: promptWithAttachments,
           thread,
