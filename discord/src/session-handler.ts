@@ -145,6 +145,9 @@ export type QueuedMessage = {
 // Key is threadId, value is array of queued messages
 export const messageQueue = new Map<string, QueuedMessage[]>()
 
+const NEXT_STEP_ABORT_TIMEOUT_MS = 2000
+const deferredQueueAbortTimeouts = new Map<string, NodeJS.Timeout>()
+
 const activeEventHandlers = new Map<string, Promise<void>>()
 
 export function addToQueue({
@@ -580,24 +583,61 @@ export async function handleOpencodeSession({
   }
 
   const existingController = abortControllers.get(session.id)
-  if (existingController) {
-    voiceLogger.log(`[ABORT] Cancelling existing request for session: ${session.id}`)
-    sessionLogger.log(
-      `[ABORT] reason=new-request sessionId=${session.id} threadId=${thread.id} - new user message arrived while previous request was still running`,
-    )
-    existingController.abort(new Error('New request started'))
-    sessionLogger.log(
-      `[ABORT-API] reason=new-request sessionId=${session.id} - sending API abort because new message arrived`,
-    )
-    const abortResult = await errore.tryAsync(() => {
-      return getClient().session.abort({
-        sessionID: session.id,
-        directory: sdkDirectory,
-      })
+  if (existingController && !existingController.signal.aborted) {
+    const queuePosition = addToQueue({
+      threadId: thread.id,
+      message: {
+        prompt,
+        userId: userId || 'unknown-user',
+        username: username || 'unknown-user',
+        queuedAt: Date.now(),
+        images,
+        appId,
+        command,
+      },
     })
-    if (abortResult instanceof Error) {
-      sessionLogger.log(`[ABORT-API] Server abort failed (may be already done):`, abortResult)
+    sessionLogger.log(
+      `[QUEUE] Active request for session ${session.id}; queued message at position ${queuePosition}`,
+    )
+
+    if (!deferredQueueAbortTimeouts.has(session.id)) {
+      sessionLogger.log(
+        `[ABORT-DEFERRED] sessionId=${session.id} threadId=${thread.id} waiting for next step before abort (timeout ${NEXT_STEP_ABORT_TIMEOUT_MS}ms)`,
+      )
+      const timeout = setTimeout(() => {
+        const activeController = abortControllers.get(session.id)
+        deferredQueueAbortTimeouts.delete(session.id)
+        if (!activeController || activeController.signal.aborted) {
+          return
+        }
+        sessionLogger.log(
+          `[ABORT] reason=queued-timeout sessionId=${session.id} threadId=${thread.id} - no step-finish within ${NEXT_STEP_ABORT_TIMEOUT_MS}ms`,
+        )
+        activeController.abort(new Error('queued-timeout'))
+        sessionLogger.log(
+          `[ABORT-API] reason=queued-timeout sessionId=${session.id} - sending API abort after timeout`,
+        )
+        void errore
+          .tryAsync(() => {
+            return getClient().session.abort({
+              sessionID: session.id,
+              directory: sdkDirectory,
+            })
+          })
+          .then((abortResult) => {
+            if (abortResult instanceof Error) {
+              sessionLogger.log(`[ABORT-API] Server abort failed after timeout:`, abortResult)
+            }
+          })
+      }, NEXT_STEP_ABORT_TIMEOUT_MS)
+      deferredQueueAbortTimeouts.set(session.id, timeout)
     }
+
+    return
+  }
+
+  if (existingController?.signal.aborted) {
+    abortControllers.delete(session.id)
   }
 
   // Auto-reject ALL pending permissions for this thread
@@ -1173,6 +1213,39 @@ export async function handleOpencodeSession({
           messageID: assistantMessageId || part.messageID,
           force: true,
         })
+
+        const queue = messageQueue.get(thread.id)
+        if (
+          queue &&
+          queue.length > 0 &&
+          deferredQueueAbortTimeouts.has(session.id) &&
+          !abortController.signal.aborted
+        ) {
+          const timeout = deferredQueueAbortTimeouts.get(session.id)
+          if (timeout) {
+            clearTimeout(timeout)
+          }
+          deferredQueueAbortTimeouts.delete(session.id)
+
+          sessionLogger.log(
+            `[ABORT] reason=queued-next-step sessionId=${session.id} threadId=${thread.id} - reached step-finish with queued messages`,
+          )
+          abortController.abort(new Error('queued-next-step'))
+          sessionLogger.log(
+            `[ABORT-API] reason=queued-next-step sessionId=${session.id} - sending API abort at step boundary`,
+          )
+          const abortResult = await errore.tryAsync(() => {
+            return getClient().session.abort({
+              sessionID: session.id,
+              directory: sdkDirectory,
+            })
+          })
+          if (abortResult instanceof Error) {
+            sessionLogger.log(`[ABORT-API] Server abort failed at step boundary:`, abortResult)
+          }
+          return
+        }
+
         setTimeout(() => {
           if (abortController.signal.aborted) return
           const hasPendingQuestion = [...pendingQuestionContexts.values()].some(
@@ -1593,6 +1666,12 @@ export async function handleOpencodeSession({
       sessionLogger.error(`Unexpected error in event handling code`, e)
       throw e
     } finally {
+      const deferredAbortTimeout = deferredQueueAbortTimeouts.get(session.id)
+      if (deferredAbortTimeout) {
+        clearTimeout(deferredAbortTimeout)
+        deferredQueueAbortTimeouts.delete(session.id)
+      }
+
       abortControllers.delete(session.id)
       const finalMessageId = assistantMessageId
       if (finalMessageId) {
@@ -1715,6 +1794,40 @@ export async function handleOpencodeSession({
         }
       } else {
         sessionLogger.log(`Session was aborted (reason: ${abortReason}), skipping duration message`)
+
+        if (abortReason === 'queued-next-step' || abortReason === 'queued-timeout') {
+          const queue = messageQueue.get(thread.id)
+          if (queue && queue.length > 0) {
+            const nextMessage = queue.shift()!
+            if (queue.length === 0) {
+              messageQueue.delete(thread.id)
+            }
+
+            sessionLogger.log(`[QUEUE] Processing queued message from ${nextMessage.username}`)
+
+            const displayText = nextMessage.command
+              ? `/${nextMessage.command.name}`
+              : `${nextMessage.prompt.slice(0, 150)}${nextMessage.prompt.length > 150 ? '...' : ''}`
+            await sendThreadMessage(thread, `» **${nextMessage.username}:** ${displayText}`)
+
+            setImmediate(() => {
+              handleOpencodeSession({
+                prompt: nextMessage.prompt,
+                thread,
+                projectDirectory,
+                images: nextMessage.images,
+                channelId,
+                username: nextMessage.username,
+                appId: nextMessage.appId,
+                command: nextMessage.command,
+              }).catch(async (e) => {
+                sessionLogger.error(`[QUEUE] Failed to process queued message:`, e)
+                const errorMsg = e instanceof Error ? e.message : String(e)
+                await sendThreadMessage(thread, `✗ Queued message failed: ${errorMsg.slice(0, 200)}`)
+              })
+            })
+          }
+        }
       }
     }
   }
