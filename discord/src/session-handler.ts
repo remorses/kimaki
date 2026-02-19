@@ -146,7 +146,16 @@ export type QueuedMessage = {
 export const messageQueue = new Map<string, QueuedMessage[]>()
 
 const NEXT_STEP_ABORT_TIMEOUT_MS = 2000
-const deferredQueueAbortTimeouts = new Map<string, NodeJS.Timeout>()
+const deferredQueueAbortTokens = new Map<string, number>()
+let deferredQueueAbortTokenCounter = 0
+
+function sleep({ ms }: { ms: number }): Promise<void> {
+  return new Promise((resolve) => {
+    setTimeout(() => {
+      resolve()
+    }, ms)
+  })
+}
 
 const activeEventHandlers = new Map<string, Promise<void>>()
 
@@ -600,37 +609,53 @@ export async function handleOpencodeSession({
       `[QUEUE] Active request for session ${session.id}; queued message at position ${queuePosition}`,
     )
 
-    if (!deferredQueueAbortTimeouts.has(session.id)) {
+    if (!deferredQueueAbortTokens.has(session.id)) {
+      const abortToken = deferredQueueAbortTokenCounter + 1
+      deferredQueueAbortTokenCounter = abortToken
+      deferredQueueAbortTokens.set(session.id, abortToken)
+
       sessionLogger.log(
         `[ABORT-DEFERRED] sessionId=${session.id} threadId=${thread.id} waiting for next step before abort (timeout ${NEXT_STEP_ABORT_TIMEOUT_MS}ms)`,
       )
-      const timeout = setTimeout(() => {
-        const activeController = abortControllers.get(session.id)
-        deferredQueueAbortTimeouts.delete(session.id)
-        if (!activeController || activeController.signal.aborted) {
-          return
-        }
-        sessionLogger.log(
-          `[ABORT] reason=queued-timeout sessionId=${session.id} threadId=${thread.id} - no step-finish within ${NEXT_STEP_ABORT_TIMEOUT_MS}ms`,
-        )
-        activeController.abort(new Error('queued-timeout'))
-        sessionLogger.log(
-          `[ABORT-API] reason=queued-timeout sessionId=${session.id} - sending API abort after timeout`,
-        )
-        void errore
-          .tryAsync(() => {
+
+      void errore
+        .tryAsync(async () => {
+          await sleep({ ms: NEXT_STEP_ABORT_TIMEOUT_MS })
+
+          const currentAbortToken = deferredQueueAbortTokens.get(session.id)
+          if (currentAbortToken !== abortToken) {
+            return
+          }
+
+          deferredQueueAbortTokens.delete(session.id)
+
+          const activeController = abortControllers.get(session.id)
+          if (!activeController || activeController.signal.aborted) {
+            return
+          }
+
+          sessionLogger.log(
+            `[ABORT] reason=queued-timeout sessionId=${session.id} threadId=${thread.id} - no step-finish within ${NEXT_STEP_ABORT_TIMEOUT_MS}ms`,
+          )
+          activeController.abort(new Error('queued-timeout'))
+          sessionLogger.log(
+            `[ABORT-API] reason=queued-timeout sessionId=${session.id} - sending API abort after timeout`,
+          )
+          const abortResult = await errore.tryAsync(() => {
             return getClient().session.abort({
               sessionID: session.id,
               directory: sdkDirectory,
             })
           })
-          .then((abortResult) => {
-            if (abortResult instanceof Error) {
-              sessionLogger.log(`[ABORT-API] Server abort failed after timeout:`, abortResult)
-            }
-          })
-      }, NEXT_STEP_ABORT_TIMEOUT_MS)
-      deferredQueueAbortTimeouts.set(session.id, timeout)
+          if (abortResult instanceof Error) {
+            sessionLogger.log(`[ABORT-API] Server abort failed after timeout:`, abortResult)
+          }
+        })
+        .then((result) => {
+          if (result instanceof Error) {
+            sessionLogger.error('[ABORT-DEFERRED] Failed queued-timeout watcher:', result)
+          }
+        })
     }
 
     return
@@ -1218,14 +1243,10 @@ export async function handleOpencodeSession({
         if (
           queue &&
           queue.length > 0 &&
-          deferredQueueAbortTimeouts.has(session.id) &&
+          deferredQueueAbortTokens.has(session.id) &&
           !abortController.signal.aborted
         ) {
-          const timeout = deferredQueueAbortTimeouts.get(session.id)
-          if (timeout) {
-            clearTimeout(timeout)
-          }
-          deferredQueueAbortTimeouts.delete(session.id)
+          deferredQueueAbortTokens.delete(session.id)
 
           sessionLogger.log(
             `[ABORT] reason=queued-next-step sessionId=${session.id} threadId=${thread.id} - reached step-finish with queued messages`,
@@ -1666,11 +1687,7 @@ export async function handleOpencodeSession({
       sessionLogger.error(`Unexpected error in event handling code`, e)
       throw e
     } finally {
-      const deferredAbortTimeout = deferredQueueAbortTimeouts.get(session.id)
-      if (deferredAbortTimeout) {
-        clearTimeout(deferredAbortTimeout)
-        deferredQueueAbortTimeouts.delete(session.id)
-      }
+      deferredQueueAbortTokens.delete(session.id)
 
       abortControllers.delete(session.id)
       const finalMessageId = assistantMessageId
