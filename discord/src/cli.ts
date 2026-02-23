@@ -101,6 +101,7 @@ import {
   setVerboseOpencodeServer,
   getMemoryEnabled,
   setMemoryEnabled,
+  setTrustedBotIds,
   getProjectsDir,
 } from './config.js'
 import { sanitizeAgentName } from './commands/agent.js'
@@ -1978,6 +1979,10 @@ cli
     '--mention-mode',
     'Bot only responds when @mentioned (default for all channels)',
   )
+  .option(
+    '--trusted-bot-ids <ids>',
+    'Comma-separated list of bot user IDs allowed to interact with this bot (bypasses bot message filter)',
+  )
   .option('--memory', 'Enable memory sync and persistent memory features')
   .option(
     '--no-critique',
@@ -2001,6 +2006,7 @@ cli
       enableVoiceChannels?: boolean
       verbosity?: string
       mentionMode?: boolean
+      trustedBotIds?: string
       memory?: boolean
       noCritique?: boolean
       autoRestart?: boolean
@@ -2038,6 +2044,14 @@ cli
           setDefaultMentionMode(true)
           cliLogger.log(
             'Default mention mode: enabled (bot only responds when @mentioned)',
+          )
+        }
+
+        if (options.trustedBotIds) {
+          const ids = options.trustedBotIds.split(',').map((id) => id.trim()).filter(Boolean)
+          setTrustedBotIds(ids)
+          cliLogger.log(
+            `Trusted bot IDs: ${ids.join(', ')} (these bots can interact with this bot)`,
           )
         }
 

@@ -94,6 +94,19 @@ export function setVerboseOpencodeServer(enabled: boolean): void {
   verboseOpencodeServer = enabled
 }
 
+// Trusted bot IDs that bypass the bot message filter.
+// Set via --trusted-bot-ids CLI flag at startup.
+// Allows specific bots (e.g. orchestration agents) to interact with Kimaki.
+let trustedBotIds: Set<string> = new Set()
+
+export function getTrustedBotIds(): Set<string> {
+  return trustedBotIds
+}
+
+export function setTrustedBotIds(ids: string[]): void {
+  trustedBotIds = new Set(ids)
+}
+
 // Whether memory sync/instructions are enabled.
 // Disabled by default; enabled via --memory CLI flag.
 let memoryEnabled = false

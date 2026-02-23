@@ -16,6 +16,7 @@ import {
   setThreadSession,
   getPrisma,
 } from './database.js'
+import { getTrustedBotIds } from './config.js'
 import {
   initializeOpencodeForDirectory,
   getOpencodeServers,
@@ -282,7 +283,7 @@ export async function startDiscordBot({
         ? promptMarker?.model
         : undefined
 
-      if (message.author?.bot && !isCliInjectedPrompt) {
+      if (message.author?.bot && !isCliInjectedPrompt && !getTrustedBotIds().has(message.author.id)) {
         return
       }
 
