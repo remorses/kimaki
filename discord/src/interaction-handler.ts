@@ -2,7 +2,7 @@
 // Processes all slash commands (/session, /resume, /fork, /model, /abort, etc.)
 // and manages autocomplete, select menu interactions for the bot.
 
-import { Events, type Client, type GuildMember, type Interaction } from 'discord.js'
+import { Events, type Client, type Interaction } from 'discord.js'
 import { handleSessionCommand, handleSessionAutocomplete } from './commands/session.js'
 import { handleNewWorktreeCommand } from './commands/worktree.js'
 import { handleMergeWorktreeCommand } from './commands/merge-worktree.js'
@@ -106,7 +106,7 @@ export function registerInteractionHandler({
       if (interaction.isChatInputCommand()) {
         interactionLogger.log(`[COMMAND] Processing: ${interaction.commandName}`)
 
-        if (!hasKimakiBotPermission(interaction.member as GuildMember | null)) {
+        if (!hasKimakiBotPermission(interaction.member, interaction.guild)) {
           await interaction.reply({
             content: `You don't have permission to use this command.\nTo use Kimaki, ask a server admin to give you the **Kimaki** role.`,
             ephemeral: true,
@@ -244,7 +244,7 @@ export function registerInteractionHandler({
       }
 
       if (interaction.isButton()) {
-        if (!hasKimakiBotPermission(interaction.member as GuildMember | null)) {
+        if (!hasKimakiBotPermission(interaction.member, interaction.guild)) {
           await interaction.reply({
             content: `You don't have permission to use this.\nTo use Kimaki, ask a server admin to give you the **Kimaki** role.`,
             ephemeral: true,
@@ -276,7 +276,7 @@ export function registerInteractionHandler({
       }
 
       if (interaction.isStringSelectMenu()) {
-        if (!hasKimakiBotPermission(interaction.member as GuildMember | null)) {
+        if (!hasKimakiBotPermission(interaction.member, interaction.guild)) {
           await interaction.reply({
             content: `You don't have permission to use this.\nTo use Kimaki, ask a server admin to give you the **Kimaki** role.`,
             ephemeral: true,
@@ -331,7 +331,7 @@ export function registerInteractionHandler({
       }
 
       if (interaction.isModalSubmit()) {
-        if (!hasKimakiBotPermission(interaction.member as GuildMember | null)) {
+        if (!hasKimakiBotPermission(interaction.member, interaction.guild)) {
           await interaction.reply({
             content: `You don't have permission to use this.\nTo use Kimaki, ask a server admin to give you the **Kimaki** role.`,
             ephemeral: true,
