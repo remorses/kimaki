@@ -3,7 +3,7 @@
 // API keys, and model preferences in <dataDir>/discord-sessions.db.
 
 import { getPrisma, closePrisma } from './db.js'
-import { hydrateBotTokenCache } from './bot-token.js'
+import { hydrateBotTokenCache, isAuthModeEnabled } from './bot-token.js'
 import { store } from './store.js'
 import { createLogger, LogPrefix } from './logger.js'
 
@@ -1116,9 +1116,14 @@ export async function getBotTokenWithMode(): Promise<
     proxyUrl: row.proxy_url,
   }
 }
+
+/**
  * Store a bot token.
  */
 export async function setBotToken(appId: string, token: string): Promise<void> {
+  if (isAuthModeEnabled()) {
+    return
+  }
   const prisma = await getPrisma()
   await prisma.bot_tokens.upsert({
     where: { app_id: appId },

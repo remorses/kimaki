@@ -1,15 +1,30 @@
-import { afterEach, describe, expect, test } from 'vitest'
+import crypto from 'node:crypto'
+import { afterAll, beforeEach, describe, expect, test } from 'vitest'
 import {
   appIdFromToken,
   getBotToken,
   hydrateBotTokenCache,
+  isAuthModeEnabled,
 } from './bot-token.js'
 
 const ORIGINAL_BOT_TOKEN = process.env.KIMAKI_BOT_TOKEN
+const ORIGINAL_GUILD_ID = process.env.KIMAKI_GUILD_ID
+const ORIGINAL_PRIVATE_KEY = process.env.KIMAKI_PRIVATE_KEY
+const ORIGINAL_APP_ID = process.env.KIMAKI_APP_ID
 
-afterEach(() => {
-  process.env.KIMAKI_BOT_TOKEN = ORIGINAL_BOT_TOKEN
+beforeEach(() => {
+  delete process.env.KIMAKI_BOT_TOKEN
+  delete process.env.KIMAKI_GUILD_ID
+  delete process.env.KIMAKI_PRIVATE_KEY
+  delete process.env.KIMAKI_APP_ID
   hydrateBotTokenCache(null)
+})
+
+afterAll(() => {
+  process.env.KIMAKI_BOT_TOKEN = ORIGINAL_BOT_TOKEN
+  process.env.KIMAKI_GUILD_ID = ORIGINAL_GUILD_ID
+  process.env.KIMAKI_PRIVATE_KEY = ORIGINAL_PRIVATE_KEY
+  process.env.KIMAKI_APP_ID = ORIGINAL_APP_ID
 })
 
 describe('appIdFromToken', () => {
@@ -97,5 +112,60 @@ describe('getBotToken', () => {
       appIdOverride: 'override-app-id',
     })
     expect(fromDb?.appId).toBe('override-app-id')
+  })
+
+  test('auth mode takes precedence over env and db token', () => {
+    const { publicKey, privateKey } = crypto.generateKeyPairSync('ed25519')
+    process.env.KIMAKI_GUILD_ID = '1477130736841658398'
+    process.env.KIMAKI_APP_ID = '1476745763009593365'
+    process.env.KIMAKI_PRIVATE_KEY = privateKey
+      .export({ format: 'pem', type: 'pkcs8' })
+      .toString()
+    process.env.KIMAKI_BOT_TOKEN = 'env-token'
+    hydrateBotTokenCache({
+      app_id: 'db-app',
+      token: 'db-token',
+    })
+
+    const resolved = getBotToken()
+
+    expect(isAuthModeEnabled()).toBe(true)
+    expect(resolved?.source).toBe('auth')
+    expect(resolved?.appId).toBe('1476745763009593365')
+    expect(resolved?.token.split('.')).toHaveLength(3)
+
+    const tokenParts = resolved!.token.split('.')
+    expect(tokenParts).toHaveLength(3)
+    const guildPart = tokenParts[0]!
+    const timestamp = tokenParts[1]!
+    const signaturePart = tokenParts[2]!
+    const decodedGuildId = Buffer.from(guildPart, 'base64').toString('utf8')
+    expect(decodedGuildId).toBe('1477130736841658398')
+    expect(Number.isNaN(Number.parseInt(timestamp, 10))).toBe(false)
+
+    const signature = Buffer.from(signaturePart, 'base64url')
+    const verified = crypto.verify(
+      null,
+      Buffer.from(`${decodedGuildId}\n${timestamp}`, 'utf8'),
+      publicKey,
+      signature,
+    )
+    expect(verified).toBe(true)
+  })
+
+  test('auth mode requires all env vars', () => {
+    process.env.KIMAKI_GUILD_ID = '1477130736841658398'
+    delete process.env.KIMAKI_PRIVATE_KEY
+    process.env.KIMAKI_APP_ID = '1476745763009593365'
+    process.env.KIMAKI_BOT_TOKEN = 'env-token'
+
+    const resolved = getBotToken()
+
+    expect(isAuthModeEnabled()).toBe(false)
+    expect(resolved).toEqual({
+      token: 'env-token',
+      appId: undefined,
+      source: 'env',
+    })
   })
 })
