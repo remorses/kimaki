@@ -79,7 +79,7 @@ export async function handleQueueCommand({
 
   if (result.action === 'sent') {
     await command.reply({
-      content: `» **${command.user.displayName}:** ${message.slice(0, 100)}${message.length > 100 ? '...' : ''}`,
+      content: `» **${command.user.displayName}:** ${message.slice(0, 1000)}${message.length > 1000 ? '...' : ''}`,
       flags: SILENT_MESSAGE_FLAGS,
     })
     return
