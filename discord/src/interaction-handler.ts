@@ -82,7 +82,7 @@ import { handleContextUsageCommand } from './commands/context-usage.js'
 import { handleSessionIdCommand } from './commands/session-id.js'
 import { handleUpgradeAndRestartCommand } from './commands/upgrade.js'
 import { handleModelVariantSelectMenu } from './commands/model.js'
-import { hasKimakiBotPermission } from './discord-utils.js'
+import { hasKimakiBotPermission, isGuildAllowed } from './discord-utils.js'
 import { createLogger, LogPrefix } from './logger.js'
 import { notifyError } from './sentry.js'
 
@@ -101,6 +101,9 @@ export function registerInteractionHandler({
     Events.InteractionCreate,
     async (interaction: Interaction) => {
       try {
+        if (!isGuildAllowed({ guildId: interaction.guildId })) {
+          return
+        }
         interactionLogger.log(
           `[INTERACTION] Received: ${interaction.type} - ${
             interaction.isChatInputCommand()

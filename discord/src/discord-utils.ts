@@ -28,6 +28,21 @@ import fs from 'node:fs'
 import path from 'node:path'
 
 const discordLogger = createLogger(LogPrefix.DISCORD)
+const guildFilterId = process.env.KIMAKI_GUILD?.trim()
+
+export function isGuildAllowed({
+  guildId,
+}: {
+  guildId?: string | null
+}): boolean {
+  if (!guildFilterId) {
+    return true
+  }
+  if (!guildId) {
+    return false
+  }
+  return guildId === guildFilterId
+}
 
 /**
  * Centralized permission check for Kimaki bot access.

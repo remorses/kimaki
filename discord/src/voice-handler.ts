@@ -41,6 +41,7 @@ import {
   escapeDiscordFormatting,
   SILENT_MESSAGE_FLAGS,
   hasKimakiBotPermission,
+  isGuildAllowed,
 } from './discord-utils.js'
 import { transcribeAudio, type TranscriptionResult } from './voice.js'
 import { FetchError } from './errors.js'
@@ -680,6 +681,9 @@ export function registerVoiceStateHandler({
         }
 
         const guild = newState.guild || oldState.guild
+        if (!isGuildAllowed({ guildId: guild?.id })) {
+          return
+        }
 
         if (oldState.channelId !== null && newState.channelId === null) {
           voiceLogger.log(
