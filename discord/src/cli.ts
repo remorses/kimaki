@@ -721,9 +721,9 @@ async function registerCommands({
           .setDescription('Verbosity level')
           .setRequired(true)
           .addChoices(
-            { name: 'tools-and-text (default)', value: 'tools-and-text' },
+            { name: 'tools-and-text', value: 'tools-and-text' },
             {
-              name: 'text-and-essential-tools',
+              name: 'text-and-essential-tools (default)',
               value: 'text-and-essential-tools',
             },
             { name: 'text-only', value: 'text-only' },
