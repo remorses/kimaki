@@ -235,6 +235,7 @@ describeIf('gateway-proxy e2e', () => {
   let directories: ReturnType<typeof createRunDirectories>
   let proxyPort: number
   let previousDefaultVerbosity: VerbosityLevel | undefined
+  let firstThreadId: string
 
   beforeAll(async () => {
     const lockPort = chooseLockPort()
@@ -366,12 +367,10 @@ describeIf('gateway-proxy e2e', () => {
   test(
     'message creates thread and bot replies through proxy',
     async () => {
-      // Send a message to channel 1 through digital-twin
       await discord.channel(CHANNEL_1_ID).user(TEST_USER_ID).sendMessage({
         content: 'hello from gateway proxy test',
       })
 
-      // Wait for kimaki to create a thread
       const thread = await discord.channel(CHANNEL_1_ID).waitForThread({
         timeout: 15_000,
         predicate: (t) => {
@@ -380,13 +379,115 @@ describeIf('gateway-proxy e2e', () => {
       })
       expect(thread).toBeDefined()
       expect(thread.id).toBeTruthy()
+      firstThreadId = thread.id
 
-      // Wait for the bot to reply in the thread
-      const th = discord.thread(thread.id)
-      const reply = await th.waitForBotReply({ timeout: 30_000 })
+      const reply = await discord.thread(thread.id).waitForBotReply({ timeout: 15_000 })
       expect(reply).toBeDefined()
       expect(reply.content.trim().length).toBeGreaterThan(0)
     },
-    60_000,
+    30_000,
+  )
+
+  test(
+    'follow-up message in thread gets bot reply',
+    async () => {
+      const existingMessages = await discord.thread(firstThreadId).getMessages()
+      const existingIds = new Set(existingMessages.map((m) => m.id))
+
+      await discord.thread(firstThreadId).user(TEST_USER_ID).sendMessage({
+        content: 'follow up through proxy',
+      })
+
+      const reply = await discord.thread(firstThreadId).waitForMessage({
+        predicate: (m) => !existingIds.has(m.id) && m.author.id === discord.botUserId,
+      })
+      expect(reply).toBeDefined()
+      expect(reply.content.trim().length).toBeGreaterThan(0)
+    },
+    30_000,
+  )
+
+  test(
+    'shell command via ! prefix in thread',
+    async () => {
+      const existingMessages = await discord.thread(firstThreadId).getMessages()
+      const existingIds = new Set(existingMessages.map((m) => m.id))
+
+      await discord.thread(firstThreadId).user(TEST_USER_ID).sendMessage({
+        content: '!echo proxy-shell-test',
+      })
+
+      // The bot replies with a loading message then edits it with the result.
+      // The predicate waits for the edited version containing "exited with".
+      const reply = await discord.thread(firstThreadId).waitForMessage({
+        predicate: (m) =>
+          !existingIds.has(m.id) &&
+          m.author.id === discord.botUserId &&
+          m.content.includes('exited with'),
+      })
+      expect(reply.content).toContain('proxy-shell-test')
+    },
+    15_000,
+  )
+
+  test(
+    'second message creates separate thread',
+    async () => {
+      await discord.channel(CHANNEL_1_ID).user(TEST_USER_ID).sendMessage({
+        content: 'second message through proxy',
+      })
+
+      const thread = await discord.channel(CHANNEL_1_ID).waitForThread({
+        predicate: (t) =>
+          (t.name?.includes('second message through proxy') ?? false) &&
+          t.id !== firstThreadId,
+      })
+      expect(thread).toBeDefined()
+      expect(thread.id).not.toBe(firstThreadId)
+
+      const reply = await discord.thread(thread.id).waitForBotReply()
+      expect(reply).toBeDefined()
+      expect(reply.content.trim().length).toBeGreaterThan(0)
+    },
+    30_000,
+  )
+
+  test(
+    'guild-2 message does not create thread (guild isolation)',
+    async () => {
+      await discord.channel(CHANNEL_2_ID).user(TEST_USER_ID).sendMessage({
+        content: 'should not create thread in guild 2',
+      })
+
+      // Brief wait for events to propagate through the local system.
+      // The proxy filters guild-2 events away from client-a, so no thread
+      // should be created. 100ms is more than enough for local event routing.
+      await new Promise((r) => {
+        setTimeout(r, 100)
+      })
+
+      const threads = await discord.channel(CHANNEL_2_ID).getThreads()
+      expect(threads).toHaveLength(0)
+    },
+    5_000,
+  )
+
+  test(
+    'slash command routes INTERACTION_CREATE through proxy',
+    async () => {
+      const { id: interactionId } = await discord
+        .channel(CHANNEL_1_ID)
+        .user(TEST_USER_ID)
+        .runSlashCommand({
+          name: 'run-shell-command',
+          options: [{ name: 'command', type: 3, value: 'echo proxy-slash-test' }],
+        })
+
+      const ack = await discord.channel(CHANNEL_1_ID).waitForInteractionAck({
+        interactionId,
+      })
+      expect(ack.acknowledged).toBe(true)
+    },
+    15_000,
   )
 })
