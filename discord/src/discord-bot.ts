@@ -501,6 +501,86 @@ export async function startDiscordBot({
               })
             : null
 
+        async function resolveVoiceAttachment({
+          sessionId,
+        }: {
+          sessionId?: string
+        }) {
+          if (eagerVoiceTranscriptionPromise) {
+            return eagerVoiceTranscriptionPromise
+          }
+
+          if (!sessionId) {
+            return processVoiceAttachment({
+              message,
+              thread,
+              projectDirectory,
+              appId: currentAppId,
+            })
+          }
+
+          let currentSessionContext: string | undefined
+          let lastSessionContext: string | undefined
+
+          if (projectDirectory) {
+            try {
+              const getClient = await initializeOpencodeForDirectory(
+                projectDirectory,
+                { channelId: parent?.id },
+              )
+              if (getClient instanceof Error) {
+                voiceLogger.error(
+                  `[SESSION] Failed to initialize OpenCode client:`,
+                  getClient.message,
+                )
+                throw new Error(getClient.message)
+              }
+              const client = getClient()
+
+              // get current session context (without system prompt, it would be duplicated)
+              const result = await getCompactSessionContext({
+                client,
+                sessionId: sessionId,
+                includeSystemPrompt: false,
+                maxMessages: 15,
+              })
+              if (errore.isOk(result)) {
+                currentSessionContext = result
+              }
+
+              // get last session context (with system prompt for project context)
+              const lastSessionResult = await getLastSessionId({
+                client,
+                excludeSessionId: sessionId,
+              })
+              const lastSessionId = errore.unwrapOr(lastSessionResult, null)
+              if (lastSessionId) {
+                const lastSessionContextResult = await getCompactSessionContext({
+                  client,
+                  sessionId: lastSessionId,
+                  includeSystemPrompt: true,
+                  maxMessages: 10,
+                })
+                if (errore.isOk(lastSessionContextResult)) {
+                  lastSessionContext = lastSessionContextResult
+                }
+              }
+            } catch (e) {
+              voiceLogger.error(`Could not get session context:`, e)
+              void notifyError(e, 'Failed to get session context')
+            }
+          }
+
+          return processVoiceAttachment({
+            message,
+            thread,
+            projectDirectory,
+            appId: currentAppId,
+            currentSessionContext,
+            lastSessionContext,
+          })
+        }
+
         if (prev && !hasVoiceAttachment) {
           // Another message is being processed — abort it immediately so this
           // queued message can start as soon as possible.
@@ -546,14 +626,7 @@ export async function startDiscordBot({
             }
 
             let prompt = resolveMentions(message)
-            const voiceResult = eagerVoiceTranscriptionPromise
-              ? await eagerVoiceTranscriptionPromise
-              : await processVoiceAttachment({
-                  message,
-                  thread,
-                  projectDirectory,
-                  appId: currentAppId,
-                })
+            const voiceResult = await resolveVoiceAttachment({})
             if (voiceResult) {
               prompt = `Voice message transcription from Discord user:\n\n${voiceResult.transcription}`
             }
@@ -609,72 +682,7 @@ export async function startDiscordBot({
           if (isCliInjectedPrompt) {
             messageContent = message.content || ''
           }
-          const voiceResult = eagerVoiceTranscriptionPromise
-            ? await eagerVoiceTranscriptionPromise
-            : await (async () => {
-                let currentSessionContext: string | undefined
-                let lastSessionContext: string | undefined
-
-                if (projectDirectory) {
-                  try {
-                    const getClient = await initializeOpencodeForDirectory(
-                      projectDirectory,
-                      { channelId: parent?.id },
-                    )
-                    if (getClient instanceof Error) {
-                      voiceLogger.error(
-                        `[SESSION] Failed to initialize OpenCode client:`,
-                        getClient.message,
-                      )
-                      throw new Error(getClient.message)
-                    }
-                    const client = getClient()
-
-                    // get current session context (without system prompt, it would be duplicated)
-                    if (sessionId) {
-                      const result = await getCompactSessionContext({
-                        client,
-                        sessionId: sessionId,
-                        includeSystemPrompt: false,
-                        maxMessages: 15,
-                      })
-                      if (errore.isOk(result)) {
-                        currentSessionContext = result
-                      }
-                    }
-
-                    // get last session context (with system prompt for project context)
-                    const lastSessionResult = await getLastSessionId({
-                      client,
-                      excludeSessionId: sessionId,
-                    })
-                    const lastSessionId = errore.unwrapOr(lastSessionResult, null)
-                    if (lastSessionId) {
-                      const result = await getCompactSessionContext({
-                        client,
-                        sessionId: lastSessionId,
-                        includeSystemPrompt: true,
-                        maxMessages: 10,
-                      })
-                      if (errore.isOk(result)) {
-                        lastSessionContext = result
-                      }
-                    }
-                  } catch (e) {
-                    voiceLogger.error(`Could not get session context:`, e)
-                    void notifyError(e, 'Failed to get session context')
-                  }
-                }
-
-                return processVoiceAttachment({
-                  message,
-                  thread,
-                  projectDirectory,
-                  appId: currentAppId,
-                  currentSessionContext,
-                  lastSessionContext,
-                })
-              })()
+          const voiceResult = await resolveVoiceAttachment({ sessionId })
           if (voiceResult) {
             messageContent = `Voice message transcription from Discord user:\n\n${voiceResult.transcription}`
           }
