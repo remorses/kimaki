@@ -95,11 +95,13 @@ export function createServer({
   botUserId,
   botToken,
   loadGatewayState,
+  gatewayUrlOverride,
 }: {
   prisma: PrismaClient
   botUserId: string
   botToken: string
   loadGatewayState: () => Promise<GatewayState>
+  gatewayUrlOverride?: string
 }): ServerComponents {
   const state = { port: 0 }
 
@@ -116,7 +118,7 @@ export function createServer({
       path: '/gateway/bot',
       handler(): RESTGetAPIGatewayBotResult {
         return {
-          url: `ws://127.0.0.1:${state.port}/gateway`,
+          url: gatewayUrlOverride ?? `ws://127.0.0.1:${state.port}/gateway`,
           shards: 1,
           session_start_limit: {
             total: 1000,

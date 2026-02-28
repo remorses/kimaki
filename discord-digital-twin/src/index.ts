@@ -33,19 +33,27 @@ import {
   messageToAPI,
 } from './serializers.js'
 
+export type DigitalDiscordChannelOption = {
+  id?: string
+  name: string
+  type: ChannelType
+  topic?: string
+  parentId?: string
+}
+
+export type DigitalDiscordGuildOption = {
+  id?: string
+  name?: string
+  ownerId?: string
+  channels?: DigitalDiscordChannelOption[]
+}
+
 export interface DigitalDiscordOptions {
-  guild?: {
-    id?: string
-    name?: string
-    ownerId?: string
-  }
-  channels?: Array<{
-    id?: string
-    name: string
-    type: ChannelType
-    topic?: string
-    parentId?: string
-  }>
+  guild?: DigitalDiscordGuildOption
+  // Multi-guild support: seed multiple guilds, each with its own channels.
+  // If both guild and guilds are provided, guilds takes precedence.
+  guilds?: DigitalDiscordGuildOption[]
+  channels?: DigitalDiscordChannelOption[]
   users?: Array<{
     id?: string
     username: string
@@ -59,6 +67,9 @@ export interface DigitalDiscordOptions {
   // Database URL. Defaults to in-memory (file::memory:?cache=shared).
   // Pass a file: URL (e.g. "file:./test.db") for persistent storage.
   dbUrl?: string
+  // Override the gateway URL returned by GET /gateway/bot.
+  // Useful when a proxy sits between the client and this server.
+  gatewayUrlOverride?: string
 }
 
 export type DigitalDiscordCommandOption = {
@@ -100,7 +111,10 @@ export class DigitalDiscord {
   prisma: PrismaClient
   botToken: string
   botUserId: string
+  // First guild ID for backward compatibility
   guildId: string
+  // All guild IDs when using multi-guild mode
+  guildIds: string[]
 
   private server: ServerComponents | null = null
   private options: DigitalDiscordOptions
@@ -111,7 +125,14 @@ export class DigitalDiscord {
     this.prisma = createPrismaClient(options.dbUrl)
     this.botToken = options.botToken ?? 'fake-bot-token'
     this.botUserId = options.botUser?.id ?? generateSnowflake()
-    this.guildId = options.guild?.id ?? generateSnowflake()
+
+    if (options.guilds && options.guilds.length > 0) {
+      this.guildIds = options.guilds.map((g) => g.id ?? generateSnowflake())
+      this.guildId = this.guildIds[0] ?? generateSnowflake()
+    } else {
+      this.guildId = options.guild?.id ?? generateSnowflake()
+      this.guildIds = [this.guildId]
+    }
   }
 
   get port(): number {
@@ -141,6 +162,7 @@ export class DigitalDiscord {
       botUserId: this.botUserId,
       botToken: this.botToken,
       loadGatewayState: () => this.loadGatewayState(),
+      gatewayUrlOverride: this.options.gatewayUrlOverride,
     })
 
     const port = await startServer(this.server)
@@ -518,36 +540,7 @@ export class DigitalDiscord {
       },
     })
 
-    // Create guild
-    const ownerId = opts.guild?.ownerId ?? generateSnowflake()
-    await this.prisma.guild.create({
-      data: {
-        id: this.guildId,
-        name: opts.guild?.name ?? 'Test Server',
-        ownerId,
-      },
-    })
-
-    // Create @everyone role
-    await this.prisma.role.create({
-      data: {
-        id: this.guildId,
-        guildId: this.guildId,
-        name: '@everyone',
-        permissions: '1071698660929',
-        position: 0,
-      },
-    })
-
-    // Add bot as guild member
-    await this.prisma.guildMember.create({
-      data: {
-        guildId: this.guildId,
-        userId: this.botUserId,
-      },
-    })
-
-    // Create additional users
+    // Create additional users first (needed for guild membership)
     const userIds: string[] = []
     for (const userOpts of opts.users ?? []) {
       const userId = userOpts.id ?? generateSnowflake()
@@ -560,26 +553,63 @@ export class DigitalDiscord {
           globalName: userOpts.username,
         },
       })
-      await this.prisma.guildMember.create({
-        data: {
-          guildId: this.guildId,
-          userId,
-        },
-      })
     }
 
-    // Create channels
-    for (const chOpts of opts.channels ?? []) {
-      await this.prisma.channel.create({
+    // Build the list of guilds to seed
+    const guildConfigs: Array<{ id: string; config: DigitalDiscordGuildOption }> = (() => {
+      if (opts.guilds && opts.guilds.length > 0) {
+        return this.guildIds.map((id, i) => ({ id, config: opts.guilds![i] ?? {} }))
+      }
+      return [{ id: this.guildId, config: opts.guild ?? {} }]
+    })()
+
+    for (const { id: guildId, config: guildConfig } of guildConfigs) {
+      const ownerId = guildConfig.ownerId ?? generateSnowflake()
+      await this.prisma.guild.create({
         data: {
-          id: chOpts.id ?? generateSnowflake(),
-          guildId: this.guildId,
-          type: chOpts.type,
-          name: chOpts.name,
-          topic: chOpts.topic,
-          parentId: chOpts.parentId,
+          id: guildId,
+          name: guildConfig.name ?? 'Test Server',
+          ownerId,
         },
       })
+
+      // Create @everyone role
+      await this.prisma.role.create({
+        data: {
+          id: guildId,
+          guildId,
+          name: '@everyone',
+          permissions: '1071698660929',
+          position: 0,
+        },
+      })
+
+      // Add bot as guild member
+      await this.prisma.guildMember.create({
+        data: { guildId, userId: this.botUserId },
+      })
+
+      // Add all users as members of each guild
+      for (const userId of userIds) {
+        await this.prisma.guildMember.create({
+          data: { guildId, userId },
+        })
+      }
+
+      // Create channels for this guild (from per-guild channels or top-level channels)
+      const channels = guildConfig.channels ?? (guildId === this.guildId ? (opts.channels ?? []) : [])
+      for (const chOpts of channels) {
+        await this.prisma.channel.create({
+          data: {
+            id: chOpts.id ?? generateSnowflake(),
+            guildId,
+            type: chOpts.type,
+            name: chOpts.name,
+            topic: chOpts.topic,
+            parentId: chOpts.parentId,
+          },
+        })
+      }
     }
   }
 
