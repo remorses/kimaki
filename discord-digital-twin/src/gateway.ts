@@ -71,9 +71,21 @@ export class DiscordGateway {
     this.port = port
     this.loadState = loadState
     this.expectedToken = expectedToken
-    this.wss = new WebSocketServer({ server: httpServer, path: '/gateway' })
+    // Use noServer mode so we can accept both /gateway and /gateway/
+    // (twilight-gateway appends /?v=10&encoding=json, creating path /gateway/)
+    this.wss = new WebSocketServer({ noServer: true })
     this.wss.on('connection', (ws) => {
       this.handleConnection(ws)
+    })
+    httpServer.on('upgrade', (request, socket, head) => {
+      const pathname = new URL(request.url ?? '/', `http://${request.headers.host}`).pathname
+      if (pathname === '/gateway' || pathname === '/gateway/') {
+        this.wss.handleUpgrade(request, socket, head, (ws) => {
+          this.wss.emit('connection', ws, request)
+        })
+      } else {
+        socket.destroy()
+      }
     })
   }
 
