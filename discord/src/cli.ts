@@ -65,11 +65,12 @@ import {
   ChannelType,
   type CategoryChannel,
   type Guild,
-  REST,
+  type REST,
   Routes,
   SlashCommandBuilder,
   AttachmentBuilder,
 } from 'discord.js'
+import { createDiscordRest, discordApiUrl } from './discord-urls.js'
 import path from 'node:path'
 import fs from 'node:fs'
 import * as errore from 'errore'
@@ -228,7 +229,7 @@ async function sendDiscordMessageWithOptionalAttachment({
     )
 
     const starterMessageResponse = await fetch(
-      `https://discord.com/api/v10/channels/${channelId}/messages`,
+      discordApiUrl(`/channels/${channelId}/messages`),
       {
         method: 'POST',
         headers: {
@@ -863,7 +864,7 @@ async function registerCommands({
     )
   }
 
-  const rest = new REST().setToken(token)
+  const rest = createDiscordRest(token)
 
   try {
     const data = (await rest.put(Routes.applicationCommands(appId), {
@@ -2117,7 +2118,7 @@ cli
           }
         }
 
-        const rest = new REST().setToken(botToken)
+        const rest = createDiscordRest(botToken)
 
         if (existingThreadMode) {
           const targetThreadId = await (async (): Promise<string> => {
@@ -2724,7 +2725,7 @@ cli
 
     // Fetch Discord channel names via REST API
     const botRow = await getBotToken()
-    const rest = botRow ? new REST().setToken(botRow.token) : null
+    const rest = botRow ? createDiscordRest(botRow.token) : null
 
     const enriched = await Promise.all(
       channels.map(async (ch) => {
@@ -2828,7 +2829,7 @@ cli
     }
 
     // Fetch channel from Discord to get guild_id
-    const rest = new REST().setToken(botToken)
+    const rest = createDiscordRest(botToken)
     const channelData = (await rest.get(
       Routes.channel(existingChannel.channel_id),
     )) as {
@@ -3404,7 +3405,7 @@ cli
 
       const { token: botToken } = await resolveBotCredentials()
 
-      const rest = new REST().setToken(botToken)
+      const rest = createDiscordRest(botToken)
       const threadData = (await rest.get(Routes.channel(threadId))) as {
         id: string
         type: number

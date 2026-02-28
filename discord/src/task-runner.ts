@@ -1,6 +1,7 @@
 // Scheduled task runner for executing due `send --send-at` jobs in the bot process.
 
-import { REST, Routes } from 'discord.js'
+import { type REST, Routes } from 'discord.js'
+import { createDiscordRest } from './discord-urls.js'
 import yaml from 'js-yaml'
 import {
   claimScheduledTaskRunning,
@@ -371,7 +372,7 @@ export function startTaskRunner({
   staleRunningMs = 120_000,
   dueBatchSize = 20,
 }: StartTaskRunnerOptions): () => Promise<void> {
-  const rest = new REST().setToken(token)
+  const rest = createDiscordRest(token)
   let stopped = false
   let ticking = false
   let tickPromise: Promise<void> | null = null

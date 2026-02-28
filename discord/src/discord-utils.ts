@@ -15,6 +15,7 @@ import {
 } from 'discord.js'
 import { REST, Routes } from 'discord.js'
 import type { OpencodeClient } from '@opencode-ai/sdk/v2'
+import { discordApiUrl } from './discord-urls.js'
 import { Lexer } from 'marked'
 import { splitTablesFromMarkdown } from './format-tables.js'
 import { getChannelDirectory, getThreadWorktree } from './database.js'
@@ -733,7 +734,7 @@ export async function uploadFilesToDiscord({
   })
 
   const response = await fetch(
-    `https://discord.com/api/v10/channels/${threadId}/messages`,
+    discordApiUrl(`/channels/${threadId}/messages`),
     {
       method: 'POST',
       headers: {

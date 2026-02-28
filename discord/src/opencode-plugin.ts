@@ -30,7 +30,8 @@ function tool<Args extends z.ZodRawShape>(input: {
   return input
 }
 import { createOpencodeClient } from '@opencode-ai/sdk/v2'
-import { REST, Routes } from 'discord.js'
+import { Routes } from 'discord.js'
+import { createDiscordRest } from './discord-urls.js'
 import * as errore from 'errore'
 import { getPrisma, createIpcRequest, getIpcRequestById } from './database.js'
 import { setDataDir } from './config.js'
@@ -142,7 +143,7 @@ const kimakiPlugin: Plugin = async ({ directory }) => {
     return {}
   }
 
-  const rest = new REST().setToken(botToken)
+  const rest = createDiscordRest(botToken)
   const port = process.env.OPENCODE_PORT
   const client = port
     ? createOpencodeClient({
