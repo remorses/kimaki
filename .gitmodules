@@ -4,3 +4,7 @@
 [submodule "traforo"]
 	path = traforo
 	url = https://github.com/remorses/traforo.git
+[submodule "gateway-proxy"]
+	path = gateway-proxy
+	url = https://github.com/remorses/gateway-proxy.git
+	branch = multi-client-support
