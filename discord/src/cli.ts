@@ -50,6 +50,7 @@ import {
   type BotMode,
 } from './database.js'
 import { getBotToken, appIdFromToken } from './bot-token.js'
+import { createDiscordRest, getDiscordApiV10BaseUrl } from './discord-api.js'
 import { ShareMarkdown } from './markdown.js'
 import {
   parseSessionSearchPattern,
@@ -75,7 +76,8 @@ import {
   SlashCommandBuilder,
   AttachmentBuilder,
 } from 'discord.js'
-import { createDiscordRest, discordApiUrl, getGatewayProxyRestBaseUrl } from './discord-urls.js'
+import { createDiscordRest, getDiscordApiV10BaseUrl } from './discord-api.js'
+import { getGatewayProxyRestBaseUrl } from './discord-urls.js'
 import crypto from 'node:crypto'
 import path from 'node:path'
 import fs from 'node:fs'
@@ -186,6 +188,7 @@ async function sendDiscordMessageWithOptionalAttachment({
   rest: REST
 }): Promise<{ id: string }> {
   const discordMaxLength = 2000
+  const apiV10BaseUrl = getDiscordApiV10BaseUrl()
   if (prompt.length <= discordMaxLength) {
     return (await rest.post(Routes.channelMessages(channelId), {
       body: { content: prompt, embeds },
@@ -219,8 +222,9 @@ async function sendDiscordMessageWithOptionalAttachment({
       'prompt.md',
     )
 
+    const apiV10BaseUrl = getDiscordApiV10BaseUrl()
     const starterMessageResponse = await fetch(
-      discordApiUrl(`/channels/${channelId}/messages`),
+      `${apiV10BaseUrl}/channels/${channelId}/messages`,
       {
         method: 'POST',
         headers: {

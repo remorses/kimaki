@@ -22,6 +22,7 @@ import {
   getPromptPreview,
   parseScheduledTaskPayload,
 } from './task-schedule.js'
+import { createDiscordRest } from './discord-api.js'
 
 const taskLogger = createLogger(LogPrefix.TASK)
 
