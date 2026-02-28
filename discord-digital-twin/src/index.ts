@@ -31,6 +31,7 @@ import {
   memberToAPI,
   channelToAPI,
   messageToAPI,
+  isoTimestamp,
 } from './serializers.js'
 
 export type DigitalDiscordChannelOption = {
@@ -352,7 +353,7 @@ export class DigitalDiscord {
             user: userToAPI(member.user),
             nick: member.nick ?? undefined,
             roles: JSON.parse(member.roles) as string[],
-            joined_at: member.joinedAt.toISOString(),
+            joined_at: isoTimestamp(member.joinedAt),
             deaf: member.deaf,
             mute: member.mute,
             flags: 0,
@@ -631,7 +632,7 @@ export class DigitalDiscord {
       guilds: guilds.map((guild) => ({
         id: guild.id,
         apiGuild: guildToAPI(guild),
-        joinedAt: guild.createdAt.toISOString(),
+        joinedAt: isoTimestamp(guild.createdAt),
         members: guild.members.map(memberToAPI),
         channels: guild.channels.map(channelToAPI),
       })),

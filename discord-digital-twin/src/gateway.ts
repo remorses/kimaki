@@ -23,10 +23,10 @@ import type {
   APIGuildMember,
   APIChannel,
   APIMessage,
-  APIBaseVoiceState,
-  APIStageInstance,
-  APIGuildScheduledEvent,
-  APISoundboardSound,
+   APIBaseVoiceState,
+   APIStageInstance,
+   APIGuildScheduledEvent,
+   APISoundboardSound,
 } from 'discord-api-types/v10'
 
 interface ConnectedClient {
@@ -253,6 +253,9 @@ export class DiscordGateway {
         presences: emptyPresences,
         stage_instances: emptyStageInstances,
         guild_scheduled_events: emptyScheduledEvents,
+        // soundboard_sounds is missing in Gelbpunkt/twilight 0.16 used by the
+        // gateway-proxy main branch. Our remorses/twilight 0.16-updated fork
+        // ignores unknown struct fields, so this is safe.
         soundboard_sounds: emptySoundboardSounds,
       }
       this.sendDispatch(client, GatewayDispatchEvents.GuildCreate, guildData)

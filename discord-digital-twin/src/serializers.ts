@@ -45,6 +45,12 @@ function noFlags<T>(): T {
   return 0 as T
 }
 
+// Format a Date as ISO 8601 with +00:00 offset instead of Z.
+// Twilight's timestamp parser rejects the Z suffix due to minimum length checks.
+export function isoTimestamp(date: Date): string {
+  return date.toISOString().replace('Z', '+00:00')
+}
+
 export function userToAPI(user: User): APIUser {
   return {
     id: user.id,
@@ -55,7 +61,9 @@ export function userToAPI(user: User): APIUser {
     system: user.system,
     flags: user.flags,
     global_name: user.globalName,
-  }
+    // mfa_enabled is required by twilight when deserializing the READY payload.
+    mfa_enabled: false,
+  } as APIUser
 }
 
 export function roleToAPI(role: Role): APIRole {
@@ -103,7 +111,7 @@ export function channelToAPI(channel: Channel): APIChannel {
             auto_archive_duration: channel.autoArchiveDuration,
             archive_timestamp: (
               channel.archiveTimestamp ?? channel.createdAt
-            ).toISOString(),
+            ).toISOString().replace('Z', '+00:00'),
             locked: channel.locked,
           },
         }
@@ -120,7 +128,7 @@ export function memberToAPI(
     user: userToAPI(member.user),
     nick: member.nick ?? undefined,
     roles: JSON.parse(member.roles) as string[],
-    joined_at: member.joinedAt.toISOString(),
+    joined_at: isoTimestamp(member.joinedAt),
     deaf: member.deaf,
     mute: member.mute,
     flags: noFlags<GuildMemberFlags>(),
@@ -157,8 +165,11 @@ export function guildToAPI(guild: Guild & { roles: Role[] }): APIGuild {
     nsfw_level: 0,
     premium_progress_bar_enabled: false,
     safety_alerts_channel_id: null,
-    region: '',
     stickers: [],
+    // hub_type, incidents_data, region are missing in Gelbpunkt/twilight 0.16
+    // used by the gateway-proxy main branch. Our remorses/twilight 0.16-updated
+    // fork ignores unknown struct fields, so these are safe to include.
+    region: '',
     hub_type: null,
     incidents_data: null,
   }
@@ -179,8 +190,8 @@ export function messageToAPI(
     channel_id: message.channelId,
     author: userToAPI(author),
     content: message.content,
-    timestamp: message.timestamp.toISOString(),
-    edited_timestamp: message.editedTimestamp?.toISOString() ?? null,
+    timestamp: isoTimestamp(message.timestamp),
+    edited_timestamp: message.editedTimestamp ? isoTimestamp(message.editedTimestamp) : null,
     tts: message.tts,
     mention_everyone: message.mentionEveryone,
     mentions: [] as APIUser[],
@@ -215,7 +226,7 @@ export function threadMemberToAPI(tm: ThreadMember): APIThreadMember {
   return {
     id: tm.channelId,
     user_id: tm.userId,
-    join_timestamp: tm.joinedAt.toISOString(),
+    join_timestamp: isoTimestamp(tm.joinedAt),
     flags: noFlags<ThreadMemberFlags>(),
   }
 }

@@ -165,6 +165,7 @@ function startGatewayProxy({
   gatewayUrl: string
 }): { process: ChildProcess; configPath: string } {
   const config = {
+    log_level: 'info',
     token: botToken,
     intents: 32511,
     shards: 1,
@@ -204,7 +205,7 @@ function startGatewayProxy({
   const child = spawn(BINARY_PATH, [], {
     cwd: configDir,
     stdio: ['ignore', 'pipe', 'pipe'],
-    env: { ...process.env, RUST_LOG: 'info' },
+    env: { ...process.env, RUST_LOG: 'debug' },
   })
 
   child.stdout?.on('data', (data: Buffer) => {
@@ -305,7 +306,7 @@ describeIf('gateway-proxy e2e', () => {
     })
     proxyProcess = proxy.process
 
-    // Wait for proxy to be ready (shard connected to twin)
+    // Wait for proxy to be ready (HTTP server up)
     await waitForProxyReady({ port: proxyPort, timeoutMs: 30_000 })
 
     // Initialize kimaki database
@@ -328,6 +329,7 @@ describeIf('gateway-proxy e2e', () => {
 
     // Start the kimaki bot connected through the proxy
     botClient = createDiscordJsClient({ restUrl: discord.restUrl })
+
     await startDiscordBot({
       token: discord.botToken,
       appId: discord.botUserId,
@@ -371,7 +373,7 @@ describeIf('gateway-proxy e2e', () => {
 
       // Wait for kimaki to create a thread
       const thread = await discord.channel(CHANNEL_1_ID).waitForThread({
-        timeout: 60_000,
+        timeout: 15_000,
         predicate: (t) => {
           return t.name?.includes('hello from gateway proxy test') ?? false
         },
@@ -381,10 +383,10 @@ describeIf('gateway-proxy e2e', () => {
 
       // Wait for the bot to reply in the thread
       const th = discord.thread(thread.id)
-      const reply = await th.waitForBotReply({ timeout: 120_000 })
+      const reply = await th.waitForBotReply({ timeout: 30_000 })
       expect(reply).toBeDefined()
       expect(reply.content.trim().length).toBeGreaterThan(0)
     },
-    360_000,
+    60_000,
   )
 })
