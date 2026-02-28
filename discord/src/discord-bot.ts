@@ -61,8 +61,6 @@ import { getCompactSessionContext, getLastSessionId } from './markdown.js'
 import {
   handleOpencodeSession,
   signalThreadInterrupt,
-  queueOrSendMessage,
-  abortControllers,
   type SessionStartSourceContext,
 } from './session-handler.js'
 import { runShellCommand } from './commands/run-command.js'
@@ -466,126 +464,12 @@ export async function startDiscordBot({
 
         const prev = threadMessageQueue.get(thread.id)
 
-        // Snapshot active request state NOW, before prev task finishes.
-        // Voice messages skip the eager interrupt so the session stays alive during
-        // transcription. But processThreadMessage is serialized behind prev, so by
-        // the time it runs the prev task may have finished and the controller is gone.
-        // This snapshot lets queueOrSendMessage know there WAS an active request
-        // when the voice message arrived, so it should queue even if the controller
-        // is no longer active.
-        // Conservative: if prev exists, something is actively being processed, so
-        // we treat it as having an active request (avoids race where the async
-        // getThreadSession call lets the prev task finish first).
-        const hadActiveRequestOnArrival: boolean = await (async () => {
-          if (!hasVoiceAttachment) {
-            return false
-          }
-          if (prev) {
-            return true
-          }
-          const sid = await getThreadSession(thread.id)
-          if (!sid) {
-            return false
-          }
-          const controller = abortControllers.get(sid)
-          return Boolean(controller && !controller.signal.aborted)
-        })()
-
-        const eagerVoiceTranscriptionPromise =
-          prev && hasVoiceAttachment
-            ? processVoiceAttachment({
-                message,
-                thread,
-                projectDirectory,
-                appId: currentAppId,
-              })
-            : null
-
-        async function resolveVoiceAttachment({
-          sessionId,
-        }: {
-          sessionId?: string
-        }) {
-          if (eagerVoiceTranscriptionPromise) {
-            return eagerVoiceTranscriptionPromise
-          }
-
-          if (!sessionId) {
-            return processVoiceAttachment({
-              message,
-              thread,
-              projectDirectory,
-              appId: currentAppId,
-            })
-          }
-
-          let currentSessionContext: string | undefined
-          let lastSessionContext: string | undefined
-
-          if (projectDirectory) {
-            try {
-              const getClient = await initializeOpencodeForDirectory(
-                projectDirectory,
-                { channelId: parent?.id },
-              )
-              if (getClient instanceof Error) {
-                voiceLogger.error(
-                  `[SESSION] Failed to initialize OpenCode client:`,
-                  getClient.message,
-                )
-                throw new Error(getClient.message)
-              }
-              const client = getClient()
-
-              // get current session context (without system prompt, it would be duplicated)
-              const result = await getCompactSessionContext({
-                client,
-                sessionId: sessionId,
-                includeSystemPrompt: false,
-                maxMessages: 15,
-              })
-              if (errore.isOk(result)) {
-                currentSessionContext = result
-              }
-
-              // get last session context (with system prompt for project context)
-              const lastSessionResult = await getLastSessionId({
-                client,
-                excludeSessionId: sessionId,
-              })
-              const lastSessionId = errore.unwrapOr(lastSessionResult, null)
-              if (lastSessionId) {
-                const lastSessionContextResult = await getCompactSessionContext({
-                  client,
-                  sessionId: lastSessionId,
-                  includeSystemPrompt: true,
-                  maxMessages: 10,
-                })
-                if (errore.isOk(lastSessionContextResult)) {
-                  lastSessionContext = lastSessionContextResult
-                }
-              }
-            } catch (e) {
-              voiceLogger.error(`Could not get session context:`, e)
-              void notifyError(e, 'Failed to get session context')
-            }
-          }
-
-          return processVoiceAttachment({
-            message,
-            thread,
-            projectDirectory,
-            appId: currentAppId,
-            currentSessionContext,
-            lastSessionContext,
-          })
-        }
-
-        if (prev && !hasVoiceAttachment) {
+        if (prev) {
+          // TODO: Voice queue intent is currently disabled because this flow is
+          // unreliable for voice replies. Revisit queueing support for voice
+          // messages after a robust design is implemented and validated.
           // Another message is being processed — abort it immediately so this
           // queued message can start as soon as possible.
-          // Voice messages are excluded here: they need transcription first to
-          // detect "queue this message" intent.
           const sdkDirectory =
             worktreeInfo?.status === 'ready' && worktreeInfo.worktree_directory
               ? worktreeInfo.worktree_directory
@@ -626,7 +510,12 @@ export async function startDiscordBot({
             }
 
             let prompt = resolveMentions(message)
-            const voiceResult = await resolveVoiceAttachment({})
+            const voiceResult = await processVoiceAttachment({
+              message,
+              thread,
+              projectDirectory,
+              appId: currentAppId,
+            })
             if (voiceResult) {
               prompt = `Voice message transcription from Discord user:\n\n${voiceResult.transcription}`
             }
@@ -682,7 +571,67 @@ export async function startDiscordBot({
           if (isCliInjectedPrompt) {
             messageContent = message.content || ''
           }
-          const voiceResult = await resolveVoiceAttachment({ sessionId })
+
+          let currentSessionContext: string | undefined
+          let lastSessionContext: string | undefined
+
+          if (projectDirectory) {
+            try {
+              const getClient = await initializeOpencodeForDirectory(
+                projectDirectory,
+                { channelId: parent?.id },
+              )
+              if (getClient instanceof Error) {
+                voiceLogger.error(
+                  `[SESSION] Failed to initialize OpenCode client:`,
+                  getClient.message,
+                )
+                throw new Error(getClient.message)
+              }
+              const client = getClient()
+
+              // get current session context (without system prompt, it would be duplicated)
+              const result = await getCompactSessionContext({
+                client,
+                sessionId: sessionId,
+                includeSystemPrompt: false,
+                maxMessages: 15,
+              })
+              if (errore.isOk(result)) {
+                currentSessionContext = result
+              }
+
+              // get last session context (with system prompt for project context)
+              const lastSessionResult = await getLastSessionId({
+                client,
+                excludeSessionId: sessionId,
+              })
+              const lastSessionId = errore.unwrapOr(lastSessionResult, null)
+              if (lastSessionId) {
+                const result = await getCompactSessionContext({
+                  client,
+                  sessionId: lastSessionId,
+                  includeSystemPrompt: true,
+                  maxMessages: 10,
+                })
+                if (errore.isOk(result)) {
+                  lastSessionContext = result
+                }
+              }
+            } catch (e) {
+              voiceLogger.error(`Could not get session context:`, e)
+              void notifyError(e, 'Failed to get session context')
+            }
+          }
+
+          const voiceResult = await processVoiceAttachment({
+            message,
+            thread,
+            projectDirectory,
+            appId: currentAppId,
+            currentSessionContext,
+            lastSessionContext,
+          })
           if (voiceResult) {
             messageContent = `Voice message transcription from Discord user:\n\n${voiceResult.transcription}`
           }
@@ -691,58 +640,6 @@ export async function startDiscordBot({
           // bail out — don't fire deferred interrupt or send an empty prompt.
           if (hasVoiceAttachment && !voiceResult && !messageContent.trim()) {
             return
-          }
-
-          // If the transcription model detected "queue this message" intent,
-          // use queueOrSendMessage instead of sending immediately.
-          if (voiceResult?.queueMessage) {
-            const fileAttachments = await getFileAttachments(message)
-            const textAttachmentsContent = await getTextAttachments(message)
-            const promptWithAttachments = textAttachmentsContent
-              ? `${messageContent}\n\n${textAttachmentsContent}`
-              : messageContent
-            const username =
-              cliInjectedUsername ||
-              message.member?.displayName ||
-              message.author.displayName
-            const result = await queueOrSendMessage({
-              thread,
-              prompt: promptWithAttachments,
-              userId: isCliInjectedPrompt
-                ? cliInjectedUserId || message.author.id
-                : message.author.id,
-              username,
-              appId: currentAppId,
-              images: fileAttachments,
-              forceQueue: hadActiveRequestOnArrival,
-            })
-            if (result.action === 'queued') {
-              await sendThreadMessage(
-                thread,
-                `Queued (position: ${result.position}). Will be sent after current response.`,
-              )
-              return
-            }
-            if (result.action === 'sent') {
-              return
-            }
-            // no-session / no-directory: fall through to normal handleOpencodeSession flow
-          }
-
-          // For voice messages without queue intent, we deferred the interrupt
-          // until after transcription (to preserve active-request state for queue
-          // detection). Now that we know it's not a queue message, signal the
-          // interrupt so the running session aborts before the new prompt is sent.
-          if (hasVoiceAttachment && !voiceResult?.queueMessage) {
-            const sdkDirectory =
-              worktreeInfo?.status === 'ready' && worktreeInfo.worktree_directory
-                ? worktreeInfo.worktree_directory
-                : projectDirectory
-            signalThreadInterrupt({
-              threadId: thread.id,
-              serverDirectory: projectDirectory,
-              sdkDirectory,
-            })
           }
 
           const fileAttachments = await getFileAttachments(message)
