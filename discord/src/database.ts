@@ -3,7 +3,7 @@
 // API keys, and model preferences in <dataDir>/discord-sessions.db.
 
 import { getPrisma, closePrisma } from './db.js'
-
+import { hydrateBotTokenCache } from './bot-token.js'
 import { store } from './store.js'
 import { createLogger, LogPrefix } from './logger.js'
 
@@ -18,6 +18,12 @@ export { getPrisma, closePrisma }
  */
 export async function initDatabase() {
   const prisma = await getPrisma()
+  const botRow = await prisma.bot_tokens.findFirst({
+    orderBy: { created_at: 'desc' },
+  })
+  hydrateBotTokenCache(
+    botRow ? { app_id: botRow.app_id, token: botRow.token } : null,
+  )
   dbLogger.log('Database initialized')
   return prisma
 }
@@ -1110,8 +1116,6 @@ export async function getBotTokenWithMode(): Promise<
     proxyUrl: row.proxy_url,
   }
 }
-
-/**
  * Store a bot token.
  */
 export async function setBotToken(appId: string, token: string): Promise<void> {
@@ -1121,6 +1125,7 @@ export async function setBotToken(appId: string, token: string): Promise<void> {
     create: { app_id: appId, token },
     update: { token },
   })
+  hydrateBotTokenCache({ app_id: appId, token })
 }
 
 export type BotMode = 'self-hosted' | 'built-in'
