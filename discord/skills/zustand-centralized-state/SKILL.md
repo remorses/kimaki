@@ -144,6 +144,15 @@ const store = createStore<AppState>(() => ({
 This is the single source of truth. No separate variables, no state scattered across
 closures, no Maps defined in different scopes.
 
+**One store, not many.** A common temptation is to create separate stores for each
+domain (one for connections, one for clients, one for config). This splits state
+across multiple sources of truth, makes cross-domain transitions non-atomic, and
+forces you to coordinate subscribes across stores. A single store avoids all of
+this. If you worry about subscribe callbacks firing too often when unrelated state
+changes, use `subscribeWithSelector` to watch only the slice you care about (see
+"Subscribing to nested state with selectors" below). This gives you the performance
+of multiple stores with the simplicity of one.
+
 ### 4. State transitions use only current state and event data
 
 Every `setState()` call should be a pure function of the current state and the
@@ -563,9 +572,85 @@ store.setState({ connectionState: 'connected' })
 const unsub = store.subscribe((state, prevState) => { ... })
 
 // subscribe with selector (fires only when selected value changes)
+// requires subscribeWithSelector middleware -- see section below
 const unsub = store.subscribe(
   (state) => state.connectionState,
   (connectionState, prevConnectionState) => { ... },
+)
+```
+
+## Subscribing to nested state with selectors
+
+By default, `store.subscribe()` fires on **every** state change with no selector
+support. When your state contains Maps or nested objects and you only care about a
+specific part, use the `subscribeWithSelector` middleware from `zustand/middleware`.
+This adds a selector overload to `subscribe` so the callback only fires when the
+selected value changes.
+
+```ts
+import { createStore } from 'zustand/vanilla'
+import { subscribeWithSelector } from 'zustand/middleware'
+
+interface Session {
+  userId: string
+  status: 'active' | 'idle' | 'expired'
+}
+
+interface AppState {
+  sessions: Map<string, Session>
+  serverStatus: 'starting' | 'running' | 'stopping'
+}
+
+const store = createStore<AppState>()(
+  subscribeWithSelector(() => ({
+    sessions: new Map(),
+    serverStatus: 'starting' as const,
+  }))
+)
+
+// only fires when the sessions Map reference changes,
+// NOT when serverStatus or other fields change
+store.subscribe(
+  (state) => state.sessions,
+  (sessions, prevSessions) => {
+    for (const [id] of sessions) {
+      if (!prevSessions.has(id)) {
+        logger.log(`new session: ${id}`)
+      }
+    }
+    for (const [id] of prevSessions) {
+      if (!sessions.has(id)) {
+        logger.log(`session removed: ${id}`)
+      }
+    }
+  },
+)
+```
+
+The selector subscribe signature is:
+
+```ts
+store.subscribe(selector, listener, options?)
+// options: { equalityFn?, fireImmediately? }
+```
+
+When the selector returns a new object each time (e.g. picking multiple fields),
+use `shallow` from `zustand/shallow` as `equalityFn`. Without it, the default
+`Object.is` compares by reference and would fire on every state change since the
+selector always creates a fresh object:
+
+```ts
+import { shallow } from 'zustand/shallow'
+
+store.subscribe(
+  (state) => ({
+    serverStatus: state.serverStatus,
+    sessionCount: state.sessions.size,
+  }),
+  (picked, prevPicked) => {
+    updateDashboard(picked)
+  },
+  { equalityFn: shallow },
 )
 ```
 
