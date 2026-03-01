@@ -1,14 +1,15 @@
 // Runtime configuration for Kimaki bot.
-// Stores data directory path and provides accessors for other modules.
-// Must be initialized before database or other path-dependent modules are used.
+// Thin re-export layer over the centralized zustand store (store.ts).
+// Getter/setter functions are kept for backwards compatibility so existing
+// import sites don't need to change. They delegate to store.getState() and
+// store.setState() under the hood.
 
 import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
+import { store } from './store.js'
 
 const DEFAULT_DATA_DIR = path.join(os.homedir(), '.kimaki')
-
-let dataDir: string | null = null
 
 /**
  * Get the data directory path.
@@ -18,14 +19,17 @@ let dataDir: string | null = null
  * dir can still call setDataDir() before any DB access to override this.
  */
 export function getDataDir(): string {
-  if (!dataDir) {
-    if (process.env.KIMAKI_VITEST) {
-      dataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'kimaki-test-'))
-    } else {
-      dataDir = DEFAULT_DATA_DIR
-    }
+  const current = store.getState().dataDir
+  if (current) {
+    return current
   }
-  return dataDir
+  if (process.env.KIMAKI_VITEST) {
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'kimaki-test-'))
+    store.setState({ dataDir: tmpDir })
+    return tmpDir
+  }
+  store.setState({ dataDir: DEFAULT_DATA_DIR })
+  return DEFAULT_DATA_DIR
 }
 
 /**
@@ -40,7 +44,7 @@ export function setDataDir(dir: string): void {
     fs.mkdirSync(resolvedDir, { recursive: true })
   }
 
-  dataDir = resolvedDir
+  store.setState({ dataDir: resolvedDir })
 }
 
 /**
@@ -51,66 +55,7 @@ export function getProjectsDir(): string {
   return path.join(getDataDir(), 'projects')
 }
 
-// Default verbosity for channels that haven't set a per-channel override.
-// Set via --verbosity CLI flag at startup.
-import type { VerbosityLevel } from './database.js'
-
-let defaultVerbosity: VerbosityLevel = 'text-and-essential-tools'
-
-export function getDefaultVerbosity(): VerbosityLevel {
-  return defaultVerbosity
-}
-
-export function setDefaultVerbosity(level: VerbosityLevel): void {
-  defaultVerbosity = level
-}
-
-// Default mention mode for channels that haven't set a per-channel override.
-// Set via --mention-mode CLI flag at startup.
-let defaultMentionMode = false
-
-export function getDefaultMentionMode(): boolean {
-  return defaultMentionMode
-}
-
-export function setDefaultMentionMode(enabled: boolean): void {
-  defaultMentionMode = enabled
-}
-
-// Whether critique (diff upload to critique.work) is enabled in system prompts.
-// Enabled by default, disabled via --no-critique CLI flag.
-let critiqueEnabled = true
-
-export function getCritiqueEnabled(): boolean {
-  return critiqueEnabled
-}
-
-export function setCritiqueEnabled(enabled: boolean): void {
-  critiqueEnabled = enabled
-}
-
-// Whether to forward OpenCode server stdout/stderr to kimaki.log.
-// Disabled by default, enabled via --verbose-opencode-server CLI flag.
-let verboseOpencodeServer = false
-
-export function getVerboseOpencodeServer(): boolean {
-  return verboseOpencodeServer
-}
-
-export function setVerboseOpencodeServer(enabled: boolean): void {
-  verboseOpencodeServer = enabled
-}
-
-// Registered user commands, populated by registerCommands() in cli.ts.
-// Stored here (not cli.ts) to avoid circular imports since commands/ modules need this.
-// discordName is the sanitized Discord slash command name (without -cmd suffix),
-// name is the original OpenCode command name (may contain :, /, etc).
-export type RegisteredUserCommand = {
-  name: string
-  discordName: string
-  description: string
-}
-export const registeredUserCommands: RegisteredUserCommand[] = []
+export type { RegisteredUserCommand } from './store.js'
 
 const DEFAULT_LOCK_PORT = 29988
 

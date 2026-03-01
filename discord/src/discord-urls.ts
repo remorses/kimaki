@@ -1,10 +1,6 @@
 // Configurable Discord API endpoint URLs.
-// Override via environment variables to point at a self-hosted gateway proxy.
-//
-// DISCORD_REST_BASE_URL: base URL for Discord REST API calls (default: https://discord.com)
-//   Used by both discord.js REST client (which appends /api/v10/...) and raw fetch calls.
-//   Read lazily from process.env so that built-in bot mode can set the env var
-//   after module import but before createDiscordClient() is called.
+// Base URL for REST calls lives in the centralized zustand store (store.ts),
+// replacing the old process.env['DISCORD_REST_BASE_URL'] mutation.
 //
 // DISCORD_GATEWAY_URL: WebSocket gateway URL (default: undefined, auto-discovered via /gateway/bot)
 //   discord.js has no direct ws.gateway option — the gateway URL comes from the
@@ -13,20 +9,21 @@
 //   for non-discord.js consumers (e.g. the Rust gateway-proxy config).
 
 import { REST } from 'discord.js'
+import { store } from './store.js'
 
 /**
  * Base URL for Discord (default: https://discord.com).
  * All REST API and raw fetch calls derive their URLs from this.
- * Read lazily so built-in mode can set DISCORD_REST_BASE_URL after import.
+ * Reads from the centralized store so built-in mode can set it via
+ * store.setState({ discordBaseUrl }) after startup.
  */
 export function getDiscordRestBaseUrl(): string {
-  return process.env['DISCORD_REST_BASE_URL'] || 'https://discord.com'
+  return store.getState().discordBaseUrl
 }
 
 /**
  * The REST api path that discord.js expects (base + /api).
  * discord.js appends /v10/... to this internally.
- * Reads env var lazily for built-in mode support.
  */
 export function getDiscordRestApiUrl(): string {
   return new URL('/api', getDiscordRestBaseUrl()).toString()
@@ -43,7 +40,6 @@ export const DISCORD_GATEWAY_URL =
 /**
  * Build a full Discord REST API URL for raw fetch() calls.
  * Uses new URL() for safe path concatenation.
- * Reads base URL lazily for built-in mode support.
  *
  * Example: discordApiUrl(`/channels/${id}/messages`) →
  *   "https://discord.com/api/v10/channels/123/messages"
@@ -55,7 +51,6 @@ export function discordApiUrl(path: string): string {
 /**
  * Create a discord.js REST client pointed at the configured base URL.
  * Centralizes the REST instantiation so all call sites use the override.
- * Reads URL lazily for built-in mode support.
  */
 export function createDiscordRest(token: string): REST {
   return new REST({ api: getDiscordRestApiUrl() }).setToken(token)
@@ -78,12 +73,4 @@ export function getGatewayProxyRestBaseUrl({ gatewayUrl }: { gatewayUrl: string 
   } catch {
     return gatewayUrl
   }
-}
-
-/**
- * Set DISCORD_REST_BASE_URL env var so all REST calls route through
- * the gateway proxy. Called in built-in bot mode paths.
- */
-export function enableBuiltInModeRouting({ restBaseUrl }: { restBaseUrl: string }): void {
-  process.env['DISCORD_REST_BASE_URL'] = restBaseUrl
 }

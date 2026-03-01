@@ -18,7 +18,7 @@ import {
 } from '../session-handler.js'
 import { createLogger, LogPrefix } from '../logger.js'
 import { notifyError } from '../sentry.js'
-import { registeredUserCommands } from '../config.js'
+import { store } from '../store.js'
 
 const logger = createLogger(LogPrefix.QUEUE)
 
@@ -183,7 +183,7 @@ export async function handleQueueCommandCommand({
   }
 
   // Validate command exists in registered user commands
-  const isKnownCommand = registeredUserCommands.some((cmd) => {
+  const isKnownCommand = store.getState().registeredUserCommands.some((cmd) => {
     return cmd.name === commandName
   })
   if (!isKnownCommand) {
@@ -282,7 +282,7 @@ export async function handleQueueCommandAutocomplete({
   }
 
   const query = focused.value.toLowerCase()
-  const choices = registeredUserCommands
+  const choices = store.getState().registeredUserCommands
     .filter((cmd) => {
       return cmd.name.toLowerCase().includes(query)
     })

@@ -20,8 +20,8 @@ import { getBotTokenWithMode } from './database.js'
 import {
   getDataDir,
   getLockPort,
-  getVerboseOpencodeServer,
 } from './config.js'
+import { store } from './store.js'
 import { getHranaUrl } from './hrana-server.js'
 
 // SDK Config type is simplified; opencode accepts nested permission objects with path patterns
@@ -299,7 +299,7 @@ export async function initializeOpencodeForDirectory(
   const kimakiBotToken = process.env.KIMAKI_BOT_TOKEN || botTokenFromDb?.token
 
   const serveArgs = ['serve', '--port', port.toString()]
-  if (getVerboseOpencodeServer()) {
+  if (store.getState().verboseOpencodeServer) {
     serveArgs.push('--print-logs', '--log-level', 'DEBUG')
   }
 
@@ -380,7 +380,7 @@ export async function initializeOpencodeForDirectory(
         logBuffer.push(...lines.map((line) => `[stdout] ${line}`))
         return
       }
-      if (getVerboseOpencodeServer()) {
+      if (store.getState().verboseOpencodeServer) {
         for (const line of lines) {
           opencodeLogger.log(`[${shortDir}:${port}] ${line}`)
         }
@@ -399,7 +399,7 @@ export async function initializeOpencodeForDirectory(
         pushStartupStderrTail({ stderrTail: startupStderrTail, chunk })
         return
       }
-      if (getVerboseOpencodeServer()) {
+      if (store.getState().verboseOpencodeServer) {
         for (const line of lines) {
           opencodeLogger.error(`[${shortDir}:${port}] ${line}`)
         }
@@ -466,7 +466,7 @@ export async function initializeOpencodeForDirectory(
 
   // When verbose mode is enabled, also dump startup logs so plugin loading
   // errors and other startup output are visible in kimaki.log.
-  if (getVerboseOpencodeServer()) {
+  if (store.getState().verboseOpencodeServer) {
     for (const line of logBuffer) {
       opencodeLogger.log(`[${shortDir}:${port}:startup] ${line}`)
     }

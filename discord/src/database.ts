@@ -3,8 +3,8 @@
 // API keys, and model preferences in <dataDir>/discord-sessions.db.
 
 import { getPrisma, closePrisma } from './db.js'
-import { getDefaultVerbosity, getDefaultMentionMode } from './config.js'
-import { enableBuiltInModeRouting } from './discord-urls.js'
+
+import { store } from './store.js'
 import { createLogger, LogPrefix } from './logger.js'
 
 const dbLogger = createLogger(LogPrefix.DB)
@@ -833,7 +833,7 @@ export async function getChannelVerbosity(
   if (row?.verbosity) {
     return row.verbosity as VerbosityLevel
   }
-  return getDefaultVerbosity()
+  return store.getState().defaultVerbosity
 }
 
 /**
@@ -869,7 +869,7 @@ export async function getChannelMentionMode(
   if (row) {
     return row.enabled === 1
   }
-  return getDefaultMentionMode()
+  return store.getState().defaultMentionMode
 }
 
 /**
@@ -1070,7 +1070,7 @@ export async function setPartMessagesBatch(
  * For built-in mode, the token is derived from client_id:client_secret
  * and REST routing is automatically enabled (idempotent env var set).
  * This ensures every code path that reads credentials gets correct routing
- * without needing to call enableBuiltInModeRouting separately.
+ * without needing to set discordBaseUrl separately.
  */
 export async function getBotTokenWithMode(): Promise<
   | {
@@ -1094,9 +1094,13 @@ export async function getBotTokenWithMode(): Promise<
   const token = (mode === 'built-in' && row.client_id && row.client_secret)
     ? `${row.client_id}:${row.client_secret}`
     : row.token
-  if (mode === 'built-in' && row.proxy_url) {
-    enableBuiltInModeRouting({ restBaseUrl: row.proxy_url })
-  }
+  // Always reset discordBaseUrl on every read so a mode switch within
+  // the same process (e.g. DB has built-in row but user proceeds self-hosted)
+  // doesn't leave a stale proxy URL in the store.
+  const discordBaseUrl = (mode === 'built-in' && row.proxy_url)
+    ? row.proxy_url
+    : 'https://discord.com'
+  store.setState({ discordBaseUrl })
   return {
     appId: row.app_id,
     token,

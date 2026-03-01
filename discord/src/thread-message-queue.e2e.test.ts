@@ -25,10 +25,9 @@ import {
   type DeterministicMatcher,
 } from 'opencode-deterministic-provider'
 import {
-  getDefaultVerbosity,
   setDataDir,
-  setDefaultVerbosity,
 } from './config.js'
+import { store } from './store.js'
 import { startDiscordBot } from './discord-bot.js'
 import {
   setBotToken,
@@ -37,6 +36,7 @@ import {
   setChannelDirectory,
   setChannelVerbosity,
   getChannelVerbosity,
+  type VerbosityLevel,
 } from './database.js'
 import { startHranaServer, stopHranaServer } from './hrana-server.js'
 import { getOpencodeServers } from './opencode.js'
@@ -340,7 +340,7 @@ e2eTest('thread message queue ordering', () => {
   let directories: ReturnType<typeof createRunDirectories>
   let discord: DigitalDiscord
   let botClient: Client
-  let previousDefaultVerbosity: ReturnType<typeof getDefaultVerbosity> | null =
+  let previousDefaultVerbosity: VerbosityLevel | null =
     null
 
   beforeAll(async () => {
@@ -349,8 +349,8 @@ e2eTest('thread message queue ordering', () => {
 
     process.env['KIMAKI_LOCK_PORT'] = String(lockPort)
     setDataDir(directories.dataDir)
-    previousDefaultVerbosity = getDefaultVerbosity()
-    setDefaultVerbosity('tools-and-text')
+    previousDefaultVerbosity = store.getState().defaultVerbosity
+    store.setState({ defaultVerbosity: 'tools-and-text' })
 
     discord = new DigitalDiscord({
       guild: {
@@ -449,7 +449,7 @@ e2eTest('thread message queue ordering', () => {
     delete process.env['KIMAKI_LOCK_PORT']
     delete process.env['KIMAKI_DB_URL']
     if (previousDefaultVerbosity) {
-      setDefaultVerbosity(previousDefaultVerbosity)
+      store.setState({ defaultVerbosity: previousDefaultVerbosity })
     }
     if (directories) {
       fs.rmSync(directories.dataDir, { recursive: true, force: true })

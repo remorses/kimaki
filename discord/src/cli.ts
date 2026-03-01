@@ -92,10 +92,6 @@ import { spawn, execSync, type ExecSyncOptions } from 'node:child_process'
 import {
   setDataDir,
   getDataDir,
-  setDefaultVerbosity,
-  setDefaultMentionMode,
-  setCritiqueEnabled,
-  setVerboseOpencodeServer,
   getProjectsDir,
 } from './config.js'
 import { sanitizeAgentName } from './commands/agent.js'
@@ -178,7 +174,7 @@ function appIdFromToken(token: string): string | undefined {
 // Resolve bot token and app ID from env var or database.
 // Used by CLI subcommands (send, project add) that need credentials
 // but don't run the interactive wizard.
-// In built-in mode, also sets DISCORD_REST_BASE_URL so REST calls
+// In built-in mode, also sets store.discordBaseUrl so REST calls
 // are routed through the gateway-proxy REST endpoint.
 async function resolveBotCredentials({ appIdOverride }: { appIdOverride?: string } = {}): Promise<{
   token: string
@@ -488,7 +484,7 @@ type CliOptions = {
 // Commands to skip when registering user commands (reserved names)
 const SKIP_USER_COMMANDS = ['init']
 
-import { registeredUserCommands } from './config.js'
+import { store, type RegisteredUserCommand } from './store.js'
 
 type AgentInfo = {
   name: string
@@ -816,8 +812,8 @@ async function registerCommands({
   ]
 
   // Add user-defined commands with -cmd suffix
-  // Also populate registeredUserCommands for /queue-command autocomplete
-  registeredUserCommands.length = 0
+  // Also populate registeredUserCommands in the store for /queue-command autocomplete
+  const newRegisteredCommands: RegisteredUserCommand[] = []
   for (const cmd of userCommands) {
     if (SKIP_USER_COMMANDS.includes(cmd.name)) {
       continue
@@ -845,7 +841,7 @@ async function registerCommands({
     const commandName = `${baseName}${cmdSuffix}`
     const description = cmd.description || `Run /${cmd.name} command`
 
-    registeredUserCommands.push({
+    newRegisteredCommands.push({
       name: cmd.name,
       discordName: baseName,
       description,
@@ -866,6 +862,7 @@ async function registerCommands({
         .toJSON(),
     )
   }
+  store.setState({ registeredUserCommands: newRegisteredCommands })
 
   // Add agent-specific quick commands like /plan-agent, /build-agent
   // Filter to primary/all mode agents (same as /agent command shows), excluding hidden agents
@@ -1819,31 +1816,31 @@ cli
             )
             process.exit(EXIT_NO_RESTART)
           }
-          setDefaultVerbosity(
-            options.verbosity as
+          store.setState({
+            defaultVerbosity: options.verbosity as
               | 'tools-and-text'
               | 'text-and-essential-tools'
               | 'text-only',
-          )
+          })
           cliLogger.log(`Default verbosity: ${options.verbosity}`)
         }
 
         if (options.mentionMode) {
-          setDefaultMentionMode(true)
+          store.setState({ defaultMentionMode: true })
           cliLogger.log(
             'Default mention mode: enabled (bot only responds when @mentioned)',
           )
         }
 
         if (options.noCritique) {
-          setCritiqueEnabled(false)
+          store.setState({ critiqueEnabled: false })
           cliLogger.log(
             'Critique disabled: diffs will not be auto-uploaded to critique.work',
           )
         }
 
         if (options.verboseOpencodeServer) {
-          setVerboseOpencodeServer(true)
+          store.setState({ verboseOpencodeServer: true })
           cliLogger.log(
             'Verbose OpenCode server: stdout/stderr will be forwarded to kimaki.log',
           )

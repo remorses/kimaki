@@ -32,11 +32,12 @@ import {
   closeDatabase,
   setChannelDirectory,
 } from './database.js'
-import { setDataDir, setDefaultVerbosity, getDefaultVerbosity } from './config.js'
+import { setDataDir } from './config.js'
 import type { VerbosityLevel } from './database.js'
 import { startDiscordBot } from './discord-bot.js'
 import { getOpencodeServers } from './opencode.js'
 import { createDiscordRest } from './discord-urls.js'
+import { store } from './store.js'
 
 // --- Constants ---
 
@@ -260,8 +261,8 @@ describeIf('gateway-proxy e2e', () => {
     process.env['KIMAKI_LOCK_PORT'] = String(lockPort)
     process.env['KIMAKI_VITEST'] = '1'
     setDataDir(directories.dataDir)
-    previousDefaultVerbosity = getDefaultVerbosity()
-    setDefaultVerbosity('text-only')
+    previousDefaultVerbosity = store.getState().defaultVerbosity
+    store.setState({ defaultVerbosity: 'text-only' })
 
     proxyPort = await getAvailablePort()
 
@@ -374,7 +375,7 @@ describeIf('gateway-proxy e2e', () => {
     delete process.env['KIMAKI_DB_URL']
     delete process.env['KIMAKI_VITEST']
     if (previousDefaultVerbosity) {
-      setDefaultVerbosity(previousDefaultVerbosity)
+      store.setState({ defaultVerbosity: previousDefaultVerbosity })
     }
     if (directories) {
       fs.rmSync(directories.dataDir, { recursive: true, force: true })
@@ -511,8 +512,8 @@ describeIf('gateway-proxy e2e', () => {
   test(
     'REST client operations work through proxy and enforce guild scope',
     async () => {
-      const previousBaseUrl = process.env['DISCORD_REST_BASE_URL']
-      process.env['DISCORD_REST_BASE_URL'] = `http://127.0.0.1:${proxyPort}`
+      const previousBaseUrl = store.getState().discordBaseUrl
+      store.setState({ discordBaseUrl: `http://127.0.0.1:${proxyPort}` })
 
       try {
         const botRest = createDiscordRest(discord.botToken)
@@ -559,11 +560,7 @@ describeIf('gateway-proxy e2e', () => {
         const me = await clientRest.get(Routes.user('@me'))
         expect(hasStringId(me)).toBe(true)
       } finally {
-        if (previousBaseUrl === undefined) {
-          delete process.env['DISCORD_REST_BASE_URL']
-        } else {
-          process.env['DISCORD_REST_BASE_URL'] = previousBaseUrl
-        }
+        store.setState({ discordBaseUrl: previousBaseUrl })
       }
     },
     30_000,

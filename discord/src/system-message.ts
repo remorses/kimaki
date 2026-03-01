@@ -2,7 +2,8 @@
 // Creates the system message injected into every OpenCode session,
 // including Discord-specific formatting rules, diff commands, and permissions info.
 
-import { getCritiqueEnabled, getDataDir } from './config.js'
+import { getDataDir } from './config.js'
+import { store } from './store.js'
 
 function getCritiqueInstructions(sessionId: string) {
   return `
@@ -515,7 +516,7 @@ git -C ${worktree.mainRepoDirectory} checkout $DEFAULT_BRANCH && git -C ${worktr
 `
       : ''
   }
-${getCritiqueEnabled() ? getCritiqueInstructions(sessionId) : ''}
+${store.getState().critiqueEnabled ? getCritiqueInstructions(sessionId) : ''}
 ${KIMAKI_TUNNEL_INSTRUCTIONS}
 ## markdown formatting
 
