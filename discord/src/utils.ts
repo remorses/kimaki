@@ -11,6 +11,8 @@ type GenerateInstallUrlOptions = {
   scopes?: string[]
   guildId?: string
   disableGuildSelect?: boolean
+  state?: string
+  redirectUri?: string
 }
 
 export function generateBotInstallUrl({
@@ -36,6 +38,8 @@ export function generateBotInstallUrl({
   scopes = ['bot'],
   guildId,
   disableGuildSelect = false,
+  state,
+  redirectUri,
 }: GenerateInstallUrlOptions): string {
   const permissionsBitField = new PermissionsBitField(permissions)
   const permissionsValue = permissionsBitField.bitfield.toString()
@@ -51,6 +55,14 @@ export function generateBotInstallUrl({
 
   if (disableGuildSelect) {
     url.searchParams.set('disable_guild_select', 'true')
+  }
+
+  if (state) {
+    url.searchParams.set('state', state)
+  }
+
+  if (redirectUri) {
+    url.searchParams.set('redirect_uri', redirectUri)
   }
 
   return url.toString()
