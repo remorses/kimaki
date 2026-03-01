@@ -13,7 +13,13 @@ import url from 'node:url'
 import net from 'node:net'
 import { spawn, type ChildProcess } from 'node:child_process'
 import { describe, test, expect, beforeAll, afterAll } from 'vitest'
-import { ChannelType, Client, GatewayIntentBits, Partials } from 'discord.js'
+import {
+  ChannelType,
+  Client,
+  GatewayIntentBits,
+  Partials,
+  Routes,
+} from 'discord.js'
 import { DigitalDiscord } from 'discord-digital-twin'
 import {
   buildDeterministicOpencodeConfig,
@@ -30,6 +36,7 @@ import { setDataDir, setDefaultVerbosity, getDefaultVerbosity } from './config.j
 import type { VerbosityLevel } from './database.js'
 import { startDiscordBot } from './discord-bot.js'
 import { getOpencodeServers } from './opencode.js'
+import { createDiscordRest } from './discord-urls.js'
 
 // --- Constants ---
 
@@ -93,6 +100,16 @@ function createDiscordJsClient({ restUrl }: { restUrl: string }) {
     partials: [Partials.Channel, Partials.Message, Partials.User, Partials.ThreadMember],
     rest: { api: restUrl, version: '10' },
   })
+}
+
+function hasStringId(value: unknown): value is { id: string } {
+  if (typeof value !== 'object' || value === null) {
+    return false
+  }
+  if (!('id' in value)) {
+    return false
+  }
+  return typeof value.id === 'string'
 }
 
 async function cleanupOpencodeServers() {
@@ -489,5 +506,66 @@ describeIf('gateway-proxy e2e', () => {
       expect(ack.acknowledged).toBe(true)
     },
     15_000,
+  )
+
+  test(
+    'REST client operations work through proxy and enforce guild scope',
+    async () => {
+      const previousBaseUrl = process.env['DISCORD_REST_BASE_URL']
+      process.env['DISCORD_REST_BASE_URL'] = `http://127.0.0.1:${proxyPort}`
+
+      try {
+        const botRest = createDiscordRest(discord.botToken)
+        const clientRest = createDiscordRest('client-a:secret-a')
+
+        const posted = await botRest.post(Routes.channelMessages(CHANNEL_1_ID), {
+          body: { content: 'rest-proxy-test-message' },
+        })
+        expect(hasStringId(posted)).toBe(true)
+        if (!hasStringId(posted)) {
+          throw new Error('Expected REST message create response to include id')
+        }
+
+        const thread = await botRest.post(
+          Routes.threads(CHANNEL_1_ID, posted.id),
+          {
+            body: { name: 'rest-proxy-thread' },
+          },
+        )
+        expect(hasStringId(thread)).toBe(true)
+
+        const channel = await botRest.get(Routes.channel(CHANNEL_1_ID))
+        expect(hasStringId(channel)).toBe(true)
+
+        const guildChannels = await clientRest.get(
+          Routes.guildChannels(GUILD_1_ID),
+        )
+        expect(Array.isArray(guildChannels)).toBe(true)
+
+        const forbiddenGuildResponse = await fetch(
+          `http://127.0.0.1:${proxyPort}/api/v10${Routes.guildChannels(GUILD_2_ID)}`,
+          {
+            method: 'GET',
+            headers: {
+              Authorization: 'Bot client-a:secret-a',
+            },
+          },
+        )
+        expect(forbiddenGuildResponse.status).toBe(403)
+
+        const gatewayInfo = await clientRest.get(Routes.gatewayBot())
+        expect(typeof gatewayInfo).toBe('object')
+
+        const me = await clientRest.get(Routes.user('@me'))
+        expect(hasStringId(me)).toBe(true)
+      } finally {
+        if (previousBaseUrl === undefined) {
+          delete process.env['DISCORD_REST_BASE_URL']
+        } else {
+          process.env['DISCORD_REST_BASE_URL'] = previousBaseUrl
+        }
+      }
+    },
+    30_000,
   )
 })

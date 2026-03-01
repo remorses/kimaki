@@ -26,13 +26,3 @@ export class GatewayClientLookupError extends errore.createTaggedError({
   name: 'GatewayClientLookupError',
   message: 'Failed to lookup gateway client $clientId',
 }) {}
-
-export class DiscordProxyFetchError extends errore.createTaggedError({
-  name: 'DiscordProxyFetchError',
-  message: 'Failed to proxy Discord request to $url',
-}) {}
-
-export class GatewayBotResponseDecodeError extends errore.createTaggedError({
-  name: 'GatewayBotResponseDecodeError',
-  message: 'Failed to decode gateway/bot payload from Discord',
-}) {}
