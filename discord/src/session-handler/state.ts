@@ -1,5 +1,11 @@
 // Session handler run-state store and transitions.
 // Centralizes prompt/idle race state so interrupt handling stays consistent.
+//
+// Two API styles are provided:
+// 1. Pure transition functions: `(state: MainRunState) => MainRunState`
+//    Used by the new runtime via `updateRunState(threadId, pureTransition)`.
+// 2. Store-based wrappers: `({ store: MainRunStore }) => void`
+//    Kept for backward compatibility with session-handler.ts until full migration.
 
 import { createStore, type StoreApi } from 'zustand/vanilla'
 
@@ -36,7 +42,7 @@ export type DeferredIdleDecision =
   | 'ignore-before-evidence'
   | 'process'
 
-function initialMainRunState(): MainRunState {
+export function initialMainRunState(): MainRunState {
   return {
     phase: 'waiting-dispatch',
     idleState: 'none',
@@ -54,18 +60,172 @@ export function createMainRunStore(): MainRunStore {
   })
 }
 
-export function beginPromptCycle({ store }: { store: MainRunStore }): void {
-  store.setState((state) => {
+// ── Pure transition functions ────────────────────────────────────
+// Take MainRunState, return new MainRunState. No side effects.
+// Used by updateRunState(threadId, transition) in the runtime.
+
+export function pureBeginPromptCycle(state: MainRunState): MainRunState {
+  return {
+    ...state,
+    phase: 'collecting-baseline',
+    idleState: 'none',
+    baselineAssistantIds: new Set<string>(),
+    currentAssistantMessageId: undefined,
+    eventSeq: 0,
+    evidenceSeq: undefined,
+    deferredIdleSeq: undefined,
+  }
+}
+
+export function pureSetBaselineAssistantIds(
+  state: MainRunState,
+  messageIds: Set<string>,
+): MainRunState {
+  return {
+    ...state,
+    baselineAssistantIds: new Set<string>(messageIds),
+  }
+}
+
+export function pureMarkDispatching(state: MainRunState): MainRunState {
+  return {
+    ...state,
+    phase: 'dispatching',
+  }
+}
+
+export function pureMarkCurrentPromptEvidence(
+  state: MainRunState,
+  messageId: string,
+): MainRunState {
+  const eventSeq = state.eventSeq + 1
+  const canTrackCurrentPrompt =
+    state.phase === 'dispatching' || state.phase === 'prompt-resolved'
+  if (!canTrackCurrentPrompt) {
     return {
       ...state,
-      phase: 'collecting-baseline',
-      idleState: 'none',
-      baselineAssistantIds: new Set<string>(),
-      currentAssistantMessageId: undefined,
-      eventSeq: 0,
-      evidenceSeq: undefined,
-      deferredIdleSeq: undefined,
+      eventSeq,
     }
+  }
+  if (state.baselineAssistantIds.has(messageId)) {
+    return {
+      ...state,
+      eventSeq,
+    }
+  }
+  return {
+    ...state,
+    eventSeq,
+    currentAssistantMessageId: messageId,
+    evidenceSeq: state.evidenceSeq ?? eventSeq,
+  }
+}
+
+/**
+ * Pure version of handleMainSessionIdle.
+ * Returns both the new state and the decision, since the caller needs both.
+ */
+export function pureHandleMainSessionIdle(
+  state: MainRunState,
+): { state: MainRunState; decision: MainSessionIdleDecision } {
+  const idleSeq = state.eventSeq + 1
+
+  if (state.phase !== 'prompt-resolved') {
+    return {
+      state: {
+        ...state,
+        eventSeq: idleSeq,
+        idleState: 'deferred',
+        deferredIdleSeq: idleSeq,
+      },
+      decision: 'deferred',
+    }
+  }
+
+  if (!state.currentAssistantMessageId) {
+    return {
+      state: {
+        ...state,
+        eventSeq: idleSeq,
+      },
+      decision: 'ignore-no-evidence',
+    }
+  }
+
+  return {
+    state: {
+      ...state,
+      eventSeq: idleSeq,
+    },
+    decision: 'process',
+  }
+}
+
+/**
+ * Pure version of markPromptResolvedAndConsumeDeferredIdle.
+ * Returns both the new state and the decision.
+ */
+export function pureMarkPromptResolvedAndConsumeDeferredIdle(
+  state: MainRunState,
+): { state: MainRunState; decision: DeferredIdleDecision } {
+  const nextState: MainRunState = {
+    ...state,
+    phase: 'prompt-resolved',
+  }
+
+  if (state.idleState !== 'deferred') {
+    return { state: nextState, decision: 'none' }
+  }
+
+  const resolvedState: MainRunState = {
+    ...nextState,
+    idleState: 'none',
+    deferredIdleSeq: undefined,
+  }
+
+  if (!state.currentAssistantMessageId) {
+    return { state: resolvedState, decision: 'ignore-no-evidence' }
+  }
+
+  if (
+    typeof state.deferredIdleSeq === 'number' &&
+    typeof state.evidenceSeq === 'number' &&
+    state.deferredIdleSeq <= state.evidenceSeq
+  ) {
+    return { state: resolvedState, decision: 'ignore-before-evidence' }
+  }
+
+  return { state: resolvedState, decision: 'process' }
+}
+
+export function pureMarkFinished(state: MainRunState): MainRunState {
+  return {
+    ...state,
+    phase: 'finished',
+  }
+}
+
+export function pureMarkAborted(state: MainRunState): MainRunState {
+  if (state.phase === 'finished') {
+    return state
+  }
+  return {
+    ...state,
+    phase: 'aborted',
+  }
+}
+
+export function pureHasCurrentPromptEvidence(state: MainRunState): boolean {
+  return Boolean(state.currentAssistantMessageId)
+}
+
+// ── Store-based wrappers (backward compatibility) ────────────────
+// These delegate to the pure functions above. Existing code in
+// session-handler.ts calls these until the full migration is done.
+
+export function beginPromptCycle({ store }: { store: MainRunStore }): void {
+  store.setState((state) => {
+    return pureBeginPromptCycle(state)
   })
 }
 
@@ -77,19 +237,13 @@ export function setBaselineAssistantIds({
   messageIds: Set<string>
 }): void {
   store.setState((state) => {
-    return {
-      ...state,
-      baselineAssistantIds: new Set<string>(messageIds),
-    }
+    return pureSetBaselineAssistantIds(state, messageIds)
   })
 }
 
 export function markDispatching({ store }: { store: MainRunStore }): void {
   store.setState((state) => {
-    return {
-      ...state,
-      phase: 'dispatching',
-    }
+    return pureMarkDispatching(state)
   })
 }
 
@@ -101,27 +255,7 @@ export function markCurrentPromptEvidence({
   messageId: string
 }): void {
   store.setState((state) => {
-    const eventSeq = state.eventSeq + 1
-    const canTrackCurrentPrompt =
-      state.phase === 'dispatching' || state.phase === 'prompt-resolved'
-    if (!canTrackCurrentPrompt) {
-      return {
-        ...state,
-        eventSeq,
-      }
-    }
-    if (state.baselineAssistantIds.has(messageId)) {
-      return {
-        ...state,
-        eventSeq,
-      }
-    }
-    return {
-      ...state,
-      eventSeq,
-      currentAssistantMessageId: messageId,
-      evidenceSeq: state.evidenceSeq ?? eventSeq,
-    }
+    return pureMarkCurrentPromptEvidence(state, messageId)
   })
 }
 
@@ -130,38 +264,10 @@ export function handleMainSessionIdle({
 }: {
   store: MainRunStore
 }): MainSessionIdleDecision {
-  const state = store.getState()
-  const idleSeq = state.eventSeq + 1
-
-  if (state.phase !== 'prompt-resolved') {
-    store.setState((current) => {
-      return {
-        ...current,
-        eventSeq: idleSeq,
-        idleState: 'deferred',
-        deferredIdleSeq: idleSeq,
-      }
-    })
-    return 'deferred'
-  }
-
-  if (!state.currentAssistantMessageId) {
-    store.setState((current) => {
-      return {
-        ...current,
-        eventSeq: idleSeq,
-      }
-    })
-    return 'ignore-no-evidence'
-  }
-
-  store.setState((current) => {
-    return {
-      ...current,
-      eventSeq: idleSeq,
-    }
-  })
-  return 'process'
+  const current = store.getState()
+  const result = pureHandleMainSessionIdle(current)
+  store.setState(result.state)
+  return result.decision
 }
 
 export function markPromptResolvedAndConsumeDeferredIdle({
@@ -169,57 +275,21 @@ export function markPromptResolvedAndConsumeDeferredIdle({
 }: {
   store: MainRunStore
 }): DeferredIdleDecision {
-  const state = store.getState()
-
-  const nextState: MainRunState = {
-    ...state,
-    phase: 'prompt-resolved',
-  }
-
-  if (state.idleState !== 'deferred') {
-    store.setState(nextState)
-    return 'none'
-  }
-
-  nextState.idleState = 'none'
-  nextState.deferredIdleSeq = undefined
-
-  if (!state.currentAssistantMessageId) {
-    store.setState(nextState)
-    return 'ignore-no-evidence'
-  }
-
-  if (
-    typeof state.deferredIdleSeq === 'number' &&
-    typeof state.evidenceSeq === 'number' &&
-    state.deferredIdleSeq <= state.evidenceSeq
-  ) {
-    store.setState(nextState)
-    return 'ignore-before-evidence'
-  }
-
-  store.setState(nextState)
-  return 'process'
+  const current = store.getState()
+  const result = pureMarkPromptResolvedAndConsumeDeferredIdle(current)
+  store.setState(result.state)
+  return result.decision
 }
 
 export function markFinished({ store }: { store: MainRunStore }): void {
   store.setState((state) => {
-    return {
-      ...state,
-      phase: 'finished',
-    }
+    return pureMarkFinished(state)
   })
 }
 
 export function markAborted({ store }: { store: MainRunStore }): void {
   store.setState((state) => {
-    if (state.phase === 'finished') {
-      return state
-    }
-    return {
-      ...state,
-      phase: 'aborted',
-    }
+    return pureMarkAborted(state)
   })
 }
 
@@ -228,5 +298,5 @@ export function hasCurrentPromptEvidence({
 }: {
   store: MainRunStore
 }): boolean {
-  return Boolean(store.getState().currentAssistantMessageId)
+  return pureHasCurrentPromptEvidence(store.getState())
 }

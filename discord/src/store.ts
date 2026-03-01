@@ -11,6 +11,7 @@
 
 import { createStore } from 'zustand/vanilla'
 import type { VerbosityLevel } from './database.js'
+import type { ThreadRunState } from './session-handler/thread-runtime-state.js'
 
 // Registered user commands, populated by registerCommands() in cli.ts.
 // discordName is the sanitized Discord slash command name (without -cmd suffix),
@@ -30,6 +31,9 @@ export type KimakiState = {
   verboseOpencodeServer: boolean
   discordBaseUrl: string
   registeredUserCommands: RegisteredUserCommand[]
+
+  // ── Per-thread runtime state (Phase 1 of event listener migration) ──
+  threads: Map<string, ThreadRunState>
 }
 
 export const store = createStore<KimakiState>(() => ({
@@ -40,4 +44,5 @@ export const store = createStore<KimakiState>(() => ({
   verboseOpencodeServer: false,
   discordBaseUrl: 'https://discord.com',
   registeredUserCommands: [],
+  threads: new Map(),
 }))

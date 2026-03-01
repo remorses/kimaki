@@ -232,61 +232,331 @@ These invariants are required for correctness during migration:
 
 ## 6. Runtime modules to introduce
 
-Create a small runtime package under `discord/src/session-handler/`:
+Extend the existing global store at `discord/src/store.ts` and create runtime
+modules under `discord/src/session-handler/`:
 
-1. `thread-session-runtime.ts`
-   - runtime class/factory
-   - event listener loop
-   - ingress methods
-   - dispatch loop
+1. `discord/src/store.ts` (EXISTING — extend, do not create a new store)
+   - Add `threads: Map<string, ThreadRunState>` to `KimakiState`
+   - This is the single Zustand store for the entire bot. Its header comment
+     already says: "Future phases will move session Maps, server registry, and
+     command pending contexts into this store."
 
-2. `runtime-store.ts`
-   - Zustand state shape
-   - pure transition functions
-   - selectors
+2. `discord/src/session-handler/thread-runtime-state.ts` (NEW)
+   - `ThreadRunState` type definition
+   - Pure transition functions (`updateThread`, `ensureThread`, `removeThread`,
+     `enqueueItem`, `dequeueItem`, blocker transitions, run state transitions)
+   - Derived helpers (`isRunActive`, `canDispatchNext`, `isBusy`, etc.)
+   - All transitions operate on the global `store` from `../store.js`
+   - Read thread state inline: `store.getState().threads.get(threadId)`
 
-3. `runtime-registry.ts`
-   - `Map<threadId, runtime>`
-   - get/create/dispose
+3. `discord/src/session-handler/thread-session-runtime.ts` (NEW)
+   - Runtime class (thin): listener loop, dispatch, event handlers, resource handles
+   - Registry functions (`getRuntime`, `getOrCreateRuntime`, `disposeRuntime`)
 
-4. `runtime-effects.ts` (optional — can inline effects in event handlers)
-   - subscribe reactor that performs Discord/OpenCode side effects
-   - typing timer lifecycle
-   - permission/question/action rendering triggers
-   - NOTE: a separate effects file with `store.subscribe()` is optional.
-     Effects can be called directly from event handlers after state
-     transitions if that is simpler. Only extract to a subscribe reactor
-     if debugging or testability demands it.
-
-5. `runtime-types.ts`
-   - shared types for ingress items, run reason enums, lifecycle enums
+4. `discord/src/session-handler/runtime-types.ts` (NEW)
+   - Shared types: `QueuedMessage`, `IngressOptions`, `RunFinishInfo`
 
 `session-handler.ts` remains public adapter for backward compatibility, but most
 logic moves into runtime modules.
 
+**Why extend the existing store, not create a new one.** The codebase already has
+a centralized Zustand store at `discord/src/store.ts` that holds global bot config.
+Per the zustand-centralized-state pattern: one store is the single source of truth.
+Creating a second store would split state, make cross-domain queries non-atomic,
+and scatter subscribes. Adding `threads` to the existing store keeps everything
+in one place. Read thread state inline with `store.getState().threads.get(threadId)`.
+
 ## 7. Concrete code snippets
 
-### 7.1 Runtime registry shape and API
+### 7.1 Extend existing store.ts with thread runtime state
+
+The codebase already has a centralized Zustand store at `discord/src/store.ts`.
+Extend it — do not create a second store.
 
 ```ts
-// discord/src/session-handler/runtime-registry.ts
-import type { ThreadChannel } from 'discord.js'
-import type { ThreadSessionRuntime } from './thread-session-runtime.js'
+// ── discord/src/store.ts (MODIFY — add threads Map) ──
 
+import { createStore } from 'zustand/vanilla'
+import type { VerbosityLevel } from './database.js'
+import type { ThreadRunState } from './session-handler/thread-runtime-state.js'
+
+export type RegisteredUserCommand = {
+  name: string
+  discordName: string
+  description: string
+}
+
+export type KimakiState = {
+  // ── Existing config state (unchanged) ──
+  dataDir: string | null
+  defaultVerbosity: VerbosityLevel
+  defaultMentionMode: boolean
+  critiqueEnabled: boolean
+  verboseOpencodeServer: boolean
+  discordBaseUrl: string
+  registeredUserCommands: RegisteredUserCommand[]
+
+  // ── NEW: per-thread runtime state ──
+  threads: Map<string, ThreadRunState>
+}
+
+export const store = createStore<KimakiState>(() => ({
+  dataDir: null,
+  defaultVerbosity: 'text-and-essential-tools' as VerbosityLevel,
+  defaultMentionMode: false,
+  critiqueEnabled: true,
+  verboseOpencodeServer: false,
+  discordBaseUrl: 'https://discord.com',
+  registeredUserCommands: [],
+  threads: new Map(),
+}))
+```
+
+```ts
+// ── discord/src/session-handler/thread-runtime-state.ts (NEW) ──
+// Per-thread state type, transition functions, and selectors.
+// All transitions operate on the global store from ../store.js.
+
+import { store } from '../store.js'
+import type { MainRunState } from './state.js'
+import type { QueuedMessage } from './runtime-types.js'
+
+// ── Per-thread state (value inside the Map) ──────────────────────
+
+export type ThreadRunState = {
+  sessionId: string | undefined
+  queueItems: QueuedMessage[]
+  blockers: {
+    permissionCount: number
+    questionCount: number
+    actionButtonsPending: boolean
+    fileUploadPending: boolean
+  }
+  // Run lifecycle state (previously a separate MainRunStore).
+  // Embedded here so one store is the single source of truth.
+  runState: MainRunState
+  // Co-located resource (mutable lifecycle — belongs in store per
+  // zustand skill rule: "mutable resources are state too").
+  runController: AbortController | undefined
+}
+
+// ── Initial state factory ────────────────────────────────────────
+
+export function initialThreadState(): ThreadRunState {
+  return {
+    sessionId: undefined,
+    queueItems: [],
+    blockers: {
+      permissionCount: 0,
+      questionCount: 0,
+      actionButtonsPending: false,
+      fileUploadPending: false,
+    },
+    runState: {
+      phase: 'waiting-dispatch',
+      idleState: 'none',
+      baselineAssistantIds: new Set<string>(),
+      currentAssistantMessageId: undefined,
+      eventSeq: 0,
+      evidenceSeq: undefined,
+      deferredIdleSeq: undefined,
+    },
+    runController: undefined,
+  }
+}
+
+// ── Derived helpers (compute, never store) ───────────────────────
+
+export function isRunActive(t: ThreadRunState): boolean {
+  const phase = t.runState.phase
+  return (
+    phase === 'collecting-baseline' ||
+    phase === 'dispatching' ||
+    phase === 'prompt-resolved'
+  )
+}
+
+export function hasQueue(t: ThreadRunState): boolean {
+  return t.queueItems.length > 0
+}
+
+export function hasBlockers(t: ThreadRunState): boolean {
+  const b = t.blockers
+  return (
+    b.permissionCount > 0 ||
+    b.questionCount > 0 ||
+    b.actionButtonsPending ||
+    b.fileUploadPending
+  )
+}
+
+export function canDispatchNext(t: ThreadRunState): boolean {
+  return (
+    t.sessionId !== undefined &&
+    hasQueue(t) &&
+    !isRunActive(t) &&
+    !hasBlockers(t)
+  )
+}
+
+export function isBusy(t: ThreadRunState): boolean {
+  return isRunActive(t) || hasQueue(t)
+}
+
+// ── Pure transition helpers ──────────────────────────────────────
+// Immutable: produces new Map + new ThreadRunState object each time.
+
+function updateThread(
+  threadId: string,
+  updater: (t: ThreadRunState) => ThreadRunState,
+): void {
+  store.setState((s) => {
+    const existing = s.threads.get(threadId)
+    if (!existing) {
+      return s
+    }
+    const newThreads = new Map(s.threads)
+    newThreads.set(threadId, updater(existing))
+    return { threads: newThreads }
+  })
+}
+
+export function ensureThread(threadId: string): void {
+  if (store.getState().threads.has(threadId)) {
+    return
+  }
+  store.setState((s) => {
+    const newThreads = new Map(s.threads)
+    newThreads.set(threadId, initialThreadState())
+    return { threads: newThreads }
+  })
+}
+
+export function removeThread(threadId: string): void {
+  store.setState((s) => {
+    if (!s.threads.has(threadId)) {
+      return s
+    }
+    const newThreads = new Map(s.threads)
+    newThreads.delete(threadId)
+    return { threads: newThreads }
+  })
+}
+
+export function setSessionId(threadId: string, sessionId: string): void {
+  updateThread(threadId, (t) => ({ ...t, sessionId }))
+}
+
+export function enqueueItem(threadId: string, item: QueuedMessage): void {
+  updateThread(threadId, (t) => ({
+    ...t,
+    queueItems: [...t.queueItems, item],
+  }))
+}
+
+export function dequeueItem(threadId: string): QueuedMessage | undefined {
+  const thread = store.getState().threads.get(threadId)
+  if (!thread || thread.queueItems.length === 0) {
+    return undefined
+  }
+  const [next, ...rest] = thread.queueItems
+  updateThread(threadId, (t) => ({ ...t, queueItems: rest }))
+  return next
+}
+
+export function clearQueueItems(threadId: string): void {
+  updateThread(threadId, (t) => ({ ...t, queueItems: [] }))
+}
+
+export function setRunController(
+  threadId: string,
+  controller: AbortController | undefined,
+): void {
+  updateThread(threadId, (t) => ({ ...t, runController: controller }))
+}
+
+// ── Blocker transitions ──────────────────────────────────────────
+
+export function incrementBlocker(
+  threadId: string,
+  blocker: 'permissionCount' | 'questionCount',
+): void {
+  updateThread(threadId, (t) => ({
+    ...t,
+    blockers: { ...t.blockers, [blocker]: t.blockers[blocker] + 1 },
+  }))
+}
+
+export function decrementBlocker(
+  threadId: string,
+  blocker: 'permissionCount' | 'questionCount',
+): void {
+  updateThread(threadId, (t) => ({
+    ...t,
+    blockers: { ...t.blockers, [blocker]: Math.max(0, t.blockers[blocker] - 1) },
+  }))
+}
+
+export function setBlockerFlag(
+  threadId: string,
+  flag: 'actionButtonsPending' | 'fileUploadPending',
+  value: boolean,
+): void {
+  updateThread(threadId, (t) => ({
+    ...t,
+    blockers: { ...t.blockers, [flag]: value },
+  }))
+}
+
+// ── Run state transitions ────────────────────────────────────────
+
+export function updateRunState(
+  threadId: string,
+  updater: (rs: MainRunState) => MainRunState,
+): void {
+  updateThread(threadId, (t) => ({
+    ...t,
+    runState: updater(t.runState),
+  }))
+}
+
+// ── Queries ──────────────────────────────────────────────────────
+
+export function getThreadState(threadId: string): ThreadRunState | undefined {
+  return store.getState().threads.get(threadId)
+}
+
+export function getThreadIds(): string[] {
+  return [...store.getState().threads.keys()]
+}
+
+```
+
+### 7.2 Runtime class (thin — owns resources, delegates state to global store)
+
+The runtime class does not own any Zustand stores. It holds resource handles
+(listener controller, typing timers, part buffer) and calls transition functions
+that operate on the global `store` from `../store.js`.
+
+```ts
+// discord/src/session-handler/thread-session-runtime.ts (sketch)
+import {
+  ensureThread,
+  removeThread,
+  getThreadState,
+  setRunController,
+  type ThreadRunState,
+} from './thread-runtime-state.js'
+
+// Runtime instances are kept in a plain Map (not Zustand — the Map
+// is not reactive state, just a lookup for resource handles).
 const runtimes = new Map<string, ThreadSessionRuntime>()
 
 export function getRuntime(threadId: string): ThreadSessionRuntime | undefined {
   return runtimes.get(threadId)
 }
 
-export function getOrCreateRuntime({
-  threadId,
-  thread,
-  projectDirectory,
-  sdkDirectory,
-  channelId,
-  appId,
-}: {
+export function getOrCreateRuntime(opts: {
   threadId: string
   thread: ThreadChannel
   projectDirectory: string
@@ -294,19 +564,13 @@ export function getOrCreateRuntime({
   channelId?: string
   appId?: string
 }): ThreadSessionRuntime {
-  const existing = runtimes.get(threadId)
+  const existing = runtimes.get(opts.threadId)
   if (existing) {
     return existing
   }
-  const runtime = new ThreadSessionRuntime({
-    threadId,
-    thread,
-    projectDirectory,
-    sdkDirectory,
-    channelId,
-    appId,
-  })
-  runtimes.set(threadId, runtime)
+  ensureThread(opts.threadId) // add to global store
+  const runtime = new ThreadSessionRuntime(opts)
+  runtimes.set(opts.threadId, runtime)
   return runtime
 }
 
@@ -317,12 +581,9 @@ export function disposeRuntime(threadId: string): void {
   }
   runtime.dispose()
   runtimes.delete(threadId)
+  removeThread(threadId) // remove from global store
 }
 
-/** Dispose runtimes matching directory AND optional channelId scope.
- *  When channelId is provided, only runtimes in that channel are disposed.
- *  This prevents restart-opencode-server in one channel from killing
- *  runtimes in other channels that share the same projectDirectory. */
 export function disposeRuntimesForDirectory({
   directory,
   channelId,
@@ -339,206 +600,41 @@ export function disposeRuntimesForDirectory({
     }
     runtime.dispose()
     runtimes.delete(threadId)
+    removeThread(threadId)
   }
 }
 
-export function getAllRuntimes(): ReadonlyMap<string, ThreadSessionRuntime> {
-  return runtimes
-}
-```
+class ThreadSessionRuntime {
+  readonly threadId: string
+  readonly projectDirectory: string
+  readonly sdkDirectory: string
+  readonly channelId?: string
+  readonly appId?: string
+  readonly thread: ThreadChannel
 
-### 7.2 Per-thread runtime store shape (derived-first)
+  // Resource handles (not in Zustand — operational, not domain state)
+  private listenerController = new AbortController()
+  private typingInterval: NodeJS.Timeout | null = null
+  private typingRestartTimeout: NodeJS.Timeout | null = null
+  private sentPartIds = new Set<string>()
+  private partBuffer = new Map<string, Map<string, Part>>()
+  private subtaskSessions = new Map<string, { label: string }>()
 
-```ts
-// discord/src/session-handler/runtime-store.ts
-import { createStore, type StoreApi } from 'zustand/vanilla'
-import type { QueuedMessage } from './runtime-types.js'
-import type { MainRunState } from './state.js'
-
-// NOTE: MainRunStore (from state.ts) is kept as a SEPARATE runtime field,
-// not embedded in RuntimeState. This avoids adapter glue — existing
-// transition helpers (beginPromptCycle, markDispatching, etc.) require
-// StoreApi<MainRunState> directly.
-//
-// The runtime class holds:
-//   this.store: RuntimeStore      (queue + blockers + sessionId)
-//   this.mainRunStore: MainRunStore  (run lifecycle, reused as-is)
-
-export type RuntimeState = {
-  // Mutable identity needed for event demux.
-  // Set when session is created/discovered, stable across runs.
-  sessionId: string | undefined
-
-  // Ingress backlog — the /queue items.
-  queueItems: QueuedMessage[]
-
-  // Queue blocking policy state — counts of pending interactive prompts.
-  blockers: {
-    permissionCount: number
-    questionCount: number
-    actionButtonsPending: boolean
-    fileUploadPending: boolean
+  // Read own state from global store
+  private get state(): ThreadRunState | undefined {
+    return getThreadState(this.threadId)
   }
-}
 
-export type RuntimeStore = StoreApi<RuntimeState>
-
-// ── Derived selectors (never store these) ────────────────────────
-// These take both stores since run phase lives in MainRunStore.
-
-export function isRunActive(runState: MainRunState): boolean {
-  const phase = runState.phase
-  return (
-    phase === 'collecting-baseline' ||
-    phase === 'dispatching' ||
-    phase === 'prompt-resolved'
-  )
-}
-
-export function hasQueue(state: RuntimeState): boolean {
-  return state.queueItems.length > 0
-}
-
-export function hasBlockers(state: RuntimeState): boolean {
-  const b = state.blockers
-  return (
-    b.permissionCount > 0 ||
-    b.questionCount > 0 ||
-    b.actionButtonsPending ||
-    b.fileUploadPending
-  )
-}
-
-export function canDispatchNext({
-  state,
-  runState,
-}: {
-  state: RuntimeState
-  runState: MainRunState
-}): boolean {
-  return (
-    state.sessionId !== undefined &&
-    hasQueue(state) &&
-    !isRunActive(runState) &&
-    !hasBlockers(state)
-  )
-}
-
-export function isBusy({
-  state,
-  runState,
-}: {
-  state: RuntimeState
-  runState: MainRunState
-}): boolean {
-  return isRunActive(runState) || hasQueue(state)
-}
-
-// ── Store factory ────────────────────────────────────────────────
-
-function initialRuntimeState(): RuntimeState {
-  return {
-    sessionId: undefined,
-    queueItems: [],
-    blockers: {
-      permissionCount: 0,
-      questionCount: 0,
-      actionButtonsPending: false,
-      fileUploadPending: false,
-    },
+  dispose(): void {
+    this.listenerController.abort()
+    this.state?.runController?.abort()
+    setRunController(this.threadId, undefined)
+    this.stopTyping()
   }
-}
 
-export function createRuntimeStore(): RuntimeStore {
-  return createStore<RuntimeState>(() => {
-    return initialRuntimeState()
-  })
-}
-
-// ── Pure transition functions ────────────────────────────────────
-
-export function enqueueItem(
-  store: RuntimeStore,
-  item: QueuedMessage,
-): void {
-  store.setState((s) => {
-    return {
-      ...s,
-      queueItems: [...s.queueItems, item],
-    }
-  })
-}
-
-export function dequeueItem(
-  store: RuntimeStore,
-): QueuedMessage | undefined {
-  const state = store.getState()
-  if (state.queueItems.length === 0) {
-    return undefined
-  }
-  const [next, ...rest] = state.queueItems
-  store.setState((s) => {
-    return { ...s, queueItems: rest }
-  })
-  return next
-}
-
-export function clearQueueItems(store: RuntimeStore): void {
-  store.setState((s) => {
-    return { ...s, queueItems: [] }
-  })
-}
-
-export function setSessionId(
-  store: RuntimeStore,
-  sessionId: string,
-): void {
-  store.setState((s) => {
-    return { ...s, sessionId }
-  })
-}
-
-export function incrementBlocker(
-  store: RuntimeStore,
-  blocker: 'permissionCount' | 'questionCount',
-): void {
-  store.setState((s) => {
-    return {
-      ...s,
-      blockers: {
-        ...s.blockers,
-        [blocker]: s.blockers[blocker] + 1,
-      },
-    }
-  })
-}
-
-export function decrementBlocker(
-  store: RuntimeStore,
-  blocker: 'permissionCount' | 'questionCount',
-): void {
-  store.setState((s) => {
-    return {
-      ...s,
-      blockers: {
-        ...s.blockers,
-        [blocker]: Math.max(0, s.blockers[blocker] - 1),
-      },
-    }
-  })
-}
-
-export function setBlockerFlag(
-  store: RuntimeStore,
-  flag: 'actionButtonsPending' | 'fileUploadPending',
-  value: boolean,
-): void {
-  store.setState((s) => {
-    return {
-      ...s,
-      blockers: { ...s.blockers, [flag]: value },
-    }
-  })
+  // ... event listener loop, dispatch, ingress methods
+  // all call transition functions from thread-runtime-state.ts
+  // like enqueueItem(this.threadId, ...)
 }
 ```
 
@@ -717,7 +813,7 @@ private async processActionQueue(): Promise<void> {
 //   handleOpencodeSession({ prompt, thread, ... })
 //
 // AFTER:
-import { getOrCreateRuntime } from './session-handler/runtime-registry.js'
+import { getOrCreateRuntime } from './session-handler/thread-session-runtime.js'
 
 async function processThreadMessage() {
   const resolved = await resolveWorkingDirectory({ channel: thread })
@@ -747,13 +843,12 @@ async function processThreadMessage() {
 // discord/src/commands/queue.ts — /queue command
 // BEFORE: abortControllers.get(sessionId), addToQueue(...)
 // AFTER:
-import { getRuntime } from '../session-handler/runtime-registry.js'
+import { getRuntime } from '../session-handler/thread-session-runtime.js'
 
 const runtime = getRuntime(thread.id)
 if (!runtime) {
   // No runtime = no active session, start one
-  // ...existing fallback to handleOpencodeSession or
-  //    getOrCreateRuntime + enqueue
+  // ...existing fallback to getOrCreateRuntime + enqueue
 }
 runtime.enqueueIncoming({
   prompt,
@@ -784,7 +879,7 @@ if (runtime) {
 // BEFORE: iterate abortControllers, find matching sessions
 // AFTER:
 import { disposeRuntimesForDirectory } from
-  '../session-handler/runtime-registry.js'
+  '../session-handler/thread-session-runtime.js'
 
 // Pass channelId to scope disposal — don't kill runtimes in other channels
 disposeRuntimesForDirectory({ directory: projectDirectory, channelId })
@@ -798,12 +893,12 @@ await restartOpencodeServer(projectDirectory)
 
 /** Called after run finishes OR after a blocker resolves. */
 private async tryDrainQueue(): Promise<void> {
-  const state = this.store.getState()
-  if (!canDispatchNext(state)) {
+  const thread = getThreadState(this.threadId)
+  if (!thread || !canDispatchNext(thread)) {
     return
   }
 
-  const next = dequeueItem(this.store)
+  const next = dequeueItem(this.threadId)
   if (!next) {
     return
   }
@@ -852,18 +947,17 @@ private onBlockerResolved(): void {
 
 | New file | What goes in it | Extracted from |
 |---|---|---|
-| `discord/src/session-handler/runtime-registry.ts` | Runtime Map, get/create/dispose | new code |
-| `discord/src/session-handler/runtime-store.ts` | RuntimeState, selectors, transitions | new + state.ts concepts |
-| `discord/src/session-handler/thread-session-runtime.ts` | Runtime class: listener loop, dispatch, event handlers | session-handler.ts lines 1186-2382 |
-| `discord/src/session-handler/runtime-effects.ts` | Subscribe reactor: typing, parts, footer, UI triggers | session-handler.ts lines 1234-1370, 2231-2327 |
+| `discord/src/session-handler/thread-runtime-state.ts` | `ThreadRunState` type, transition functions, derived helpers. Operates on global `store` from `../store.js`. | new + state.ts concepts |
+| `discord/src/session-handler/thread-session-runtime.ts` | Runtime class (thin): listener loop, dispatch, event handlers, resource handles. Registry functions (getRuntime, getOrCreateRuntime, disposeRuntime). | session-handler.ts lines 1186-2382 |
 | `discord/src/session-handler/runtime-types.ts` | QueuedMessage, IngressOptions, RunFinishInfo types | session-handler.ts lines 259-268 |
 
 ### Files to MODIFY
 
 | File | What changes | Lines affected |
 |---|---|---|
+| `store.ts` | Add `threads: Map<string, ThreadRunState>` to `KimakiState`. Import `ThreadRunState` from `./session-handler/thread-runtime-state.js`. | Lines 12, 24-33, 35-43 |
 | `session-handler.ts` | Remove: `abortControllers`, `messageQueue`, `activeEventHandlers`, `pendingPermissions` globals. `handleOpencodeSession` becomes thin adapter calling runtime. Keep exported API signatures (`queueOrSendMessage`, `abortAndRetrySession`, `signalThreadInterrupt`) as wrappers over runtime-registry calls. | Lines 86, 213-226, 272-274 (globals), lines 783-2668 (main function) |
-| `session-handler/state.ts` | No changes. `MainRunStore` is reused as-is inside `RuntimeState.runState`. | None |
+| `session-handler/state.ts` | `MainRunState` type reused. Transition functions (`beginPromptCycle`, `markDispatching`, etc.) adapted to work with `updateRunState(threadId, updater)` instead of requiring a `StoreApi<MainRunState>`. Keep as pure functions taking `MainRunState` and returning `MainRunState`. | Function signatures change from `(store: MainRunStore)` to `(state: MainRunState) => MainRunState` |
 | `discord-bot.ts` | Replace `handleOpencodeSession` calls with `getOrCreateRuntime` + `enqueueIncoming`. Remove `signalThreadInterrupt` calls (runtime handles interrupt internally). Keep `threadMessageQueue` as ingress serializer through Phase 3.5. | Lines 468-496 (thread queue), 551-565 (first session), 653-669 (existing session), 833-843 (channel message) |
 | `commands/abort.ts` | Replace `abortControllers.get(sessionId)` with `getRuntime(threadId)?.abortActiveRun()`. | ~5 lines |
 | `commands/queue.ts` | Replace `abortControllers`, `addToQueue`, `getQueueLength`, `clearQueue`, `queueOrSendMessage` with runtime API calls. | ~40 lines |
@@ -883,12 +977,19 @@ exported API surface as thin wrappers.
 
 ## 9. Minimal centralized runtime state
 
-Keep only irreducible state. If a value can be derived from existing state,
-event payloads, or an on-demand API read, do not store it.
+Extend the existing global store at `discord/src/store.ts`. Add a
+`threads: Map<string, ThreadRunState>` field alongside the existing config
+fields. One store, one source of truth for everything.
 
 ```ts
-// RuntimeStore (Zustand) — queue + blockers + sessionId
-type RuntimeState = {
+// discord/src/store.ts — KimakiState (extended)
+type KimakiState = {
+  // ... existing config fields (dataDir, defaultVerbosity, etc.) ...
+  threads: Map<string, ThreadRunState>  // NEW
+}
+
+// Per-thread value inside the Map
+type ThreadRunState = {
   sessionId?: string
   queueItems: QueuedMessage[]
   blockers: {
@@ -897,23 +998,17 @@ type RuntimeState = {
     actionButtonsPending: boolean
     fileUploadPending: boolean
   }
+  runState: MainRunState  // embedded, not separate store
+  runController: AbortController | undefined  // mutable resource = state
 }
-
-// MainRunStore (Zustand, separate) — run lifecycle
-// Reused as-is from state.ts via createMainRunStore().
-// Kept as a separate store field on the runtime class so existing
-// transition helpers (beginPromptCycle, markDispatching, etc.) work
-// without adapter glue.
 ```
 
-### Runtime-owned refs/caches (not in Zustand)
+### Runtime-owned refs/caches (on the class, NOT in Zustand)
 
-Keep non-reactive implementation details as runtime fields (not store state):
+Operational resources that don't drive reactive side effects:
 
 - immutable thread metadata (`threadId`, `projectDirectory`, `sdkDirectory`)
-- `mainRunStore: MainRunStore` (separate Zustand store for run lifecycle)
 - listener abort controller and reconnect backoff counters
-- run abort controller
 - typing interval/restart timeout handles
 - part buffer and dedupe sets (`sentPartIds`, `partBuffer`)
 - transient subtask label/session maps
@@ -922,13 +1017,18 @@ Keep non-reactive implementation details as runtime fields (not store state):
 - `lastDisplayedContextPercentage`, `lastRateLimitDisplayTime` (per-run)
 - early-resolved agent/model snapshots (per-dispatch)
 
-### Derived selectors (do not store)
+### Derived helpers (compute, never store)
 
-- `isRunActive`: derived from `runState.phase`
-- `hasQueue`: `queueItems.length > 0`
-- `hasBlockers`: derived from `blockers`
-- `canDispatchNext`: `sessionId && hasQueue && !isRunActive && !hasBlockers`
-- `isBusy`: `isRunActive || hasQueue`
+- `isRunActive(t)`: derived from `t.runState.phase`
+- `hasQueue(t)`: `t.queueItems.length > 0`
+- `hasBlockers(t)`: derived from `t.blockers`
+- `canDispatchNext(t)`: `t.sessionId && hasQueue && !isRunActive && !hasBlockers`
+- `isBusy(t)`: `isRunActive || hasQueue`
+
+Read thread state inline wherever needed:
+```ts
+const thread = store.getState().threads.get(threadId)
+```
 
 ### Explicitly remove from state model
 
@@ -1057,24 +1157,34 @@ Acceptance criteria:
 - [ ] `pnpm tsc` passes inside `discord/`
 - [ ] existing e2e tests green: `pnpm vitest --run src/thread-message-queue.e2e.test.ts`
 
-### Phase 1 - Runtime skeleton and registry
+### Phase 1 - Extend existing store + runtime skeleton
 
 Files:
 
-- new `@discord/src/session-handler/runtime-registry.ts`
+- `@discord/src/store.ts` (MODIFY — add `threads` field)
+- new `@discord/src/session-handler/thread-runtime-state.ts`
 - new `@discord/src/session-handler/thread-session-runtime.ts`
-- new `@discord/src/session-handler/runtime-store.ts`
 - new `@discord/src/session-handler/runtime-types.ts`
+- `@discord/src/session-handler/state.ts`
 - `@discord/src/session-handler.ts`
 
 Tasks:
 
 - add `runtime-types.ts` first — move `QueuedMessage` type there to avoid
-  coupling runtime-store.ts back to session-handler.ts
-- add runtime get/create registry (code from §7.1)
-- add RuntimeStore with state shape and selectors (code from §7.2)
-- add skeleton ThreadSessionRuntime class with empty method stubs, holding
-  both `store: RuntimeStore` and `mainRunStore: MainRunStore` as fields
+  coupling back to session-handler.ts
+- extend existing `store.ts`:
+  - add `threads: Map<string, ThreadRunState>` to `KimakiState`
+  - import `ThreadRunState` from `./session-handler/thread-runtime-state.js`
+- add `thread-runtime-state.ts` with transition functions and derived helpers
+  — all operating on the global `store`
+  - embed `MainRunState` inside `ThreadRunState` (one store, not two)
+  - co-locate `runController: AbortController | undefined` per thread
+- adapt `state.ts` transition functions to pure form:
+  `(state: MainRunState) => MainRunState` instead of `(store: MainRunStore) => void`
+  so they work with `updateRunState(threadId, updater)`
+- add skeleton ThreadSessionRuntime class with empty method stubs
+- add registry functions (`getRuntime`, `getOrCreateRuntime`, `disposeRuntime`)
+  in `thread-session-runtime.ts`
 - add thin adapter in `handleOpencodeSession` that can route to runtime
 - keep old flow behind compatibility switch while wiring APIs
 - enforce state budget rule: every store field must document why it cannot be
@@ -1083,7 +1193,7 @@ Tasks:
 Acceptance criteria:
 
 - [ ] `pnpm tsc` passes inside `discord/`
-- [ ] `runtime-store.test.ts` covers: enqueue/dequeue, selector derivation,
+- [ ] `thread-runtime-state.test.ts` covers: enqueue/dequeue, derived helpers,
   blocker increment/decrement, canDispatchNext edge cases
 - [ ] no behavior change — old path still used
 
@@ -1092,7 +1202,7 @@ Acceptance criteria:
 Files:
 
 - `@discord/src/session-handler/thread-session-runtime.ts`
-- `@discord/src/session-handler/runtime-store.ts`
+- `@discord/src/session-handler/thread-runtime-state.ts`
 - `@discord/src/session-handler/state.ts` (reuse transition logic)
 
 Tasks:
@@ -1108,12 +1218,13 @@ Tasks:
 
 Key implementation detail — two abort controllers:
 ```ts
-// listenerController: lives for runtime lifetime
-// runController: per-prompt, aborted on interrupt/finish
-this.runController = new AbortController()
+// listenerController: on runtime class instance, lives for runtime lifetime
+// runController: in global store (ThreadRunState.runController), per-prompt
+setRunController(this.threadId, new AbortController())
+const rc = getThreadState(this.threadId)?.runController
 // prompt call passes runController.signal
-await client.session.prompt({...}, { signal: this.runController.signal })
-// event.subscribe passes listenerController.signal
+await client.session.prompt({...}, { signal: rc!.signal })
+// event.subscribe passes listenerController.signal (on class instance)
 await client.event.subscribe({...}, { signal: this.listenerController.signal })
 ```
 
@@ -1276,7 +1387,7 @@ Run during each phase:
 1. `pnpm tsc` (inside `discord/`)
 2. `pnpm vitest --run src/thread-message-queue.e2e.test.ts`
 3. runtime unit tests once added:
-   - `pnpm vitest --run src/session-handler/runtime-store.test.ts`
+   - `pnpm vitest --run src/session-handler/thread-runtime-state.test.ts`
    - `pnpm vitest --run src/session-handler/thread-session-runtime.test.ts`
 
 Key scenarios:

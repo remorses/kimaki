@@ -1,6 +1,12 @@
 // OpenCode session lifecycle manager.
 // Creates, maintains, and sends prompts to OpenCode sessions from Discord threads.
 // Handles streaming events, permissions, abort signals, and message queuing.
+//
+// Migration note: Phase 1 introduces the ThreadSessionRuntime skeleton
+// (thread-session-runtime.ts) and runtime state (thread-runtime-state.ts).
+// This file keeps the old per-message flow. Phase 3 will add a routing
+// adapter here to delegate to the runtime. See:
+//   docs/event-listener-runtime-migration-plan.md
 
 import type {
   Part,
@@ -256,16 +262,10 @@ function buildPermissionDedupeKey({
   return `${directory}::${permission.permission}::${normalizedPatterns.join('|')}`
 }
 
-export type QueuedMessage = {
-  prompt: string
-  userId: string
-  username: string
-  queuedAt: number
-  images?: DiscordFileAttachment[]
-  appId?: string
-  /** If set, uses session.command API instead of session.prompt */
-  command?: { name: string; arguments: string }
-}
+// Re-export QueuedMessage for backward compatibility.
+// New code should import from './session-handler/thread-runtime-state.js' instead.
+export type { QueuedMessage } from './session-handler/thread-runtime-state.js'
+import type { QueuedMessage } from './session-handler/thread-runtime-state.js'
 
 // Queue of messages waiting to be sent after current response finishes
 // Key is threadId, value is array of queued messages
