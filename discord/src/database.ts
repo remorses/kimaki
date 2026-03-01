@@ -4,6 +4,7 @@
 
 import { getPrisma, closePrisma } from './db.js'
 import { getDefaultVerbosity, getDefaultMentionMode } from './config.js'
+import { enableBuiltInModeRouting } from './discord-urls.js'
 import { createLogger, LogPrefix } from './logger.js'
 
 const dbLogger = createLogger(LogPrefix.DB)
@@ -1065,10 +1066,22 @@ export async function setPartMessagesBatch(
 // ============================================================================
 
 /**
- * Get the most recent bot token.
+ * Get the most recent bot token along with its mode info in a single query.
+ * For built-in mode, the token is derived from client_id:client_secret
+ * and REST routing is automatically enabled (idempotent env var set).
+ * This ensures every code path that reads credentials gets correct routing
+ * without needing to call enableBuiltInModeRouting separately.
  */
-export async function getBotToken(): Promise<
-  { app_id: string; token: string } | undefined
+export async function getBotTokenWithMode(): Promise<
+  | {
+      appId: string
+      token: string
+      mode: BotMode
+      clientId: string | null
+      clientSecret: string | null
+      proxyUrl: string | null
+    }
+  | undefined
 > {
   const prisma = await getPrisma()
   const row = await prisma.bot_tokens.findFirst({
@@ -1077,7 +1090,21 @@ export async function getBotToken(): Promise<
   if (!row) {
     return undefined
   }
-  return { app_id: row.app_id, token: row.token }
+  const mode: BotMode = row.bot_mode === 'built-in' ? 'built-in' : 'self-hosted'
+  const token = (mode === 'built-in' && row.client_id && row.client_secret)
+    ? `${row.client_id}:${row.client_secret}`
+    : row.token
+  if (mode === 'built-in' && row.proxy_url) {
+    enableBuiltInModeRouting({ restBaseUrl: row.proxy_url })
+  }
+  return {
+    appId: row.app_id,
+    token,
+    mode,
+    clientId: row.client_id,
+    clientSecret: row.client_secret,
+    proxyUrl: row.proxy_url,
+  }
 }
 
 /**
@@ -1089,6 +1116,39 @@ export async function setBotToken(appId: string, token: string): Promise<void> {
     where: { app_id: appId },
     create: { app_id: appId, token },
     update: { token },
+  })
+}
+
+export type BotMode = 'self-hosted' | 'built-in'
+
+/**
+ * Persist built-in bot mode credentials.
+ * Upserts the row so a prior setBotToken call is not needed.
+ */
+export async function setBotMode({
+  appId,
+  mode,
+  clientId,
+  clientSecret,
+  proxyUrl,
+}: {
+  appId: string
+  mode: BotMode
+  clientId?: string | null
+  clientSecret?: string | null
+  proxyUrl?: string | null
+}): Promise<void> {
+  const prisma = await getPrisma()
+  const data = {
+    bot_mode: mode,
+    client_id: clientId ?? null,
+    client_secret: clientSecret ?? null,
+    proxy_url: proxyUrl ?? null,
+  }
+  await prisma.bot_tokens.upsert({
+    where: { app_id: appId },
+    create: { app_id: appId, token: `${clientId}:${clientSecret}`, ...data },
+    update: data,
   })
 }
 

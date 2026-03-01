@@ -14,6 +14,8 @@ import {
   confirm,
   log,
   multiselect,
+  select,
+  spinner,
 } from '@clack/prompts'
 import {
   deduplicateByKey,
@@ -32,8 +34,9 @@ import {
   type ChannelWithTags,
 } from './discord-bot.js'
 import {
-  getBotToken,
+  getBotTokenWithMode,
   setBotToken,
+  setBotMode,
   setChannelDirectory,
   findChannelsByDirectory,
   findChannelByAppId,
@@ -44,6 +47,7 @@ import {
   listScheduledTasks,
   cancelScheduledTask,
   getSessionStartSourcesBySessionIds,
+  type BotMode,
 } from './database.js'
 import { ShareMarkdown } from './markdown.js'
 import {
@@ -70,7 +74,8 @@ import {
   SlashCommandBuilder,
   AttachmentBuilder,
 } from 'discord.js'
-import { createDiscordRest, discordApiUrl } from './discord-urls.js'
+import { createDiscordRest, discordApiUrl, getGatewayProxyRestBaseUrl } from './discord-urls.js'
+import crypto from 'node:crypto'
 import path from 'node:path'
 import fs from 'node:fs'
 import * as errore from 'errore'
@@ -114,6 +119,23 @@ import {
 
 const cliLogger = createLogger(LogPrefix.CLI)
 
+// Built-in bot mode constants.
+// KIMAKI_SHARED_APP_ID is the Discord Application ID of the shared Kimaki bot.
+// KIMAKI_WEBSITE_URL is the website that handles OAuth callback + onboarding status.
+// KIMAKI_GATEWAY_PROXY_URL is the gateway-proxy base URL.
+// We derive REST base from this URL by swapping ws/wss to http/https.
+// These are hardcoded because they're deploy-time constants for the shared infrastructure.
+const KIMAKI_SHARED_APP_ID = process.env.KIMAKI_SHARED_APP_ID || '1477605701202481173'
+const KIMAKI_WEBSITE_URL =
+  process.env.KIMAKI_WEBSITE_URL || 'https://api.kimaki.xyz'
+const KIMAKI_GATEWAY_PROXY_URL =
+  process.env.KIMAKI_GATEWAY_PROXY_URL ||
+  'wss://kimaki-gateway-production.fly.dev'
+
+const KIMAKI_GATEWAY_PROXY_REST_BASE_URL = getGatewayProxyRestBaseUrl({
+  gatewayUrl: KIMAKI_GATEWAY_PROXY_URL,
+})
+
 // Strip bracketed paste escape sequences from terminal input.
 // iTerm2 and other terminals wrap pasted content with \x1b[200~ and \x1b[201~
 // which can cause validation to fail on macOS. See: https://github.com/remorses/kimaki/issues/18
@@ -131,7 +153,13 @@ function stripBracketedPaste(value: string | undefined): string {
 // Derive the Discord Application ID from a bot token.
 // Discord bot tokens have the format: base64(userId).timestamp.hmac
 // The first segment is the bot's user ID (= Application ID) base64-encoded.
+// For built-in mode tokens (client_id:secret format), this function returns
+// undefined -- the caller should use KIMAKI_SHARED_APP_ID instead.
 function appIdFromToken(token: string): string | undefined {
+  // Built-in mode tokens use "client_id:secret" format, not base64.
+  if (token.includes(':')) {
+    return undefined
+  }
   const segment = token.split('.')[0]
   if (!segment) {
     return undefined
@@ -150,6 +178,8 @@ function appIdFromToken(token: string): string | undefined {
 // Resolve bot token and app ID from env var or database.
 // Used by CLI subcommands (send, project add) that need credentials
 // but don't run the interactive wizard.
+// In built-in mode, also sets DISCORD_REST_BASE_URL so REST calls
+// are routed through the gateway-proxy REST endpoint.
 async function resolveBotCredentials({ appIdOverride }: { appIdOverride?: string } = {}): Promise<{
   token: string
   appId: string | undefined
@@ -162,7 +192,7 @@ async function resolveBotCredentials({ appIdOverride }: { appIdOverride?: string
     return { token: envToken, appId }
   }
 
-  const botRow = await getBotToken().catch((e: unknown) => {
+  const botRow = await getBotTokenWithMode().catch((e: unknown) => {
     cliLogger.error('Database error:', e instanceof Error ? e.message : String(e))
     return null
   })
@@ -170,7 +200,8 @@ async function resolveBotCredentials({ appIdOverride }: { appIdOverride?: string
     cliLogger.error('No bot token found. Set KIMAKI_BOT_TOKEN env var or run `kimaki` first to set up.')
     process.exit(EXIT_NO_RESTART)
   }
-  return { token: botRow.token, appId: appIdOverride || botRow.app_id }
+
+  return { token: botRow.token, appId: appIdOverride || botRow.appId }
 }
 
 function isThreadChannelType(type: number): boolean {
@@ -1148,16 +1179,18 @@ async function run({
 
   // Resolve bot credentials from (in priority order):
   // 1. KIMAKI_BOT_TOKEN env var (headless/CI deployments)
-  // 2. Saved credentials in the database
-  // 3. Interactive setup wizard (first-time users)
-  // App ID is always derived from the token (base64 first segment).
+  // 2. Saved credentials in the database (self-hosted or built-in mode)
+  // 3. Interactive setup wizard (first-time users -- mode selector)
+  // App ID is always derived from the token (base64 first segment),
+  // except in built-in mode where KIMAKI_SHARED_APP_ID is used.
   const { appId, token, isQuickStart } = await (async (): Promise<{
     appId: string
     token: string
     isQuickStart: boolean
   }> => {
     const envToken = process.env.KIMAKI_BOT_TOKEN
-    const existingBot = await getBotToken()
+    // Single query to get token + mode info, avoiding desync from separate queries
+    const existingBot = await getBotTokenWithMode()
 
     // 1. Env var takes precedence (headless deployments)
     if (envToken && !forceSetup) {
@@ -1175,22 +1208,139 @@ async function run({
 
     // 2. Saved credentials in the database
     if (existingBot && !forceSetup) {
+      const modeLabel =
+        existingBot.mode === 'built-in' ? ' (built-in mode)' : ''
       note(
-        `Using saved bot credentials:\nApp ID: ${existingBot.app_id}\n\nTo use different credentials, run with --restart`,
+        `Using saved bot credentials${modeLabel}:\nApp ID: ${existingBot.appId}\n\nTo use different credentials, run with --restart`,
         'Existing Bot Found',
       )
-      note(
-        `Bot install URL (in case you need to add it to another server):\n${generateBotInstallUrl({ clientId: existingBot.app_id })}`,
-        'Install URL',
-      )
-      return { appId: existingBot.app_id, token: existingBot.token, isQuickStart: !addChannels }
+      if (existingBot.mode !== 'built-in') {
+        note(
+          `Bot install URL (in case you need to add it to another server):\n${generateBotInstallUrl({ clientId: existingBot.appId })}`,
+          'Install URL',
+        )
+      }
+      return { appId: existingBot.appId, token: existingBot.token, isQuickStart: !addChannels }
     }
 
-    // 3. Interactive setup wizard
+    // 3. Interactive setup wizard -- first-time users or --restart
     if (forceSetup && existingBot) {
       note('Ignoring saved credentials due to --restart flag', 'Restart Setup')
     }
 
+    // Mode selector: built-in (no setup needed) vs self-hosted (create your own bot)
+    const modeChoice = await select({
+      message: 'How do you want to connect to Discord?',
+      options: [
+        {
+          value: 'built-in' as const,
+          label: 'Built-in Kimaki bot (simple, experimental)',
+          hint: 'Install the shared Kimaki bot to your server',
+        },
+        {
+          value: 'self-hosted' as const,
+          label: 'Self-hosted bot (5-10 minutes setup)',
+          hint: 'Full control: bring your own Discord bot token',
+        },
+      ],
+    })
+    if (isCancel(modeChoice)) {
+      cancel('Setup cancelled')
+      process.exit(0)
+    }
+
+    // ── Built-in mode flow ──
+    if (modeChoice === 'built-in') {
+      if (!KIMAKI_SHARED_APP_ID) {
+        cliLogger.error(
+          'Built-in mode is not available yet. KIMAKI_SHARED_APP_ID is not configured.',
+        )
+        process.exit(EXIT_NO_RESTART)
+      }
+
+      // Generate client credentials
+      const clientId = crypto.randomUUID()
+      const clientSecret = crypto.randomBytes(32).toString('hex')
+
+      // State is a JSON object so the website callback can easily
+      // extract fields without fragile delimiter splitting.
+      const statePayload = JSON.stringify({ clientId, clientSecret })
+      const oauthUrl = generateBotInstallUrl({
+        clientId: KIMAKI_SHARED_APP_ID,
+        state: statePayload,
+        redirectUri: `${KIMAKI_WEBSITE_URL}/oauth/callback`,
+      })
+
+      note(
+        `Opening your browser to install the Kimaki bot...\n\n${oauthUrl}`,
+        'Install Bot',
+      )
+
+      // Open URL in default browser
+      const { exec } = await import('node:child_process')
+      const openCmd =
+        process.platform === 'darwin'
+          ? 'open'
+          : process.platform === 'win32'
+            ? 'start'
+            : 'xdg-open'
+      exec(`${openCmd} "${oauthUrl}"`)
+
+      // Poll for completion
+      const s = spinner()
+      s.start('Waiting for bot authorization...')
+
+      const pollUrl = new URL('/api/onboarding/status', KIMAKI_WEBSITE_URL)
+      pollUrl.searchParams.set('client_id', clientId)
+      pollUrl.searchParams.set('secret', clientSecret)
+
+      let guildId: string | undefined
+      for (let attempt = 0; attempt < 150; attempt++) {
+        // 150 * 2s = 5 minutes timeout
+        await new Promise((resolve) => {
+          setTimeout(resolve, 2000)
+        })
+
+        try {
+          const resp = await fetch(pollUrl.toString())
+          if (resp.ok) {
+            const data = (await resp.json()) as { guild_id?: string }
+            if (data.guild_id) {
+              guildId = data.guild_id
+              break
+            }
+          }
+        } catch {
+          // Network error, retry
+        }
+      }
+
+      if (!guildId) {
+        s.stop('Authorization timed out')
+        cliLogger.error(
+          'Bot authorization timed out after 5 minutes. Please try again.',
+        )
+        process.exit(EXIT_NO_RESTART)
+      }
+
+      s.stop('Bot authorized successfully!')
+
+      await setBotMode({
+        appId: KIMAKI_SHARED_APP_ID,
+        mode: 'built-in',
+        clientId,
+        clientSecret,
+        proxyUrl: KIMAKI_GATEWAY_PROXY_REST_BASE_URL,
+      })
+
+      return {
+        appId: KIMAKI_SHARED_APP_ID,
+        token: `${clientId}:${clientSecret}`,
+        isQuickStart: false,
+      }
+    }
+
+    // ── Self-hosted mode flow (existing wizard) ──
     note(
       '1. Go to https://discord.com/developers/applications\n' +
         '2. Click "New Application"\n' +
@@ -1708,7 +1858,7 @@ cli
 
         if (options.installUrl) {
           await initDatabase()
-          const existingBot = await getBotToken()
+          const existingBot = await getBotTokenWithMode()
 
           if (!existingBot) {
             cliLogger.error(
@@ -1717,7 +1867,7 @@ cli
             process.exit(EXIT_NO_RESTART)
           }
 
-          cliLogger.log(generateBotInstallUrl({ clientId: existingBot.app_id }))
+          cliLogger.log(generateBotInstallUrl({ clientId: existingBot.appId }))
           process.exit(0)
         }
 
@@ -1774,7 +1924,7 @@ cli
         process.exit(EXIT_NO_RESTART)
       }
 
-      const botRow = await getBotToken()
+      const botRow = await getBotTokenWithMode()
 
       if (!botRow) {
         cliLogger.error(
@@ -2724,7 +2874,7 @@ cli
     }
 
     // Fetch Discord channel names via REST API
-    const botRow = await getBotToken()
+    const botRow = await getBotTokenWithMode()
     const rest = botRow ? createDiscordRest(botRow.token) : null
 
     const enriched = await Promise.all(
@@ -2779,13 +2929,13 @@ cli
   .action(async () => {
     await initDatabase()
 
-    const botRow = await getBotToken()
+    const botRow = await getBotTokenWithMode()
     if (!botRow) {
       cliLogger.error('No bot configured. Run `kimaki` first.')
       process.exit(EXIT_NO_RESTART)
     }
 
-    const { app_id: appId, token: botToken } = botRow
+    const { appId, token: botToken } = botRow
     const absolutePath = path.resolve('.')
 
     // Walk up parent directories to find a matching channel
@@ -2880,13 +3030,13 @@ cli
 
     await initDatabase()
 
-    const botRow = await getBotToken()
+    const botRow = await getBotTokenWithMode()
     if (!botRow) {
       cliLogger.error('No bot configured. Run `kimaki` first.')
       process.exit(EXIT_NO_RESTART)
     }
 
-    const { app_id: appId, token: botToken } = botRow
+    const { appId, token: botToken } = botRow
 
     const projectsDir = getProjectsDir()
     const projectDirectory = path.join(projectsDir, sanitizedName)

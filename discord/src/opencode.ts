@@ -16,7 +16,7 @@ import {
   type OpencodeClient,
   type Config as SdkConfig,
 } from '@opencode-ai/sdk/v2'
-import { getBotToken } from './database.js'
+import { getBotTokenWithMode } from './database.js'
 import {
   getDataDir,
   getLockPort,
@@ -295,7 +295,7 @@ export async function initializeOpencodeForDirectory(
   }
 
   // Get bot token for plugin to use Discord API
-  const botTokenFromDb = await getBotToken()
+  const botTokenFromDb = await getBotTokenWithMode()
   const kimakiBotToken = process.env.KIMAKI_BOT_TOKEN || botTokenFromDb?.token
 
   const serveArgs = ['serve', '--port', port.toString()]

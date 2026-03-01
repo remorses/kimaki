@@ -1,8 +1,8 @@
 // GET /oauth/callback -- OAuth completion handler.
-// Receives Discord redirect after user authorizes the bot, decodes the
-// state parameter (base64url-encoded client_id:secret), validates format,
-// inserts client+guild into the gateway_clients table, and renders a
-// React success page telling the user to return to their terminal.
+// Receives Discord redirect after user authorizes the bot, parses the
+// state parameter (URL-encoded JSON with clientId + clientSecret),
+// validates format, inserts client+guild into the gateway_clients table,
+// and renders a React success page telling the user to return to their terminal.
 
 import type { Context } from 'hono'
 import { renderToString } from 'react-dom/server'
@@ -12,44 +12,30 @@ import { prisma } from 'db/src/prisma.js'
 import { SuccessPage } from '../components/success-page.js'
 import {
   GatewayClientUpsertError,
-  InvalidClientCredentialsError,
   InvalidStateFormatError,
   StateDecodeError,
 } from '../errors.js'
 
-// Validate client_id is a UUID and secret is a 64-char hex string
-function validateCredentials(clientId: string, secret: string): boolean {
-  const uuidRegex =
-    /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
-  const hexRegex = /^[0-9a-f]{64}$/i
-  return uuidRegex.test(clientId) && hexRegex.test(secret)
-}
-
+// State is a JSON object: { clientId, clientSecret }
+// URL-encoded by the browser, so we just JSON.parse the raw string.
 function parseCredentialsFromState({ stateParam }: { stateParam: string }) {
-  const decoded = errore.try({
+  const parsed = errore.try({
     try: () => {
-      return Buffer.from(stateParam, 'base64url').toString('utf-8')
+      return JSON.parse(stateParam) as { clientId?: string; clientSecret?: string }
     },
     catch: (cause) => {
       return new StateDecodeError({ cause })
     },
   })
-  if (decoded instanceof Error) {
-    return decoded
+  if (parsed instanceof Error) {
+    return parsed
   }
 
-  const parts = decoded.split(':')
-  if (parts.length !== 2 || !parts[0] || !parts[1]) {
+  if (!parsed.clientId || !parsed.clientSecret) {
     return new InvalidStateFormatError()
   }
 
-  const clientId = parts[0]
-  const secret = parts[1]
-  if (!validateCredentials(clientId, secret)) {
-    return new InvalidClientCredentialsError()
-  }
-
-  return { clientId, secret }
+  return { clientId: parsed.clientId, secret: parsed.clientSecret }
 }
 
 async function upsertGatewayClient({
@@ -95,10 +81,6 @@ export async function handleOAuthCallback(c: Context) {
 
     if (InvalidStateFormatError.is(credentials)) {
       return c.text('Invalid state parameter format', 400)
-    }
-
-    if (InvalidClientCredentialsError.is(credentials)) {
-      return c.text('Invalid client credentials format', 400)
     }
 
     return c.text('Internal server error', 500)

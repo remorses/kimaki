@@ -14,6 +14,10 @@ CREATE TABLE IF NOT EXISTS "part_messages" (
 CREATE TABLE IF NOT EXISTS "bot_tokens" (
     "app_id" TEXT NOT NULL PRIMARY KEY,
     "token" TEXT NOT NULL,
+    "bot_mode" TEXT NOT NULL DEFAULT 'self-hosted',
+    "client_id" TEXT,
+    "client_secret" TEXT,
+    "proxy_url" TEXT,
     "created_at" DATETIME DEFAULT CURRENT_TIMESTAMP
 );
 CREATE TABLE IF NOT EXISTS "channel_directories" (

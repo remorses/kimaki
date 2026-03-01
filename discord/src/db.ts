@@ -159,6 +159,24 @@ async function migrateSchema(prisma: PrismaClient): Promise<void> {
     // Column already exists
   }
 
+  // Migration: add built-in bot mode columns to bot_tokens.
+  // bot_mode distinguishes "self-hosted" (user's own bot) from "built-in" (shared Kimaki bot).
+  // client_id + client_secret are the credentials used for gateway proxy auth.
+  // proxy_url stores the gateway-proxy REST base URL.
+  const botTokenAlters = [
+    "ALTER TABLE bot_tokens ADD COLUMN bot_mode TEXT DEFAULT 'self-hosted'",
+    'ALTER TABLE bot_tokens ADD COLUMN client_id TEXT',
+    'ALTER TABLE bot_tokens ADD COLUMN client_secret TEXT',
+    'ALTER TABLE bot_tokens ADD COLUMN proxy_url TEXT',
+  ]
+  for (const stmt of botTokenAlters) {
+    try {
+      await prisma.$executeRawUnsafe(stmt)
+    } catch {
+      // Column already exists
+    }
+  }
+
   // Migration: move session_thinking data into session_models.variant.
   // session_thinking table is left in place (not dropped) so older kimaki versions
   // that still reference it won't crash on the same database.

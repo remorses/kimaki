@@ -65,7 +65,7 @@ import {
 } from './session-handler.js'
 import { runShellCommand } from './commands/run-command.js'
 import { registerInteractionHandler } from './interaction-handler.js'
-import { DISCORD_REST_API_URL } from './discord-urls.js'
+import { getDiscordRestApiUrl } from './discord-urls.js'
 import { stopHranaServer } from './hrana-server.js'
 import { notifyError } from './sentry.js'
 
@@ -171,6 +171,9 @@ type StartOptions = {
 }
 
 export async function createDiscordClient() {
+  // Read REST API URL lazily so built-in mode can set DISCORD_REST_BASE_URL
+  // env var after module import but before client creation.
+  const restApiUrl = getDiscordRestApiUrl()
   return new Client({
     intents: [
       GatewayIntentBits.Guilds,
@@ -184,7 +187,7 @@ export async function createDiscordClient() {
       Partials.User,
       Partials.ThreadMember,
     ],
-    rest: { api: DISCORD_REST_API_URL },
+    rest: { api: restApiUrl },
   })
 }
 

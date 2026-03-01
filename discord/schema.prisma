@@ -28,9 +28,13 @@ model part_messages {
 }
 
 model bot_tokens {
-  app_id     String    @id
-  token      String
-  created_at DateTime? @default(now())
+  app_id        String    @id
+  token         String
+  bot_mode      String    @default("self-hosted")
+  client_id     String?
+  client_secret String?
+  proxy_url     String?
+  created_at    DateTime? @default(now())
 
   api_keys           bot_api_keys?
   channels           channel_directories[]
