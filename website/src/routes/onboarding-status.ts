@@ -6,26 +6,7 @@
 import type { Context } from 'hono'
 import { createPrisma } from 'db/src/prisma.js'
 import { GatewayClientLookupError } from '../errors.js'
-import type { HonoBindings } from '../index.js'
-
-async function findGatewayClientByCredentials({
-  connectionString,
-  clientId,
-  secret,
-}: {
-  connectionString: string
-  clientId: string
-  secret: string
-}) {
-  const prisma = createPrisma(connectionString)
-  return await prisma.gateway_clients
-    .findFirst({
-      where: { client_id: clientId, secret },
-    })
-    .catch((cause) => {
-      return new GatewayClientLookupError({ clientId, cause })
-    })
-}
+import type { HonoBindings } from '../env.js'
 
 export async function handleOnboardingStatus(c: Context<{ Bindings: HonoBindings }>) {
   const clientId = c.req.query('client_id')
@@ -35,11 +16,14 @@ export async function handleOnboardingStatus(c: Context<{ Bindings: HonoBindings
     return c.json({ error: 'Missing client_id or secret' }, 400)
   }
 
-  const row = await findGatewayClientByCredentials({
-    connectionString: c.env.HYPERDRIVE.connectionString,
-    clientId,
-    secret,
-  })
+  const prisma = createPrisma(c.env.HYPERDRIVE.connectionString)
+  const row = await prisma.gateway_clients
+    .findFirst({
+      where: { client_id: clientId, secret },
+    })
+    .catch((cause) => {
+      return new GatewayClientLookupError({ clientId, cause })
+    })
   if (row instanceof Error) {
     return c.json({ error: 'Internal server error' }, 500)
   }

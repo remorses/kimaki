@@ -8,10 +8,9 @@ import { Hono } from 'hono'
 import { createPrisma } from 'db/src/prisma.js'
 import { handleOAuthCallback } from './routes/oauth-callback.js'
 import { handleOnboardingStatus } from './routes/onboarding-status.js'
+import type { HonoBindings } from './env.js'
 
-export type HonoBindings = {
-  HYPERDRIVE: { connectionString: string }
-}
+export type { HonoBindings }
 
 const app = new Hono<{ Bindings: HonoBindings }>()
 
@@ -28,7 +27,7 @@ app.get('/health', async (c) => {
 })
 
 // OAuth callback -- Discord redirects here after bot authorization
-app.get('/oauth/callback', handleOAuthCallback)
+app.get('/api/auth/callback/discord', handleOAuthCallback)
 
 // CLI polling -- kimaki polls this to check if bot install completed
 app.get('/api/onboarding/status', handleOnboardingStatus)

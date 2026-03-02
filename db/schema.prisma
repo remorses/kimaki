@@ -18,5 +18,25 @@ model gateway_clients {
   guild_id   String // the guild the client installed. it is known thanks to the Discord install url state parameter and callback url
   updated_at DateTime? @default(now()) @db.Timestamptz
 
+  discord_user discord_users? @relation(fields: [client_id], references: [client_id], onDelete: Cascade)
+
   @@id([client_id, guild_id])
+}
+
+// Discord user data collected during OAuth bot install flow.
+// Populated from /users/@me after exchanging the authorization code.
+// Linked to gateway_clients via client_id. Deleting a discord_user
+// cascades to delete all their gateway_clients rows.
+model discord_users {
+  discord_id     String  @id // Discord user snowflake ID
+  client_id      String  @unique // the kimaki client_id that installed the bot
+  username       String // Discord username
+  global_name    String? // Display name, can be null
+  avatar         String? // Avatar hash, used to build avatar URL
+  email          String? // Email address, requires email OAuth scope
+  email_verified Boolean @default(false) // Whether the email is verified on Discord
+  created_at     DateTime @default(now()) @db.Timestamptz
+  updated_at     DateTime @default(now()) @db.Timestamptz
+
+  gateway_clients gateway_clients[]
 }

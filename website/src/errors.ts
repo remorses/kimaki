@@ -21,3 +21,8 @@ export class GatewayClientLookupError extends errore.createTaggedError({
   name: 'GatewayClientLookupError',
   message: 'Failed to lookup gateway client $clientId',
 }) {}
+
+export class DiscordCodeExchangeError extends errore.createTaggedError({
+  name: 'DiscordCodeExchangeError',
+  message: 'Failed to exchange authorization code with Discord: $reason',
+}) {}

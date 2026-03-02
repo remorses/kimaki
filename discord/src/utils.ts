@@ -13,6 +13,7 @@ type GenerateInstallUrlOptions = {
   disableGuildSelect?: boolean
   state?: string
   redirectUri?: string
+  responseType?: string
 }
 
 export function generateBotInstallUrl({
@@ -35,11 +36,12 @@ export function generateBotInstallUrl({
     PermissionsBitField.Flags.ManageEvents,
     PermissionsBitField.Flags.CreateEvents,
   ],
-  scopes = ['bot', 'applications.commands'],
+  scopes = ['bot', 'applications.commands', 'identify', 'email'],
   guildId,
   disableGuildSelect = false,
   state,
   redirectUri,
+  responseType,
 }: GenerateInstallUrlOptions): string {
   const permissionsBitField = new PermissionsBitField(permissions)
   const permissionsValue = permissionsBitField.bitfield.toString()
@@ -63,6 +65,10 @@ export function generateBotInstallUrl({
 
   if (redirectUri) {
     url.searchParams.set('redirect_uri', redirectUri)
+  }
+
+  if (responseType) {
+    url.searchParams.set('response_type', responseType)
   }
 
   return url.toString()

@@ -1267,7 +1267,8 @@ async function run({
       const oauthUrl = generateBotInstallUrl({
         clientId: KIMAKI_SHARED_APP_ID,
         state: statePayload,
-        redirectUri: `${KIMAKI_WEBSITE_URL}/oauth/callback`,
+        redirectUri: `${KIMAKI_WEBSITE_URL}/api/auth/callback/discord`,
+        responseType: 'code',
       })
 
       note(
@@ -1516,7 +1517,8 @@ async function run({
     const installUrl = generateBotInstallUrl({
       clientId: KIMAKI_SHARED_APP_ID,
       state: JSON.stringify({ clientId, clientSecret } satisfies GatewayOAuthState),
-      redirectUri: `${KIMAKI_WEBSITE_URL}/oauth/callback`,
+      redirectUri: `${KIMAKI_WEBSITE_URL}/api/auth/callback/discord`,
+      responseType: 'code',
     })
     cliLogger.error(
       'No Discord servers found. The bot must be installed in at least one server.\n' +
