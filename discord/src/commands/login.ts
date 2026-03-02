@@ -36,6 +36,38 @@ const pendingLoginContexts = new Map<
   }
 >()
 
+// Popularity-ordered provider IDs for the select menu.
+// Discord select menus cap at 25 options, so we show these first,
+// then fill remaining slots with unlisted providers alphabetically.
+// IDs sourced from opencode's provider.list() API (scripts/list-providers.ts).
+const PROVIDER_POPULARITY_ORDER: string[] = [
+  'anthropic',
+  'openai',
+  'google',
+  'github-copilot',
+  'xai',
+  'groq',
+  'deepseek',
+  'mistral',
+  'openrouter',
+  'fireworks-ai',
+  'togetherai',
+  'amazon-bedrock',
+  'azure',
+  'google-vertex',
+  'google-vertex-anthropic',
+  'cohere',
+  'cerebras',
+  'perplexity',
+  'cloudflare-workers-ai',
+  'novita-ai',
+  'huggingface',
+  'deepinfra',
+  'github-models',
+  'lmstudio',
+  'llama',
+]
+
 export type ProviderAuthMethod = {
   type: 'oauth' | 'api'
   label: string
@@ -139,6 +171,34 @@ export async function handleLoginCommand({
       return
     }
 
+    // Sort by hardcoded popularity order, then alphabetically for unlisted ones.
+    // Discord select menus cap at 25, so we show the most popular providers.
+    const options = [...allProviders]
+      .sort((a, b) => {
+        const rankA = PROVIDER_POPULARITY_ORDER.indexOf(a.id)
+        const rankB = PROVIDER_POPULARITY_ORDER.indexOf(b.id)
+        const posA = rankA === -1 ? Infinity : rankA
+        const posB = rankB === -1 ? Infinity : rankB
+        if (posA !== posB) {
+          return posA - posB
+        }
+        return a.name.localeCompare(b.name)
+      })
+      .slice(0, 25)
+      .map((provider) => {
+        const isConnected = connected.includes(provider.id)
+        return {
+          label: `${provider.name}${isConnected ? ' \u2713' : ''}`.slice(
+            0,
+            100,
+          ),
+          value: provider.id,
+          description: isConnected
+            ? 'Connected - select to re-authenticate'
+            : 'Not connected',
+        }
+      })
+
     // Store context with a short hash key to avoid customId length limits
     const context = {
       dir: projectDirectory,
@@ -146,20 +206,6 @@ export async function handleLoginCommand({
     }
     const contextHash = crypto.randomBytes(8).toString('hex')
     pendingLoginContexts.set(contextHash, context)
-
-    const options = [...allProviders]
-      .sort((a, b) => a.name.localeCompare(b.name))
-      .slice(0, 25)
-      .map((provider) => {
-        const isConnected = connected.includes(provider.id)
-        return {
-          label: `${provider.name}${isConnected ? ' ✓' : ''}`.slice(0, 100),
-          value: provider.id,
-          description: isConnected
-            ? 'Connected - select to re-authenticate'
-            : 'Not connected',
-        }
-      })
 
     const selectMenu = new StringSelectMenuBuilder()
       .setCustomId(`login_provider:${contextHash}`)
