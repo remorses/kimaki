@@ -155,7 +155,8 @@ export function disposeRuntimesForDirectory({
 }: {
   directory: string
   channelId?: string
-}): void {
+}): number {
+  let count = 0
   for (const [threadId, runtime] of runtimes) {
     if (runtime.projectDirectory !== directory) {
       continue
@@ -166,7 +167,9 @@ export function disposeRuntimesForDirectory({
     runtime.dispose()
     runtimes.delete(threadId)
     threadState.removeThread(threadId)
+    count++
   }
+  return count
 }
 
 /** Returns number of active runtimes (useful for diagnostics). */
@@ -2332,8 +2335,83 @@ export class ThreadSessionRuntime {
     pendingPermissions.delete(this.thread.id)
   }
 
-  // Phase 4: Retry last user prompt (for model-change flow)
-  // async retryLastUserPrompt(): Promise<void> { }
+  // ── Phase 4: Retry last user prompt (for model-change flow) ──
+
+  /**
+   * Abort the active run and re-send the last user message with the
+   * (now-updated) model preference. Used by /model and /unset-model.
+   * Returns true if a retry was actually dispatched.
+   */
+  async retryLastUserPrompt(): Promise<boolean> {
+    const state = this.state
+    if (!state?.sessionId) {
+      logger.log(`[RETRY] No session for thread ${this.threadId}`)
+      return false
+    }
+
+    const sessionId = state.sessionId
+
+    // 1. Abort active run
+    this.abortActiveRun('model-change')
+
+    // Small delay to let the abort propagate through OpenCode
+    await new Promise<void>((resolve) => {
+      setTimeout(resolve, 300)
+    })
+
+    // 2. Fetch last user message from API
+    const client = getOpencodeClient(this.projectDirectory)
+    if (!client) {
+      logger.log(`[RETRY] No OpenCode client for ${this.projectDirectory}`)
+      return false
+    }
+
+    logger.log(`[RETRY] Fetching last user message for session ${sessionId}`)
+    const messagesResult = await errore.tryAsync(() => {
+      return client.session.messages({
+        sessionID: sessionId,
+        directory: this.sdkDirectory,
+      })
+    })
+    if (messagesResult instanceof Error) {
+      logger.error(`[RETRY] Failed to fetch messages:`, messagesResult)
+      return false
+    }
+
+    const messages = messagesResult.data || []
+    const lastUserMessage = [...messages]
+      .reverse()
+      .find((m) => m.info.role === 'user')
+
+    if (!lastUserMessage) {
+      logger.log(`[RETRY] No user message found in session ${sessionId}`)
+      return false
+    }
+
+    // Extract text and images from parts (skip synthetic parts like branch context)
+    const textPart = lastUserMessage.parts.find(
+      (p) => p.type === 'text' && !('synthetic' in p && p.synthetic),
+    ) as { type: 'text'; text: string } | undefined
+    const prompt = textPart?.text || ''
+    const images = lastUserMessage.parts.filter(
+      (p) => p.type === 'file',
+    ) as DiscordFileAttachment[]
+
+    logger.log(
+      `[RETRY] Re-enqueuing last user prompt for session ${sessionId}`,
+    )
+
+    // 3. Enqueue the retry (non-interrupting since we already aborted)
+    await this.enqueueIncoming({
+      prompt,
+      userId: '',
+      username: '',
+      images,
+      interruptActive: false,
+    })
+
+    return true
+  }
 }
 
 // ── Module-level helpers ──────────────────────────────────────────

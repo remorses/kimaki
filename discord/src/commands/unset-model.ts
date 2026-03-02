@@ -16,7 +16,7 @@ import {
 import { getPrisma } from '../db.js'
 import { initializeOpencodeForDirectory } from '../opencode.js'
 import { resolveTextChannel, getKimakiMetadata } from '../discord-utils.js'
-import { abortAndRetrySession } from '../session-handler.js'
+import { getRuntime } from '../session-handler/thread-session-runtime.js'
 import { getCurrentModelInfo } from './model.js'
 import { createLogger, LogPrefix } from '../logger.js'
 
@@ -168,14 +168,10 @@ export async function handleUnsetModelCommand({
   // Check if there's a running request and abort+retry with new model (only for session changes in threads)
   let retried = false
   if (isThread && clearedType === 'session' && sessionId) {
-    const thread = channel as ThreadChannel
-    retried = await abortAndRetrySession({
-      sessionId,
-      thread,
-      projectDirectory,
-      appId: effectiveAppId,
-      channelId: targetChannelId,
-    })
+    const runtime = getRuntime(channel.id)
+    if (runtime) {
+      retried = await runtime.retryLastUserPrompt()
+    }
   }
 
   const clearedTypeText = clearedType === 'session' ? 'Session' : 'Channel'

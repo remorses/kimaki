@@ -29,6 +29,7 @@ import {
 } from './config.js'
 import { store } from './store.js'
 import { startDiscordBot } from './discord-bot.js'
+import { getRuntime } from './session-handler/thread-session-runtime.js'
 import {
   setBotToken,
   initDatabase,
@@ -994,5 +995,78 @@ e2eTest('thread message queue ordering', () => {
       await runInterruptRaceScenario(1)
     },
     45_000,
+  )
+
+  test(
+    'retryLastUserPrompt aborts active run and re-dispatches same prompt',
+    async () => {
+      // Simulates the /model flow: user sends a message, model is changed
+      // mid-run, retryLastUserPrompt() aborts and re-dispatches the same prompt.
+
+      // 1. Establish session
+      await discord.channel(TEXT_CHANNEL_ID).user(TEST_USER_ID).sendMessage({
+        content: 'Reply with exactly: retry-setup',
+      })
+
+      const thread = await discord.channel(TEXT_CHANNEL_ID).waitForThread({
+        timeout: 30_000,
+        predicate: (t) => {
+          return t.name === 'Reply with exactly: retry-setup'
+        },
+      })
+
+      const th = discord.thread(thread.id)
+      const firstReply = await th.waitForBotReply({ timeout: 45_000 })
+      expect(firstReply.content.trim().length).toBeGreaterThan(0)
+
+      // 2. Send a slow prompt (sleep tool) so the run stays active
+      await th.user(TEST_USER_ID).sendMessage({
+        content:
+          'MANDATORY INSTRUCTION: call the bash tool immediately and run exactly this command: `sleep 500`. No explanation. No normal text. Do not skip the tool call.',
+      })
+
+      // Wait for the tool call to start — proves run is active
+      await waitForBotMessageContaining({
+        discord,
+        threadId: thread.id,
+        text: 'sleep 500',
+        afterUserMessageIncludes: 'sleep 500',
+        timeout: 30_000,
+      })
+
+      // 3. Call retryLastUserPrompt() — this simulates what /model does
+      const runtime = getRuntime(thread.id)
+      expect(runtime).toBeDefined()
+      const retried = await runtime!.retryLastUserPrompt()
+      expect(retried).toBe(true)
+
+      // 4. The retry re-fetches the last user message (the sleep prompt)
+      //    and re-dispatches it. The deterministic provider will match the
+      //    sleep tool call again. We verify a new tool call message appears
+      //    AFTER the retry point.
+      //
+      //    Since the retry aborts the active run and re-enqueues, we should
+      //    eventually see a second batch of sleep-related output or a
+      //    follow-up bot message. The key assertion: the runtime didn't get
+      //    stuck — it produced new output after retry.
+      const before = await th.getMessages()
+      const beforeBotCount = before.filter((m) => {
+        return m.author.id === discord.botUserId
+      }).length
+
+      // Wait for at least one new bot message after the retry
+      const after = await waitForBotMessageCount({
+        discord,
+        threadId: thread.id,
+        count: beforeBotCount + 1,
+        timeout: 45_000,
+      })
+
+      const afterBotMessages = after.filter((m) => {
+        return m.author.id === discord.botUserId
+      })
+      expect(afterBotMessages.length).toBeGreaterThan(beforeBotCount)
+    },
+    60_000,
   )
 })

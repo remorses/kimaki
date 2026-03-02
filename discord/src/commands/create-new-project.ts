@@ -8,7 +8,7 @@ import { execSync } from 'node:child_process'
 import type { CommandContext } from './types.js'
 import { getProjectsDir } from '../config.js'
 import { createProjectChannels } from '../channel-management.js'
-import { handleOpencodeSession } from '../session-handler.js'
+import { getOrCreateRuntime } from '../session-handler/thread-session-runtime.js'
 import { SILENT_MESSAGE_FLAGS } from '../discord-utils.js'
 import { createLogger, LogPrefix } from '../logger.js'
 
@@ -160,13 +160,21 @@ export async function handleCreateNewProjectCommand({
     // Add user to thread so it appears in their sidebar
     await thread.members.add(command.user.id)
 
-    await handleOpencodeSession({
-      prompt:
-        'The project was just initialized. Say hi and ask what the user wants to build.',
+    const runtime = getOrCreateRuntime({
+      threadId: thread.id,
       thread,
       projectDirectory,
+      sdkDirectory: projectDirectory,
       channelId: textChannel.id,
       appId,
+    })
+    await runtime.enqueueIncoming({
+      prompt:
+        'The project was just initialized. Say hi and ask what the user wants to build.',
+      userId: command.user.id,
+      username: command.user.displayName,
+      appId,
+      interruptActive: true,
     })
 
     logger.log(`Created new project ${channelName} at ${projectDirectory}`)

@@ -7,7 +7,7 @@ import type { CommandContext, AutocompleteContext } from './types.js'
 import { getChannelDirectory } from '../database.js'
 import { initializeOpencodeForDirectory } from '../opencode.js'
 import { SILENT_MESSAGE_FLAGS } from '../discord-utils.js'
-import { handleOpencodeSession } from '../session-handler.js'
+import { getOrCreateRuntime } from '../session-handler/thread-session-runtime.js'
 import { createLogger, LogPrefix } from '../logger.js'
 import * as errore from 'errore'
 
@@ -85,13 +85,21 @@ export async function handleSessionCommand({
 
     await command.editReply(`Created new session in ${thread.toString()}`)
 
-    await handleOpencodeSession({
-      prompt: fullPrompt,
+    const runtime = getOrCreateRuntime({
+      threadId: thread.id,
       thread,
       projectDirectory,
+      sdkDirectory: projectDirectory,
       channelId: textChannel.id,
+      appId,
+    })
+    await runtime.enqueueIncoming({
+      prompt: fullPrompt,
+      userId: command.user.id,
+      username: command.user.displayName,
       agent,
       appId,
+      interruptActive: true,
     })
   } catch (error) {
     logger.error('[SESSION] Error:', error)
