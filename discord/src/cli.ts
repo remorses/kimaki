@@ -126,7 +126,7 @@ const KIMAKI_WEBSITE_URL =
   process.env.KIMAKI_WEBSITE_URL || 'https://api.kimaki.xyz'
 const KIMAKI_GATEWAY_PROXY_URL =
   process.env.KIMAKI_GATEWAY_PROXY_URL ||
-  'wss://kimaki-gateway-production.fly.dev'
+  'wss://discord-gateway.kimaki.xyz'
 
 const KIMAKI_GATEWAY_PROXY_REST_BASE_URL = getGatewayProxyRestBaseUrl({
   gatewayUrl: KIMAKI_GATEWAY_PROXY_URL,
@@ -479,6 +479,7 @@ type CliOptions = {
   dataDir?: string
   useWorktrees?: boolean
   enableVoiceChannels?: boolean
+  gateway?: boolean
 }
 
 // Commands to skip when registering user commands (reserved names)
@@ -1108,10 +1109,12 @@ async function run({
   addChannels,
   useWorktrees,
   enableVoiceChannels,
+  gateway,
 }: CliOptions) {
   startCaffeinate()
 
   const forceSetup = Boolean(restart)
+  const forceGateway = Boolean(gateway)
 
   // Step 0: Ensure required CLI tools are installed (OpenCode + Bun)
   await ensureCommandAvailable({
@@ -1165,17 +1168,18 @@ async function run({
   // 3. Interactive setup wizard (first-time users -- mode selector)
   // App ID is always derived from the token (base64 first segment),
   // except in built-in mode where KIMAKI_SHARED_APP_ID is used.
-  const { appId, token, isQuickStart } = await (async (): Promise<{
+  const { appId, token, isQuickStart, isGatewayMode } = await (async (): Promise<{
     appId: string
     token: string
     isQuickStart: boolean
+    isGatewayMode: boolean
   }> => {
     const envToken = process.env.KIMAKI_BOT_TOKEN
     // Single query to get token + mode info, avoiding desync from separate queries
     const existingBot = await getBotTokenWithMode()
 
     // 1. Env var takes precedence (headless deployments)
-    if (envToken && !forceSetup) {
+    if (envToken && !forceSetup && !forceGateway) {
       const derivedAppId = appIdFromToken(envToken)
       if (!derivedAppId) {
         cliLogger.error(
@@ -1185,11 +1189,15 @@ async function run({
       }
       await setBotToken(derivedAppId, envToken)
       cliLogger.log(`Using KIMAKI_BOT_TOKEN env var (App ID: ${derivedAppId})`)
-      return { appId: derivedAppId, token: envToken, isQuickStart: !addChannels }
+      return { appId: derivedAppId, token: envToken, isQuickStart: !addChannels, isGatewayMode: false }
     }
 
     // 2. Saved credentials in the database
-    if (existingBot && !forceSetup) {
+    // Reuse saved creds unless: --restart forces re-setup, or --gateway
+    // overrides saved self-hosted creds (saved built-in creds are still used).
+    const canReuseSavedCreds = existingBot && !forceSetup
+      && !(forceGateway && existingBot.mode !== 'built-in')
+    if (canReuseSavedCreds) {
       const modeLabel =
         existingBot.mode === 'built-in' ? ' (built-in mode)' : ''
       note(
@@ -1202,34 +1210,45 @@ async function run({
           'Install URL',
         )
       }
-      return { appId: existingBot.appId, token: existingBot.token, isQuickStart: !addChannels }
+      return { appId: existingBot.appId, token: existingBot.token, isQuickStart: !addChannels, isGatewayMode: existingBot.mode === 'built-in' }
     }
 
-    // 3. Interactive setup wizard -- first-time users or --restart
-    if (forceSetup && existingBot) {
+    // 3. Explain why saved credentials are being skipped, then enter
+    //    interactive setup wizard (first-time users, --restart, or --gateway override).
+    if (existingBot && forceGateway && existingBot.mode !== 'built-in') {
+      note(
+        'Ignoring saved self-hosted credentials due to --gateway flag.\nSwitching to built-in (gateway) mode.',
+        'Gateway Mode',
+      )
+    } else if (forceSetup && existingBot) {
       note('Ignoring saved credentials due to --restart flag', 'Restart Setup')
     }
 
-    // Mode selector: built-in (no setup needed) vs self-hosted (create your own bot)
-    const modeChoice = await select({
-      message: 'How do you want to connect to Discord?',
-      options: [
-        {
-          value: 'built-in' as const,
-          label: 'Built-in Kimaki bot (simple, experimental)',
-          hint: 'Install the shared Kimaki bot to your server',
-        },
-        {
-          value: 'self-hosted' as const,
-          label: 'Self-hosted bot (5-10 minutes setup)',
-          hint: 'Full control: bring your own Discord bot token',
-        },
-      ],
-    })
-    if (isCancel(modeChoice)) {
-      cancel('Setup cancelled')
-      process.exit(0)
-    }
+    // When --gateway is passed, skip the mode selector and go straight to built-in mode.
+    const modeChoice: 'built-in' | 'self-hosted' = forceGateway
+      ? 'built-in'
+      : await (async () => {
+          const choice = await select({
+            message: 'How do you want to connect to Discord?',
+            options: [
+              {
+                value: 'built-in' as const,
+                label: 'Built-in Kimaki bot (simple, experimental)',
+                hint: 'Install the shared Kimaki bot to your server',
+              },
+              {
+                value: 'self-hosted' as const,
+                label: 'Self-hosted bot (5-10 minutes setup)',
+                hint: 'Full control: bring your own Discord bot token',
+              },
+            ],
+          })
+          if (isCancel(choice)) {
+            cancel('Setup cancelled')
+            process.exit(0)
+          }
+          return choice
+        })()
 
     // ── Built-in mode flow ──
     if (modeChoice === 'built-in') {
@@ -1319,6 +1338,7 @@ async function run({
         appId: KIMAKI_SHARED_APP_ID,
         token: `${clientId}:${clientSecret}`,
         isQuickStart: false,
+        isGatewayMode: true,
       }
     }
 
@@ -1397,7 +1417,7 @@ async function run({
       process.exit(0)
     }
 
-    return { appId: derivedAppId, token: wizardToken, isQuickStart: false }
+    return { appId: derivedAppId, token: wizardToken, isQuickStart: false, isGatewayMode: false }
   })()
 
   const shouldAddChannels =
@@ -1466,6 +1486,28 @@ async function run({
     process.exit(EXIT_NO_RESTART)
   }
   await setBotToken(appId, token)
+
+  // In gateway (built-in) mode the bot only sees guilds the user has installed
+  // it in. Zero guilds means the install URL callback never completed or the
+  // user removed the bot from all servers — there is nothing the bot can do.
+  if (isGatewayMode && guilds.length === 0) {
+    // Rebuild the install URL from the current credentials so the user can
+    // add the bot to a server without going through the full --restart flow.
+    const [clientId, clientSecret] = token.split(':')
+    const statePayload = JSON.stringify({ clientId, clientSecret })
+    const installUrl = generateBotInstallUrl({
+      clientId: KIMAKI_SHARED_APP_ID,
+      state: statePayload,
+      redirectUri: `${KIMAKI_WEBSITE_URL}/oauth/callback`,
+    })
+    cliLogger.error(
+      'No Discord servers found. The bot must be installed in at least one server.\n' +
+        `Install URL: ${installUrl}\n` +
+        'Open the URL above to add the bot to a server, then run kimaki again.',
+    )
+    discordClient.destroy()
+    process.exit(EXIT_NO_RESTART)
+  }
 
   // Quick start: start the bot first, then defer channel sync/role reconciliation.
   if (isQuickStart) {
@@ -1764,6 +1806,10 @@ cli
     'Forward OpenCode server stdout/stderr to kimaki.log',
   )
   .option('--no-sentry', 'Disable Sentry error reporting')
+  .option(
+    '--gateway',
+    'Force built-in gateway mode (use the shared Kimaki bot instead of a self-hosted bot)',
+  )
   .action(
     async (options: {
       restart?: boolean
@@ -1778,6 +1824,7 @@ cli
       autoRestart?: boolean
       verboseOpencodeServer?: boolean
       noSentry?: boolean
+      gateway?: boolean
     }) => {
       try {
         // Set data directory early, before any database access
@@ -1861,6 +1908,7 @@ cli
           dataDir: options.dataDir,
           useWorktrees: options.useWorktrees,
           enableVoiceChannels: options.enableVoiceChannels,
+          gateway: options.gateway,
         })
       } catch (error) {
         cliLogger.error('Unhandled error:', formatErrorWithStack(error))
