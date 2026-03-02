@@ -198,6 +198,23 @@ function delay(ms: number): Promise<void> {
   })
 }
 
+type TokenUsage = {
+  input: number
+  output: number
+  reasoning: number
+  cache: { read: number; write: number }
+}
+
+function getTokenTotal(tokens: TokenUsage): number {
+  return (
+    tokens.input +
+    tokens.output +
+    tokens.reasoning +
+    tokens.cache.read +
+    tokens.cache.write
+  )
+}
+
 /** Check if a tool part is "essential" (shown in text-and-essential-tools mode). */
 function isEssentialToolName(toolName: string): boolean {
   const essentialTools = [
@@ -900,12 +917,7 @@ export class ThreadSessionRuntime {
     this.updateRun((r) => {
       let tokensUsed = r.tokensUsed
       if ('tokens' in msg && msg.tokens) {
-        const newTokensTotal =
-          msg.tokens.input +
-          msg.tokens.output +
-          msg.tokens.reasoning +
-          msg.tokens.cache.read +
-          msg.tokens.cache.write
+        const newTokensTotal = getTokenTotal(msg.tokens)
         if (newTokensTotal > 0) {
           tokensUsed = newTokensTotal
         }
@@ -1257,13 +1269,19 @@ export class ThreadSessionRuntime {
         )
         return
       }
+      if (result.decision === 'ignore-inactive-phase') {
+        logger.log(
+          `[SESSION IDLE] decision=ignore-inactive-phase sessionId=${sessionId} runState=${this.formatRunStateForLog(result.state)}`,
+        )
+        return
+      }
 
       // decision === 'process' — run finished.
       // finishRun marks finished, flushes parts, emits footer, drains queue.
       logger.log(
         `[SESSION IDLE] decision=process sessionId=${sessionId} runState=${this.formatRunStateForLog(result.state)}`,
       )
-      await this.finishRun()
+      await this.finishRun({ expectedRunId: this.run?.runId })
       return
     }
 
@@ -1939,8 +1957,10 @@ export class ThreadSessionRuntime {
     // Initialize currentRun in the store (replaces resetPerRunState + dispatchStartTime)
     threadState.updateThread(this.threadId, (t) => ({
       ...t,
-      currentRun: threadState.initialCurrentRunInfo(),
+      lastRunId: t.lastRunId + 1,
+      currentRun: threadState.initialCurrentRunInfo({ runId: t.lastRunId + 1 }),
     }))
+    const dispatchRunId = this.run?.runId
 
     // ── Ensure session ────────────────────────────────────────
     const sessionResult = await this.ensureSession({
@@ -2329,7 +2349,7 @@ export class ThreadSessionRuntime {
         )
         // Run finishRun through action queue to serialize with events
         await this.dispatchAction(() => {
-          return this.finishRun()
+          return this.finishRun({ expectedRunId: dispatchRunId })
         })
       } else if (result.decision === 'ignore-no-evidence') {
         logger.log(
@@ -2453,7 +2473,17 @@ export class ThreadSessionRuntime {
    * Called when session.idle decision is 'process' — the run finished.
    * Marks finished, flushes parts, emits footer, drains queue.
    */
-  private async finishRun(): Promise<void> {
+  private async finishRun({ expectedRunId }: { expectedRunId?: number } = {}): Promise<void> {
+    if (typeof expectedRunId === 'number') {
+      const activeRunId = this.run?.runId
+      if (activeRunId !== expectedRunId) {
+        logger.log(
+          `[FINISH] Skip stale finish (expectedRunId=${expectedRunId}, activeRunId=${String(activeRunId)})`,
+        )
+        return
+      }
+    }
+
     // Guard against double-finish
     const currentPhase = this.state?.runState.phase
     if (currentPhase === 'finished' || currentPhase === 'aborted') {
@@ -2491,10 +2521,11 @@ export class ThreadSessionRuntime {
    */
   private async emitFooter(): Promise<void> {
     const run = this.run
-    const sessionDuration = prettyMilliseconds(
-      Date.now() - (run?.dispatchStartTime ?? Date.now()),
-      { secondsDecimalDigits: 0 },
-    )
+    const elapsedMs = Date.now() - (run?.dispatchStartTime ?? Date.now())
+    const sessionDuration =
+      elapsedMs < 1000
+        ? '<1s'
+        : prettyMilliseconds(elapsedMs, { secondsDecimalDigits: 0 })
     const modelInfo = run?.model ? ` ⋅ ${run.model}` : ''
     const agentInfo =
       run?.agent && run.agent.toLowerCase() !== 'build'
@@ -2540,21 +2571,16 @@ export class ThreadSessionRuntime {
           const lastAssistant = [...messages]
             .reverse()
             .find((m) => {
-              return m.info.role === 'assistant'
+              if (m.info.role !== 'assistant') {
+                return false
+              }
+              if (!('tokens' in m.info) || !m.info.tokens) {
+                return false
+              }
+              return getTokenTotal(m.info.tokens) > 0
             })
           if (lastAssistant && 'tokens' in lastAssistant.info) {
-            const tokens = lastAssistant.info.tokens as {
-              input: number
-              output: number
-              reasoning: number
-              cache: { read: number; write: number }
-            }
-            tokensUsed =
-              tokens.input +
-              tokens.output +
-              tokens.reasoning +
-              tokens.cache.read +
-              tokens.cache.write
+            tokensUsed = getTokenTotal(lastAssistant.info.tokens)
             this.updateRun((r) => ({ ...r, tokensUsed }))
           }
         }

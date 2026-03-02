@@ -3,6 +3,9 @@
 //
 // Pure transition functions: `(state: MainRunState) => MainRunState`
 // Used by the runtime via `updateRunState(threadId, pureTransition)`.
+//
+// STATE DISCIPLINE: keep as little state as possible. Before adding any new
+// state field, ask if it can be derived from existing state instead.
 
 export type MainRunPhase =
   | 'waiting-dispatch'
@@ -73,6 +76,7 @@ export type MainRunState = {
 export type MainSessionIdleDecision =
   | 'deferred'
   | 'ignore-no-evidence'
+  | 'ignore-inactive-phase'
   | 'process'
 
 export type DeferredIdleDecision =
@@ -161,6 +165,17 @@ export function pureMarkCurrentPromptEvidence(
 export function pureHandleMainSessionIdle(
   state: MainRunState,
 ): { state: MainRunState; decision: MainSessionIdleDecision } {
+  if (
+    state.phase === 'waiting-dispatch' ||
+    state.phase === 'finished' ||
+    state.phase === 'aborted'
+  ) {
+    return {
+      state,
+      decision: 'ignore-inactive-phase',
+    }
+  }
+
   const idleSeq = state.eventSeq + 1
 
   if (state.phase !== 'prompt-resolved') {
@@ -251,4 +266,3 @@ export function pureMarkAborted(state: MainRunState): MainRunState {
 export function pureHasCurrentPromptEvidence(state: MainRunState): boolean {
   return Boolean(state.currentAssistantMessageId)
 }
-

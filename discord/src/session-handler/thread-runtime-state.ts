@@ -7,6 +7,9 @@
 //
 // Derived helpers (isRunActive, canDispatchNext, etc.) compute from state
 // and are never stored — they are always re-derived from ThreadRunState.
+//
+// STATE DISCIPLINE: keep as little state as possible. Before adding any new
+// state field, ask if it can be derived from existing state instead.
 
 import type { DiscordFileAttachment } from '../message-formatting.js'
 import { store } from '../store.js'
@@ -72,6 +75,10 @@ export type CurrentRunInfo = {
   // Date.now() when dispatchPrompt() started this run. Used to calculate
   // the duration shown in the run footer (e.g. "42s").
   dispatchStartTime: number
+  // Monotonic per-thread run identifier. Incremented for every dispatch.
+  // Used to ignore stale finish/footer work from older runs that race
+  // with abort + redispatch paths.
+  runId: number
   // UI throttle: last context-window percentage shown to the user.
   // Prevents spamming context warnings on every token update — only shows
   // a new warning when percentage crosses a threshold since the last display.
@@ -90,13 +97,14 @@ export type CurrentRunInfo = {
   agentSpawnCounts: Record<string, number>
 }
 
-export function initialCurrentRunInfo(): CurrentRunInfo {
+export function initialCurrentRunInfo({ runId }: { runId: number }): CurrentRunInfo {
   return {
     model: undefined,
     providerID: undefined,
     agent: undefined,
     tokensUsed: 0,
     dispatchStartTime: Date.now(),
+    runId,
     lastDisplayedContextPercentage: 0,
     lastRateLimitDisplayTime: 0,
     subtaskSessions: new Map(),
@@ -115,6 +123,11 @@ export type ThreadRunState = {
   // invalid and a new one is created. Never cleared except on dispose.
   // Read by: dispatchPrompt, ensureSession, abortSessionViaApi, footer.
   sessionId: string | undefined
+
+  // Monotonic counter for run cycles in this thread.
+  // Incremented right before each new dispatch, then copied into
+  // currentRun.runId. This guards against stale finish/footer tasks.
+  lastRunId: number
 
   // FIFO queue of pending user messages waiting to be dispatched.
   // Messages are enqueued by enqueueIncoming() and dequeued one at a time
@@ -168,7 +181,8 @@ export type ThreadRunState = {
 
   // Per-run metadata, present while a prompt is in-flight or was recently
   // active. Holds model/agent info, token counts, timing, subtask tracking.
-  // Changes: set to initialCurrentRunInfo() on dispatch, cleared (undefined)
+  // Changes: set to initialCurrentRunInfo({ runId }) on dispatch, cleared
+  // (undefined)
   // by resetPerRunState() in finishRun(). NOT cleared on abort — it lingers
   // until the next successful finishRun() or until the runtime is disposed.
   currentRun: CurrentRunInfo | undefined
@@ -188,6 +202,7 @@ export type ThreadRunState = {
 export function initialThreadState(): ThreadRunState {
   return {
     sessionId: undefined,
+    lastRunId: 0,
     queueItems: [],
     blockers: {
       permissionCount: 0,
