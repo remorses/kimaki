@@ -15,12 +15,58 @@ export type MainRunPhase =
 export type MainIdleState = 'none' | 'deferred'
 
 export type MainRunState = {
+  // The current lifecycle phase of the prompt run. Transitions:
+  //   waiting-dispatch → collecting-baseline → dispatching → prompt-resolved → finished
+  //   aborted can be reached from any phase except finished.
+  // "collecting-baseline" fetches existing assistant message IDs before dispatch
+  // so the event handler can distinguish old messages from new ones.
+  // "dispatching" means the SDK call (session.prompt) is in-flight.
+  // "prompt-resolved" means the SDK call returned but session.idle hasn't arrived yet.
+  // Changes: on every phase transition via pure transition functions.
+  // Read by: isRunActive(), canDispatchNext(), event handlers, finishRun.
   phase: MainRunPhase
+
+  // Handles the race between session.idle (SSE event) and the SDK call returning.
+  // If session.idle arrives while phase is not yet 'prompt-resolved' (e.g. still
+  // 'dispatching' or 'collecting-baseline'), it can't be processed yet, so idleState
+  // is set to 'deferred'. When the SDK call returns and phase transitions to
+  // 'prompt-resolved', the deferred idle is consumed.
+  // Changes: set to 'deferred' by pureHandleMainSessionIdle, cleared to 'none' on consume.
+  // Read by: pureMarkPromptResolvedAndConsumeDeferredIdle.
   idleState: MainIdleState
+
+  // Set of assistant message IDs that existed BEFORE the current prompt was dispatched.
+  // Populated during 'collecting-baseline' phase by fetching the session's messages.
+  // Used to filter out old parts in the SSE stream — only parts from NEW messages
+  // (not in this set) are treated as evidence of the current prompt's response.
+  // Changes: set once during collecting-baseline, cleared on next pureBeginPromptCycle.
   baselineAssistantIds: Set<string>
+
+  // The OpenCode assistant message ID for the current prompt's response.
+  // Set when the first non-baseline assistant message update arrives
+  // (pureMarkCurrentPromptEvidence called from the message event handler).
+  // Used to: (a) confirm that the prompt produced output, (b) route parts to the
+  // correct Discord message, (c) gate session.idle processing (no evidence = ignore idle).
+  // Changes: set on first evidence message, cleared on next pureBeginPromptCycle.
   currentAssistantMessageId: string | undefined
+
+  // Monotonically incrementing counter for ordering SSE events within a run.
+  // Incremented by pureMarkCurrentPromptEvidence (message update path) and
+  // pureHandleMainSessionIdle (idle path). Used to determine whether a
+  // deferred idle arrived before or after the first evidence message.
+  // Changes: incremented on message-update evidence and idle events.
   eventSeq: number
+
+  // The eventSeq value when the first evidence (new assistant message) was seen.
+  // undefined until evidence arrives. Used to filter stale deferred idles:
+  // if deferredIdleSeq <= evidenceSeq, the idle arrived before any output
+  // and is ignored (the model will send another idle when truly done).
+  // Changes: set once on first evidence, cleared on next pureBeginPromptCycle.
   evidenceSeq: number | undefined
+
+  // The eventSeq value when a deferred idle was recorded (idleState='deferred').
+  // Compared against evidenceSeq to decide if the deferred idle is stale.
+  // Changes: set when idle is deferred, cleared when consumed or on reset.
   deferredIdleSeq: number | undefined
 }
 

@@ -15,18 +15,34 @@ import type { MainRunState } from './state.js'
 // ── Shared types ─────────────────────────────────────────────────
 
 export type QueuedMessage = {
+  // The text content to send to the OpenCode session (user message or
+  // transcribed voice message). Always present.
   prompt: string
+  // Discord user ID of the message author. Used for permission checks
+  // and attribution in the session start source tracking.
   userId: string
+  // Discord display name. Used in runtime drain logging.
   username: string
+  // Date.now() when this message was enqueued. Written but not currently
+  // read — available for future queue position display or staleness checks.
   queuedAt: number
+  // Image/file attachments extracted from the Discord message. Sent as
+  // file parts alongside the prompt in the SDK call.
   images?: DiscordFileAttachment[]
+  // Bot application ID. Used for model-preference resolution fallback
+  // (looking up channel/session model overrides keyed by appId).
   appId?: string
-  /** If set, uses session.command API instead of session.prompt */
+  // When set, dispatches via session.command() instead of session.prompt().
+  // Used by /queue-command and user-defined slash commands.
   command?: { name: string; arguments: string }
-  // First-dispatch-only overrides (used when creating a new session).
+  // First-dispatch-only overrides — used when creating a new session.
   // Subsequent queue drains ignore these since the session already exists.
+  // Set by --agent/--model flags on kimaki send or slash commands.
   agent?: string
   model?: string
+  // Tracking fields for scheduled tasks. Stored in the DB via
+  // setSessionStartSource() after the session is created, so the session
+  // list can show which sessions were started by scheduled tasks.
   sessionStartScheduleKind?: 'at' | 'cron'
   sessionStartScheduledTaskId?: number
 }
@@ -39,16 +55,38 @@ export type SubtaskInfo = {
 }
 
 export type CurrentRunInfo = {
+  // Model ID. May be set early before dispatch (from model preferences)
+  // and updated from SDK session.updated or message events during the run.
+  // Used in the run footer display.
   model: string | undefined
+  // Provider ID (e.g. "anthropic", "openai"). May be set early before
+  // dispatch and updated from SDK events. Used alongside model for the
+  // run footer display.
   providerID: string | undefined
+  // Agent name (e.g. "build", "plan") resolved from SDK events.
+  // Used in the run footer and session preference tracking.
   agent: string | undefined
+  // Accumulated input+output token count for this run, updated on each
+  // message event. Displayed in the run footer and context-usage warnings.
   tokensUsed: number
+  // Date.now() when dispatchPrompt() started this run. Used to calculate
+  // the duration shown in the run footer (e.g. "42s").
   dispatchStartTime: number
-  // UI throttle state (per-run, reset on each dispatch)
+  // UI throttle: last context-window percentage shown to the user.
+  // Prevents spamming context warnings on every token update — only shows
+  // a new warning when percentage crosses a threshold since the last display.
   lastDisplayedContextPercentage: number
+  // UI throttle: Date.now() of the last rate-limit message shown.
+  // Prevents spamming "rate limited, retrying..." messages — shows at
+  // most once per 10s window.
   lastRateLimitDisplayTime: number
-  // Subtask routing: child sessionId → label + message tracking
+  // Subtask routing: maps child sessionId → label + Discord message ID.
+  // When the AI spawns a Task agent, the child session events are routed
+  // to a separate Discord message. Populated from task tool part metadata
+  // (part.state.metadata.sessionId) when a task tool call is detected.
   subtaskSessions: Map<string, SubtaskInfo>
+  // Counts how many times each agent type was spawned in this run.
+  // Used to generate unique subtask labels (e.g. "explore #2", "oracle #3").
   agentSpawnCounts: Record<string, number>
 }
 
@@ -69,31 +107,79 @@ export function initialCurrentRunInfo(): CurrentRunInfo {
 // ── Per-thread state (value inside the Map) ──────────────────────
 
 export type ThreadRunState = {
+  // OpenCode session ID for this thread. Set lazily by ensureSession()
+  // on first dispatch (not on thread creation). Persists across multiple
+  // prompt runs — the same session is reused for the thread's lifetime.
+  // Also stored in the DB (thread_sessions table) for recovery after restart.
+  // Changes: set on first dispatch, may be re-set if the old session is
+  // invalid and a new one is created. Never cleared except on dispose.
+  // Read by: dispatchPrompt, ensureSession, abortSessionViaApi, footer.
   sessionId: string | undefined
+
+  // FIFO queue of pending user messages waiting to be dispatched.
+  // Messages are enqueued by enqueueIncoming() and dequeued one at a time
+  // by tryDrainQueue() → dequeueItem(). Only one message runs at a time;
+  // the rest wait until the current run finishes or is aborted.
+  // Changes: enqueueItem (append), dequeueItem (head removal), clearQueueItems.
+  // Read by: canDispatchNext, hasQueue, /queue command display.
   queueItems: QueuedMessage[]
+
+  // Blockers prevent the queue from draining while the user is being
+  // asked an interactive question. canDispatchNext() returns false if
+  // any blocker is nonzero. Each blocker maps to a specific Discord UI:
   blockers: {
+    // Number of pending permission dialogs (Accept/Deny buttons) in this
+    // thread. Incremented when showPermissionButtons sends a message,
+    // decremented when the user clicks or when auto-rejected on interrupt.
     permissionCount: number
+    // Number of pending AskUserQuestion dropdowns in this thread.
+    // Incremented when dropdowns are shown, decremented when all answered
+    // or cancelled on interrupt (answered with the user's typed message).
     questionCount: number
+    // True while action buttons (from kimaki_action_buttons tool) are
+    // shown and awaiting the user's click. Set false on click or cancel.
     actionButtonsPending: boolean
+    // True while a file upload modal (from kimaki_file_upload tool) is
+    // shown and awaiting the user's submission. Set false on submit or cancel.
     fileUploadPending: boolean
   }
-  // Run lifecycle state (previously a separate MainRunStore).
-  // Embedded here so one store is the single source of truth.
+
+  // Run lifecycle phase state machine. Tracks the prompt/idle race
+  // condition and determines when a run is "active" vs "finished".
+  // See state.ts for the phase diagram and pure transition functions.
+  // Changes: on every phase transition (begin, dispatch, resolve, finish, abort).
+  // Read by: isRunActive, canDispatchNext, finishRun, event handlers.
   runState: MainRunState
-  // Per-prompt abort controller. Kept in store so any code with a
-  // threadId can abort without needing a runtime instance reference
-  // (e.g. /abort command just does getThreadState(id)?.runController?.abort()).
+
+  // Per-prompt abort controller. Created at the start of each dispatchPrompt()
+  // and aborted when: (a) user sends a new message (interrupt), (b) /abort
+  // command, or (c) run finishes normally. Kept in store so any code with
+  // a threadId can abort without needing the runtime class instance
+  // (e.g. /abort just calls getThreadState(id)?.runController?.abort()).
+  // Changes: set on dispatch, cleared (undefined) on abort or finish.
   runController: AbortController | undefined
-  // Listener lifetime controller — only aborted on dispose or fatal error.
-  // Run abort never kills the listener. Kept in store so lifecycle is
-  // observable without needing the runtime class instance.
+
+  // Listener lifetime controller — scoped to the entire runtime lifetime,
+  // NOT per-prompt. Only aborted on dispose() or fatal error. Run abort
+  // never kills the listener — the SSE event loop stays alive across runs
+  // so subsequent prompts reuse the same listener.
+  // Changes: created in constructor, aborted only on dispose.
   listenerController: AbortController | undefined
-  // Per-run state, present when a prompt is in-flight.
-  // undefined when no run is active (waiting-dispatch/finished/aborted).
+
+  // Per-run metadata, present while a prompt is in-flight or was recently
+  // active. Holds model/agent info, token counts, timing, subtask tracking.
+  // Changes: set to initialCurrentRunInfo() on dispatch, cleared (undefined)
+  // by resetPerRunState() in finishRun(). NOT cleared on abort — it lingers
+  // until the next successful finishRun() or until the runtime is disposed.
   currentRun: CurrentRunInfo | undefined
-  // Output dedup: tracks which part IDs have been sent to Discord.
+
+  // Output dedup: tracks which part IDs have already been sent to Discord.
+  // Prevents resending the same tool output or text part on SSE reconnect.
   // Lives at thread level (not in currentRun) because it accumulates
-  // across runs for the lifetime of the runtime — never reset per-run.
+  // across runs for the runtime's lifetime — never reset per-run.
+  // Changes: bootstrapped from DB on session resume, added on each part
+  // sent to Discord, removed on send failure, also updated in subtask flows.
+  // Read by: handleMainPart() dedup check, subtask routing.
   sentPartIds: Set<string>
 }
 
