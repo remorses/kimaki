@@ -2,5 +2,11 @@
   "name": "kimaki-website",
   "main": "src/index.tsx",
   "compatibility_flags": ["nodejs_compat"],
-  "compatibility_date": "2025-04-01"
+  "compatibility_date": "2025-04-01",
+  "routes": [
+    {
+      "pattern": "kimaki.xyz/*",
+      "zone_name": "kimaki.xyz"
+    }
+  ]
 }

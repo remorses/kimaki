@@ -1,0 +1,15 @@
+{
+  "name": "db",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "devDependencies": {
+    "prisma": "7.4.2"
+  },
+  "dependencies": {
+    "@prisma/adapter-pg": "7.4.2",
+    "@prisma/client": "7.4.2",
+    "@types/pg": "^8.18.0",
+    "pg": "^8.19.0"
+  }
+}
