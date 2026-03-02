@@ -40,7 +40,13 @@ import {
 } from './database.js'
 import { startHranaServer, stopHranaServer } from './hrana-server.js'
 import { initializeOpencodeForDirectory } from './opencode.js'
-import { cleanupOpencodeServers, cleanupTestSessions } from './test-utils.js'
+import {
+  cleanupOpencodeServers,
+  cleanupTestSessions,
+  waitForBotMessageCount,
+  waitForBotReplyAfterUserMessage,
+  waitForBotMessageContaining,
+} from './test-utils.js'
 import { getLogEntryCount, getLogEntriesSince } from './logger.js'
 
 const e2eTest = describe
@@ -204,125 +210,6 @@ function createDeterministicMatchers() {
     toolFollowupMatcher,
     userReplyMatcher,
   ]
-}
-
-/** Poll getMessages until we see at least `count` bot messages. */
-async function waitForBotMessageCount({
-  discord,
-  threadId,
-  count,
-  timeout,
-}: {
-  discord: DigitalDiscord
-  threadId: string
-  count: number
-  timeout: number
-}) {
-  const start = Date.now()
-  while (Date.now() - start < timeout) {
-    const messages = await discord.thread(threadId).getMessages()
-    const botMessages = messages.filter((m) => {
-      return m.author.id === discord.botUserId
-    })
-    if (botMessages.length >= count) {
-      return messages
-    }
-    await new Promise((r) => {
-      setTimeout(r, 100)
-    })
-  }
-  throw new Error(
-    `Timed out waiting for ${count} bot messages in thread ${threadId}`,
-  )
-}
-
-async function waitForBotReplyAfterUserMessage({
-  discord,
-  threadId,
-  userMessageIncludes,
-  timeout,
-}: {
-  discord: DigitalDiscord
-  threadId: string
-  userMessageIncludes: string
-  timeout: number
-}) {
-  const start = Date.now()
-  while (Date.now() - start < timeout) {
-    const messages = await discord.thread(threadId).getMessages()
-    const userMessageIndex = messages.findIndex((message) => {
-      return (
-        message.author.id === TEST_USER_ID &&
-        message.content.includes(userMessageIncludes)
-      )
-    })
-    const botReplyIndex = messages.findIndex((message, index) => {
-      return index > userMessageIndex && message.author.id === discord.botUserId
-    })
-    if (userMessageIndex >= 0 && botReplyIndex >= 0) {
-      return messages
-    }
-    await new Promise((resolve) => {
-      setTimeout(resolve, 100)
-    })
-  }
-  throw new Error(
-    `Timed out waiting for bot reply after user message containing "${userMessageIncludes}" in thread ${threadId}`,
-  )
-}
-
-async function waitForBotMessageContaining({
-  discord,
-  threadId,
-  text,
-  afterUserMessageIncludes,
-  timeout,
-}: {
-  discord: DigitalDiscord
-  threadId: string
-  text: string
-  afterUserMessageIncludes?: string
-  timeout: number
-}) {
-  const start = Date.now()
-  let lastMessages: APIMessage[] = []
-  while (Date.now() - start < timeout) {
-    const messages = await discord.thread(threadId).getMessages()
-    lastMessages = messages
-    const afterIndex = afterUserMessageIncludes
-      ? messages.findIndex((message) => {
-          return (
-            message.author.id === TEST_USER_ID &&
-            message.content.includes(afterUserMessageIncludes)
-          )
-        })
-      : -1
-    const match = messages.find((message, index) => {
-      if (afterUserMessageIncludes && afterIndex >= 0 && index <= afterIndex) {
-        return false
-      }
-      return (
-        message.author.id === discord.botUserId &&
-        message.content.includes(text)
-      )
-    })
-    if (match) {
-      return messages
-    }
-    await new Promise((resolve) => {
-      setTimeout(resolve, 100)
-    })
-  }
-  const recent = lastMessages
-    .slice(-12)
-    .map((message) => {
-      const role = message.author.id === discord.botUserId ? 'bot' : 'user'
-      return `${role}: ${message.content.slice(0, 120)}`
-    })
-    .join('\n')
-  throw new Error(
-    `Timed out waiting for bot message containing "${text}" in thread ${threadId}. Recent messages:\n${recent}`,
-  )
 }
 
 const TEST_USER_ID = '200000000000000777'
@@ -699,6 +586,7 @@ e2eTest('thread message queue ordering', () => {
       const after = await waitForBotReplyAfterUserMessage({
         discord,
         threadId: thread.id,
+        userId: TEST_USER_ID,
         userMessageIncludes: 'foxtrot',
         timeout: 4_000,
       })
@@ -773,6 +661,7 @@ e2eTest('thread message queue ordering', () => {
       const after = await waitForBotReplyAfterUserMessage({
         discord,
         threadId: thread.id,
+        userId: TEST_USER_ID,
         userMessageIncludes: 'india',
         timeout: 4_000,
       })
@@ -841,6 +730,7 @@ e2eTest('thread message queue ordering', () => {
       const afterBurst = await waitForBotReplyAfterUserMessage({
         discord,
         threadId: thread.id,
+        userId: TEST_USER_ID,
         userMessageIncludes: 'mike',
         timeout: 4_000,
       })
@@ -860,6 +750,7 @@ e2eTest('thread message queue ordering', () => {
       const afterE = await waitForBotReplyAfterUserMessage({
         discord,
         threadId: thread.id,
+        userId: TEST_USER_ID,
         userMessageIncludes: 'november',
         timeout: 4_000,
       })
@@ -922,6 +813,7 @@ e2eTest('thread message queue ordering', () => {
       await waitForBotMessageContaining({
         discord,
         threadId: thread.id,
+        userId: TEST_USER_ID,
         text: 'sleep 500',
         afterUserMessageIncludes: 'sleep 500',
         timeout: 4_000,
@@ -936,6 +828,7 @@ e2eTest('thread message queue ordering', () => {
       const after = await waitForBotReplyAfterUserMessage({
         discord,
         threadId: thread.id,
+        userId: TEST_USER_ID,
         userMessageIncludes: 'papa',
         timeout: 4_000,
       })
@@ -996,6 +889,7 @@ e2eTest('thread message queue ordering', () => {
     await waitForBotMessageContaining({
       discord,
       threadId: thread.id,
+      userId: TEST_USER_ID,
       text: 'sleep 500',
       afterUserMessageIncludes: 'sleep 500',
       timeout: 4_000,
@@ -1008,6 +902,7 @@ e2eTest('thread message queue ordering', () => {
     await waitForBotMessageContaining({
       discord,
       threadId: thread.id,
+      userId: TEST_USER_ID,
       text: 'race-final',
       afterUserMessageIncludes: raceFinalPrompt,
       timeout: 4_000,
@@ -1054,6 +949,7 @@ e2eTest('thread message queue ordering', () => {
       await waitForBotMessageContaining({
         discord,
         threadId: thread.id,
+        userId: TEST_USER_ID,
         text: 'sleep 500',
         afterUserMessageIncludes: 'sleep 500',
         timeout: 4_000,
@@ -1124,6 +1020,7 @@ e2eTest('thread message queue ordering', () => {
       await waitForBotMessageContaining({
         discord,
         threadId: thread.id,
+        userId: TEST_USER_ID,
         text: 'sleep 500',
         afterUserMessageIncludes: 'sleep 500',
         timeout: 4_000,
@@ -1146,6 +1043,7 @@ e2eTest('thread message queue ordering', () => {
       await waitForBotMessageContaining({
         discord,
         threadId: thread.id,
+        userId: TEST_USER_ID,
         text: '*project',
         afterUserMessageIncludes: 'sleep 500',
         timeout: 4_000,
@@ -1180,6 +1078,7 @@ e2eTest('thread message queue ordering', () => {
       await waitForBotMessageContaining({
         discord,
         threadId: thread.id,
+        userId: TEST_USER_ID,
         text: 'sleep 500',
         afterUserMessageIncludes: 'sleep 500',
         timeout: 4_000,

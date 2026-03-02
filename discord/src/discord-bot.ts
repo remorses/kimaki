@@ -60,7 +60,7 @@ import {
 import { getCompactSessionContext, getLastSessionId } from './markdown.js'
 import {
   type SessionStartSourceContext,
-} from './session-handler.js'
+} from './session-handler/model-utils.js'
 import {
   getOrCreateRuntime,
 } from './session-handler/thread-session-runtime.js'
@@ -118,10 +118,7 @@ setGlobalDispatcher(
 const discordLogger = createLogger(LogPrefix.DISCORD)
 const voiceLogger = createLogger(LogPrefix.VOICE)
 
-// Per-thread serial queue so messages (voice + text) in the same thread are
-// processed one at a time in arrival order. Without this, a slow voice
-// transcription can finish after a fast text message and abort its session.
-const threadMessageQueue = new Map<string, Promise<void>>()
+
 
 function parseEmbedFooterMarker<T extends Record<string, unknown>>({
   footer,
@@ -460,27 +457,13 @@ export async function startDiscordBot({
           }
         }
 
-        // Chain onto per-thread queue so messages (voice transcription + text)
-        // are processed in Discord arrival order, not completion order.
         const hasVoiceAttachment = message.attachments.some((a) => {
           return a.contentType?.startsWith('audio/')
         })
 
-        const prev = threadMessageQueue.get(thread.id)
-
-        // signalThreadInterrupt removed — the runtime's enqueueIncoming
-        // with interruptActive: true handles abort internally.
-        const task = (prev || Promise.resolve()).then(
-          () => { return processThreadMessage() },
-          () => { return processThreadMessage() },
-        )
-        threadMessageQueue.set(thread.id, task)
-        void task.finally(() => {
-          if (threadMessageQueue.get(thread.id) === task) {
-            threadMessageQueue.delete(thread.id)
-          }
-        })
-        await task
+        // The runtime's enqueueIncoming handles per-thread serialization
+        // internally via its action queue — no outer threadMessageQueue needed.
+        await processThreadMessage()
         return
 
         async function processThreadMessage() {

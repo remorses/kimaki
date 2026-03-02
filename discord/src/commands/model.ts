@@ -26,7 +26,7 @@ import {
 } from '../database.js'
 import { initializeOpencodeForDirectory } from '../opencode.js'
 import { resolveTextChannel, getKimakiMetadata } from '../discord-utils.js'
-import { getDefaultModel } from '../session-handler.js'
+import { getDefaultModel } from '../session-handler/model-utils.js'
 import { getRuntime } from '../session-handler/thread-session-runtime.js'
 import { getThinkingValuesForModel } from '../thinking-utils.js'
 import { createLogger, LogPrefix } from '../logger.js'

@@ -456,8 +456,8 @@ type ProcessVoiceAttachmentArgs = {
   lastSessionContext?: string
 }
 
-// Per-thread serialization is handled by threadMessageQueue in discord-bot.ts,
-// so this function no longer needs its own queue.
+// Per-thread serialization is handled by ThreadSessionRuntime.enqueueIncoming()
+// via the runtime action queue; no local serialization is needed here.
 export async function processVoiceAttachment({
   message,
   thread,

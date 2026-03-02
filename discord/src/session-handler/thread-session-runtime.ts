@@ -2,12 +2,9 @@
 // Owns resource handles (listener controller, typing timers, part buffer).
 // Delegates all state to the global store via thread-runtime-state.ts transitions.
 //
-// Phase 1: skeleton with registry functions.
-// Phase 2: long-lived event listener loop, session demux guard, serialized
-//   action queue, two-controller abort model, and event handler stubs
-//   extracted from session-handler.ts eventHandler closure.
-//   The old handleOpencodeSession path is NOT wired through this yet —
-//   Phase 3 will route ingress through the runtime.
+// This is the sole session orchestrator. Discord handlers and slash commands
+// call runtime APIs (enqueueIncoming, abortActiveRun, etc.) without inspecting
+// run internals. The old per-message handleOpencodeSession was removed in Phase 5.
 
 import { ChannelType, type ThreadChannel } from 'discord.js'
 import type {
@@ -85,10 +82,26 @@ import {
   type AgentInfo,
   type WorktreeInfo,
 } from '../system-message.js'
-import {
-  pendingPermissions,
-  resolveValidatedAgentPreference,
-} from '../session-handler.js'
+import { resolveValidatedAgentPreference } from './agent-utils.js'
+
+// Track multiple pending permissions per thread (keyed by permission ID).
+// OpenCode handles blocking/sequencing — we just need to track all pending
+// permissions to avoid duplicates and properly clean up on auto-reject.
+// Moved from session-handler.ts in Phase 5: the runtime is the sole owner.
+export const pendingPermissions = new Map<
+  string, // threadId
+  Map<
+    string,
+    {
+      permission: PermissionRequest
+      messageId: string
+      directory: string
+      permissionDirectory: string
+      contextHash: string
+      dedupeKey: string
+    }
+  > // permissionId -> data
+>()
 import {
   getThinkingValuesForModel,
   matchThinkingValue,
@@ -1724,7 +1737,7 @@ export class ThreadSessionRuntime {
   }
 
   // ── Phase 3: Prompt Dispatch ─────────────────────────────────
-  // Equivalent of the prompt dispatch section in handleOpencodeSession
+  // Prompt dispatch: resolve session, build system message, send to OpenCode
   // (session-handler.ts lines 2384-2620). The listener is already running,
   // so this only handles session ensure + model/agent + SDK call + state.
 

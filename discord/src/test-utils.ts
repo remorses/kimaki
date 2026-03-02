@@ -1,5 +1,5 @@
-// Shared e2e test utilities for session and server cleanup.
-// Extracted from individual test files to avoid duplication.
+// Shared e2e test utilities for session cleanup, server cleanup, and
+// Discord message polling helpers.
 // Uses directory + start timestamp double-filter to ensure we only
 // delete sessions created by this specific test run, never real user sessions.
 //
@@ -7,6 +7,8 @@
 // spawning a new server process during teardown. Falls back to initializing
 // a new server only if no existing client is available.
 
+import type { APIMessage } from 'discord.js'
+import type { DigitalDiscord } from 'discord-digital-twin/src'
 import {
   getOpencodeClient,
   getOpencodeServers,
@@ -68,5 +70,140 @@ export async function cleanupTestSessions({
         return
       })
     }),
+  )
+}
+
+// ── Discord message polling helpers ──────────────────────────────
+// Used by e2e tests to wait for bot responses. All poll at 100ms
+// intervals with configurable timeouts.
+
+/** Poll getMessages until we see at least `count` bot messages. */
+export async function waitForBotMessageCount({
+  discord,
+  threadId,
+  count,
+  timeout,
+}: {
+  discord: DigitalDiscord
+  threadId: string
+  count: number
+  timeout: number
+}): Promise<APIMessage[]> {
+  const start = Date.now()
+  while (Date.now() - start < timeout) {
+    const messages = await discord.thread(threadId).getMessages()
+    const botMessages = messages.filter((m) => {
+      return m.author.id === discord.botUserId
+    })
+    if (botMessages.length >= count) {
+      return messages
+    }
+    await new Promise((r) => {
+      setTimeout(r, 100)
+    })
+  }
+  throw new Error(
+    `Timed out waiting for ${count} bot messages in thread ${threadId}`,
+  )
+}
+
+/**
+ * Poll until a bot message appears after a user message containing the given text.
+ * Content-aware: finds the user message by content, then checks for a bot reply after it.
+ */
+export async function waitForBotReplyAfterUserMessage({
+  discord,
+  threadId,
+  userId,
+  userMessageIncludes,
+  timeout,
+}: {
+  discord: DigitalDiscord
+  threadId: string
+  userId: string
+  userMessageIncludes: string
+  timeout: number
+}): Promise<APIMessage[]> {
+  const start = Date.now()
+  while (Date.now() - start < timeout) {
+    const messages = await discord.thread(threadId).getMessages()
+    const userMessageIndex = messages.findIndex((message) => {
+      return (
+        message.author.id === userId &&
+        message.content.includes(userMessageIncludes)
+      )
+    })
+    const botReplyIndex = messages.findIndex((message, index) => {
+      return index > userMessageIndex && message.author.id === discord.botUserId
+    })
+    if (userMessageIndex >= 0 && botReplyIndex >= 0) {
+      return messages
+    }
+    await new Promise((resolve) => {
+      setTimeout(resolve, 100)
+    })
+  }
+  throw new Error(
+    `Timed out waiting for bot reply after user message containing "${userMessageIncludes}" in thread ${threadId}`,
+  )
+}
+
+/**
+ * Poll until a bot message containing specific text appears.
+ * Optionally scoped to appear after a specific user message.
+ */
+export async function waitForBotMessageContaining({
+  discord,
+  threadId,
+  userId,
+  text,
+  afterUserMessageIncludes,
+  timeout,
+}: {
+  discord: DigitalDiscord
+  threadId: string
+  userId: string
+  text: string
+  afterUserMessageIncludes?: string
+  timeout: number
+}): Promise<APIMessage[]> {
+  const start = Date.now()
+  let lastMessages: APIMessage[] = []
+  while (Date.now() - start < timeout) {
+    const messages = await discord.thread(threadId).getMessages()
+    lastMessages = messages
+    const afterIndex = afterUserMessageIncludes
+      ? messages.findIndex((message) => {
+          return (
+            message.author.id === userId &&
+            message.content.includes(afterUserMessageIncludes)
+          )
+        })
+      : -1
+    const match = messages.find((message, index) => {
+      if (afterUserMessageIncludes && afterIndex >= 0 && index <= afterIndex) {
+        return false
+      }
+      return (
+        message.author.id === discord.botUserId &&
+        message.content.includes(text)
+      )
+    })
+    if (match) {
+      return messages
+    }
+    await new Promise((resolve) => {
+      setTimeout(resolve, 100)
+    })
+  }
+  const recent = lastMessages
+    .slice(-12)
+    .map((message) => {
+      const role = message.author.id === discord.botUserId ? 'bot' : 'user'
+      return `${role}: ${message.content.slice(0, 120)}`
+    })
+    .join('\n')
+  throw new Error(
+    `Timed out waiting for bot message containing "${text}" in thread ${threadId}. Recent messages:\n${recent}`,
   )
 }
