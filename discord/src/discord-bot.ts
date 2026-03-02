@@ -545,7 +545,7 @@ export async function startDiscordBot({
               thread,
               projectDirectory,
               sdkDirectory: sdkDir,
-              channelId: parent?.id || '',
+              channelId: parent?.id || undefined,
               appId: currentAppId,
             })
             await runtime.enqueueIncoming({

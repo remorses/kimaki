@@ -235,6 +235,8 @@ export type IngressInput = {
   agent?: string
   model?: string
   sessionStartSource?: { scheduleKind: 'at' | 'cron'; scheduledTaskId?: number }
+  /** Optional guard for retries: skip enqueue when session has changed. */
+  expectedSessionId?: string
 }
 
 // ── Runtime class ────────────────────────────────────────────────
@@ -1462,6 +1464,16 @@ export class ThreadSessionRuntime {
     }
 
     await this.dispatchAction(async () => {
+      if (
+        input.expectedSessionId &&
+        this.state?.sessionId !== input.expectedSessionId
+      ) {
+        logger.log(
+          `[ENQUEUE] Skipping stale enqueue for thread ${this.threadId}: expected session ${input.expectedSessionId}, current session ${this.state?.sessionId || 'none'}`,
+        )
+        return
+      }
+
       if (input.interruptActive) {
         // Abort active run if any
         this.abortActiveRun('new-request')
@@ -1519,7 +1531,38 @@ export class ThreadSessionRuntime {
    * Abort the currently active run. Does NOT kill the listener.
    * Aborts the per-prompt run controller and calls session.abort best-effort.
    */
-  abortActiveRun(reason: string): void {
+  private abortSessionViaApi({
+    reason,
+    sessionId,
+  }: {
+    reason: string
+    sessionId: string
+  }): void {
+    const client = getOpencodeClient(this.projectDirectory)
+    if (!client) {
+      return
+    }
+
+    void (async () => {
+      const abortResult = await errore.tryAsync(() => {
+        return client.session.abort({
+          sessionID: sessionId,
+          directory: this.sdkDirectory,
+        })
+      })
+      if (!(abortResult instanceof Error)) {
+        return
+      }
+      logger.log(
+        `[ABORT-API] reason=${reason} sessionId=${sessionId} - API abort failed (may already be done): ${abortResult.message}`,
+      )
+    })()
+  }
+
+  abortActiveRun(
+    reason: string,
+    options?: { forceApiAbortWithoutRunController?: boolean },
+  ): void {
     const state = this.state
     if (!state) {
       return
@@ -1529,6 +1572,9 @@ export class ThreadSessionRuntime {
     if (!runController || runController.signal.aborted) {
       // No active run or already aborted — just mark state
       threadState.updateRunState(this.threadId, pureMarkAborted)
+      if (options?.forceApiAbortWithoutRunController && state.sessionId) {
+        this.abortSessionViaApi({ reason, sessionId: state.sessionId })
+      }
       return
     }
 
@@ -1542,21 +1588,7 @@ export class ThreadSessionRuntime {
     // Best-effort API abort (fire-and-forget)
     const sessionId = state.sessionId
     if (sessionId) {
-      const client = getOpencodeClient(this.projectDirectory)
-      if (client) {
-        void errore.tryAsync(() => {
-          return client.session.abort({
-            sessionID: sessionId,
-            directory: this.sdkDirectory,
-          })
-        }).then((result) => {
-          if (result instanceof Error) {
-            logger.log(
-              `[ABORT-API] reason=${reason} sessionId=${sessionId} - API abort failed (may already be done): ${result.message}`,
-            )
-          }
-        })
-      }
+      this.abortSessionViaApi({ reason, sessionId })
     }
   }
 
@@ -2352,12 +2384,34 @@ export class ThreadSessionRuntime {
     const sessionId = state.sessionId
 
     // 1. Abort active run
-    this.abortActiveRun('model-change')
+    const abortResult = await errore.tryAsync(() => {
+      return this.dispatchAction(async () => {
+        this.abortActiveRun('model-change', {
+          forceApiAbortWithoutRunController: true,
+        })
+      })
+    })
+    if (abortResult instanceof Error) {
+      logger.error('[RETRY] Failed to abort active run before retry:', abortResult)
+      return false
+    }
 
     // Small delay to let the abort propagate through OpenCode
     await new Promise<void>((resolve) => {
       setTimeout(resolve, 300)
     })
+
+    if (this.listenerController.signal.aborted) {
+      logger.log(`[RETRY] Runtime disposed before retry for thread ${this.threadId}`)
+      return false
+    }
+
+    if (this.state?.sessionId !== sessionId) {
+      logger.log(
+        `[RETRY] Session changed before retry for thread ${this.threadId}`,
+      )
+      return false
+    }
 
     // 2. Fetch last user message from API
     const client = getOpencodeClient(this.projectDirectory)
@@ -2407,8 +2461,17 @@ export class ThreadSessionRuntime {
       userId: '',
       username: '',
       images,
+      appId: this.appId,
       interruptActive: false,
+      expectedSessionId: sessionId,
     })
+
+    if (this.state?.sessionId !== sessionId) {
+      logger.log(
+        `[RETRY] Session changed while retry was enqueued for thread ${this.threadId}`,
+      )
+      return false
+    }
 
     return true
   }

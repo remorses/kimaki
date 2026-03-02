@@ -1,22 +1,17 @@
-// E2e tests for per-thread message queue ordering (threadMessageQueue).
-// Validates that messages in the same thread are processed sequentially
-// in Discord arrival order, and that immediate interrupt allows
-// queued messages to start without waiting for the full prior response.
+// E2e tests for per-thread message queue ordering.
+// Uses opencode-deterministic-provider which returns canned responses instantly
+// (no real LLM calls), so poll timeouts can be aggressive (4s). The only real
+// latency is OpenCode server startup (beforeAll) and intentional partDelaysMs
+// in matchers (700ms for user-reply, 2500ms for race-final-reply).
 //
-// The threadMessageQueue (Map<string, Promise<void>>) only serializes messages
-// arriving in threads — the initial text channel message goes through a separate
-// code path (creates thread + calls handleOpencodeSession directly). So each
-// test first establishes a session via the initial message, waits for the bot
-// reply, then sends follow-up messages into the thread to exercise the queue.
-//
-// Bot replies may be error messages (e.g. "opencode session error: Not Found")
-// rather than actual LLM content, depending on provider/session state. The
-// tests verify ordering by message position, not content matching.
+// Tests within a single file run sequentially (shared in-memory log buffer
+// for failure diagnostics). If total duration of a file exceeds ~10s, split
+// into a new test file so vitest can parallelize across files.
 
 import fs from 'node:fs'
 import path from 'node:path'
 import url from 'node:url'
-import { describe, beforeAll, afterAll, test, expect } from 'vitest'
+import { describe, beforeAll, afterAll, beforeEach, onTestFailed, test, expect } from 'vitest'
 import { ChannelType, Client, GatewayIntentBits, Partials } from 'discord.js'
 import type { APIMessage } from 'discord.js'
 import { DigitalDiscord } from 'discord-digital-twin/src'
@@ -29,7 +24,11 @@ import {
 } from './config.js'
 import { store } from './store.js'
 import { startDiscordBot } from './discord-bot.js'
-import { getRuntime } from './session-handler/thread-session-runtime.js'
+import {
+  disposeRuntime,
+  getRuntime,
+} from './session-handler/thread-session-runtime.js'
+import { setRunController } from './session-handler/thread-runtime-state.js'
 import {
   setBotToken,
   initDatabase,
@@ -40,7 +39,8 @@ import {
   type VerbosityLevel,
 } from './database.js'
 import { startHranaServer, stopHranaServer } from './hrana-server.js'
-import { getOpencodeServers } from './opencode.js'
+import { getOpencodeServers, initializeOpencodeForDirectory } from './opencode.js'
+import { getLogEntryCount, getLogEntriesSince } from './logger.js'
 
 const e2eTest = describe
 
@@ -237,7 +237,7 @@ async function waitForBotMessageCount({
       return messages
     }
     await new Promise((r) => {
-      setTimeout(r, 500)
+      setTimeout(r, 100)
     })
   }
   throw new Error(
@@ -272,7 +272,7 @@ async function waitForBotReplyAfterUserMessage({
       return messages
     }
     await new Promise((resolve) => {
-      setTimeout(resolve, 500)
+      setTimeout(resolve, 100)
     })
   }
   throw new Error(
@@ -319,7 +319,7 @@ async function waitForBotMessageContaining({
       return messages
     }
     await new Promise((resolve) => {
-      setTimeout(resolve, 500)
+      setTimeout(resolve, 100)
     })
   }
   const recent = lastMessages
@@ -430,6 +430,32 @@ e2eTest('thread message queue ordering', () => {
   }, 60_000)
 
   afterAll(async () => {
+    // Clean up opencode sessions created during tests
+    if (directories) {
+      const getClient = await initializeOpencodeForDirectory(
+        directories.projectDirectory,
+      )
+      if (!(getClient instanceof Error)) {
+        const client = getClient()
+        const listResult = await client.session.list({
+          directory: directories.projectDirectory,
+        }).catch(() => {
+          return null
+        })
+        const sessions = listResult?.data ?? []
+        await Promise.all(
+          sessions.map((s) => {
+            return client.session.delete({
+              sessionID: s.id,
+              directory: directories.projectDirectory,
+            }).catch(() => {
+              return
+            })
+          }),
+        )
+      }
+    }
+
     if (botClient) {
       botClient.destroy()
     }
@@ -455,7 +481,23 @@ e2eTest('thread message queue ordering', () => {
     if (directories) {
       fs.rmSync(directories.dataDir, { recursive: true, force: true })
     }
-  }, 30_000)
+  }, 10_000)
+
+  // Capture log buffer position before each test. On failure, dump only the
+  // log lines produced during that test so failures are easy to diagnose.
+  let logStartIndex = 0
+
+  beforeEach(() => {
+    logStartIndex = getLogEntryCount()
+    onTestFailed(() => {
+      const logs = getLogEntriesSince(logStartIndex)
+      if (logs.length > 0) {
+        console.error(`\n--- kimaki logs (${logs.length} lines) ---`)
+        console.error(logs.join(''))
+        console.error(`--- end ---\n`)
+      }
+    })
+  })
 
   test(
     'text message during active session gets processed',
@@ -466,7 +508,7 @@ e2eTest('thread message queue ordering', () => {
       })
 
       const thread = await discord.channel(TEXT_CHANNEL_ID).waitForThread({
-        timeout: 30_000,
+        timeout: 4_000,
         predicate: (t) => {
           return t.name === 'Reply with exactly: alpha'
         },
@@ -476,7 +518,7 @@ e2eTest('thread message queue ordering', () => {
 
       // Wait for the first bot reply so session is fully established in DB
       const firstReply = await th.waitForBotReply({
-        timeout: 45_000,
+        timeout: 4_000,
       })
       expect(firstReply.content.trim().length).toBeGreaterThan(0)
 
@@ -496,7 +538,7 @@ e2eTest('thread message queue ordering', () => {
         discord,
         threadId: thread.id,
         count: beforeBotCount + 1,
-        timeout: 45_000,
+        timeout: 4_000,
       })
 
       // 4. Verify at least 1 new bot message appeared for the follow-up.
@@ -526,7 +568,7 @@ e2eTest('thread message queue ordering', () => {
       const newBotReply = afterBotMessages[afterBotMessages.length - 1]!
       expect(newBotReply.content.trim().length).toBeGreaterThan(0)
     },
-    45_000,
+    8_000,
   )
 
   test(
@@ -538,7 +580,7 @@ e2eTest('thread message queue ordering', () => {
       })
 
       const thread = await discord.channel(TEXT_CHANNEL_ID).waitForThread({
-        timeout: 30_000,
+        timeout: 4_000,
         predicate: (t) => {
           return t.name === 'Reply with exactly: one'
         },
@@ -548,7 +590,7 @@ e2eTest('thread message queue ordering', () => {
 
       // Wait for the first bot reply so session is established
       const firstReply = await th.waitForBotReply({
-        timeout: 45_000,
+        timeout: 4_000,
       })
       expect(firstReply.content.trim().length).toBeGreaterThan(0)
 
@@ -571,7 +613,7 @@ e2eTest('thread message queue ordering', () => {
         discord,
         threadId: thread.id,
         count: beforeBotCount + 2,
-        timeout: 45_000,
+        timeout: 4_000,
       })
 
       // 4. Verify at least 2 new bot messages appeared (one per follow-up).
@@ -624,7 +666,7 @@ e2eTest('thread message queue ordering', () => {
       // Bot response for B appears before bot response for C (queue order)
       expect(botForB).toBeLessThan(botForC)
     },
-    45_000,
+    8_000,
   )
 
   test(
@@ -640,14 +682,14 @@ e2eTest('thread message queue ordering', () => {
       })
 
       const thread = await discord.channel(TEXT_CHANNEL_ID).waitForThread({
-        timeout: 30_000,
+        timeout: 4_000,
         predicate: (t) => {
           return t.name === 'Reply with exactly: delta'
         },
       })
 
       const th = discord.thread(thread.id)
-      const firstReply = await th.waitForBotReply({ timeout: 45_000 })
+      const firstReply = await th.waitForBotReply({ timeout: 4_000 })
       expect(firstReply.content.trim().length).toBeGreaterThan(0)
 
       const before = await th.getMessages()
@@ -675,7 +717,7 @@ e2eTest('thread message queue ordering', () => {
         discord,
         threadId: thread.id,
         userMessageIncludes: 'foxtrot',
-        timeout: 45_000,
+        timeout: 4_000,
       })
 
       // 4. Foxtrot got a bot response. Echo may or may not produce one —
@@ -700,7 +742,7 @@ e2eTest('thread message queue ordering', () => {
       })
       expect(botAfterFoxtrot).toBeGreaterThan(userFoxtrotIndex)
     },
-    45_000,
+    8_000,
   )
 
   test(
@@ -715,14 +757,14 @@ e2eTest('thread message queue ordering', () => {
       })
 
       const thread = await discord.channel(TEXT_CHANNEL_ID).waitForThread({
-        timeout: 30_000,
+        timeout: 4_000,
         predicate: (t) => {
           return t.name === 'Reply with exactly: golf'
         },
       })
 
       const th = discord.thread(thread.id)
-      const firstReply = await th.waitForBotReply({ timeout: 45_000 })
+      const firstReply = await th.waitForBotReply({ timeout: 4_000 })
       expect(firstReply.content.trim().length).toBeGreaterThan(0)
 
       const before = await th.getMessages()
@@ -749,7 +791,7 @@ e2eTest('thread message queue ordering', () => {
         discord,
         threadId: thread.id,
         userMessageIncludes: 'india',
-        timeout: 45_000,
+        timeout: 4_000,
       })
 
       // C's user message appears before its bot response.
@@ -764,7 +806,7 @@ e2eTest('thread message queue ordering', () => {
       })
       expect(botAfterIndia).toBeGreaterThan(userIndiaIndex)
     },
-    45_000,
+    8_000,
   )
 
   test(
@@ -780,14 +822,14 @@ e2eTest('thread message queue ordering', () => {
       })
 
       const thread = await discord.channel(TEXT_CHANNEL_ID).waitForThread({
-        timeout: 30_000,
+        timeout: 4_000,
         predicate: (t) => {
           return t.name === 'Reply with exactly: juliet'
         },
       })
 
       const th = discord.thread(thread.id)
-      const firstReply = await th.waitForBotReply({ timeout: 45_000 })
+      const firstReply = await th.waitForBotReply({ timeout: 4_000 })
       expect(firstReply.content.trim().length).toBeGreaterThan(0)
 
       const before = await th.getMessages()
@@ -817,7 +859,7 @@ e2eTest('thread message queue ordering', () => {
         discord,
         threadId: thread.id,
         userMessageIncludes: 'mike',
-        timeout: 45_000,
+        timeout: 4_000,
       })
 
       const burstBotMessages = afterBurst.filter((m) => {
@@ -836,7 +878,7 @@ e2eTest('thread message queue ordering', () => {
         discord,
         threadId: thread.id,
         userMessageIncludes: 'november',
-        timeout: 45_000,
+        timeout: 4_000,
       })
 
       const finalBotMessages = afterE.filter((m) => {
@@ -854,7 +896,7 @@ e2eTest('thread message queue ordering', () => {
       })
       expect(userNovemberIndex).toBeLessThan(lastBotIndex)
     },
-    45_000,
+    8_000,
   )
 
   test(
@@ -871,14 +913,14 @@ e2eTest('thread message queue ordering', () => {
       })
 
       const thread = await discord.channel(TEXT_CHANNEL_ID).waitForThread({
-        timeout: 30_000,
+        timeout: 4_000,
         predicate: (t) => {
           return t.name === 'Reply with exactly: oscar'
         },
       })
 
       const th = discord.thread(thread.id)
-      const firstReply = await th.waitForBotReply({ timeout: 45_000 })
+      const firstReply = await th.waitForBotReply({ timeout: 4_000 })
       expect(firstReply.content.trim().length).toBeGreaterThan(0)
 
       const before = await th.getMessages()
@@ -899,7 +941,7 @@ e2eTest('thread message queue ordering', () => {
         threadId: thread.id,
         text: 'sleep 500',
         afterUserMessageIncludes: 'sleep 500',
-        timeout: 30_000,
+        timeout: 4_000,
       })
 
       // 4. Send interrupt message while sleep is still running
@@ -912,7 +954,7 @@ e2eTest('thread message queue ordering', () => {
         discord,
         threadId: thread.id,
         userMessageIncludes: 'papa',
-        timeout: 45_000,
+        timeout: 4_000,
       })
 
       const afterBotMessages = after.filter((m) => {
@@ -937,7 +979,7 @@ e2eTest('thread message queue ordering', () => {
       })
       expect(userPapaIndex).toBeLessThan(lastBotIndex)
     },
-    45_000,
+    8_000,
   )
 
   async function runInterruptRaceScenario(runIndex: number) {
@@ -953,14 +995,14 @@ e2eTest('thread message queue ordering', () => {
     })
 
     const thread = await discord.channel(TEXT_CHANNEL_ID).waitForThread({
-      timeout: 30_000,
+      timeout: 4_000,
       predicate: (t) => {
         return t.name === setupPrompt
       },
     })
 
     const th = discord.thread(thread.id)
-    const setupReply = await th.waitForBotReply({ timeout: 45_000 })
+    const setupReply = await th.waitForBotReply({ timeout: 4_000 })
     expect(setupReply.content.trim().length).toBeGreaterThan(0)
 
     await th.user(TEST_USER_ID).sendMessage({
@@ -973,7 +1015,7 @@ e2eTest('thread message queue ordering', () => {
       threadId: thread.id,
       text: 'sleep 500',
       afterUserMessageIncludes: 'sleep 500',
-      timeout: 30_000,
+      timeout: 4_000,
     })
 
     await th.user(TEST_USER_ID).sendMessage({
@@ -985,7 +1027,7 @@ e2eTest('thread message queue ordering', () => {
       threadId: thread.id,
       text: 'race-final',
       afterUserMessageIncludes: raceFinalPrompt,
-      timeout: 30_000,
+      timeout: 4_000,
     })
   }
 
@@ -994,7 +1036,7 @@ e2eTest('thread message queue ordering', () => {
     async () => {
       await runInterruptRaceScenario(1)
     },
-    45_000,
+    8_000,
   )
 
   test(
@@ -1009,14 +1051,14 @@ e2eTest('thread message queue ordering', () => {
       })
 
       const thread = await discord.channel(TEXT_CHANNEL_ID).waitForThread({
-        timeout: 30_000,
+        timeout: 4_000,
         predicate: (t) => {
           return t.name === 'Reply with exactly: retry-setup'
         },
       })
 
       const th = discord.thread(thread.id)
-      const firstReply = await th.waitForBotReply({ timeout: 45_000 })
+      const firstReply = await th.waitForBotReply({ timeout: 4_000 })
       expect(firstReply.content.trim().length).toBeGreaterThan(0)
 
       // 2. Send a slow prompt (sleep tool) so the run stays active
@@ -1031,13 +1073,16 @@ e2eTest('thread message queue ordering', () => {
         threadId: thread.id,
         text: 'sleep 500',
         afterUserMessageIncludes: 'sleep 500',
-        timeout: 30_000,
+        timeout: 4_000,
       })
 
       // 3. Call retryLastUserPrompt() — this simulates what /model does
       const runtime = getRuntime(thread.id)
       expect(runtime).toBeDefined()
-      const retried = await runtime!.retryLastUserPrompt()
+      if (!runtime) {
+        throw new Error('Expected runtime to exist for retry test')
+      }
+      const retried = await runtime.retryLastUserPrompt()
       expect(retried).toBe(true)
 
       // 4. The retry re-fetches the last user message (the sleep prompt)
@@ -1059,7 +1104,7 @@ e2eTest('thread message queue ordering', () => {
         discord,
         threadId: thread.id,
         count: beforeBotCount + 1,
-        timeout: 45_000,
+        timeout: 4_000,
       })
 
       const afterBotMessages = after.filter((m) => {
@@ -1067,6 +1112,108 @@ e2eTest('thread message queue ordering', () => {
       })
       expect(afterBotMessages.length).toBeGreaterThan(beforeBotCount)
     },
-    60_000,
+    10_000,
+  )
+
+  test(
+    'abortActiveRun forces API abort when run controller is missing',
+    async () => {
+      await discord.channel(TEXT_CHANNEL_ID).user(TEST_USER_ID).sendMessage({
+        content: 'Reply with exactly: force-abort-setup',
+      })
+
+      const thread = await discord.channel(TEXT_CHANNEL_ID).waitForThread({
+        timeout: 4_000,
+        predicate: (t) => {
+          return t.name === 'Reply with exactly: force-abort-setup'
+        },
+      })
+
+      const th = discord.thread(thread.id)
+      const setupReply = await th.waitForBotReply({ timeout: 4_000 })
+      expect(setupReply.content.trim().length).toBeGreaterThan(0)
+
+      await th.user(TEST_USER_ID).sendMessage({
+        content:
+          'MANDATORY INSTRUCTION: call the bash tool immediately and run exactly this command: `sleep 500`. No explanation. No normal text. Do not skip the tool call.',
+      })
+
+      await waitForBotMessageContaining({
+        discord,
+        threadId: thread.id,
+        text: 'sleep 500',
+        afterUserMessageIncludes: 'sleep 500',
+        timeout: 4_000,
+      })
+
+      const runtime = getRuntime(thread.id)
+      expect(runtime).toBeDefined()
+      if (!runtime) {
+        throw new Error('Expected runtime to exist for forced-abort test')
+      }
+
+      // Simulate the edge case found in review: runtime exists but
+      // runController was already cleared before /abort runs.
+      setRunController(thread.id, undefined)
+
+      runtime.abortActiveRun('force-abort-test', {
+        forceApiAbortWithoutRunController: true,
+      })
+
+      await waitForBotMessageContaining({
+        discord,
+        threadId: thread.id,
+        text: '*project',
+        afterUserMessageIncludes: 'sleep 500',
+        timeout: 4_000,
+      })
+    },
+    10_000,
+  )
+
+  test(
+    'retryLastUserPrompt returns false when runtime is disposed mid-retry',
+    async () => {
+      await discord.channel(TEXT_CHANNEL_ID).user(TEST_USER_ID).sendMessage({
+        content: 'Reply with exactly: retry-dispose-setup',
+      })
+
+      const thread = await discord.channel(TEXT_CHANNEL_ID).waitForThread({
+        timeout: 4_000,
+        predicate: (t) => {
+          return t.name === 'Reply with exactly: retry-dispose-setup'
+        },
+      })
+
+      const th = discord.thread(thread.id)
+      const setupReply = await th.waitForBotReply({ timeout: 4_000 })
+      expect(setupReply.content.trim().length).toBeGreaterThan(0)
+
+      await th.user(TEST_USER_ID).sendMessage({
+        content:
+          'MANDATORY INSTRUCTION: call the bash tool immediately and run exactly this command: `sleep 500`. No explanation. No normal text. Do not skip the tool call.',
+      })
+
+      await waitForBotMessageContaining({
+        discord,
+        threadId: thread.id,
+        text: 'sleep 500',
+        afterUserMessageIncludes: 'sleep 500',
+        timeout: 4_000,
+      })
+
+      const runtime = getRuntime(thread.id)
+      expect(runtime).toBeDefined()
+      if (!runtime) {
+        throw new Error('Expected runtime to exist for dispose-retry test')
+      }
+
+      const retryPromise = runtime.retryLastUserPrompt()
+      disposeRuntime(thread.id)
+
+      const retried = await retryPromise
+      expect(retried).toBe(false)
+    },
+    10_000,
   )
 })
