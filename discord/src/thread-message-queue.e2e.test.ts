@@ -465,7 +465,7 @@ e2eTest('thread message queue ordering', () => {
       })
 
       const thread = await discord.channel(TEXT_CHANNEL_ID).waitForThread({
-        timeout: 60_000,
+        timeout: 30_000,
         predicate: (t) => {
           return t.name === 'Reply with exactly: alpha'
         },
@@ -475,7 +475,7 @@ e2eTest('thread message queue ordering', () => {
 
       // Wait for the first bot reply so session is fully established in DB
       const firstReply = await th.waitForBotReply({
-        timeout: 120_000,
+        timeout: 45_000,
       })
       expect(firstReply.content.trim().length).toBeGreaterThan(0)
 
@@ -495,7 +495,7 @@ e2eTest('thread message queue ordering', () => {
         discord,
         threadId: thread.id,
         count: beforeBotCount + 1,
-        timeout: 120_000,
+        timeout: 45_000,
       })
 
       // 4. Verify at least 1 new bot message appeared for the follow-up.
@@ -525,7 +525,7 @@ e2eTest('thread message queue ordering', () => {
       const newBotReply = afterBotMessages[afterBotMessages.length - 1]!
       expect(newBotReply.content.trim().length).toBeGreaterThan(0)
     },
-    360_000,
+    45_000,
   )
 
   test(
@@ -537,7 +537,7 @@ e2eTest('thread message queue ordering', () => {
       })
 
       const thread = await discord.channel(TEXT_CHANNEL_ID).waitForThread({
-        timeout: 60_000,
+        timeout: 30_000,
         predicate: (t) => {
           return t.name === 'Reply with exactly: one'
         },
@@ -547,7 +547,7 @@ e2eTest('thread message queue ordering', () => {
 
       // Wait for the first bot reply so session is established
       const firstReply = await th.waitForBotReply({
-        timeout: 120_000,
+        timeout: 45_000,
       })
       expect(firstReply.content.trim().length).toBeGreaterThan(0)
 
@@ -570,7 +570,7 @@ e2eTest('thread message queue ordering', () => {
         discord,
         threadId: thread.id,
         count: beforeBotCount + 2,
-        timeout: 120_000,
+        timeout: 45_000,
       })
 
       // 4. Verify at least 2 new bot messages appeared (one per follow-up).
@@ -623,7 +623,7 @@ e2eTest('thread message queue ordering', () => {
       // Bot response for B appears before bot response for C (queue order)
       expect(botForB).toBeLessThan(botForC)
     },
-    360_000,
+    45_000,
   )
 
   test(
@@ -639,14 +639,14 @@ e2eTest('thread message queue ordering', () => {
       })
 
       const thread = await discord.channel(TEXT_CHANNEL_ID).waitForThread({
-        timeout: 60_000,
+        timeout: 30_000,
         predicate: (t) => {
           return t.name === 'Reply with exactly: delta'
         },
       })
 
       const th = discord.thread(thread.id)
-      const firstReply = await th.waitForBotReply({ timeout: 120_000 })
+      const firstReply = await th.waitForBotReply({ timeout: 45_000 })
       expect(firstReply.content.trim().length).toBeGreaterThan(0)
 
       const before = await th.getMessages()
@@ -674,14 +674,15 @@ e2eTest('thread message queue ordering', () => {
         discord,
         threadId: thread.id,
         userMessageIncludes: 'foxtrot',
-        timeout: 120_000,
+        timeout: 45_000,
       })
 
-      // 4. Both B and C got bot responses
+      // 4. Foxtrot got a bot response. Echo may or may not produce one —
+      //    the abort error is silently suppressed, so no error message appears.
       const afterBotMessages = after.filter((m) => {
         return m.author.id === discord.botUserId
       })
-      expect(afterBotMessages.length).toBeGreaterThanOrEqual(beforeBotCount + 2)
+      expect(afterBotMessages.length).toBeGreaterThanOrEqual(beforeBotCount + 1)
 
       const userEchoIndex = after.findIndex((m) => {
         return m.author.id === TEST_USER_ID && m.content.includes('echo')
@@ -698,7 +699,7 @@ e2eTest('thread message queue ordering', () => {
       })
       expect(botAfterFoxtrot).toBeGreaterThan(userFoxtrotIndex)
     },
-    360_000,
+    45_000,
   )
 
   test(
@@ -713,14 +714,14 @@ e2eTest('thread message queue ordering', () => {
       })
 
       const thread = await discord.channel(TEXT_CHANNEL_ID).waitForThread({
-        timeout: 60_000,
+        timeout: 30_000,
         predicate: (t) => {
           return t.name === 'Reply with exactly: golf'
         },
       })
 
       const th = discord.thread(thread.id)
-      const firstReply = await th.waitForBotReply({ timeout: 120_000 })
+      const firstReply = await th.waitForBotReply({ timeout: 45_000 })
       expect(firstReply.content.trim().length).toBeGreaterThan(0)
 
       const before = await th.getMessages()
@@ -747,7 +748,7 @@ e2eTest('thread message queue ordering', () => {
         discord,
         threadId: thread.id,
         userMessageIncludes: 'india',
-        timeout: 120_000,
+        timeout: 45_000,
       })
 
       // C's user message appears before its bot response.
@@ -762,7 +763,7 @@ e2eTest('thread message queue ordering', () => {
       })
       expect(botAfterIndia).toBeGreaterThan(userIndiaIndex)
     },
-    360_000,
+    45_000,
   )
 
   test(
@@ -778,14 +779,14 @@ e2eTest('thread message queue ordering', () => {
       })
 
       const thread = await discord.channel(TEXT_CHANNEL_ID).waitForThread({
-        timeout: 60_000,
+        timeout: 30_000,
         predicate: (t) => {
           return t.name === 'Reply with exactly: juliet'
         },
       })
 
       const th = discord.thread(thread.id)
-      const firstReply = await th.waitForBotReply({ timeout: 120_000 })
+      const firstReply = await th.waitForBotReply({ timeout: 45_000 })
       expect(firstReply.content.trim().length).toBeGreaterThan(0)
 
       const before = await th.getMessages()
@@ -815,7 +816,7 @@ e2eTest('thread message queue ordering', () => {
         discord,
         threadId: thread.id,
         userMessageIncludes: 'mike',
-        timeout: 120_000,
+        timeout: 45_000,
       })
 
       const burstBotMessages = afterBurst.filter((m) => {
@@ -834,7 +835,7 @@ e2eTest('thread message queue ordering', () => {
         discord,
         threadId: thread.id,
         userMessageIncludes: 'november',
-        timeout: 120_000,
+        timeout: 45_000,
       })
 
       const finalBotMessages = afterE.filter((m) => {
@@ -852,7 +853,7 @@ e2eTest('thread message queue ordering', () => {
       })
       expect(userNovemberIndex).toBeLessThan(lastBotIndex)
     },
-    360_000,
+    45_000,
   )
 
   test(
@@ -869,14 +870,14 @@ e2eTest('thread message queue ordering', () => {
       })
 
       const thread = await discord.channel(TEXT_CHANNEL_ID).waitForThread({
-        timeout: 60_000,
+        timeout: 30_000,
         predicate: (t) => {
           return t.name === 'Reply with exactly: oscar'
         },
       })
 
       const th = discord.thread(thread.id)
-      const firstReply = await th.waitForBotReply({ timeout: 120_000 })
+      const firstReply = await th.waitForBotReply({ timeout: 45_000 })
       expect(firstReply.content.trim().length).toBeGreaterThan(0)
 
       const before = await th.getMessages()
@@ -910,7 +911,7 @@ e2eTest('thread message queue ordering', () => {
         discord,
         threadId: thread.id,
         userMessageIncludes: 'papa',
-        timeout: 120_000,
+        timeout: 45_000,
       })
 
       const afterBotMessages = after.filter((m) => {
@@ -935,7 +936,7 @@ e2eTest('thread message queue ordering', () => {
       })
       expect(userPapaIndex).toBeLessThan(lastBotIndex)
     },
-    360_000,
+    45_000,
   )
 
   async function runInterruptRaceScenario(runIndex: number) {
@@ -951,14 +952,14 @@ e2eTest('thread message queue ordering', () => {
     })
 
     const thread = await discord.channel(TEXT_CHANNEL_ID).waitForThread({
-      timeout: 60_000,
+      timeout: 30_000,
       predicate: (t) => {
         return t.name === setupPrompt
       },
     })
 
     const th = discord.thread(thread.id)
-    const setupReply = await th.waitForBotReply({ timeout: 120_000 })
+    const setupReply = await th.waitForBotReply({ timeout: 45_000 })
     expect(setupReply.content.trim().length).toBeGreaterThan(0)
 
     await th.user(TEST_USER_ID).sendMessage({
@@ -992,6 +993,6 @@ e2eTest('thread message queue ordering', () => {
     async () => {
       await runInterruptRaceScenario(1)
     },
-    360_000,
+    45_000,
   )
 })
