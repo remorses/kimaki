@@ -1272,7 +1272,7 @@ async function run({
       })
 
       note(
-        `Opening your browser to install the Kimaki bot...\n\n${oauthUrl}`,
+        `Open this URL to install the Kimaki bot in your Discord server:\n\n${oauthUrl}\n\nDo not share this URL with anyone — it contains your credentials.\n\nIf you don't have a server, create one first (+ button in the Discord sidebar).`,
         'Install Bot',
       )
 
@@ -1286,20 +1286,38 @@ async function run({
             : 'xdg-open'
       exec(`${openCmd} "${oauthUrl}"`)
 
-      // Poll for completion
+      // Poll until the user installs the bot in a Discord server.
+      // 600 attempts x 2s = 20 minutes timeout.
       const s = spinner()
-      s.start('Waiting for bot authorization...')
+      s.start('Waiting for a Discord server with the bot installed...')
 
       const pollUrl = new URL('/api/onboarding/status', KIMAKI_WEBSITE_URL)
       pollUrl.searchParams.set('client_id', clientId)
       pollUrl.searchParams.set('secret', clientSecret)
 
       let guildId: string | undefined
-      for (let attempt = 0; attempt < 150; attempt++) {
-        // 150 * 2s = 5 minutes timeout
+      for (let attempt = 0; attempt < 600; attempt++) {
         await new Promise((resolve) => {
           setTimeout(resolve, 2000)
         })
+
+        // Progressive hints for users who may be stuck
+        if (attempt === 15) {
+          // ~30s
+          s.message(
+            'Still waiting... Select a server in the Discord authorization page and click "Authorize"',
+          )
+        } else if (attempt === 45) {
+          // ~90s
+          s.message(
+            `Still waiting... If you don't see any servers, create one first (+ button in Discord sidebar), then reopen the URL above`,
+          )
+        } else if (attempt === 150) {
+          // ~5min
+          s.message(
+            `Still waiting... Reopen the install URL if you closed it:\n${oauthUrl}`,
+          )
+        }
 
         try {
           const resp = await fetch(pollUrl.toString())
@@ -1318,7 +1336,7 @@ async function run({
       if (!guildId) {
         s.stop('Authorization timed out')
         cliLogger.error(
-          'Bot authorization timed out after 5 minutes. Please try again.',
+          'Bot authorization timed out after 20 minutes. Please try again.',
         )
         process.exit(EXIT_NO_RESTART)
       }
@@ -1504,6 +1522,7 @@ async function run({
     cliLogger.error(
       'No Discord servers found. The bot must be installed in at least one server.\n' +
         `Install URL: ${installUrl}\n` +
+        'Do not share this URL with anyone — it contains your credentials.\n' +
         'Open the URL above to add the bot to a server, then run kimaki again.',
     )
     discordClient.destroy()

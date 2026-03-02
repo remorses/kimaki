@@ -35,7 +35,7 @@ export function generateBotInstallUrl({
     PermissionsBitField.Flags.ManageEvents,
     PermissionsBitField.Flags.CreateEvents,
   ],
-  scopes = ['bot'],
+  scopes = ['bot', 'applications.commands'],
   guildId,
   disableGuildSelect = false,
   state,
