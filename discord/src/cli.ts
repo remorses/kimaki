@@ -1131,7 +1131,7 @@ async function run({
   // 1. KIMAKI_BOT_TOKEN env var (headless/CI deployments)
   // 2. Saved credentials in the database (self-hosted or built-in mode)
   // 3. Interactive setup wizard (first-time users -- mode selector)
-  // App ID is always derived from the token (base64 first segment),
+  // App ID comes from auth mode env or is derived from token (base64 first segment),
   // except in built-in mode where KIMAKI_SHARED_APP_ID is used.
   const { appId, token, isQuickStart } = await (async (): Promise<{
     appId: string
@@ -1142,18 +1142,33 @@ async function run({
     // Single query to get token + mode info, avoiding desync from separate queries
     const existingBot = await getBotTokenWithMode()
 
-    // 1. Env var takes precedence (headless deployments)
-    if (envBot && !forceSetup) {
-      const derivedAppId = appIdFromToken(envBot.token)
-      if (!derivedAppId) {
+    // 1. Env var/auth mode takes precedence (headless deployments)
+    if (envBot && (!forceSetup || envBot.source === 'auth')) {
+      if (forceSetup && envBot.source === 'auth') {
+        cliLogger.log('Auth mode enabled; skipping interactive setup (--restart ignored)')
+      }
+      const resolvedAppId = envBot.appId || appIdFromToken(envBot.token)
+      if (!resolvedAppId) {
         cliLogger.error(
-          'Could not derive Application ID from KIMAKI_BOT_TOKEN. The token appears malformed.',
+          envBot.source === 'auth'
+            ? 'Auth mode requires KIMAKI_APP_ID when using KIMAKI_GUILD_ID/KIMAKI_PRIVATE_KEY.'
+            : 'Could not derive Application ID from KIMAKI_BOT_TOKEN. The token appears malformed.',
         )
         process.exit(EXIT_NO_RESTART)
       }
-      await setBotToken(derivedAppId, envBot.token)
-      cliLogger.log(`Using KIMAKI_BOT_TOKEN env var (App ID: ${derivedAppId})`)
-      return { appId: derivedAppId, token: envBot.token, isQuickStart: !addChannels }
+      await setBotToken(resolvedAppId, envBot.token)
+      if (envBot.source === 'auth') {
+        cliLogger.log(`Using auth mode credentials (App ID: ${resolvedAppId})`)
+      } else {
+        cliLogger.log(
+          `Using KIMAKI_BOT_TOKEN env var (App ID: ${resolvedAppId})`,
+        )
+      }
+      return {
+        appId: resolvedAppId,
+        token: envBot.token,
+        isQuickStart: !addChannels,
+      }
     }
 
     // 2. Saved credentials in the database
