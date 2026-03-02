@@ -94,7 +94,9 @@ The command prints a preview URL when done — share that URL with the user.
 const KIMAKI_TUNNEL_INSTRUCTIONS = `
 ## running dev servers with tunnel access
 
-When the user asks to start a dev server and make it accessible remotely, use \`kimaki tunnel\` with \`tmux\` to run it in the background.
+ALWAYS use \`kimaki tunnel\` when starting any dev server. NEVER run \`pnpm dev\`, \`npm run dev\`, or any dev server command without wrapping it in \`kimaki tunnel\`. The user is on Discord, not at the terminal — localhost URLs are useless to them. They need a tunnel URL to access the site.
+
+Use \`tmux\` to run the tunnel + dev server combo in the background so it persists across commands.
 
 ### installing tmux (if missing)
 
