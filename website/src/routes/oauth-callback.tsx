@@ -8,7 +8,8 @@ import type { Context } from 'hono'
 import { renderToString } from 'react-dom/server'
 import React from 'react'
 import * as errore from 'errore'
-import { prisma } from 'db/src/prisma.js'
+import { createPrisma } from 'db/src/prisma.js'
+import { decodeGatewayOAuthState } from 'db/src/gateway-state.js'
 import { SuccessPage } from '../components/success-page.js'
 import {
   GatewayClientUpsertError,
@@ -16,12 +17,10 @@ import {
   StateDecodeError,
 } from '../errors.js'
 
-// State is a JSON object: { clientId, clientSecret }
-// URL-encoded by the browser, so we just JSON.parse the raw string.
 function parseCredentialsFromState({ stateParam }: { stateParam: string }) {
   const parsed = errore.try({
     try: () => {
-      return JSON.parse(stateParam) as { clientId?: string; clientSecret?: string }
+      return decodeGatewayOAuthState(stateParam)
     },
     catch: (cause) => {
       return new StateDecodeError({ cause })
@@ -31,7 +30,7 @@ function parseCredentialsFromState({ stateParam }: { stateParam: string }) {
     return parsed
   }
 
-  if (!parsed.clientId || !parsed.clientSecret) {
+  if (!parsed) {
     return new InvalidStateFormatError()
   }
 
@@ -47,6 +46,7 @@ async function upsertGatewayClient({
   secret: string
   guildId: string
 }) {
+  const prisma = createPrisma()
   const upsertResult = await prisma.gateway_clients
     .upsert({
       where: {

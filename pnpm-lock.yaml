@@ -176,6 +176,9 @@ importers:
       '@types/node':
         specifier: ^24.3.0
         version: 24.3.0
+      db:
+        specifier: workspace:^
+        version: link:../db
       discord-digital-twin:
         specifier: workspace:^
         version: link:../discord-digital-twin

@@ -6,7 +6,7 @@
 // populate process.env with secrets and env vars. No manual bridging needed.
 
 import { Hono } from 'hono'
-import { prisma } from 'db/src/prisma.js'
+import { createPrisma } from 'db/src/prisma.js'
 import { handleOAuthCallback } from './routes/oauth-callback.js'
 import { handleOnboardingStatus } from './routes/onboarding-status.js'
 
@@ -19,6 +19,7 @@ app.get('/', (c) => {
 
 // Health check with DB ping
 app.get('/health', async (c) => {
+  const prisma = createPrisma()
   const result = await prisma.$queryRaw<[{ result: number }]>`SELECT 1 as result`
   return c.json({ status: 'ok', db: result[0].result })
 })

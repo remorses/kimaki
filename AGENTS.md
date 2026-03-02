@@ -87,6 +87,10 @@ the built-in mode onboarding (in `discord/src/cli.ts`, the `run()` function) wor
 
 use `--gateway` to force built-in mode even if self-hosted credentials are already saved. this skips saved self-hosted creds and enters the built-in onboarding flow.
 
+## db package
+
+`db` is a devDependency of `discord`. this means discord can only import **types** from `db`, not runtime values. use `import type { ... } from 'db/...'` in discord code. website has `db` as a normal dependency so it can import runtime values (functions, classes, etc.).
+
 ## opencode SDK
 
 always import from `@opencode-ai/sdk/v2`, never from `@opencode-ai/sdk` (v1). the v2 SDK uses flat parameters instead of nested `path`/`query`/`body` objects. for example:

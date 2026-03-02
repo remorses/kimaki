@@ -22,6 +22,7 @@ import {
   generateBotInstallUrl,
   abbreviatePath,
 } from './utils.js'
+import type { GatewayOAuthState } from 'db/src/gateway-state.js'
 import {
   getChannelsWithDescriptions,
   createDiscordClient,
@@ -1263,9 +1264,7 @@ async function run({
       const clientId = crypto.randomUUID()
       const clientSecret = crypto.randomBytes(32).toString('hex')
 
-      // State is a JSON object so the website callback can easily
-      // extract fields without fragile delimiter splitting.
-      const statePayload = JSON.stringify({ clientId, clientSecret })
+      const statePayload = JSON.stringify({ clientId, clientSecret } satisfies GatewayOAuthState)
       const oauthUrl = generateBotInstallUrl({
         clientId: KIMAKI_SHARED_APP_ID,
         state: statePayload,
@@ -1494,10 +1493,12 @@ async function run({
     // Rebuild the install URL from the current credentials so the user can
     // add the bot to a server without going through the full --restart flow.
     const [clientId, clientSecret] = token.split(':')
-    const statePayload = JSON.stringify({ clientId, clientSecret })
+    if (!clientId || !clientSecret) {
+      throw new Error('Malformed gateway token: expected clientId:clientSecret format')
+    }
     const installUrl = generateBotInstallUrl({
       clientId: KIMAKI_SHARED_APP_ID,
-      state: statePayload,
+      state: JSON.stringify({ clientId, clientSecret } satisfies GatewayOAuthState),
       redirectUri: `${KIMAKI_WEBSITE_URL}/oauth/callback`,
     })
     cliLogger.error(

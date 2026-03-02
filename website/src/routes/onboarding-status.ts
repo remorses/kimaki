@@ -4,7 +4,7 @@
 // Returns 404 if not ready, 200 with guild_id if the client has been registered.
 
 import type { Context } from 'hono'
-import { prisma } from 'db/src/prisma.js'
+import { createPrisma } from 'db/src/prisma.js'
 import { GatewayClientLookupError } from '../errors.js'
 
 async function findGatewayClientByCredentials({
@@ -14,6 +14,7 @@ async function findGatewayClientByCredentials({
   clientId: string
   secret: string
 }) {
+  const prisma = createPrisma()
   return await prisma.gateway_clients
     .findFirst({
       where: { client_id: clientId, secret },

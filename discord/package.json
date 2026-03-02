@@ -33,6 +33,7 @@
     "@types/json-schema": "^7.0.15",
     "@types/ms": "^2.1.0",
     "@types/node": "^24.3.0",
+    "db": "workspace:^",
     "discord-digital-twin": "workspace:^",
     "opencode-cached-provider": "workspace:^",
     "opencode-deterministic-provider": "workspace:^",
