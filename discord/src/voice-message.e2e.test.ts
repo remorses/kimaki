@@ -724,12 +724,21 @@ e2eTest('voice message handling', () => {
 
       await th.user(TEST_USER_ID).sendVoiceMessage()
 
-      // 3. Transcription should appear
+      // 3. Transcription should appear, followed by queue notification
       await waitForBotMessageContaining({
         discord,
         threadId: thread.id,
         userId: TEST_USER_ID,
         text: 'Queue this task for later',
+        timeout: 4_000,
+      })
+
+      // Bot should notify that the message was queued with its position
+      await waitForBotMessageContaining({
+        discord,
+        threadId: thread.id,
+        userId: TEST_USER_ID,
+        text: 'Queued at position',
         timeout: 4_000,
       })
 

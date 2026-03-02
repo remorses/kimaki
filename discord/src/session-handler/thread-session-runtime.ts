@@ -233,6 +233,13 @@ function isEssentialToolPart(part: Part): boolean {
 
 // ── Ingress input type ───────────────────────────────────────────
 
+export type EnqueueResult = {
+  /** True if the message is waiting in queue behind an active run. */
+  queued: boolean
+  /** Queue position (1-based). Only set when queued is true. */
+  position?: number
+}
+
 export type IngressInput = {
   prompt: string
   userId: string
@@ -1530,8 +1537,11 @@ export class ThreadSessionRuntime {
    * Enqueue an incoming message/command, optionally interrupting the active run.
    * Normal user messages use interruptActive: true (abort + enqueue + drain).
    * /queue command uses interruptActive: false (just enqueue + drain).
+   *
+   * Returns { queued, position } computed atomically inside dispatchAction
+   * so callers can show queue notifications without a race window.
    */
-  async enqueueIncoming(input: IngressInput): Promise<void> {
+  async enqueueIncoming(input: IngressInput): Promise<EnqueueResult> {
     const queuedMessage: QueuedMessage = {
       prompt: input.prompt,
       userId: input.userId,
@@ -1545,6 +1555,8 @@ export class ThreadSessionRuntime {
       sessionStartScheduleKind: input.sessionStartSource?.scheduleKind,
       sessionStartScheduledTaskId: input.sessionStartSource?.scheduledTaskId,
     }
+
+    let result: EnqueueResult = { queued: false }
 
     await this.dispatchAction(async () => {
       if (
@@ -1599,6 +1611,16 @@ export class ThreadSessionRuntime {
       // Enqueue the message
       threadState.enqueueItem(this.threadId, queuedMessage)
 
+      // Snapshot queue position atomically before tryDrainQueue may dequeue it
+      const stateAfterEnqueue = threadState.getThreadState(this.threadId)
+      const position = stateAfterEnqueue?.queueItems.length ?? 0
+      const willDrainNow = stateAfterEnqueue
+        ? threadState.canDispatchNext(stateAfterEnqueue)
+        : false
+      result = !willDrainNow && position > 0
+        ? { queued: true, position }
+        : { queued: false }
+
       // Ensure listener is running
       if (!this.listenerLoopRunning) {
         void this.startEventListener()
@@ -1608,6 +1630,8 @@ export class ThreadSessionRuntime {
       // typed this message (whether session was idle or got interrupted).
       await this.tryDrainQueue()
     })
+
+    return result
   }
 
   /**

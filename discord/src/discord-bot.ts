@@ -689,7 +689,7 @@ export async function startDiscordBot({
             channelId: parent?.id,
             appId: currentAppId,
           })
-          await runtime.enqueueIncoming({
+          const enqueueResult = await runtime.enqueueIncoming({
             prompt: promptWithAttachments,
             userId: (isCliInjectedPrompt && cliInjectedUserId)
               ? cliInjectedUserId
@@ -710,6 +710,13 @@ export async function startDiscordBot({
                 }
               : undefined,
           })
+
+          // Notify when a voice message was queued instead of sent immediately.
+          // Position is computed atomically inside enqueueIncoming to avoid
+          // a race where the queue drains before we read its length.
+          if (voiceResult?.queueMessage && enqueueResult.queued && enqueueResult.position) {
+            await sendThreadMessage(thread, `Queued at position ${enqueueResult.position}`)
+          }
         }
       }
 
