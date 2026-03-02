@@ -3,6 +3,13 @@
   "version": "0.0.0",
   "private": true,
   "type": "module",
+  "scripts": {
+    "studio": "doppler run -- prisma studio",
+    "push": "doppler run -c dev --command 'prisma db push && pnpm tsc'",
+    "gen": "prisma generate && pnpm tsc",
+    "postinstall": "prisma generate",
+    "pull": "doppler run -c dev -- prisma db pull && prisma generate"
+  },
   "devDependencies": {
     "prisma": "7.4.2"
   },
