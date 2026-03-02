@@ -1,4 +1,5 @@
 // Queue commands - /queue, /queue-command, /clear-queue
+// Phase 3: Routes through ThreadSessionRuntime instead of global maps.
 
 import { ChannelType, MessageFlags, type ThreadChannel } from 'discord.js'
 import type { AutocompleteContext, CommandContext } from './types.js'
@@ -9,13 +10,9 @@ import {
   SILENT_MESSAGE_FLAGS,
 } from '../discord-utils.js'
 import {
-  handleOpencodeSession,
-  abortControllers,
-  addToQueue,
-  getQueueLength,
-  clearQueue,
-  queueOrSendMessage,
-} from '../session-handler.js'
+  getRuntime,
+  getOrCreateRuntime,
+} from '../session-handler/thread-session-runtime.js'
 import { createLogger, LogPrefix } from '../logger.js'
 import { notifyError } from '../sentry.js'
 import { store } from '../store.js'
@@ -52,15 +49,9 @@ export async function handleQueueCommand({
     return
   }
 
-  const result = await queueOrSendMessage({
-    thread: channel as ThreadChannel,
-    prompt: message,
-    userId: command.user.id,
-    username: command.user.displayName,
-    appId,
-  })
-
-  if (result.action === 'no-session') {
+  const thread = channel as ThreadChannel
+  const sessionId = await getThreadSession(thread.id)
+  if (!sessionId) {
     await command.reply({
       content:
         'No active session in this thread. Send a message directly instead.',
@@ -69,7 +60,8 @@ export async function handleQueueCommand({
     return
   }
 
-  if (result.action === 'no-directory') {
+  const resolved = await resolveWorkingDirectory({ channel: thread })
+  if (!resolved) {
     await command.reply({
       content: 'Could not determine project directory',
       flags: MessageFlags.Ephemeral | SILENT_MESSAGE_FLAGS,
@@ -77,17 +69,27 @@ export async function handleQueueCommand({
     return
   }
 
-  if (result.action === 'sent') {
-    await command.reply({
-      content: `» **${command.user.displayName}:** ${message.slice(0, 1000)}${message.length > 1000 ? '...' : ''}`,
-      flags: SILENT_MESSAGE_FLAGS,
-    })
-    return
-  }
+  const runtime = getOrCreateRuntime({
+    threadId: thread.id,
+    thread,
+    projectDirectory: resolved.projectDirectory,
+    sdkDirectory: resolved.workingDirectory,
+    channelId: thread.parentId || thread.id,
+    appId,
+  })
+
+  // /queue does NOT interrupt — enqueue with interruptActive: false
+  await runtime.enqueueIncoming({
+    prompt: message,
+    userId: command.user.id,
+    username: command.user.displayName,
+    appId,
+    interruptActive: false,
+  })
 
   await command.reply({
-    content: `Message queued (position: ${result.position}). Will be sent after current response.`,
-    flags: MessageFlags.Ephemeral | SILENT_MESSAGE_FLAGS,
+    content: `» **${command.user.displayName}:** ${message.slice(0, 1000)}${message.length > 1000 ? '...' : ''}`,
+    flags: SILENT_MESSAGE_FLAGS,
   })
 }
 
@@ -118,7 +120,8 @@ export async function handleClearQueueCommand({
     return
   }
 
-  const queueLength = getQueueLength(channel.id)
+  const runtime = getRuntime(channel.id)
+  const queueLength = runtime?.getQueueLength() ?? 0
 
   if (queueLength === 0) {
     await command.reply({
@@ -128,10 +131,10 @@ export async function handleClearQueueCommand({
     return
   }
 
-  clearQueue(channel.id)
+  runtime?.clearQueue()
 
   await command.reply({
-    content: `🗑 Cleared ${queueLength} queued message${queueLength > 1 ? 's' : ''}`,
+    content: `Cleared ${queueLength} queued message${queueLength > 1 ? 's' : ''}`,
     flags: SILENT_MESSAGE_FLAGS,
   })
 
@@ -196,74 +199,39 @@ export async function handleQueueCommandCommand({
 
   const commandPayload = { name: commandName, arguments: args }
   const displayText = `/${commandName}`
+  const thread = channel as ThreadChannel
 
-  // Check if there's an active request running
-  const existingController = abortControllers.get(sessionId)
-  const hasActiveRequest = Boolean(
-    existingController && !existingController.signal.aborted,
-  )
-  if (existingController && existingController.signal.aborted) {
-    abortControllers.delete(sessionId)
-  }
-
-  if (!hasActiveRequest) {
-    const resolved = await resolveWorkingDirectory({
-      channel: channel as ThreadChannel,
-    })
-
-    if (!resolved) {
-      await command.reply({
-        content: 'Could not determine project directory',
-        flags: MessageFlags.Ephemeral | SILENT_MESSAGE_FLAGS,
-      })
-      return
-    }
-
+  const resolved = await resolveWorkingDirectory({ channel: thread })
+  if (!resolved) {
     await command.reply({
-      content: `» **${command.user.displayName}:** ${displayText}`,
-      flags: SILENT_MESSAGE_FLAGS,
+      content: 'Could not determine project directory',
+      flags: MessageFlags.Ephemeral | SILENT_MESSAGE_FLAGS,
     })
-
-    logger.log(
-      `[QUEUE] No active request, sending command immediately in thread ${channel.id}`,
-    )
-
-    handleOpencodeSession({
-      prompt: '',
-      thread: channel as ThreadChannel,
-      projectDirectory: resolved.projectDirectory,
-      channelId: (channel as ThreadChannel).parentId || channel.id,
-      command: commandPayload,
-      appId,
-    }).catch(async (e) => {
-      logger.error(`[QUEUE] Failed to send command:`, e)
-      void notifyError(e, 'Queue: failed to send command')
-      const errorMsg = e instanceof Error ? e.message : String(e)
-      await sendThreadMessage(
-        channel as ThreadChannel,
-        `Failed: ${errorMsg.slice(0, 200)}`,
-      )
-    })
-
     return
   }
 
-  // Add to queue with command payload
-  const queuePosition = addToQueue({
-    threadId: channel.id,
-    message: {
-      prompt: '',
-      userId: command.user.id,
-      username: command.user.displayName,
-      queuedAt: Date.now(),
-      appId,
-      command: commandPayload,
-    },
+  const runtime = getOrCreateRuntime({
+    threadId: thread.id,
+    thread,
+    projectDirectory: resolved.projectDirectory,
+    sdkDirectory: resolved.workingDirectory,
+    channelId: thread.parentId || thread.id,
+    appId,
   })
 
   await command.reply({
-    content: `Command queued (position: ${queuePosition}): ${displayText}`,
-    flags: MessageFlags.Ephemeral | SILENT_MESSAGE_FLAGS,
+    content: `» **${command.user.displayName}:** ${displayText}`,
+    flags: SILENT_MESSAGE_FLAGS,
+  })
+
+  // Queue commands don't interrupt — use interruptActive: false
+  await runtime.enqueueIncoming({
+    prompt: '',
+    userId: command.user.id,
+    username: command.user.displayName,
+    appId,
+    command: commandPayload,
+    interruptActive: false,
   })
 
   logger.log(

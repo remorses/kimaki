@@ -23,6 +23,12 @@ export type QueuedMessage = {
   appId?: string
   /** If set, uses session.command API instead of session.prompt */
   command?: { name: string; arguments: string }
+  // First-dispatch-only overrides (used when creating a new session).
+  // Subsequent queue drains ignore these since the session already exists.
+  agent?: string
+  model?: string
+  sessionStartScheduleKind?: 'at' | 'cron'
+  sessionStartScheduledTaskId?: number
 }
 
 // ── Per-thread state (value inside the Map) ──────────────────────
@@ -95,13 +101,10 @@ export function hasBlockers(t: ThreadRunState): boolean {
   )
 }
 
+// sessionId is NOT required here — ensureSession() creates it lazily
+// inside dispatchPrompt(). Requiring it would deadlock the first message.
 export function canDispatchNext(t: ThreadRunState): boolean {
-  return (
-    t.sessionId !== undefined &&
-    hasQueue(t) &&
-    !isRunActive(t) &&
-    !hasBlockers(t)
-  )
+  return hasQueue(t) && !isRunActive(t) && !hasBlockers(t)
 }
 
 export function isBusy(t: ThreadRunState): boolean {

@@ -10,10 +10,8 @@ import { notifyError } from '../sentry.js'
 import { mergeWorktree } from '../worktree-utils.js'
 import { sendThreadMessage, resolveWorkingDirectory } from '../discord-utils.js'
 import {
-  handleOpencodeSession,
-  abortControllers,
-  addToQueue,
-} from '../session-handler.js'
+  getOrCreateRuntime,
+} from '../session-handler/thread-session-runtime.js'
 import { RebaseConflictError, DirtyWorktreeError } from '../errors.js'
 
 const logger = createLogger(LogPrefix.WORKTREE)
@@ -47,6 +45,7 @@ async function removeWorktreePrefixFromTitle(
 /**
  * Send a prompt to the AI model in the thread.
  * If a session is actively streaming, queues it. Otherwise sends directly.
+ * Phase 3: Routes through ThreadSessionRuntime instead of global maps.
  */
 async function sendPromptToModel({
   prompt,
@@ -61,43 +60,23 @@ async function sendPromptToModel({
   command: CommandContext['command']
   appId?: string
 }): Promise<void> {
-  const sessionId = await getThreadSession(thread.id)
-  const existingController = sessionId ? abortControllers.get(sessionId) : null
-  const hasActiveRequest = Boolean(
-    existingController && !existingController.signal.aborted,
-  )
-
-  if (hasActiveRequest) {
-    addToQueue({
-      threadId: thread.id,
-      message: {
-        prompt,
-        userId: command.user.id,
-        username: command.user.displayName,
-        queuedAt: Date.now(),
-        appId,
-      },
-    })
-    logger.log(`[merge] Queued prompt (session active)`)
-    return
-  }
-
   const resolved = await resolveWorkingDirectory({ channel: thread })
-  handleOpencodeSession({
-    prompt,
+
+  // Merge prompts don't interrupt — enqueue with interruptActive: false
+  const runtime = getOrCreateRuntime({
+    threadId: thread.id,
     thread,
     projectDirectory: resolved?.projectDirectory || projectDirectory,
+    sdkDirectory: resolved?.workingDirectory || projectDirectory,
     channelId: thread.parentId || thread.id,
-    username: command.user.displayName,
-    userId: command.user.id,
     appId,
-  }).catch((e) => {
-    logger.error(`[merge] Failed to send prompt to model:`, e)
-    void notifyError(e, 'Merge-worktree prompt send failed')
-    sendThreadMessage(
-      thread,
-      `Failed to send prompt: ${(e instanceof Error ? e.message : String(e)).slice(0, 1900)}`,
-    ).catch(() => {})
+  })
+  await runtime.enqueueIncoming({
+    prompt,
+    userId: command.user.id,
+    username: command.user.displayName,
+    appId,
+    interruptActive: false,
   })
 }
 

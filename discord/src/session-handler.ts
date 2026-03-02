@@ -457,7 +457,7 @@ function isModelValid(
   return isConnected && !!modelExists
 }
 
-async function resolveValidatedAgentPreference({
+export async function resolveValidatedAgentPreference({
   agent,
   sessionId,
   channelId,

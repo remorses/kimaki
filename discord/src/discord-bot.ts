@@ -59,10 +59,11 @@ import {
 } from './voice-handler.js'
 import { getCompactSessionContext, getLastSessionId } from './markdown.js'
 import {
-  handleOpencodeSession,
-  signalThreadInterrupt,
   type SessionStartSourceContext,
 } from './session-handler.js'
+import {
+  getOrCreateRuntime,
+} from './session-handler/thread-session-runtime.js'
 import { runShellCommand } from './commands/run-command.js'
 import { registerInteractionHandler } from './interaction-handler.js'
 import { getDiscordRestApiUrl } from './discord-urls.js'
@@ -467,22 +468,8 @@ export async function startDiscordBot({
 
         const prev = threadMessageQueue.get(thread.id)
 
-        if (prev) {
-          // TODO: Voice queue intent is currently disabled because this flow is
-          // unreliable for voice replies. Revisit queueing support for voice
-          // messages after a robust design is implemented and validated.
-          // Another message is being processed — abort it immediately so this
-          // queued message can start as soon as possible.
-          const sdkDirectory =
-            worktreeInfo?.status === 'ready' && worktreeInfo.worktree_directory
-              ? worktreeInfo.worktree_directory
-              : projectDirectory
-          signalThreadInterrupt({
-            threadId: thread.id,
-            serverDirectory: projectDirectory,
-            sdkDirectory,
-          })
-        }
+        // signalThreadInterrupt removed — the runtime's enqueueIncoming
+        // with interruptActive: true handles abort internally.
         const task = (prev || Promise.resolve()).then(
           () => { return processThreadMessage() },
           () => { return processThreadMessage() },
@@ -548,20 +535,36 @@ export async function startDiscordBot({
               }
             }
 
-            await handleOpencodeSession({
-              prompt,
+            const sdkDir =
+              worktreeInfo?.status === 'ready' &&
+              worktreeInfo.worktree_directory
+                ? worktreeInfo.worktree_directory
+                : projectDirectory
+            const runtime = getOrCreateRuntime({
+              threadId: thread.id,
               thread,
               projectDirectory,
+              sdkDirectory: sdkDir,
               channelId: parent?.id || '',
+              appId: currentAppId,
+            })
+            await runtime.enqueueIncoming({
+              prompt,
+              userId: cliInjectedUserId || message.author.id,
               username:
                 cliInjectedUsername ||
                 message.member?.displayName ||
                 message.author.displayName,
-              userId: cliInjectedUserId || message.author.id,
               appId: currentAppId,
-              sessionStartSource,
+              interruptActive: true,
               agent: cliInjectedAgent,
               model: cliInjectedModel,
+              sessionStartSource: sessionStartSource
+                ? {
+                    scheduleKind: sessionStartSource.scheduleKind,
+                    scheduledTaskId: sessionStartSource.scheduledTaskId,
+                  }
+                : undefined,
             })
             return
           }
@@ -650,22 +653,47 @@ export async function startDiscordBot({
           const promptWithAttachments = textAttachmentsContent
             ? `${messageContent}\n\n${textAttachmentsContent}`
             : messageContent
-          await handleOpencodeSession({
-            prompt: promptWithAttachments,
+
+          if (!projectDirectory) {
+            discordLogger.log(
+              `Cannot process message: no project directory for thread ${thread.id}`,
+            )
+            return
+          }
+
+          const sdkDir =
+            worktreeInfo?.status === 'ready' &&
+            worktreeInfo.worktree_directory
+              ? worktreeInfo.worktree_directory
+              : projectDirectory
+          const runtime = getOrCreateRuntime({
+            threadId: thread.id,
             thread,
             projectDirectory,
-            originalMessage: message,
-            images: fileAttachments,
+            sdkDirectory: sdkDir,
             channelId: parent?.id,
+            appId: currentAppId,
+          })
+          await runtime.enqueueIncoming({
+            prompt: promptWithAttachments,
+            userId: (isCliInjectedPrompt && cliInjectedUserId)
+              ? cliInjectedUserId
+              : message.author.id,
             username:
               cliInjectedUsername ||
               message.member?.displayName ||
               message.author.displayName,
-            userId: isCliInjectedPrompt ? cliInjectedUserId : message.author.id,
+            images: fileAttachments,
             appId: currentAppId,
-            sessionStartSource,
+            interruptActive: true,
             agent: cliInjectedAgent,
             model: cliInjectedModel,
+            sessionStartSource: sessionStartSource
+              ? {
+                  scheduleKind: sessionStartSource.scheduleKind,
+                  scheduledTaskId: sessionStartSource.scheduledTaskId,
+                }
+              : undefined,
           })
         }
       }
@@ -830,16 +858,22 @@ export async function startDiscordBot({
         const promptWithAttachments = textAttachmentsContent
           ? `${messageContent}\n\n${textAttachmentsContent}`
           : messageContent
-        await handleOpencodeSession({
-          prompt: promptWithAttachments,
+        const channelRuntime = getOrCreateRuntime({
+          threadId: thread.id,
           thread,
           projectDirectory: sessionDirectory,
-          originalMessage: message,
-          images: fileAttachments,
+          sdkDirectory: sessionDirectory,
           channelId: textChannel.id,
-          username: message.member?.displayName || message.author.displayName,
-          userId: message.author.id,
           appId: currentAppId,
+        })
+        await channelRuntime.enqueueIncoming({
+          prompt: promptWithAttachments,
+          userId: message.author.id,
+          username:
+            message.member?.displayName || message.author.displayName,
+          images: fileAttachments,
+          appId: currentAppId,
+          interruptActive: true,
         })
       } else {
         discordLogger.log(`Channel type ${channel.type} is not supported`)
@@ -1033,17 +1067,28 @@ export async function startDiscordBot({
 
       const botThreadStartSource = parseSessionStartSourceFromMarker(marker)
 
-      await handleOpencodeSession({
-        prompt,
+      const runtime = getOrCreateRuntime({
+        threadId: thread.id,
         thread,
-        projectDirectory: sessionDirectory,
+        projectDirectory,
+        sdkDirectory: sessionDirectory,
         channelId: parent.id,
         appId: currentAppId,
-        username: marker.username,
-        userId: marker.userId,
+      })
+      await runtime.enqueueIncoming({
+        prompt,
+        userId: marker.userId || '',
+        username: marker.username || 'bot',
+        appId: currentAppId,
         agent: marker.agent,
         model: marker.model,
-        sessionStartSource: botThreadStartSource,
+        interruptActive: true,
+        sessionStartSource: botThreadStartSource
+          ? {
+              scheduleKind: botThreadStartSource.scheduleKind,
+              scheduledTaskId: botThreadStartSource.scheduledTaskId,
+            }
+          : undefined,
       })
     } catch (error) {
       voiceLogger.error(
