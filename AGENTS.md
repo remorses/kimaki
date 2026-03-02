@@ -4,6 +4,89 @@ after every change always run tsc inside discord to validate your changes. try t
 
 do not use spawnSync. use our util execAsync. which uses spawn under the hood
 
+# repo architecture
+
+kimaki is a monorepo with three main packages that communicate via a shared Postgres database hosted on PlanetScale.
+
+```
+┌─────────────────────────────────────────────────────────────┐
+│  User's machine                                             │
+│  discord/ (TypeScript CLI + Discord bot)                    │
+│  ├── src/cli.ts        main CLI, onboarding wizard          │
+│  ├── src/discord-bot.ts  event loop, session routing        │
+│  └── SQLite (~/.kimaki/discord-sessions.db)                 │
+│         local state: bot tokens, channels, threads, models  │
+└────────┬──────────────────────────┬─────────────────────────┘
+         │ REST + WebSocket         │ polls /api/onboarding/status
+         │ (clientId:secret)        │ during first-time setup
+         ▼                          ▼
+┌─────────────────────┐   ┌──────────────────────────────────┐
+│  gateway-proxy/      │   │  website/                        │
+│  (Rust, fly.io)      │   │  (Cloudflare Worker, Hono)       │
+│                      │   │  https://api.kimaki.xyz           │
+│  Sits between the    │   │                                  │
+│  CLI and Discord.    │   │  GET /oauth/callback              │
+│  One shared bot for  │   │    → upserts gateway_clients row │
+│  all users — users   │   │    → website/src/routes/          │
+│  don't create their  │   │      oauth-callback.tsx           │
+│  own Discord bot.    │   │                                  │
+│                      │   │  GET /api/onboarding/status       │
+│  Multi-tenant:       │   │    → CLI polls every 2s           │
+│  filters events per  │   │    → website/src/routes/          │
+│  client_id + guild   │   │      onboarding-status.ts         │
+│                      │   │                                  │
+│  wss://kimaki-       │   └──────────┬───────────────────────┘
+│  gateway-production  │              │
+│  .fly.dev            │              │
+└──────────┬───────────┘              │
+           │                          │
+           ▼                          ▼
+┌──────────────────────────────────────────────────────────────┐
+│  Shared Postgres (PlanetScale)                               │
+│  db/schema.prisma                                            │
+│                                                              │
+│  gateway_clients table:                                      │
+│    client_id  TEXT   ── identifies the kimaki user            │
+│    secret     TEXT   ── authenticates gateway connections     │
+│    guild_id   TEXT   ── guild the user installed the bot in   │
+│    @@id([client_id, guild_id])                               │
+│                                                              │
+│  Written by: website (on OAuth callback)                     │
+│  Read by: gateway-proxy (polls every 1s via db_config.rs)    │
+│  Read by: website (onboarding status check)                  │
+└──────────────────────────────────────────────────────────────┘
+```
+
+## gateway-proxy (Rust)
+
+`gateway-proxy/` is a Rust service that proxies both Discord Gateway (WebSocket) and REST traffic. it lets multiple users share a single Discord bot instead of each user creating their own.
+
+key files:
+- `src/main.rs` — entry point, shard setup, HTTP server, DB polling
+- `src/auth.rs` — authenticates `client_id:secret` tokens
+- `src/db_config.rs` — polls Postgres `gateway_clients` table every 1s, atomically swaps the in-memory client map. stale protection: rejects auth if DB unreachable >30s
+- `src/server.rs` — HTTP+WS server. REST proxy at `/api/v10/*`, WebSocket upgrade for gateway
+- `src/dispatch.rs` — per-shard event fanout, filters events by `authorized_guilds`
+- `src/cache.rs` — builds synthetic READY payloads filtered to authorized guilds
+- `src/rest_proxy.rs` — forwards REST calls, rewrites Authorization header to real bot token, scopes guild/channel routes
+
+auth flow: client sends IDENTIFY with token `client_id:client_secret` → proxy validates against the CLIENTS map (from DB) → returns `SessionPrincipal::Client(id)` + `authorized_guilds` → only forwards events for those guilds.
+
+## gateway onboarding flow (built-in mode)
+
+the built-in mode onboarding (in `discord/src/cli.ts`, the `run()` function) works as follows:
+
+1. CLI generates `clientId` (UUID) + `clientSecret` (32-byte hex)
+2. builds Discord OAuth URL with `state=JSON({clientId, clientSecret})` and `redirect_uri=https://api.kimaki.xyz/oauth/callback`
+3. opens browser to the Discord install URL
+4. user authorizes the shared Kimaki bot in their server
+5. Discord redirects to `website/src/routes/oauth-callback.tsx` with `guild_id` + `state` — website upserts `gateway_clients` row in Postgres
+6. CLI polls `website/src/routes/onboarding-status.ts` every 2s until it finds the `client_id` + `secret` row, gets back `guild_id`
+7. CLI stores credentials locally via `setBotMode()` in SQLite with `bot_mode='built-in'`, `proxy_url` pointing to the gateway
+8. bot connects with `clientId:clientSecret` as the Discord token — discord.js hits the gateway proxy which routes events for authorized guilds only
+
+use `--gateway` to force built-in mode even if self-hosted credentials are already saved. this skips saved self-hosted creds and enters the built-in onboarding flow.
+
 ## opencode SDK
 
 always import from `@opencode-ai/sdk/v2`, never from `@opencode-ai/sdk` (v1). the v2 SDK uses flat parameters instead of nested `path`/`query`/`body` objects. for example:
@@ -705,26 +788,3 @@ const jsonSchema = toJSONSchema(mySchema, {
 });
 ```
 
-
-<!-- opensrc:start -->
-
-## Source Code Reference
-
-Source code for dependencies is available in `opensrc/` for deeper understanding of implementation details.
-
-See `opensrc/sources.json` for the list of available packages and their versions.
-
-Use this source code when you need to understand how a package works internally, not just its types/interface.
-
-### Fetching Additional Source Code
-
-To fetch source code for a package or repository you need to understand, run:
-
-```bash
-npx opensrc <package>           # npm package (e.g., npx opensrc zod)
-npx opensrc pypi:<package>      # Python package (e.g., npx opensrc pypi:requests)
-npx opensrc crates:<package>    # Rust crate (e.g., npx opensrc crates:serde)
-npx opensrc <owner>/<repo>      # GitHub repo (e.g., npx opensrc vercel/ai)
-```
-
-<!-- opensrc:end -->
