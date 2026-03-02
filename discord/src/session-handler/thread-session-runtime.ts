@@ -675,6 +675,12 @@ export class ThreadSessionRuntime {
       if (this.listenerAborted) {
         return
       }
+      // Don't restart typing if the run was aborted — a step-finish event
+      // can schedule this timeout right before abort fires, and the 300ms
+      // delay means it fires after abort already cleared typing.
+      if (this.state?.runState.phase === 'aborted') {
+        return
+      }
       // Don't restart typing if interactive UI is pending
       const hasPendingQuestion = [...pendingQuestionContexts.values()].some(
         (ctx) => {
@@ -1752,6 +1758,8 @@ export class ThreadSessionRuntime {
     if (!runController || runControllerAlreadyAborted) {
       // No active run or already aborted — just mark state.
       threadState.updateRunState(this.threadId, pureMarkAborted)
+      // Stop typing immediately — don't wait for the async API abort response.
+      this.stopTyping()
       const apiAbortPromise = forceApiAbortWithoutRunController && sessionId
         ? this.abortSessionViaApi({ abortId, reason, sessionId })
         : undefined
@@ -1768,6 +1776,10 @@ export class ThreadSessionRuntime {
     runController.abort(new SessionAbortError({ reason }))
     threadState.updateRunState(this.threadId, pureMarkAborted)
     threadState.setRunController(this.threadId, undefined)
+    // Stop typing immediately — don't wait for the async API abort response.
+    // Downstream paths (dispatchPrompt response.error) call stopTyping() too
+    // but that's idempotent; this ensures typing stops the instant abort fires.
+    this.stopTyping()
 
     const apiAbortPromise = sessionId
       ? this.abortSessionViaApi({ abortId, reason, sessionId })
@@ -2210,6 +2222,10 @@ export class ThreadSessionRuntime {
     // errors in { error } field, but AbortController throws on signal abort.
     const response = await sdkCall.catch(async (thrown: unknown) => {
       if (isAbortError(thrown)) {
+        // Stop typing immediately — abortActiveRunInternal already calls
+        // stopTyping() but this covers any code path where the SDK call
+        // is aborted without going through abortActiveRunInternal.
+        this.stopTyping()
         return undefined // aborted by user or new message
       }
       const errMsg =
