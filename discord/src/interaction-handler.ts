@@ -72,7 +72,10 @@ import {
 } from './commands/queue.js'
 import { handleUndoCommand, handleRedoCommand } from './commands/undo-redo.js'
 import { handleUserCommand } from './commands/user-command.js'
-import { handleVerbosityCommand } from './commands/verbosity.js'
+import {
+  handleVerbosityCommand,
+  handleVerbositySelectMenu,
+} from './commands/verbosity.js'
 import { handleRestartOpencodeServerCommand } from './commands/restart-opencode-server.js'
 import { handleRunCommand } from './commands/run-command.js'
 import { handleContextUsageCommand } from './commands/context-usage.js'
@@ -382,6 +385,11 @@ export function registerInteractionHandler({
 
           if (customId.startsWith('agent_select:')) {
             await handleAgentSelectMenu(interaction)
+            return
+          }
+
+          if (customId.startsWith('verbosity_select:')) {
+            await handleVerbositySelectMenu(interaction)
             return
           }
 

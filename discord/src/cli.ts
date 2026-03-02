@@ -742,22 +742,7 @@ async function registerCommands({
       .toJSON(),
     new SlashCommandBuilder()
       .setName('verbosity')
-      .setDescription('Set output verbosity for new sessions in this channel')
-      .addStringOption((option) => {
-        option
-          .setName('level')
-          .setDescription('Verbosity level')
-          .setRequired(true)
-          .addChoices(
-            { name: 'tools-and-text', value: 'tools-and-text' },
-            {
-              name: 'text-and-essential-tools (default)',
-              value: 'text-and-essential-tools',
-            },
-            { name: 'text-only', value: 'text-only' },
-          )
-        return option
-      })
+      .setDescription('Set output verbosity for this channel')
       .setDMPermission(false)
       .toJSON(),
     new SlashCommandBuilder()
