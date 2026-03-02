@@ -3,6 +3,12 @@
   "main": "src/index.tsx",
   "compatibility_flags": ["nodejs_compat"],
   "compatibility_date": "2025-04-01",
+  "hyperdrive": [
+    {
+      "binding": "HYPERDRIVE",
+      "id": "fc242a96a2d5472bb5d6a84eabaab910"
+    }
+  ],
   "routes": [
     {
       "pattern": "kimaki.xyz/*",

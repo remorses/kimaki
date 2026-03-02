@@ -14,16 +14,24 @@ It is responsible for:
 
 **NEVER use a singleton PrismaClient or pg.Pool in this package.** Cloudflare Workers cannot reuse TCP connections across requests. A module-level singleton causes ~40% of requests to hang with error 1101 ("Worker code had hung").
 
-Always call `createPrisma()` inside each request handler to get a fresh client. Never cache the result in a module-level variable.
+Always call `createPrisma(connectionString)` inside each request handler to get a fresh client. Never cache the result in a module-level variable.
+
+**Always pass `c.env.HYPERDRIVE.connectionString`** to `createPrisma()`. The Hyperdrive binding provides pooled connections that cut latency from ~950ms to ~300ms. Without it, every request pays the full TCP+TLS+auth cost to PlanetScale.
 
 ```ts
 // WRONG — will hang intermittently
 import { createPrisma } from 'db/src/prisma.js'
 const prisma = createPrisma() // module-level = singleton = broken
 
-// CORRECT — fresh client per request
+// WRONG — works but ~950ms per request (no pooling)
 async function handleRequest(c: Context) {
   const prisma = createPrisma()
+  // ...
+}
+
+// CORRECT — fresh client per request, Hyperdrive pooled (~300ms)
+async function handleRequest(c: Context<{ Bindings: HonoBindings }>) {
+  const prisma = createPrisma(c.env.HYPERDRIVE.connectionString)
   // ...
 }
 ```

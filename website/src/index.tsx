@@ -1,16 +1,19 @@
 // Cloudflare Worker entrypoint for the Kimaki website.
 // Handles OAuth callback and onboarding status polling.
-// All routes that interact with gateway_clients use the shared db/ Prisma client.
 //
-// With nodejs_compat + compatibility_date >= 2025-04-01, CF Workers automatically
-// populate process.env with secrets and env vars. No manual bridging needed.
+// Uses Hyperdrive for pooled DB connections (env.HYPERDRIVE binding).
+// Each request gets a fresh PrismaClient with the Hyperdrive connection string.
 
 import { Hono } from 'hono'
 import { createPrisma } from 'db/src/prisma.js'
 import { handleOAuthCallback } from './routes/oauth-callback.js'
 import { handleOnboardingStatus } from './routes/onboarding-status.js'
 
-const app = new Hono()
+export type HonoBindings = {
+  HYPERDRIVE: { connectionString: string }
+}
+
+const app = new Hono<{ Bindings: HonoBindings }>()
 
 // Root -- redirect to GitHub
 app.get('/', (c) => {
@@ -19,7 +22,7 @@ app.get('/', (c) => {
 
 // Health check with DB ping
 app.get('/health', async (c) => {
-  const prisma = createPrisma()
+  const prisma = createPrisma(c.env.HYPERDRIVE.connectionString)
   const result = await prisma.$queryRaw<[{ result: number }]>`SELECT 1 as result`
   return c.json({ status: 'ok', db: result[0].result })
 })

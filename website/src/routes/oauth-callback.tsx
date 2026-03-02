@@ -16,6 +16,7 @@ import {
   InvalidStateFormatError,
   StateDecodeError,
 } from '../errors.js'
+import type { HonoBindings } from '../index.js'
 
 function parseCredentialsFromState({ stateParam }: { stateParam: string }) {
   const parsed = errore.try({
@@ -38,15 +39,17 @@ function parseCredentialsFromState({ stateParam }: { stateParam: string }) {
 }
 
 async function upsertGatewayClient({
+  connectionString,
   clientId,
   secret,
   guildId,
 }: {
+  connectionString: string
   clientId: string
   secret: string
   guildId: string
 }) {
-  const prisma = createPrisma()
+  const prisma = createPrisma(connectionString)
   const upsertResult = await prisma.gateway_clients
     .upsert({
       where: {
@@ -65,7 +68,7 @@ async function upsertGatewayClient({
   return null
 }
 
-export async function handleOAuthCallback(c: Context) {
+export async function handleOAuthCallback(c: Context<{ Bindings: HonoBindings }>) {
   const guildId = c.req.query('guild_id')
   const stateParam = c.req.query('state')
 
@@ -87,6 +90,7 @@ export async function handleOAuthCallback(c: Context) {
   }
 
   const upsertError = await upsertGatewayClient({
+    connectionString: c.env.HYPERDRIVE.connectionString,
     clientId: credentials.clientId,
     secret: credentials.secret,
     guildId,
