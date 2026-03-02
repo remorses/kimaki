@@ -35,7 +35,7 @@ import {
 import { setDataDir } from './config.js'
 import type { VerbosityLevel } from './database.js'
 import { startDiscordBot } from './discord-bot.js'
-import { getOpencodeServers } from './opencode.js'
+import { cleanupOpencodeServers, cleanupTestSessions } from './test-utils.js'
 import { createDiscordRest } from './discord-urls.js'
 import { store } from './store.js'
 
@@ -111,16 +111,6 @@ function hasStringId(value: unknown): value is { id: string } {
     return false
   }
   return typeof value.id === 'string'
-}
-
-async function cleanupOpencodeServers() {
-  const servers = getOpencodeServers()
-  for (const [, server] of servers) {
-    if (!server.process.killed) {
-      server.process.kill('SIGTERM')
-    }
-  }
-  servers.clear()
 }
 
 function createMatchers(): DeterministicMatcher[] {
@@ -254,8 +244,10 @@ describeIf('gateway-proxy e2e', () => {
   let proxyPort: number
   let previousDefaultVerbosity: VerbosityLevel | undefined
   let firstThreadId: string
+  let testStartTime = Date.now()
 
   beforeAll(async () => {
+    testStartTime = Date.now()
     const lockPort = chooseLockPort()
     directories = createRunDirectories()
     process.env['KIMAKI_LOCK_PORT'] = String(lockPort)
@@ -357,6 +349,13 @@ describeIf('gateway-proxy e2e', () => {
   }, 120_000)
 
   afterAll(async () => {
+    if (directories) {
+      await cleanupTestSessions({
+        projectDirectory: directories.projectDirectory,
+        testStartTime,
+      })
+    }
+
     if (botClient) {
       botClient.destroy()
     }

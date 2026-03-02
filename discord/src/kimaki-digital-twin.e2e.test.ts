@@ -16,7 +16,7 @@ import {
   setChannelDirectory,
 } from './database.js'
 import { startHranaServer, stopHranaServer } from './hrana-server.js'
-import { getOpencodeServers } from './opencode.js'
+import { cleanupOpencodeServers, cleanupTestSessions } from './test-utils.js'
 
 const geminiApiKey =
   process.env['GEMINI_API_KEY'] ||
@@ -67,19 +67,10 @@ function createDiscordJsClient({ restUrl }: { restUrl: string }) {
   })
 }
 
-async function cleanupOpencodeServers() {
-  const servers = getOpencodeServers()
-  for (const [, server] of servers) {
-    if (!server.process.killed) {
-      server.process.kill('SIGTERM')
-    }
-  }
-  servers.clear()
-}
-
 e2eTest(
   'onboarding then message creates thread and assistant reply via digital twin',
   async () => {
+    const testStartTime = Date.now()
     const directories = createRunDirectories()
     const lockPort = chooseLockPort()
 
@@ -172,6 +163,11 @@ e2eTest(
       expect(createdThread.id.length).toBeGreaterThan(0)
       expect(botReply.content.trim().length).toBeGreaterThan(0)
     } finally {
+      await cleanupTestSessions({
+        projectDirectory: directories.projectDirectory,
+        testStartTime,
+      })
+
       if (botClient) {
         botClient.destroy()
       }

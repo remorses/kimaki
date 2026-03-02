@@ -39,7 +39,7 @@ import {
   type VerbosityLevel,
 } from './database.js'
 import { startHranaServer, stopHranaServer } from './hrana-server.js'
-import { getOpencodeServers, initializeOpencodeForDirectory } from './opencode.js'
+import { cleanupOpencodeServers, cleanupTestSessions } from './test-utils.js'
 import { getLogEntryCount, getLogEntriesSince } from './logger.js'
 
 const e2eTest = describe
@@ -78,16 +78,6 @@ function createDiscordJsClient({ restUrl }: { restUrl: string }) {
       version: '10',
     },
   })
-}
-
-async function cleanupOpencodeServers() {
-  const servers = getOpencodeServers()
-  for (const [, server] of servers) {
-    if (!server.process.killed) {
-      server.process.kill('SIGTERM')
-    }
-  }
-  servers.clear()
 }
 
 function createDeterministicMatchers() {
@@ -343,8 +333,10 @@ e2eTest('thread message queue ordering', () => {
   let botClient: Client
   let previousDefaultVerbosity: VerbosityLevel | null =
     null
+  let testStartTime = Date.now()
 
   beforeAll(async () => {
+    testStartTime = Date.now()
     directories = createRunDirectories()
     const lockPort = chooseLockPort()
 
@@ -430,30 +422,11 @@ e2eTest('thread message queue ordering', () => {
   }, 60_000)
 
   afterAll(async () => {
-    // Clean up opencode sessions created during tests
     if (directories) {
-      const getClient = await initializeOpencodeForDirectory(
-        directories.projectDirectory,
-      )
-      if (!(getClient instanceof Error)) {
-        const client = getClient()
-        const listResult = await client.session.list({
-          directory: directories.projectDirectory,
-        }).catch(() => {
-          return null
-        })
-        const sessions = listResult?.data ?? []
-        await Promise.all(
-          sessions.map((s) => {
-            return client.session.delete({
-              sessionID: s.id,
-              directory: directories.projectDirectory,
-            }).catch(() => {
-              return
-            })
-          }),
-        )
-      }
+      await cleanupTestSessions({
+        projectDirectory: directories.projectDirectory,
+        testStartTime,
+      })
     }
 
     if (botClient) {
