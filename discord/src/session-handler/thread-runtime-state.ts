@@ -31,6 +31,41 @@ export type QueuedMessage = {
   sessionStartScheduledTaskId?: number
 }
 
+// ── Per-run info (present while a prompt is in-flight) ───────────
+
+export type SubtaskInfo = {
+  label: string
+  assistantMessageId: string | undefined
+}
+
+export type CurrentRunInfo = {
+  model: string | undefined
+  providerID: string | undefined
+  agent: string | undefined
+  tokensUsed: number
+  dispatchStartTime: number
+  // UI throttle state (per-run, reset on each dispatch)
+  lastDisplayedContextPercentage: number
+  lastRateLimitDisplayTime: number
+  // Subtask routing: child sessionId → label + message tracking
+  subtaskSessions: Map<string, SubtaskInfo>
+  agentSpawnCounts: Record<string, number>
+}
+
+export function initialCurrentRunInfo(): CurrentRunInfo {
+  return {
+    model: undefined,
+    providerID: undefined,
+    agent: undefined,
+    tokensUsed: 0,
+    dispatchStartTime: Date.now(),
+    lastDisplayedContextPercentage: 0,
+    lastRateLimitDisplayTime: 0,
+    subtaskSessions: new Map(),
+    agentSpawnCounts: {},
+  }
+}
+
 // ── Per-thread state (value inside the Map) ──────────────────────
 
 export type ThreadRunState = {
@@ -49,6 +84,17 @@ export type ThreadRunState = {
   // threadId can abort without needing a runtime instance reference
   // (e.g. /abort command just does getThreadState(id)?.runController?.abort()).
   runController: AbortController | undefined
+  // Listener lifetime controller — only aborted on dispose or fatal error.
+  // Run abort never kills the listener. Kept in store so lifecycle is
+  // observable without needing the runtime class instance.
+  listenerController: AbortController | undefined
+  // Per-run state, present when a prompt is in-flight.
+  // undefined when no run is active (waiting-dispatch/finished/aborted).
+  currentRun: CurrentRunInfo | undefined
+  // Output dedup: tracks which part IDs have been sent to Discord.
+  // Lives at thread level (not in currentRun) because it accumulates
+  // across runs for the lifetime of the runtime — never reset per-run.
+  sentPartIds: Set<string>
 }
 
 // ── Initial state factory ────────────────────────────────────────
@@ -73,6 +119,9 @@ export function initialThreadState(): ThreadRunState {
       deferredIdleSeq: undefined,
     },
     runController: undefined,
+    listenerController: undefined,
+    currentRun: undefined,
+    sentPartIds: new Set(),
   }
 }
 
@@ -114,7 +163,7 @@ export function isBusy(t: ThreadRunState): boolean {
 // ── Pure transition helpers ──────────────────────────────────────
 // Immutable: produces new Map + new ThreadRunState object each time.
 
-function updateThread(
+export function updateThread(
   threadId: string,
   updater: (t: ThreadRunState) => ThreadRunState,
 ): void {

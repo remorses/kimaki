@@ -252,38 +252,22 @@ export class ThreadSessionRuntime {
   readonly appId: string | undefined
   readonly thread: ThreadChannel
 
-  // ── Resource handles (not in Zustand — operational, not domain state) ──
+  // ── Resource handles (mechanisms, not domain state) ──
 
-  // Listener lifetime controller — only aborted on dispose or fatal error.
-  // Run abort never kills the listener.
-  private listenerController = new AbortController()
-  private listenerStarted = false
+  // Reentrancy guard for startEventListener (not domain state —
+  // just prevents calling the async loop twice).
+  private listenerLoopRunning = false
 
   // Typing indicator handles
   private typingInterval: ReturnType<typeof setInterval> | null = null
   private typingRestartTimeout: ReturnType<typeof setTimeout> | null = null
 
-  // Part output deduplication and buffering
-  private sentPartIds = new Set<string>()
+  // Part output buffering (write-side cache, not domain state)
   private partBuffer = new Map<string, Map<string, Part>>()
 
-  // Subtask tracking: child sessionId → { label, assistantMessageId }
-  private subtaskSessions = new Map<
-    string,
-    { label: string; assistantMessageId?: string }
-  >()
-  private agentSpawnCounts: Record<string, number> = {}
-
-  // Per-run caches (reset on each new prompt dispatch in Phase 3)
-  private usedModel: string | undefined
-  private usedProviderID: string | undefined
-  private usedAgent: string | undefined
-  private tokensUsedInSession = 0
-  private lastDisplayedContextPercentage = 0
-  private lastRateLimitDisplayTime = 0
+  // Derivable cache (perf optimization for provider.list API call)
   private modelContextLimit: number | undefined
   private modelContextLimitKey: string | undefined
-  private assistantMessageId: string | undefined
 
   // Serialized action queue — all mutations flow through dispatchAction
   private actionQueue: Array<() => Promise<void>> = []
@@ -296,6 +280,10 @@ export class ThreadSessionRuntime {
     this.channelId = opts.channelId
     this.appId = opts.appId
     this.thread = opts.thread
+    threadState.updateThread(this.threadId, (t) => ({
+      ...t,
+      listenerController: new AbortController(),
+    }))
   }
 
   // Read own state from global store
@@ -303,12 +291,46 @@ export class ThreadSessionRuntime {
     return threadState.getThreadState(this.threadId)
   }
 
+  /** Whether the listener has been disposed. */
+  private get listenerAborted(): boolean {
+    return this.state?.listenerController?.signal.aborted ?? true
+  }
+
+  /** The listener AbortSignal, used to pass to SDK subscribe calls. */
+  private get listenerSignal(): AbortSignal | undefined {
+    return this.state?.listenerController?.signal
+  }
+
+  /** Current assistant message ID from the centralized run state. */
+  private get currentAssistantMessageId(): string | undefined {
+    return this.state?.runState.currentAssistantMessageId
+  }
+
+  /** Shorthand for the current run info from the store. */
+  private get run(): threadState.CurrentRunInfo | undefined {
+    return this.state?.currentRun
+  }
+
+  /** Update fields on the current run info in the store. */
+  private updateRun(
+    updater: (r: threadState.CurrentRunInfo) => threadState.CurrentRunInfo,
+  ): void {
+    threadState.updateThread(this.threadId, (t) => ({
+      ...t,
+      currentRun: t.currentRun ? updater(t.currentRun) : t.currentRun,
+    }))
+  }
+
   // ── Lifecycle ────────────────────────────────────────────────
 
   dispose(): void {
-    this.listenerController.abort()
+    this.state?.listenerController?.abort()
     this.state?.runController?.abort()
-    threadState.setRunController(this.threadId, undefined)
+    threadState.updateThread(this.threadId, (t) => ({
+      ...t,
+      runController: undefined,
+      listenerController: undefined,
+    }))
     this.stopTyping()
   }
 
@@ -316,9 +338,16 @@ export class ThreadSessionRuntime {
   // already sent in a previous runtime or before a reconnect.
   private async bootstrapSentPartIds(): Promise<void> {
     const existingPartIds = await getPartMessageIds(this.thread.id)
-    for (const id of existingPartIds) {
-      this.sentPartIds.add(id)
+    if (existingPartIds.length === 0) {
+      return
     }
+    threadState.updateThread(this.threadId, (t) => {
+      const newIds = new Set(t.sentPartIds)
+      for (const id of existingPartIds) {
+        newIds.add(id)
+      }
+      return { ...t, sentPartIds: newIds }
+    })
   }
 
   // ── Event Listener Loop (§7.3) ──────────────────────────────
@@ -328,17 +357,17 @@ export class ThreadSessionRuntime {
   // Run abort never affects this loop.
 
   async startEventListener(): Promise<void> {
-    if (this.listenerStarted) {
+    if (this.listenerLoopRunning) {
       return
     }
-    this.listenerStarted = true
+    this.listenerLoopRunning = true
 
     const client = getOpencodeClient(this.projectDirectory)
     if (!client) {
       logger.warn(
         `[LISTENER] No OpenCode client for directory: ${this.projectDirectory}`,
       )
-      this.listenerStarted = false
+      this.listenerLoopRunning = false
       return
     }
 
@@ -349,11 +378,15 @@ export class ThreadSessionRuntime {
     let backoffMs = 500
     const maxBackoffMs = 30_000
 
-    while (!this.listenerController.signal.aborted) {
+    while (!this.listenerAborted) {
+      const signal = this.listenerSignal
+      if (!signal) {
+        return // disposed before we could subscribe
+      }
       const subscribeResult = await errore.tryAsync(() => {
         return client.event.subscribe(
           { directory: this.sdkDirectory },
-          { signal: this.listenerController.signal },
+          { signal },
         )
       })
 
@@ -453,7 +486,7 @@ export class ThreadSessionRuntime {
     // Drop events that don't match current session (stale events from
     // previous sessions), unless it's a global event or a subtask session.
     if (!isGlobalEvent && eventSessionId && eventSessionId !== sessionId) {
-      if (!this.subtaskSessions.has(eventSessionId)) {
+      if (!this.run?.subtaskSessions.has(eventSessionId)) {
         return // stale event from previous session
       }
     }
@@ -539,7 +572,7 @@ export class ThreadSessionRuntime {
   // ── Typing Indicator Management ─────────────────────────────
 
   private startTyping(): void {
-    if (this.listenerController.signal.aborted) {
+    if (this.listenerAborted) {
       return
     }
 
@@ -557,7 +590,7 @@ export class ThreadSessionRuntime {
       })
 
     this.typingInterval = setInterval(() => {
-      if (this.listenerController.signal.aborted) {
+      if (this.listenerAborted) {
         this.clearTypingInterval()
         return
       }
@@ -596,13 +629,13 @@ export class ThreadSessionRuntime {
 
   private scheduleTypingRestart(): void {
     this.clearTypingRestartTimeout()
-    if (this.listenerController.signal.aborted) {
+    if (this.listenerAborted) {
       return
     }
 
     this.typingRestartTimeout = setTimeout(() => {
       this.typingRestartTimeout = null
-      if (this.listenerController.signal.aborted) {
+      if (this.listenerAborted) {
         return
       }
       // Don't restart typing if interactive UI is pending
@@ -678,18 +711,26 @@ export class ThreadSessionRuntime {
     if (!content.trim() || content.length === 0) {
       return
     }
-    if (this.sentPartIds.has(part.id)) {
+    if (this.state?.sentPartIds.has(part.id)) {
       return
     }
     // Mark as sent BEFORE the async send to prevent concurrent flushes
     // from sending the same part while this await is in-flight.
-    this.sentPartIds.add(part.id)
+    threadState.updateThread(this.threadId, (t) => {
+      const newIds = new Set(t.sentPartIds)
+      newIds.add(part.id)
+      return { ...t, sentPartIds: newIds }
+    })
 
     const sendResult = await errore.tryAsync(() => {
       return sendThreadMessage(this.thread, content)
     })
     if (sendResult instanceof Error) {
-      this.sentPartIds.delete(part.id)
+      threadState.updateThread(this.threadId, (t) => {
+        const newIds = new Set(t.sentPartIds)
+        newIds.delete(part.id)
+        return { ...t, sentPartIds: newIds }
+      })
       discordLogger.error(
         `ERROR: Failed to send part ${part.id}:`,
         sendResult,
@@ -704,7 +745,7 @@ export class ThreadSessionRuntime {
     force,
     skipPartId,
   }: {
-    messageID: string
+    messageID: string | undefined
     force: boolean
     skipPartId?: string
   }): Promise<void> {
@@ -733,7 +774,7 @@ export class ThreadSessionRuntime {
     show: () => Promise<void>
   }): Promise<void> {
     this.stopTyping()
-    const targetMessageId = flushMessageId || this.assistantMessageId
+    const targetMessageId = flushMessageId || this.currentAssistantMessageId
     if (targetMessageId) {
       await this.flushBufferedParts({
         messageID: targetMessageId,
@@ -745,10 +786,11 @@ export class ThreadSessionRuntime {
   }
 
   private async ensureModelContextLimit(): Promise<void> {
-    if (!this.usedProviderID || !this.usedModel) {
+    const run = this.run
+    if (!run?.providerID || !run.model) {
       return
     }
-    const key = `${this.usedProviderID}/${this.usedModel}`
+    const key = `${run.providerID}/${run.model}`
     if (this.modelContextLimit && this.modelContextLimitKey === key) {
       return
     }
@@ -768,10 +810,10 @@ export class ThreadSessionRuntime {
     }
     const provider = providersResponse.data?.all?.find(
       (p) => {
-        return p.id === this.usedProviderID
+        return p.id === run.providerID
       },
     )
-    const model = provider?.models?.[this.usedModel || '']
+    const model = provider?.models?.[run.model || '']
     if (!model?.limit?.context) {
       return
     }
@@ -787,9 +829,16 @@ export class ThreadSessionRuntime {
     const sessionId = this.state?.sessionId
 
     // Track subtask assistant message IDs
-    const subtaskInfo = this.subtaskSessions.get(msg.sessionID)
+    const subtaskInfo = this.run?.subtaskSessions.get(msg.sessionID)
     if (subtaskInfo && msg.role === 'assistant') {
-      subtaskInfo.assistantMessageId = msg.id
+      this.updateRun((r) => {
+        const newSubs = new Map(r.subtaskSessions)
+        const existing = newSubs.get(msg.sessionID)
+        if (existing) {
+          newSubs.set(msg.sessionID, { ...existing, assistantMessageId: msg.id })
+        }
+        return { ...r, subtaskSessions: newSubs }
+      })
     }
 
     if (msg.sessionID !== sessionId) {
@@ -804,41 +853,37 @@ export class ThreadSessionRuntime {
       return pureMarkCurrentPromptEvidence(rs, msg.id)
     })
 
-    // Track tokens from assistant messages
-    if ('tokens' in msg && msg.tokens) {
-      const newTokensTotal =
-        msg.tokens.input +
-        msg.tokens.output +
-        msg.tokens.reasoning +
-        msg.tokens.cache.read +
-        msg.tokens.cache.write
-      if (newTokensTotal > 0) {
-        this.tokensUsedInSession = newTokensTotal
+    // Track tokens, model, provider, agent from assistant messages
+    this.updateRun((r) => {
+      let tokensUsed = r.tokensUsed
+      if ('tokens' in msg && msg.tokens) {
+        const newTokensTotal =
+          msg.tokens.input +
+          msg.tokens.output +
+          msg.tokens.reasoning +
+          msg.tokens.cache.read +
+          msg.tokens.cache.write
+        if (newTokensTotal > 0) {
+          tokensUsed = newTokensTotal
+        }
       }
-    }
-
-    this.assistantMessageId = msg.id
-    if ('modelID' in msg) {
-      this.usedModel = msg.modelID
-    }
-    if ('providerID' in msg) {
-      this.usedProviderID = msg.providerID
-    }
-    if ('mode' in msg) {
-      this.usedAgent = msg.mode
-    }
+      return {
+        ...r,
+        tokensUsed,
+        model: 'modelID' in msg ? msg.modelID : r.model,
+        providerID: 'providerID' in msg ? msg.providerID : r.providerID,
+        agent: 'mode' in msg ? msg.mode : r.agent,
+      }
+    })
 
     await this.flushBufferedParts({
-      messageID: this.assistantMessageId,
+      messageID: this.currentAssistantMessageId,
       force: false,
     })
 
     // Context usage notice
-    if (
-      this.tokensUsedInSession === 0 ||
-      !this.usedProviderID ||
-      !this.usedModel
-    ) {
+    const run = this.run
+    if (!run || run.tokensUsed === 0 || !run.providerID || !run.model) {
       return
     }
     await this.ensureModelContextLimit()
@@ -846,16 +891,19 @@ export class ThreadSessionRuntime {
       return
     }
     const currentPercentage = Math.floor(
-      (this.tokensUsedInSession / this.modelContextLimit) * 100,
+      (run.tokensUsed / this.modelContextLimit) * 100,
     )
     const thresholdCrossed = Math.floor(currentPercentage / 10) * 10
     if (
-      thresholdCrossed <= this.lastDisplayedContextPercentage ||
+      thresholdCrossed <= run.lastDisplayedContextPercentage ||
       thresholdCrossed < 10
     ) {
       return
     }
-    this.lastDisplayedContextPercentage = thresholdCrossed
+    this.updateRun((r) => ({
+      ...r,
+      lastDisplayedContextPercentage: thresholdCrossed,
+    }))
     const chunk = `⬦ context usage ${currentPercentage}%`
     const sendResult = await errore.tryAsync(() => {
       return this.thread.send({ content: chunk, flags: SILENT_MESSAGE_FLAGS })
@@ -869,7 +917,7 @@ export class ThreadSessionRuntime {
     this.storePart(part)
     const sessionId = this.state?.sessionId
 
-    const subtaskInfo = this.subtaskSessions.get(part.sessionID)
+    const subtaskInfo = this.run?.subtaskSessions.get(part.sessionID)
     const isSubtaskEvent = Boolean(subtaskInfo)
 
     if (part.sessionID !== sessionId && !isSubtaskEvent) {
@@ -892,11 +940,11 @@ export class ThreadSessionRuntime {
   }
 
   private async handleMainPart(part: Part): Promise<void> {
-    const isActiveMessage = this.assistantMessageId
-      ? part.messageID === this.assistantMessageId
+    const isActiveMessage = this.currentAssistantMessageId
+      ? part.messageID === this.currentAssistantMessageId
       : false
     const allowEarlyProcessing =
-      !this.assistantMessageId &&
+      !this.currentAssistantMessageId &&
       part.type === 'tool' &&
       part.state.status === 'running'
     if (!isActiveMessage && !allowEarlyProcessing) {
@@ -921,31 +969,46 @@ export class ThreadSessionRuntime {
 
     if (part.type === 'tool' && part.state.status === 'running') {
       await this.flushBufferedParts({
-        messageID: this.assistantMessageId || part.messageID,
+        messageID: this.currentAssistantMessageId || part.messageID,
         force: true,
         skipPartId: part.id,
       })
       await this.sendPartMessage(part)
 
       // Track task tool spawning subtask sessions
-      if (part.tool === 'task' && !this.sentPartIds.has(part.id)) {
+      if (part.tool === 'task' && !this.state?.sentPartIds.has(part.id)) {
         const description = (part.state.input?.description as string) || ''
         const agent = (part.state.input?.subagent_type as string) || 'task'
         const childSessionId =
           (part.state.metadata?.sessionId as string) || ''
         if (description && childSessionId) {
-          this.agentSpawnCounts[agent] =
-            (this.agentSpawnCounts[agent] || 0) + 1
-          const label = `${agent}-${this.agentSpawnCounts[agent]}`
-          this.subtaskSessions.set(childSessionId, {
-            label,
-            assistantMessageId: undefined,
+          threadState.updateThread(this.threadId, (t) => {
+            const r = t.currentRun
+            if (!r) {
+              return t
+            }
+            const newCounts = { ...r.agentSpawnCounts }
+            newCounts[agent] = (newCounts[agent] || 0) + 1
+            const label = `${agent}-${newCounts[agent]}`
+            const newSubs = new Map(r.subtaskSessions)
+            newSubs.set(childSessionId, { label, assistantMessageId: undefined })
+            const newSentIds = new Set(t.sentPartIds)
+            newSentIds.add(part.id)
+            return {
+              ...t,
+              sentPartIds: newSentIds,
+              currentRun: {
+                ...r,
+                agentSpawnCounts: newCounts,
+                subtaskSessions: newSubs,
+              },
+            }
           })
           if ((await this.getVerbosity()) !== 'text-only') {
+            const spawnCount = this.run?.agentSpawnCounts[agent] || 1
             const taskDisplay = `┣ task **${description}**${agent ? ` _${agent}_` : ''}`
             await sendThreadMessage(this.thread, taskDisplay + '\n\n')
           }
-          this.sentPartIds.add(part.id)
         }
       }
       return
@@ -960,7 +1023,7 @@ export class ThreadSessionRuntime {
       const sessionId = this.state?.sessionId
       await this.showInteractiveUi({
         skipPartId: part.id,
-        flushMessageId: this.assistantMessageId || part.messageID,
+        flushMessageId: this.currentAssistantMessageId || part.messageID,
         show: async () => {
           if (!sessionId) {
             return
@@ -1062,7 +1125,7 @@ export class ThreadSessionRuntime {
 
     if (part.type === 'step-finish') {
       await this.flushBufferedParts({
-        messageID: this.assistantMessageId || part.messageID,
+        messageID: this.currentAssistantMessageId || part.messageID,
         force: true,
       })
       this.scheduleTypingRestart()
@@ -1099,7 +1162,7 @@ export class ThreadSessionRuntime {
     }
 
     const content = formatPart(part, subtaskInfo.label)
-    if (!content.trim() || this.sentPartIds.has(part.id)) {
+    if (!content.trim() || this.state?.sentPartIds.has(part.id)) {
       return
     }
     const sendResult = await errore.tryAsync(() => {
@@ -1112,7 +1175,11 @@ export class ThreadSessionRuntime {
       )
       return
     }
-    this.sentPartIds.add(part.id)
+    threadState.updateThread(this.threadId, (t) => {
+      const newIds = new Set(t.sentPartIds)
+      newIds.add(part.id)
+      return { ...t, sentPartIds: newIds }
+    })
     await setPartMessage(part.id, sendResult.id, this.thread.id)
   }
 
@@ -1158,14 +1225,18 @@ export class ThreadSessionRuntime {
     }
 
     // Subtask idle
-    if (!this.subtaskSessions.has(idleSessionId)) {
+    if (!this.run?.subtaskSessions.has(idleSessionId)) {
       return
     }
-    const subtask = this.subtaskSessions.get(idleSessionId)
+    const subtask = this.run.subtaskSessions.get(idleSessionId)
     logger.log(
       `[SUBTASK IDLE] Subtask "${subtask?.label}" completed`,
     )
-    this.subtaskSessions.delete(idleSessionId)
+    this.updateRun((r) => {
+      const newSubs = new Map(r.subtaskSessions)
+      newSubs.delete(idleSessionId)
+      return { ...r, subtaskSessions: newSubs }
+    })
   }
 
   private async handleSessionError(properties: {
@@ -1214,7 +1285,7 @@ export class ThreadSessionRuntime {
   ): Promise<void> {
     const sessionId = this.state?.sessionId
     const isMainSession = permission.sessionID === sessionId
-    const isSubtaskSession = this.subtaskSessions.has(permission.sessionID)
+    const isSubtaskSession = this.run?.subtaskSessions.has(permission.sessionID) ?? false
 
     if (!isMainSession && !isSubtaskSession) {
       logger.log(
@@ -1224,7 +1295,7 @@ export class ThreadSessionRuntime {
     }
 
     const subtaskLabel = isSubtaskSession
-      ? this.subtaskSessions.get(permission.sessionID)?.label
+      ? this.run?.subtaskSessions.get(permission.sessionID)?.label
       : undefined
 
     const dedupeKey = buildPermissionDedupeKey({
@@ -1312,7 +1383,7 @@ export class ThreadSessionRuntime {
   }): void {
     const sessionId = this.state?.sessionId
     const isMainSession = properties.sessionID === sessionId
-    const isSubtaskSession = this.subtaskSessions.has(properties.sessionID)
+    const isSubtaskSession = this.run?.subtaskSessions.has(properties.sessionID) ?? false
 
     if (!isMainSession && !isSubtaskSession) {
       return
@@ -1353,7 +1424,7 @@ export class ThreadSessionRuntime {
     )
 
     await this.showInteractiveUi({
-      flushMessageId: this.assistantMessageId,
+      flushMessageId: this.currentAssistantMessageId,
       show: async () => {
         if (!sessionId) {
           return
@@ -1390,10 +1461,10 @@ export class ThreadSessionRuntime {
     }
     // Throttle to once per 10 seconds
     const now = Date.now()
-    if (now - this.lastRateLimitDisplayTime < 10_000) {
+    if (now - (this.run?.lastRateLimitDisplayTime ?? 0) < 10_000) {
       return
     }
-    this.lastRateLimitDisplayTime = now
+    this.updateRun((r) => ({ ...r, lastRateLimitDisplayTime: now }))
 
     const { attempt, message, next } = properties.status
     const remainingMs = Math.max(0, next - now)
@@ -1517,7 +1588,7 @@ export class ThreadSessionRuntime {
       threadState.enqueueItem(this.threadId, queuedMessage)
 
       // Ensure listener is running
-      if (!this.listenerStarted) {
+      if (!this.listenerLoopRunning) {
         void this.startEventListener()
       }
 
@@ -1657,13 +1728,12 @@ export class ThreadSessionRuntime {
   // (session-handler.ts lines 2384-2620). The listener is already running,
   // so this only handles session ensure + model/agent + SDK call + state.
 
-  private dispatchStartTime = 0
-
   private async dispatchPrompt(input: QueuedMessage): Promise<void> {
-    this.dispatchStartTime = Date.now()
-
-    // Reset per-run caches
-    this.resetPerRunState()
+    // Initialize currentRun in the store (replaces resetPerRunState + dispatchStartTime)
+    threadState.updateThread(this.threadId, (t) => ({
+      ...t,
+      currentRun: threadState.initialCurrentRunInfo(),
+    }))
 
     // ── Ensure session ────────────────────────────────────────
     const sessionResult = await this.ensureSession({
@@ -1687,7 +1757,7 @@ export class ThreadSessionRuntime {
     // Ensure listener is running now that we have a valid OpenCode client.
     // The eager start in enqueueIncoming may have failed if the client
     // wasn't initialized yet (fresh thread, first message).
-    if (!this.listenerStarted) {
+    if (!this.listenerLoopRunning) {
       void this.startEventListener()
     }
 
@@ -1780,8 +1850,11 @@ export class ThreadSessionRuntime {
     }
 
     // Set initial model info from early resolution
-    this.usedModel = earlyModelParam.modelID
-    this.usedProviderID = earlyModelParam.providerID
+    this.updateRun((r) => ({
+      ...r,
+      model: earlyModelParam.modelID,
+      providerID: earlyModelParam.providerID,
+    }))
 
     // Resolve thinking variant
     const earlyThinkingValue = await (async (): Promise<string | undefined> => {
@@ -2175,9 +2248,9 @@ export class ThreadSessionRuntime {
     this.stopTyping()
 
     // Flush remaining buffered parts
-    if (this.assistantMessageId) {
+    if (this.currentAssistantMessageId) {
       await this.flushBufferedParts({
-        messageID: this.assistantMessageId,
+        messageID: this.currentAssistantMessageId,
         force: true,
       })
     }
@@ -2201,14 +2274,15 @@ export class ThreadSessionRuntime {
    * Equivalent to session-handler.ts footer logic (lines 2232-2327).
    */
   private async emitFooter(): Promise<void> {
+    const run = this.run
     const sessionDuration = prettyMilliseconds(
-      Date.now() - this.dispatchStartTime,
+      Date.now() - (run?.dispatchStartTime ?? Date.now()),
       { secondsDecimalDigits: 0 },
     )
-    const modelInfo = this.usedModel ? ` ⋅ ${this.usedModel}` : ''
+    const modelInfo = run?.model ? ` ⋅ ${run.model}` : ''
     const agentInfo =
-      this.usedAgent && this.usedAgent.toLowerCase() !== 'build'
-        ? ` ⋅ **${this.usedAgent}**`
+      run?.agent && run.agent.toLowerCase() !== 'build'
+        ? ` ⋅ **${run.agent}**`
         : ''
     let contextInfo = ''
     const folderName = path.basename(this.sdkDirectory)
@@ -2227,9 +2301,10 @@ export class ThreadSessionRuntime {
         if (!client || !sessionId) {
           return
         }
+        let tokensUsed = run?.tokensUsed ?? 0
         // Fetch final token count from API
         const [messagesResult, providersResult] = await Promise.all([
-          this.tokensUsedInSession === 0
+          tokensUsed === 0
             ? errore.tryAsync(() => {
                 return client.session.messages({
                   sessionID: sessionId,
@@ -2258,23 +2333,24 @@ export class ThreadSessionRuntime {
               reasoning: number
               cache: { read: number; write: number }
             }
-            this.tokensUsedInSession =
+            tokensUsed =
               tokens.input +
               tokens.output +
               tokens.reasoning +
               tokens.cache.read +
               tokens.cache.write
+            this.updateRun((r) => ({ ...r, tokensUsed }))
           }
         }
 
         if (providersResult && !(providersResult instanceof Error)) {
           const provider = providersResult.data?.all?.find((p) => {
-            return p.id === this.usedProviderID
+            return p.id === run?.providerID
           })
-          const model = provider?.models?.[this.usedModel || '']
+          const model = provider?.models?.[run?.model || '']
           if (model?.limit?.context) {
             const percentage = Math.round(
-              (this.tokensUsedInSession / model.limit.context) * 100,
+              (tokensUsed / model.limit.context) * 100,
             )
             contextInfo = ` ⋅ ${percentage}%`
           }
@@ -2299,23 +2375,18 @@ export class ThreadSessionRuntime {
       { flags: NOTIFY_MESSAGE_FLAGS },
     )
     logger.log(
-      `DURATION: Session completed in ${sessionDuration}, model ${this.usedModel}, tokens ${this.tokensUsedInSession}`,
+      `DURATION: Session completed in ${sessionDuration}, model ${run?.model}, tokens ${run?.tokensUsed ?? 0}`,
     )
   }
 
-  /** Reset per-run caches for the next prompt dispatch. */
+  /** Reset per-run state for the next prompt dispatch. */
   private resetPerRunState(): void {
-    this.usedModel = undefined
-    this.usedProviderID = undefined
-    this.usedAgent = undefined
-    this.tokensUsedInSession = 0
-    this.lastDisplayedContextPercentage = 0
-    this.lastRateLimitDisplayTime = 0
+    threadState.updateThread(this.threadId, (t) => ({
+      ...t,
+      currentRun: undefined,
+    }))
     this.modelContextLimit = undefined
     this.modelContextLimitKey = undefined
-    this.assistantMessageId = undefined
-    this.subtaskSessions.clear()
-    this.agentSpawnCounts = {}
   }
 
   /**
@@ -2401,7 +2472,7 @@ export class ThreadSessionRuntime {
       setTimeout(resolve, 300)
     })
 
-    if (this.listenerController.signal.aborted) {
+    if (this.listenerAborted) {
       logger.log(`[RETRY] Runtime disposed before retry for thread ${this.threadId}`)
       return false
     }
