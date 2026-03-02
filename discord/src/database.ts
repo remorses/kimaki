@@ -1121,9 +1121,6 @@ export async function getBotTokenWithMode(): Promise<
  * Store a bot token.
  */
 export async function setBotToken(appId: string, token: string): Promise<void> {
-  if (isAuthModeEnabled()) {
-    return
-  }
   const prisma = await getPrisma()
   await prisma.bot_tokens.upsert({
     where: { app_id: appId },
