@@ -39,6 +39,7 @@ import {
   type VerbosityLevel,
 } from './database.js'
 import { startHranaServer, stopHranaServer } from './hrana-server.js'
+import { initializeOpencodeForDirectory } from './opencode.js'
 import { cleanupOpencodeServers, cleanupTestSessions } from './test-utils.js'
 import { getLogEntryCount, getLogEntriesSince } from './logger.js'
 
@@ -419,6 +420,15 @@ e2eTest('thread message queue ordering', () => {
       appId: discord.botUserId,
       discordClient: botClient,
     })
+
+    // Pre-warm the opencode server so the first test doesn't include
+    // server startup time (~3-4s) inside its 4s poll timeouts.
+    const warmup = await initializeOpencodeForDirectory(
+      directories.projectDirectory,
+    )
+    if (warmup instanceof Error) {
+      throw warmup
+    }
   }, 60_000)
 
   afterAll(async () => {
