@@ -187,6 +187,14 @@ export type ThreadRunState = {
   // until the next successful finishRun() or until the runtime is disposed.
   currentRun: CurrentRunInfo | undefined
 
+  // True while a tool call is in-flight (status='running' seen, no
+  // step-finish yet). Used by enqueueIncoming to decide whether to wait
+  // for the current step to finish before aborting — gives the tool up
+  // to 3s to complete instead of killing it mid-execution.
+  // Changes: set true on tool running part, set false on step-finish/abort/finish.
+  // Read by: enqueueIncoming graceful interrupt logic.
+  hasRunningTool: boolean
+
   // Output dedup: tracks which part IDs have already been sent to Discord.
   // Prevents resending the same tool output or text part on SSE reconnect.
   // Lives at thread level (not in currentRun) because it accumulates
@@ -222,6 +230,7 @@ export function initialThreadState(): ThreadRunState {
     runController: undefined,
     listenerController: undefined,
     currentRun: undefined,
+    hasRunningTool: false,
     sentPartIds: new Set(),
   }
 }
@@ -372,6 +381,15 @@ export function setBlockerFlag(
     ...t,
     blockers: { ...t.blockers, [flag]: value },
   }))
+}
+
+// ── Tool running state ───────────────────────────────────────────
+
+export function setHasRunningTool(
+  threadId: string,
+  value: boolean,
+): void {
+  updateThread(threadId, (t) => ({ ...t, hasRunningTool: value }))
 }
 
 // ── Run state transitions ────────────────────────────────────────

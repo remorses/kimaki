@@ -190,6 +190,12 @@ export function getRuntimeCount(): number {
   return runtimes.size
 }
 
+// Max time to wait for the current tool call to finish before aborting.
+// When a user sends a message while a tool is running, we give the tool
+// this much time to complete naturally (step-finish event) instead of
+// killing it mid-execution. If the step doesn't finish in time, we abort.
+const GRACEFUL_STEP_WAIT_MS = 3_000
+
 // ── Helpers ──────────────────────────────────────────────────────
 
 function delay(ms: number): Promise<void> {
@@ -315,6 +321,11 @@ export class ThreadSessionRuntime {
   // Serialized action queue — all mutations flow through dispatchAction
   private actionQueue: Array<() => Promise<void>> = []
   private processingAction = false
+
+  // Step-finish waiter: resolved when a step-finish event arrives.
+  // Used by enqueueIncoming to wait for the current tool call to complete
+  // before aborting, giving tools up to GRACEFUL_STEP_WAIT_MS to finish.
+  private stepFinishWaiter: { resolve: () => void; promise: Promise<void> } | undefined
 
   constructor(opts: RuntimeOptions) {
     this.threadId = opts.threadId
@@ -713,6 +724,33 @@ export class ThreadSessionRuntime {
     }, 300)
   }
 
+  // ── Step-finish waiter (graceful interrupt) ─────────────────
+  // When a user message interrupts an active tool call, we wait up to
+  // GRACEFUL_STEP_WAIT_MS for the step to finish naturally before aborting.
+  // This avoids killing tool calls that are about to complete.
+
+  /** Create a waiter that resolves when notifyStepFinished() is called. */
+  private createStepFinishWaiter(): Promise<void> {
+    if (this.stepFinishWaiter) {
+      return this.stepFinishWaiter.promise
+    }
+    let resolve!: () => void
+    const promise = new Promise<void>((r) => {
+      resolve = r
+    })
+    this.stepFinishWaiter = { resolve, promise }
+    return promise
+  }
+
+  /** Called from handleMainPart on step-finish to resolve any pending waiter. */
+  private notifyStepFinished(): void {
+    if (!this.stepFinishWaiter) {
+      return
+    }
+    this.stepFinishWaiter.resolve()
+    this.stepFinishWaiter = undefined
+  }
+
   // ── Part Buffering & Output ─────────────────────────────────
 
   private getVerbosityChannelId(): string {
@@ -1023,6 +1061,7 @@ export class ThreadSessionRuntime {
     }
 
     if (part.type === 'tool' && part.state.status === 'running') {
+      threadState.setHasRunningTool(this.threadId, true)
       await this.flushBufferedParts({
         messageID: this.currentAssistantMessageId || part.messageID,
         force: true,
@@ -1179,6 +1218,8 @@ export class ThreadSessionRuntime {
     }
 
     if (part.type === 'step-finish') {
+      threadState.setHasRunningTool(this.threadId, false)
+      this.notifyStepFinished()
       await this.flushBufferedParts({
         messageID: this.currentAssistantMessageId || part.messageID,
         force: true,
@@ -1604,6 +1645,13 @@ export class ThreadSessionRuntime {
 
     let result: EnqueueResult = { queued: false }
     let pendingAbortOutcome: AbortRunOutcome | undefined
+    // Whether a tool was running when the interrupt arrived — used to
+    // decide if we should wait for the step to finish before aborting.
+    let toolWasRunning = false
+    // Promise that resolves when a step-finish event arrives. Created
+    // INSIDE dispatchAction to prevent a lost-wake race where step-finish
+    // fires before the waiter is registered.
+    let stepFinishPromise: Promise<void> | undefined
 
     await this.dispatchAction(async () => {
       if (
@@ -1617,15 +1665,10 @@ export class ThreadSessionRuntime {
       }
 
       if (input.interruptActive) {
-        pendingAbortOutcome = this.abortActiveRunInternal({
-          reason: 'new-request',
-          forceApiAbortWithoutRunController: true,
-        })
-
-        // Auto-reject all pending permissions for this thread
+        // Cancel interactive UIs immediately regardless of graceful wait —
+        // these block the session and the user clearly wants to move on.
         await this.autoRejectPendingPermissions()
 
-        // Answer pending question with the user's message
         const questionAnswered = await cancelPendingQuestion(
           this.thread.id,
           input.prompt,
@@ -1636,7 +1679,6 @@ export class ThreadSessionRuntime {
           )
         }
 
-        // Cancel pending file upload
         const fileUploadCancelled = await cancelPendingFileUpload(
           this.thread.id,
         )
@@ -1646,13 +1688,34 @@ export class ThreadSessionRuntime {
           )
         }
 
-        // Dismiss pending action buttons
         const actionButtonsDismissed = cancelPendingActionButtons(
           this.thread.id,
         )
         if (actionButtonsDismissed) {
           logger.log(
             `[ENQUEUE] Dismissed pending action buttons due to new message`,
+          )
+        }
+
+        // Check if a tool call is currently in-flight. If so, we'll
+        // wait for it to finish (up to GRACEFUL_STEP_WAIT_MS) outside
+        // dispatchAction before aborting — this avoids killing tool
+        // calls that are about to complete.
+        toolWasRunning = this.state?.hasRunningTool ?? false
+
+        if (!toolWasRunning) {
+          // No tool running (text generation or between steps) — abort immediately.
+          pendingAbortOutcome = this.abortActiveRunInternal({
+            reason: 'new-request',
+            forceApiAbortWithoutRunController: true,
+          })
+        } else {
+          // Register the waiter inside dispatchAction so it exists before
+          // any step-finish event can be processed (events also serialize
+          // through dispatchAction). This prevents a lost-wake race.
+          stepFinishPromise = this.createStepFinishWaiter()
+          logger.log(
+            `[ENQUEUE] Tool running — deferring abort for up to ${GRACEFUL_STEP_WAIT_MS}ms threadId=${this.threadId}`,
           )
         }
       }
@@ -1692,11 +1755,72 @@ export class ThreadSessionRuntime {
       }
     })
 
-    if (input.interruptActive && pendingAbortOutcome) {
-      await this.waitForAbortSettlement(pendingAbortOutcome)
-      await this.dispatchAction(async () => {
-        await this.tryDrainQueue()
-      })
+    if (input.interruptActive) {
+      if (toolWasRunning && stepFinishPromise) {
+        // Graceful step wait: give the current tool call time to finish
+        // before aborting. The step-finish event handler will resolve the
+        // waiter when the tool completes. We wait outside dispatchAction
+        // so event processing (which also uses dispatchAction) isn't blocked.
+        let stepFinished = false
+        await Promise.race([
+          stepFinishPromise.then(() => {
+            stepFinished = true
+          }),
+          delay(GRACEFUL_STEP_WAIT_MS),
+        ])
+        // Clean up waiter if we timed out (prevent stale resolve later)
+        if (!stepFinished) {
+          this.notifyStepFinished()
+        }
+
+        // Check if the run already finished naturally during our wait
+        // (session.idle arrived and finishRun() processed it). Check this
+        // independent of stepFinished — even if the signal was lost, the
+        // run state is the source of truth.
+        const phase = this.state?.runState.phase
+        const runFinishedNaturally =
+          phase === 'finished' || phase === 'waiting-dispatch'
+
+        if (runFinishedNaturally) {
+          // The model's turn completed naturally — no need to abort.
+          // Just drain the queue so the user's new message gets dispatched.
+          logger.log(
+            `[ENQUEUE] Graceful wait: run finished naturally, skipping abort threadId=${this.threadId} stepFinished=${stepFinished}`,
+          )
+          await this.dispatchAction(async () => {
+            await this.tryDrainQueue()
+          })
+        } else {
+          // Step finished but model has more steps, or timeout — abort now.
+          if (stepFinished) {
+            logger.log(
+              `[ENQUEUE] Graceful wait: step finished but run still active, aborting threadId=${this.threadId}`,
+            )
+          } else {
+            logger.log(
+              `[ENQUEUE] Graceful wait: timeout after ${GRACEFUL_STEP_WAIT_MS}ms, aborting threadId=${this.threadId}`,
+            )
+          }
+          await this.dispatchAction(async () => {
+            pendingAbortOutcome = this.abortActiveRunInternal({
+              reason: 'new-request',
+              forceApiAbortWithoutRunController: true,
+            })
+          })
+          if (pendingAbortOutcome) {
+            await this.waitForAbortSettlement(pendingAbortOutcome)
+          }
+          await this.dispatchAction(async () => {
+            await this.tryDrainQueue()
+          })
+        }
+      } else if (pendingAbortOutcome) {
+        // No tool was running — immediate abort path (original behavior).
+        await this.waitForAbortSettlement(pendingAbortOutcome)
+        await this.dispatchAction(async () => {
+          await this.tryDrainQueue()
+        })
+      }
     }
 
     return result
@@ -1776,6 +1900,8 @@ export class ThreadSessionRuntime {
     if (!runController || runControllerAlreadyAborted) {
       // No active run or already aborted — just mark state.
       threadState.updateRunState(this.threadId, pureMarkAborted)
+      threadState.setHasRunningTool(this.threadId, false)
+      this.notifyStepFinished()
       // Stop typing immediately — don't wait for the async API abort response.
       this.stopTyping()
       const apiAbortPromise = forceApiAbortWithoutRunController && sessionId
@@ -1794,6 +1920,8 @@ export class ThreadSessionRuntime {
     runController.abort(new SessionAbortError({ reason }))
     threadState.updateRunState(this.threadId, pureMarkAborted)
     threadState.setRunController(this.threadId, undefined)
+    threadState.setHasRunningTool(this.threadId, false)
+    this.notifyStepFinished()
     // Stop typing immediately — don't wait for the async API abort response.
     // Downstream paths (dispatchPrompt response.error) call stopTyping() too
     // but that's idempotent; this ensures typing stops the instant abort fires.
@@ -2256,6 +2384,8 @@ export class ThreadSessionRuntime {
       void notifyError(errObj, 'Failed to send prompt to OpenCode')
       threadState.updateRunState(this.threadId, pureMarkAborted)
       threadState.setRunController(this.threadId, undefined)
+      threadState.setHasRunningTool(this.threadId, false)
+      this.notifyStepFinished()
       this.stopTyping()
       await sendThreadMessage(
         this.thread,
@@ -2289,6 +2419,8 @@ export class ThreadSessionRuntime {
         )
         threadState.updateRunState(this.threadId, pureMarkAborted)
         threadState.setRunController(this.threadId, undefined)
+        threadState.setHasRunningTool(this.threadId, false)
+        this.notifyStepFinished()
         this.stopTyping()
         // Don't drain the queue here — the caller that triggered the abort
         // handles draining: interrupt code (enqueueIncoming) drains without
@@ -2324,6 +2456,8 @@ export class ThreadSessionRuntime {
       void notifyError(apiError, 'OpenCode API error during prompt')
       threadState.updateRunState(this.threadId, pureMarkAborted)
       threadState.setRunController(this.threadId, undefined)
+      threadState.setHasRunningTool(this.threadId, false)
+      this.notifyStepFinished()
       this.stopTyping()
       await sendThreadMessage(this.thread, `✗ ${apiError.message}`)
       // Show indicator: API error, next queued message was waiting.
@@ -2626,7 +2760,9 @@ export class ThreadSessionRuntime {
     threadState.updateThread(this.threadId, (t) => ({
       ...t,
       currentRun: undefined,
+      hasRunningTool: false,
     }))
+    this.notifyStepFinished()
     this.modelContextLimit = undefined
     this.modelContextLimitKey = undefined
   }
