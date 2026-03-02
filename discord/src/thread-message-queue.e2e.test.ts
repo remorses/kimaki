@@ -692,6 +692,18 @@ e2eTest('thread message queue ordering', () => {
         return i > userFoxtrotIndex && m.author.id === discord.botUserId
       })
       expect(botAfterFoxtrot).toBeGreaterThan(userFoxtrotIndex)
+
+      // Interrupt messages must NOT show the » dispatch indicator.
+      // The indicator is only for messages that genuinely waited in queue
+      // (e.g. via /queue), not for messages that triggered the interrupt.
+      const hasInterruptIndicator = after.some((m) => {
+        return (
+          m.author.id === discord.botUserId &&
+          m.content.includes('»') &&
+          m.content.includes('foxtrot')
+        )
+      })
+      expect(hasInterruptIndicator).toBe(false)
     },
     8_000,
   )

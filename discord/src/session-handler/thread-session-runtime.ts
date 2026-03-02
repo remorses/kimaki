@@ -1849,6 +1849,13 @@ export class ThreadSessionRuntime {
     if (outcome.apiAbortPromise) {
       void outcome.apiAbortPromise
     }
+    // Drain queued messages after abort — the SDK session abort response
+    // handler no longer drains (it raced with interrupt drains and showed
+    // the » indicator for non-queued messages). This covers /abort and
+    // other external callers that need queued messages to continue.
+    void this.dispatchAction(() => {
+      return this.tryDrainQueue({ showIndicator: true })
+    })
   }
 
   /** Number of messages waiting in the queue. */
@@ -2247,9 +2254,12 @@ export class ThreadSessionRuntime {
         threadState.updateRunState(this.threadId, pureMarkAborted)
         threadState.setRunController(this.threadId, undefined)
         this.stopTyping()
-        await this.dispatchAction(() => {
-          return this.tryDrainQueue({ showIndicator: true })
-        })
+        // Don't drain the queue here — the caller that triggered the abort
+        // handles draining: interrupt code (enqueueIncoming) drains without
+        // the » indicator, and /abort drains via abortActiveRun with indicator.
+        // Draining here raced with the interrupt's drain because this
+        // dispatchAction ran during waitForAbortSettlement's await yield,
+        // causing the » user: message indicator to show for interrupts.
         return
       }
 
