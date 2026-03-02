@@ -1611,7 +1611,17 @@ export class ThreadSessionRuntime {
       // Enqueue the message
       threadState.enqueueItem(this.threadId, queuedMessage)
 
-      // Snapshot queue position atomically before tryDrainQueue may dequeue it
+      // Determine if the message is genuinely waiting in queue (behind an
+      // active run or blocker) vs being dispatched immediately.
+      // This must be computed here — inside dispatchAction, after enqueueItem
+      // but before tryDrainQueue — because tryDrainQueue will dequeue and
+      // dispatch the item if the session is idle. If the caller tried to
+      // check queue state after enqueueIncoming returns, a race exists where
+      // the queue already drained and the position reads as 0.
+      //
+      // canDispatchNext returns true when queue has items AND no run is active
+      // AND no blockers are pending. If it's true, the item will be dispatched
+      // immediately by tryDrainQueue below, so it's not really "queued".
       const stateAfterEnqueue = threadState.getThreadState(this.threadId)
       const position = stateAfterEnqueue?.queueItems.length ?? 0
       const willDrainNow = stateAfterEnqueue
