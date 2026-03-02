@@ -411,6 +411,7 @@ function processRequest(
 // @libsql/client HTTP driver uses batons to keep streams alive across
 // pipeline requests (needed for interactive transactions). Each stream has
 // its own SQL store for store_sql/close_sql scoping.
+
 let batonCounter = 0
 const streamStores = new Map<string, Map<number, string>>()
 

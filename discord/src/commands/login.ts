@@ -188,7 +188,7 @@ export async function handleLoginCommand({
       .map((provider) => {
         const isConnected = connected.includes(provider.id)
         return {
-          label: `${provider.name}${isConnected ? ' \u2713' : ''}`.slice(
+          label: `${provider.name}${isConnected ? ' ✓' : ''}`.slice(
             0,
             100,
           ),
