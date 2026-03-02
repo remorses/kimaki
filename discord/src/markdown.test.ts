@@ -1,115 +1,183 @@
+// Deterministic markdown export tests.
+// Spawns an isolated opencode server with the deterministic provider,
+// creates sessions with known content, and validates markdown output.
+// No dependency on machine-local session state.
+
+import fs from 'node:fs'
+import path from 'node:path'
+import url from 'node:url'
 import { test, expect, beforeAll, afterAll } from 'vitest'
-import { spawn, type ChildProcess } from 'child_process'
-import { OpencodeClient } from '@opencode-ai/sdk/v2'
+import type { OpencodeClient } from '@opencode-ai/sdk/v2'
 import * as errore from 'errore'
+import {
+  buildDeterministicOpencodeConfig,
+  type DeterministicMatcher,
+} from 'opencode-deterministic-provider'
 import { ShareMarkdown, getCompactSessionContext } from './markdown.js'
+import { setDataDir } from './config.js'
+import { initializeOpencodeForDirectory, getOpencodeClient } from './opencode.js'
+import { cleanupOpencodeServers, cleanupTestSessions } from './test-utils.js'
 
-let serverProcess: ChildProcess
-let client: OpencodeClient
-let port: number
+const ROOT = path.resolve(process.cwd(), 'tmp', 'markdown-test')
 
-const waitForServer = async (port: number, maxAttempts = 30) => {
-  for (let i = 0; i < maxAttempts; i++) {
-    try {
-      const response = await fetch(`http://127.0.0.1:${port}/api/health`)
-      if (response.status < 500) {
-        return true
-      }
-    } catch {
-      // Server not ready yet
-    }
-    await new Promise((resolve) => setTimeout(resolve, 1000))
-  }
-  throw new Error(
-    `Server did not start on port ${port} after ${maxAttempts} seconds`,
-  )
+function createRunDirectories() {
+  fs.mkdirSync(ROOT, { recursive: true })
+  const dataDir = fs.mkdtempSync(path.join(ROOT, 'data-'))
+  const projectDirectory = path.join(ROOT, 'project')
+  fs.mkdirSync(projectDirectory, { recursive: true })
+  return { dataDir, projectDirectory }
 }
 
-beforeAll(async () => {
-  // Use default opencode port
-  port = 4096
+function createMatchers(): DeterministicMatcher[] {
+  const helloMatcher: DeterministicMatcher = {
+    id: 'hello-reply',
+    priority: 100,
+    when: { latestUserTextIncludes: 'hello markdown test' },
+    then: {
+      parts: [
+        { type: 'stream-start', warnings: [] },
+        { type: 'text-start', id: 'hello-text' },
+        { type: 'text-delta', id: 'hello-text', delta: 'Hello! This is a deterministic markdown test response.' },
+        { type: 'text-end', id: 'hello-text' },
+        { type: 'finish', finishReason: 'stop', usage: { inputTokens: 10, outputTokens: 8, totalTokens: 18 } },
+      ],
+    },
+  }
 
-  // Spawn opencode server
-  console.log(`Starting opencode server on port ${port}...`)
-  serverProcess = spawn('opencode', ['serve', '--port', port.toString()], {
-    stdio: 'pipe',
-    detached: false,
-    env: {
-      ...process.env,
-      OPENCODE_PORT: port.toString(),
+  const defaultMatcher: DeterministicMatcher = {
+    id: 'default-reply',
+    priority: 1,
+    then: {
+      parts: [
+        { type: 'stream-start', warnings: [] },
+        { type: 'text-start', id: 'default-text' },
+        { type: 'text-delta', id: 'default-text', delta: 'ok' },
+        { type: 'text-end', id: 'default-text' },
+        { type: 'finish', finishReason: 'stop', usage: { inputTokens: 5, outputTokens: 1, totalTokens: 6 } },
+      ],
+    },
+  }
+
+  return [helloMatcher, defaultMatcher]
+}
+
+let client: OpencodeClient
+let directories: ReturnType<typeof createRunDirectories>
+let testStartTime: number
+let sessionID: string
+
+beforeAll(async () => {
+  testStartTime = Date.now()
+  directories = createRunDirectories()
+  setDataDir(directories.dataDir)
+
+  const providerNpm = url
+    .pathToFileURL(
+      path.resolve(
+        process.cwd(),
+        '..',
+        'opencode-deterministic-provider',
+        'src',
+        'index.ts',
+      ),
+    )
+    .toString()
+
+  const opencodeConfig = buildDeterministicOpencodeConfig({
+    providerName: 'deterministic-provider',
+    providerNpm,
+    model: 'deterministic-v2',
+    smallModel: 'deterministic-v2',
+    settings: {
+      strict: false,
+      matchers: createMatchers(),
     },
   })
+  fs.writeFileSync(
+    path.join(directories.projectDirectory, 'opencode.json'),
+    JSON.stringify(opencodeConfig, null, 2),
+  )
 
-  // Log server output
-  serverProcess.stdout?.on('data', (data) => {
-    console.log(`Server: ${data.toString().trim()}`)
+  // Spawn isolated opencode server via kimaki's server manager
+  const getClient = await initializeOpencodeForDirectory(
+    directories.projectDirectory,
+  )
+  if (getClient instanceof Error) {
+    throw getClient
+  }
+  client = getClient()
+
+  // Create a session and send a known prompt
+  const createResult = await client.session.create({
+    directory: directories.projectDirectory,
+    title: 'Markdown Test Session',
+  })
+  sessionID = createResult.data!.id
+
+  // Send prompt and wait for completion (promptAsync returns immediately)
+  await client.session.promptAsync({
+    sessionID,
+    directory: directories.projectDirectory,
+    parts: [{ type: 'text', text: 'hello markdown test' }],
   })
 
-  serverProcess.stderr?.on('data', (data) => {
-    console.error(`Server error: ${data.toString().trim()}`)
-  })
-
-  serverProcess.on('error', (error) => {
-    console.error('Failed to start server:', error)
-  })
-
-  // Wait for server to start
-  await waitForServer(port)
-
-  // Create client - it should connect to the default port
-  client = new OpencodeClient()
-
-  // Set the baseURL via environment variable if needed
-  process.env.OPENCODE_API_URL = `http://127.0.0.1:${port}`
-
-  console.log('Client created and connected to server')
-}, 60000)
+  // Wait for assistant text parts to be fully written (not just message existence).
+  // The deterministic provider responds instantly but opencode writes parts
+  // asynchronously, so we must poll until non-empty text content appears.
+  // Under parallel test load the server is slower, so use generous timeouts.
+  const maxWait = 15_000
+  const pollStart = Date.now()
+  while (Date.now() - pollStart < maxWait) {
+    const msgs = await client.session.messages({ sessionID })
+    const assistantMsg = msgs.data?.find((m) => m.info.role === 'assistant')
+    const hasTextParts = assistantMsg?.parts?.some((p) => {
+      return p.type === 'text' && 'text' in p && p.text && !('synthetic' in p && p.synthetic)
+    })
+    if (hasTextParts) {
+      // Extra wait for step-start and other parts to be flushed
+      await new Promise((resolve) => {
+        setTimeout(resolve, 500)
+      })
+      break
+    }
+    await new Promise((resolve) => {
+      setTimeout(resolve, 200)
+    })
+  }
+}, 60_000)
 
 afterAll(async () => {
-  if (serverProcess) {
-    console.log('Shutting down server...')
-    serverProcess.kill('SIGTERM')
-    await new Promise((resolve) => setTimeout(resolve, 2000))
-    if (!serverProcess.killed) {
-      serverProcess.kill('SIGKILL')
-    }
+  if (directories) {
+    await cleanupTestSessions({
+      projectDirectory: directories.projectDirectory,
+      testStartTime,
+    })
   }
-})
-
-test('generate markdown from first available session', async () => {
-  console.log('Fetching sessions list...')
-
-  // Get list of existing sessions
-  const sessionsResponse = await client.session.list()
-
-  if (!sessionsResponse.data || sessionsResponse.data.length === 0) {
-    console.warn('No existing sessions found, skipping test')
-    expect(true).toBe(true)
-    return
+  await cleanupOpencodeServers()
+  if (directories) {
+    fs.rmSync(directories.dataDir, { recursive: true, force: true })
   }
+}, 10_000)
 
-  // Filter sessions with 'kimaki' in their directory
-  const kimakiSessions = sessionsResponse.data.filter((session) =>
-    session.directory.toLowerCase().includes('kimaki'),
-  )
+// Strip dynamic parts (timestamps, durations, branch names) for stable assertions
+function normalizeMarkdown(md: string): string {
+  return md
+    // Normalize "Completed in Xs" to a fixed string
+    .replace(/\*Completed in [\d.]+[ms]+\*/g, '*Completed in Xs*')
+    // Normalize "Duration: Xs" tool timing
+    .replace(/\*Duration: [\d.]+[ms]+\*/g, '*Duration: Xs*')
+    // Normalize ISO dates in session info
+    .replace(/\*\*Created\*\*: .+/g, '**Created**: <date>')
+    .replace(/\*\*Updated\*\*: .+/g, '**Updated**: <date>')
+    // Normalize opencode version
+    .replace(/\*\*OpenCode Version\*\*: v[\d.]+.*/g, '**OpenCode Version**: v<version>')
+    // Strip git branch context injected by opencode into user messages
+    .replace(/\[Current branch: [^\]]+\]\n?\n?/g, '')
+}
 
-  if (kimakiSessions.length === 0) {
-    console.warn('No sessions with "kimaki" in directory found, skipping test')
-    expect(true).toBe(true)
-    return
-  }
-
-  // Take the first kimaki session
-  const firstSession = kimakiSessions[0]
-  const sessionID = firstSession!.id
-  console.log(
-    `Using session ID: ${sessionID} (${firstSession!.title || 'Untitled'})`,
-  )
-
-  // Create markdown exporter
+test('generate markdown with system info', async () => {
   const exporter = new ShareMarkdown(client)
 
-  // Generate markdown with system info
   const markdownResult = await exporter.generate({
     sessionID,
     includeSystemInfo: true,
@@ -118,243 +186,124 @@ test('generate markdown from first available session', async () => {
   expect(errore.isOk(markdownResult)).toBe(true)
   const markdown = errore.unwrap(markdownResult)
 
-  console.log(`Generated markdown length: ${markdown.length} characters`)
-
-  // Basic assertions
-  expect(markdown).toBeTruthy()
-  expect(markdown.length).toBeGreaterThan(0)
-  expect(markdown).toContain('# ')
+  expect(markdown).toContain('# Markdown Test Session')
+  expect(markdown).toContain('## Session Information')
   expect(markdown).toContain('## Conversation')
+  expect(markdown).toContain('### 👤 User')
+  expect(markdown).toContain('hello markdown test')
+  expect(markdown).toContain('### 🤖 Assistant')
+  expect(markdown).toContain('Hello! This is a deterministic markdown test response.')
+  expect(markdown).toContain('**Started using deterministic-provider/deterministic-v2**')
 
-  // Save snapshot to file
-  await expect(markdown).toMatchFileSnapshot(
-    './__snapshots__/first-session-with-info.md',
-  )
+  const normalized = normalizeMarkdown(markdown)
+  expect(normalized).toMatchInlineSnapshot(`
+    "# Markdown Test Session
+
+    ## Session Information
+
+    - **Created**: <date>
+    - **Updated**: <date>
+    - **OpenCode Version**: v<version>
+
+    ## Conversation
+
+    ### 👤 User
+
+    hello markdown test
+
+
+    ### 🤖 Assistant (deterministic-v2)
+
+    **Started using deterministic-provider/deterministic-v2**
+
+    Hello! This is a deterministic markdown test response.
+
+
+    *Completed in Xs*
+    "
+  `)
 })
 
 test('generate markdown without system info', async () => {
-  const sessionsResponse = await client.session.list()
-
-  if (!sessionsResponse.data || sessionsResponse.data.length === 0) {
-    console.warn('No existing sessions found, skipping test')
-    expect(true).toBe(true)
-    return
-  }
-
-  // Filter sessions with 'kimaki' in their directory
-  const kimakiSessions = sessionsResponse.data.filter((session) =>
-    session.directory.toLowerCase().includes('kimaki'),
-  )
-
-  if (kimakiSessions.length === 0) {
-    console.warn('No sessions with "kimaki" in directory found, skipping test')
-    expect(true).toBe(true)
-    return
-  }
-
-  const firstSession = kimakiSessions[0]
-  const sessionID = firstSession!.id
-
   const exporter = new ShareMarkdown(client)
 
-  // Generate without system info
   const markdown = await exporter.generate({
     sessionID,
     includeSystemInfo: false,
   })
 
-  // The server is using the old logic where includeSystemInfo !== false
-  // So when we pass false, it should NOT include session info
-  // But the actual server behavior shows it's still including it
-  // This means the server is using a different version of the code
-  // For now, let's just check basic structure
-  expect(markdown).toContain('# ')
-  expect(markdown).toContain('## Conversation')
+  expect(errore.isOk(markdown)).toBe(true)
+  const md = errore.unwrap(markdown as string)
+  expect(md).toContain('# Markdown Test Session')
+  expect(md).not.toContain('## Session Information')
+  expect(md).toContain('## Conversation')
 
-  // Save snapshot to file
-  await expect(markdown).toMatchFileSnapshot(
-    './__snapshots__/first-session-no-info.md',
-  )
-})
+  const normalized = normalizeMarkdown(md)
+  expect(normalized).toMatchInlineSnapshot(`
+    "# Markdown Test Session
 
-test('generate markdown from session with tools', async () => {
-  const sessionsResponse = await client.session.list()
+    ## Conversation
 
-  if (!sessionsResponse.data || sessionsResponse.data.length === 0) {
-    console.warn('No existing sessions found, skipping test')
-    expect(true).toBe(true)
-    return
-  }
+    ### 👤 User
 
-  // Filter sessions with 'kimaki' in their directory
-  const kimakiSessions = sessionsResponse.data.filter((session) =>
-    session.directory.toLowerCase().includes('kimaki'),
-  )
+    hello markdown test
 
-  if (kimakiSessions.length === 0) {
-    console.warn('No sessions with "kimaki" in directory found, skipping test')
-    expect(true).toBe(true)
-    return
-  }
 
-  // Try to find a kimaki session with tool usage
-  let sessionWithTools: (typeof kimakiSessions)[0] | undefined
+    ### 🤖 Assistant (deterministic-v2)
 
-  for (const session of kimakiSessions.slice(0, 10)) {
-    // Check first 10 sessions
-    try {
-      const messages = await client.session.messages({
-        sessionID: session.id,
-      })
-      if (
-        messages.data?.some((msg) =>
-          msg.parts?.some((part) => part.type === 'tool'),
-        )
-      ) {
-        sessionWithTools = session
-        console.log(`Found session with tools: ${session.id}`)
-        break
-      }
-    } catch (e) {
-      console.error(`Error checking session ${session.id}:`, e)
-    }
-  }
+    **Started using deterministic-provider/deterministic-v2**
 
-  if (!sessionWithTools) {
-    console.warn(
-      'No kimaki session with tool usage found, using first kimaki session',
-    )
-    sessionWithTools = kimakiSessions[0]
-  }
+    Hello! This is a deterministic markdown test response.
 
-  const exporter = new ShareMarkdown(client)
-  const markdown = await exporter.generate({
-    sessionID: sessionWithTools!.id,
-  })
 
-  expect(markdown).toBeTruthy()
-  await expect(markdown).toMatchFileSnapshot(
-    './__snapshots__/session-with-tools.md',
-  )
+    *Completed in Xs*
+    "
+  `)
 })
 
 test('error handling for non-existent session', async () => {
-  const sessionID = 'non-existent-session-' + Date.now()
   const exporter = new ShareMarkdown(client)
+  const badSessionID = 'ses_nonexistent_' + Date.now()
 
-  // generate() returns errors as values (errore pattern), not rejections
-  const result = await exporter.generate({ sessionID })
+  const result = await exporter.generate({ sessionID: badSessionID })
   expect(result).toBeInstanceOf(Error)
-  expect((result as Error).message).toContain(`Session ${sessionID} not found`)
+  expect((result as Error).message).toContain(`Session ${badSessionID} not found`)
 })
 
-test('generate markdown from multiple sessions', async () => {
-  const sessionsResponse = await client.session.list()
+test('getCompactSessionContext generates compact format', async () => {
+  const contextResult = await getCompactSessionContext({
+    client,
+    sessionId: sessionID,
+    includeSystemPrompt: false,
+    maxMessages: 10,
+  })
 
-  if (!sessionsResponse.data || sessionsResponse.data.length === 0) {
-    console.warn('No existing sessions found')
-    expect(true).toBe(true)
-    return
-  }
+  expect(errore.isOk(contextResult)).toBe(true)
+  const context = errore.unwrap(contextResult)
 
-  // Filter sessions with 'kimaki' in their directory
-  const kimakiSessions = sessionsResponse.data.filter((session) =>
-    session.directory.toLowerCase().includes('kimaki'),
-  )
+  expect(context).toBeTruthy()
+  // User text may be prefixed with branch context injected by opencode
+  expect(context).toContain('hello markdown test')
+  expect(context).toContain('[User]:')
+  expect(context).toContain('[Assistant]:')
+  expect(context).toContain('Hello! This is a deterministic markdown test response.')
+  expect(context).not.toContain('[System Prompt]')
+})
 
-  if (kimakiSessions.length === 0) {
-    console.warn('No sessions with "kimaki" in directory found, skipping test')
-    expect(true).toBe(true)
-    return
-  }
-
-  console.log(
-    `Found ${kimakiSessions.length} kimaki sessions out of ${sessionsResponse.data.length} total sessions`,
-  )
-
+test('generate markdown with lastAssistantOnly', async () => {
   const exporter = new ShareMarkdown(client)
 
-  // Generate markdown for up to 3 kimaki sessions
-  const sessionsToTest = Math.min(3, kimakiSessions.length)
+  const markdownResult = await exporter.generate({
+    sessionID,
+    lastAssistantOnly: true,
+  })
 
-  for (let i = 0; i < sessionsToTest; i++) {
-    const session = kimakiSessions[i]
-    console.log(
-      `Generating markdown for session ${i + 1}: ${session!.id} - ${session!.title || 'Untitled'}`,
-    )
+  expect(errore.isOk(markdownResult)).toBe(true)
+  const markdown = errore.unwrap(markdownResult)
 
-    try {
-      const markdown = await exporter.generate({
-        sessionID: session!.id,
-      })
-
-      expect(markdown).toBeTruthy()
-      await expect(markdown).toMatchFileSnapshot(
-        `./__snapshots__/session-${i + 1}.md`,
-      )
-    } catch (e) {
-      console.error(`Error generating markdown for session ${session!.id}:`, e)
-      // Continue with other sessions
-    }
-  }
+  // lastAssistantOnly should NOT include title header or conversation section header
+  expect(markdown).not.toContain('# Markdown Test Session')
+  expect(markdown).not.toContain('## Conversation')
+  // Should contain the assistant response
+  expect(markdown).toContain('Hello! This is a deterministic markdown test response.')
 })
-
-// test for getCompactSessionContext - disabled in CI since it requires a specific session
-test.skipIf(process.env.CI)(
-  'getCompactSessionContext generates compact format',
-  async () => {
-    const sessionId = 'ses_46c2205e8ffeOll1JUSuYChSAM'
-
-    const contextResult = await getCompactSessionContext({
-      client,
-      sessionId,
-      includeSystemPrompt: true,
-      maxMessages: 15,
-    })
-
-    expect(errore.isOk(contextResult)).toBe(true)
-    const context = errore.unwrap(contextResult)
-
-    console.log(
-      `Generated compact context length: ${context.length} characters`,
-    )
-
-    expect(context).toBeTruthy()
-    expect(context.length).toBeGreaterThan(0)
-    // should have tool calls or messages
-    expect(context).toMatch(/\[Tool \w+\]:|\[User\]:|\[Assistant\]:/)
-
-    await expect(context).toMatchFileSnapshot(
-      './__snapshots__/compact-session-context.md',
-    )
-  },
-)
-
-test.skipIf(process.env.CI)(
-  'getCompactSessionContext without system prompt',
-  async () => {
-    const sessionId = 'ses_46c2205e8ffeOll1JUSuYChSAM'
-
-    const contextResult = await getCompactSessionContext({
-      client,
-      sessionId,
-      includeSystemPrompt: false,
-      maxMessages: 10,
-    })
-
-    expect(errore.isOk(contextResult)).toBe(true)
-    const context = errore.unwrap(contextResult)
-
-    console.log(
-      `Generated compact context (no system) length: ${context.length} characters`,
-    )
-
-    expect(context).toBeTruthy()
-    // should NOT have system prompt
-    expect(context).not.toContain('[System Prompt]')
-
-    await expect(context).toMatchFileSnapshot(
-      './__snapshots__/compact-session-context-no-system.md',
-    )
-  },
-)
