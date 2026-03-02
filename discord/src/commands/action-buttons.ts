@@ -20,10 +20,8 @@ import {
 import { createLogger } from '../logger.js'
 import { notifyError } from '../sentry.js'
 import {
-  abortControllers,
-  addToQueue,
-  handleOpencodeSession,
-} from '../session-handler.js'
+  getOrCreateRuntime,
+} from '../session-handler/thread-session-runtime.js'
 
 const logger = createLogger('ACT_BTN')
 const PENDING_TTL_MS = 24 * 60 * 60 * 1000
@@ -164,36 +162,23 @@ async function sendClickedActionToModel({
     throw new Error('Could not resolve project directory for thread')
   }
 
-  const sessionId = await getThreadSession(thread.id)
-  const existingController = sessionId ? abortControllers.get(sessionId) : null
-  const hasActiveRequest = Boolean(
-    existingController && !existingController.signal.aborted,
-  )
   const username = interaction.user.globalName || interaction.user.username
 
-  if (hasActiveRequest) {
-    addToQueue({
-      threadId: thread.id,
-      message: {
-        prompt,
-        userId: interaction.user.id,
-        username,
-        queuedAt: Date.now(),
-        appId: resolved.channelAppId,
-      },
-    })
-    logger.log(`[ACTION] Queued click for session ${sessionId}`)
-    return
-  }
-
-  await handleOpencodeSession({
-    prompt,
+  // Action button clicks don't interrupt — they enqueue with interruptActive: false
+  const runtime = getOrCreateRuntime({
+    threadId: thread.id,
     thread,
     projectDirectory: resolved.projectDirectory,
+    sdkDirectory: resolved.workingDirectory,
     channelId: thread.parentId || thread.id,
-    username,
-    userId: interaction.user.id,
     appId: resolved.channelAppId,
+  })
+  await runtime.enqueueIncoming({
+    prompt,
+    userId: interaction.user.id,
+    username,
+    appId: resolved.channelAppId,
+    interruptActive: false,
   })
 }
 

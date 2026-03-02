@@ -13,8 +13,7 @@ import {
   resolveWorkingDirectory,
   SILENT_MESSAGE_FLAGS,
 } from '../discord-utils.js'
-import { abortControllers } from '../session-handler.js'
-import { SessionAbortError } from '../errors.js'
+import { getRuntime } from '../session-handler/thread-session-runtime.js'
 import { createLogger, LogPrefix } from '../logger.js'
 
 const logger = createLogger(LogPrefix.ABORT)
@@ -71,42 +70,33 @@ export async function handleAbortCommand({
     return
   }
 
-  const existingController = abortControllers.get(sessionId)
-  if (existingController) {
-    logger.log(
-      `[ABORT] reason=user-requested sessionId=${sessionId} channelId=${channel.id} - user ran /abort command`,
-    )
-    existingController.abort(new SessionAbortError({ reason: 'user-requested' }))
-    abortControllers.delete(sessionId)
+  // Phase 4: Use runtime API — abortActiveRun handles both the local
+  // controller abort and the best-effort API session.abort call.
+  const runtime = getRuntime(channel.id)
+  if (runtime) {
+    runtime.abortActiveRun('user-requested', {
+      forceApiAbortWithoutRunController: true,
+    })
+  } else {
+    // No runtime but session exists — fall back to direct API abort
+    const getClient = await initializeOpencodeForDirectory(projectDirectory)
+    if (getClient instanceof Error) {
+      await command.reply({
+        content: `Failed to abort: ${getClient.message}`,
+        flags: MessageFlags.Ephemeral | SILENT_MESSAGE_FLAGS,
+      })
+      return
+    }
+    try {
+      await getClient().session.abort({ sessionID: sessionId })
+    } catch (error) {
+      logger.error('[ABORT] API abort failed:', error)
+    }
   }
 
-  const getClient = await initializeOpencodeForDirectory(projectDirectory)
-  if (getClient instanceof Error) {
-    await command.reply({
-      content: `Failed to abort: ${getClient.message}`,
-      flags: MessageFlags.Ephemeral | SILENT_MESSAGE_FLAGS,
-    })
-    return
-  }
-
-  try {
-    logger.log(
-      `[ABORT-API] reason=user-requested sessionId=${sessionId} channelId=${channel.id} - sending API abort from /abort command`,
-    )
-    await getClient().session.abort({
-      sessionID: sessionId,
-    })
-
-    await command.reply({
-      content: `🛑 Request **aborted**`,
-      flags: SILENT_MESSAGE_FLAGS,
-    })
-    logger.log(`Session ${sessionId} aborted by user`)
-  } catch (error) {
-    logger.error('[ABORT] Error:', error)
-    await command.reply({
-      content: `Failed to abort: ${error instanceof Error ? error.message : 'Unknown error'}`,
-      flags: MessageFlags.Ephemeral | SILENT_MESSAGE_FLAGS,
-    })
-  }
+  await command.reply({
+    content: `Request **aborted**`,
+    flags: SILENT_MESSAGE_FLAGS,
+  })
+  logger.log(`Session ${sessionId} aborted by user`)
 }

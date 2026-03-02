@@ -8,7 +8,7 @@ import {
   type TextChannel,
   type ThreadChannel,
 } from 'discord.js'
-import { handleOpencodeSession } from '../session-handler.js'
+import { getOrCreateRuntime } from '../session-handler/thread-session-runtime.js'
 import { sendThreadMessage, SILENT_MESSAGE_FLAGS } from '../discord-utils.js'
 import { createLogger, LogPrefix } from '../logger.js'
 import { getChannelDirectory, getThreadSession } from '../database.js'
@@ -130,13 +130,21 @@ export const handleUserCommand: CommandHandler = async ({
       // Running in existing thread - just send the command
       await command.editReply(`Running /${commandName}...`)
 
-      await handleOpencodeSession({
-        prompt: '', // Not used when command is set
+      const runtime = getOrCreateRuntime({
+        threadId: thread.id,
         thread,
         projectDirectory,
+        sdkDirectory: projectDirectory,
         channelId: textChannel?.id,
+        appId,
+      })
+      await runtime.enqueueIncoming({
+        prompt: '',
+        userId: command.user.id,
+        username: command.user.displayName,
         command: commandPayload,
         appId,
+        interruptActive: true,
       })
     } else if (textChannel) {
       // Running in text channel - create a new thread
@@ -165,13 +173,21 @@ export const handleUserCommand: CommandHandler = async ({
         `Started /${commandName} in ${newThread.toString()}`,
       )
 
-      await handleOpencodeSession({
-        prompt: '', // Not used when command is set
+      const runtime = getOrCreateRuntime({
+        threadId: newThread.id,
         thread: newThread,
         projectDirectory,
+        sdkDirectory: projectDirectory,
         channelId: textChannel.id,
+        appId,
+      })
+      await runtime.enqueueIncoming({
+        prompt: '',
+        userId: command.user.id,
+        username: command.user.displayName,
         command: commandPayload,
         appId,
+        interruptActive: true,
       })
     }
   } catch (error) {

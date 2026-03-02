@@ -120,11 +120,14 @@ export function formatErrorWithStack(error: unknown): string {
 }
 
 function writeToFile(level: string, prefix: string, args: unknown[]) {
+  const timestamp = new Date().toISOString()
+  const message = `[${timestamp}] [${level}] [${prefix}] ${args.map(formatArg).join(' ')}\n`
+  if (testLogBuffer) {
+    testLogBuffer.push(message)
+  }
   if (!logFilePath) {
     return
   }
-  const timestamp = new Date().toISOString()
-  const message = `[${timestamp}] [${level}] [${prefix}] ${args.map(formatArg).join(' ')}\n`
   fs.appendFileSync(logFilePath, message)
 }
 
@@ -150,6 +153,21 @@ const noSpacing = { spacing: 0 }
 // Suppress clack terminal output during vitest runs to avoid flooding
 // test output with hundreds of log lines. File logging still works.
 const isVitest = !!process.env['KIMAKI_VITEST']
+
+// In-memory log buffer for tests. Only populated when KIMAKI_VITEST is set
+// so production never accumulates entries. Tests use getLogEntryCount() before
+// the test and getLogEntriesSince(startIndex) on failure to print only the
+// relevant log lines. This means tests in the same file run sequentially
+// (shared buffer), not in parallel.
+const testLogBuffer: string[] | null = isVitest ? [] : null
+
+export function getLogEntryCount(): number {
+  return testLogBuffer?.length ?? 0
+}
+
+export function getLogEntriesSince(startIndex: number): string[] {
+  return testLogBuffer?.slice(startIndex) ?? []
+}
 
 export function createLogger(prefix: LogPrefixType | string) {
   const paddedPrefix = padPrefix(prefix)

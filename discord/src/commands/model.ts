@@ -26,7 +26,8 @@ import {
 } from '../database.js'
 import { initializeOpencodeForDirectory } from '../opencode.js'
 import { resolveTextChannel, getKimakiMetadata } from '../discord-utils.js'
-import { abortAndRetrySession, getDefaultModel } from '../session-handler.js'
+import { getDefaultModel } from '../session-handler/model-utils.js'
+import { getRuntime } from '../session-handler/thread-session-runtime.js'
 import { getThinkingValuesForModel } from '../thinking-utils.js'
 import { createLogger, LogPrefix } from '../logger.js'
 import * as errore from 'errore'
@@ -898,13 +899,10 @@ export async function handleModelScopeSelectMenu(
 
       let retried = false
       if (context.thread) {
-        retried = await abortAndRetrySession({
-          sessionId: context.sessionId,
-          thread: context.thread,
-          projectDirectory: context.dir,
-          appId: context.appId,
-          channelId: context.channelId,
-        })
+        const runtime = getRuntime(context.thread.id)
+        if (runtime) {
+          retried = await runtime.retryLastUserPrompt()
+        }
       }
 
       const retryNote = retried

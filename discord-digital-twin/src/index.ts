@@ -872,6 +872,28 @@ export class ScopedUserActor {
     })
   }
 
+  /**
+   * Send a voice message (audio attachment with content_type: audio/ogg).
+   * The attachment URL is fake — tests using deterministic transcription
+   * bypass the fetch entirely. Content defaults to empty string since
+   * real Discord voice messages have no text body.
+   */
+  async sendVoiceMessage({ content }: { content?: string } = {}) {
+    return this.sendMessage({
+      content: content ?? '',
+      attachments: [
+        {
+          id: generateSnowflake(),
+          filename: 'voice-message.ogg',
+          content_type: 'audio/ogg',
+          size: 1024,
+          url: 'https://fake-cdn.discord.test/voice-message.ogg',
+          proxy_url: 'https://fake-cdn.discord.test/voice-message.ogg',
+        },
+      ],
+    })
+  }
+
   async runSlashCommand({
     name,
     commandId,

@@ -59,10 +59,11 @@ import {
 } from './voice-handler.js'
 import { getCompactSessionContext, getLastSessionId } from './markdown.js'
 import {
-  handleOpencodeSession,
-  signalThreadInterrupt,
   type SessionStartSourceContext,
-} from './session-handler.js'
+} from './session-handler/model-utils.js'
+import {
+  getOrCreateRuntime,
+} from './session-handler/thread-session-runtime.js'
 import { runShellCommand } from './commands/run-command.js'
 import { registerInteractionHandler } from './interaction-handler.js'
 import { getDiscordRestApiUrl } from './discord-urls.js'
@@ -117,10 +118,7 @@ setGlobalDispatcher(
 const discordLogger = createLogger(LogPrefix.DISCORD)
 const voiceLogger = createLogger(LogPrefix.VOICE)
 
-// Per-thread serial queue so messages (voice + text) in the same thread are
-// processed one at a time in arrival order. Without this, a slow voice
-// transcription can finish after a fast text message and abort its session.
-const threadMessageQueue = new Map<string, Promise<void>>()
+
 
 function parseEmbedFooterMarker<T extends Record<string, unknown>>({
   footer,
@@ -268,6 +266,11 @@ export async function startDiscordBot({
   } else {
     discordClient.once(Events.ClientReady, setupHandlers)
   }
+
+  // Per-thread promise chain to serialize the expensive pre-enqueue work
+  // (context fetch, voice transcription) that runs before runtime.enqueueIncoming().
+  // Without this, two overlapping messageCreate events can invert arrival order.
+  const threadIngressQueue = new Map<string, Promise<void>>()
 
   discordClient.on(Events.MessageCreate, async (message: Message) => {
     try {
@@ -459,41 +462,40 @@ export async function startDiscordBot({
           }
         }
 
-        // Chain onto per-thread queue so messages (voice transcription + text)
-        // are processed in Discord arrival order, not completion order.
         const hasVoiceAttachment = message.attachments.some((a) => {
           return a.contentType?.startsWith('audio/')
         })
 
-        const prev = threadMessageQueue.get(thread.id)
-
-        if (prev) {
-          // TODO: Voice queue intent is currently disabled because this flow is
-          // unreliable for voice replies. Revisit queueing support for voice
-          // messages after a robust design is implemented and validated.
-          // Another message is being processed — abort it immediately so this
-          // queued message can start as soon as possible.
-          const sdkDirectory =
-            worktreeInfo?.status === 'ready' && worktreeInfo.worktree_directory
-              ? worktreeInfo.worktree_directory
-              : projectDirectory
-          signalThreadInterrupt({
-            threadId: thread.id,
-            serverDirectory: projectDirectory,
-            sdkDirectory,
+        // discord.js EventEmitter doesn't await async handlers, so two
+        // messageCreate events for the same thread can overlap. The expensive
+        // pre-enqueue work (context fetch, voice transcription) runs before
+        // runtime.enqueueIncoming(), so arrival order can invert without
+        // serialization. This lightweight per-thread promise chain preserves
+        // Discord arrival order for the pre-processing; the runtime's
+        // dispatchAction handles state serialization after enqueue.
+        const prev = threadIngressQueue.get(thread.id) ?? Promise.resolve()
+        // Chain must never reject so the next queued call always runs,
+        // but we re-throw the error so the outer MessageCreate try/catch
+        // can fire notifyError.
+        let caughtError: unknown
+        const queued = prev
+          .then(() => {
+            return processThreadMessage()
           })
+          .catch((err: unknown) => {
+            caughtError = err
+          })
+          .finally(() => {
+            // Clean up resolved entry to avoid unbounded map growth.
+            if (threadIngressQueue.get(thread.id) === queued) {
+              threadIngressQueue.delete(thread.id)
+            }
+          })
+        threadIngressQueue.set(thread.id, queued)
+        await queued
+        if (caughtError) {
+          throw caughtError
         }
-        const task = (prev || Promise.resolve()).then(
-          () => { return processThreadMessage() },
-          () => { return processThreadMessage() },
-        )
-        threadMessageQueue.set(thread.id, task)
-        void task.finally(() => {
-          if (threadMessageQueue.get(thread.id) === task) {
-            threadMessageQueue.delete(thread.id)
-          }
-        })
-        await task
         return
 
         async function processThreadMessage() {
@@ -548,20 +550,36 @@ export async function startDiscordBot({
               }
             }
 
-            await handleOpencodeSession({
-              prompt,
+            const sdkDir =
+              worktreeInfo?.status === 'ready' &&
+              worktreeInfo.worktree_directory
+                ? worktreeInfo.worktree_directory
+                : projectDirectory
+            const runtime = getOrCreateRuntime({
+              threadId: thread.id,
               thread,
               projectDirectory,
-              channelId: parent?.id || '',
+              sdkDirectory: sdkDir,
+              channelId: parent?.id || undefined,
+              appId: currentAppId,
+            })
+            await runtime.enqueueIncoming({
+              prompt,
+              userId: cliInjectedUserId || message.author.id,
               username:
                 cliInjectedUsername ||
                 message.member?.displayName ||
                 message.author.displayName,
-              userId: cliInjectedUserId || message.author.id,
               appId: currentAppId,
-              sessionStartSource,
+              interruptActive: voiceResult?.queueMessage ? false : true,
               agent: cliInjectedAgent,
               model: cliInjectedModel,
+              sessionStartSource: sessionStartSource
+                ? {
+                    scheduleKind: sessionStartSource.scheduleKind,
+                    scheduledTaskId: sessionStartSource.scheduledTaskId,
+                  }
+                : undefined,
             })
             return
           }
@@ -650,23 +668,55 @@ export async function startDiscordBot({
           const promptWithAttachments = textAttachmentsContent
             ? `${messageContent}\n\n${textAttachmentsContent}`
             : messageContent
-          await handleOpencodeSession({
-            prompt: promptWithAttachments,
+
+          if (!projectDirectory) {
+            discordLogger.log(
+              `Cannot process message: no project directory for thread ${thread.id}`,
+            )
+            return
+          }
+
+          const sdkDir =
+            worktreeInfo?.status === 'ready' &&
+            worktreeInfo.worktree_directory
+              ? worktreeInfo.worktree_directory
+              : projectDirectory
+          const runtime = getOrCreateRuntime({
+            threadId: thread.id,
             thread,
             projectDirectory,
-            originalMessage: message,
-            images: fileAttachments,
+            sdkDirectory: sdkDir,
             channelId: parent?.id,
+            appId: currentAppId,
+          })
+          const enqueueResult = await runtime.enqueueIncoming({
+            prompt: promptWithAttachments,
+            userId: (isCliInjectedPrompt && cliInjectedUserId)
+              ? cliInjectedUserId
+              : message.author.id,
             username:
               cliInjectedUsername ||
               message.member?.displayName ||
               message.author.displayName,
-            userId: isCliInjectedPrompt ? cliInjectedUserId : message.author.id,
+            images: fileAttachments,
             appId: currentAppId,
-            sessionStartSource,
+            interruptActive: voiceResult?.queueMessage ? false : true,
             agent: cliInjectedAgent,
             model: cliInjectedModel,
+            sessionStartSource: sessionStartSource
+              ? {
+                  scheduleKind: sessionStartSource.scheduleKind,
+                  scheduledTaskId: sessionStartSource.scheduledTaskId,
+                }
+              : undefined,
           })
+
+          // Notify when a voice message was queued instead of sent immediately.
+          // Position is computed atomically inside enqueueIncoming to avoid
+          // a race where the queue drains before we read its length.
+          if (voiceResult?.queueMessage && enqueueResult.queued && enqueueResult.position) {
+            await sendThreadMessage(thread, `Queued at position ${enqueueResult.position}`)
+          }
         }
       }
 
@@ -830,16 +880,22 @@ export async function startDiscordBot({
         const promptWithAttachments = textAttachmentsContent
           ? `${messageContent}\n\n${textAttachmentsContent}`
           : messageContent
-        await handleOpencodeSession({
-          prompt: promptWithAttachments,
+        const channelRuntime = getOrCreateRuntime({
+          threadId: thread.id,
           thread,
           projectDirectory: sessionDirectory,
-          originalMessage: message,
-          images: fileAttachments,
+          sdkDirectory: sessionDirectory,
           channelId: textChannel.id,
-          username: message.member?.displayName || message.author.displayName,
-          userId: message.author.id,
           appId: currentAppId,
+        })
+        await channelRuntime.enqueueIncoming({
+          prompt: promptWithAttachments,
+          userId: message.author.id,
+          username:
+            message.member?.displayName || message.author.displayName,
+          images: fileAttachments,
+          appId: currentAppId,
+          interruptActive: voiceResult?.queueMessage ? false : true,
         })
       } else {
         discordLogger.log(`Channel type ${channel.type} is not supported`)
@@ -1033,17 +1089,28 @@ export async function startDiscordBot({
 
       const botThreadStartSource = parseSessionStartSourceFromMarker(marker)
 
-      await handleOpencodeSession({
-        prompt,
+      const runtime = getOrCreateRuntime({
+        threadId: thread.id,
         thread,
-        projectDirectory: sessionDirectory,
+        projectDirectory,
+        sdkDirectory: sessionDirectory,
         channelId: parent.id,
         appId: currentAppId,
-        username: marker.username,
-        userId: marker.userId,
+      })
+      await runtime.enqueueIncoming({
+        prompt,
+        userId: marker.userId || '',
+        username: marker.username || 'bot',
+        appId: currentAppId,
         agent: marker.agent,
         model: marker.model,
-        sessionStartSource: botThreadStartSource,
+        interruptActive: true,
+        sessionStartSource: botThreadStartSource
+          ? {
+              scheduleKind: botThreadStartSource.scheduleKind,
+              scheduledTaskId: botThreadStartSource.scheduledTaskId,
+            }
+          : undefined,
       })
     } catch (error) {
       voiceLogger.error(

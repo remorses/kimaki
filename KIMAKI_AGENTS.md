@@ -198,9 +198,9 @@ if a kimaki test needs a new interaction primitive, first add it to `discord-dig
 
 see `docs/e2e-testing-learnings.md` for detailed lessons. key points:
 
-- e2e tests use `CachedOpencodeProviderProxy` which caches LLM responses. first run = cache miss (real provider speed), second run = cache hit. `streamChunkDelayMs` only affects cache hits. **always run a failing e2e test at least twice** before investigating — the first run populates cache, second run exercises cached path.
-- never use fake api keys (like `dummy`) for e2e runs when real provider env vars exist. use real `GEMINI_API_KEY` / `GOOGLE_GENERATIVE_AI_API_KEY` from env.
+- e2e tests use `opencode-deterministic-provider` which returns canned responses instantly (no real LLM). poll timeouts should be **4s max** and polling interval **100ms**. the only real latency is opencode server startup (`beforeAll`, 60s is fine) and intentional `partDelaysMs` in matchers.
 - prefer content-aware polling ("does this user message have a bot reply after it?") over count-based polling (`waitForBotMessageCount`). count-based is fragile when sessions get interrupted/aborted because error messages satisfy the count early.
-- keep test timeouts long: 360s per test, 120s for polling, 60s for beforeAll. LLM calls + opencode server startup + cache misses are slow. never use short timeouts in e2e.
 - bot replies can be error messages, not just LLM content. verify ordering by position, not content matching.
-- set `KIMAKI_VITEST=1` to suppress clack terminal log noise during test runs.
+- set `KIMAKI_VITEST=1` to suppress clack terminal log noise during test runs. when set, the logger pushes entries to an in-memory buffer. tests use `getLogEntryCount()` / `getLogEntriesSince(index)` with `onTestFailed` to dump only the log lines from the failed test.
+- tests in a single file share the in-memory log buffer and run **sequentially** (not in parallel). if total duration of an e2e test file exceeds **~10 seconds**, split into a new file so vitest parallelizes across files.
+- `afterAll` should clean up opencode sessions via `session.list()` + `session.delete()` to avoid accumulation across runs.
