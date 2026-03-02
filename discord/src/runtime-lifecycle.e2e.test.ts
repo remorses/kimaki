@@ -51,7 +51,7 @@ function createRunDirectories() {
 }
 
 function chooseLockPort() {
-  return 48_000 + (Date.now() % 2_000)
+  return 46_000 + (Date.now() % 2_000)
 }
 
 function createDiscordJsClient({ restUrl }: { restUrl: string }) {
@@ -77,7 +77,8 @@ function createDiscordJsClient({ restUrl }: { restUrl: string }) {
 
 function createDeterministicMatchers(): DeterministicMatcher[] {
   // Simple reply matcher: model echoes back the requested text.
-  // Uses 700ms delay on first text delta to simulate realistic latency.
+  // Uses 100ms delay on first text delta to keep streams async without adding
+  // unnecessary latency. Tests verify ordering/serialization, not latency handling.
   const userReplyMatcher: DeterministicMatcher = {
     id: 'user-reply',
     priority: 10,
@@ -97,7 +98,7 @@ function createDeterministicMatchers(): DeterministicMatcher[] {
           usage: { inputTokens: 1, outputTokens: 1, totalTokens: 2 },
         },
       ],
-      partDelaysMs: [0, 700, 0, 0, 0],
+      partDelaysMs: [0, 100, 0, 0, 0],
     },
   }
 
@@ -366,6 +367,12 @@ describe('runtime lifecycle', () => {
         timeout: 4_000,
       })
 
+      // Snapshot bot message count before sending concurrent messages
+      const beforeMessages = await th.getMessages()
+      const beforeBotCount = beforeMessages.filter((m) => {
+        return m.author.id === discord.botUserId
+      }).length
+
       // 2. Fire B and C simultaneously — no await between sends
       const sendB = th.user(TEST_USER_ID).sendMessage({
         content: 'Reply with exactly: concurrent-bravo',
@@ -392,8 +399,13 @@ describe('runtime lifecycle', () => {
         timeout: 4_000,
       })
 
-      // 4. Verify ordering: bravo appears before charlie in the message list
+      // 4. Verify both user messages arrived and the thread didn't deadlock.
+      //    With interruptActive, bravo can be aborted by charlie before
+      //    producing a reply, so we can't assert +2 bot messages. What we
+      //    CAN verify: both user messages exist, charlie (the last one) has
+      //    a bot reply after it, and the replies are distinct messages.
       const messages = await th.getMessages()
+
       const bravoIndex = messages.findIndex((m) => {
         return (
           m.author.id === TEST_USER_ID &&
@@ -410,15 +422,18 @@ describe('runtime lifecycle', () => {
       expect(charlieIndex).toBeGreaterThan(-1)
       expect(bravoIndex).toBeLessThan(charlieIndex)
 
-      // Both user messages have bot replies after them
-      const bravoReply = messages.find((m, i) => {
-        return i > bravoIndex && m.author.id === discord.botUserId
-      })
-      const charlieReply = messages.find((m, i) => {
+      // Charlie (the last queued message) must have a bot reply after it.
+      const charlieReplyIndex = messages.findIndex((m, i) => {
         return i > charlieIndex && m.author.id === discord.botUserId
       })
-      expect(bravoReply).toBeDefined()
-      expect(charlieReply).toBeDefined()
+      expect(charlieReplyIndex).toBeGreaterThan(-1)
+
+      // At least 1 new bot message appeared (charlie's reply). If bravo
+      // wasn't aborted, there will be 2. Either way, no deadlock.
+      const afterBotCount = messages.filter((m) => {
+        return m.author.id === discord.botUserId
+      }).length
+      expect(afterBotCount).toBeGreaterThanOrEqual(beforeBotCount + 1)
     },
     15_000,
   )

@@ -180,6 +180,14 @@ export async function waitForBotMessageContaining({
           )
         })
       : -1
+    // If the anchor user message hasn't appeared yet, skip this iteration
+    // to avoid false-positives from old bot messages matching `text`.
+    if (afterUserMessageIncludes && afterIndex === -1) {
+      await new Promise((resolve) => {
+        setTimeout(resolve, 100)
+      })
+      continue
+    }
     const match = messages.find((message, index) => {
       if (afterUserMessageIncludes && afterIndex >= 0 && index <= afterIndex) {
         return false

@@ -267,6 +267,11 @@ export async function startDiscordBot({
     discordClient.once(Events.ClientReady, setupHandlers)
   }
 
+  // Per-thread promise chain to serialize the expensive pre-enqueue work
+  // (context fetch, voice transcription) that runs before runtime.enqueueIncoming().
+  // Without this, two overlapping messageCreate events can invert arrival order.
+  const threadIngressQueue = new Map<string, Promise<void>>()
+
   discordClient.on(Events.MessageCreate, async (message: Message) => {
     try {
       const isSelfBotMessage = Boolean(
@@ -461,9 +466,36 @@ export async function startDiscordBot({
           return a.contentType?.startsWith('audio/')
         })
 
-        // The runtime's enqueueIncoming handles per-thread serialization
-        // internally via its action queue — no outer threadMessageQueue needed.
-        await processThreadMessage()
+        // discord.js EventEmitter doesn't await async handlers, so two
+        // messageCreate events for the same thread can overlap. The expensive
+        // pre-enqueue work (context fetch, voice transcription) runs before
+        // runtime.enqueueIncoming(), so arrival order can invert without
+        // serialization. This lightweight per-thread promise chain preserves
+        // Discord arrival order for the pre-processing; the runtime's
+        // dispatchAction handles state serialization after enqueue.
+        const prev = threadIngressQueue.get(thread.id) ?? Promise.resolve()
+        // Chain must never reject so the next queued call always runs,
+        // but we re-throw the error so the outer MessageCreate try/catch
+        // can fire notifyError.
+        let caughtError: unknown
+        const queued = prev
+          .then(() => {
+            return processThreadMessage()
+          })
+          .catch((err: unknown) => {
+            caughtError = err
+          })
+          .finally(() => {
+            // Clean up resolved entry to avoid unbounded map growth.
+            if (threadIngressQueue.get(thread.id) === queued) {
+              threadIngressQueue.delete(thread.id)
+            }
+          })
+        threadIngressQueue.set(thread.id, queued)
+        await queued
+        if (caughtError) {
+          throw caughtError
+        }
         return
 
         async function processThreadMessage() {

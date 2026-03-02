@@ -60,7 +60,6 @@ import {
   cleanupPermissionContext,
   addPermissionRequestToContext,
   arePatternsCoveredBy,
-  pendingPermissionContexts,
 } from '../commands/permissions.js'
 import {
   showAskUserQuestionDropdowns,

@@ -1,13 +1,8 @@
-// Session handler run-state store and transitions.
+// Session handler run-state transitions.
 // Centralizes prompt/idle race state so interrupt handling stays consistent.
 //
-// Two API styles are provided:
-// 1. Pure transition functions: `(state: MainRunState) => MainRunState`
-//    Used by the new runtime via `updateRunState(threadId, pureTransition)`.
-// 2. Store-based wrappers: `({ store: MainRunStore }) => void`
-//    Kept for backward compatibility with session-handler.ts until full migration.
-
-import { createStore, type StoreApi } from 'zustand/vanilla'
+// Pure transition functions: `(state: MainRunState) => MainRunState`
+// Used by the runtime via `updateRunState(threadId, pureTransition)`.
 
 export type MainRunPhase =
   | 'waiting-dispatch'
@@ -28,8 +23,6 @@ export type MainRunState = {
   evidenceSeq: number | undefined
   deferredIdleSeq: number | undefined
 }
-
-export type MainRunStore = StoreApi<MainRunState>
 
 export type MainSessionIdleDecision =
   | 'deferred'
@@ -52,12 +45,6 @@ export function initialMainRunState(): MainRunState {
     evidenceSeq: undefined,
     deferredIdleSeq: undefined,
   }
-}
-
-export function createMainRunStore(): MainRunStore {
-  return createStore<MainRunState>(() => {
-    return initialMainRunState()
-  })
 }
 
 // ── Pure transition functions ────────────────────────────────────
@@ -219,84 +206,3 @@ export function pureHasCurrentPromptEvidence(state: MainRunState): boolean {
   return Boolean(state.currentAssistantMessageId)
 }
 
-// ── Store-based wrappers (backward compatibility) ────────────────
-// These delegate to the pure functions above. Existing code in
-// session-handler.ts calls these until the full migration is done.
-
-export function beginPromptCycle({ store }: { store: MainRunStore }): void {
-  store.setState((state) => {
-    return pureBeginPromptCycle(state)
-  })
-}
-
-export function setBaselineAssistantIds({
-  store,
-  messageIds,
-}: {
-  store: MainRunStore
-  messageIds: Set<string>
-}): void {
-  store.setState((state) => {
-    return pureSetBaselineAssistantIds(state, messageIds)
-  })
-}
-
-export function markDispatching({ store }: { store: MainRunStore }): void {
-  store.setState((state) => {
-    return pureMarkDispatching(state)
-  })
-}
-
-export function markCurrentPromptEvidence({
-  store,
-  messageId,
-}: {
-  store: MainRunStore
-  messageId: string
-}): void {
-  store.setState((state) => {
-    return pureMarkCurrentPromptEvidence(state, messageId)
-  })
-}
-
-export function handleMainSessionIdle({
-  store,
-}: {
-  store: MainRunStore
-}): MainSessionIdleDecision {
-  const current = store.getState()
-  const result = pureHandleMainSessionIdle(current)
-  store.setState(result.state)
-  return result.decision
-}
-
-export function markPromptResolvedAndConsumeDeferredIdle({
-  store,
-}: {
-  store: MainRunStore
-}): DeferredIdleDecision {
-  const current = store.getState()
-  const result = pureMarkPromptResolvedAndConsumeDeferredIdle(current)
-  store.setState(result.state)
-  return result.decision
-}
-
-export function markFinished({ store }: { store: MainRunStore }): void {
-  store.setState((state) => {
-    return pureMarkFinished(state)
-  })
-}
-
-export function markAborted({ store }: { store: MainRunStore }): void {
-  store.setState((state) => {
-    return pureMarkAborted(state)
-  })
-}
-
-export function hasCurrentPromptEvidence({
-  store,
-}: {
-  store: MainRunStore
-}): boolean {
-  return pureHasCurrentPromptEvidence(store.getState())
-}
