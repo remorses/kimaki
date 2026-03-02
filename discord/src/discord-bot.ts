@@ -571,7 +571,7 @@ export async function startDiscordBot({
                 message.member?.displayName ||
                 message.author.displayName,
               appId: currentAppId,
-              interruptActive: true,
+              interruptActive: voiceResult?.queueMessage ? false : true,
               agent: cliInjectedAgent,
               model: cliInjectedModel,
               sessionStartSource: sessionStartSource
@@ -700,7 +700,7 @@ export async function startDiscordBot({
               message.author.displayName,
             images: fileAttachments,
             appId: currentAppId,
-            interruptActive: true,
+            interruptActive: voiceResult?.queueMessage ? false : true,
             agent: cliInjectedAgent,
             model: cliInjectedModel,
             sessionStartSource: sessionStartSource
@@ -888,7 +888,7 @@ export async function startDiscordBot({
             message.member?.displayName || message.author.displayName,
           images: fileAttachments,
           appId: currentAppId,
-          interruptActive: true,
+          interruptActive: voiceResult?.queueMessage ? false : true,
         })
       } else {
         discordLogger.log(`Channel type ${channel.type} is not supported`)

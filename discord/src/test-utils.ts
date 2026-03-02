@@ -14,6 +14,11 @@ import {
   getOpencodeServers,
   initializeOpencodeForDirectory,
 } from './opencode.js'
+import {
+  getThreadState,
+  type ThreadRunState,
+} from './session-handler/thread-runtime-state.js'
+import type { MainRunPhase } from './session-handler/state.js'
 
 /**
  * Kill all in-memory opencode server processes and clear the registry.
@@ -213,5 +218,106 @@ export async function waitForBotMessageContaining({
     .join('\n')
   throw new Error(
     `Timed out waiting for bot message containing "${text}" in thread ${threadId}. Recent messages:\n${recent}`,
+  )
+}
+
+// ── Thread state polling helpers ─────────────────────────────────
+// Used by e2e tests to assert on session state transitions
+// (phase changes, queue depth, abort, idle).
+
+/**
+ * Poll until thread runState.phase matches one of the expected values.
+ * Returns the full ThreadRunState snapshot when the condition is met.
+ */
+export async function waitForThreadPhase({
+  threadId,
+  phase,
+  timeout,
+}: {
+  threadId: string
+  phase: MainRunPhase | MainRunPhase[]
+  timeout: number
+}): Promise<ThreadRunState> {
+  const phases = Array.isArray(phase) ? phase : [phase]
+  const start = Date.now()
+  while (Date.now() - start < timeout) {
+    const state = getThreadState(threadId)
+    if (state && phases.includes(state.runState.phase)) {
+      return state
+    }
+    await new Promise((resolve) => {
+      setTimeout(resolve, 50)
+    })
+  }
+  const finalState = getThreadState(threadId)
+  const currentPhase = finalState?.runState.phase ?? 'no-thread-state'
+  throw new Error(
+    `Timed out waiting for thread ${threadId} phase [${phases.join(', ')}]. Current phase: ${currentPhase}`,
+  )
+}
+
+/**
+ * Poll until thread has at least `count` items in its queue.
+ */
+export async function waitForThreadQueueLength({
+  threadId,
+  count,
+  timeout,
+}: {
+  threadId: string
+  count: number
+  timeout: number
+}): Promise<ThreadRunState> {
+  const start = Date.now()
+  while (Date.now() - start < timeout) {
+    const state = getThreadState(threadId)
+    if (state && state.queueItems.length >= count) {
+      return state
+    }
+    await new Promise((resolve) => {
+      setTimeout(resolve, 50)
+    })
+  }
+  const finalState = getThreadState(threadId)
+  const currentLength = finalState?.queueItems.length ?? 0
+  throw new Error(
+    `Timed out waiting for thread ${threadId} queue length >= ${count}. Current length: ${currentLength}`,
+  )
+}
+
+/**
+ * Poll until a custom predicate on ThreadRunState returns true.
+ * Use this for compound assertions (e.g. phase === 'finished' AND queue empty)
+ * to avoid matching transient states during phase transitions.
+ */
+export async function waitForThreadState({
+  threadId,
+  predicate,
+  timeout,
+  description,
+}: {
+  threadId: string
+  predicate: (state: ThreadRunState) => boolean
+  timeout: number
+  /** Human-readable description for timeout error messages */
+  description?: string
+}): Promise<ThreadRunState> {
+  const start = Date.now()
+  while (Date.now() - start < timeout) {
+    const state = getThreadState(threadId)
+    if (state && predicate(state)) {
+      return state
+    }
+    await new Promise((resolve) => {
+      setTimeout(resolve, 50)
+    })
+  }
+  const finalState = getThreadState(threadId)
+  const desc = description ?? 'custom predicate'
+  const phase = finalState?.runState.phase ?? 'no-thread-state'
+  const queueLen = finalState?.queueItems.length ?? 0
+  throw new Error(
+    `Timed out waiting for thread ${threadId} (${desc}). ` +
+    `Current: phase=${phase}, queue=${queueLen}`,
   )
 }

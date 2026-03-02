@@ -44,6 +44,7 @@ import {
 } from './discord-utils.js'
 import { transcribeAudio, type TranscriptionResult } from './voice.js'
 import { FetchError } from './errors.js'
+import { store } from './store.js'
 
 import { createLogger, LogPrefix } from './logger.js'
 import { notifyError } from './sentry.js'
@@ -478,6 +479,43 @@ export async function processVoiceAttachment({
   )
 
   await sendThreadMessage(thread, '🎤 Transcribing voice message...')
+
+  // Deterministic mode: skip audio download and AI model call entirely,
+  // return a canned result after an optional delay. Used by e2e tests to
+  // control transcription output, timing, and queueMessage deterministically.
+  // Only active when KIMAKI_VITEST=1 to prevent accidental activation in production.
+  const deterministicConfig =
+    process.env['KIMAKI_VITEST'] === '1'
+      ? store.getState().test.deterministicTranscription
+      : null
+  if (deterministicConfig) {
+    if (deterministicConfig.delayMs) {
+      await new Promise<void>((resolve) => {
+        setTimeout(resolve, deterministicConfig.delayMs)
+      })
+    }
+    const result: TranscriptionResult = {
+      transcription: deterministicConfig.transcription,
+      queueMessage: deterministicConfig.queueMessage,
+    }
+    voiceLogger.log(
+      `[DETERMINISTIC] Returning canned transcription: "${result.transcription}"${result.queueMessage ? ' [QUEUE]' : ''}`,
+    )
+    if (isNewThread) {
+      const threadName = result.transcription.replace(/\s+/g, ' ').trim().slice(0, 80)
+      if (threadName) {
+        await errore.tryAsync({
+          try: () => thread.setName(threadName),
+          catch: (e) => e as Error,
+        })
+      }
+    }
+    await sendThreadMessage(
+      thread,
+      `📝 **Transcribed message:** ${escapeDiscordFormatting(result.transcription)}`,
+    )
+    return result
+  }
 
   const audioResponse = await errore.tryAsync({
     try: () => fetch(audioAttachment.url),

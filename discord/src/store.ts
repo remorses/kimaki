@@ -22,6 +22,17 @@ export type RegisteredUserCommand = {
   description: string
 }
 
+// Deterministic transcription config for e2e tests.
+// When set, processVoiceAttachment() skips the real AI model call and
+// returns this canned result after sleeping for delayMs. This lets tests
+// control transcription output, timing, and queue behavior deterministically.
+export type DeterministicTranscriptionConfig = {
+  transcription: string
+  queueMessage: boolean
+  /** Artificial delay before returning the result (ms). Default 0. */
+  delayMs?: number
+}
+
 export type KimakiState = {
   // ── Minimal config state (set once at startup by CLI) ──
   dataDir: string | null
@@ -34,6 +45,11 @@ export type KimakiState = {
 
   // ── Per-thread runtime state (Phase 1 of event listener migration) ──
   threads: Map<string, ThreadRunState>
+
+  // ── Test-only state (set by e2e tests, never used in production) ──
+  test: {
+    deterministicTranscription: DeterministicTranscriptionConfig | null
+  }
 }
 
 export const store = createStore<KimakiState>(() => ({
@@ -45,4 +61,5 @@ export const store = createStore<KimakiState>(() => ({
   discordBaseUrl: 'https://discord.com',
   registeredUserCommands: [],
   threads: new Map(),
+  test: { deterministicTranscription: null },
 }))
