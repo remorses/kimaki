@@ -39,8 +39,10 @@ import { initializeOpencodeForDirectory } from './opencode.js'
 import {
   cleanupOpencodeServers,
   cleanupTestSessions,
+  waitForBotMessageContaining,
   waitForBotMessageCount,
   waitForBotReplyAfterUserMessage,
+  waitForThreadPhase,
 } from './test-utils.js'
 import { getLogEntryCount, getLogEntriesSince } from './logger.js'
 
@@ -535,6 +537,89 @@ e2eTest('thread message queue ordering', () => {
   )
 
   test(
+    '/queue shows queued status first, then dispatch indicator when dequeued',
+    async () => {
+      await discord.channel(TEXT_CHANNEL_ID).user(TEST_USER_ID).sendMessage({
+        content: 'Reply with exactly: queue-slash-setup',
+      })
+
+      const thread = await discord.channel(TEXT_CHANNEL_ID).waitForThread({
+        timeout: 4_000,
+        predicate: (t) => {
+          return t.name === 'Reply with exactly: queue-slash-setup'
+        },
+      })
+
+      const th = discord.thread(thread.id)
+      const firstReply = await th.waitForBotReply({ timeout: 4_000 })
+      expect(firstReply.content.trim().length).toBeGreaterThan(0)
+
+      // Start a non-interrupting queued slash message while idle so it
+      // dispatches immediately and keeps the runtime active.
+      const { id: firstQueueInteractionId } = await th.user(TEST_USER_ID)
+        .runSlashCommand({
+          name: 'queue',
+          options: [{ name: 'message', type: 3, value: 'Reply with exactly: race-final' }],
+        })
+
+      await th.waitForInteractionAck({
+        interactionId: firstQueueInteractionId,
+        timeout: 4_000,
+      })
+
+      await waitForThreadPhase({
+        threadId: thread.id,
+        phase: ['collecting-baseline', 'dispatching', 'prompt-resolved'],
+        timeout: 4_000,
+      })
+
+      const queuedPrompt = 'Reply with exactly: queued-from-slash'
+      const { id: interactionId } = await th.user(TEST_USER_ID).runSlashCommand({
+        name: 'queue',
+        options: [{ name: 'message', type: 3, value: queuedPrompt }],
+      })
+
+      await th.waitForInteractionAck({ interactionId, timeout: 4_000 })
+
+      await waitForBotMessageContaining({
+        discord,
+        threadId: thread.id,
+        userId: TEST_USER_ID,
+        text: 'Queued message (position 1)',
+        timeout: 4_000,
+      })
+
+      const expectedDispatchIndicator = `» **queue-tester:** ${queuedPrompt}`
+      await waitForBotMessageContaining({
+        discord,
+        threadId: thread.id,
+        userId: TEST_USER_ID,
+        text: expectedDispatchIndicator,
+        timeout: 8_000,
+      })
+
+      const finalMessages = await th.getMessages()
+      const queuedAckIndex = finalMessages.findIndex((message) => {
+        return (
+          message.author.id === discord.botUserId &&
+          message.content.includes('Queued message (position 1)')
+        )
+      })
+      const dispatchIndicatorIndex = finalMessages.findIndex((message) => {
+        return (
+          message.author.id === discord.botUserId &&
+          message.content.includes(expectedDispatchIndicator)
+        )
+      })
+
+      expect(queuedAckIndex).toBeGreaterThan(-1)
+      expect(dispatchIndicatorIndex).toBeGreaterThan(-1)
+      expect(queuedAckIndex).toBeLessThan(dispatchIndicatorIndex)
+    },
+    12_000,
+  )
+
+  test(
     'queued message aborts running session immediately',
     async () => {
       // When a new message arrives while a session is running,
@@ -769,4 +854,3 @@ e2eTest('thread message queue ordering', () => {
   )
 
 })
-

@@ -79,7 +79,7 @@ export async function handleQueueCommand({
   })
 
   // /queue does NOT interrupt — enqueue with interruptActive: false
-  await runtime.enqueueIncoming({
+  const enqueueResult = await runtime.enqueueIncoming({
     prompt: message,
     userId: command.user.id,
     username: command.user.displayName,
@@ -87,8 +87,12 @@ export async function handleQueueCommand({
     interruptActive: false,
   })
 
+  const responseText = enqueueResult.queued
+    ? `Queued message${enqueueResult.position ? ` (position ${enqueueResult.position})` : ''}`
+    : `» **${command.user.displayName}:** ${message.slice(0, 1000)}${message.length > 1000 ? '...' : ''}`
+
   await command.reply({
-    content: `» **${command.user.displayName}:** ${message.slice(0, 1000)}${message.length > 1000 ? '...' : ''}`,
+    content: responseText,
     flags: SILENT_MESSAGE_FLAGS,
   })
 }
@@ -219,19 +223,23 @@ export async function handleQueueCommandCommand({
     appId,
   })
 
-  await command.reply({
-    content: `» **${command.user.displayName}:** ${displayText}`,
-    flags: SILENT_MESSAGE_FLAGS,
-  })
-
   // Queue commands don't interrupt — use interruptActive: false
-  await runtime.enqueueIncoming({
+  const enqueueResult = await runtime.enqueueIncoming({
     prompt: '',
     userId: command.user.id,
     username: command.user.displayName,
     appId,
     command: commandPayload,
     interruptActive: false,
+  })
+
+  const responseText = enqueueResult.queued
+    ? `Queued message${enqueueResult.position ? ` (position ${enqueueResult.position})` : ''}`
+    : `» **${command.user.displayName}:** ${displayText}`
+
+  await command.reply({
+    content: responseText,
+    flags: SILENT_MESSAGE_FLAGS,
   })
 
   logger.log(
