@@ -29,6 +29,7 @@ import {
   pureMarkFinished,
   pureMarkAborted,
 } from './state.js'
+import type { MainRunState } from './state.js'
 import type { OpencodeClient } from '@opencode-ai/sdk/v2'
 import {
   getOpencodeClient,
@@ -258,6 +259,12 @@ export type IngressInput = {
   expectedSessionId?: string
 }
 
+type AbortRunOutcome = {
+  abortId: string
+  reason: string
+  apiAbortPromise: Promise<void> | undefined
+}
+
 // ── Runtime class ────────────────────────────────────────────────
 
 export class ThreadSessionRuntime {
@@ -338,6 +345,17 @@ export class ThreadSessionRuntime {
       ...t,
       currentRun: t.currentRun ? updater(t.currentRun) : t.currentRun,
     }))
+  }
+
+  private nextAbortId(reason: string): string {
+    return `${reason}-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 6)}`
+  }
+
+  private formatRunStateForLog(runState: MainRunState | undefined): string {
+    if (!runState) {
+      return 'none'
+    }
+    return `phase=${runState.phase},idle=${runState.idleState},eventSeq=${runState.eventSeq},evidenceSeq=${String(runState.evidenceSeq)},deferredIdleSeq=${String(runState.deferredIdleSeq)},currentAssistant=${runState.currentAssistantMessageId || 'none'}`
   }
 
   // ── Lifecycle ────────────────────────────────────────────────
@@ -1223,13 +1241,13 @@ export class ThreadSessionRuntime {
 
       if (result.decision === 'deferred') {
         logger.log(
-          `[SESSION IDLE] Deferring idle event for ${sessionId} until prompt resolves`,
+          `[SESSION IDLE] decision=deferred sessionId=${sessionId} runState=${this.formatRunStateForLog(result.state)}`,
         )
         return
       }
       if (result.decision === 'ignore-no-evidence') {
         logger.log(
-          `[SESSION IDLE] Ignoring idle event for ${sessionId} (no current-prompt events yet)`,
+          `[SESSION IDLE] decision=ignore-no-evidence sessionId=${sessionId} runState=${this.formatRunStateForLog(result.state)}`,
         )
         return
       }
@@ -1237,7 +1255,7 @@ export class ThreadSessionRuntime {
       // decision === 'process' — run finished.
       // finishRun marks finished, flushes parts, emits footer, drains queue.
       logger.log(
-        `[SESSION IDLE] Session ${sessionId} is idle, run finished`,
+        `[SESSION IDLE] decision=process sessionId=${sessionId} runState=${this.formatRunStateForLog(result.state)}`,
       )
       await this.finishRun()
       return
@@ -1281,13 +1299,17 @@ export class ThreadSessionRuntime {
 
     // Skip abort errors — they are expected when operations are cancelled
     if (properties.error?.name === 'MessageAbortedError') {
-      logger.log(`Operation aborted (expected)`)
+      logger.log(
+        `[SESSION ERROR] Operation aborted (expected) sessionId=${sessionId} runState=${this.formatRunStateForLog(this.state?.runState)}`,
+      )
       return
     }
     // Check the run controller abort too
     const runController = this.state?.runController
     if (runController?.signal.aborted) {
-      logger.log(`Operation aborted (run controller aborted)`)
+      logger.log(
+        `[SESSION ERROR] Operation aborted (run controller aborted) sessionId=${sessionId} runState=${this.formatRunStateForLog(this.state?.runState)}`,
+      )
       return
     }
 
@@ -1557,6 +1579,7 @@ export class ThreadSessionRuntime {
     }
 
     let result: EnqueueResult = { queued: false }
+    let pendingAbortOutcome: AbortRunOutcome | undefined
 
     await this.dispatchAction(async () => {
       if (
@@ -1570,8 +1593,10 @@ export class ThreadSessionRuntime {
       }
 
       if (input.interruptActive) {
-        // Abort active run if any
-        this.abortActiveRun('new-request')
+        pendingAbortOutcome = this.abortActiveRunInternal({
+          reason: 'new-request',
+          forceApiAbortWithoutRunController: true,
+        })
 
         // Auto-reject all pending permissions for this thread
         await this.autoRejectPendingPermissions()
@@ -1636,10 +1661,19 @@ export class ThreadSessionRuntime {
         void this.startEventListener()
       }
 
-      // Try to drain queue immediately — no indicator because the user just
-      // typed this message (whether session was idle or got interrupted).
-      await this.tryDrainQueue()
+      if (!input.interruptActive) {
+        // Try to drain queue immediately — no indicator because the user just
+        // typed this message into an idle/non-interrupting flow.
+        await this.tryDrainQueue()
+      }
     })
+
+    if (input.interruptActive && pendingAbortOutcome) {
+      await this.waitForAbortSettlement(pendingAbortOutcome)
+      await this.dispatchAction(async () => {
+        await this.tryDrainQueue()
+      })
+    }
 
     return result
   }
@@ -1648,64 +1682,172 @@ export class ThreadSessionRuntime {
    * Abort the currently active run. Does NOT kill the listener.
    * Aborts the per-prompt run controller and calls session.abort best-effort.
    */
-  private abortSessionViaApi({
+  private async abortSessionViaApi({
+    abortId,
     reason,
     sessionId,
   }: {
+    abortId: string
     reason: string
     sessionId: string
-  }): void {
+  }): Promise<void> {
     const client = getOpencodeClient(this.projectDirectory)
     if (!client) {
+      logger.log(
+        `[ABORT API] id=${abortId} reason=${reason} sessionId=${sessionId} skipped=no-client`,
+      )
       return
     }
 
-    void (async () => {
-      const abortResult = await errore.tryAsync(() => {
-        return client.session.abort({
-          sessionID: sessionId,
-          directory: this.sdkDirectory,
-        })
+    const startedAt = Date.now()
+    logger.log(
+      `[ABORT API] id=${abortId} reason=${reason} sessionId=${sessionId} start`,
+    )
+    const abortResult = await errore.tryAsync(() => {
+      return client.session.abort({
+        sessionID: sessionId,
+        directory: this.sdkDirectory,
       })
-      if (!(abortResult instanceof Error)) {
-        return
-      }
+    })
+    if (!(abortResult instanceof Error)) {
       logger.log(
-        `[ABORT-API] reason=${reason} sessionId=${sessionId} - API abort failed (may already be done): ${abortResult.message}`,
+        `[ABORT API] id=${abortId} reason=${reason} sessionId=${sessionId} success durationMs=${Date.now() - startedAt}`,
       )
-    })()
+      return
+    }
+    logger.log(
+      `[ABORT API] id=${abortId} reason=${reason} sessionId=${sessionId} failed durationMs=${Date.now() - startedAt} message=${abortResult.message}`,
+    )
+  }
+
+  private abortActiveRunInternal({
+    reason,
+    forceApiAbortWithoutRunController,
+  }: {
+    reason: string
+    forceApiAbortWithoutRunController?: boolean
+  }): AbortRunOutcome {
+    const abortId = this.nextAbortId(reason)
+    const state = this.state
+    if (!state) {
+      logger.log(
+        `[ABORT] id=${abortId} reason=${reason} threadId=${this.threadId} skipped=no-state`,
+      )
+      return {
+        abortId,
+        reason,
+        apiAbortPromise: undefined,
+      }
+    }
+
+    const runController = state.runController
+    const sessionId = state.sessionId
+    const runControllerAlreadyAborted = Boolean(runController?.signal.aborted)
+    const hasRunController = Boolean(runController)
+
+    logger.log(
+      `[ABORT] id=${abortId} reason=${reason} threadId=${this.threadId} sessionId=${sessionId || 'none'} queueLength=${state.queueItems.length} runState=${this.formatRunStateForLog(state.runState)} hasRunController=${hasRunController} runControllerAborted=${runControllerAlreadyAborted}`,
+    )
+
+    if (!runController || runControllerAlreadyAborted) {
+      // No active run or already aborted — just mark state.
+      threadState.updateRunState(this.threadId, pureMarkAborted)
+      const apiAbortPromise = forceApiAbortWithoutRunController && sessionId
+        ? this.abortSessionViaApi({ abortId, reason, sessionId })
+        : undefined
+      logger.log(
+        `[ABORT] id=${abortId} reason=${reason} threadId=${this.threadId} local-abort-skipped hasRunController=${hasRunController} alreadyAborted=${runControllerAlreadyAborted}`,
+      )
+      return {
+        abortId,
+        reason,
+        apiAbortPromise,
+      }
+    }
+
+    runController.abort(new SessionAbortError({ reason }))
+    threadState.updateRunState(this.threadId, pureMarkAborted)
+    threadState.setRunController(this.threadId, undefined)
+
+    const apiAbortPromise = sessionId
+      ? this.abortSessionViaApi({ abortId, reason, sessionId })
+      : undefined
+
+    logger.log(
+      `[ABORT] id=${abortId} reason=${reason} threadId=${this.threadId} local-abort-done runState=${this.formatRunStateForLog(this.state?.runState)}`,
+    )
+
+    return {
+      abortId,
+      reason,
+      apiAbortPromise,
+    }
+  }
+
+  private async waitForAbortSettlement(
+    outcome: AbortRunOutcome,
+    options?: {
+      timeoutMs?: number
+      pollMs?: number
+      stablePolls?: number
+      apiAbortTimeoutMs?: number
+    },
+  ): Promise<void> {
+    const timeoutMs = options?.timeoutMs ?? 1_200
+    const pollMs = options?.pollMs ?? 25
+    const stablePolls = options?.stablePolls ?? 1
+    const apiAbortTimeoutMs = options?.apiAbortTimeoutMs ?? 300
+    const startedAt = Date.now()
+
+    logger.log(
+      `[ABORT WAIT] id=${outcome.abortId} reason=${outcome.reason} threadId=${this.threadId} timeoutMs=${timeoutMs} pollMs=${pollMs}`,
+    )
+
+    if (outcome.apiAbortPromise) {
+      await Promise.race([outcome.apiAbortPromise, delay(apiAbortTimeoutMs)])
+    }
+
+    let consecutiveStablePolls = 0
+    while (!this.listenerAborted && Date.now() - startedAt < timeoutMs) {
+      const state = this.state
+      const runControllerCleared = !state?.runController
+      const runState = state?.runState
+      const phaseSettled =
+        runState?.phase === 'aborted' ||
+        runState?.phase === 'finished' ||
+        runState?.phase === 'waiting-dispatch'
+
+      if (runControllerCleared && phaseSettled) {
+        consecutiveStablePolls += 1
+        if (consecutiveStablePolls >= stablePolls) {
+          logger.log(
+            `[ABORT WAIT] id=${outcome.abortId} reason=${outcome.reason} settled durationMs=${Date.now() - startedAt} runState=${this.formatRunStateForLog(runState)}`,
+          )
+          return
+        }
+      } else {
+        consecutiveStablePolls = 0
+      }
+
+      await delay(pollMs)
+    }
+
+    logger.warn(
+      `[ABORT WAIT] id=${outcome.abortId} reason=${outcome.reason} timeout durationMs=${Date.now() - startedAt} runState=${this.formatRunStateForLog(this.state?.runState)} processingAction=${this.processingAction} actionQueueLength=${this.actionQueue.length}`,
+    )
   }
 
   abortActiveRun(
     reason: string,
     options?: { forceApiAbortWithoutRunController?: boolean },
   ): void {
-    const state = this.state
-    if (!state) {
-      return
-    }
-
-    const runController = state.runController
-    if (!runController || runController.signal.aborted) {
-      // No active run or already aborted — just mark state
-      threadState.updateRunState(this.threadId, pureMarkAborted)
-      if (options?.forceApiAbortWithoutRunController && state.sessionId) {
-        this.abortSessionViaApi({ reason, sessionId: state.sessionId })
-      }
-      return
-    }
-
-    logger.log(
-      `[ABORT] reason=${reason} threadId=${this.threadId} - aborting active run`,
-    )
-    runController.abort(new SessionAbortError({ reason }))
-    threadState.updateRunState(this.threadId, pureMarkAborted)
-    threadState.setRunController(this.threadId, undefined)
-
-    // Best-effort API abort (fire-and-forget)
-    const sessionId = state.sessionId
-    if (sessionId) {
-      this.abortSessionViaApi({ reason, sessionId })
+    const outcome = this.abortActiveRunInternal({
+      reason,
+      forceApiAbortWithoutRunController:
+        options?.forceApiAbortWithoutRunController,
+    })
+    if (outcome.apiAbortPromise) {
+      void outcome.apiAbortPromise
     }
   }
 
@@ -2099,7 +2241,9 @@ export class ThreadSessionRuntime {
         : ''
       const isSessionAbort = errMessage.includes('aborted')
       if (isSessionAbort) {
-        logger.log(`[DISPATCH] Session aborted (expected): ${JSON.stringify(err).slice(0, 200)}`)
+        logger.log(
+          `[DISPATCH] Session aborted (expected) sessionId=${session.id} runState=${this.formatRunStateForLog(this.state?.runState)} error=${JSON.stringify(err).slice(0, 200)}`,
+        )
         threadState.updateRunState(this.threadId, pureMarkAborted)
         threadState.setRunController(this.threadId, undefined)
         this.stopTyping()
@@ -2155,7 +2299,7 @@ export class ThreadSessionRuntime {
 
       if (result.decision === 'process') {
         logger.log(
-          `[SESSION IDLE] Processing deferred idle for ${session.id} after prompt resolved`,
+          `[SESSION IDLE] deferred=process sessionId=${session.id} runState=${this.formatRunStateForLog(result.state)}`,
         )
         // Run finishRun through action queue to serialize with events
         await this.dispatchAction(() => {
@@ -2163,11 +2307,11 @@ export class ThreadSessionRuntime {
         })
       } else if (result.decision === 'ignore-no-evidence') {
         logger.log(
-          `[SESSION IDLE] Ignoring deferred idle for ${session.id} (no current-prompt events)`,
+          `[SESSION IDLE] deferred=ignore-no-evidence sessionId=${session.id} runState=${this.formatRunStateForLog(result.state)}`,
         )
       } else if (result.decision === 'ignore-before-evidence') {
         logger.log(
-          `[SESSION IDLE] Ignoring deferred idle for ${session.id} (arrived before evidence)`,
+          `[SESSION IDLE] deferred=ignore-before-evidence sessionId=${session.id} runState=${this.formatRunStateForLog(result.state)}`,
         )
       }
     }
@@ -2501,9 +2645,11 @@ export class ThreadSessionRuntime {
     const sessionId = state.sessionId
 
     // 1. Abort active run
+    let abortOutcome: AbortRunOutcome | undefined
     const abortResult = await errore.tryAsync(() => {
       return this.dispatchAction(async () => {
-        this.abortActiveRun('model-change', {
+        abortOutcome = this.abortActiveRunInternal({
+          reason: 'model-change',
           forceApiAbortWithoutRunController: true,
         })
       })
@@ -2513,10 +2659,9 @@ export class ThreadSessionRuntime {
       return false
     }
 
-    // Small delay to let the abort propagate through OpenCode
-    await new Promise<void>((resolve) => {
-      setTimeout(resolve, 300)
-    })
+    if (abortOutcome) {
+      await this.waitForAbortSettlement(abortOutcome)
+    }
 
     if (this.listenerAborted) {
       logger.log(`[RETRY] Runtime disposed before retry for thread ${this.threadId}`)
