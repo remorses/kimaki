@@ -29,7 +29,8 @@ import {
   setChannelVerbosity,
 } from './database.js'
 import { startHranaServer, stopHranaServer } from './hrana-server.js'
-import { initializeOpencodeForDirectory } from './opencode.js'
+import { initializeOpencodeForDirectory, getOpencodeClient } from './opencode.js'
+import type { Part, Message } from '@opencode-ai/sdk/v2'
 import {
   cleanupOpencodeServers,
   cleanupTestSessions,
@@ -88,17 +89,104 @@ function setDeterministicTranscription(config: DeterministicTranscriptionConfig 
   })
 }
 
+// ── OpenCode session assertion helpers ───────────────────────────
+// These verify what actually happened in the OpenCode session (prompts
+// sent, aborts, responses) beyond just Discord messages and thread state.
+
+type SessionMessage = { info: Message; parts: Part[] }
+
+function getOpencodeClientForTest(projectDirectory: string) {
+  const client = getOpencodeClient(projectDirectory)
+  if (!client) {
+    throw new Error('OpenCode client not found for project directory')
+  }
+  return client
+}
+
+/** Extract text content from an array of parts (filters to TextPart only). */
+function getTextFromParts(parts: Part[]): string[] {
+  return parts.flatMap((part) => {
+    if (part.type === 'text') {
+      return [part.text]
+    }
+    return []
+  })
+}
+
+/** Get all user-role messages' text parts joined. */
+function getUserTexts(messages: SessionMessage[]): string[] {
+  return messages
+    .filter((m) => m.info.role === 'user')
+    .flatMap((m) => getTextFromParts(m.parts))
+}
+
+/** Get all assistant-role messages' text parts joined. */
+function getAssistantTexts(messages: SessionMessage[]): string[] {
+  return messages
+    .filter((m) => m.info.role === 'assistant')
+    .flatMap((m) => getTextFromParts(m.parts))
+}
+
+/**
+ * Poll session.messages() until predicate returns true.
+ * Used to wait for async session updates (prompts dispatched, responses completed).
+ */
+async function waitForSessionMessages({
+  projectDirectory,
+  sessionID,
+  timeout,
+  predicate,
+  description,
+}: {
+  projectDirectory: string
+  sessionID: string
+  timeout: number
+  predicate: (messages: SessionMessage[]) => boolean
+  description: string
+}): Promise<SessionMessage[]> {
+  const client = getOpencodeClientForTest(projectDirectory)
+  const start = Date.now()
+  while (Date.now() - start < timeout) {
+    const result = await client.session.messages({
+      sessionID,
+      directory: projectDirectory,
+    })
+    const messages = result.data ?? []
+    if (predicate(messages)) {
+      return messages
+    }
+    await new Promise((resolve) => {
+      setTimeout(resolve, 100)
+    })
+  }
+  // Final attempt for error reporting
+  const finalResult = await client.session.messages({
+    sessionID,
+    directory: projectDirectory,
+  })
+  const finalMessages = finalResult.data ?? []
+  const userTexts = getUserTexts(finalMessages)
+  const assistantTexts = getAssistantTexts(finalMessages)
+  throw new Error(
+    `Timed out waiting for session messages (${description}). ` +
+    `User texts: ${JSON.stringify(userTexts.map((t) => t.slice(0, 80)))}. ` +
+    `Assistant texts: ${JSON.stringify(assistantTexts.map((t) => t.slice(0, 80)))}`,
+  )
+}
+
 // ── Deterministic provider matchers ──────────────────────────────
 // The opencode session uses these to produce canned responses.
 
 function createDeterministicMatchers(): DeterministicMatcher[] {
   // Slow response: emits text-delta after 2s delay, giving voice messages
   // time to arrive while the session is still "running".
+  // Uses latestUserTextIncludes (not rawPromptIncludes) so it only matches
+  // the current user message, not previous messages in session history.
   const slowResponse: DeterministicMatcher = {
     id: 'slow-response',
     priority: 100,
     when: {
-      rawPromptIncludes: 'SLOW_RESPONSE_MARKER',
+      latestUserTextIncludes: 'SLOW_RESPONSE_MARKER',
     },
     then: {
       parts: [
@@ -122,7 +210,7 @@ function createDeterministicMatchers(): DeterministicMatcher[] {
     id: 'fast-response',
     priority: 90,
     when: {
-      rawPromptIncludes: 'FAST_RESPONSE_MARKER',
+      latestUserTextIncludes: 'FAST_RESPONSE_MARKER',
     },
     then: {
       parts: [
@@ -401,6 +489,23 @@ e2eTest('voice message handling', () => {
         timeout: 4_000,
       })
       expect(finalState.sessionId).toBeDefined()
+
+      // Verify OpenCode session received the transcribed voice message as a prompt
+      const messages = await waitForSessionMessages({
+        projectDirectory: directories.projectDirectory,
+        sessionID: finalState.sessionId!,
+        timeout: 4_000,
+        description: 'voice transcription prompt sent to session',
+        predicate: (all) => {
+          const userTexts = getUserTexts(all)
+          return userTexts.some((text) => text.includes('Fix the login bug in auth.ts'))
+        },
+      })
+      const userTexts = getUserTexts(messages)
+      expect(userTexts.some((t) => t.includes('Fix the login bug in auth.ts'))).toBe(true)
+      // Session should have at least one assistant response
+      const assistantTexts = getAssistantTexts(messages)
+      expect(assistantTexts.length).toBeGreaterThan(0)
     },
     8_000,
   )
@@ -469,6 +574,28 @@ e2eTest('voice message handling', () => {
       })
       expect(finalState.sessionId).toBeDefined()
       expect(finalState.queueItems.length).toBe(0)
+
+      // Verify the same OpenCode session received both prompts:
+      // the initial text message AND the voice transcription
+      const messages = await waitForSessionMessages({
+        projectDirectory: directories.projectDirectory,
+        sessionID: finalState.sessionId!,
+        timeout: 4_000,
+        description: 'idle session receives voice transcription prompt',
+        predicate: (all) => {
+          const userTexts = getUserTexts(all)
+          return (
+            userTexts.some((t) => t.includes('FAST_RESPONSE_MARKER initial setup')) &&
+            userTexts.some((t) => t.includes('Add error handling to the parser'))
+          )
+        },
+      })
+      const userTexts = getUserTexts(messages)
+      expect(userTexts.some((t) => t.includes('FAST_RESPONSE_MARKER initial setup'))).toBe(true)
+      expect(userTexts.some((t) => t.includes('Add error handling to the parser'))).toBe(true)
+      // Both prompts should have gotten assistant responses
+      const assistantTexts = getAssistantTexts(messages)
+      expect(assistantTexts.length).toBeGreaterThanOrEqual(2)
     },
     8_000,
   )
@@ -526,6 +653,38 @@ e2eTest('voice message handling', () => {
       })
       expect(finalState.sessionId).toBeDefined()
       expect(finalState.queueItems.length).toBe(0)
+
+      // Verify the OpenCode session shows evidence of the interrupt:
+      // - The original slow prompt was sent
+      // - It was aborted (assistant message has MessageAbortedError)
+      // - The voice transcription was sent as a new prompt after the abort
+      const messages = await waitForSessionMessages({
+        projectDirectory: directories.projectDirectory,
+        sessionID: finalState.sessionId!,
+        timeout: 4_000,
+        description: 'interrupt: original prompt + abort + voice prompt',
+        predicate: (all) => {
+          const userTexts = getUserTexts(all)
+          return (
+            userTexts.some((t) => t.includes('SLOW_RESPONSE_MARKER start slow task')) &&
+            userTexts.some((t) => t.includes('Stop and do this instead'))
+          )
+        },
+      })
+      const userTexts = getUserTexts(messages)
+      // Both prompts were sent to the same session
+      expect(userTexts.some((t) => t.includes('SLOW_RESPONSE_MARKER start slow task'))).toBe(true)
+      expect(userTexts.some((t) => t.includes('Stop and do this instead'))).toBe(true)
+
+      // The first run's assistant message should have been aborted
+      const abortedAssistant = messages.find((m) => {
+        return m.info.role === 'assistant' && m.info.error?.name === 'MessageAbortedError'
+      })
+      expect(abortedAssistant).toBeDefined()
+
+      // The second run (voice transcription) should have a successful assistant response
+      const assistantTexts = getAssistantTexts(messages)
+      expect(assistantTexts.some((t) => t.includes('session-reply'))).toBe(true)
     },
     10_000,
   )
@@ -599,6 +758,38 @@ e2eTest('voice message handling', () => {
       })
       expect(finalState.runState.phase).toBe('finished')
       expect(finalState.queueItems.length).toBe(0)
+
+      // Verify the OpenCode session processed BOTH prompts sequentially:
+      // the slow initial prompt completed, then the queued voice prompt ran
+      const messages = await waitForSessionMessages({
+        projectDirectory: directories.projectDirectory,
+        sessionID: finalState.sessionId!,
+        timeout: 4_000,
+        description: 'queue: both prompts processed with responses',
+        predicate: (all) => {
+          const userTexts = getUserTexts(all)
+          const assistantTexts = getAssistantTexts(all)
+          return (
+            userTexts.some((t) => t.includes('SLOW_RESPONSE_MARKER start queued task')) &&
+            userTexts.some((t) => t.includes('Queue this task for later')) &&
+            assistantTexts.some((t) => t.includes('slow-response-done')) &&
+            assistantTexts.some((t) => t.includes('session-reply'))
+          )
+        },
+      })
+      const userTexts = getUserTexts(messages)
+      const assistantTexts = getAssistantTexts(messages)
+      // Both prompts sent to the session
+      expect(userTexts.some((t) => t.includes('SLOW_RESPONSE_MARKER start queued task'))).toBe(true)
+      expect(userTexts.some((t) => t.includes('Queue this task for later'))).toBe(true)
+      // Both got responses (slow response + default reply for queued message)
+      expect(assistantTexts.some((t) => t.includes('slow-response-done'))).toBe(true)
+      expect(assistantTexts.some((t) => t.includes('session-reply'))).toBe(true)
+      // No abort errors — the queue preserved the first run
+      const abortedAssistant = messages.find((m) => {
+        return m.info.role === 'assistant' && m.info.error?.name === 'MessageAbortedError'
+      })
+      expect(abortedAssistant).toBeUndefined()
     },
     12_000,
   )
@@ -662,14 +853,33 @@ e2eTest('voice message handling', () => {
       expect(finalState.sessionId).toBeDefined()
       expect(finalState.queueItems.length).toBe(0)
 
-      // 5. Verify the bot sent a session reply after the transcription
-      // (there should be at least 2 session replies: one for the fast text, one for the voice)
-      const messages = await th.getMessages()
-      const botMessages = messages.filter((m) => {
-        return m.author.id === discord.botUserId
+      // 5. Verify the OpenCode session processed both prompts on the same session:
+      // the fast text message completed first, then the delayed voice transcription
+      const sessionMessages = await waitForSessionMessages({
+        projectDirectory: directories.projectDirectory,
+        sessionID: finalState.sessionId!,
+        timeout: 4_000,
+        description: 'race: both prompts processed with responses on same session',
+        predicate: (all) => {
+          const userTexts = getUserTexts(all)
+          const aTexts = getAssistantTexts(all)
+          return (
+            userTexts.some((t) => t.includes('FAST_RESPONSE_MARKER quick task')) &&
+            userTexts.some((t) => t.includes('Delayed transcription result')) &&
+            aTexts.length >= 2
+          )
+        },
       })
-      // At minimum: transcribing msg + transcribed msg + session reply for text + session reply for voice
-      expect(botMessages.length).toBeGreaterThanOrEqual(4)
+      const userTexts = getUserTexts(sessionMessages)
+      expect(userTexts.some((t) => t.includes('FAST_RESPONSE_MARKER quick task'))).toBe(true)
+      expect(userTexts.some((t) => t.includes('Delayed transcription result'))).toBe(true)
+      // Both prompts got assistant responses (no aborts — second arrived after first finished)
+      const assistantTexts = getAssistantTexts(sessionMessages)
+      expect(assistantTexts.length).toBeGreaterThanOrEqual(2)
+      const abortedAssistant = sessionMessages.find((m) => {
+        return m.info.role === 'assistant' && m.info.error?.name === 'MessageAbortedError'
+      })
+      expect(abortedAssistant).toBeUndefined()
     },
     8_000,
   )
