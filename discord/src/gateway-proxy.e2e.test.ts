@@ -88,7 +88,7 @@ function createRunDirectories() {
 }
 
 function chooseLockPort() {
-  return 48_000 + (Date.now() % 2_000)
+  return 49_000 + (Date.now() % 2_000)
 }
 
 function createDiscordJsClient({ restUrl }: { restUrl: string }) {
