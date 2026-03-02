@@ -124,7 +124,7 @@ const cliLogger = createLogger(LogPrefix.CLI)
 // These are hardcoded because they're deploy-time constants for the shared infrastructure.
 const KIMAKI_SHARED_APP_ID = process.env.KIMAKI_SHARED_APP_ID || '1477605701202481173'
 const KIMAKI_WEBSITE_URL =
-  process.env.KIMAKI_WEBSITE_URL || 'https://api.kimaki.xyz'
+  process.env.KIMAKI_WEBSITE_URL || 'https://kimaki.xyz'
 const KIMAKI_GATEWAY_PROXY_URL =
   process.env.KIMAKI_GATEWAY_PROXY_URL ||
   'wss://discord-gateway.kimaki.xyz'

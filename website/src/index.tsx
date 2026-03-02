@@ -66,39 +66,14 @@ app.get('/api/auth/callback/discord', async (c) => {
     redirectUri,
   })
   if (exchangeResult instanceof Error) {
-    console.error('Discord code exchange failed:', exchangeResult.message)
-    return c.text('Failed to verify authorization with Discord', 500)
+    return c.text(`Code exchange failed: ${exchangeResult.message}`, 500)
   }
 
   const { guildId, accessToken } = exchangeResult
   const prisma = createPrisma(c.env.HYPERDRIVE.connectionString)
 
-  // Upsert gateway client with the verified guild_id
-  const upsertResult = await prisma.gateway_clients
-    .upsert({
-      where: {
-        client_id_guild_id: {
-          client_id: kimakiCredentials.clientId,
-          guild_id: guildId,
-        },
-      },
-      create: {
-        client_id: kimakiCredentials.clientId,
-        secret: kimakiCredentials.secret,
-        guild_id: guildId,
-      },
-      update: { secret: kimakiCredentials.secret },
-    })
-    .catch((cause) => {
-      return new Error('Failed to upsert gateway client', { cause })
-    })
-  if (upsertResult instanceof Error) {
-    console.error(upsertResult.message, upsertResult.cause)
-    return c.text('Internal server error', 500)
-  }
-
-  // Fetch and store the Discord user profile.
-  // If this fails we still complete the flow -- user data is nice-to-have.
+  // Fetch and store the Discord user profile BEFORE gateway_clients,
+  // because gateway_clients has a FK to discord_users.client_id.
   const discordUser = await fetchDiscordUser({ accessToken })
   if (discordUser instanceof Error) {
     console.warn('Failed to fetch Discord user profile:', discordUser.message)
@@ -130,6 +105,29 @@ app.get('/api/auth/callback/discord', async (c) => {
       })
   }
 
+  // Upsert gateway client with the verified guild_id
+  const upsertResult = await prisma.gateway_clients
+    .upsert({
+      where: {
+        client_id_guild_id: {
+          client_id: kimakiCredentials.clientId,
+          guild_id: guildId,
+        },
+      },
+      create: {
+        client_id: kimakiCredentials.clientId,
+        secret: kimakiCredentials.secret,
+        guild_id: guildId,
+      },
+      update: { secret: kimakiCredentials.secret },
+    })
+    .catch((cause) => {
+      return new Error('Failed to upsert gateway client', { cause })
+    })
+  if (upsertResult instanceof Error) {
+    return c.text(`Gateway client upsert failed: ${upsertResult.message}`, 500)
+  }
+
   const html = renderToString(<SuccessPage guildId={guildId} />)
   return c.html(`<!DOCTYPE html>${html}`)
 })
@@ -154,8 +152,7 @@ app.get('/api/onboarding/status', async (c) => {
       return new Error('Failed to lookup gateway client', { cause })
     })
   if (row instanceof Error) {
-    console.error(row.message, row.cause)
-    return c.json({ error: 'Internal server error' }, 500)
+    return c.json({ error: row.message }, 500)
   }
 
   if (!row) {
