@@ -67,7 +67,7 @@ export type KimakiState = {
   verboseOpencodeServer: boolean
 
   // Base URL for Discord REST API calls (default https://discord.com).
-  // Overridden when using a gateway-proxy or built-in Discord mode.
+  // Overridden when using a gateway-proxy or gateway Discord mode.
   // Changes: set by getBotTokenWithMode() which runs at startup and on
   // multiple runtime paths (CLI init, opencode spawn). May be updated
   // whenever bot credentials are re-read from the DB.

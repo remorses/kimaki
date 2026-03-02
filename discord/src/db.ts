@@ -159,8 +159,8 @@ async function migrateSchema(prisma: PrismaClient): Promise<void> {
     // Column already exists
   }
 
-  // Migration: add built-in bot mode columns to bot_tokens.
-  // bot_mode distinguishes "self-hosted" (user's own bot) from "built-in" (shared Kimaki bot).
+  // Migration: add gateway bot mode columns to bot_tokens.
+  // bot_mode distinguishes "self-hosted" (user's own bot) from "gateway" (shared Kimaki bot).
   // client_id + client_secret are the credentials used for gateway proxy auth.
   // proxy_url stores the gateway-proxy REST base URL.
   const botTokenAlters = [

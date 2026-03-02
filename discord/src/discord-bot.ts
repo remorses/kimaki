@@ -169,7 +169,7 @@ type StartOptions = {
 }
 
 export async function createDiscordClient() {
-  // Read REST API URL lazily so built-in mode can set store.discordBaseUrl
+  // Read REST API URL lazily so gateway mode can set store.discordBaseUrl
   // after module import but before client creation.
   const restApiUrl = getDiscordRestApiUrl()
   return new Client({

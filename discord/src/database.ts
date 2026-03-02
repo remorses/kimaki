@@ -1067,7 +1067,7 @@ export async function setPartMessagesBatch(
 
 /**
  * Get the most recent bot token along with its mode info in a single query.
- * For built-in mode, the token is derived from client_id:client_secret
+ * For gateway mode, the token is derived from client_id:client_secret
  * and REST routing is automatically enabled (idempotent env var set).
  * This ensures every code path that reads credentials gets correct routing
  * without needing to set discordBaseUrl separately.
@@ -1090,14 +1090,15 @@ export async function getBotTokenWithMode(): Promise<
   if (!row) {
     return undefined
   }
-  const mode: BotMode = row.bot_mode === 'built-in' ? 'built-in' : 'self-hosted'
-  const token = (mode === 'built-in' && row.client_id && row.client_secret)
+  // Accept both 'gateway' (current) and 'built-in' (legacy DB rows) as gateway mode
+  const mode: BotMode = (row.bot_mode === 'gateway' || row.bot_mode === 'built-in') ? 'gateway' : 'self-hosted'
+  const token = (mode === 'gateway' && row.client_id && row.client_secret)
     ? `${row.client_id}:${row.client_secret}`
     : row.token
   // Always reset discordBaseUrl on every read so a mode switch within
-  // the same process (e.g. DB has built-in row but user proceeds self-hosted)
+  // the same process (e.g. DB has gateway row but user proceeds self-hosted)
   // doesn't leave a stale proxy URL in the store.
-  const discordBaseUrl = (mode === 'built-in' && row.proxy_url)
+  const discordBaseUrl = (mode === 'gateway' && row.proxy_url)
     ? row.proxy_url
     : 'https://discord.com'
   store.setState({ discordBaseUrl })
@@ -1123,10 +1124,10 @@ export async function setBotToken(appId: string, token: string): Promise<void> {
   })
 }
 
-export type BotMode = 'self-hosted' | 'built-in'
+export type BotMode = 'self-hosted' | 'gateway'
 
 /**
- * Persist built-in bot mode credentials.
+ * Persist gateway bot mode credentials.
  * Upserts the row so a prior setBotToken call is not needed.
  */
 export async function setBotMode({

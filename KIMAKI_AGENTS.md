@@ -70,9 +70,9 @@ key files:
 
 auth flow: client sends IDENTIFY with token `client_id:client_secret` → proxy validates against the CLIENTS map (from DB) → returns `SessionPrincipal::Client(id)` + `authorized_guilds` → only forwards events for those guilds.
 
-## gateway onboarding flow (built-in mode)
+## gateway onboarding flow (gateway mode)
 
-the built-in mode onboarding (in `discord/src/cli.ts`, the `run()` function) works as follows:
+the gateway mode onboarding (in `discord/src/cli.ts`, the `run()` function) works as follows:
 
 1. CLI generates `clientId` (UUID) + `clientSecret` (32-byte hex)
 2. builds Discord OAuth URL with `state=JSON({clientId, clientSecret})` and `redirect_uri=https://api.kimaki.xyz/oauth/callback`
@@ -80,10 +80,10 @@ the built-in mode onboarding (in `discord/src/cli.ts`, the `run()` function) wor
 4. user authorizes the shared Kimaki bot in their server
 5. Discord redirects to `website/src/routes/oauth-callback.tsx` with `guild_id` + `state` — website upserts `gateway_clients` row in Postgres
 6. CLI polls `website/src/routes/onboarding-status.ts` every 2s until it finds the `client_id` + `secret` row, gets back `guild_id`
-7. CLI stores credentials locally via `setBotMode()` in SQLite with `bot_mode='built-in'`, `proxy_url` pointing to the gateway
+7. CLI stores credentials locally via `setBotMode()` in SQLite with `bot_mode='gateway'`, `proxy_url` pointing to the gateway
 8. bot connects with `clientId:clientSecret` as the Discord token — discord.js hits the gateway proxy which routes events for authorized guilds only
 
-use `--gateway` to force built-in mode even if self-hosted credentials are already saved. this skips saved self-hosted creds and enters the built-in onboarding flow.
+use `--gateway` to force gateway mode even if self-hosted credentials are already saved. this skips saved self-hosted creds and enters the gateway onboarding flow.
 
 ## db package
 

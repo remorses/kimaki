@@ -116,7 +116,7 @@ import {
 
 const cliLogger = createLogger(LogPrefix.CLI)
 
-// Built-in bot mode constants.
+// Gateway bot mode constants.
 // KIMAKI_SHARED_APP_ID is the Discord Application ID of the shared Kimaki bot.
 // KIMAKI_WEBSITE_URL is the website that handles OAuth callback + onboarding status.
 // KIMAKI_GATEWAY_PROXY_URL is the gateway-proxy base URL.
@@ -150,10 +150,10 @@ function stripBracketedPaste(value: string | undefined): string {
 // Derive the Discord Application ID from a bot token.
 // Discord bot tokens have the format: base64(userId).timestamp.hmac
 // The first segment is the bot's user ID (= Application ID) base64-encoded.
-// For built-in mode tokens (client_id:secret format), this function returns
+// For gateway mode tokens (client_id:secret format), this function returns
 // undefined -- the caller should use KIMAKI_SHARED_APP_ID instead.
 function appIdFromToken(token: string): string | undefined {
-  // Built-in mode tokens use "client_id:secret" format, not base64.
+  // Gateway mode tokens use "client_id:secret" format, not base64.
   if (token.includes(':')) {
     return undefined
   }
@@ -175,7 +175,7 @@ function appIdFromToken(token: string): string | undefined {
 // Resolve bot token and app ID from env var or database.
 // Used by CLI subcommands (send, project add) that need credentials
 // but don't run the interactive wizard.
-// In built-in mode, also sets store.discordBaseUrl so REST calls
+// In gateway mode, also sets store.discordBaseUrl so REST calls
 // are routed through the gateway-proxy REST endpoint.
 async function resolveBotCredentials({ appIdOverride }: { appIdOverride?: string } = {}): Promise<{
   token: string
@@ -475,7 +475,7 @@ const cli = goke('kimaki')
 process.title = 'kimaki'
 
 type CliOptions = {
-  restart?: boolean
+  restartOnboarding?: boolean
   addChannels?: boolean
   dataDir?: string
   useWorktrees?: boolean
@@ -1106,7 +1106,7 @@ async function backgroundInit({
 }
 
 async function run({
-  restart,
+  restartOnboarding,
   addChannels,
   useWorktrees,
   enableVoiceChannels,
@@ -1114,7 +1114,7 @@ async function run({
 }: CliOptions) {
   startCaffeinate()
 
-  const forceSetup = Boolean(restart)
+  const forceRestartOnboarding = Boolean(restartOnboarding)
   const forceGateway = Boolean(gateway)
 
   // Step 0: Ensure required CLI tools are installed (OpenCode + Bun)
@@ -1165,10 +1165,9 @@ async function run({
 
   // Resolve bot credentials from (in priority order):
   // 1. KIMAKI_BOT_TOKEN env var (headless/CI deployments)
-  // 2. Saved credentials in the database (self-hosted or built-in mode)
-  // 3. Interactive setup wizard (first-time users -- mode selector)
-  // App ID is always derived from the token (base64 first segment),
-  // except in built-in mode where KIMAKI_SHARED_APP_ID is used.
+   // 2. Saved credentials in the database (self-hosted or gateway mode)
+   // App ID is always derived from the token (base64 first segment),
+   // except in gateway mode where KIMAKI_SHARED_APP_ID is used.
   const { appId, token, isQuickStart, isGatewayMode } = await (async (): Promise<{
     appId: string
     token: string
@@ -1180,7 +1179,7 @@ async function run({
     const existingBot = await getBotTokenWithMode()
 
     // 1. Env var takes precedence (headless deployments)
-    if (envToken && !forceSetup && !forceGateway) {
+    if (envToken && !forceRestartOnboarding && !forceGateway) {
       const derivedAppId = appIdFromToken(envToken)
       if (!derivedAppId) {
         cliLogger.error(
@@ -1194,47 +1193,47 @@ async function run({
     }
 
     // 2. Saved credentials in the database
-    // Reuse saved creds unless: --restart forces re-setup, or --gateway
-    // overrides saved self-hosted creds (saved built-in creds are still used).
-    const canReuseSavedCreds = existingBot && !forceSetup
-      && !(forceGateway && existingBot.mode !== 'built-in')
+    // Reuse saved creds unless: --restart-onboarding forces re-setup, or --gateway
+    // overrides saved self-hosted creds (saved gateway creds are still used).
+    const canReuseSavedCreds = existingBot && !forceRestartOnboarding
+      && !(forceGateway && existingBot.mode !== 'gateway')
     if (canReuseSavedCreds) {
       const modeLabel =
-        existingBot.mode === 'built-in' ? ' (built-in mode)' : ''
+        existingBot.mode === 'gateway' ? ' (gateway mode)' : ''
       note(
-        `Using saved bot credentials${modeLabel}:\nApp ID: ${existingBot.appId}\n\nTo use different credentials, run with --restart`,
+        `Using saved bot credentials${modeLabel}:\nApp ID: ${existingBot.appId}\n\nTo use different credentials, run with --restart-onboarding`,
         'Existing Bot Found',
       )
-      if (existingBot.mode !== 'built-in') {
+      if (existingBot.mode !== 'gateway') {
         note(
           `Bot install URL (in case you need to add it to another server):\n${generateBotInstallUrl({ clientId: existingBot.appId })}`,
           'Install URL',
         )
       }
-      return { appId: existingBot.appId, token: existingBot.token, isQuickStart: !addChannels, isGatewayMode: existingBot.mode === 'built-in' }
+      return { appId: existingBot.appId, token: existingBot.token, isQuickStart: !addChannels, isGatewayMode: existingBot.mode === 'gateway' }
     }
 
     // 3. Explain why saved credentials are being skipped, then enter
-    //    interactive setup wizard (first-time users, --restart, or --gateway override).
-    if (existingBot && forceGateway && existingBot.mode !== 'built-in') {
+    //    interactive setup wizard (first-time users, --restart-onboarding, or --gateway override).
+    if (existingBot && forceGateway && existingBot.mode !== 'gateway') {
       note(
-        'Ignoring saved self-hosted credentials due to --gateway flag.\nSwitching to built-in (gateway) mode.',
+        'Ignoring saved self-hosted credentials due to --gateway flag.\nSwitching to gateway mode.',
         'Gateway Mode',
       )
-    } else if (forceSetup && existingBot) {
-      note('Ignoring saved credentials due to --restart flag', 'Restart Setup')
+    } else if (forceRestartOnboarding && existingBot) {
+      note('Ignoring saved credentials due to --restart-onboarding flag', 'Restart Onboarding')
     }
 
-    // When --gateway is passed, skip the mode selector and go straight to built-in mode.
-    const modeChoice: 'built-in' | 'self-hosted' = forceGateway
-      ? 'built-in'
+    // When --gateway is passed, skip the mode selector and go straight to gateway mode.
+    const modeChoice: 'gateway' | 'self-hosted' = forceGateway
+      ? 'gateway'
       : await (async () => {
           const choice = await select({
             message: 'How do you want to connect to Discord?',
             options: [
               {
-                value: 'built-in' as const,
-                label: 'Built-in Kimaki bot (simple, experimental)',
+                value: 'gateway' as const,
+                label: 'Gateway mode (simple, experimental)',
                 hint: 'Install the shared Kimaki bot to your server',
               },
               {
@@ -1251,11 +1250,11 @@ async function run({
           return choice
         })()
 
-    // ── Built-in mode flow ──
-    if (modeChoice === 'built-in') {
+    // ── Gateway mode flow ──
+    if (modeChoice === 'gateway') {
       if (!KIMAKI_SHARED_APP_ID) {
         cliLogger.error(
-          'Built-in mode is not available yet. KIMAKI_SHARED_APP_ID is not configured.',
+          'Gateway mode is not available yet. KIMAKI_SHARED_APP_ID is not configured.',
         )
         process.exit(EXIT_NO_RESTART)
       }
@@ -1345,7 +1344,7 @@ async function run({
 
       await setBotMode({
         appId: KIMAKI_SHARED_APP_ID,
-        mode: 'built-in',
+        mode: 'gateway',
         clientId,
         clientSecret,
         proxyUrl: KIMAKI_GATEWAY_PROXY_REST_BASE_URL,
@@ -1438,7 +1437,7 @@ async function run({
   })()
 
   const shouldAddChannels =
-    !isQuickStart || forceSetup || Boolean(addChannels)
+    !isQuickStart || forceRestartOnboarding || Boolean(addChannels)
 
   // Start OpenCode server EARLY - let it initialize in parallel with Discord login.
   // This is the biggest startup bottleneck (can take 1-30 seconds to spawn and wait for ready)
@@ -1504,12 +1503,12 @@ async function run({
   }
   await setBotToken(appId, token)
 
-  // In gateway (built-in) mode the bot only sees guilds the user has installed
+   // In gateway mode the bot only sees guilds the user has installed
   // it in. Zero guilds means the install URL callback never completed or the
   // user removed the bot from all servers — there is nothing the bot can do.
   if (isGatewayMode && guilds.length === 0) {
     // Rebuild the install URL from the current credentials so the user can
-    // add the bot to a server without going through the full --restart flow.
+    // add the bot to a server without going through the full --restart-onboarding flow.
     const [clientId, clientSecret] = token.split(':')
     if (!clientId || !clientSecret) {
       throw new Error('Malformed gateway token: expected clientId:clientSecret format')
@@ -1787,7 +1786,7 @@ async function run({
 
 cli
   .command('', 'Set up and run the Kimaki Discord bot')
-  .option('--restart', 'Prompt for new credentials even if saved')
+  .option('--restart-onboarding', 'Prompt for new credentials even if saved')
   .option(
     '--add-channels',
     'Select OpenCode projects to create Discord channels before starting',
@@ -1828,11 +1827,11 @@ cli
   .option('--no-sentry', 'Disable Sentry error reporting')
   .option(
     '--gateway',
-    'Force built-in gateway mode (use the shared Kimaki bot instead of a self-hosted bot)',
+    'Force gateway mode (use the shared Kimaki bot instead of a self-hosted bot)',
   )
   .action(
     async (options: {
-      restart?: boolean
+      restartOnboarding?: boolean
       addChannels?: boolean
       dataDir?: string
       installUrl?: boolean
@@ -1923,7 +1922,7 @@ cli
         // Single-instance enforcement is handled by the hrana server binding the lock port.
         // startHranaServer() in run() evicts any existing instance before binding.
         await run({
-          restart: options.restart,
+          restartOnboarding: options.restartOnboarding,
           addChannels: options.addChannels,
           dataDir: options.dataDir,
           useWorktrees: options.useWorktrees,

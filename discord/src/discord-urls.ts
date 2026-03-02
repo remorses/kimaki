@@ -14,7 +14,7 @@ import { store } from './store.js'
 /**
  * Base URL for Discord (default: https://discord.com).
  * All REST API and raw fetch calls derive their URLs from this.
- * Reads from the centralized store so built-in mode can set it via
+ * Reads from the centralized store so gateway mode can set it via
  * store.setState({ discordBaseUrl }) after startup.
  */
 export function getDiscordRestBaseUrl(): string {
@@ -58,7 +58,7 @@ export function createDiscordRest(token: string): REST {
 
 /**
  * Derive an HTTPS REST base URL from a WebSocket gateway URL.
- * Swaps wss→https and ws→http. Used for built-in mode where the
+ * Swaps wss→https and ws→http. Used for gateway mode where the
  * gateway proxy URL doubles as the REST proxy base.
  */
 export function getGatewayProxyRestBaseUrl({ gatewayUrl }: { gatewayUrl: string }): string {

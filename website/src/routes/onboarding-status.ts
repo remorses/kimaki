@@ -1,5 +1,5 @@
 // GET /api/onboarding/status -- CLI polling endpoint.
-// The kimaki CLI polls this endpoint every 2s during built-in mode onboarding
+// The kimaki CLI polls this endpoint every 2s during gateway mode onboarding
 // to check if the user has completed the bot authorization flow.
 // Returns 404 if not ready, 200 with guild_id if the client has been registered.
 
