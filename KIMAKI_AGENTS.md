@@ -251,6 +251,29 @@ for the log prefixes always use short names
 
 kimaki writes logs to `<dataDir>/kimaki.log` (default `~/.kimaki/kimaki.log`). the log file is reset on every bot startup, so it only contains logs from the current run. file logging works in all environments (dev and production).
 
+to debug opencode event ordering, set `KIMAKI_LOG_OPENCODE_SESSION_EVENTS=1`. this writes jsonl files under `<dataDir>/opencode-session-events/` (one file per session id, like `ses_xxx.jsonl`). use `KIMAKI_OPENCODE_SESSION_EVENTS_DIR` to override the output directory.
+
+the jsonl line includes runtime metadata (`threadId`, `activeSessionId`, `runPhase`, etc) and the raw opencode event under `.event`.
+
+use `jq` to inspect these files quickly:
+
+```bash
+# list event type counts for one session file
+jq -r '.event.type' ~/.kimaki/opencode-session-events/ses_xxx.jsonl | sort | uniq -c
+
+# show only session lifecycle events (status/idle/error)
+jq -r 'select(.event.type=="session.status" or .event.type=="session.idle" or .event.type=="session.error") | [.timestamp, .event.type, (.event.properties.status.type // ""), (.event.properties.error.name // "")] | @tsv' ~/.kimaki/opencode-session-events/ses_xxx.jsonl
+
+# filter by a specific event type (example: message.part.updated)
+jq -r 'select(.event.type=="message.part.updated")' ~/.kimaki/opencode-session-events/ses_xxx.jsonl
+
+# filter by event subtype (example: session.status idle)
+jq -r 'select(.event.type=="session.status" and .event.properties.status.type=="idle")' ~/.kimaki/opencode-session-events/ses_xxx.jsonl
+
+# show only events processed as active-session events (ignore stale cross-session noise)
+jq -r 'select(.eventSessionId == .activeSessionId)' ~/.kimaki/opencode-session-events/ses_xxx.jsonl
+```
+
 for checkout validation requests, prefer non-recursive checks unless the user asks otherwise.
 
 ## opencode plugin and env vars
@@ -289,6 +312,8 @@ if a kimaki test needs a new interaction primitive, first add it to `discord-dig
 see `docs/e2e-testing-learnings.md` for detailed lessons. key points:
 
 - e2e tests use `opencode-deterministic-provider` which returns canned responses instantly (no real LLM). poll timeouts should be **4s max** and polling interval **100ms**. the only real latency is opencode server startup (`beforeAll`, 60s is fine) and intentional `partDelaysMs` in matchers.
+- deterministic provider matchers can still trigger **real tool execution** when they emit `tool-call` parts (for example `bash` + `sleep`). do not use long sleeps (`sleep 500` means 500 seconds). prefer `partDelaysMs` for timing windows in tests.
+- avoid broad matchers like only `lastMessageRole: 'tool'` in shared e2e matcher lists. always scope with an explicit marker (`rawPromptIncludes`, exact latest user text, etc.) or they can cascade across unrelated turns and create flaky tests.
 - prefer content-aware polling ("does this user message have a bot reply after it?") over count-based polling (`waitForBotMessageCount`). count-based is fragile when sessions get interrupted/aborted because error messages satisfy the count early.
 - bot replies can be error messages, not just LLM content. verify ordering by position, not content matching.
 - set `KIMAKI_VITEST=1` to suppress clack terminal log noise during test runs. when set, the logger pushes entries to an in-memory buffer. tests use `getLogEntryCount()` / `getLogEntriesSince(index)` with `onTestFailed` to dump only the log lines from the failed test.
