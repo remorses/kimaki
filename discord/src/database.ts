@@ -1072,7 +1072,7 @@ export async function setPartMessagesBatch(
  * This ensures every code path that reads credentials gets correct routing
  * without needing to set discordBaseUrl separately.
  */
-export async function getBotTokenWithMode({ mode: modeFilter }: { mode?: BotMode } = {}): Promise<
+export async function getBotTokenWithMode(): Promise<
   | {
       appId: string
       token: string
@@ -1084,19 +1084,7 @@ export async function getBotTokenWithMode({ mode: modeFilter }: { mode?: BotMode
   | undefined
 > {
   const prisma = await getPrisma()
-  // When modeFilter is set, find the most recent bot row matching that mode.
-  // 'gateway' filter also matches legacy 'built-in' rows.
-  const modeValues: string[] | undefined = (() => {
-    if (!modeFilter) {
-      return undefined
-    }
-    if (modeFilter === 'gateway') {
-      return ['gateway', 'built-in']
-    }
-    return [modeFilter]
-  })()
   const row = await prisma.bot_tokens.findFirst({
-    where: modeValues ? { bot_mode: { in: modeValues } } : undefined,
     orderBy: { created_at: 'desc' },
   })
   if (!row) {
@@ -1166,6 +1154,20 @@ export async function setBotMode({
     where: { app_id: appId },
     create: { app_id: appId, token: `${clientId}:${clientSecret}`, ...data },
     update: data,
+  })
+}
+
+/**
+ * Touch the bot_tokens row so it becomes the "most recent" via created_at.
+ * Called after credential resolution in run() so that subcommands in separate
+ * processes (send, upload-to-discord, project list, etc.) get the correct
+ * active bot from getBotTokenWithMode() which returns the most recent row.
+ */
+export async function touchBotTokenTimestamp(appId: string): Promise<void> {
+  const prisma = await getPrisma()
+  await prisma.bot_tokens.update({
+    where: { app_id: appId },
+    data: { created_at: new Date() },
   })
 }
 

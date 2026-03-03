@@ -49,7 +49,7 @@ import {
   cancelScheduledTask,
   getSessionStartSourcesBySessionIds,
   migrateChannelAppIds,
-  type BotMode,
+  touchBotTokenTimestamp,
 } from './database.js'
 import { ShareMarkdown } from './markdown.js'
 import {
@@ -487,6 +487,15 @@ type CliOptions = {
 // Commands to skip when registering user commands (reserved names)
 const SKIP_USER_COMMANDS = ['init']
 
+function getDiscordCommandSuffix(
+  command: OpencodeCommand,
+): '-cmd' | '-skill' {
+  if (command.source === 'skill') {
+    return '-skill'
+  }
+  return '-cmd'
+}
+
 import { store, type RegisteredUserCommand } from './store.js'
 
 type AgentInfo = {
@@ -799,7 +808,7 @@ async function registerCommands({
       .toJSON(),
   ]
 
-  // Add user-defined commands with -cmd suffix
+  // Add user-defined commands with source-based suffixes (-cmd / -skill)
   // Also populate registeredUserCommands in the store for /queue-command autocomplete
   const newRegisteredCommands: RegisteredUserCommand[] = []
   for (const cmd of userCommands) {
@@ -822,17 +831,19 @@ async function registerCommands({
       continue
     }
 
-    // Truncate base name before appending suffix so the -cmd suffix is never
+    const commandSuffix = getDiscordCommandSuffix(cmd)
+
+    // Truncate base name before appending suffix so the suffix is never
     // lost to Discord's 32-char command name limit.
-    const cmdSuffix = '-cmd'
-    const baseName = sanitizedName.slice(0, 32 - cmdSuffix.length)
-    const commandName = `${baseName}${cmdSuffix}`
+    const baseName = sanitizedName.slice(0, 32 - commandSuffix.length)
+    const commandName = `${baseName}${commandSuffix}`
     const description = cmd.description || `Run /${cmd.name} command`
 
     newRegisteredCommands.push({
       name: cmd.name,
-      discordName: baseName,
+      discordCommandName: commandName,
       description,
+      source: cmd.source,
     })
 
     commands.push(
@@ -1183,11 +1194,13 @@ async function run({
     // Get the most recent bot row (any mode) for general reuse checks
     const existingBot = await getBotTokenWithMode()
     // When --gateway is requested and the most recent bot is self-hosted,
-    // also check if there are saved gateway credentials we can reuse
-    // (and vice versa). This lets users switch back and forth between modes.
-    const requestedMode: BotMode | undefined = forceGateway ? 'gateway' : undefined
-    const savedBotForRequestedMode = (requestedMode && existingBot?.mode !== requestedMode)
-      ? await getBotTokenWithMode({ mode: requestedMode })
+    // check if saved gateway credentials exist by looking up the shared app_id
+    // directly. This lets users switch back and forth between modes without
+    // re-running the onboarding wizard each time.
+    const hasGatewayCreds = (forceGateway && existingBot?.mode !== 'gateway')
+      ? await (await getPrisma()).bot_tokens.findUnique({
+          where: { app_id: KIMAKI_SHARED_APP_ID },
+        })
       : undefined
 
     // 1. Env var takes precedence (headless deployments)
@@ -1225,20 +1238,21 @@ async function run({
       return { appId: existingBot.appId, token: existingBot.token, isQuickStart: !addChannels, isGatewayMode: existingBot.mode === 'gateway', previousAppId: undefined }
     }
 
-    // 2b. Switching modes: saved credentials exist for the requested mode
-    // (e.g. user ran self-hosted before, now passes --gateway and has old gateway creds).
-    // Reuse them without re-running the onboarding wizard.
-    if (savedBotForRequestedMode && !forceRestartOnboarding) {
-      const modeLabel = savedBotForRequestedMode.mode === 'gateway' ? ' (gateway mode)' : ' (self-hosted)'
+    // 2b. Switching to gateway: saved gateway credentials exist from a previous
+    // gateway setup. Reuse them without re-running the onboarding wizard.
+    if (hasGatewayCreds && !forceRestartOnboarding) {
+      const gatewayToken = (hasGatewayCreds.client_id && hasGatewayCreds.client_secret)
+        ? `${hasGatewayCreds.client_id}:${hasGatewayCreds.client_secret}`
+        : hasGatewayCreds.token
       note(
-        `Switching to saved ${savedBotForRequestedMode.mode} credentials${modeLabel}:\nApp ID: ${savedBotForRequestedMode.appId}`,
+        `Switching to saved gateway credentials:\nApp ID: ${hasGatewayCreds.app_id}`,
         'Mode Switch',
       )
       return {
-        appId: savedBotForRequestedMode.appId,
-        token: savedBotForRequestedMode.token,
+        appId: hasGatewayCreds.app_id,
+        token: gatewayToken,
         isQuickStart: !addChannels,
-        isGatewayMode: savedBotForRequestedMode.mode === 'gateway',
+        isGatewayMode: true,
         previousAppId: existingBot?.appId,
       }
     }
@@ -1481,6 +1495,12 @@ async function run({
       cliLogger.log(`Migrated ${migrated} channel(s) from bot ${previousAppId} to ${appId}`)
     }
   }
+
+  // Touch the active bot row so it has the most recent created_at timestamp.
+  // Subcommands in separate processes (send, upload-to-discord, project list)
+  // call getBotTokenWithMode() which returns the most recent row — this
+  // ensures they always get the bot that's actually running.
+  await touchBotTokenTimestamp(appId)
 
   const shouldAddChannels =
     !isQuickStart || forceRestartOnboarding || Boolean(addChannels)
@@ -1794,13 +1814,14 @@ async function run({
   if (registrableCommands.length > 0) {
     const commandList = registrableCommands
       .map(
-        (cmd) => `  /${cmd.name}-cmd - ${cmd.description || 'No description'}`,
+        (cmd) =>
+          `  /${cmd.name}${getDiscordCommandSuffix(cmd)} - ${cmd.description || 'No description'}`,
       )
       .join('\n')
 
     note(
       `Found ${registrableCommands.length} user-defined command(s):\n${commandList}`,
-      'OpenCode Commands',
+      'OpenCode Commands/Skills',
     )
   }
 
