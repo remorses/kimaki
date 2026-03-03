@@ -1,7 +1,7 @@
 // OpenCode plugin for Kimaki Discord bot.
 // Provides tools for Discord integration like listing users for mentions.
 // Also injects synthetic message parts for branch changes and idle-time awareness.
-
+import type { Event } from '@opencode-ai/sdk'
 import type { Plugin } from '@opencode-ai/plugin'
 import type { ToolContext } from '@opencode-ai/plugin/tool'
 import crypto from 'node:crypto'
@@ -36,7 +36,12 @@ import * as errore from 'errore'
 import { getPrisma, createIpcRequest, getIpcRequestById } from './database.js'
 import { setDataDir } from './config.js'
 import { archiveThread, reactToThread } from './discord-utils.js'
-import { createLogger, formatErrorWithStack, LogPrefix, setLogFilePath } from './logger.js'
+import {
+  createLogger,
+  formatErrorWithStack,
+  LogPrefix,
+  setLogFilePath,
+} from './logger.js'
 import { initSentry, notifyError } from './sentry.js'
 import { execAsync } from './worktree-utils.js'
 
@@ -648,4 +653,93 @@ const kimakiPlugin: Plugin = async ({ directory }) => {
   }
 }
 
-export { kimakiPlugin }
+
+const TIMEOUT_SECONDS = 1
+
+type StoredEvent = { event: Event; time: number }
+
+// Interrupt a running session when a new user message is queued.
+// After TIMEOUT_SECONDS, aborts the current step and resumes
+// the session so the new message is processed immediately.
+//
+// Uses "chat.message" hook (fires synchronously during prompt flow)
+// to detect queued messages, and "event" hook for busy/idle tracking.
+export const interruptOpencodeSessionOnUserMessage: Plugin = async (ctx) => {
+  const busy = new Set<string>()
+  const timers = new Map<string, ReturnType<typeof setTimeout>>()
+  const events: StoredEvent[] = []
+
+  function waitForEvent(input: {
+    filter: (event: Event) => boolean
+    after?: number
+    timeout?: number
+  }) {
+    const after = input.after ?? Date.now()
+    const timeout = input.timeout ?? 10_000
+    return new Promise<Event>((resolve, reject) => {
+      const deadline = Date.now() + timeout
+      const check = () => {
+        for (let i = events.length - 1; i >= 0; i--) {
+          const entry = events[i]!
+          if (entry.time < after) break
+          if (input.filter(entry.event)) return resolve(entry.event)
+        }
+        if (Date.now() > deadline)
+          return reject(new Error('waitForEvent timeout'))
+        setTimeout(check, 100)
+      }
+      check()
+    })
+  }
+
+  return {
+    async event({ event }) {
+      events.push({ event, time: Date.now() })
+      if (events.length > 100) events.shift()
+
+      if (event.type === 'session.status') {
+        const { sessionID, status } = event.properties
+        if (status.type === 'busy') {
+          busy.add(sessionID)
+        } else {
+          busy.delete(sessionID)
+          const timer = timers.get(sessionID)
+          if (timer) {
+            clearTimeout(timer)
+            timers.delete(sessionID)
+          }
+        }
+      }
+    },
+
+    async 'chat.message'(input) {
+      const { sessionID } = input
+      if (!sessionID) return
+      if (!busy.has(sessionID)) return
+
+      // New user message on a busy session — start timeout
+      const existing = timers.get(sessionID)
+      if (existing) clearTimeout(existing)
+
+      const timer = setTimeout(async () => {
+        timers.delete(sessionID)
+        if (!busy.has(sessionID)) return
+        const timestamp = Date.now()
+        await ctx.client.session.abort({
+          path: { id: sessionID },
+        })
+        await waitForEvent({
+          filter: (e) =>
+            e.type === 'session.idle' && e.properties.sessionID === sessionID,
+          after: timestamp,
+        })
+        await ctx.client.session.promptAsync({
+          path: { id: sessionID },
+          body: { parts: [] },
+        })
+      }, TIMEOUT_SECONDS * 1000)
+
+      timers.set(sessionID, timer)
+    },
+  }
+}
