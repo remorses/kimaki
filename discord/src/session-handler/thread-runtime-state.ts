@@ -211,13 +211,8 @@ export function initialThreadState(): ThreadRunState {
       fileUploadPending: false,
     },
     runState: {
-      phase: 'waiting-dispatch',
-      idleState: 'none',
-      baselineAssistantIds: new Set<string>(),
+      phase: 'idle',
       currentAssistantMessageId: undefined,
-      eventSeq: 0,
-      evidenceSeq: undefined,
-      deferredIdleSeq: undefined,
     },
     runController: undefined,
     listenerController: undefined,
@@ -229,12 +224,7 @@ export function initialThreadState(): ThreadRunState {
 // ── Derived helpers (compute, never store) ───────────────────────
 
 export function isRunActive(t: ThreadRunState): boolean {
-  const phase = t.runState.phase
-  return (
-    phase === 'collecting-baseline' ||
-    phase === 'dispatching' ||
-    phase === 'prompt-resolved'
-  )
+  return t.runState.phase === 'running'
 }
 
 export function hasQueue(t: ThreadRunState): boolean {

@@ -20,16 +20,10 @@ import * as errore from 'errore'
 import * as threadState from './thread-runtime-state.js'
 import type { QueuedMessage } from './thread-runtime-state.js'
 import {
-  pureMarkCurrentPromptEvidence,
-  pureHandleMainSessionIdle,
-  pureBeginPromptCycle,
-  pureSetBaselineAssistantIds,
-  pureMarkDispatching,
-  pureMarkPromptResolvedAndConsumeDeferredIdle,
-  pureMarkFinished,
-  pureMarkAborted,
+  pureMarkRunning,
+  pureMarkIdle,
+  pureSetCurrentAssistant,
 } from './state.js'
-import type { MainRunState } from './state.js'
 import type { OpencodeClient } from '@opencode-ai/sdk/v2'
 import {
   getOpencodeClient,
@@ -312,6 +306,13 @@ export class ThreadSessionRuntime {
   private modelContextLimit: number | undefined
   private modelContextLimitKey: string | undefined
 
+  // Bounded buffer of recent SSE events with timestamps.
+  // Used by waitForEvent() to scan for specific events that arrived
+  // after a given point in time (e.g. wait for session.idle after abort).
+  // Generic: any future "wait for X event" can reuse this buffer.
+  private static EVENT_BUFFER_MAX = 100
+  private eventBuffer: Array<{ event: OpenCodeEvent; timestamp: number }> = []
+
   // Serialized action queue — all mutations flow through dispatchAction
   private actionQueue: Array<() => Promise<void>> = []
   private processingAction = false
@@ -368,11 +369,12 @@ export class ThreadSessionRuntime {
     return `${reason}-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 6)}`
   }
 
-  private formatRunStateForLog(runState: MainRunState | undefined): string {
-    if (!runState) {
+  private formatRunStateForLog(): string {
+    const rs = this.state?.runState
+    if (!rs) {
       return 'none'
     }
-    return `phase=${runState.phase},idle=${runState.idleState},eventSeq=${runState.eventSeq},evidenceSeq=${String(runState.evidenceSeq)},deferredIdleSeq=${String(runState.deferredIdleSeq)},currentAssistant=${runState.currentAssistantMessageId || 'none'}`
+    return `phase=${rs.phase},assistant=${rs.currentAssistantMessageId || 'none'}`
   }
 
   // ── Lifecycle ────────────────────────────────────────────────
@@ -380,12 +382,49 @@ export class ThreadSessionRuntime {
   dispose(): void {
     this.state?.listenerController?.abort()
     this.state?.runController?.abort()
+    // waitForEvent loops check listenerAborted and exit naturally.
     threadState.updateThread(this.threadId, (t) => ({
       ...t,
       runController: undefined,
       listenerController: undefined,
     }))
     this.stopTyping()
+  }
+
+  /**
+   * Generic event waiter: polls the event buffer until a matching event
+   * appears (with timestamp >= sinceTimestamp), or timeout/abort.
+   *
+   * Unlike the old idleWaiter (a promise wired into handleSessionIdle),
+   * this has zero coupling to specific event handlers — it just scans
+   * the buffer that handleEvent() fills. Works for any event type.
+   */
+  private async waitForEvent(opts: {
+    predicate: (event: OpenCodeEvent) => boolean
+    sinceTimestamp: number
+    timeoutMs: number
+    pollMs?: number
+  }): Promise<OpenCodeEvent | undefined> {
+    const { predicate, sinceTimestamp, timeoutMs, pollMs = 50 } = opts
+    const deadline = Date.now() + timeoutMs
+
+    while (Date.now() < deadline) {
+      if (this.listenerAborted) {
+        return undefined
+      }
+      const match = this.eventBuffer.find((entry) => {
+        return entry.timestamp >= sinceTimestamp && predicate(entry.event)
+      })
+      if (match) {
+        return match.event
+      }
+      await delay(pollMs)
+    }
+
+    logger.warn(
+      `[WAIT EVENT] Timeout after ${timeoutMs}ms for thread ${this.threadId}, proceeding`,
+    )
+    return undefined
   }
 
   // Seed sentPartIds from DB to avoid re-sending parts that were
@@ -508,6 +547,12 @@ export class ThreadSessionRuntime {
   // Subtask sessions also bypass — they're tracked in subtaskSessions.
 
   private async handleEvent(event: OpenCodeEvent): Promise<void> {
+    // Push into bounded event buffer for waitForEvent() consumers.
+    this.eventBuffer.push({ event, timestamp: Date.now() })
+    if (this.eventBuffer.length > ThreadSessionRuntime.EVENT_BUFFER_MAX) {
+      this.eventBuffer.splice(0, this.eventBuffer.length - ThreadSessionRuntime.EVENT_BUFFER_MAX)
+    }
+
     const sessionId = this.state?.sessionId
 
     // Extract sessionID from event based on event type.
@@ -692,10 +737,10 @@ export class ThreadSessionRuntime {
       if (this.listenerAborted) {
         return
       }
-      // Don't restart typing if the run was aborted — a step-finish event
-      // can schedule this timeout right before abort fires, and the 300ms
-      // delay means it fires after abort already cleared typing.
-      if (this.state?.runState.phase === 'aborted') {
+      // Don't restart typing if the run is no longer active — a step-finish
+      // event can schedule this timeout right before abort/finish fires,
+      // and the 300ms delay means it fires after typing was already cleared.
+      if (this.state?.runState.phase !== 'running') {
         return
       }
       // Don't restart typing if interactive UI is pending
@@ -908,9 +953,9 @@ export class ThreadSessionRuntime {
       return
     }
 
-    // Update run state: mark evidence of current prompt's response
+    // Track the current assistant message ID for part routing
     threadState.updateRunState(this.threadId, (rs) => {
-      return pureMarkCurrentPromptEvidence(rs, msg.id)
+      return pureSetCurrentAssistant(rs, msg.id)
     })
 
     // Track tokens, model, provider, agent from assistant messages
@@ -979,10 +1024,10 @@ export class ThreadSessionRuntime {
       return
     }
 
-    // Update run state evidence for main session parts
+    // Track the current assistant message ID for part routing
     if (part.sessionID === sessionId) {
       threadState.updateRunState(this.threadId, (rs) => {
-        return pureMarkCurrentPromptEvidence(rs, part.messageID)
+        return pureSetCurrentAssistant(rs, part.messageID)
       })
     }
 
@@ -1241,51 +1286,24 @@ export class ThreadSessionRuntime {
   private async handleSessionIdle(idleSessionId: string): Promise<void> {
     const sessionId = this.state?.sessionId
 
+    // ── Main session idle ─────────────────────────────────────
+    // The event is also pushed into the event buffer by handleEvent(),
+    // so waitForEvent() consumers (abort settlement) will see it too.
     if (idleSessionId === sessionId) {
-      const result = pureHandleMainSessionIdle(
-        this.state?.runState ?? {
-          phase: 'waiting-dispatch',
-          idleState: 'none',
-          baselineAssistantIds: new Set<string>(),
-          currentAssistantMessageId: undefined,
-          eventSeq: 0,
-          evidenceSeq: undefined,
-          deferredIdleSeq: undefined,
-        },
-      )
-      threadState.updateRunState(this.threadId, () => {
-        return result.state
-      })
-
-      if (result.decision === 'deferred') {
+      if (this.state?.runState.phase !== 'running') {
         logger.log(
-          `[SESSION IDLE] decision=deferred sessionId=${sessionId} runState=${this.formatRunStateForLog(result.state)}`,
+          `[SESSION IDLE] ignored (not running) sessionId=${sessionId} ${this.formatRunStateForLog()}`,
         )
         return
       }
-      if (result.decision === 'ignore-no-evidence') {
-        logger.log(
-          `[SESSION IDLE] decision=ignore-no-evidence sessionId=${sessionId} runState=${this.formatRunStateForLog(result.state)}`,
-        )
-        return
-      }
-      if (result.decision === 'ignore-inactive-phase') {
-        logger.log(
-          `[SESSION IDLE] decision=ignore-inactive-phase sessionId=${sessionId} runState=${this.formatRunStateForLog(result.state)}`,
-        )
-        return
-      }
-
-      // decision === 'process' — run finished.
-      // finishRun marks finished, flushes parts, emits footer, drains queue.
       logger.log(
-        `[SESSION IDLE] decision=process sessionId=${sessionId} runState=${this.formatRunStateForLog(result.state)}`,
+        `[SESSION IDLE] finishing run sessionId=${sessionId} ${this.formatRunStateForLog()}`,
       )
       await this.finishRun({ expectedRunId: this.run?.runId })
       return
     }
 
-    // Subtask idle
+    // ── Subtask idle ──────────────────────────────────────────
     if (!this.run?.subtaskSessions.has(idleSessionId)) {
       return
     }
@@ -1324,7 +1342,7 @@ export class ThreadSessionRuntime {
     // Skip abort errors — they are expected when operations are cancelled
     if (properties.error?.name === 'MessageAbortedError') {
       logger.log(
-        `[SESSION ERROR] Operation aborted (expected) sessionId=${sessionId} runState=${this.formatRunStateForLog(this.state?.runState)}`,
+        `[SESSION ERROR] Operation aborted (expected) sessionId=${sessionId} ${this.formatRunStateForLog()}`,
       )
       return
     }
@@ -1332,7 +1350,7 @@ export class ThreadSessionRuntime {
     const runController = this.state?.runController
     if (runController?.signal.aborted) {
       logger.log(
-        `[SESSION ERROR] Operation aborted (run controller aborted) sessionId=${sessionId} runState=${this.formatRunStateForLog(this.state?.runState)}`,
+        `[SESSION ERROR] Operation aborted (run controller aborted) sessionId=${sessionId} ${this.formatRunStateForLog()}`,
       )
       return
     }
@@ -1603,7 +1621,11 @@ export class ThreadSessionRuntime {
     }
 
     let result: EnqueueResult = { queued: false }
-    let pendingAbortOutcome: AbortRunOutcome | undefined
+    let needsIdleWait = false
+    // Capture timestamp before abort so waitForEvent only sees events
+    // that arrive after this point (filters stale buffered events).
+    const waitSinceTimestamp = Date.now()
+    let abortSessionId: string | undefined
 
     await this.dispatchAction(async () => {
       if (
@@ -1617,10 +1639,19 @@ export class ThreadSessionRuntime {
       }
 
       if (input.interruptActive) {
-        pendingAbortOutcome = this.abortActiveRunInternal({
+        // Only wait for idle if a run is actively producing output.
+        // If the session is already idle/finished, no idle event will come.
+        needsIdleWait = this.state?.runState.phase === 'running'
+        abortSessionId = this.state?.sessionId
+
+        const outcome = this.abortActiveRunInternal({
           reason: 'new-request',
-          forceApiAbortWithoutRunController: true,
         })
+
+        // Best-effort API abort (fire and forget)
+        if (outcome.apiAbortPromise) {
+          void outcome.apiAbortPromise
+        }
 
         // Auto-reject all pending permissions for this thread
         await this.autoRejectPendingPermissions()
@@ -1660,17 +1691,7 @@ export class ThreadSessionRuntime {
       // Enqueue the message
       threadState.enqueueItem(this.threadId, queuedMessage)
 
-      // Determine if the message is genuinely waiting in queue (behind an
-      // active run or blocker) vs being dispatched immediately.
-      // This must be computed here — inside dispatchAction, after enqueueItem
-      // but before tryDrainQueue — because tryDrainQueue will dequeue and
-      // dispatch the item if the session is idle. If the caller tried to
-      // check queue state after enqueueIncoming returns, a race exists where
-      // the queue already drained and the position reads as 0.
-      //
-      // canDispatchNext returns true when queue has items AND no run is active
-      // AND no blockers are pending. If it's true, the item will be dispatched
-      // immediately by tryDrainQueue below, so it's not really "queued".
+      // Determine if the message is genuinely waiting in queue
       const stateAfterEnqueue = threadState.getThreadState(this.threadId)
       const position = stateAfterEnqueue?.queueItems.length ?? 0
       const willDrainNow = stateAfterEnqueue
@@ -1686,14 +1707,24 @@ export class ThreadSessionRuntime {
       }
 
       if (!input.interruptActive) {
-        // Try to drain queue immediately — no indicator because the user just
-        // typed this message into an idle/non-interrupting flow.
         await this.tryDrainQueue()
       }
     })
 
-    if (input.interruptActive && pendingAbortOutcome) {
-      await this.waitForAbortSettlement(pendingAbortOutcome)
+    if (input.interruptActive) {
+      // Wait for the server to confirm it's idle after the abort.
+      // waitForEvent scans the event buffer for a session.idle that
+      // arrived after we started the abort — no special handler wiring.
+      if (needsIdleWait && abortSessionId) {
+        await this.waitForEvent({
+          predicate: (event) => {
+            return event.type === 'session.idle'
+              && (event.properties as { sessionID?: string }).sessionID === abortSessionId
+          },
+          sinceTimestamp: waitSinceTimestamp,
+          timeoutMs: 2000,
+        })
+      }
       await this.dispatchAction(async () => {
         await this.tryDrainQueue()
       })
@@ -1746,10 +1777,8 @@ export class ThreadSessionRuntime {
 
   private abortActiveRunInternal({
     reason,
-    forceApiAbortWithoutRunController,
   }: {
     reason: string
-    forceApiAbortWithoutRunController?: boolean
   }): AbortRunOutcome {
     const abortId = this.nextAbortId(reason)
     const state = this.state
@@ -1770,19 +1799,21 @@ export class ThreadSessionRuntime {
     const hasRunController = Boolean(runController)
 
     logger.log(
-      `[ABORT] id=${abortId} reason=${reason} threadId=${this.threadId} sessionId=${sessionId || 'none'} queueLength=${state.queueItems.length} runState=${this.formatRunStateForLog(state.runState)} hasRunController=${hasRunController} runControllerAborted=${runControllerAlreadyAborted}`,
+      `[ABORT] id=${abortId} reason=${reason} threadId=${this.threadId} sessionId=${sessionId || 'none'} queueLength=${state.queueItems.length} ${this.formatRunStateForLog()} hasRunController=${hasRunController} runControllerAborted=${runControllerAlreadyAborted}`,
     )
 
     if (!runController || runControllerAlreadyAborted) {
-      // No active run or already aborted — just mark state.
-      threadState.updateRunState(this.threadId, pureMarkAborted)
-      // Stop typing immediately — don't wait for the async API abort response.
+      // No active run or already aborted — nothing to cancel locally.
+      const shouldAbortViaApi = state.runState.phase === 'running'
+      if (shouldAbortViaApi) {
+        threadState.updateRunState(this.threadId, pureMarkIdle)
+      }
       this.stopTyping()
-      const apiAbortPromise = forceApiAbortWithoutRunController && sessionId
+      const apiAbortPromise = shouldAbortViaApi && sessionId
         ? this.abortSessionViaApi({ abortId, reason, sessionId })
         : undefined
       logger.log(
-        `[ABORT] id=${abortId} reason=${reason} threadId=${this.threadId} local-abort-skipped hasRunController=${hasRunController} alreadyAborted=${runControllerAlreadyAborted}`,
+        `[ABORT] id=${abortId} reason=${reason} threadId=${this.threadId} skipped hasRunController=${hasRunController} alreadyAborted=${runControllerAlreadyAborted} apiAbort=${shouldAbortViaApi}`,
       )
       return {
         abortId,
@@ -1792,11 +1823,8 @@ export class ThreadSessionRuntime {
     }
 
     runController.abort(new SessionAbortError({ reason }))
-    threadState.updateRunState(this.threadId, pureMarkAborted)
+    threadState.updateRunState(this.threadId, pureMarkIdle)
     threadState.setRunController(this.threadId, undefined)
-    // Stop typing immediately — don't wait for the async API abort response.
-    // Downstream paths (dispatchPrompt response.error) call stopTyping() too
-    // but that's idempotent; this ensures typing stops the instant abort fires.
     this.stopTyping()
 
     const apiAbortPromise = sessionId
@@ -1804,7 +1832,7 @@ export class ThreadSessionRuntime {
       : undefined
 
     logger.log(
-      `[ABORT] id=${abortId} reason=${reason} threadId=${this.threadId} local-abort-done runState=${this.formatRunStateForLog(this.state?.runState)}`,
+      `[ABORT] id=${abortId} reason=${reason} threadId=${this.threadId} aborted ${this.formatRunStateForLog()}`,
     )
 
     return {
@@ -1814,67 +1842,9 @@ export class ThreadSessionRuntime {
     }
   }
 
-  private async waitForAbortSettlement(
-    outcome: AbortRunOutcome,
-    options?: {
-      timeoutMs?: number
-      pollMs?: number
-      stablePolls?: number
-      apiAbortTimeoutMs?: number
-    },
-  ): Promise<void> {
-    const timeoutMs = options?.timeoutMs ?? 1_200
-    const pollMs = options?.pollMs ?? 25
-    const stablePolls = options?.stablePolls ?? 1
-    const apiAbortTimeoutMs = options?.apiAbortTimeoutMs ?? 300
-    const startedAt = Date.now()
-
-    logger.log(
-      `[ABORT WAIT] id=${outcome.abortId} reason=${outcome.reason} threadId=${this.threadId} timeoutMs=${timeoutMs} pollMs=${pollMs}`,
-    )
-
-    if (outcome.apiAbortPromise) {
-      await Promise.race([outcome.apiAbortPromise, delay(apiAbortTimeoutMs)])
-    }
-
-    let consecutiveStablePolls = 0
-    while (!this.listenerAborted && Date.now() - startedAt < timeoutMs) {
-      const state = this.state
-      const runControllerCleared = !state?.runController
-      const runState = state?.runState
-      const phaseSettled =
-        runState?.phase === 'aborted' ||
-        runState?.phase === 'finished' ||
-        runState?.phase === 'waiting-dispatch'
-
-      if (runControllerCleared && phaseSettled) {
-        consecutiveStablePolls += 1
-        if (consecutiveStablePolls >= stablePolls) {
-          logger.log(
-            `[ABORT WAIT] id=${outcome.abortId} reason=${outcome.reason} settled durationMs=${Date.now() - startedAt} runState=${this.formatRunStateForLog(runState)}`,
-          )
-          return
-        }
-      } else {
-        consecutiveStablePolls = 0
-      }
-
-      await delay(pollMs)
-    }
-
-    logger.warn(
-      `[ABORT WAIT] id=${outcome.abortId} reason=${outcome.reason} timeout durationMs=${Date.now() - startedAt} runState=${this.formatRunStateForLog(this.state?.runState)} processingAction=${this.processingAction} actionQueueLength=${this.actionQueue.length}`,
-    )
-  }
-
-  abortActiveRun(
-    reason: string,
-    options?: { forceApiAbortWithoutRunController?: boolean },
-  ): void {
+  abortActiveRun(reason: string): void {
     const outcome = this.abortActiveRunInternal({
       reason,
-      forceApiAbortWithoutRunController:
-        options?.forceApiAbortWithoutRunController,
     })
     if (outcome.apiAbortPromise) {
       void outcome.apiAbortPromise
@@ -1962,6 +1932,15 @@ export class ThreadSessionRuntime {
     }))
     const dispatchRunId = this.run?.runId
 
+    // Mark run active immediately so canDispatchNext() cannot start another
+    // concurrent dispatch while we perform async setup (ensureSession/model/etc).
+    threadState.updateRunState(this.threadId, pureMarkRunning)
+
+    // Create run controller immediately so interrupts can cancel even during
+    // async setup steps before the SDK prompt call starts.
+    const runController = new AbortController()
+    threadState.setRunController(this.threadId, runController)
+
     // ── Ensure session ────────────────────────────────────────
     const sessionResult = await this.ensureSession({
       prompt: input.prompt,
@@ -1970,6 +1949,8 @@ export class ThreadSessionRuntime {
       sessionStartScheduledTaskId: input.sessionStartScheduledTaskId,
     })
     if (sessionResult instanceof Error) {
+      threadState.updateRunState(this.threadId, pureMarkIdle)
+      threadState.setRunController(this.threadId, undefined)
       await sendThreadMessage(
         this.thread,
         `✗ ${sessionResult.message}`,
@@ -2018,6 +1999,8 @@ export class ThreadSessionRuntime {
       })
     })
     if (earlyAgentResult instanceof Error) {
+      threadState.updateRunState(this.threadId, pureMarkIdle)
+      threadState.setRunController(this.threadId, undefined)
       await sendThreadMessage(
         this.thread,
         `Failed to resolve agent: ${earlyAgentResult.message}`,
@@ -2057,6 +2040,8 @@ export class ThreadSessionRuntime {
       }),
     ])
     if (earlyModelResult instanceof Error) {
+      threadState.updateRunState(this.threadId, pureMarkIdle)
+      threadState.setRunController(this.threadId, undefined)
       await sendThreadMessage(
         this.thread,
         `Failed to resolve model: ${earlyModelResult.message}`,
@@ -2067,6 +2052,8 @@ export class ThreadSessionRuntime {
     }
     const earlyModelParam = earlyModelResult
     if (!earlyModelParam) {
+      threadState.updateRunState(this.threadId, pureMarkIdle)
+      threadState.setRunController(this.threadId, undefined)
       await sendThreadMessage(
         this.thread,
         'No AI provider connected. Configure a provider in OpenCode with `/connect` command.',
@@ -2107,10 +2094,6 @@ export class ThreadSessionRuntime {
         availableValues,
       }) || undefined
     })()
-
-    // ── Create run controller ─────────────────────────────────
-    const runController = new AbortController()
-    threadState.setRunController(this.threadId, runController)
 
     // ── Start typing ──────────────────────────────────────────
     this.startTyping()
@@ -2169,37 +2152,14 @@ export class ThreadSessionRuntime {
       return fetched.topic?.trim() || undefined
     })()
 
-    // ── Run state: begin prompt cycle + baseline ──────────────
-    threadState.updateRunState(this.threadId, pureBeginPromptCycle)
-
-    const messagesBeforePromptResult = await errore.tryAsync(() => {
-      return getClient().session.messages({
-        sessionID: session.id,
-        directory: this.sdkDirectory,
-      })
-    })
-    if (!(messagesBeforePromptResult instanceof Error)) {
-      const messagesBeforePrompt = messagesBeforePromptResult.data || []
-      const baselineAssistantIds = new Set(
-        messagesBeforePrompt
-          .filter((message) => {
-            return message.info.role === 'assistant'
-          })
-          .map((message) => {
-            return message.info.id
-          }),
-      )
-      threadState.updateRunState(this.threadId, (rs) => {
-        return pureSetBaselineAssistantIds(rs, baselineAssistantIds)
-      })
-    }
-
-    // ── Dispatch SDK call ─────────────────────────────────────
-    threadState.updateRunState(this.threadId, pureMarkDispatching)
-
     const variantField = earlyThinkingValue
       ? { variant: earlyThinkingValue }
       : {}
+
+    if (runController.signal.aborted) {
+      this.stopTyping()
+      return
+    }
 
     // SDK prompt/command calls return { data, error } instead of throwing.
     // The abort signal CAN throw (AbortError), which we catch separately.
@@ -2238,15 +2198,11 @@ export class ThreadSessionRuntime {
           { signal: runController.signal },
         )
 
-    // Catch abort/network errors from the SDK call. The SDK itself returns
-    // errors in { error } field, but AbortController throws on signal abort.
+    // Catch abort/network errors from the SDK call.
     const response = await sdkCall.catch(async (thrown: unknown) => {
       if (isAbortError(thrown)) {
-        // Stop typing immediately — abortActiveRunInternal already calls
-        // stopTyping() but this covers any code path where the SDK call
-        // is aborted without going through abortActiveRunInternal.
         this.stopTyping()
-        return undefined // aborted by user or new message
+        return undefined // aborted — idle waiter handles settlement
       }
       const errMsg =
         thrown instanceof Error ? thrown.message : String(thrown)
@@ -2254,14 +2210,13 @@ export class ThreadSessionRuntime {
         thrown instanceof Error ? thrown : new Error(errMsg)
       logger.error(`[DISPATCH] Prompt SDK call failed: ${errMsg}`)
       void notifyError(errObj, 'Failed to send prompt to OpenCode')
-      threadState.updateRunState(this.threadId, pureMarkAborted)
+      threadState.updateRunState(this.threadId, pureMarkIdle)
       threadState.setRunController(this.threadId, undefined)
       this.stopTyping()
       await sendThreadMessage(
         this.thread,
         `✗ Unexpected bot Error: ${errMsg}`,
       )
-      // Show indicator: SDK call failed, next queued message was waiting.
       await this.dispatchAction(() => {
         return this.tryDrainQueue({ showIndicator: true })
       })
@@ -2274,28 +2229,17 @@ export class ThreadSessionRuntime {
     if (response.error) {
       const err = response.error
 
-      // SessionAbortError is expected when a new message interrupts an
-      // active run — abortActiveRun sends session.abort which returns this.
-      // Silently mark aborted and drain queue; don't show error to user.
-      // response.error is a plain JSON object (not an Error instance), so
-      // check the message field directly for abort indicators.
+      // Abort response — expected when a new message interrupts.
+      // The idle waiter in enqueueIncoming handles draining.
       const errMessage = err && typeof err === 'object' && 'message' in err
         ? String(err.message)
         : ''
-      const isSessionAbort = errMessage.includes('aborted')
-      if (isSessionAbort) {
+      if (errMessage.includes('aborted')) {
         logger.log(
-          `[DISPATCH] Session aborted (expected) sessionId=${session.id} runState=${this.formatRunStateForLog(this.state?.runState)} error=${JSON.stringify(err).slice(0, 200)}`,
+          `[DISPATCH] Session aborted (expected) sessionId=${session.id}`,
         )
-        threadState.updateRunState(this.threadId, pureMarkAborted)
         threadState.setRunController(this.threadId, undefined)
         this.stopTyping()
-        // Don't drain the queue here — the caller that triggered the abort
-        // handles draining: interrupt code (enqueueIncoming) drains without
-        // the » indicator, and /abort drains via abortActiveRun with indicator.
-        // Draining here raced with the interrupt's drain because this
-        // dispatchAction ran during waitForAbortSettlement's await yield,
-        // causing the » user: message indicator to show for interrupts.
         return
       }
 
@@ -2322,46 +2266,18 @@ export class ThreadSessionRuntime {
       const apiError = new Error(`OpenCode API error: ${errorMessage}`)
       logger.error(`[DISPATCH] ${apiError.message}`)
       void notifyError(apiError, 'OpenCode API error during prompt')
-      threadState.updateRunState(this.threadId, pureMarkAborted)
+      threadState.updateRunState(this.threadId, pureMarkIdle)
       threadState.setRunController(this.threadId, undefined)
       this.stopTyping()
       await sendThreadMessage(this.thread, `✗ ${apiError.message}`)
-      // Show indicator: API error, next queued message was waiting.
       await this.dispatchAction(() => {
         return this.tryDrainQueue({ showIndicator: true })
       })
       return
     }
 
-    // ── Prompt resolved → consume deferred idle ───────────────
-    const currentRunState = this.state?.runState
-    if (currentRunState) {
-      const result = pureMarkPromptResolvedAndConsumeDeferredIdle(
-        currentRunState,
-      )
-      threadState.updateRunState(this.threadId, () => {
-        return result.state
-      })
-
-      if (result.decision === 'process') {
-        logger.log(
-          `[SESSION IDLE] deferred=process sessionId=${session.id} runState=${this.formatRunStateForLog(result.state)}`,
-        )
-        // Run finishRun through action queue to serialize with events
-        await this.dispatchAction(() => {
-          return this.finishRun({ expectedRunId: dispatchRunId })
-        })
-      } else if (result.decision === 'ignore-no-evidence') {
-        logger.log(
-          `[SESSION IDLE] deferred=ignore-no-evidence sessionId=${session.id} runState=${this.formatRunStateForLog(result.state)}`,
-        )
-      } else if (result.decision === 'ignore-before-evidence') {
-        logger.log(
-          `[SESSION IDLE] deferred=ignore-before-evidence sessionId=${session.id} runState=${this.formatRunStateForLog(result.state)}`,
-        )
-      }
-    }
-
+    // Prompt accepted — model is now running. session.idle SSE event
+    // will trigger finishRun when the model completes.
     logger.log(`[DISPATCH] Successfully sent prompt for session ${session.id}`)
   }
 
@@ -2485,12 +2401,11 @@ export class ThreadSessionRuntime {
     }
 
     // Guard against double-finish
-    const currentPhase = this.state?.runState.phase
-    if (currentPhase === 'finished' || currentPhase === 'aborted') {
+    if (this.state?.runState.phase !== 'running') {
       return
     }
 
-    threadState.updateRunState(this.threadId, pureMarkFinished)
+    threadState.updateRunState(this.threadId, pureMarkIdle)
     this.stopTyping()
 
     // Flush remaining buffered parts
@@ -2696,13 +2611,14 @@ export class ThreadSessionRuntime {
 
     const sessionId = state.sessionId
 
-    // 1. Abort active run
-    let abortOutcome: AbortRunOutcome | undefined
+    // 1. Abort active run and wait for idle
+    let needsIdleWait = false
+    const waitSinceTimestamp = Date.now()
     const abortResult = await errore.tryAsync(() => {
       return this.dispatchAction(async () => {
-        abortOutcome = this.abortActiveRunInternal({
+        needsIdleWait = this.state?.runState.phase === 'running'
+        this.abortActiveRunInternal({
           reason: 'model-change',
-          forceApiAbortWithoutRunController: true,
         })
       })
     })
@@ -2711,8 +2627,15 @@ export class ThreadSessionRuntime {
       return false
     }
 
-    if (abortOutcome) {
-      await this.waitForAbortSettlement(abortOutcome)
+    if (needsIdleWait) {
+      await this.waitForEvent({
+        predicate: (event) => {
+          return event.type === 'session.idle'
+            && (event.properties as { sessionID?: string }).sessionID === sessionId
+        },
+        sinceTimestamp: waitSinceTimestamp,
+        timeoutMs: 2000,
+      })
     }
 
     if (this.listenerAborted) {

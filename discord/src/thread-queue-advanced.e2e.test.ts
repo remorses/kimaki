@@ -590,7 +590,7 @@ e2eTest('thread queue advanced (interrupt, abort, retry)', () => {
   )
 
   test(
-    'abortActiveRun forces API abort when run controller is missing',
+    'abortActiveRun falls back to API abort when run controller is missing',
     async () => {
       await discord.channel(TEXT_CHANNEL_ID).user(TEST_USER_ID).sendMessage({
         content: 'Reply with exactly: force-abort-setup',
@@ -631,9 +631,7 @@ e2eTest('thread queue advanced (interrupt, abort, retry)', () => {
       // runController was already cleared before /abort runs.
       setRunController(thread.id, undefined)
 
-      runtime.abortActiveRun('force-abort-test', {
-        forceApiAbortWithoutRunController: true,
-      })
+      runtime.abortActiveRun('force-abort-test')
 
       await waitForBotMessageContaining({
         discord,

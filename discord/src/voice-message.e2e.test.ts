@@ -485,7 +485,7 @@ e2eTest('voice message handling', () => {
       // Assert thread state reaches finished (session completed)
       const finalState = await waitForThreadPhase({
         threadId: thread.id,
-        phase: 'finished',
+        phase: 'idle',
         timeout: 4_000,
       })
       expect(finalState.sessionId).toBeDefined()
@@ -533,13 +533,13 @@ e2eTest('voice message handling', () => {
       // Wait for the session to complete (reach finished state)
       await waitForThreadPhase({
         threadId: thread.id,
-        phase: 'finished',
+        phase: 'idle',
         timeout: 4_000,
       })
 
       // Confirm session is idle
       const idleState = getThreadState(thread.id)
-      expect(idleState?.runState.phase).toBe('finished')
+      expect(idleState?.runState.phase).toBe('idle')
 
       // 2. Now send a voice message to the idle session
       setDeterministicTranscription({
@@ -569,7 +569,7 @@ e2eTest('voice message handling', () => {
       // Session should process the transcribed message and finish
       const finalState = await waitForThreadPhase({
         threadId: thread.id,
-        phase: 'finished',
+        phase: 'idle',
         timeout: 4_000,
       })
       expect(finalState.sessionId).toBeDefined()
@@ -623,7 +623,7 @@ e2eTest('voice message handling', () => {
       // Wait for the session to start running (dispatching phase)
       await waitForThreadPhase({
         threadId: thread.id,
-        phase: ['collecting-baseline', 'dispatching', 'prompt-resolved'],
+        phase: 'running',
         timeout: 4_000,
       })
 
@@ -648,7 +648,7 @@ e2eTest('voice message handling', () => {
       // Session should eventually reach finished with the new prompt processed
       const finalState = await waitForThreadPhase({
         threadId: thread.id,
-        phase: 'finished',
+        phase: 'idle',
         timeout: 6_000,
       })
       expect(finalState.sessionId).toBeDefined()
@@ -713,7 +713,7 @@ e2eTest('voice message handling', () => {
       // Wait for session to start running
       await waitForThreadPhase({
         threadId: thread.id,
-        phase: ['collecting-baseline', 'dispatching', 'prompt-resolved'],
+        phase: 'running',
         timeout: 4_000,
       })
 
@@ -750,23 +750,21 @@ e2eTest('voice message handling', () => {
         count: 1,
         timeout: 4_000,
       })
-      // Session should still be in an active phase (not aborted)
-      expect(['collecting-baseline', 'dispatching', 'prompt-resolved']).toContain(
-        midState.runState.phase,
-      )
+      // Session should still be in an active phase
+      expect(midState.runState.phase).toBe('running')
 
       // 5. Wait for the slow session to finish AND the queue to drain.
       // Using waitForThreadState with a compound predicate avoids matching
-      // the transient 'finished' state from run A before run B starts.
+      // the transient 'idle' state from run A before run B starts.
       const finalState = await waitForThreadState({
         threadId: thread.id,
         predicate: (s) => {
-          return s.runState.phase === 'finished' && s.queueItems.length === 0
+          return s.runState.phase === 'idle' && s.queueItems.length === 0
         },
         timeout: 8_000,
-        description: 'phase=finished AND queue empty (both runs completed)',
+        description: 'phase=idle AND queue empty (both runs completed)',
       })
-      expect(finalState.runState.phase).toBe('finished')
+      expect(finalState.runState.phase).toBe('idle')
       expect(finalState.queueItems.length).toBe(0)
 
       // Verify the OpenCode session processed BOTH prompts sequentially:
@@ -857,7 +855,7 @@ e2eTest('voice message handling', () => {
       // 4. Session should process the delayed transcription and reach finished
       const finalState = await waitForThreadPhase({
         threadId: thread.id,
-        phase: 'finished',
+        phase: 'idle',
         timeout: 4_000,
       })
       expect(finalState.sessionId).toBeDefined()

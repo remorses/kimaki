@@ -74,9 +74,7 @@ export async function handleAbortCommand({
   // controller abort and the best-effort API session.abort call.
   const runtime = getRuntime(channel.id)
   if (runtime) {
-    runtime.abortActiveRun('user-requested', {
-      forceApiAbortWithoutRunController: true,
-    })
+    runtime.abortActiveRun('user-requested')
   } else {
     // No runtime but session exists — fall back to direct API abort
     const getClient = await initializeOpencodeForDirectory(projectDirectory)

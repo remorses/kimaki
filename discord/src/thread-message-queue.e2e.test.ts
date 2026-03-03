@@ -43,6 +43,7 @@ import {
   waitForBotMessageCount,
   waitForBotReplyAfterUserMessage,
   waitForThreadPhase,
+  waitForThreadState,
 } from './test-utils.js'
 import { getLogEntryCount, getLogEntriesSince } from './logger.js'
 
@@ -467,7 +468,8 @@ e2eTest('thread message queue ordering', () => {
         return m.author.id === discord.botUserId
       }).length
 
-      // 2. Rapidly send messages B and C — both serialized by runtime's enqueueIncoming
+      // 2. Rapidly send messages B and C. Since normal thread messages use
+      // interruptActive=true, C is allowed to interrupt B if B is still running.
       await th.user(TEST_USER_ID).sendMessage({
         content: 'Reply with exactly: two',
       })
@@ -475,63 +477,50 @@ e2eTest('thread message queue ordering', () => {
         content: 'Reply with exactly: three',
       })
 
-      // 3. Wait for exactly 2 new bot messages (one per follow-up)
-      const after = await waitForBotMessageCount({
+      // 3. Wait for a bot reply after message C. This is content-aware and
+      // robust to interrupts (B may or may not produce a visible reply).
+      const after = await waitForBotReplyAfterUserMessage({
         discord,
         threadId: thread.id,
-        count: beforeBotCount + 2,
+        userId: TEST_USER_ID,
+        userMessageIncludes: 'three',
         timeout: 4_000,
       })
 
-      // 4. Verify at least 2 new bot messages appeared (one per follow-up).
-      //    The bot may send additional messages per session (error reactions,
-      //    session notifications) so we check >= not exact equality.
+      // 4. Verify the latest user message got a bot reply.
       const afterBotMessages = after.filter((m) => {
         return m.author.id === discord.botUserId
       })
-      expect(afterBotMessages.length).toBeGreaterThanOrEqual(beforeBotCount + 2)
+      expect(afterBotMessages.length).toBeGreaterThanOrEqual(beforeBotCount + 1)
 
-      // Each new bot message has non-empty content
-      const newBotReplies = afterBotMessages.slice(beforeBotCount)
-      for (const reply of newBotReplies) {
-        expect(reply.content.trim().length).toBeGreaterThan(0)
-      }
-
-      // 5. Verify per-follow-up causality: user B appears before 2nd bot
-      //    message, user C appears before 3rd bot message
-      const botIndices = after.reduce<number[]>((acc, m, i) => {
-        if (m.author.id === discord.botUserId) {
-          acc.push(i)
-        }
-        return acc
-      }, [])
-
-      const userTwoIndex = after.findIndex((m) => {
+      const userThreeIndex = after.findIndex((message) => {
         return (
-          m.author.id === TEST_USER_ID &&
-          m.content.includes('two')
+          message.author.id === TEST_USER_ID &&
+          message.content.includes('three')
         )
       })
-      const userThreeIndex = after.findIndex((m) => {
-        return (
-          m.author.id === TEST_USER_ID &&
-          m.content.includes('three')
-        )
-      })
-
-      expect(userTwoIndex).toBeGreaterThan(-1)
       expect(userThreeIndex).toBeGreaterThan(-1)
 
-      // Bot responses for B and C are the last 2 bot messages
-      const botForB = botIndices[botIndices.length - 2]!
-      const botForC = botIndices[botIndices.length - 1]!
+      const botAfterThreeIndex = after.findIndex((message, index) => {
+        return index > userThreeIndex && message.author.id === discord.botUserId
+      })
+      expect(botAfterThreeIndex).toBeGreaterThan(userThreeIndex)
 
-      // Each user message appears before its corresponding bot response
-      expect(userTwoIndex).toBeLessThan(botForB)
-      expect(userThreeIndex).toBeLessThan(botForC)
+      const newBotReplies = afterBotMessages.slice(beforeBotCount)
+      expect(newBotReplies.some((reply) => {
+        return reply.content.trim().length > 0
+      })).toBe(true)
 
-      // Bot response for B appears before bot response for C (queue order)
-      expect(botForB).toBeLessThan(botForC)
+      const finalState = await waitForThreadState({
+        threadId: thread.id,
+        predicate: (state) => {
+          return state.runState.phase === 'idle' && state.queueItems.length === 0
+        },
+        timeout: 4_000,
+        description: 'phase=idle AND queue empty after rapid interrupts',
+      })
+      expect(finalState.runState.phase).toBe('idle')
+      expect(finalState.queueItems.length).toBe(0)
     },
     8_000,
   )
@@ -569,7 +558,7 @@ e2eTest('thread message queue ordering', () => {
 
       await waitForThreadPhase({
         threadId: thread.id,
-        phase: ['collecting-baseline', 'dispatching', 'prompt-resolved'],
+        phase: 'running',
         timeout: 4_000,
       })
 
