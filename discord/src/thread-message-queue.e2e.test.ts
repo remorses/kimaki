@@ -86,6 +86,76 @@ function createDiscordJsClient({ restUrl }: { restUrl: string }) {
 }
 
 function createDeterministicMatchers() {
+  const bashCreateFileMatcher: DeterministicMatcher = {
+    id: 'bash-create-file',
+    priority: 130,
+    when: {
+      lastMessageRole: 'user',
+      rawPromptIncludes: 'BASH_TOOL_FILE_MARKER',
+    },
+    then: {
+      parts: [
+        { type: 'stream-start', warnings: [] },
+        { type: 'text-start', id: 'bash-create-file' },
+        {
+          type: 'text-delta',
+          id: 'bash-create-file',
+          delta: 'running create file',
+        },
+        { type: 'text-end', id: 'bash-create-file' },
+        {
+          type: 'tool-call',
+          toolCallId: 'bash-create-file-call',
+          toolName: 'bash',
+          input: JSON.stringify({
+            command: 'mkdir -p tmp && printf "created" > tmp/bash-tool-executed.txt',
+            description: 'Create marker file for e2e test',
+            hasSideEffect: true,
+          }),
+        },
+        {
+          type: 'finish',
+          finishReason: 'tool-calls',
+          usage: {
+            inputTokens: 1,
+            outputTokens: 1,
+            totalTokens: 2,
+          },
+        },
+      ],
+    },
+  }
+
+  const bashCreateFileFollowupMatcher: DeterministicMatcher = {
+    id: 'bash-create-file-followup',
+    priority: 120,
+    when: {
+      lastMessageRole: 'tool',
+      rawPromptIncludes: 'BASH_TOOL_FILE_MARKER',
+    },
+    then: {
+      parts: [
+        { type: 'stream-start', warnings: [] },
+        { type: 'text-start', id: 'bash-create-file-followup' },
+        {
+          type: 'text-delta',
+          id: 'bash-create-file-followup',
+          delta: 'file created',
+        },
+        { type: 'text-end', id: 'bash-create-file-followup' },
+        {
+          type: 'finish',
+          finishReason: 'stop',
+          usage: {
+            inputTokens: 1,
+            outputTokens: 1,
+            totalTokens: 2,
+          },
+        },
+      ],
+    },
+  }
+
   const raceFinalReplyMatcher: DeterministicMatcher = {
     id: 'race-final-reply',
     priority: 110,
@@ -111,66 +181,6 @@ function createDeterministicMatchers() {
       // Delay first output to widen the stale-idle window. The race happens
       // in <1ms; 500ms is plenty to keep the window reliably open.
       partDelaysMs: [0, 500, 0, 0, 0],
-    },
-  }
-
-  const sleepMatcher: DeterministicMatcher = {
-    id: 'sleep-tool-call',
-    priority: 100,
-    when: {
-      rawPromptIncludes: 'SLOW_QUEUE_TOOL_MARKER',
-    },
-    then: {
-      parts: [
-        { type: 'stream-start', warnings: [] },
-        { type: 'text-start', id: 'sleep-start' },
-        { type: 'text-delta', id: 'sleep-start', delta: 'running sleep 500' },
-        { type: 'text-end', id: 'sleep-start' },
-        {
-          type: 'tool-call',
-          toolCallId: 'sleep-call-1',
-          toolName: 'bash',
-          input: JSON.stringify({
-            command: 'sleep 500',
-            description: 'Deterministic sleep for interrupt e2e',
-            hasSideEffect: true,
-          }),
-        },
-        {
-          type: 'finish',
-          finishReason: 'tool-calls',
-          usage: {
-            inputTokens: 1,
-            outputTokens: 1,
-            totalTokens: 2,
-          },
-        },
-      ],
-    },
-  }
-
-  const toolFollowupMatcher: DeterministicMatcher = {
-    id: 'tool-followup',
-    priority: 50,
-    when: {
-      lastMessageRole: 'tool',
-    },
-    then: {
-      parts: [
-        { type: 'stream-start', warnings: [] },
-        { type: 'text-start', id: 'tool-followup' },
-        { type: 'text-delta', id: 'tool-followup', delta: 'tool done' },
-        { type: 'text-end', id: 'tool-followup' },
-        {
-          type: 'finish',
-          finishReason: 'stop',
-          usage: {
-            inputTokens: 1,
-            outputTokens: 1,
-            totalTokens: 2,
-          },
-        },
-      ],
     },
   }
 
@@ -202,9 +212,9 @@ function createDeterministicMatchers() {
   }
 
   return [
-    sleepMatcher,
+    bashCreateFileMatcher,
+    bashCreateFileFollowupMatcher,
     raceFinalReplyMatcher,
-    toolFollowupMatcher,
     userReplyMatcher,
   ]
 }
@@ -598,6 +608,47 @@ e2eTest('thread message queue ordering', () => {
         description: 'local queue remains empty in opencode mode',
       })
       expect(noLocalQueueState.queueItems.length).toBe(0)
+    },
+    8_000,
+  )
+
+  test(
+    'bash tool-call actually executes and creates file in project directory',
+    async () => {
+      const markerRelativePath = path.join('tmp', 'bash-tool-executed.txt')
+      const markerPath = path.join(directories.projectDirectory, markerRelativePath)
+      fs.rmSync(markerPath, { force: true })
+
+      const prompt = 'Reply with exactly: BASH_TOOL_FILE_MARKER'
+      await discord.channel(TEXT_CHANNEL_ID).user(TEST_USER_ID).sendMessage({
+        content: prompt,
+      })
+
+      const thread = await discord.channel(TEXT_CHANNEL_ID).waitForThread({
+        timeout: 4_000,
+        predicate: (t) => {
+          return t.name === prompt
+        },
+      })
+
+      await waitForBotMessageContaining({
+        discord,
+        threadId: thread.id,
+        userId: TEST_USER_ID,
+        text: 'running create file',
+        timeout: 4_000,
+      })
+
+      const deadline = Date.now() + 4_000
+      while (!fs.existsSync(markerPath) && Date.now() < deadline) {
+        await new Promise((resolve) => {
+          setTimeout(resolve, 100)
+        })
+      }
+
+      expect(fs.existsSync(markerPath)).toBe(true)
+      const markerContents = fs.readFileSync(markerPath, 'utf8')
+      expect(markerContents).toBe('created')
     },
     8_000,
   )

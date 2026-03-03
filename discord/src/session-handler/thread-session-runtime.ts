@@ -22,7 +22,7 @@ import type { QueuedMessage } from './thread-runtime-state.js'
 import {
   pureMarkRunning,
   pureMarkIdle,
-  pureSetCurrentAssistant,
+  pureRegisterAssistantMessage,
 } from './state.js'
 import type { OpencodeClient } from '@opencode-ai/sdk/v2'
 import {
@@ -74,6 +74,11 @@ import {
   type WorktreeInfo,
 } from '../system-message.js'
 import { resolveValidatedAgentPreference } from './agent-utils.js'
+import {
+  appendOpencodeSessionEventLog,
+  getOpencodeEventSessionId,
+  isOpencodeSessionEventLogEnabled,
+} from './opencode-session-event-log.js'
 
 // Track multiple pending permissions per thread (keyed by permission ID).
 // OpenCode handles blocking/sequencing — we just need to track all pending
@@ -103,9 +108,12 @@ import { notifyError } from '../sentry.js'
 
 const logger = createLogger(LogPrefix.SESSION)
 const discordLogger = createLogger(LogPrefix.DISCORD)
+const NO_ASSISTANT_MESSAGE_IDS: ReadonlySet<string> = new Set<string>()
+const DETERMINISTIC_CONTEXT_LIMIT = 100_000
 const shouldLogSessionEvents =
   process.env['KIMAKI_LOG_SESSION_EVENTS'] === '1' ||
   process.env['KIMAKI_VITEST'] === '1'
+const shouldLogSessionEventsToJsonl = isOpencodeSessionEventLogEnabled()
 
 // ── Registry ─────────────────────────────────────────────────────
 // Runtime instances are kept in a plain Map (not Zustand — the Map
@@ -352,9 +360,14 @@ export class ThreadSessionRuntime {
     return this.state?.listenerController?.signal
   }
 
-  /** Current assistant message ID from the centralized run state. */
+  /** Latest assistant message ID for the active run. */
   private get currentAssistantMessageId(): string | undefined {
-    return this.state?.runState.currentAssistantMessageId
+    return this.state?.runState.latestAssistantMessageId
+  }
+
+  /** All assistant message IDs seen during the active run. */
+  private get assistantMessageIds(): ReadonlySet<string> {
+    return this.state?.runState.assistantMessageIds || NO_ASSISTANT_MESSAGE_IDS
   }
 
   /** Shorthand for the current run info from the store. */
@@ -381,7 +394,8 @@ export class ThreadSessionRuntime {
     if (!rs) {
       return 'none'
     }
-    return `phase=${rs.phase},assistant=${rs.currentAssistantMessageId || 'none'}`
+    const latestAssistant = rs.latestAssistantMessageId || 'none'
+    return `phase=${rs.phase},assistant=${latestAssistant},assistantCount=${rs.assistantMessageIds.size}`
   }
 
   // ── Lifecycle ────────────────────────────────────────────────
@@ -562,30 +576,7 @@ export class ThreadSessionRuntime {
 
     const sessionId = this.state?.sessionId
 
-    // Extract sessionID from event based on event type.
-    // The sessionID lives at different paths per event type:
-    //   message.updated      → event.properties.info.sessionID
-    //   message.part.updated → event.properties.part.sessionID
-    //   session.*            → event.properties.sessionID
-    //   permission.*         → event.properties.sessionID
-    //   question.*           → event.properties.sessionID
-    const eventSessionId: string | undefined = (() => {
-      switch (event.type) {
-        case 'message.updated':
-          return event.properties.info.sessionID
-        case 'message.part.updated':
-          return event.properties.part.sessionID
-        case 'session.idle':
-        case 'session.error':
-        case 'session.status':
-        case 'permission.asked':
-        case 'permission.replied':
-        case 'question.asked':
-          return (event.properties as { sessionID?: string }).sessionID
-        default:
-          return undefined
-      }
-    })()
+    const eventSessionId = getOpencodeEventSessionId(event)
 
     if (shouldLogSessionEvents) {
       const eventDetails = (() => {
@@ -623,6 +614,27 @@ export class ThreadSessionRuntime {
     if (!isGlobalEvent && eventSessionId && eventSessionId !== sessionId) {
       if (!this.run?.subtaskSessions.has(eventSessionId)) {
         return // stale event from previous session
+      }
+    }
+
+    if (shouldLogSessionEventsToJsonl) {
+      const runState = this.state?.runState
+      const eventLogResult = await appendOpencodeSessionEventLog({
+        threadId: this.threadId,
+        projectDirectory: this.projectDirectory,
+        sdkDirectory: this.sdkDirectory,
+        activeSessionId: sessionId,
+        eventSessionId,
+        runPhase: runState?.phase || 'none',
+        latestAssistantMessageId: runState?.latestAssistantMessageId,
+        assistantMessageCount: runState?.assistantMessageIds.size || 0,
+        event,
+      })
+      if (eventLogResult instanceof Error) {
+        logger.error(
+          '[SESSION EVENT JSONL] Failed to write session event log:',
+          eventLogResult,
+        )
       }
     }
 
@@ -905,6 +917,25 @@ export class ThreadSessionRuntime {
     }
   }
 
+  private async flushBufferedPartsForMessages({
+    messageIDs,
+    force,
+    skipPartId,
+  }: {
+    messageIDs: ReadonlyArray<string>
+    force: boolean
+    skipPartId?: string
+  }): Promise<void> {
+    const uniqueMessageIDs = [...new Set(messageIDs)]
+    for (const messageID of uniqueMessageIDs) {
+      await this.flushBufferedParts({
+        messageID,
+        force,
+        skipPartId,
+      })
+    }
+  }
+
   private async showInteractiveUi({
     skipPartId,
     flushMessageId,
@@ -919,6 +950,12 @@ export class ThreadSessionRuntime {
     if (targetMessageId) {
       await this.flushBufferedParts({
         messageID: targetMessageId,
+        force: true,
+        skipPartId,
+      })
+    } else {
+      await this.flushBufferedPartsForMessages({
+        messageIDs: [...this.assistantMessageIds],
         force: true,
         skipPartId,
       })
@@ -955,10 +992,13 @@ export class ThreadSessionRuntime {
       },
     )
     const model = provider?.models?.[run.model || '']
-    if (!model?.limit?.context) {
+    const contextLimit = model?.limit?.context || getFallbackContextLimit({
+      providerID: run.providerID,
+    })
+    if (!contextLimit) {
       return
     }
-    this.modelContextLimit = model.limit.context
+    this.modelContextLimit = contextLimit
     this.modelContextLimitKey = key
   }
 
@@ -989,9 +1029,9 @@ export class ThreadSessionRuntime {
       return
     }
 
-    // Track the current assistant message ID for part routing
+    // Track assistant message IDs for part routing.
     threadState.updateRunState(this.threadId, (rs) => {
-      return pureSetCurrentAssistant(rs, msg.id)
+      return pureRegisterAssistantMessage(rs, msg.id)
     })
 
     // promptAsync paths can deliver complete parts via message.updated even when
@@ -1043,7 +1083,7 @@ export class ThreadSessionRuntime {
     })
 
     await this.flushBufferedParts({
-      messageID: this.currentAssistantMessageId,
+      messageID: msg.id,
       force: false,
     })
 
@@ -1099,11 +1139,9 @@ export class ThreadSessionRuntime {
   }
 
   private async handleMainPart(part: Part): Promise<void> {
-    const isActiveMessage = this.currentAssistantMessageId
-      ? part.messageID === this.currentAssistantMessageId
-      : false
+    const isActiveMessage = this.assistantMessageIds.has(part.messageID)
     const allowEarlyProcessing =
-      !this.currentAssistantMessageId &&
+      this.assistantMessageIds.size === 0 &&
       part.type === 'tool' &&
       part.state.status === 'running'
     if (!isActiveMessage && !allowEarlyProcessing) {
@@ -1128,7 +1166,7 @@ export class ThreadSessionRuntime {
 
     if (part.type === 'tool' && part.state.status === 'running') {
       await this.flushBufferedParts({
-        messageID: this.currentAssistantMessageId || part.messageID,
+        messageID: part.messageID,
         force: true,
         skipPartId: part.id,
       })
@@ -1182,7 +1220,7 @@ export class ThreadSessionRuntime {
       const sessionId = this.state?.sessionId
       await this.showInteractiveUi({
         skipPartId: part.id,
-        flushMessageId: this.currentAssistantMessageId || part.messageID,
+        flushMessageId: part.messageID,
         show: async () => {
           if (!sessionId) {
             return
@@ -1284,7 +1322,7 @@ export class ThreadSessionRuntime {
 
     if (part.type === 'step-finish') {
       await this.flushBufferedParts({
-        messageID: this.currentAssistantMessageId || part.messageID,
+        messageID: part.messageID,
         force: true,
       })
       this.scheduleTypingRestart()
@@ -1566,7 +1604,6 @@ export class ThreadSessionRuntime {
     )
 
     await this.showInteractiveUi({
-      flushMessageId: this.currentAssistantMessageId,
       show: async () => {
         if (!sessionId) {
           return
@@ -1704,6 +1741,14 @@ export class ThreadSessionRuntime {
         this.state?.runState.phase !== 'running' ||
         input.resetAssistantForNewRun === true
       if (shouldMarkRunning) {
+        threadState.updateThread(this.threadId, (t) => {
+          const nextRunId = t.lastRunId + 1
+          return {
+            ...t,
+            lastRunId: nextRunId,
+            currentRun: threadState.initialCurrentRunInfo({ runId: nextRunId }),
+          }
+        })
         threadState.updateRunState(this.threadId, pureMarkRunning)
         this.startTyping()
       }
@@ -2532,16 +2577,17 @@ export class ThreadSessionRuntime {
       return
     }
 
+    const assistantMessageIds = [...this.assistantMessageIds]
+
     threadState.updateRunState(this.threadId, pureMarkIdle)
     this.stopTyping()
 
-    // Flush remaining buffered parts
-    if (this.currentAssistantMessageId) {
-      await this.flushBufferedParts({
-        messageID: this.currentAssistantMessageId,
-        force: true,
-      })
-    }
+    // Flush remaining buffered parts for all assistant messages observed during
+    // this run. A single run can emit multiple assistant messages.
+    await this.flushBufferedPartsForMessages({
+      messageIDs: assistantMessageIds,
+      force: true,
+    })
 
     // Emit footer
     await this.emitFooter()
@@ -2627,17 +2673,26 @@ export class ThreadSessionRuntime {
           }
         }
 
+        const fallbackLimit = run?.providerID
+          ? getFallbackContextLimit({
+              providerID: run.providerID,
+            })
+          : undefined
+
+        let contextLimit = fallbackLimit
         if (providersResult && !(providersResult instanceof Error)) {
           const provider = providersResult.data?.all?.find((p) => {
             return p.id === run?.providerID
           })
           const model = provider?.models?.[run?.model || '']
-          if (model?.limit?.context) {
-            const percentage = Math.round(
-              (tokensUsed / model.limit.context) * 100,
-            )
-            contextInfo = ` ⋅ ${percentage}%`
-          }
+          contextLimit = model?.limit?.context || contextLimit
+        }
+
+        if (contextLimit) {
+          const percentage = Math.round(
+            (tokensUsed / contextLimit) * 100,
+          )
+          contextInfo = ` ⋅ ${percentage}%`
         }
       }),
     ])
@@ -2772,6 +2827,17 @@ function buildPermissionDedupeKey({
     return a.localeCompare(b)
   })
   return `${directory}::${permission.permission}::${normalizedPatterns.join('|')}`
+}
+
+function getFallbackContextLimit({
+  providerID,
+}: {
+  providerID: string
+}): number | undefined {
+  if (providerID === 'deterministic-provider') {
+    return DETERMINISTIC_CONTEXT_LIMIT
+  }
+  return undefined
 }
 
 /** Format a session error from event properties for display. */

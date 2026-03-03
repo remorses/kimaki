@@ -8,7 +8,7 @@
 //
 // This file only tracks two things:
 //   1. phase: is a run active? ('idle' or 'running')
-//   2. currentAssistantMessageId: which assistant message are we outputting?
+//   2. assistant message routing for the active run.
 
 export type MainRunPhase = 'idle' | 'running'
 
@@ -17,17 +17,23 @@ export type MainRunState = {
   // 'running' — prompt sent, model is producing output.
   phase: MainRunPhase
 
-  // The OpenCode assistant message ID for the current run's response.
-  // Set when the first assistant message.updated event arrives during 'running'.
-  // Used to route SSE part events to the correct Discord message.
+  // Assistant message IDs seen during the active run.
+  // A single user turn can produce multiple assistant messages (for example
+  // tool-call loops and follow-up generations), so routing by one fixed ID is
+  // incorrect. Part updates are valid when their messageID is in this set.
+  assistantMessageIds: ReadonlySet<string>
+
+  // Most recently observed assistant message for the active run. Used as a
+  // convenience pointer for places that need a "latest" message target.
   // Cleared on every new run start (pureMarkRunning) and on finish (pureMarkIdle).
-  currentAssistantMessageId: string | undefined
+  latestAssistantMessageId: string | undefined
 }
 
 export function initialMainRunState(): MainRunState {
   return {
     phase: 'idle',
-    currentAssistantMessageId: undefined,
+    assistantMessageIds: new Set<string>(),
+    latestAssistantMessageId: undefined,
   }
 }
 
@@ -36,31 +42,42 @@ export function initialMainRunState(): MainRunState {
 export function pureMarkRunning(state: MainRunState): MainRunState {
   return {
     phase: 'running',
-    currentAssistantMessageId: undefined,
+    assistantMessageIds: new Set<string>(),
+    latestAssistantMessageId: undefined,
   }
 }
 
 export function pureMarkIdle(_state: MainRunState): MainRunState {
   return {
     phase: 'idle',
-    currentAssistantMessageId: undefined,
+    assistantMessageIds: new Set<string>(),
+    latestAssistantMessageId: undefined,
   }
 }
 
-/** Set the current assistant message ID. Only takes effect during 'running'. */
-export function pureSetCurrentAssistant(
+/**
+ * Register an assistant message for the active run.
+ * Only takes effect during 'running'.
+ */
+export function pureRegisterAssistantMessage(
   state: MainRunState,
   messageId: string,
 ): MainRunState {
   if (state.phase !== 'running') {
     return state
   }
-  // Only set once per run — first new assistant message wins.
-  if (state.currentAssistantMessageId) {
+
+  const alreadyTracked = state.assistantMessageIds.has(messageId)
+  if (alreadyTracked && state.latestAssistantMessageId === messageId) {
     return state
   }
+
+  const assistantMessageIds = new Set(state.assistantMessageIds)
+  assistantMessageIds.add(messageId)
+
   return {
     ...state,
-    currentAssistantMessageId: messageId,
+    assistantMessageIds,
+    latestAssistantMessageId: messageId,
   }
 }

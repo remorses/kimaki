@@ -5,53 +5,60 @@ import {
   initialMainRunState,
   pureMarkRunning,
   pureMarkIdle,
-  pureSetCurrentAssistant,
+  pureRegisterAssistantMessage,
 } from './state.js'
 
 describe('session state transitions', () => {
   test('initial state is idle with no assistant', () => {
     const state = initialMainRunState()
     expect(state.phase).toBe('idle')
-    expect(state.currentAssistantMessageId).toBeUndefined()
+    expect(state.latestAssistantMessageId).toBeUndefined()
+    expect(state.assistantMessageIds.size).toBe(0)
   })
 
   test('pureMarkRunning resets to running with no assistant', () => {
     let state = initialMainRunState()
     state = pureMarkRunning(state)
-    state = pureSetCurrentAssistant(state, 'old-msg')
+    state = pureRegisterAssistantMessage(state, 'old-msg')
     // Starting a new run should clear the assistant
     state = pureMarkRunning(state)
     expect(state.phase).toBe('running')
-    expect(state.currentAssistantMessageId).toBeUndefined()
+    expect(state.latestAssistantMessageId).toBeUndefined()
+    expect(state.assistantMessageIds.size).toBe(0)
   })
 
   test('pureMarkIdle resets to idle with no assistant', () => {
     let state = initialMainRunState()
     state = pureMarkRunning(state)
-    state = pureSetCurrentAssistant(state, 'msg-1')
+    state = pureRegisterAssistantMessage(state, 'msg-1')
     state = pureMarkIdle(state)
     expect(state.phase).toBe('idle')
-    expect(state.currentAssistantMessageId).toBeUndefined()
+    expect(state.latestAssistantMessageId).toBeUndefined()
+    expect(state.assistantMessageIds.size).toBe(0)
   })
 
-  test('pureSetCurrentAssistant sets ID during running phase', () => {
+  test('pureRegisterAssistantMessage tracks message during running phase', () => {
     let state = initialMainRunState()
     state = pureMarkRunning(state)
-    state = pureSetCurrentAssistant(state, 'assistant-msg-1')
-    expect(state.currentAssistantMessageId).toBe('assistant-msg-1')
+    state = pureRegisterAssistantMessage(state, 'assistant-msg-1')
+    expect(state.latestAssistantMessageId).toBe('assistant-msg-1')
+    expect(state.assistantMessageIds.has('assistant-msg-1')).toBe(true)
   })
 
-  test('pureSetCurrentAssistant ignores during idle phase', () => {
+  test('pureRegisterAssistantMessage ignores during idle phase', () => {
     let state = initialMainRunState()
-    state = pureSetCurrentAssistant(state, 'assistant-msg-1')
-    expect(state.currentAssistantMessageId).toBeUndefined()
+    state = pureRegisterAssistantMessage(state, 'assistant-msg-1')
+    expect(state.latestAssistantMessageId).toBeUndefined()
+    expect(state.assistantMessageIds.size).toBe(0)
   })
 
-  test('pureSetCurrentAssistant keeps first assistant (no overwrite)', () => {
+  test('pureRegisterAssistantMessage tracks multiple assistants and latest', () => {
     let state = initialMainRunState()
     state = pureMarkRunning(state)
-    state = pureSetCurrentAssistant(state, 'first-msg')
-    state = pureSetCurrentAssistant(state, 'second-msg')
-    expect(state.currentAssistantMessageId).toBe('first-msg')
+    state = pureRegisterAssistantMessage(state, 'first-msg')
+    state = pureRegisterAssistantMessage(state, 'second-msg')
+    expect(state.latestAssistantMessageId).toBe('second-msg')
+    expect(state.assistantMessageIds.has('first-msg')).toBe(true)
+    expect(state.assistantMessageIds.has('second-msg')).toBe(true)
   })
 })

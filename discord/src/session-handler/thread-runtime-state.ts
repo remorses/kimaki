@@ -13,7 +13,10 @@
 
 import type { DiscordFileAttachment } from '../message-formatting.js'
 import { store } from '../store.js'
-import type { MainRunState } from './state.js'
+import {
+  initialMainRunState,
+  type MainRunState,
+} from './state.js'
 
 // ── Shared types ─────────────────────────────────────────────────
 
@@ -206,10 +209,7 @@ export function initialThreadState(): ThreadRunState {
       actionButtonsPending: false,
       fileUploadPending: false,
     },
-    runState: {
-      phase: 'idle',
-      currentAssistantMessageId: undefined,
-    },
+    runState: initialMainRunState(),
     runController: undefined,
     listenerController: undefined,
     currentRun: undefined,

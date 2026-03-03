@@ -335,6 +335,51 @@ describe('runtime lifecycle', () => {
   )
 
   test(
+    'footer includes context percentage and model id',
+    async () => {
+      const prompt = 'Reply with exactly: footer-check'
+      await discord.channel(TEXT_CHANNEL_ID).user(TEST_USER_ID).sendMessage({
+        content: prompt,
+      })
+
+      const thread = await discord.channel(TEXT_CHANNEL_ID).waitForThread({
+        timeout: 4_000,
+        predicate: (t) => {
+          return t.name === prompt
+        },
+      })
+
+      await waitForBotMessageContaining({
+        discord,
+        threadId: thread.id,
+        userId: TEST_USER_ID,
+        text: 'deterministic-v2',
+        timeout: 4_000,
+      })
+
+      const messages = await discord.thread(thread.id).getMessages()
+
+      const footerMessage = messages.find((message) => {
+        if (message.author.id !== discord.botUserId) {
+          return false
+        }
+        if (!message.content.startsWith('*')) {
+          return false
+        }
+        return message.content.includes('deterministic-v2')
+      })
+
+      expect(footerMessage).toBeDefined()
+      if (!footerMessage) {
+        throw new Error('Expected footer message to be present')
+      }
+      expect(footerMessage.content).toContain('deterministic-v2')
+      expect(footerMessage.content).toMatch(/\d+%/)
+    },
+    10_000,
+  )
+
+  test(
     'two near-simultaneous messages to same thread serialize correctly',
     async () => {
       // Sends A to create a thread, then fires B and C simultaneously into
