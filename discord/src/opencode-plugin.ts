@@ -653,7 +653,6 @@ const kimakiPlugin: Plugin = async ({ directory }) => {
   }
 }
 
-
 type StoredEvent = { event: Event; index: number }
 
 // Interrupt a running session when a new user message is queued.
@@ -662,7 +661,7 @@ type StoredEvent = { event: Event; index: number }
 //
 // Uses "chat.message" hook (fires synchronously during prompt flow)
 // to detect queued messages, and "event" hook for busy/idle tracking.
-export const interruptOpencodeSessionOnUserMessage: Plugin = async (ctx) => {
+const interruptOpencodeSessionOnUserMessage: Plugin = async (ctx) => {
   let seq = 0
   const busy = new Set<string>()
   const timers = new Map<string, ReturnType<typeof setTimeout>>()
@@ -732,8 +731,7 @@ export const interruptOpencodeSessionOnUserMessage: Plugin = async (ctx) => {
         const error = await waitForEvent({
           filter: (e) => {
             return (
-              e.type === 'session.error' &&
-              e.properties.sessionID === sessionID
+              e.type === 'session.error' && e.properties.sessionID === sessionID
             )
           },
           after: cursor,
@@ -747,8 +745,7 @@ export const interruptOpencodeSessionOnUserMessage: Plugin = async (ctx) => {
         await waitForEvent({
           filter: (e) => {
             return (
-              e.type === 'session.idle' &&
-              e.properties.sessionID === sessionID
+              e.type === 'session.idle' && e.properties.sessionID === sessionID
             )
           },
           after: barrier,
@@ -763,3 +760,6 @@ export const interruptOpencodeSessionOnUserMessage: Plugin = async (ctx) => {
     },
   }
 }
+
+export { kimakiPlugin }
+export { interruptOpencodeSessionOnUserMessage }
