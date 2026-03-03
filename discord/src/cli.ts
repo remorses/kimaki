@@ -48,6 +48,7 @@ import {
   listScheduledTasks,
   cancelScheduledTask,
   getSessionStartSourcesBySessionIds,
+  migrateChannelAppIds,
   type BotMode,
 } from './database.js'
 import { ShareMarkdown } from './markdown.js'
@@ -1165,18 +1166,29 @@ async function run({
 
   // Resolve bot credentials from (in priority order):
   // 1. KIMAKI_BOT_TOKEN env var (headless/CI deployments)
-   // 2. Saved credentials in the database (self-hosted or gateway mode)
-   // App ID is always derived from the token (base64 first segment),
-   // except in gateway mode where KIMAKI_SHARED_APP_ID is used.
-  const { appId, token, isQuickStart, isGatewayMode } = await (async (): Promise<{
+  // 2. Saved credentials in the database (self-hosted or gateway mode)
+  // App ID is always derived from the token (base64 first segment),
+  // except in gateway mode where KIMAKI_SHARED_APP_ID is used.
+  //
+  // previousAppId is set when switching between modes so we can migrate
+  // channel_directories.app_id from the old bot to the new one.
+  const { appId, token, isQuickStart, isGatewayMode, previousAppId } = await (async (): Promise<{
     appId: string
     token: string
     isQuickStart: boolean
     isGatewayMode: boolean
+    previousAppId: string | undefined
   }> => {
     const envToken = process.env.KIMAKI_BOT_TOKEN
-    // Single query to get token + mode info, avoiding desync from separate queries
+    // Get the most recent bot row (any mode) for general reuse checks
     const existingBot = await getBotTokenWithMode()
+    // When --gateway is requested and the most recent bot is self-hosted,
+    // also check if there are saved gateway credentials we can reuse
+    // (and vice versa). This lets users switch back and forth between modes.
+    const requestedMode: BotMode | undefined = forceGateway ? 'gateway' : undefined
+    const savedBotForRequestedMode = (requestedMode && existingBot?.mode !== requestedMode)
+      ? await getBotTokenWithMode({ mode: requestedMode })
+      : undefined
 
     // 1. Env var takes precedence (headless deployments)
     if (envToken && !forceRestartOnboarding && !forceGateway) {
@@ -1189,7 +1201,7 @@ async function run({
       }
       await setBotToken(derivedAppId, envToken)
       cliLogger.log(`Using KIMAKI_BOT_TOKEN env var (App ID: ${derivedAppId})`)
-      return { appId: derivedAppId, token: envToken, isQuickStart: !addChannels, isGatewayMode: false }
+      return { appId: derivedAppId, token: envToken, isQuickStart: !addChannels, isGatewayMode: false, previousAppId: undefined }
     }
 
     // 2. Saved credentials in the database
@@ -1210,7 +1222,25 @@ async function run({
           'Install URL',
         )
       }
-      return { appId: existingBot.appId, token: existingBot.token, isQuickStart: !addChannels, isGatewayMode: existingBot.mode === 'gateway' }
+      return { appId: existingBot.appId, token: existingBot.token, isQuickStart: !addChannels, isGatewayMode: existingBot.mode === 'gateway', previousAppId: undefined }
+    }
+
+    // 2b. Switching modes: saved credentials exist for the requested mode
+    // (e.g. user ran self-hosted before, now passes --gateway and has old gateway creds).
+    // Reuse them without re-running the onboarding wizard.
+    if (savedBotForRequestedMode && !forceRestartOnboarding) {
+      const modeLabel = savedBotForRequestedMode.mode === 'gateway' ? ' (gateway mode)' : ' (self-hosted)'
+      note(
+        `Switching to saved ${savedBotForRequestedMode.mode} credentials${modeLabel}:\nApp ID: ${savedBotForRequestedMode.appId}`,
+        'Mode Switch',
+      )
+      return {
+        appId: savedBotForRequestedMode.appId,
+        token: savedBotForRequestedMode.token,
+        isQuickStart: !addChannels,
+        isGatewayMode: savedBotForRequestedMode.mode === 'gateway',
+        previousAppId: existingBot?.appId,
+      }
     }
 
     // 3. Explain why saved credentials are being skipped, then enter
@@ -1356,6 +1386,7 @@ async function run({
         token: `${clientId}:${clientSecret}`,
         isQuickStart: false,
         isGatewayMode: true,
+        previousAppId: existingBot?.appId,
       }
     }
 
@@ -1434,8 +1465,18 @@ async function run({
       process.exit(0)
     }
 
-    return { appId: derivedAppId, token: wizardToken, isQuickStart: false, isGatewayMode: false }
+    return { appId: derivedAppId, token: wizardToken, isQuickStart: false, isGatewayMode: false, previousAppId: existingBot?.appId }
   })()
+
+  // Migrate channel_directories.app_id when switching between bots (e.g.
+  // self-hosted → gateway or vice versa). Without this, existing channels
+  // become invisible because their app_id no longer matches the current bot.
+  if (previousAppId && previousAppId !== appId) {
+    const migrated = await migrateChannelAppIds({ fromAppId: previousAppId, toAppId: appId })
+    if (migrated > 0) {
+      cliLogger.log(`Migrated ${migrated} channel(s) from bot ${previousAppId} to ${appId}`)
+    }
+  }
 
   const shouldAddChannels =
     !isQuickStart || forceRestartOnboarding || Boolean(addChannels)

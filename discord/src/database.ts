@@ -1072,7 +1072,7 @@ export async function setPartMessagesBatch(
  * This ensures every code path that reads credentials gets correct routing
  * without needing to set discordBaseUrl separately.
  */
-export async function getBotTokenWithMode(): Promise<
+export async function getBotTokenWithMode({ mode: modeFilter }: { mode?: BotMode } = {}): Promise<
   | {
       appId: string
       token: string
@@ -1084,7 +1084,19 @@ export async function getBotTokenWithMode(): Promise<
   | undefined
 > {
   const prisma = await getPrisma()
+  // When modeFilter is set, find the most recent bot row matching that mode.
+  // 'gateway' filter also matches legacy 'built-in' rows.
+  const modeValues: string[] | undefined = (() => {
+    if (!modeFilter) {
+      return undefined
+    }
+    if (modeFilter === 'gateway') {
+      return ['gateway', 'built-in']
+    }
+    return [modeFilter]
+  })()
   const row = await prisma.bot_tokens.findFirst({
+    where: modeValues ? { bot_mode: { in: modeValues } } : undefined,
     orderBy: { created_at: 'desc' },
   })
   if (!row) {
@@ -1233,6 +1245,30 @@ export async function getTranscriptionApiKey(
     return { provider: 'gemini', apiKey: row.gemini_api_key }
   }
   return null
+}
+
+/**
+ * Migrate channel_directories.app_id from one bot to another.
+ * Used when switching between self-hosted and gateway mode so existing
+ * channels are re-associated with the new bot instead of becoming invisible.
+ * Returns the number of rows updated.
+ */
+export async function migrateChannelAppIds({
+  fromAppId,
+  toAppId,
+}: {
+  fromAppId: string
+  toAppId: string
+}): Promise<number> {
+  if (fromAppId === toAppId) {
+    return 0
+  }
+  const prisma = await getPrisma()
+  const result = await prisma.channel_directories.updateMany({
+    where: { app_id: fromAppId },
+    data: { app_id: toAppId },
+  })
+  return result.count
 }
 
 // ============================================================================
