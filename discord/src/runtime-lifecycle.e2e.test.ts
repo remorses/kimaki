@@ -400,7 +400,7 @@ describe('runtime lifecycle', () => {
       })
 
       // 4. Verify both user messages arrived and the thread didn't deadlock.
-      //    With interruptActive, bravo can be aborted by charlie before
+      //    With explicit abort flows, bravo can be aborted by charlie before
       //    producing a reply, so we can't assert +2 bot messages. What we
       //    CAN verify: both user messages exist, charlie (the last one) has
       //    a bot reply after it, and the replies are distinct messages.

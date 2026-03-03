@@ -118,8 +118,7 @@ function createDeterministicMatchers() {
     id: 'sleep-tool-call',
     priority: 100,
     when: {
-      rawPromptIncludes:
-        'MANDATORY INSTRUCTION: call the bash tool immediately and run exactly this command: `sleep 500`',
+      rawPromptIncludes: 'SLOW_QUEUE_TOOL_MARKER',
     },
     then: {
       parts: [
@@ -368,6 +367,38 @@ e2eTest('thread message queue ordering', () => {
   })
 
   test(
+    'first prompt after cold opencode server start still streams text parts',
+    async () => {
+      // Reproduce cold-start path: clear in-memory server/client registry so
+      // runtime startEventListener() runs once before initialize and exits with
+      // "No OpenCode client". The first prompt must still show text parts.
+      await cleanupOpencodeServers()
+
+      const prompt = 'Reply with exactly: cold-start-stream'
+
+      await discord.channel(TEXT_CHANNEL_ID).user(TEST_USER_ID).sendMessage({
+        content: prompt,
+      })
+
+      const thread = await discord.channel(TEXT_CHANNEL_ID).waitForThread({
+        timeout: 4_000,
+        predicate: (t) => {
+          return t.name === prompt
+        },
+      })
+
+      await waitForBotMessageContaining({
+        discord,
+        threadId: thread.id,
+        userId: TEST_USER_ID,
+        text: '⬥ ok',
+        timeout: 10_000,
+      })
+    },
+    12_000,
+  )
+
+  test(
     'text message during active session gets processed',
     async () => {
       // 1. Send initial message to text channel → thread created + session established
@@ -468,8 +499,8 @@ e2eTest('thread message queue ordering', () => {
         return m.author.id === discord.botUserId
       }).length
 
-      // 2. Rapidly send messages B and C. Since normal thread messages use
-      // interruptActive=true, C is allowed to interrupt B if B is still running.
+      // 2. Rapidly send messages B and C. With opencode queue mode,
+      // both messages are serialized by opencode's per-session loop.
       await th.user(TEST_USER_ID).sendMessage({
         content: 'Reply with exactly: two',
       })
@@ -477,8 +508,7 @@ e2eTest('thread message queue ordering', () => {
         content: 'Reply with exactly: three',
       })
 
-      // 3. Wait for a bot reply after message C. This is content-aware and
-      // robust to interrupts (B may or may not produce a visible reply).
+      // 3. Wait for a bot reply after message C.
       const after = await waitForBotReplyAfterUserMessage({
         discord,
         threadId: thread.id,
@@ -521,6 +551,53 @@ e2eTest('thread message queue ordering', () => {
       })
       expect(finalState.runState.phase).toBe('idle')
       expect(finalState.queueItems.length).toBe(0)
+    },
+    8_000,
+  )
+
+  test(
+    'normal messages bypass local queue and still show assistant text parts',
+    async () => {
+      await discord.channel(TEXT_CHANNEL_ID).user(TEST_USER_ID).sendMessage({
+        content: 'Reply with exactly: opencode-queue-setup',
+      })
+
+      const thread = await discord.channel(TEXT_CHANNEL_ID).waitForThread({
+        timeout: 4_000,
+        predicate: (t) => {
+          return t.name === 'Reply with exactly: opencode-queue-setup'
+        },
+      })
+
+      const th = discord.thread(thread.id)
+      const firstReply = await th.waitForBotReply({ timeout: 4_000 })
+      expect(firstReply.content.trim().length).toBeGreaterThan(0)
+
+      await th.user(TEST_USER_ID).sendMessage({
+        content:
+          'Prompt from test: respond with short text for opencode queue mode.',
+      })
+
+      // Assert assistant text parts are visible in Discord.
+      await waitForBotMessageContaining({
+        discord,
+        threadId: thread.id,
+        userId: TEST_USER_ID,
+        text: '⬥ ok',
+        afterUserMessageIncludes: 'Prompt from test: respond with short text',
+        timeout: 4_000,
+      })
+
+      // Normal messages should not populate kimaki local queue.
+      const noLocalQueueState = await waitForThreadState({
+        threadId: thread.id,
+        predicate: (state) => {
+          return state.queueItems.length === 0
+        },
+        timeout: 4_000,
+        description: 'local queue remains empty in opencode mode',
+      })
+      expect(noLocalQueueState.queueItems.length).toBe(0)
     },
     8_000,
   )
@@ -609,11 +686,10 @@ e2eTest('thread message queue ordering', () => {
   )
 
   test(
-    'queued message aborts running session immediately',
+    'queued message waits for running session and then processes next',
     async () => {
-      // When a new message arrives while a session is running,
-      // runtime.enqueueIncoming with interruptActive aborts the in-flight
-      // run immediately, then the runtime processes the next message.
+      // When a new message arrives while a session is running, it queues and
+      // runs after the in-flight request completes.
       //
       // 1. Fast setup: establish session
       await discord.channel(TEXT_CHANNEL_ID).user(TEST_USER_ID).sendMessage({
@@ -636,9 +712,7 @@ e2eTest('thread message queue ordering', () => {
         return m.author.id === discord.botUserId
       }).length
 
-      // 2. Send B, then quickly send C to trigger the interrupt.
-      //    200ms gap gives B time to enter the queue and start processing.
-      //    runtime's abortActiveRun aborts B immediately so C can run.
+      // 2. Send B, then quickly send C to enqueue behind B.
       await th.user(TEST_USER_ID).sendMessage({
         content: 'Reply with exactly: echo',
       })
@@ -660,8 +734,7 @@ e2eTest('thread message queue ordering', () => {
         timeout: 4_000,
       })
 
-      // 4. Foxtrot got a bot response. Echo may or may not produce one —
-      //    the abort error is silently suppressed, so no error message appears.
+      // 4. Foxtrot got a bot response after B/C were processed.
       const afterBotMessages = after.filter((m) => {
         return m.author.id === discord.botUserId
       })
@@ -682,26 +755,16 @@ e2eTest('thread message queue ordering', () => {
       })
       expect(botAfterFoxtrot).toBeGreaterThan(userFoxtrotIndex)
 
-      // Interrupt messages must NOT show the » dispatch indicator.
-      // The indicator is only for messages that genuinely waited in queue
-      // (e.g. via /queue), not for messages that triggered the interrupt.
-      const hasInterruptIndicator = after.some((m) => {
-        return (
-          m.author.id === discord.botUserId &&
-          m.content.includes('»') &&
-          m.content.includes('foxtrot')
-        )
-      })
-      expect(hasInterruptIndicator).toBe(false)
+      // With queued-by-default behavior, dispatch indicator may appear.
     },
     8_000,
   )
 
   test(
-    'slow stream still gets interrupted when no step-finish arrives',
+    'slow stream still processes queued next message after completion',
     async () => {
-      // With immediate abort, a queued message interrupts even while the previous
-      // request is mid-stream and has not reached a step-finish event.
+      // A message sent mid-stream queues and runs after the in-flight request
+      // completes (no auto-interrupt).
 
       // 1. Fast setup: establish session
       await discord.channel(TEXT_CHANNEL_ID).user(TEST_USER_ID).sendMessage({
@@ -729,7 +792,7 @@ e2eTest('thread message queue ordering', () => {
         content: 'Reply with exactly: hotel',
       })
 
-      // 3. Wait briefly for B to start, then send C to trigger immediate abort
+      // 3. Wait briefly for B to start, then send C to queue behind it
       await new Promise((r) => {
         setTimeout(r, 200)
       })
@@ -737,7 +800,7 @@ e2eTest('thread message queue ordering', () => {
         content: 'Reply with exactly: india',
       })
 
-      // 4. B is aborted and C gets processed.
+      // 4. B completes, then C gets processed.
       //    Poll until india's user message has a bot reply after it.
       const after = await waitForBotReplyAfterUserMessage({
         discord,
@@ -748,8 +811,7 @@ e2eTest('thread message queue ordering', () => {
       })
 
       // C's user message appears before its bot response.
-      // The interrupted hotel session may or may not produce a visible bot message
-      // (depends on timing), so we only assert on india's reply existence.
+      // We assert on india's reply existence.
       const userIndiaIndex = after.findIndex((m) => {
         return m.author.id === TEST_USER_ID && m.content.includes('india')
       })
@@ -763,11 +825,9 @@ e2eTest('thread message queue ordering', () => {
   )
 
   test(
-    'queue drains correctly after interrupted session',
+    'queue drains correctly after bursty queued messages',
     async () => {
-      // Verifies the queue doesn't get stuck after multiple interrupts.
-      // Rapidly sends B, C, D — each interrupts the previous. Then after all
-      // complete, sends E to prove the queue is clean and accepting new work.
+      // Verifies the queue doesn't get stuck after multiple rapid messages.
 
       // 1. Fast setup: establish session
       await discord.channel(TEXT_CHANNEL_ID).user(TEST_USER_ID).sendMessage({
@@ -790,7 +850,7 @@ e2eTest('thread message queue ordering', () => {
         return m.author.id === discord.botUserId
       }).length
 
-      // 2. Rapidly send B, C, D — each queues behind the previous and triggers interrupt
+      // 2. Rapidly send B, C, D — each queues behind the previous
       await th.user(TEST_USER_ID).sendMessage({
         content: 'Reply with exactly: kilo',
       })

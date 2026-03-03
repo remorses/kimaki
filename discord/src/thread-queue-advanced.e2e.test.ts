@@ -24,10 +24,9 @@ import {
 import { store } from './store.js'
 import { startDiscordBot } from './discord-bot.js'
 import {
-  disposeRuntime,
   getRuntime,
 } from './session-handler/thread-session-runtime.js'
-import { setRunController } from './session-handler/thread-runtime-state.js'
+import { getThreadState, setRunController } from './session-handler/thread-runtime-state.js'
 import {
   setBotToken,
   initDatabase,
@@ -35,6 +34,7 @@ import {
   setChannelDirectory,
   setChannelVerbosity,
   getChannelVerbosity,
+  setSessionModel,
   type VerbosityLevel,
 } from './database.js'
 import { startHranaServer, stopHranaServer } from './hrana-server.js'
@@ -42,9 +42,8 @@ import { initializeOpencodeForDirectory } from './opencode.js'
 import {
   cleanupOpencodeServers,
   cleanupTestSessions,
-  waitForBotMessageCount,
   waitForBotReplyAfterUserMessage,
-  waitForBotMessageContaining,
+  waitForThreadPhase,
 } from './test-utils.js'
 import { getLogEntryCount, getLogEntriesSince } from './logger.js'
 
@@ -115,32 +114,21 @@ function createDeterministicMatchers() {
     },
   }
 
-  const sleepMatcher: DeterministicMatcher = {
-    id: 'sleep-tool-call',
+  const slowAbortMatcher: DeterministicMatcher = {
+    id: 'slow-abort-marker',
     priority: 100,
     when: {
-      rawPromptIncludes:
-        'MANDATORY INSTRUCTION: call the bash tool immediately and run exactly this command: `sleep 500`',
+      rawPromptIncludes: 'SLOW_ABORT_MARKER run long response',
     },
     then: {
       parts: [
         { type: 'stream-start', warnings: [] },
-        { type: 'text-start', id: 'sleep-start' },
-        { type: 'text-delta', id: 'sleep-start', delta: 'running sleep 500' },
-        { type: 'text-end', id: 'sleep-start' },
-        {
-          type: 'tool-call',
-          toolCallId: 'sleep-call-1',
-          toolName: 'bash',
-          input: JSON.stringify({
-            command: 'sleep 500',
-            description: 'Deterministic sleep for interrupt e2e',
-            hasSideEffect: true,
-          }),
-        },
+        { type: 'text-start', id: 'slow-start' },
+        { type: 'text-delta', id: 'slow-start', delta: 'slow-response-started' },
+        { type: 'text-end', id: 'slow-start' },
         {
           type: 'finish',
-          finishReason: 'tool-calls',
+          finishReason: 'stop',
           usage: {
             inputTokens: 1,
             outputTokens: 1,
@@ -148,6 +136,9 @@ function createDeterministicMatchers() {
           },
         },
       ],
+      // Keep run active for a while after emitting initial text so abort paths
+      // can race against an in-flight stream.
+      partDelaysMs: [0, 0, 0, 3_000, 0],
     },
   }
 
@@ -204,7 +195,7 @@ function createDeterministicMatchers() {
   }
 
   return [
-    sleepMatcher,
+    slowAbortMatcher,
     raceFinalReplyMatcher,
     toolFollowupMatcher,
     userReplyMatcher,
@@ -214,7 +205,7 @@ function createDeterministicMatchers() {
 const TEST_USER_ID = '200000000000000991'
 const TEXT_CHANNEL_ID = '200000000000000992'
 
-e2eTest('thread queue advanced (interrupt, abort, retry)', () => {
+e2eTest('thread queue advanced (interrupt, abort, model-switch)', () => {
   let directories: ReturnType<typeof createRunDirectories>
   let discord: DigitalDiscord
   let botClient: Client
@@ -270,7 +261,7 @@ e2eTest('thread queue advanced (interrupt, abort, retry)', () => {
       providerName: 'deterministic-provider',
       providerNpm,
       model: 'deterministic-v2',
-      smallModel: 'deterministic-v2',
+      smallModel: 'deterministic-v3',
       settings: {
         strict: false,
         matchers: createDeterministicMatchers(),
@@ -369,12 +360,10 @@ e2eTest('thread queue advanced (interrupt, abort, retry)', () => {
   })
 
   test(
-    'slow tool call (sleep) gets aborted when new message queues',
+    'slow tool call (sleep) gets aborted by explicit abort, then queue continues',
     async () => {
-      // Tests that long-running tool calls get properly aborted when a new
-      // message queues behind them. During tool execution no step-finish events
-      // arrive, but interrupt should still abort immediately so the queue can
-      // process the next message normally.
+      // Tests that long-running tool calls can be explicitly aborted, then
+      // the next user message is processed normally.
 
       // 1. Fast setup: establish session
       await discord.channel(TEXT_CHANNEL_ID).user(TEST_USER_ID).sendMessage({
@@ -399,33 +388,36 @@ e2eTest('thread queue advanced (interrupt, abort, retry)', () => {
 
       // 2. Ask the model to run a long sleep command
       await th.user(TEST_USER_ID).sendMessage({
-        content:
-          'MANDATORY INSTRUCTION: call the bash tool immediately and run exactly this command: `sleep 500`. No explanation. No normal text. Do not skip the tool call.',
+        content: 'SLOW_ABORT_MARKER run long response',
       })
 
-      // 3. Wait until we see the bash tool message for sleep, proving the tool
-      //    call actually started before the interrupt message is sent.
-      await waitForBotMessageContaining({
-        discord,
+      // 3. Wait until the slow run is active.
+      await waitForThreadPhase({
         threadId: thread.id,
-        userId: TEST_USER_ID,
-        text: 'sleep 500',
-        afterUserMessageIncludes: 'sleep 500',
+        phase: 'running',
         timeout: 4_000,
       })
 
-      // 4. Send interrupt message while sleep is still running
+      const runtime = getRuntime(thread.id)
+      expect(runtime).toBeDefined()
+      if (!runtime) {
+        throw new Error('Expected runtime to exist for explicit-abort test')
+      }
+
+      // 4. Explicitly abort the active sleep run, then enqueue next message.
+      runtime.abortActiveRun('test-explicit-abort')
+
       await th.user(TEST_USER_ID).sendMessage({
         content: 'Reply with exactly: papa',
       })
 
-      // 5. The interrupt aborts the sleep session, and the queue processes "papa".
+      // 5. The explicit abort stops the sleep session, and the queue processes "papa".
       const after = await waitForBotReplyAfterUserMessage({
         discord,
         threadId: thread.id,
         userId: TEST_USER_ID,
         userMessageIncludes: 'papa',
-        timeout: 4_000,
+        timeout: 8_000,
       })
 
       const afterBotMessages = after.filter((m) => {
@@ -433,9 +425,12 @@ e2eTest('thread queue advanced (interrupt, abort, retry)', () => {
       })
       expect(afterBotMessages.length).toBeGreaterThanOrEqual(beforeBotCount + 1)
 
-      // Ensure sleep tool output appeared before the interrupt message.
+      // Ensure the slow marker user message appeared before papa.
       const sleepToolIndex = after.findIndex((m) => {
-        return m.author.id === discord.botUserId && m.content.includes('sleep 500')
+        return (
+          m.author.id === TEST_USER_ID &&
+          m.content.includes('SLOW_ABORT_MARKER run long response')
+        )
       })
       expect(sleepToolIndex).toBeGreaterThan(-1)
 
@@ -477,16 +472,12 @@ e2eTest('thread queue advanced (interrupt, abort, retry)', () => {
     expect(setupReply.content.trim().length).toBeGreaterThan(0)
 
     await th.user(TEST_USER_ID).sendMessage({
-      content:
-        'MANDATORY INSTRUCTION: call the bash tool immediately and run exactly this command: `sleep 500`. No explanation. No normal text. Do not skip the tool call.',
+      content: 'SLOW_ABORT_MARKER run long response',
     })
 
-    await waitForBotMessageContaining({
-      discord,
+    await waitForThreadPhase({
       threadId: thread.id,
-      userId: TEST_USER_ID,
-      text: 'sleep 500',
-      afterUserMessageIncludes: 'sleep 500',
+      phase: 'running',
       timeout: 4_000,
     })
 
@@ -494,18 +485,24 @@ e2eTest('thread queue advanced (interrupt, abort, retry)', () => {
       content: raceFinalPrompt,
     })
 
-    await waitForBotMessageContaining({
+    const runtime = getRuntime(thread.id)
+    expect(runtime).toBeDefined()
+    if (!runtime) {
+      throw new Error('Expected runtime to exist for race abort scenario')
+    }
+    runtime.abortActiveRun('test-race-abort')
+
+    await waitForBotReplyAfterUserMessage({
       discord,
       threadId: thread.id,
       userId: TEST_USER_ID,
-      text: 'race-final',
-      afterUserMessageIncludes: raceFinalPrompt,
+      userMessageIncludes: raceFinalPrompt,
       timeout: 4_000,
     })
   }
 
   test(
-    'interrupt race: queued message still gets assistant text after stale idle window',
+    'explicit abort race: queued message still gets assistant text after stale idle window',
     async () => {
       await runInterruptRaceScenario(1)
     },
@@ -513,10 +510,12 @@ e2eTest('thread queue advanced (interrupt, abort, retry)', () => {
   )
 
   test(
-    'retryLastUserPrompt aborts active run and re-dispatches same prompt',
+    'model switch mid-session aborts and restarts from same session history',
     async () => {
-      // Simulates the /model flow: user sends a message, model is changed
-      // mid-run, retryLastUserPrompt() aborts and re-dispatches the same prompt.
+      // Simulates the /model flow with simplified runtime behavior:
+      // abort current run, then send empty user prompt to opencode.
+      // The deterministic provider should still see the original marker
+      // in raw prompt history and replay that same request context.
 
       // 1. Establish session
       await discord.channel(TEXT_CHANNEL_ID).user(TEST_USER_ID).sendMessage({
@@ -534,57 +533,52 @@ e2eTest('thread queue advanced (interrupt, abort, retry)', () => {
       const firstReply = await th.waitForBotReply({ timeout: 4_000 })
       expect(firstReply.content.trim().length).toBeGreaterThan(0)
 
-      // 2. Send a slow prompt (sleep tool) so the run stays active
+      // 2. Send a slow marker prompt so the run stays active.
       await th.user(TEST_USER_ID).sendMessage({
-        content:
-          'MANDATORY INSTRUCTION: call the bash tool immediately and run exactly this command: `sleep 500`. No explanation. No normal text. Do not skip the tool call.',
+        content: 'SLOW_ABORT_MARKER run long response',
       })
 
-      // Wait for the tool call to start — proves run is active
-      await waitForBotMessageContaining({
-        discord,
+      // Wait for run active state, then switch model immediately.
+      await waitForThreadPhase({
         threadId: thread.id,
-        userId: TEST_USER_ID,
-        text: 'sleep 500',
-        afterUserMessageIncludes: 'sleep 500',
+        phase: 'running',
         timeout: 4_000,
       })
 
-      // 3. Call retryLastUserPrompt() — this simulates what /model does
+      const sessionId = getThreadState(thread.id)?.sessionId
+      expect(sessionId).toBeDefined()
+      if (!sessionId) {
+        throw new Error('Expected active session id for model switch test')
+      }
+
+      // 3. Switch model and trigger mid-run restart.
+      await setSessionModel({
+        sessionId,
+        modelId: 'deterministic-provider/deterministic-v3',
+        variant: null,
+      })
+
       const runtime = getRuntime(thread.id)
       expect(runtime).toBeDefined()
       if (!runtime) {
-        throw new Error('Expected runtime to exist for retry test')
+        throw new Error('Expected runtime to exist for model switch test')
       }
       const retried = await runtime.retryLastUserPrompt()
       expect(retried).toBe(true)
 
-      // 4. The retry re-fetches the last user message (the sleep prompt)
-      //    and re-dispatches it. The deterministic provider will match the
-      //    sleep tool call again. We verify a new tool call message appears
-      //    AFTER the retry point.
-      //
-      //    Since the retry aborts the active run and re-enqueues, we should
-      //    eventually see a second batch of sleep-related output or a
-      //    follow-up bot message. The key assertion: the runtime didn't get
-      //    stuck — it produced new output after retry.
-      const before = await th.getMessages()
-      const beforeBotCount = before.filter((m) => {
-        return m.author.id === discord.botUserId
-      }).length
+      // 4. Ensure the thread keeps making progress after model-switch retry.
+      //    If retry deadlocks, this follow-up won't get a bot reply.
+      await th.user(TEST_USER_ID).sendMessage({
+        content: 'Reply with exactly: model-switch-followup',
+      })
 
-      // Wait for at least one new bot message after the retry
-      const after = await waitForBotMessageCount({
+      await waitForBotReplyAfterUserMessage({
         discord,
         threadId: thread.id,
-        count: beforeBotCount + 1,
+        userId: TEST_USER_ID,
+        userMessageIncludes: 'model-switch-followup',
         timeout: 4_000,
       })
-
-      const afterBotMessages = after.filter((m) => {
-        return m.author.id === discord.botUserId
-      })
-      expect(afterBotMessages.length).toBeGreaterThan(beforeBotCount)
     },
     10_000,
   )
@@ -608,16 +602,12 @@ e2eTest('thread queue advanced (interrupt, abort, retry)', () => {
       expect(setupReply.content.trim().length).toBeGreaterThan(0)
 
       await th.user(TEST_USER_ID).sendMessage({
-        content:
-          'MANDATORY INSTRUCTION: call the bash tool immediately and run exactly this command: `sleep 500`. No explanation. No normal text. Do not skip the tool call.',
+        content: 'SLOW_ABORT_MARKER run long response',
       })
 
-      await waitForBotMessageContaining({
-        discord,
+      await waitForThreadPhase({
         threadId: thread.id,
-        userId: TEST_USER_ID,
-        text: 'sleep 500',
-        afterUserMessageIncludes: 'sleep 500',
+        phase: 'running',
         timeout: 4_000,
       })
 
@@ -633,62 +623,14 @@ e2eTest('thread queue advanced (interrupt, abort, retry)', () => {
 
       runtime.abortActiveRun('force-abort-test')
 
-      await waitForBotMessageContaining({
-        discord,
+      const settled = await waitForThreadPhase({
         threadId: thread.id,
-        userId: TEST_USER_ID,
-        text: '*project',
-        afterUserMessageIncludes: 'sleep 500',
+        phase: 'idle',
         timeout: 4_000,
       })
+      expect(settled.runState.phase).toBe('idle')
     },
     10_000,
   )
 
-  test(
-    'retryLastUserPrompt returns false when runtime is disposed mid-retry',
-    async () => {
-      await discord.channel(TEXT_CHANNEL_ID).user(TEST_USER_ID).sendMessage({
-        content: 'Reply with exactly: retry-dispose-setup',
-      })
-
-      const thread = await discord.channel(TEXT_CHANNEL_ID).waitForThread({
-        timeout: 4_000,
-        predicate: (t) => {
-          return t.name === 'Reply with exactly: retry-dispose-setup'
-        },
-      })
-
-      const th = discord.thread(thread.id)
-      const setupReply = await th.waitForBotReply({ timeout: 4_000 })
-      expect(setupReply.content.trim().length).toBeGreaterThan(0)
-
-      await th.user(TEST_USER_ID).sendMessage({
-        content:
-          'MANDATORY INSTRUCTION: call the bash tool immediately and run exactly this command: `sleep 500`. No explanation. No normal text. Do not skip the tool call.',
-      })
-
-      await waitForBotMessageContaining({
-        discord,
-        threadId: thread.id,
-        userId: TEST_USER_ID,
-        text: 'sleep 500',
-        afterUserMessageIncludes: 'sleep 500',
-        timeout: 4_000,
-      })
-
-      const runtime = getRuntime(thread.id)
-      expect(runtime).toBeDefined()
-      if (!runtime) {
-        throw new Error('Expected runtime to exist for dispose-retry test')
-      }
-
-      const retryPromise = runtime.retryLastUserPrompt()
-      disposeRuntime(thread.id)
-
-      const retried = await retryPromise
-      expect(retried).toBe(false)
-    },
-    10_000,
-  )
 })

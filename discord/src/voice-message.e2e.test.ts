@@ -600,10 +600,10 @@ e2eTest('voice message handling', () => {
     8_000,
   )
 
-  // ── Test 3: Voice message interrupts running session ──
+  // ── Test 3: Voice message queues behind running session (default) ──
 
   test(
-    'voice message interrupts running session when queueMessage is false',
+    'voice message with queueMessage=false queues behind running session',
     async () => {
       // 1. Start a session with a slow response
       setDeterministicTranscription(null)
@@ -627,7 +627,7 @@ e2eTest('voice message handling', () => {
         timeout: 4_000,
       })
 
-      // 2. Send voice message while session is running (should interrupt)
+      // 2. Send voice message while session is running (default: queue)
       setDeterministicTranscription({
         transcription: 'Stop and do this instead',
         queueMessage: false,
@@ -635,8 +635,7 @@ e2eTest('voice message handling', () => {
 
       await th.user(TEST_USER_ID).sendVoiceMessage()
 
-      // 3. The running session should be aborted, then new request processed.
-      // Wait for the transcription to appear first
+      // 3. Wait for transcription to appear first
       await waitForBotMessageContaining({
         discord,
         threadId: thread.id,
@@ -645,29 +644,50 @@ e2eTest('voice message handling', () => {
         timeout: 4_000,
       })
 
-      // Session should eventually reach finished with the new prompt processed
-      const finalState = await waitForThreadPhase({
+      // queueMessage=false no longer interrupts by default, so we should NOT
+      // receive the queued-position ack that queueMessage=true sends.
+      const afterTranscription = await th.getMessages()
+      const hasQueuedAck = afterTranscription.some((m) => {
+        return (
+          m.author.id === discord.botUserId &&
+          m.content.includes('Queued at position')
+        )
+      })
+      expect(hasQueuedAck).toBe(false)
+
+      const midState = await waitForThreadPhase({
         threadId: thread.id,
-        phase: 'idle',
-        timeout: 6_000,
+        phase: 'running',
+        timeout: 4_000,
+      })
+      expect(midState.runState.phase).toBe('running')
+
+      // 4. Wait for both runs to finish (slow prompt + queued transcription)
+      const finalState = await waitForThreadState({
+        threadId: thread.id,
+        predicate: (s) => {
+          return s.runState.phase === 'idle' && s.queueItems.length === 0
+        },
+        timeout: 8_000,
+        description: 'phase=idle AND queue empty (default queued voice behavior)',
       })
       expect(finalState.sessionId).toBeDefined()
       expect(finalState.queueItems.length).toBe(0)
 
-      // Verify the OpenCode session shows evidence of the interrupt:
-      // - The original slow prompt was sent
-      // - The voice transcription was sent as a new prompt after the interrupt
-      // - The second prompt produced a successful assistant response
+      // Verify the OpenCode session processed both prompts sequentially.
       const messages = await waitForSessionMessages({
         projectDirectory: directories.projectDirectory,
         sessionID: finalState.sessionId!,
         timeout: 4_000,
-        description: 'interrupt: original prompt + voice prompt',
+        description: 'default queue: original prompt + voice prompt',
         predicate: (all) => {
           const userTexts = getUserTexts(all)
+          const assistantTexts = getAssistantTexts(all)
           return (
             userTexts.some((t) => t.includes('SLOW_RESPONSE_MARKER start slow task')) &&
-            userTexts.some((t) => t.includes('Stop and do this instead'))
+            userTexts.some((t) => t.includes('Stop and do this instead')) &&
+            assistantTexts.some((t) => t.includes('slow-response-done')) &&
+            assistantTexts.some((t) => t.includes('session-reply'))
           )
         },
       })
@@ -676,15 +696,8 @@ e2eTest('voice message handling', () => {
       expect(userTexts.some((t) => t.includes('SLOW_RESPONSE_MARKER start slow task'))).toBe(true)
       expect(userTexts.some((t) => t.includes('Stop and do this instead'))).toBe(true)
 
-      // Depending on timing, the interrupted run may or may not emit a visible
-      // assistant abort message. If present, it should be MessageAbortedError.
-      const abortedAssistants = messages.filter((m) => {
-        return m.info.role === 'assistant' && m.info.error?.name === 'MessageAbortedError'
-      })
-      expect(abortedAssistants.length).toBeLessThanOrEqual(1)
-
-      // The second run (voice transcription) should have a successful assistant response
       const assistantTexts = getAssistantTexts(messages)
+      expect(assistantTexts.some((t) => t.includes('slow-response-done'))).toBe(true)
       expect(assistantTexts.some((t) => t.includes('session-reply'))).toBe(true)
     },
     10_000,
@@ -743,7 +756,7 @@ e2eTest('voice message handling', () => {
         timeout: 4_000,
       })
 
-      // 4. The message should be queued (interruptActive: false means it goes to queue)
+      // 4. The message should be queued (queueMessage=true uses local-queue mode)
       // The slow session should still be running, not aborted
       const midState = await waitForThreadQueueLength({
         threadId: thread.id,
