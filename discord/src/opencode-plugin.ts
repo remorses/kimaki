@@ -654,9 +654,7 @@ const kimakiPlugin: Plugin = async ({ directory }) => {
 }
 
 
-const TIMEOUT_SECONDS = 1
-
-type StoredEvent = { event: Event; time: number }
+type StoredEvent = { event: Event; index: number }
 
 // Interrupt a running session when a new user message is queued.
 // After TIMEOUT_SECONDS, aborts the current step and resumes
@@ -665,6 +663,7 @@ type StoredEvent = { event: Event; time: number }
 // Uses "chat.message" hook (fires synchronously during prompt flow)
 // to detect queued messages, and "event" hook for busy/idle tracking.
 export const interruptOpencodeSessionOnUserMessage: Plugin = async (ctx) => {
+  let seq = 0
   const busy = new Set<string>()
   const timers = new Map<string, ReturnType<typeof setTimeout>>()
   const events: StoredEvent[] = []
@@ -674,18 +673,17 @@ export const interruptOpencodeSessionOnUserMessage: Plugin = async (ctx) => {
     after?: number
     timeout?: number
   }) {
-    const after = input.after ?? Date.now()
+    const after = input.after ?? seq
     const timeout = input.timeout ?? 10_000
-    return new Promise<Event>((resolve, reject) => {
+    return new Promise<Event | undefined>((resolve) => {
       const deadline = Date.now() + timeout
       const check = () => {
         for (let i = events.length - 1; i >= 0; i--) {
           const entry = events[i]!
-          if (entry.time < after) break
+          if (entry.index <= after) break
           if (input.filter(entry.event)) return resolve(entry.event)
         }
-        if (Date.now() > deadline)
-          return reject(new Error('waitForEvent timeout'))
+        if (Date.now() > deadline) return resolve(undefined)
         setTimeout(check, 100)
       }
       check()
@@ -694,7 +692,7 @@ export const interruptOpencodeSessionOnUserMessage: Plugin = async (ctx) => {
 
   return {
     async event({ event }) {
-      events.push({ event, time: Date.now() })
+      events.push({ event, index: ++seq })
       if (events.length > 100) events.shift()
 
       if (event.type === 'session.status') {
@@ -724,20 +722,42 @@ export const interruptOpencodeSessionOnUserMessage: Plugin = async (ctx) => {
       const timer = setTimeout(async () => {
         timers.delete(sessionID)
         if (!busy.has(sessionID)) return
-        const timestamp = Date.now()
+        const cursor = seq
         await ctx.client.session.abort({
           path: { id: sessionID },
         })
+        // Wait for error as sync barrier (idle fires before error settles).
+        // If error never arrives, fall back to timeout and proceed anyway.
+        let barrier = cursor
+        const error = await waitForEvent({
+          filter: (e) => {
+            return (
+              e.type === 'session.error' &&
+              e.properties.sessionID === sessionID
+            )
+          },
+          after: cursor,
+          timeout: 2000,
+        })
+        if (error) {
+          barrier = events.find((e) => {
+            return e.event === error
+          })!.index
+        }
         await waitForEvent({
-          filter: (e) =>
-            e.type === 'session.idle' && e.properties.sessionID === sessionID,
-          after: timestamp,
+          filter: (e) => {
+            return (
+              e.type === 'session.idle' &&
+              e.properties.sessionID === sessionID
+            )
+          },
+          after: barrier,
         })
         await ctx.client.session.promptAsync({
           path: { id: sessionID },
           body: { parts: [] },
         })
-      }, TIMEOUT_SECONDS * 1000)
+      }, 1000)
 
       timers.set(sessionID, timer)
     },
