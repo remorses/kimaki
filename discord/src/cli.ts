@@ -1471,6 +1471,10 @@ async function run({
   // Migrate channel_directories.app_id when switching between bots (e.g.
   // self-hosted → gateway or vice versa). Without this, existing channels
   // become invisible because their app_id no longer matches the current bot.
+  // TODO: app_id filtering on channels is not really useful in practice —
+  // each kimaki process has its own data dir (and thus its own SQLite DB),
+  // so multiple bots never share a database. Consider dropping the app_id
+  // filter entirely and keeping app_id as metadata only.
   if (previousAppId && previousAppId !== appId) {
     const migrated = await migrateChannelAppIds({ fromAppId: previousAppId, toAppId: appId })
     if (migrated > 0) {
