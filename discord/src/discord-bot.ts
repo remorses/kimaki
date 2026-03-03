@@ -571,7 +571,7 @@ export async function startDiscordBot({
                 message.member?.displayName ||
                 message.author.displayName,
               appId: currentAppId,
-              interruptActive: voiceResult?.queueMessage ? false : true,
+              mode: voiceResult?.queueMessage ? 'local-queue' : 'opencode',
               agent: cliInjectedAgent,
               model: cliInjectedModel,
               sessionStartSource: sessionStartSource
@@ -700,7 +700,7 @@ export async function startDiscordBot({
               message.author.displayName,
             images: fileAttachments,
             appId: currentAppId,
-            interruptActive: voiceResult?.queueMessage ? false : true,
+            mode: voiceResult?.queueMessage ? 'local-queue' : 'opencode',
             agent: cliInjectedAgent,
             model: cliInjectedModel,
             sessionStartSource: sessionStartSource
@@ -895,7 +895,7 @@ export async function startDiscordBot({
             message.member?.displayName || message.author.displayName,
           images: fileAttachments,
           appId: currentAppId,
-          interruptActive: voiceResult?.queueMessage ? false : true,
+          mode: voiceResult?.queueMessage ? 'local-queue' : 'opencode',
         })
       } else {
         discordLogger.log(`Channel type ${channel.type} is not supported`)
@@ -1104,7 +1104,7 @@ export async function startDiscordBot({
         appId: currentAppId,
         agent: marker.agent,
         model: marker.model,
-        interruptActive: true,
+        mode: 'opencode',
         sessionStartSource: botThreadStartSource
           ? {
               scheduleKind: botThreadStartSource.scheduleKind,

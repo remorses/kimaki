@@ -62,7 +62,7 @@ async function sendPromptToModel({
 }): Promise<void> {
   const resolved = await resolveWorkingDirectory({ channel: thread })
 
-  // Merge prompts don't interrupt — enqueue with interruptActive: false
+  // Merge prompts use opencode queue mode.
   const runtime = getOrCreateRuntime({
     threadId: thread.id,
     thread,
@@ -76,7 +76,7 @@ async function sendPromptToModel({
     userId: command.user.id,
     username: command.user.displayName,
     appId,
-    interruptActive: false,
+    mode: 'opencode',
   })
 }
 

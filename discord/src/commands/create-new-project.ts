@@ -174,7 +174,7 @@ export async function handleCreateNewProjectCommand({
       userId: command.user.id,
       username: command.user.displayName,
       appId,
-      interruptActive: true,
+      mode: 'opencode',
     })
 
     logger.log(`Created new project ${channelName} at ${projectDirectory}`)

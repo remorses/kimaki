@@ -164,7 +164,7 @@ async function sendClickedActionToModel({
 
   const username = interaction.user.globalName || interaction.user.username
 
-  // Action button clicks don't interrupt — they enqueue with interruptActive: false
+  // Action button clicks use opencode queue mode.
   const runtime = getOrCreateRuntime({
     threadId: thread.id,
     thread,
@@ -178,7 +178,7 @@ async function sendClickedActionToModel({
     userId: interaction.user.id,
     username,
     appId: resolved.channelAppId,
-    interruptActive: false,
+    mode: 'opencode',
   })
 }
 

@@ -78,13 +78,13 @@ export async function handleQueueCommand({
     appId,
   })
 
-  // /queue does NOT interrupt — enqueue with interruptActive: false
+  // /queue explicitly uses kimaki local queue mode.
   const enqueueResult = await runtime.enqueueIncoming({
     prompt: message,
     userId: command.user.id,
     username: command.user.displayName,
     appId,
-    interruptActive: false,
+    mode: 'local-queue',
   })
 
   const responseText = enqueueResult.queued
@@ -223,14 +223,14 @@ export async function handleQueueCommandCommand({
     appId,
   })
 
-  // Queue commands don't interrupt — use interruptActive: false
+  // /queue-command explicitly uses kimaki local queue mode.
   const enqueueResult = await runtime.enqueueIncoming({
     prompt: '',
     userId: command.user.id,
     username: command.user.displayName,
     appId,
     command: commandPayload,
-    interruptActive: false,
+    mode: 'local-queue',
   })
 
   const responseText = enqueueResult.queued

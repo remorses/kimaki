@@ -99,7 +99,7 @@ export async function handleSessionCommand({
       username: command.user.displayName,
       agent,
       appId,
-      interruptActive: true,
+      mode: 'opencode',
     })
   } catch (error) {
     logger.error('[SESSION] Error:', error)

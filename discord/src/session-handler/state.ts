@@ -1,7 +1,7 @@
 // Session run-state: minimal phase tracking.
 //
 // The abort→resume race (stale SSE events after abort) is handled by the
-// idle-waiter mechanism in thread-session-runtime.ts, NOT by state fields.
+// runtime event-wait mechanism in thread-session-runtime.ts, NOT by state fields.
 // After an abort, the runtime waits for the actual session.idle SSE event
 // before starting the next dispatch — so stale events have already passed
 // through by the time the new run begins.

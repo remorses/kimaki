@@ -80,7 +80,7 @@ export async function getTools({
 
         // do not await
         getClient()
-          .session.prompt({
+          .session.promptAsync({
             sessionID: sessionId,
             parts: [{ type: 'text', text: message }],
             model: sessionModel,
@@ -94,7 +94,6 @@ export async function getTools({
             onMessageCompleted?.({
               sessionId,
               messageId: '',
-              data: response.data,
               markdown: errore.unwrapOr(markdownResult, ''),
             })
           })
@@ -151,7 +150,7 @@ export async function getTools({
 
           // do not await
           getClient()
-            .session.prompt({
+            .session.promptAsync({
               sessionID: session.data.id,
               parts: [{ type: 'text', text: message }],
               system: getOpencodeSystemMessage({ sessionId: session.data.id }),
@@ -164,7 +163,6 @@ export async function getTools({
               onMessageCompleted?.({
                 sessionId: session.data.id,
                 messageId: '',
-                data: response.data,
                 markdown: errore.unwrapOr(markdownResult, ''),
               })
             })

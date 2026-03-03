@@ -58,15 +58,12 @@ import {
 } from '../commands/permissions.js'
 import {
   showAskUserQuestionDropdowns,
-  cancelPendingQuestion,
   pendingQuestionContexts,
 } from '../commands/ask-question.js'
 import {
   showActionButtons,
-  cancelPendingActionButtons,
   waitForQueuedActionButtonsRequest,
 } from '../commands/action-buttons.js'
-import { cancelPendingFileUpload } from '../commands/file-upload.js'
 import {
   getCurrentModelInfo,
   ensureSessionPreferencesSnapshot,
@@ -80,7 +77,7 @@ import { resolveValidatedAgentPreference } from './agent-utils.js'
 
 // Track multiple pending permissions per thread (keyed by permission ID).
 // OpenCode handles blocking/sequencing — we just need to track all pending
-// permissions to avoid duplicates and properly clean up on auto-reject.
+// permissions to avoid duplicates and properly clean up on reply/teardown.
 // Moved from session-handler.ts in Phase 5: the runtime is the sole owner.
 export const pendingPermissions = new Map<
   string, // threadId
@@ -106,6 +103,9 @@ import { notifyError } from '../sentry.js'
 
 const logger = createLogger(LogPrefix.SESSION)
 const discordLogger = createLogger(LogPrefix.DISCORD)
+const shouldLogSessionEvents =
+  process.env['KIMAKI_LOG_SESSION_EVENTS'] === '1' ||
+  process.env['KIMAKI_VITEST'] === '1'
 
 // ── Registry ─────────────────────────────────────────────────────
 // Runtime instances are kept in a plain Map (not Zustand — the Map
@@ -259,9 +259,16 @@ export type IngressInput = {
   images?: DiscordFileAttachment[]
   appId?: string
   command?: { name: string; arguments: string }
-  /** true = abort active run + cancel interactive UIs before enqueueing.
-   *  Normal user messages use true, /queue uses false. */
-  interruptActive: boolean
+  /**
+   * `opencode` (default): send via session.promptAsync and let opencode
+   * serialize pending user turns internally.
+   * `local-queue`: keep in kimaki's local queue (used by /queue flows).
+   */
+  mode?: 'opencode' | 'local-queue'
+  // Force a new assistant-part routing window by resetting run-state to
+  // running before enqueue. Used by model-switch retry flows where old
+  // assistant IDs can linger briefly after abort.
+  resetAssistantForNewRun?: boolean
   // First-dispatch-only overrides (used when creating a new session)
   agent?: string
   model?: string
@@ -579,6 +586,35 @@ export class ThreadSessionRuntime {
           return undefined
       }
     })()
+
+    if (shouldLogSessionEvents) {
+      const eventDetails = (() => {
+        if (event.type === 'session.error') {
+          const errorName = event.properties.error?.name || 'unknown'
+          return ` error=${errorName}`
+        }
+        if (event.type === 'session.status') {
+          const status = event.properties.status || 'unknown'
+          return ` status=${status}`
+        }
+        if (event.type === 'message.updated') {
+          return ` role=${event.properties.info.role} messageID=${event.properties.info.id}`
+        }
+        if (event.type === 'message.part.updated') {
+          const partType = event.properties.part.type
+          const partId = event.properties.part.id
+          const messageId = event.properties.part.messageID
+          const toolSuffix = partType === 'tool'
+            ? ` tool=${event.properties.part.tool} status=${event.properties.part.state.status}`
+            : ''
+          return ` part=${partType} partID=${partId} messageID=${messageId}${toolSuffix}`
+        }
+        return ''
+      })()
+      logger.log(
+        `[EVENT] type=${event.type} eventSessionId=${eventSessionId || 'none'} activeSessionId=${sessionId || 'none'} ${this.formatRunStateForLog()}${eventDetails}`,
+      )
+    }
 
     const isGlobalEvent = event.type === 'tui.toast.show'
 
@@ -958,6 +994,36 @@ export class ThreadSessionRuntime {
       return pureSetCurrentAssistant(rs, msg.id)
     })
 
+    // promptAsync paths can deliver complete parts via message.updated even when
+    // message.part.updated events are sparse or absent. Seed the part buffer
+    // from message.parts when we have not seen per-part events for this message.
+    if (!this.partBuffer.has(msg.id)) {
+      const messageParts = (() => {
+        const candidate: { parts?: unknown } = msg as { parts?: unknown }
+        if (!Array.isArray(candidate.parts)) {
+          return [] as Part[]
+        }
+        return candidate.parts.filter((part): part is Part => {
+          if (!part || typeof part !== 'object') {
+            return false
+          }
+          const maybePart = part as {
+            id?: unknown
+            type?: unknown
+            messageID?: unknown
+          }
+          return (
+            typeof maybePart.id === 'string' &&
+            typeof maybePart.type === 'string' &&
+            typeof maybePart.messageID === 'string'
+          )
+        })
+      })()
+      messageParts.forEach((part) => {
+        this.storePart(part)
+      })
+    }
+
     // Track tokens, model, provider, agent from assistant messages
     this.updateRun((r) => {
       let tokensUsed = r.tokensUsed
@@ -1022,13 +1088,6 @@ export class ThreadSessionRuntime {
 
     if (part.sessionID !== sessionId && !isSubtaskEvent) {
       return
-    }
-
-    // Track the current assistant message ID for part routing
-    if (part.sessionID === sessionId) {
-      threadState.updateRunState(this.threadId, (rs) => {
-        return pureSetCurrentAssistant(rs, part.messageID)
-      })
     }
 
     if (isSubtaskEvent && subtaskInfo) {
@@ -1598,19 +1657,163 @@ export class ThreadSessionRuntime {
   // ── Phase 3: Ingress API ─────────────────────────────────────
 
   /**
-   * Enqueue an incoming message/command, optionally interrupting the active run.
-   * Normal user messages use interruptActive: true (abort + enqueue + drain).
-   * /queue command uses interruptActive: false (just enqueue + drain).
-   *
-   * Returns { queued, position } computed atomically inside dispatchAction
-   * so callers can show queue notifications without a race window.
+   * Submit a user turn directly to opencode's internal session queue.
+   * This is the default path for normal Discord messages.
    */
-  async enqueueIncoming(input: IngressInput): Promise<EnqueueResult> {
+  private async submitViaOpencodeQueue(input: IngressInput): Promise<EnqueueResult> {
+    let skippedBySessionGuard = false
+
+    await this.dispatchAction(async () => {
+      if (
+        input.expectedSessionId &&
+        this.state?.sessionId !== input.expectedSessionId
+      ) {
+        logger.log(
+          `[ENQUEUE] Skipping stale promptAsync enqueue for thread ${this.threadId}: expected session ${input.expectedSessionId}, current session ${this.state?.sessionId || 'none'}`,
+        )
+        skippedBySessionGuard = true
+        return
+      }
+
+      if (!this.listenerLoopRunning) {
+        void this.startEventListener()
+      }
+
+      const sessionResult = await this.ensureSession({
+        prompt: input.prompt,
+        agent: input.agent,
+        sessionStartScheduleKind: input.sessionStartSource?.scheduleKind,
+        sessionStartScheduledTaskId: input.sessionStartSource?.scheduledTaskId,
+      })
+      if (sessionResult instanceof Error) {
+        await sendThreadMessage(this.thread, `✗ ${sessionResult.message}`)
+        return
+      }
+
+      const { session, getClient } = sessionResult
+
+      // If listener startup happened before initializeOpencodeForDirectory(),
+      // startEventListener may have exited early with "No OpenCode client".
+      // Re-check after ensureSession so first promptAsync on a cold directory
+      // still has an active SSE listener for message parts.
+      if (!this.listenerLoopRunning) {
+        void this.startEventListener()
+      }
+
+      const shouldMarkRunning =
+        this.state?.runState.phase !== 'running' ||
+        input.resetAssistantForNewRun === true
+      if (shouldMarkRunning) {
+        threadState.updateRunState(this.threadId, pureMarkRunning)
+        this.startTyping()
+      }
+
+      const images = input.images || []
+      const promptWithImagePaths = (() => {
+        if (images.length === 0) {
+          return input.prompt
+        }
+        const imageList = images
+          .map((img) => {
+            return `- ${img.sourceUrl || img.filename}`
+          })
+          .join('\n')
+        return `${input.prompt}\n\n**The following images are already included in this message as inline content (do not use Read tool on these):**\n${imageList}`
+      })()
+
+      let syntheticContext = ''
+      if (input.username) {
+        syntheticContext += `<discord-user name="${input.username}" />`
+      }
+      const parts = [
+        { type: 'text' as const, text: promptWithImagePaths },
+        { type: 'text' as const, text: syntheticContext, synthetic: true },
+        ...images,
+      ]
+
+      const modelField = (() => {
+        if (!input.model) {
+          return undefined
+        }
+        const [providerID, ...modelParts] = input.model.split('/')
+        const modelID = modelParts.join('/')
+        if (!providerID || !modelID) {
+          return undefined
+        }
+        return { providerID, modelID }
+      })()
+
+      const request = {
+        sessionID: session.id,
+        directory: this.sdkDirectory,
+        parts,
+        ...(input.agent ? { agent: input.agent } : {}),
+        ...(modelField ? { model: modelField } : {}),
+      }
+      const promptResult = await errore.tryAsync(() => {
+        return getClient().session.promptAsync(request)
+      })
+      if (promptResult instanceof Error || promptResult.error) {
+        if (shouldMarkRunning) {
+          threadState.updateRunState(this.threadId, pureMarkIdle)
+          this.stopTyping()
+        }
+        const errorMessage = (() => {
+          if (promptResult instanceof Error) {
+            return promptResult.message
+          }
+          const err = promptResult.error
+          if (err && typeof err === 'object') {
+            if (
+              'data' in err &&
+              err.data &&
+              typeof err.data === 'object' &&
+              'message' in err.data
+            ) {
+              return String(err.data.message)
+            }
+            if (
+              'errors' in err &&
+              Array.isArray(err.errors) &&
+              err.errors.length > 0
+            ) {
+              return JSON.stringify(err.errors)
+            }
+          }
+          return 'Unknown OpenCode API error'
+        })()
+        await sendThreadMessage(this.thread, `✗ OpenCode API error: ${errorMessage}`)
+        return
+      }
+
+      if (modelField) {
+        this.updateRun((r) => ({
+          ...r,
+          model: modelField.modelID,
+          providerID: modelField.providerID,
+        }))
+      }
+
+      logger.log(
+        `[INGRESS] promptAsync accepted by opencode queue sessionId=${session.id} threadId=${this.threadId}`,
+      )
+    })
+
+    if (skippedBySessionGuard) {
+      return { queued: false }
+    }
+    return { queued: false }
+  }
+
+  /**
+   * Enqueue in kimaki's local per-thread queue.
+   * Used for explicit queue workflows (/queue, queueMessage=true).
+   */
+  private async enqueueViaLocalQueue(input: IngressInput): Promise<EnqueueResult> {
     const queuedMessage: QueuedMessage = {
       prompt: input.prompt,
       userId: input.userId,
       username: input.username,
-      queuedAt: Date.now(),
       images: input.images,
       appId: input.appId,
       command: input.command,
@@ -1621,73 +1824,8 @@ export class ThreadSessionRuntime {
     }
 
     let result: EnqueueResult = { queued: false }
-    let needsIdleWait = false
-    // Capture timestamp before abort so waitForEvent only sees events
-    // that arrive after this point (filters stale buffered events).
-    const waitSinceTimestamp = Date.now()
-    let abortSessionId: string | undefined
 
     await this.dispatchAction(async () => {
-      if (
-        input.expectedSessionId &&
-        this.state?.sessionId !== input.expectedSessionId
-      ) {
-        logger.log(
-          `[ENQUEUE] Skipping stale enqueue for thread ${this.threadId}: expected session ${input.expectedSessionId}, current session ${this.state?.sessionId || 'none'}`,
-        )
-        return
-      }
-
-      if (input.interruptActive) {
-        // Only wait for idle if a run is actively producing output.
-        // If the session is already idle/finished, no idle event will come.
-        needsIdleWait = this.state?.runState.phase === 'running'
-        abortSessionId = this.state?.sessionId
-
-        const outcome = this.abortActiveRunInternal({
-          reason: 'new-request',
-        })
-
-        // Best-effort API abort (fire and forget)
-        if (outcome.apiAbortPromise) {
-          void outcome.apiAbortPromise
-        }
-
-        // Auto-reject all pending permissions for this thread
-        await this.autoRejectPendingPermissions()
-
-        // Answer pending question with the user's message
-        const questionAnswered = await cancelPendingQuestion(
-          this.thread.id,
-          input.prompt,
-        )
-        if (questionAnswered) {
-          logger.log(
-            `[ENQUEUE] Answered pending question with user message`,
-          )
-        }
-
-        // Cancel pending file upload
-        const fileUploadCancelled = await cancelPendingFileUpload(
-          this.thread.id,
-        )
-        if (fileUploadCancelled) {
-          logger.log(
-            `[ENQUEUE] Cancelled pending file upload due to new message`,
-          )
-        }
-
-        // Dismiss pending action buttons
-        const actionButtonsDismissed = cancelPendingActionButtons(
-          this.thread.id,
-        )
-        if (actionButtonsDismissed) {
-          logger.log(
-            `[ENQUEUE] Dismissed pending action buttons due to new message`,
-          )
-        }
-      }
-
       // Enqueue the message
       threadState.enqueueItem(this.threadId, queuedMessage)
 
@@ -1706,31 +1844,24 @@ export class ThreadSessionRuntime {
         void this.startEventListener()
       }
 
-      if (!input.interruptActive) {
-        await this.tryDrainQueue()
-      }
+      await this.tryDrainQueue()
     })
-
-    if (input.interruptActive) {
-      // Wait for the server to confirm it's idle after the abort.
-      // waitForEvent scans the event buffer for a session.idle that
-      // arrived after we started the abort — no special handler wiring.
-      if (needsIdleWait && abortSessionId) {
-        await this.waitForEvent({
-          predicate: (event) => {
-            return event.type === 'session.idle'
-              && (event.properties as { sessionID?: string }).sessionID === abortSessionId
-          },
-          sinceTimestamp: waitSinceTimestamp,
-          timeoutMs: 2000,
-        })
-      }
-      await this.dispatchAction(async () => {
-        await this.tryDrainQueue()
-      })
-    }
-
     return result
+  }
+
+  /**
+   * Ingress API for Discord handlers and commands.
+   * Defaults to opencode queue mode; local queue mode is explicit.
+   */
+  async enqueueIncoming(input: IngressInput): Promise<EnqueueResult> {
+    if (input.mode === 'local-queue') {
+      return this.enqueueViaLocalQueue(input)
+    }
+    if (input.command) {
+      // Commands keep using local queue so they still support /queue-command.
+      return this.enqueueViaLocalQueue(input)
+    }
+    return this.submitViaOpencodeQueue(input)
   }
 
   /**
@@ -1849,10 +1980,7 @@ export class ThreadSessionRuntime {
     if (outcome.apiAbortPromise) {
       void outcome.apiAbortPromise
     }
-    // Drain queued messages after abort — the SDK session abort response
-    // handler no longer drains (it raced with interrupt drains and showed
-    // the » indicator for non-queued messages). This covers /abort and
-    // other external callers that need queued messages to continue.
+    // Drain local queued messages after explicit abort.
     void this.dispatchAction(() => {
       return this.tryDrainQueue({ showIndicator: true })
     })
@@ -1936,7 +2064,7 @@ export class ThreadSessionRuntime {
     // concurrent dispatch while we perform async setup (ensureSession/model/etc).
     threadState.updateRunState(this.threadId, pureMarkRunning)
 
-    // Create run controller immediately so interrupts can cancel even during
+    // Create run controller immediately so explicit aborts can cancel even during
     // async setup steps before the SDK prompt call starts.
     const runController = new AbortController()
     threadState.setRunController(this.threadId, runController)
@@ -2202,7 +2330,7 @@ export class ThreadSessionRuntime {
     const response = await sdkCall.catch(async (thrown: unknown) => {
       if (isAbortError(thrown)) {
         this.stopTyping()
-        return undefined // aborted — idle waiter handles settlement
+        return undefined // aborted — run settles via session.idle event
       }
       const errMsg =
         thrown instanceof Error ? thrown.message : String(thrown)
@@ -2229,8 +2357,7 @@ export class ThreadSessionRuntime {
     if (response.error) {
       const err = response.error
 
-      // Abort response — expected when a new message interrupts.
-      // The idle waiter in enqueueIncoming handles draining.
+      // Abort response — expected for explicit abort/retry flows.
       const errMessage = err && typeof err === 'object' && 'message' in err
         ? String(err.message)
         : ''
@@ -2546,61 +2673,14 @@ export class ThreadSessionRuntime {
     this.modelContextLimitKey = undefined
   }
 
-  /**
-   * Auto-reject all pending permissions for this thread.
-   * Called when a new interrupting message arrives.
-   */
-  private async autoRejectPendingPermissions(): Promise<void> {
-    const threadPermissions = pendingPermissions.get(this.thread.id)
-    if (!threadPermissions || threadPermissions.size === 0) {
-      return
-    }
-
-    const client = getOpencodeClient(this.projectDirectory)
-
-    for (const [permId, pendingPerm] of threadPermissions) {
-      logger.log(
-        `[PERMISSION] Auto-rejecting permission ${permId} due to new message`,
-      )
-      // Remove buttons from Discord message
-      const removeButtonsResult = await errore.tryAsync(async () => {
-        const msg = await this.thread.messages.fetch(pendingPerm.messageId)
-        await msg.edit({ components: [] })
-      })
-      if (removeButtonsResult instanceof Error) {
-        logger.log(
-          `[PERMISSION] Failed to remove buttons for ${permId}:`,
-          removeButtonsResult,
-        )
-      }
-      if (!client) {
-        cleanupPermissionContext(pendingPerm.contextHash)
-        continue
-      }
-      const rejectResult = await errore.tryAsync(() => {
-        return client.permission.reply({
-          requestID: permId,
-          directory: pendingPerm.permissionDirectory,
-          reply: 'reject',
-        })
-      })
-      if (rejectResult instanceof Error) {
-        logger.log(
-          `[PERMISSION] Failed to auto-reject permission ${permId}:`,
-          rejectResult,
-        )
-      }
-      cleanupPermissionContext(pendingPerm.contextHash)
-    }
-    pendingPermissions.delete(this.thread.id)
-  }
-
   // ── Phase 4: Retry last user prompt (for model-change flow) ──
 
   /**
-   * Abort the active run and re-send the last user message with the
-   * (now-updated) model preference. Used by /model and /unset-model.
-   * Returns true if a retry was actually dispatched.
+   * Abort the active run and immediately send an empty user prompt.
+   *
+   * Used by /model and /unset-model so opencode can restart from the
+   * current session history with the updated model preference, without
+   * replaying/fetching the last user message in kimaki.
    */
   async retryLastUserPrompt(): Promise<boolean> {
     const state = this.state
@@ -2611,15 +2691,18 @@ export class ThreadSessionRuntime {
 
     const sessionId = state.sessionId
 
-    // 1. Abort active run and wait for idle
+    // 1. Abort active run.
     let needsIdleWait = false
     const waitSinceTimestamp = Date.now()
     const abortResult = await errore.tryAsync(() => {
       return this.dispatchAction(async () => {
         needsIdleWait = this.state?.runState.phase === 'running'
-        this.abortActiveRunInternal({
+        const outcome = this.abortActiveRunInternal({
           reason: 'model-change',
         })
+        if (outcome.apiAbortPromise) {
+          void outcome.apiAbortPromise
+        }
       })
     })
     if (abortResult instanceof Error) {
@@ -2650,56 +2733,18 @@ export class ThreadSessionRuntime {
       return false
     }
 
-    // 2. Fetch last user message from API
-    const client = getOpencodeClient(this.projectDirectory)
-    if (!client) {
-      logger.log(`[RETRY] No OpenCode client for ${this.projectDirectory}`)
-      return false
-    }
-
-    logger.log(`[RETRY] Fetching last user message for session ${sessionId}`)
-    const messagesResult = await errore.tryAsync(() => {
-      return client.session.messages({
-        sessionID: sessionId,
-        directory: this.sdkDirectory,
-      })
-    })
-    if (messagesResult instanceof Error) {
-      logger.error(`[RETRY] Failed to fetch messages:`, messagesResult)
-      return false
-    }
-
-    const messages = messagesResult.data || []
-    const lastUserMessage = [...messages]
-      .reverse()
-      .find((m) => m.info.role === 'user')
-
-    if (!lastUserMessage) {
-      logger.log(`[RETRY] No user message found in session ${sessionId}`)
-      return false
-    }
-
-    // Extract text and images from parts (skip synthetic parts like branch context)
-    const textPart = lastUserMessage.parts.find(
-      (p) => p.type === 'text' && !('synthetic' in p && p.synthetic),
-    ) as { type: 'text'; text: string } | undefined
-    const prompt = textPart?.text || ''
-    const images = lastUserMessage.parts.filter(
-      (p) => p.type === 'file',
-    ) as DiscordFileAttachment[]
-
     logger.log(
-      `[RETRY] Re-enqueuing last user prompt for session ${sessionId}`,
+      `[RETRY] Re-submitting with empty prompt for session ${sessionId}`,
     )
 
-    // 3. Enqueue the retry (non-interrupting since we already aborted)
+    // 2. Re-submit with empty prompt so opencode continues from session history.
     await this.enqueueIncoming({
-      prompt,
+      prompt: '',
       userId: '',
       username: '',
-      images,
       appId: this.appId,
-      interruptActive: false,
+      mode: 'opencode',
+      resetAssistantForNewRun: true,
       expectedSessionId: sessionId,
     })
 

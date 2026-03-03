@@ -906,7 +906,7 @@ export async function handleModelScopeSelectMenu(
       }
 
       const retryNote = retried
-        ? '\n_Retrying current request with new model..._'
+        ? '\n_Restarting current request with new model..._'
         : ''
       await interaction.editReply({
         content: `Model set for this session:\n**${context.providerName}** / **${modelDisplay}**${variantSuffix}\n\`${modelId}\`${retryNote}${agentTip}`,

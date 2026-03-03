@@ -176,7 +176,7 @@ export async function handleUnsetModelCommand({
 
   const clearedTypeText = clearedType === 'session' ? 'Session' : 'Channel'
   const retriedText = retried
-    ? '\n_Retrying current request with new model..._'
+    ? '\n_Restarting current request with new model..._'
     : ''
 
   await interaction.editReply({

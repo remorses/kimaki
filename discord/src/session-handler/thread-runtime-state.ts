@@ -26,9 +26,6 @@ export type QueuedMessage = {
   userId: string
   // Discord display name. Used in runtime drain logging.
   username: string
-  // Date.now() when this message was enqueued. Written but not currently
-  // read — available for future queue position display or staleness checks.
-  queuedAt: number
   // Image/file attachments extracted from the Discord message. Sent as
   // file parts alongside the prompt in the SDK call.
   images?: DiscordFileAttachment[]
@@ -129,10 +126,9 @@ export type ThreadRunState = {
   // currentRun.runId. This guards against stale finish/footer tasks.
   lastRunId: number
 
-  // FIFO queue of pending user messages waiting to be dispatched.
-  // Messages are enqueued by enqueueIncoming() and dequeued one at a time
-  // by tryDrainQueue() → dequeueItem(). Only one message runs at a time;
-  // the rest wait until the current run finishes or is aborted.
+  // FIFO queue of pending inputs waiting for kimaki-local dispatch.
+  // Normal user messages default to opencode queue mode; this queue is
+  // for explicit local-queue flows (for example /queue).
   // Changes: enqueueItem (append), dequeueItem (head removal), clearQueueItems.
   // Read by: canDispatchNext, hasQueue, /queue command display.
   queueItems: QueuedMessage[]
@@ -143,11 +139,11 @@ export type ThreadRunState = {
   blockers: {
     // Number of pending permission dialogs (Accept/Deny buttons) in this
     // thread. Incremented when showPermissionButtons sends a message,
-    // decremented when the user clicks or when auto-rejected on interrupt.
+    // decremented when the user clicks or when a permission response arrives.
     permissionCount: number
     // Number of pending AskUserQuestion dropdowns in this thread.
     // Incremented when dropdowns are shown, decremented when all answered
-    // or cancelled on interrupt (answered with the user's typed message).
+    // or cancelled.
     questionCount: number
     // True while action buttons (from kimaki_action_buttons tool) are
     // shown and awaiting the user's click. Set false on click or cancel.
@@ -165,8 +161,8 @@ export type ThreadRunState = {
   runState: MainRunState
 
   // Per-prompt abort controller. Created at the start of each dispatchPrompt()
-  // and aborted when: (a) user sends a new message (interrupt), (b) /abort
-  // command, or (c) run finishes normally. Kept in store so any code with
+  // and aborted by explicit abort/retry flows or when the run finishes normally.
+  // Kept in store so any code with
   // a threadId can abort without needing the runtime class instance
   // (e.g. /abort just calls getThreadState(id)?.runController?.abort()).
   // Changes: set on dispatch, cleared (undefined) on abort or finish.

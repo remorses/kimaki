@@ -144,7 +144,7 @@ export const handleUserCommand: CommandHandler = async ({
         username: command.user.displayName,
         command: commandPayload,
         appId,
-        interruptActive: true,
+        mode: 'local-queue',
       })
     } else if (textChannel) {
       // Running in text channel - create a new thread
@@ -187,7 +187,7 @@ export const handleUserCommand: CommandHandler = async ({
         username: command.user.displayName,
         command: commandPayload,
         appId,
-        interruptActive: true,
+        mode: 'local-queue',
       })
     }
   } catch (error) {
