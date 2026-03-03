@@ -62,6 +62,7 @@ kimaki is a monorepo with three main packages that communicate via a shared Post
 `gateway-proxy/` is a Rust service that proxies both Discord Gateway (WebSocket) and REST traffic. it lets multiple users share a single Discord bot instead of each user creating their own.
 
 key files:
+
 - `src/main.rs` — entry point, shard setup, HTTP server, DB polling
 - `src/auth.rs` — authenticates `client_id:secret` tokens
 - `src/db_config.rs` — polls Postgres `gateway_clients` table every 1s, atomically swaps the in-memory client map. stale protection: rejects auth if DB unreachable >30s
@@ -260,6 +261,8 @@ the opencode plugin (`discord/src/opencode-plugin.ts`) runs inside the **opencod
 
 **CRITICAL: never export utility functions from `opencode-plugin.ts`.** opencode's plugin loader calls every exported function in the module as a plugin initializer. if you export a helper like `condenseMemoryMd(content: string)`, it will be called with a PluginInput object instead of a string and crash. only the plugin entrypoint function should be exported. move any utilities to separate files (e.g. `condense-memory.ts`) and import them.
 
+we should architecture our opencode plugins as many separate plugins to make them readable and easy to understand. every export will be interpreted as a different plugin.
+
 to pass bot-process state to the plugin, use `KIMAKI_*` env vars set in `opencode.ts` when spawning the server process. current env vars:
 
 - `KIMAKI_DATA_DIR`: data directory path
@@ -293,6 +296,25 @@ see `docs/e2e-testing-learnings.md` for detailed lessons. key points:
 - set `KIMAKI_VITEST=1` to suppress clack terminal log noise during test runs. when set, the logger pushes entries to an in-memory buffer. tests use `getLogEntryCount()` / `getLogEntriesSince(index)` with `onTestFailed` to dump only the log lines from the failed test.
 - tests in a single file share the in-memory log buffer and run **sequentially** (not in parallel). if total duration of an e2e test file exceeds **~10 seconds**, split into a new file so vitest parallelizes across files.
 - `afterAll` should clean up opencode sessions via `session.list()` + `session.delete()` to avoid accumulation across runs.
+
+## event handler architecture
+
+our event handler should follow closely what opencode tui does. you can find opencode source code in opensrc folder.
+
+see `packages/app/src/components/prompt-input/submit.ts` for where opencode tui calls promptAsync
+
+opencode uses the event subscription (sdk call `event.subscribe`) as single source of truth for everything displayed in the tui. we should follow similar architecture. using opencode event stream as source of truth, and not setting state in discord message handlers. instead we should trigger opencode sdk calls, and then listen for the event stream as single source of truth.
+
+## aborting and resuming opencode session
+
+currently we queue user messages in opencode via `session.promptAsync` sdk method. opencode will run these messages on the next step (when current part finishes, things like tool calls, etc).
+
+we also have a /queue command to queue messages for next message finish. this state is tracked in our own state instead of opencode.
+
+sometimes we need to interrupt the opencode session and restart it. for example /model Discord command does this. the best way to implement this is to
+
+1. call `session.abort` sdk method to abort current session.
+2. call `session.promptAsync({ parts: [] })` to resume session
 
 # core guidelines
 
@@ -642,7 +664,7 @@ to understand how the code you are writing works, you should add inline snapshot
 
 - for very long snapshots you should use `toMatchFileSnapshot(filename)` instead of `toMatchInlineSnapshot()`. put the snapshot files in a snapshots/ directory and use the appropriate extension for the file based on the content
 
-never test client react components. only React and browser independent code.
+never test client react components. only React and browser independent code. 
 
 most tests should be simple calls to functions with some expect calls, no mocks. test files should be called the same as the file where the tested function is being exported from.
 
@@ -791,3 +813,4 @@ const jsonSchema = toJSONSchema(mySchema, {
   removeAdditionalStrategy: "strict",
 });
 ```
+
