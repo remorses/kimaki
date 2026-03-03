@@ -264,7 +264,7 @@ export async function handleQueueCommandAutocomplete({
     })
     .slice(0, 25)
     .map((cmd) => ({
-      name: `/${cmd.name} - ${cmd.description}`.slice(0, 100),
+      name: `/${cmd.name} [${cmd.source === 'skill' ? 'skill' : cmd.source === 'mcp' ? 'mcp' : 'cmd'}] - ${cmd.description}`.slice(0, 100),
       value: cmd.name.slice(0, 100),
     }))
 

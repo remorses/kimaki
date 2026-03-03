@@ -23,13 +23,13 @@ export const handleUserCommand: CommandHandler = async ({
 }: CommandContext) => {
   const discordCommandName = command.commandName
   // Look up the original OpenCode command name from the mapping populated at registration.
-  // The sanitized Discord name is lossy (e.g. foo:bar → foo-bar), so stripping -cmd
-  // would give the wrong name for commands with special characters.
-  const sanitizedBase = discordCommandName.replace(/-cmd$/, '')
+  // The sanitized Discord name is lossy (e.g. foo:bar → foo-bar), so resolving from
+  // the exact registered slash command name avoids collisions.
   const registered = store.getState().registeredUserCommands.find(
-    (c) => c.discordName === sanitizedBase,
+    (c) => c.discordCommandName === discordCommandName,
   )
-  const commandName = registered?.name || sanitizedBase
+  const fallbackBase = discordCommandName.replace(/-(cmd|skill)$/, '')
+  const commandName = registered?.name || fallbackBase
   const args = command.options.getString('arguments') || ''
 
   userCommandLogger.log(

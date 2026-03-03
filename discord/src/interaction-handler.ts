@@ -302,8 +302,11 @@ export function registerInteractionHandler({
             return
           }
 
-          // Handle user-defined commands (ending with -cmd suffix)
-          if (interaction.commandName.endsWith('-cmd')) {
+          // Handle user-defined commands (ending with -cmd or -skill suffix)
+          if (
+            interaction.commandName.endsWith('-cmd') ||
+            interaction.commandName.endsWith('-skill')
+          ) {
             await handleUserCommand({ command: interaction, appId })
             return
           }

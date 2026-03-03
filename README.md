@@ -194,6 +194,18 @@ Just send a message in any channel linked to a project. Kimaki handles the rest.
 | `/redo`                      | Redo the last undone message                            |
 | `/upgrade-and-restart`       | Upgrade kimaki to latest and restart the bot            |
 
+### Dynamic OpenCode Slash Commands
+
+Kimaki also registers project-specific slash commands from OpenCode's
+`/command` list:
+
+- **OpenCode commands** (`source: "command"`) become `/name-cmd`
+- **OpenCode skills** (`source: "skill"`) become `/name-skill`
+- **MCP prompts** (`source: "mcp"`) become `/name-cmd`
+
+MCP note: only MCP prompts become slash commands. MCP tools and MCP
+resources do not register as slash commands.
+
 ### CLI Commands
 
 ```bash

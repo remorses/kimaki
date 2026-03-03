@@ -14,12 +14,14 @@ import type { VerbosityLevel } from './database.js'
 import type { ThreadRunState } from './session-handler/thread-runtime-state.js'
 
 // Registered user commands, populated by registerCommands() in cli.ts.
-// discordName is the sanitized Discord slash command name (without -cmd suffix),
-// name is the original OpenCode command name (may contain :, /, etc).
+// discordCommandName is the full sanitized Discord slash command name
+// (including -cmd or -skill suffix), while name is the original OpenCode
+// command name (may contain :, /, etc).
 export type RegisteredUserCommand = {
   name: string
-  discordName: string
+  discordCommandName: string
   description: string
+  source?: 'command' | 'mcp' | 'skill'
 }
 
 // Deterministic transcription config for e2e tests.
