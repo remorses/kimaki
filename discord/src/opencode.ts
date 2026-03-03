@@ -289,6 +289,14 @@ export async function initializeOpencodeForDirectory(
   externalDirectoryPermissions[opencodeConfigDir] = 'allow'
   externalDirectoryPermissions[`${opencodeConfigDir}/*`] = 'allow'
 
+  // Allow ~/.kimaki so the agent can access kimaki data dir (logs, db, etc.)
+  // without permission prompts.
+  const kimakiDataDir = path
+    .join(os.homedir(), '.kimaki')
+    .replaceAll('\\', '/')
+  externalDirectoryPermissions[kimakiDataDir] = 'allow'
+  externalDirectoryPermissions[`${kimakiDataDir}/*`] = 'allow'
+
   if (originalRepo) {
     externalDirectoryPermissions[originalRepo] = 'allow'
     externalDirectoryPermissions[`${originalRepo}/*`] = 'allow'
