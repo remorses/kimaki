@@ -814,7 +814,7 @@ export function registerVoiceStateHandler({
             adapterCreator: newState.guild.voiceAdapterCreator,
             selfDeaf: false,
             debug: true,
-            daveEncryption: false,
+            // daveEncryption defaults to true, required by Discord since ~March 2026
             selfMute: false,
           })
 

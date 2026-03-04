@@ -76,6 +76,7 @@
   },
   "optionalDependencies": {
     "@discordjs/opus": "^0.10.0",
+    "@snazzah/davey": "^0.1.10",
     "heic-convert": "^2.1.0",
     "prism-media": "^1.3.5",
     "sharp": "^0.34.5"
