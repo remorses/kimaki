@@ -197,6 +197,24 @@ export function resolveOpencodeCommand(): string {
   return result
 }
 
+/**
+ * Build the spawn command and args, handling Windows .cmd shims.
+ * On Windows, .cmd/.bat files can't be spawned directly without a shell —
+ * we wrap them with cmd.exe /d /s /c instead of using shell: true
+ * (which creates an intermediate sh process that eats SIGTERM).
+ */
+function getSpawnCommandAndArgs(baseArgs: string[]): { command: string; args: string[] } {
+  const resolved = resolveOpencodeCommand()
+  if (process.platform !== 'win32') {
+    return { command: resolved, args: baseArgs }
+  }
+  const lower = resolved.toLowerCase()
+  if (lower.endsWith('.cmd') || lower.endsWith('.bat')) {
+    return { command: 'cmd.exe', args: ['/d', '/s', '/c', `"${resolved}"`, ...baseArgs] }
+  }
+  return { command: resolved, args: baseArgs }
+}
+
 const opencodeServers = new Map<
   string,
   {
@@ -353,18 +371,20 @@ export async function initializeOpencodeForDirectory(
     serveArgs.push('--print-logs', '--log-level', 'DEBUG')
   }
 
+  const { command: spawnCommand, args: spawnArgs } = getSpawnCommandAndArgs(serveArgs)
+
   const serverProcess = spawn(
-    opencodeCommand,
-    serveArgs,
+    spawnCommand,
+    spawnArgs,
     {
       stdio: 'pipe',
       detached: false,
       cwd: directory,
       // No shell: true — the binary path is resolved upfront via
-      // resolveOpencodeCommand(). shell: true creates an intermediate sh
-      // process that eats SIGTERM on cleanup, leaving the real opencode
-      // process orphaned. On Windows, cli.ts ensureCommandAvailable
-      // resolves the full .cmd path into OPENCODE_PATH before we get here.
+      // resolveOpencodeCommand(), and Windows .cmd shims are handled via
+      // cmd.exe /c in getSpawnCommandAndArgs(). shell: true creates an
+      // intermediate sh process that eats SIGTERM on cleanup, leaving
+      // the real opencode process orphaned.
       env: {
         ...process.env,
         OPENCODE_CONFIG_CONTENT: JSON.stringify({
@@ -467,15 +487,21 @@ export async function initializeOpencodeForDirectory(
     logBuffer.push(`Failed to start server on port ${port}: ${error}`)
   })
 
-  serverProcess.on('exit', (code) => {
+  serverProcess.on('exit', (code, signal) => {
     opencodeLogger.log(
-      `Opencode server on ${directory} exited with code:`,
-      code,
+      `Opencode server on ${directory} exited with code: ${code}, signal: ${signal}`,
     )
     // Capture init options before deleting the entry so auto-restart preserves
     // worktree repo access.
     const storedInitOptions = opencodeServers.get(directory)?.initOptions
     opencodeServers.delete(directory)
+    // Intentional kills (SIGTERM from cleanup/restart) should not trigger
+    // auto-restart. Only unexpected crashes (non-zero exit without signal)
+    // get retried.
+    if (signal === 'SIGTERM') {
+      serverRetryCount.delete(directory)
+      return
+    }
     if (code !== 0) {
       const retryCount = serverRetryCount.get(directory) || 0
       if (retryCount < 5) {
@@ -558,14 +584,6 @@ export function getOpencodeServers() {
   return opencodeServers
 }
 
-/**
- * Suppress auto-restart for a directory so the exit handler doesn't
- * respawn the server after SIGTERM. Used by test cleanup.
- */
-export function suppressAutoRestart(directory: string) {
-  serverRetryCount.set(directory, 999)
-}
-
 export function getOpencodeServerPort(directory: string): number | null {
   const entry = opencodeServers.get(directory)
   return entry?.port ?? null
@@ -593,8 +611,6 @@ export async function restartOpencodeServer(
     opencodeLogger.log(
       `Killing existing server for directory: ${directory} (pid: ${existing.process.pid})`,
     )
-    // Reset retry count so the exit handler doesn't auto-restart
-    serverRetryCount.set(directory, 999)
     existing.process.kill('SIGTERM')
     opencodeServers.delete(directory)
     // Give the process time to fully terminate

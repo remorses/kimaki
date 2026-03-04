@@ -13,7 +13,6 @@ import {
   getOpencodeClient,
   getOpencodeServers,
   initializeOpencodeForDirectory,
-  suppressAutoRestart,
 } from './opencode.js'
 import {
   getThreadState,
@@ -27,10 +26,7 @@ import type { MainRunPhase } from './session-handler/state.js'
  */
 export async function cleanupOpencodeServers() {
   const servers = getOpencodeServers()
-  for (const [directory, server] of servers) {
-    // Suppress auto-restart before killing so the exit handler doesn't
-    // respawn the server after SIGTERM (same pattern as restartOpencodeServer).
-    suppressAutoRestart(directory)
+  for (const [, server] of servers) {
     if (!server.process.killed) {
       server.process.kill('SIGTERM')
     }
