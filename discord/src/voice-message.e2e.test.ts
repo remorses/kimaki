@@ -944,8 +944,13 @@ e2eTest('voice message handling', () => {
 
       const th = discord.thread(thread.id)
 
-      // Wait for the first bot reply (session established)
+      // Wait for the first run to complete before sending voice.
       await th.waitForBotReply({ timeout: 4_000 })
+      await waitForFooterMessage({
+        discord,
+        threadId: thread.id,
+        timeout: 4_000,
+      })
 
       // 2. Now send voice message with slow transcription
       // The fast response completes in ~100ms, but transcription takes 500ms.
@@ -983,26 +988,15 @@ e2eTest('voice message handling', () => {
         afterAuthorId: discord.botUserId,
       })
 
-      const transcribingBlock =
-        '--- from: assistant (TestBot)\n🎤 Transcribing voice message...'
-      const footerBlock =
-        '--- from: assistant (TestBot)\n*project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2*'
-      const normalizedThreadText = (await th.text())
-        .replace(
-          `${transcribingBlock}\n${footerBlock}`,
-          '--- from: assistant (TestBot)\n[TRANSCRIBING_AND_FOOTER]',
-        )
-        .replace(
-          `${footerBlock}\n${transcribingBlock}`,
-          '--- from: assistant (TestBot)\n[TRANSCRIBING_AND_FOOTER]',
-        )
-      expect(normalizedThreadText).toMatchInlineSnapshot(`
+      expect(await th.text()).toMatchInlineSnapshot(`
         "--- from: assistant (TestBot)
         ⬥ fast-response-done
+        --- from: assistant (TestBot)
+        *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2*
         --- from: user (voice-tester)
         [attachment: voice-message.ogg]
         --- from: assistant (TestBot)
-        [TRANSCRIBING_AND_FOOTER]
+        🎤 Transcribing voice message...
         --- from: assistant (TestBot)
         📝 **Transcribed message:** Delayed transcription result
         --- from: assistant (TestBot)
