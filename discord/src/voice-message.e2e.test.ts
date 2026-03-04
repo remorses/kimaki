@@ -592,9 +592,7 @@ e2eTest('voice message handling', () => {
         timeout: 4_000,
       })
       expect(await th.text()).toMatchInlineSnapshot(`
-        "[bot typing]
-        [bot typing]
-        --- from: assistant (TestBot)
+        "--- from: assistant (TestBot)
         ⬥ fast-response-done
         --- from: user (voice-tester)
         [attachment: voice-message.ogg]
@@ -604,10 +602,10 @@ e2eTest('voice message handling', () => {
         🎤 Transcribing voice message...
         --- from: assistant (TestBot)
         📝 **Transcribed message:** Add error handling to the parser
-        [bot typing]
-        [bot typing]
         --- from: assistant (TestBot)
-        ⬥ session-reply"
+        ⬥ session-reply
+        --- from: assistant (TestBot)
+        *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2*"
       `)
       expect(finalState.sessionId).toBeDefined()
       expect(finalState.queueItems.length).toBe(0)
@@ -821,10 +819,8 @@ e2eTest('voice message handling', () => {
         🎤 Transcribing voice message...
         --- from: assistant (TestBot)
         📝 **Transcribed message:** Queue this task for later
-        [bot typing]
         --- from: assistant (TestBot)
         Queued at position 1
-        [bot typing]
         --- from: assistant (TestBot)
         ⬥ slow-response-done
         --- from: assistant (TestBot)
@@ -833,8 +829,6 @@ e2eTest('voice message handling', () => {
         » **voice-tester:** Voice message transcription from Discord user:
 
         Queue this task for later
-        [bot typing]
-        [bot typing]
         --- from: assistant (TestBot)
         ⬥ session-reply"
       `)
@@ -938,11 +932,13 @@ e2eTest('voice message handling', () => {
         --- from: user (voice-tester)
         [attachment: voice-message.ogg]
         --- from: assistant (TestBot)
-        *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2*
-        --- from: assistant (TestBot)
         🎤 Transcribing voice message...
         --- from: assistant (TestBot)
-        📝 **Transcribed message:** Delayed transcription result"
+        *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2*
+        --- from: assistant (TestBot)
+        📝 **Transcribed message:** Delayed transcription result
+        --- from: assistant (TestBot)
+        ⬥ session-reply"
       `)
       expect(finalState.sessionId).toBeDefined()
       expect(finalState.queueItems.length).toBe(0)
