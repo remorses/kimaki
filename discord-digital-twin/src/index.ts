@@ -716,17 +716,50 @@ export class ChannelScope {
    *   message content
    *   --- from: assistant (BotName)
    *   reply content
+   *   [typing]
    *
    * @param deterministicFooters - When true (default), replaces non-deterministic
    *   values in footer lines (duration like "2m 30s" and context percentage like
    *   "71%") with stable placeholders ("Ns" and "N%") so inline snapshots don't
    *   break across runs. Footer lines are detected by starting with "*" and
    *   containing "⋅".
+   * @param showTyping - When true, interleaves [typing] markers at the
+   *   chronological position of typing indicator POST calls. Defaults to false
+   *   so existing snapshots are not affected.
    */
-  async text({ deterministicFooters = true }: { deterministicFooters?: boolean } = {}): Promise<string> {
+  async text({ deterministicFooters = true, showTyping = true }: { deterministicFooters?: boolean; showTyping?: boolean } = {}): Promise<string> {
     const messages = await this.getMessages()
+
+    // Build timeline entries: messages + optional typing events
+    type TimelineEntry =
+      | { kind: 'message'; ts: number; msg: APIMessage }
+      | { kind: 'typing'; ts: number }
+
+    const timeline: TimelineEntry[] = messages.map((msg) => {
+      return {
+        kind: 'message' as const,
+        ts: new Date(msg.timestamp).getTime(),
+        msg,
+      }
+    })
+
+    if (showTyping) {
+      const typingEvents = this.discord.getTypingEvents({ channelId: this.channelId })
+      for (const evt of typingEvents) {
+        timeline.push({ kind: 'typing' as const, ts: evt.timestamp })
+      }
+      timeline.sort((a, b) => {
+        return a.ts - b.ts
+      })
+    }
+
     const lines: string[] = []
-    for (const msg of messages) {
+    for (const entry of timeline) {
+      if (entry.kind === 'typing') {
+        lines.push('[typing]')
+        continue
+      }
+      const msg = entry.msg
       const role = msg.author.bot ? 'assistant' : 'user'
       lines.push(`--- from: ${role} (${msg.author.username})`)
       if (msg.content) {

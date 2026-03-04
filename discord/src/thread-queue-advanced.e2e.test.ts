@@ -457,10 +457,11 @@ e2eTest('thread queue advanced (interrupt, abort, model-switch)', () => {
         })
       }
       expect(await th.text()).toMatchInlineSnapshot(`
-        "--- from: assistant (TestBot)
+        "[typing]
+        [typing]
+        --- from: assistant (TestBot)
         ⬥ ok
-
-
+        [typing]
         --- from: assistant (TestBot)
         *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2*"
       `)
@@ -518,8 +519,6 @@ e2eTest('thread queue advanced (interrupt, abort, model-switch)', () => {
       expect(await th.text()).toMatchInlineSnapshot(`
         "--- from: assistant (TestBot)
         ⬥ ok
-
-
         --- from: assistant (TestBot)
         *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2*"
       `)
@@ -587,19 +586,13 @@ e2eTest('thread queue advanced (interrupt, abort, model-switch)', () => {
           && m.content.includes('⋅')
       }).length
       expect(await th.text()).toMatchInlineSnapshot(`
-        "--- from: assistant (TestBot)
-        ⬥ ok
-
-
-        --- from: assistant (TestBot)
-        *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2*
-        --- from: user (queue-advanced-tester)
-        Reply with exactly: footer-multi-second
-        --- from: assistant (TestBot)
-        ⬥ ok
-
-        "
-      `)
+          "[typing]
+          [typing]
+          --- from: assistant (TestBot)
+          ⬥ ok
+          --- from: assistant (TestBot)
+          *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2*"
+        `)
       if (footerCount >= 2) {
         // Already appeared
         expect(footerCount).toBeGreaterThanOrEqual(2)
@@ -714,25 +707,21 @@ e2eTest('thread queue advanced (interrupt, abort, model-switch)', () => {
         return m.author.id === discord.botUserId && m.content.includes('ok')
       })
       expect(await th.text()).toMatchInlineSnapshot(`
-        "--- from: assistant (TestBot)
-        ⬥ ok
-
-
-        --- from: assistant (TestBot)
-        *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2*
-        --- from: user (queue-advanced-tester)
-        PLUGIN_TIMEOUT_SLEEP_MARKER
-        --- from: assistant (TestBot)
-        ⬥ starting sleep 100
-
-
-        --- from: user (queue-advanced-tester)
-        Reply with exactly: interrupt-footer-followup
-        --- from: assistant (TestBot)
-        ⬥ ok
-
-        "
-      `)
+          "[typing]
+          [typing]
+          --- from: assistant (TestBot)
+          ⬥ ok
+          --- from: assistant (TestBot)
+          *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2*
+          --- from: user (queue-advanced-tester)
+          Reply with exactly: footer-multi-second
+          [typing]
+          [typing]
+          --- from: assistant (TestBot)
+          ⬥ ok
+          --- from: assistant (TestBot)
+          *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2*"
+        `)
       expect(followupUserIdx).toBeGreaterThanOrEqual(0)
       expect(okReplyIdx).toBeGreaterThan(followupUserIdx)
 
@@ -824,27 +813,24 @@ e2eTest('thread queue advanced (interrupt, abort, model-switch)', () => {
       })
 
       expect(await th.text()).toMatchInlineSnapshot(`
-        "--- from: assistant (TestBot)
-        ⬥ ok
-
-
-        --- from: assistant (TestBot)
-        *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2*
-        --- from: user (queue-advanced-tester)
-        PLUGIN_TIMEOUT_SLEEP_MARKER
-        --- from: assistant (TestBot)
-        ⬥ starting sleep 100
-
-
-        --- from: user (queue-advanced-tester)
-        Reply with exactly: typing-stop-interrupt-final
-        --- from: assistant (TestBot)
-        ⬥ ok
-
-
-        --- from: assistant (TestBot)
-        *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2*"
-      `)
+          "[typing]
+          [typing]
+          --- from: assistant (TestBot)
+          ⬥ ok
+          --- from: assistant (TestBot)
+          *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2*
+          --- from: user (queue-advanced-tester)
+          PLUGIN_TIMEOUT_SLEEP_MARKER
+          [typing]
+          [typing]
+          --- from: assistant (TestBot)
+          ⬥ starting sleep 100
+          --- from: user (queue-advanced-tester)
+          Reply with exactly: interrupt-footer-followup
+          [typing]
+          --- from: assistant (TestBot)
+          ⬥ ok"
+        `)
       expect(finalUserIndex).toBeGreaterThanOrEqual(0)
       expect(finalReplyIndex).toBeGreaterThan(finalUserIndex)
       expect(finalFooterIndex).toBeGreaterThan(finalReplyIndex)
@@ -926,19 +912,24 @@ e2eTest('thread queue advanced (interrupt, abort, model-switch)', () => {
         return m.author.id === discord.botUserId
       })
       expect(await th.text()).toMatchInlineSnapshot(`
-        "--- from: assistant (TestBot)
-        ⬥ ok
-
-
-        --- from: user (queue-advanced-tester)
-        PLUGIN_TIMEOUT_SLEEP_MARKER
-        --- from: user (queue-advanced-tester)
-        Reply with exactly: papa
-        --- from: assistant (TestBot)
-        ⬥ starting sleep 100
-
-        "
-      `)
+          "--- from: assistant (TestBot)
+          ⬥ ok
+          --- from: assistant (TestBot)
+          *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2*
+          --- from: user (queue-advanced-tester)
+          PLUGIN_TIMEOUT_SLEEP_MARKER
+          [typing]
+          [typing]
+          --- from: assistant (TestBot)
+          ⬥ starting sleep 100
+          --- from: user (queue-advanced-tester)
+          Reply with exactly: typing-stop-interrupt-final
+          [typing]
+          --- from: assistant (TestBot)
+          ⬥ ok
+          --- from: assistant (TestBot)
+          *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2*"
+        `)
       expect(afterBotMessages.length).toBeGreaterThanOrEqual(beforeBotCount + 1)
 
       // Ensure the slow marker user message appeared before papa.
@@ -1020,15 +1011,19 @@ e2eTest('thread queue advanced (interrupt, abort, model-switch)', () => {
       })
 
       expect(await th.text()).toMatchInlineSnapshot(`
-        "--- from: assistant (TestBot)
-        ⬥ ok
-
-
-        --- from: assistant (TestBot)
-        *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2*
-        --- from: user (queue-advanced-tester)
-        SLOW_ABORT_MARKER run long response"
-      `)
+          "[typing]
+          [typing]
+          --- from: assistant (TestBot)
+          ⬥ ok
+          --- from: user (queue-advanced-tester)
+          PLUGIN_TIMEOUT_SLEEP_MARKER
+          --- from: user (queue-advanced-tester)
+          Reply with exactly: papa
+          [typing]
+          [typing]
+          --- from: assistant (TestBot)
+          ⬥ starting sleep 100"
+        `)
       // Poll Discord messages and verify no NEW footer appears after abort.
       // Only check messages that arrived after the abort — earlier footers
       // (from the setup reply) are expected and should not cause failure.
@@ -1112,27 +1107,16 @@ e2eTest('thread queue advanced (interrupt, abort, model-switch)', () => {
         )
       })
       expect(await th.text()).toMatchInlineSnapshot(`
-        "--- from: assistant (TestBot)
-        ⬥ ok
-
-
-        --- from: assistant (TestBot)
-        *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2*
-        --- from: user (queue-advanced-tester)
-        PLUGIN_TIMEOUT_SLEEP_MARKER
-        --- from: assistant (TestBot)
-        ⬥ starting sleep 100
-
-
-        --- from: user (queue-advanced-tester)
-        Reply with exactly: plugin-timeout-after
-        --- from: assistant (TestBot)
-        ⬥ ok
-
-
-        --- from: assistant (TestBot)
-        *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2*"
-      `)
+          "[typing]
+          [typing]
+          --- from: assistant (TestBot)
+          ⬥ ok
+          --- from: assistant (TestBot)
+          *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2*
+          --- from: user (queue-advanced-tester)
+          SLOW_ABORT_MARKER run long response
+          [typing]"
+        `)
       expect(afterIndex).toBeGreaterThanOrEqual(0)
 
       const okReplyIndex = messages.findIndex((message, index) => {
@@ -1291,15 +1275,24 @@ e2eTest('thread queue advanced (interrupt, abort, model-switch)', () => {
       })
 
       expect(await th.text()).toMatchInlineSnapshot(`
-        "--- from: assistant (TestBot)
-        ⬥ ok
-
-
-        --- from: user (queue-advanced-tester)
-        PLUGIN_TIMEOUT_SLEEP_MARKER
-        --- from: user (queue-advanced-tester)
-        Reply with exactly: model-switch-followup"
-      `)
+          "[typing]
+          [typing]
+          --- from: assistant (TestBot)
+          ⬥ ok
+          --- from: assistant (TestBot)
+          *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2*
+          --- from: user (queue-advanced-tester)
+          PLUGIN_TIMEOUT_SLEEP_MARKER
+          [typing]
+          [typing]
+          --- from: assistant (TestBot)
+          ⬥ starting sleep 100
+          --- from: user (queue-advanced-tester)
+          Reply with exactly: plugin-timeout-after
+          [typing]
+          --- from: assistant (TestBot)
+          ⬥ ok"
+        `)
       await waitForBotReplyAfterUserMessage({
         discord,
         threadId: thread.id,
@@ -1357,13 +1350,17 @@ e2eTest('thread queue advanced (interrupt, abort, model-switch)', () => {
         timeout: 4_000,
       })
       expect(await th.text()).toMatchInlineSnapshot(`
-        "--- from: assistant (TestBot)
-        ⬥ ok
-
-
-        --- from: user (queue-advanced-tester)
-        SLOW_ABORT_MARKER run long response"
-      `)
+          "[typing]
+          [typing]
+          --- from: assistant (TestBot)
+          ⬥ ok
+          --- from: user (queue-advanced-tester)
+          PLUGIN_TIMEOUT_SLEEP_MARKER
+          [typing]
+          [typing]
+          --- from: user (queue-advanced-tester)
+          Reply with exactly: model-switch-followup"
+        `)
       expect(settled.runState.phase).toBe('idle')
     },
     10_000,

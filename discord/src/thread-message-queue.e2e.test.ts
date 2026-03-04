@@ -406,10 +406,10 @@ e2eTest('thread message queue ordering', () => {
       })
 
       expect(await discord.thread(thread.id).text()).toMatchInlineSnapshot(`
-        "--- from: assistant (TestBot)
-        ⬥ ok
-
-        "
+        "[typing]
+        [typing]
+        --- from: assistant (TestBot)
+        ⬥ ok"
       `)
     },
     12_000,
@@ -466,10 +466,10 @@ e2eTest('thread message queue ordering', () => {
       expect(afterBotMessages.length).toBeGreaterThanOrEqual(beforeBotCount + 1)
 
       expect(await th.text()).toMatchInlineSnapshot(`
-        "--- from: assistant (TestBot)
+        "[typing]
+        [typing]
+        --- from: assistant (TestBot)
         ⬥ ok
-
-
         --- from: user (queue-tester)
         Reply with exactly: beta
         --- from: assistant (TestBot)
@@ -551,16 +551,17 @@ e2eTest('thread message queue ordering', () => {
       expect(afterBotMessages.length).toBeGreaterThanOrEqual(beforeBotCount + 1)
 
       expect(await th.text()).toMatchInlineSnapshot(`
-        "--- from: assistant (TestBot)
+        "[typing]
+        [typing]
+        --- from: assistant (TestBot)
         ⬥ ok
-
-
         --- from: user (queue-tester)
         Reply with exactly: two
         --- from: user (queue-tester)
         Reply with exactly: three
         --- from: assistant (TestBot)
-        *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2*"
+        *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2*
+        [typing]"
       `)
       const userThreeIndex = after.findIndex((message) => {
         return (
@@ -628,18 +629,18 @@ e2eTest('thread message queue ordering', () => {
       })
 
       expect(await th.text()).toMatchInlineSnapshot(`
-        "--- from: assistant (TestBot)
+        "[typing]
+        [typing]
+        --- from: assistant (TestBot)
         ⬥ ok
-
-
         --- from: user (queue-tester)
         Prompt from test: respond with short text for opencode queue mode.
         --- from: assistant (TestBot)
         *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2*
+        [typing]
+        [typing]
         --- from: assistant (TestBot)
-        ⬥ ok
-
-        "
+        ⬥ ok"
       `)
       // Normal messages should not populate kimaki local queue.
       const noLocalQueueState = await waitForThreadState({
@@ -690,10 +691,10 @@ e2eTest('thread message queue ordering', () => {
       }
 
       expect(await discord.thread(thread.id).text()).toMatchInlineSnapshot(`
-        "--- from: assistant (TestBot)
-        ⬥ running create file
-
-        "
+        "[typing]
+        [typing]
+        --- from: assistant (TestBot)
+        ⬥ running create file"
       `)
       expect(fs.existsSync(markerPath)).toBe(true)
       const markerContents = fs.readFileSync(markerPath, 'utf8')
@@ -779,26 +780,27 @@ e2eTest('thread message queue ordering', () => {
       })
 
       expect(await th.text()).toMatchInlineSnapshot(`
-        "--- from: assistant (TestBot)
+        "[typing]
+        [typing]
+        --- from: assistant (TestBot)
         ⬥ ok
-
-
         --- from: assistant (TestBot)
         Queued message (position 1)
         --- from: assistant (TestBot)
         *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2*
         --- from: assistant (TestBot)
         » **queue-tester:** Reply with exactly: race-final
+        [typing]
         --- from: assistant (TestBot)
         Queued message (position 1)
+        [typing]
         --- from: assistant (TestBot)
         ⬥ race-final
-
-
         --- from: assistant (TestBot)
         *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2*
         --- from: assistant (TestBot)
-        » **queue-tester:** Reply with exactly: queued-from-slash"
+        » **queue-tester:** Reply with exactly: queued-from-slash
+        [typing]"
       `)
       expect(queuedAckIndex).toBeGreaterThan(-1)
       expect(dispatchIndicatorIndex).toBeGreaterThan(-1)
@@ -869,20 +871,20 @@ e2eTest('thread message queue ordering', () => {
         return m.author.id === TEST_USER_ID && m.content.includes('foxtrot')
       })
       expect(await th.text()).toMatchInlineSnapshot(`
-        "--- from: assistant (TestBot)
+        "[typing]
+        [typing]
+        --- from: assistant (TestBot)
         ⬥ ok
-
-
         --- from: user (queue-tester)
         Reply with exactly: echo
         --- from: assistant (TestBot)
         *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2*
+        [typing]
         --- from: user (queue-tester)
         Reply with exactly: foxtrot
+        [typing]
         --- from: assistant (TestBot)
-        ⬥ ok
-
-        "
+        ⬥ ok"
       `)
       expect(userEchoIndex).toBeGreaterThan(-1)
       expect(userFoxtrotIndex).toBeGreaterThan(-1)
@@ -951,20 +953,20 @@ e2eTest('thread message queue ordering', () => {
       // C's user message appears before its bot response.
       // We assert on india's reply existence.
       expect(await th.text()).toMatchInlineSnapshot(`
-        "--- from: assistant (TestBot)
+        "[typing]
+        [typing]
+        --- from: assistant (TestBot)
         ⬥ ok
-
-
         --- from: user (queue-tester)
         Reply with exactly: hotel
         --- from: assistant (TestBot)
         *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2*
+        [typing]
         --- from: user (queue-tester)
         Reply with exactly: india
+        [typing]
         --- from: assistant (TestBot)
-        ⬥ ok
-
-        "
+        ⬥ ok"
       `)
       const userIndiaIndex = after.findIndex((m) => {
         return m.author.id === TEST_USER_ID && m.content.includes('india')
@@ -1056,32 +1058,30 @@ e2eTest('thread message queue ordering', () => {
       expect(finalBotMessages.length).toBeGreaterThanOrEqual(burstBotCount)
 
       expect(await th.text()).toMatchInlineSnapshot(`
-        "--- from: assistant (TestBot)
+        "[typing]
+        [typing]
+        --- from: assistant (TestBot)
         ⬥ ok
-
-
         --- from: user (queue-tester)
         Reply with exactly: kilo
         --- from: assistant (TestBot)
         *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2*
+        [typing]
         --- from: user (queue-tester)
         Reply with exactly: lima
+        [typing]
         --- from: assistant (TestBot)
         ⬥ ok
-
-
         --- from: user (queue-tester)
         Reply with exactly: mike
+        [typing]
         --- from: assistant (TestBot)
         ⬥ ok
-
-
         --- from: user (queue-tester)
         Reply with exactly: november
+        [typing]
         --- from: assistant (TestBot)
-        ⬥ ok
-
-        "
+        ⬥ ok"
       `)
       // E's user message appears before the final bot response
       const userNovemberIndex = afterE.findIndex((m) => {

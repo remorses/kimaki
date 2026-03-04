@@ -400,10 +400,10 @@ describeIf('gateway-proxy e2e', () => {
 
       const reply = await discord.thread(thread.id).waitForBotReply({ timeout: 15_000 })
       expect(await discord.thread(thread.id).text()).toMatchInlineSnapshot(`
-        "--- from: assistant (TestBot)
-        ⬥ gateway-proxy-reply
-
-        "
+        "[typing]
+        [typing]
+        --- from: assistant (TestBot)
+        ⬥ gateway-proxy-reply"
       `)
       expect(reply).toBeDefined()
       expect(reply.content.trim().length).toBeGreaterThan(0)
@@ -425,10 +425,10 @@ describeIf('gateway-proxy e2e', () => {
         predicate: (m) => !existingIds.has(m.id) && m.author.id === discord.botUserId,
       })
       expect(await discord.thread(firstThreadId).text()).toMatchInlineSnapshot(`
-        "--- from: assistant (TestBot)
+        "[typing]
+        [typing]
+        --- from: assistant (TestBot)
         ⬥ gateway-proxy-reply
-
-
         --- from: user (proxy-tester)
         follow up through proxy
         --- from: assistant (TestBot)
@@ -459,10 +459,10 @@ describeIf('gateway-proxy e2e', () => {
           m.content.includes('exited with'),
       })
       expect(await discord.thread(firstThreadId).text()).toMatchInlineSnapshot(`
-        "--- from: assistant (TestBot)
+        "[typing]
+        [typing]
+        --- from: assistant (TestBot)
         ⬥ gateway-proxy-reply
-
-
         --- from: user (proxy-tester)
         follow up through proxy
         --- from: assistant (TestBot)
@@ -473,7 +473,8 @@ describeIf('gateway-proxy e2e', () => {
         \`echo proxy-shell-test\` exited with 0
         \`\`\`
         proxy-shell-test
-        \`\`\`"
+        \`\`\`
+        [typing]"
       `)
       expect(reply.content).toContain('proxy-shell-test')
     },
@@ -497,10 +498,10 @@ describeIf('gateway-proxy e2e', () => {
 
       const reply = await discord.thread(thread.id).waitForBotReply()
       expect(await discord.thread(thread.id).text()).toMatchInlineSnapshot(`
-        "--- from: assistant (TestBot)
-        ⬥ gateway-proxy-reply
-
-        "
+        "[typing]
+        [typing]
+        --- from: assistant (TestBot)
+        ⬥ gateway-proxy-reply"
       `)
       expect(reply).toBeDefined()
       expect(reply.content.trim().length).toBeGreaterThan(0)
