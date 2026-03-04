@@ -93,6 +93,34 @@ function createDiscordJsClient({ restUrl }: { restUrl: string }) {
 }
 
 function createDeterministicMatchers(): DeterministicMatcher[] {
+  const systemContextMatcher: DeterministicMatcher = {
+    id: 'system-context-check',
+    priority: 20,
+    when: {
+      lastMessageRole: 'user',
+      latestUserTextIncludes: 'Reply with exactly: system-context-check',
+      rawPromptIncludes: `Current Discord user ID is: ${TEST_USER_ID}`,
+    },
+    then: {
+      parts: [
+        { type: 'stream-start', warnings: [] },
+        { type: 'text-start', id: 'system-context-reply' },
+        {
+          type: 'text-delta',
+          id: 'system-context-reply',
+          delta: 'system-context-ok',
+        },
+        { type: 'text-end', id: 'system-context-reply' },
+        {
+          type: 'finish',
+          finishReason: 'stop',
+          usage: { inputTokens: 1, outputTokens: 1, totalTokens: 2 },
+        },
+      ],
+      partDelaysMs: [0, 100, 0, 0, 0],
+    },
+  }
+
   const userReplyMatcher: DeterministicMatcher = {
     id: 'user-reply',
     priority: 10,
@@ -116,7 +144,7 @@ function createDeterministicMatchers(): DeterministicMatcher[] {
     },
   }
 
-  return [userReplyMatcher]
+  return [systemContextMatcher, userReplyMatcher]
 }
 
 /**
@@ -358,6 +386,33 @@ describe('agent model resolution', () => {
       // The footer should contain the agent's model, not the default
       expect(footerMessage.content).toContain(AGENT_MODEL)
       expect(footerMessage.content).not.toContain(DEFAULT_MODEL)
+    },
+    15_000,
+  )
+
+  test(
+    'promptAsync path includes rich system context',
+    async () => {
+      await setChannelAgent(TEXT_CHANNEL_ID, 'test-agent')
+
+      await discord.channel(TEXT_CHANNEL_ID).user(TEST_USER_ID).sendMessage({
+        content: 'Reply with exactly: system-context-check',
+      })
+
+      const thread = await discord.channel(TEXT_CHANNEL_ID).waitForThread({
+        timeout: 4_000,
+        predicate: (t) => {
+          return t.name === 'Reply with exactly: system-context-check'
+        },
+      })
+
+      await waitForBotMessageContaining({
+        discord,
+        threadId: thread.id,
+        userId: TEST_USER_ID,
+        text: 'system-context-ok',
+        timeout: 4_000,
+      })
     },
     15_000,
   )

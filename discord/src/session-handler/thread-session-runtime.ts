@@ -1768,10 +1768,9 @@ export class ThreadSessionRuntime {
         void this.startEventListener()
       }
 
-      // ── Mark running + create abort controller early ────────
-      // Mirrors dispatchPrompt: mark running immediately so canDispatchNext()
-      // cannot start a concurrent dispatch, and create an AbortController so
-      // explicit aborts can cancel even during async setup.
+      // ── Mark running early ───────────────────────────────────
+      // Keep this path event-driven for run lifecycle details; this flag only
+      // gates local queue draining/typing behavior for this enqueue attempt.
       const shouldMarkRunning =
         this.state?.runState.phase !== 'running' ||
         input.resetAssistantForNewRun === true
@@ -1787,18 +1786,18 @@ export class ThreadSessionRuntime {
         threadState.updateRunState(this.threadId, pureMarkRunning)
       }
 
-      const runController = new AbortController()
-      threadState.setRunController(this.threadId, runController)
-
       // Helper: clean up run state on any error path (mirrors dispatchPrompt).
-      // Marks idle, clears controller, stops typing, and drains queue so
+      // Marks idle, stops typing, and drains queue so
       // queued messages don't get permanently stuck after errors.
       const cleanupOnError = async (errorMessage: string) => {
-        threadState.updateRunState(this.threadId, pureMarkIdle)
-        threadState.setRunController(this.threadId, undefined)
-        this.stopTyping()
+        if (shouldMarkRunning) {
+          threadState.updateRunState(this.threadId, pureMarkIdle)
+          this.stopTyping()
+        }
         await sendThreadMessage(this.thread, errorMessage)
-        await this.tryDrainQueue({ showIndicator: true })
+        if (shouldMarkRunning) {
+          await this.tryDrainQueue({ showIndicator: true })
+        }
       }
 
       // ── Ensure session ──────────────────────────────────────
@@ -1936,7 +1935,9 @@ export class ThreadSessionRuntime {
         : {}
 
       // ── Start typing ────────────────────────────────────────
-      this.startTyping()
+      if (shouldMarkRunning) {
+        this.startTyping()
+      }
 
       // ── Build prompt parts ──────────────────────────────────
       const images = input.images || []
@@ -1991,12 +1992,6 @@ export class ThreadSessionRuntime {
         }
         return fetched.topic?.trim() || undefined
       })()
-
-      // ── Check abort before SDK call ─────────────────────────
-      if (runController.signal.aborted) {
-        this.stopTyping()
-        return
-      }
 
       const request = {
         sessionID: session.id,
