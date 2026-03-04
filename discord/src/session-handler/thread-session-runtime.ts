@@ -1744,6 +1744,10 @@ export class ThreadSessionRuntime {
   /**
    * Submit a user turn directly to opencode's internal session queue.
    * This is the default path for normal Discord messages.
+   *
+   * Mirrors dispatchPrompt's preference resolution, abort handling, and error
+   * recovery so that promptAsync receives the same agent/model/variant/system
+   * fields that the local-queue path provides.
    */
   private async submitViaOpencodeQueue(input: IngressInput): Promise<EnqueueResult> {
     let skippedBySessionGuard = false
@@ -1764,27 +1768,10 @@ export class ThreadSessionRuntime {
         void this.startEventListener()
       }
 
-      const sessionResult = await this.ensureSession({
-        prompt: input.prompt,
-        agent: input.agent,
-        sessionStartScheduleKind: input.sessionStartSource?.scheduleKind,
-        sessionStartScheduledTaskId: input.sessionStartSource?.scheduledTaskId,
-      })
-      if (sessionResult instanceof Error) {
-        await sendThreadMessage(this.thread, `✗ ${sessionResult.message}`)
-        return
-      }
-
-      const { session, getClient } = sessionResult
-
-      // If listener startup happened before initializeOpencodeForDirectory(),
-      // startEventListener may have exited early with "No OpenCode client".
-      // Re-check after ensureSession so first promptAsync on a cold directory
-      // still has an active SSE listener for message parts.
-      if (!this.listenerLoopRunning) {
-        void this.startEventListener()
-      }
-
+      // ── Mark running + create abort controller early ────────
+      // Mirrors dispatchPrompt: mark running immediately so canDispatchNext()
+      // cannot start a concurrent dispatch, and create an AbortController so
+      // explicit aborts can cancel even during async setup.
       const shouldMarkRunning =
         this.state?.runState.phase !== 'running' ||
         input.resetAssistantForNewRun === true
@@ -1798,9 +1785,160 @@ export class ThreadSessionRuntime {
           }
         })
         threadState.updateRunState(this.threadId, pureMarkRunning)
-        this.startTyping()
       }
 
+      const runController = new AbortController()
+      threadState.setRunController(this.threadId, runController)
+
+      // Helper: clean up run state on any error path (mirrors dispatchPrompt).
+      // Marks idle, clears controller, stops typing, and drains queue so
+      // queued messages don't get permanently stuck after errors.
+      const cleanupOnError = async (errorMessage: string) => {
+        threadState.updateRunState(this.threadId, pureMarkIdle)
+        threadState.setRunController(this.threadId, undefined)
+        this.stopTyping()
+        await sendThreadMessage(this.thread, errorMessage)
+        await this.tryDrainQueue({ showIndicator: true })
+      }
+
+      // ── Ensure session ──────────────────────────────────────
+      const sessionResult = await this.ensureSession({
+        prompt: input.prompt,
+        agent: input.agent,
+        sessionStartScheduleKind: input.sessionStartSource?.scheduleKind,
+        sessionStartScheduledTaskId: input.sessionStartSource?.scheduledTaskId,
+      })
+      if (sessionResult instanceof Error) {
+        await cleanupOnError(`✗ ${sessionResult.message}`)
+        return
+      }
+
+      const { session, getClient, createdNewSession } = sessionResult
+
+      // If listener startup happened before initializeOpencodeForDirectory(),
+      // startEventListener may have exited early with "No OpenCode client".
+      // Re-check after ensureSession so first promptAsync on a cold directory
+      // still has an active SSE listener for message parts.
+      if (!this.listenerLoopRunning) {
+        void this.startEventListener()
+      }
+
+      // ── Resolve model + agent preferences (mirrors dispatchPrompt) ──
+      const channelId = this.channelId
+      const channelInfo = channelId
+        ? await getChannelDirectory(channelId)
+        : undefined
+      const resolvedAppId = channelInfo?.appId ?? input.appId
+
+      if (input.agent && createdNewSession) {
+        await setSessionAgent(session.id, input.agent)
+      }
+
+      await ensureSessionPreferencesSnapshot({
+        sessionId: session.id,
+        channelId,
+        appId: resolvedAppId,
+        getClient,
+        agentOverride: input.agent,
+        modelOverride: input.model,
+        force: createdNewSession,
+      })
+
+      const agentResult = await errore.tryAsync(() => {
+        return resolveValidatedAgentPreference({
+          agent: input.agent,
+          sessionId: session.id,
+          channelId,
+          getClient,
+        })
+      })
+      if (agentResult instanceof Error) {
+        await cleanupOnError(`Failed to resolve agent: ${agentResult.message}`)
+        return
+      }
+      const resolvedAgent = agentResult.agentPreference
+      const availableAgents = agentResult.agents
+
+      const [modelResult, preferredVariant] = await Promise.all([
+        errore.tryAsync(async () => {
+          if (input.model) {
+            const [providerID, ...modelParts] = input.model.split('/')
+            const modelID = modelParts.join('/')
+            if (providerID && modelID) {
+              return { providerID, modelID }
+            }
+          }
+          const modelInfo = await getCurrentModelInfo({
+            sessionId: session.id,
+            channelId,
+            appId: resolvedAppId,
+            agentPreference: resolvedAgent,
+            getClient,
+          })
+          if (modelInfo.type === 'none') {
+            return undefined
+          }
+          return { providerID: modelInfo.providerID, modelID: modelInfo.modelID }
+        }),
+        getVariantCascade({
+          sessionId: session.id,
+          channelId,
+          appId: resolvedAppId,
+        }),
+      ])
+      if (modelResult instanceof Error) {
+        await cleanupOnError(`Failed to resolve model: ${modelResult.message}`)
+        return
+      }
+      const modelField = modelResult
+      if (!modelField) {
+        await cleanupOnError(
+          'No AI provider connected. Configure a provider in OpenCode with `/connect` command.',
+        )
+        return
+      }
+
+      // Set model info in run state immediately (mirrors dispatchPrompt).
+      // Without this there is a window where the run has no model info.
+      this.updateRun((r) => ({
+        ...r,
+        model: modelField.modelID,
+        providerID: modelField.providerID,
+      }))
+
+      // Resolve thinking variant
+      const thinkingValue = await (async (): Promise<string | undefined> => {
+        if (!preferredVariant) {
+          return undefined
+        }
+        const providersResponse = await errore.tryAsync(() => {
+          return getClient().provider.list({ directory: this.sdkDirectory })
+        })
+        if (providersResponse instanceof Error || !providersResponse.data) {
+          return undefined
+        }
+        const availableValues = getThinkingValuesForModel({
+          providers: providersResponse.data.all,
+          providerId: modelField.providerID,
+          modelId: modelField.modelID,
+        })
+        if (availableValues.length === 0) {
+          return undefined
+        }
+        return matchThinkingValue({
+          requestedValue: preferredVariant,
+          availableValues,
+        }) || undefined
+      })()
+
+      const variantField = thinkingValue
+        ? { variant: thinkingValue }
+        : {}
+
+      // ── Start typing ────────────────────────────────────────
+      this.startTyping()
+
+      // ── Build prompt parts ──────────────────────────────────
       const images = input.images || []
       const promptWithImagePaths = (() => {
         if (images.length === 0) {
@@ -1824,33 +1962,65 @@ export class ThreadSessionRuntime {
         ...images,
       ]
 
-      const modelField = (() => {
-        if (!input.model) {
+      // ── Worktree + channel topic for system message ─────────
+      const worktreeInfo = await getThreadWorktree(this.thread.id)
+      const worktree: WorktreeInfo | undefined =
+        worktreeInfo?.status === 'ready' && worktreeInfo.worktree_directory
+          ? {
+              worktreeDirectory: worktreeInfo.worktree_directory,
+              branch: worktreeInfo.worktree_name,
+              mainRepoDirectory: worktreeInfo.project_directory,
+            }
+          : undefined
+
+      const channelTopic = await (async () => {
+        if (this.thread.parent?.type === ChannelType.GuildText) {
+          return this.thread.parent.topic?.trim() || undefined
+        }
+        if (!channelId) {
           return undefined
         }
-        const [providerID, ...modelParts] = input.model.split('/')
-        const modelID = modelParts.join('/')
-        if (!providerID || !modelID) {
+        const fetched = await errore.tryAsync(() => {
+          return this.thread.guild.channels.fetch(channelId)
+        })
+        if (fetched instanceof Error || !fetched) {
           return undefined
         }
-        return { providerID, modelID }
+        if (fetched.type !== ChannelType.GuildText) {
+          return undefined
+        }
+        return fetched.topic?.trim() || undefined
       })()
+
+      // ── Check abort before SDK call ─────────────────────────
+      if (runController.signal.aborted) {
+        this.stopTyping()
+        return
+      }
 
       const request = {
         sessionID: session.id,
         directory: this.sdkDirectory,
         parts,
-        ...(input.agent ? { agent: input.agent } : {}),
+        system: getOpencodeSystemMessage({
+          sessionId: session.id,
+          channelId,
+          guildId: this.thread.guildId,
+          threadId: this.thread.id,
+          worktree,
+          channelTopic,
+          username: input.username,
+          userId: input.userId,
+          agents: availableAgents,
+        }),
+        ...(resolvedAgent ? { agent: resolvedAgent } : {}),
         ...(modelField ? { model: modelField } : {}),
+        ...variantField,
       }
       const promptResult = await errore.tryAsync(() => {
         return getClient().session.promptAsync(request)
       })
       if (promptResult instanceof Error || promptResult.error) {
-        if (shouldMarkRunning) {
-          threadState.updateRunState(this.threadId, pureMarkIdle)
-          this.stopTyping()
-        }
         const errorMessage = (() => {
           if (promptResult instanceof Error) {
             return promptResult.message
@@ -1875,16 +2045,12 @@ export class ThreadSessionRuntime {
           }
           return 'Unknown OpenCode API error'
         })()
-        await sendThreadMessage(this.thread, `✗ OpenCode API error: ${errorMessage}`)
+        const errObj = promptResult instanceof Error
+          ? promptResult
+          : new Error(errorMessage)
+        void notifyError(errObj, 'promptAsync failed in submitViaOpencodeQueue')
+        await cleanupOnError(`✗ OpenCode API error: ${errorMessage}`)
         return
-      }
-
-      if (modelField) {
-        this.updateRun((r) => ({
-          ...r,
-          model: modelField.modelID,
-          providerID: modelField.providerID,
-        }))
       }
 
       logger.log(

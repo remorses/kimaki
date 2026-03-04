@@ -38,8 +38,10 @@ import {
   setChannelDirectory,
   setChannelVerbosity,
   setChannelAgent,
+  setChannelModel,
   type VerbosityLevel,
 } from './database.js'
+import { getPrisma } from './db.js'
 import { startHranaServer, stopHranaServer } from './hrana-server.js'
 import { initializeOpencodeForDirectory } from './opencode.js'
 import {
@@ -52,6 +54,7 @@ import { getLogEntryCount, getLogEntriesSince } from './logger.js'
 const TEST_USER_ID = '200000000000000920'
 const TEXT_CHANNEL_ID = '200000000000000921'
 const AGENT_MODEL = 'agent-model-v2'
+const CHANNEL_MODEL = 'channel-model-v2'
 const DEFAULT_MODEL = 'deterministic-v2'
 const PROVIDER_NAME = 'deterministic-provider'
 
@@ -207,11 +210,12 @@ describe('agent model resolution', () => {
       },
     })
 
-    // Add the agent's model to the provider so opencode accepts it
+    // Add extra models to the provider so opencode accepts them
     const providerConfig = opencodeConfig.provider[PROVIDER_NAME] as {
       models: Record<string, { name: string }>
     }
     providerConfig.models[AGENT_MODEL] = { name: AGENT_MODEL }
+    providerConfig.models[CHANNEL_MODEL] = { name: CHANNEL_MODEL }
 
     fs.writeFileSync(
       path.join(directories.projectDirectory, 'opencode.json'),
@@ -353,6 +357,129 @@ describe('agent model resolution', () => {
 
       // The footer should contain the agent's model, not the default
       expect(footerMessage.content).toContain(AGENT_MODEL)
+      expect(footerMessage.content).not.toContain(DEFAULT_MODEL)
+    },
+    15_000,
+  )
+
+  test(
+    'new thread uses channel model when channel model preference is set',
+    async () => {
+      // Clear channel agent so model resolution falls through to channel model
+      const prisma = await getPrisma()
+      await prisma.channel_agents.deleteMany({
+        where: { channel_id: TEXT_CHANNEL_ID },
+      })
+
+      // Set channel model preference — simulates /model selecting a model at channel scope
+      await setChannelModel({
+        channelId: TEXT_CHANNEL_ID,
+        modelId: `${PROVIDER_NAME}/${CHANNEL_MODEL}`,
+      })
+
+      await discord.channel(TEXT_CHANNEL_ID).user(TEST_USER_ID).sendMessage({
+        content: 'Reply with exactly: channel-model-check',
+      })
+
+      const thread = await discord.channel(TEXT_CHANNEL_ID).waitForThread({
+        timeout: 4_000,
+        predicate: (t) => {
+          return t.name === 'Reply with exactly: channel-model-check'
+        },
+      })
+
+      await waitForBotMessageContaining({
+        discord,
+        threadId: thread.id,
+        userId: TEST_USER_ID,
+        text: '*project',
+        timeout: 4_000,
+      })
+
+      const messages = await discord.thread(thread.id).getMessages()
+      const footerMessage = messages.find((message) => {
+        return (
+          message.author.id === discord.botUserId &&
+          message.content.startsWith('*')
+        )
+      })
+
+      expect(footerMessage).toBeDefined()
+      if (!footerMessage) {
+        throw new Error(
+          `Expected footer message but none found. Bot messages: ${messages
+            .filter((m) => m.author.id === discord.botUserId)
+            .map((m) => m.content.slice(0, 150))
+            .join(' | ')}`,
+        )
+      }
+
+      // Footer should contain the channel model, not the default
+      expect(footerMessage.content).toContain(CHANNEL_MODEL)
+      expect(footerMessage.content).not.toContain(DEFAULT_MODEL)
+    },
+    15_000,
+  )
+
+  test(
+    'channel model with variant preference completes without error',
+    async () => {
+      // Clear channel agent so model resolution falls through to channel model
+      const prisma = await getPrisma()
+      await prisma.channel_agents.deleteMany({
+        where: { channel_id: TEXT_CHANNEL_ID },
+      })
+
+      // Set channel model with a variant (thinking level)
+      // The deterministic provider doesn't support thinking, so the variant
+      // is resolved but silently dropped (no matching thinking values).
+      // This test verifies the variant cascade code path runs without crashing
+      // and the correct model still appears in the footer.
+      await setChannelModel({
+        channelId: TEXT_CHANNEL_ID,
+        modelId: `${PROVIDER_NAME}/${CHANNEL_MODEL}`,
+        variant: 'high',
+      })
+
+      await discord.channel(TEXT_CHANNEL_ID).user(TEST_USER_ID).sendMessage({
+        content: 'Reply with exactly: variant-check',
+      })
+
+      const thread = await discord.channel(TEXT_CHANNEL_ID).waitForThread({
+        timeout: 4_000,
+        predicate: (t) => {
+          return t.name === 'Reply with exactly: variant-check'
+        },
+      })
+
+      await waitForBotMessageContaining({
+        discord,
+        threadId: thread.id,
+        userId: TEST_USER_ID,
+        text: '*project',
+        timeout: 4_000,
+      })
+
+      const messages = await discord.thread(thread.id).getMessages()
+      const footerMessage = messages.find((message) => {
+        return (
+          message.author.id === discord.botUserId &&
+          message.content.startsWith('*')
+        )
+      })
+
+      expect(footerMessage).toBeDefined()
+      if (!footerMessage) {
+        throw new Error(
+          `Expected footer message but none found. Bot messages: ${messages
+            .filter((m) => m.author.id === discord.botUserId)
+            .map((m) => m.content.slice(0, 150))
+            .join(' | ')}`,
+        )
+      }
+
+      // Footer should still contain the channel model (variant doesn't crash)
+      expect(footerMessage.content).toContain(CHANNEL_MODEL)
       expect(footerMessage.content).not.toContain(DEFAULT_MODEL)
     },
     15_000,
