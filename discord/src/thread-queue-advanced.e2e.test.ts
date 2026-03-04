@@ -456,9 +456,84 @@ e2eTest('thread queue advanced (interrupt, abort, model-switch)', () => {
           setTimeout(resolve, 100)
         })
       }
+      expect(await th.text()).toMatchInlineSnapshot(`
+        "--- from: assistant (TestBot)
+        ⬥ ok
+
+
+        --- from: assistant (TestBot)
+        *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2*"
+      `)
       expect(foundFooter).toBe(true)
     },
     8_000,
+  )
+
+  test(
+    'normal reply stops typing after footer',
+    async () => {
+      await discord.channel(TEXT_CHANNEL_ID).user(TEST_USER_ID).sendMessage({
+        content: 'Reply with exactly: typing-stop-normal',
+      })
+
+      const thread = await discord.channel(TEXT_CHANNEL_ID).waitForThread({
+        timeout: 4_000,
+        predicate: (t) => {
+          return t.name === 'Reply with exactly: typing-stop-normal'
+        },
+      })
+
+      const th = discord.thread(thread.id)
+
+      await th.waitForTypingEvent({ timeout: 4_000 })
+
+      await waitForBotMessageContaining({
+        discord,
+        threadId: thread.id,
+        userId: TEST_USER_ID,
+        text: 'ok',
+        timeout: 4_000,
+      })
+
+      const messages = await waitForBotMessageContaining({
+        discord,
+        threadId: thread.id,
+        userId: TEST_USER_ID,
+        text: '*project',
+        timeout: 4_000,
+      })
+
+      const replyIndex = messages.findIndex((message) => {
+        return message.author.id === discord.botUserId && message.content.includes('ok')
+      })
+      const footerIndex = messages.findIndex((message, index) => {
+        if (index <= replyIndex) {
+          return false
+        }
+        return message.author.id === discord.botUserId
+          && message.content.startsWith('*')
+          && message.content.includes('⋅')
+      })
+
+      expect(await th.text()).toMatchInlineSnapshot(`
+        "--- from: assistant (TestBot)
+        ⬥ ok
+
+
+        --- from: assistant (TestBot)
+        *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2*"
+      `)
+      expect(replyIndex).toBeGreaterThanOrEqual(0)
+      expect(footerIndex).toBeGreaterThan(replyIndex)
+
+      const footerSeenAt = Date.now()
+      await th.waitForTypingToStop({
+        afterTimestamp: footerSeenAt,
+        idleMs: 8_500,
+        timeout: 12_000,
+      })
+    },
+    20_000,
   )
 
   test(
@@ -511,6 +586,20 @@ e2eTest('thread queue advanced (interrupt, abort, model-switch)', () => {
           && m.content.startsWith('*')
           && m.content.includes('⋅')
       }).length
+      expect(await th.text()).toMatchInlineSnapshot(`
+        "--- from: assistant (TestBot)
+        ⬥ ok
+
+
+        --- from: assistant (TestBot)
+        *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2*
+        --- from: user (queue-advanced-tester)
+        Reply with exactly: footer-multi-second
+        --- from: assistant (TestBot)
+        ⬥ ok
+
+        "
+      `)
       if (footerCount >= 2) {
         // Already appeared
         expect(footerCount).toBeGreaterThanOrEqual(2)
@@ -624,6 +713,26 @@ e2eTest('thread queue advanced (interrupt, abort, model-switch)', () => {
         }
         return m.author.id === discord.botUserId && m.content.includes('ok')
       })
+      expect(await th.text()).toMatchInlineSnapshot(`
+        "--- from: assistant (TestBot)
+        ⬥ ok
+
+
+        --- from: assistant (TestBot)
+        *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2*
+        --- from: user (queue-advanced-tester)
+        PLUGIN_TIMEOUT_SLEEP_MARKER
+        --- from: assistant (TestBot)
+        ⬥ starting sleep 100
+
+
+        --- from: user (queue-advanced-tester)
+        Reply with exactly: interrupt-footer-followup
+        --- from: assistant (TestBot)
+        ⬥ ok
+
+        "
+      `)
       expect(followupUserIdx).toBeGreaterThanOrEqual(0)
       expect(okReplyIdx).toBeGreaterThan(followupUserIdx)
 
@@ -639,6 +748,115 @@ e2eTest('thread queue advanced (interrupt, abort, model-switch)', () => {
       expect(footerBetween).toBe(false)
     },
     15_000,
+  )
+
+  test(
+    'interruption flow emits footer for final assistant reply and then stops typing',
+    async () => {
+      await discord.channel(TEXT_CHANNEL_ID).user(TEST_USER_ID).sendMessage({
+        content: 'Reply with exactly: typing-stop-interrupt-setup',
+      })
+
+      const thread = await discord.channel(TEXT_CHANNEL_ID).waitForThread({
+        timeout: 4_000,
+        predicate: (t) => {
+          return t.name === 'Reply with exactly: typing-stop-interrupt-setup'
+        },
+      })
+
+      const th = discord.thread(thread.id)
+
+      await waitForBotMessageContaining({
+        discord,
+        threadId: thread.id,
+        userId: TEST_USER_ID,
+        text: '*project',
+        timeout: 4_000,
+      })
+
+      th.clearTypingEvents()
+
+      await th.user(TEST_USER_ID).sendMessage({
+        content: 'PLUGIN_TIMEOUT_SLEEP_MARKER',
+      })
+
+      await th.waitForTypingEvent({ timeout: 4_000 })
+
+      await waitForBotMessageContaining({
+        discord,
+        threadId: thread.id,
+        userId: TEST_USER_ID,
+        text: 'starting sleep 100',
+        afterUserMessageIncludes: 'PLUGIN_TIMEOUT_SLEEP_MARKER',
+        timeout: 4_000,
+      })
+
+      await th.user(TEST_USER_ID).sendMessage({
+        content: 'Reply with exactly: typing-stop-interrupt-final',
+      })
+
+      const messages = await waitForBotMessageContaining({
+        discord,
+        threadId: thread.id,
+        userId: TEST_USER_ID,
+        text: '*project',
+        afterUserMessageIncludes: 'typing-stop-interrupt-final',
+        timeout: 12_000,
+      })
+
+      const finalUserIndex = messages.findIndex((message) => {
+        return message.author.id === TEST_USER_ID
+          && message.content.includes('typing-stop-interrupt-final')
+      })
+      const finalReplyIndex = messages.findIndex((message, index) => {
+        if (index <= finalUserIndex) {
+          return false
+        }
+        return message.author.id === discord.botUserId && message.content.includes('ok')
+      })
+      const finalFooterIndex = messages.findIndex((message, index) => {
+        if (index <= finalReplyIndex) {
+          return false
+        }
+        return message.author.id === discord.botUserId
+          && message.content.startsWith('*')
+          && message.content.includes('⋅')
+      })
+
+      expect(await th.text()).toMatchInlineSnapshot(`
+        "--- from: assistant (TestBot)
+        ⬥ ok
+
+
+        --- from: assistant (TestBot)
+        *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2*
+        --- from: user (queue-advanced-tester)
+        PLUGIN_TIMEOUT_SLEEP_MARKER
+        --- from: assistant (TestBot)
+        ⬥ starting sleep 100
+
+
+        --- from: user (queue-advanced-tester)
+        Reply with exactly: typing-stop-interrupt-final
+        --- from: assistant (TestBot)
+        ⬥ ok
+
+
+        --- from: assistant (TestBot)
+        *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2*"
+      `)
+      expect(finalUserIndex).toBeGreaterThanOrEqual(0)
+      expect(finalReplyIndex).toBeGreaterThan(finalUserIndex)
+      expect(finalFooterIndex).toBeGreaterThan(finalReplyIndex)
+
+      const footerSeenAt = Date.now()
+      await th.waitForTypingToStop({
+        afterTimestamp: footerSeenAt,
+        idleMs: 8_500,
+        timeout: 12_000,
+      })
+    },
+    25_000,
   )
 
   test(
@@ -707,6 +925,20 @@ e2eTest('thread queue advanced (interrupt, abort, model-switch)', () => {
       const afterBotMessages = after.filter((m) => {
         return m.author.id === discord.botUserId
       })
+      expect(await th.text()).toMatchInlineSnapshot(`
+        "--- from: assistant (TestBot)
+        ⬥ ok
+
+
+        --- from: user (queue-advanced-tester)
+        PLUGIN_TIMEOUT_SLEEP_MARKER
+        --- from: user (queue-advanced-tester)
+        Reply with exactly: papa
+        --- from: assistant (TestBot)
+        ⬥ starting sleep 100
+
+        "
+      `)
       expect(afterBotMessages.length).toBeGreaterThanOrEqual(beforeBotCount + 1)
 
       // Ensure the slow marker user message appeared before papa.
@@ -787,6 +1019,16 @@ e2eTest('thread queue advanced (interrupt, abort, model-switch)', () => {
         timeout: 4_000,
       })
 
+      expect(await th.text()).toMatchInlineSnapshot(`
+        "--- from: assistant (TestBot)
+        ⬥ ok
+
+
+        --- from: assistant (TestBot)
+        *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2*
+        --- from: user (queue-advanced-tester)
+        SLOW_ABORT_MARKER run long response"
+      `)
       // Poll Discord messages and verify no NEW footer appears after abort.
       // Only check messages that arrived after the abort — earlier footers
       // (from the setup reply) are expected and should not cause failure.
@@ -869,6 +1111,28 @@ e2eTest('thread queue advanced (interrupt, abort, model-switch)', () => {
           && message.content.includes('plugin-timeout-after')
         )
       })
+      expect(await th.text()).toMatchInlineSnapshot(`
+        "--- from: assistant (TestBot)
+        ⬥ ok
+
+
+        --- from: assistant (TestBot)
+        *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2*
+        --- from: user (queue-advanced-tester)
+        PLUGIN_TIMEOUT_SLEEP_MARKER
+        --- from: assistant (TestBot)
+        ⬥ starting sleep 100
+
+
+        --- from: user (queue-advanced-tester)
+        Reply with exactly: plugin-timeout-after
+        --- from: assistant (TestBot)
+        ⬥ ok
+
+
+        --- from: assistant (TestBot)
+        *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2*"
+      `)
       expect(afterIndex).toBeGreaterThanOrEqual(0)
 
       const okReplyIndex = messages.findIndex((message, index) => {
@@ -1026,6 +1290,16 @@ e2eTest('thread queue advanced (interrupt, abort, model-switch)', () => {
         content: 'Reply with exactly: model-switch-followup',
       })
 
+      expect(await th.text()).toMatchInlineSnapshot(`
+        "--- from: assistant (TestBot)
+        ⬥ ok
+
+
+        --- from: user (queue-advanced-tester)
+        PLUGIN_TIMEOUT_SLEEP_MARKER
+        --- from: user (queue-advanced-tester)
+        Reply with exactly: model-switch-followup"
+      `)
       await waitForBotReplyAfterUserMessage({
         discord,
         threadId: thread.id,
@@ -1082,6 +1356,14 @@ e2eTest('thread queue advanced (interrupt, abort, model-switch)', () => {
         phase: 'idle',
         timeout: 4_000,
       })
+      expect(await th.text()).toMatchInlineSnapshot(`
+        "--- from: assistant (TestBot)
+        ⬥ ok
+
+
+        --- from: user (queue-advanced-tester)
+        SLOW_ABORT_MARKER run long response"
+      `)
       expect(settled.runState.phase).toBe('idle')
     },
     10_000,

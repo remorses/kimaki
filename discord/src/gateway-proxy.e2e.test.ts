@@ -399,6 +399,12 @@ describeIf('gateway-proxy e2e', () => {
       firstThreadId = thread.id
 
       const reply = await discord.thread(thread.id).waitForBotReply({ timeout: 15_000 })
+      expect(await discord.thread(thread.id).text()).toMatchInlineSnapshot(`
+        "--- from: assistant (TestBot)
+        ⬥ gateway-proxy-reply
+
+        "
+      `)
       expect(reply).toBeDefined()
       expect(reply.content.trim().length).toBeGreaterThan(0)
     },
@@ -418,6 +424,16 @@ describeIf('gateway-proxy e2e', () => {
       const reply = await discord.thread(firstThreadId).waitForMessage({
         predicate: (m) => !existingIds.has(m.id) && m.author.id === discord.botUserId,
       })
+      expect(await discord.thread(firstThreadId).text()).toMatchInlineSnapshot(`
+        "--- from: assistant (TestBot)
+        ⬥ gateway-proxy-reply
+
+
+        --- from: user (proxy-tester)
+        follow up through proxy
+        --- from: assistant (TestBot)
+        *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2*"
+      `)
       expect(reply).toBeDefined()
       expect(reply.content.trim().length).toBeGreaterThan(0)
     },
@@ -442,6 +458,23 @@ describeIf('gateway-proxy e2e', () => {
           m.author.id === discord.botUserId &&
           m.content.includes('exited with'),
       })
+      expect(await discord.thread(firstThreadId).text()).toMatchInlineSnapshot(`
+        "--- from: assistant (TestBot)
+        ⬥ gateway-proxy-reply
+
+
+        --- from: user (proxy-tester)
+        follow up through proxy
+        --- from: assistant (TestBot)
+        *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2*
+        --- from: user (proxy-tester)
+        !echo proxy-shell-test
+        --- from: assistant (TestBot)
+        \`echo proxy-shell-test\` exited with 0
+        \`\`\`
+        proxy-shell-test
+        \`\`\`"
+      `)
       expect(reply.content).toContain('proxy-shell-test')
     },
     15_000,
@@ -463,6 +496,12 @@ describeIf('gateway-proxy e2e', () => {
       expect(thread.id).not.toBe(firstThreadId)
 
       const reply = await discord.thread(thread.id).waitForBotReply()
+      expect(await discord.thread(thread.id).text()).toMatchInlineSnapshot(`
+        "--- from: assistant (TestBot)
+        ⬥ gateway-proxy-reply
+
+        "
+      `)
       expect(reply).toBeDefined()
       expect(reply.content.trim().length).toBeGreaterThan(0)
     },

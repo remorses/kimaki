@@ -373,6 +373,14 @@ describe('agent model resolution', () => {
         )
       })
 
+      expect(await discord.thread(thread.id).text()).toMatchInlineSnapshot(`
+        "--- from: assistant (TestBot)
+        ⬥ ok
+
+
+        --- from: assistant (TestBot)
+        *project ⋅ main ⋅ Ns ⋅ N% ⋅ agent-model-v2 ⋅ **test-agent***"
+      `)
       expect(footerMessage).toBeDefined()
       if (!footerMessage) {
         throw new Error(
@@ -413,6 +421,12 @@ describe('agent model resolution', () => {
         text: 'system-context-ok',
         timeout: 4_000,
       })
+      expect(await discord.thread(thread.id).text()).toMatchInlineSnapshot(`
+        "--- from: assistant (TestBot)
+        ⬥ system-context-ok
+
+        "
+      `)
     },
     15_000,
   )
@@ -459,6 +473,14 @@ describe('agent model resolution', () => {
         )
       })
 
+      expect(await discord.thread(thread.id).text()).toMatchInlineSnapshot(`
+        "--- from: assistant (TestBot)
+        ⬥ ok
+
+
+        --- from: assistant (TestBot)
+        *project ⋅ main ⋅ Ns ⋅ N% ⋅ channel-model-v2*"
+      `)
       expect(footerMessage).toBeDefined()
       if (!footerMessage) {
         throw new Error(
@@ -523,6 +545,14 @@ describe('agent model resolution', () => {
         )
       })
 
+      expect(await discord.thread(thread.id).text()).toMatchInlineSnapshot(`
+        "--- from: assistant (TestBot)
+        ⬥ ok
+
+
+        --- from: assistant (TestBot)
+        *project ⋅ main ⋅ Ns ⋅ N% ⋅ channel-model-v2*"
+      `)
       expect(footerMessage).toBeDefined()
       if (!footerMessage) {
         throw new Error(

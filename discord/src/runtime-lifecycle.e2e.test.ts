@@ -329,6 +329,30 @@ describe('runtime lifecycle', () => {
 
       // Still the same runtime — three full cycles, one runtime, one listener
       const runtimeAfterC = getRuntime(thread.id)
+      expect(await th.text()).toMatchInlineSnapshot(`
+        "--- from: assistant (TestBot)
+        ⬥ ok
+
+
+        --- from: assistant (TestBot)
+        *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2*
+        --- from: user (lifecycle-tester)
+        Reply with exactly: seq-beta
+        --- from: assistant (TestBot)
+        ⬥ ok
+
+
+        --- from: assistant (TestBot)
+        *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2*
+        --- from: user (lifecycle-tester)
+        Reply with exactly: seq-gamma
+        --- from: assistant (TestBot)
+        ⬥ ok
+
+
+        --- from: assistant (TestBot)
+        *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2*"
+      `)
       expect(runtimeAfterC).toBe(runtimeAfterA)
     },
     15_000,
@@ -369,6 +393,14 @@ describe('runtime lifecycle', () => {
         return message.content.includes('deterministic-v2')
       })
 
+      expect(await discord.thread(thread.id).text()).toMatchInlineSnapshot(`
+        "--- from: assistant (TestBot)
+        ⬥ ok
+
+
+        --- from: assistant (TestBot)
+        *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2*"
+      `)
       expect(footerMessage).toBeDefined()
       if (!footerMessage) {
         throw new Error('Expected footer message to be present')
@@ -451,6 +483,22 @@ describe('runtime lifecycle', () => {
       //    a bot reply after it, and the replies are distinct messages.
       const messages = await th.getMessages()
 
+      expect(await th.text()).toMatchInlineSnapshot(`
+        "--- from: assistant (TestBot)
+        ⬥ ok
+
+
+        --- from: assistant (TestBot)
+        *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2*
+        --- from: user (lifecycle-tester)
+        Reply with exactly: concurrent-bravo
+        --- from: user (lifecycle-tester)
+        Reply with exactly: concurrent-charlie
+        --- from: assistant (TestBot)
+        ⬥ ok
+
+        "
+      `)
       const bravoIndex = messages.findIndex((m) => {
         return (
           m.author.id === TEST_USER_ID &&

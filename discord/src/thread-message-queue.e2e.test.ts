@@ -404,6 +404,13 @@ e2eTest('thread message queue ordering', () => {
         text: '⬥ ok',
         timeout: 10_000,
       })
+
+      expect(await discord.thread(thread.id).text()).toMatchInlineSnapshot(`
+        "--- from: assistant (TestBot)
+        ⬥ ok
+
+        "
+      `)
     },
     12_000,
   )
@@ -458,6 +465,16 @@ e2eTest('thread message queue ordering', () => {
       })
       expect(afterBotMessages.length).toBeGreaterThanOrEqual(beforeBotCount + 1)
 
+      expect(await th.text()).toMatchInlineSnapshot(`
+        "--- from: assistant (TestBot)
+        ⬥ ok
+
+
+        --- from: user (queue-tester)
+        Reply with exactly: beta
+        --- from: assistant (TestBot)
+        *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2*"
+      `)
       // User B's message must appear before the new bot response
       const userBIndex = after.findIndex((m) => {
         return (
@@ -533,6 +550,18 @@ e2eTest('thread message queue ordering', () => {
       })
       expect(afterBotMessages.length).toBeGreaterThanOrEqual(beforeBotCount + 1)
 
+      expect(await th.text()).toMatchInlineSnapshot(`
+        "--- from: assistant (TestBot)
+        ⬥ ok
+
+
+        --- from: user (queue-tester)
+        Reply with exactly: two
+        --- from: user (queue-tester)
+        Reply with exactly: three
+        --- from: assistant (TestBot)
+        *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2*"
+      `)
       const userThreeIndex = after.findIndex((message) => {
         return (
           message.author.id === TEST_USER_ID &&
@@ -598,6 +627,20 @@ e2eTest('thread message queue ordering', () => {
         timeout: 4_000,
       })
 
+      expect(await th.text()).toMatchInlineSnapshot(`
+        "--- from: assistant (TestBot)
+        ⬥ ok
+
+
+        --- from: user (queue-tester)
+        Prompt from test: respond with short text for opencode queue mode.
+        --- from: assistant (TestBot)
+        *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2*
+        --- from: assistant (TestBot)
+        ⬥ ok
+
+        "
+      `)
       // Normal messages should not populate kimaki local queue.
       const noLocalQueueState = await waitForThreadState({
         threadId: thread.id,
@@ -646,6 +689,12 @@ e2eTest('thread message queue ordering', () => {
         })
       }
 
+      expect(await discord.thread(thread.id).text()).toMatchInlineSnapshot(`
+        "--- from: assistant (TestBot)
+        ⬥ running create file
+
+        "
+      `)
       expect(fs.existsSync(markerPath)).toBe(true)
       const markerContents = fs.readFileSync(markerPath, 'utf8')
       expect(markerContents).toBe('created')
@@ -729,6 +778,28 @@ e2eTest('thread message queue ordering', () => {
         )
       })
 
+      expect(await th.text()).toMatchInlineSnapshot(`
+        "--- from: assistant (TestBot)
+        ⬥ ok
+
+
+        --- from: assistant (TestBot)
+        Queued message (position 1)
+        --- from: assistant (TestBot)
+        *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2*
+        --- from: assistant (TestBot)
+        » **queue-tester:** Reply with exactly: race-final
+        --- from: assistant (TestBot)
+        Queued message (position 1)
+        --- from: assistant (TestBot)
+        ⬥ race-final
+
+
+        --- from: assistant (TestBot)
+        *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2*
+        --- from: assistant (TestBot)
+        » **queue-tester:** Reply with exactly: queued-from-slash"
+      `)
       expect(queuedAckIndex).toBeGreaterThan(-1)
       expect(dispatchIndicatorIndex).toBeGreaterThan(-1)
       expect(queuedAckIndex).toBeLessThan(dispatchIndicatorIndex)
@@ -797,6 +868,22 @@ e2eTest('thread message queue ordering', () => {
       const userFoxtrotIndex = after.findIndex((m) => {
         return m.author.id === TEST_USER_ID && m.content.includes('foxtrot')
       })
+      expect(await th.text()).toMatchInlineSnapshot(`
+        "--- from: assistant (TestBot)
+        ⬥ ok
+
+
+        --- from: user (queue-tester)
+        Reply with exactly: echo
+        --- from: assistant (TestBot)
+        *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2*
+        --- from: user (queue-tester)
+        Reply with exactly: foxtrot
+        --- from: assistant (TestBot)
+        ⬥ ok
+
+        "
+      `)
       expect(userEchoIndex).toBeGreaterThan(-1)
       expect(userFoxtrotIndex).toBeGreaterThan(-1)
 
@@ -863,6 +950,22 @@ e2eTest('thread message queue ordering', () => {
 
       // C's user message appears before its bot response.
       // We assert on india's reply existence.
+      expect(await th.text()).toMatchInlineSnapshot(`
+        "--- from: assistant (TestBot)
+        ⬥ ok
+
+
+        --- from: user (queue-tester)
+        Reply with exactly: hotel
+        --- from: assistant (TestBot)
+        *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2*
+        --- from: user (queue-tester)
+        Reply with exactly: india
+        --- from: assistant (TestBot)
+        ⬥ ok
+
+        "
+      `)
       const userIndiaIndex = after.findIndex((m) => {
         return m.author.id === TEST_USER_ID && m.content.includes('india')
       })
@@ -952,6 +1055,34 @@ e2eTest('thread message queue ordering', () => {
       })
       expect(finalBotMessages.length).toBeGreaterThanOrEqual(burstBotCount)
 
+      expect(await th.text()).toMatchInlineSnapshot(`
+        "--- from: assistant (TestBot)
+        ⬥ ok
+
+
+        --- from: user (queue-tester)
+        Reply with exactly: kilo
+        --- from: assistant (TestBot)
+        *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2*
+        --- from: user (queue-tester)
+        Reply with exactly: lima
+        --- from: assistant (TestBot)
+        ⬥ ok
+
+
+        --- from: user (queue-tester)
+        Reply with exactly: mike
+        --- from: assistant (TestBot)
+        ⬥ ok
+
+
+        --- from: user (queue-tester)
+        Reply with exactly: november
+        --- from: assistant (TestBot)
+        ⬥ ok
+
+        "
+      `)
       // E's user message appears before the final bot response
       const userNovemberIndex = afterE.findIndex((m) => {
         return m.author.id === TEST_USER_ID && m.content.includes('november')
