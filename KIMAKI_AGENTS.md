@@ -253,6 +253,8 @@ kimaki writes logs to `<dataDir>/kimaki.log` (default `~/.kimaki/kimaki.log`). t
 
 to debug opencode event ordering, set `KIMAKI_LOG_OPENCODE_SESSION_EVENTS=1`. this writes jsonl files under `<dataDir>/opencode-session-events/` (one file per session id, like `ses_xxx.jsonl`). use `KIMAKI_OPENCODE_SESSION_EVENTS_DIR` to override the output directory.
 
+For example when running a test to debug events: `KIMAKI_OPENCODE_SESSION_EVENTS_DIR=/tmp/kimaki-test-3423 KIMAKI_LOG_OPENCODE_SESSION_EVENTS=1 pnpm test test-file.test.ts -t test-name`
+
 the jsonl line includes runtime metadata (`threadId`, `activeSessionId`, `runPhase`, etc) and the raw opencode event under `.event`.
 
 use `jq` to inspect these files quickly:
@@ -311,14 +313,17 @@ if a kimaki test needs a new interaction primitive, first add it to `discord-dig
 
 see `docs/e2e-testing-learnings.md` for detailed lessons. key points:
 
+- **always assert on Discord messages (what the user sees), not internal state or logs.** use digital-discord helpers like `th.getMessages()`, `waitForBotReply`, `waitForBotReplyAfterUserMessage`, `waitForBotMessageContaining` to verify actual Discord thread content. never use `getLogEntriesSince` + string matching for test expectations — logs are brittle, can bleed across sequential tests, and don't verify actual behavior. use `getLogEntriesSince` only in `onTestFailed` for diagnostics.
 - e2e tests use `opencode-deterministic-provider` which returns canned responses instantly (no real LLM). poll timeouts should be **4s max** and polling interval **100ms**. the only real latency is opencode server startup (`beforeAll`, 60s is fine) and intentional `partDelaysMs` in matchers.
 - deterministic provider matchers can still trigger **real tool execution** when they emit `tool-call` parts (for example `bash` + `sleep`). do not use long sleeps (`sleep 500` means 500 seconds). prefer `partDelaysMs` for timing windows in tests.
 - avoid broad matchers like only `lastMessageRole: 'tool'` in shared e2e matcher lists. always scope with an explicit marker (`rawPromptIncludes`, exact latest user text, etc.) or they can cascade across unrelated turns and create flaky tests.
+- prefer `latestUserTextIncludes` over `rawPromptIncludes` for deterministic matcher markers that should only trigger once. `rawPromptIncludes` scans full session history, so after abort+retry in the same session the old marker re-fires and causes deadlocks or timeouts. `latestUserTextIncludes` only checks the most recent user message.
 - prefer content-aware polling ("does this user message have a bot reply after it?") over count-based polling (`waitForBotMessageCount`). count-based is fragile when sessions get interrupted/aborted because error messages satisfy the count early.
 - bot replies can be error messages, not just LLM content. verify ordering by position, not content matching.
 - set `KIMAKI_VITEST=1` to suppress clack terminal log noise during test runs. when set, the logger pushes entries to an in-memory buffer. tests use `getLogEntryCount()` / `getLogEntriesSince(index)` with `onTestFailed` to dump only the log lines from the failed test.
 - tests in a single file share the in-memory log buffer and run **sequentially** (not in parallel). if total duration of an e2e test file exceeds **~10 seconds**, split into a new file so vitest parallelizes across files.
 - `afterAll` should clean up opencode sessions via `session.list()` + `session.delete()` to avoid accumulation across runs.
+- to assert something doesn't appear in Discord (e.g. no footer after abort), poll `th.getMessages()` in a loop: sleep 20ms, max 10 iterations. everything is deterministic so 200ms total is enough. fail immediately if the unwanted message appears.
 
 ## event handler architecture
 
