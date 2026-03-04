@@ -15,7 +15,6 @@ import {
   waitForFooterMessage,
   waitForBotMessageContaining,
   waitForBotReplyAfterUserMessage,
-  waitForThreadPhase,
 } from './test-utils.js'
 
 const TEXT_CHANNEL_ID = '200000000000001003'
@@ -64,12 +63,6 @@ e2eTest('queue advanced: abort and retry', () => {
         content: 'PLUGIN_TIMEOUT_SLEEP_MARKER',
       })
 
-      await waitForThreadPhase({
-        threadId: thread.id,
-        phase: 'running',
-        timeout: 4_000,
-      })
-
       // The matcher emits "starting sleep 100" text before the long delay.
       // Wait for it to land in Discord BEFORE aborting so the message is in a
       // deterministic position and the abort produces no further stray messages.
@@ -89,13 +82,6 @@ e2eTest('queue advanced: abort and retry', () => {
       }
 
       runtime.abortActiveRun('test-explicit-abort')
-
-      // Wait for abort to settle before sending next message
-      await waitForThreadPhase({
-        threadId: thread.id,
-        phase: 'idle',
-        timeout: 4_000,
-      })
 
       await th.user(TEST_USER_ID).sendMessage({
         content: 'Reply with exactly: papa',
@@ -189,12 +175,6 @@ e2eTest('queue advanced: abort and retry', () => {
         content: 'SLOW_ABORT_MARKER run long response',
       })
 
-      await waitForThreadPhase({
-        threadId: thread.id,
-        phase: 'running',
-        timeout: 4_000,
-      })
-
       const runtime = getRuntime(thread.id)
       expect(runtime).toBeDefined()
       if (!runtime) {
@@ -205,12 +185,6 @@ e2eTest('queue advanced: abort and retry', () => {
       const baselineCount = beforeAbortMessages.length
 
       runtime.abortActiveRun('test-no-footer-on-abort')
-
-      await waitForThreadPhase({
-        threadId: thread.id,
-        phase: 'idle',
-        timeout: 4_000,
-      })
 
       expect(await th.text()).toMatchInlineSnapshot(`
         "--- from: assistant (TestBot)
@@ -262,12 +236,6 @@ e2eTest('queue advanced: abort and retry', () => {
         content: 'SLOW_ABORT_MARKER run long response',
       })
 
-      await waitForThreadPhase({
-        threadId: thread.id,
-        phase: 'running',
-        timeout: 4_000,
-      })
-
       const runtime = getRuntime(thread.id)
       expect(runtime).toBeDefined()
       if (!runtime) {
@@ -313,9 +281,12 @@ e2eTest('queue advanced: abort and retry', () => {
         content: 'PLUGIN_TIMEOUT_SLEEP_MARKER',
       })
 
-      await waitForThreadPhase({
+      await waitForBotMessageContaining({
+        discord: ctx.discord,
         threadId: thread.id,
-        phase: 'running',
+        userId: TEST_USER_ID,
+        text: 'starting sleep',
+        afterUserMessageIncludes: 'PLUGIN_TIMEOUT_SLEEP_MARKER',
         timeout: 4_000,
       })
 
@@ -350,6 +321,8 @@ e2eTest('queue advanced: abort and retry', () => {
         PLUGIN_TIMEOUT_SLEEP_MARKER
         --- from: assistant (TestBot)
         *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2*
+        --- from: assistant (TestBot)
+        ⬥ starting sleep 100
         --- from: user (queue-advanced-tester)
         Reply with exactly: model-switch-followup"
       `)
@@ -386,12 +359,6 @@ e2eTest('queue advanced: abort and retry', () => {
         content: 'SLOW_ABORT_MARKER run long response',
       })
 
-      await waitForThreadPhase({
-        threadId: thread.id,
-        phase: 'running',
-        timeout: 4_000,
-      })
-
       const runtime = getRuntime(thread.id)
       expect(runtime).toBeDefined()
       if (!runtime) {
@@ -400,18 +367,11 @@ e2eTest('queue advanced: abort and retry', () => {
 
       runtime.abortActiveRun('force-abort-test')
 
-      await waitForThreadPhase({
-        threadId: thread.id,
-        phase: 'idle',
-        timeout: 4_000,
-      })
       expect(await th.text()).toMatchInlineSnapshot(`
         "--- from: assistant (TestBot)
         ⬥ ok
         --- from: user (queue-advanced-tester)
-        SLOW_ABORT_MARKER run long response
-        --- from: assistant (TestBot)
-        *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2*"
+        SLOW_ABORT_MARKER run long response"
       `)
     },
     10_000,

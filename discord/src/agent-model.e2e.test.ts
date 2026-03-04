@@ -47,6 +47,7 @@ import {
   cleanupOpencodeServers,
   cleanupTestSessions,
   waitForBotMessageContaining,
+  waitForFooterMessage,
 } from './test-utils.js'
 
 
@@ -425,9 +426,20 @@ describe('agent model resolution', () => {
         text: 'system-context-ok',
         timeout: 4_000,
       })
+
+      await waitForFooterMessage({
+        discord,
+        threadId: thread.id,
+        timeout: 4_000,
+        afterMessageIncludes: 'system-context-ok',
+        afterAuthorId: discord.botUserId,
+      })
+
       expect(await discord.thread(thread.id).text()).toMatchInlineSnapshot(`
         "--- from: assistant (TestBot)
-        ⬥ system-context-ok"
+        ⬥ system-context-ok
+        --- from: assistant (TestBot)
+        *project ⋅ main ⋅ Ns ⋅ N% ⋅ agent-model-v2 ⋅ **test-agent***"
       `)
     },
     15_000,

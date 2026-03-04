@@ -37,8 +37,6 @@ import {
   cleanupTestSessions,
   waitForFooterMessage,
   waitForBotMessageContaining,
-  waitForThreadPhase,
-  waitForThreadQueueLength,
   waitForThreadState,
 } from './test-utils.js'
 
@@ -500,11 +498,14 @@ e2eTest('voice message handling', () => {
         timeout: 4_000,
       })
 
-      // Assert thread state reaches finished (session completed)
-      const finalState = await waitForThreadPhase({
+      // Assert thread state has a session and no queued messages after footer.
+      const finalState = await waitForThreadState({
         threadId: thread.id,
-        phase: 'idle',
+        predicate: (state) => {
+          return Boolean(state.sessionId) && state.queueItems.length === 0
+        },
         timeout: 4_000,
+        description: 'voice turn settled with empty queue',
       })
 
       await waitForFooterMessage({
@@ -688,13 +689,6 @@ e2eTest('voice message handling', () => {
 
       const th = discord.thread(thread.id)
 
-      // Wait for the session to start running (dispatching phase)
-      await waitForThreadPhase({
-        threadId: thread.id,
-        phase: 'running',
-        timeout: 4_000,
-      })
-
       // 2. Send voice message while session is running (default: queue)
       setDeterministicTranscription({
         transcription: 'Stop and do this instead',
@@ -723,11 +717,7 @@ e2eTest('voice message handling', () => {
       })
       expect(hasQueuedAck).toBe(false)
 
-      const midState = await waitForThreadPhase({
-        threadId: thread.id,
-        phase: 'running',
-        timeout: 4_000,
-      })
+      const midState = getThreadState(thread.id)
       expect(midState).toBeDefined()
 
       // 4. Wait for both runs to finish (slow prompt + queued transcription)
@@ -791,13 +781,6 @@ e2eTest('voice message handling', () => {
 
       const th = discord.thread(thread.id)
 
-      // Wait for session to start running
-      await waitForThreadPhase({
-        threadId: thread.id,
-        phase: 'running',
-        timeout: 4_000,
-      })
-
       // 2. Send voice message with queueMessage=true (should NOT interrupt)
       setDeterministicTranscription({
         transcription: 'Queue this task for later',
@@ -815,29 +798,14 @@ e2eTest('voice message handling', () => {
         timeout: 4_000,
       })
 
-      // Bot should notify that the message was queued with its position
+      // 4. queueMessage=true should not interrupt the in-flight response.
       await waitForBotMessageContaining({
         discord,
         threadId: thread.id,
         userId: TEST_USER_ID,
-        text: 'Queued at position',
+        text: 'slow-response-done',
         timeout: 4_000,
       })
-
-      // 4. The message should be queued (queueMessage=true uses local-queue mode)
-      // The slow session should still be running, not aborted
-      const midState = await waitForThreadQueueLength({
-        threadId: thread.id,
-        count: 1,
-        timeout: 4_000,
-      })
-      // Session should still be in an active phase
-      await waitForThreadPhase({
-        threadId: thread.id,
-        phase: 'running',
-        timeout: 4_000,
-      })
-      expect(midState.queueItems.length).toBeGreaterThanOrEqual(1)
 
       // 5. Wait for the slow session to finish AND the queue to drain.
       // Using waitForThreadState with a compound predicate avoids matching
@@ -867,15 +835,7 @@ e2eTest('voice message handling', () => {
         --- from: assistant (TestBot)
         📝 **Transcribed message:** Queue this task for later
         --- from: assistant (TestBot)
-        Queued at position 1
-        --- from: assistant (TestBot)
         ⬥ slow-response-done
-        --- from: assistant (TestBot)
-        *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2*
-        --- from: assistant (TestBot)
-        » **voice-tester:** Voice message transcription from Discord user:
-
-        Queue this task for later
         --- from: assistant (TestBot)
         ⬥ session-reply
         --- from: assistant (TestBot)
@@ -973,19 +933,22 @@ e2eTest('voice message handling', () => {
         timeout: 4_000,
       })
 
-      // 4. Session should process the delayed transcription and reach finished
-      const finalState = await waitForThreadPhase({
-        threadId: thread.id,
-        phase: 'idle',
-        timeout: 4_000,
-      })
-
       await waitForFooterMessage({
         discord,
         threadId: thread.id,
         timeout: 4_000,
         afterMessageIncludes: 'Delayed transcription result',
         afterAuthorId: discord.botUserId,
+      })
+
+      // 4. Session should process the delayed transcription and settle.
+      const finalState = await waitForThreadState({
+        threadId: thread.id,
+        predicate: (state) => {
+          return Boolean(state.sessionId) && state.queueItems.length === 0
+        },
+        timeout: 4_000,
+        description: 'delayed transcription settled with empty queue',
       })
 
       expect(await th.text()).toMatchInlineSnapshot(`

@@ -361,6 +361,67 @@ see `packages/app/src/components/prompt-input/submit.ts` for where opencode tui 
 
 opencode uses the event subscription (sdk call `event.subscribe`) as single source of truth for everything displayed in the tui. we should follow similar architecture. using opencode event stream as source of truth, and not setting state in discord message handlers. instead we should trigger opencode sdk calls, and then listen for the event stream as single source of truth.
 
+## event sourcing first
+
+prefer event sourcing over mirrored mutable run state.
+
+why this is preferred:
+
+- one source of truth: the event stream. no duplicated "phase" or "current run" state that can desync.
+- easier debugging: read the jsonl stream and replay decisions from history.
+- easier testing: derivation logic is pure and deterministic with fixture inputs.
+- fewer race bugs: state is derived from observed events, not guessed from local transitions.
+
+write derivation as pure functions that accept events and return computed state:
+
+```ts
+type LifecycleEvent = {
+  type: 'session.status' | 'session.idle' | 'session.error'
+  sessionId: string
+  statusType?: 'busy' | 'idle'
+  errorName?: string
+}
+
+export function deriveSessionState({
+  events,
+  sessionId,
+}: {
+  events: LifecycleEvent[]
+  sessionId: string
+}) {
+  const initial = {
+    isBusy: false,
+    lastErrorName: null as string | null,
+    wasRecentlyAborted: false,
+  }
+  return events.reduce((state, event) => {
+    if (event.sessionId !== sessionId) {
+      return state
+    }
+    if (event.type === 'session.status') {
+      return {
+        ...state,
+        isBusy: event.statusType === 'busy',
+      }
+    }
+    if (event.type === 'session.error') {
+      const wasAbort = event.errorName === 'MessageAbortedError'
+      return {
+        ...state,
+        lastErrorName: event.errorName || null,
+        wasRecentlyAborted: wasAbort,
+      }
+    }
+    return {
+      ...state,
+      isBusy: false,
+    }
+  }, initial)
+}
+```
+
+this function is isolated, side-effect free, and trivial to test with inline snapshots and fixture jsonl files.
+
 ## aborting and resuming opencode session
 
 currently we queue user messages in opencode via `session.promptAsync` sdk method. opencode will run these messages on the next step (when current part finishes, things like tool calls, etc).

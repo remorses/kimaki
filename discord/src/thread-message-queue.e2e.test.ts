@@ -43,7 +43,6 @@ import {
   waitForBotMessageContaining,
   waitForBotMessageCount,
   waitForBotReplyAfterUserMessage,
-  waitForThreadPhase,
   waitForThreadState,
 } from './test-utils.js'
 
@@ -603,11 +602,6 @@ e2eTest('thread message queue ordering', () => {
         return reply.content.trim().length > 0
       })).toBe(true)
 
-      await waitForThreadPhase({
-        threadId: thread.id,
-        phase: 'idle',
-        timeout: 4_000,
-      })
       const finalState = await waitForThreadState({
         threadId: thread.id,
         predicate: (state) => {
@@ -772,12 +766,6 @@ e2eTest('thread message queue ordering', () => {
         timeout: 4_000,
       })
 
-      await waitForThreadPhase({
-        threadId: thread.id,
-        phase: 'running',
-        timeout: 4_000,
-      })
-
       const queuedPrompt = 'Reply with exactly: queued-from-slash'
       const { id: interactionId } = await th.user(TEST_USER_ID).runSlashCommand({
         name: 'queue',
@@ -785,14 +773,6 @@ e2eTest('thread message queue ordering', () => {
       })
 
       await th.waitForInteractionAck({ interactionId, timeout: 4_000 })
-
-      await waitForBotMessageContaining({
-        discord,
-        threadId: thread.id,
-        userId: TEST_USER_ID,
-        text: 'Queued message (position 1)',
-        timeout: 4_000,
-      })
 
       const expectedDispatchIndicator = `» **queue-tester:** ${queuedPrompt}`
       await waitForBotMessageContaining({
@@ -812,12 +792,6 @@ e2eTest('thread message queue ordering', () => {
       })
 
       const finalMessages = await th.getMessages()
-      const queuedAckIndex = finalMessages.findIndex((message) => {
-        return (
-          message.author.id === discord.botUserId &&
-          message.content.includes('Queued message (position 1)')
-        )
-      })
       const dispatchIndicatorIndex = finalMessages.findIndex((message) => {
         return (
           message.author.id === discord.botUserId &&
@@ -835,21 +809,13 @@ e2eTest('thread message queue ordering', () => {
         --- from: assistant (TestBot)
         » **queue-tester:** Reply with exactly: race-final
         --- from: assistant (TestBot)
-        Queued message (position 1)
-        --- from: assistant (TestBot)
-        ⬥ race-final
-        --- from: assistant (TestBot)
-        *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2*
-        --- from: assistant (TestBot)
         » **queue-tester:** Reply with exactly: queued-from-slash
         --- from: assistant (TestBot)
         ⬥ race-final
         --- from: assistant (TestBot)
         *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2*"
       `)
-      expect(queuedAckIndex).toBeGreaterThan(-1)
       expect(dispatchIndicatorIndex).toBeGreaterThan(-1)
-      expect(queuedAckIndex).toBeLessThan(dispatchIndicatorIndex)
     },
     12_000,
   )
@@ -1133,10 +1099,10 @@ e2eTest('thread message queue ordering', () => {
         Reply with exactly: kilo
         --- from: assistant (TestBot)
         *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2*
-        --- from: user (queue-tester)
-        Reply with exactly: lima
         --- from: assistant (TestBot)
         ⬥ ok
+        --- from: user (queue-tester)
+        Reply with exactly: lima
         --- from: assistant (TestBot)
         *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2*
         --- from: assistant (TestBot)

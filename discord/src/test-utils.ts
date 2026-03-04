@@ -18,7 +18,6 @@ import {
   getThreadState,
   type ThreadRunState,
 } from './session-handler/thread-runtime-state.js'
-import { getRuntime } from './session-handler/thread-session-runtime.js'
 
 /**
  * Kill all in-memory opencode server processes and clear the registry.
@@ -304,44 +303,7 @@ export async function waitForFooterMessage({
 }
 
 // ── Thread state polling helpers ─────────────────────────────────
-// Used by e2e tests to assert on session state transitions
-// (phase changes, queue depth, abort, idle).
-
-/**
- * Poll until thread derived phase matches one of the expected values.
- * Returns the full ThreadRunState snapshot when the condition is met.
- */
-export async function waitForThreadPhase({
-  threadId,
-  phase,
-  timeout,
-}: {
-  threadId: string
-  phase: 'idle' | 'running' | Array<'idle' | 'running'>
-  timeout: number
-}): Promise<ThreadRunState> {
-  const phases = Array.isArray(phase) ? phase : [phase]
-  const start = Date.now()
-  while (Date.now() - start < timeout) {
-    const state = getThreadState(threadId)
-    const runtime = getRuntime(threadId)
-    const currentPhase = runtime?.getDerivedPhase() || 'idle'
-    if (state && phases.includes(currentPhase)) {
-      return state
-    }
-    await new Promise((resolve) => {
-      setTimeout(resolve, 50)
-    })
-  }
-  const finalState = getThreadState(threadId)
-  const finalRuntime = getRuntime(threadId)
-  const currentPhase = finalState
-    ? (finalRuntime?.getDerivedPhase() || 'idle')
-    : 'no-thread-state'
-  throw new Error(
-    `Timed out waiting for thread ${threadId} phase [${phases.join(', ')}]. Current phase: ${currentPhase}`,
-  )
-}
+// Used by e2e tests to assert on queue and session-state snapshots.
 
 /**
  * Poll until thread has at least `count` items in its queue.
@@ -374,8 +336,7 @@ export async function waitForThreadQueueLength({
 
 /**
  * Poll until a custom predicate on ThreadRunState returns true.
- * Use this for compound assertions (e.g. phase === 'finished' AND queue empty)
- * to avoid matching transient states during phase transitions.
+ * Use this for compound assertions against thread state snapshots.
  */
 export async function waitForThreadState({
   threadId,
@@ -401,13 +362,10 @@ export async function waitForThreadState({
   }
   const finalState = getThreadState(threadId)
   const desc = description ?? 'custom predicate'
-  const finalRuntime = getRuntime(threadId)
-  const phase = finalState
-    ? (finalRuntime?.getDerivedPhase() || 'idle')
-    : 'no-thread-state'
   const queueLen = finalState?.queueItems.length ?? 0
+  const sessionId = finalState?.sessionId ?? 'none'
   throw new Error(
     `Timed out waiting for thread ${threadId} (${desc}). ` +
-    `Current: phase=${phase}, queue=${queueLen}`,
+    `Current: queue=${queueLen}, sessionId=${sessionId}`,
   )
 }

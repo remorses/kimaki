@@ -10,7 +10,6 @@ import {
   waitForFooterMessage,
   waitForBotMessageContaining,
   waitForBotReplyAfterUserMessage,
-  waitForThreadPhase,
 } from './test-utils.js'
 
 const TEXT_CHANNEL_ID = '200000000000001001'
@@ -194,12 +193,6 @@ e2eTest('queue advanced: footer emission', () => {
         timeout: 4_000,
       })
 
-      await waitForThreadPhase({
-        threadId: thread.id,
-        phase: 'running',
-        timeout: 4_000,
-      })
-
       await th.user(TEST_USER_ID).sendMessage({
         content: 'Reply with exactly: interrupt-footer-followup',
       })
@@ -299,12 +292,6 @@ e2eTest('queue advanced: footer emission', () => {
         userId: TEST_USER_ID,
         text: 'starting sleep 100',
         afterUserMessageIncludes: 'PLUGIN_TIMEOUT_SLEEP_MARKER',
-        timeout: 4_000,
-      })
-
-      await waitForThreadPhase({
-        threadId: thread.id,
-        phase: 'running',
         timeout: 4_000,
       })
 
