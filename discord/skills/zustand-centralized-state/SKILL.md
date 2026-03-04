@@ -6,11 +6,15 @@ description: >
   all reactive side effects. Based on Rich Hickey's "Simple Made Easy" principles:
   prefer values over mutable state, derive instead of cache, centralize transitions,
   and push side effects to the edges. Resource co-location in the same store is
-  also valid when lifecycle management is safer that way. Use this skill when
-  building any stateful TypeScript application (servers, extensions, CLIs, relays)
-  to keep state simple, testable, and easy to reason about. ALWAYS read this skill
-  when a project uses zustand/vanilla for state management outside of React.
-version: 0.2.1
+  also valid when lifecycle management is safer that way. Also covers state
+  encapsulation: keeping state local to its owner (closures, plugins, factory
+  functions) so it doesn't leak across the app, reducing the blast radius of
+  mutations.
+  Use this skill when building any stateful TypeScript application (servers,
+  extensions, CLIs, relays) to keep state simple, testable, and easy to reason
+  about. ALWAYS read this skill when a project uses zustand/vanilla for state
+  management outside of React.
+version: 0.3.0
 ---
 
 # Centralized State Management
@@ -654,6 +658,336 @@ store.subscribe(
 )
 ```
 
+## Encapsulate state to limit blast radius
+
+Centralizing global state in one store is good, but the best state is state that
+**doesn't leak outside its owner**. When state is read and mutated from many
+places, it becomes hard to reason about: N state fields that interact create an
+explosion of possible combinations. The fewer places that can see or touch a piece
+of state, the easier the program is to understand.
+
+The goal: keep state **small** and **local** to the code that owns it. Don't
+expose it to the rest of the application. This is the same principle behind
+React's `useState` -- a component's state is private, and no other component can
+reach in and mutate it. The component renders based on its own state, and the
+only way to change that state is through the component's own event handlers.
+
+This principle applies everywhere, not just React:
+
+### Closures and plugins
+
+A closure (or plugin factory) can hold state in local variables that are invisible
+to the outside world. The returned interface exposes only **behavior** (event
+handlers, methods), never the raw state.
+
+```ts
+// Real example: opencode-plugin.ts interruptOpencodeSessionOnUserMessage
+const interruptOnMessage: Plugin = async (ctx) => {
+  // All state is closure-local — invisible to anything outside this plugin
+  let seq = 0
+  const busy = new Set<string>()
+  const timers = new Map<string, ReturnType<typeof setTimeout>>()
+  const events: StoredEvent[] = []
+
+  return {
+    async event({ event }) {
+      // Only this handler mutates busy/timers/events
+      events.push({ event, index: ++seq })
+      if (events.length > 100) events.shift()
+
+      if (event.type === 'session.status') {
+        const { sessionID, status } = event.properties
+        if (status.type === 'busy') {
+          busy.add(sessionID)
+        } else {
+          busy.delete(sessionID)
+          const timer = timers.get(sessionID)
+          if (timer) {
+            clearTimeout(timer)
+            timers.delete(sessionID)
+          }
+        }
+      }
+    },
+
+    async 'chat.message'(input) {
+      // Reads busy set, manages timers — all closure-scoped
+      const { sessionID } = input
+      if (!sessionID) return
+      if (!busy.has(sessionID)) return
+      // ... abort and resume logic
+    },
+  }
+}
+```
+
+This plugin is easy to reason about because:
+- **4 state variables**, all in one place (the closure)
+- **2 handlers** that read/write them (`event` and `chat.message`)
+- **Nothing outside** can see or mutate `busy`, `timers`, `events`, or `seq`
+- You can understand the full state machine by reading ~80 lines
+
+Compare this to the alternative where `busy`, `timers`, etc. are module-level
+variables or fields on a shared object that any handler in the codebase can
+reach into. Now every handler is a potential writer, and you have to grep the
+entire codebase to understand the state lifecycle.
+
+### Closure-based modules
+
+The same pattern works for any feature that needs internal state. A factory
+function returns an interface of operations, while the state stays trapped
+inside the closure. Nothing outside can read or mutate it directly.
+
+```ts
+// BAD: module-level state that any file can import and mutate
+export const rateLimitState = {
+  tokens: new Map<string, number>(),     // anyone can .set(), .clear()
+  lastRefill: new Map<string, number>(), // anyone can .delete()
+}
+
+// some random file reaches in:
+rateLimitState.tokens.set('user-1', 9999)  // bypasses all logic
+```
+
+```ts
+// GOOD: state is closure-local, only operations are exposed
+function createRateLimiter({ maxTokens, refillMs }: {
+  maxTokens: number
+  refillMs: number
+}) {
+  const tokens = new Map<string, number>()
+  const lastRefill = new Map<string, number>()
+
+  function refill(key: string) {
+    const now = Date.now()
+    const last = lastRefill.get(key) ?? 0
+    const elapsed = now - last
+    const newTokens = Math.floor(elapsed / refillMs) * maxTokens
+    if (newTokens > 0) {
+      tokens.set(key, Math.min(maxTokens, (tokens.get(key) ?? maxTokens) + newTokens))
+      lastRefill.set(key, now)
+    }
+  }
+
+  return {
+    tryConsume(key: string): boolean {
+      refill(key)
+      const current = tokens.get(key) ?? maxTokens
+      if (current <= 0) return false
+      tokens.set(key, current - 1)
+      return true
+    },
+    remaining(key: string): number {
+      refill(key)
+      return tokens.get(key) ?? maxTokens
+    },
+  }
+}
+
+const limiter = createRateLimiter({ maxTokens: 10, refillMs: 1000 })
+limiter.tryConsume('user-1') // the only way to change state
+// limiter.tokens — doesn't exist, no way to reach in
+```
+
+The returned object exposes **behavior** (`tryConsume`, `remaining`), never the
+raw Maps. Just like a React component -- you can't set another component's state
+from outside, you can only interact through its public interface.
+
+### When to centralize vs encapsulate
+
+| Situation | Approach |
+|---|---|
+| State shared across many modules (app config, connection status) | Centralize in one zustand store |
+| State used by one module or feature (rate limiting, retry tracking) | Encapsulate in a closure |
+| State used by 2-3 closely related handlers | Encapsulate in a shared closure (plugin pattern) |
+| State that drives UI across the whole app | Centralize in store + subscribe |
+
+The rule of thumb: **start encapsulated, promote to centralized only when
+multiple unrelated parts of the app need the same state.** Most state should be
+local. Global state should be the exception, not the default.
+
+**Important:** encapsulation only applies to local, feature-scoped state. If state
+is truly global (shared across many unrelated modules), it should live in a
+centralized zustand store as described in the earlier sections. Encapsulation is
+not a replacement for centralized state -- it's for the cases where state doesn't
+need to be global in the first place.
+
+## Derive state from events instead of tracking it
+
+The best state is **no state at all**. When you have an event stream (SSE events,
+WebSocket messages, webhook callbacks), the most common mistake is to maintain
+internal mutable state that gets updated on each event and then read elsewhere in
+the handler. This creates the usual problems: the state can get out of sync, it's
+mutated from multiple places, and the interaction between state fields creates
+a combinatorial explosion of possible program states.
+
+A better approach is **event sourcing**: keep a bounded buffer of recent events
+and derive any "state" you need on demand by scanning the buffer with a pure
+function. The event stream is the single source of truth -- there is no separate
+mutable state to keep in sync.
+
+### The pattern
+
+```ts
+type StoredEvent = { event: Event; index: number }
+
+// The only mutable state: an append-only bounded buffer
+let seq = 0
+const events: StoredEvent[] = []
+
+function onEvent(event: Event) {
+  events.push({ event, index: ++seq })
+  if (events.length > 100) events.shift()
+}
+
+// Derive "state" from the event buffer with a pure function.
+// No mutable boolean, no flag to keep in sync.
+function wasSessionAborted(
+  events: StoredEvent[],
+  sessionId: string,
+  afterIndex: number,
+): boolean {
+  return events.some((e) => {
+    return (
+      e.index > afterIndex &&
+      e.event.type === 'session.error' &&
+      e.event.properties.sessionID === sessionId &&
+      e.event.properties.error?.name === 'MessageAbortedError'
+    )
+  })
+}
+```
+
+### Why mutable state is worse
+
+Consider an OpenCode session event handler that needs to distinguish between a
+session going idle because it **completed normally** vs because it was **aborted**.
+The idle event itself doesn't carry this information -- you need to know whether
+an abort error arrived just before the idle.
+
+**BAD: mutable flag that must stay in sync**
+
+```ts
+// BAD: mutable state scattered across event handlers
+let wasAborted = false
+
+function onEvent(event: Event) {
+  if (event.type === 'session.error') {
+    if (event.properties.error?.name === 'MessageAbortedError') {
+      wasAborted = true  // set in one handler...
+    }
+  }
+
+  if (event.type === 'session.idle') {
+    if (wasAborted) {
+      // ...read in another handler
+      handleAbortedIdle()
+    } else {
+      handleNormalCompletion()
+    }
+    wasAborted = false  // must remember to reset, or next idle is wrong
+  }
+}
+```
+
+Problems with this:
+- `wasAborted` is written in one place, read in another, reset in a third
+- If you forget the reset, every subsequent idle looks like an abort
+- If events arrive out of order or a new feature adds another path that
+  sets the flag, the state machine breaks silently
+- Testing requires setting up the mutable flag in the right state first
+
+**GOOD: derive from the event buffer**
+
+```ts
+// GOOD: event buffer is the sole source of truth, derive everything from it
+type StoredEvent = { event: Event; index: number }
+let seq = 0
+const events: StoredEvent[] = []
+
+function onEvent(event: Event) {
+  events.push({ event, index: ++seq })
+  if (events.length > 100) events.shift()
+
+  if (event.type === 'session.idle') {
+    const sessionId = event.properties.sessionID
+    // Pure function: was there an abort error for this session
+    // in the recent event history?
+    const aborted = wasSessionAborted(events, sessionId)
+    if (aborted) {
+      handleAbortedIdle(sessionId)
+    } else {
+      handleNormalCompletion(sessionId)
+    }
+  }
+}
+
+// Pure function — easy to test, no mutable state dependency
+function wasSessionAborted(
+  events: StoredEvent[],
+  sessionId: string,
+): boolean {
+  // Scan backward for the most recent status event for this session
+  for (let i = events.length - 1; i >= 0; i--) {
+    const e = events[i]!.event
+    if (e.properties?.sessionID !== sessionId) continue
+    if (
+      e.type === 'session.error' &&
+      e.properties.error?.name === 'MessageAbortedError'
+    ) {
+      return true
+    }
+    // Found a non-error event for this session before any abort — not aborted
+    if (e.type === 'session.status') return false
+  }
+  return false
+}
+```
+
+This is better because:
+- **No mutable boolean** -- there's nothing to reset or keep in sync
+- **Pure derivation** -- `wasSessionAborted` takes data in, returns data out
+- **Easy to test** -- construct an array of events, call the function, assert
+- **Easy to extend** -- need to know if idle was from a timeout? Add another
+  pure function that scans the same buffer, no new state variable needed
+
+### Testing event-sourced state
+
+The pure derivation functions are trivial to test -- no mocks, no setup, just
+events in and booleans out:
+
+```ts
+test('detects abort from event stream', () => {
+  const events: StoredEvent[] = [
+    { event: { type: 'session.status', properties: { sessionID: 's1', status: { type: 'busy' } } }, index: 1 },
+    { event: { type: 'session.error', properties: { sessionID: 's1', error: { name: 'MessageAbortedError' } } }, index: 2 },
+    { event: { type: 'session.idle', properties: { sessionID: 's1' } }, index: 3 },
+  ]
+  expect(wasSessionAborted(events, 's1')).toBe(true)
+})
+
+test('normal completion has no abort error', () => {
+  const events: StoredEvent[] = [
+    { event: { type: 'session.status', properties: { sessionID: 's1', status: { type: 'busy' } } }, index: 1 },
+    { event: { type: 'session.idle', properties: { sessionID: 's1' } }, index: 2 },
+  ]
+  expect(wasSessionAborted(events, 's1')).toBe(false)
+})
+```
+
+### When to use event sourcing vs mutable state
+
+| Situation | Approach |
+|---|---|
+| Need to classify events based on recent history (abort vs complete, retry vs first attempt) | Derive from event buffer |
+| Tracking a long-lived resource lifecycle (connection open/close) | Mutable state or zustand store |
+| Flag that's set and read in the same handler | Local variable (no state needed) |
+| Need to answer "what happened before X?" | Event buffer scan |
+
+The key insight: if you're adding a boolean flag just to communicate information
+between two event handlers, you probably don't need that flag. Keep the events
+around and derive the answer when you need it.
+
 ## Summary
 
 | Principle | Practice |
@@ -665,3 +999,5 @@ store.subscribe(
 | Centralize side effects | One `subscribe()` for all reactive effects |
 | State vs I/O boundary | Prefer separation, but co-location is valid for safer cleanup |
 | Test with data | State in -> state out, no mocks needed |
+| Encapsulate state | Keep state local to its owner (closure, component), promote to global only when needed |
+| Derive from events | Keep a bounded event buffer, derive "state" with pure functions instead of mutable flags |
