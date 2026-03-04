@@ -314,9 +314,6 @@ export class ThreadSessionRuntime {
   private typingInterval: ReturnType<typeof setInterval> | null = null
   private typingRestartTimeout: ReturnType<typeof setTimeout> | null = null
 
-  // Per-dispatch controller (runtime-owned, not in store).
-  private runController: AbortController | undefined
-
   // Notification throttles for retry/context notices.
   private lastDisplayedContextPercentage = 0
   private lastRateLimitDisplayTime = 0
@@ -358,11 +355,6 @@ export class ThreadSessionRuntime {
   }
 
   getDerivedPhase(): 'idle' | 'running' {
-    const hasActiveRunController =
-      this.runController !== undefined && !this.runController.signal.aborted
-    if (hasActiveRunController) {
-      return 'running'
-    }
     return this.isMainSessionBusy() ? 'running' : 'idle'
   }
 
@@ -516,8 +508,6 @@ export class ThreadSessionRuntime {
 
   dispose(): void {
     this.state?.listenerController?.abort()
-    this.runController?.abort()
-    this.runController = undefined
     // waitForEvent loops check listenerAborted and exit naturally.
     threadState.updateThread(this.threadId, (t) => ({
       ...t,
@@ -2118,7 +2108,6 @@ export class ThreadSessionRuntime {
           stateAfterEnqueue.queueItems.length > 0
           && !threadState.hasBlockers(stateAfterEnqueue)
           && !this.isMainSessionBusy()
-          && (!this.runController || this.runController.signal.aborted)
         )
         : false
       result = !willDrainNow && position > 0
@@ -2152,7 +2141,7 @@ export class ThreadSessionRuntime {
 
   /**
    * Abort the currently active run. Does NOT kill the listener.
-   * Aborts the per-prompt run controller and calls session.abort best-effort.
+   * Calls session.abort best-effort and lets event-stream idle settle the run.
    */
   private async abortSessionViaApi({
     abortId,
@@ -2210,36 +2199,13 @@ export class ThreadSessionRuntime {
       }
     }
 
-    const runController = this.runController
     const sessionId = state.sessionId
-    const runControllerAlreadyAborted = Boolean(runController?.signal.aborted)
-    const hasRunController = Boolean(runController)
     const sessionIsBusy = this.isMainSessionBusy()
 
     logger.log(
-      `[ABORT] id=${abortId} reason=${reason} threadId=${this.threadId} sessionId=${sessionId || 'none'} queueLength=${state.queueItems.length} ${this.formatRunStateForLog()} hasRunController=${hasRunController} runControllerAborted=${runControllerAlreadyAborted} sessionBusy=${sessionIsBusy}`,
+      `[ABORT] id=${abortId} reason=${reason} threadId=${this.threadId} sessionId=${sessionId || 'none'} queueLength=${state.queueItems.length} ${this.formatRunStateForLog()} sessionBusy=${sessionIsBusy}`,
     )
 
-    if (!runController || runControllerAlreadyAborted) {
-      // No active run or already aborted — best-effort API abort only.
-      this.runController = undefined
-      this.stopTyping()
-      const shouldAbortViaApi = Boolean(sessionId)
-      const apiAbortPromise = shouldAbortViaApi && sessionId
-        ? this.abortSessionViaApi({ abortId, reason, sessionId })
-        : undefined
-      logger.log(
-        `[ABORT] id=${abortId} reason=${reason} threadId=${this.threadId} skipped hasRunController=${hasRunController} alreadyAborted=${runControllerAlreadyAborted} apiAbort=${shouldAbortViaApi}`,
-      )
-      return {
-        abortId,
-        reason,
-        apiAbortPromise,
-      }
-    }
-
-    runController.abort(new Error(`Session aborted: ${reason}`))
-    this.runController = undefined
     this.stopTyping()
 
     const apiAbortPromise = sessionId
@@ -2247,7 +2213,7 @@ export class ThreadSessionRuntime {
       : undefined
 
     logger.log(
-      `[ABORT] id=${abortId} reason=${reason} threadId=${this.threadId} aborted ${this.formatRunStateForLog()}`,
+      `[ABORT] id=${abortId} reason=${reason} threadId=${this.threadId} apiAbort=${Boolean(sessionId)} ${this.formatRunStateForLog()}`,
     )
 
     return {
@@ -2303,12 +2269,6 @@ export class ThreadSessionRuntime {
       return
     }
 
-    const hasActiveRunController =
-      this.runController !== undefined && !this.runController.signal.aborted
-    if (hasActiveRunController) {
-      return
-    }
-
     const sessionBusy = thread.sessionId
       ? isSessionBusy({ events: this.eventBuffer, sessionId: thread.sessionId })
       : false
@@ -2341,8 +2301,8 @@ export class ThreadSessionRuntime {
 
     // Start dispatch (detached — does not block the action queue).
     // The prompt call is long-running. Events continue to flow through
-    // the action queue while the SDK call is in-flight. State machine
-    // invariants (isRunActive) prevent concurrent dispatches.
+    // the action queue while the SDK call is in-flight. Event-derived busy
+    // gating prevents concurrent local-queue dispatches.
     void this.dispatchPrompt(next).catch(async (err) => {
       logger.error('[DISPATCH] Prompt dispatch failed:', err)
       void notifyError(err, 'Runtime prompt dispatch failed')
@@ -2357,8 +2317,6 @@ export class ThreadSessionRuntime {
   private async dispatchPrompt(input: QueuedMessage): Promise<void> {
     this.lastDisplayedContextPercentage = 0
     this.lastRateLimitDisplayTime = 0
-    const runController = new AbortController()
-    this.runController = runController
 
     // ── Ensure session ────────────────────────────────────────
     const sessionResult = await this.ensureSession({
@@ -2368,9 +2326,6 @@ export class ThreadSessionRuntime {
       sessionStartScheduledTaskId: input.sessionStartScheduledTaskId,
     })
     if (sessionResult instanceof Error) {
-      if (this.runController === runController) {
-        this.runController = undefined
-      }
       this.stopTyping()
       await sendThreadMessage(
         this.thread,
@@ -2420,9 +2375,6 @@ export class ThreadSessionRuntime {
       })
     })
     if (earlyAgentResult instanceof Error) {
-      if (this.runController === runController) {
-        this.runController = undefined
-      }
       this.stopTyping()
       await sendThreadMessage(
         this.thread,
@@ -2463,9 +2415,6 @@ export class ThreadSessionRuntime {
       }),
     ])
     if (earlyModelResult instanceof Error) {
-      if (this.runController === runController) {
-        this.runController = undefined
-      }
       this.stopTyping()
       await sendThreadMessage(
         this.thread,
@@ -2477,9 +2426,6 @@ export class ThreadSessionRuntime {
     }
     const earlyModelParam = earlyModelResult
     if (!earlyModelParam) {
-      if (this.runController === runController) {
-        this.runController = undefined
-      }
       this.stopTyping()
       await sendThreadMessage(
         this.thread,
@@ -2578,135 +2524,161 @@ export class ThreadSessionRuntime {
       ? { variant: earlyThinkingValue }
       : {}
 
-    if (runController.signal.aborted) {
-      this.stopTyping()
-      return
+    const parseOpenCodeErrorMessage = (err: unknown): string => {
+      if (err && typeof err === 'object') {
+        if (
+          'data' in err &&
+          err.data &&
+          typeof err.data === 'object' &&
+          'message' in err.data
+        ) {
+          return String(err.data.message)
+        }
+        if (
+          'errors' in err &&
+          Array.isArray(err.errors) &&
+          err.errors.length > 0
+        ) {
+          return JSON.stringify(err.errors)
+        }
+        if ('message' in err && typeof err.message === 'string') {
+          return err.message
+        }
+      }
+      return 'Unknown OpenCode API error'
     }
 
-    // SDK prompt/command calls return { data, error } instead of throwing.
-    // The abort signal CAN throw (AbortError), which we catch separately.
-    const sdkCall = input.command
-      ? getClient().session.command(
+    if (input.command) {
+      const queuedCommand = input.command
+      const commandSignal = AbortSignal.timeout(30_000)
+      const commandResponse = await errore.tryAsync(() => {
+        return getClient().session.command(
           {
             sessionID: session.id,
             directory: this.sdkDirectory,
-            command: input.command.name,
-            arguments: input.command.arguments,
+            command: queuedCommand.name,
+            arguments: queuedCommand.arguments,
             agent: earlyAgentPreference,
             ...variantField,
           },
-          { signal: runController.signal },
+          { signal: commandSignal },
         )
-      : getClient().session.prompt(
-          {
-            sessionID: session.id,
-            directory: this.sdkDirectory,
-            parts,
-            system: getOpencodeSystemMessage({
-              sessionId: session.id,
-              channelId,
-              guildId: this.thread.guildId,
-              threadId: this.thread.id,
-              worktree,
-              channelTopic,
-              username: input.username,
-              userId: input.userId,
-              agents: earlyAvailableAgents,
-            }),
-            model: earlyModelParam,
-            agent: earlyAgentPreference,
-            ...variantField,
-          },
-          { signal: runController.signal },
-        )
-
-    // Catch abort/network errors from the SDK call.
-    const response = await sdkCall.catch(async (thrown: unknown) => {
-      if (isAbortError(thrown)) {
-        if (this.runController === runController) {
-          this.runController = undefined
-        }
-        this.stopTyping()
-        return undefined // aborted — run settles via session.idle event
-      }
-      const errMsg =
-        thrown instanceof Error ? thrown.message : String(thrown)
-      const errObj =
-        thrown instanceof Error ? thrown : new Error(errMsg)
-      logger.error(`[DISPATCH] Prompt SDK call failed: ${errMsg}`)
-      void notifyError(errObj, 'Failed to send prompt to OpenCode')
-      if (this.runController === runController) {
-        this.runController = undefined
-      }
-      this.stopTyping()
-      await sendThreadMessage(
-        this.thread,
-        `✗ Unexpected bot Error: ${errMsg}`,
-      )
-      await this.dispatchAction(() => {
-        return this.tryDrainQueue({ showIndicator: true })
       })
-      return undefined
-    })
 
-    if (!response) {
-      return // aborted or errored (already handled)
-    }
-    if (response.error) {
-      const err = response.error
-
-      // Abort response — expected for explicit abort/retry flows.
-      const errMessage = err && typeof err === 'object' && 'message' in err
-        ? String(err.message)
-        : ''
-      if (errMessage.includes('aborted')) {
-        logger.log(
-          `[DISPATCH] Session aborted (expected) sessionId=${session.id}`,
-        )
-        if (this.runController === runController) {
-          this.runController = undefined
+      if (commandResponse instanceof Error) {
+        const timeoutReason = commandSignal.reason
+        const timedOut =
+          commandSignal.aborted &&
+          timeoutReason instanceof Error &&
+          timeoutReason.name === 'TimeoutError'
+        if (timedOut) {
+          logger.warn(
+            `[DISPATCH] Command timed out after 30s sessionId=${session.id}`,
+          )
+          this.stopTyping()
+          await sendThreadMessage(
+            this.thread,
+            '✗ Command timed out after 30 seconds. Try a shorter command or run it with /run-shell-command.',
+          )
+          await this.dispatchAction(() => {
+            return this.tryDrainQueue({ showIndicator: true })
+          })
+          return
         }
+
+        const commandErrorForAbortCheck: unknown = commandResponse
+        if (isAbortError(commandErrorForAbortCheck)) {
+          logger.log(
+            `[DISPATCH] Command aborted (expected) sessionId=${session.id}`,
+          )
+          this.stopTyping()
+          return
+        }
+
+        logger.error(
+          `[DISPATCH] Command SDK call failed: ${commandResponse.message}`,
+        )
+        void notifyError(commandResponse, 'Failed to send command to OpenCode')
         this.stopTyping()
+        await sendThreadMessage(
+          this.thread,
+          `✗ Unexpected bot Error: ${commandResponse.message}`,
+        )
+        await this.dispatchAction(() => {
+          return this.tryDrainQueue({ showIndicator: true })
+        })
         return
       }
 
-      const errorMessage = (() => {
-        if (err && typeof err === 'object') {
-          if (
-            'data' in err &&
-            err.data &&
-            typeof err.data === 'object' &&
-            'message' in err.data
-          ) {
-            return String(err.data.message)
-          }
-          if (
-            'errors' in err &&
-            Array.isArray(err.errors) &&
-            err.errors.length > 0
-          ) {
-            return JSON.stringify(err.errors)
-          }
+      if (commandResponse.error) {
+        const errorMessage = parseOpenCodeErrorMessage(commandResponse.error)
+        if (errorMessage.includes('aborted')) {
+          logger.log(
+            `[DISPATCH] Command aborted (expected) sessionId=${session.id}`,
+          )
+          this.stopTyping()
+          return
         }
-        return JSON.stringify(err)
-      })()
-      const apiError = new Error(`OpenCode API error: ${errorMessage}`)
-      logger.error(`[DISPATCH] ${apiError.message}`)
-      void notifyError(apiError, 'OpenCode API error during prompt')
-      if (this.runController === runController) {
-        this.runController = undefined
+        const apiError = new Error(`OpenCode API error: ${errorMessage}`)
+        logger.error(`[DISPATCH] ${apiError.message}`)
+        void notifyError(apiError, 'OpenCode API error during command')
+        this.stopTyping()
+        await sendThreadMessage(this.thread, `✗ ${apiError.message}`)
+        await this.dispatchAction(() => {
+          return this.tryDrainQueue({ showIndicator: true })
+        })
+        return
       }
+
+      logger.log(`[DISPATCH] Successfully ran command for session ${session.id}`)
+      return
+    }
+
+    const promptResponse = await errore.tryAsync(() => {
+      return getClient().session.promptAsync({
+        sessionID: session.id,
+        directory: this.sdkDirectory,
+        parts,
+        system: getOpencodeSystemMessage({
+          sessionId: session.id,
+          channelId,
+          guildId: this.thread.guildId,
+          threadId: this.thread.id,
+          worktree,
+          channelTopic,
+          username: input.username,
+          userId: input.userId,
+          agents: earlyAvailableAgents,
+        }),
+        model: earlyModelParam,
+        agent: earlyAgentPreference,
+        ...variantField,
+      })
+    })
+
+    if (promptResponse instanceof Error || promptResponse.error) {
+      const errorMessage = (() => {
+        if (promptResponse instanceof Error) {
+          return promptResponse.message
+        }
+        return parseOpenCodeErrorMessage(promptResponse.error)
+      })()
+      const errorObject = promptResponse instanceof Error
+        ? promptResponse
+        : new Error(errorMessage)
+      logger.error(`[DISPATCH] Prompt API call failed: ${errorMessage}`)
+      void notifyError(errorObject, 'OpenCode API error during local queue prompt')
       this.stopTyping()
-      await sendThreadMessage(this.thread, `✗ ${apiError.message}`)
+      await sendThreadMessage(this.thread, `✗ OpenCode API error: ${errorMessage}`)
       await this.dispatchAction(() => {
         return this.tryDrainQueue({ showIndicator: true })
       })
       return
     }
 
-    // Prompt accepted — model is now running. session.idle SSE event
-    // will trigger finishRun when the model completes.
-    logger.log(`[DISPATCH] Successfully sent prompt for session ${session.id}`)
+    logger.log(
+      `[DISPATCH] promptAsync accepted by opencode queue sessionId=${session.id} threadId=${this.threadId}`,
+    )
   }
 
   // ── Phase 3: Session Ensure ──────────────────────────────────
@@ -2836,7 +2808,6 @@ export class ThreadSessionRuntime {
       }),
     ]
 
-    this.runController = undefined
     this.stopTyping()
 
     // Flush remaining buffered parts for all assistant messages observed during
