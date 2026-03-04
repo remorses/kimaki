@@ -133,6 +133,8 @@ const KIMAKI_GATEWAY_PROXY_URL =
 const KIMAKI_GATEWAY_PROXY_REST_BASE_URL = getGatewayProxyRestBaseUrl({
   gatewayUrl: KIMAKI_GATEWAY_PROXY_URL,
 })
+const KIMAKI_CLIENT_ID = process.env.KIMAKI_CLIENT_ID?.trim() || undefined
+const KIMAKI_CLIENT_SECRET = process.env.KIMAKI_CLIENT_SECRET?.trim() || undefined
 
 // Strip bracketed paste escape sequences from terminal input.
 // iTerm2 and other terminals wrap pasted content with \x1b[200~ and \x1b[201~
@@ -1303,9 +1305,22 @@ async function run({
         process.exit(EXIT_NO_RESTART)
       }
 
-      // Generate client credentials
-      const clientId = crypto.randomUUID()
-      const clientSecret = crypto.randomBytes(32).toString('hex')
+      const hasGatewayClientId = Boolean(KIMAKI_CLIENT_ID)
+      const hasGatewayClientSecret = Boolean(KIMAKI_CLIENT_SECRET)
+      if (hasGatewayClientId !== hasGatewayClientSecret) {
+        cliLogger.error(
+          'Gateway credential env vars must be set together: KIMAKI_CLIENT_ID and KIMAKI_CLIENT_SECRET.',
+        )
+        process.exit(EXIT_NO_RESTART)
+      }
+      const clientId = KIMAKI_CLIENT_ID || crypto.randomUUID()
+      const clientSecret = KIMAKI_CLIENT_SECRET
+        || crypto.randomBytes(32).toString('hex')
+      if (KIMAKI_CLIENT_ID && KIMAKI_CLIENT_SECRET) {
+        cliLogger.log(
+          'Using KIMAKI_CLIENT_ID and KIMAKI_CLIENT_SECRET from environment for gateway mode.',
+        )
+      }
 
       const statePayload = JSON.stringify({ clientId, clientSecret } satisfies GatewayOAuthState)
       const oauthUrl = generateBotInstallUrl({
