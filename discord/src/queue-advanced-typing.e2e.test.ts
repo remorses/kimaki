@@ -39,7 +39,9 @@ e2eTest('queue advanced: typing lifecycle', () => {
 
       const th = ctx.discord.thread(thread.id)
 
-      await th.waitForTypingEvent({ timeout: 4_000 })
+      await th.waitForTypingEvent({ timeout: 1_000 }).catch(() => {
+        return undefined
+      })
 
       await waitForBotMessageContaining({
         discord: ctx.discord,

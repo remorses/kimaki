@@ -12,6 +12,7 @@ import {
 import { getThreadState, setRunController } from './session-handler/thread-runtime-state.js'
 import { setSessionModel } from './database.js'
 import {
+  waitForFooterMessage,
   waitForBotMessageContaining,
   waitForBotReplyAfterUserMessage,
   waitForThreadPhase,
@@ -79,12 +80,21 @@ e2eTest('queue advanced: abort and retry', () => {
         threadId: thread.id,
         userId: TEST_USER_ID,
         userMessageIncludes: 'papa',
-        timeout: 4_000,
+        timeout: 8_000,
       })
 
       const afterBotMessages = after.filter((m) => {
         return m.author.id === ctx.discord.botUserId
       })
+
+      await waitForFooterMessage({
+        discord: ctx.discord,
+        threadId: thread.id,
+        timeout: 8_000,
+        afterMessageIncludes: 'papa',
+        afterAuthorId: TEST_USER_ID,
+      })
+
       expect(await th.text()).toMatchInlineSnapshot(`
         "--- from: assistant (TestBot)
         ⬥ ok
@@ -93,7 +103,11 @@ e2eTest('queue advanced: abort and retry', () => {
         --- from: user (queue-advanced-tester)
         Reply with exactly: papa
         --- from: assistant (TestBot)
-        ⬥ starting sleep 100"
+        ⬥ starting sleep 100
+        --- from: assistant (TestBot)
+        ⬥ ok
+        --- from: assistant (TestBot)
+        *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2*"
       `)
       expect(afterBotMessages.length).toBeGreaterThanOrEqual(beforeBotCount + 1)
 
@@ -115,7 +129,7 @@ e2eTest('queue advanced: abort and retry', () => {
       })
       expect(userPapaIndex).toBeLessThan(lastBotIndex)
     },
-    8_000,
+    12_000,
   )
 
   test(

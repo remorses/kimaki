@@ -39,6 +39,7 @@ import { initializeOpencodeForDirectory } from './opencode.js'
 import {
   cleanupOpencodeServers,
   cleanupTestSessions,
+  waitForFooterMessage,
   waitForBotMessageContaining,
   waitForBotMessageCount,
   waitForBotReplyAfterUserMessage,
@@ -409,9 +410,17 @@ e2eTest('thread message queue ordering', () => {
         timeout: 10_000,
       })
 
+      await waitForFooterMessage({
+        discord,
+        threadId: thread.id,
+        timeout: 4_000,
+      })
+
       expect(await discord.thread(thread.id).text()).toMatchInlineSnapshot(`
         "--- from: assistant (TestBot)
-        ⬥ ok"
+        ⬥ ok
+        --- from: assistant (TestBot)
+        *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2*"
       `)
     },
     12_000,
@@ -466,6 +475,14 @@ e2eTest('thread message queue ordering', () => {
         return m.author.id === discord.botUserId
       })
       expect(afterBotMessages.length).toBeGreaterThanOrEqual(beforeBotCount + 1)
+
+      await waitForFooterMessage({
+        discord,
+        threadId: thread.id,
+        timeout: 4_000,
+        afterMessageIncludes: 'beta',
+        afterAuthorId: TEST_USER_ID,
+      })
 
       expect(await th.text()).toMatchInlineSnapshot(`
         "--- from: assistant (TestBot)
@@ -550,6 +567,14 @@ e2eTest('thread message queue ordering', () => {
       })
       expect(afterBotMessages.length).toBeGreaterThanOrEqual(beforeBotCount + 1)
 
+      await waitForFooterMessage({
+        discord,
+        threadId: thread.id,
+        timeout: 4_000,
+        afterMessageIncludes: 'three',
+        afterAuthorId: TEST_USER_ID,
+      })
+
       expect(await th.text()).toMatchInlineSnapshot(`
         "--- from: assistant (TestBot)
         ⬥ ok
@@ -625,6 +650,14 @@ e2eTest('thread message queue ordering', () => {
         timeout: 4_000,
       })
 
+      await waitForFooterMessage({
+        discord,
+        threadId: thread.id,
+        timeout: 4_000,
+        afterMessageIncludes: 'Prompt from test: respond with short text',
+        afterAuthorId: TEST_USER_ID,
+      })
+
       expect(await th.text()).toMatchInlineSnapshot(`
         "--- from: assistant (TestBot)
         ⬥ ok
@@ -676,6 +709,12 @@ e2eTest('thread message queue ordering', () => {
         timeout: 4_000,
       })
 
+      await waitForFooterMessage({
+        discord,
+        threadId: thread.id,
+        timeout: 4_000,
+      })
+
       const deadline = Date.now() + 4_000
       while (!fs.existsSync(markerPath) && Date.now() < deadline) {
         await new Promise((resolve) => {
@@ -685,7 +724,11 @@ e2eTest('thread message queue ordering', () => {
 
       expect(await discord.thread(thread.id).text()).toMatchInlineSnapshot(`
         "--- from: assistant (TestBot)
-        ⬥ running create file"
+        ⬥ running create file
+        --- from: assistant (TestBot)
+        ⬥ ok
+        --- from: assistant (TestBot)
+        *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2*"
       `)
       expect(fs.existsSync(markerPath)).toBe(true)
       const markerContents = fs.readFileSync(markerPath, 'utf8')
@@ -756,6 +799,14 @@ e2eTest('thread message queue ordering', () => {
         timeout: 8_000,
       })
 
+      await waitForFooterMessage({
+        discord,
+        threadId: thread.id,
+        timeout: 8_000,
+        afterMessageIncludes: expectedDispatchIndicator,
+        afterAuthorId: discord.botUserId,
+      })
+
       const finalMessages = await th.getMessages()
       const queuedAckIndex = finalMessages.findIndex((message) => {
         return (
@@ -786,7 +837,11 @@ e2eTest('thread message queue ordering', () => {
         --- from: assistant (TestBot)
         *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2*
         --- from: assistant (TestBot)
-        » **queue-tester:** Reply with exactly: queued-from-slash"
+        » **queue-tester:** Reply with exactly: queued-from-slash
+        --- from: assistant (TestBot)
+        ⬥ race-final
+        --- from: assistant (TestBot)
+        *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2*"
       `)
       expect(queuedAckIndex).toBeGreaterThan(-1)
       expect(dispatchIndicatorIndex).toBeGreaterThan(-1)
@@ -850,6 +905,14 @@ e2eTest('thread message queue ordering', () => {
       })
       expect(afterBotMessages.length).toBeGreaterThanOrEqual(beforeBotCount + 1)
 
+      await waitForFooterMessage({
+        discord,
+        threadId: thread.id,
+        timeout: 4_000,
+        afterMessageIncludes: 'foxtrot',
+        afterAuthorId: TEST_USER_ID,
+      })
+
       const userEchoIndex = after.findIndex((m) => {
         return m.author.id === TEST_USER_ID && m.content.includes('echo')
       })
@@ -866,7 +929,11 @@ e2eTest('thread message queue ordering', () => {
         --- from: user (queue-tester)
         Reply with exactly: foxtrot
         --- from: assistant (TestBot)
-        ⬥ ok"
+        ⬥ ok
+        --- from: assistant (TestBot)
+        ⬥ ok
+        --- from: assistant (TestBot)
+        *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2*"
       `)
       expect(userEchoIndex).toBeGreaterThan(-1)
       expect(userFoxtrotIndex).toBeGreaterThan(-1)
@@ -932,6 +999,14 @@ e2eTest('thread message queue ordering', () => {
         timeout: 4_000,
       })
 
+      await waitForFooterMessage({
+        discord,
+        threadId: thread.id,
+        timeout: 4_000,
+        afterMessageIncludes: 'india',
+        afterAuthorId: TEST_USER_ID,
+      })
+
       // C's user message appears before its bot response.
       // We assert on india's reply existence.
       expect(await th.text()).toMatchInlineSnapshot(`
@@ -944,7 +1019,11 @@ e2eTest('thread message queue ordering', () => {
         --- from: user (queue-tester)
         Reply with exactly: india
         --- from: assistant (TestBot)
-        ⬥ ok"
+        ⬥ ok
+        --- from: assistant (TestBot)
+        ⬥ ok
+        --- from: assistant (TestBot)
+        *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2*"
       `)
       const userIndiaIndex = after.findIndex((m) => {
         return m.author.id === TEST_USER_ID && m.content.includes('india')
@@ -1035,6 +1114,14 @@ e2eTest('thread message queue ordering', () => {
       })
       expect(finalBotMessages.length).toBeGreaterThanOrEqual(burstBotCount)
 
+      await waitForFooterMessage({
+        discord,
+        threadId: thread.id,
+        timeout: 4_000,
+        afterMessageIncludes: 'november',
+        afterAuthorId: TEST_USER_ID,
+      })
+
       expect(await th.text()).toMatchInlineSnapshot(`
         "--- from: assistant (TestBot)
         ⬥ ok
@@ -1046,16 +1133,18 @@ e2eTest('thread message queue ordering', () => {
         Reply with exactly: lima
         --- from: assistant (TestBot)
         ⬥ ok
-        --- from: assistant (TestBot)
-        ⬥ ok
         --- from: user (queue-tester)
         Reply with exactly: mike
         --- from: assistant (TestBot)
-        *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2*
+        ⬥ ok
         --- from: user (queue-tester)
         Reply with exactly: november
         --- from: assistant (TestBot)
-        ⬥ ok"
+        ⬥ ok
+        --- from: assistant (TestBot)
+        ⬥ ok
+        --- from: assistant (TestBot)
+        *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2*"
       `)
       // E's user message appears before the final bot response
       const userNovemberIndex = afterE.findIndex((m) => {

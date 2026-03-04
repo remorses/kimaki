@@ -221,6 +221,88 @@ export async function waitForBotMessageContaining({
   )
 }
 
+function isFooterMessage({
+  message,
+  botUserId,
+}: {
+  message: APIMessage
+  botUserId: string
+}): boolean {
+  if (message.author.id !== botUserId) {
+    return false
+  }
+  if (!message.content.startsWith('*')) {
+    return false
+  }
+  return message.content.includes('⋅')
+}
+
+/**
+ * Poll until a footer message appears, optionally after an anchor message.
+ * Useful for stabilizing snapshots by waiting for run completion metadata.
+ */
+export async function waitForFooterMessage({
+  discord,
+  threadId,
+  timeout,
+  afterMessageIncludes,
+  afterAuthorId,
+}: {
+  discord: DigitalDiscord
+  threadId: string
+  timeout: number
+  afterMessageIncludes?: string
+  afterAuthorId?: string
+}): Promise<APIMessage[]> {
+  const start = Date.now()
+  let lastMessages: APIMessage[] = []
+  while (Date.now() - start < timeout) {
+    const messages = await discord.thread(threadId).getMessages()
+    lastMessages = messages
+    const afterIndex = afterMessageIncludes
+      ? messages.findLastIndex((message) => {
+          if (!message.content.includes(afterMessageIncludes)) {
+            return false
+          }
+          if (!afterAuthorId) {
+            return true
+          }
+          return message.author.id === afterAuthorId
+        })
+      : -1
+    if (afterMessageIncludes && afterIndex === -1) {
+      await new Promise((resolve) => {
+        setTimeout(resolve, 100)
+      })
+      continue
+    }
+    const footer = messages.find((message, index) => {
+      if (afterIndex >= 0 && index <= afterIndex) {
+        return false
+      }
+      return isFooterMessage({ message, botUserId: discord.botUserId })
+    })
+    if (footer) {
+      return messages
+    }
+    await new Promise((resolve) => {
+      setTimeout(resolve, 100)
+    })
+  }
+
+  const recent = lastMessages
+    .slice(-12)
+    .map((message) => {
+      const role = message.author.id === discord.botUserId ? 'bot' : 'user'
+      return `${role}: ${message.content.slice(0, 120)}`
+    })
+    .join('\n')
+  const anchorText = afterMessageIncludes || 'start'
+  throw new Error(
+    `Timed out waiting for footer after "${anchorText}" in thread ${threadId}. Recent messages:\n${recent}`,
+  )
+}
+
 // ── Thread state polling helpers ─────────────────────────────────
 // Used by e2e tests to assert on session state transitions
 // (phase changes, queue depth, abort, idle).

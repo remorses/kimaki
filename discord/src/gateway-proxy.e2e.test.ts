@@ -35,7 +35,11 @@ import {
 import { setDataDir } from './config.js'
 import type { VerbosityLevel } from './database.js'
 import { startDiscordBot } from './discord-bot.js'
-import { cleanupOpencodeServers, cleanupTestSessions } from './test-utils.js'
+import {
+  cleanupOpencodeServers,
+  cleanupTestSessions,
+  waitForFooterMessage,
+} from './test-utils.js'
 import { createDiscordRest } from './discord-urls.js'
 import { store } from './store.js'
 
@@ -406,9 +410,18 @@ describeIf('gateway-proxy e2e', () => {
       firstThreadId = thread.id
 
       const reply = await discord.thread(thread.id).waitForBotReply({ timeout: 15_000 })
+
+      await waitForFooterMessage({
+        discord,
+        threadId: thread.id,
+        timeout: 15_000,
+      })
+
       expect(await discord.thread(thread.id).text()).toMatchInlineSnapshot(`
         "--- from: assistant (TestBot)
-        ⬥ gateway-proxy-reply"
+        ⬥ gateway-proxy-reply
+        --- from: assistant (TestBot)
+        *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2*"
       `)
       expect(reply).toBeDefined()
       expect(reply.content.trim().length).toBeGreaterThan(0)
@@ -429,11 +442,24 @@ describeIf('gateway-proxy e2e', () => {
       const reply = await discord.thread(firstThreadId).waitForMessage({
         predicate: (m) => !existingIds.has(m.id) && m.author.id === discord.botUserId,
       })
+
+      await waitForFooterMessage({
+        discord,
+        threadId: firstThreadId,
+        timeout: 15_000,
+        afterMessageIncludes: 'follow up through proxy',
+        afterAuthorId: TEST_USER_ID,
+      })
+
       expect(await discord.thread(firstThreadId).text()).toMatchInlineSnapshot(`
         "--- from: assistant (TestBot)
         ⬥ gateway-proxy-reply
+        --- from: assistant (TestBot)
+        *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2*
         --- from: user (proxy-tester)
         follow up through proxy
+        --- from: assistant (TestBot)
+        ⬥ gateway-proxy-reply
         --- from: assistant (TestBot)
         *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2*"
       `)
@@ -464,8 +490,12 @@ describeIf('gateway-proxy e2e', () => {
       expect(await discord.thread(firstThreadId).text()).toMatchInlineSnapshot(`
         "--- from: assistant (TestBot)
         ⬥ gateway-proxy-reply
+        --- from: assistant (TestBot)
+        *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2*
         --- from: user (proxy-tester)
         follow up through proxy
+        --- from: assistant (TestBot)
+        ⬥ gateway-proxy-reply
         --- from: assistant (TestBot)
         *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2*
         --- from: user (proxy-tester)

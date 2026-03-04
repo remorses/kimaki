@@ -7,6 +7,7 @@ import {
   TEST_USER_ID,
 } from './queue-advanced-e2e-setup.js'
 import {
+  waitForFooterMessage,
   waitForBotMessageContaining,
   waitForBotReplyAfterUserMessage,
   waitForThreadPhase,
@@ -41,28 +42,22 @@ e2eTest('queue advanced: footer emission', () => {
       const th = ctx.discord.thread(thread.id)
       await th.waitForBotReply({ timeout: 4_000 })
 
-      const deadline = Date.now() + 4_000
-      let foundFooter = false
-      while (Date.now() < deadline) {
-        const msgs = await th.getMessages()
-        foundFooter = msgs.some((m) => {
-          return m.author.id === ctx.discord.botUserId
-            && m.content.startsWith('*')
-            && m.content.includes('⋅')
-        })
-        if (foundFooter) {
-          break
-        }
-        await new Promise((resolve) => {
-          setTimeout(resolve, 100)
-        })
-      }
+      const footerMessages = await waitForFooterMessage({
+        discord: ctx.discord,
+        threadId: thread.id,
+        timeout: 4_000,
+      })
       expect(await th.text()).toMatchInlineSnapshot(`
         "--- from: assistant (TestBot)
         ⬥ ok
         --- from: assistant (TestBot)
         *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2*"
       `)
+      const foundFooter = footerMessages.some((m) => {
+        return m.author.id === ctx.discord.botUserId
+          && m.content.startsWith('*')
+          && m.content.includes('⋅')
+      })
       expect(foundFooter).toBe(true)
     },
     8_000,
@@ -105,6 +100,14 @@ e2eTest('queue advanced: footer emission', () => {
         timeout: 4_000,
       })
 
+      await waitForFooterMessage({
+        discord: ctx.discord,
+        threadId: thread.id,
+        timeout: 4_000,
+        afterMessageIncludes: 'footer-multi-second',
+        afterAuthorId: TEST_USER_ID,
+      })
+
       const msgs = await th.getMessages()
       const footerCount = msgs.filter((m) => {
         return m.author.id === ctx.discord.botUserId
@@ -119,7 +122,9 @@ e2eTest('queue advanced: footer emission', () => {
         --- from: user (queue-advanced-tester)
         Reply with exactly: footer-multi-second
         --- from: assistant (TestBot)
-        ⬥ ok"
+        ⬥ ok
+        --- from: assistant (TestBot)
+        *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2*"
       `)
       if (footerCount >= 2) {
         expect(footerCount).toBeGreaterThanOrEqual(2)
@@ -219,6 +224,15 @@ e2eTest('queue advanced: footer emission', () => {
         }
         return m.author.id === ctx.discord.botUserId && m.content.includes('ok')
       })
+
+      await waitForFooterMessage({
+        discord: ctx.discord,
+        threadId: thread.id,
+        timeout: 12_000,
+        afterMessageIncludes: 'interrupt-footer-followup',
+        afterAuthorId: TEST_USER_ID,
+      })
+
       expect(await th.text()).toMatchInlineSnapshot(`
         "--- from: assistant (TestBot)
         ⬥ ok
@@ -231,7 +245,9 @@ e2eTest('queue advanced: footer emission', () => {
         --- from: user (queue-advanced-tester)
         Reply with exactly: interrupt-footer-followup
         --- from: assistant (TestBot)
-        ⬥ ok"
+        ⬥ ok
+        --- from: assistant (TestBot)
+        *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2*"
       `)
       expect(followupUserIdx).toBeGreaterThanOrEqual(0)
       expect(okReplyIdx).toBeGreaterThan(followupUserIdx)

@@ -791,7 +791,7 @@ export class ThreadSessionRuntime {
       // Don't restart typing if the run is no longer active — a step-finish
       // event can schedule this timeout right before abort/finish fires,
       // and the 300ms delay means it fires after typing was already cleared.
-      if (this.state?.runState.phase !== 'running') {
+      if (!this.isMainSessionBusyFromEventBuffer()) {
         return
       }
       // Don't restart typing if interactive UI is pending
@@ -807,6 +807,32 @@ export class ThreadSessionRuntime {
       }
       void this.startTyping()
     }, 300)
+  }
+
+  private isMainSessionBusyFromEventBuffer(): boolean {
+    const sessionId = this.state?.sessionId
+    if (!sessionId) {
+      return false
+    }
+
+    for (let index = this.eventBuffer.length - 1; index >= 0; index -= 1) {
+      const entry = this.eventBuffer[index]
+      if (!entry) {
+        continue
+      }
+      const eventSessionId = getOpencodeEventSessionId(entry.event)
+      if (eventSessionId !== sessionId) {
+        continue
+      }
+      if (entry.event.type === 'session.idle') {
+        return false
+      }
+      if (entry.event.type === 'session.status') {
+        return entry.event.properties.status.type === 'busy'
+      }
+    }
+
+    return false
   }
 
   // ── Part Buffering & Output ─────────────────────────────────
@@ -1033,6 +1059,23 @@ export class ThreadSessionRuntime {
     }
 
     const knownMessage = this.partBuffer.has(msg.id)
+    if (!knownMessage && this.state?.runState.phase !== 'running') {
+      // promptAsync can queue follow-up user turns while a run is active.
+      // After an interrupt, the queued follow-up assistant message may arrive
+      // when local runState is already idle. Promote this fresh assistant
+      // message to a new active run so the subsequent session.idle emits the
+      // footer for the final assistant reply.
+      threadState.updateThread(this.threadId, (t) => {
+        const nextRunId = t.lastRunId + 1
+        return {
+          ...t,
+          lastRunId: nextRunId,
+          currentRun: threadState.initialCurrentRunInfo({ runId: nextRunId }),
+        }
+      })
+      threadState.updateRunState(this.threadId, pureMarkRunning)
+    }
+
     if (!knownMessage) {
       // Register only newly observed assistant messages for the active run.
       // Replayed message.updated events from previous runs can arrive when a
@@ -1396,6 +1439,7 @@ export class ThreadSessionRuntime {
     // so waitForEvent() consumers (abort settlement) will see it too.
     if (idleSessionId === sessionId) {
       if (this.state?.runState.phase !== 'running') {
+        this.stopTyping()
         logger.log(
           `[SESSION IDLE] ignored (not running) sessionId=${sessionId} ${this.formatRunStateForLog()}`,
         )
@@ -1685,9 +1729,31 @@ export class ThreadSessionRuntime {
     if (properties.sessionID !== sessionId) {
       return
     }
+
+    if (properties.status.type === 'idle') {
+      this.stopTyping()
+      return
+    }
+
+    if (properties.status.type === 'busy') {
+      const hasPendingQuestion = [...pendingQuestionContexts.values()].some(
+        (ctx) => {
+          return ctx.thread.id === this.thread.id
+        },
+      )
+      const hasPendingPermission =
+        (pendingPermissions.get(this.thread.id)?.size ?? 0) > 0
+      if (hasPendingQuestion || hasPendingPermission || this.typingInterval) {
+        return
+      }
+      await this.startTyping()
+      return
+    }
+
     if (properties.status.type !== 'retry') {
       return
     }
+
     // Throttle to once per 10 seconds
     const now = Date.now()
     if (now - (this.run?.lastRateLimitDisplayTime ?? 0) < 10_000) {
@@ -1935,11 +2001,6 @@ export class ThreadSessionRuntime {
       const variantField = thinkingValue
         ? { variant: thinkingValue }
         : {}
-
-      // ── Start typing ────────────────────────────────────────
-      if (shouldMarkRunning) {
-        await this.startTyping()
-      }
 
       // ── Build prompt parts ──────────────────────────────────
       const images = input.images || []
@@ -2480,9 +2541,6 @@ export class ThreadSessionRuntime {
         availableValues,
       }) || undefined
     })()
-
-    // ── Start typing ──────────────────────────────────────────
-    await this.startTyping()
 
     // ── Build prompt parts ────────────────────────────────────
     const images = input.images || []
