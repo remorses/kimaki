@@ -2982,6 +2982,7 @@ export class ThreadSessionRuntime {
     const projectInfo = branchName
       ? `${folderName} ⋅ ${branchName} ⋅ `
       : `${folderName} ⋅ `
+    this.stopTyping()
     await sendThreadMessage(
       this.thread,
       `*${projectInfo}${sessionDuration}${contextInfo}${modelInfo}${agentInfo}*`,
