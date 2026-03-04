@@ -361,3 +361,7 @@ we also support voice user messages, these are transcribed with another model an
 we also support a /queue command to queue user messages to be sent at current session end. and a /clear-queue command to clear the queue. when the message ends we will display a message by the bot with content like `» Tommy: content` for the queued user message being sent.
 
 this information is useful for your tests. you can use this knowledge to write tests, tests should use expect and find messages that match a specific pattern.
+
+## discord bot typing indicator
+
+discord.js has a startTyping method. this method will show a typing indicator in discord for the next 7 seconds. it will also stop at the next bot message. so we need to continuously call startTyping while the bot is working, at an interval of 7 seconds. we simply stop calling when the bot is done, before the last bot message is sent, and Discord will stop showing it.
