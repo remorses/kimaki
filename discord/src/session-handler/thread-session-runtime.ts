@@ -221,6 +221,7 @@ function isEssentialToolName(toolName: string): boolean {
   const essentialTools = [
     'edit',
     'write',
+    'apply_patch',
     'bash',
     'webfetch',
     'websearch',
