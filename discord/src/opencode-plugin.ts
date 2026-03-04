@@ -655,6 +655,20 @@ const kimakiPlugin: Plugin = async ({ directory }) => {
 
 type StoredEvent = { event: Event; index: number }
 
+const DEFAULT_INTERRUPT_STEP_TIMEOUT_MS = 3_000
+
+function getInterruptStepTimeoutMsFromEnv(): number {
+  const raw = process.env['KIMAKI_INTERRUPT_STEP_TIMEOUT_MS']
+  if (!raw) {
+    return DEFAULT_INTERRUPT_STEP_TIMEOUT_MS
+  }
+  const parsed = Number.parseInt(raw, 10)
+  if (!Number.isFinite(parsed) || parsed <= 0) {
+    return DEFAULT_INTERRUPT_STEP_TIMEOUT_MS
+  }
+  return parsed
+}
+
 // Interrupt a running session when a new user message is queued.
 // After TIMEOUT_SECONDS, aborts the current step and resumes
 // the session so the new message is processed immediately.
@@ -662,6 +676,7 @@ type StoredEvent = { event: Event; index: number }
 // Uses "chat.message" hook (fires synchronously during prompt flow)
 // to detect queued messages, and "event" hook for busy/idle tracking.
 const interruptOpencodeSessionOnUserMessage: Plugin = async (ctx) => {
+  const interruptStepTimeoutMs = getInterruptStepTimeoutMsFromEnv()
   let seq = 0
   const busy = new Set<string>()
   const timers = new Map<string, ReturnType<typeof setTimeout>>()
@@ -754,7 +769,7 @@ const interruptOpencodeSessionOnUserMessage: Plugin = async (ctx) => {
           path: { id: sessionID },
           body: { parts: [] },
         })
-      }, 1000)
+      }, interruptStepTimeoutMs)
 
       timers.set(sessionID, timer)
     },

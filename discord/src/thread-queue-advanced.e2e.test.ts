@@ -42,6 +42,7 @@ import { initializeOpencodeForDirectory } from './opencode.js'
 import {
   cleanupOpencodeServers,
   cleanupTestSessions,
+  waitForBotMessageContaining,
   waitForBotReplyAfterUserMessage,
   waitForThreadPhase,
 } from './test-utils.js'
@@ -446,6 +447,181 @@ e2eTest('thread queue advanced (interrupt, abort, model-switch)', () => {
       expect(userPapaIndex).toBeLessThan(lastBotIndex)
     },
     8_000,
+  )
+
+  test(
+    'explicit abort emits MessageAbortedError and does not emit footer',
+    async () => {
+      await discord.channel(TEXT_CHANNEL_ID).user(TEST_USER_ID).sendMessage({
+        content: 'Reply with exactly: abort-no-footer-setup',
+      })
+
+      const thread = await discord.channel(TEXT_CHANNEL_ID).waitForThread({
+        timeout: 4_000,
+        predicate: (t) => {
+          return t.name === 'Reply with exactly: abort-no-footer-setup'
+        },
+      })
+
+      const th = discord.thread(thread.id)
+      await th.waitForBotReply({ timeout: 4_000 })
+
+      await th.user(TEST_USER_ID).sendMessage({
+        content: 'SLOW_ABORT_MARKER run long response',
+      })
+
+      await waitForThreadPhase({
+        threadId: thread.id,
+        phase: 'running',
+        timeout: 4_000,
+      })
+
+      const runtime = getRuntime(thread.id)
+      expect(runtime).toBeDefined()
+      if (!runtime) {
+        throw new Error('Expected runtime to exist for abort no-footer test')
+      }
+
+      const activeSessionId = getThreadState(thread.id)?.sessionId
+      expect(activeSessionId).toBeDefined()
+      if (!activeSessionId) {
+        throw new Error('Expected active session id for abort no-footer test')
+      }
+
+      const abortLogStartIndex = getLogEntryCount()
+
+      runtime.abortActiveRun('test-no-footer-on-abort')
+
+      await waitForThreadPhase({
+        threadId: thread.id,
+        phase: 'idle',
+        timeout: 4_000,
+      })
+
+      await new Promise((resolve) => {
+        setTimeout(resolve, 500)
+      })
+
+      const abortWindowLogs = getLogEntriesSince(abortLogStartIndex)
+      const finishedAbortedSession = abortWindowLogs.some((line) => {
+        return line.includes('[SESSION IDLE] finishing run')
+          && line.includes(`sessionId=${activeSessionId}`)
+      })
+      expect(finishedAbortedSession).toBe(false)
+    },
+    10_000,
+  )
+
+  test(
+    'plugin timeout interrupt aborts slow sleep and avoids intermediate footer',
+    async () => {
+      await discord.channel(TEXT_CHANNEL_ID).user(TEST_USER_ID).sendMessage({
+        content: 'Reply with exactly: plugin-timeout-setup',
+      })
+
+      const thread = await discord.channel(TEXT_CHANNEL_ID).waitForThread({
+        timeout: 4_000,
+        predicate: (t) => {
+          return t.name === 'Reply with exactly: plugin-timeout-setup'
+        },
+      })
+
+      const th = discord.thread(thread.id)
+      await th.waitForBotReply({ timeout: 4_000 })
+      await waitForBotMessageContaining({
+        discord,
+        threadId: thread.id,
+        userId: TEST_USER_ID,
+        text: '*project',
+        timeout: 4_000,
+      })
+
+      await th.user(TEST_USER_ID).sendMessage({
+        content: 'PLUGIN_TIMEOUT_SLEEP_MARKER',
+      })
+
+      await waitForBotMessageContaining({
+        discord,
+        threadId: thread.id,
+        userId: TEST_USER_ID,
+        text: 'starting sleep 100',
+        afterUserMessageIncludes: 'PLUGIN_TIMEOUT_SLEEP_MARKER',
+        timeout: 4_000,
+      })
+
+      await waitForThreadPhase({
+        threadId: thread.id,
+        phase: 'running',
+        timeout: 4_000,
+      })
+
+      const activeSessionId = getThreadState(thread.id)?.sessionId
+      expect(activeSessionId).toBeDefined()
+      if (!activeSessionId) {
+        throw new Error('Expected active session id for plugin timeout test')
+      }
+
+      const logStart = getLogEntryCount()
+
+      await th.user(TEST_USER_ID).sendMessage({
+        content: 'Reply with exactly: plugin-timeout-after',
+      })
+
+      const messages = await waitForBotMessageContaining({
+        discord,
+        threadId: thread.id,
+        userId: TEST_USER_ID,
+        text: 'ok',
+        afterUserMessageIncludes: 'plugin-timeout-after',
+        timeout: 12_000,
+      })
+
+      const logDeadline = Date.now() + 8_000
+      let sawAbortError = false
+      while (Date.now() < logDeadline) {
+        const logs = getLogEntriesSince(logStart)
+        sawAbortError = logs.some((line) => {
+          return line.includes('[EVENT] type=session.error')
+            && line.includes('error=MessageAbortedError')
+            && line.includes(`eventSessionId=${activeSessionId}`)
+        })
+        if (sawAbortError) {
+          break
+        }
+        await new Promise((resolve) => {
+          setTimeout(resolve, 100)
+        })
+      }
+      expect(sawAbortError).toBe(true)
+
+      const afterIndex = messages.findIndex((message) => {
+        return (
+          message.author.id === TEST_USER_ID
+          && message.content.includes('plugin-timeout-after')
+        )
+      })
+      expect(afterIndex).toBeGreaterThanOrEqual(0)
+
+      const okReplyIndex = messages.findIndex((message, index) => {
+        if (index <= afterIndex) {
+          return false
+        }
+        return message.author.id === discord.botUserId && message.content.includes('ok')
+      })
+      expect(okReplyIndex).toBeGreaterThan(afterIndex)
+
+      const footerBeforeReply = messages.some((message, index) => {
+        if (index <= afterIndex || index >= okReplyIndex) {
+          return false
+        }
+        if (message.author.id !== discord.botUserId) {
+          return false
+        }
+        return message.content.startsWith('*') && message.content.includes('⋅')
+      })
+      expect(footerBeforeReply).toBe(false)
+    },
+    15_000,
   )
 
   async function runInterruptRaceScenario(runIndex: number) {

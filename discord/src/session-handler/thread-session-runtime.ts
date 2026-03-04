@@ -1393,6 +1393,16 @@ export class ThreadSessionRuntime {
         )
         return
       }
+
+      if (this.shouldSuppressIdleFinishForAbortedRun({
+        sessionId: idleSessionId,
+      })) {
+        logger.log(
+          `[SESSION IDLE] suppress finish after MessageAbortedError sessionId=${sessionId} ${this.formatRunStateForLog()}`,
+        )
+        return
+      }
+
       logger.log(
         `[SESSION IDLE] finishing run sessionId=${sessionId} ${this.formatRunStateForLog()}`,
       )
@@ -1413,6 +1423,44 @@ export class ThreadSessionRuntime {
       newSubs.delete(idleSessionId)
       return { ...r, subtaskSessions: newSubs }
     })
+  }
+
+  private shouldSuppressIdleFinishForAbortedRun({
+    sessionId,
+  }: {
+    sessionId: string
+  }): boolean {
+    let lastAbortErrorTimestamp = 0
+    let lastAssistantMessageTimestamp = 0
+
+    for (const entry of this.eventBuffer) {
+      const eventSessionId = getOpencodeEventSessionId(entry.event)
+      if (eventSessionId !== sessionId) {
+        continue
+      }
+
+      if (
+        entry.event.type === 'session.error' &&
+        entry.event.properties.error?.name === 'MessageAbortedError'
+      ) {
+        lastAbortErrorTimestamp = entry.timestamp
+        continue
+      }
+
+      if (entry.event.type !== 'message.updated') {
+        continue
+      }
+      if (entry.event.properties.info.role !== 'assistant') {
+        continue
+      }
+      lastAssistantMessageTimestamp = entry.timestamp
+    }
+
+    if (lastAbortErrorTimestamp === 0) {
+      return false
+    }
+
+    return lastAbortErrorTimestamp >= lastAssistantMessageTimestamp
   }
 
   private async handleSessionError(properties: {
