@@ -669,6 +669,39 @@ export class ChannelScope {
     return this.user(this.discord.botUserId)
   }
 
+  /**
+   * Returns a markdown-like textual representation of all messages in this
+   * channel/thread. Useful for inline snapshots in tests so both agents and
+   * humans can see what happened in Discord at a glance.
+   *
+   * Format:
+   *   --- from: user (Username)
+   *   message content
+   *   --- from: assistant (BotName)
+   *   reply content
+   */
+  async text(): Promise<string> {
+    const messages = await this.getMessages()
+    const lines: string[] = []
+    for (const msg of messages) {
+      const role = msg.author.bot ? 'assistant' : 'user'
+      lines.push(`--- from: ${role} (${msg.author.username})`)
+      if (msg.content) {
+        lines.push(msg.content)
+      }
+      const embeds = msg.embeds ?? []
+      for (const embed of embeds) {
+        const label = embed.title ? `embed: "${embed.title}"` : 'embed'
+        lines.push(`[${label}]`)
+      }
+      const attachments = msg.attachments ?? []
+      for (const attachment of attachments) {
+        lines.push(`[attachment: ${attachment.filename}]`)
+      }
+    }
+    return lines.join('\n')
+  }
+
   async getMessages(): Promise<APIMessage[]> {
     const messages = await this.discord.prisma.message.findMany({
       where: { channelId: this.channelId },

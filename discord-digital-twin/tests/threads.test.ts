@@ -88,6 +88,10 @@ describe('threads and channels', () => {
     })
     createdThreadId = thread.id
 
+    expect(await discord.channel(channelId).text()).toMatchInlineSnapshot(`
+      "--- from: assistant (TestBot)
+      Thread starter message"
+    `)
     expect(thread.name).toBe('test-thread')
     expect(thread.parentId).toBe(channelId)
     expect(thread.type).toBe(ChannelType.PublicThread)
@@ -112,6 +116,10 @@ describe('threads and channels', () => {
     const sent = await thread.send('Message in thread')
     expect(sent.content).toBe('Message in thread')
 
+    expect(await discord.thread(createdThreadId).text()).toMatchInlineSnapshot(`
+      "--- from: assistant (TestBot)
+      Message in thread"
+    `)
     const messages = await discord.thread(createdThreadId).getMessages()
     expect(messages.some((m) => m.content === 'Message in thread')).toBe(true)
   })

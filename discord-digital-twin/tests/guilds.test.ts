@@ -181,6 +181,10 @@ describe('guild management routes', () => {
       autoArchiveDuration: 1440,
     })
 
+    expect(await discord.channel(channelId).text()).toMatchInlineSnapshot(`
+      "--- from: assistant (TestBot)
+      phase5 active thread starter"
+    `)
     const activeThreads = await guild.channels.fetchActiveThreads()
     expect(activeThreads.threads.has(thread.id)).toBe(true)
     expect(activeThreads.threads.get(thread.id)?.name).toBe('phase5-active-thread')

@@ -77,6 +77,10 @@ describe('messages and reactions', () => {
     })
 
     const msg = await received
+    expect(await discord.channel(channelId).text()).toMatchInlineSnapshot(`
+      "--- from: user (TestUser)
+      Hello from user!"
+    `)
     expect(msg.content).toBe('Hello from user!')
     expect(msg.author.bot).toBe(false)
     expect(msg.author.username).toBe('TestUser')
