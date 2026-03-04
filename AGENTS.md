@@ -311,6 +311,8 @@ aim for a playwright-like style in tests:
 
 if a kimaki test needs a new interaction primitive, first add it to `discord-digital-twin/src/index.ts` and cover it in `discord-digital-twin/tests/*` so future tests can reuse it.
 
+always add `expect(await th.text()).toMatchInlineSnapshot()` (or `discord.channel(id).text()` / `discord.thread(id).text()`) in every test that creates or modifies messages. place it **before** other expects so it updates even when a test fails. this gives both agents and humans a quick textual snapshot of what happened in Discord during the test, making failures easy to diagnose. use deterministic message content (no `Date.now()` or random values) so snapshots stay stable across runs. for tests that don't create messages (metadata, typing, guild routes), the snapshot can be skipped.
+
 ## e2e testing learnings
 
 see `docs/e2e-testing-learnings.md` for detailed lessons. key points:

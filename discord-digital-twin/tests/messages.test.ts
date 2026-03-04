@@ -87,7 +87,7 @@ describe('messages and reactions', () => {
   })
 
   test('user actor helper can send a message and wait helper can observe it', async () => {
-    const content = `Actor helper message ${Date.now().toString()}`
+    const content = 'Actor helper message'
 
     await discord.channel(channelId).user(testUserId).sendMessage({
       content,
@@ -99,6 +99,12 @@ describe('messages and reactions', () => {
       },
     })
 
+    expect(await discord.channel(channelId).text()).toMatchInlineSnapshot(`
+      "--- from: user (TestUser)
+      Hello from user!
+      --- from: user (TestUser)
+      Actor helper message"
+    `)
     expect(observed.content).toBe(content)
     expect(observed.author.id).toBe(testUserId)
   })
@@ -112,10 +118,45 @@ describe('messages and reactions', () => {
     const sent = await channel.send('Hello from bot!')
     expect(sent.content).toBe('Hello from bot!')
 
+    expect(await discord.channel(channelId).text()).toMatchInlineSnapshot(`
+      "--- from: user (TestUser)
+      Hello from user!
+      --- from: user (TestUser)
+      Actor helper message
+      --- from: assistant (TestBot)
+      Hello from bot!"
+    `)
     const messages = await discord.channel(channelId).getMessages()
     const found = messages.find((m) => m.content === 'Hello from bot!')
     expect(found).toBeDefined()
     expect(found?.author.bot).toBe(true)
+  })
+
+  test('typing endpoint events are tracked for channel scope', async () => {
+    const guild = client.guilds.cache.first()!
+    const channel = guild.channels.cache.find(
+      (c) => c.name === 'general',
+    ) as TextChannel
+
+    const ch = discord.channel(channelId)
+    ch.clearTypingEvents()
+
+    const start = Date.now()
+    await channel.sendTyping()
+
+    const typingEvent = await ch.waitForTypingEvent({
+      timeout: 1000,
+      afterTimestamp: start - 1,
+    })
+
+    expect(typingEvent.channelId).toBe(channelId)
+    expect(typingEvent.timestamp).toBeGreaterThanOrEqual(start)
+
+    await ch.waitForTypingToStop({
+      timeout: 1000,
+      idleMs: 100,
+      afterTimestamp: typingEvent.timestamp,
+    })
   })
 
   test('message edit updates content and edited_timestamp', async () => {
@@ -128,6 +169,16 @@ describe('messages and reactions', () => {
     const edited = await sent.edit('Edited content')
     expect(edited.content).toBe('Edited content')
 
+    expect(await discord.channel(channelId).text()).toMatchInlineSnapshot(`
+      "--- from: user (TestUser)
+      Hello from user!
+      --- from: user (TestUser)
+      Actor helper message
+      --- from: assistant (TestBot)
+      Hello from bot!
+      --- from: assistant (TestBot)
+      Edited content"
+    `)
     const messages = await discord.channel(channelId).getMessages()
     const found = messages.find((m) => m.id === sent.id)
     expect(found?.content).toBe('Edited content')
@@ -144,6 +195,16 @@ describe('messages and reactions', () => {
     const sentId = sent.id
     await sent.delete()
 
+    expect(await discord.channel(channelId).text()).toMatchInlineSnapshot(`
+      "--- from: user (TestUser)
+      Hello from user!
+      --- from: user (TestUser)
+      Actor helper message
+      --- from: assistant (TestBot)
+      Hello from bot!
+      --- from: assistant (TestBot)
+      Edited content"
+    `)
     const messages = await discord.channel(channelId).getMessages()
     const found = messages.find((m) => m.id === sentId)
     expect(found).toBeUndefined()
@@ -158,6 +219,18 @@ describe('messages and reactions', () => {
     const sent = await channel.send('React to me')
     await sent.react('🔥')
 
+    expect(await discord.channel(channelId).text()).toMatchInlineSnapshot(`
+      "--- from: user (TestUser)
+      Hello from user!
+      --- from: user (TestUser)
+      Actor helper message
+      --- from: assistant (TestBot)
+      Hello from bot!
+      --- from: assistant (TestBot)
+      Edited content
+      --- from: assistant (TestBot)
+      React to me"
+    `)
     const reactions = await discord.prisma.reaction.findMany({
       where: { messageId: sent.id },
     })
