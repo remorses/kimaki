@@ -23,6 +23,7 @@ import {
   startServer,
   stopServer,
   type ServerComponents,
+  type TypingEventRecord,
 } from './server.js'
 import type { GatewayState } from './gateway.js'
 import {
@@ -91,6 +92,7 @@ export type DigitalDiscordModalField = {
 
 export type DigitalDiscordMessagePredicate = (message: APIMessage) => boolean
 export type DigitalDiscordThreadPredicate = (thread: APIChannel) => boolean
+export type DigitalDiscordTypingEvent = TypingEventRecord
 
 function compareSnowflakeDesc(a: string, b: string): number {
   try {
@@ -198,6 +200,41 @@ export class DigitalDiscord {
       return null
     }
     return firstUser.id
+  }
+
+  getTypingEvents({
+    channelId,
+  }: {
+    channelId?: string
+  } = {}): DigitalDiscordTypingEvent[] {
+    if (!this.server) {
+      throw new Error('Server not started')
+    }
+    const allEvents = this.server.typingEvents
+    if (!channelId) {
+      return [...allEvents]
+    }
+    return allEvents.filter((event) => {
+      return event.channelId === channelId
+    })
+  }
+
+  clearTypingEvents({
+    channelId,
+  }: {
+    channelId?: string
+  } = {}): void {
+    if (!this.server) {
+      throw new Error('Server not started')
+    }
+    if (!channelId) {
+      this.server.typingEvents.splice(0, this.server.typingEvents.length)
+      return
+    }
+    const filtered = this.server.typingEvents.filter((event) => {
+      return event.channelId !== channelId
+    })
+    this.server.typingEvents.splice(0, this.server.typingEvents.length, ...filtered)
   }
 
   // --- Test utilities ---
@@ -691,7 +728,9 @@ export class ChannelScope {
       }
       const embeds = msg.embeds ?? []
       for (const embed of embeds) {
-        const label = embed.title ? `embed: "${embed.title}"` : 'embed'
+        // Escape quotes/newlines in titles so snapshots stay clean
+        const safeTitle = embed.title ? JSON.stringify(embed.title).slice(1, -1) : ''
+        const label = safeTitle ? `embed: "${safeTitle}"` : 'embed'
         lines.push(`[${label}]`)
       }
       const attachments = msg.attachments ?? []
@@ -705,7 +744,7 @@ export class ChannelScope {
   async getMessages(): Promise<APIMessage[]> {
     const messages = await this.discord.prisma.message.findMany({
       where: { channelId: this.channelId },
-      orderBy: { timestamp: 'asc' },
+      orderBy: [{ timestamp: 'asc' }, { id: 'asc' }],
     })
     const result: APIMessage[] = []
     for (const msg of messages) {
@@ -720,6 +759,75 @@ export class ChannelScope {
       )
     }
     return result
+  }
+
+  getTypingEvents(): DigitalDiscordTypingEvent[] {
+    return this.discord.getTypingEvents({ channelId: this.channelId })
+  }
+
+  clearTypingEvents(): void {
+    this.discord.clearTypingEvents({ channelId: this.channelId })
+  }
+
+  async waitForTypingEvent({
+    timeout = 10000,
+    afterTimestamp = 0,
+  }: {
+    timeout?: number
+    afterTimestamp?: number
+  } = {}): Promise<DigitalDiscordTypingEvent> {
+    const start = Date.now()
+    while (Date.now() - start < timeout) {
+      const event = this.getTypingEvents().find((entry) => {
+        return entry.timestamp > afterTimestamp
+      })
+      if (event) {
+        return event
+      }
+      await new Promise((resolve) => {
+        setTimeout(resolve, 50)
+      })
+    }
+    throw new Error(
+      `Timed out waiting for typing event in channel ${this.channelId}`,
+    )
+  }
+
+  async waitForTypingToStop({
+    timeout = 12000,
+    idleMs = 8500,
+    afterTimestamp,
+  }: {
+    timeout?: number
+    idleMs?: number
+    afterTimestamp?: number
+  } = {}): Promise<void> {
+    const start = Date.now()
+    const baselineTimestamp = afterTimestamp ?? start
+    while (Date.now() - start < timeout) {
+      const latestTypingTimestamp = this.getTypingEvents()
+        .filter((entry) => {
+          return entry.timestamp >= baselineTimestamp
+        })
+        .map((entry) => {
+          return entry.timestamp
+        })
+        .sort((a, b) => {
+          return b - a
+        })[0] ?? baselineTimestamp
+
+      if (Date.now() - latestTypingTimestamp >= idleMs) {
+        return
+      }
+
+      await new Promise((resolve) => {
+        setTimeout(resolve, 50)
+      })
+    }
+
+    throw new Error(
+      `Timed out waiting for typing to stop in channel ${this.channelId}`,
+    )
   }
 
   async getChannel(): Promise<APIChannel | null> {
