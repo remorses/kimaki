@@ -343,3 +343,17 @@ sometimes we need to interrupt the opencode session and restart it. for example 
 
 1. call `session.abort` sdk method to abort current session.
 2. call `session.promptAsync({ parts: [] })` to resume session
+
+## how kimaki messages look like in Discord
+
+Kimaki works by creating threads on the first user message. The bot will then reply messages there for text parts, prefixing them with ⬥
+
+tool parts are also displayed in Discord as messages, either prefixed with ┣ or ◼︎ for file edits or writes. we also display context usage info like percentage of context used at 10% windows, prefixed with ⬦. the tool calls displayed depend on the verbosity parameter. the default skips tool parts for parts like `thinking`, file reads and non `sideEffect` bash parts (sideEffect is a param passed by the model).
+
+at a assistant message normal completion we also display a footer message like `kimakivoice ⋅ main ⋅ 2m 30s ⋅ 71% ⋅ claude-opus-4-6`. with folder, branch, time, context used, model id.
+
+we also support voice user messages, these are transcribed with another model and sent with prefix `Transcribed message:`, shown by the bot.
+
+we also support a /queue command to queue user messages to be sent at current session end. and a /clear-queue command to clear the queue. when the message ends we will display a message by the bot with content like `» Tommy: content` for the queued user message being sent.
+
+this information is useful for your tests. you can use this knowledge to write tests, tests should use expect and find messages that match a specific pattern.
