@@ -158,7 +158,7 @@ describe('session-user-interruption', () => {
   })
 
   test('second idle: shouldEmitFooter', () => {
-    expect(shouldEmitFooter({ events, sessionId, idleEventIndex: idleAt(idles, 1) })).toMatchInlineSnapshot(`true`)
+    expect(shouldEmitFooter({ events, sessionId, idleEventIndex: idleAt(idles, 1) })).toMatchInlineSnapshot(`false`)
   })
 })
 

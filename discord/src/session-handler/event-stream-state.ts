@@ -219,8 +219,123 @@ export function shouldEmitFooter({
   if (wasRecentlyAborted({ events, sessionId, idleEventIndex })) {
     return false
   }
-  const runStart = getRunStartTimeForIdle({ events, sessionId, idleEventIndex })
-  return runStart !== undefined
+
+  const runWindowStart = getRunWindowStartIndex({
+    events,
+    sessionId,
+    idleEventIndex,
+  })
+  const assistantMessageIds = getAssistantMessageIdsInRunWindow({
+    events,
+    sessionId,
+    runWindowStart,
+    idleEventIndex,
+  })
+  if (assistantMessageIds.size === 0) {
+    return false
+  }
+
+  return hasAssistantStepFinishInRunWindow({
+    events,
+    sessionId,
+    runWindowStart,
+    idleEventIndex,
+    assistantMessageIds,
+  })
+}
+
+function getRunWindowStartIndex({
+  events,
+  sessionId,
+  idleEventIndex,
+}: {
+  events: EventBufferEntry[]
+  sessionId: string
+  idleEventIndex: number
+}): number {
+  for (let i = idleEventIndex - 1; i >= 0; i--) {
+    const entry = events[i]
+    if (!entry) {
+      continue
+    }
+    const e = entry.event
+    const eid = getOpencodeEventSessionId(e)
+    if (eid !== sessionId) {
+      continue
+    }
+    if (e.type === 'session.idle') {
+      return i + 1
+    }
+  }
+
+  return 0
+}
+
+function getAssistantMessageIdsInRunWindow({
+  events,
+  sessionId,
+  runWindowStart,
+  idleEventIndex,
+}: {
+  events: EventBufferEntry[]
+  sessionId: string
+  runWindowStart: number
+  idleEventIndex: number
+}): Set<string> {
+  const assistantMessageIds = new Set<string>()
+  for (let i = runWindowStart; i < idleEventIndex; i++) {
+    const entry = events[i]
+    if (!entry) {
+      continue
+    }
+    const e = entry.event
+    if (e.type !== 'message.updated') {
+      continue
+    }
+    const msg = e.properties.info
+    if (msg.sessionID !== sessionId || msg.role !== 'assistant') {
+      continue
+    }
+    assistantMessageIds.add(msg.id)
+  }
+  return assistantMessageIds
+}
+
+function hasAssistantStepFinishInRunWindow({
+  events,
+  sessionId,
+  runWindowStart,
+  idleEventIndex,
+  assistantMessageIds,
+}: {
+  events: EventBufferEntry[]
+  sessionId: string
+  runWindowStart: number
+  idleEventIndex: number
+  assistantMessageIds: Set<string>
+}): boolean {
+  for (let i = runWindowStart; i < idleEventIndex; i++) {
+    const entry = events[i]
+    if (!entry) {
+      continue
+    }
+    const e = entry.event
+    const eid = getOpencodeEventSessionId(e)
+    if (eid !== sessionId) {
+      continue
+    }
+    if (e.type !== 'message.part.updated') {
+      continue
+    }
+    if (e.properties.part.type !== 'step-finish') {
+      continue
+    }
+    if (assistantMessageIds.has(e.properties.part.messageID)) {
+      return true
+    }
+  }
+
+  return false
 }
 
 // Checks if candidateSessionId appears as a subtask of mainSessionId.

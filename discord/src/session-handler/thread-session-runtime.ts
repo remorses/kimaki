@@ -79,6 +79,10 @@ import {
   getOpencodeEventSessionId,
   isOpencodeSessionEventLogEnabled,
 } from './opencode-session-event-log.js'
+import {
+  isSessionBusy,
+  shouldEmitFooter,
+} from './event-stream-state.js'
 
 // Track multiple pending permissions per thread (keyed by permission ID).
 // OpenCode handles blocking/sequencing — we just need to track all pending
@@ -325,7 +329,7 @@ export class ThreadSessionRuntime {
   // Used by waitForEvent() to scan for specific events that arrived
   // after a given point in time (e.g. wait for session.idle after abort).
   // Generic: any future "wait for X event" can reuse this buffer.
-  private static EVENT_BUFFER_MAX = 100
+  private static EVENT_BUFFER_MAX = 1000
   private eventBuffer: Array<{ event: OpenCodeEvent; timestamp: number }> = []
 
   // Serialized action queue — all mutations flow through dispatchAction
@@ -792,7 +796,11 @@ export class ThreadSessionRuntime {
       // Don't restart typing if the run is no longer active — a step-finish
       // event can schedule this timeout right before abort/finish fires,
       // and the 300ms delay means it fires after typing was already cleared.
-      if (!this.isMainSessionBusyFromEventBuffer()) {
+      const sessionId = this.state?.sessionId
+      if (!sessionId) {
+        return
+      }
+      if (!isSessionBusy({ events: this.eventBuffer, sessionId })) {
         return
       }
       // Don't restart typing if interactive UI is pending
@@ -808,32 +816,6 @@ export class ThreadSessionRuntime {
       }
       void this.startTyping()
     }, 300)
-  }
-
-  private isMainSessionBusyFromEventBuffer(): boolean {
-    const sessionId = this.state?.sessionId
-    if (!sessionId) {
-      return false
-    }
-
-    for (let index = this.eventBuffer.length - 1; index >= 0; index -= 1) {
-      const entry = this.eventBuffer[index]
-      if (!entry) {
-        continue
-      }
-      const eventSessionId = getOpencodeEventSessionId(entry.event)
-      if (eventSessionId !== sessionId) {
-        continue
-      }
-      if (entry.event.type === 'session.idle') {
-        return false
-      }
-      if (entry.event.type === 'session.status') {
-        return entry.event.properties.status.type === 'busy'
-      }
-    }
-
-    return false
   }
 
   // ── Part Buffering & Output ─────────────────────────────────
@@ -1439,21 +1421,17 @@ export class ThreadSessionRuntime {
     // The event is also pushed into the event buffer by handleEvent(),
     // so waitForEvent() consumers (abort settlement) will see it too.
     if (idleSessionId === sessionId) {
-      if (this.state?.runState.phase !== 'running') {
-        this.stopTyping()
-        logger.log(
-          `[SESSION IDLE] ignored (not running) sessionId=${sessionId} ${this.formatRunStateForLog()}`,
-        )
-        return
-      }
+      const idleEventIndex = this.eventBuffer.length - 1
 
       // Suppress footer if the run was interrupted before completing.
-      // Derived from the event buffer: a completed run has a step-finish
-      // part for one of its assistant messages; an interrupted run has
-      // step-start but no step-finish because the abort kills the stream.
-      const suppressFooter = !this.runCompletedNormally({
+      // Footer emission is derived from the current run window in the event
+      // buffer (including interruption semantics) via shouldEmitFooter.
+      const suppressFooter = !shouldEmitFooter({
+        events: this.eventBuffer,
         sessionId: idleSessionId,
+        idleEventIndex,
       })
+
       if (suppressFooter) {
         logger.log(
           `[SESSION IDLE] finishing run (no footer, unreplied user message) sessionId=${sessionId} ${this.formatRunStateForLog()}`,
@@ -1480,34 +1458,6 @@ export class ThreadSessionRuntime {
       newSubs.delete(idleSessionId)
       return { ...r, subtaskSessions: newSubs }
     })
-  }
-
-  // Derives whether the current run completed normally by scanning the event
-  // buffer for a step-finish part targeting one of the run's assistant messages.
-  // A completed run always has step-finish; an interrupted run (abort, interrupt
-  // plugin) has step-start but no step-finish because the stream was killed.
-  // Pure function over event buffer — no mutable flags needed.
-  private runCompletedNormally({
-    sessionId,
-  }: {
-    sessionId: string
-  }): boolean {
-    const assistantIds = this.assistantMessageIds
-    for (const entry of this.eventBuffer) {
-      const eventSessionId = getOpencodeEventSessionId(entry.event)
-      if (eventSessionId !== sessionId) {
-        continue
-      }
-      if (entry.event.type !== 'message.part.updated') {
-        continue
-      }
-      if (entry.event.properties.part.type === 'step-finish') {
-        if (assistantIds.has(entry.event.properties.part.messageID)) {
-          return true
-        }
-      }
-    }
-    return false
   }
 
   private async handleSessionError(properties: {
