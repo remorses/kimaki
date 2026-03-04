@@ -727,7 +727,7 @@ export class ChannelScope {
    *   chronological position of typing indicator POST calls. Defaults to false
    *   so existing snapshots are not affected.
    */
-  async text({ deterministicFooters = true, showTyping = true }: { deterministicFooters?: boolean; showTyping?: boolean } = {}): Promise<string> {
+  async text({ deterministicFooters = true, showTyping = false }: { deterministicFooters?: boolean; showTyping?: boolean } = {}): Promise<string> {
     const messages = await this.getMessages()
 
     // Build timeline entries: messages + optional typing events

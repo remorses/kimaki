@@ -473,7 +473,8 @@ e2eTest('thread message queue ordering', () => {
         --- from: user (queue-tester)
         Reply with exactly: beta
         --- from: assistant (TestBot)
-        *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2*"
+        *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2*
+        [bot typing]"
       `)
       // User B's message must appear before the new bot response
       const userBIndex = after.findIndex((m) => {
@@ -786,19 +787,20 @@ e2eTest('thread message queue ordering', () => {
         --- from: assistant (TestBot)
         Queued message (position 1)
         --- from: assistant (TestBot)
+        Queued message (position 2)
+        --- from: assistant (TestBot)
         *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2*
         --- from: assistant (TestBot)
         » **queue-tester:** Reply with exactly: race-final
         [bot typing]
-        --- from: assistant (TestBot)
-        Queued message (position 1)
         [bot typing]
         --- from: assistant (TestBot)
         ⬥ race-final
         --- from: assistant (TestBot)
         *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2*
         --- from: assistant (TestBot)
-        » **queue-tester:** Reply with exactly: queued-from-slash"
+        » **queue-tester:** Reply with exactly: queued-from-slash
+        [bot typing]"
       `)
       expect(queuedAckIndex).toBeGreaterThan(-1)
       expect(dispatchIndicatorIndex).toBeGreaterThan(-1)
@@ -875,13 +877,10 @@ e2eTest('thread message queue ordering', () => {
         ⬥ ok
         --- from: user (queue-tester)
         Reply with exactly: echo
-        --- from: assistant (TestBot)
-        *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2*
         --- from: user (queue-tester)
         Reply with exactly: foxtrot
-        [bot typing]
         --- from: assistant (TestBot)
-        ⬥ ok"
+        *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2*"
       `)
       expect(userEchoIndex).toBeGreaterThan(-1)
       expect(userFoxtrotIndex).toBeGreaterThan(-1)
@@ -1063,7 +1062,6 @@ e2eTest('thread message queue ordering', () => {
         Reply with exactly: kilo
         --- from: assistant (TestBot)
         *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2*
-        [bot typing]
         --- from: user (queue-tester)
         Reply with exactly: lima
         [bot typing]
@@ -1076,6 +1074,7 @@ e2eTest('thread message queue ordering', () => {
         ⬥ ok
         --- from: user (queue-tester)
         Reply with exactly: november
+        [bot typing]
         [bot typing]
         --- from: assistant (TestBot)
         ⬥ ok"

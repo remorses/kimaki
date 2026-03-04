@@ -493,8 +493,6 @@ e2eTest('voice message handling', () => {
         🎤 Transcribing voice message...
         --- from: assistant (TestBot)
         📝 **Transcribed message:** Fix the login bug in auth.ts
-        [bot typing]
-        [bot typing]
         --- from: assistant (TestBot)
         ⬥ session-reply"
       `)
@@ -924,24 +922,16 @@ e2eTest('voice message handling', () => {
         timeout: 4_000,
       })
       expect(await th.text()).toMatchInlineSnapshot(`
-        "[bot typing]
-        [bot typing]
-        --- from: assistant (TestBot)
+        "--- from: assistant (TestBot)
         ⬥ fast-response-done
         --- from: user (voice-tester)
         [attachment: voice-message.ogg]
         --- from: assistant (TestBot)
-        🎤 Transcribing voice message...
-        --- from: assistant (TestBot)
         *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2*
         --- from: assistant (TestBot)
-        📝 **Transcribed message:** Delayed transcription result
-        [bot typing]
-        [bot typing]
+        🎤 Transcribing voice message...
         --- from: assistant (TestBot)
-        ⬥ session-reply
-        --- from: assistant (TestBot)
-        *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2*"
+        📝 **Transcribed message:** Delayed transcription result"
       `)
       expect(finalState.sessionId).toBeDefined()
       expect(finalState.queueItems.length).toBe(0)

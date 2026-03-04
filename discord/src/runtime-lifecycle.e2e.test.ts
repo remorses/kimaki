@@ -330,24 +330,18 @@ describe('runtime lifecycle', () => {
       // Still the same runtime — three full cycles, one runtime, one listener
       const runtimeAfterC = getRuntime(thread.id)
       expect(await th.text()).toMatchInlineSnapshot(`
-        "[bot typing]
-        [bot typing]
-        --- from: assistant (TestBot)
+        "--- from: assistant (TestBot)
         ⬥ ok
         --- from: assistant (TestBot)
         *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2*
         --- from: user (lifecycle-tester)
         Reply with exactly: seq-beta
-        [bot typing]
-        [bot typing]
         --- from: assistant (TestBot)
         ⬥ ok
         --- from: assistant (TestBot)
         *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2*
         --- from: user (lifecycle-tester)
         Reply with exactly: seq-gamma
-        [bot typing]
-        [bot typing]
         --- from: assistant (TestBot)
         ⬥ ok
         --- from: assistant (TestBot)
@@ -394,9 +388,7 @@ describe('runtime lifecycle', () => {
       })
 
       expect(await discord.thread(thread.id).text()).toMatchInlineSnapshot(`
-        "[bot typing]
-        [bot typing]
-        --- from: assistant (TestBot)
+        "--- from: assistant (TestBot)
         ⬥ ok
         --- from: assistant (TestBot)
         *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2*"
@@ -484,9 +476,7 @@ describe('runtime lifecycle', () => {
       const messages = await th.getMessages()
 
       expect(await th.text()).toMatchInlineSnapshot(`
-        "[bot typing]
-        [bot typing]
-        --- from: assistant (TestBot)
+        "--- from: assistant (TestBot)
         ⬥ ok
         --- from: assistant (TestBot)
         *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2*
@@ -494,12 +484,8 @@ describe('runtime lifecycle', () => {
         Reply with exactly: concurrent-bravo
         --- from: user (lifecycle-tester)
         Reply with exactly: concurrent-charlie
-        [bot typing]
-        [bot typing]
         --- from: assistant (TestBot)
-        ⬥ ok
-        --- from: assistant (TestBot)
-        *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2*"
+        ⬥ ok"
       `)
       const bravoIndex = messages.findIndex((m) => {
         return (

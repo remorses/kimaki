@@ -724,7 +724,7 @@ export class ThreadSessionRuntime {
 
   // ── Typing Indicator Management ─────────────────────────────
 
-  private startTyping(): void {
+  private async startTyping(): Promise<void> {
     if (this.listenerAborted) {
       return
     }
@@ -732,15 +732,12 @@ export class ThreadSessionRuntime {
     this.clearTypingRestartTimeout()
     this.clearTypingInterval()
 
-    void errore
-      .tryAsync(() => {
-        return this.thread.sendTyping()
-      })
-      .then((result) => {
-        if (result instanceof Error) {
-          discordLogger.log(`Failed to send initial typing: ${result}`)
-        }
-      })
+    const result = await errore.tryAsync(() => {
+      return this.thread.sendTyping()
+    })
+    if (result instanceof Error) {
+      discordLogger.log(`Failed to send initial typing: ${result}`)
+    }
 
     this.typingInterval = setInterval(() => {
       if (this.listenerAborted) {
@@ -808,7 +805,7 @@ export class ThreadSessionRuntime {
       if (hasPendingQuestion || hasPendingPermission) {
         return
       }
-      this.startTyping()
+      void this.startTyping()
     }, 300)
   }
 
@@ -866,7 +863,7 @@ export class ThreadSessionRuntime {
       }
     }
 
-    const content = formatPart(part) + '\n\n'
+    const content = formatPart(part)
     if (!content.trim() || content.length === 0) {
       return
     }
@@ -1170,7 +1167,7 @@ export class ThreadSessionRuntime {
       const hasPendingPermission =
         (pendingPermissions.get(this.thread.id)?.size ?? 0) > 0
       if (!hasPendingQuestion && !hasPendingPermission) {
-        this.startTyping()
+        await this.startTyping()
       }
       return
     }
@@ -1941,7 +1938,7 @@ export class ThreadSessionRuntime {
 
       // ── Start typing ────────────────────────────────────────
       if (shouldMarkRunning) {
-        this.startTyping()
+        await this.startTyping()
       }
 
       // ── Build prompt parts ──────────────────────────────────
@@ -2485,7 +2482,7 @@ export class ThreadSessionRuntime {
     })()
 
     // ── Start typing ──────────────────────────────────────────
-    this.startTyping()
+    await this.startTyping()
 
     // ── Build prompt parts ────────────────────────────────────
     const images = input.images || []
