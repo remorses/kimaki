@@ -9,6 +9,7 @@ import {
 } from './queue-advanced-e2e-setup.js'
 import {
   waitForBotMessageContaining,
+  waitForFooterMessage,
 } from './test-utils.js'
 
 const TEXT_CHANNEL_ID = '200000000000001002'
@@ -51,12 +52,12 @@ e2eTest('queue advanced: typing lifecycle', () => {
         timeout: 4_000,
       })
 
-      const messages = await waitForBotMessageContaining({
+      const messages = await waitForFooterMessage({
         discord: ctx.discord,
         threadId: thread.id,
-        userId: TEST_USER_ID,
-        text: '*project',
         timeout: 4_000,
+        afterMessageIncludes: 'ok',
+        afterAuthorId: ctx.discord.botUserId,
       })
 
       const replyIndex = messages.findIndex((message) => {
@@ -71,16 +72,30 @@ e2eTest('queue advanced: typing lifecycle', () => {
           && message.content.includes('⋅')
       })
 
-      expect(await th.text()).toMatchInlineSnapshot(`
-        "--- from: assistant (TestBot)
+      const timeline = await th.text({ showTyping: true })
+      expect(timeline).toMatchInlineSnapshot(`
+        "[bot typing]
+        [bot typing]
+        [bot typing]
+        [bot typing]
+        --- from: assistant (TestBot)
         ⬥ ok
+        [bot typing]
         --- from: assistant (TestBot)
         *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2*"
       `)
       expect(replyIndex).toBeGreaterThanOrEqual(0)
       expect(footerIndex).toBeGreaterThan(replyIndex)
+      const footerMessage = messages[footerIndex]
+      expect(footerMessage).toBeDefined()
 
-      const footerSeenAt = Date.now()
+      const lastFooterPosition = timeline.lastIndexOf('*project ⋅')
+      expect(lastFooterPosition).toBeGreaterThanOrEqual(0)
+      expect(timeline.slice(lastFooterPosition)).not.toContain('[bot typing]')
+
+      const footerSeenAt = footerMessage
+        ? new Date(footerMessage.timestamp).getTime()
+        : Date.now()
       await th.waitForTypingToStop({
         afterTimestamp: footerSeenAt,
         idleMs: 8_500,
@@ -120,8 +135,6 @@ e2eTest('queue advanced: typing lifecycle', () => {
         content: 'PLUGIN_TIMEOUT_SLEEP_MARKER',
       })
 
-      await th.waitForTypingEvent({ timeout: 4_000 })
-
       await waitForBotMessageContaining({
         discord: ctx.discord,
         threadId: thread.id,
@@ -135,13 +148,21 @@ e2eTest('queue advanced: typing lifecycle', () => {
         content: 'Reply with exactly: typing-stop-interrupt-final',
       })
 
-      const messages = await waitForBotMessageContaining({
+      await waitForBotMessageContaining({
         discord: ctx.discord,
         threadId: thread.id,
         userId: TEST_USER_ID,
-        text: '*project',
+        text: 'ok',
         afterUserMessageIncludes: 'typing-stop-interrupt-final',
         timeout: 12_000,
+      })
+
+      const messages = await waitForFooterMessage({
+        discord: ctx.discord,
+        threadId: thread.id,
+        timeout: 12_000,
+        afterMessageIncludes: 'typing-stop-interrupt-final',
+        afterAuthorId: TEST_USER_ID,
       })
 
       const finalUserIndex = messages.findIndex((message) => {
@@ -163,27 +184,45 @@ e2eTest('queue advanced: typing lifecycle', () => {
           && message.content.includes('⋅')
       })
 
-      expect(await th.text()).toMatchInlineSnapshot(`
+      const timeline = await th.text({ showTyping: true })
+      expect(timeline).toMatchInlineSnapshot(`
         "--- from: assistant (TestBot)
         ⬥ ok
         --- from: assistant (TestBot)
         *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2*
         --- from: user (queue-advanced-tester)
         PLUGIN_TIMEOUT_SLEEP_MARKER
+        [bot typing]
+        [bot typing]
+        [bot typing]
+        [bot typing]
         --- from: assistant (TestBot)
         ⬥ starting sleep 100
         --- from: user (queue-advanced-tester)
         Reply with exactly: typing-stop-interrupt-final
+        [bot typing]
+        [bot typing]
+        [bot typing]
+        [bot typing]
         --- from: assistant (TestBot)
         ⬥ ok
+        [bot typing]
         --- from: assistant (TestBot)
         *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2*"
       `)
       expect(finalUserIndex).toBeGreaterThanOrEqual(0)
       expect(finalReplyIndex).toBeGreaterThan(finalUserIndex)
       expect(finalFooterIndex).toBeGreaterThan(finalReplyIndex)
+      const finalFooter = messages[finalFooterIndex]
+      expect(finalFooter).toBeDefined()
 
-      const footerSeenAt = Date.now()
+      const lastFooterPosition = timeline.lastIndexOf('*project ⋅')
+      expect(lastFooterPosition).toBeGreaterThanOrEqual(0)
+      expect(timeline.slice(lastFooterPosition)).not.toContain('[bot typing]')
+
+      const footerSeenAt = finalFooter
+        ? new Date(finalFooter.timestamp).getTime()
+        : Date.now()
       await th.waitForTypingToStop({
         afterTimestamp: footerSeenAt,
         idleMs: 8_500,

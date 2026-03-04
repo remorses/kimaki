@@ -310,9 +310,8 @@ export class ThreadSessionRuntime {
   // just prevents calling the async loop twice).
   private listenerLoopRunning = false
 
-  // Typing indicator handles
+  // Typing indicator handle (single stateful mechanism).
   private typingInterval: ReturnType<typeof setInterval> | null = null
-  private typingRestartTimeout: ReturnType<typeof setTimeout> | null = null
 
   // Notification throttles for retry/context notices.
   private lastDisplayedContextPercentage = 0
@@ -831,44 +830,61 @@ export class ThreadSessionRuntime {
 
   // ── Typing Indicator Management ─────────────────────────────
 
-  private async startTyping(): Promise<void> {
+  private hasPendingInteractiveUi(): boolean {
+    const hasPendingQuestion = [...pendingQuestionContexts.values()].some(
+      (ctx) => {
+        return ctx.thread.id === this.thread.id
+      },
+    )
+    const hasPendingPermission =
+      (pendingPermissions.get(this.thread.id)?.size ?? 0) > 0
+    return hasPendingQuestion || hasPendingPermission
+  }
+
+  private shouldTypeNow(): boolean {
     if (this.listenerAborted) {
+      return false
+    }
+    if (this.hasPendingInteractiveUi()) {
+      return false
+    }
+    const sessionId = this.state?.sessionId
+    if (!sessionId) {
+      return false
+    }
+    return isSessionBusy({ events: this.eventBuffer, sessionId })
+  }
+
+  private sendTypingPulse(): void {
+    void errore
+      .tryAsync(() => {
+        return this.thread.sendTyping()
+      })
+      .then((result) => {
+        if (result instanceof Error) {
+          discordLogger.log(`Failed to send typing: ${result}`)
+        }
+      })
+  }
+
+  private startTyping(): void {
+    if (!this.shouldTypeNow()) {
       return
     }
-
-    this.clearTypingRestartTimeout()
-    this.clearTypingInterval()
-
-    const result = await errore.tryAsync(() => {
-      return this.thread.sendTyping()
-    })
-    if (result instanceof Error) {
-      discordLogger.log(`Failed to send initial typing: ${result}`)
+    if (this.typingInterval) {
+      return
     }
-
+    this.sendTypingPulse()
     this.typingInterval = setInterval(() => {
-      if (this.listenerAborted) {
-        this.clearTypingInterval()
+      if (!this.shouldTypeNow()) {
+        this.stopTyping()
         return
       }
-      void errore
-        .tryAsync(() => {
-          return this.thread.sendTyping()
-        })
-        .then((result) => {
-          if (result instanceof Error) {
-            discordLogger.log(`Failed to send periodic typing: ${result}`)
-          }
-        })
-    }, 8000)
+      this.sendTypingPulse()
+    }, 7000)
   }
 
   private stopTyping(): void {
-    this.clearTypingInterval()
-    this.clearTypingRestartTimeout()
-  }
-
-  private clearTypingInterval(): void {
     if (!this.typingInterval) {
       return
     }
@@ -876,48 +892,20 @@ export class ThreadSessionRuntime {
     this.typingInterval = null
   }
 
-  private clearTypingRestartTimeout(): void {
-    if (!this.typingRestartTimeout) {
+  private reconcileTyping({
+    sendImmediatePulse,
+  }: {
+    sendImmediatePulse: boolean
+  }): void {
+    if (!this.shouldTypeNow()) {
+      this.stopTyping()
       return
     }
-    clearTimeout(this.typingRestartTimeout)
-    this.typingRestartTimeout = null
-  }
-
-  private scheduleTypingRestart(): void {
-    this.clearTypingRestartTimeout()
-    if (this.listenerAborted) {
+    this.startTyping()
+    if (!sendImmediatePulse) {
       return
     }
-
-    this.typingRestartTimeout = setTimeout(() => {
-      this.typingRestartTimeout = null
-      if (this.listenerAborted) {
-        return
-      }
-      // Don't restart typing if the run is no longer active — a step-finish
-      // event can schedule this timeout right before abort/finish fires,
-      // and the 300ms delay means it fires after typing was already cleared.
-      const sessionId = this.state?.sessionId
-      if (!sessionId) {
-        return
-      }
-      if (!isSessionBusy({ events: this.eventBuffer, sessionId })) {
-        return
-      }
-      // Don't restart typing if interactive UI is pending
-      const hasPendingQuestion = [...pendingQuestionContexts.values()].some(
-        (ctx) => {
-          return ctx.thread.id === this.thread.id
-        },
-      )
-      const hasPendingPermission =
-        (pendingPermissions.get(this.thread.id)?.size ?? 0) > 0
-      if (hasPendingQuestion || hasPendingPermission) {
-        return
-      }
-      void this.startTyping()
-    }, 300)
+    this.sendTypingPulse()
   }
 
   // ── Part Buffering & Output ─────────────────────────────────
@@ -1244,16 +1232,7 @@ export class ThreadSessionRuntime {
 
   private async handleMainPart(part: Part): Promise<void> {
     if (part.type === 'step-start') {
-      const hasPendingQuestion = [...pendingQuestionContexts.values()].some(
-        (ctx) => {
-          return ctx.thread.id === this.thread.id
-        },
-      )
-      const hasPendingPermission =
-        (pendingPermissions.get(this.thread.id)?.size ?? 0) > 0
-      if (!hasPendingQuestion && !hasPendingPermission && !this.typingInterval) {
-        void this.startTyping()
-      }
+      this.reconcileTyping({ sendImmediatePulse: true })
       return
     }
 
@@ -1406,7 +1385,7 @@ export class ThreadSessionRuntime {
         messageID: part.messageID,
         force: true,
       })
-      this.scheduleTypingRestart()
+      this.reconcileTyping({ sendImmediatePulse: false })
     }
   }
 
@@ -1719,22 +1698,12 @@ export class ThreadSessionRuntime {
     }
 
     if (properties.status.type === 'idle') {
-      this.stopTyping()
+      this.reconcileTyping({ sendImmediatePulse: false })
       return
     }
 
     if (properties.status.type === 'busy') {
-      const hasPendingQuestion = [...pendingQuestionContexts.values()].some(
-        (ctx) => {
-          return ctx.thread.id === this.thread.id
-        },
-      )
-      const hasPendingPermission =
-        (pendingPermissions.get(this.thread.id)?.size ?? 0) > 0
-      if (hasPendingQuestion || hasPendingPermission || this.typingInterval) {
-        return
-      }
-      void this.startTyping()
+      this.reconcileTyping({ sendImmediatePulse: true })
       return
     }
 
