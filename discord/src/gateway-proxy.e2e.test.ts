@@ -87,8 +87,8 @@ function createRunDirectories() {
   return { root, dataDir, projectDirectory }
 }
 
-function chooseLockPort() {
-  return 49_000 + (Date.now() % 2_000)
+function chooseLockPort(): Promise<number> {
+  return getAvailablePort()
 }
 
 function createDiscordJsClient({ restUrl }: { restUrl: string }) {
@@ -249,13 +249,18 @@ describeIf('gateway-proxy e2e', () => {
 
   beforeAll(async () => {
     testStartTime = Date.now()
-    const lockPort = chooseLockPort()
+    const lockPort = await chooseLockPort()
     directories = createRunDirectories()
     process.env['KIMAKI_LOCK_PORT'] = String(lockPort)
     process.env['KIMAKI_VITEST'] = '1'
     setDataDir(directories.dataDir)
     previousDefaultVerbosity = store.getState().defaultVerbosity
     store.setState({ defaultVerbosity: 'text-only' })
+
+    const digitalDiscordDbPath = path.join(
+      directories.dataDir,
+      'digital-discord.db',
+    )
 
     proxyPort = await getAvailablePort()
 
@@ -283,6 +288,7 @@ describeIf('gateway-proxy e2e', () => {
       ],
       users: [{ id: TEST_USER_ID, username: 'proxy-tester' }],
       gatewayUrlOverride: `ws://127.0.0.1:${proxyPort}`,
+      dbUrl: `file:${digitalDiscordDbPath}`,
     })
     await discord.start()
 

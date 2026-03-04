@@ -43,8 +43,14 @@ export function createRunDirectories({ name }: { name: string }) {
   return { root, dataDir, projectDirectory }
 }
 
-export function chooseLockPort() {
-  return 51_000 + (Date.now() % 2_000)
+export function chooseLockPort({ channelId }: { channelId: string }): number {
+  let hash = 0
+  for (let i = 0; i < channelId.length; i++) {
+    const char = channelId.charCodeAt(i)
+    hash = (hash << 5) - hash + char
+    hash |= 0
+  }
+  return 51_000 + (Math.abs(hash) % 2_000)
 }
 
 export function createDiscordJsClient({ restUrl }: { restUrl: string }) {
@@ -224,7 +230,7 @@ export function setupQueueAdvancedSuite({
   beforeAll(async () => {
     ctx.testStartTime = Date.now()
     ctx.directories = createRunDirectories({ name: dirName })
-    const lockPort = chooseLockPort()
+    const lockPort = chooseLockPort({ channelId })
     const sessionEventsDir = path.join(ctx.directories.root, 'opencode-session-events')
     fs.mkdirSync(sessionEventsDir, { recursive: true })
 
@@ -236,12 +242,18 @@ export function setupQueueAdvancedSuite({
     previousDefaultVerbosity = store.getState().defaultVerbosity
     store.setState({ defaultVerbosity: 'tools-and-text' })
 
+    const digitalDiscordDbPath = path.join(
+      ctx.directories.dataDir,
+      'digital-discord.db',
+    )
+
     ctx.discord = new DigitalDiscord({
       guild: { name: `${dirName} Guild`, ownerId: TEST_USER_ID },
       channels: [
         { id: channelId, name: channelName, type: ChannelType.GuildText },
       ],
       users: [{ id: TEST_USER_ID, username }],
+      dbUrl: `file:${digitalDiscordDbPath}`,
     })
 
     await ctx.discord.start()

@@ -151,6 +151,9 @@ export class DigitalDiscord {
   }
 
   async start(): Promise<void> {
+    await this.prisma.$executeRawUnsafe('PRAGMA busy_timeout = 5000')
+    await this.prisma.$executeRawUnsafe('PRAGMA journal_mode = WAL')
+
     // Apply migrations by pushing schema to in-memory DB
     // For libsql :memory:, we use Prisma's $executeRawUnsafe with the schema SQL
     await this.applySchema()

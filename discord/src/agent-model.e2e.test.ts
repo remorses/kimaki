@@ -11,6 +11,7 @@
 // Poll timeouts: 4s max, 100ms interval.
 
 import fs from 'node:fs'
+import net from 'node:net'
 import path from 'node:path'
 import url from 'node:url'
 import {
@@ -65,8 +66,22 @@ function createRunDirectories() {
   return { root, dataDir, projectDirectory }
 }
 
-function chooseLockPort() {
-  return 53_000 + (Date.now() % 2_000)
+function chooseLockPort(): Promise<number> {
+  return new Promise((resolve, reject) => {
+    const server = net.createServer()
+    server.listen(0, () => {
+      const address = server.address()
+      if (!address || typeof address === 'string') {
+        server.close()
+        reject(new Error('Failed to resolve lock port'))
+        return
+      }
+      const port = address.port
+      server.close(() => {
+        resolve(port)
+      })
+    })
+  })
 }
 
 function createDiscordJsClient({ restUrl }: { restUrl: string }) {
@@ -183,12 +198,17 @@ describe('agent model resolution', () => {
   beforeAll(async () => {
     testStartTime = Date.now()
     directories = createRunDirectories()
-    const lockPort = chooseLockPort()
+    const lockPort = await chooseLockPort()
 
     process.env['KIMAKI_LOCK_PORT'] = String(lockPort)
     setDataDir(directories.dataDir)
     previousDefaultVerbosity = store.getState().defaultVerbosity
     store.setState({ defaultVerbosity: 'tools-and-text' })
+
+    const digitalDiscordDbPath = path.join(
+      directories.dataDir,
+      'digital-discord.db',
+    )
 
     discord = new DigitalDiscord({
       guild: {
@@ -208,6 +228,7 @@ describe('agent model resolution', () => {
           username: 'agent-model-tester',
         },
       ],
+      dbUrl: `file:${digitalDiscordDbPath}`,
     })
 
     await discord.start()
