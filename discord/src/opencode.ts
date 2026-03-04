@@ -3,7 +3,7 @@
 // handles automatic restarts on failure, and provides typed SDK clients.
 // Uses errore for type-safe error handling.
 
-import { spawn, type ChildProcess } from 'node:child_process'
+import { spawn, execFileSync, type ChildProcess } from 'node:child_process'
 import fs from 'node:fs'
 import net from 'node:net'
 import os from 'node:os'
@@ -155,6 +155,48 @@ function buildStartupTimeoutReason({
 
 type ServerInitOptions = { originalRepoDirectory?: string; channelId?: string }
 
+// Resolve the full path to the opencode binary so we can spawn without
+// shell: true. Using shell: true creates an intermediate sh process — when
+// cleanup sends SIGTERM it only kills the shell, leaving the actual opencode
+// process orphaned (reparented to PID 1). Resolving the path upfront lets
+// us spawn the binary directly and SIGTERM reaches the right process.
+let resolvedOpencodeCommand: string | null = null
+
+export function resolveOpencodeCommand(): string {
+  if (resolvedOpencodeCommand) {
+    return resolvedOpencodeCommand
+  }
+
+  const envPath = process.env.OPENCODE_PATH
+  if (envPath) {
+    resolvedOpencodeCommand = envPath
+    return envPath
+  }
+
+  const isWindows = process.platform === 'win32'
+  const whichCmd = isWindows ? 'where' : 'which'
+  const result = errore.tryFn({
+    try: () => {
+      return execFileSync(whichCmd, ['opencode'], {
+        encoding: 'utf8',
+        timeout: 5000,
+      }).trim().split('\n')[0]!.trim()
+    },
+    catch: () => new Error('opencode not found in PATH'),
+  })
+
+  if (result instanceof Error) {
+    // Fall back to bare command name — spawn will fail with a clear error
+    // if it can't find the binary.
+    opencodeLogger.warn('Could not resolve opencode path via which, falling back to "opencode"')
+    return 'opencode'
+  }
+
+  resolvedOpencodeCommand = result
+  opencodeLogger.log(`Resolved opencode binary: ${result}`)
+  return result
+}
+
 const opencodeServers = new Map<
   string,
   {
@@ -261,7 +303,7 @@ export async function initializeOpencodeForDirectory(
 
   const port = await getOpenPort()
 
-  const opencodeCommand = process.env.OPENCODE_PATH || 'opencode'
+  const opencodeCommand = resolveOpencodeCommand()
 
   // Normalize path separators for cross-platform compatibility (Windows uses backslashes)
   const tmpdir = os.tmpdir().replaceAll('\\', '/')
@@ -318,7 +360,11 @@ export async function initializeOpencodeForDirectory(
       stdio: 'pipe',
       detached: false,
       cwd: directory,
-      shell: true, // Required for .cmd files on Windows
+      // No shell: true — the binary path is resolved upfront via
+      // resolveOpencodeCommand(). shell: true creates an intermediate sh
+      // process that eats SIGTERM on cleanup, leaving the real opencode
+      // process orphaned. On Windows, cli.ts ensureCommandAvailable
+      // resolves the full .cmd path into OPENCODE_PATH before we get here.
       env: {
         ...process.env,
         OPENCODE_CONFIG_CONTENT: JSON.stringify({
@@ -510,6 +556,14 @@ export async function initializeOpencodeForDirectory(
 
 export function getOpencodeServers() {
   return opencodeServers
+}
+
+/**
+ * Suppress auto-restart for a directory so the exit handler doesn't
+ * respawn the server after SIGTERM. Used by test cleanup.
+ */
+export function suppressAutoRestart(directory: string) {
+  serverRetryCount.set(directory, 999)
 }
 
 export function getOpencodeServerPort(directory: string): number | null {

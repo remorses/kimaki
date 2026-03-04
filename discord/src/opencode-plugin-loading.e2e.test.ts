@@ -9,6 +9,7 @@ import net from 'node:net'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { test, expect } from 'vitest'
+import { resolveOpencodeCommand } from './opencode.js'
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 
@@ -63,12 +64,11 @@ test(
     const stderrLines: string[] = []
 
     const serverProcess: ChildProcess = spawn(
-      process.env.OPENCODE_PATH || 'opencode',
+      resolveOpencodeCommand(),
       ['serve', '--port', port.toString(), '--print-logs', '--log-level', 'DEBUG'],
       {
         stdio: 'pipe',
         cwd: projectDir,
-        shell: true,
         env: {
           ...process.env,
           OPENCODE_CONFIG_CONTENT: JSON.stringify({
