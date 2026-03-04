@@ -332,7 +332,9 @@ export class ThreadSessionRuntime {
   private static EVENT_BUFFER_MAX = 1000
   private eventBuffer: Array<{ event: OpenCodeEvent; timestamp: number }> = []
 
-  // Serialized action queue — all mutations flow through dispatchAction
+  // Serialized action queue for per-thread runtime transitions.
+  // Ingress and event handling both flow through this queue to keep ordering
+  // deterministic and avoid interleaving shared mutable structures.
   private actionQueue: Array<() => Promise<void>> = []
   private processingAction = false
 
@@ -784,8 +786,7 @@ export class ThreadSessionRuntime {
   }
 
   // ── Serialized Action Queue (§7.4) ──────────────────────────
-  // All mutations (ingress actions + events) are serialized through
-  // one internal queue to prevent interleaving writes.
+  // Serializes event handling + local-queue state mutations.
 
   async dispatchAction(action: () => Promise<void>): Promise<void> {
     return new Promise<void>((resolve, reject) => {
@@ -1250,8 +1251,8 @@ export class ThreadSessionRuntime {
       )
       const hasPendingPermission =
         (pendingPermissions.get(this.thread.id)?.size ?? 0) > 0
-      if (!hasPendingQuestion && !hasPendingPermission) {
-        await this.startTyping()
+      if (!hasPendingQuestion && !hasPendingPermission && !this.typingInterval) {
+        void this.startTyping()
       }
       return
     }
@@ -1733,7 +1734,7 @@ export class ThreadSessionRuntime {
       if (hasPendingQuestion || hasPendingPermission || this.typingInterval) {
         return
       }
-      await this.startTyping()
+      void this.startTyping()
       return
     }
 
