@@ -10,6 +10,7 @@ function getCritiqueInstructions(sessionId: string) {
 ## showing diffs
 
 IMPORTANT: After editing any files, you MUST execute the critique command using the Bash tool to get a diff URL, then share that URL with the user.
+IMPORTANT: When the user asks to see a diff, show a diff, or review changes, ALWAYS use critique to generate a web URL instead of showing raw git diff output.
 
 Typical usage examples:
 
