@@ -241,6 +241,28 @@ signal summary:
 
 the implementation is in `discord/src/heap-monitor.ts`.
 
+## cpu profiling tests
+
+set `VITEST_CPU_PROF=1` to generate `.cpuprofile` files when running vitest. profiles land in `discord/tmp/cpu-profiles/`. always run a single test file to avoid hanging the machine — the config forces `maxForks: 1` when profiling.
+
+```bash
+# run one test file with profiling
+cd discord
+VITEST_CPU_PROF=1 pnpm test --run src/some-file.e2e.test.ts
+```
+
+to get a top-down self-time report without opening a browser, use profano (a workspace package in `profano/`):
+
+```bash
+node ../profano/dist/cli.js tmp/cpu-profiles/CPU.*.cpuprofile
+```
+
+for an interactive flame chart in the browser, use cpupro:
+
+```bash
+npx cpupro tmp/cpu-profiles/CPU.*.cpuprofile
+```
+
 ## goke cli
 
 this project uses goke (not cac) for CLI parsing. goke auto-infers option types from `.option()` calls. never add manual type annotations to `.action()` callback options. just use `.action(async (options) => { ... })` and let goke infer the types.
