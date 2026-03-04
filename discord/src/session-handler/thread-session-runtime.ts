@@ -1394,19 +1394,19 @@ export class ThreadSessionRuntime {
         return
       }
 
-      if (this.shouldSuppressIdleFinishForAbortedRun({
+      const suppressFooter = this.hasUnrepliedUserMessage({
         sessionId: idleSessionId,
-      })) {
+      })
+      if (suppressFooter) {
         logger.log(
-          `[SESSION IDLE] suppress finish after MessageAbortedError sessionId=${sessionId} ${this.formatRunStateForLog()}`,
+          `[SESSION IDLE] finishing run (no footer, unreplied user message) sessionId=${sessionId} ${this.formatRunStateForLog()}`,
         )
-        return
+      } else {
+        logger.log(
+          `[SESSION IDLE] finishing run sessionId=${sessionId} ${this.formatRunStateForLog()}`,
+        )
       }
-
-      logger.log(
-        `[SESSION IDLE] finishing run sessionId=${sessionId} ${this.formatRunStateForLog()}`,
-      )
-      await this.finishRun({ expectedRunId: this.run?.runId })
+      await this.finishRun({ expectedRunId: this.run?.runId, suppressFooter })
       return
     }
 
@@ -1425,12 +1425,19 @@ export class ThreadSessionRuntime {
     })
   }
 
-  private shouldSuppressIdleFinishForAbortedRun({
+  // Detects interrupted runs by checking for an unreplied user message.
+  // When the interrupt plugin aborts a running session, opencode emits
+  // session.idle without session.error. The signal is: a user message
+  // appeared in the event buffer after the last assistant message started,
+  // meaning the session was aborted before it could reply to the new message.
+  // In that case, suppress the footer — the interrupt plugin will resume
+  // the session to process the pending message.
+  private hasUnrepliedUserMessage({
     sessionId,
   }: {
     sessionId: string
   }): boolean {
-    let lastAbortErrorTimestamp = 0
+    let lastUserMessageTimestamp = 0
     let lastAssistantMessageTimestamp = 0
 
     for (const entry of this.eventBuffer) {
@@ -1439,28 +1446,21 @@ export class ThreadSessionRuntime {
         continue
       }
 
-      if (
-        entry.event.type === 'session.error' &&
-        entry.event.properties.error?.name === 'MessageAbortedError'
-      ) {
-        lastAbortErrorTimestamp = entry.timestamp
-        continue
-      }
-
       if (entry.event.type !== 'message.updated') {
         continue
       }
-      if (entry.event.properties.info.role !== 'assistant') {
-        continue
+
+      if (entry.event.properties.info.role === 'user') {
+        lastUserMessageTimestamp = entry.timestamp
+      } else if (entry.event.properties.info.role === 'assistant') {
+        lastAssistantMessageTimestamp = entry.timestamp
       }
-      lastAssistantMessageTimestamp = entry.timestamp
     }
 
-    if (lastAbortErrorTimestamp === 0) {
-      return false
-    }
-
-    return lastAbortErrorTimestamp >= lastAssistantMessageTimestamp
+    // If the most recent user message is newer than the most recent assistant
+    // message, there's a pending user message that hasn't been replied to.
+    // This means the session was aborted (interrupted) before completing.
+    return lastUserMessageTimestamp > lastAssistantMessageTimestamp
   }
 
   private async handleSessionError(properties: {
@@ -2609,7 +2609,7 @@ export class ThreadSessionRuntime {
    * Called when session.idle decision is 'process' — the run finished.
    * Marks finished, flushes parts, emits footer, drains queue.
    */
-  private async finishRun({ expectedRunId }: { expectedRunId?: number } = {}): Promise<void> {
+  private async finishRun({ expectedRunId, suppressFooter }: { expectedRunId?: number; suppressFooter?: boolean } = {}): Promise<void> {
     if (typeof expectedRunId === 'number') {
       const activeRunId = this.run?.runId
       if (activeRunId !== expectedRunId) {
@@ -2637,8 +2637,10 @@ export class ThreadSessionRuntime {
       force: true,
     })
 
-    // Emit footer
-    await this.emitFooter()
+    // Emit footer (skip when the run was interrupted with a pending user message)
+    if (!suppressFooter) {
+      await this.emitFooter()
+    }
 
     // Clear run controller
     threadState.setRunController(this.threadId, undefined)
