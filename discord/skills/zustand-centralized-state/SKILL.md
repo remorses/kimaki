@@ -9,11 +9,12 @@ description: >
   also valid when lifecycle management is safer that way. Also covers state
   encapsulation: keeping state local to its owner (closures, plugins, factory
   functions) so it doesn't leak across the app, reducing the blast radius of
-  mutations.
-  Use this skill when building any stateful TypeScript application (servers,
-  extensions, CLIs, relays) to keep state simple, testable, and easy to reason
-  about. ALWAYS read this skill when a project uses zustand/vanilla for state
-  management outside of React.
+  mutations. Also covers event sourcing: keeping a bounded event buffer and
+  deriving state with pure functions instead of mutable flags, making event
+  handlers easy to test and reason about. Use this skill when building any
+  stateful TypeScript application (servers, extensions, CLIs, relays) to keep
+  state simple, testable, and easy to reason about. ALWAYS read this skill
+  when a project uses zustand/vanilla for state management outside of React.
 version: 0.3.0
 ---
 
