@@ -370,55 +370,50 @@ why this is preferred:
 - easier testing: derivation logic is pure and deterministic with fixture inputs.
 - fewer race bugs: state is derived from observed events, not guessed from local transitions.
 
-write derivation as pure functions that accept events and return computed state:
+write derivation as pure functions that accept events and return computed state.
+prefer existing derivation helpers from `event-stream-state.ts` (for example
+`wasRecentlyAborted`) over new mirrored flags:
 
 ```ts
-type LifecycleEvent = {
-  type: 'session.status' | 'session.idle' | 'session.error'
-  sessionId: string
-  statusType?: 'busy' | 'idle'
-  errorName?: string
-}
 
-export function deriveSessionState({
+export function deriveRunOutcome({
   events,
   sessionId,
+  idleEventIndex,
 }: {
-  events: LifecycleEvent[]
+  events: EventBufferEntry[]
   sessionId: string
-}) {
-  const initial = {
-    isBusy: false,
-    lastErrorName: null as string | null,
-    wasRecentlyAborted: false,
+  idleEventIndex: number
+}): RunOutcome {
+  const isBusy = isSessionBusy({
+    events,
+    sessionId,
+    upToIndex: idleEventIndex,
+  })
+  const wasAbort = wasRecentlyAborted({
+    events,
+    sessionId,
+    idleEventIndex,
+  })
+  return {
+    isBusy,
+    wasAbort,
+    shouldShowFooter: !isBusy && !wasAbort,
   }
-  return events.reduce((state, event) => {
-    if (event.sessionId !== sessionId) {
-      return state
-    }
-    if (event.type === 'session.status') {
-      return {
-        ...state,
-        isBusy: event.statusType === 'busy',
-      }
-    }
-    if (event.type === 'session.error') {
-      const wasAbort = event.errorName === 'MessageAbortedError'
-      return {
-        ...state,
-        lastErrorName: event.errorName || null,
-        wasRecentlyAborted: wasAbort,
-      }
-    }
-    return {
-      ...state,
-      isBusy: false,
-    }
-  }, initial)
 }
 ```
 
-this function is isolated, side-effect free, and trivial to test with inline snapshots and fixture jsonl files.
+this function is isolated, side-effect free, deterministic, and easy to test
+with fixture jsonl streams and inline snapshots.
+
+## state minimization and centralization
+
+if mutable state is really needed, centralize it.
+
+- use `discord/src/store.ts` for global shared state so every read/write path is visible.
+- keep global state at a minimum. every new field multiplies the number of possible app states and increases bug surface.
+- prefer deriving values from events/existing state instead of storing mirrored flags.
+- if state is local-only, keep it local and encapsulated (for example a local `let count = 0` in one function/loop). do not promote temporary local state to global store.
 
 ## aborting and resuming opencode session
 
