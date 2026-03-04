@@ -6,14 +6,13 @@
 // latency is OpenCode server startup (beforeAll) and intentional partDelaysMs
 // in matchers (100ms for user-reply).
 //
-// Tests within a single file run sequentially (shared in-memory log buffer
-// for failure diagnostics). If total duration of a file exceeds ~10s, split
-// into a new test file so vitest can parallelize across files.
+// If total duration of a file exceeds ~10s, split into a new test file
+// so vitest can parallelize across files.
 
 import fs from 'node:fs'
 import path from 'node:path'
 import url from 'node:url'
-import { describe, beforeAll, afterAll, beforeEach, onTestFailed, test, expect } from 'vitest'
+import { describe, beforeAll, afterAll, test, expect } from 'vitest'
 import { ChannelType, Client, GatewayIntentBits, Partials } from 'discord.js'
 import { DigitalDiscord } from 'discord-digital-twin/src'
 import {
@@ -45,7 +44,7 @@ import {
   waitForThreadPhase,
   waitForThreadState,
 } from './test-utils.js'
-import { getLogEntryCount, getLogEntriesSince } from './logger.js'
+
 
 const e2eTest = describe
 
@@ -359,22 +358,6 @@ e2eTest('thread message queue ordering', () => {
       fs.rmSync(directories.dataDir, { recursive: true, force: true })
     }
   }, 10_000)
-
-  // Capture log buffer position before each test. On failure, dump only the
-  // log lines produced during that test so failures are easy to diagnose.
-  let logStartIndex = 0
-
-  beforeEach(() => {
-    logStartIndex = getLogEntryCount()
-    onTestFailed(() => {
-      const logs = getLogEntriesSince(logStartIndex)
-      if (logs.length > 0) {
-        console.error(`\n--- kimaki logs (${logs.length} lines) ---`)
-        console.error(logs.join(''))
-        console.error(`--- end ---\n`)
-      }
-    })
-  })
 
   test(
     'first prompt after cold opencode server start still streams text parts',

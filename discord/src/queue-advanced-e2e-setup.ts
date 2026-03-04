@@ -4,7 +4,7 @@
 import fs from 'node:fs'
 import path from 'node:path'
 import url from 'node:url'
-import { beforeAll, afterAll, beforeEach, afterEach, onTestFailed, expect } from 'vitest'
+import { beforeAll, afterAll, afterEach, expect } from 'vitest'
 import { ChannelType, Client, GatewayIntentBits, Partials } from 'discord.js'
 import { DigitalDiscord } from 'discord-digital-twin/src'
 import {
@@ -30,7 +30,7 @@ import {
   cleanupOpencodeServers,
   cleanupTestSessions,
 } from './test-utils.js'
-import { getLogEntryCount, getLogEntriesSince } from './logger.js'
+
 
 export function createRunDirectories({ name }: { name: string }) {
   const root = path.resolve(process.cwd(), 'tmp', name)
@@ -327,18 +327,6 @@ export function setupQueueAdvancedSuite({
       fs.rmSync(ctx.directories.dataDir, { recursive: true, force: true })
     }
   }, 10_000)
-
-  beforeEach(() => {
-    const logStartIndex = getLogEntryCount()
-    onTestFailed(() => {
-      const logs = getLogEntriesSince(logStartIndex)
-      if (logs.length > 0) {
-        console.error(`\n--- kimaki logs (${logs.length} lines) ---`)
-        console.error(logs.join(''))
-        console.error(`--- end ---\n`)
-      }
-    })
-  })
 
   afterEach(async () => {
     const threadIds = [...store.getState().threads.keys()]

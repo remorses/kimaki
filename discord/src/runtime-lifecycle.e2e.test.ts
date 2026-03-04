@@ -9,7 +9,7 @@
 import fs from 'node:fs'
 import path from 'node:path'
 import url from 'node:url'
-import { describe, beforeAll, afterAll, beforeEach, onTestFailed, test, expect } from 'vitest'
+import { describe, beforeAll, afterAll, test, expect } from 'vitest'
 import { ChannelType, Client, GatewayIntentBits, Partials } from 'discord.js'
 import { DigitalDiscord } from 'discord-digital-twin/src'
 import {
@@ -36,7 +36,7 @@ import {
   waitForBotMessageContaining,
   waitForBotReplyAfterUserMessage,
 } from './test-utils.js'
-import { getLogEntryCount, getLogEntriesSince } from './logger.js'
+
 
 const TEST_USER_ID = '200000000000000888'
 const TEXT_CHANNEL_ID = '200000000000000889'
@@ -229,19 +229,6 @@ describe('runtime lifecycle', () => {
       fs.rmSync(directories.dataDir, { recursive: true, force: true })
     }
   }, 10_000)
-
-  let logStartIndex = 0
-  beforeEach(() => {
-    logStartIndex = getLogEntryCount()
-    onTestFailed(() => {
-      const logs = getLogEntriesSince(logStartIndex)
-      if (logs.length > 0) {
-        console.error(`\n--- kimaki logs (${logs.length} lines) ---`)
-        console.error(logs.join(''))
-        console.error(`--- end ---\n`)
-      }
-    })
-  })
 
   test(
     'three sequential completions reuse same runtime and listener',

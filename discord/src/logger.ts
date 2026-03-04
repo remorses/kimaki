@@ -122,9 +122,6 @@ export function formatErrorWithStack(error: unknown): string {
 function writeToFile(level: string, prefix: string, args: unknown[]) {
   const timestamp = new Date().toISOString()
   const message = `[${timestamp}] [${level}] [${prefix}] ${args.map(formatArg).join(' ')}\n`
-  if (testLogBuffer) {
-    testLogBuffer.push(message)
-  }
   if (!logFilePath) {
     return
   }
@@ -152,28 +149,17 @@ const noSpacing = { spacing: 0 }
 
 // Suppress clack terminal output during vitest runs to avoid flooding
 // test output with hundreds of log lines. File logging still works.
+// Set KIMAKI_TEST_LOGS=1 when rerunning a failing test to see all
+// kimaki logger output in the terminal for debugging.
 const isVitest = !!process.env['KIMAKI_VITEST']
-
-// In-memory log buffer for tests. Only populated when KIMAKI_VITEST is set
-// so production never accumulates entries. Tests use getLogEntryCount() before
-// the test and getLogEntriesSince(startIndex) on failure to print only the
-// relevant log lines. This means tests in the same file run sequentially
-// (shared buffer), not in parallel.
-const testLogBuffer: string[] | null = isVitest ? [] : null
-
-export function getLogEntryCount(): number {
-  return testLogBuffer?.length ?? 0
-}
-
-export function getLogEntriesSince(startIndex: number): string[] {
-  return testLogBuffer?.slice(startIndex) ?? []
-}
+const showTestLogs = isVitest && !!process.env['KIMAKI_TEST_LOGS']
 
 export function createLogger(prefix: LogPrefixType | string) {
   const paddedPrefix = padPrefix(prefix)
+  const suppressConsole = isVitest && !showTestLogs
   const log = (...args: unknown[]) => {
     writeToFile('LOG', prefix, args)
-    if (isVitest) {
+    if (suppressConsole) {
       return
     }
     clackLog.message(
@@ -188,7 +174,7 @@ export function createLogger(prefix: LogPrefixType | string) {
     log,
     error: (...args: unknown[]) => {
       writeToFile('ERROR', prefix, args)
-      if (isVitest) {
+      if (suppressConsole) {
         return
       }
       clackLog.error(
@@ -198,7 +184,7 @@ export function createLogger(prefix: LogPrefixType | string) {
     },
     warn: (...args: unknown[]) => {
       writeToFile('WARN', prefix, args)
-      if (isVitest) {
+      if (suppressConsole) {
         return
       }
       clackLog.warn(
@@ -208,7 +194,7 @@ export function createLogger(prefix: LogPrefixType | string) {
     },
     info: (...args: unknown[]) => {
       writeToFile('INFO', prefix, args)
-      if (isVitest) {
+      if (suppressConsole) {
         return
       }
       clackLog.info(

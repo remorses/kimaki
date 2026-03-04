@@ -216,15 +216,16 @@ function startGatewayProxy({
     env: { ...process.env, RUST_LOG: 'debug' },
   })
 
+  const showLogs = !!process.env['KIMAKI_TEST_LOGS']
   child.stdout?.on('data', (data: Buffer) => {
     const line = data.toString().trim()
-    if (line) {
+    if (line && showLogs) {
       console.log(`[gateway-proxy] ${line}`)
     }
   })
   child.stderr?.on('data', (data: Buffer) => {
     const line = data.toString().trim()
-    if (line) {
+    if (line && showLogs) {
       console.log(`[gateway-proxy] ${line}`)
     }
   })

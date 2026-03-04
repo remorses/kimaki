@@ -130,7 +130,12 @@ like "Reply with exactly: foxtrot").
 
 ## Logger noise in tests
 
-Set `KIMAKI_VITEST=1` env var to suppress clack terminal output during
-test runs. File logging still works via `writeToFile`. Without this,
-hundreds of formatted log lines flood the test output making it hard to
-read actual test failures.
+Test logs are suppressed by default (`KIMAKI_VITEST=1` in vitest.config.ts).
+To debug a failing test, rerun with `KIMAKI_TEST_LOGS=1` to see all
+kimaki logger output in the terminal:
+
+```bash
+KIMAKI_TEST_LOGS=1 pnpm test --run src/thread-message-queue.e2e.test.ts
+```
+
+File logging to `<dataDir>/kimaki.log` still works regardless of this flag.

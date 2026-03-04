@@ -11,7 +11,7 @@
 import fs from 'node:fs'
 import path from 'node:path'
 import url from 'node:url'
-import { describe, beforeAll, afterAll, beforeEach, onTestFailed, test, expect } from 'vitest'
+import { describe, beforeAll, afterAll, beforeEach, test, expect } from 'vitest'
 import { ChannelType, Client, GatewayIntentBits, Partials } from 'discord.js'
 import { DigitalDiscord } from 'discord-digital-twin/src'
 import {
@@ -39,7 +39,7 @@ import {
   waitForThreadQueueLength,
   waitForThreadState,
 } from './test-utils.js'
-import { getLogEntryCount, getLogEntriesSince } from './logger.js'
+
 import { getThreadState } from './session-handler/thread-runtime-state.js'
 
 const e2eTest = describe
@@ -418,20 +418,10 @@ e2eTest('voice message handling', () => {
     }
   }, 10_000)
 
-  let logStartIndex = 0
   beforeEach(() => {
     // Reset deterministic transcription before each test to prevent leakage
     // from a failed test that set it but didn't clean up
     setDeterministicTranscription(null)
-    logStartIndex = getLogEntryCount()
-    onTestFailed(() => {
-      const logs = getLogEntriesSince(logStartIndex)
-      if (logs.length > 0) {
-        console.error(`\n--- kimaki logs (${logs.length} lines) ---`)
-        console.error(logs.join(''))
-        console.error(`--- end ---\n`)
-      }
-    })
   })
 
   // ── Test 1: Voice message in a channel creates thread + session ──

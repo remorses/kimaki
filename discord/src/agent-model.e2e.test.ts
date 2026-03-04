@@ -17,8 +17,6 @@ import {
   describe,
   beforeAll,
   afterAll,
-  beforeEach,
-  onTestFailed,
   test,
   expect,
 } from 'vitest'
@@ -49,7 +47,7 @@ import {
   cleanupTestSessions,
   waitForBotMessageContaining,
 } from './test-utils.js'
-import { getLogEntryCount, getLogEntriesSince } from './logger.js'
+
 
 const TEST_USER_ID = '200000000000000920'
 const TEXT_CHANNEL_ID = '200000000000000921'
@@ -321,19 +319,6 @@ describe('agent model resolution', () => {
       fs.rmSync(directories.dataDir, { recursive: true, force: true })
     }
   }, 10_000)
-
-  let logStartIndex = 0
-  beforeEach(() => {
-    logStartIndex = getLogEntryCount()
-    onTestFailed(() => {
-      const logs = getLogEntriesSince(logStartIndex)
-      if (logs.length > 0) {
-        console.error(`\n--- kimaki logs (${logs.length} lines) ---`)
-        console.error(logs.join(''))
-        console.error(`--- end ---\n`)
-      }
-    })
-  })
 
   test(
     'new thread uses agent model when channel agent is set',

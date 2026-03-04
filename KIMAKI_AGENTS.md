@@ -2,6 +2,8 @@ after every change always run tsc inside discord to validate your changes. try t
 
 do not use spawnSync. use our util execAsync. which uses spawn under the hood
 
+the important package in this repo is discord. it contains the discord bot code.
+
 # repo architecture
 
 kimaki is a monorepo with three main packages that communicate via a shared Postgres database hosted on PlanetScale.
@@ -322,8 +324,8 @@ see `docs/e2e-testing-learnings.md` for detailed lessons. key points:
 - prefer `latestUserTextIncludes` over `rawPromptIncludes` for deterministic matcher markers that should only trigger once. `rawPromptIncludes` scans full session history, so after abort+retry in the same session the old marker re-fires and causes deadlocks or timeouts. `latestUserTextIncludes` only checks the most recent user message.
 - prefer content-aware polling ("does this user message have a bot reply after it?") over count-based polling (`waitForBotMessageCount`). count-based is fragile when sessions get interrupted/aborted because error messages satisfy the count early.
 - bot replies can be error messages, not just LLM content. verify ordering by position, not content matching.
-- set `KIMAKI_VITEST=1` to suppress clack terminal log noise during test runs. when set, the logger pushes entries to an in-memory buffer. tests use `getLogEntryCount()` / `getLogEntriesSince(index)` with `onTestFailed` to dump only the log lines from the failed test.
-- tests in a single file share the in-memory log buffer and run **sequentially** (not in parallel). if total duration of an e2e test file exceeds **~10 seconds**, split into a new file so vitest parallelizes across files.
+- test logs are suppressed by default (`KIMAKI_VITEST=1` in vitest.config.ts). to debug a failing test, rerun with `KIMAKI_TEST_LOGS=1` to see all kimaki logger output in the terminal. example: `KIMAKI_TEST_LOGS=1 pnpm test --run src/thread-message-queue.e2e.test.ts`. only run one test at a time with logs enabled to see clear logs and save context window.
+- if total duration of an e2e test file exceeds **~10 seconds**, split into a new file so vitest parallelizes across files.
 - `afterAll` should clean up opencode sessions via `session.list()` + `session.delete()` to avoid accumulation across runs.
 - to assert something doesn't appear in Discord (e.g. no footer after abort), poll `th.getMessages()` in a loop: sleep 20ms, max 10 iterations. everything is deterministic so 200ms total is enough. fail immediately if the unwanted message appears.
 
