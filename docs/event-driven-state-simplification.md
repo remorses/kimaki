@@ -68,10 +68,12 @@ truth.
 
 ## Solution
 
-Remove the local phase state machine. Derive all run lifecycle decisions from
-the SSE event buffer using pure functions. Switch the local-queue dispatch
-path from blocking `session.prompt()` to fire-and-forget `session.promptAsync()`
-to unify both paths and eliminate `runController`.
+Make the OpenCode event stream the sole run-lifecycle source of truth.
+Remove all per-run mirrors from both store and runtime class. Runtime/store
+should keep only what cannot be derived from events (session identity,
+queue/blockers, listener handles, output dedup). All run decisions (busy/idle,
+abort classification, footer timing, model/provider/agent/tokens, subtask
+routing) must be derived from event history.
 
 ## Changes
 
@@ -112,80 +114,69 @@ Remove from store entirely:
 This file becomes empty after removing `MainRunState`, `MainRunPhase`, and
 the pure transition functions. Delete it.
 
-### 3. Move per-run mechanism state to the class
+### 3. Remove per-run mechanism state from the class
 
 **File: `discord/src/session-handler/thread-session-runtime.ts`**
 
-Add to class fields (single-owner mechanism, not shared state):
+Do not move `currentRun` fields into class fields. Remove them instead.
+Avoid replacing store state with equivalent class caches.
 
-```ts
-// Per-dispatch tracking — set on each promptAsync call, read on footer.
-// Stored as a queue so rapid A/B dispatches each get correct durations.
-// Dequeued on each session.idle to produce the footer for that response.
-private dispatchTimeQueue: number[] = []
-// Subtask routing — maps child sessionId → label + Discord message ID
-private subtaskSessions = new Map<string, SubtaskInfo>()
-// Subtask naming — counts spawns per agent type
-private agentSpawnCounts: Record<string, number> = {}
-// UI throttle: context usage percentage last shown
-private lastDisplayedContextPercentage = 0
-// UI throttle: last rate-limit message timestamp
-private lastRateLimitDisplayTime = 0
-```
+Use event-derived helpers instead:
 
-These were in `CurrentRunInfo` in the store. They move to the class because
-they have a single owner (the runtime instance) and are never read by external
-code.
+- Footer duration: derive from lifecycle sequence (`busy` timestamp preceding
+  the idle currently being handled), not from `dispatchTimeQueue`.
+- Subtask routing/labels: derive from task tool events in the event history
+  (for example `message.part.updated` tool `task` metadata), not from a
+  persistent `subtaskSessions` map.
+- UI throttle state from `currentRun` should be removed or rewritten as
+  event-derived logic; do not keep per-run counters in mutable runtime state.
 
-**NOTE: `lastDispatchTime` is a queue, not a single scalar.** When messages
-A and B are dispatched via promptAsync in rapid succession, each pushes its
-`Date.now()` onto `dispatchTimeQueue`. When `session.idle` fires for A's
-completion, the queue head is dequeued for A's footer. Then B's idle dequeues
-the next entry. This ensures each footer shows the correct duration.
+This keeps the runtime class as an event interpreter instead of a second run
+state machine.
 
-### 4. Split event buffer: lifecycle ring + general ring
+### 4. Increase event buffer to 1000 (single ring)
 
 **File: `discord/src/session-handler/thread-session-runtime.ts`**
 
 The current 100-event buffer can lose lifecycle events (`session.idle`,
 `session.status`, `session.error`) during long runs with many tool/part
-events. The derivation functions depend on lifecycle events being present.
+events. Increase the single event ring to 1000 so lifecycle derivation stays
+reliable without adding another state structure.
 
-Split into two bounded buffers:
+Use one bounded buffer:
 
 ```ts
-// All events — used for part routing, subtask detection, general queries
-private static EVENT_BUFFER_MAX = 100
+// All events — used for lifecycle derivation, part routing,
+// subtask detection, and footer metadata queries.
+private static EVENT_BUFFER_MAX = 1000
 private eventBuffer: Array<{ event: OpenCodeEvent; timestamp: number }> = []
-
-// Lifecycle events only (session.idle, session.status, session.error)
-// Smaller set, never evicted by part events. 50 is more than enough since
-// each run produces ~3 lifecycle events (busy, idle, maybe error).
-private static LIFECYCLE_BUFFER_MAX = 50
-private lifecycleBuffer: Array<{ event: OpenCodeEvent; timestamp: number }> = []
 ```
 
 On each event:
-- Always push to `eventBuffer` (cap at 100)
-- If event is `session.idle`, `session.status`, or `session.error`: also
-  push to `lifecycleBuffer` (cap at 50)
+- Push to `eventBuffer`.
+- If length exceeds 1000, drop oldest entries.
 
 The derivation functions (`isSessionBusy`, `wasRecentlyAborted`) scan
-`lifecycleBuffer` instead of `eventBuffer`. This guarantees lifecycle events
-are never lost, regardless of how many tool/part events arrive.
+`eventBuffer` directly.
+
+**Important:** remove `clearEventBuffer()` from dispatch paths after migrating
+`handleSessionIdle` off `runCompletedNormally()`. In the current code,
+`clearEventBuffer()` is called at each dispatch start and can erase evidence
+needed for a prior run's footer when promptAsync turns overlap. Once lifecycle
+derivation is authoritative, keeping bounded rings is safer than clearing.
 
 ### 5. Add pure derivation functions over event buffers
 
 **File: `discord/src/session-handler/thread-session-runtime.ts`** (private methods)
 
 ```ts
-// Derive whether the session is currently busy from the lifecycle buffer.
+// Derive whether the session is currently busy from the event buffer.
 // Scans backward for the most recent session-scoped lifecycle event.
 private isSessionBusy(): boolean {
   const sessionId = this.state?.sessionId
   if (!sessionId) return false
-  for (let i = this.lifecycleBuffer.length - 1; i >= 0; i--) {
-    const e = this.lifecycleBuffer[i].event
+  for (let i = this.eventBuffer.length - 1; i >= 0; i--) {
+    const e = this.eventBuffer[i].event
     const eid = getOpencodeEventSessionId(e)
     if (eid !== sessionId) continue
     if (e.type === 'session.idle') return false
@@ -198,7 +189,7 @@ private isSessionBusy(): boolean {
 
 // Derive whether the most recent run ended due to abort.
 // Called from handleSessionIdle AFTER the idle event has been pushed to the
-// lifecycle buffer. So we must skip the current idle and look at what
+// event buffer. So we must skip the current idle and look at what
 // preceded it.
 //
 // Event order on abort: session.error(MessageAbortedError) → session.idle
@@ -209,8 +200,8 @@ private wasRecentlyAborted(): boolean {
   const sessionId = this.state?.sessionId
   if (!sessionId) return false
   let skippedCurrentIdle = false
-  for (let i = this.lifecycleBuffer.length - 1; i >= 0; i--) {
-    const e = this.lifecycleBuffer[i].event
+  for (let i = this.eventBuffer.length - 1; i >= 0; i--) {
+    const e = this.eventBuffer[i].event
     const eid = getOpencodeEventSessionId(e)
     if (eid !== sessionId) continue
     // Skip the current session.idle that triggered this call
@@ -288,10 +279,9 @@ private async handleSessionIdle(idleSessionId: string): Promise<void> {
   const sessionId = this.state?.sessionId
 
   // ── Subtask idle ────────────────────────────────────────
-  // Check subtask BEFORE main session — subtask sessions have different IDs
-  // from the main sessionId, so this branch handles them first.
-  if (this.subtaskSessions.has(idleSessionId)) {
-    this.subtaskSessions.delete(idleSessionId)
+  // Check subtask BEFORE main session. Subtask identity is derived from
+  // event history, not mutable maps.
+  if (this.isDerivedSubtaskSession(idleSessionId)) {
     return
   }
 
@@ -302,16 +292,10 @@ private async handleSessionIdle(idleSessionId: string): Promise<void> {
   this.stopTyping()
   await this.flushAllBufferedParts()
 
-  const dispatchTime = this.dispatchTimeQueue.shift()
-  if (!aborted && dispatchTime) {
-    await this.emitFooter({ dispatchTime })
+  const runStartTime = this.getRunStartTimeForCurrentIdle()
+  if (!aborted && runStartTime) {
+    await this.emitFooter({ dispatchTime: runStartTime })
   }
-
-  // Reset per-run state
-  this.lastDisplayedContextPercentage = 0
-  this.lastRateLimitDisplayTime = 0
-  this.subtaskSessions.clear()
-  this.agentSpawnCounts = {}
 
   await this.tryDrainQueue({ showIndicator: true })
 }
@@ -419,8 +403,7 @@ Remove all `shouldMarkRunning` logic:
 - No `initialCurrentRunInfo` setup
 - No `cleanupOnError` calling `pureMarkIdle`
 
-Just: ensure session → resolve model/agent → build parts → push `Date.now()`
-onto `dispatchTimeQueue` → call `promptAsync`.
+Just: ensure session → resolve model/agent → build parts → call `promptAsync`.
 
 The event listener handles everything from there — `session.status busy`
 confirms the run started, SSE events stream parts, `session.idle` triggers
@@ -432,13 +415,23 @@ After steps 8 and 12, both methods do the same thing:
 1. `ensureSession()`
 2. Resolve model/agent/variant
 3. Build system message and parts
-4. Push dispatch time
-5. Call `promptAsync()`
+4. Call `promptAsync()`
 
 Merge into a single private method. The `enqueueIncoming` entry point becomes:
 - `mode === 'local-queue'` or has `command` → enqueue in `queueItems`, drain
   calls the unified dispatch
 - `mode === 'opencode'` (default) → call the unified dispatch directly
+
+**Risk note:** this merge should be done last, not bundled with state-field
+deletions. The current methods differ in serialization boundaries,
+error-recovery behavior, and command execution semantics:
+
+- `dispatchPrompt` is detached from the action queue and currently supports
+  blocking `session.prompt()` / `session.command()` behavior.
+- `submitViaOpencodeQueue` runs entirely inside `dispatchAction` and uses
+  `promptAsync` acceptance semantics.
+- Merging too early can regress queue-drain behavior or stall event handling on
+  long command execution.
 
 ### 14. Update typing restart guard
 
@@ -453,21 +446,152 @@ if (!this.isSessionBusy()) return
 
 ## Event buffer considerations
 
-- **Buffer split:** Lifecycle events are duplicated into a separate 50-entry
-  ring buffer. This prevents `isSessionBusy` / `wasRecentlyAborted` from
-  failing during long runs with many tool/part events that would evict
-  lifecycle events from the general 100-entry buffer.
+- **Single larger ring:** Increase `EVENT_BUFFER_MAX` from 100 to 1000 and
+  keep one buffer. Lifecycle derivation (`isSessionBusy`,
+  `wasRecentlyAborted`) scans this single buffer.
 
 - **SSE reconnect:** On reconnect, events may have been missed. This is an
   existing risk that affects the current architecture equally. The existing
   TODO (line 540) for reconnect reconciliation applies to both approaches.
-  After reconnect, the lifecycle buffer may be stale. A conservative fallback:
-  if `isSessionBusy()` returns false (no lifecycle events in buffer), call
-  `session.get()` to check actual session status before draining the queue.
+  After reconnect, the event buffer may be incomplete. A conservative fallback:
+  if `isSessionBusy()` returns false, call `session.get()` to check actual
+  session status before draining the queue.
 
 - **Multiple idle events:** If opencode processes queued prompts back-to-back,
-  each completed response emits its own `session.idle`. Each dequeues from
-  `dispatchTimeQueue` and gets its own footer with the correct duration.
+  each completed response emits its own `session.idle`. Footer duration is
+  derived from each idle's corresponding lifecycle `busy` transition.
+
+## Implementation sequence and safeguards
+
+Apply this plan incrementally (not as one atomic refactor):
+
+1. Add lifecycle derivation helpers over the single 1000-entry event buffer
+   while keeping existing fields in place.
+2. Move non-critical read sites to derivation (`canDispatchNext` busy checks,
+   typing-restart guard) with fallback behavior.
+3. Add lifecycle-derived footer timing (derive start time from lifecycle
+   events), then verify rapid promptAsync A/B turns each emit correct durations.
+4. Switch idle/footer gating to lifecycle derivation and remove
+   `runCompletedNormally` / `finishRun(expectedRunId)` dependency.
+5. Migrate tests/helpers away from `runState.phase` / `setRunController`
+   assertions.
+6. Delete `runState`, `runController`, `lastRunId`, `currentRun`, and
+   `state.ts` only after no remaining reads.
+7. Merge `dispatchPrompt` + `submitViaOpencodeQueue` in a follow-up step.
+
+## Execution phases (explicit)
+
+Use these phases as the implementation contract. Do not start a later phase
+until the current phase has passing checks.
+
+### Phase 0 — Fixture baseline and pure API contract
+
+**Goal:** lock deterministic event-stream inputs and pure function signatures
+before touching runtime behavior.
+
+**Steps:**
+1. Keep committed fixtures under
+   `discord/src/session-handler/event-stream-fixtures/*.jsonl`.
+2. Define pure function API in a new module (for example
+   `event-stream-state.ts`) that accepts only data args (`events`,
+   `sessionId`, indexes/options).
+3. Define fixture test matrix (fixture -> function -> expected output shape).
+
+**Done when:** fixture files are committed, pure function signatures are fixed,
+and there is no runtime-class dependency in function inputs.
+
+### Phase 1 — Pure derivation implementation + fixture tests
+
+**Goal:** compute lifecycle decisions from event arrays only.
+
+**Steps:**
+1. Implement pure derivation functions (`isSessionBusy`,
+   `wasRecentlyAborted`, `getRunStartTimeForIdle`, `getLatestRunInfo`,
+   `shouldEmitFooter`, `isDerivedSubtaskSession`) in the pure module.
+2. Add fixture-driven unit tests that parse JSONL fixtures and assert derived
+   values for hardcoded scenario checkpoints.
+3. Keep runtime unchanged except optional temporary wrappers.
+
+**Done when:** pure tests pass using only fixture input; no class/store access.
+
+### Phase 2 — Runtime reads switched to pure helpers (no deletions yet)
+
+**Goal:** route runtime decisions through pure helpers while preserving current
+state fields as fallback.
+
+**Steps:**
+1. Replace runtime methods that read mirrored state (`isSessionBusy`,
+   abort/footer decision, latest run info) with calls to pure helpers.
+2. Remove `clearEventBuffer()` from dispatch path once idle/footer no longer
+   depends on `runCompletedNormally()`.
+3. Keep `runState`/`runController` fields present but not authoritative.
+
+**Done when:** runtime behavior matches fixture expectations in e2e tests with
+no regressions in footer/abort ordering.
+
+### Phase 3 — State deletion from store/runtime
+
+**Goal:** remove mirrored run lifecycle state from store.
+
+**Steps:**
+1. Remove `runState`, `lastRunId`, `currentRun`, `runController` from
+   `ThreadRunState`.
+2. Delete `session-handler/state.ts` and `state.test.ts`.
+3. Remove store helpers tied to deleted fields (`updateRunState`,
+   `setRunController`, phase selectors).
+
+**Done when:** repo has zero references to removed fields/types.
+
+### Phase 4 — Abort/dispatch simplification and command safety
+
+**Goal:** make abort semantics rely on opencode events + `session.abort()`.
+
+**Steps:**
+1. Simplify `/abort` and runtime abort paths to API abort behavior.
+2. Keep `session.command()` blocking path with explicit timeout guard.
+3. Merge `dispatchPrompt` and `submitViaOpencodeQueue` only after parity is
+   proven in previous phases.
+
+**Done when:** abort scenarios and queue drain pass without run-controller
+dependencies.
+
+### Phase 5 — Logging schema + test harness cleanup
+
+**Goal:** align debug logs and tests with event-sourced model.
+
+**Steps:**
+1. Remove mirrored-state fields from event-log payload (`runPhase`,
+   `latestAssistantMessageId`, `assistantMessageCount`).
+2. Update test helpers/e2e assertions to avoid `runState.phase` checks.
+3. Add missing `session-with-tasks.jsonl` fixture and corresponding pure tests
+   for subtask classification.
+
+**Done when:** test suite references event-derived assertions only.
+
+Required guardrails before deleting state fields:
+
+- Replace remaining `runState.phase` reads in retry/abort/error paths
+  (notably `retryLastUserPrompt()`).
+- Replace `runController`-based abort classification in `handleSessionError()`
+  and cleanup in `dispose()`.
+- Replace assistant-message-ID-based flush targeting in `showInteractiveUi()`
+  with event-derived/latest-message behavior.
+- Do not introduce `dispatchTimeQueue`; derive footer time from lifecycle
+  events to avoid new mutable per-run state.
+- Keep command-path behavior safe (no action-queue starvation) while
+  `session.command()` remains blocking.
+- Update session event logging payload/type to remove
+  `runPhase`/`latestAssistantMessageId`/`assistantMessageCount` coupling.
+
+Expected scenario behavior that the plan must preserve:
+
+- Normal single message completion shows footer.
+- Two rapid promptAsync turns both show footers with per-turn durations.
+- Abort mid-run shows no footer.
+- Abort during setup does not stall queue draining.
+- Permission pause/resume still produces footer when run resolves.
+- Subtask idle never triggers false main-session footer.
+- SSE reconnect remains best-effort until explicit reconciliation is added.
 
 ## Files changed
 
@@ -485,6 +609,7 @@ if (!this.isSessionBusy()) return
 | `thread-message-queue.e2e.test.ts` | Update: remove `runState.phase` assertions |
 | `voice-message.e2e.test.ts` | Update: remove `runState.phase` assertions |
 | `session-handler/opencode-session-event-log.ts` | Update: remove `runPhase`, `latestAssistantMessageId`, `assistantMessageCount` fields from event log payload (or derive from lifecycle buffer) |
+| `session-handler/event-stream-fixtures/*.jsonl` | New committed event-stream fixtures captured from deterministic e2e runs; used as stable inputs for pure state-derivation tests. |
 
 ## Testing
 
@@ -496,23 +621,45 @@ if (!this.isSessionBusy()) return
 - `voice-message.e2e.test.ts` — Same phase assertion removal.
 - `state.test.ts` — Delete alongside `state.ts`.
 
-**New tests to add:**
-- Unit tests for `isSessionBusy()`, `wasRecentlyAborted()`, `getLatestRunInfo()`
-  with synthetic event arrays. Cover:
-  - Normal completion: `[busy, idle]` → not aborted
-  - Abort: `[busy, error(MessageAbortedError), idle]` → aborted
-  - Non-abort error: `[busy, error(Other), idle]` → not aborted
-  - Empty buffer → not busy, not aborted
-  - Multiple sessions interleaved → only matches target session
-- E2e test: send two messages rapidly via promptAsync, verify both get
-  footers with correct ordering.
-- E2e test: abort during session setup (before promptAsync), verify no
-  footer and queue drains correctly.
-- E2e test: long run with >100 tool call events, verify footer still appears
-  (lifecycle buffer not evicted).
-- E2e test: `session.command()` timeout — verify thread gets error message
-  and queue is not permanently stalled.
-- E2e test: subtask idle followed by main session idle — verify only main
-  idle produces footer.
-- E2e test: SSE reconnect during active run — verify run completes with
-  footer after reconnect.
+**Event-stream fixture baseline (generated and committed):**
+
+- `session-normal-completion.jsonl`
+  - source: `runtime-lifecycle.e2e.test.ts` (`footer includes context percentage and model id`)
+  - validates: busy/idle derivation, latest run info derivation, footer allowed.
+- `session-two-completions-same-session.jsonl`
+  - source: `queue-advanced-footer.e2e.test.ts` (`footer appears after second message in same session`)
+  - validates: two consecutive run windows in same session, per-idle footer decision.
+- `session-user-interruption.jsonl`
+  - source: `queue-advanced-footer.e2e.test.ts` (`interrupted run has no footer, completed follow-up has footer`)
+  - validates: interrupted run suppresses footer, follow-up run emits footer.
+- `session-explicit-abort.jsonl`
+  - source: `queue-advanced-abort.e2e.test.ts` (`explicit abort emits MessageAbortedError and does not emit footer`)
+  - validates: `wasRecentlyAborted` derivation.
+- `session-concurrent-messages-serialized.jsonl`
+  - source: `runtime-lifecycle.e2e.test.ts` (`two near-simultaneous messages to same thread serialize correctly`)
+  - validates: lifecycle derivation under near-concurrent prompts.
+- `session-tool-call-noisy-stream.jsonl`
+  - source: `thread-message-queue.e2e.test.ts` (`bash tool-call actually executes and creates file in project directory`)
+  - validates: derivation robustness under dense tool/part event noise.
+- `session-voice-queued-followup.jsonl`
+  - source: `voice-message.e2e.test.ts` (`voice message with queueMessage=true queues behind running session`)
+  - validates: queued follow-up run lifecycle and footer decision.
+
+**Pure tests to add (built on fixtures, not class state):**
+
+- Add pure module functions (no runtime class methods):
+  - `isSessionBusy({ events, sessionId, upToIndex? })`
+  - `wasRecentlyAborted({ events, sessionId, idleEventIndex })`
+  - `getRunStartTimeForIdle({ events, sessionId, idleEventIndex })`
+  - `getLatestRunInfo({ events, sessionId, upToIndex? })`
+  - `shouldEmitFooter({ events, sessionId, idleEventIndex })`
+  - `isDerivedSubtaskSession({ events, mainSessionId, candidateSessionId, upToIndex? })`
+- Add fixture-driven tests that load `event-stream-fixtures/*.jsonl`, pass hardcoded
+  params (session alias + idle index), and assert deterministic results via
+  inline snapshots.
+
+**Still needed fixture/test:**
+
+- `session-with-tasks.jsonl` from a dedicated deterministic e2e scenario that
+  actually emits Task-subagent session events. This is required to verify
+  subtask detection is derived purely from event history.
