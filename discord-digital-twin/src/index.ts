@@ -716,15 +716,32 @@ export class ChannelScope {
    *   message content
    *   --- from: assistant (BotName)
    *   reply content
+   *
+   * @param deterministicFooters - When true (default), replaces non-deterministic
+   *   values in footer lines (duration like "2m 30s" and context percentage like
+   *   "71%") with stable placeholders ("Ns" and "N%") so inline snapshots don't
+   *   break across runs. Footer lines are detected by starting with "*" and
+   *   containing "⋅".
    */
-  async text(): Promise<string> {
+  async text({ deterministicFooters = true }: { deterministicFooters?: boolean } = {}): Promise<string> {
     const messages = await this.getMessages()
     const lines: string[] = []
     for (const msg of messages) {
       const role = msg.author.bot ? 'assistant' : 'user'
       lines.push(`--- from: ${role} (${msg.author.username})`)
       if (msg.content) {
-        lines.push(msg.content)
+        let content = msg.content
+        // Footer lines look like: *project ⋅ main ⋅ <1s ⋅ 2% ⋅ model-name*
+        // Replace duration and percentage with stable placeholders.
+        if (deterministicFooters && content.startsWith('*') && content.includes('⋅')) {
+          content = content
+            .replace(/<1s/g, 'Ns')
+            .replace(/\b\d+m\s+\d+s\b/g, 'Ns')
+            .replace(/\b\d+s\b/g, 'Ns')
+            .replace(/\b\d+m\b/g, 'Ns')
+            .replace(/\b\d+%/g, 'N%')
+        }
+        lines.push(content)
       }
       const embeds = msg.embeds ?? []
       for (const embed of embeds) {

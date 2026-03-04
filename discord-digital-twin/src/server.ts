@@ -87,7 +87,13 @@ export interface ServerComponents {
   httpServer: http.Server
   gateway: DiscordGateway
   app: { handleForNode: Spiceflow['handleForNode'] }
+  typingEvents: TypingEventRecord[]
   port: number
+}
+
+export type TypingEventRecord = {
+  channelId: string
+  timestamp: number
 }
 
 export function createServer({
@@ -104,6 +110,7 @@ export function createServer({
   gatewayUrlOverride?: string
 }): ServerComponents {
   const state = { port: 0 }
+  const typingEvents: TypingEventRecord[] = []
 
   // Route handlers close over `gateway`. It's assigned after httpServer
   // creation but before any request arrives (server hasn't started listening).
@@ -539,7 +546,14 @@ export function createServer({
     .route({
       method: 'POST',
       path: '/channels/:channel_id/typing',
-      handler(): Response {
+      handler({ params }): Response {
+        typingEvents.push({
+          channelId: params.channel_id,
+          timestamp: Date.now(),
+        })
+        if (typingEvents.length > 5_000) {
+          typingEvents.splice(0, typingEvents.length - 5_000)
+        }
         return new Response(null, { status: 204 })
       },
     })
@@ -1787,6 +1801,7 @@ export function createServer({
     httpServer,
     gateway,
     app,
+    typingEvents,
     get port() {
       return state.port
     },
