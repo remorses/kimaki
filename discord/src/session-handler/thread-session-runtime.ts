@@ -19,11 +19,6 @@ import prettyMilliseconds from 'pretty-ms'
 import * as errore from 'errore'
 import * as threadState from './thread-runtime-state.js'
 import type { QueuedMessage } from './thread-runtime-state.js'
-import {
-  pureMarkRunning,
-  pureMarkIdle,
-  pureRegisterAssistantMessage,
-} from './state.js'
 import type { OpencodeClient } from '@opencode-ai/sdk/v2'
 import {
   getOpencodeClient,
@@ -81,6 +76,9 @@ import {
 } from './opencode-session-event-log.js'
 import {
   isSessionBusy,
+  getLatestRunInfo,
+  getRunStartTimeForIdle,
+  isDerivedSubtaskSession,
   shouldEmitFooter,
 } from './event-stream-state.js'
 
@@ -107,12 +105,10 @@ import {
   matchThinkingValue,
 } from '../thinking-utils.js'
 import { execAsync } from '../worktree-utils.js'
-import { SessionAbortError } from '../errors.js'
 import { notifyError } from '../sentry.js'
 
 const logger = createLogger(LogPrefix.SESSION)
 const discordLogger = createLogger(LogPrefix.DISCORD)
-const NO_ASSISTANT_MESSAGE_IDS: ReadonlySet<string> = new Set<string>()
 const DETERMINISTIC_CONTEXT_LIMIT = 100_000
 const shouldLogSessionEvents =
   process.env['KIMAKI_LOG_SESSION_EVENTS'] === '1' ||
@@ -318,6 +314,13 @@ export class ThreadSessionRuntime {
   private typingInterval: ReturnType<typeof setInterval> | null = null
   private typingRestartTimeout: ReturnType<typeof setTimeout> | null = null
 
+  // Per-dispatch controller (runtime-owned, not in store).
+  private runController: AbortController | undefined
+
+  // Notification throttles for retry/context notices.
+  private lastDisplayedContextPercentage = 0
+  private lastRateLimitDisplayTime = 0
+
   // Part output buffering (write-side cache, not domain state)
   private partBuffer = new Map<string, Map<string, Part>>()
 
@@ -354,6 +357,15 @@ export class ThreadSessionRuntime {
     return threadState.getThreadState(this.threadId)
   }
 
+  getDerivedPhase(): 'idle' | 'running' {
+    const hasActiveRunController =
+      this.runController !== undefined && !this.runController.signal.aborted
+    if (hasActiveRunController) {
+      return 'running'
+    }
+    return this.isMainSessionBusy() ? 'running' : 'idle'
+  }
+
   /** Whether the listener has been disposed. */
   private get listenerAborted(): boolean {
     return this.state?.listenerController?.signal.aborted ?? true
@@ -364,53 +376,151 @@ export class ThreadSessionRuntime {
     return this.state?.listenerController?.signal
   }
 
-  /** Latest assistant message ID for the active run. */
-  private get currentAssistantMessageId(): string | undefined {
-    return this.state?.runState.latestAssistantMessageId
-  }
-
-  /** All assistant message IDs seen during the active run. */
-  private get assistantMessageIds(): ReadonlySet<string> {
-    return this.state?.runState.assistantMessageIds || NO_ASSISTANT_MESSAGE_IDS
-  }
-
-  /** Shorthand for the current run info from the store. */
-  private get run(): threadState.CurrentRunInfo | undefined {
-    return this.state?.currentRun
-  }
-
-  /** Update fields on the current run info in the store. */
-  private updateRun(
-    updater: (r: threadState.CurrentRunInfo) => threadState.CurrentRunInfo,
-  ): void {
-    threadState.updateThread(this.threadId, (t) => ({
-      ...t,
-      currentRun: t.currentRun ? updater(t.currentRun) : t.currentRun,
-    }))
-  }
-
   private nextAbortId(reason: string): string {
     return `${reason}-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 6)}`
   }
 
   private formatRunStateForLog(): string {
-    const rs = this.state?.runState
-    if (!rs) {
+    const sessionId = this.state?.sessionId
+    if (!sessionId) {
       return 'none'
     }
-    const latestAssistant = rs.latestAssistantMessageId || 'none'
-    return `phase=${rs.phase},assistant=${latestAssistant},assistantCount=${rs.assistantMessageIds.size}`
+    const latestAssistant = this.getLatestAssistantMessageIdForSession({
+      sessionId,
+    }) || 'none'
+    const assistantCount = this.getAssistantMessageIdsForSession({
+      sessionId,
+    }).size
+    const phase = this.getDerivedPhase()
+    return `phase=${phase},assistant=${latestAssistant},assistantCount=${assistantCount}`
+  }
+
+  private isMainSessionBusy(): boolean {
+    const sessionId = this.state?.sessionId
+    if (!sessionId) {
+      return false
+    }
+    return isSessionBusy({ events: this.eventBuffer, sessionId })
+  }
+
+  private getRunWindowStartIndexForSession({
+    sessionId,
+    upToIndex,
+  }: {
+    sessionId: string
+    upToIndex?: number
+  }): number {
+    const end = upToIndex ?? this.eventBuffer.length
+    for (let i = end - 1; i >= 0; i--) {
+      const entry = this.eventBuffer[i]
+      if (!entry) {
+        continue
+      }
+      const event = entry.event
+      const eventSessionId = getOpencodeEventSessionId(event)
+      if (eventSessionId !== sessionId) {
+        continue
+      }
+      if (event.type === 'session.idle') {
+        return i + 1
+      }
+    }
+    return 0
+  }
+
+  private getAssistantMessageIdsForSession({
+    sessionId,
+    upToIndex,
+  }: {
+    sessionId: string
+    upToIndex?: number
+  }): Set<string> {
+    const end = upToIndex ?? this.eventBuffer.length
+    const runWindowStart = this.getRunWindowStartIndexForSession({
+      sessionId,
+      upToIndex: end,
+    })
+    const assistantMessageIds = new Set<string>()
+    for (let i = runWindowStart; i < end; i++) {
+      const entry = this.eventBuffer[i]
+      if (!entry) {
+        continue
+      }
+      const event = entry.event
+      if (event.type !== 'message.updated') {
+        continue
+      }
+      const message = event.properties.info
+      if (message.sessionID !== sessionId || message.role !== 'assistant') {
+        continue
+      }
+      assistantMessageIds.add(message.id)
+    }
+    return assistantMessageIds
+  }
+
+  private getLatestAssistantMessageIdForSession({
+    sessionId,
+    upToIndex,
+  }: {
+    sessionId: string
+    upToIndex?: number
+  }): string | undefined {
+    const end = upToIndex ?? this.eventBuffer.length
+    const runWindowStart = this.getRunWindowStartIndexForSession({
+      sessionId,
+      upToIndex: end,
+    })
+    for (let i = end - 1; i >= runWindowStart; i--) {
+      const entry = this.eventBuffer[i]
+      if (!entry) {
+        continue
+      }
+      const event = entry.event
+      if (event.type !== 'message.updated') {
+        continue
+      }
+      const message = event.properties.info
+      if (message.sessionID !== sessionId || message.role !== 'assistant') {
+        continue
+      }
+      return message.id
+    }
+    return undefined
+  }
+
+  private getSubtaskInfoForSession(
+    candidateSessionId: string,
+  ): { label: string; assistantMessageId?: string } | undefined {
+    const mainSessionId = this.state?.sessionId
+    if (!mainSessionId || candidateSessionId === mainSessionId) {
+      return undefined
+    }
+    const derived = isDerivedSubtaskSession({
+      events: this.eventBuffer,
+      mainSessionId,
+      candidateSessionId,
+    })
+    if (!derived) {
+      return undefined
+    }
+
+    const label = `task-${candidateSessionId.slice(-4)}`
+    const assistantMessageId = this.getLatestAssistantMessageIdForSession({
+      sessionId: candidateSessionId,
+    })
+    return { label, assistantMessageId }
   }
 
   // ── Lifecycle ────────────────────────────────────────────────
 
   dispose(): void {
     this.state?.listenerController?.abort()
-    this.state?.runController?.abort()
+    this.runController?.abort()
+    this.runController = undefined
     // waitForEvent loops check listenerAborted and exit naturally.
     threadState.updateThread(this.threadId, (t) => ({
       ...t,
-      runController: undefined,
       listenerController: undefined,
     }))
     this.stopTyping()
@@ -450,13 +560,6 @@ export class ThreadSessionRuntime {
       `[WAIT EVENT] Timeout after ${timeoutMs}ms for thread ${this.threadId}, proceeding`,
     )
     return undefined
-  }
-
-  // Keep only current-run events in the buffer.
-  // This prevents stale step-finish/session.idle events from a previous run
-  // (same session ID) from affecting run-completion decisions in the next run.
-  private clearEventBuffer(): void {
-    this.eventBuffer = []
   }
 
   // Seed sentPartIds from DB to avoid re-sending parts that were
@@ -623,22 +726,30 @@ export class ThreadSessionRuntime {
     // Drop events that don't match current session (stale events from
     // previous sessions), unless it's a global event or a subtask session.
     if (!isGlobalEvent && eventSessionId && eventSessionId !== sessionId) {
-      if (!this.run?.subtaskSessions.has(eventSessionId)) {
+      if (!this.getSubtaskInfoForSession(eventSessionId)) {
         return // stale event from previous session
       }
     }
 
     if (isOpencodeSessionEventLogEnabled()) {
-      const runState = this.state?.runState
+      const derivedRunPhase = sessionId
+        ? (this.isMainSessionBusy() ? 'running' : 'idle')
+        : 'none'
+      const derivedLatestAssistantMessageId = sessionId
+        ? this.getLatestAssistantMessageIdForSession({ sessionId })
+        : undefined
+      const derivedAssistantMessageCount = sessionId
+        ? this.getAssistantMessageIdsForSession({ sessionId }).size
+        : 0
       const eventLogResult = await appendOpencodeSessionEventLog({
         threadId: this.threadId,
         projectDirectory: this.projectDirectory,
         sdkDirectory: this.sdkDirectory,
         activeSessionId: sessionId,
         eventSessionId,
-        runPhase: runState?.phase || 'none',
-        latestAssistantMessageId: runState?.latestAssistantMessageId,
-        assistantMessageCount: runState?.assistantMessageIds.size || 0,
+        runPhase: derivedRunPhase,
+        latestAssistantMessageId: derivedLatestAssistantMessageId,
+        assistantMessageCount: derivedAssistantMessageCount,
         event,
       })
       if (eventLogResult instanceof Error) {
@@ -958,7 +1069,16 @@ export class ThreadSessionRuntime {
     show: () => Promise<void>
   }): Promise<void> {
     this.stopTyping()
-    const targetMessageId = flushMessageId || this.currentAssistantMessageId
+    const sessionId = this.state?.sessionId
+    const targetMessageId = (() => {
+      if (flushMessageId) {
+        return flushMessageId
+      }
+      if (!sessionId) {
+        return undefined
+      }
+      return this.getLatestAssistantMessageIdForSession({ sessionId })
+    })()
     if (targetMessageId) {
       await this.flushBufferedParts({
         messageID: targetMessageId,
@@ -966,8 +1086,11 @@ export class ThreadSessionRuntime {
         skipPartId,
       })
     } else {
+      const assistantMessageIds = sessionId
+        ? [...this.getAssistantMessageIdsForSession({ sessionId })]
+        : []
       await this.flushBufferedPartsForMessages({
-        messageIDs: [...this.assistantMessageIds],
+        messageIDs: assistantMessageIds,
         force: true,
         skipPartId,
       })
@@ -975,12 +1098,14 @@ export class ThreadSessionRuntime {
     await show()
   }
 
-  private async ensureModelContextLimit(): Promise<void> {
-    const run = this.run
-    if (!run?.providerID || !run.model) {
-      return
-    }
-    const key = `${run.providerID}/${run.model}`
+  private async ensureModelContextLimit({
+    providerID,
+    modelID,
+  }: {
+    providerID: string
+    modelID: string
+  }): Promise<void> {
+    const key = `${providerID}/${modelID}`
     if (this.modelContextLimit && this.modelContextLimitKey === key) {
       return
     }
@@ -1000,12 +1125,12 @@ export class ThreadSessionRuntime {
     }
     const provider = providersResponse.data?.all?.find(
       (p) => {
-        return p.id === run.providerID
+        return p.id === providerID
       },
     )
-    const model = provider?.models?.[run.model || '']
+    const model = provider?.models?.[modelID]
     const contextLimit = model?.limit?.context || getFallbackContextLimit({
-      providerID: run.providerID,
+      providerID,
     })
     if (!contextLimit) {
       return
@@ -1021,19 +1146,6 @@ export class ThreadSessionRuntime {
   private async handleMessageUpdated(msg: OpenCodeMessage): Promise<void> {
     const sessionId = this.state?.sessionId
 
-    // Track subtask assistant message IDs
-    const subtaskInfo = this.run?.subtaskSessions.get(msg.sessionID)
-    if (subtaskInfo && msg.role === 'assistant') {
-      this.updateRun((r) => {
-        const newSubs = new Map(r.subtaskSessions)
-        const existing = newSubs.get(msg.sessionID)
-        if (existing) {
-          newSubs.set(msg.sessionID, { ...existing, assistantMessageId: msg.id })
-        }
-        return { ...r, subtaskSessions: newSubs }
-      })
-    }
-
     if (msg.sessionID !== sessionId) {
       return
     }
@@ -1042,31 +1154,6 @@ export class ThreadSessionRuntime {
     }
 
     const knownMessage = this.partBuffer.has(msg.id)
-    if (!knownMessage && this.state?.runState.phase !== 'running') {
-      // promptAsync can queue follow-up user turns while a run is active.
-      // After an interrupt, the queued follow-up assistant message may arrive
-      // when local runState is already idle. Promote this fresh assistant
-      // message to a new active run so the subsequent session.idle emits the
-      // footer for the final assistant reply.
-      threadState.updateThread(this.threadId, (t) => {
-        const nextRunId = t.lastRunId + 1
-        return {
-          ...t,
-          lastRunId: nextRunId,
-          currentRun: threadState.initialCurrentRunInfo({ runId: nextRunId }),
-        }
-      })
-      threadState.updateRunState(this.threadId, pureMarkRunning)
-    }
-
-    if (!knownMessage) {
-      // Register only newly observed assistant messages for the active run.
-      // Replayed message.updated events from previous runs can arrive when a
-      // new run starts; those message IDs already exist in partBuffer.
-      threadState.updateRunState(this.threadId, (rs) => {
-        return pureRegisterAssistantMessage(rs, msg.id)
-      })
-    }
 
     // promptAsync paths can deliver complete parts via message.updated even when
     // message.part.updated events are sparse or absent. Seed the part buffer
@@ -1098,52 +1185,44 @@ export class ThreadSessionRuntime {
       })
     }
 
-    // Track tokens, model, provider, agent from assistant messages
-    this.updateRun((r) => {
-      let tokensUsed = r.tokensUsed
-      if ('tokens' in msg && msg.tokens) {
-        const newTokensTotal = getTokenTotal(msg.tokens)
-        if (newTokensTotal > 0) {
-          tokensUsed = newTokensTotal
-        }
-      }
-      return {
-        ...r,
-        tokensUsed,
-        model: 'modelID' in msg ? msg.modelID : r.model,
-        providerID: 'providerID' in msg ? msg.providerID : r.providerID,
-        agent: 'mode' in msg ? msg.mode : r.agent,
-      }
-    })
-
     await this.flushBufferedParts({
       messageID: msg.id,
       force: false,
     })
 
     // Context usage notice
-    const run = this.run
-    if (!run || run.tokensUsed === 0 || !run.providerID || !run.model) {
+    if (!sessionId) {
       return
     }
-    await this.ensureModelContextLimit()
+    const latestRunInfo = getLatestRunInfo({
+      events: this.eventBuffer,
+      sessionId,
+    })
+    if (
+      latestRunInfo.tokensUsed === 0
+      || !latestRunInfo.providerID
+      || !latestRunInfo.model
+    ) {
+      return
+    }
+    await this.ensureModelContextLimit({
+      providerID: latestRunInfo.providerID,
+      modelID: latestRunInfo.model,
+    })
     if (!this.modelContextLimit) {
       return
     }
     const currentPercentage = Math.floor(
-      (run.tokensUsed / this.modelContextLimit) * 100,
+      (latestRunInfo.tokensUsed / this.modelContextLimit) * 100,
     )
     const thresholdCrossed = Math.floor(currentPercentage / 10) * 10
     if (
-      thresholdCrossed <= run.lastDisplayedContextPercentage ||
+      thresholdCrossed <= this.lastDisplayedContextPercentage ||
       thresholdCrossed < 10
     ) {
       return
     }
-    this.updateRun((r) => ({
-      ...r,
-      lastDisplayedContextPercentage: thresholdCrossed,
-    }))
+    this.lastDisplayedContextPercentage = thresholdCrossed
     const chunk = `⬦ context usage ${currentPercentage}%`
     const sendResult = await errore.tryAsync(() => {
       return this.thread.send({ content: chunk, flags: SILENT_MESSAGE_FLAGS })
@@ -1157,7 +1236,7 @@ export class ThreadSessionRuntime {
     this.storePart(part)
     const sessionId = this.state?.sessionId
 
-    const subtaskInfo = this.run?.subtaskSessions.get(part.sessionID)
+    const subtaskInfo = this.getSubtaskInfoForSession(part.sessionID)
     const isSubtaskEvent = Boolean(subtaskInfo)
 
     if (part.sessionID !== sessionId && !isSubtaskEvent) {
@@ -1173,17 +1252,6 @@ export class ThreadSessionRuntime {
   }
 
   private async handleMainPart(part: Part): Promise<void> {
-    const isActiveMessage = this.assistantMessageIds.has(part.messageID)
-    const allowEarlyProcessing =
-      this.assistantMessageIds.size === 0 &&
-      part.type === 'tool' &&
-      part.state.status === 'running'
-    if (!isActiveMessage && !allowEarlyProcessing) {
-      if (part.type !== 'step-start') {
-        return
-      }
-    }
-
     if (part.type === 'step-start') {
       const hasPendingQuestion = [...pendingQuestionContexts.values()].some(
         (ctx) => {
@@ -1210,33 +1278,9 @@ export class ThreadSessionRuntime {
       if (part.tool === 'task' && !this.state?.sentPartIds.has(part.id)) {
         const description = (part.state.input?.description as string) || ''
         const agent = (part.state.input?.subagent_type as string) || 'task'
-        const childSessionId =
-          (part.state.metadata?.sessionId as string) || ''
+        const childSessionId = (part.state.metadata?.sessionId as string) || ''
         if (description && childSessionId) {
-          threadState.updateThread(this.threadId, (t) => {
-            const r = t.currentRun
-            if (!r) {
-              return t
-            }
-            const newCounts = { ...r.agentSpawnCounts }
-            newCounts[agent] = (newCounts[agent] || 0) + 1
-            const label = `${agent}-${newCounts[agent]}`
-            const newSubs = new Map(r.subtaskSessions)
-            newSubs.set(childSessionId, { label, assistantMessageId: undefined })
-            const newSentIds = new Set(t.sentPartIds)
-            newSentIds.add(part.id)
-            return {
-              ...t,
-              sentPartIds: newSentIds,
-              currentRun: {
-                ...r,
-                agentSpawnCounts: newCounts,
-                subtaskSessions: newSubs,
-              },
-            }
-          })
           if ((await this.getVerbosity()) !== 'text-only') {
-            const spawnCount = this.run?.agentSpawnCounts[agent] || 1
             const taskDisplay = `┣ task **${description}**${agent ? ` _${agent}_` : ''}`
             await sendThreadMessage(this.thread, taskDisplay + '\n\n')
           }
@@ -1315,7 +1359,19 @@ export class ThreadSessionRuntime {
         const outputTokens = Math.ceil(output.length / 4)
         const largeOutputThreshold = 3000
         if (outputTokens >= largeOutputThreshold) {
-          await this.ensureModelContextLimit()
+          const sessionId = this.state?.sessionId
+          if (sessionId) {
+            const latestRunInfo = getLatestRunInfo({
+              events: this.eventBuffer,
+              sessionId,
+            })
+            if (latestRunInfo.providerID && latestRunInfo.model) {
+              await this.ensureModelContextLimit({
+                providerID: latestRunInfo.providerID,
+                modelID: latestRunInfo.model,
+              })
+            }
+          }
           const formattedTokens =
             outputTokens >= 1000
               ? `${(outputTokens / 1000).toFixed(1)}k`
@@ -1417,6 +1473,15 @@ export class ThreadSessionRuntime {
   private async handleSessionIdle(idleSessionId: string): Promise<void> {
     const sessionId = this.state?.sessionId
 
+    // ── Subtask idle ──────────────────────────────────────────
+    const subtask = this.getSubtaskInfoForSession(idleSessionId)
+    if (subtask) {
+      logger.log(
+        `[SUBTASK IDLE] Subtask "${subtask?.label}" completed`,
+      )
+      return
+    }
+
     // ── Main session idle ─────────────────────────────────────
     // The event is also pushed into the event buffer by handleEvent(),
     // so waitForEvent() consumers (abort settlement) will see it too.
@@ -1441,23 +1506,12 @@ export class ThreadSessionRuntime {
           `[SESSION IDLE] finishing run sessionId=${sessionId} ${this.formatRunStateForLog()}`,
         )
       }
-      await this.finishRun({ expectedRunId: this.run?.runId, suppressFooter })
+      await this.finishRun({
+        suppressFooter,
+        idleEventIndex,
+      })
       return
     }
-
-    // ── Subtask idle ──────────────────────────────────────────
-    if (!this.run?.subtaskSessions.has(idleSessionId)) {
-      return
-    }
-    const subtask = this.run.subtaskSessions.get(idleSessionId)
-    logger.log(
-      `[SUBTASK IDLE] Subtask "${subtask?.label}" completed`,
-    )
-    this.updateRun((r) => {
-      const newSubs = new Map(r.subtaskSessions)
-      newSubs.delete(idleSessionId)
-      return { ...r, subtaskSessions: newSubs }
-    })
   }
 
   private async handleSessionError(properties: {
@@ -1488,14 +1542,6 @@ export class ThreadSessionRuntime {
       )
       return
     }
-    // Check the run controller abort too
-    const runController = this.state?.runController
-    if (runController?.signal.aborted) {
-      logger.log(
-        `[SESSION ERROR] Operation aborted (run controller aborted) sessionId=${sessionId} ${this.formatRunStateForLog()}`,
-      )
-      return
-    }
 
     const errorMessage = formatSessionErrorFromProps(properties.error)
     logger.error(`Sending error to thread: ${errorMessage}`)
@@ -1509,8 +1555,9 @@ export class ThreadSessionRuntime {
     permission: PermissionRequest,
   ): Promise<void> {
     const sessionId = this.state?.sessionId
+    const subtaskInfo = this.getSubtaskInfoForSession(permission.sessionID)
     const isMainSession = permission.sessionID === sessionId
-    const isSubtaskSession = this.run?.subtaskSessions.has(permission.sessionID) ?? false
+    const isSubtaskSession = Boolean(subtaskInfo)
 
     if (!isMainSession && !isSubtaskSession) {
       logger.log(
@@ -1519,9 +1566,7 @@ export class ThreadSessionRuntime {
       return
     }
 
-    const subtaskLabel = isSubtaskSession
-      ? this.run?.subtaskSessions.get(permission.sessionID)?.label
-      : undefined
+    const subtaskLabel = subtaskInfo?.label
 
     const dedupeKey = buildPermissionDedupeKey({
       permission,
@@ -1607,8 +1652,9 @@ export class ThreadSessionRuntime {
     sessionID: string
   }): void {
     const sessionId = this.state?.sessionId
+    const subtaskInfo = this.getSubtaskInfoForSession(properties.sessionID)
     const isMainSession = properties.sessionID === sessionId
-    const isSubtaskSession = this.run?.subtaskSessions.has(properties.sessionID) ?? false
+    const isSubtaskSession = Boolean(subtaskInfo)
 
     if (!isMainSession && !isSubtaskSession) {
       return
@@ -1707,10 +1753,10 @@ export class ThreadSessionRuntime {
 
     // Throttle to once per 10 seconds
     const now = Date.now()
-    if (now - (this.run?.lastRateLimitDisplayTime ?? 0) < 10_000) {
+    if (now - this.lastRateLimitDisplayTime < 10_000) {
       return
     }
-    this.updateRun((r) => ({ ...r, lastRateLimitDisplayTime: now }))
+    this.lastRateLimitDisplayTime = now
 
     const { attempt, message, next } = properties.status
     const remainingMs = Math.max(0, next - now)
@@ -1787,36 +1833,11 @@ export class ThreadSessionRuntime {
         void this.startEventListener()
       }
 
-      // ── Mark running early ───────────────────────────────────
-      // Keep this path event-driven for run lifecycle details; this flag only
-      // gates local queue draining/typing behavior for this enqueue attempt.
-      const shouldMarkRunning =
-        this.state?.runState.phase !== 'running' ||
-        input.resetAssistantForNewRun === true
-      if (shouldMarkRunning) {
-        threadState.updateThread(this.threadId, (t) => {
-          const nextRunId = t.lastRunId + 1
-          return {
-            ...t,
-            lastRunId: nextRunId,
-            currentRun: threadState.initialCurrentRunInfo({ runId: nextRunId }),
-          }
-        })
-        threadState.updateRunState(this.threadId, pureMarkRunning)
-      }
-
-      // Helper: clean up run state on any error path (mirrors dispatchPrompt).
-      // Marks idle, stops typing, and drains queue so
-      // queued messages don't get permanently stuck after errors.
+      // Helper: stop typing and drain queued local messages on error.
       const cleanupOnError = async (errorMessage: string) => {
-        if (shouldMarkRunning) {
-          threadState.updateRunState(this.threadId, pureMarkIdle)
-          this.stopTyping()
-        }
+        this.stopTyping()
         await sendThreadMessage(this.thread, errorMessage)
-        if (shouldMarkRunning) {
-          await this.tryDrainQueue({ showIndicator: true })
-        }
+        await this.tryDrainQueue({ showIndicator: true })
       }
 
       // ── Ensure session ──────────────────────────────────────
@@ -1915,14 +1936,6 @@ export class ThreadSessionRuntime {
         )
         return
       }
-
-      // Set model info in run state immediately (mirrors dispatchPrompt).
-      // Without this there is a window where the run has no model info.
-      this.updateRun((r) => ({
-        ...r,
-        model: modelField.modelID,
-        providerID: modelField.providerID,
-      }))
 
       // Resolve thinking variant
       const thinkingValue = await (async (): Promise<string | undefined> => {
@@ -2101,7 +2114,12 @@ export class ThreadSessionRuntime {
       const stateAfterEnqueue = threadState.getThreadState(this.threadId)
       const position = stateAfterEnqueue?.queueItems.length ?? 0
       const willDrainNow = stateAfterEnqueue
-        ? threadState.canDispatchNext(stateAfterEnqueue)
+        ? (
+          stateAfterEnqueue.queueItems.length > 0
+          && !threadState.hasBlockers(stateAfterEnqueue)
+          && !this.isMainSessionBusy()
+          && (!this.runController || this.runController.signal.aborted)
+        )
         : false
       result = !willDrainNow && position > 0
         ? { queued: true, position }
@@ -2192,22 +2210,21 @@ export class ThreadSessionRuntime {
       }
     }
 
-    const runController = state.runController
+    const runController = this.runController
     const sessionId = state.sessionId
     const runControllerAlreadyAborted = Boolean(runController?.signal.aborted)
     const hasRunController = Boolean(runController)
+    const sessionIsBusy = this.isMainSessionBusy()
 
     logger.log(
-      `[ABORT] id=${abortId} reason=${reason} threadId=${this.threadId} sessionId=${sessionId || 'none'} queueLength=${state.queueItems.length} ${this.formatRunStateForLog()} hasRunController=${hasRunController} runControllerAborted=${runControllerAlreadyAborted}`,
+      `[ABORT] id=${abortId} reason=${reason} threadId=${this.threadId} sessionId=${sessionId || 'none'} queueLength=${state.queueItems.length} ${this.formatRunStateForLog()} hasRunController=${hasRunController} runControllerAborted=${runControllerAlreadyAborted} sessionBusy=${sessionIsBusy}`,
     )
 
     if (!runController || runControllerAlreadyAborted) {
-      // No active run or already aborted — nothing to cancel locally.
-      const shouldAbortViaApi = state.runState.phase === 'running'
-      if (shouldAbortViaApi) {
-        threadState.updateRunState(this.threadId, pureMarkIdle)
-      }
+      // No active run or already aborted — best-effort API abort only.
+      this.runController = undefined
       this.stopTyping()
+      const shouldAbortViaApi = Boolean(sessionId)
       const apiAbortPromise = shouldAbortViaApi && sessionId
         ? this.abortSessionViaApi({ abortId, reason, sessionId })
         : undefined
@@ -2221,9 +2238,8 @@ export class ThreadSessionRuntime {
       }
     }
 
-    runController.abort(new SessionAbortError({ reason }))
-    threadState.updateRunState(this.threadId, pureMarkIdle)
-    threadState.setRunController(this.threadId, undefined)
+    runController.abort(new Error(`Session aborted: ${reason}`))
+    this.runController = undefined
     this.stopTyping()
 
     const apiAbortPromise = sessionId
@@ -2277,7 +2293,26 @@ export class ThreadSessionRuntime {
    */
   private async tryDrainQueue({ showIndicator = false } = {}): Promise<void> {
     const thread = threadState.getThreadState(this.threadId)
-    if (!thread || !threadState.canDispatchNext(thread)) {
+    if (!thread) {
+      return
+    }
+    if (thread.queueItems.length === 0) {
+      return
+    }
+    if (threadState.hasBlockers(thread)) {
+      return
+    }
+
+    const hasActiveRunController =
+      this.runController !== undefined && !this.runController.signal.aborted
+    if (hasActiveRunController) {
+      return
+    }
+
+    const sessionBusy = thread.sessionId
+      ? isSessionBusy({ events: this.eventBuffer, sessionId: thread.sessionId })
+      : false
+    if (sessionBusy) {
       return
     }
 
@@ -2320,24 +2355,10 @@ export class ThreadSessionRuntime {
   // so this only handles session ensure + model/agent + SDK call + state.
 
   private async dispatchPrompt(input: QueuedMessage): Promise<void> {
-    this.clearEventBuffer()
-
-    // Initialize currentRun in the store (replaces resetPerRunState + dispatchStartTime)
-    threadState.updateThread(this.threadId, (t) => ({
-      ...t,
-      lastRunId: t.lastRunId + 1,
-      currentRun: threadState.initialCurrentRunInfo({ runId: t.lastRunId + 1 }),
-    }))
-    const dispatchRunId = this.run?.runId
-
-    // Mark run active immediately so canDispatchNext() cannot start another
-    // concurrent dispatch while we perform async setup (ensureSession/model/etc).
-    threadState.updateRunState(this.threadId, pureMarkRunning)
-
-    // Create run controller immediately so explicit aborts can cancel even during
-    // async setup steps before the SDK prompt call starts.
+    this.lastDisplayedContextPercentage = 0
+    this.lastRateLimitDisplayTime = 0
     const runController = new AbortController()
-    threadState.setRunController(this.threadId, runController)
+    this.runController = runController
 
     // ── Ensure session ────────────────────────────────────────
     const sessionResult = await this.ensureSession({
@@ -2347,8 +2368,10 @@ export class ThreadSessionRuntime {
       sessionStartScheduledTaskId: input.sessionStartScheduledTaskId,
     })
     if (sessionResult instanceof Error) {
-      threadState.updateRunState(this.threadId, pureMarkIdle)
-      threadState.setRunController(this.threadId, undefined)
+      if (this.runController === runController) {
+        this.runController = undefined
+      }
+      this.stopTyping()
       await sendThreadMessage(
         this.thread,
         `✗ ${sessionResult.message}`,
@@ -2397,8 +2420,10 @@ export class ThreadSessionRuntime {
       })
     })
     if (earlyAgentResult instanceof Error) {
-      threadState.updateRunState(this.threadId, pureMarkIdle)
-      threadState.setRunController(this.threadId, undefined)
+      if (this.runController === runController) {
+        this.runController = undefined
+      }
+      this.stopTyping()
       await sendThreadMessage(
         this.thread,
         `Failed to resolve agent: ${earlyAgentResult.message}`,
@@ -2438,8 +2463,10 @@ export class ThreadSessionRuntime {
       }),
     ])
     if (earlyModelResult instanceof Error) {
-      threadState.updateRunState(this.threadId, pureMarkIdle)
-      threadState.setRunController(this.threadId, undefined)
+      if (this.runController === runController) {
+        this.runController = undefined
+      }
+      this.stopTyping()
       await sendThreadMessage(
         this.thread,
         `Failed to resolve model: ${earlyModelResult.message}`,
@@ -2450,8 +2477,10 @@ export class ThreadSessionRuntime {
     }
     const earlyModelParam = earlyModelResult
     if (!earlyModelParam) {
-      threadState.updateRunState(this.threadId, pureMarkIdle)
-      threadState.setRunController(this.threadId, undefined)
+      if (this.runController === runController) {
+        this.runController = undefined
+      }
+      this.stopTyping()
       await sendThreadMessage(
         this.thread,
         'No AI provider connected. Configure a provider in OpenCode with `/connect` command.',
@@ -2460,13 +2489,6 @@ export class ThreadSessionRuntime {
       await this.tryDrainQueue({ showIndicator: true })
       return
     }
-
-    // Set initial model info from early resolution
-    this.updateRun((r) => ({
-      ...r,
-      model: earlyModelParam.modelID,
-      providerID: earlyModelParam.providerID,
-    }))
 
     // Resolve thinking variant
     const earlyThinkingValue = await (async (): Promise<string | undefined> => {
@@ -2492,6 +2514,11 @@ export class ThreadSessionRuntime {
         availableValues,
       }) || undefined
     })()
+
+    await this.ensureModelContextLimit({
+      providerID: earlyModelParam.providerID,
+      modelID: earlyModelParam.modelID,
+    })
 
     // ── Build prompt parts ────────────────────────────────────
     const images = input.images || []
@@ -2596,6 +2623,9 @@ export class ThreadSessionRuntime {
     // Catch abort/network errors from the SDK call.
     const response = await sdkCall.catch(async (thrown: unknown) => {
       if (isAbortError(thrown)) {
+        if (this.runController === runController) {
+          this.runController = undefined
+        }
         this.stopTyping()
         return undefined // aborted — run settles via session.idle event
       }
@@ -2605,8 +2635,9 @@ export class ThreadSessionRuntime {
         thrown instanceof Error ? thrown : new Error(errMsg)
       logger.error(`[DISPATCH] Prompt SDK call failed: ${errMsg}`)
       void notifyError(errObj, 'Failed to send prompt to OpenCode')
-      threadState.updateRunState(this.threadId, pureMarkIdle)
-      threadState.setRunController(this.threadId, undefined)
+      if (this.runController === runController) {
+        this.runController = undefined
+      }
       this.stopTyping()
       await sendThreadMessage(
         this.thread,
@@ -2632,7 +2663,9 @@ export class ThreadSessionRuntime {
         logger.log(
           `[DISPATCH] Session aborted (expected) sessionId=${session.id}`,
         )
-        threadState.setRunController(this.threadId, undefined)
+        if (this.runController === runController) {
+          this.runController = undefined
+        }
         this.stopTyping()
         return
       }
@@ -2660,8 +2693,9 @@ export class ThreadSessionRuntime {
       const apiError = new Error(`OpenCode API error: ${errorMessage}`)
       logger.error(`[DISPATCH] ${apiError.message}`)
       void notifyError(apiError, 'OpenCode API error during prompt')
-      threadState.updateRunState(this.threadId, pureMarkIdle)
-      threadState.setRunController(this.threadId, undefined)
+      if (this.runController === runController) {
+        this.runController = undefined
+      }
       this.stopTyping()
       await sendThreadMessage(this.thread, `✗ ${apiError.message}`)
       await this.dispatchAction(() => {
@@ -2783,25 +2817,26 @@ export class ThreadSessionRuntime {
    * Called when session.idle decision is 'process' — the run finished.
    * Marks finished, flushes parts, emits footer, drains queue.
    */
-  private async finishRun({ expectedRunId, suppressFooter }: { expectedRunId?: number; suppressFooter?: boolean } = {}): Promise<void> {
-    if (typeof expectedRunId === 'number') {
-      const activeRunId = this.run?.runId
-      if (activeRunId !== expectedRunId) {
-        logger.log(
-          `[FINISH] Skip stale finish (expectedRunId=${expectedRunId}, activeRunId=${String(activeRunId)})`,
-        )
-        return
-      }
-    }
-
-    // Guard against double-finish
-    if (this.state?.runState.phase !== 'running') {
+  private async finishRun({
+    suppressFooter,
+    idleEventIndex,
+  }: {
+    suppressFooter?: boolean
+    idleEventIndex: number
+  }): Promise<void> {
+    const sessionId = this.state?.sessionId
+    if (!sessionId) {
       return
     }
 
-    const assistantMessageIds = [...this.assistantMessageIds]
+    const assistantMessageIds = [
+      ...this.getAssistantMessageIdsForSession({
+        sessionId,
+        upToIndex: idleEventIndex,
+      }),
+    ]
 
-    threadState.updateRunState(this.threadId, pureMarkIdle)
+    this.runController = undefined
     this.stopTyping()
 
     // Flush remaining buffered parts for all assistant messages observed during
@@ -2813,11 +2848,15 @@ export class ThreadSessionRuntime {
 
     // Emit footer (skip when the run was interrupted with a pending user message)
     if (!suppressFooter) {
-      await this.emitFooter()
+      const runStartTime = getRunStartTimeForIdle({
+        events: this.eventBuffer,
+        sessionId,
+        idleEventIndex,
+      })
+      if (runStartTime !== undefined) {
+        await this.emitFooter({ runStartTime })
+      }
     }
-
-    // Clear run controller
-    threadState.setRunController(this.threadId, undefined)
 
     // Reset per-run caches
     this.resetPerRunState()
@@ -2831,22 +2870,33 @@ export class ThreadSessionRuntime {
    * Emit the run footer: duration, model, context%, project info.
    * Equivalent to session-handler.ts footer logic (lines 2232-2327).
    */
-  private async emitFooter(): Promise<void> {
-    const run = this.run
-    const elapsedMs = Date.now() - (run?.dispatchStartTime ?? Date.now())
+  private async emitFooter({
+    runStartTime,
+  }: {
+    runStartTime: number
+  }): Promise<void> {
+    const sessionId = this.state?.sessionId
+    const runInfo = sessionId
+      ? getLatestRunInfo({ events: this.eventBuffer, sessionId })
+      : {
+        model: undefined,
+        providerID: undefined,
+        agent: undefined,
+        tokensUsed: 0,
+      }
+    const elapsedMs = Date.now() - runStartTime
     const sessionDuration =
       elapsedMs < 1000
         ? '<1s'
         : prettyMilliseconds(elapsedMs, { secondsDecimalDigits: 0 })
-    const modelInfo = run?.model ? ` ⋅ ${run.model}` : ''
+    const modelInfo = runInfo.model ? ` ⋅ ${runInfo.model}` : ''
     const agentInfo =
-      run?.agent && run.agent.toLowerCase() !== 'build'
-        ? ` ⋅ **${run.agent}**`
+      runInfo.agent && runInfo.agent.toLowerCase() !== 'build'
+        ? ` ⋅ **${runInfo.agent}**`
         : ''
     let contextInfo = ''
     const folderName = path.basename(this.sdkDirectory)
 
-    const sessionId = this.state?.sessionId
     const client = getOpencodeClient(this.projectDirectory)
 
     // Run git branch, token fetch, and provider list in parallel
@@ -2860,7 +2910,7 @@ export class ThreadSessionRuntime {
         if (!client || !sessionId) {
           return
         }
-        let tokensUsed = run?.tokensUsed ?? 0
+        let tokensUsed = runInfo.tokensUsed
         // Fetch final token count from API
         const [messagesResult, providersResult] = await Promise.all([
           tokensUsed === 0
@@ -2893,22 +2943,21 @@ export class ThreadSessionRuntime {
             })
           if (lastAssistant && 'tokens' in lastAssistant.info) {
             tokensUsed = getTokenTotal(lastAssistant.info.tokens)
-            this.updateRun((r) => ({ ...r, tokensUsed }))
           }
         }
 
-        const fallbackLimit = run?.providerID
+        const fallbackLimit = runInfo.providerID
           ? getFallbackContextLimit({
-              providerID: run.providerID,
+              providerID: runInfo.providerID,
             })
           : undefined
 
         let contextLimit = fallbackLimit
         if (providersResult && !(providersResult instanceof Error)) {
           const provider = providersResult.data?.all?.find((p) => {
-            return p.id === run?.providerID
+            return p.id === runInfo.providerID
           })
-          const model = provider?.models?.[run?.model || '']
+          const model = provider?.models?.[runInfo.model || '']
           contextLimit = model?.limit?.context || contextLimit
         }
 
@@ -2939,18 +2988,16 @@ export class ThreadSessionRuntime {
       { flags: NOTIFY_MESSAGE_FLAGS },
     )
     logger.log(
-      `DURATION: Session completed in ${sessionDuration}, model ${run?.model}, tokens ${run?.tokensUsed ?? 0}`,
+      `DURATION: Session completed in ${sessionDuration}, model ${runInfo.model}, tokens ${runInfo.tokensUsed}`,
     )
   }
 
   /** Reset per-run state for the next prompt dispatch. */
   private resetPerRunState(): void {
-    threadState.updateThread(this.threadId, (t) => ({
-      ...t,
-      currentRun: undefined,
-    }))
     this.modelContextLimit = undefined
     this.modelContextLimitKey = undefined
+    this.lastDisplayedContextPercentage = 0
+    this.lastRateLimitDisplayTime = 0
   }
 
   // ── Phase 4: Retry last user prompt (for model-change flow) ──
@@ -2976,7 +3023,7 @@ export class ThreadSessionRuntime {
     const waitSinceTimestamp = Date.now()
     const abortResult = await errore.tryAsync(() => {
       return this.dispatchAction(async () => {
-        needsIdleWait = this.state?.runState.phase === 'running'
+        needsIdleWait = this.isMainSessionBusy()
         const outcome = this.abortActiveRunInternal({
           reason: 'model-change',
         })

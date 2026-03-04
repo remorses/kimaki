@@ -603,15 +603,19 @@ e2eTest('thread message queue ordering', () => {
         return reply.content.trim().length > 0
       })).toBe(true)
 
+      await waitForThreadPhase({
+        threadId: thread.id,
+        phase: 'idle',
+        timeout: 4_000,
+      })
       const finalState = await waitForThreadState({
         threadId: thread.id,
         predicate: (state) => {
-          return state.runState.phase === 'idle' && state.queueItems.length === 0
+          return state.queueItems.length === 0
         },
         timeout: 4_000,
-        description: 'phase=idle AND queue empty after rapid interrupts',
+        description: 'queue empty after rapid interrupts',
       })
-      expect(finalState.runState.phase).toBe('idle')
       expect(finalState.queueItems.length).toBe(0)
     },
     8_000,
@@ -1133,10 +1137,14 @@ e2eTest('thread message queue ordering', () => {
         Reply with exactly: lima
         --- from: assistant (TestBot)
         ⬥ ok
+        --- from: assistant (TestBot)
+        *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2*
+        --- from: assistant (TestBot)
+        ⬥ ok
         --- from: user (queue-tester)
         Reply with exactly: mike
         --- from: assistant (TestBot)
-        ⬥ ok
+        *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2*
         --- from: user (queue-tester)
         Reply with exactly: november
         --- from: assistant (TestBot)

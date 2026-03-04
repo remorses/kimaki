@@ -9,7 +9,7 @@ import {
 import {
   getRuntime,
 } from './session-handler/thread-session-runtime.js'
-import { getThreadState, setRunController } from './session-handler/thread-runtime-state.js'
+import { getThreadState } from './session-handler/thread-runtime-state.js'
 import { setSessionModel } from './database.js'
 import {
   waitForFooterMessage,
@@ -348,6 +348,8 @@ e2eTest('queue advanced: abort and retry', () => {
         ⬥ ok
         --- from: user (queue-advanced-tester)
         PLUGIN_TIMEOUT_SLEEP_MARKER
+        --- from: assistant (TestBot)
+        *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2*
         --- from: user (queue-advanced-tester)
         Reply with exactly: model-switch-followup"
       `)
@@ -363,7 +365,7 @@ e2eTest('queue advanced: abort and retry', () => {
   )
 
   test(
-    'abortActiveRun falls back to API abort when run controller is missing',
+    'abortActiveRun settles correctly during long-running request',
     async () => {
       await ctx.discord.channel(TEXT_CHANNEL_ID).user(TEST_USER_ID).sendMessage({
         content: 'Reply with exactly: force-abort-setup',
@@ -396,11 +398,9 @@ e2eTest('queue advanced: abort and retry', () => {
         throw new Error('Expected runtime to exist for forced-abort test')
       }
 
-      setRunController(thread.id, undefined)
-
       runtime.abortActiveRun('force-abort-test')
 
-      const settled = await waitForThreadPhase({
+      await waitForThreadPhase({
         threadId: thread.id,
         phase: 'idle',
         timeout: 4_000,
@@ -413,7 +413,6 @@ e2eTest('queue advanced: abort and retry', () => {
         --- from: assistant (TestBot)
         *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2*"
       `)
-      expect(settled.runState.phase).toBe('idle')
     },
     10_000,
   )

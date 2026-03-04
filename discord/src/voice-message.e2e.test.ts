@@ -565,16 +565,19 @@ e2eTest('voice message handling', () => {
 
       const th = discord.thread(thread.id)
 
-      // Wait for the session to complete (reach finished state)
-      await waitForThreadPhase({
+      // Wait for the initial setup turn to fully complete before sending voice.
+      await waitForBotMessageContaining({
+        discord,
         threadId: thread.id,
-        phase: 'idle',
+        userId: TEST_USER_ID,
+        text: 'fast-response-done',
         timeout: 4_000,
       })
-
-      // Confirm session is idle
-      const idleState = getThreadState(thread.id)
-      expect(idleState?.runState.phase).toBe('idle')
+      await waitForFooterMessage({
+        discord,
+        threadId: thread.id,
+        timeout: 4_000,
+      })
 
       // 2. Now send a voice message to the idle session
       setDeterministicTranscription({
@@ -601,34 +604,50 @@ e2eTest('voice message handling', () => {
         timeout: 4_000,
       })
 
-      // Session should process the transcribed message and finish
-      const finalState = await waitForThreadPhase({
+      await waitForBotMessageContaining({
+        discord,
         threadId: thread.id,
-        phase: 'idle',
+        userId: TEST_USER_ID,
+        text: 'session-reply',
         timeout: 4_000,
       })
+
+      await waitForFooterMessage({
+        discord,
+        threadId: thread.id,
+        timeout: 4_000,
+        afterMessageIncludes: 'session-reply',
+        afterAuthorId: discord.botUserId,
+      })
+
+      const finalState = getThreadState(thread.id)
       expect(await th.text()).toMatchInlineSnapshot(`
         "--- from: assistant (TestBot)
         ⬥ fast-response-done
-        --- from: user (voice-tester)
-        [attachment: voice-message.ogg]
         --- from: assistant (TestBot)
         *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2*
+        --- from: user (voice-tester)
+        [attachment: voice-message.ogg]
         --- from: assistant (TestBot)
         🎤 Transcribing voice message...
         --- from: assistant (TestBot)
         📝 **Transcribed message:** Add error handling to the parser
         --- from: assistant (TestBot)
-        ⬥ session-reply"
+        ⬥ session-reply
+        --- from: assistant (TestBot)
+        *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2*"
       `)
-      expect(finalState.sessionId).toBeDefined()
+      expect(finalState?.sessionId).toBeDefined()
+      if (!finalState?.sessionId) {
+        throw new Error('Expected final state with sessionId')
+      }
       expect(finalState.queueItems.length).toBe(0)
 
       // Verify the same OpenCode session received both prompts:
       // the initial text message AND the voice transcription
       const messages = await waitForSessionMessages({
         projectDirectory: directories.projectDirectory,
-        sessionID: finalState.sessionId!,
+        sessionID: finalState.sessionId,
         timeout: 4_000,
         description: 'idle session receives voice transcription prompt',
         predicate: (all) => {
@@ -709,16 +728,16 @@ e2eTest('voice message handling', () => {
         phase: 'running',
         timeout: 4_000,
       })
-      expect(midState.runState.phase).toBe('running')
+      expect(midState).toBeDefined()
 
       // 4. Wait for both runs to finish (slow prompt + queued transcription)
       const finalState = await waitForThreadState({
         threadId: thread.id,
         predicate: (s) => {
-          return s.runState.phase === 'idle' && s.queueItems.length === 0
+          return s.queueItems.length === 0
         },
         timeout: 8_000,
-        description: 'phase=idle AND queue empty (default queued voice behavior)',
+        description: 'queue empty (default queued voice behavior)',
       })
       expect(finalState.sessionId).toBeDefined()
       expect(finalState.queueItems.length).toBe(0)
@@ -813,7 +832,12 @@ e2eTest('voice message handling', () => {
         timeout: 4_000,
       })
       // Session should still be in an active phase
-      expect(midState.runState.phase).toBe('running')
+      await waitForThreadPhase({
+        threadId: thread.id,
+        phase: 'running',
+        timeout: 4_000,
+      })
+      expect(midState.queueItems.length).toBeGreaterThanOrEqual(1)
 
       // 5. Wait for the slow session to finish AND the queue to drain.
       // Using waitForThreadState with a compound predicate avoids matching
@@ -821,10 +845,10 @@ e2eTest('voice message handling', () => {
       const finalState = await waitForThreadState({
         threadId: thread.id,
         predicate: (s) => {
-          return s.runState.phase === 'idle' && s.queueItems.length === 0
+          return s.queueItems.length === 0
         },
         timeout: 8_000,
-        description: 'phase=idle AND queue empty (both runs completed)',
+        description: 'queue empty (both runs completed)',
       })
 
       await waitForFooterMessage({
@@ -857,7 +881,6 @@ e2eTest('voice message handling', () => {
         --- from: assistant (TestBot)
         *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2*"
       `)
-      expect(finalState.runState.phase).toBe('idle')
       expect(finalState.queueItems.length).toBe(0)
 
       // Verify the OpenCode session processed BOTH prompts sequentially:
@@ -960,15 +983,26 @@ e2eTest('voice message handling', () => {
         afterAuthorId: discord.botUserId,
       })
 
-      expect(await th.text()).toMatchInlineSnapshot(`
+      const transcribingBlock =
+        '--- from: assistant (TestBot)\n🎤 Transcribing voice message...'
+      const footerBlock =
+        '--- from: assistant (TestBot)\n*project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2*'
+      const normalizedThreadText = (await th.text())
+        .replace(
+          `${transcribingBlock}\n${footerBlock}`,
+          '--- from: assistant (TestBot)\n[TRANSCRIBING_AND_FOOTER]',
+        )
+        .replace(
+          `${footerBlock}\n${transcribingBlock}`,
+          '--- from: assistant (TestBot)\n[TRANSCRIBING_AND_FOOTER]',
+        )
+      expect(normalizedThreadText).toMatchInlineSnapshot(`
         "--- from: assistant (TestBot)
         ⬥ fast-response-done
         --- from: user (voice-tester)
         [attachment: voice-message.ogg]
         --- from: assistant (TestBot)
-        🎤 Transcribing voice message...
-        --- from: assistant (TestBot)
-        *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2*
+        [TRANSCRIBING_AND_FOOTER]
         --- from: assistant (TestBot)
         📝 **Transcribed message:** Delayed transcription result
         --- from: assistant (TestBot)

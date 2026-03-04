@@ -18,7 +18,7 @@ import {
   getThreadState,
   type ThreadRunState,
 } from './session-handler/thread-runtime-state.js'
-import type { MainRunPhase } from './session-handler/state.js'
+import { getRuntime } from './session-handler/thread-session-runtime.js'
 
 /**
  * Kill all in-memory opencode server processes and clear the registry.
@@ -308,7 +308,7 @@ export async function waitForFooterMessage({
 // (phase changes, queue depth, abort, idle).
 
 /**
- * Poll until thread runState.phase matches one of the expected values.
+ * Poll until thread derived phase matches one of the expected values.
  * Returns the full ThreadRunState snapshot when the condition is met.
  */
 export async function waitForThreadPhase({
@@ -317,14 +317,16 @@ export async function waitForThreadPhase({
   timeout,
 }: {
   threadId: string
-  phase: MainRunPhase | MainRunPhase[]
+  phase: 'idle' | 'running' | Array<'idle' | 'running'>
   timeout: number
 }): Promise<ThreadRunState> {
   const phases = Array.isArray(phase) ? phase : [phase]
   const start = Date.now()
   while (Date.now() - start < timeout) {
     const state = getThreadState(threadId)
-    if (state && phases.includes(state.runState.phase)) {
+    const runtime = getRuntime(threadId)
+    const currentPhase = runtime?.getDerivedPhase() || 'idle'
+    if (state && phases.includes(currentPhase)) {
       return state
     }
     await new Promise((resolve) => {
@@ -332,7 +334,10 @@ export async function waitForThreadPhase({
     })
   }
   const finalState = getThreadState(threadId)
-  const currentPhase = finalState?.runState.phase ?? 'no-thread-state'
+  const finalRuntime = getRuntime(threadId)
+  const currentPhase = finalState
+    ? (finalRuntime?.getDerivedPhase() || 'idle')
+    : 'no-thread-state'
   throw new Error(
     `Timed out waiting for thread ${threadId} phase [${phases.join(', ')}]. Current phase: ${currentPhase}`,
   )
@@ -396,7 +401,10 @@ export async function waitForThreadState({
   }
   const finalState = getThreadState(threadId)
   const desc = description ?? 'custom predicate'
-  const phase = finalState?.runState.phase ?? 'no-thread-state'
+  const finalRuntime = getRuntime(threadId)
+  const phase = finalState
+    ? (finalRuntime?.getDerivedPhase() || 'idle')
+    : 'no-thread-state'
   const queueLen = finalState?.queueItems.length ?? 0
   throw new Error(
     `Timed out waiting for thread ${threadId} (${desc}). ` +
