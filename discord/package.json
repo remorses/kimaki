@@ -37,7 +37,7 @@
     "discord-digital-twin": "workspace:^",
     "opencode-cached-provider": "workspace:^",
     "opencode-deterministic-provider": "workspace:^",
-    "prisma": "7.3.0",
+    "prisma": "7.4.2",
     "tsx": "^4.20.5"
   },
   "dependencies": {
@@ -51,8 +51,8 @@
     "@opencode-ai/plugin": "^1.2.15",
     "@opencode-ai/sdk": "^1.2.15",
     "@parcel/watcher": "^2.5.6",
-    "@prisma/adapter-libsql": "7.3.0",
-    "@prisma/client": "7.3.0",
+    "@prisma/adapter-libsql": "7.4.2",
+    "@prisma/client": "7.4.2",
     "@purinton/resampler": "^1.0.4",
     "@sentry/node": "^10.40.0",
     "cron-parser": "^5.5.0",

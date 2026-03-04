@@ -39,8 +39,8 @@
   },
   "dependencies": {
     "@libsql/client": "^0.15.15",
-    "@prisma/adapter-libsql": "7.3.0",
-    "@prisma/client": "7.3.0",
+    "@prisma/adapter-libsql": "7.4.2",
+    "@prisma/client": "7.4.2",
     "discord-api-types": "^0.38.40",
     "spiceflow": "^1.17.12",
     "ws": "^8.18.0"
@@ -48,7 +48,7 @@
   "devDependencies": {
     "@types/ws": "^8.5.0",
     "discord.js": "^14.25.1",
-    "prisma": "7.3.0",
+    "prisma": "7.4.2",
     "typescript": "^5.7.0",
     "vitest": "^3.0.0"
   }
