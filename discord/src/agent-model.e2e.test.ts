@@ -374,10 +374,11 @@ describe('agent model resolution', () => {
       })
 
       expect(await discord.thread(thread.id).text()).toMatchInlineSnapshot(`
-        "[typing]
-        [typing]
+        "[bot typing]
+        [bot typing]
         --- from: assistant (TestBot)
         ⬥ ok
+        [bot typing]
         --- from: assistant (TestBot)
         *project ⋅ main ⋅ Ns ⋅ N% ⋅ agent-model-v2 ⋅ **test-agent***"
       `)
@@ -422,8 +423,8 @@ describe('agent model resolution', () => {
         timeout: 4_000,
       })
       expect(await discord.thread(thread.id).text()).toMatchInlineSnapshot(`
-        "[typing]
-        [typing]
+        "[bot typing]
+        [bot typing]
         --- from: assistant (TestBot)
         ⬥ system-context-ok"
       `)
@@ -474,8 +475,8 @@ describe('agent model resolution', () => {
       })
 
       expect(await discord.thread(thread.id).text()).toMatchInlineSnapshot(`
-        "[typing]
-        [typing]
+        "[bot typing]
+        [bot typing]
         --- from: assistant (TestBot)
         ⬥ ok
         --- from: assistant (TestBot)
@@ -546,8 +547,8 @@ describe('agent model resolution', () => {
       })
 
       expect(await discord.thread(thread.id).text()).toMatchInlineSnapshot(`
-        "[typing]
-        [typing]
+        "[bot typing]
+        [bot typing]
         --- from: assistant (TestBot)
         ⬥ ok
         --- from: assistant (TestBot)

@@ -756,7 +756,7 @@ export class ChannelScope {
     const lines: string[] = []
     for (const entry of timeline) {
       if (entry.kind === 'typing') {
-        lines.push('[typing]')
+        lines.push('[bot typing]')
         continue
       }
       const msg = entry.msg

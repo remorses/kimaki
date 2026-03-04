@@ -400,8 +400,8 @@ describeIf('gateway-proxy e2e', () => {
 
       const reply = await discord.thread(thread.id).waitForBotReply({ timeout: 15_000 })
       expect(await discord.thread(thread.id).text()).toMatchInlineSnapshot(`
-        "[typing]
-        [typing]
+        "[bot typing]
+        [bot typing]
         --- from: assistant (TestBot)
         ⬥ gateway-proxy-reply"
       `)
@@ -425,12 +425,13 @@ describeIf('gateway-proxy e2e', () => {
         predicate: (m) => !existingIds.has(m.id) && m.author.id === discord.botUserId,
       })
       expect(await discord.thread(firstThreadId).text()).toMatchInlineSnapshot(`
-        "[typing]
-        [typing]
+        "[bot typing]
+        [bot typing]
         --- from: assistant (TestBot)
         ⬥ gateway-proxy-reply
         --- from: user (proxy-tester)
         follow up through proxy
+        [bot typing]
         --- from: assistant (TestBot)
         *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2*"
       `)
@@ -459,12 +460,13 @@ describeIf('gateway-proxy e2e', () => {
           m.content.includes('exited with'),
       })
       expect(await discord.thread(firstThreadId).text()).toMatchInlineSnapshot(`
-        "[typing]
-        [typing]
+        "[bot typing]
+        [bot typing]
         --- from: assistant (TestBot)
         ⬥ gateway-proxy-reply
         --- from: user (proxy-tester)
         follow up through proxy
+        [bot typing]
         --- from: assistant (TestBot)
         *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2*
         --- from: user (proxy-tester)
@@ -473,8 +475,7 @@ describeIf('gateway-proxy e2e', () => {
         \`echo proxy-shell-test\` exited with 0
         \`\`\`
         proxy-shell-test
-        \`\`\`
-        [typing]"
+        \`\`\`"
       `)
       expect(reply.content).toContain('proxy-shell-test')
     },
@@ -498,8 +499,8 @@ describeIf('gateway-proxy e2e', () => {
 
       const reply = await discord.thread(thread.id).waitForBotReply()
       expect(await discord.thread(thread.id).text()).toMatchInlineSnapshot(`
-        "[typing]
-        [typing]
+        "[bot typing]
+        [bot typing]
         --- from: assistant (TestBot)
         ⬥ gateway-proxy-reply"
       `)
