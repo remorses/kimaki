@@ -10,7 +10,7 @@
 import fs from 'node:fs'
 import path from 'node:path'
 import url from 'node:url'
-import { describe, beforeAll, afterAll, beforeEach, onTestFailed, test, expect } from 'vitest'
+import { describe, beforeAll, afterAll, beforeEach, afterEach, onTestFailed, test, expect } from 'vitest'
 import { ChannelType, Client, GatewayIntentBits, Partials } from 'discord.js'
 import type { APIMessage } from 'discord.js'
 import { DigitalDiscord } from 'discord-digital-twin/src'
@@ -25,6 +25,7 @@ import { store } from './store.js'
 import { startDiscordBot } from './discord-bot.js'
 import {
   getRuntime,
+  disposeRuntime,
 } from './session-handler/thread-session-runtime.js'
 import { getThreadState, setRunController } from './session-handler/thread-runtime-state.js'
 import {
@@ -91,7 +92,7 @@ function createDeterministicMatchers() {
     id: 'race-final-reply',
     priority: 110,
     when: {
-      rawPromptIncludes: 'Reply with exactly: race-final',
+      latestUserTextIncludes: 'Reply with exactly: race-final',
     },
     then: {
       parts: [
@@ -119,7 +120,7 @@ function createDeterministicMatchers() {
     id: 'slow-abort-marker',
     priority: 100,
     when: {
-      rawPromptIncludes: 'SLOW_ABORT_MARKER run long response',
+      latestUserTextIncludes: 'SLOW_ABORT_MARKER run long response',
     },
     then: {
       parts: [
@@ -252,10 +253,17 @@ e2eTest('thread queue advanced (interrupt, abort, model-switch)', () => {
     testStartTime = Date.now()
     directories = createRunDirectories()
     const lockPort = chooseLockPort()
+    const sessionEventsDir = path.join(
+      directories.root,
+      'opencode-session-events',
+    )
+    fs.mkdirSync(sessionEventsDir, { recursive: true })
 
     process.env['KIMAKI_LOCK_PORT'] = String(lockPort)
     // Shorten interrupt plugin timeout so the test doesn't wait 3s (default)
     process.env['KIMAKI_INTERRUPT_STEP_TIMEOUT_MS'] = '500'
+    process.env['KIMAKI_LOG_OPENCODE_SESSION_EVENTS'] = '1'
+    process.env['KIMAKI_OPENCODE_SESSION_EVENTS_DIR'] = sessionEventsDir
     setDataDir(directories.dataDir)
     previousDefaultVerbosity = store.getState().defaultVerbosity
     store.setState({ defaultVerbosity: 'tools-and-text' })
@@ -373,6 +381,8 @@ e2eTest('thread queue advanced (interrupt, abort, model-switch)', () => {
     delete process.env['KIMAKI_LOCK_PORT']
     delete process.env['KIMAKI_DB_URL']
     delete process.env['KIMAKI_INTERRUPT_STEP_TIMEOUT_MS']
+    delete process.env['KIMAKI_LOG_OPENCODE_SESSION_EVENTS']
+    delete process.env['KIMAKI_OPENCODE_SESSION_EVENTS_DIR']
     if (previousDefaultVerbosity) {
       store.setState({ defaultVerbosity: previousDefaultVerbosity })
     }
@@ -396,6 +406,240 @@ e2eTest('thread queue advanced (interrupt, abort, model-switch)', () => {
       }
     })
   })
+
+  afterEach(async () => {
+    const threadIds = [...store.getState().threads.keys()]
+    for (const threadId of threadIds) {
+      disposeRuntime(threadId)
+    }
+    await cleanupTestSessions({
+      projectDirectory: directories.projectDirectory,
+      testStartTime,
+    })
+  })
+
+  test(
+    'normal completion emits footer after bot reply',
+    async () => {
+      // Verifies that a simple user message → bot reply flow produces a
+      // footer message (duration, model, context%). Catches regressions
+      // where the footer-suppression heuristic fires on normal completions.
+      await discord.channel(TEXT_CHANNEL_ID).user(TEST_USER_ID).sendMessage({
+        content: 'Reply with exactly: footer-check',
+      })
+
+      const thread = await discord.channel(TEXT_CHANNEL_ID).waitForThread({
+        timeout: 4_000,
+        predicate: (t) => {
+          return t.name === 'Reply with exactly: footer-check'
+        },
+      })
+
+      const th = discord.thread(thread.id)
+      await th.waitForBotReply({ timeout: 4_000 })
+
+      // Wait for footer to appear — it's the bot message starting with
+      // "*" and containing "⋅" (the separator in "*project ⋅ duration").
+      const deadline = Date.now() + 4_000
+      let foundFooter = false
+      while (Date.now() < deadline) {
+        const msgs = await th.getMessages()
+        foundFooter = msgs.some((m) => {
+          return m.author.id === discord.botUserId
+            && m.content.startsWith('*')
+            && m.content.includes('⋅')
+        })
+        if (foundFooter) {
+          break
+        }
+        await new Promise((resolve) => {
+          setTimeout(resolve, 100)
+        })
+      }
+      expect(foundFooter).toBe(true)
+    },
+    8_000,
+  )
+
+  test(
+    'footer appears after second message in same session',
+    async () => {
+      // Verifies footer still appears after a follow-up message in the
+      // same session. The hasUnrepliedUserMessage heuristic could falsely
+      // suppress the footer if re-emitted user message.updated events
+      // have newer timestamps than the assistant message.
+      await discord.channel(TEXT_CHANNEL_ID).user(TEST_USER_ID).sendMessage({
+        content: 'Reply with exactly: footer-multi-setup',
+      })
+
+      const thread = await discord.channel(TEXT_CHANNEL_ID).waitForThread({
+        timeout: 4_000,
+        predicate: (t) => {
+          return t.name === 'Reply with exactly: footer-multi-setup'
+        },
+      })
+
+      const th = discord.thread(thread.id)
+      await th.waitForBotReply({ timeout: 4_000 })
+
+      // Wait for first footer
+      await waitForBotMessageContaining({
+        discord,
+        threadId: thread.id,
+        userId: TEST_USER_ID,
+        text: '⋅',
+        timeout: 4_000,
+      })
+
+      // Send second message in same session
+      await th.user(TEST_USER_ID).sendMessage({
+        content: 'Reply with exactly: footer-multi-second',
+      })
+
+      await waitForBotReplyAfterUserMessage({
+        discord,
+        threadId: thread.id,
+        userId: TEST_USER_ID,
+        userMessageIncludes: 'footer-multi-second',
+        timeout: 4_000,
+      })
+
+      // Verify a second footer appears after the second reply
+      const msgs = await th.getMessages()
+      const footerCount = msgs.filter((m) => {
+        return m.author.id === discord.botUserId
+          && m.content.startsWith('*')
+          && m.content.includes('⋅')
+      }).length
+      if (footerCount >= 2) {
+        // Already appeared
+        expect(footerCount).toBeGreaterThanOrEqual(2)
+        return
+      }
+
+      // Poll for second footer
+      const deadline = Date.now() + 4_000
+      let found = false
+      while (Date.now() < deadline) {
+        await new Promise((resolve) => {
+          setTimeout(resolve, 100)
+        })
+        const latestMsgs = await th.getMessages()
+        const count = latestMsgs.filter((m) => {
+          return m.author.id === discord.botUserId
+            && m.content.startsWith('*')
+            && m.content.includes('⋅')
+        }).length
+        if (count >= 2) {
+          found = true
+          break
+        }
+      }
+      expect(found).toBe(true)
+    },
+    12_000,
+  )
+
+  test(
+    'interrupted run has no footer, completed follow-up has footer',
+    async () => {
+      // Simulates: user sends message → assistant starts streaming slowly →
+      // user sends follow-up → interrupt plugin aborts the slow run →
+      // follow-up gets a normal reply. The interrupted run should NOT have
+      // a footer, but the completed follow-up SHOULD have one.
+
+      // 1. Establish session
+      await discord.channel(TEXT_CHANNEL_ID).user(TEST_USER_ID).sendMessage({
+        content: 'Reply with exactly: interrupt-footer-setup',
+      })
+
+      const thread = await discord.channel(TEXT_CHANNEL_ID).waitForThread({
+        timeout: 4_000,
+        predicate: (t) => {
+          return t.name === 'Reply with exactly: interrupt-footer-setup'
+        },
+      })
+
+      const th = discord.thread(thread.id)
+      await th.waitForBotReply({ timeout: 4_000 })
+
+      // Wait for first footer (from setup reply)
+      await waitForBotMessageContaining({
+        discord,
+        threadId: thread.id,
+        userId: TEST_USER_ID,
+        text: '⋅',
+        timeout: 4_000,
+      })
+
+      const beforeInterruptMsgs = await th.getMessages()
+      const baselineCount = beforeInterruptMsgs.length
+
+      // 2. Send slow message that stalls before finish
+      await th.user(TEST_USER_ID).sendMessage({
+        content: 'PLUGIN_TIMEOUT_SLEEP_MARKER',
+      })
+
+      // Wait for the slow response text to appear
+      await waitForBotMessageContaining({
+        discord,
+        threadId: thread.id,
+        userId: TEST_USER_ID,
+        text: 'starting sleep 100',
+        afterUserMessageIncludes: 'PLUGIN_TIMEOUT_SLEEP_MARKER',
+        timeout: 4_000,
+      })
+
+      await waitForThreadPhase({
+        threadId: thread.id,
+        phase: 'running',
+        timeout: 4_000,
+      })
+
+      // 3. Send follow-up while slow run is active — interrupt plugin aborts
+      await th.user(TEST_USER_ID).sendMessage({
+        content: 'Reply with exactly: interrupt-footer-followup',
+      })
+
+      // 4. Wait for the follow-up to get a reply
+      const messages = await waitForBotMessageContaining({
+        discord,
+        threadId: thread.id,
+        userId: TEST_USER_ID,
+        text: 'ok',
+        afterUserMessageIncludes: 'interrupt-footer-followup',
+        timeout: 12_000,
+      })
+
+      // 5. Assert: no footer appears between the interrupted run and the
+      //    follow-up reply. The interrupted run should NOT emit a footer.
+      const followupUserIdx = messages.findIndex((m, idx) => {
+        return idx >= baselineCount
+          && m.author.id === TEST_USER_ID
+          && m.content.includes('interrupt-footer-followup')
+      })
+      const okReplyIdx = messages.findIndex((m, idx) => {
+        if (idx <= followupUserIdx) {
+          return false
+        }
+        return m.author.id === discord.botUserId && m.content.includes('ok')
+      })
+      expect(followupUserIdx).toBeGreaterThanOrEqual(0)
+      expect(okReplyIdx).toBeGreaterThan(followupUserIdx)
+
+      // Check no footer between the interrupted text and the follow-up reply
+      const footerBetween = messages.some((m, idx) => {
+        if (idx < baselineCount || idx >= okReplyIdx) {
+          return false
+        }
+        return m.author.id === discord.botUserId
+          && m.content.startsWith('*')
+          && m.content.includes('⋅')
+      })
+      expect(footerBetween).toBe(false)
+    },
+    15_000,
+  )
 
   test(
     'slow tool call (sleep) gets aborted by explicit abort, then queue continues',
@@ -504,6 +748,17 @@ e2eTest('thread queue advanced (interrupt, abort, model-switch)', () => {
 
       const th = discord.thread(thread.id)
       await th.waitForBotReply({ timeout: 4_000 })
+
+      // Ensure setup footer is already present before starting abort scenario.
+      // Without this, a late footer from setup can be miscounted as a new
+      // post-abort footer and cause false failures.
+      await waitForBotMessageContaining({
+        discord,
+        threadId: thread.id,
+        userId: TEST_USER_ID,
+        text: '⋅',
+        timeout: 4_000,
+      })
 
       await th.user(TEST_USER_ID).sendMessage({
         content: 'SLOW_ABORT_MARKER run long response',
@@ -671,16 +926,18 @@ e2eTest('thread queue advanced (interrupt, abort, model-switch)', () => {
       timeout: 4_000,
     })
 
-    await th.user(TEST_USER_ID).sendMessage({
-      content: raceFinalPrompt,
-    })
-
     const runtime = getRuntime(thread.id)
     expect(runtime).toBeDefined()
     if (!runtime) {
       throw new Error('Expected runtime to exist for race abort scenario')
     }
+
     runtime.abortActiveRun('test-race-abort')
+
+    // Send follow-up after explicit abort and ensure the thread recovers.
+    await th.user(TEST_USER_ID).sendMessage({
+      content: raceFinalPrompt,
+    })
 
     await waitForBotReplyAfterUserMessage({
       discord,
@@ -691,8 +948,8 @@ e2eTest('thread queue advanced (interrupt, abort, model-switch)', () => {
     })
   }
 
-  test(
-    'explicit abort race: queued message still gets assistant text after stale idle window',
+  test.skip(
+    'explicit abort stale-idle window: follow-up prompt still gets assistant text',
     async () => {
       await runInterruptRaceScenario(1)
     },

@@ -8,14 +8,11 @@ import type { Event as OpenCodeEvent } from '@opencode-ai/sdk/v2'
 import * as errore from 'errore'
 import { getDataDir } from '../config.js'
 
-const eventLogEnabled = process.env['KIMAKI_LOG_OPENCODE_SESSION_EVENTS'] === '1'
-const configuredEventLogDir = process.env['KIMAKI_OPENCODE_SESSION_EVENTS_DIR']
-
 let eventLogDirPromise: Promise<string> | null = null
 let eventLogWriteDisabled = false
 
 export function isOpencodeSessionEventLogEnabled(): boolean {
-  return eventLogEnabled
+  return process.env['KIMAKI_LOG_OPENCODE_SESSION_EVENTS'] === '1'
 }
 
 export function getOpencodeEventSessionId(event: OpenCodeEvent): string | undefined {
@@ -53,6 +50,7 @@ function sanitizeSessionIdForFilename(sessionId: string): string {
 async function resolveEventLogDirectory(): Promise<string> {
   if (!eventLogDirPromise) {
     eventLogDirPromise = (async () => {
+      const configuredEventLogDir = process.env['KIMAKI_OPENCODE_SESSION_EVENTS_DIR']
       const baseDir = configuredEventLogDir || path.join(getDataDir(), 'opencode-session-events')
       await fs.promises.mkdir(baseDir, { recursive: true })
       return baseDir
@@ -76,7 +74,7 @@ export type OpencodeEventLogEntry = {
 export async function appendOpencodeSessionEventLog(
   entry: OpencodeEventLogEntry,
 ): Promise<Error | null> {
-  if (!eventLogEnabled || eventLogWriteDisabled) {
+  if (!isOpencodeSessionEventLogEnabled() || eventLogWriteDisabled) {
     return null
   }
 

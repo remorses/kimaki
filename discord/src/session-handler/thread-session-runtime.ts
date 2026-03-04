@@ -113,7 +113,6 @@ const DETERMINISTIC_CONTEXT_LIMIT = 100_000
 const shouldLogSessionEvents =
   process.env['KIMAKI_LOG_SESSION_EVENTS'] === '1' ||
   process.env['KIMAKI_VITEST'] === '1'
-const shouldLogSessionEventsToJsonl = isOpencodeSessionEventLogEnabled()
 
 // ── Registry ─────────────────────────────────────────────────────
 // Runtime instances are kept in a plain Map (not Zustand — the Map
@@ -448,6 +447,13 @@ export class ThreadSessionRuntime {
     return undefined
   }
 
+  // Keep only current-run events in the buffer.
+  // This prevents stale step-finish/session.idle events from a previous run
+  // (same session ID) from affecting run-completion decisions in the next run.
+  private clearEventBuffer(): void {
+    this.eventBuffer = []
+  }
+
   // Seed sentPartIds from DB to avoid re-sending parts that were
   // already sent in a previous runtime or before a reconnect.
   private async bootstrapSentPartIds(): Promise<void> {
@@ -617,7 +623,7 @@ export class ThreadSessionRuntime {
       }
     }
 
-    if (shouldLogSessionEventsToJsonl) {
+    if (isOpencodeSessionEventLogEnabled()) {
       const runState = this.state?.runState
       const eventLogResult = await appendOpencodeSessionEventLog({
         threadId: this.threadId,
@@ -1029,15 +1035,20 @@ export class ThreadSessionRuntime {
       return
     }
 
-    // Track assistant message IDs for part routing.
-    threadState.updateRunState(this.threadId, (rs) => {
-      return pureRegisterAssistantMessage(rs, msg.id)
-    })
+    const knownMessage = this.partBuffer.has(msg.id)
+    if (!knownMessage) {
+      // Register only newly observed assistant messages for the active run.
+      // Replayed message.updated events from previous runs can arrive when a
+      // new run starts; those message IDs already exist in partBuffer.
+      threadState.updateRunState(this.threadId, (rs) => {
+        return pureRegisterAssistantMessage(rs, msg.id)
+      })
+    }
 
     // promptAsync paths can deliver complete parts via message.updated even when
     // message.part.updated events are sparse or absent. Seed the part buffer
     // from message.parts when we have not seen per-part events for this message.
-    if (!this.partBuffer.has(msg.id)) {
+    if (!knownMessage) {
       const messageParts = (() => {
         const candidate: { parts?: unknown } = msg as { parts?: unknown }
         if (!Array.isArray(candidate.parts)) {
@@ -1394,7 +1405,11 @@ export class ThreadSessionRuntime {
         return
       }
 
-      const suppressFooter = this.hasUnrepliedUserMessage({
+      // Suppress footer if the run was interrupted before completing.
+      // Derived from the event buffer: a completed run has a step-finish
+      // part for one of its assistant messages; an interrupted run has
+      // step-start but no step-finish because the abort kills the stream.
+      const suppressFooter = !this.runCompletedNormally({
         sessionId: idleSessionId,
       })
       if (suppressFooter) {
@@ -1425,42 +1440,32 @@ export class ThreadSessionRuntime {
     })
   }
 
-  // Detects interrupted runs by checking for an unreplied user message.
-  // When the interrupt plugin aborts a running session, opencode emits
-  // session.idle without session.error. The signal is: a user message
-  // appeared in the event buffer after the last assistant message started,
-  // meaning the session was aborted before it could reply to the new message.
-  // In that case, suppress the footer — the interrupt plugin will resume
-  // the session to process the pending message.
-  private hasUnrepliedUserMessage({
+  // Derives whether the current run completed normally by scanning the event
+  // buffer for a step-finish part targeting one of the run's assistant messages.
+  // A completed run always has step-finish; an interrupted run (abort, interrupt
+  // plugin) has step-start but no step-finish because the stream was killed.
+  // Pure function over event buffer — no mutable flags needed.
+  private runCompletedNormally({
     sessionId,
   }: {
     sessionId: string
   }): boolean {
-    let lastUserMessageTimestamp = 0
-    let lastAssistantMessageTimestamp = 0
-
+    const assistantIds = this.assistantMessageIds
     for (const entry of this.eventBuffer) {
       const eventSessionId = getOpencodeEventSessionId(entry.event)
       if (eventSessionId !== sessionId) {
         continue
       }
-
-      if (entry.event.type !== 'message.updated') {
+      if (entry.event.type !== 'message.part.updated') {
         continue
       }
-
-      if (entry.event.properties.info.role === 'user') {
-        lastUserMessageTimestamp = entry.timestamp
-      } else if (entry.event.properties.info.role === 'assistant') {
-        lastAssistantMessageTimestamp = entry.timestamp
+      if (entry.event.properties.part.type === 'step-finish') {
+        if (assistantIds.has(entry.event.properties.part.messageID)) {
+          return true
+        }
       }
     }
-
-    // If the most recent user message is newer than the most recent assistant
-    // message, there's a pending user message that hasn't been replied to.
-    // This means the session was aborted (interrupted) before completing.
-    return lastUserMessageTimestamp > lastAssistantMessageTimestamp
+    return false
   }
 
   private async handleSessionError(properties: {
@@ -2306,6 +2311,8 @@ export class ThreadSessionRuntime {
   // so this only handles session ensure + model/agent + SDK call + state.
 
   private async dispatchPrompt(input: QueuedMessage): Promise<void> {
+    this.clearEventBuffer()
+
     // Initialize currentRun in the store (replaces resetPerRunState + dispatchStartTime)
     threadState.updateThread(this.threadId, (t) => ({
       ...t,

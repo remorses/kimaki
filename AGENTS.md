@@ -352,7 +352,7 @@ Kimaki works by creating threads on the first user message. The bot will then re
 
 tool parts are also displayed in Discord as messages, either prefixed with ┣ or ◼︎ for file edits or writes. we also display context usage info like percentage of context used at 10% windows, prefixed with ⬦. the tool calls displayed depend on the verbosity parameter. the default skips tool parts for parts like `thinking`, file reads and non `sideEffect` bash parts (sideEffect is a param passed by the model).
 
-at a assistant message normal completion we also display a footer message like `kimakivoice ⋅ main ⋅ 2m 30s ⋅ 71% ⋅ claude-opus-4-6`. with folder, branch, time, context used, model id.
+at assistant message normal completion we also display a footer message like `kimakivoice ⋅ main ⋅ 2m 30s ⋅ 71% ⋅ claude-opus-4-6`. with folder, branch, time, context used, model id. we should not show this message on interruptions or aborts.
 
 we also support voice user messages, these are transcribed with another model and sent with prefix `Transcribed message:`, shown by the bot.
 
