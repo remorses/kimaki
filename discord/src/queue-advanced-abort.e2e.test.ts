@@ -48,6 +48,13 @@ e2eTest('queue advanced: abort and retry', () => {
       const firstReply = await th.waitForBotReply({ timeout: 4_000 })
       expect(firstReply.content.trim().length).toBeGreaterThan(0)
 
+      // Wait for the first completion footer so it lands in a deterministic position
+      await waitForFooterMessage({
+        discord: ctx.discord,
+        threadId: thread.id,
+        timeout: 4_000,
+      })
+
       const before = await th.getMessages()
       const beforeBotCount = before.filter((m) => {
         return m.author.id === ctx.discord.botUserId
@@ -63,6 +70,18 @@ e2eTest('queue advanced: abort and retry', () => {
         timeout: 4_000,
       })
 
+      // The matcher emits "starting sleep 100" text before the long delay.
+      // Wait for it to land in Discord BEFORE aborting so the message is in a
+      // deterministic position and the abort produces no further stray messages.
+      await waitForBotMessageContaining({
+        discord: ctx.discord,
+        threadId: thread.id,
+        userId: TEST_USER_ID,
+        text: 'starting sleep',
+        afterUserMessageIncludes: 'PLUGIN_TIMEOUT_SLEEP_MARKER',
+        timeout: 4_000,
+      })
+
       const runtime = getRuntime(thread.id)
       expect(runtime).toBeDefined()
       if (!runtime) {
@@ -70,6 +89,13 @@ e2eTest('queue advanced: abort and retry', () => {
       }
 
       runtime.abortActiveRun('test-explicit-abort')
+
+      // Wait for abort to settle before sending next message
+      await waitForThreadPhase({
+        threadId: thread.id,
+        phase: 'idle',
+        timeout: 4_000,
+      })
 
       await th.user(TEST_USER_ID).sendMessage({
         content: 'Reply with exactly: papa',
@@ -98,12 +124,14 @@ e2eTest('queue advanced: abort and retry', () => {
       expect(await th.text()).toMatchInlineSnapshot(`
         "--- from: assistant (TestBot)
         ⬥ ok
+        --- from: assistant (TestBot)
+        *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2*
         --- from: user (queue-advanced-tester)
         PLUGIN_TIMEOUT_SLEEP_MARKER
-        --- from: user (queue-advanced-tester)
-        Reply with exactly: papa
         --- from: assistant (TestBot)
         ⬥ starting sleep 100
+        --- from: user (queue-advanced-tester)
+        Reply with exactly: papa
         --- from: assistant (TestBot)
         ⬥ ok
         --- from: assistant (TestBot)
@@ -381,7 +409,9 @@ e2eTest('queue advanced: abort and retry', () => {
         "--- from: assistant (TestBot)
         ⬥ ok
         --- from: user (queue-advanced-tester)
-        SLOW_ABORT_MARKER run long response"
+        SLOW_ABORT_MARKER run long response
+        --- from: assistant (TestBot)
+        *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2*"
       `)
       expect(settled.runState.phase).toBe('idle')
     },
