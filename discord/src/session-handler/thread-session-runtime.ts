@@ -337,6 +337,11 @@ export class ThreadSessionRuntime {
   private actionQueue: Array<() => Promise<void>> = []
   private processingAction = false
 
+  // Local-queue drain guards. These close the race window between local
+  // dispatch acceptance and the first busy/idle lifecycle event.
+  private localQueueDispatchInFlight = false
+  private localQueueAwaitingSessionBusy = false
+
   constructor(opts: RuntimeOptions) {
     this.threadId = opts.threadId
     this.projectDirectory = opts.projectDirectory
@@ -514,6 +519,8 @@ export class ThreadSessionRuntime {
       ...t,
       listenerController: undefined,
     }))
+    this.localQueueDispatchInFlight = false
+    this.localQueueAwaitingSessionBusy = false
     this.stopTyping()
   }
 
@@ -1456,6 +1463,7 @@ export class ThreadSessionRuntime {
     // The event is also pushed into the event buffer by handleEvent(),
     // so waitForEvent() consumers (abort settlement) will see it too.
     if (idleSessionId === sessionId) {
+      this.localQueueAwaitingSessionBusy = false
       const idleEventIndex = this.eventBuffer.length - 1
 
       // Suppress footer if the run was interrupted before completing.
@@ -1504,6 +1512,8 @@ export class ThreadSessionRuntime {
       )
       return
     }
+
+    this.localQueueAwaitingSessionBusy = false
 
     // Skip abort errors — they are expected when operations are cancelled
     if (properties.error?.name === 'MessageAbortedError') {
@@ -1698,11 +1708,13 @@ export class ThreadSessionRuntime {
     }
 
     if (properties.status.type === 'idle') {
+      this.localQueueAwaitingSessionBusy = false
       this.reconcileTyping({ sendImmediatePulse: false })
       return
     }
 
     if (properties.status.type === 'busy') {
+      this.localQueueAwaitingSessionBusy = false
       this.reconcileTyping({ sendImmediatePulse: true })
       return
     }
@@ -2077,6 +2089,8 @@ export class ThreadSessionRuntime {
         ? (
           stateAfterEnqueue.queueItems.length > 0
           && !threadState.hasBlockers(stateAfterEnqueue)
+          && !this.localQueueDispatchInFlight
+          && !this.localQueueAwaitingSessionBusy
           && !this.isMainSessionBusy()
         )
         : false
@@ -2238,6 +2252,9 @@ export class ThreadSessionRuntime {
     if (threadState.hasBlockers(thread)) {
       return
     }
+    if (this.localQueueDispatchInFlight || this.localQueueAwaitingSessionBusy) {
+      return
+    }
 
     const sessionBusy = thread.sessionId
       ? isSessionBusy({ events: this.eventBuffer, sessionId: thread.sessionId })
@@ -2273,9 +2290,15 @@ export class ThreadSessionRuntime {
     // The prompt call is long-running. Events continue to flow through
     // the action queue while the SDK call is in-flight. Event-derived busy
     // gating prevents concurrent local-queue dispatches.
+    this.localQueueDispatchInFlight = true
     void this.dispatchPrompt(next).catch(async (err) => {
       logger.error('[DISPATCH] Prompt dispatch failed:', err)
       void notifyError(err, 'Runtime prompt dispatch failed')
+    }).finally(() => {
+      this.localQueueDispatchInFlight = false
+      void this.dispatchAction(() => {
+        return this.tryDrainQueue({ showIndicator: true })
+      })
     })
   }
 
@@ -2649,6 +2672,7 @@ export class ThreadSessionRuntime {
     logger.log(
       `[DISPATCH] promptAsync accepted by opencode queue sessionId=${session.id} threadId=${this.threadId}`,
     )
+    this.localQueueAwaitingSessionBusy = true
   }
 
   // ── Phase 3: Session Ensure ──────────────────────────────────

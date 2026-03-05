@@ -162,13 +162,15 @@ export async function waitForBotMessageContaining({
   userId,
   text,
   afterUserMessageIncludes,
+  afterMessageId,
   timeout,
 }: {
   discord: DigitalDiscord
   threadId: string
-  userId: string
+  userId?: string
   text: string
   afterUserMessageIncludes?: string
+  afterMessageId?: string
   timeout: number
 }): Promise<APIMessage[]> {
   const start = Date.now()
@@ -176,24 +178,32 @@ export async function waitForBotMessageContaining({
   while (Date.now() - start < timeout) {
     const messages = await discord.thread(threadId).getMessages()
     lastMessages = messages
-    const afterIndex = afterUserMessageIncludes
-      ? messages.findIndex((message) => {
+    const afterIndex = (() => {
+      if (afterMessageId) {
+        return messages.findLastIndex((message) => {
+          return message.id === afterMessageId
+        })
+      }
+      if (afterUserMessageIncludes && userId) {
+        return messages.findLastIndex((message) => {
           return (
             message.author.id === userId &&
             message.content.includes(afterUserMessageIncludes)
           )
         })
-      : -1
+      }
+      return -1
+    })()
     // If the anchor user message hasn't appeared yet, skip this iteration
     // to avoid false-positives from old bot messages matching `text`.
-    if (afterUserMessageIncludes && afterIndex === -1) {
+    if ((afterUserMessageIncludes || afterMessageId) && afterIndex === -1) {
       await new Promise((resolve) => {
         setTimeout(resolve, 100)
       })
       continue
     }
     const match = messages.find((message, index) => {
-      if (afterUserMessageIncludes && afterIndex >= 0 && index <= afterIndex) {
+      if ((afterUserMessageIncludes || afterMessageId) && afterIndex >= 0 && index <= afterIndex) {
         return false
       }
       return (
@@ -217,6 +227,37 @@ export async function waitForBotMessageContaining({
     .join('\n')
   throw new Error(
     `Timed out waiting for bot message containing "${text}" in thread ${threadId}. Recent messages:\n${recent}`,
+  )
+}
+
+/** Poll until a specific message id appears in thread history. */
+export async function waitForMessageById({
+  discord,
+  threadId,
+  messageId,
+  timeout,
+}: {
+  discord: DigitalDiscord
+  threadId: string
+  messageId: string
+  timeout: number
+}): Promise<APIMessage> {
+  const start = Date.now()
+  while (Date.now() - start < timeout) {
+    const messages = await discord.thread(threadId).getMessages()
+    const message = messages.find((candidate) => {
+      return candidate.id === messageId
+    })
+    if (message) {
+      return message
+    }
+    await new Promise((resolve) => {
+      setTimeout(resolve, 100)
+    })
+  }
+
+  throw new Error(
+    `Timed out waiting for message ${messageId} in thread ${threadId}`,
   )
 }
 

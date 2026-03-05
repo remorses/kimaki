@@ -308,7 +308,15 @@ e2eTest('queue advanced: footer emission', () => {
         timeout: 12_000,
       })
 
-      const afterIndex = messages.findIndex((message) => {
+      const messagesWithFooter = await waitForFooterMessage({
+        discord: ctx.discord,
+        threadId: thread.id,
+        timeout: 12_000,
+        afterMessageIncludes: 'plugin-timeout-after',
+        afterAuthorId: TEST_USER_ID,
+      })
+
+      const afterIndex = messagesWithFooter.findIndex((message) => {
         return (
           message.author.id === TEST_USER_ID
           && message.content.includes('plugin-timeout-after')
@@ -326,11 +334,13 @@ e2eTest('queue advanced: footer emission', () => {
         --- from: user (queue-advanced-tester)
         Reply with exactly: plugin-timeout-after
         --- from: assistant (TestBot)
-        ⬥ ok"
+        ⬥ ok
+        --- from: assistant (TestBot)
+        *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2*"
       `)
       expect(afterIndex).toBeGreaterThanOrEqual(0)
 
-      const okReplyIndex = messages.findIndex((message, index) => {
+      const okReplyIndex = messagesWithFooter.findIndex((message, index) => {
         if (index <= afterIndex) {
           return false
         }
@@ -338,7 +348,7 @@ e2eTest('queue advanced: footer emission', () => {
       })
       expect(okReplyIndex).toBeGreaterThan(afterIndex)
 
-      const footerBeforeReply = messages.some((message, index) => {
+      const footerBeforeReply = messagesWithFooter.some((message, index) => {
         if (index <= afterIndex || index >= okReplyIndex) {
           return false
         }

@@ -41,6 +41,7 @@ import {
   cleanupTestSessions,
   waitForFooterMessage,
   waitForBotMessageContaining,
+  waitForMessageById,
   waitForBotMessageCount,
   waitForBotReplyAfterUserMessage,
   waitForThreadState,
@@ -174,7 +175,7 @@ function createDeterministicMatchers() {
     id: 'race-final-reply',
     priority: 110,
     when: {
-      rawPromptIncludes: 'Reply with exactly: race-final',
+      latestUserTextIncludes: 'Reply with exactly: race-final',
     },
     then: {
       parts: [
@@ -618,8 +619,9 @@ e2eTest('thread message queue ordering', () => {
   test(
     'normal messages bypass local queue and still show assistant text parts',
     async () => {
+      const setupPrompt = 'Reply with exactly: opencode-queue-setup'
       await discord.channel(TEXT_CHANNEL_ID).user(TEST_USER_ID).sendMessage({
-        content: 'Reply with exactly: opencode-queue-setup',
+        content: setupPrompt,
       })
 
       const thread = await discord.channel(TEXT_CHANNEL_ID).waitForThread({
@@ -633,9 +635,19 @@ e2eTest('thread message queue ordering', () => {
       const firstReply = await th.waitForBotReply({ timeout: 4_000 })
       expect(firstReply.content.trim().length).toBeGreaterThan(0)
 
-      await th.user(TEST_USER_ID).sendMessage({
-        content:
-          'Prompt from test: respond with short text for opencode queue mode.',
+      // Anchor follow-up on an already-completed first run so footer ordering
+      // is deterministic before we assert on the second prompt.
+      await waitForFooterMessage({
+        discord,
+        threadId: thread.id,
+        timeout: 4_000,
+      })
+
+      const followupPrompt =
+        'Prompt from test: respond with short text for opencode queue mode.'
+
+      const followupUserMessage = await th.user(TEST_USER_ID).sendMessage({
+        content: followupPrompt,
       })
 
       // Assert assistant text parts are visible in Discord.
@@ -644,28 +656,51 @@ e2eTest('thread message queue ordering', () => {
         threadId: thread.id,
         userId: TEST_USER_ID,
         text: '⬥ ok',
-        afterUserMessageIncludes: 'Prompt from test: respond with short text',
+        afterMessageId: followupUserMessage.id,
         timeout: 4_000,
       })
 
-      await waitForFooterMessage({
+      const messagesWithFollowupFooter = await waitForFooterMessage({
         discord,
         threadId: thread.id,
         timeout: 4_000,
-        afterMessageIncludes: 'Prompt from test: respond with short text',
+        afterMessageIncludes: followupPrompt,
         afterAuthorId: TEST_USER_ID,
       })
 
       expect(await th.text()).toMatchInlineSnapshot(`
         "--- from: assistant (TestBot)
         ⬥ ok
+        --- from: assistant (TestBot)
+        *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2*
         --- from: user (queue-tester)
         Prompt from test: respond with short text for opencode queue mode.
         --- from: assistant (TestBot)
-        *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2*
+        ⬥ ok
         --- from: assistant (TestBot)
-        ⬥ ok"
+        *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2*"
       `)
+      const followupUserIndex = messagesWithFollowupFooter.findIndex((message) => {
+        return message.id === followupUserMessage.id
+      })
+      const textPartAfterFollowupIndex = messagesWithFollowupFooter.findIndex((message, index) => {
+        return (
+          index > followupUserIndex &&
+          message.author.id === discord.botUserId &&
+          message.content.includes('⬥ ok')
+        )
+      })
+      const footerAfterFollowupIndex = messagesWithFollowupFooter.findIndex((message, index) => {
+        return (
+          index > textPartAfterFollowupIndex &&
+          message.author.id === discord.botUserId &&
+          message.content.startsWith('*') &&
+          message.content.includes('⋅')
+        )
+      })
+      expect(followupUserIndex).toBeGreaterThan(-1)
+      expect(textPartAfterFollowupIndex).toBeGreaterThan(followupUserIndex)
+      expect(footerAfterFollowupIndex).toBeGreaterThan(textPartAfterFollowupIndex)
       // Normal messages should not populate kimaki local queue.
       const noLocalQueueState = await waitForThreadState({
         threadId: thread.id,
@@ -761,10 +796,21 @@ e2eTest('thread message queue ordering', () => {
           options: [{ name: 'message', type: 3, value: 'Reply with exactly: race-final' }],
         })
 
-      await th.waitForInteractionAck({
+      const firstQueueAck = await th.waitForInteractionAck({
         interactionId: firstQueueInteractionId,
         timeout: 4_000,
       })
+      if (!firstQueueAck.messageId) {
+        throw new Error('Expected first /queue response message id')
+      }
+
+      const firstQueueAckMessage = await waitForMessageById({
+        discord,
+        threadId: thread.id,
+        messageId: firstQueueAck.messageId,
+        timeout: 4_000,
+      })
+      expect(firstQueueAckMessage.content).toContain('» **queue-tester:** Reply with exactly: race-final')
 
       const queuedPrompt = 'Reply with exactly: queued-from-slash'
       const { id: interactionId } = await th.user(TEST_USER_ID).runSlashCommand({
@@ -772,14 +818,51 @@ e2eTest('thread message queue ordering', () => {
         options: [{ name: 'message', type: 3, value: queuedPrompt }],
       })
 
-      await th.waitForInteractionAck({ interactionId, timeout: 4_000 })
+      const queuedAck = await th.waitForInteractionAck({ interactionId, timeout: 4_000 })
+      if (!queuedAck.messageId) {
+        throw new Error('Expected queued /queue response message id')
+      }
+
+      const queuedStatusMessage = await waitForMessageById({
+        discord,
+        threadId: thread.id,
+        messageId: queuedAck.messageId,
+        timeout: 4_000,
+      })
+      expect(queuedStatusMessage.content.startsWith('Queued message')).toBe(true)
 
       const expectedDispatchIndicator = `» **queue-tester:** ${queuedPrompt}`
-      await waitForBotMessageContaining({
+      const messagesWithDispatch = await waitForBotMessageContaining({
         discord,
         threadId: thread.id,
         userId: TEST_USER_ID,
         text: expectedDispatchIndicator,
+        afterMessageId: queuedStatusMessage.id,
+        timeout: 8_000,
+      })
+
+      const queuedStatusIndex = messagesWithDispatch.findIndex((message) => {
+        return message.id === queuedStatusMessage.id
+      })
+      const dispatchIndicatorIndex = messagesWithDispatch.findIndex((message) => {
+        return (
+          message.author.id === discord.botUserId &&
+          message.content.includes(expectedDispatchIndicator)
+        )
+      })
+      expect(queuedStatusIndex).toBeGreaterThan(-1)
+      expect(dispatchIndicatorIndex).toBeGreaterThan(queuedStatusIndex)
+
+      const dispatchIndicatorMessage = messagesWithDispatch[dispatchIndicatorIndex]
+      if (!dispatchIndicatorMessage) {
+        throw new Error('Expected dispatch indicator message')
+      }
+
+      await waitForBotMessageContaining({
+        discord,
+        threadId: thread.id,
+        text: '⬥ ok',
+        afterMessageId: dispatchIndicatorMessage.id,
         timeout: 8_000,
       })
 
@@ -787,35 +870,30 @@ e2eTest('thread message queue ordering', () => {
         discord,
         threadId: thread.id,
         timeout: 8_000,
-        afterMessageIncludes: expectedDispatchIndicator,
+        afterMessageIncludes: '⬥ ok',
         afterAuthorId: discord.botUserId,
-      })
-
-      const finalMessages = await th.getMessages()
-      const dispatchIndicatorIndex = finalMessages.findIndex((message) => {
-        return (
-          message.author.id === discord.botUserId &&
-          message.content.includes(expectedDispatchIndicator)
-        )
       })
 
       expect(await th.text()).toMatchInlineSnapshot(`
         "--- from: assistant (TestBot)
         ⬥ ok
         --- from: assistant (TestBot)
-        Queued message (position 1)
-        --- from: assistant (TestBot)
         *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2*
         --- from: assistant (TestBot)
         » **queue-tester:** Reply with exactly: race-final
         --- from: assistant (TestBot)
-        » **queue-tester:** Reply with exactly: queued-from-slash
+        Queued message (position 1)
         --- from: assistant (TestBot)
         ⬥ race-final
         --- from: assistant (TestBot)
+        *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2*
+        --- from: assistant (TestBot)
+        » **queue-tester:** Reply with exactly: queued-from-slash
+        --- from: assistant (TestBot)
+        ⬥ ok
+        --- from: assistant (TestBot)
         *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2*"
       `)
-      expect(dispatchIndicatorIndex).toBeGreaterThan(-1)
     },
     12_000,
   )
