@@ -279,7 +279,25 @@ kimaki writes logs to `<dataDir>/kimaki.log` (default `~/.kimaki/kimaki.log`). t
 
 to debug opencode event ordering, set `KIMAKI_LOG_OPENCODE_SESSION_EVENTS=1`. this writes jsonl files under `<dataDir>/opencode-session-events/` (one file per session id, like `ses_xxx.jsonl`). use `KIMAKI_OPENCODE_SESSION_EVENTS_DIR` to override the output directory.
 
-For example when running a test to debug events: `KIMAKI_OPENCODE_SESSION_EVENTS_DIR=/tmp/kimaki-test-3423 KIMAKI_LOG_OPENCODE_SESSION_EVENTS=1 pnpm test test-file.test.ts -t test-name`
+For example when running a test to debug events: `KIMAKI_OPENCODE_SESSION_EVENTS_DIR=./tmp/kimaki-test-3423 KIMAKI_LOG_OPENCODE_SESSION_EVENTS=1 pnpm test test-file.test.ts -t test-name`
+
+for live user-session debugging (without restarting with env vars), export the current in-memory event buffer with:
+
+`kimaki session export-events-jsonl --session <session_id> --out ./tmp/session-events.jsonl`
+
+use this when debugging session-state regressions (for example footer appearing after abort). the exported jsonl can be copied into `discord/src/session-handler/event-stream-fixtures/` and used to add/update `event-stream-state.test.ts` coverage for pure derivation helpers.
+
+runtime note: `ThreadSessionRuntime` keeps the last 1000 opencode events in memory per thread (`eventBuffer`) for event-sourcing derivation and waiters. the buffer stores a compacted event shape to avoid memory spikes.
+
+the compacted buffer strips/truncates these large fields:
+
+- `message.updated` user events: strip `info.system`, `info.summary`, `info.tools`
+- `message.part.updated` text/reasoning/snapshot: truncate long text fields
+- `message.part.updated` `step-start.snapshot`: truncate
+- `message.part.updated` tool states: replace `state.input` with `{}`
+- `message.part.updated` completed tool output: truncate `state.output` (for `task` tool keep only `task_id: ...`)
+- `message.part.updated` completed tool attachments: strip `state.attachments`
+- `message.part.updated` pending `state.raw` and error `state.error`: truncate
 
 the jsonl line includes runtime metadata (`threadId`, `activeSessionId`, `runPhase`, etc) and the raw opencode event under `.event`.
 
@@ -377,17 +395,6 @@ prefer existing derivation helpers from `event-stream-state.ts` (for example
 `wasRecentlyAborted`) over new mirrored flags:
 
 ```ts
-import {
-  isSessionBusy,
-  wasRecentlyAborted,
-  type EventBufferEntry,
-} from './session-handler/event-stream-state.js'
-
-type RunOutcome = {
-  isBusy: boolean
-  wasAbort: boolean
-  shouldShowFooter: boolean
-}
 
 export function deriveRunOutcome({
   events,
@@ -424,7 +431,7 @@ with fixture jsonl streams and inline snapshots.
 if mutable state is really needed, centralize it.
 
 - use `discord/src/store.ts` for global shared state so every read/write path is visible.
-- keep global state at a maximum minimum. every new field multiplies the number of possible app states and increases bug surface.
+- keep global state at a minimum. every new field multiplies the number of possible app states and increases bug surface.
 - prefer deriving values from events/existing state instead of storing mirrored flags.
 - if state is local-only, keep it local and encapsulated (for example a local `let count = 0` in one function/loop). do not promote temporary local state to global store.
 

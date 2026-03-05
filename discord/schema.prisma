@@ -13,9 +13,23 @@ model thread_sessions {
   created_at DateTime? @default(now())
 
   part_messages   part_messages[]
+  session_events  session_events[]
   scheduled_tasks scheduled_tasks[]
   thread_worktree thread_worktrees?
   ipc_requests    ipc_requests[]
+}
+
+model session_events {
+  id               Int       @id @default(autoincrement())
+  session_id       String
+  thread_id        String
+  timestamp        BigInt    // milliseconds since Unix epoch
+  event_json       String
+
+  thread thread_sessions @relation(fields: [thread_id], references: [thread_id], onDelete: Cascade, onUpdate: Cascade)
+
+  @@index([session_id, timestamp, id])
+  @@index([thread_id, timestamp, id])
 }
 
 model part_messages {

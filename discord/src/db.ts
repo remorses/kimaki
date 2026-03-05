@@ -193,6 +193,7 @@ async function migrateSchema(prisma: PrismaClient): Promise<void> {
   } catch {
     // session_thinking table may not exist in fresh installs
   }
+
 }
 
 /**

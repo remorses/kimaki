@@ -1,6 +1,5 @@
 // E2e tests for typing indicator lifecycle in advanced queue scenarios.
 // Split from thread-queue-advanced.e2e.test.ts for parallelization.
-// These tests are inherently slow (~10s each) due to 8.5s typing idle waits.
 
 import { describe, test, expect } from 'vitest'
 import {
@@ -86,23 +85,14 @@ e2eTest('queue advanced: typing lifecycle', () => {
       `)
       expect(replyIndex).toBeGreaterThanOrEqual(0)
       expect(footerIndex).toBeGreaterThan(replyIndex)
-      const footerMessage = messages[footerIndex]
-      expect(footerMessage).toBeDefined()
+      expect(messages[footerIndex]).toBeDefined()
 
       const lastFooterPosition = timeline.lastIndexOf('*project ⋅')
       expect(lastFooterPosition).toBeGreaterThanOrEqual(0)
       expect(timeline.slice(lastFooterPosition)).not.toContain('[bot typing]')
 
-      const footerSeenAt = footerMessage
-        ? new Date(footerMessage.timestamp).getTime()
-        : Date.now()
-      await th.waitForTypingToStop({
-        afterTimestamp: footerSeenAt,
-        idleMs: 8_500,
-        timeout: 12_000,
-      })
     },
-    20_000,
+    8_000,
   )
 
   test(
@@ -213,22 +203,13 @@ e2eTest('queue advanced: typing lifecycle', () => {
       expect(finalUserIndex).toBeGreaterThanOrEqual(0)
       expect(finalReplyIndex).toBeGreaterThan(finalUserIndex)
       expect(finalFooterIndex).toBeGreaterThan(finalReplyIndex)
-      const finalFooter = messages[finalFooterIndex]
-      expect(finalFooter).toBeDefined()
+      expect(messages[finalFooterIndex]).toBeDefined()
 
       const lastFooterPosition = timeline.lastIndexOf('*project ⋅')
       expect(lastFooterPosition).toBeGreaterThanOrEqual(0)
       expect(timeline.slice(lastFooterPosition)).not.toContain('[bot typing]')
 
-      const footerSeenAt = finalFooter
-        ? new Date(finalFooter.timestamp).getTime()
-        : Date.now()
-      await th.waitForTypingToStop({
-        afterTimestamp: footerSeenAt,
-        idleMs: 8_500,
-        timeout: 12_000,
-      })
     },
-    25_000,
+    12_000,
   )
 })

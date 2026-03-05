@@ -60,7 +60,11 @@ export function getHranaUrl(): string | null {
  * Handles single-instance enforcement: if the port is occupied, kills the
  * existing process first.
  */
-export async function startHranaServer({ dbPath }: { dbPath: string }) {
+export async function startHranaServer({
+  dbPath,
+}: {
+  dbPath: string
+}) {
   if (server && db && hranaUrl) return hranaUrl
 
   const port = getLockPort()
@@ -419,17 +423,19 @@ export function createHranaHandler(
   database: Database.Database,
 ): http.RequestListener {
   return (req, res) => {
-    if (req.method === 'GET' && req.url === '/health') {
+    const requestUrl = new URL(req.url || '/', 'http://127.0.0.1')
+
+    if (req.method === 'GET' && requestUrl.pathname === '/health') {
       res.writeHead(200, { 'content-type': 'application/json' })
       res.end(JSON.stringify({ status: 'ok', pid: process.pid }))
       return
     }
-    if (req.method === 'GET' && req.url === '/v2') {
+    if (req.method === 'GET' && requestUrl.pathname === '/v2') {
       res.writeHead(200, { 'content-type': 'application/json' })
       res.end('{"version":"hrana-v2"}')
       return
     }
-    if (req.method === 'POST' && req.url === '/v2/pipeline') {
+    if (req.method === 'POST' && requestUrl.pathname === '/v2/pipeline') {
       const chunks: Buffer[] = []
       let aborted = false
       req.on('error', () => {

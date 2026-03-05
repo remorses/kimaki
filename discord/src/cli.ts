@@ -43,6 +43,7 @@ import {
   findChannelByAppId,
   getThreadSession,
   getThreadIdBySessionId,
+  getSessionEventSnapshot,
   getPrisma,
   createScheduledTask,
   listScheduledTasks,
@@ -61,10 +62,16 @@ import {
 import { formatWorktreeName } from './commands/worktree.js'
 import { WORKTREE_PREFIX } from './commands/merge-worktree.js'
 import type { ThreadStartMarker } from './system-message.js'
+import {
+  isSessionBusy,
+  type EventBufferEntry,
+} from './session-handler/event-stream-state.js'
+import { getOpencodeEventSessionId } from './session-handler/opencode-session-event-log.js'
 import yaml from 'js-yaml'
 import type {
   OpencodeClient,
   Command as OpencodeCommand,
+  Event as OpenCodeEvent,
 } from '@opencode-ai/sdk/v2'
 import {
   Events,
@@ -3659,6 +3666,142 @@ cli
       )
       process.exit(EXIT_NO_RESTART)
     }
+  })
+
+cli
+  .command(
+    'session export-events-jsonl',
+    'Export persisted session events from SQLite to JSONL for debugging Kimaki runtime bugs',
+  )
+  .option(
+    '--session <sessionId>',
+    'Session ID whose persisted event stream should be exported',
+  )
+  .option(
+    '--out <file>',
+    'Output .jsonl path (useful for reproducing Kimaki issues in event-stream-state tests)',
+  )
+  .action(async (options) => {
+    const sessionId =
+      typeof options.session === 'string' ? options.session.trim() : ''
+    if (!sessionId) {
+      cliLogger.error('Missing --session value')
+      process.exit(EXIT_NO_RESTART)
+    }
+
+    const outFile = typeof options.out === 'string' ? options.out.trim() : ''
+    if (!outFile) {
+      cliLogger.error('Missing --out value')
+      process.exit(EXIT_NO_RESTART)
+    }
+    if (path.extname(outFile).toLowerCase() !== '.jsonl') {
+      cliLogger.error('--out must point to a .jsonl file')
+      process.exit(EXIT_NO_RESTART)
+    }
+
+    const outPath = path.resolve(outFile)
+    const rows = await getSessionEventSnapshot({ sessionId })
+    if (rows.length === 0) {
+      cliLogger.error(
+        `No persisted events found for session ${sessionId}. The session may not have emitted events yet.`,
+      )
+      process.exit(EXIT_NO_RESTART)
+    }
+
+    const parsedRows = rows.flatMap((row) => {
+      const parsed = errore.try({
+        try: () => {
+          return JSON.parse(row.event_json) as OpenCodeEvent
+        },
+        catch: (error) => {
+          return new Error('Failed to parse persisted event JSON', {
+            cause: error,
+          })
+        },
+      })
+      if (parsed instanceof Error) {
+        cliLogger.warn(
+          `Skipping invalid persisted event row ${row.id}: ${parsed.message}`,
+        )
+        return []
+      }
+
+      return [{ row, event: parsed }]
+    })
+
+    if (parsedRows.length === 0) {
+      cliLogger.error(
+        `No valid persisted events found for session ${sessionId}.`,
+      )
+      process.exit(EXIT_NO_RESTART)
+    }
+
+    const eventBuffer: EventBufferEntry[] = parsedRows.map(({ row, event }) => {
+      return { event, timestamp: Number(row.timestamp) }
+    })
+
+    let projectDirectory = ''
+    let sdkDirectory = ''
+    let latestAssistantMessageId: string | undefined
+    const assistantMessageIds = new Set<string>()
+
+    const lines = parsedRows.map(({ row, event }, index) => {
+      if (event.type === 'session.updated') {
+        if (!projectDirectory) {
+          projectDirectory = event.properties.info.directory
+        }
+        if (!sdkDirectory) {
+          sdkDirectory = event.properties.info.directory
+        }
+      }
+
+      if (event.type === 'message.updated') {
+        const messageInfo = event.properties.info
+        if (messageInfo.sessionID === sessionId) {
+          if (messageInfo.role === 'assistant') {
+            if (!projectDirectory && messageInfo.path?.root) {
+              projectDirectory = messageInfo.path.root
+            }
+            if (!sdkDirectory && messageInfo.path?.cwd) {
+              sdkDirectory = messageInfo.path.cwd
+            }
+            assistantMessageIds.add(messageInfo.id)
+            latestAssistantMessageId = messageInfo.id
+          }
+        }
+      }
+
+      const eventSessionId = getOpencodeEventSessionId(event)
+      const runPhase: 'idle' | 'running' | 'none' = isSessionBusy({
+        events: eventBuffer,
+        sessionId,
+        upToIndex: index,
+      })
+        ? 'running'
+        : 'idle'
+
+      return JSON.stringify({
+        timestamp: new Date(Number(row.timestamp)).toISOString(),
+        timestampMs: Number(row.timestamp),
+        threadId: row.thread_id,
+        projectDirectory,
+        sdkDirectory,
+        activeSessionId: sessionId,
+        eventSessionId: eventSessionId || sessionId,
+        runPhase,
+        latestAssistantMessageId,
+        assistantMessageCount: assistantMessageIds.size,
+        event,
+      })
+    })
+    const jsonl = `${lines.join('\n')}${lines.length > 0 ? '\n' : ''}`
+
+    fs.mkdirSync(path.dirname(outPath), { recursive: true })
+    fs.writeFileSync(outPath, jsonl, 'utf8')
+    cliLogger.log(
+      `Exported ${lines.length} events from ${sessionId} to ${outPath}`,
+    )
+    process.exit(0)
   })
 
 cli

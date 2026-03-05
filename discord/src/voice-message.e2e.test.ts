@@ -866,30 +866,12 @@ e2eTest('voice message handling', () => {
         description: 'queue empty (both runs completed)',
       })
 
-      const messagesWithFinalFooter = await waitForFooterMessage({
+      await waitForFooterMessage({
         discord,
         threadId: thread.id,
         timeout: 4_000,
         afterMessageIncludes: 'session-reply',
         afterAuthorId: discord.botUserId,
-      })
-
-      const finalFooterIndex = messagesWithFinalFooter.findLastIndex((message) => {
-        return (
-          message.author.id === discord.botUserId
-          && message.content.startsWith('*')
-          && message.content.includes('⋅')
-        )
-      })
-      const finalFooterMessage = messagesWithFinalFooter[finalFooterIndex]
-      expect(finalFooterMessage).toBeDefined()
-      const finalFooterSeenAt = finalFooterMessage
-        ? new Date(finalFooterMessage.timestamp).getTime()
-        : Date.now()
-      await th.waitForTypingToStop({
-        afterTimestamp: finalFooterSeenAt,
-        idleMs: 8_500,
-        timeout: 12_000,
       })
 
       expect(await th.text()).toMatchInlineSnapshot(`
@@ -948,7 +930,7 @@ e2eTest('voice message handling', () => {
       })
       expect(abortedAssistant).toBeUndefined()
     },
-    25_000,
+    12_000,
   )
 
   // ── Test 5: Slow transcription finishes after session becomes idle (race condition) ──

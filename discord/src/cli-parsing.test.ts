@@ -17,6 +17,10 @@ function createCliForIdParsing() {
     .command('session search <query>', 'Search sessions')
     .option('--channel <channelId>', 'Discord channel ID')
     .option('--project <path>', 'Project path')
+  cli
+    .command('session export-events-jsonl', 'Export in-memory events to JSONL')
+    .option('--session <sessionId>', 'Session ID')
+    .option('--out <file>', 'Output path')
 
   cli
     .command('add-project', 'Add a project')
@@ -104,6 +108,33 @@ describe('goke CLI ID parsing', () => {
     expect(typeof result.args[0]).toBe('string')
     expect(result.options.channel).toBe(channelId)
     expect(typeof result.options.channel).toBe('string')
+  })
+
+  test('keeps session export options as strings', () => {
+    const cli = createCliForIdParsing()
+    const sessionId = '001111222233334444'
+    const outPath = './tmp/session-events.jsonl'
+
+    const result = cli.parse(
+      [
+        'node',
+        'kimaki',
+        'session',
+        'export-events-jsonl',
+        '--session',
+        sessionId,
+        '--out',
+        outPath,
+      ],
+      {
+        run: false,
+      },
+    )
+
+    expect(result.options.session).toBe(sessionId)
+    expect(typeof result.options.session).toBe('string')
+    expect(result.options.out).toBe(outPath)
+    expect(typeof result.options.out).toBe('string')
   })
 
   test('keeps --send-at cron string intact', () => {

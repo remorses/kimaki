@@ -3,6 +3,7 @@
 // API keys, and model preferences in <dataDir>/discord-sessions.db.
 
 import { getPrisma, closePrisma } from './db.js'
+import type { Prisma, session_events } from './generated/client.js'
 
 import { store } from './store.js'
 import { createLogger, LogPrefix } from './logger.js'
@@ -1003,6 +1004,98 @@ export async function getAllThreadSessionIds(): Promise<string[]> {
     select: { session_id: true },
   })
   return rows.map((row) => row.session_id).filter((id) => id !== '')
+}
+
+export async function appendSessionEventsSinceLastTimestamp({
+  sessionId,
+  events,
+}: {
+  sessionId: string
+  events: Prisma.session_eventsCreateManyInput[]
+}): Promise<number> {
+  if (events.length === 0) {
+    return 0
+  }
+
+  const prisma = await getPrisma()
+  const sortedEvents = [...events]
+    .sort((a, b) => {
+      if (a.timestamp < b.timestamp) {
+        return -1
+      }
+      if (a.timestamp > b.timestamp) {
+        return 1
+      }
+      return 0
+    })
+
+  const latestPersisted = await prisma.session_events.findFirst({
+    where: {
+      session_id: sessionId,
+    },
+    orderBy: [{ timestamp: 'desc' }, { id: 'desc' }],
+    select: {
+      timestamp: true,
+    },
+  })
+
+  const eventsToInsert = sortedEvents.filter((event) => {
+    if (!latestPersisted) {
+      return true
+    }
+    return event.timestamp > latestPersisted.timestamp
+  })
+
+  if (eventsToInsert.length === 0) {
+    return 0
+  }
+
+  await prisma.$transaction(async (tx) => {
+    await tx.session_events.createMany({
+      data: eventsToInsert,
+    })
+
+    const staleRows = await tx.session_events.findMany({
+      where: {
+        session_id: sessionId,
+      },
+      orderBy: [{ timestamp: 'desc' }, { id: 'desc' }],
+      skip: 1000,
+      select: {
+        id: true,
+      },
+    })
+    if (staleRows.length === 0) {
+      return
+    }
+
+    await tx.session_events.deleteMany({
+      where: {
+        id: {
+          in: staleRows.map((row) => {
+            return row.id
+          }),
+        },
+      },
+    })
+  })
+
+  return eventsToInsert.length
+}
+
+export async function getSessionEventSnapshot({
+  sessionId,
+}: {
+  sessionId: string
+}): Promise<session_events[]> {
+  const prisma = await getPrisma()
+  return prisma.session_events.findMany({
+    where: {
+      session_id: sessionId,
+    },
+    orderBy: [{ timestamp: 'asc' }, { id: 'asc' }],
+    take: 1000,
+  })
 }
 
 // ============================================================================

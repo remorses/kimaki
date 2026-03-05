@@ -69,6 +69,7 @@ import { registerInteractionHandler } from './interaction-handler.js'
 import { getDiscordRestApiUrl } from './discord-urls.js'
 import { stopHranaServer } from './hrana-server.js'
 import { notifyError } from './sentry.js'
+import { flushDebouncedProcessCallbacks } from './debounced-process-flush.js'
 
 export {
   initDatabase,
@@ -1151,6 +1152,13 @@ export async function startDiscordBot({
 
     try {
       await stopTaskRunner()
+
+      await flushDebouncedProcessCallbacks().catch((error) => {
+        discordLogger.warn(
+          'Failed to flush debounced process callbacks:',
+          error instanceof Error ? error.message : String(error),
+        )
+      })
 
       // Cancel pending IPC requests so plugin tools don't hang
       await cancelAllPendingIpcRequests().catch((e) => {

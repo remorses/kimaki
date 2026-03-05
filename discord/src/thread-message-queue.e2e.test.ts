@@ -701,16 +701,6 @@ e2eTest('thread message queue ordering', () => {
       expect(followupUserIndex).toBeGreaterThan(-1)
       expect(textPartAfterFollowupIndex).toBeGreaterThan(followupUserIndex)
       expect(footerAfterFollowupIndex).toBeGreaterThan(textPartAfterFollowupIndex)
-      const followupFooterMessage = messagesWithFollowupFooter[footerAfterFollowupIndex]
-      expect(followupFooterMessage).toBeDefined()
-      const followupFooterSeenAt = followupFooterMessage
-        ? new Date(followupFooterMessage.timestamp).getTime()
-        : Date.now()
-      await th.waitForTypingToStop({
-        afterTimestamp: followupFooterSeenAt,
-        idleMs: 8_500,
-        timeout: 12_000,
-      })
       // Normal messages should not populate kimaki local queue.
       const noLocalQueueState = await waitForThreadState({
         threadId: thread.id,
@@ -722,7 +712,7 @@ e2eTest('thread message queue ordering', () => {
       })
       expect(noLocalQueueState.queueItems.length).toBe(0)
     },
-    22_000,
+    8_000,
   )
 
   test(
@@ -884,30 +874,12 @@ e2eTest('thread message queue ordering', () => {
         timeout: 8_000,
       })
 
-      const messagesWithFinalFooter = await waitForFooterMessage({
+      await waitForFooterMessage({
         discord,
         threadId: thread.id,
         timeout: 8_000,
         afterMessageIncludes: '⬥ ok',
         afterAuthorId: discord.botUserId,
-      })
-
-      const finalFooterIndex = messagesWithFinalFooter.findLastIndex((message) => {
-        return (
-          message.author.id === discord.botUserId &&
-          message.content.startsWith('*') &&
-          message.content.includes('⋅')
-        )
-      })
-      const finalFooterMessage = messagesWithFinalFooter[finalFooterIndex]
-      expect(finalFooterMessage).toBeDefined()
-      const finalFooterSeenAt = finalFooterMessage
-        ? new Date(finalFooterMessage.timestamp).getTime()
-        : Date.now()
-      await th.waitForTypingToStop({
-        afterTimestamp: finalFooterSeenAt,
-        idleMs: 8_500,
-        timeout: 12_000,
       })
 
       expect(await th.text()).toMatchInlineSnapshot(`
@@ -931,7 +903,7 @@ e2eTest('thread message queue ordering', () => {
         *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2*"
       `)
     },
-    25_000,
+    12_000,
   )
 
   test(

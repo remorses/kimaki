@@ -4,6 +4,15 @@ CREATE TABLE IF NOT EXISTS "thread_sessions" (
     "session_id" TEXT NOT NULL,
     "created_at" DATETIME DEFAULT CURRENT_TIMESTAMP
 );
+CREATE TABLE IF NOT EXISTS "session_events" (
+    "id" INTEGER NOT NULL PRIMARY KEY AUTOINCREMENT,
+    "session_id" TEXT NOT NULL,
+    "thread_id" TEXT NOT NULL,
+    "timestamp" BIGINT NOT NULL,
+    "event_json" TEXT NOT NULL,
+    CONSTRAINT "session_events_thread_id_fkey" FOREIGN KEY ("thread_id") REFERENCES "thread_sessions" ("thread_id") ON DELETE CASCADE ON UPDATE CASCADE
+);
+CREATE TABLE sqlite_sequence(name,seq);
 CREATE TABLE IF NOT EXISTS "part_messages" (
     "part_id" TEXT NOT NULL PRIMARY KEY,
     "message_id" TEXT NOT NULL,
@@ -123,7 +132,6 @@ CREATE TABLE IF NOT EXISTS "scheduled_tasks" (
     CONSTRAINT "scheduled_tasks_channel_id_fkey" FOREIGN KEY ("channel_id") REFERENCES "channel_directories" ("channel_id") ON DELETE SET NULL ON UPDATE CASCADE,
     CONSTRAINT "scheduled_tasks_thread_id_fkey" FOREIGN KEY ("thread_id") REFERENCES "thread_sessions" ("thread_id") ON DELETE SET NULL ON UPDATE CASCADE
 );
-CREATE TABLE sqlite_sequence(name,seq);
 CREATE TABLE IF NOT EXISTS "session_start_sources" (
     "session_id" TEXT NOT NULL PRIMARY KEY,
     "schedule_kind" TEXT NOT NULL,
@@ -154,6 +162,8 @@ CREATE TABLE IF NOT EXISTS "ipc_requests" (
     "updated_at" DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
     CONSTRAINT "ipc_requests_thread_id_fkey" FOREIGN KEY ("thread_id") REFERENCES "thread_sessions" ("thread_id") ON DELETE RESTRICT ON UPDATE CASCADE
 );
+CREATE INDEX "session_events_session_id_timestamp_id_idx" ON "session_events"("session_id", "timestamp", "id");
+CREATE INDEX "session_events_thread_id_timestamp_id_idx" ON "session_events"("thread_id", "timestamp", "id");
 CREATE INDEX "scheduled_tasks_status_next_run_at_idx" ON "scheduled_tasks"("status", "next_run_at");
 CREATE INDEX "scheduled_tasks_channel_id_status_idx" ON "scheduled_tasks"("channel_id", "status");
 CREATE INDEX "scheduled_tasks_thread_id_status_idx" ON "scheduled_tasks"("thread_id", "status");

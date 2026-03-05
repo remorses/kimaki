@@ -44,6 +44,8 @@ import {
   setSessionAgent,
   getVariantCascade,
   setSessionStartSource,
+  appendSessionEventsSinceLastTimestamp,
+  getSessionEventSnapshot,
 } from '../database.js'
 import {
   showPermissionButtons,
@@ -80,6 +82,7 @@ import {
   getRunStartTimeForIdle,
   isDerivedSubtaskSession,
   shouldEmitFooter,
+  type EventBufferEntry,
 } from './event-stream-state.js'
 
 // Track multiple pending permissions per thread (keyed by permission ID).
@@ -106,6 +109,7 @@ import {
 } from '../thinking-utils.js'
 import { execAsync } from '../worktree-utils.js'
 import { notifyError } from '../sentry.js'
+import { createDebouncedProcessFlush } from '../debounced-process-flush.js'
 
 const logger = createLogger(LogPrefix.SESSION)
 const discordLogger = createLogger(LogPrefix.DISCORD)
@@ -329,7 +333,12 @@ export class ThreadSessionRuntime {
   // after a given point in time (e.g. wait for session.idle after abort).
   // Generic: any future "wait for X event" can reuse this buffer.
   private static EVENT_BUFFER_MAX = 1000
-  private eventBuffer: Array<{ event: OpenCodeEvent; timestamp: number }> = []
+  private static EVENT_BUFFER_DB_FLUSH_MS = 2_000
+  private static EVENT_BUFFER_TEXT_MAX_CHARS = 512
+  private eventBuffer: EventBufferEntry[] = []
+  private persistEventBufferDebounced: ReturnType<
+    typeof createDebouncedProcessFlush
+  >
 
   // Serialized action queue for per-thread runtime transitions.
   // Ingress and event handling both flow through this queue to keep ordering
@@ -348,6 +357,18 @@ export class ThreadSessionRuntime {
       ...t,
       listenerController: new AbortController(),
     }))
+    this.persistEventBufferDebounced = createDebouncedProcessFlush({
+      waitMs: ThreadSessionRuntime.EVENT_BUFFER_DB_FLUSH_MS,
+      callback: async () => {
+        await this.persistSessionEventsToDatabase()
+      },
+      onError: (error) => {
+        logger.error(
+          `[SESSION EVENT DB] Debounced persistence failed for thread ${this.threadId}:`,
+          error,
+        )
+      },
+    })
   }
 
   // Read own state from global store
@@ -367,6 +388,78 @@ export class ThreadSessionRuntime {
   /** The listener AbortSignal, used to pass to SDK subscribe calls. */
   private get listenerSignal(): AbortSignal | undefined {
     return this.state?.listenerController?.signal
+  }
+
+  private async hydrateSessionEventsFromDatabase({
+    sessionId,
+  }: {
+    sessionId: string
+  }): Promise<void> {
+    if (this.eventBuffer.length > 0) {
+      return
+    }
+
+    const rows = await getSessionEventSnapshot({ sessionId })
+    if (rows.length === 0) {
+      return
+    }
+
+    const hydratedEvents: EventBufferEntry[] = rows.flatMap((row) => {
+      const eventResult = errore.try({
+        try: () => {
+          return JSON.parse(row.event_json) as OpenCodeEvent
+        },
+        catch: (error) => {
+          return new Error('Failed to parse persisted session event JSON', {
+            cause: error,
+          })
+        },
+      })
+      if (eventResult instanceof Error) {
+        logger.warn(
+          `[SESSION EVENT DB] Skipping invalid persisted event row for session ${sessionId}: ${eventResult.message}`,
+        )
+        return []
+      }
+      return [
+        {
+          event: eventResult,
+          timestamp: Number(row.timestamp),
+        },
+      ]
+    })
+
+    this.eventBuffer = hydratedEvents.slice(-ThreadSessionRuntime.EVENT_BUFFER_MAX)
+    logger.log(
+      `[SESSION EVENT DB] Hydrated ${this.eventBuffer.length} events for session ${sessionId}`,
+    )
+  }
+
+  private async persistSessionEventsToDatabase(): Promise<void> {
+    const sessionId = this.state?.sessionId
+    if (!sessionId) {
+      return
+    }
+
+    const events = this.eventBuffer.flatMap((entry) => {
+      const eventSessionId = getOpencodeEventSessionId(entry.event)
+      if (eventSessionId !== sessionId) {
+        return []
+      }
+      return [
+        {
+          session_id: sessionId,
+          thread_id: this.threadId,
+          timestamp: BigInt(entry.timestamp),
+          event_json: JSON.stringify(entry.event),
+        },
+      ]
+    })
+
+    await appendSessionEventsSinceLastTimestamp({
+      sessionId,
+      events,
+    })
   }
 
   private nextAbortId(reason: string): string {
@@ -514,14 +607,99 @@ export class ThreadSessionRuntime {
       ...t,
       listenerController: undefined,
     }))
+    void this.persistEventBufferDebounced.dispose()
     this.stopTyping()
   }
 
+  private compactTextForEventBuffer(text: string): string {
+    if (text.length <= ThreadSessionRuntime.EVENT_BUFFER_TEXT_MAX_CHARS) {
+      return text
+    }
+    return `${text.slice(0, ThreadSessionRuntime.EVENT_BUFFER_TEXT_MAX_CHARS)}…`
+  }
+
+  private compactEventForEventBuffer(event: OpenCodeEvent): OpenCodeEvent {
+    if (event.type !== 'message.updated' && event.type !== 'message.part.updated') {
+      return event
+    }
+
+    const compacted = structuredClone(event)
+
+    if (compacted.type === 'message.updated') {
+      if (compacted.properties.info.role !== 'user') {
+        return compacted
+      }
+      delete compacted.properties.info.system
+      delete compacted.properties.info.summary
+      delete compacted.properties.info.tools
+      return compacted
+    }
+
+    const part = compacted.properties.part
+
+    if (part.type === 'text') {
+      part.text = this.compactTextForEventBuffer(part.text)
+      return compacted
+    }
+
+    if (part.type === 'reasoning') {
+      part.text = this.compactTextForEventBuffer(part.text)
+      return compacted
+    }
+
+    if (part.type === 'snapshot') {
+      part.snapshot = this.compactTextForEventBuffer(part.snapshot)
+      return compacted
+    }
+
+    if (part.type === 'step-start' && part.snapshot) {
+      part.snapshot = this.compactTextForEventBuffer(part.snapshot)
+      return compacted
+    }
+
+    if (part.type !== 'tool') {
+      return compacted
+    }
+
+    const state = part.state
+    state.input = {}
+
+    if (state.status === 'pending') {
+      state.raw = this.compactTextForEventBuffer(state.raw)
+      return compacted
+    }
+
+    if (state.status === 'running') {
+      return compacted
+    }
+
+    if (state.status === 'completed') {
+      state.output = this.compactTextForEventBuffer(state.output)
+      delete state.attachments
+      return compacted
+    }
+
+    if (state.status === 'error') {
+      state.error = this.compactTextForEventBuffer(state.error)
+      return compacted
+    }
+
+    return compacted
+  }
+
   private appendEventToBuffer(event: OpenCodeEvent): void {
-    this.eventBuffer.push({ event, timestamp: Date.now() })
+    const lastTimestamp = this.eventBuffer[this.eventBuffer.length - 1]?.timestamp || 0
+    const now = Date.now()
+    const timestamp = now > lastTimestamp ? now : lastTimestamp + 1
+
+    this.eventBuffer.push({
+      event: this.compactEventForEventBuffer(event),
+      timestamp,
+    })
     if (this.eventBuffer.length > ThreadSessionRuntime.EVENT_BUFFER_MAX) {
       this.eventBuffer.splice(0, this.eventBuffer.length - ThreadSessionRuntime.EVENT_BUFFER_MAX)
     }
+    this.persistEventBufferDebounced.trigger()
   }
 
   // Queue-dispatch lifecycle markers are synthetic buffer-only events.
@@ -1506,6 +1684,7 @@ export class ThreadSessionRuntime {
         suppressFooter,
         idleEventIndex,
       })
+      await this.persistEventBufferDebounced.flush()
       return
     }
   }
@@ -1536,6 +1715,7 @@ export class ThreadSessionRuntime {
       logger.log(
         `[SESSION ERROR] Operation aborted (expected) sessionId=${sessionId} ${this.formatRunStateForLog()}`,
       )
+      await this.persistEventBufferDebounced.flush()
       return
     }
 
@@ -1545,6 +1725,7 @@ export class ThreadSessionRuntime {
       this.thread,
       `✗ opencode session error: ${errorMessage}`,
     )
+    await this.persistEventBufferDebounced.flush()
   }
 
   private async handlePermissionAsked(
@@ -2772,6 +2953,7 @@ export class ThreadSessionRuntime {
     // Store session in DB and thread state
     await setThreadSession(this.thread.id, session.id)
     threadState.setSessionId(this.threadId, session.id)
+    await this.hydrateSessionEventsFromDatabase({ sessionId: session.id })
 
     // Store session start source for scheduled tasks
     if (createdNewSession && sessionStartScheduleKind) {
