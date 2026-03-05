@@ -768,6 +768,13 @@ async function registerCommands({
       .setDMPermission(false)
       .toJSON(),
     new SlashCommandBuilder()
+      .setName('stop-opencode-server')
+      .setDescription(
+        'Stop the opencode server if inactivity is at least 60 minutes',
+      )
+      .setDMPermission(false)
+      .toJSON(),
+    new SlashCommandBuilder()
       .setName('run-shell-command')
       .setDescription(
         'Run a shell command in the project directory. Tip: prefix messages with ! as shortcut',

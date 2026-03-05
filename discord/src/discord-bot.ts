@@ -70,6 +70,7 @@ import { getDiscordRestApiUrl } from './discord-urls.js'
 import { stopHranaServer } from './hrana-server.js'
 import { notifyError } from './sentry.js'
 import { flushDebouncedProcessCallbacks } from './debounced-process-flush.js'
+import { startRuntimeIdleSweeper } from './runtime-idle-sweeper.js'
 
 export {
   initDatabase,
@@ -1171,6 +1172,7 @@ export async function startDiscordBot({
 
   startHeapMonitor()
   const stopTaskRunner = startTaskRunner({ token })
+  const stopRuntimeIdleSweeper = startRuntimeIdleSweeper()
 
   const handleShutdown = async (signal: string, { skipExit = false } = {}) => {
     discordLogger.log(`Received ${signal}, cleaning up...`)
@@ -1182,6 +1184,7 @@ export async function startDiscordBot({
     ;(global as any).shuttingDown = true
 
     try {
+      await stopRuntimeIdleSweeper()
       await stopTaskRunner()
 
       await flushDebouncedProcessCallbacks().catch((error) => {

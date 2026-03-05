@@ -594,6 +594,65 @@ export function getOpencodeClient(directory: string): OpencodeClient | null {
   return entry?.client ?? null
 }
 
+export async function stopOpencodeServer(
+  directory: string,
+): Promise<boolean> {
+  const existing = opencodeServers.get(directory)
+  if (!existing) {
+    return false
+  }
+
+  opencodeLogger.log(
+    `Stopping opencode server for directory: ${directory} (pid: ${existing.process.pid})`,
+  )
+  if (!existing.process.killed) {
+    const killResult = errore.try({
+      try: () => {
+        existing.process.kill('SIGTERM')
+      },
+      catch: (error) => {
+        return new Error(
+          `Failed to send SIGTERM to opencode server for ${directory}`,
+          {
+            cause: error,
+          },
+        )
+      },
+    })
+    if (killResult instanceof Error) {
+      opencodeLogger.warn(killResult.message)
+    }
+  }
+
+  opencodeServers.delete(directory)
+  serverRetryCount.delete(directory)
+  await new Promise((resolve) => {
+    setTimeout(resolve, 1000)
+  })
+  return true
+}
+
+export async function stopOpencodeServersWithoutRuntimeDirectories({
+  activeDirectories,
+}: {
+  activeDirectories: ReadonlyArray<string>
+}): Promise<string[]> {
+  const activeDirectorySet = new Set(activeDirectories)
+  const directoriesToStop = [...opencodeServers.keys()].filter((directory) => {
+    return !activeDirectorySet.has(directory)
+  })
+
+  const stoppedDirectories: string[] = []
+  for (const directory of directoriesToStop) {
+    const stopped = await stopOpencodeServer(directory)
+    if (!stopped) {
+      continue
+    }
+    stoppedDirectories.push(directory)
+  }
+  return stoppedDirectories
+}
+
 /**
  * Restart the opencode server for a directory.
  * Kills the existing process and reinitializes a new one.
@@ -608,15 +667,7 @@ export async function restartOpencodeServer(
   const storedInitOptions = existing?.initOptions
 
   if (existing) {
-    opencodeLogger.log(
-      `Killing existing server for directory: ${directory} (pid: ${existing.process.pid})`,
-    )
-    existing.process.kill('SIGTERM')
-    opencodeServers.delete(directory)
-    // Give the process time to fully terminate
-    await new Promise((resolve) => {
-      setTimeout(resolve, 1000)
-    })
+    await stopOpencodeServer(directory)
   }
 
   // Reset retry count for the fresh start

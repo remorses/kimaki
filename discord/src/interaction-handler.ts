@@ -77,6 +77,7 @@ import {
   handleVerbositySelectMenu,
 } from './commands/verbosity.js'
 import { handleRestartOpencodeServerCommand } from './commands/restart-opencode-server.js'
+import { handleStopOpencodeServerCommand } from './commands/stop-opencode-server.js'
 import { handleRunCommand } from './commands/run-command.js'
 import { handleContextUsageCommand } from './commands/context-usage.js'
 import { handleSessionIdCommand } from './commands/session-id.js'
@@ -261,6 +262,13 @@ export function registerInteractionHandler({
 
             case 'restart-opencode-server':
               await handleRestartOpencodeServerCommand({
+                command: interaction,
+                appId,
+              })
+              return
+
+            case 'stop-opencode-server':
+              await handleStopOpencodeServerCommand({
                 command: interaction,
                 appId,
               })

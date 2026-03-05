@@ -197,12 +197,120 @@ export function getRuntimeCount(): number {
   return runtimes.size
 }
 
+export function getActiveRuntimeProjectDirectories(): string[] {
+  const directories = new Set<string>()
+  for (const runtime of runtimes.values()) {
+    directories.add(runtime.projectDirectory)
+  }
+  return [...directories]
+}
+
+export function disposeInactiveRuntimes({
+  idleMs,
+  nowMs = Date.now(),
+}: {
+  idleMs: number
+  nowMs?: number
+}): {
+  disposedThreadIds: string[]
+  disposedDirectories: string[]
+} {
+  const candidates = [...runtimes.entries()].filter(([, runtime]) => {
+    return runtime.isIdleForInactivityTimeout({ idleMs, nowMs })
+  })
+  const disposedDirectories = new Set<string>()
+  const disposedThreadIds: string[] = []
+
+  for (const [threadId, runtime] of candidates) {
+    runtime.dispose()
+    runtimes.delete(threadId)
+    threadState.removeThread(threadId)
+    disposedThreadIds.push(threadId)
+    disposedDirectories.add(runtime.projectDirectory)
+  }
+
+  return {
+    disposedThreadIds,
+    disposedDirectories: [...disposedDirectories],
+  }
+}
+
+export function getDirectoryRuntimeInactivitySnapshot({
+  directory,
+  nowMs = Date.now(),
+}: {
+  directory: string
+  nowMs?: number
+}): {
+  runtimeCount: number
+  hasNonIdleRuntime: boolean
+  inactiveForMs: number | null
+} {
+  const snapshots = [...runtimes.values()]
+    .filter((runtime) => {
+      return runtime.projectDirectory === directory
+    })
+    .map((runtime) => {
+      return runtime.getInactivitySnapshot({ nowMs })
+    })
+
+  if (snapshots.length === 0) {
+    return {
+      runtimeCount: 0,
+      hasNonIdleRuntime: false,
+      inactiveForMs: null,
+    }
+  }
+
+  const hasNonIdleRuntime = snapshots.some((snapshot) => {
+    return !snapshot.idleCandidate
+  })
+  if (hasNonIdleRuntime) {
+    return {
+      runtimeCount: snapshots.length,
+      hasNonIdleRuntime: true,
+      inactiveForMs: 0,
+    }
+  }
+
+  const inactiveForMs = snapshots.reduce((min, snapshot) => {
+    return Math.min(min, snapshot.inactiveForMs)
+  }, Number.POSITIVE_INFINITY)
+
+  return {
+    runtimeCount: snapshots.length,
+    hasNonIdleRuntime: false,
+    inactiveForMs: Number.isFinite(inactiveForMs) ? inactiveForMs : 0,
+  }
+}
+
 // ── Helpers ──────────────────────────────────────────────────────
 
 function delay(ms: number): Promise<void> {
   return new Promise((resolve) => {
     setTimeout(resolve, ms)
   })
+}
+
+function getTimestampFromSnowflake(snowflake: string): number | undefined {
+  const discordEpochMs = 1_420_070_400_000n
+  const snowflakeIdResult = errore.try({
+    try: () => {
+      return BigInt(snowflake)
+    },
+    catch: () => {
+      return new Error('Invalid Discord snowflake')
+    },
+  })
+  if (snowflakeIdResult instanceof Error) {
+    return undefined
+  }
+  const timestampBigInt = (snowflakeIdResult >> 22n) + discordEpochMs
+  const timestampMs = Number(timestampBigInt)
+  if (!Number.isFinite(timestampMs) || timestampMs <= 0) {
+    return undefined
+  }
+  return timestampMs
 }
 
 type TokenUsage = {
@@ -391,6 +499,76 @@ export class ThreadSessionRuntime {
   /** The listener AbortSignal, used to pass to SDK subscribe calls. */
   private get listenerSignal(): AbortSignal | undefined {
     return this.state?.listenerController?.signal
+  }
+
+  private getLastRuntimeActivityTimestamp({
+    nowMs: _nowMs,
+  }: {
+    nowMs: number
+  }): number {
+    const lastEvent = this.eventBuffer[this.eventBuffer.length - 1]
+    const lastEventTimestamp = lastEvent?.timestamp
+    if (typeof lastEventTimestamp === 'number' && Number.isFinite(lastEventTimestamp)) {
+      return lastEventTimestamp
+    }
+    const threadCreatedTimestamp = this.thread.createdTimestamp
+    if (
+      typeof threadCreatedTimestamp === 'number'
+      && Number.isFinite(threadCreatedTimestamp)
+      && threadCreatedTimestamp > 0
+    ) {
+      return threadCreatedTimestamp
+    }
+    const snowflakeTimestamp = getTimestampFromSnowflake(this.thread.id)
+    if (snowflakeTimestamp) {
+      return snowflakeTimestamp
+    }
+    return 0
+  }
+
+  private isIdleCandidateForInactivityCheck(): boolean {
+    if (this.isMainSessionBusy()) {
+      return false
+    }
+    if ((this.state?.queueItems.length ?? 0) > 0) {
+      return false
+    }
+    if (this.hasPendingInteractiveUi()) {
+      return false
+    }
+    if (this.processingAction || this.actionQueue.length > 0) {
+      return false
+    }
+    return true
+  }
+
+  getInactivitySnapshot({
+    nowMs,
+  }: {
+    nowMs: number
+  }): {
+    idleCandidate: boolean
+    inactiveForMs: number
+  } {
+    const lastActivityTimestamp = this.getLastRuntimeActivityTimestamp({ nowMs })
+    return {
+      idleCandidate: this.isIdleCandidateForInactivityCheck(),
+      inactiveForMs: Math.max(0, nowMs - lastActivityTimestamp),
+    }
+  }
+
+  isIdleForInactivityTimeout({
+    idleMs,
+    nowMs,
+  }: {
+    idleMs: number
+    nowMs: number
+  }): boolean {
+    const snapshot = this.getInactivitySnapshot({ nowMs })
+    if (!snapshot.idleCandidate) {
+      return false
+    }
+    return snapshot.inactiveForMs >= idleMs
   }
 
   private async hydrateSessionEventsFromDatabase({
