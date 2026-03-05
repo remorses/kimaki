@@ -1486,6 +1486,13 @@ async function run({
 
       s.stop('Bot authorized successfully!')
 
+      const syncSpinner = spinner()
+      syncSpinner.start('Waiting for gateway sync...')
+      await new Promise((resolve) => {
+        setTimeout(resolve, 2000)
+      })
+      syncSpinner.stop('Gateway sync completed')
+
       await setBotMode({
         appId: KIMAKI_SHARED_APP_ID,
         mode: 'gateway',
