@@ -344,6 +344,8 @@ skills is a symlink to discord/skills. this is a folder of skills for kimaki. lo
 
 when writing discord e2e tests, prefer adding reusable automation methods to `DigitalDiscord` instead of creating per-test helper functions in kimaki.
 
+always import from `discord-digital-twin/src` so we dont need to compile that package before using it.
+
 aim for a playwright-like style in tests:
 
 - actor methods for actions: `discord.user(userId).sendMessage(...)`, `runSlashCommand(...)`, `clickButton(...)`, etc
