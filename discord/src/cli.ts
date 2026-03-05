@@ -320,6 +320,17 @@ function formatTaskScheduleLine(schedule: ParsedSendAt): string {
 
 const EXIT_NO_RESTART = 64
 
+function canUseInteractivePrompts(): boolean {
+  return Boolean(process.stdin.isTTY && process.stdout.isTTY)
+}
+
+function exitNonInteractiveSetup(): never {
+  cliLogger.error(
+    'Setup requires an interactive terminal (TTY) for prompts. Run `kimaki` in an interactive shell to complete setup.',
+  )
+  process.exit(EXIT_NO_RESTART)
+}
+
 // Detect if a CLI tool is installed, prompt to install if missing.
 // Uses official install scripts with platform-specific commands for Unix vs Windows.
 // Sets process.env[envPathKey] to the found binary path for the current session.
@@ -361,6 +372,13 @@ async function ensureCommandAvailable({
   }
 
   note(`${name} is required but not found in your PATH.`, `${name} Not Found`)
+
+  if (!canUseInteractivePrompts()) {
+    cliLogger.error(
+      `Cannot prompt to install ${name} in non-interactive mode. Re-run kimaki in an interactive terminal.`,
+    )
+    process.exit(EXIT_NO_RESTART)
+  }
 
   const shouldInstall = await confirm({
     message: `Would you like to install ${name} right now?`,
@@ -1258,6 +1276,8 @@ async function run({
   //
   // previousAppId is set when switching between modes so we can migrate
   // channel_directories.app_id from the old bot to the new one.
+  // isQuickStart means startup can skip interactive onboarding/channel prompts
+  // and go straight to bot runtime using already-available credentials/config.
   const { appId, token, isQuickStart, isGatewayMode, previousAppId } = await (async (): Promise<{
     appId: string
     token: string
@@ -1334,6 +1354,10 @@ async function run({
 
     // 3. Explain why saved credentials are being skipped, then enter
     //    interactive setup wizard (first-time users, --restart-onboarding, or --gateway override).
+    if (!canUseInteractivePrompts()) {
+      exitNonInteractiveSetup()
+    }
+
     if (existingBot && forceGateway && existingBot.mode !== 'gateway') {
       note(
         'Ignoring saved self-hosted credentials due to --gateway flag.\nSwitching to gateway mode.',
@@ -1583,7 +1607,8 @@ async function run({
       select: { channel_id: true },
     }),
   )
-  const shouldForceChannelSetup = isQuickStart && !hasConfiguredTextChannels
+  const shouldForceChannelSetup =
+    isQuickStart && !hasConfiguredTextChannels && canUseInteractivePrompts()
   const shouldAddChannels =
     !isQuickStart || forceRestartOnboarding || Boolean(addChannels) || shouldForceChannelSetup
 
@@ -1839,6 +1864,10 @@ async function run({
     (!existingDirs?.length && availableProjects.length > 0) ||
     shouldAddChannels
   ) {
+    if (!canUseInteractivePrompts()) {
+      exitNonInteractiveSetup()
+    }
+
     const selectedProjects = await multiselect({
       message: 'Select projects to create Discord channels for:',
       options: availableProjects.map((project) => ({
