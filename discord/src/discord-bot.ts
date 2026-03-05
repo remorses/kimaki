@@ -196,6 +196,15 @@ export async function startDiscordBot({
   discordClient,
   useWorktrees,
 }: StartOptions & { discordClient?: Client }) {
+  const isVitest = process.env['KIMAKI_VITEST'] === '1'
+  const exitProcess = (code: number, reason: string): void => {
+    if (isVitest) {
+      discordLogger.warn(`[EXIT_SUPPRESSED] code=${code} reason=${reason}`)
+      return
+    }
+    process.exit(code)
+  }
+
   if (!discordClient) {
     discordClient = await createDiscordClient()
   }
@@ -267,6 +276,94 @@ export async function startDiscordBot({
   } else {
     discordClient.once(Events.ClientReady, setupHandlers)
   }
+
+  const fatalGatewayCloseCodes = new Set<number>([
+    4004, // AuthenticationFailed
+    4010, // InvalidShard
+    4011, // ShardingRequired
+    4012, // InvalidAPIVersion
+    4013, // InvalidIntents
+    4014, // DisallowedIntents
+  ])
+  const pendingShardExitTimers = new Map<number, ReturnType<typeof setTimeout>>()
+  const clearPendingShardExit = ({ shardId }: { shardId: number }): void => {
+    const timer = pendingShardExitTimers.get(shardId)
+    if (!timer) {
+      return
+    }
+    clearTimeout(timer)
+    pendingShardExitTimers.delete(shardId)
+  }
+
+  discordClient.on(Events.Error, (error) => {
+    discordLogger.error('[GATEWAY] Client error:', formatErrorWithStack(error))
+  })
+
+  discordClient.on(Events.ShardError, (error, shardId) => {
+    discordLogger.error(
+      `[GATEWAY] Shard ${shardId} connection error:`,
+      formatErrorWithStack(error),
+    )
+  })
+
+  discordClient.on(Events.ShardReconnecting, (shardId) => {
+    clearPendingShardExit({ shardId })
+    discordLogger.warn(`[GATEWAY] Shard ${shardId} reconnecting`)
+  })
+
+  discordClient.on(Events.ShardReady, (shardId) => {
+    clearPendingShardExit({ shardId })
+  })
+
+  discordClient.on(Events.ShardResume, (shardId, replayedEvents) => {
+    clearPendingShardExit({ shardId })
+    discordLogger.log(
+      `[GATEWAY] Shard ${shardId} resumed with ${replayedEvents} replayed events`,
+    )
+  })
+
+  discordClient.on(Events.ShardDisconnect, (event, shardId) => {
+    if ((global as any).shuttingDown) {
+      return
+    }
+    clearPendingShardExit({ shardId })
+
+    if (!fatalGatewayCloseCodes.has(event.code)) {
+      discordLogger.warn(
+        `[GATEWAY] Shard ${shardId} disconnected (recoverable, code=${event.code})`,
+      )
+      return
+    }
+
+    discordLogger.error(
+      `[GATEWAY] Shard ${shardId} disconnected unrecoverably (code=${event.code})`,
+    )
+    const error = new Error(
+      `Gateway shard disconnected unrecoverably: shard=${shardId} code=${event.code}`,
+    )
+    void notifyError(error, 'Gateway shard disconnected unrecoverably')
+    const timer = setTimeout(() => {
+      exitProcess(
+        1,
+        `unrecoverable gateway disconnect shard=${shardId} code=${event.code}`,
+      )
+    }, 250).unref()
+    pendingShardExitTimers.set(shardId, timer)
+  })
+
+  discordClient.on(Events.Invalidated, () => {
+    discordLogger.error('[GATEWAY] Session invalidated by Discord')
+    void notifyError(
+      new Error('Gateway session invalidated by Discord'),
+      'Gateway session invalidated',
+    )
+    if ((global as any).shuttingDown) {
+      return
+    }
+    setTimeout(() => {
+      exitProcess(1, 'gateway session invalidated')
+    }, 250).unref()
+  })
 
   // Per-thread promise chain to serialize the expensive pre-enqueue work
   // (context fetch, voice transcription) that runs before runtime.enqueueIncoming().
@@ -1205,12 +1302,12 @@ export async function startDiscordBot({
 
       discordLogger.log('Cleanup complete.')
       if (!skipExit) {
-        process.exit(0)
+        exitProcess(0, `cleanup complete (${signal})`)
       }
     } catch (error) {
       voiceLogger.error('[SHUTDOWN] Error during cleanup:', error)
       if (!skipExit) {
-        process.exit(1)
+        exitProcess(1, `cleanup failed (${signal})`)
       }
     }
   }
@@ -1220,7 +1317,7 @@ export async function startDiscordBot({
       await handleShutdown('SIGTERM')
     } catch (error) {
       voiceLogger.error('[SIGTERM] Error during shutdown:', error)
-      process.exit(1)
+      exitProcess(1, 'SIGTERM shutdown handler failed')
     }
   })
 
@@ -1229,7 +1326,7 @@ export async function startDiscordBot({
       await handleShutdown('SIGINT')
     } catch (error) {
       voiceLogger.error('[SIGINT] Error during shutdown:', error)
-      process.exit(1)
+      exitProcess(1, 'SIGINT shutdown handler failed')
     }
   })
 
@@ -1264,7 +1361,7 @@ export async function startDiscordBot({
       cwd: process.cwd(),
       env,
     }).unref()
-    process.exit(0)
+    exitProcess(0, 'SIGUSR2 restart handoff complete')
   })
 
   process.on('uncaughtException', (error) => {
@@ -1279,7 +1376,7 @@ export async function startDiscordBot({
       },
     )
     setTimeout(() => {
-      process.exit(1)
+      exitProcess(1, 'uncaughtException')
     }, 250).unref()
   })
 
