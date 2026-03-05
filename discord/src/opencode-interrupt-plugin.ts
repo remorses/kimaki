@@ -3,19 +3,19 @@
 // correlating assistant message parentID events.
 
 import type { Plugin } from '@opencode-ai/plugin'
-import {
-  createInterruptState,
-  getPendingInterruptMessage,
-  hasUnsentPendingForSession,
-  hasUnsentPendingMessage,
-  listPendingMessageIdsForSession,
-  reduceInterruptState,
-  type InterruptEvent,
-} from './opencode-interrupt-state.js'
+
+type PluginHooks = Awaited<ReturnType<Plugin>>
+type InterruptEvent = Parameters<NonNullable<PluginHooks['event']>>[0]['event']
+
+type PendingMessage = {
+  sessionID: string
+  sent: boolean
+  timer: ReturnType<typeof setTimeout>
+}
 
 type EventWaiter = {
   match: (event: InterruptEvent) => boolean
-  finish: (matched: boolean) => void
+  finish: () => void
   timer: ReturnType<typeof setTimeout>
 }
 
@@ -38,42 +38,17 @@ function getInterruptStepTimeoutMsFromEnv(): number {
 // to the queued user message ID.
 const interruptOpencodeSessionOnUserMessage: Plugin = async (ctx) => {
   const interruptStepTimeoutMs = getInterruptStepTimeoutMsFromEnv()
-  let state = createInterruptState()
-  const timersByMessageId = new Map<string, ReturnType<typeof setTimeout>>()
+  const pendingByMessageId = new Map<string, PendingMessage>()
   const recoveringSessions = new Set<string>()
   const waiters = new Set<EventWaiter>()
 
-  function clearTimer({ messageID }: { messageID: string }): void {
-    const timer = timersByMessageId.get(messageID)
-    if (!timer) {
+  function clearPendingByMessageId({ messageID }: { messageID: string }): void {
+    const pending = pendingByMessageId.get(messageID)
+    if (!pending) {
       return
     }
-    clearTimeout(timer)
-    timersByMessageId.delete(messageID)
-  }
-
-  function clearPendingByMessageId({ messageID }: { messageID: string }): void {
-    clearTimer({ messageID })
-    state = reduceInterruptState({
-      state,
-      action: { type: 'clear-message', messageID },
-    })
-  }
-
-  function scheduleTimeout({
-    messageID,
-    delayMs,
-    onTimeout,
-  }: {
-    messageID: string
-    delayMs: number
-    onTimeout: ({ messageID }: { messageID: string }) => Promise<void>
-  }): void {
-    clearTimer({ messageID })
-    const timer = setTimeout(() => {
-      void onTimeout({ messageID })
-    }, delayMs)
-    timersByMessageId.set(messageID, timer)
+    clearTimeout(pending.timer)
+    pendingByMessageId.delete(messageID)
   }
 
   function waitForEvent(input: {
@@ -88,7 +63,9 @@ const interruptOpencodeSessionOnUserMessage: Plugin = async (ctx) => {
       }
       const waiter: EventWaiter = {
         match: input.match,
-        finish,
+        finish: () => {
+          finish(true)
+        },
         timer: setTimeout(() => {
           finish(false)
         }, input.timeoutMs),
@@ -97,25 +74,69 @@ const interruptOpencodeSessionOnUserMessage: Plugin = async (ctx) => {
     })
   }
 
+  function scheduleTimeout({
+    messageID,
+    sessionID,
+    delayMs,
+  }: {
+    messageID: string
+    sessionID: string
+    delayMs: number
+  }): void {
+    const existing = pendingByMessageId.get(messageID)
+    if (existing) {
+      clearTimeout(existing.timer)
+    }
+
+    const timer = setTimeout(() => {
+      void handleUnsentTimeout({ messageID })
+    }, delayMs)
+
+    pendingByMessageId.set(messageID, {
+      sessionID,
+      sent: false,
+      timer,
+    })
+  }
+
+  function markSent({ messageID }: { messageID: string }): void {
+    const pending = pendingByMessageId.get(messageID)
+    if (!pending) {
+      return
+    }
+    pending.sent = true
+    clearPendingByMessageId({ messageID })
+  }
+
+  function getNextUnsentMessageId({ sessionID }: { sessionID: string }):
+    | string
+    | undefined {
+    for (const [messageID, pending] of pendingByMessageId.entries()) {
+      if (pending.sessionID !== sessionID) {
+        continue
+      }
+      if (pending.sent) {
+        continue
+      }
+      return messageID
+    }
+    return undefined
+  }
+
   async function handleUnsentTimeout({ messageID }: { messageID: string }): Promise<void> {
-    if (!hasUnsentPendingMessage({ state, messageID })) {
+    const pending = pendingByMessageId.get(messageID)
+    if (!pending) {
       clearPendingByMessageId({ messageID })
       return
     }
-
-    const pending = getPendingInterruptMessage({ state, messageID })
-    if (!pending) {
+    if (pending.sent) {
       clearPendingByMessageId({ messageID })
       return
     }
 
     const sessionID = pending.sessionID
     if (recoveringSessions.has(sessionID)) {
-      scheduleTimeout({
-        messageID,
-        delayMs: 200,
-        onTimeout: handleUnsentTimeout,
-      })
+      scheduleTimeout({ messageID, sessionID, delayMs: 200 })
       return
     }
 
@@ -143,7 +164,8 @@ const interruptOpencodeSessionOnUserMessage: Plugin = async (ctx) => {
       await errorWait
       await idleWait
 
-      if (!hasUnsentPendingMessage({ state, messageID })) {
+      const currentPending = pendingByMessageId.get(messageID)
+      if (!currentPending || currentPending.sent) {
         clearPendingByMessageId({ messageID })
         return
       }
@@ -154,22 +176,11 @@ const interruptOpencodeSessionOnUserMessage: Plugin = async (ctx) => {
       })
       clearPendingByMessageId({ messageID })
 
-      if (!hasUnsentPendingForSession({ state, sessionID })) {
-        return
-      }
-      const nextMessageID = listPendingMessageIdsForSession({ state, sessionID }).find(
-        (pendingMessageID) => {
-          return hasUnsentPendingMessage({ state, messageID: pendingMessageID })
-        },
-      )
+      const nextMessageID = getNextUnsentMessageId({ sessionID })
       if (!nextMessageID) {
         return
       }
-      scheduleTimeout({
-        messageID: nextMessageID,
-        delayMs: 50,
-        onTimeout: handleUnsentTimeout,
-      })
+      scheduleTimeout({ messageID: nextMessageID, sessionID, delayMs: 50 })
     } finally {
       recoveringSessions.delete(sessionID)
     }
@@ -181,36 +192,21 @@ const interruptOpencodeSessionOnUserMessage: Plugin = async (ctx) => {
         if (!waiter.match(event)) {
           return
         }
-        waiter.finish(true)
+        waiter.finish()
       })
 
       if (event.type === 'message.updated' && event.properties.info.role === 'assistant') {
         const parentID = event.properties.info.parentID
-        if (!getPendingInterruptMessage({ state, messageID: parentID })) {
-          return
-        }
-        state = reduceInterruptState({
-          state,
-          action: { type: 'event', event },
-        })
-        clearPendingByMessageId({ messageID: parentID })
+        markSent({ messageID: parentID })
         return
       }
 
       if (event.type === 'session.deleted') {
         const sessionID = event.properties.info.id
-        const pendingMessageIds = listPendingMessageIdsForSession({
-          state,
-          sessionID,
-        })
-        if (pendingMessageIds.length === 0) {
-          return
-        }
-        state = reduceInterruptState({
-          state,
-          action: { type: 'event', event },
-        })
-        pendingMessageIds.forEach((messageID) => {
+        Array.from(pendingByMessageId.entries()).forEach(([messageID, pending]) => {
+          if (pending.sessionID !== sessionID) {
+            return
+          }
           clearPendingByMessageId({ messageID })
         })
       }
@@ -226,22 +222,13 @@ const interruptOpencodeSessionOnUserMessage: Plugin = async (ctx) => {
       if (!messageID) {
         return
       }
-      const nextState = reduceInterruptState({
-        state,
-        action: {
-          type: 'queue',
-          sessionID,
-          messageID,
-        },
-      })
-      if (nextState === state) {
+      if (pendingByMessageId.has(messageID)) {
         return
       }
-      state = nextState
       scheduleTimeout({
         messageID,
+        sessionID,
         delayMs: interruptStepTimeoutMs,
-        onTimeout: handleUnsentTimeout,
       })
     },
   }
