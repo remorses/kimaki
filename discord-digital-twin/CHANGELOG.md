@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.1.0
+
+- Added scoped actor API accessors for clearer test ergonomics (`channel(...)`, `thread(...)`, `user(...)`).
+- Added richer deterministic text snapshots: typing markers, footer placeholders, and stable message ordering.
+- Expanded gateway compatibility (Twilight `/gateway/` path support, multi-guild behavior, and configurable gateway URL).
+- Improved interaction + wait flows for e2e reliability, including deterministic footer/typing tracking and better parallel test stability.
+- Upgraded Prisma toolchain to `7.4.2`.
+- Updated published package layout to ship built `dist` output, include `schema.prisma`, and run `generate + build` in `prepublishOnly`.
+
 ## 0.0.1
 
 Initial release.

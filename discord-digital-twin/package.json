@@ -1,6 +1,6 @@
 {
   "name": "discord-digital-twin",
-  "version": "0.0.1",
+  "version": "0.1.0",
   "description": "Local Discord API twin for testing discord.js bots without hitting real Discord servers",
   "type": "module",
   "license": "MIT",
