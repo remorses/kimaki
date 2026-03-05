@@ -81,26 +81,24 @@ describe('session-normal-completion', () => {
   const idles = findIdleIndices(events, sessionId)
 
   test('isSessionBusy at end of buffer', () => {
-    expect(isSessionBusy({ events, sessionId })).toMatchInlineSnapshot(`false`)
+    expect(isSessionBusy({ events, sessionId })).toBe(false)
   })
 
   test('wasRecentlyAborted at final idle', () => {
-    expect(wasRecentlyAborted({ events, sessionId, idleEventIndex: lastIdle(idles) })).toMatchInlineSnapshot(`false`)
+    expect(wasRecentlyAborted({ events, sessionId, idleEventIndex: lastIdle(idles) })).toBe(false)
   })
 
   test('shouldEmitFooter at final idle', () => {
-    expect(shouldEmitFooter({ events, sessionId, idleEventIndex: lastIdle(idles) })).toMatchInlineSnapshot(`true`)
+    expect(shouldEmitFooter({ events, sessionId, idleEventIndex: lastIdle(idles) })).toBe(true)
   })
 
   test('getLatestRunInfo', () => {
-    expect(getLatestRunInfo({ events, sessionId })).toMatchInlineSnapshot(`
-      {
-        "agent": "build",
-        "model": "deterministic-v2",
-        "providerID": "deterministic-provider",
-        "tokensUsed": 2,
-      }
-    `)
+    expect(getLatestRunInfo({ events, sessionId })).toEqual({
+      model: 'deterministic-v2',
+      providerID: 'deterministic-provider',
+      agent: 'build',
+      tokensUsed: 2,
+    })
   })
 
   test('getRunStartTimeForIdle', () => {
@@ -116,11 +114,11 @@ describe('session-explicit-abort', () => {
   const idles = findIdleIndices(events, sessionId)
 
   test('wasRecentlyAborted at final idle', () => {
-    expect(wasRecentlyAborted({ events, sessionId, idleEventIndex: lastIdle(idles) })).toMatchInlineSnapshot(`false`)
+    expect(wasRecentlyAborted({ events, sessionId, idleEventIndex: lastIdle(idles) })).toBe(false)
   })
 
   test('shouldEmitFooter at final idle', () => {
-    expect(shouldEmitFooter({ events, sessionId, idleEventIndex: lastIdle(idles) })).toMatchInlineSnapshot(`false`)
+    expect(shouldEmitFooter({ events, sessionId, idleEventIndex: lastIdle(idles) })).toBe(false)
   })
 })
 
@@ -134,19 +132,19 @@ describe('session-user-interruption', () => {
   })
 
   test('first idle: wasRecentlyAborted', () => {
-    expect(wasRecentlyAborted({ events, sessionId, idleEventIndex: idleAt(idles, 0) })).toMatchInlineSnapshot(`false`)
+    expect(wasRecentlyAborted({ events, sessionId, idleEventIndex: idleAt(idles, 0) })).toBe(false)
   })
 
   test('first idle: shouldEmitFooter', () => {
-    expect(shouldEmitFooter({ events, sessionId, idleEventIndex: idleAt(idles, 0) })).toMatchInlineSnapshot(`true`)
+    expect(shouldEmitFooter({ events, sessionId, idleEventIndex: idleAt(idles, 0) })).toBe(true)
   })
 
   test('second idle: wasRecentlyAborted', () => {
-    expect(wasRecentlyAborted({ events, sessionId, idleEventIndex: idleAt(idles, 1) })).toMatchInlineSnapshot(`false`)
+    expect(wasRecentlyAborted({ events, sessionId, idleEventIndex: idleAt(idles, 1) })).toBe(false)
   })
 
   test('second idle: shouldEmitFooter', () => {
-    expect(shouldEmitFooter({ events, sessionId, idleEventIndex: idleAt(idles, 1) })).toMatchInlineSnapshot(`false`)
+    expect(shouldEmitFooter({ events, sessionId, idleEventIndex: idleAt(idles, 1) })).toBe(false)
   })
 })
 
@@ -160,11 +158,11 @@ describe('session-two-completions-same-session', () => {
   })
 
   test('first idle: shouldEmitFooter', () => {
-    expect(shouldEmitFooter({ events, sessionId, idleEventIndex: idleAt(idles, 0) })).toMatchInlineSnapshot(`true`)
+    expect(shouldEmitFooter({ events, sessionId, idleEventIndex: idleAt(idles, 0) })).toBe(true)
   })
 
   test('second idle: shouldEmitFooter', () => {
-    expect(shouldEmitFooter({ events, sessionId, idleEventIndex: idleAt(idles, 1) })).toMatchInlineSnapshot(`true`)
+    expect(shouldEmitFooter({ events, sessionId, idleEventIndex: idleAt(idles, 1) })).toBe(true)
   })
 
   test('getRunStartTimeForIdle returns different timestamps', () => {
@@ -197,18 +195,16 @@ describe('session-tool-call-noisy-stream', () => {
     // This fixture captures a dense tool-call stream that ends while still
     // running — it has no session.idle events. Derivation should report busy.
     expect(idles.length).toBe(0)
-    expect(isSessionBusy({ events, sessionId })).toMatchInlineSnapshot(`true`)
+    expect(isSessionBusy({ events, sessionId })).toBe(true)
   })
 
   test('getLatestRunInfo still works through dense tool events', () => {
-    expect(getLatestRunInfo({ events, sessionId })).toMatchInlineSnapshot(`
-      {
-        "agent": "build",
-        "model": "deterministic-v2",
-        "providerID": "deterministic-provider",
-        "tokensUsed": 0,
-      }
-    `)
+    expect(getLatestRunInfo({ events, sessionId })).toEqual({
+      model: 'deterministic-v2',
+      providerID: 'deterministic-provider',
+      agent: 'build',
+      tokensUsed: 0,
+    })
   })
 })
 
@@ -230,18 +226,16 @@ describe('real-session-task-normal', () => {
   const idles = findIdleIndices(events, sessionId)
 
   test('shouldEmitFooter at final idle', () => {
-    expect(shouldEmitFooter({ events, sessionId, idleEventIndex: lastIdle(idles) })).toMatchInlineSnapshot(`true`)
+    expect(shouldEmitFooter({ events, sessionId, idleEventIndex: lastIdle(idles) })).toBe(true)
   })
 
   test('getLatestRunInfo has model info', () => {
-    expect(getLatestRunInfo({ events, sessionId })).toMatchInlineSnapshot(`
-      {
-        "agent": "build",
-        "model": "gemini-2.5-flash",
-        "providerID": "cached-google-real-events",
-        "tokensUsed": 39025,
-      }
-    `)
+    expect(getLatestRunInfo({ events, sessionId })).toEqual({
+      model: 'gemini-2.5-flash',
+      providerID: 'cached-google-real-events',
+      agent: 'build',
+      tokensUsed: 39025,
+    })
   })
 })
 
@@ -257,7 +251,7 @@ describe('real-session-task-user-interruption', () => {
       events,
       mainSessionId: sessionId,
       candidateSessionId: childSessionId,
-    })).toMatchInlineSnapshot(`true`)
+    })).toBe(true)
   })
 
   test('isDerivedSubtaskSession returns false for unknown session', () => {
@@ -265,22 +259,20 @@ describe('real-session-task-user-interruption', () => {
       events,
       mainSessionId: sessionId,
       candidateSessionId: 'ses_nonexistent',
-    })).toMatchInlineSnapshot(`false`)
+    })).toBe(false)
   })
 
   test('shouldEmitFooter at final idle', () => {
-    expect(shouldEmitFooter({ events, sessionId, idleEventIndex: lastIdle(idles) })).toMatchInlineSnapshot(`true`)
+    expect(shouldEmitFooter({ events, sessionId, idleEventIndex: lastIdle(idles) })).toBe(true)
   })
 
   test('getLatestRunInfo', () => {
-    expect(getLatestRunInfo({ events, sessionId })).toMatchInlineSnapshot(`
-      {
-        "agent": "build",
-        "model": "gemini-2.5-flash",
-        "providerID": "cached-google-real-events",
-        "tokensUsed": 43610,
-      }
-    `)
+    expect(getLatestRunInfo({ events, sessionId })).toEqual({
+      model: 'gemini-2.5-flash',
+      providerID: 'cached-google-real-events',
+      agent: 'build',
+      tokensUsed: 43610,
+    })
   })
 })
 
@@ -291,7 +283,7 @@ describe('real-session-action-buttons', () => {
 
   test('shouldEmitFooter at final idle', () => {
     if (idles.length > 0) {
-      expect(shouldEmitFooter({ events, sessionId, idleEventIndex: lastIdle(idles) })).toMatchInlineSnapshot(`true`)
+      expect(shouldEmitFooter({ events, sessionId, idleEventIndex: lastIdle(idles) })).toBe(true)
     }
   })
 })
@@ -302,9 +294,7 @@ describe('real-session-permission-external-file', () => {
   const idles = findIdleIndices(events, sessionId)
 
   test('shouldEmitFooter at final idle', () => {
-    if (idles.length > 0) {
-      expect(shouldEmitFooter({ events, sessionId, idleEventIndex: lastIdle(idles) })).toMatchInlineSnapshot()
-    }
+    expect(idles.length).toBe(0)
   })
 })
 
@@ -314,11 +304,14 @@ describe('real-session-footer-suppressed-on-pre-idle-interrupt', () => {
   const idles = findIdleIndices(events, sessionId)
 
   test('fixture has the expected idle sequence', () => {
-    expect(idles.length).toMatchInlineSnapshot(`3`)
+    expect(idles.length).toBe(3)
   })
 
+  // Regression: this real stream has a delayed idle from the previous run after
+  // a newer run already moved the session back to busy. We must not emit footer
+  // for that first idle because its latest assistant message never finished.
   test('first idle should not emit footer when a newer run started before idle was emitted', () => {
-    expect(wasRecentlyAborted({ events, sessionId, idleEventIndex: idleAt(idles, 0) })).toMatchInlineSnapshot(`false`)
-    expect(shouldEmitFooter({ events, sessionId, idleEventIndex: idleAt(idles, 0) })).toMatchInlineSnapshot(`false`)
+    expect(wasRecentlyAborted({ events, sessionId, idleEventIndex: idleAt(idles, 0) })).toBe(false)
+    expect(shouldEmitFooter({ events, sessionId, idleEventIndex: idleAt(idles, 0) })).toBe(false)
   })
 })
