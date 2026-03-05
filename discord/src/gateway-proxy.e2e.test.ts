@@ -20,7 +20,7 @@ import {
   Partials,
   Routes,
 } from 'discord.js'
-import { DigitalDiscord } from 'discord-digital-twin'
+import { DigitalDiscord } from 'discord-digital-twin/src'
 import {
   buildDeterministicOpencodeConfig,
   type DeterministicMatcher,

@@ -1509,7 +1509,7 @@ class DigitalDiscord {
 ```ts
 import { describe, test, expect, beforeAll, afterAll } from 'vitest'
 import { Client, GatewayIntentBits } from 'discord.js'
-import { DigitalDiscord } from 'discord-digital-twin'
+import { DigitalDiscord } from 'discord-digital-twin/src'
 
 describe('Kimaki message handling', () => {
   let discord: DigitalDiscord

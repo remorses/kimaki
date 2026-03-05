@@ -7,7 +7,7 @@
   "author": "remorses <beats.by.morse@gmail.com>",
   "repository": {
     "type": "git",
-    "url": "https://github.com/remorses/kimaki",
+    "url": "git+https://github.com/remorses/kimaki.git",
     "directory": "discord-digital-twin"
   },
   "homepage": "https://github.com/remorses/kimaki/tree/main/discord-digital-twin",
@@ -17,12 +17,16 @@
     "testing",
     "mock",
     "discord.js",
+    "typescript",
+    "esm",
+    "test-utils",
     "e2e",
     "integration-test"
   ],
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
   "files": [
+    "src",
     "dist",
     "schema.prisma",
     "README.md",
@@ -36,8 +40,12 @@
       "default": "./dist/index.js"
     },
     "./src": {
-      "types": "./src/index.ts",
+      "types": "./dist/index.d.ts",
       "default": "./src/index.ts"
+    },
+    "./src/*": {
+      "types": "./dist/*.d.ts",
+      "default": "./src/*.ts"
     }
   },
   "scripts": {
@@ -56,6 +64,7 @@
     "ws": "^8.18.0"
   },
   "devDependencies": {
+    "@types/node": "^24.11.0",
     "@types/ws": "^8.5.0",
     "discord.js": "^14.25.1",
     "prisma": "7.4.2",
