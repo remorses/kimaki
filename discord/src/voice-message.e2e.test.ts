@@ -798,6 +798,21 @@ e2eTest('voice message handling', () => {
         timeout: 4_000,
       })
 
+      const messagesWithQueueAck = await waitForBotMessageContaining({
+        discord,
+        threadId: thread.id,
+        userId: TEST_USER_ID,
+        text: 'Queued at position',
+        timeout: 4_000,
+      })
+      const queueAckMessage = messagesWithQueueAck.find((message) => {
+        return (
+          message.author.id === discord.botUserId
+          && message.content.includes('Queued at position')
+        )
+      })
+      expect(queueAckMessage).toBeDefined()
+
       // 4. queueMessage=true should not interrupt the in-flight response.
       await waitForBotMessageContaining({
         discord,
@@ -805,6 +820,38 @@ e2eTest('voice message handling', () => {
         userId: TEST_USER_ID,
         text: 'slow-response-done',
         timeout: 4_000,
+      })
+
+      if (!queueAckMessage) {
+        throw new Error('Expected queue ack message')
+      }
+
+      const dispatchPrefix = '» **voice-tester:** Voice message transcription from Discord user:'
+      const messagesWithDispatch = await waitForBotMessageContaining({
+        discord,
+        threadId: thread.id,
+        text: dispatchPrefix,
+        afterMessageId: queueAckMessage.id,
+        timeout: 8_000,
+      })
+      const dispatchMessage = messagesWithDispatch.find((message) => {
+        return (
+          message.author.id === discord.botUserId
+          && message.content.includes(dispatchPrefix)
+        )
+      })
+      expect(dispatchMessage).toBeDefined()
+
+      if (!dispatchMessage) {
+        throw new Error('Expected queued dispatch indicator message')
+      }
+
+      await waitForBotMessageContaining({
+        discord,
+        threadId: thread.id,
+        text: 'session-reply',
+        afterMessageId: dispatchMessage.id,
+        timeout: 8_000,
       })
 
       // 5. Wait for the slow session to finish AND the queue to drain.
@@ -819,12 +866,30 @@ e2eTest('voice message handling', () => {
         description: 'queue empty (both runs completed)',
       })
 
-      await waitForFooterMessage({
+      const messagesWithFinalFooter = await waitForFooterMessage({
         discord,
         threadId: thread.id,
         timeout: 4_000,
-        afterMessageIncludes: 'Queue this task for later',
+        afterMessageIncludes: 'session-reply',
         afterAuthorId: discord.botUserId,
+      })
+
+      const finalFooterIndex = messagesWithFinalFooter.findLastIndex((message) => {
+        return (
+          message.author.id === discord.botUserId
+          && message.content.startsWith('*')
+          && message.content.includes('⋅')
+        )
+      })
+      const finalFooterMessage = messagesWithFinalFooter[finalFooterIndex]
+      expect(finalFooterMessage).toBeDefined()
+      const finalFooterSeenAt = finalFooterMessage
+        ? new Date(finalFooterMessage.timestamp).getTime()
+        : Date.now()
+      await th.waitForTypingToStop({
+        afterTimestamp: finalFooterSeenAt,
+        idleMs: 8_500,
+        timeout: 12_000,
       })
 
       expect(await th.text()).toMatchInlineSnapshot(`
@@ -835,7 +900,15 @@ e2eTest('voice message handling', () => {
         --- from: assistant (TestBot)
         📝 **Transcribed message:** Queue this task for later
         --- from: assistant (TestBot)
+        Queued at position 1
+        --- from: assistant (TestBot)
         ⬥ slow-response-done
+        --- from: assistant (TestBot)
+        *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2*
+        --- from: assistant (TestBot)
+        » **voice-tester:** Voice message transcription from Discord user:
+
+        Queue this task for later
         --- from: assistant (TestBot)
         ⬥ session-reply
         --- from: assistant (TestBot)
@@ -875,7 +948,7 @@ e2eTest('voice message handling', () => {
       })
       expect(abortedAssistant).toBeUndefined()
     },
-    12_000,
+    25_000,
   )
 
   // ── Test 5: Slow transcription finishes after session becomes idle (race condition) ──

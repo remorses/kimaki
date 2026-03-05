@@ -701,6 +701,16 @@ e2eTest('thread message queue ordering', () => {
       expect(followupUserIndex).toBeGreaterThan(-1)
       expect(textPartAfterFollowupIndex).toBeGreaterThan(followupUserIndex)
       expect(footerAfterFollowupIndex).toBeGreaterThan(textPartAfterFollowupIndex)
+      const followupFooterMessage = messagesWithFollowupFooter[footerAfterFollowupIndex]
+      expect(followupFooterMessage).toBeDefined()
+      const followupFooterSeenAt = followupFooterMessage
+        ? new Date(followupFooterMessage.timestamp).getTime()
+        : Date.now()
+      await th.waitForTypingToStop({
+        afterTimestamp: followupFooterSeenAt,
+        idleMs: 8_500,
+        timeout: 12_000,
+      })
       // Normal messages should not populate kimaki local queue.
       const noLocalQueueState = await waitForThreadState({
         threadId: thread.id,
@@ -712,7 +722,7 @@ e2eTest('thread message queue ordering', () => {
       })
       expect(noLocalQueueState.queueItems.length).toBe(0)
     },
-    8_000,
+    22_000,
   )
 
   test(
@@ -787,6 +797,14 @@ e2eTest('thread message queue ordering', () => {
       const th = discord.thread(thread.id)
       const firstReply = await th.waitForBotReply({ timeout: 4_000 })
       expect(firstReply.content.trim().length).toBeGreaterThan(0)
+
+      // Ensure the setup run is fully settled before slash-queue checks.
+      // Otherwise the first /queue call can race with a still-busy run window.
+      await waitForFooterMessage({
+        discord,
+        threadId: thread.id,
+        timeout: 4_000,
+      })
 
       // Start a non-interrupting queued slash message while idle so it
       // dispatches immediately and keeps the runtime active.
@@ -866,12 +884,30 @@ e2eTest('thread message queue ordering', () => {
         timeout: 8_000,
       })
 
-      await waitForFooterMessage({
+      const messagesWithFinalFooter = await waitForFooterMessage({
         discord,
         threadId: thread.id,
         timeout: 8_000,
         afterMessageIncludes: '⬥ ok',
         afterAuthorId: discord.botUserId,
+      })
+
+      const finalFooterIndex = messagesWithFinalFooter.findLastIndex((message) => {
+        return (
+          message.author.id === discord.botUserId &&
+          message.content.startsWith('*') &&
+          message.content.includes('⋅')
+        )
+      })
+      const finalFooterMessage = messagesWithFinalFooter[finalFooterIndex]
+      expect(finalFooterMessage).toBeDefined()
+      const finalFooterSeenAt = finalFooterMessage
+        ? new Date(finalFooterMessage.timestamp).getTime()
+        : Date.now()
+      await th.waitForTypingToStop({
+        afterTimestamp: finalFooterSeenAt,
+        idleMs: 8_500,
+        timeout: 12_000,
       })
 
       expect(await th.text()).toMatchInlineSnapshot(`
@@ -895,7 +931,7 @@ e2eTest('thread message queue ordering', () => {
         *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2*"
       `)
     },
-    12_000,
+    25_000,
   )
 
   test(
@@ -1111,18 +1147,13 @@ e2eTest('thread message queue ordering', () => {
         return m.author.id === discord.botUserId
       }).length
 
-      // 2. Rapidly send B, C, D — each queues behind the previous
+      // 2. Rapidly send B, C, D back-to-back to avoid timing windows where
+      // one run can finish between sends and reorder transcript lines.
       await th.user(TEST_USER_ID).sendMessage({
         content: 'Reply with exactly: kilo',
       })
-      await new Promise((r) => {
-        setTimeout(r, 300)
-      })
       await th.user(TEST_USER_ID).sendMessage({
         content: 'Reply with exactly: lima',
-      })
-      await new Promise((r) => {
-        setTimeout(r, 300)
       })
       await th.user(TEST_USER_ID).sendMessage({
         content: 'Reply with exactly: mike',
@@ -1175,16 +1206,8 @@ e2eTest('thread message queue ordering', () => {
         ⬥ ok
         --- from: user (queue-tester)
         Reply with exactly: kilo
-        --- from: assistant (TestBot)
-        *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2*
-        --- from: assistant (TestBot)
-        ⬥ ok
         --- from: user (queue-tester)
         Reply with exactly: lima
-        --- from: assistant (TestBot)
-        *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2*
-        --- from: assistant (TestBot)
-        ⬥ ok
         --- from: user (queue-tester)
         Reply with exactly: mike
         --- from: assistant (TestBot)
