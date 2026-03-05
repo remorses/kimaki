@@ -27,11 +27,18 @@ function createTestOutputStream(): GokeOutputStream & { lines: string[]; readonl
  * still allowing the original error to propagate (the framework
  * re-throws after calling exit when exit doesn't halt execution).
  *
+ * It also defaults stdout/stderr to in-memory streams, so expected
+ * error-path tests don't spam Vitest output with stack traces.
+ *
  * Tests can still use .toThrow() to assert CLI errors normally.
  */
 function gokeTestable(name = '', options?: Partial<GokeOptions>) {
+  const stdout = options?.stdout ?? createTestOutputStream()
+  const stderr = options?.stderr ?? createTestOutputStream()
   return goke(name, {
     ...options,
+    stdout,
+    stderr,
     exit: () => {},
   })
 }

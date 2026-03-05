@@ -74,12 +74,8 @@ e2eTest('queue advanced: typing lifecycle', () => {
       const timeline = await th.text({ showTyping: true })
       expect(timeline).toMatchInlineSnapshot(`
         "[bot typing]
-        [bot typing]
-        [bot typing]
-        [bot typing]
         --- from: assistant (TestBot)
         ⬥ ok
-        [bot typing]
         --- from: assistant (TestBot)
         *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2*"
       `)
@@ -183,20 +179,13 @@ e2eTest('queue advanced: typing lifecycle', () => {
         --- from: user (queue-advanced-tester)
         PLUGIN_TIMEOUT_SLEEP_MARKER
         [bot typing]
-        [bot typing]
-        [bot typing]
-        [bot typing]
         --- from: assistant (TestBot)
         ⬥ starting sleep 100
         --- from: user (queue-advanced-tester)
         Reply with exactly: typing-stop-interrupt-final
         [bot typing]
-        [bot typing]
-        [bot typing]
-        [bot typing]
         --- from: assistant (TestBot)
         ⬥ ok
-        [bot typing]
         --- from: assistant (TestBot)
         *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2*"
       `)

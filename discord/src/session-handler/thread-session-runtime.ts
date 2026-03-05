@@ -55,7 +55,6 @@ import {
 } from '../commands/permissions.js'
 import {
   showAskUserQuestionDropdowns,
-  pendingQuestionContexts,
 } from '../commands/ask-question.js'
 import {
   showActionButtons,
@@ -314,8 +313,8 @@ export class ThreadSessionRuntime {
   // just prevents calling the async loop twice).
   private listenerLoopRunning = false
 
-  // Typing indicator handle (single stateful mechanism).
-  private typingInterval: ReturnType<typeof setInterval> | null = null
+  // Typing indicator scheduler handle (single stateful mechanism).
+  private typingInterval: ReturnType<typeof setTimeout> | null = null
 
   // Notification throttles for retry/context notices.
   private lastDisplayedContextPercentage = 0
@@ -1027,14 +1026,11 @@ export class ThreadSessionRuntime {
   // ── Typing Indicator Management ─────────────────────────────
 
   private hasPendingInteractiveUi(): boolean {
-    const hasPendingQuestion = [...pendingQuestionContexts.values()].some(
-      (ctx) => {
-        return ctx.thread.id === this.thread.id
-      },
-    )
-    const hasPendingPermission =
-      (pendingPermissions.get(this.thread.id)?.size ?? 0) > 0
-    return hasPendingQuestion || hasPendingPermission
+    const currentState = this.state
+    if (!currentState) {
+      return false
+    }
+    return threadState.hasBlockers(currentState)
   }
 
   private shouldTypeNow(): boolean {
@@ -1051,40 +1047,62 @@ export class ThreadSessionRuntime {
     return isSessionBusy({ events: this.eventBuffer, sessionId })
   }
 
-  private sendTypingPulse(): void {
-    void errore
-      .tryAsync(() => {
-        return this.thread.sendTyping()
-      })
-      .then((result) => {
-        if (result instanceof Error) {
-          discordLogger.log(`Failed to send typing: ${result}`)
-        }
-      })
+  private async sendTypingPulse(): Promise<void> {
+    const result = await errore.tryAsync(() => {
+      return this.thread.sendTyping()
+    })
+    if (result instanceof Error) {
+      discordLogger.log(`Failed to send typing: ${result}`)
+    }
   }
 
-  private startTyping(): void {
+  private scheduleTypingPulse({
+    delayMs,
+  }: {
+    delayMs: number
+  }): void {
+    this.typingInterval = setTimeout(() => {
+      const activeTimer = this.typingInterval
+      if (!activeTimer) {
+        return
+      }
+      void (async () => {
+        if (!this.shouldTypeNow()) {
+          this.stopTyping()
+          return
+        }
+        await this.sendTypingPulse()
+        if (this.typingInterval !== activeTimer) {
+          return
+        }
+        if (!this.shouldTypeNow()) {
+          this.stopTyping()
+          return
+        }
+        this.scheduleTypingPulse({ delayMs: 7000 })
+      })()
+    }, delayMs)
+  }
+
+  private startTyping({
+    sendImmediatePulse,
+  }: {
+    sendImmediatePulse: boolean
+  }): void {
     if (!this.shouldTypeNow()) {
       return
     }
     if (this.typingInterval) {
       return
     }
-    this.sendTypingPulse()
-    this.typingInterval = setInterval(() => {
-      if (!this.shouldTypeNow()) {
-        this.stopTyping()
-        return
-      }
-      this.sendTypingPulse()
-    }, 7000)
+    this.scheduleTypingPulse({ delayMs: sendImmediatePulse ? 0 : 7000 })
   }
 
   private stopTyping(): void {
     if (!this.typingInterval) {
       return
     }
-    clearInterval(this.typingInterval)
+    clearTimeout(this.typingInterval)
     this.typingInterval = null
   }
 
@@ -1097,11 +1115,7 @@ export class ThreadSessionRuntime {
       this.stopTyping()
       return
     }
-    this.startTyping()
-    if (!sendImmediatePulse) {
-      return
-    }
-    this.sendTypingPulse()
+    this.startTyping({ sendImmediatePulse })
   }
 
   // ── Part Buffering & Output ─────────────────────────────────
