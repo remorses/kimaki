@@ -73,6 +73,13 @@ key files:
 
 auth flow: client sends IDENTIFY with token `client_id:client_secret` → proxy validates against the CLIENTS map (from DB) → returns `SessionPrincipal::Client(id)` + `authorized_guilds` → only forwards events for those guilds.
 
+gateway REST rule for discord package code: when running with `client_id:secret`
+through gateway-proxy, Discord REST calls must be guild-scoped or explicitly
+allowlisted by the proxy (`/gateway/bot`, `/users/@me`, etc). avoid global
+application routes like `/applications/{app_id}/commands`; use
+`/applications/{app_id}/guilds/{guild_id}/commands` instead so auth can resolve
+scope and allow the request.
+
 ## gateway onboarding flow (gateway mode)
 
 the gateway mode onboarding (in `discord/src/cli.ts`, the `run()` function) works as follows:
