@@ -9,6 +9,7 @@ import { getOpencodeEventSessionId } from './opencode-session-event-log.js'
 export type EventBufferEntry = {
   event: OpenCodeEvent
   timestamp: number
+  eventIndex?: number
 }
 
 // Scans backward for most recent session-scoped lifecycle event.

@@ -336,6 +336,7 @@ export class ThreadSessionRuntime {
   private static EVENT_BUFFER_DB_FLUSH_MS = 2_000
   private static EVENT_BUFFER_TEXT_MAX_CHARS = 512
   private eventBuffer: EventBufferEntry[] = []
+  private nextEventIndex = 0
   private persistEventBufferDebounced: ReturnType<
     typeof createDebouncedProcessFlush
   >
@@ -425,11 +426,16 @@ export class ThreadSessionRuntime {
         {
           event: eventResult,
           timestamp: Number(row.timestamp),
+          eventIndex: Number(row.event_index),
         },
       ]
     })
 
     this.eventBuffer = hydratedEvents.slice(-ThreadSessionRuntime.EVENT_BUFFER_MAX)
+    const lastHydratedEvent = this.eventBuffer[this.eventBuffer.length - 1]
+    this.nextEventIndex = lastHydratedEvent
+      ? Number(lastHydratedEvent.eventIndex || 0) + 1
+      : 0
     logger.log(
       `[SESSION EVENT DB] Hydrated ${this.eventBuffer.length} events for session ${sessionId}`,
     )
@@ -451,6 +457,7 @@ export class ThreadSessionRuntime {
           session_id: sessionId,
           thread_id: this.threadId,
           timestamp: BigInt(entry.timestamp),
+          event_index: entry.eventIndex || 0,
           event_json: JSON.stringify(entry.event),
         },
       ]
@@ -688,13 +695,13 @@ export class ThreadSessionRuntime {
   }
 
   private appendEventToBuffer(event: OpenCodeEvent): void {
-    const lastTimestamp = this.eventBuffer[this.eventBuffer.length - 1]?.timestamp || 0
-    const now = Date.now()
-    const timestamp = now > lastTimestamp ? now : lastTimestamp + 1
-
+    const timestamp = Date.now()
+    const eventIndex = this.nextEventIndex
+    this.nextEventIndex += 1
     this.eventBuffer.push({
       event: this.compactEventForEventBuffer(event),
       timestamp,
+      eventIndex,
     })
     if (this.eventBuffer.length > ThreadSessionRuntime.EVENT_BUFFER_MAX) {
       this.eventBuffer.splice(0, this.eventBuffer.length - ThreadSessionRuntime.EVENT_BUFFER_MAX)

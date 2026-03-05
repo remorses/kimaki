@@ -71,6 +71,32 @@ export type OpencodeEventLogEntry = {
   event: OpenCodeEvent
 }
 
+export function buildOpencodeEventLogLine({
+  timestampMs,
+  entry,
+}: {
+  timestampMs: number
+  entry: OpencodeEventLogEntry
+}): {
+  timestamp: string
+  timestampMs: number
+  threadId: string
+  projectDirectory: string
+  sdkDirectory: string
+  activeSessionId?: string
+  eventSessionId?: string
+  runPhase: 'idle' | 'running' | 'none'
+  latestAssistantMessageId?: string
+  assistantMessageCount: number
+  event: OpenCodeEvent
+} {
+  return {
+    timestamp: new Date(timestampMs).toISOString(),
+    timestampMs,
+    ...entry,
+  }
+}
+
 export async function appendOpencodeSessionEventLog(
   entry: OpencodeEventLogEntry,
 ): Promise<Error | null> {
@@ -95,11 +121,10 @@ export async function appendOpencodeSessionEventLog(
   const logFilePath = path.join(logDirResult, `${safeSessionId}.jsonl`)
 
   const now = Date.now()
-  const line = JSON.stringify({
-    timestamp: new Date(now).toISOString(),
+  const line = `${JSON.stringify(buildOpencodeEventLogLine({
     timestampMs: now,
-    ...entry,
-  }) + '\n'
+    entry,
+  }))}\n`
 
   const appendResult = await errore.tryAsync(() => {
     return fs.promises.appendFile(logFilePath, line, 'utf8')

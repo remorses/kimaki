@@ -1026,6 +1026,12 @@ export async function appendSessionEventsSinceLastTimestamp({
       if (a.timestamp > b.timestamp) {
         return 1
       }
+      if (a.event_index < b.event_index) {
+        return -1
+      }
+      if (a.event_index > b.event_index) {
+        return 1
+      }
       return 0
     })
 
@@ -1033,9 +1039,10 @@ export async function appendSessionEventsSinceLastTimestamp({
     where: {
       session_id: sessionId,
     },
-    orderBy: [{ timestamp: 'desc' }, { id: 'desc' }],
+    orderBy: [{ timestamp: 'desc' }, { event_index: 'desc' }, { id: 'desc' }],
     select: {
       timestamp: true,
+      event_index: true,
     },
   })
 
@@ -1043,7 +1050,13 @@ export async function appendSessionEventsSinceLastTimestamp({
     if (!latestPersisted) {
       return true
     }
-    return event.timestamp > latestPersisted.timestamp
+    if (event.timestamp > latestPersisted.timestamp) {
+      return true
+    }
+    if (event.timestamp < latestPersisted.timestamp) {
+      return false
+    }
+    return event.event_index > latestPersisted.event_index
   })
 
   if (eventsToInsert.length === 0) {
@@ -1059,7 +1072,7 @@ export async function appendSessionEventsSinceLastTimestamp({
       where: {
         session_id: sessionId,
       },
-      orderBy: [{ timestamp: 'desc' }, { id: 'desc' }],
+      orderBy: [{ timestamp: 'desc' }, { event_index: 'desc' }, { id: 'desc' }],
       skip: 1000,
       select: {
         id: true,
@@ -1093,7 +1106,7 @@ export async function getSessionEventSnapshot({
     where: {
       session_id: sessionId,
     },
-    orderBy: [{ timestamp: 'asc' }, { id: 'asc' }],
+    orderBy: [{ timestamp: 'asc' }, { event_index: 'asc' }, { id: 'asc' }],
     take: 1000,
   })
 }

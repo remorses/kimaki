@@ -24,12 +24,13 @@ model session_events {
   session_id       String
   thread_id        String
   timestamp        BigInt    // milliseconds since Unix epoch
+  event_index      Int       // stable in-memory insertion order within a session
   event_json       String
 
   thread thread_sessions @relation(fields: [thread_id], references: [thread_id], onDelete: Cascade, onUpdate: Cascade)
 
-  @@index([session_id, timestamp, id])
-  @@index([thread_id, timestamp, id])
+  @@index([session_id, timestamp, event_index, id])
+  @@index([thread_id, timestamp, event_index, id])
 }
 
 model part_messages {

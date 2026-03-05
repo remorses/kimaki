@@ -9,6 +9,7 @@ CREATE TABLE IF NOT EXISTS "session_events" (
     "session_id" TEXT NOT NULL,
     "thread_id" TEXT NOT NULL,
     "timestamp" BIGINT NOT NULL,
+    "event_index" INTEGER NOT NULL,
     "event_json" TEXT NOT NULL,
     CONSTRAINT "session_events_thread_id_fkey" FOREIGN KEY ("thread_id") REFERENCES "thread_sessions" ("thread_id") ON DELETE CASCADE ON UPDATE CASCADE
 );
@@ -162,8 +163,8 @@ CREATE TABLE IF NOT EXISTS "ipc_requests" (
     "updated_at" DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
     CONSTRAINT "ipc_requests_thread_id_fkey" FOREIGN KEY ("thread_id") REFERENCES "thread_sessions" ("thread_id") ON DELETE RESTRICT ON UPDATE CASCADE
 );
-CREATE INDEX "session_events_session_id_timestamp_id_idx" ON "session_events"("session_id", "timestamp", "id");
-CREATE INDEX "session_events_thread_id_timestamp_id_idx" ON "session_events"("thread_id", "timestamp", "id");
+CREATE INDEX "session_events_session_id_timestamp_event_index_id_idx" ON "session_events"("session_id", "timestamp", "event_index", "id");
+CREATE INDEX "session_events_thread_id_timestamp_event_index_id_idx" ON "session_events"("thread_id", "timestamp", "event_index", "id");
 CREATE INDEX "scheduled_tasks_status_next_run_at_idx" ON "scheduled_tasks"("status", "next_run_at");
 CREATE INDEX "scheduled_tasks_channel_id_status_idx" ON "scheduled_tasks"("channel_id", "status");
 CREATE INDEX "scheduled_tasks_thread_id_status_idx" ON "scheduled_tasks"("thread_id", "status");
