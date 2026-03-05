@@ -5,7 +5,7 @@
 // global store's `threads` Map. Transition functions produce new Map +
 // new ThreadRunState objects each time (immutable updates).
 //
-// Derived helpers (queue/blocker checks) compute from state and are never
+// Derived helpers (queue checks) compute from state and are never
 // stored — they are always re-derived from ThreadRunState.
 //
 // STATE DISCIPLINE: keep as little state as possible. Before adding any new
@@ -65,26 +65,6 @@ export type ThreadRunState = {
   // Read by: runtime queue gating, hasQueue helpers, /queue command display.
   queueItems: QueuedMessage[]
 
-  // Blockers prevent the queue from draining while the user is being
-  // asked an interactive question. Runtime dispatch gating checks these
-  // blockers before dequeuing. Each blocker maps to a specific Discord UI:
-  blockers: {
-    // Number of pending permission dialogs (Accept/Deny buttons) in this
-    // thread. Incremented when showPermissionButtons sends a message,
-    // decremented when the user clicks or when a permission response arrives.
-    permissionCount: number
-    // Number of pending AskUserQuestion dropdowns in this thread.
-    // Incremented when dropdowns are shown, decremented when all answered
-    // or cancelled.
-    questionCount: number
-    // True while action buttons (from kimaki_action_buttons tool) are
-    // shown and awaiting the user's click. Set false on click or cancel.
-    actionButtonsPending: boolean
-    // True while a file upload modal (from kimaki_file_upload tool) is
-    // shown and awaiting the user's submission. Set false on submit or cancel.
-    fileUploadPending: boolean
-  }
-
   // Listener lifetime controller — scoped to the entire runtime lifetime,
   // NOT per-prompt. Only aborted on dispose() or fatal error. Run abort
   // never kills the listener — the SSE event loop stays alive across runs
@@ -108,12 +88,6 @@ export function initialThreadState(): ThreadRunState {
   return {
     sessionId: undefined,
     queueItems: [],
-    blockers: {
-      permissionCount: 0,
-      questionCount: 0,
-      actionButtonsPending: false,
-      fileUploadPending: false,
-    },
     listenerController: undefined,
     sentPartIds: new Set(),
   }
@@ -123,16 +97,6 @@ export function initialThreadState(): ThreadRunState {
 
 export function hasQueue(t: ThreadRunState): boolean {
   return t.queueItems.length > 0
-}
-
-export function hasBlockers(t: ThreadRunState): boolean {
-  const b = t.blockers
-  return (
-    b.permissionCount > 0 ||
-    b.questionCount > 0 ||
-    b.actionButtonsPending ||
-    b.fileUploadPending
-  )
 }
 
 // ── Pure transition helpers ──────────────────────────────────────
@@ -206,39 +170,6 @@ export function dequeueItem(threadId: string): QueuedMessage | undefined {
 
 export function clearQueueItems(threadId: string): void {
   updateThread(threadId, (t) => ({ ...t, queueItems: [] }))
-}
-
-// ── Blocker transitions ──────────────────────────────────────────
-
-export function incrementBlocker(
-  threadId: string,
-  blocker: 'permissionCount' | 'questionCount',
-): void {
-  updateThread(threadId, (t) => ({
-    ...t,
-    blockers: { ...t.blockers, [blocker]: t.blockers[blocker] + 1 },
-  }))
-}
-
-export function decrementBlocker(
-  threadId: string,
-  blocker: 'permissionCount' | 'questionCount',
-): void {
-  updateThread(threadId, (t) => ({
-    ...t,
-    blockers: { ...t.blockers, [blocker]: Math.max(0, t.blockers[blocker] - 1) },
-  }))
-}
-
-export function setBlockerFlag(
-  threadId: string,
-  flag: 'actionButtonsPending' | 'fileUploadPending',
-  value: boolean,
-): void {
-  updateThread(threadId, (t) => ({
-    ...t,
-    blockers: { ...t.blockers, [flag]: value },
-  }))
 }
 
 // ── Queries ──────────────────────────────────────────────────────

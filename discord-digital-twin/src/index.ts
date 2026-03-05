@@ -94,6 +94,14 @@ export type DigitalDiscordMessagePredicate = (message: APIMessage) => boolean
 export type DigitalDiscordThreadPredicate = (thread: APIChannel) => boolean
 export type DigitalDiscordTypingEvent = TypingEventRecord
 
+type DigitalDiscordInteractionEvent = {
+  timestamp: number
+  channelId: string
+  interactionType: InteractionType
+  componentType?: ComponentType
+  values?: string[]
+}
+
 function compareSnowflakeDesc(a: string, b: string): number {
   try {
     const aSnowflake = BigInt(a)
@@ -122,6 +130,7 @@ export class DigitalDiscord {
   private server: ServerComponents | null = null
   private options: DigitalDiscordOptions
   private seeded = false
+  private interactionEvents: DigitalDiscordInteractionEvent[] = []
 
   constructor(options: DigitalDiscordOptions = {}) {
     this.options = options
@@ -238,6 +247,34 @@ export class DigitalDiscord {
       return event.channelId !== channelId
     })
     this.server.typingEvents.splice(0, this.server.typingEvents.length, ...filtered)
+  }
+
+  getInteractionEvents({
+    channelId,
+  }: {
+    channelId?: string
+  } = {}): DigitalDiscordInteractionEvent[] {
+    if (!channelId) {
+      return [...this.interactionEvents]
+    }
+    return this.interactionEvents.filter((event) => {
+      return event.channelId === channelId
+    })
+  }
+
+  clearInteractionEvents({
+    channelId,
+  }: {
+    channelId?: string
+  } = {}): void {
+    if (!channelId) {
+      this.interactionEvents.splice(0, this.interactionEvents.length)
+      return
+    }
+    const filtered = this.interactionEvents.filter((event) => {
+      return event.channelId !== channelId
+    })
+    this.interactionEvents.splice(0, this.interactionEvents.length, ...filtered)
   }
 
   // --- Test utilities ---
@@ -375,6 +412,39 @@ export class DigitalDiscord {
         resolvedGuildId,
         msgMember ?? undefined,
       )
+    }
+
+    const componentType = (() => {
+      if (type !== InteractionType.MessageComponent || !data) {
+        return undefined
+      }
+      const raw = data['component_type']
+      if (typeof raw !== 'number') {
+        return undefined
+      }
+      return raw as ComponentType
+    })()
+    const values = (() => {
+      if (!data) {
+        return undefined
+      }
+      const raw = data['values']
+      if (!Array.isArray(raw)) {
+        return undefined
+      }
+      return raw.filter((item): item is string => {
+        return typeof item === 'string'
+      })
+    })()
+    this.interactionEvents.push({
+      timestamp: Date.now(),
+      channelId,
+      interactionType: type,
+      componentType,
+      values,
+    })
+    if (this.interactionEvents.length > 5_000) {
+      this.interactionEvents.splice(0, this.interactionEvents.length - 5_000)
     }
 
     // APIInteraction is a discriminated union keyed by `type` -- the concrete
@@ -729,14 +799,19 @@ export class ChannelScope {
    * @param showTyping - When true, interleaves [typing] markers at the
    *   chronological position of typing indicator POST calls. Defaults to false
    *   so existing snapshots are not affected.
+   * @param showInteractions - When true, interleaves interaction markers like
+   *   [user clicks button] and [user selects dropdown: value] at the
+   *   chronological position of interaction events. Defaults to false so
+   *   existing snapshots are not affected.
    */
-  async text({ deterministicFooters = true, showTyping = false }: { deterministicFooters?: boolean; showTyping?: boolean } = {}): Promise<string> {
+  async text({ deterministicFooters = true, showTyping = false, showInteractions = false }: { deterministicFooters?: boolean; showTyping?: boolean; showInteractions?: boolean } = {}): Promise<string> {
     const messages = await this.getMessages()
 
     // Build timeline entries: messages + optional typing events
     type TimelineEntry =
       | { kind: 'message'; ts: number; msg: APIMessage }
       | { kind: 'typing'; ts: number }
+      | { kind: 'interaction'; ts: number; event: DigitalDiscordInteractionEvent }
 
     const timeline: TimelineEntry[] = messages.map((msg) => {
       return {
@@ -751,6 +826,22 @@ export class ChannelScope {
       for (const evt of typingEvents) {
         timeline.push({ kind: 'typing' as const, ts: evt.timestamp })
       }
+    }
+
+    if (showInteractions) {
+      const interactionEvents = this.discord.getInteractionEvents({
+        channelId: this.channelId,
+      })
+      for (const event of interactionEvents) {
+        timeline.push({
+          kind: 'interaction' as const,
+          ts: event.timestamp,
+          event,
+        })
+      }
+    }
+
+    if (showTyping || showInteractions) {
       timeline.sort((a, b) => {
         return a.ts - b.ts
       })
@@ -760,6 +851,32 @@ export class ChannelScope {
     for (const entry of timeline) {
       if (entry.kind === 'typing') {
         lines.push('[bot typing]')
+        continue
+      }
+      if (entry.kind === 'interaction') {
+        const label = (() => {
+          if (
+            entry.event.interactionType === InteractionType.MessageComponent &&
+            entry.event.componentType === ComponentType.Button
+          ) {
+            return '[user clicks button]'
+          }
+          if (
+            entry.event.interactionType === InteractionType.MessageComponent &&
+            entry.event.componentType === ComponentType.StringSelect
+          ) {
+            const selectedValues = (entry.event.values || []).join(', ')
+            if (!selectedValues) {
+              return '[user selects dropdown]'
+            }
+            return `[user selects dropdown: ${selectedValues}]`
+          }
+          if (entry.event.interactionType === InteractionType.ModalSubmit) {
+            return '[user submits modal]'
+          }
+          return '[user interaction]'
+        })()
+        lines.push(label)
         continue
       }
       const msg = entry.msg

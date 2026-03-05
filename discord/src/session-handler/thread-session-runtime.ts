@@ -55,11 +55,14 @@ import {
 } from '../commands/permissions.js'
 import {
   showAskUserQuestionDropdowns,
+  pendingQuestionContexts,
 } from '../commands/ask-question.js'
 import {
   showActionButtons,
   waitForQueuedActionButtonsRequest,
+  pendingActionButtonContexts,
 } from '../commands/action-buttons.js'
+import { pendingFileUploadContexts } from '../commands/file-upload.js'
 import {
   getCurrentModelInfo,
   ensureSessionPreferencesSnapshot,
@@ -968,6 +971,9 @@ export class ThreadSessionRuntime {
       case 'question.asked':
         await this.handleQuestionAsked(event.properties)
         break
+      case 'question.replied':
+        this.handleQuestionReplied(event.properties)
+        break
       case 'session.status':
         await this.handleSessionStatus(event.properties)
         break
@@ -1026,11 +1032,38 @@ export class ThreadSessionRuntime {
   // ── Typing Indicator Management ─────────────────────────────
 
   private hasPendingInteractiveUi(): boolean {
-    const currentState = this.state
-    if (!currentState) {
-      return false
+    const hasPendingQuestion = [...pendingQuestionContexts.values()].some(
+      (ctx) => {
+        return ctx.thread.id === this.thread.id
+      },
+    )
+    if (hasPendingQuestion) {
+      return true
     }
-    return threadState.hasBlockers(currentState)
+    const hasPendingActionButtons = [...pendingActionButtonContexts.values()].some(
+      (ctx) => {
+        return ctx.thread.id === this.thread.id
+      },
+    )
+    if (hasPendingActionButtons) {
+      return true
+    }
+    const hasPendingFileUpload = [...pendingFileUploadContexts.values()].some(
+      (ctx) => {
+        return ctx.thread.id === this.thread.id
+      },
+    )
+    if (hasPendingFileUpload) {
+      return true
+    }
+    return (pendingPermissions.get(this.thread.id)?.size ?? 0) > 0
+  }
+
+  onInteractiveUiStateChanged(): void {
+    this.reconcileTyping({ sendImmediatePulse: true })
+    void this.dispatchAction(() => {
+      return this.tryDrainQueue({ showIndicator: true })
+    })
   }
 
   private shouldTypeNow(): boolean {
@@ -1860,6 +1893,7 @@ export class ThreadSessionRuntime {
     if (threadPermissions.size === 0) {
       pendingPermissions.delete(this.thread.id)
     }
+    this.onInteractiveUiStateChanged()
   }
 
   private async handleQuestionAsked(
@@ -1896,6 +1930,14 @@ export class ThreadSessionRuntime {
     // here. The migration plan (§11) changes behavior to block dispatch while
     // question/permission is pending. The old code in session-handler.ts
     // (line 2018) immediately drains the queue, which auto-dismisses questions.
+  }
+
+  private handleQuestionReplied(properties: { sessionID: string }): void {
+    const sessionId = this.state?.sessionId
+    if (properties.sessionID !== sessionId) {
+      return
+    }
+    this.onInteractiveUiStateChanged()
   }
 
   private async handleSessionStatus(properties: {
@@ -2290,7 +2332,7 @@ export class ThreadSessionRuntime {
       const willDrainNow = stateAfterEnqueue
         ? (
           stateAfterEnqueue.queueItems.length > 0
-          && !threadState.hasBlockers(stateAfterEnqueue)
+          && !this.hasPendingInteractiveUi()
           && !this.isMainSessionBusy()
         )
         : false
@@ -2449,7 +2491,7 @@ export class ThreadSessionRuntime {
     if (thread.queueItems.length === 0) {
       return
     }
-    if (threadState.hasBlockers(thread)) {
+    if (this.hasPendingInteractiveUi()) {
       return
     }
 

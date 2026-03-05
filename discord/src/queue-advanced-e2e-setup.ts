@@ -183,9 +183,74 @@ export function createDeterministicMatchers(): DeterministicMatcher[] {
     },
   }
 
+  const permissionTypingMatcher: DeterministicMatcher = {
+    id: 'permission-typing-marker',
+    priority: 105,
+    when: {
+      lastMessageRole: 'user',
+      latestUserTextIncludes: 'PERMISSION_TYPING_MARKER',
+    },
+    then: {
+      parts: [
+        { type: 'stream-start', warnings: [] },
+        { type: 'text-start', id: 'permission-typing-start' },
+        {
+          type: 'text-delta',
+          id: 'permission-typing-start',
+          delta: 'requesting external read permission',
+        },
+        { type: 'text-end', id: 'permission-typing-start' },
+        {
+          type: 'tool-call',
+          toolCallId: 'permission-typing-read-call',
+          toolName: 'read',
+          input: JSON.stringify({
+            filePath: '/Users/morse/.zprofile',
+          }),
+        },
+        {
+          type: 'finish',
+          finishReason: 'tool-calls',
+          usage: { inputTokens: 1, outputTokens: 1, totalTokens: 2 },
+        },
+      ],
+    },
+  }
+
+  const permissionTypingFollowupMatcher: DeterministicMatcher = {
+    id: 'permission-typing-followup',
+    priority: 104,
+    when: {
+      latestUserTextIncludes: 'PERMISSION_TYPING_MARKER',
+      rawPromptIncludes: 'requesting external read permission',
+    },
+    then: {
+      parts: [
+        { type: 'stream-start', warnings: [] },
+        { type: 'text-start', id: 'permission-typing-followup' },
+        {
+          type: 'text-delta',
+          id: 'permission-typing-followup',
+          delta: 'permission-flow-done',
+        },
+        { type: 'text-end', id: 'permission-typing-followup' },
+        {
+          type: 'finish',
+          finishReason: 'stop',
+          usage: { inputTokens: 1, outputTokens: 1, totalTokens: 2 },
+        },
+      ],
+      // Keep run busy long enough after permission reply so typing keepalive
+      // must pulse again. This makes typing resume assertions deterministic.
+      partDelaysMs: [0, 0, 0, 0, 8_000],
+    },
+  }
+
   return [
     slowAbortMatcher,
     pluginTimeoutSleepMatcher,
+    permissionTypingMatcher,
+    permissionTypingFollowupMatcher,
     raceFinalReplyMatcher,
     toolFollowupMatcher,
     userReplyMatcher,
