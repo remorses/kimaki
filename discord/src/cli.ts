@@ -511,11 +511,13 @@ type AgentInfo = {
 async function registerCommands({
   token,
   appId,
+  guildIds,
   userCommands = [],
   agents = [],
 }: {
   token: string
   appId: string
+  guildIds: string[]
   userCommands?: OpencodeCommand[]
   agents?: AgentInfo[]
 }) {
@@ -902,14 +904,69 @@ async function registerCommands({
   }
 
   const rest = createDiscordRest(token)
+  const uniqueGuildIds = Array.from(new Set(guildIds.filter((guildId) => guildId)))
+
+  if (uniqueGuildIds.length === 0) {
+    cliLogger.warn('COMMANDS: No guilds available, skipping slash command registration')
+    return
+  }
 
   try {
-    const data = (await rest.put(Routes.applicationCommands(appId), {
-      body: commands,
-    })) as any[]
+    const results = await Promise.allSettled(
+      uniqueGuildIds.map(async (guildId) => {
+        const response = await rest.put(
+          Routes.applicationGuildCommands(appId, guildId),
+          {
+            body: commands,
+          },
+        )
+
+        const registeredCount = Array.isArray(response)
+          ? response.length
+          : commands.length
+
+        return { guildId, registeredCount }
+      }),
+    )
+
+    const failedGuilds = results
+      .map((result, index) => {
+        if (result.status === 'fulfilled') {
+          return null
+        }
+
+        return {
+          guildId: uniqueGuildIds[index],
+          error:
+            result.reason instanceof Error
+              ? result.reason.message
+              : String(result.reason),
+        }
+      })
+      .filter((value): value is { guildId: string; error: string } => {
+        return value !== null
+      })
+
+    if (failedGuilds.length > 0) {
+      failedGuilds.forEach((failure) => {
+        cliLogger.warn(
+          `COMMANDS: Failed to register slash commands for guild ${failure.guildId}: ${failure.error}`,
+        )
+      })
+      throw new Error(
+        `Failed to register slash commands for ${failedGuilds.length} guild(s)`,
+      )
+    }
+
+    const successfulGuilds = results.length
+    const firstRegisteredCount = results[0]
+    const registeredCommandCount =
+      firstRegisteredCount && firstRegisteredCount.status === 'fulfilled'
+        ? firstRegisteredCount.value.registeredCount
+        : commands.length
 
     cliLogger.info(
-      `COMMANDS: Successfully registered ${data.length} slash commands`,
+      `COMMANDS: Successfully registered ${registeredCommandCount} slash commands for ${successfulGuilds} guild(s)`,
     )
   } catch (error) {
     cliLogger.error(
@@ -1077,17 +1134,25 @@ async function backgroundInit({
   currentDir,
   token,
   appId,
+  guildIds,
 }: {
   currentDir: string
   token: string
   appId: string
+  guildIds: string[]
 }): Promise<void> {
   try {
     const opencodeResult = await initializeOpencodeForDirectory(currentDir)
     if (opencodeResult instanceof Error) {
       cliLogger.warn('Background OpenCode init failed:', opencodeResult.message)
       // Still try to register basic commands without user commands/agents
-      await registerCommands({ token, appId, userCommands: [], agents: [] })
+      await registerCommands({
+        token,
+        appId,
+        guildIds,
+        userCommands: [],
+        agents: [],
+      })
       return
     }
 
@@ -1116,7 +1181,7 @@ async function backgroundInit({
         }),
     ])
 
-    await registerCommands({ token, appId, userCommands, agents })
+    await registerCommands({ token, appId, guildIds, userCommands, agents })
     cliLogger.log('Slash commands registered!')
   } catch (error) {
     cliLogger.error(
@@ -1538,6 +1603,20 @@ async function run({
   try {
     await new Promise((resolve, reject) => {
       discordClient.once(Events.ClientReady, async (c) => {
+        // Guild discovery comes from the Gateway WebSocket READY payload, not
+        // from a separate REST fetch. discord.js consumes READY and hydrates
+        // client.guilds.cache from d.guilds. In gateway mode, gateway-proxy
+        // already filters this list to authorized guilds for client_id:secret.
+        // Example payload fragment received over WS:
+        // {
+        //   "op": 0,
+        //   "t": "READY",
+        //   "d": {
+        //     "guilds": [
+        //       { "id": "123456789012345678", "unavailable": false }
+        //     ]
+        //   }
+        // }
         guilds.push(...Array.from(c.guilds.cache.values()))
 
         if (isQuickStart) {
@@ -1632,7 +1711,14 @@ async function run({
     })()
 
     // Background: OpenCode init + slash command registration (non-blocking)
-    void backgroundInit({ currentDir, token, appId })
+    void backgroundInit({
+      currentDir,
+      token,
+      appId,
+      guildIds: guilds.map((guild) => {
+        return guild.id
+      }),
+    })
 
     showReadyMessage({ kimakiChannels: [], createdChannels, appId })
     outro('✨ Bot ready! Listening for messages...')
@@ -1839,6 +1925,9 @@ async function run({
   void registerCommands({
     token,
     appId,
+    guildIds: guilds.map((guild) => {
+      return guild.id
+    }),
     userCommands: allUserCommands,
     agents: allAgents,
   })
