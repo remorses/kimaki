@@ -9,7 +9,6 @@ import { afterAll, afterEach, beforeAll, describe, expect, test } from 'vitest'
 import { ChannelType, Client, GatewayIntentBits, Partials, type APIMessage } from 'discord.js'
 import { DigitalDiscord } from 'discord-digital-twin/src'
 import { CachedOpencodeProviderProxy } from 'opencode-cached-provider'
-import type { Event as OpenCodeEvent } from '@opencode-ai/sdk/v2'
 import { setDataDir } from './config.js'
 import { store } from './store.js'
 import { startDiscordBot } from './discord-bot.js'
@@ -28,6 +27,7 @@ import { waitForBotMessageContaining, waitForBotReplyAfterUserMessage } from './
 import { disposeRuntime, pendingPermissions } from './session-handler/thread-session-runtime.js'
 import { pendingActionButtonContexts } from './commands/action-buttons.js'
 import { pendingQuestionContexts } from './commands/ask-question.js'
+import type { OpencodeEventLogEntry } from './session-handler/opencode-session-event-log.js'
 
 const geminiApiKey =
   process.env['GEMINI_API_KEY'] ||
@@ -40,10 +40,6 @@ const realCaptureTest = shouldRunRealCapture ? test : test.skip
 
 const TEST_USER_ID = '200000000000003001'
 const TEXT_CHANNEL_ID = '200000000000003002'
-
-type EventLogLine = {
-  event: OpenCodeEvent
-}
 
 function createRunDirectories() {
   const root = path.resolve(process.cwd(), 'tmp', 'event-stream-real-capture-e2e')
@@ -111,17 +107,17 @@ function createDiscordJsClient({ restUrl }: { restUrl: string }) {
   })
 }
 
-function readJsonlEvents(filePath: string): EventLogLine[] {
+function readJsonlEvents(filePath: string): OpencodeEventLogEntry[] {
   const content = fs.readFileSync(filePath, 'utf8')
   const lines = content.split('\n').filter((line) => {
     return line.trim().length > 0
   })
   return lines.map((line) => {
-    return JSON.parse(line) as EventLogLine
+    return JSON.parse(line) as OpencodeEventLogEntry
   })
 }
 
-function hasToolEvent({ events, tool }: { events: EventLogLine[]; tool: string }): boolean {
+function hasToolEvent({ events, tool }: { events: OpencodeEventLogEntry[]; tool: string }): boolean {
   return events.some((line) => {
     if (line.event.type !== 'message.part.updated') {
       return false
@@ -305,7 +301,7 @@ describe('real event stream capture fixtures (cached provider)', () => {
   }: {
     fixtureName: string
     beforeFiles: Map<string, { size: number; mtimeMs: number }>
-    assertEvents: (events: EventLogLine[]) => void
+    assertEvents: (events: OpencodeEventLogEntry[]) => void
   }): Promise<void> {
     const newLogPath = await waitForNewOrUpdatedSessionLog({
       directory: directories.sessionEventsDir,

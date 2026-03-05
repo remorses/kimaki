@@ -4,8 +4,10 @@
 import fs from 'node:fs'
 import path from 'node:path'
 import { describe, test, expect } from 'vitest'
-import type { Event as OpenCodeEvent } from '@opencode-ai/sdk/v2'
-import { getOpencodeEventSessionId } from './opencode-session-event-log.js'
+import {
+  getOpencodeEventSessionId,
+  type OpencodeEventLogEntry,
+} from './opencode-session-event-log.js'
 import {
   isSessionBusy,
   wasRecentlyAborted,
@@ -18,28 +20,14 @@ import {
 
 const fixturesDir = path.join(import.meta.dirname, 'event-stream-fixtures')
 
-type JsonlLine = {
-  timestamp: string
-  timestampMs: number
-  threadId: string
-  projectDirectory: string
-  sdkDirectory: string
-  activeSessionId: string
-  eventSessionId: string
-  runPhase: 'idle' | 'running' | 'none'
-  latestAssistantMessageId?: string
-  assistantMessageCount: number
-  event: OpenCodeEvent
-}
-
 function loadFixture(filename: string): EventBufferEntry[] {
   const content = fs.readFileSync(path.join(fixturesDir, filename), 'utf8')
   return content
     .split('\n')
     .filter(Boolean)
     .map((line) => {
-      const parsed = JSON.parse(line) as JsonlLine
-      return { event: parsed.event, timestamp: parsed.timestampMs }
+      const parsed = JSON.parse(line) as OpencodeEventLogEntry
+      return { event: parsed.event, timestamp: parsed.timestamp }
     })
 }
 
@@ -317,5 +305,20 @@ describe('real-session-permission-external-file', () => {
     if (idles.length > 0) {
       expect(shouldEmitFooter({ events, sessionId, idleEventIndex: lastIdle(idles) })).toMatchInlineSnapshot()
     }
+  })
+})
+
+describe('real-session-footer-suppressed-on-pre-idle-interrupt', () => {
+  const events = loadFixture('real-session-footer-suppressed-on-pre-idle-interrupt.jsonl')
+  const sessionId = getSessionId(events)
+  const idles = findIdleIndices(events, sessionId)
+
+  test('fixture has the expected idle sequence', () => {
+    expect(idles.length).toMatchInlineSnapshot(`3`)
+  })
+
+  test('first idle should not emit footer when a newer run started before idle was emitted', () => {
+    expect(wasRecentlyAborted({ events, sessionId, idleEventIndex: idleAt(idles, 0) })).toMatchInlineSnapshot(`false`)
+    expect(shouldEmitFooter({ events, sessionId, idleEventIndex: idleAt(idles, 0) })).toMatchInlineSnapshot(`false`)
   })
 })

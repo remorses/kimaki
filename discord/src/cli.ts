@@ -62,11 +62,7 @@ import {
 import { formatWorktreeName } from './commands/worktree.js'
 import { WORKTREE_PREFIX } from './commands/merge-worktree.js'
 import type { ThreadStartMarker } from './system-message.js'
-import {
-  isSessionBusy,
-  type EventBufferEntry,
-} from './session-handler/event-stream-state.js'
-import { getOpencodeEventSessionId } from './session-handler/opencode-session-event-log.js'
+import { buildOpencodeEventLogLine } from './session-handler/opencode-session-event-log.js'
 import yaml from 'js-yaml'
 import type {
   OpencodeClient,
@@ -3736,63 +3732,25 @@ cli
       process.exit(EXIT_NO_RESTART)
     }
 
-    const eventBuffer: EventBufferEntry[] = parsedRows.map(({ row, event }) => {
-      return { event, timestamp: Number(row.timestamp) }
-    })
-
-    let projectDirectory = ''
-    let sdkDirectory = ''
-    let latestAssistantMessageId: string | undefined
-    const assistantMessageIds = new Set<string>()
-
-    const lines = parsedRows.map(({ row, event }, index) => {
-      if (event.type === 'session.updated') {
-        if (!projectDirectory) {
-          projectDirectory = event.properties.info.directory
-        }
-        if (!sdkDirectory) {
-          sdkDirectory = event.properties.info.directory
-        }
+    const projectDirectory = parsedRows.reduce((directory, { event }) => {
+      if (directory) {
+        return directory
       }
-
-      if (event.type === 'message.updated') {
-        const messageInfo = event.properties.info
-        if (messageInfo.sessionID === sessionId) {
-          if (messageInfo.role === 'assistant') {
-            if (!projectDirectory && messageInfo.path?.root) {
-              projectDirectory = messageInfo.path.root
-            }
-            if (!sdkDirectory && messageInfo.path?.cwd) {
-              sdkDirectory = messageInfo.path.cwd
-            }
-            assistantMessageIds.add(messageInfo.id)
-            latestAssistantMessageId = messageInfo.id
-          }
-        }
+      if (event.type !== 'session.updated') {
+        return directory
       }
+      return event.properties.info.directory
+    }, '')
 
-      const eventSessionId = getOpencodeEventSessionId(event)
-      const runPhase: 'idle' | 'running' | 'none' = isSessionBusy({
-        events: eventBuffer,
-        sessionId,
-        upToIndex: index,
-      })
-        ? 'running'
-        : 'idle'
-
-      return JSON.stringify({
-        timestamp: new Date(Number(row.timestamp)).toISOString(),
-        timestampMs: Number(row.timestamp),
-        threadId: row.thread_id,
-        projectDirectory,
-        sdkDirectory,
-        activeSessionId: sessionId,
-        eventSessionId: eventSessionId || sessionId,
-        runPhase,
-        latestAssistantMessageId,
-        assistantMessageCount: assistantMessageIds.size,
-        event,
-      })
+    const lines = parsedRows.map(({ row, event }) => {
+      return JSON.stringify(
+        buildOpencodeEventLogLine({
+          timestamp: Number(row.timestamp),
+          threadId: row.thread_id,
+          projectDirectory,
+          event,
+        }),
+      )
     })
     const jsonl = `${lines.join('\n')}${lines.length > 0 ? '\n' : ''}`
 

@@ -934,24 +934,9 @@ export class ThreadSessionRuntime {
     }
 
     if (isOpencodeSessionEventLogEnabled()) {
-      const derivedRunPhase = sessionId
-        ? (this.isMainSessionBusy() ? 'running' : 'idle')
-        : 'none'
-      const derivedLatestAssistantMessageId = sessionId
-        ? this.getLatestAssistantMessageIdForSession({ sessionId })
-        : undefined
-      const derivedAssistantMessageCount = sessionId
-        ? this.getAssistantMessageIdsForSession({ sessionId }).size
-        : 0
       const eventLogResult = await appendOpencodeSessionEventLog({
         threadId: this.threadId,
         projectDirectory: this.projectDirectory,
-        sdkDirectory: this.sdkDirectory,
-        activeSessionId: sessionId,
-        eventSessionId,
-        runPhase: derivedRunPhase,
-        latestAssistantMessageId: derivedLatestAssistantMessageId,
-        assistantMessageCount: derivedAssistantMessageCount,
         event,
       })
       if (eventLogResult instanceof Error) {

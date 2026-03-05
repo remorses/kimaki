@@ -226,13 +226,13 @@ export function shouldEmitFooter({
     sessionId,
     idleEventIndex,
   })
-  const assistantMessageIds = getAssistantMessageIdsInRunWindow({
+  const latestAssistantMessageId = getLatestAssistantMessageIdInRunWindow({
     events,
     sessionId,
     runWindowStart,
     idleEventIndex,
   })
-  if (assistantMessageIds.size === 0) {
+  if (!latestAssistantMessageId) {
     return false
   }
 
@@ -241,7 +241,7 @@ export function shouldEmitFooter({
     sessionId,
     runWindowStart,
     idleEventIndex,
-    assistantMessageIds,
+    assistantMessageId: latestAssistantMessageId,
   })
 }
 
@@ -272,7 +272,7 @@ function getRunWindowStartIndex({
   return 0
 }
 
-function getAssistantMessageIdsInRunWindow({
+function getLatestAssistantMessageIdInRunWindow({
   events,
   sessionId,
   runWindowStart,
@@ -282,9 +282,8 @@ function getAssistantMessageIdsInRunWindow({
   sessionId: string
   runWindowStart: number
   idleEventIndex: number
-}): Set<string> {
-  const assistantMessageIds = new Set<string>()
-  for (let i = runWindowStart; i < idleEventIndex; i++) {
+}): string | undefined {
+  for (let i = idleEventIndex - 1; i >= runWindowStart; i--) {
     const entry = events[i]
     if (!entry) {
       continue
@@ -297,9 +296,9 @@ function getAssistantMessageIdsInRunWindow({
     if (msg.sessionID !== sessionId || msg.role !== 'assistant') {
       continue
     }
-    assistantMessageIds.add(msg.id)
+    return msg.id
   }
-  return assistantMessageIds
+  return undefined
 }
 
 function hasAssistantStepFinishInRunWindow({
@@ -307,13 +306,13 @@ function hasAssistantStepFinishInRunWindow({
   sessionId,
   runWindowStart,
   idleEventIndex,
-  assistantMessageIds,
+  assistantMessageId,
 }: {
   events: EventBufferEntry[]
   sessionId: string
   runWindowStart: number
   idleEventIndex: number
-  assistantMessageIds: Set<string>
+  assistantMessageId: string
 }): boolean {
   for (let i = runWindowStart; i < idleEventIndex; i++) {
     const entry = events[i]
@@ -331,7 +330,7 @@ function hasAssistantStepFinishInRunWindow({
     if (e.properties.part.type !== 'step-finish') {
       continue
     }
-    if (assistantMessageIds.has(e.properties.part.messageID)) {
+    if (e.properties.part.messageID === assistantMessageId) {
       return true
     }
   }

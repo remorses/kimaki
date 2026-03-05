@@ -60,25 +60,39 @@ async function resolveEventLogDirectory(): Promise<string> {
 }
 
 export type OpencodeEventLogEntry = {
+  timestamp: number
   threadId: string
   projectDirectory: string
-  sdkDirectory: string
-  activeSessionId?: string
-  eventSessionId?: string
-  runPhase: 'idle' | 'running' | 'none'
-  latestAssistantMessageId?: string
-  assistantMessageCount: number
   event: OpenCodeEvent
 }
 
+export function buildOpencodeEventLogLine({
+  timestamp,
+  threadId,
+  projectDirectory,
+  event,
+}: {
+  timestamp: number
+  threadId: string
+  projectDirectory: string
+  event: OpenCodeEvent
+}): OpencodeEventLogEntry {
+  return {
+    timestamp,
+    threadId,
+    projectDirectory,
+    event,
+  }
+}
+
 export async function appendOpencodeSessionEventLog(
-  entry: OpencodeEventLogEntry,
+  entry: Omit<OpencodeEventLogEntry, 'timestamp'>,
 ): Promise<Error | null> {
   if (!isOpencodeSessionEventLogEnabled() || eventLogWriteDisabled) {
     return null
   }
 
-  const sessionId = entry.eventSessionId
+  const sessionId = getOpencodeEventSessionId(entry.event)
   if (!sessionId) {
     return null
   }
@@ -95,11 +109,14 @@ export async function appendOpencodeSessionEventLog(
   const logFilePath = path.join(logDirResult, `${safeSessionId}.jsonl`)
 
   const now = Date.now()
-  const line = JSON.stringify({
-    timestamp: new Date(now).toISOString(),
-    timestampMs: now,
-    ...entry,
-  }) + '\n'
+  const line = `${JSON.stringify(
+    buildOpencodeEventLogLine({
+      timestamp: now,
+      threadId: entry.threadId,
+      projectDirectory: entry.projectDirectory,
+      event: entry.event,
+    }),
+  )}\n`
 
   const appendResult = await errore.tryAsync(() => {
     return fs.promises.appendFile(logFilePath, line, 'utf8')

@@ -297,7 +297,7 @@ the compacted buffer strips/truncates these large fields:
 - `message.part.updated` completed tool attachments: strip `state.attachments`
 - `message.part.updated` pending `state.raw` and error `state.error`: truncate
 
-the jsonl line includes runtime metadata (`threadId`, `activeSessionId`, `runPhase`, etc) and the raw opencode event under `.event`.
+the jsonl line is intentionally minimal: `{ timestamp, threadId, projectDirectory, event }`.
 
 use `jq` to inspect these files quickly:
 
@@ -314,8 +314,8 @@ jq -r 'select(.event.type=="message.part.updated")' ~/.kimaki/opencode-session-e
 # filter by event subtype (example: session.status idle)
 jq -r 'select(.event.type=="session.status" and .event.properties.status.type=="idle")' ~/.kimaki/opencode-session-events/ses_xxx.jsonl
 
-# show only events processed as active-session events (ignore stale cross-session noise)
-jq -r 'select(.eventSessionId == .activeSessionId)' ~/.kimaki/opencode-session-events/ses_xxx.jsonl
+# show timestamps + event types
+jq -r '[.timestamp, .event.type] | @tsv' ~/.kimaki/opencode-session-events/ses_xxx.jsonl
 ```
 
 for checkout validation requests, prefer non-recursive checks unless the user asks otherwise.
