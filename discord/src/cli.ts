@@ -66,11 +66,7 @@ import {
   isSessionBusy,
   type EventBufferEntry,
 } from './session-handler/event-stream-state.js'
-import {
-  getOpencodeEventSessionId,
-  buildOpencodeEventLogLine,
-  type OpencodeEventLogEntry,
-} from './session-handler/opencode-session-event-log.js'
+import { getOpencodeEventSessionId } from './session-handler/opencode-session-event-log.js'
 import yaml from 'js-yaml'
 import type {
   OpencodeClient,
@@ -3741,71 +3737,62 @@ cli
     }
 
     const eventBuffer: EventBufferEntry[] = parsedRows.map(({ row, event }) => {
-      return {
-        event,
-        timestamp: Number(row.timestamp),
-      }
+      return { event, timestamp: Number(row.timestamp) }
     })
 
-    const directoryFromSessionUpdated = parsedRows.reduce(
-      (directory, { event }) => {
-        if (directory) {
-          return directory
-        }
-        if (event.type !== 'session.updated') {
-          return directory
-        }
-        return event.properties.info.directory
-      },
-      '',
-    )
-    const projectDirectory = directoryFromSessionUpdated
-    const sdkDirectory = directoryFromSessionUpdated
-
-    const assistantMessageIds = new Set<string>()
+    let projectDirectory = ''
+    let sdkDirectory = ''
     let latestAssistantMessageId: string | undefined
+    const assistantMessageIds = new Set<string>()
 
-    const lines = parsedRows.flatMap(({ row, event }, index) => {
-      if (
-        event.type === 'message.updated' &&
-        event.properties.info.role === 'assistant' &&
-        event.properties.info.sessionID === sessionId
-      ) {
-        assistantMessageIds.add(event.properties.info.id)
-        latestAssistantMessageId = event.properties.info.id
+    const lines = parsedRows.map(({ row, event }, index) => {
+      if (event.type === 'session.updated') {
+        if (!projectDirectory) {
+          projectDirectory = event.properties.info.directory
+        }
+        if (!sdkDirectory) {
+          sdkDirectory = event.properties.info.directory
+        }
+      }
+
+      if (event.type === 'message.updated') {
+        const messageInfo = event.properties.info
+        if (messageInfo.sessionID === sessionId) {
+          if (messageInfo.role === 'assistant') {
+            if (!projectDirectory && messageInfo.path?.root) {
+              projectDirectory = messageInfo.path.root
+            }
+            if (!sdkDirectory && messageInfo.path?.cwd) {
+              sdkDirectory = messageInfo.path.cwd
+            }
+            assistantMessageIds.add(messageInfo.id)
+            latestAssistantMessageId = messageInfo.id
+          }
+        }
       }
 
       const eventSessionId = getOpencodeEventSessionId(event)
-      if (!eventSessionId) {
-        return []
-      }
+      const runPhase: 'idle' | 'running' | 'none' = isSessionBusy({
+        events: eventBuffer,
+        sessionId,
+        upToIndex: index,
+      })
+        ? 'running'
+        : 'idle'
 
-      const entry: OpencodeEventLogEntry = {
+      return JSON.stringify({
+        timestamp: new Date(Number(row.timestamp)).toISOString(),
+        timestampMs: Number(row.timestamp),
         threadId: row.thread_id,
         projectDirectory,
         sdkDirectory,
         activeSessionId: sessionId,
-        eventSessionId,
-        runPhase: isSessionBusy({
-          events: eventBuffer,
-          sessionId,
-          upToIndex: index,
-        })
-          ? 'running'
-          : 'idle',
+        eventSessionId: eventSessionId || sessionId,
+        runPhase,
         latestAssistantMessageId,
         assistantMessageCount: assistantMessageIds.size,
         event,
-      }
-
-      return [
-        JSON.stringify(
-          buildOpencodeEventLogLine({
-            timestampMs: Number(row.timestamp),
-            entry,
-          }),
-        ),
-      ]
+      })
     })
     const jsonl = `${lines.join('\n')}${lines.length > 0 ? '\n' : ''}`
 
