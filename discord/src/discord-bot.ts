@@ -762,6 +762,20 @@ export async function startDiscordBot({
         const channelConfig = await getChannelDirectory(textChannel.id)
 
         if (!channelConfig) {
+          const botMentioned = Boolean(
+            discordClient.user && message.mentions.has(discordClient.user.id),
+          )
+          if (botMentioned) {
+            // TODO: Consider creating/using a session for any text channel when Kimaki is
+            // explicitly @mentioned, so the bot can answer quick questions even before
+            // the channel is linked to a project.
+            await message.reply({
+              content:
+                'This channel is not connected to an OpenCode project.\nSend your message in a project channel, or use `/add-project` for an existing project, or `/create-new-project` to make a new one.',
+              flags: SILENT_MESSAGE_FLAGS,
+            })
+            return
+          }
           voiceLogger.log(
             `[IGNORED] Channel #${textChannel.name} has no project directory configured`,
           )
