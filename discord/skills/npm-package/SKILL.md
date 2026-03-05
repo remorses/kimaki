@@ -27,8 +27,11 @@ Use this skill when scaffolding or fixing npm packages.
 6. Exports structure must include:
    - `"."` for runtime entrypoint (`dist`)
    - `"./src"` and `"./src/*"` pointing to `.ts` source files
-7. In every export object, put `types` first and point it to `.d.ts` files
-   when emitting build output.
+7. In every export object, put `types` first.
+   - For runtime exports (for example `"."`), point `types` to emitted
+     declaration files in `dist`.
+   - For source exports (`"./src"`, `"./src/*"`), point `types` to source
+     files in `src` (not `./dist/*.d.ts`).
 8. Always include `default` in exports.
 9. `files` must include at least:
    - `src`
@@ -83,11 +86,11 @@ Use Node ESM-compatible compiler settings:
       "default": "./dist/index.js"
     },
     "./src": {
-      "types": "./dist/index.d.ts",
+      "types": "./src/index.ts",
       "default": "./src/index.ts"
     },
     "./src/*": {
-      "types": "./dist/*.d.ts",
+      "types": "./src/*.ts",
       "default": "./src/*.ts" // or .tsx for packages that export React components. if so all files should end with .tsx
     }
   }
