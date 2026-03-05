@@ -1276,11 +1276,11 @@ async function run({
   //
   // previousAppId is set when switching between modes so we can migrate
   // channel_directories.app_id from the old bot to the new one.
-  // isQuickStart means startup can skip interactive onboarding/channel prompts
-  // and go straight to bot runtime using already-available credentials/config.
   const { appId, token, isQuickStart, isGatewayMode, previousAppId } = await (async (): Promise<{
     appId: string
     token: string
+    // isQuickStart means startup can skip interactive onboarding/channel prompts
+    // and go straight to bot runtime using already-available credentials/config.
     isQuickStart: boolean
     isGatewayMode: boolean
     previousAppId: string | undefined
