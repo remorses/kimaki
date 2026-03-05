@@ -25,7 +25,7 @@ import {
   initializeOpencodeForDirectory,
 } from '../opencode.js'
 import { isAbortError } from '../utils.js'
-import { createLogger, formatErrorWithStack, LogPrefix } from '../logger.js'
+import { createLogger, LogPrefix } from '../logger.js'
 import {
   sendThreadMessage,
   SILENT_MESSAGE_FLAGS,
@@ -1058,12 +1058,7 @@ export class ThreadSessionRuntime {
       })
       .then((result) => {
         if (result instanceof Error) {
-          discordLogger.error(
-            'Failed to send typing:',
-            formatErrorWithStack(result),
-            'cause:',
-            result.cause ? formatErrorWithStack(result.cause) : 'none',
-          )
+          discordLogger.log(`Failed to send typing: ${result}`)
         }
       })
   }
