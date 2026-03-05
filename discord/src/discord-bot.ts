@@ -268,6 +268,37 @@ export async function startDiscordBot({
     discordClient.once(Events.ClientReady, setupHandlers)
   }
 
+  discordClient.on(Events.Error, (error) => {
+    discordLogger.error('[GATEWAY] Client error:', formatErrorWithStack(error))
+  })
+
+  discordClient.on(Events.ShardError, (error, shardId) => {
+    discordLogger.error(
+      `[GATEWAY] Shard ${shardId} connection error:`,
+      formatErrorWithStack(error),
+    )
+  })
+
+  discordClient.on(Events.ShardReconnecting, (shardId) => {
+    discordLogger.warn(`[GATEWAY] Shard ${shardId} reconnecting`)
+  })
+
+  discordClient.on(Events.ShardResume, (shardId, replayedEvents) => {
+    discordLogger.log(
+      `[GATEWAY] Shard ${shardId} resumed with ${replayedEvents} replayed events`,
+    )
+  })
+
+  discordClient.on(Events.ShardDisconnect, (event, shardId) => {
+    discordLogger.warn(
+      `[GATEWAY] Shard ${shardId} disconnected (code=${event.code})`,
+    )
+  })
+
+  discordClient.on(Events.Invalidated, () => {
+    discordLogger.error('[GATEWAY] Session invalidated by Discord')
+  })
+
   // Per-thread promise chain to serialize the expensive pre-enqueue work
   // (context fetch, voice transcription) that runs before runtime.enqueueIncoming().
   // Without this, two overlapping messageCreate events can invert arrival order.
