@@ -1577,8 +1577,15 @@ async function run({
   // ensures they always get the bot that's actually running.
   await touchBotTokenTimestamp(appId)
 
+  const hasConfiguredTextChannels = Boolean(
+    await (await getPrisma()).channel_directories.findFirst({
+      where: { app_id: appId, channel_type: 'text' },
+      select: { channel_id: true },
+    }),
+  )
+  const shouldForceChannelSetup = isQuickStart && !hasConfiguredTextChannels
   const shouldAddChannels =
-    !isQuickStart || forceRestartOnboarding || Boolean(addChannels)
+    !isQuickStart || forceRestartOnboarding || Boolean(addChannels) || shouldForceChannelSetup
 
   // Start OpenCode server EARLY - let it initialize in parallel with Discord login.
   // This is the biggest startup bottleneck (can take 1-30 seconds to spawn and wait for ready)
@@ -1685,7 +1692,9 @@ async function run({
   }
 
   // Quick start: start the bot first, then defer channel sync/role reconciliation.
-  if (isQuickStart) {
+  // If there are no configured text channels for this bot yet, fall through to
+  // the channel setup flow (same behavior as --add-channels).
+  if (isQuickStart && !shouldForceChannelSetup) {
     cliLogger.log('Starting Discord bot...')
     await startDiscordBot({ token, appId, discordClient, useWorktrees })
     cliLogger.log('Discord bot is running!')
@@ -1727,6 +1736,13 @@ async function run({
 
   // Store channel-directory mappings
   await storeChannelDirectories({ kimakiChannels })
+
+  if (shouldForceChannelSetup) {
+    note(
+      'No Kimaki project channels are configured yet. Opening project/channel setup.',
+      'Channel Setup',
+    )
+  }
 
   if (kimakiChannels.length > 0) {
     const channelList = kimakiChannels
