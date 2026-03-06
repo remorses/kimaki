@@ -51,25 +51,30 @@ type WorktreeGitStatus = {
 }
 
 // Checks dirty state and commits ahead of default branch in parallel.
-// Returns null for worktrees that aren't ready (no directory).
+// Returns null for worktrees that aren't ready or when the directory is
+// missing / git commands fail (e.g. deleted worktree folder).
 async function getWorktreeGitStatus(
   wt: ThreadWorktree,
 ): Promise<WorktreeGitStatus | null> {
   if (wt.status !== 'ready' || !wt.worktree_directory) {
     return null
   }
-  const dir = wt.worktree_directory
-  const [dirtyResult, defaultBranch] = await Promise.all([
-    isDirty(dir),
-    getDefaultBranch(wt.project_directory),
-  ])
-  const aheadResult = await git(
-    dir,
-    `rev-list --count "${defaultBranch}..HEAD"`,
-  )
-  const aheadCount =
-    aheadResult instanceof Error ? 0 : parseInt(aheadResult, 10)
-  return { dirty: dirtyResult, aheadCount }
+  try {
+    const dir = wt.worktree_directory
+    const [dirtyResult, defaultBranch] = await Promise.all([
+      isDirty(dir),
+      getDefaultBranch(wt.project_directory),
+    ])
+    const aheadResult = await git(
+      dir,
+      `rev-list --count "${defaultBranch}..HEAD"`,
+    )
+    const aheadCount =
+      aheadResult instanceof Error ? 0 : parseInt(aheadResult, 10)
+    return { dirty: dirtyResult, aheadCount }
+  } catch {
+    return null
+  }
 }
 
 function buildWorktreeTable({
@@ -88,8 +93,11 @@ function buildWorktreeTable({
     const name = wt.worktree_name
     const gs = gitStatuses[i]
     const status = (() => {
-      if (wt.status !== 'ready' || !gs) {
+      if (wt.status !== 'ready') {
         return statusLabel(wt)
+      }
+      if (!gs) {
+        return 'unknown'
       }
       const parts: string[] = []
       if (gs.dirty) {
