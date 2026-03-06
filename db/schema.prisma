@@ -1,13 +1,77 @@
 generator client {
-  provider     = "prisma-client"
-  output       = "src/generated"
-  moduleFormat = "esm"
-  runtime      = "workerd"
+  provider      = "prisma-client"
+  output        = "src/generated"
+  moduleFormat  = "esm"
+  runtime       = "workerd"
+  // "small" trades slightly slower query compilation for a much smaller WASM
+  // blob (~900 KiB vs ~3.6 MiB with "fast"). Critical for CF Worker cold starts.
+  compilerBuild = "small"
 }
 
 datasource db {
   provider = "postgresql"
 }
+
+// ──────────────────────────────────────────────────────────────────
+// better-auth core tables
+// These are required by better-auth for user/session/account management.
+// See: https://www.better-auth.com/docs/concepts/database#core-schema
+// ──────────────────────────────────────────────────────────────────
+
+model User {
+  id            String    @id
+  name          String
+  email         String    @unique
+  emailVerified Boolean
+  image         String?
+  createdAt     DateTime
+  updatedAt     DateTime
+  accounts      Account[]
+  sessions      Session[]
+  gatewayClients gateway_clients[]
+}
+
+model Session {
+  id        String   @id
+  expiresAt DateTime
+  token     String   @unique
+  createdAt DateTime
+  updatedAt DateTime
+  ipAddress String?
+  userAgent String?
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+}
+
+model Account {
+  id                    String    @id
+  accountId             String
+  providerId            String
+  userId                String
+  accessToken           String?
+  refreshToken          String?
+  idToken               String?
+  accessTokenExpiresAt  DateTime?
+  refreshTokenExpiresAt DateTime?
+  scope                 String?
+  password              String?
+  createdAt             DateTime
+  updatedAt             DateTime
+  user                  User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+}
+
+model Verification {
+  id         String    @id
+  identifier String
+  value      String
+  expiresAt  DateTime
+  createdAt  DateTime?
+  updatedAt  DateTime?
+}
+
+// ──────────────────────────────────────────────────────────────────
+// Kimaki gateway tables
+// ──────────────────────────────────────────────────────────────────
 
 // Matches the gateway-proxy's raw SQL schema in db_config.rs.
 // The Rust proxy uses raw SQL (CREATE TABLE IF NOT EXISTS),
@@ -19,25 +83,8 @@ model gateway_clients {
   created_at DateTime  @default(now()) @db.Timestamptz
   updated_at DateTime? @default(now()) @db.Timestamptz
 
-  discord_user discord_users? @relation(fields: [client_id], references: [client_id], onDelete: Cascade)
+  user_id String
+  user    User @relation(fields: [user_id], references: [id], onDelete: Cascade)
 
   @@id([client_id, guild_id])
-}
-
-// Discord user data collected during OAuth bot install flow.
-// Populated from /users/@me after exchanging the authorization code.
-// Linked to gateway_clients via client_id. Deleting a discord_user
-// cascades to delete all their gateway_clients rows.
-model discord_users {
-  discord_id     String  @id // Discord user snowflake ID
-  client_id      String  @unique // the kimaki client_id that installed the bot
-  username       String // Discord username
-  global_name    String? // Display name, can be null
-  avatar         String? // Avatar hash, used to build avatar URL
-  email          String? // Email address, requires email OAuth scope
-  email_verified Boolean @default(false) // Whether the email is verified on Discord
-  created_at     DateTime @default(now()) @db.Timestamptz
-  updated_at     DateTime @default(now()) @db.Timestamptz
-
-  gateway_clients gateway_clients[]
 }
