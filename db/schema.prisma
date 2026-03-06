@@ -16,6 +16,7 @@ model gateway_clients {
   client_id  String // the kimaki client id. identifies the kimaki user that is connecting to the gateway
   secret     String // the secret, needed to authorize clients that connect to the gateway.
   guild_id   String // the guild the client installed. it is known thanks to the Discord install url state parameter and callback url
+  created_at DateTime  @default(now()) @db.Timestamptz
   updated_at DateTime? @default(now()) @db.Timestamptz
 
   discord_user discord_users? @relation(fields: [client_id], references: [client_id], onDelete: Cascade)
