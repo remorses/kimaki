@@ -328,8 +328,81 @@ function exitNonInteractiveSetup(): never {
   process.exit(EXIT_NO_RESTART)
 }
 
-async function printDiscordInstallUrlAndExit() {
+async function resolveGatewayInstallCredentials(): Promise<
+  Error | { clientId: string; clientSecret: string; createdNow: boolean }
+> {
+  if (!KIMAKI_GATEWAY_APP_ID) {
+    return new Error(
+      'Gateway mode is not available yet. KIMAKI_GATEWAY_APP_ID is not configured.',
+    )
+  }
+
+  const prisma = await getPrisma()
+  const gatewayBot = await prisma.bot_tokens.findUnique({
+    where: { app_id: KIMAKI_GATEWAY_APP_ID },
+  })
+
+  if (gatewayBot?.client_id && gatewayBot.client_secret) {
+    return {
+      clientId: gatewayBot.client_id,
+      clientSecret: gatewayBot.client_secret,
+      createdNow: false,
+    }
+  }
+
+  const clientId = crypto.randomUUID()
+  const clientSecret = crypto.randomBytes(32).toString('hex')
+
+  await setBotMode({
+    appId: KIMAKI_GATEWAY_APP_ID,
+    mode: 'gateway',
+    clientId,
+    clientSecret,
+    proxyUrl: KIMAKI_GATEWAY_PROXY_REST_BASE_URL,
+  })
+
+  return {
+    clientId,
+    clientSecret,
+    createdNow: true,
+  }
+}
+
+async function printDiscordInstallUrlAndExit({
+  gateway,
+}: {
+  gateway?: boolean
+} = {}) {
   await initDatabase()
+
+  if (gateway) {
+    const gatewayCredentials = await resolveGatewayInstallCredentials()
+    if (gatewayCredentials instanceof Error) {
+      cliLogger.error(`Failed to resolve gateway install URL: ${gatewayCredentials.message}`)
+      process.exit(EXIT_NO_RESTART)
+    }
+
+    const installUrl = generateDiscordInstallUrlForBot({
+      appId: KIMAKI_GATEWAY_APP_ID,
+      mode: 'gateway',
+      clientId: gatewayCredentials.clientId,
+      clientSecret: gatewayCredentials.clientSecret,
+    })
+    if (installUrl instanceof Error) {
+      cliLogger.error(`Failed to build install URL: ${installUrl.message}`)
+      process.exit(EXIT_NO_RESTART)
+    }
+
+    cliLogger.log(installUrl)
+    if (gatewayCredentials.createdNow) {
+      cliLogger.log('Generated and saved new local gateway client credentials.')
+    }
+    cliLogger.log(
+      'This gateway install URL contains your client credentials. Do not share it.',
+    )
+    process.exit(0)
+  }
+
   const existingBot = await getBotTokenWithMode()
 
   if (!existingBot) {
@@ -1418,9 +1491,11 @@ async function run({
         process.exit(EXIT_NO_RESTART)
       }
 
-      // Generate client credentials
-      const clientId = crypto.randomUUID()
-      const clientSecret = crypto.randomBytes(32).toString('hex')
+      const gatewayCredentials = await resolveGatewayInstallCredentials()
+      if (gatewayCredentials instanceof Error) {
+        throw gatewayCredentials
+      }
+      const { clientId, clientSecret } = gatewayCredentials
 
       const oauthUrlResult = generateDiscordInstallUrlForBot({
         appId: KIMAKI_GATEWAY_APP_ID,
@@ -1511,14 +1586,6 @@ async function run({
         setTimeout(resolve, 2000)
       })
       syncSpinner.stop('Gateway sync completed')
-
-      await setBotMode({
-        appId: KIMAKI_GATEWAY_APP_ID,
-        mode: 'gateway',
-        clientId,
-        clientSecret,
-        proxyUrl: KIMAKI_GATEWAY_PROXY_REST_BASE_URL,
-      })
 
       return {
         appId: KIMAKI_GATEWAY_APP_ID,
@@ -2123,7 +2190,7 @@ cli
         }
 
         if (options.installUrl) {
-          await printDiscordInstallUrlAndExit()
+          await printDiscordInstallUrlAndExit({ gateway: options.gateway })
         }
 
         // Single-instance enforcement is handled by the hrana server binding the lock port.
@@ -2149,6 +2216,10 @@ cli
     '--data-dir <path>',
     'Data directory for config and database (default: ~/.kimaki)',
   )
+  .option(
+    '--gateway',
+    'Print the gateway install URL and create local gateway credentials if missing',
+  )
   .action(async (options) => {
     try {
       if (options.dataDir) {
@@ -2157,7 +2228,7 @@ cli
       }
 
       initLogFile(getDataDir())
-      await printDiscordInstallUrlAndExit()
+      await printDiscordInstallUrlAndExit({ gateway: options.gateway })
     } catch (error) {
       cliLogger.error(
         'Error:',
