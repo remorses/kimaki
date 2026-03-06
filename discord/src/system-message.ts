@@ -42,6 +42,18 @@ bunx critique main feature-branch --web "Compare branches"
 
 The command outputs a URL - share that URL with the user so they can see the diff.
 
+### always show diff at end of session
+
+If you edited any files during the current session, you MUST run \`bunx critique --web\` at the end of your final message to generate a diff URL and share it with the user. This applies even if the user did not ask to see a diff — always show what changed. Pass the file paths you edited as \`--filter\` arguments so the diff only includes your changes. Skip this only if the session was purely read-only (no file edits, no writes).
+
+Example — if you edited \`src/config.ts\` and \`src/utils.ts\`:
+
+\`\`\`bash
+bunx critique --web "Short title describing the changes" --filter "src/config.ts" --filter "src/utils.ts"
+\`\`\`
+
+The string after \`--web\` becomes the diff page title — make it reflect what the changes do (e.g. "Add retry logic to API client", "Fix auth timeout bug").
+
 ### about critique
 
 critique is an open source tool (MIT license) at https://github.com/remorses/critique.
