@@ -99,7 +99,10 @@ import {
   getDataDir,
   getProjectsDir,
 } from './config.js'
-import { sanitizeAgentName } from './commands/agent.js'
+import {
+  sanitizeAgentName,
+  buildQuickAgentCommandDescription,
+} from './commands/agent.js'
 import { execAsync } from './worktree-utils.js'
 import {
   backgroundUpgradeKimaki,
@@ -1082,12 +1085,15 @@ async function registerCommands({
     const agentSuffix = '-agent'
     const agentBaseName = sanitizedName.slice(0, 32 - agentSuffix.length)
     const commandName = `${agentBaseName}${agentSuffix}`
-    const description = agent.description || `Switch to ${agent.name} agent`
+    const description = buildQuickAgentCommandDescription({
+      agentName: agent.name,
+      description: agent.description,
+    })
 
     commands.push(
       new SlashCommandBuilder()
         .setName(commandName)
-        .setDescription(description.slice(0, 100))
+        .setDescription(description)
         .setDMPermission(false)
         .toJSON(),
     )

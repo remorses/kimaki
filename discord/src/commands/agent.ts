@@ -89,6 +89,80 @@ export function sanitizeAgentName(name: string): string {
     .replace(/^-|-$/g, '')
 }
 
+const QUICK_AGENT_DESCRIPTION_PATTERN = /^\[agent:([^\]]+)\]/
+
+/**
+ * Build quick-agent command description with an embedded original agent name.
+ * Metadata format: [agent:<original-name>] <visible description>
+ */
+export function buildQuickAgentCommandDescription({
+  agentName,
+  description,
+}: {
+  agentName: string
+  description?: string
+}): string {
+  const metadataPrefix = `[agent:${agentName}]`
+  if (metadataPrefix.length > 100) {
+    return metadataPrefix.slice(0, 100)
+  }
+
+  const visibleDescription = description || `Switch to ${agentName} agent`
+  const maxVisibleLength = 100 - metadataPrefix.length - 1
+
+  if (maxVisibleLength <= 0) {
+    return metadataPrefix
+  }
+
+  const trimmedVisible = visibleDescription.slice(0, maxVisibleLength).trim()
+  if (!trimmedVisible) {
+    return metadataPrefix
+  }
+
+  return `${metadataPrefix} ${trimmedVisible}`
+}
+
+function parseQuickAgentNameFromDescription(
+  description: string | undefined,
+): string | undefined {
+  if (!description) {
+    return undefined
+  }
+  const match = QUICK_AGENT_DESCRIPTION_PATTERN.exec(description)
+  if (!match) {
+    return undefined
+  }
+  const agentName = match[1]?.trim()
+  if (!agentName) {
+    return undefined
+  }
+  return agentName
+}
+
+async function resolveQuickAgentNameFromInteraction({
+  command,
+}: {
+  command: ChatInputCommandInteraction
+}): Promise<string | undefined> {
+  const fromCommandObject = parseQuickAgentNameFromDescription(
+    command.command?.description,
+  )
+  if (fromCommandObject) {
+    return fromCommandObject
+  }
+
+  if (!command.guild) {
+    return undefined
+  }
+
+  const fetchedCommand = await command.guild.commands.fetch(command.commandId)
+  if (!fetchedCommand) {
+    return undefined
+  }
+
+  return parseQuickAgentNameFromDescription(fetchedCommand.description)
+}
+
 /**
  * Resolve the context for an agent command (directory, channel, session).
  * Returns null if the command cannot be executed in this context.
@@ -325,11 +399,10 @@ export async function handleAgentSelectMenu(
  * Handle quick agent commands like /plan-agent, /build-agent.
  * These instantly switch to the specified agent without showing a dropdown.
  *
- * Optimized for speed: skips opencode server entirely.
- * The agent name is already validated at command registration time (cli.ts registers
- * commands from the agents list), so we trust the command name directly instead of
- * calling initializeOpencodeForDirectory + app.agents() to re-validate.
- * This eliminates two HTTP round-trips (~400-1000ms) that the old implementation had.
+ * The slash command name is sanitized for Discord and can be lossy
+ * (for example gpt5.4 -> gpt5-4-agent). To keep the original agent name,
+ * registration stores [agent:<name>] metadata in the description and this
+ * handler resolves from that metadata first.
  */
 export async function handleQuickAgentCommand({
   command,
@@ -338,8 +411,7 @@ export async function handleQuickAgentCommand({
   command: ChatInputCommandInteraction
   appId: string
 }): Promise<void> {
-  // Extract agent name from command: "plan-agent" → "plan"
-  const sanitizedAgentName = command.commandName.replace(/-agent$/, '')
+  const fallbackAgentName = command.commandName.replace(/-agent$/, '')
 
   await command.deferReply({ flags: MessageFlags.Ephemeral })
 
@@ -352,6 +424,10 @@ export async function handleQuickAgentCommand({
   }
 
   try {
+    const resolvedAgentName =
+      (await resolveQuickAgentNameFromInteraction({ command })) ||
+      fallbackAgentName
+
     // Check current agent and set new one.
     // getCurrentAgentInfo is fast (DB only), use it for the "was X" text.
     const previousAgent = await getCurrentAgentInfo({
@@ -361,15 +437,15 @@ export async function handleQuickAgentCommand({
     const previousAgentName =
       previousAgent.type !== 'none' ? previousAgent.agent : undefined
 
-    if (previousAgentName === sanitizedAgentName) {
+    if (previousAgentName === resolvedAgentName) {
       await command.editReply({
-        content: `Already using **${sanitizedAgentName}** agent`,
+        content: `Already using **${resolvedAgentName}** agent`,
       })
       return
     }
 
-    // Set the agent preference (DB write only, no HTTP calls)
-    await setAgentForContext({ context, agentName: sanitizedAgentName })
+    // Set the agent preference in DB for this context.
+    await setAgentForContext({ context, agentName: resolvedAgentName })
 
     const previousText = previousAgentName
       ? ` (was **${previousAgentName}**)`
@@ -377,11 +453,11 @@ export async function handleQuickAgentCommand({
 
     if (context.isThread && context.sessionId) {
       await command.editReply({
-        content: `Switched to **${sanitizedAgentName}** agent for this session${previousText}`,
+        content: `Switched to **${resolvedAgentName}** agent for this session${previousText}`,
       })
     } else {
       await command.editReply({
-        content: `Switched to **${sanitizedAgentName}** agent for this channel${previousText}\nAll new sessions will use this agent.`,
+        content: `Switched to **${resolvedAgentName}** agent for this channel${previousText}\nAll new sessions will use this agent.`,
       })
     }
   } catch (error) {
