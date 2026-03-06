@@ -66,6 +66,7 @@ Use Node ESM-compatible compiler settings:
 }
 ```
 
+- Always use "rootDir": "src"
 - Add `"DOM"` to `lib` only when browser globals are needed.
 - Keep source imports with `.js` extensions in TypeScript ESM files.
 - Install `@types/node` as a dev dependency whenever Node APIs are used.
