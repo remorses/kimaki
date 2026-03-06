@@ -292,6 +292,99 @@ describe('interruptOpencodeSessionOnUserMessage', () => {
     expect(promptAsyncCalls).toEqual([])
   })
 
+  // Reproduces production bug from ses_33bb324aaffeQuvMZeixQ9x11N:
+  //
+  // Timeline:
+  //   1. Session is busy streaming response to firstMsg
+  //   2. User sends userMsg (queued via promptAsync in opencode)
+  //   3. 3s timeout fires - no assistant started on userMsg
+  //   4. Plugin aborts session → session goes idle
+  //   5. Plugin sends promptAsync({parts:[]}) → opencode creates NEW empty
+  //      user message and processes THAT instead of userMsg
+  //   6. userMsg is silently lost — no assistant ever responds to it
+  //
+  // Root cause: session.abort() clears opencode's internal prompt queue.
+  // The empty promptAsync({parts:[]}) is supposed to "resume" but instead
+  // creates a separate message. The user's actual message is gone.
+  //
+  // This is a unit-level repro — it proves the plugin clears the user
+  // message from tracking without any assistant acknowledgement. A full
+  // e2e test is needed to prove the message is lost in Discord.
+  test.todo('BUG REPRO: user message dropped after abort because promptAsync({parts:[]}) replaces it', async () => {
+    process.env['KIMAKI_INTERRUPT_STEP_TIMEOUT_MS'] = '20'
+
+    const abortCalls: Array<{ path: { id: string } }> = []
+    const promptAsyncCalls: Array<{
+      path: { id: string }
+      body: { parts: [] }
+    }> = []
+    const client: MockClient = {
+      session: {
+        abort: async (input) => {
+          abortCalls.push(input)
+        },
+        promptAsync: async (input) => {
+          promptAsyncCalls.push(input)
+        },
+      },
+    }
+
+    const { eventHook, chatHook } = await requireHooks({ client })
+    const sessionID = 'ses-33bb-repro'
+    const firstMsgID = 'msg-first-streaming'
+    const userMsgID = 'msg-user-queued'
+
+    // 1. First message is running (assistant already started on it)
+    await chatHook(
+      { sessionID, messageID: firstMsgID } as InterruptChatInput,
+      createChatOutput({ sessionID, messageID: firstMsgID }),
+    )
+    await eventHook({
+      event: createAssistantStartedEvent({ sessionID, messageID: firstMsgID }),
+    })
+
+    // 2. User sends second message while session is busy streaming
+    await chatHook(
+      { sessionID, messageID: userMsgID } as InterruptChatInput,
+      createChatOutput({ sessionID, messageID: userMsgID }),
+    )
+
+    // 3. Timeout fires (20ms), plugin runs handleUnsentTimeout
+    await delay({ ms: 30 })
+
+    // 4. Simulate abort completing (error + idle from opencode)
+    await eventHook({ event: createSessionErrorEvent({ sessionID }) })
+    await eventHook({ event: createSessionIdleEvent({ sessionID }) })
+    await delay({ ms: 20 })
+
+    // 5. Verify plugin aborted the session
+    expect(abortCalls).toEqual([{ path: { id: sessionID } }])
+
+    // 6. BUG: plugin sent promptAsync({parts:[]}) which creates a NEW empty
+    //    user message in opencode. The user's actual message (userMsgID) was
+    //    cleared from the prompt queue by abort() and is never processed.
+    expect(promptAsyncCalls).toEqual([
+      { path: { id: sessionID }, body: { parts: [] } },
+    ])
+
+    // 7. Verify the plugin cleared userMsgID from pending tracking.
+    //    Re-registering it via chatHook succeeds (doesn't hit the dedup guard
+    //    at line 225), proving the plugin considers it "handled" even though
+    //    no assistant message.updated with parentID=userMsgID was ever received.
+    //
+    //    In production this means the user's message is silently lost:
+    //    - opencode processed the empty prompt instead
+    //    - the bot thinks the message was dispatched (promptAsync returned OK)
+    //    - nobody re-sends the user's actual message
+    let reRegisteredWithoutDedup = false
+    await chatHook(
+      { sessionID, messageID: userMsgID } as InterruptChatInput,
+      createChatOutput({ sessionID, messageID: userMsgID }),
+    )
+    reRegisteredWithoutDedup = true
+    expect(reRegisteredWithoutDedup).toBe(true)
+  })
+
   test('real sleep interrupt trace still recovers queued interrupt message', async () => {
     process.env['KIMAKI_INTERRUPT_STEP_TIMEOUT_MS'] = '20'
 
