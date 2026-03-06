@@ -2622,9 +2622,12 @@ export class ThreadSessionRuntime {
       rejectOuter = reject
     })
 
-    // Chain preprocess calls so they run in arrival order but outside
-    // dispatchAction. The chain itself never rejects (catch + re-throw
-    // via rejectOuter) so the next link always runs.
+    // Chain preprocess + enqueue calls so they run in arrival order but
+    // outside dispatchAction. The chain awaits the full enqueue (including
+    // ensureSession / setThreadSession) before releasing to the next
+    // message, so session-creation races on fresh threads are avoided.
+    // The chain itself never rejects (catch + resolve via rejectOuter)
+    // so the next link always runs.
     this.preprocessChain = this.preprocessChain.then(async () => {
       try {
         const result = await input.preprocess!()
@@ -2640,17 +2643,14 @@ export class ThreadSessionRuntime {
           preprocess: undefined,
         }
 
-        // Route with the resolved mode through normal paths
-        // (these enter dispatchAction internally)
-        if (resolvedInput.mode === 'local-queue') {
-          resolveOuter(this.enqueueViaLocalQueue(resolvedInput))
-          return
-        }
-        if (resolvedInput.command) {
-          resolveOuter(this.enqueueViaLocalQueue(resolvedInput))
-          return
-        }
-        resolveOuter(this.submitViaOpencodeQueue(resolvedInput))
+        // Route with the resolved mode through normal paths.
+        // Await the enqueue so session state (ensureSession, setThreadSession)
+        // is persisted before the next message's preprocessing reads it.
+        const enqueueResult =
+          resolvedInput.mode === 'local-queue' || resolvedInput.command
+            ? await this.enqueueViaLocalQueue(resolvedInput)
+            : await this.submitViaOpencodeQueue(resolvedInput)
+        resolveOuter(enqueueResult)
       } catch (err) {
         rejectOuter(err)
       }

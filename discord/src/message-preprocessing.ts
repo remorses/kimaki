@@ -4,7 +4,7 @@
 //
 // This module exists so discord-bot.ts stays a thin event router and the
 // expensive async work (voice transcription, context fetch, attachment
-// download) runs inside the runtime's serialized dispatchAction queue —
+// download) runs inside the runtime's serialized preprocessChain —
 // preserving arrival order without a separate threadIngressQueue.
 
 import type { Message, ThreadChannel } from 'discord.js'
