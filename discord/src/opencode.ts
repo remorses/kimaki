@@ -298,6 +298,7 @@ export async function initializeOpencodeForDirectory(
 ): Promise<OpenCodeErrors | (() => OpencodeClient)> {
   const existing = opencodeServers.get(directory)
   if (existing && !existing.process.killed) {
+    existing.lastActivityMs = Date.now()
     opencodeLogger.log(
       `Reusing existing server on port ${existing.port} for directory: ${directory}`,
     )
