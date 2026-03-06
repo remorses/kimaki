@@ -119,7 +119,56 @@ setGlobalDispatcher(
 const discordLogger = createLogger(LogPrefix.DISCORD)
 const voiceLogger = createLogger(LogPrefix.VOICE)
 
+// Well-known WebSocket and Discord Gateway close codes for diagnostic logging.
+// Gateway proxy redeploys cause an abrupt TCP drop (code 1006) because the proxy
+// doesn't send a close frame to clients before shutting down. discord.js then
+// enters reconnection mode. The ShardReconnecting event intentionally strips the
+// close code for recoverable disconnects, so we track it ourselves from the
+// lower-level ShardDisconnect and ShardError events and correlate by shard ID.
+function describeCloseCode(code: number): string {
+  const codes: Record<number, string> = {
+    1000: 'normal closure',
+    1001: 'going away',
+    1006: 'abnormal closure (no close frame received)',
+    1011: 'unexpected server error',
+    1012: 'service restart',
+    4000: 'unknown error',
+    4001: 'unknown opcode',
+    4002: 'decode error',
+    4003: 'not authenticated',
+    4004: 'authentication failed',
+    4005: 'already authenticated',
+    4007: 'invalid seq',
+    4008: 'rate limited',
+    4009: 'session timed out',
+    4010: 'invalid shard',
+    4011: 'sharding required',
+    4012: 'invalid API version',
+    4013: 'invalid intents',
+    4014: 'disallowed intents',
+  }
+  return codes[code] || 'unknown'
+}
 
+// Per-shard state for tracking reconnection context.
+// When discord.js fires ShardReconnecting it only provides the shard ID.
+// We stash the last error / close code from preceding events so the
+// reconnecting log line can include the actual cause.
+interface ShardReconnectInfo {
+  lastError?: Error
+  lastDisconnectCode?: number
+  attempts: number
+}
+const shardReconnectState = new Map<number, ShardReconnectInfo>()
+
+function getOrCreateShardState(shardId: number): ShardReconnectInfo {
+  let state = shardReconnectState.get(shardId)
+  if (!state) {
+    state = { attempts: 0 }
+    shardReconnectState.set(shardId, state)
+  }
+  return state
+}
 
 function parseEmbedFooterMarker<T extends Record<string, unknown>>({
   footer,
@@ -267,26 +316,66 @@ export async function startDiscordBot({
   })
 
   discordClient.on(Events.ShardError, (error, shardId) => {
+    const state = getOrCreateShardState(shardId)
+    state.lastError = error
     discordLogger.error(
-      `[GATEWAY] Shard ${shardId} connection error:`,
-      formatErrorWithStack(error),
-    )
-  })
-
-  discordClient.on(Events.ShardReconnecting, (shardId) => {
-    discordLogger.warn(`[GATEWAY] Shard ${shardId} reconnecting`)
-  })
-
-  discordClient.on(Events.ShardResume, (shardId, replayedEvents) => {
-    discordLogger.log(
-      `[GATEWAY] Shard ${shardId} resumed with ${replayedEvents} replayed events`,
+      `[GATEWAY] Shard ${shardId} error: ${formatErrorWithStack(error)}`,
     )
   })
 
   discordClient.on(Events.ShardDisconnect, (event, shardId) => {
+    // ShardDisconnect fires for unrecoverable close codes (4004, 4010-4014).
+    // For recoverable codes discord.js fires ShardReconnecting instead.
+    const state = getOrCreateShardState(shardId)
+    state.lastDisconnectCode = event.code
     discordLogger.warn(
-      `[GATEWAY] Shard ${shardId} disconnected (code=${event.code})`,
+      `[GATEWAY] Shard ${shardId} disconnected: code=${event.code} (${describeCloseCode(event.code)})`,
     )
+  })
+
+  discordClient.on(Events.ShardReconnecting, (shardId) => {
+    // discord.js strips the close code before emitting this event.
+    // We log whatever context we captured from preceding ShardError events.
+    const state = getOrCreateShardState(shardId)
+    state.attempts++
+
+    const parts: string[] = [`attempt #${state.attempts}`]
+    if (state.lastDisconnectCode !== undefined) {
+      parts.push(`close code=${state.lastDisconnectCode} (${describeCloseCode(state.lastDisconnectCode)})`)
+    }
+    if (state.lastError) {
+      parts.push(`last error: ${state.lastError.message}`)
+    }
+    discordLogger.warn(
+      `[GATEWAY] Shard ${shardId} reconnecting: ${parts.join(', ')}`,
+    )
+  })
+
+  discordClient.on(Events.ShardResume, (shardId, replayedEvents) => {
+    const state = shardReconnectState.get(shardId)
+    if (state?.attempts) {
+      discordLogger.log(
+        `[GATEWAY] Shard ${shardId} resumed after ${state.attempts} reconnect attempt(s), ${replayedEvents} replayed events`,
+      )
+    } else {
+      discordLogger.log(
+        `[GATEWAY] Shard ${shardId} resumed, ${replayedEvents} replayed events`,
+      )
+    }
+    shardReconnectState.delete(shardId)
+  })
+
+  // ShardReady fires when a shard completes a fresh IDENTIFY (not RESUME).
+  // After a gateway proxy redeploy, sessions are lost (in-memory), so RESUME
+  // fails with INVALID_SESSION and discord.js falls back to fresh IDENTIFY.
+  discordClient.on(Events.ShardReady, (shardId) => {
+    const state = shardReconnectState.get(shardId)
+    if (state?.attempts) {
+      discordLogger.log(
+        `[GATEWAY] Shard ${shardId} ready after ${state.attempts} reconnect attempt(s)`,
+      )
+    }
+    shardReconnectState.delete(shardId)
   })
 
   discordClient.on(Events.Invalidated, () => {
