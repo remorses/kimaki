@@ -11,7 +11,7 @@
 //
 // The after hook also reads additionalData (clientId, clientSecret) via
 // getOAuthState() — these are the Kimaki CLI gateway credentials passed
-// through the OAuth flow via the /start-install route.
+// through the OAuth flow via the /discord-install route.
 
 // better-auth/minimal excludes kysely (~182 KiB minified) from the bundle.
 // Safe because we use the prisma adapter, not direct DB connections.

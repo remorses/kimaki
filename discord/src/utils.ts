@@ -99,11 +99,11 @@ export function generateDiscordInstallUrlForBot({
     return new Error('Gateway credentials are missing from local database')
   }
 
-  // In gateway mode, redirect to the website's /start-install route.
+  // In gateway mode, redirect to the website's /discord-install route.
   // This initiates the better-auth OAuth flow with clientId/clientSecret
   // as additionalData, which better-auth stores in its verification table
   // and recovers after Discord redirects back to the callback.
-  const url = new URL(`${KIMAKI_WEBSITE_URL}/start-install`)
+  const url = new URL(`${KIMAKI_WEBSITE_URL}/discord-install`)
   url.searchParams.set('clientId', clientId)
   url.searchParams.set('clientSecret', clientSecret)
   return url.toString()

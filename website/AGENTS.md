@@ -6,7 +6,7 @@ The `website` package is the HTTP layer for Kimaki onboarding.
 
 It is responsible for:
 
-- `GET /start-install`: initiates better-auth Discord OAuth flow with
+- `GET /discord-install`: initiates better-auth Discord OAuth flow with
   `clientId`/`clientSecret` as `additionalData`.
 - `GET/POST /api/auth/*`: better-auth handler (processes OAuth callback,
   session management).
