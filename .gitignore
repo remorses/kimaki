@@ -7,6 +7,7 @@ esm
 coverage
 useraudio
 .env
+.dev.vars
 *.db
 *.wav
 discord-audio-logs
