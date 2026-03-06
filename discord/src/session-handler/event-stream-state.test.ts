@@ -14,7 +14,7 @@ import {
   getRunStartTimeForIdle,
   getLatestRunInfo,
   shouldEmitFooter,
-  isDerivedSubtaskSession,
+  getDerivedSubtaskIndex,
   type EventBufferEntry,
 } from './event-stream-state.js'
 
@@ -240,26 +240,128 @@ describe('real-session-task-normal', () => {
 })
 
 describe('real-session-task-user-interruption', () => {
+  // Event-shape reference for live task streams:
+  // tmp/session-events/ses_33d8cd632ffeImx2BDMv6M2eM3.jsonl
+  // This file shows task tool updates with state.metadata.sessionId and
+  // state.output lines starting with "task_id: ses_...".
   const events = loadFixture('real-session-task-user-interruption.jsonl')
   const sessionId = getSessionId(events)
   const idles = findIdleIndices(events, sessionId)
+  const childSessionId = 'ses_3464f3a1dffeBBD0d15EqnGjAh'
 
-  test('isDerivedSubtaskSession detects child session from tool output', () => {
-    // The task tool output contains "task_id: ses_3464f3a1dffeBBD0d15EqnGjAh"
-    const childSessionId = 'ses_3464f3a1dffeBBD0d15EqnGjAh'
-    expect(isDerivedSubtaskSession({
+  test('getDerivedSubtaskIndex starts at 1 for first task of assistant message', () => {
+    expect(getDerivedSubtaskIndex({
       events,
       mainSessionId: sessionId,
       candidateSessionId: childSessionId,
-    })).toBe(true)
+    })).toBe(1)
   })
 
-  test('isDerivedSubtaskSession returns false for unknown session', () => {
-    expect(isDerivedSubtaskSession({
+  test('getDerivedSubtaskIndex restarts at 1 for a newer assistant message', () => {
+    const firstTaskEvent = events.find((entry) => {
+      if (entry.event.type !== 'message.part.updated') {
+        return false
+      }
+      const part = entry.event.properties.part
+      if (part.sessionID !== sessionId) {
+        return false
+      }
+      if (part.type !== 'tool' || part.tool !== 'task') {
+        return false
+      }
+      if (part.state.status !== 'running' && part.state.status !== 'completed') {
+        return false
+      }
+      return part.state.metadata?.sessionId === childSessionId
+    })
+    if (!firstTaskEvent) {
+      throw new Error('Expected to find task tool event in fixture')
+    }
+
+    const secondChildSessionId = 'ses_synthetic_child_2'
+    const thirdChildSessionId = 'ses_synthetic_child_3'
+    const syntheticAssistantMessageId = 'msg_synthetic_new_assistant'
+
+    const secondTaskEvent = structuredClone(firstTaskEvent)
+    if (secondTaskEvent.event.type !== 'message.part.updated') {
+      throw new Error('Expected message.part.updated event')
+    }
+    const secondTaskPart = secondTaskEvent.event.properties.part
+    if (secondTaskPart.type !== 'tool' || secondTaskPart.tool !== 'task') {
+      throw new Error('Expected task tool part')
+    }
+    if (secondTaskPart.state.status !== 'completed') {
+      throw new Error('Expected completed task tool part')
+    }
+    secondTaskPart.id = `${secondTaskPart.id}-synthetic-2`
+    secondTaskPart.messageID = syntheticAssistantMessageId
+    secondTaskPart.state = {
+      ...secondTaskPart.state,
+      metadata: {
+        ...(secondTaskPart.state.metadata || {}),
+        sessionId: secondChildSessionId,
+      },
+      output: `task_id: ${secondChildSessionId}`,
+    }
+
+    const thirdTaskEvent = structuredClone(secondTaskEvent)
+    if (thirdTaskEvent.event.type !== 'message.part.updated') {
+      throw new Error('Expected message.part.updated event')
+    }
+    const thirdTaskPart = thirdTaskEvent.event.properties.part
+    if (thirdTaskPart.type !== 'tool' || thirdTaskPart.tool !== 'task') {
+      throw new Error('Expected task tool part')
+    }
+    if (thirdTaskPart.state.status !== 'completed') {
+      throw new Error('Expected completed task tool part')
+    }
+    thirdTaskPart.id = `${thirdTaskPart.id}-synthetic-3`
+    thirdTaskPart.messageID = syntheticAssistantMessageId
+    thirdTaskPart.state = {
+      ...thirdTaskPart.state,
+      metadata: {
+        ...(thirdTaskPart.state.metadata || {}),
+        sessionId: thirdChildSessionId,
+      },
+      output: `task_id: ${thirdChildSessionId}`,
+    }
+
+    const lastTimestamp = events[events.length - 1]?.timestamp || 0
+    const augmentedEvents: EventBufferEntry[] = [
+      ...events,
+      {
+        timestamp: lastTimestamp + 1,
+        event: secondTaskEvent.event,
+      },
+      {
+        timestamp: lastTimestamp + 2,
+        event: thirdTaskEvent.event,
+      },
+    ]
+
+    expect(getDerivedSubtaskIndex({
+      events: augmentedEvents,
+      mainSessionId: sessionId,
+      candidateSessionId: childSessionId,
+    })).toBe(1)
+    expect(getDerivedSubtaskIndex({
+      events: augmentedEvents,
+      mainSessionId: sessionId,
+      candidateSessionId: secondChildSessionId,
+    })).toBe(1)
+    expect(getDerivedSubtaskIndex({
+      events: augmentedEvents,
+      mainSessionId: sessionId,
+      candidateSessionId: thirdChildSessionId,
+    })).toBe(2)
+  })
+
+  test('getDerivedSubtaskIndex returns undefined for unknown session', () => {
+    expect(getDerivedSubtaskIndex({
       events,
       mainSessionId: sessionId,
       candidateSessionId: 'ses_nonexistent',
-    })).toBe(false)
+    })).toBe(undefined)
   })
 
   test('shouldEmitFooter at final idle', () => {

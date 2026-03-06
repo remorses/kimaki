@@ -81,7 +81,7 @@ import {
   isSessionBusy,
   getLatestRunInfo,
   getRunStartTimeForIdle,
-  isDerivedSubtaskSession,
+  getDerivedSubtaskIndex,
   shouldEmitFooter,
   type EventBufferEntry,
 } from './event-stream-state.js'
@@ -768,16 +768,16 @@ export class ThreadSessionRuntime {
     if (!mainSessionId || candidateSessionId === mainSessionId) {
       return undefined
     }
-    const derived = isDerivedSubtaskSession({
+    const subtaskIndex = getDerivedSubtaskIndex({
       events: this.eventBuffer,
       mainSessionId,
       candidateSessionId,
     })
-    if (!derived) {
+    if (!subtaskIndex) {
       return undefined
     }
 
-    const label = `task-${candidateSessionId.slice(-4)}`
+    const label = `task-${subtaskIndex}`
     const assistantMessageId = this.getLatestAssistantMessageIdForSession({
       sessionId: candidateSessionId,
     })

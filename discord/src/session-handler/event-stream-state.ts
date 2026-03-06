@@ -3,13 +3,65 @@
 // Zero imports from thread-session-runtime.ts, store.ts, or state.ts.
 // Only types from @opencode-ai/sdk/v2 and the getOpencodeEventSessionId helper.
 
-import type { Event as OpenCodeEvent } from '@opencode-ai/sdk/v2'
+import type { Event as OpenCodeEvent, Part } from '@opencode-ai/sdk/v2'
 import { getOpencodeEventSessionId } from './opencode-session-event-log.js'
 
 export type EventBufferEntry = {
   event: OpenCodeEvent
   timestamp: number
   eventIndex?: number
+}
+
+function getTaskChildSessionId({
+  part,
+}: {
+  part: Extract<Part, { type: 'tool' }>
+}): string | undefined {
+  // Event-shape reference:
+  // - tmp/session-events/ses_33d8cd632ffeImx2BDMv6M2eM3.jsonl
+  // - In real task events, state.metadata.sessionId appears on running/completed
+  //   tool updates and is the canonical child-session identifier.
+  // We intentionally do not parse state.output because it is user-facing text
+  // and can change format across providers/versions.
+  const metadataValue = (part.state as { metadata?: unknown }).metadata
+  const metadataSessionId =
+    metadataValue && typeof metadataValue === 'object'
+      ? (metadataValue as { sessionId?: unknown }).sessionId
+      : undefined
+  if (typeof metadataSessionId === 'string' && metadataSessionId.length > 0) {
+    return metadataSessionId
+  }
+  return undefined
+}
+
+function getTaskCandidateFromEvent({
+  event,
+  mainSessionId,
+}: {
+  event: OpenCodeEvent
+  mainSessionId: string
+}): { assistantMessageId: string; childSessionId: string } | undefined {
+  if (event.type !== 'message.part.updated') {
+    return undefined
+  }
+
+  const part = event.properties.part
+  if (part.sessionID !== mainSessionId) {
+    return undefined
+  }
+  if (part.type !== 'tool' || part.tool !== 'task') {
+    return undefined
+  }
+
+  const childSessionId = getTaskChildSessionId({ part })
+  if (!childSessionId) {
+    return undefined
+  }
+
+  return {
+    assistantMessageId: part.messageID,
+    childSessionId,
+  }
 }
 
 // Scans backward for most recent session-scoped lifecycle event.
@@ -245,6 +297,70 @@ export function shouldEmitFooter({
   })
 }
 
+// Returns a stable 1-based subtask index for candidateSessionId.
+// Indexing scope is the parent assistant message that spawned the task tool calls,
+// so numbering restarts at 1 for each assistant message.
+export function getDerivedSubtaskIndex({
+  events,
+  mainSessionId,
+  candidateSessionId,
+  upToIndex,
+}: {
+  events: EventBufferEntry[]
+  mainSessionId: string
+  candidateSessionId: string
+  upToIndex?: number
+}): number | undefined {
+  const end = upToIndex ?? events.length - 1
+  let parentAssistantMessageId: string | undefined
+
+  for (let i = end; i >= 0; i--) {
+    const entry = events[i]
+    if (!entry) {
+      continue
+    }
+    const candidate = getTaskCandidateFromEvent({
+      event: entry.event,
+      mainSessionId,
+    })
+    if (!candidate) {
+      continue
+    }
+    if (candidate.childSessionId !== candidateSessionId) {
+      continue
+    }
+    parentAssistantMessageId = candidate.assistantMessageId
+    break
+  }
+
+  if (!parentAssistantMessageId) {
+    return undefined
+  }
+
+  const indexByChildSessionId = new Map<string, number>()
+  for (let i = 0; i <= end; i++) {
+    const entry = events[i]
+    if (!entry) {
+      continue
+    }
+    const candidate = getTaskCandidateFromEvent({
+      event: entry.event,
+      mainSessionId,
+    })
+    if (!candidate || candidate.assistantMessageId !== parentAssistantMessageId) {
+      continue
+    }
+    if (!indexByChildSessionId.has(candidate.childSessionId)) {
+      indexByChildSessionId.set(
+        candidate.childSessionId,
+        indexByChildSessionId.size + 1,
+      )
+    }
+  }
+
+  return indexByChildSessionId.get(candidateSessionId)
+}
+
 function getRunWindowStartIndex({
   events,
   sessionId,
@@ -335,54 +451,5 @@ function hasAssistantStepFinishInRunWindow({
     }
   }
 
-  return false
-}
-
-// Checks if candidateSessionId appears as a subtask of mainSessionId.
-// A subtask is detected when a message.part.updated with tool=task has
-// the candidateSessionId mentioned in the tool output (task_id: <sessionId>)
-// or in state.metadata.sessionId.
-export function isDerivedSubtaskSession({
-  events,
-  mainSessionId,
-  candidateSessionId,
-  upToIndex,
-}: {
-  events: EventBufferEntry[]
-  mainSessionId: string
-  candidateSessionId: string
-  upToIndex?: number
-}): boolean {
-  const end = upToIndex ?? events.length - 1
-  for (let i = end; i >= 0; i--) {
-    const entry = events[i]
-    if (!entry) {
-      continue
-    }
-    const e = entry.event
-    if (e.type !== 'message.part.updated') {
-      continue
-    }
-    const part = e.properties.part
-    if (part.sessionID !== mainSessionId) {
-      continue
-    }
-    if (part.type !== 'tool' || part.tool !== 'task') {
-      continue
-    }
-    // Check state.output for "task_id: <candidateSessionId>"
-    const state = part.state as { output?: string; metadata?: { sessionId?: string } } | undefined
-    if (!state) {
-      continue
-    }
-    // Check state.metadata.sessionId first (spec-defined path)
-    if (state.metadata?.sessionId === candidateSessionId) {
-      return true
-    }
-    // Fallback: extract from tool output "task_id: <sessionId>"
-    if (typeof state.output === 'string' && state.output.includes(`task_id: ${candidateSessionId}`)) {
-      return true
-    }
-  }
   return false
 }
