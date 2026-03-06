@@ -162,7 +162,9 @@ describe('queue advanced: action buttons', () => {
 
       const timeline = await th.text({ showInteractions: true })
       expect(timeline).toMatchInlineSnapshot(`
-        "--- from: assistant (TestBot)
+        "--- from: user (queue-action-tester)
+        Reply with exactly: action-button-setup
+        --- from: assistant (TestBot)
         ⬥ ok
         --- from: assistant (TestBot)
         *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2*
@@ -252,7 +254,9 @@ describe('queue advanced: action buttons', () => {
 
       const timeline = await th.text({ showInteractions: true })
       expect(timeline).toMatchInlineSnapshot(`
-        "--- from: assistant (TestBot)
+        "--- from: user (queue-action-tester)
+        Reply with exactly: action-button-dismiss-setup
+        --- from: assistant (TestBot)
         ⬥ ok
         --- from: assistant (TestBot)
         *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2*

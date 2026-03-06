@@ -73,7 +73,9 @@ e2eTest('queue advanced: typing lifecycle', () => {
 
       const timeline = await th.text({ showTyping: true })
       expect(timeline).toMatchInlineSnapshot(`
-        "[bot typing]
+        "--- from: user (queue-advanced-tester)
+        Reply with exactly: typing-stop-normal
+        [bot typing]
         --- from: assistant (TestBot)
         ⬥ ok
         --- from: assistant (TestBot)
@@ -172,7 +174,9 @@ e2eTest('queue advanced: typing lifecycle', () => {
 
       const timeline = await th.text({ showTyping: true })
       expect(timeline).toMatchInlineSnapshot(`
-        "--- from: assistant (TestBot)
+        "--- from: user (queue-advanced-tester)
+        Reply with exactly: typing-stop-interrupt-setup
+        --- from: assistant (TestBot)
         ⬥ ok
         --- from: assistant (TestBot)
         *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2*

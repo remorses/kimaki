@@ -121,7 +121,9 @@ describe('queue advanced: typing around permissions', () => {
         showInteractions: true,
       })
       expect(timeline).toMatchInlineSnapshot(`
-        "--- from: assistant (TestBot)
+        "--- from: user (queue-permission-tester)
+        PERMISSION_TYPING_MARKER
+        --- from: assistant (TestBot)
         ⚠️ **Permission Required**
         **Type:** \`external_directory\`
         **Pattern:** \`/Users/morse/*\`

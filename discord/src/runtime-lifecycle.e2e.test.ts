@@ -337,7 +337,9 @@ describe('runtime lifecycle', () => {
       // Still the same runtime — three full cycles, one runtime, one listener
       const runtimeAfterC = getRuntime(thread.id)
       expect(await th.text()).toMatchInlineSnapshot(`
-        "--- from: assistant (TestBot)
+        "--- from: user (lifecycle-tester)
+        Reply with exactly: seq-alpha
+        --- from: assistant (TestBot)
         ⬥ ok
         --- from: assistant (TestBot)
         *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2*
@@ -395,7 +397,9 @@ describe('runtime lifecycle', () => {
       })
 
       expect(await discord.thread(thread.id).text()).toMatchInlineSnapshot(`
-        "--- from: assistant (TestBot)
+        "--- from: user (lifecycle-tester)
+        Reply with exactly: footer-check
+        --- from: assistant (TestBot)
         ⬥ ok
         --- from: assistant (TestBot)
         *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2*"
@@ -483,7 +487,9 @@ describe('runtime lifecycle', () => {
       const messages = await th.getMessages()
 
       expect(await th.text()).toMatchInlineSnapshot(`
-        "--- from: assistant (TestBot)
+        "--- from: user (lifecycle-tester)
+        Reply with exactly: concurrent-setup
+        --- from: assistant (TestBot)
         ⬥ ok
         --- from: assistant (TestBot)
         *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2*
@@ -492,7 +498,9 @@ describe('runtime lifecycle', () => {
         --- from: user (lifecycle-tester)
         Reply with exactly: concurrent-charlie
         --- from: assistant (TestBot)
-        ⬥ ok"
+        ⬥ ok
+        --- from: assistant (TestBot)
+        *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2*"
       `)
       const bravoIndex = messages.findIndex((m) => {
         return (

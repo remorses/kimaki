@@ -108,7 +108,9 @@ e2eTest('queue advanced: abort and retry', () => {
       })
 
       expect(await th.text()).toMatchInlineSnapshot(`
-        "--- from: assistant (TestBot)
+        "--- from: user (queue-advanced-tester)
+        Reply with exactly: oscar
+        --- from: assistant (TestBot)
         ⬥ ok
         --- from: assistant (TestBot)
         *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2*
@@ -187,7 +189,9 @@ e2eTest('queue advanced: abort and retry', () => {
       runtime.abortActiveRun('test-no-footer-on-abort')
 
       expect(await th.text()).toMatchInlineSnapshot(`
-        "--- from: assistant (TestBot)
+        "--- from: user (queue-advanced-tester)
+        Reply with exactly: abort-no-footer-setup
+        --- from: assistant (TestBot)
         ⬥ ok
         --- from: assistant (TestBot)
         *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2*
@@ -315,7 +319,9 @@ e2eTest('queue advanced: abort and retry', () => {
       })
 
       expect(await th.text()).toMatchInlineSnapshot(`
-        "--- from: assistant (TestBot)
+        "--- from: user (queue-advanced-tester)
+        Reply with exactly: retry-setup
+        --- from: assistant (TestBot)
         ⬥ ok
         --- from: user (queue-advanced-tester)
         PLUGIN_TIMEOUT_SLEEP_MARKER
@@ -368,7 +374,9 @@ e2eTest('queue advanced: abort and retry', () => {
       runtime.abortActiveRun('force-abort-test')
 
       expect(await th.text()).toMatchInlineSnapshot(`
-        "--- from: assistant (TestBot)
+        "--- from: user (queue-advanced-tester)
+        Reply with exactly: force-abort-setup
+        --- from: assistant (TestBot)
         ⬥ ok
         --- from: user (queue-advanced-tester)
         SLOW_ABORT_MARKER run long response"

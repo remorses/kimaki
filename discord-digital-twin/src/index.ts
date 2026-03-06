@@ -621,7 +621,7 @@ export class DigitalDiscord {
     const statements = [
       `CREATE TABLE IF NOT EXISTS "Guild" ("id" TEXT NOT NULL PRIMARY KEY, "name" TEXT NOT NULL, "ownerId" TEXT NOT NULL, "icon" TEXT, "description" TEXT, "features" TEXT NOT NULL DEFAULT '[]', "createdAt" DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP)`,
       `CREATE TABLE IF NOT EXISTS "User" ("id" TEXT NOT NULL PRIMARY KEY, "username" TEXT NOT NULL, "discriminator" TEXT NOT NULL DEFAULT '0', "avatar" TEXT, "bot" BOOLEAN NOT NULL DEFAULT false, "system" BOOLEAN NOT NULL DEFAULT false, "flags" INTEGER NOT NULL DEFAULT 0, "globalName" TEXT)`,
-      `CREATE TABLE IF NOT EXISTS "Channel" ("id" TEXT NOT NULL PRIMARY KEY, "guildId" TEXT, "type" INTEGER NOT NULL, "name" TEXT, "topic" TEXT, "parentId" TEXT, "position" INTEGER NOT NULL DEFAULT 0, "ownerId" TEXT, "archived" BOOLEAN NOT NULL DEFAULT false, "locked" BOOLEAN NOT NULL DEFAULT false, "autoArchiveDuration" INTEGER NOT NULL DEFAULT 1440, "archiveTimestamp" DATETIME, "lastMessageId" TEXT, "messageCount" INTEGER NOT NULL DEFAULT 0, "memberCount" INTEGER NOT NULL DEFAULT 0, "totalMessageSent" INTEGER NOT NULL DEFAULT 0, "rateLimitPerUser" INTEGER NOT NULL DEFAULT 0, "createdAt" DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP, CONSTRAINT "Channel_guildId_fkey" FOREIGN KEY ("guildId") REFERENCES "Guild" ("id") ON DELETE CASCADE ON UPDATE CASCADE)`,
+      `CREATE TABLE IF NOT EXISTS "Channel" ("id" TEXT NOT NULL PRIMARY KEY, "guildId" TEXT, "type" INTEGER NOT NULL, "name" TEXT, "topic" TEXT, "parentId" TEXT, "position" INTEGER NOT NULL DEFAULT 0, "ownerId" TEXT, "archived" BOOLEAN NOT NULL DEFAULT false, "locked" BOOLEAN NOT NULL DEFAULT false, "autoArchiveDuration" INTEGER NOT NULL DEFAULT 1440, "archiveTimestamp" DATETIME, "lastMessageId" TEXT, "messageCount" INTEGER NOT NULL DEFAULT 0, "memberCount" INTEGER NOT NULL DEFAULT 0, "totalMessageSent" INTEGER NOT NULL DEFAULT 0, "rateLimitPerUser" INTEGER NOT NULL DEFAULT 0, "starterMessageId" TEXT, "createdAt" DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP, CONSTRAINT "Channel_guildId_fkey" FOREIGN KEY ("guildId") REFERENCES "Guild" ("id") ON DELETE CASCADE ON UPDATE CASCADE)`,
       `CREATE TABLE IF NOT EXISTS "Message" ("id" TEXT NOT NULL PRIMARY KEY, "channelId" TEXT NOT NULL, "authorId" TEXT NOT NULL, "content" TEXT NOT NULL DEFAULT '', "timestamp" DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP, "editedTimestamp" DATETIME, "tts" BOOLEAN NOT NULL DEFAULT false, "mentionEveryone" BOOLEAN NOT NULL DEFAULT false, "pinned" BOOLEAN NOT NULL DEFAULT false, "type" INTEGER NOT NULL DEFAULT 0, "flags" INTEGER NOT NULL DEFAULT 0, "embeds" TEXT NOT NULL DEFAULT '[]', "components" TEXT NOT NULL DEFAULT '[]', "attachments" TEXT NOT NULL DEFAULT '[]', "mentions" TEXT NOT NULL DEFAULT '[]', "mentionRoles" TEXT NOT NULL DEFAULT '[]', "nonce" TEXT, "webhookId" TEXT, "applicationId" TEXT, "messageReference" TEXT, "createdAt" DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP, CONSTRAINT "Message_channelId_fkey" FOREIGN KEY ("channelId") REFERENCES "Channel" ("id") ON DELETE CASCADE ON UPDATE CASCADE)`,
       `CREATE TABLE IF NOT EXISTS "GuildMember" ("guildId" TEXT NOT NULL, "userId" TEXT NOT NULL, "nick" TEXT, "roles" TEXT NOT NULL DEFAULT '[]', "joinedAt" DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP, "deaf" BOOLEAN NOT NULL DEFAULT false, "mute" BOOLEAN NOT NULL DEFAULT false, "permissions" TEXT, PRIMARY KEY ("guildId", "userId"), CONSTRAINT "GuildMember_guildId_fkey" FOREIGN KEY ("guildId") REFERENCES "Guild" ("id") ON DELETE CASCADE ON UPDATE CASCADE, CONSTRAINT "GuildMember_userId_fkey" FOREIGN KEY ("userId") REFERENCES "User" ("id") ON DELETE CASCADE ON UPDATE CASCADE)`,
       `CREATE TABLE IF NOT EXISTS "Role" ("id" TEXT NOT NULL PRIMARY KEY, "guildId" TEXT NOT NULL, "name" TEXT NOT NULL, "color" INTEGER NOT NULL DEFAULT 0, "hoist" BOOLEAN NOT NULL DEFAULT false, "position" INTEGER NOT NULL DEFAULT 0, "permissions" TEXT NOT NULL DEFAULT '0', "managed" BOOLEAN NOT NULL DEFAULT false, "mentionable" BOOLEAN NOT NULL DEFAULT false, "flags" INTEGER NOT NULL DEFAULT 0, CONSTRAINT "Role_guildId_fkey" FOREIGN KEY ("guildId") REFERENCES "Guild" ("id") ON DELETE CASCADE ON UPDATE CASCADE)`,
@@ -912,17 +912,30 @@ export class ChannelScope {
   }
 
   async getMessages(): Promise<APIMessage[]> {
+    const channel = await this.discord.prisma.channel.findUnique({
+      where: { id: this.channelId },
+    })
     const messages = await this.discord.prisma.message.findMany({
       where: { channelId: this.channelId },
       orderBy: [{ timestamp: 'asc' }, { id: 'asc' }],
     })
     const result: APIMessage[] = []
+    // For threads created from a message, prepend the starter message
+    // (it lives in the parent channel, not in the thread's own messages)
+    if (channel?.starterMessageId) {
+      const starterMsg = await this.discord.prisma.message.findUnique({
+        where: { id: channel.starterMessageId },
+      })
+      if (starterMsg && !messages.some((m) => { return m.id === starterMsg.id })) {
+        const starterAuthor = await this.discord.prisma.user.findUniqueOrThrow({
+          where: { id: starterMsg.authorId },
+        })
+        result.push(messageToAPI(starterMsg, starterAuthor, channel.guildId ?? undefined))
+      }
+    }
     for (const msg of messages) {
       const author = await this.discord.prisma.user.findUniqueOrThrow({
         where: { id: msg.authorId },
-      })
-      const channel = await this.discord.prisma.channel.findUnique({
-        where: { id: this.channelId },
       })
       result.push(
         messageToAPI(msg, author, channel?.guildId ?? undefined),

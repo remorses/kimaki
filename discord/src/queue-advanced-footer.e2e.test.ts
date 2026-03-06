@@ -47,7 +47,9 @@ e2eTest('queue advanced: footer emission', () => {
         timeout: 4_000,
       })
       expect(await th.text()).toMatchInlineSnapshot(`
-        "--- from: assistant (TestBot)
+        "--- from: user (queue-advanced-tester)
+        Reply with exactly: footer-check
+        --- from: assistant (TestBot)
         ⬥ ok
         --- from: assistant (TestBot)
         *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2*"
@@ -114,7 +116,9 @@ e2eTest('queue advanced: footer emission', () => {
           && m.content.includes('⋅')
       }).length
       expect(await th.text()).toMatchInlineSnapshot(`
-        "--- from: assistant (TestBot)
+        "--- from: user (queue-advanced-tester)
+        Reply with exactly: footer-multi-setup
+        --- from: assistant (TestBot)
         ⬥ ok
         --- from: assistant (TestBot)
         *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2*
@@ -227,7 +231,9 @@ e2eTest('queue advanced: footer emission', () => {
       })
 
       expect(await th.text()).toMatchInlineSnapshot(`
-        "--- from: assistant (TestBot)
+        "--- from: user (queue-advanced-tester)
+        Reply with exactly: interrupt-footer-setup
+        --- from: assistant (TestBot)
         ⬥ ok
         --- from: assistant (TestBot)
         *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2*
@@ -323,7 +329,9 @@ e2eTest('queue advanced: footer emission', () => {
         )
       })
       expect(await th.text()).toMatchInlineSnapshot(`
-        "--- from: assistant (TestBot)
+        "--- from: user (queue-advanced-tester)
+        Reply with exactly: plugin-timeout-setup
+        --- from: assistant (TestBot)
         ⬥ ok
         --- from: assistant (TestBot)
         *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2*

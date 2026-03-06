@@ -417,7 +417,9 @@ describeIf('gateway-proxy e2e', () => {
       })
 
       expect(await discord.thread(thread.id).text()).toMatchInlineSnapshot(`
-        "--- from: assistant (TestBot)
+        "--- from: user (proxy-tester)
+        hello from gateway proxy test
+        --- from: assistant (TestBot)
         ⬥ gateway-proxy-reply
         --- from: assistant (TestBot)
         *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2*"
@@ -451,7 +453,9 @@ describeIf('gateway-proxy e2e', () => {
       })
 
       expect(await discord.thread(firstThreadId).text()).toMatchInlineSnapshot(`
-        "--- from: assistant (TestBot)
+        "--- from: user (proxy-tester)
+        hello from gateway proxy test
+        --- from: assistant (TestBot)
         ⬥ gateway-proxy-reply
         --- from: assistant (TestBot)
         *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2*
@@ -487,7 +491,9 @@ describeIf('gateway-proxy e2e', () => {
           m.content.includes('exited with'),
       })
       expect(await discord.thread(firstThreadId).text()).toMatchInlineSnapshot(`
-        "--- from: assistant (TestBot)
+        "--- from: user (proxy-tester)
+        hello from gateway proxy test
+        --- from: assistant (TestBot)
         ⬥ gateway-proxy-reply
         --- from: assistant (TestBot)
         *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2*
@@ -527,7 +533,9 @@ describeIf('gateway-proxy e2e', () => {
 
       const reply = await discord.thread(thread.id).waitForBotReply()
       expect(await discord.thread(thread.id).text()).toMatchInlineSnapshot(`
-        "--- from: assistant (TestBot)
+        "--- from: user (proxy-tester)
+        second message through proxy
+        --- from: assistant (TestBot)
         ⬥ gateway-proxy-reply"
       `)
       expect(reply).toBeDefined()

@@ -514,7 +514,9 @@ e2eTest('voice message handling', () => {
       })
 
       expect(await th.text()).toMatchInlineSnapshot(`
-        "--- from: assistant (TestBot)
+        "--- from: user (voice-tester)
+        [attachment: voice-message.ogg]
+        --- from: assistant (TestBot)
         🎤 Transcribing voice message...
         --- from: assistant (TestBot)
         📝 **Transcribed message:** Fix the login bug in auth.ts
@@ -622,7 +624,9 @@ e2eTest('voice message handling', () => {
 
       const finalState = getThreadState(thread.id)
       expect(await th.text()).toMatchInlineSnapshot(`
-        "--- from: assistant (TestBot)
+        "--- from: user (voice-tester)
+        FAST_RESPONSE_MARKER initial setup
+        --- from: assistant (TestBot)
         ⬥ fast-response-done
         --- from: assistant (TestBot)
         *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2*
@@ -875,6 +879,8 @@ e2eTest('voice message handling', () => {
 
       expect(await th.text()).toMatchInlineSnapshot(`
         "--- from: user (voice-tester)
+        SLOW_RESPONSE_MARKER start queued task
+        --- from: user (voice-tester)
         [attachment: voice-message.ogg]
         --- from: assistant (TestBot)
         🎤 Transcribing voice message...
@@ -1006,7 +1012,9 @@ e2eTest('voice message handling', () => {
       })
 
       expect(await th.text()).toMatchInlineSnapshot(`
-        "--- from: assistant (TestBot)
+        "--- from: user (voice-tester)
+        FAST_RESPONSE_MARKER quick task
+        --- from: assistant (TestBot)
         ⬥ fast-response-done
         --- from: assistant (TestBot)
         *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2*

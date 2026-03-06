@@ -39,6 +39,7 @@ model Channel {
   memberCount         Int            @default(0)
   totalMessageSent    Int            @default(0)
   rateLimitPerUser    Int            @default(0)
+  starterMessageId    String?
   messages            Message[]
   threadMembers       ThreadMember[]
   createdAt           DateTime       @default(now())

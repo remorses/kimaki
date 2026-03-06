@@ -416,7 +416,9 @@ e2eTest('thread message queue ordering', () => {
       })
 
       expect(await discord.thread(thread.id).text()).toMatchInlineSnapshot(`
-        "--- from: assistant (TestBot)
+        "--- from: user (queue-tester)
+        Reply with exactly: cold-start-stream
+        --- from: assistant (TestBot)
         ⬥ ok
         --- from: assistant (TestBot)
         *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2*"
@@ -484,7 +486,9 @@ e2eTest('thread message queue ordering', () => {
       })
 
       expect(await th.text()).toMatchInlineSnapshot(`
-        "--- from: assistant (TestBot)
+        "--- from: user (queue-tester)
+        Reply with exactly: alpha
+        --- from: assistant (TestBot)
         ⬥ ok
         --- from: user (queue-tester)
         Reply with exactly: beta
@@ -575,7 +579,9 @@ e2eTest('thread message queue ordering', () => {
       })
 
       expect(await th.text()).toMatchInlineSnapshot(`
-        "--- from: assistant (TestBot)
+        "--- from: user (queue-tester)
+        Reply with exactly: one
+        --- from: assistant (TestBot)
         ⬥ ok
         --- from: user (queue-tester)
         Reply with exactly: two
@@ -668,7 +674,9 @@ e2eTest('thread message queue ordering', () => {
       })
 
       expect(await th.text()).toMatchInlineSnapshot(`
-        "--- from: assistant (TestBot)
+        "--- from: user (queue-tester)
+        Reply with exactly: opencode-queue-setup
+        --- from: assistant (TestBot)
         ⬥ ok
         --- from: assistant (TestBot)
         *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2*
@@ -755,7 +763,9 @@ e2eTest('thread message queue ordering', () => {
       }
 
       expect(await discord.thread(thread.id).text()).toMatchInlineSnapshot(`
-        "--- from: assistant (TestBot)
+        "--- from: user (queue-tester)
+        Reply with exactly: BASH_TOOL_FILE_MARKER
+        --- from: assistant (TestBot)
         ⬥ running create file
         --- from: assistant (TestBot)
         ⬥ ok
@@ -882,7 +892,9 @@ e2eTest('thread message queue ordering', () => {
       })
 
       expect(await th.text()).toMatchInlineSnapshot(`
-        "--- from: assistant (TestBot)
+        "--- from: user (queue-tester)
+        Reply with exactly: queue-slash-setup
+        --- from: assistant (TestBot)
         ⬥ ok
         --- from: assistant (TestBot)
         *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2*
@@ -975,7 +987,9 @@ e2eTest('thread message queue ordering', () => {
         return m.author.id === TEST_USER_ID && m.content.includes('foxtrot')
       })
       expect(await th.text()).toMatchInlineSnapshot(`
-        "--- from: assistant (TestBot)
+        "--- from: user (queue-tester)
+        Reply with exactly: delta
+        --- from: assistant (TestBot)
         ⬥ ok
         --- from: user (queue-tester)
         Reply with exactly: echo
@@ -1065,7 +1079,9 @@ e2eTest('thread message queue ordering', () => {
       // C's user message appears before its bot response.
       // We assert on india's reply existence.
       expect(await th.text()).toMatchInlineSnapshot(`
-        "--- from: assistant (TestBot)
+        "--- from: user (queue-tester)
+        Reply with exactly: golf
+        --- from: assistant (TestBot)
         ⬥ ok
         --- from: user (queue-tester)
         Reply with exactly: hotel
@@ -1173,7 +1189,9 @@ e2eTest('thread message queue ordering', () => {
       })
 
       expect(await th.text()).toMatchInlineSnapshot(`
-        "--- from: assistant (TestBot)
+        "--- from: user (queue-tester)
+        Reply with exactly: juliet
+        --- from: assistant (TestBot)
         ⬥ ok
         --- from: user (queue-tester)
         Reply with exactly: kilo

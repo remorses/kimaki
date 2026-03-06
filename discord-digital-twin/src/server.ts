@@ -846,6 +846,7 @@ export function createServer({
             autoArchiveDuration: body.auto_archive_duration ?? 1440,
             archiveTimestamp: new Date(),
             rateLimitPerUser: body.rate_limit_per_user ?? 0,
+            starterMessageId: params.message_id,
             memberCount: 1,
           },
         })
