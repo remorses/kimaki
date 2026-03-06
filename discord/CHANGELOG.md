@@ -1,5 +1,28 @@
 # Changelog
 
+## 0.4.73
+
+1. **New `/worktrees` slash command** — list all active worktree sessions with branch, status, and age; handles deleted worktree folders gracefully
+2. **New `/stop-opencode-server` command** — manually stop the OpenCode server for the current project channel
+3. **OpenCode servers auto-stop after 2 hours of inactivity** — idle server processes are cleaned up automatically to free resources
+4. **Agent name shown in thread messages** — messages now prefix with the active agent name (e.g. `[build-agent]`) instead of the generic `task` label
+5. **Tool calls from previous sessions hidden** — resuming a session no longer replays tool call messages from earlier runs in the thread
+6. **Stale action buttons cleaned up** — action buttons left over from ended sessions are properly removed
+7. **Legacy global slash commands removed on startup** — outdated global commands are automatically cleaned up when the bot registers guild commands
+8. **`--gateway` CLI flag** — force gateway mode even when self-hosted credentials are already saved, useful for switching between modes
+9. **`/login` providers sorted by popularity** — most-used providers (Anthropic, OpenAI, etc.) are listed first
+10. **`/verbosity` uses a dropdown** — replaced text input with a select menu for a better UX when setting output verbosity
+11. **Fixed duplicate context usage notices** — context percentage no longer appears twice before the run footer
+12. **Fixed queued message delivery timing** — queued messages now wait for the current run to fully complete before dispatching
+13. **Bot explains unlinked channels** — when `@mentioned` in a channel not linked to a project, the bot now sends a helpful explanation
+14. **Fixed typing indicator stuck after `/abort`** — typing indicator now properly clears when aborting a session
+15. **Fixed interrupt messages showing `»` prefix** — messages after an abort no longer show the queue indicator prefix
+16. **`/queue` confirmation delayed until dispatched** — queue echo is shown only after the message is actually placed in the queue
+17. **Voice messages show queue position** — queued voice messages now display their queue position number
+18. **`~/.kimaki` always accessible** — OpenCode sessions no longer trigger permission prompts when reading kimaki config files
+19. **Smart bot auto-selection** — picks the correct bot configuration automatically when multiple bots are configured in the database
+20. **`--restart-onboarding` flag renamed from `--restart`** — more descriptive name for the flag that re-runs the setup wizard
+
 ## 0.4.72
 
 1. **Fixed plugin tools silently missing** — `kimaki_action_buttons`, `kimaki_file_upload`, `kimaki_mark_thread`, and other plugin tools were silently missing on some OpenCode versions due to a crash in the plugin loader; the root cause (an extra exported function confusing the loader) is now fixed
