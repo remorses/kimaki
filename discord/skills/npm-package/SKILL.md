@@ -38,6 +38,7 @@ Use this skill when scaffolding or fixing npm packages.
    - `dist`
    - any runtime-required extra files (for example `schema.prisma`)
    - docs like `README.md` and `CHANGELOG.md`
+   - if tests are inside src and gets included in dist, it's fine. don't try to exclude them
 10. `scripts.build` should be only `tsc` and no bundling. Optionall include running scripts with tsx if needed to generate build artifacts.
 11. `prepublishOnly` must always run `build` (optionally run generation before
     build when required).
