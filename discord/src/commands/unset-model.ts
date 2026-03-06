@@ -73,7 +73,6 @@ export async function handleUnsetModelCommand({
   ].includes(channel.type)
 
   let projectDirectory: string | undefined
-  let channelAppId: string | undefined
   let targetChannelId: string
   let sessionId: string | undefined
 
@@ -82,25 +81,16 @@ export async function handleUnsetModelCommand({
     const textChannel = await resolveTextChannel(thread)
     const metadata = await getKimakiMetadata(textChannel)
     projectDirectory = metadata.projectDirectory
-    channelAppId = metadata.channelAppId
     targetChannelId = textChannel?.id || channel.id
     sessionId = await getThreadSession(thread.id)
   } else if (channel.type === ChannelType.GuildText) {
     const textChannel = channel as TextChannel
     const metadata = await getKimakiMetadata(textChannel)
     projectDirectory = metadata.projectDirectory
-    channelAppId = metadata.channelAppId
     targetChannelId = channel.id
   } else {
     await interaction.editReply({
       content: 'This command can only be used in text channels or threads',
-    })
-    return
-  }
-
-  if (channelAppId && channelAppId !== appId) {
-    await interaction.editReply({
-      content: 'This channel is not configured for this bot',
     })
     return
   }
@@ -111,8 +101,6 @@ export async function handleUnsetModelCommand({
     })
     return
   }
-
-  const effectiveAppId = channelAppId || appId
 
   // Check what overrides exist
   const [sessionPref, channelPref] = await Promise.all([
@@ -155,7 +143,7 @@ export async function handleUnsetModelCommand({
     const newModelInfo = await getCurrentModelInfo({
       sessionId,
       channelId: targetChannelId,
-      appId: effectiveAppId,
+      appId,
       getClient,
     })
 

@@ -24,7 +24,6 @@ const logger = createLogger(LogPrefix.RESUME)
 
 export async function handleResumeCommand({
   command,
-  appId,
 }: CommandContext): Promise<void> {
   await command.deferReply({ ephemeral: false })
 
@@ -55,12 +54,6 @@ export async function handleResumeCommand({
 
   const channelConfig = await getChannelDirectory(textChannel.id)
   const projectDirectory = channelConfig?.directory
-  const channelAppId = channelConfig?.appId || undefined
-
-  if (channelAppId && channelAppId !== appId) {
-    await command.editReply('This channel is not configured for this bot')
-    return
-  }
 
   if (!projectDirectory) {
     await command.editReply(
@@ -172,7 +165,6 @@ export async function handleResumeCommand({
 
 export async function handleResumeAutocomplete({
   interaction,
-  appId,
 }: AutocompleteContext): Promise<void> {
   const focusedValue = interaction.options.getFocused()
 
@@ -184,10 +176,6 @@ export async function handleResumeAutocomplete({
     )
     if (textChannel) {
       const channelConfig = await getChannelDirectory(textChannel.id)
-      if (channelConfig?.appId && channelConfig.appId !== appId) {
-        await interaction.respond([])
-        return
-      }
       projectDirectory = channelConfig?.directory
     }
   }

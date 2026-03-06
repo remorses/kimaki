@@ -155,7 +155,6 @@ e2eTest(
         channelId: textChannelId,
         directory: directories.projectDirectory,
         channelType: 'text',
-        appId: discord.botUserId,
       })
 
       botClient = createDiscordJsClient({ restUrl: discord.restUrl })

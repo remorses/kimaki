@@ -32,7 +32,6 @@ function formatInactivityMinutes(inactiveForMs: number | null): string {
 
 export async function handleStopOpencodeServerCommand({
   command,
-  appId,
 }: CommandContext): Promise<void> {
   const channel = command.channel
 
@@ -71,15 +70,7 @@ export async function handleStopOpencodeServerCommand({
     return
   }
 
-  const { projectDirectory, channelAppId } = resolved
-
-  if (channelAppId && channelAppId !== appId) {
-    await command.reply({
-      content: 'This channel is not configured for this bot',
-      flags: MessageFlags.Ephemeral | SILENT_MESSAGE_FLAGS,
-    })
-    return
-  }
+  const { projectDirectory } = resolved
 
   await command.deferReply({ flags: SILENT_MESSAGE_FLAGS })
 

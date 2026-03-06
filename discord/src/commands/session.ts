@@ -33,12 +33,6 @@ export async function handleSessionCommand({
 
   const channelConfig = await getChannelDirectory(textChannel.id)
   const projectDirectory = channelConfig?.directory
-  const channelAppId = channelConfig?.appId || undefined
-
-  if (channelAppId && channelAppId !== appId) {
-    await command.editReply('This channel is not configured for this bot')
-    return
-  }
 
   if (!projectDirectory) {
     await command.editReply(
@@ -111,8 +105,9 @@ export async function handleSessionCommand({
 
 async function handleAgentAutocomplete({
   interaction,
-  appId,
-}: AutocompleteContext): Promise<void> {
+}: {
+  interaction: AutocompleteContext['interaction']
+}): Promise<void> {
   const focusedValue = interaction.options.getFocused()
 
   let projectDirectory: string | undefined
@@ -123,10 +118,6 @@ async function handleAgentAutocomplete({
   ) {
     const channelConfig = await getChannelDirectory(interaction.channel.id)
     if (channelConfig) {
-      if (channelConfig.appId && channelConfig.appId !== appId) {
-        await interaction.respond([])
-        return
-      }
       projectDirectory = channelConfig.directory
     }
   }
@@ -174,12 +165,11 @@ async function handleAgentAutocomplete({
 
 export async function handleSessionAutocomplete({
   interaction,
-  appId,
 }: AutocompleteContext): Promise<void> {
   const focusedOption = interaction.options.getFocused(true)
 
   if (focusedOption.name === 'agent') {
-    await handleAgentAutocomplete({ interaction, appId })
+    await handleAgentAutocomplete({ interaction })
     return
   }
 
@@ -204,10 +194,6 @@ export async function handleSessionAutocomplete({
   ) {
     const channelConfig = await getChannelDirectory(interaction.channel.id)
     if (channelConfig) {
-      if (channelConfig.appId && channelConfig.appId !== appId) {
-        await interaction.respond([])
-        return
-      }
       projectDirectory = channelConfig.directory
     }
   }

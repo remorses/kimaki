@@ -22,12 +22,10 @@ const logger = createLogger(LogPrefix.CREATE_PROJECT)
 export async function createNewProject({
   guild,
   projectName,
-  appId,
   botName,
 }: {
   guild: Guild
   projectName: string
-  appId: string
   botName?: string
 }): Promise<{
   textChannelId: string
@@ -69,7 +67,6 @@ export async function createNewProject({
     await createProjectChannels({
       guild,
       projectDirectory,
-      appId,
       botName,
     })
 
@@ -106,7 +103,6 @@ export async function handleCreateNewProjectCommand({
     const result = await createNewProject({
       guild,
       projectName,
-      appId,
       botName: command.client.user?.username,
     })
 

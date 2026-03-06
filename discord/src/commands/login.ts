@@ -79,7 +79,6 @@ export type ProviderAuthMethod = {
  */
 export async function handleLoginCommand({
   interaction,
-  appId,
 }: {
   interaction: ChatInputCommandInteraction
   appId: string
@@ -107,7 +106,6 @@ export async function handleLoginCommand({
   ].includes(channel.type)
 
   let projectDirectory: string | undefined
-  let channelAppId: string | undefined
   let targetChannelId: string
 
   if (isThread) {
@@ -115,24 +113,15 @@ export async function handleLoginCommand({
     const textChannel = await resolveTextChannel(thread)
     const metadata = await getKimakiMetadata(textChannel)
     projectDirectory = metadata.projectDirectory
-    channelAppId = metadata.channelAppId
     targetChannelId = textChannel?.id || channel.id
   } else if (channel.type === ChannelType.GuildText) {
     const textChannel = channel as TextChannel
     const metadata = await getKimakiMetadata(textChannel)
     projectDirectory = metadata.projectDirectory
-    channelAppId = metadata.channelAppId
     targetChannelId = channel.id
   } else {
     await interaction.editReply({
       content: 'This command can only be used in text channels or threads',
-    })
-    return
-  }
-
-  if (channelAppId && channelAppId !== appId) {
-    await interaction.editReply({
-      content: 'This channel is not configured for this bot',
     })
     return
   }

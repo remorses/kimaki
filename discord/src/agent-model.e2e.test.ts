@@ -290,7 +290,6 @@ describe('agent model resolution', () => {
       channelId: TEXT_CHANNEL_ID,
       directory: directories.projectDirectory,
       channelType: 'text',
-      appId: discord.botUserId,
     })
     await setChannelVerbosity(TEXT_CHANNEL_ID, 'tools-and-text')
 

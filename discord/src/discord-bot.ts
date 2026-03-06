@@ -221,9 +221,7 @@ export async function startDiscordBot({
       discordLogger.log(`Bot Application ID (provided): ${currentAppId}`)
     }
 
-    voiceLogger.log(
-      `[READY] Bot is ready and will only respond to channels with app ID: ${currentAppId}`,
-    )
+    voiceLogger.log('[READY] Bot is ready')
 
     registerInteractionHandler({ discordClient: c, appId: currentAppId })
     registerVoiceStateHandler({ discordClient: c, appId: currentAppId })
@@ -234,11 +232,7 @@ export async function startDiscordBot({
         discordLogger.log(`${guild.name} (${guild.id})`)
 
         const channels = await getChannelsWithDescriptions(guild)
-        const kimakiChannels = channels.filter(
-          (ch) =>
-            ch.kimakiDirectory &&
-            (!ch.kimakiApp || ch.kimakiApp === currentAppId),
-        )
+        const kimakiChannels = channels.filter((ch) => ch.kimakiDirectory)
 
         if (kimakiChannels.length > 0) {
           discordLogger.log(
@@ -420,13 +414,10 @@ export async function startDiscordBot({
 
         const parent = thread.parent as TextChannel | null
         let projectDirectory: string | undefined
-        let channelAppId: string | undefined
-
         if (parent) {
           const channelConfig = await getChannelDirectory(parent.id)
           if (channelConfig) {
             projectDirectory = channelConfig.directory
-            channelAppId = channelConfig.appId || undefined
           }
         }
 
@@ -455,13 +446,6 @@ export async function startDiscordBot({
               `Using project directory: ${projectDirectory} (worktree: ${worktreeInfo.worktree_directory})`,
             )
           }
-        }
-
-        if (channelAppId && channelAppId !== currentAppId) {
-          voiceLogger.log(
-            `[IGNORED] Thread belongs to different bot app (expected: ${currentAppId}, got: ${channelAppId})`,
-          )
-          return
         }
 
         if (projectDirectory && !fs.existsSync(projectDirectory)) {
@@ -783,22 +767,11 @@ export async function startDiscordBot({
         }
 
         const projectDirectory = channelConfig.directory
-        const channelAppId = channelConfig.appId || undefined
-
-        if (channelAppId && channelAppId !== currentAppId) {
-          voiceLogger.log(
-            `[IGNORED] Channel belongs to different bot app (expected: ${currentAppId}, got: ${channelAppId})`,
-          )
-          return
-        }
 
         // Note: Mention mode is checked early in the handler (before permission check)
         // to avoid sending permission errors to users who just didn't @mention the bot.
 
         discordLogger.log(`DIRECTORY: Found kimaki.directory: ${projectDirectory}`)
-        if (channelAppId) {
-          discordLogger.log(`APP: Channel app ID: ${channelAppId}`)
-        }
 
         if (!fs.existsSync(projectDirectory)) {
           discordLogger.error(`Directory does not exist: ${projectDirectory}`)
@@ -1040,12 +1013,6 @@ export async function startDiscordBot({
       }
 
       const projectDirectory = channelConfig.directory
-      const channelAppId = channelConfig.appId || undefined
-
-      if (channelAppId && channelAppId !== currentAppId) {
-        discordLogger.log(`[BOT_SESSION] Channel belongs to different bot app`)
-        return
-      }
 
       if (!fs.existsSync(projectDirectory)) {
         discordLogger.error(

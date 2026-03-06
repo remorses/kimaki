@@ -34,9 +34,7 @@ CREATE TABLE IF NOT EXISTS "channel_directories" (
     "channel_id" TEXT NOT NULL PRIMARY KEY,
     "directory" TEXT NOT NULL,
     "channel_type" TEXT NOT NULL,
-    "app_id" TEXT,
-    "created_at" DATETIME DEFAULT CURRENT_TIMESTAMP,
-    CONSTRAINT "channel_directories_app_id_fkey" FOREIGN KEY ("app_id") REFERENCES "bot_tokens" ("app_id") ON DELETE SET NULL ON UPDATE CASCADE
+    "created_at" DATETIME DEFAULT CURRENT_TIMESTAMP
 );
 CREATE TABLE IF NOT EXISTS "bot_api_keys" (
     "app_id" TEXT NOT NULL PRIMARY KEY,

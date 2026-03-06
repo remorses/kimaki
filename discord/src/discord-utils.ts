@@ -629,7 +629,6 @@ export async function getKimakiMetadata(
   textChannel: TextChannel | null,
 ): Promise<{
   projectDirectory?: string
-  channelAppId?: string
 }> {
   if (!textChannel) {
     return {}
@@ -643,7 +642,6 @@ export async function getKimakiMetadata(
 
   return {
     projectDirectory: channelConfig.directory,
-    channelAppId: channelConfig.appId || undefined,
   }
 }
 
@@ -662,7 +660,6 @@ export async function resolveWorkingDirectory({
   | {
       projectDirectory: string
       workingDirectory: string
-      channelAppId?: string
     }
   | undefined
 > {
@@ -692,7 +689,6 @@ export async function resolveWorkingDirectory({
   return {
     projectDirectory: metadata.projectDirectory,
     workingDirectory,
-    channelAppId: metadata.channelAppId,
   }
 }
 

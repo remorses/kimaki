@@ -21,7 +21,6 @@ const logger = createLogger(LogPrefix.OPENCODE)
 
 export async function handleRestartOpencodeServerCommand({
   command,
-  appId,
 }: CommandContext): Promise<void> {
   const channel = command.channel
 
@@ -61,15 +60,7 @@ export async function handleRestartOpencodeServerCommand({
     return
   }
 
-  const { projectDirectory, channelAppId } = resolved
-
-  if (channelAppId && channelAppId !== appId) {
-    await command.reply({
-      content: 'This channel is not configured for this bot',
-      flags: MessageFlags.Ephemeral | SILENT_MESSAGE_FLAGS,
-    })
-    return
-  }
+  const { projectDirectory } = resolved
 
   // Defer reply since restart may take a moment
   await command.deferReply({ flags: SILENT_MESSAGE_FLAGS })

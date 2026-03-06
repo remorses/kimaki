@@ -354,7 +354,6 @@ export function setupQueueAdvancedSuite({
       channelId,
       directory: ctx.directories.projectDirectory,
       channelType: 'text',
-      appId: ctx.discord.botUserId,
     })
     await setChannelVerbosity(channelId, 'tools-and-text')
     const channelVerbosity = await getChannelVerbosity(channelId)

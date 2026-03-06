@@ -171,13 +171,11 @@ async function sendClickedActionToModel({
     projectDirectory: resolved.projectDirectory,
     sdkDirectory: resolved.workingDirectory,
     channelId: thread.parentId || thread.id,
-    appId: resolved.channelAppId,
   })
   await runtime.enqueueIncoming({
     prompt,
     userId: interaction.user.id,
     username,
-    appId: resolved.channelAppId,
     mode: 'opencode',
   })
 }

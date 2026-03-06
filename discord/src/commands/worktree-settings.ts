@@ -23,7 +23,6 @@ const worktreeSettingsLogger = createLogger(LogPrefix.WORKTREE)
  */
 export async function handleToggleWorktreesCommand({
   command,
-  appId,
 }: {
   command: ChatInputCommandInteraction
   appId: string
@@ -42,14 +41,6 @@ export async function handleToggleWorktreesCommand({
 
   const textChannel = channel as TextChannel
   const metadata = await getKimakiMetadata(textChannel)
-
-  if (metadata.channelAppId && metadata.channelAppId !== appId) {
-    await command.reply({
-      content: 'This channel is configured for a different bot.',
-      flags: MessageFlags.Ephemeral,
-    })
-    return
-  }
 
   if (!metadata.projectDirectory) {
     await command.reply({

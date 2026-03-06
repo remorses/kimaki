@@ -40,7 +40,6 @@ import {
   getThreadSession,
   setThreadSession,
   getThreadWorktree,
-  getChannelDirectory,
   setSessionAgent,
   getVariantCascade,
   setSessionStartSource,
@@ -2257,10 +2256,7 @@ export class ThreadSessionRuntime {
 
       // ── Resolve model + agent preferences (mirrors dispatchPrompt) ──
       const channelId = this.channelId
-      const channelInfo = channelId
-        ? await getChannelDirectory(channelId)
-        : undefined
-      const resolvedAppId = channelInfo?.appId ?? input.appId
+      const resolvedAppId = input.appId
 
       if (input.agent && createdNewSession) {
         await setSessionAgent(session.id, input.agent)
@@ -2763,10 +2759,7 @@ export class ThreadSessionRuntime {
 
     // ── Resolve model + agent preferences ─────────────────────
     const channelId = this.channelId
-    const channelInfo = channelId
-      ? await getChannelDirectory(channelId)
-      : undefined
-    const resolvedAppId = channelInfo?.appId ?? input.appId
+    const resolvedAppId = input.appId
 
     if (input.agent && createdNewSession) {
       await setSessionAgent(session.id, input.agent)

@@ -52,7 +52,6 @@ model bot_tokens {
   created_at    DateTime? @default(now())
 
   api_keys           bot_api_keys?
-  channels           channel_directories[]
   forum_sync_configs forum_sync_configs[]
   global_model       global_models?
 }
@@ -61,10 +60,9 @@ model channel_directories {
   channel_id   String    @id
   directory    String
   channel_type String
-  app_id       String?
+  // app_id String? // no longer used: channel ownership is no longer scoped per bot app
   created_at   DateTime? @default(now())
 
-  bot                  bot_tokens?           @relation(fields: [app_id], references: [app_id])
   channel_model        channel_models?
   channel_agent        channel_agents?
   channel_worktree     channel_worktrees?

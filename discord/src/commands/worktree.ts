@@ -81,7 +81,6 @@ function deriveWorktreeNameFromThread(threadName: string): string {
  */
 async function getProjectDirectoryFromChannel(
   channel: TextChannel,
-  appId: string,
 ): Promise<string | WorktreeError> {
   const channelConfig = await getChannelDirectory(channel.id)
 
@@ -89,10 +88,6 @@ async function getProjectDirectoryFromChannel(
     return new WorktreeError(
       'This channel is not configured with a project directory',
     )
-  }
-
-  if (channelConfig.appId && channelConfig.appId !== appId) {
-    return new WorktreeError('This channel is not configured for this bot')
   }
 
   if (!fs.existsSync(channelConfig.directory)) {
@@ -208,7 +203,6 @@ async function findExistingWorktreePath({
 
 export async function handleNewWorktreeCommand({
   command,
-  appId,
 }: CommandContext): Promise<void> {
   await command.deferReply({ ephemeral: false })
 
@@ -226,7 +220,6 @@ export async function handleNewWorktreeCommand({
   if (isThread) {
     await handleWorktreeInThread({
       command,
-      appId,
       thread: channel as ThreadChannel,
     })
     return
@@ -260,7 +253,6 @@ export async function handleNewWorktreeCommand({
 
   const projectDirectory = await getProjectDirectoryFromChannel(
     textChannel,
-    appId,
   )
   if (errore.isError(projectDirectory)) {
     await command.editReply(projectDirectory.message)
@@ -340,9 +332,11 @@ export async function handleNewWorktreeCommand({
  */
 async function handleWorktreeInThread({
   command,
-  appId,
   thread,
-}: CommandContext & { thread: ThreadChannel }): Promise<void> {
+}: {
+  command: CommandContext['command']
+  thread: ThreadChannel
+}): Promise<void> {
   // Error if thread already has a worktree
   if (await getThreadWorktree(thread.id)) {
     await command.editReply('This thread already has a worktree attached.')
@@ -371,7 +365,6 @@ async function handleWorktreeInThread({
 
   const projectDirectory = await getProjectDirectoryFromChannel(
     parent as TextChannel,
-    appId,
   )
   if (errore.isError(projectDirectory)) {
     await command.editReply(projectDirectory.message)

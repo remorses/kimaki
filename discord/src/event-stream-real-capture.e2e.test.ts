@@ -367,7 +367,6 @@ describe('real event stream capture fixtures (cached provider)', () => {
       channelId: TEXT_CHANNEL_ID,
       directory: directories.projectDirectory,
       channelType: 'text',
-      appId: discord.botUserId,
     })
     await setChannelVerbosity(TEXT_CHANNEL_ID, 'tools-and-text')
     expect(await getChannelVerbosity(TEXT_CHANNEL_ID)).toBe('tools-and-text')

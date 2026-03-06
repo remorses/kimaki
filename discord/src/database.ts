@@ -925,13 +925,12 @@ export async function setChannelWorktreesEnabled(
 // ============================================================================
 
 /**
- * Get the directory and app_id for a channel from the database.
+ * Get the directory for a channel from the database.
  * This is the single source of truth for channel-project mappings.
  */
 export async function getChannelDirectory(channelId: string): Promise<
   | {
       directory: string
-      appId: string | null
     }
   | undefined
 > {
@@ -946,7 +945,6 @@ export async function getChannelDirectory(channelId: string): Promise<
 
   return {
     directory: row.directory,
-    appId: row.app_id,
   }
 }
 
@@ -1355,30 +1353,6 @@ export async function getTranscriptionApiKey(
   return null
 }
 
-/**
- * Migrate channel_directories.app_id from one bot to another.
- * Used when switching between self-hosted and gateway mode so existing
- * channels are re-associated with the new bot instead of becoming invisible.
- * Returns the number of rows updated.
- */
-export async function migrateChannelAppIds({
-  fromAppId,
-  toAppId,
-}: {
-  fromAppId: string
-  toAppId: string
-}): Promise<number> {
-  if (fromAppId === toAppId) {
-    return 0
-  }
-  const prisma = await getPrisma()
-  const result = await prisma.channel_directories.updateMany({
-    where: { app_id: fromAppId },
-    data: { app_id: toAppId },
-  })
-  return result.count
-}
-
 // ============================================================================
 // Channel Directory CRUD Functions
 // ============================================================================
@@ -1392,13 +1366,11 @@ export async function setChannelDirectory({
   channelId,
   directory,
   channelType,
-  appId,
   skipIfExists = false,
 }: {
   channelId: string
   directory: string
   channelType: 'text' | 'voice'
-  appId?: string | null
   skipIfExists?: boolean
 }): Promise<void> {
   const prisma = await getPrisma()
@@ -1415,7 +1387,6 @@ export async function setChannelDirectory({
         channel_id: channelId,
         directory,
         channel_type: channelType,
-        app_id: appId ?? null,
       },
     })
   } else {
@@ -1426,12 +1397,10 @@ export async function setChannelDirectory({
         channel_id: channelId,
         directory,
         channel_type: channelType,
-        app_id: appId ?? null,
       },
       update: {
         directory,
         channel_type: channelType,
-        app_id: appId ?? null,
       },
     })
   }
@@ -1443,11 +1412,9 @@ export async function setChannelDirectory({
 export async function findChannelsByDirectory({
   directory,
   channelType,
-  appId,
 }: {
   directory?: string
   channelType?: 'text' | 'voice'
-  appId?: string
 }): Promise<
   Array<{ channel_id: string; directory: string; channel_type: string }>
 > {
@@ -1455,16 +1422,12 @@ export async function findChannelsByDirectory({
   const where: {
     directory?: string
     channel_type?: string
-    app_id?: string
   } = {}
   if (directory) {
     where.directory = directory
   }
   if (channelType) {
     where.channel_type = channelType
-  }
-  if (appId) {
-    where.app_id = appId
   }
   const rows = await prisma.channel_directories.findMany({
     where,
@@ -1496,21 +1459,6 @@ export async function deleteChannelDirectoriesByDirectory(
   await prisma.channel_directories.deleteMany({
     where: { directory },
   })
-}
-
-/**
- * Find a channel by app ID.
- */
-export async function findChannelByAppId(
-  appId: string,
-): Promise<string | undefined> {
-  const prisma = await getPrisma()
-  const row = await prisma.channel_directories.findFirst({
-    where: { app_id: appId },
-    orderBy: { created_at: 'desc' },
-    select: { channel_id: true },
-  })
-  return row?.channel_id
 }
 
 /**

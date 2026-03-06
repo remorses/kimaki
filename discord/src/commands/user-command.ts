@@ -61,7 +61,6 @@ export const handleUserCommand: CommandHandler = async ({
   }
 
   let projectDirectory: string | undefined
-  let channelAppId: string | undefined
   let textChannel: TextChannel | null = null
   let thread: ThreadChannel | null = null
 
@@ -85,7 +84,6 @@ export const handleUserCommand: CommandHandler = async ({
     if (textChannel) {
       const channelConfig = await getChannelDirectory(textChannel.id)
       projectDirectory = channelConfig?.directory
-      channelAppId = channelConfig?.appId || undefined
     }
   } else {
     // Running in a text channel - will create a new thread
@@ -93,15 +91,6 @@ export const handleUserCommand: CommandHandler = async ({
 
     const channelConfig = await getChannelDirectory(textChannel.id)
     projectDirectory = channelConfig?.directory
-    channelAppId = channelConfig?.appId || undefined
-  }
-
-  if (channelAppId && channelAppId !== appId) {
-    await command.reply({
-      content: 'This channel is not configured for this bot',
-      flags: MessageFlags.Ephemeral,
-    })
-    return
   }
 
   if (!projectDirectory) {

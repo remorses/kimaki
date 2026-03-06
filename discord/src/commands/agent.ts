@@ -95,7 +95,6 @@ export function sanitizeAgentName(name: string): string {
  */
 export async function resolveAgentCommandContext({
   interaction,
-  appId,
 }: {
   interaction: ChatInputCommandInteraction
   appId: string
@@ -116,7 +115,6 @@ export async function resolveAgentCommandContext({
   ].includes(channel.type)
 
   let projectDirectory: string | undefined
-  let channelAppId: string | undefined
   let targetChannelId: string
   let sessionId: string | undefined
 
@@ -125,7 +123,6 @@ export async function resolveAgentCommandContext({
     const textChannel = await resolveTextChannel(thread)
     const metadata = await getKimakiMetadata(textChannel)
     projectDirectory = metadata.projectDirectory
-    channelAppId = metadata.channelAppId
     targetChannelId = textChannel?.id || channel.id
 
     sessionId = await getThreadSession(thread.id)
@@ -133,18 +130,10 @@ export async function resolveAgentCommandContext({
     const textChannel = channel as TextChannel
     const metadata = await getKimakiMetadata(textChannel)
     projectDirectory = metadata.projectDirectory
-    channelAppId = metadata.channelAppId
     targetChannelId = channel.id
   } else {
     await interaction.editReply({
       content: 'This command can only be used in text channels or threads',
-    })
-    return null
-  }
-
-  if (channelAppId && channelAppId !== appId) {
-    await interaction.editReply({
-      content: 'This channel is not configured for this bot',
     })
     return null
   }

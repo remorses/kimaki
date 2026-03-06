@@ -71,13 +71,11 @@ export async function ensureKimakiAudioCategory(
 export async function createProjectChannels({
   guild,
   projectDirectory,
-  appId,
   botName,
   enableVoiceChannels = false,
 }: {
   guild: Guild
   projectDirectory: string
-  appId: string
   botName?: string
   enableVoiceChannels?: boolean
 }): Promise<{
@@ -104,7 +102,6 @@ export async function createProjectChannels({
     channelId: textChannel.id,
     directory: projectDirectory,
     channelType: 'text',
-    appId,
   })
 
   let voiceChannelId: string | null = null
@@ -122,7 +119,6 @@ export async function createProjectChannels({
       channelId: voiceChannel.id,
       directory: projectDirectory,
       channelType: 'voice',
-      appId,
     })
 
     voiceChannelId = voiceChannel.id
@@ -140,7 +136,6 @@ export type ChannelWithTags = {
   name: string
   description: string | null
   kimakiDirectory?: string
-  kimakiApp?: string
 }
 
 export async function getChannelsWithDescriptions(
@@ -164,7 +159,6 @@ export async function getChannelsWithDescriptions(
       name: textChannel.name,
       description,
       kimakiDirectory: channelConfig?.directory,
-      kimakiApp: channelConfig?.appId || undefined,
     })
   }
 

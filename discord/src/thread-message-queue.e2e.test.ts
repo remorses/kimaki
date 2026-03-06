@@ -323,7 +323,6 @@ e2eTest('thread message queue ordering', () => {
       channelId: TEXT_CHANNEL_ID,
       directory: directories.projectDirectory,
       channelType: 'text',
-      appId: discord.botUserId,
     })
     await setChannelVerbosity(TEXT_CHANNEL_ID, 'tools-and-text')
     const channelVerbosity = await getChannelVerbosity(TEXT_CHANNEL_ID)

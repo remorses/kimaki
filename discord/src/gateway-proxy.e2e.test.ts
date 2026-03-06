@@ -346,7 +346,6 @@ describeIf('gateway-proxy e2e', () => {
       channelId: CHANNEL_1_ID,
       directory: directories.projectDirectory,
       channelType: 'text',
-      appId: discord.botUserId,
     })
 
     // Start the kimaki bot connected through the proxy

@@ -40,7 +40,6 @@ import {
   setBotMode,
   setChannelDirectory,
   findChannelsByDirectory,
-  findChannelByAppId,
   getThreadSession,
   getThreadIdBySessionId,
   getSessionEventSnapshot,
@@ -49,7 +48,6 @@ import {
   listScheduledTasks,
   cancelScheduledTask,
   getSessionStartSourcesBySessionIds,
-  migrateChannelAppIds,
   touchBotTokenTimestamp,
 } from './database.js'
 import { ShareMarkdown } from './markdown.js'
@@ -1025,11 +1023,9 @@ async function reconcileKimakiRole({ guild }: { guild: Guild }): Promise<void> {
 
 async function collectKimakiChannels({
   guilds,
-  appId,
   reconcileRoles,
 }: {
   guilds: Guild[]
-  appId: string
   reconcileRoles: boolean
 }): Promise<{ guild: Guild; channels: ChannelWithTags[] }[]> {
   const guildResults = await Promise.all(
@@ -1039,9 +1035,7 @@ async function collectKimakiChannels({
       }
 
       const channels = await getChannelsWithDescriptions(guild)
-      const kimakiChans = channels.filter(
-        (ch) => ch.kimakiDirectory && (!ch.kimakiApp || ch.kimakiApp === appId),
-      )
+      const kimakiChans = channels.filter((ch) => ch.kimakiDirectory)
 
       return { guild, channels: kimakiChans }
     }),
@@ -1068,7 +1062,6 @@ async function storeChannelDirectories({
           channelId: channel.id,
           directory: channel.kimakiDirectory,
           channelType: 'text',
-          appId: channel.kimakiApp || null,
           skipIfExists: true,
         })
 
@@ -1082,7 +1075,6 @@ async function storeChannelDirectories({
             channelId: voiceChannel.id,
             directory: channel.kimakiDirectory,
             channelType: 'voice',
-            appId: channel.kimakiApp || null,
             skipIfExists: true,
           })
         }
@@ -1098,11 +1090,9 @@ async function storeChannelDirectories({
 function showReadyMessage({
   kimakiChannels,
   createdChannels,
-  appId,
 }: {
   kimakiChannels: { guild: Guild; channels: ChannelWithTags[] }[]
   createdChannels: { name: string; id: string; guildId: string }[]
-  appId: string
 }): void {
   const allChannels: {
     name: string
@@ -1275,15 +1265,13 @@ async function run({
   // except in gateway mode where KIMAKI_SHARED_APP_ID is used.
   //
   // previousAppId is set when switching between modes so we can migrate
-  // channel_directories.app_id from the old bot to the new one.
-  const { appId, token, isQuickStart, isGatewayMode, previousAppId } = await (async (): Promise<{
+  const { appId, token, isQuickStart, isGatewayMode } = await (async (): Promise<{
     appId: string
     token: string
     // isQuickStart means startup can skip interactive onboarding/channel prompts
     // and go straight to bot runtime using already-available credentials/config.
     isQuickStart: boolean
     isGatewayMode: boolean
-    previousAppId: string | undefined
   }> => {
     const envToken = process.env.KIMAKI_BOT_TOKEN
     // Get the most recent bot row (any mode) for general reuse checks
@@ -1309,7 +1297,7 @@ async function run({
       }
       await setBotToken(derivedAppId, envToken)
       cliLogger.log(`Using KIMAKI_BOT_TOKEN env var (App ID: ${derivedAppId})`)
-      return { appId: derivedAppId, token: envToken, isQuickStart: !addChannels, isGatewayMode: false, previousAppId: undefined }
+      return { appId: derivedAppId, token: envToken, isQuickStart: !addChannels, isGatewayMode: false }
     }
 
     // 2. Saved credentials in the database
@@ -1330,7 +1318,7 @@ async function run({
           'Install URL',
         )
       }
-      return { appId: existingBot.appId, token: existingBot.token, isQuickStart: !addChannels, isGatewayMode: existingBot.mode === 'gateway', previousAppId: undefined }
+      return { appId: existingBot.appId, token: existingBot.token, isQuickStart: !addChannels, isGatewayMode: existingBot.mode === 'gateway' }
     }
 
     // 2b. Switching to gateway: saved gateway credentials exist from a previous
@@ -1348,7 +1336,6 @@ async function run({
         token: gatewayToken,
         isQuickStart: !addChannels,
         isGatewayMode: true,
-        previousAppId: existingBot?.appId,
       }
     }
 
@@ -1506,7 +1493,6 @@ async function run({
         token: `${clientId}:${clientSecret}`,
         isQuickStart: false,
         isGatewayMode: true,
-        previousAppId: existingBot?.appId,
       }
     }
 
@@ -1585,22 +1571,8 @@ async function run({
       process.exit(0)
     }
 
-    return { appId: derivedAppId, token: wizardToken, isQuickStart: false, isGatewayMode: false, previousAppId: existingBot?.appId }
+    return { appId: derivedAppId, token: wizardToken, isQuickStart: false, isGatewayMode: false }
   })()
-
-  // Migrate channel_directories.app_id when switching between bots (e.g.
-  // self-hosted → gateway or vice versa). Without this, existing channels
-  // become invisible because their app_id no longer matches the current bot.
-  // TODO: app_id filtering on channels is not really useful in practice —
-  // each kimaki process has its own data dir (and thus its own SQLite DB),
-  // so multiple bots never share a database. Consider dropping the app_id
-  // filter entirely and keeping app_id as metadata only.
-  if (previousAppId && previousAppId !== appId) {
-    const migrated = await migrateChannelAppIds({ fromAppId: previousAppId, toAppId: appId })
-    if (migrated > 0) {
-      cliLogger.log(`Migrated ${migrated} channel(s) from bot ${previousAppId} to ${appId}`)
-    }
-  }
 
   // Touch the active bot row so it has the most recent created_at timestamp.
   // Subcommands in separate processes (send, upload-to-discord, project list)
@@ -1610,7 +1582,7 @@ async function run({
 
   const hasConfiguredTextChannels = Boolean(
     await (await getPrisma()).channel_directories.findFirst({
-      where: { app_id: appId, channel_type: 'text' },
+      where: { channel_type: 'text' },
       select: { channel_id: true },
     }),
   )
@@ -1666,7 +1638,6 @@ async function run({
         // Process guild metadata when setup flow needs channel prompts.
         const guildResults = await collectKimakiChannels({
           guilds,
-          appId,
           reconcileRoles: true,
         })
 
@@ -1736,7 +1707,6 @@ async function run({
       try {
         const backgroundChannels = await collectKimakiChannels({
           guilds,
-          appId,
           reconcileRoles: true,
         })
         await storeChannelDirectories({ kimakiChannels: backgroundChannels })
@@ -1761,7 +1731,7 @@ async function run({
       }),
     })
 
-    showReadyMessage({ kimakiChannels: [], createdChannels, appId })
+    showReadyMessage({ kimakiChannels: [], createdChannels })
     outro('✨ Bot ready! Listening for messages...')
     return
   }
@@ -1780,13 +1750,7 @@ async function run({
     const channelList = kimakiChannels
       .flatMap(({ guild, channels }) =>
         channels.map((ch) => {
-          const appInfo =
-            ch.kimakiApp === appId
-              ? ' (this bot)'
-              : ch.kimakiApp
-                ? ` (app: ${ch.kimakiApp})`
-                : ''
-          return `#${ch.name} in ${guild.name}: ${ch.kimakiDirectory}${appInfo}`
+          return `#${ch.name} in ${guild.name}: ${ch.kimakiDirectory}`
         }),
       )
       .join('\n')
@@ -1842,7 +1806,7 @@ async function run({
 
   const existingDirs = kimakiChannels.flatMap(({ channels }) =>
     channels
-      .filter((ch) => ch.kimakiDirectory && ch.kimakiApp === appId)
+      .filter((ch) => ch.kimakiDirectory)
       .map((ch) => ch.kimakiDirectory)
       .filter(Boolean),
   )
@@ -1925,7 +1889,6 @@ async function run({
           const { textChannelId, channelName } = await createProjectChannels({
             guild: targetGuild,
             projectDirectory: project.worktree,
-            appId,
             botName: discordClient.user?.username,
             enableVoiceChannels,
           })
@@ -1997,7 +1960,7 @@ async function run({
   await startDiscordBot({ token, appId, discordClient, useWorktrees })
   cliLogger.log('Discord bot is running!')
 
-  showReadyMessage({ kimakiChannels, createdChannels, appId })
+  showReadyMessage({ kimakiChannels, createdChannels })
   outro(
     '✨ Setup complete! Listening for new messages... do not close this process.',
   )
@@ -2414,28 +2377,17 @@ cli
           // Check if channel already exists for this directory or a parent directory
           // This allows running from subfolders of a registered project
           try {
-            // Helper to find channel for a path (prefers current bot's channel)
+            // Helper to find channel for a path.
             const findChannelForPath = async (
               dirPath: string,
             ): Promise<
               { channel_id: string; directory: string } | undefined
             > => {
-              const withAppId = appId
-                ? await findChannelsByDirectory({
-                    directory: dirPath,
-                    channelType: 'text',
-                    appId,
-                  })
-                : []
-              if (withAppId.length > 0) {
-                return withAppId[0]
-              }
-
-              const withoutAppId = await findChannelsByDirectory({
+              const channels = await findChannelsByDirectory({
                 directory: dirPath,
                 channelType: 'text',
               })
-              return withoutAppId[0]
+              return channels[0]
             }
 
             // Try exact match first, then walk up parent directories
@@ -2482,10 +2434,11 @@ cli
 
               // Get guild from existing channels or first available
               const guild = await (async () => {
-                // Try to find a guild from existing channels belonging to this bot
-                const existingChannelId = appId
-                  ? await findChannelByAppId(appId)
-                  : undefined
+                const existingChannelId = await (await getPrisma()).channel_directories.findFirst({
+                  where: { channel_type: 'text' },
+                  orderBy: { created_at: 'desc' },
+                  select: { channel_id: true },
+                }).then((row) => row?.channel_id)
 
                 if (existingChannelId) {
                   try {
@@ -2521,7 +2474,6 @@ cli
               const { textChannelId } = await createProjectChannels({
                 guild,
                 projectDirectory: absolutePath,
-                appId,
                 botName: client.user?.username,
               })
 
@@ -2613,13 +2565,6 @@ cli
             process.exit(0)
           }
 
-          const channelAppId = channelConfig.appId || undefined
-          if (channelAppId && appId && channelAppId !== appId) {
-            throw new Error(
-              `Thread belongs to a different bot (expected: ${appId}, got: ${channelAppId})`,
-            )
-          }
-
           const threadPromptMarker: ThreadStartMarker = {
             cliThreadPrompt: true,
           }
@@ -2683,15 +2628,6 @@ cli
         }
 
         const projectDirectory = channelConfig.directory
-        const channelAppId = channelConfig.appId || undefined
-
-        // Verify app ID matches if both are present
-        if (channelAppId && appId && channelAppId !== appId) {
-          cliLogger.log('Channel belongs to different bot')
-          throw new Error(
-            `Channel belongs to a different bot (expected: ${appId}, got: ${channelAppId})`,
-          )
-        }
 
         // Resolve username to user ID if provided
         const resolvedUser = await (async (): Promise<
@@ -3009,8 +2945,11 @@ cli
         }
         guild = foundGuild
       } else {
-        // Auto-detect: prefer guild with existing channels for this bot, else first guild
-        const existingChannelId = await findChannelByAppId(appId)
+        const existingChannelId = await (await getPrisma()).channel_directories.findFirst({
+          where: { channel_type: 'text' },
+          orderBy: { created_at: 'desc' },
+          select: { channel_id: true },
+        }).then((row) => row?.channel_id)
 
         if (existingChannelId) {
           try {
@@ -3068,7 +3007,6 @@ cli
         const existingChannels = await findChannelsByDirectory({
           directory: absolutePath,
           channelType: 'text',
-          appId,
         })
 
         for (const existingChannel of existingChannels) {
@@ -3101,7 +3039,6 @@ cli
         await createProjectChannels({
           guild,
           projectDirectory: absolutePath,
-          appId,
           botName: client.user?.username,
         })
 
@@ -3168,7 +3105,6 @@ cli
         channel_name: ch.channelName,
         directory: ch.directory,
         folder_name: path.basename(ch.directory),
-        app_id: ch.app_id,
       }))
       console.log(JSON.stringify(output, null, 2))
       process.exit(0)
@@ -3181,9 +3117,6 @@ cli
       console.log(`   Folder: ${folderName}`)
       console.log(`   Directory: ${ch.directory}`)
       console.log(`   Channel ID: ${ch.channel_id}`)
-      if (ch.app_id) {
-        console.log(`   Bot App ID: ${ch.app_id}`)
-      }
     }
 
     process.exit(0)
@@ -3203,28 +3136,18 @@ cli
       process.exit(EXIT_NO_RESTART)
     }
 
-    const { appId, token: botToken } = botRow
+    const { token: botToken } = botRow
     const absolutePath = path.resolve('.')
 
     // Walk up parent directories to find a matching channel
     const findChannelForPath = async (
       dirPath: string,
     ): Promise<{ channel_id: string; directory: string } | undefined> => {
-      const withAppId = appId
-        ? await findChannelsByDirectory({
-            directory: dirPath,
-            channelType: 'text',
-            appId,
-          })
-        : []
-      if (withAppId.length > 0) {
-        return withAppId[0]
-      }
-      const withoutAppId = await findChannelsByDirectory({
+      const channels = await findChannelsByDirectory({
         directory: dirPath,
         channelType: 'text',
       })
-      return withoutAppId[0]
+      return channels[0]
     }
 
     let existingChannel: { channel_id: string; directory: string } | undefined
@@ -3304,7 +3227,7 @@ cli
       process.exit(EXIT_NO_RESTART)
     }
 
-    const { appId, token: botToken } = botRow
+    const { token: botToken } = botRow
 
     const projectsDir = getProjectsDir()
     const projectDirectory = path.join(projectsDir, sanitizedName)
@@ -3357,7 +3280,6 @@ cli
     const { textChannelId, channelName } = await createProjectChannels({
       guild,
       projectDirectory,
-      appId,
       botName: client.user?.username,
     })
 

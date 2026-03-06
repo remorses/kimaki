@@ -17,7 +17,6 @@ const logger = createLogger(LogPrefix.ADD_PROJECT)
 
 export async function handleAddProjectCommand({
   command,
-  appId,
 }: CommandContext): Promise<void> {
   await command.deferReply({ ephemeral: false })
 
@@ -73,7 +72,6 @@ export async function handleAddProjectCommand({
       await createProjectChannels({
         guild,
         projectDirectory: directory,
-        appId,
         botName: command.client.user?.username,
       })
 
@@ -93,7 +91,6 @@ export async function handleAddProjectCommand({
 
 export async function handleAddProjectAutocomplete({
   interaction,
-  appId,
 }: AutocompleteContext): Promise<void> {
   const focusedValue = interaction.options.getFocused()
 
