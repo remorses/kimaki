@@ -4,7 +4,6 @@
 
 import os from 'node:os'
 import { PermissionsBitField } from 'discord.js'
-import type { GatewayOAuthState } from 'db/src/gateway-state.js'
 import type { BotMode } from './database.js'
 import * as errore from 'errore'
 
@@ -96,25 +95,18 @@ export function generateDiscordInstallUrlForBot({
     return generateBotInstallUrl({ clientId: appId })
   }
 
-  if (!KIMAKI_GATEWAY_APP_ID) {
-    return new Error('Gateway mode is not available: gateway app ID is missing')
-  }
-
   if (!clientId || !clientSecret) {
     return new Error('Gateway credentials are missing from local database')
   }
 
-  const statePayload = JSON.stringify({
-    clientId,
-    clientSecret,
-  } satisfies GatewayOAuthState)
-
-  return generateBotInstallUrl({
-    clientId: KIMAKI_GATEWAY_APP_ID,
-    state: statePayload,
-    redirectUri: `${KIMAKI_WEBSITE_URL}/api/auth/callback/discord`,
-    responseType: 'code',
-  })
+  // In gateway mode, redirect to the website's /start-install route.
+  // This initiates the better-auth OAuth flow with clientId/clientSecret
+  // as additionalData, which better-auth stores in its verification table
+  // and recovers after Discord redirects back to the callback.
+  const url = new URL(`${KIMAKI_WEBSITE_URL}/start-install`)
+  url.searchParams.set('clientId', clientId)
+  url.searchParams.set('clientSecret', clientSecret)
+  return url.toString()
 }
 
 export function deduplicateByKey<T, K>(arr: T[], keyFn: (item: T) => K): T[] {

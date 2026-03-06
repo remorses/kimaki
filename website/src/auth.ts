@@ -57,9 +57,11 @@ export function createAuth({ env, baseURL }: { env: HonoBindings; baseURL: strin
           // Discord includes { guild: { id, name } } when the `bot` scope is used.
           const raw = token.raw as DiscordTokenRaw | undefined
           capturedGuildId = raw?.guild?.id
+          console.log('[auth] getUserInfo called, guild_id:', capturedGuildId, 'raw keys:', raw ? Object.keys(raw) : 'none')
 
           const accessToken = token.accessToken
           if (!accessToken) {
+            console.warn('[auth] getUserInfo: no accessToken')
             return null
           }
 
@@ -95,9 +97,10 @@ export function createAuth({ env, baseURL }: { env: HonoBindings; baseURL: strin
     },
     hooks: {
       after: createAuthMiddleware(async (ctx) => {
-        if (ctx.path !== '/callback/discord') {
-          return
-        }
+        // Skip non-callback routes. capturedGuildId is only set during Discord
+        // OAuth token exchange (getUserInfo), so it acts as the discriminator
+        // instead of matching ctx.path (which is the route pattern "/callback/:id",
+        // not the resolved "/callback/discord").
         if (!capturedGuildId) {
           console.warn('better-auth callback: no guild_id captured from token exchange')
           return

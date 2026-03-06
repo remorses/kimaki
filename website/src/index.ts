@@ -41,19 +41,39 @@ app.get('/start-install', async (c) => {
   const baseURL = new URL(c.req.url).origin
   const auth = createAuth({ env: c.env, baseURL })
 
-  const result = await auth.api.signInSocial({
+  // signInSocial returns { url, redirect } JSON with a Location header, but
+  // status 200 — browsers ignore Location on non-3xx responses. We need to:
+  // 1. Call with asResponse to get the Set-Cookie headers (OAuth state cookie)
+  // 2. Build a real 302 redirect that carries those cookies
+  const response = await auth.api.signInSocial({
     body: {
       provider: 'discord',
       additionalData: { clientId, clientSecret },
       callbackURL: '/install-success',
     },
+    headers: c.req.raw.headers,
+    asResponse: true,
   })
 
-  if (!result?.url) {
-    return c.text('Failed to generate Discord OAuth URL', 500)
+  const redirectUrl = response.headers.get('Location')
+  if (!redirectUrl) {
+    // Fallback: parse URL from JSON body
+    const body = await response.json() as { url?: string }
+    if (!body.url) {
+      return c.text('Failed to get Discord OAuth URL', 500)
+    }
+    return c.redirect(body.url, 302)
   }
 
-  return c.redirect(result.url)
+  // Build a 302 redirect preserving Set-Cookie headers from better-auth
+  const redirect = new Response(null, {
+    status: 302,
+    headers: { Location: redirectUrl },
+  })
+  for (const cookie of response.headers.getSetCookie()) {
+    redirect.headers.append('Set-Cookie', cookie)
+  }
+  return redirect
 })
 
 // Success page after the OAuth callback completes.

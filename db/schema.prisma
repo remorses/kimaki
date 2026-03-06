@@ -18,6 +18,9 @@ datasource db {
 // See: https://www.better-auth.com/docs/concepts/database#core-schema
 // ──────────────────────────────────────────────────────────────────
 
+// @@map is required: better-auth expects lowercase table names.
+// Without it Prisma creates PascalCase tables (User, Session, etc.)
+// which causes "State not persisted correctly" errors on OAuth callback.
 model User {
   id            String    @id
   name          String
@@ -29,6 +32,8 @@ model User {
   accounts      Account[]
   sessions      Session[]
   gatewayClients gateway_clients[]
+
+  @@map("user")
 }
 
 model Session {
@@ -41,6 +46,8 @@ model Session {
   userAgent String?
   userId    String
   user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@map("session")
 }
 
 model Account {
@@ -58,6 +65,8 @@ model Account {
   createdAt             DateTime
   updatedAt             DateTime
   user                  User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@map("account")
 }
 
 model Verification {
@@ -67,6 +76,8 @@ model Verification {
   expiresAt  DateTime
   createdAt  DateTime?
   updatedAt  DateTime?
+
+  @@map("verification")
 }
 
 // ──────────────────────────────────────────────────────────────────
