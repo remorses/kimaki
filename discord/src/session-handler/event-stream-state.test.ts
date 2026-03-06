@@ -241,7 +241,7 @@ describe('real-session-task-normal', () => {
 
 describe('real-session-task-user-interruption', () => {
   // Event-shape reference for live task streams:
-  // tmp/session-events/ses_33d8cd632ffeImx2BDMv6M2eM3.jsonl
+  // discord/src/session-handler/event-stream-fixtures/real-session-task-three-parallel-sleeps.jsonl
   // This file shows task tool updates with state.metadata.sessionId and
   // state.output lines starting with "task_id: ses_...".
   const events = loadFixture('real-session-task-user-interruption.jsonl')

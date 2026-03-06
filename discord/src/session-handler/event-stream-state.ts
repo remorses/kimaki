@@ -18,7 +18,7 @@ function getTaskChildSessionId({
   part: Extract<Part, { type: 'tool' }>
 }): string | undefined {
   // Event-shape reference:
-  // - tmp/session-events/ses_33d8cd632ffeImx2BDMv6M2eM3.jsonl
+  // - discord/src/session-handler/event-stream-fixtures/real-session-task-three-parallel-sleeps.jsonl
   // - In real task events, state.metadata.sessionId appears on running/completed
   //   tool updates and is the canonical child-session identifier.
   // We intentionally do not parse state.output because it is user-facing text
