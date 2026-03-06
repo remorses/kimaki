@@ -72,6 +72,8 @@ Use Node ESM-compatible compiler settings:
 - If generation is required, keep generators in `scripts/*.ts` and invoke them
   from package scripts before build/publish.
 
+> IMPORTANT! always use rootDir src. if there are other root level folders that should be type checked you should create other tsconfig.json files inside those folder. DO NOT add other folders inside src or the dist/ will contain dist/src, dist/other-folder. which breaks imports. the tsconfig.json inside these other folders can be minimal, using noEmit true, declaration false. Because usually these folders do not need to be emitted or compiled. just type checked. tests should still be put inside src. other folders can be things like `scripts` or `fixtures`.
+
 ## Preferred exports template
 
 ```json
