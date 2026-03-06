@@ -3321,7 +3321,10 @@ export class ThreadSessionRuntime {
 
   /**
    * Called when session.idle decision is 'process' — the run finished.
-   * Marks finished, flushes parts, emits footer, drains queue.
+   * Marks finished, flushes parts, emits footer, then drains queue only for
+   * idles that are allowed to emit the footer. Interrupted/stale idles must
+   * not advance the local queue, otherwise queued work can run before the
+   * resumed opencode turn finishes.
    */
   private async finishRun({
     suppressFooter,
@@ -3365,6 +3368,10 @@ export class ThreadSessionRuntime {
 
     // Reset per-run caches
     this.resetPerRunState()
+
+    if (suppressFooter) {
+      return
+    }
 
     // Show indicator: previous run finished, any queued message has been
     // waiting for this run to complete — show which one is starting next.
