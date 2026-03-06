@@ -2257,6 +2257,7 @@ cli
         // Initialize file logging to <dataDir>/kimaki.log
         initLogFile(getDataDir())
 
+        // Batch all CLI flag store updates into a single setState call.
         if (options.verbosity) {
           const validLevels = [
             'tools_and_text',
@@ -2269,31 +2270,34 @@ cli
             )
             process.exit(EXIT_NO_RESTART)
           }
-          store.setState({
+        }
+
+        store.setState({
+          ...(options.verbosity && {
             defaultVerbosity: options.verbosity as
               | 'tools_and_text'
               | 'text_and_essential_tools'
               | 'text_only',
-          })
+          }),
+          ...(options.mentionMode && { defaultMentionMode: true }),
+          ...(options.noCritique && { critiqueEnabled: false }),
+          ...(options.verboseOpencodeServer && { verboseOpencodeServer: true }),
+        })
+
+        if (options.verbosity) {
           cliLogger.log(`Default verbosity: ${options.verbosity}`)
         }
-
         if (options.mentionMode) {
-          store.setState({ defaultMentionMode: true })
           cliLogger.log(
             'Default mention mode: enabled (bot only responds when @mentioned)',
           )
         }
-
         if (options.noCritique) {
-          store.setState({ critiqueEnabled: false })
           cliLogger.log(
             'Critique disabled: diffs will not be auto-uploaded to critique.work',
           )
         }
-
         if (options.verboseOpencodeServer) {
-          store.setState({ verboseOpencodeServer: true })
           cliLogger.log(
             'Verbose OpenCode server: stdout/stderr will be forwarded to kimaki.log',
           )
