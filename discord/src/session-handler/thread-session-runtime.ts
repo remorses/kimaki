@@ -4,7 +4,7 @@
 //
 // This is the sole session orchestrator. Discord handlers and slash commands
 // call runtime APIs (enqueueIncoming, abortActiveRun, etc.) without inspecting
-// run internals. The old per-message handleOpencodeSession was removed in Phase 5.
+// run internals.
 
 import { ChannelType, type ThreadChannel } from 'discord.js'
 import type {
@@ -90,7 +90,7 @@ import {
 // Track multiple pending permissions per thread (keyed by permission ID).
 // OpenCode handles blocking/sequencing — we just need to track all pending
 // permissions to avoid duplicates and properly clean up on reply/teardown.
-// Moved from session-handler.ts in Phase 5: the runtime is the sole owner.
+// The runtime is the sole owner of pending permissions per thread.
 export const pendingPermissions = new Map<
   string, // threadId
   Map<
@@ -1060,15 +1060,8 @@ export class ThreadSessionRuntime {
       )
 
       // Re-bootstrap sentPartIds on reconnect to prevent re-sending
-      // parts that arrived while we were disconnected and were handled
-      // by the old code path in session-handler.ts.
+      // parts that arrived while we were disconnected.
       await this.bootstrapSentPartIds()
-
-      // TODO Phase 3: Reconnect reconciliation — after listener reconnect,
-      // fetch session status/messages snapshot to repair run state if events
-      // were missed during the disconnect. If recovery cannot prove progress,
-      // move run to terminal error path and continue queue processing.
-      // See migration plan §11 (Reconnect recovery behavior).
 
       const iterResult = await errore.tryAsync(async () => {
         for await (const event of events) {
@@ -2157,10 +2150,8 @@ export class ThreadSessionRuntime {
       },
     })
 
-    // TODO Phase 3: Queue drain on question shown is intentionally NOT done
-    // here. The migration plan (§11) changes behavior to block dispatch while
-    // question/permission is pending. The old code in session-handler.ts
-    // (line 2018) immediately drains the queue, which auto-dismisses questions.
+    // Queue drain is intentionally NOT done here — tryDrainQueue() already
+    // blocks dispatch while interactive UI (question/permission) is pending.
   }
 
   private handleQuestionReplied(properties: { sessionID: string }): void {
@@ -2250,7 +2241,7 @@ export class ThreadSessionRuntime {
     }
   }
 
-  // ── Phase 3: Ingress API ─────────────────────────────────────
+  // ── Ingress API ─────────────────────────────────────────────
 
   /**
    * Submit a user turn directly to opencode's internal session queue.
@@ -2766,7 +2757,7 @@ export class ThreadSessionRuntime {
     threadState.clearQueueItems(this.threadId)
   }
 
-  // ── Phase 3: Queue Drain ─────────────────────────────────────
+  // ── Queue Drain ─────────────────────────────────────────────
 
   /**
    * Check if we can dispatch the next queued message. If so, dequeue and
@@ -2841,10 +2832,10 @@ export class ThreadSessionRuntime {
     })
   }
 
-  // ── Phase 3: Prompt Dispatch ─────────────────────────────────
-  // Prompt dispatch: resolve session, build system message, send to OpenCode
-  // (session-handler.ts lines 2384-2620). The listener is already running,
-  // so this only handles session ensure + model/agent + SDK call + state.
+  // ── Prompt Dispatch ─────────────────────────────────────────
+  // Resolve session, build system message, send to OpenCode.
+  // The listener is already running, so this only handles
+  // session ensure + model/agent + SDK call + state.
 
   private async dispatchPrompt(input: QueuedMessage): Promise<void> {
     this.lastDisplayedContextPercentage = 0
@@ -3210,7 +3201,7 @@ export class ThreadSessionRuntime {
     )
   }
 
-  // ── Phase 3: Session Ensure ──────────────────────────────────
+  // ── Session Ensure ──────────────────────────────────────────
   // Creates or reuses the OpenCode session for this thread.
 
   private async ensureSession({
@@ -3313,7 +3304,7 @@ export class ThreadSessionRuntime {
     return { session, getClient, createdNewSession }
   }
 
-  // ── Phase 3: Run Finish + Footer ─────────────────────────────
+  // ── Run Finish + Footer ─────────────────────────────────────
 
   /**
    * Called when session.idle decision is 'process' — the run finished.
@@ -3501,7 +3492,7 @@ export class ThreadSessionRuntime {
     this.lastRateLimitDisplayTime = 0
   }
 
-  // ── Phase 4: Retry last user prompt (for model-change flow) ──
+  // ── Retry Last User Prompt (for model-change flow) ──────────
 
   /**
    * Abort the active run and immediately send an empty user prompt.

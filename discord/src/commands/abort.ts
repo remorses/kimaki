@@ -70,8 +70,7 @@ export async function handleAbortCommand({
     return
   }
 
-  // Phase 4: Use runtime API — abortActiveRun delegates to session.abort()
-  // and run settlement stays event-driven.
+  // abortActiveRun delegates to session.abort(), run settlement stays event-driven.
   const runtime = getRuntime(channel.id)
   if (runtime) {
     runtime.abortActiveRun('user-requested')

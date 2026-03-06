@@ -1,6 +1,5 @@
 // Model resolution utilities.
 // getDefaultModel resolves the default model from OpenCode when no user preference is set.
-// Extracted from session-handler.ts during Phase 5 migration.
 
 import fs from 'node:fs'
 import path from 'node:path'

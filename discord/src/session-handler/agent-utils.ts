@@ -1,6 +1,5 @@
 // Agent preference resolution utility.
 // Validates agent preferences against the OpenCode API.
-// Extracted from session-handler.ts during Phase 5 migration.
 
 import * as errore from 'errore'
 import {

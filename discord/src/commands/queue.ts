@@ -1,5 +1,4 @@
 // Queue commands - /queue, /queue-command, /clear-queue
-// Phase 3: Routes through ThreadSessionRuntime instead of global maps.
 
 import { ChannelType, MessageFlags, type ThreadChannel } from 'discord.js'
 import type { AutocompleteContext, CommandContext } from './types.js'

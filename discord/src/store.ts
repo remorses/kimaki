@@ -1,13 +1,7 @@
 // Centralized zustand/vanilla store for global bot state.
 // Replaces scattered module-level `let` variables, process.env mutations,
 // and mutable arrays with a single immutable state atom.
-//
-// Phase 1: config state (set once at CLI startup, read everywhere).
-// Future phases will move session Maps, server registry, and command
-// pending contexts into this store.
-//
-// See docs/zustand-state-centralization-plan.md for the full migration plan
-// and discord/skills/zustand-centralized-state/SKILL.md for the pattern.
+// See discord/skills/zustand-centralized-state/SKILL.md for the pattern.
 
 import { createStore } from 'zustand/vanilla'
 import type { VerbosityLevel } from './database.js'

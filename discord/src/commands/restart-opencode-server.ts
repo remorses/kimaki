@@ -65,7 +65,7 @@ export async function handleRestartOpencodeServerCommand({
   // Defer reply since restart may take a moment
   await command.deferReply({ flags: SILENT_MESSAGE_FLAGS })
 
-  // Phase 4: Dispose all runtimes for this directory/channel scope.
+  // Dispose all runtimes for this directory/channel scope.
   // disposeRuntimesForDirectory aborts active runs, kills listeners, and
   // removes runtimes from the registry. Scoped by channelId so runtimes
   // in other channels sharing the same project directory are not affected.

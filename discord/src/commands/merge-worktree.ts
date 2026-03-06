@@ -45,7 +45,7 @@ async function removeWorktreePrefixFromTitle(
 /**
  * Send a prompt to the AI model in the thread.
  * If a session is actively streaming, queues it. Otherwise sends directly.
- * Phase 3: Routes through ThreadSessionRuntime instead of global maps.
+ * Routes through ThreadSessionRuntime.
  */
 async function sendPromptToModel({
   prompt,
