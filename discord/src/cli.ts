@@ -20,6 +20,9 @@ import {
 import {
   deduplicateByKey,
   generateBotInstallUrl,
+  generateDiscordInstallUrlForBot,
+  KIMAKI_SHARED_APP_ID,
+  KIMAKI_WEBSITE_URL,
   abbreviatePath,
 } from './utils.js'
 import type { GatewayOAuthState } from 'db/src/gateway-state.js'
@@ -124,9 +127,6 @@ const cliLogger = createLogger(LogPrefix.CLI)
 // KIMAKI_GATEWAY_PROXY_URL is the gateway-proxy base URL.
 // We derive REST base from this URL by swapping ws/wss to http/https.
 // These are hardcoded because they're deploy-time constants for the shared infrastructure.
-const KIMAKI_SHARED_APP_ID = process.env.KIMAKI_SHARED_APP_ID || '1477605701202481173'
-const KIMAKI_WEBSITE_URL =
-  process.env.KIMAKI_WEBSITE_URL || 'https://kimaki.xyz'
 const KIMAKI_GATEWAY_PROXY_URL =
   process.env.KIMAKI_GATEWAY_PROXY_URL ||
   'wss://discord-gateway.kimaki.xyz'
@@ -327,6 +327,36 @@ function exitNonInteractiveSetup(): never {
     'Setup requires an interactive terminal (TTY) for prompts. Run `kimaki` in an interactive shell to complete setup.',
   )
   process.exit(EXIT_NO_RESTART)
+}
+
+async function printDiscordInstallUrlAndExit() {
+  await initDatabase()
+  const existingBot = await getBotTokenWithMode()
+
+  if (!existingBot) {
+    cliLogger.error('No bot configured yet. Run `kimaki` first to set up.')
+    process.exit(EXIT_NO_RESTART)
+  }
+
+  const installUrl = generateDiscordInstallUrlForBot({
+    appId: existingBot.appId,
+    mode: existingBot.mode,
+    clientId: existingBot.clientId,
+    clientSecret: existingBot.clientSecret,
+  })
+  if (installUrl instanceof Error) {
+    cliLogger.error(`Failed to build install URL: ${installUrl.message}`)
+    process.exit(EXIT_NO_RESTART)
+  }
+
+  cliLogger.log(installUrl)
+  if (existingBot.mode === 'gateway') {
+    cliLogger.log(
+      'This gateway install URL contains your client credentials. Do not share it.',
+    )
+  }
+
+  process.exit(0)
 }
 
 // Detect if a CLI tool is installed, prompt to install if missing.
@@ -1678,12 +1708,16 @@ async function run({
     if (!clientId || !clientSecret) {
       throw new Error('Malformed gateway token: expected clientId:clientSecret format')
     }
-    const installUrl = generateBotInstallUrl({
-      clientId: KIMAKI_SHARED_APP_ID,
-      state: JSON.stringify({ clientId, clientSecret } satisfies GatewayOAuthState),
-      redirectUri: `${KIMAKI_WEBSITE_URL}/api/auth/callback/discord`,
-      responseType: 'code',
+    const installUrlResult = generateDiscordInstallUrlForBot({
+      appId: KIMAKI_SHARED_APP_ID,
+      mode: 'gateway',
+      clientId,
+      clientSecret,
     })
+    if (installUrlResult instanceof Error) {
+      throw installUrlResult
+    }
+    const installUrl = installUrlResult
     cliLogger.error(
       'No Discord servers found. The bot must be installed in at least one server.\n' +
         `Install URL: ${installUrl}\n` +
@@ -2087,18 +2121,7 @@ cli
         }
 
         if (options.installUrl) {
-          await initDatabase()
-          const existingBot = await getBotTokenWithMode()
-
-          if (!existingBot) {
-            cliLogger.error(
-              'No bot configured yet. Run `kimaki` first to set up.',
-            )
-            process.exit(EXIT_NO_RESTART)
-          }
-
-          cliLogger.log(generateBotInstallUrl({ clientId: existingBot.appId }))
-          process.exit(0)
+          await printDiscordInstallUrlAndExit()
         }
 
         // Single-instance enforcement is handled by the hrana server binding the lock port.
@@ -2117,6 +2140,30 @@ cli
       }
     },
   )
+
+cli
+  .command('discord-install-url', 'Print the bot install URL and exit')
+  .option(
+    '--data-dir <path>',
+    'Data directory for config and database (default: ~/.kimaki)',
+  )
+  .action(async (options) => {
+    try {
+      if (options.dataDir) {
+        setDataDir(options.dataDir)
+        cliLogger.log(`Using data directory: ${getDataDir()}`)
+      }
+
+      initLogFile(getDataDir())
+      await printDiscordInstallUrlAndExit()
+    } catch (error) {
+      cliLogger.error(
+        'Error:',
+        error instanceof Error ? error.message : String(error),
+      )
+      process.exit(EXIT_NO_RESTART)
+    }
+  })
 
 cli
   .command(

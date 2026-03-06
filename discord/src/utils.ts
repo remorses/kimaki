@@ -4,6 +4,9 @@
 
 import os from 'node:os'
 import { PermissionsBitField } from 'discord.js'
+import type { GatewayOAuthState } from 'db/src/gateway-state.js'
+import type { BotMode } from './database.js'
+import * as errore from 'errore'
 
 type GenerateInstallUrlOptions = {
   clientId: string
@@ -74,6 +77,46 @@ export function generateBotInstallUrl({
   return url.toString()
 }
 
+export const KIMAKI_SHARED_APP_ID =
+  process.env.KIMAKI_SHARED_APP_ID || '1477605701202481173'
+export const KIMAKI_WEBSITE_URL = process.env.KIMAKI_WEBSITE_URL || 'https://kimaki.xyz'
+
+export function generateDiscordInstallUrlForBot({
+  appId,
+  mode,
+  clientId,
+  clientSecret,
+}: {
+  appId: string
+  mode: BotMode
+  clientId: string | null
+  clientSecret: string | null
+}): Error | string {
+  if (mode !== 'gateway') {
+    return generateBotInstallUrl({ clientId: appId })
+  }
+
+  if (!KIMAKI_SHARED_APP_ID) {
+    return new Error('Gateway mode is not available: shared app ID is missing')
+  }
+
+  if (!clientId || !clientSecret) {
+    return new Error('Gateway credentials are missing from local database')
+  }
+
+  const statePayload = JSON.stringify({
+    clientId,
+    clientSecret,
+  } satisfies GatewayOAuthState)
+
+  return generateBotInstallUrl({
+    clientId: KIMAKI_SHARED_APP_ID,
+    state: statePayload,
+    redirectUri: `${KIMAKI_WEBSITE_URL}/api/auth/callback/discord`,
+    responseType: 'code',
+  })
+}
+
 export function deduplicateByKey<T, K>(arr: T[], keyFn: (item: T) => K): T[] {
   const seen = new Set<K>()
   return arr.filter((item) => {
@@ -85,8 +128,6 @@ export function deduplicateByKey<T, K>(arr: T[], keyFn: (item: T) => K): T[] {
     return true
   })
 }
-
-import * as errore from 'errore'
 
 // Delegates to errore.isAbortError (walks cause chain for AbortError instances),
 // then falls back to opencode server-specific abort patterns that aren't
