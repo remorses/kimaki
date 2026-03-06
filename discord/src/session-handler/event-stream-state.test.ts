@@ -13,6 +13,7 @@ import {
   wasRecentlyAborted,
   getRunStartTimeForIdle,
   getLatestRunInfo,
+  isAssistantMessageInCurrentRunWindow,
   shouldEmitFooter,
   getDerivedSubtaskIndex,
   type EventBufferEntry,
@@ -73,6 +74,22 @@ function idleAt(idles: number[], index: number): number {
     throw new Error(`No idle event at index ${index}`)
   }
   return val
+}
+
+function findAssistantMessageIds(events: EventBufferEntry[], sessionId: string): string[] {
+  const ids = new Set<string>()
+  events.forEach((entry) => {
+    const e = entry.event
+    if (e.type !== 'message.updated') {
+      return
+    }
+    const msg = e.properties.info
+    if (msg.sessionID !== sessionId || msg.role !== 'assistant') {
+      return
+    }
+    ids.add(msg.id)
+  })
+  return [...ids]
 }
 
 describe('session-normal-completion', () => {
@@ -152,6 +169,9 @@ describe('session-two-completions-same-session', () => {
   const events = loadFixture('session-two-completions-same-session.jsonl')
   const sessionId = getSessionId(events)
   const idles = findIdleIndices(events, sessionId)
+  const assistantMessageIds = findAssistantMessageIds(events, sessionId)
+  const firstAssistantMessageId = assistantMessageIds[0]
+  const secondAssistantMessageId = assistantMessageIds[1]
 
   test('has at least two idle events', () => {
     expect(idles.length >= 2).toBe(true)
@@ -171,6 +191,68 @@ describe('session-two-completions-same-session', () => {
     expect(start1).toBeDefined()
     expect(start2).toBeDefined()
     expect(start1 !== start2).toBe(true)
+  })
+
+  test('isAssistantMessageInCurrentRunWindow only includes latest run assistant message', () => {
+    if (!firstAssistantMessageId || !secondAssistantMessageId) {
+      throw new Error('Expected two assistant messages in fixture')
+    }
+    const secondIdleIndex = idleAt(idles, 1)
+    expect(isAssistantMessageInCurrentRunWindow({
+      events,
+      sessionId,
+      messageId: firstAssistantMessageId,
+      upToIndex: secondIdleIndex,
+    })).toBe(false)
+    expect(isAssistantMessageInCurrentRunWindow({
+      events,
+      sessionId,
+      messageId: secondAssistantMessageId,
+      upToIndex: secondIdleIndex,
+    })).toBe(true)
+  })
+
+  test('late old part updates do not move old assistant messages into current run window', () => {
+    if (!firstAssistantMessageId || !secondAssistantMessageId) {
+      throw new Error('Expected two assistant messages in fixture')
+    }
+
+    const oldPartEvent = events.find((entry) => {
+      if (entry.event.type !== 'message.part.updated') {
+        return false
+      }
+      return entry.event.properties.part.messageID === firstAssistantMessageId
+    })
+
+    if (!oldPartEvent) {
+      throw new Error('Expected old assistant part in fixture')
+    }
+
+    const stalePartEvent = structuredClone(oldPartEvent.event)
+    if (stalePartEvent.type !== 'message.part.updated') {
+      throw new Error('Expected message.part.updated event')
+    }
+    stalePartEvent.properties.part.id = `${stalePartEvent.properties.part.id}-late-old-part`
+
+    const lastTimestamp = events[events.length - 1]?.timestamp || 0
+    const augmentedEvents: EventBufferEntry[] = [
+      ...events,
+      {
+        timestamp: lastTimestamp + 1,
+        event: stalePartEvent,
+      },
+    ]
+
+    expect(isAssistantMessageInCurrentRunWindow({
+      events: augmentedEvents,
+      sessionId,
+      messageId: firstAssistantMessageId,
+    })).toBe(false)
+    expect(isAssistantMessageInCurrentRunWindow({
+      events: augmentedEvents,
+      sessionId,
+      messageId: secondAssistantMessageId,
+    })).toBe(false)
   })
 })
 

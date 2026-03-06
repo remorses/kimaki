@@ -297,6 +297,60 @@ export function shouldEmitFooter({
   })
 }
 
+// Checks whether an assistant message ID belongs to the current run window.
+// The run window starts after the most recent session.idle for the session
+// before upToIndex and ends at upToIndex (exclusive).
+export function isAssistantMessageInCurrentRunWindow({
+  events,
+  sessionId,
+  messageId,
+  upToIndex,
+}: {
+  events: EventBufferEntry[]
+  sessionId: string
+  messageId: string
+  upToIndex?: number
+}): boolean {
+  const end = upToIndex ?? events.length
+  let runWindowStart = 0
+
+  for (let i = end - 1; i >= 0; i--) {
+    const entry = events[i]
+    if (!entry) {
+      continue
+    }
+    const e = entry.event
+    const eid = getOpencodeEventSessionId(e)
+    if (eid !== sessionId) {
+      continue
+    }
+    if (e.type === 'session.idle') {
+      runWindowStart = i + 1
+      break
+    }
+  }
+
+  for (let i = runWindowStart; i < end; i++) {
+    const entry = events[i]
+    if (!entry) {
+      continue
+    }
+    const e = entry.event
+    if (e.type !== 'message.updated') {
+      continue
+    }
+    const msg = e.properties.info
+    if (msg.sessionID !== sessionId || msg.role !== 'assistant') {
+      continue
+    }
+    if (msg.id === messageId) {
+      return true
+    }
+  }
+
+  return false
+}
+
 // Returns a stable 1-based subtask index for candidateSessionId.
 // Indexing scope is the parent assistant message that spawned the task tool calls,
 // so numbering restarts at 1 for each assistant message.

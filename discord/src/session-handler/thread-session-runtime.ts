@@ -82,6 +82,7 @@ import {
   getLatestRunInfo,
   getRunStartTimeForIdle,
   getDerivedSubtaskIndex,
+  isAssistantMessageInCurrentRunWindow,
   shouldEmitFooter,
   type EventBufferEntry,
 } from './event-stream-state.js'
@@ -1551,6 +1552,17 @@ export class ThreadSessionRuntime {
     if (msg.role !== 'assistant') {
       return
     }
+    if (!sessionId) {
+      return
+    }
+    if (!isAssistantMessageInCurrentRunWindow({
+      events: this.eventBuffer,
+      sessionId,
+      messageId: msg.id,
+    })) {
+      logger.info(`[SKIP] message.updated for old assistant message ${msg.id}, not in current run window`)
+      return
+    }
 
     const knownMessage = this.partBuffer.has(msg.id)
 
@@ -1590,9 +1602,6 @@ export class ThreadSessionRuntime {
     })
 
     // Context usage notice
-    if (!sessionId) {
-      return
-    }
     const latestRunInfo = getLatestRunInfo({
       events: this.eventBuffer,
       sessionId,
@@ -1734,6 +1743,18 @@ export class ThreadSessionRuntime {
 
     // Large output notification for completed tools
     if (part.type === 'tool' && part.state.status === 'completed') {
+      const sessionId = this.state?.sessionId
+      if (sessionId) {
+        const isCurrentRunMessage = isAssistantMessageInCurrentRunWindow({
+          events: this.eventBuffer,
+          sessionId,
+          messageId: part.messageID,
+        })
+        if (!isCurrentRunMessage) {
+          logger.info(`[SKIP] tool part ${part.id} for old assistant message ${part.messageID}, not in current run window`)
+          return
+        }
+      }
       const showLargeOutput = await (async () => {
         const verbosity = await this.getVerbosity()
         if (verbosity === 'text-only') {
@@ -1749,7 +1770,6 @@ export class ThreadSessionRuntime {
         const outputTokens = Math.ceil(output.length / 4)
         const largeOutputThreshold = 3000
         if (outputTokens >= largeOutputThreshold) {
-          const sessionId = this.state?.sessionId
           if (sessionId) {
             const latestRunInfo = getLatestRunInfo({
               events: this.eventBuffer,
