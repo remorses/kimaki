@@ -59,6 +59,20 @@ permission:
 ---
 ```
 
+**.opencode/agent/gpt5-medium.md** - GPT 5 Codex pinned to medium reasoning effort:
+
+```yaml
+---
+description: GPT 5 Codex, medium effort
+mode: primary
+model: openai/gpt-5.3-codex
+variant: medium
+permission:
+  question: allow
+  plan_enter: allow
+---
+```
+
 **.opencode/agent/gemini-low.md** - Gemini with low thinking for quick cheap tasks. Lower temperature for more deterministic output:
 
 ```yaml
@@ -96,7 +110,7 @@ permission:
 | Field         | Type    | Description                                                                  |
 | ------------- | ------- | ---------------------------------------------------------------------------- |
 | `model`       | string  | Model ID as `provider/model` (e.g. `anthropic/claude-sonnet-4-20250514`)     |
-| `variant`     | string  | Thinking level: `low`, `high`, `max` (available values depend on model)      |
+| `variant`     | string  | Reasoning level (provider/model dependent): `none`, `minimal`, `low`, `medium`, `high`, `max`, `xhigh` |
 | `mode`        | string  | `primary` (top-level agent) or `all` (usable as both top-level and subagent) |
 | `description` | string  | Shown in the `/agent` selector and agent autocomplete                        |
 | `permission`  | object  | Auto-allow/deny permissions: `question`, `plan_enter`, `bash`, `edit`, etc.  |
@@ -108,6 +122,44 @@ permission:
 | `options`     | object  | Extra provider-specific parameters passed through to the model API           |
 
 Any unknown frontmatter keys are automatically merged into `options` and forwarded to the provider, so you can pass provider-specific parameters directly in frontmatter without nesting them under `options`.
+
+### Effort customization notes
+
+`variant` is the primary way to customize agent effort from markdown frontmatter.
+
+- For GPT-5 models, use variants like `minimal`, `low`, `medium`, `high`, or `xhigh` (if the selected GPT-5 model supports it).
+- For Anthropic models, common values are `high` and `max` (mapped to model thinking settings).
+- Available values depend on the exact provider + model pair.
+
+## Override the default `build` agent variant
+
+The best way to override the default build agent effort is to create a file named exactly `build.md` in `.opencode/agent/`. The filename maps to the agent name, so this merges into the built-in `build` agent config.
+
+Use both `model` and `variant` to make behavior predictable:
+
+```yaml
+---
+description: Build agent pinned to GPT-5 medium effort
+mode: primary
+model: openai/gpt-5.3-codex
+variant: medium
+permission:
+  question: allow
+  plan_enter: allow
+---
+```
+
+Why this is the most reliable approach:
+
+- `build.md` targets the native `build` agent directly.
+- `variant` gives you default effort for that agent.
+- pairing with `model` avoids ambiguity when the active model changes.
+- explicit per-request variant still wins when you choose one manually.
+
+> **Prompt override callout**
+> Using `.md` agent files does **not** override built-in prompts unless the file has markdown body content.
+> Frontmatter-only files keep default prompt behavior and only change config fields like `model`, `variant`, `permission`, and `steps`.
+> This applies to built-in agents like `build`, `plan`, `explore`, and other native agents.
 
 ### Activating
 
