@@ -82,6 +82,7 @@ import {
   getLatestRunInfo,
   getRunStartTimeForIdle,
   getDerivedSubtaskIndex,
+  getDerivedSubtaskAgentType,
   isAssistantMessageInCurrentRunWindow,
   shouldEmitFooter,
   type EventBufferEntry,
@@ -812,7 +813,12 @@ export class ThreadSessionRuntime {
       return undefined
     }
 
-    const label = `task-${subtaskIndex}`
+    const agentType = getDerivedSubtaskAgentType({
+      events: this.eventBuffer,
+      mainSessionId,
+      candidateSessionId,
+    })
+    const label = `${agentType || 'task'}-${subtaskIndex}`
     const assistantMessageId = this.getLatestAssistantMessageIdForSession({
       sessionId: candidateSessionId,
     })
@@ -883,7 +889,14 @@ export class ThreadSessionRuntime {
     }
 
     const state = part.state
+    // Preserve subagent_type for task tools so derivation can build labels
+    // like "explore-1" instead of generic "task-1" after compaction strips input
+    const taskSubagentType =
+      part.tool === 'task' ? state.input?.subagent_type : undefined
     state.input = {}
+    if (typeof taskSubagentType === 'string') {
+      state.input.subagent_type = taskSubagentType
+    }
 
     if (state.status === 'pending') {
       state.raw = this.compactTextForEventBuffer(state.raw)
@@ -1707,7 +1720,7 @@ export class ThreadSessionRuntime {
         const childSessionId = (part.state.metadata?.sessionId as string) || ''
         if (description && childSessionId) {
           if ((await this.getVerbosity()) !== 'text-only') {
-            const taskDisplay = `┣ task **${description}**${agent ? ` _${agent}_` : ''}`
+            const taskDisplay = `┣ ${agent} **${description}**`
             await sendThreadMessage(this.thread, taskDisplay + '\n\n')
           }
         }

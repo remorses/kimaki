@@ -40,7 +40,7 @@ function getTaskCandidateFromEvent({
 }: {
   event: OpenCodeEvent
   mainSessionId: string
-}): { assistantMessageId: string; childSessionId: string } | undefined {
+}): { assistantMessageId: string; childSessionId: string; subagentType?: string } | undefined {
   if (event.type !== 'message.part.updated') {
     return undefined
   }
@@ -58,9 +58,11 @@ function getTaskCandidateFromEvent({
     return undefined
   }
 
+  const subagentType = part.state.input?.subagent_type
   return {
     assistantMessageId: part.messageID,
     childSessionId,
+    subagentType: typeof subagentType === 'string' ? subagentType : undefined,
   }
 }
 
@@ -413,6 +415,34 @@ export function getDerivedSubtaskIndex({
   }
 
   return indexByChildSessionId.get(candidateSessionId)
+}
+
+// Returns the subagent_type (e.g. "explore", "general") for a given child session.
+// Used to build labels like "explore-1" instead of generic "task-1".
+export function getDerivedSubtaskAgentType({
+  events,
+  mainSessionId,
+  candidateSessionId,
+}: {
+  events: EventBufferEntry[]
+  mainSessionId: string
+  candidateSessionId: string
+}): string | undefined {
+  for (let i = events.length - 1; i >= 0; i--) {
+    const entry = events[i]
+    if (!entry) {
+      continue
+    }
+    const candidate = getTaskCandidateFromEvent({
+      event: entry.event,
+      mainSessionId,
+    })
+    if (!candidate || candidate.childSessionId !== candidateSessionId) {
+      continue
+    }
+    return candidate.subagentType
+  }
+  return undefined
 }
 
 function getRunWindowStartIndex({
