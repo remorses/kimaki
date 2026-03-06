@@ -105,3 +105,10 @@ Use Node ESM-compatible compiler settings:
 ## tests location
 
 test files should be close with the associated source files. for example if you have an utils.ts file you will create utils.test.ts file next to it. with tests, importing from utils. preferred testing framework is vitest (or bun if project already using `bun test` or depends on bun APIs, rare)
+
+
+## common mistakes
+
+- if you need to use zod always use latest version
+- always install packages as dev dependencies if used only for scripts, testing or types only
+-
