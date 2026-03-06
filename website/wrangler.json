@@ -1,6 +1,7 @@
 {
   "name": "kimaki-website",
-  "main": "src/index.tsx",
+  "main": "src/index.ts",
+  "minify": true,
   "compatibility_flags": ["nodejs_compat"],
   "compatibility_date": "2025-04-01",
   "hyperdrive": [

@@ -4,20 +4,16 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "dev": "wrangler dev",
+    "dev": "doppler run --mount .dev.vars --mount-format env -- wrangler dev",
     "deploy": "tsc --noEmit && wrangler deploy",
     "secrets:prod": "doppler run -c production --mount .env.prod --mount-format env -- wrangler secret bulk .env.prod"
   },
   "dependencies": {
+    "better-auth": "^1.5.4",
     "db": "workspace:^",
-    "errore": "workspace:^",
-    "hono": "^4.7.10",
-    "react": "^19.1.0",
-    "react-dom": "^19.1.0"
+    "hono": "^4.7.10"
   },
   "devDependencies": {
-    "@types/react": "^19.1.0",
-    "@types/react-dom": "^19.1.0",
     "wrangler": "^4.61.1"
   }
 }
