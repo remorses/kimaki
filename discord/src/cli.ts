@@ -1409,6 +1409,7 @@ async function run({
 
   const forceRestartOnboarding = Boolean(restartOnboarding)
   const forceGateway = Boolean(gateway)
+  store.setState({ preferGateway: forceGateway })
 
   // Step 0: Ensure required CLI tools are installed (OpenCode + Bun)
   await ensureCommandAvailable({
@@ -1472,9 +1473,8 @@ async function run({
     isGatewayMode: boolean
   }> => {
     const envToken = process.env.KIMAKI_BOT_TOKEN
-    // Get the most recent bot row (any mode) for general reuse checks
     const existingBot = await getBotTokenWithMode()
-    // When --gateway is requested and the most recent bot is self-hosted,
+    // When --gateway is requested and the resolved bot is still self-hosted,
     // check if saved gateway credentials exist by looking up the gateway app_id
     // directly. This lets users switch back and forth between modes without
     // re-running the onboarding wizard each time.

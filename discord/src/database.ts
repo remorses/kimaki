@@ -1170,7 +1170,16 @@ export async function setPartMessagesBatch(
 // ============================================================================
 
 /**
- * Get the most recent bot token along with its mode info in a single query.
+ * Get the bot token to use, with mode info, in a single query.
+ *
+ * Selection logic (when multiple bot rows exist):
+ * - If only one bot exists, use it regardless of mode.
+ * - If multiple bots exist: prefer gateway row when `preferGateway` is true,
+ *   otherwise prefer the self-hosted row. Within the preferred mode, pick
+ *   the most recently created row.
+ * - Falls back to the most recent row of any mode if no row matches the
+ *   preferred mode (e.g. preferGateway=true but only self-hosted rows exist).
+ *
  * For gateway mode, the token is derived from client_id:client_secret
  * and REST routing is automatically enabled (idempotent env var set).
  * This ensures every code path that reads credentials gets correct routing
@@ -1188,14 +1197,27 @@ export async function getBotTokenWithMode(): Promise<
   | undefined
 > {
   const prisma = await getPrisma()
-  const row = await prisma.bot_tokens.findFirst({
+  const allBots = await prisma.bot_tokens.findMany({
     orderBy: { created_at: 'desc' },
   })
-  if (!row) {
+  const [mostRecent] = allBots
+  if (!mostRecent) {
     return undefined
   }
-  // Accept both 'gateway' (current) and 'built-in' (legacy DB rows) as gateway mode
-  const mode: BotMode = (row.bot_mode === 'gateway' || row.bot_mode === 'built-in') ? 'gateway' : 'self-hosted'
+  // If only one bot, use it. If multiple, prefer the mode matching store.preferGateway.
+  const row = (() => {
+    if (allBots.length === 1) {
+      return mostRecent
+    }
+    const preferredMode = store.getState().preferGateway ? 'gateway' : 'self-hosted'
+    const match = allBots.find((b) => {
+      const m = b.bot_mode === 'gateway' ? 'gateway' : 'self-hosted'
+      return m === preferredMode
+    })
+    // Fall back to most recent row if no row matches preferred mode
+    return match || mostRecent
+  })()
+  const mode: BotMode = row.bot_mode === 'gateway' ? 'gateway' : 'self-hosted'
   const token = (mode === 'gateway' && row.client_id && row.client_secret)
     ? `${row.client_id}:${row.client_secret}`
     : row.token
