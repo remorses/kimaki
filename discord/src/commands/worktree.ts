@@ -23,9 +23,7 @@ import { createLogger, LogPrefix } from '../logger.js'
 import { notifyError } from '../sentry.js'
 import {
   createWorktreeWithSubmodules,
-  captureGitDiff,
   execAsync,
-  type CapturedDiff,
 } from '../worktrees.js'
 import { WORKTREE_PREFIX } from './merge-worktree.js'
 import * as errore from 'errore'
@@ -101,31 +99,26 @@ async function getProjectDirectoryFromChannel(
 
 /**
  * Create worktree in background and update starter message when done.
- * If diff is provided, it's applied during worktree creation (before submodule init).
  */
 async function createWorktreeInBackground({
   thread,
   starterMessage,
   worktreeName,
   projectDirectory,
-  diff,
   rest,
 }: {
   thread: ThreadChannel
   starterMessage: Message
   worktreeName: string
   projectDirectory: string
-  diff?: CapturedDiff | null
   rest: REST
 }): Promise<void> {
-  // Create worktree using git, apply diff, then init submodules
   logger.log(
     `Creating worktree "${worktreeName}" for project ${projectDirectory}`,
   )
   const worktreeResult = await createWorktreeWithSubmodules({
     directory: projectDirectory,
     name: worktreeName,
-    diff,
   })
 
   if (worktreeResult instanceof Error) {
@@ -152,16 +145,10 @@ async function createWorktreeInBackground({
     emoji: '🌳',
   })
 
-  const diffStatus = diff
-    ? worktreeResult.diffApplied
-      ? '\n✅ Changes applied'
-      : '\n⚠️ Failed to apply changes'
-    : ''
   await starterMessage.edit(
     `🌳 **Worktree: ${worktreeName}**\n` +
       `📁 \`${worktreeResult.directory}\`\n` +
-      `🌿 Branch: \`${worktreeResult.branch}\`` +
-      diffStatus,
+      `🌿 Branch: \`${worktreeResult.branch}\``,
   )
 }
 
@@ -386,11 +373,6 @@ async function handleWorktreeInThread({
     return
   }
 
-  // Capture git diff from project directory before creating worktree.
-  // This allows transferring uncommitted changes to the new worktree.
-  const diff = await captureGitDiff(projectDirectory)
-  const hasDiff = diff && (diff.staged || diff.unstaged)
-
   // Store pending worktree in database for this existing thread
   await createPendingWorktree({
     threadId: thread.id,
@@ -399,9 +381,8 @@ async function handleWorktreeInThread({
   })
 
   // Send status message in thread
-  const diffNote = hasDiff ? '\n📋 Will transfer uncommitted changes' : ''
   const statusMessage = await thread.send({
-    content: `🌳 **Creating worktree: ${worktreeName}**\n⏳ Setting up...${diffNote}`,
+    content: `🌳 **Creating worktree: ${worktreeName}**\n⏳ Setting up...`,
     flags: SILENT_MESSAGE_FLAGS,
   })
 
@@ -409,13 +390,11 @@ async function handleWorktreeInThread({
     `Creating worktree \`${worktreeName}\` for this thread...`,
   )
 
-  // Create worktree in background, passing diff to apply after creation
   createWorktreeInBackground({
     thread,
     starterMessage: statusMessage,
     worktreeName,
     projectDirectory,
-    diff,
     rest: command.client.rest,
   }).catch((e) => {
     logger.error('[NEW-WORKTREE] Background error:', e)

@@ -590,19 +590,14 @@ function getManagedWorktreeDirectory({
 /**
  * Create a worktree using git and initialize git submodules.
  * This wrapper ensures submodules are properly set up in new worktrees.
- *
- * If diff is provided, it's applied BEFORE submodule update to ensure
- * any submodule pointer changes in the diff are respected.
  */
 export async function createWorktreeWithSubmodules({
   directory,
   name,
-  diff,
 }: {
   directory: string
   name: string
-  diff?: CapturedDiff | null
-}): Promise<(WorktreeResult & { diffApplied: boolean }) | Error> {
+}): Promise<WorktreeResult | Error> {
   // 1. Create worktree via git (checked out immediately).
   const worktreeDir = getManagedWorktreeDirectory({ directory, name })
   const targetRef = await resolveDefaultWorktreeTarget(directory)
@@ -629,17 +624,7 @@ export async function createWorktreeWithSubmodules({
     return createResult
   }
 
-  let diffApplied = false
-
-  // 2. Apply diff BEFORE submodule update (if provided)
-  // This ensures any submodule pointer changes in the diff are applied first,
-  // so submodule update checks out the correct commits.
-  if (diff) {
-    logger.log(`Applying diff to ${worktreeDir} before submodule init`)
-    diffApplied = await applyGitDiff(worktreeDir, diff)
-  }
-
-  // 3. Remove broken submodule stubs before init
+  // 2. Remove broken submodule stubs before init
   // git worktree creates stub directories with .git files pointing to incomplete gitdirs
   await removeBrokenSubmoduleStubs(worktreeDir)
 
@@ -683,51 +668,12 @@ export async function createWorktreeWithSubmodules({
   // detectInstallCommand() was built as a replacement but install is skipped for now.
   // Opencode sessions can run install themselves if needed.
 
-  return { directory: worktreeDir, branch: name, diffApplied }
-}
-
-/**
- * Captured git diff (both staged and unstaged changes).
- */
-export type CapturedDiff = {
-  unstaged: string
-  staged: string
-}
-
-/**
- * Capture git diff from a directory (both staged and unstaged changes).
- * Returns null if no changes or on error.
- */
-export async function captureGitDiff(
-  directory: string,
-): Promise<CapturedDiff | null> {
-  try {
-    // Capture unstaged changes
-    const unstagedResult = await execAsync('git diff', { cwd: directory })
-    const unstaged = unstagedResult.stdout.trim()
-
-    // Capture staged changes
-    const stagedResult = await execAsync('git diff --staged', {
-      cwd: directory,
-    })
-    const staged = stagedResult.stdout.trim()
-
-    if (!unstaged && !staged) {
-      return null
-    }
-
-    return { unstaged, staged }
-  } catch (e) {
-    logger.warn(
-      `Failed to capture git diff from ${directory}: ${e instanceof Error ? e.message : String(e)}`,
-    )
-    return null
-  }
+  return { directory: worktreeDir, branch: name }
 }
 
 /**
  * Run a git command with stdin input.
- * Uses spawn to pipe the diff content to git apply.
+ * Used by mergeWorktree squash commit flow.
  */
 function runGitWithStdin(
   args: string[],
@@ -757,37 +703,6 @@ function runGitWithStdin(
     child.stdin?.write(input)
     child.stdin?.end()
   })
-}
-
-/**
- * Apply a captured git diff to a directory.
- * Applies staged changes first, then unstaged.
- */
-export async function applyGitDiff(
-  directory: string,
-  diff: CapturedDiff,
-): Promise<boolean> {
-  try {
-    // Apply staged changes first (and stage them)
-    if (diff.staged) {
-      logger.log(`Applying staged diff to ${directory}`)
-      await runGitWithStdin(['apply', '--index'], directory, diff.staged)
-    }
-
-    // Apply unstaged changes (don't stage them)
-    if (diff.unstaged) {
-      logger.log(`Applying unstaged diff to ${directory}`)
-      await runGitWithStdin(['apply'], directory, diff.unstaged)
-    }
-
-    logger.log(`Successfully applied diff to ${directory}`)
-    return true
-  } catch (e) {
-    logger.warn(
-      `Failed to apply git diff to ${directory}: ${e instanceof Error ? e.message : String(e)}`,
-    )
-    return false
-  }
 }
 
 // ─── Worktree merge ──────────────────────────────────────────────────────────
