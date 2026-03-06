@@ -75,6 +75,23 @@ key files:
 
 auth flow: client sends IDENTIFY with token `client_id:client_secret` → proxy validates against the CLIENTS map (from DB) → returns `SessionPrincipal::Client(id)` + `authorized_guilds` → only forwards events for those guilds.
 
+gateway REST rule for discord package code: when running with `client_id:secret`
+through gateway-proxy, Discord REST calls must be guild-scoped or explicitly
+allowlisted by the proxy (`/gateway/bot`, `/users/@me`, etc). avoid global
+application routes like `/applications/{app_id}/commands`; use
+`/applications/{app_id}/guilds/{guild_id}/commands` instead so auth can resolve
+scope and allow the request.
+
+multi-tenant REST safety invariant:
+
+- never allow client-authenticated requests to hit unscoped bot-token routes.
+- only tokenized interaction/webhook routes are allowed without auth
+  (`/interactions/{id}/{token}/...`, `/webhooks/{id}/{token}/...`).
+- never treat `/webhooks/{id}` as allowlisted.
+- for `AllowedWithoutAuth` routes, do not inject bot `Authorization` upstream.
+- fail closed (`403`/`401`) when route scope cannot be proven as guild-scoped or
+  token-scoped.
+
 ## gateway onboarding flow (gateway mode)
 
 the gateway mode onboarding (in `discord/src/cli.ts`, the `run()` function) works as follows:
@@ -102,6 +119,27 @@ always import from `@opencode-ai/sdk/v2`, never from `@opencode-ai/sdk` (v1). th
 - `session.messages({ sessionID: id, directory })` not `session.messages({ path: { id }, query: { directory } })`
 - `session.create({ title, directory })` not `session.create({ body: { title }, query: { directory } })`
 - `provider.list({ directory })` not `provider.list({ query: { directory } })`
+
+## ai sdk provider stream protocol (v2)
+
+when editing deterministic provider matchers or debugging stream behavior, always
+confirm the protocol from both docs and installed types:
+
+- docs: `content/docs/07-reference/01-ai-sdk-core/02-stream-text.mdx`
+- installed types: `node_modules/.pnpm/@ai-sdk+provider@*/node_modules/@ai-sdk/provider/src/language-model/v2/language-model-v2-stream-part.ts`
+- built types: `node_modules/.pnpm/@ai-sdk+provider@*/node_modules/@ai-sdk/provider/dist/index.d.ts`
+
+use these shapes for realistic assistant output:
+
+- text assistant message: `stream-start` → `text-start` → one or more
+  `text-delta` → `text-end` → `finish`
+- tool-invoking assistant message: `stream-start` → `tool-call` → `finish`
+  (`finishReason: "tool-calls"`)
+
+for opencode-style tool calls in deterministic matchers, represent tool usage via
+`tool-call` parts with `toolName` and JSON `input` (for example `read`, `edit`,
+`write`, `bash`, `task`). do not fake these as plain text when the test is about
+tool execution or tool routing.
 
 # restarting the discord bot
 
@@ -281,7 +319,7 @@ to debug opencode event ordering, set `KIMAKI_LOG_OPENCODE_SESSION_EVENTS=1`. th
 
 For example when running a test to debug events: `KIMAKI_OPENCODE_SESSION_EVENTS_DIR=./tmp/kimaki-test-3423 KIMAKI_LOG_OPENCODE_SESSION_EVENTS=1 pnpm test test-file.test.ts -t test-name`
 
-for live user-session debugging (without restarting with env vars), export the current in-memory event buffer with:
+for live user-session debugging (without restarting with env vars), export the persisted session event buffer from sqlite with:
 
 `kimaki session export-events-jsonl --session <session_id> --out ./tmp/session-events.jsonl`
 
@@ -295,11 +333,11 @@ the compacted buffer strips/truncates these large fields:
 - `message.part.updated` text/reasoning/snapshot: truncate long text fields
 - `message.part.updated` `step-start.snapshot`: truncate
 - `message.part.updated` tool states: replace `state.input` with `{}`
-- `message.part.updated` completed tool output: truncate `state.output` (for `task` tool keep only `task_id: ...`)
+- `message.part.updated` completed tool output: truncate `state.output`
 - `message.part.updated` completed tool attachments: strip `state.attachments`
 - `message.part.updated` pending `state.raw` and error `state.error`: truncate
 
-the jsonl line includes runtime metadata (`threadId`, `activeSessionId`, `runPhase`, etc) and the raw opencode event under `.event`.
+the jsonl line is intentionally minimal: `{ timestamp, threadId, projectDirectory, event }`.
 
 use `jq` to inspect these files quickly:
 
@@ -316,8 +354,8 @@ jq -r 'select(.event.type=="message.part.updated")' ~/.kimaki/opencode-session-e
 # filter by event subtype (example: session.status idle)
 jq -r 'select(.event.type=="session.status" and .event.properties.status.type=="idle")' ~/.kimaki/opencode-session-events/ses_xxx.jsonl
 
-# show only events processed as active-session events (ignore stale cross-session noise)
-jq -r 'select(.eventSessionId == .activeSessionId)' ~/.kimaki/opencode-session-events/ses_xxx.jsonl
+# show timestamps + event types
+jq -r '[.timestamp, .event.type] | @tsv' ~/.kimaki/opencode-session-events/ses_xxx.jsonl
 ```
 
 for checkout validation requests, prefer non-recursive checks unless the user asks otherwise.
@@ -345,6 +383,8 @@ skills is a symlink to discord/skills. this is a folder of skills for kimaki. lo
 ## discord-digital-twin e2e style
 
 when writing discord e2e tests, prefer adding reusable automation methods to `DigitalDiscord` instead of creating per-test helper functions in kimaki.
+
+always import from `discord-digital-twin/src` so we dont need to compile that package before using it.
 
 aim for a playwright-like style in tests:
 
@@ -962,26 +1002,3 @@ const jsonSchema = toJSONSchema(mySchema, {
 });
 ```
 
-
-<!-- opensrc:start -->
-
-## Source Code Reference
-
-Source code for dependencies is available in `opensrc/` for deeper understanding of implementation details.
-
-See `opensrc/sources.json` for the list of available packages and their versions.
-
-Use this source code when you need to understand how a package works internally, not just its types/interface.
-
-### Fetching Additional Source Code
-
-To fetch source code for a package or repository you need to understand, run:
-
-```bash
-npx opensrc <package>           # npm package (e.g., npx opensrc zod)
-npx opensrc pypi:<package>      # Python package (e.g., npx opensrc pypi:requests)
-npx opensrc crates:<package>    # Rust crate (e.g., npx opensrc crates:serde)
-npx opensrc <owner>/<repo>      # GitHub repo (e.g., npx opensrc vercel/ai)
-```
-
-<!-- opensrc:end -->
