@@ -80,6 +80,16 @@ application routes like `/applications/{app_id}/commands`; use
 `/applications/{app_id}/guilds/{guild_id}/commands` instead so auth can resolve
 scope and allow the request.
 
+multi-tenant REST safety invariant:
+
+- never allow client-authenticated requests to hit unscoped bot-token routes.
+- only tokenized interaction/webhook routes are allowed without auth
+  (`/interactions/{id}/{token}/...`, `/webhooks/{id}/{token}/...`).
+- never treat `/webhooks/{id}` as allowlisted.
+- for `AllowedWithoutAuth` routes, do not inject bot `Authorization` upstream.
+- fail closed (`403`/`401`) when route scope cannot be proven as guild-scoped or
+  token-scoped.
+
 ## gateway onboarding flow (gateway mode)
 
 the gateway mode onboarding (in `discord/src/cli.ts`, the `run()` function) works as follows:
