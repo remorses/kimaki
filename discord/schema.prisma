@@ -1,3 +1,7 @@
+// schema.prisma for the kimaki local db
+// prefer using enum for strings with few known options so it is type safe in typescript code. sqlite does not have enum. this is a prisma only concept
+// these enums will be also exported as types by prisma and we can reuse them in our code
+
 generator client {
   provider = "prisma-client"
   output   = "./src/generated"
@@ -45,7 +49,7 @@ model part_messages {
 model bot_tokens {
   app_id        String    @id
   token         String
-  bot_mode      String    @default("self-hosted")
+  bot_mode      BotMode   @default(self_hosted)
   client_id     String?
   client_secret String?
   proxy_url     String?
@@ -56,12 +60,17 @@ model bot_tokens {
   global_model       global_models?
 }
 
+enum BotMode {
+  self_hosted
+  gateway
+}
+
 model channel_directories {
-  channel_id   String    @id
+  channel_id   String      @id
   directory    String
-  channel_type String
+  channel_type ChannelType
   // app_id String? // no longer used: channel ownership is no longer scoped per bot app
-  created_at   DateTime? @default(now())
+  created_at   DateTime?   @default(now())
 
   channel_model        channel_models?
   channel_agent        channel_agents?
@@ -69,6 +78,11 @@ model channel_directories {
   channel_verbosity    channel_verbosity?
   channel_mention_mode channel_mention_mode?
   scheduled_tasks      scheduled_tasks[]
+}
+
+enum ChannelType {
+  text
+  voice
 }
 
 model bot_api_keys {
@@ -81,17 +95,22 @@ model bot_api_keys {
   bot bot_tokens @relation(fields: [app_id], references: [app_id])
 }
 
-// status: 'pending' while creating, 'ready' when done, 'error' if failed
 model thread_worktrees {
-  thread_id          String    @id
+  thread_id          String          @id
   worktree_name      String
   worktree_directory String?
   project_directory  String
-  status             String?   @default("pending")
+  status             WorktreeStatus  @default(pending)
   error_message      String?
-  created_at         DateTime? @default(now())
+  created_at         DateTime?       @default(now())
 
   thread thread_sessions @relation(fields: [thread_id], references: [thread_id])
+}
+
+enum WorktreeStatus {
+  pending
+  ready
+  error
 }
 
 model channel_models {
@@ -136,11 +155,17 @@ model channel_worktrees {
 }
 
 model channel_verbosity {
-  channel_id String    @id
-  verbosity  String    @default("tools-and-text")
-  updated_at DateTime? @default(now()) @updatedAt
+  channel_id String         @id
+  verbosity  VerbosityLevel @default(tools_and_text)
+  updated_at DateTime?      @default(now()) @updatedAt
 
   channel channel_directories @relation(fields: [channel_id], references: [channel_id])
+}
+
+enum VerbosityLevel {
+  tools_and_text
+  text_and_essential_tools
+  text_only
 }
 
 model channel_mention_mode {

@@ -1,8 +1,8 @@
 // /verbosity command.
 // Shows a dropdown to set output verbosity level for sessions in a channel.
-// 'text-and-essential-tools' (default): shows text and essential tools (edits, custom MCP tools)
-// 'tools-and-text': shows all output including tool executions
-// 'text-only': only shows text responses
+// 'text_and_essential_tools' (default): shows text and essential tools (edits, custom MCP tools)
+// 'tools_and_text': shows all output including tool executions
+// 'text_only': only shows text responses
 
 import {
   ChatInputCommandInteraction,
@@ -30,17 +30,17 @@ const VERBOSITY_OPTIONS: Array<{
   description: string
 }> = [
   {
-    value: 'tools-and-text',
+    value: 'tools_and_text',
     label: 'Tools and text',
     description: 'All output including tool executions and status messages',
   },
   {
-    value: 'text-and-essential-tools',
+    value: 'text_and_essential_tools',
     label: 'Text and essential tools',
     description: 'Text + essential tools (edits, custom MCP). Hides read/search.',
   },
   {
-    value: 'text-only',
+    value: 'text_only',
     label: 'Text only',
     description: 'Only text responses. Hides all tools and status messages.',
   },

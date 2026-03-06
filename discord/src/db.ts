@@ -160,11 +160,11 @@ async function migrateSchema(prisma: PrismaClient): Promise<void> {
   }
 
   // Migration: add gateway bot mode columns to bot_tokens.
-  // bot_mode distinguishes "self-hosted" (user's own bot) from "gateway" (gateway Kimaki bot).
+  // bot_mode distinguishes "self_hosted" (user's own bot) from "gateway" (gateway Kimaki bot).
   // client_id + client_secret are the credentials used for gateway proxy auth.
   // proxy_url stores the gateway-proxy REST base URL.
   const botTokenAlters = [
-    "ALTER TABLE bot_tokens ADD COLUMN bot_mode TEXT DEFAULT 'self-hosted'",
+    "ALTER TABLE bot_tokens ADD COLUMN bot_mode TEXT DEFAULT 'self_hosted'",
     'ALTER TABLE bot_tokens ADD COLUMN client_id TEXT',
     'ALTER TABLE bot_tokens ADD COLUMN client_secret TEXT',
     'ALTER TABLE bot_tokens ADD COLUMN proxy_url TEXT',
@@ -192,6 +192,35 @@ async function migrateSchema(prisma: PrismaClient): Promise<void> {
     `)
   } catch {
     // session_thinking table may not exist in fresh installs
+  }
+
+  // Migration: rename hyphenated verbosity values to underscored for Prisma enum.
+  // Old DBs have 'tools-and-text', 'text-and-essential-tools', 'text-only'.
+  const verbosityRenames = [
+    "UPDATE channel_verbosity SET verbosity = 'tools_and_text' WHERE verbosity = 'tools-and-text'",
+    "UPDATE channel_verbosity SET verbosity = 'text_and_essential_tools' WHERE verbosity = 'text-and-essential-tools'",
+    "UPDATE channel_verbosity SET verbosity = 'text_only' WHERE verbosity = 'text-only'",
+  ]
+  for (const stmt of verbosityRenames) {
+    try {
+      await prisma.$executeRawUnsafe(stmt)
+    } catch {
+      // Table may not exist on first run
+    }
+  }
+
+  // Defensive migration: rename legacy 'self-hosted' bot_mode to 'self_hosted'.
+  // Also fix NULL worktree status rows that predate the required enum.
+  const defensiveMigrations = [
+    "UPDATE bot_tokens SET bot_mode = 'self_hosted' WHERE bot_mode = 'self-hosted'",
+    "UPDATE thread_worktrees SET status = 'pending' WHERE status IS NULL",
+  ]
+  for (const stmt of defensiveMigrations) {
+    try {
+      await prisma.$executeRawUnsafe(stmt)
+    } catch {
+      // Table may not exist on first run
+    }
   }
 
 }

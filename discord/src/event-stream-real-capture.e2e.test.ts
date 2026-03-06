@@ -340,7 +340,7 @@ describe('real event stream capture fixtures (cached provider)', () => {
     setDataDir(directories.dataDir)
 
     previousDefaultVerbosity = store.getState().defaultVerbosity
-    store.setState({ defaultVerbosity: 'tools-and-text' })
+    store.setState({ defaultVerbosity: 'tools_and_text' })
 
     await Promise.all([proxy.start(), discord.start()])
 
@@ -368,8 +368,8 @@ describe('real event stream capture fixtures (cached provider)', () => {
       directory: directories.projectDirectory,
       channelType: 'text',
     })
-    await setChannelVerbosity(TEXT_CHANNEL_ID, 'tools-and-text')
-    expect(await getChannelVerbosity(TEXT_CHANNEL_ID)).toBe('tools-and-text')
+    await setChannelVerbosity(TEXT_CHANNEL_ID, 'tools_and_text')
+    expect(await getChannelVerbosity(TEXT_CHANNEL_ID)).toBe('tools_and_text')
 
     botClient = createDiscordJsClient({ restUrl: discord.restUrl })
     await startDiscordBot({

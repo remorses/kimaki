@@ -1414,10 +1414,10 @@ export class ThreadSessionRuntime {
 
   private async sendPartMessage(part: Part): Promise<void> {
     const verbosity = await this.getVerbosity()
-    if (verbosity === 'text-only' && part.type !== 'text') {
+    if (verbosity === 'text_only' && part.type !== 'text') {
       return
     }
-    if (verbosity === 'text-and-essential-tools') {
+    if (verbosity === 'text_and_essential_tools') {
       if (part.type !== 'text' && !(part.type === 'tool' && isEssentialToolPart(part))) {
         return
       }
@@ -1719,7 +1719,7 @@ export class ThreadSessionRuntime {
         const agent = (part.state.input?.subagent_type as string) || 'task'
         const childSessionId = (part.state.metadata?.sessionId as string) || ''
         if (description && childSessionId) {
-          if ((await this.getVerbosity()) !== 'text-only') {
+          if ((await this.getVerbosity()) !== 'text_only') {
             const taskDisplay = `┣ ${agent} **${description}**`
             await sendThreadMessage(this.thread, taskDisplay + '\n\n')
           }
@@ -1797,10 +1797,10 @@ export class ThreadSessionRuntime {
       }
       const showLargeOutput = await (async () => {
         const verbosity = await this.getVerbosity()
-        if (verbosity === 'text-only') {
+        if (verbosity === 'text_only') {
           return false
         }
-        if (verbosity === 'text-and-essential-tools') {
+        if (verbosity === 'text_and_essential_tools') {
           return isEssentialToolPart(part)
         }
         return true
@@ -1874,10 +1874,10 @@ export class ThreadSessionRuntime {
     subtaskInfo: { label: string; assistantMessageId?: string },
   ): Promise<void> {
     const verbosity = await this.getVerbosity()
-    if (verbosity === 'text-only') {
+    if (verbosity === 'text_only') {
       return
     }
-    if (verbosity === 'text-and-essential-tools') {
+    if (verbosity === 'text_and_essential_tools') {
       if (!isEssentialToolPart(part)) {
         return
       }

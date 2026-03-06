@@ -259,7 +259,7 @@ describeIf('gateway-proxy e2e', () => {
     process.env['KIMAKI_VITEST'] = '1'
     setDataDir(directories.dataDir)
     previousDefaultVerbosity = store.getState().defaultVerbosity
-    store.setState({ defaultVerbosity: 'text-only' })
+    store.setState({ defaultVerbosity: 'text_only' })
 
     const digitalDiscordDbPath = path.join(
       directories.dataDir,

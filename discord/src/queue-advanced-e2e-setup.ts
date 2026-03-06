@@ -332,7 +332,7 @@ export function setupQueueAdvancedSuite({
     process.env['KIMAKI_OPENCODE_SESSION_EVENTS_DIR'] = sessionEventsDir
     setDataDir(ctx.directories.dataDir)
     previousDefaultVerbosity = store.getState().defaultVerbosity
-    store.setState({ defaultVerbosity: 'tools-and-text' })
+    store.setState({ defaultVerbosity: 'tools_and_text' })
 
     const digitalDiscordDbPath = path.join(
       ctx.directories.dataDir,
@@ -382,9 +382,9 @@ export function setupQueueAdvancedSuite({
       directory: ctx.directories.projectDirectory,
       channelType: 'text',
     })
-    await setChannelVerbosity(channelId, 'tools-and-text')
+    await setChannelVerbosity(channelId, 'tools_and_text')
     const channelVerbosity = await getChannelVerbosity(channelId)
-    expect(channelVerbosity).toBe('tools-and-text')
+    expect(channelVerbosity).toBe('tools_and_text')
 
     ctx.botClient = createDiscordJsClient({ restUrl: ctx.discord.restUrl })
     await startDiscordBot({

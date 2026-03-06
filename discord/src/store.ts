@@ -4,7 +4,7 @@
 // See discord/skills/zustand-centralized-state/SKILL.md for the pattern.
 
 import { createStore } from 'zustand/vanilla'
-import type { VerbosityLevel } from './database.js'
+import type { VerbosityLevel } from './generated/client.js'
 import type { ThreadRunState } from './session-handler/thread-runtime-state.js'
 
 // Registered user commands, populated by registerCommands() in cli.ts.
@@ -106,7 +106,7 @@ export type KimakiState = {
 
 export const store = createStore<KimakiState>(() => ({
   dataDir: null,
-  defaultVerbosity: 'text-and-essential-tools',
+  defaultVerbosity: 'text_and_essential_tools',
   defaultMentionMode: false,
   critiqueEnabled: true,
   verboseOpencodeServer: false,

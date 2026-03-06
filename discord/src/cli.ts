@@ -1178,11 +1178,17 @@ async function registerCommands({
         ? firstRegisteredCount.value.registeredCount
         : commands.length
 
-    await deleteLegacyGlobalCommands({
-      rest,
-      appId,
-      commandNames: guildCommandNames,
-    })
+    // In gateway mode, global application routes (/applications/{app_id}/commands)
+    // are denied by the proxy (DeniedWithoutGuild). Legacy global commands only
+    // exist for self-hosted bots that previously registered commands globally.
+    const isGateway = store.getState().discordBaseUrl !== 'https://discord.com'
+    if (!isGateway) {
+      await deleteLegacyGlobalCommands({
+        rest,
+        appId,
+        commandNames: guildCommandNames,
+      })
+    }
 
     cliLogger.info(
       `COMMANDS: Successfully registered ${registeredCommandCount} slash commands for ${successfulGuilds} guild(s)`,
@@ -1558,7 +1564,7 @@ async function run({
     }
 
     // When --gateway is passed, skip the mode selector and go straight to gateway mode.
-    const modeChoice: 'gateway' | 'self-hosted' = forceGateway
+    const modeChoice: 'gateway' | 'self_hosted' = forceGateway
       ? 'gateway'
       : await (async () => {
           const choice = await select({
@@ -1570,7 +1576,7 @@ async function run({
                 hint: 'Install the gateway Kimaki bot to your server',
               },
               {
-                value: 'self-hosted' as const,
+                value: 'self_hosted' as const,
                 label: 'Self-hosted bot (5-10 minutes setup)',
                 hint: 'Full control: bring your own Discord bot token',
               },
@@ -1773,6 +1779,16 @@ async function run({
 
     return { appId: derivedAppId, token: wizardToken, isQuickStart: false, isGatewayMode: false }
   })()
+
+  // In gateway mode, ensure REST calls route through the gateway proxy.
+  // getBotTokenWithMode() sets this for saved-credential paths, but the fresh
+  // onboarding path returns directly without going through getBotTokenWithMode(),
+  // leaving store.discordBaseUrl at the default 'https://discord.com'.
+  // Without this, discord.js sends the clientId:clientSecret token to Discord
+  // directly, which rejects it with "An invalid token was provided".
+  if (isGatewayMode) {
+    store.setState({ discordBaseUrl: KIMAKI_GATEWAY_PROXY_REST_BASE_URL })
+  }
 
   // Touch the active bot row so it has the most recent created_at timestamp.
   // Subcommands in separate processes (send, upload-to-discord, project list)
@@ -2192,7 +2208,7 @@ cli
   )
   .option(
     '--verbosity <level>',
-    'Default verbosity for all channels (tools-and-text, text-and-essential-tools, or text-only)',
+    'Default verbosity for all channels (tools_and_text, text_and_essential_tools, or text_only)',
   )
   .option(
     '--mention-mode',
@@ -2243,9 +2259,9 @@ cli
 
         if (options.verbosity) {
           const validLevels = [
-            'tools-and-text',
-            'text-and-essential-tools',
-            'text-only',
+            'tools_and_text',
+            'text_and_essential_tools',
+            'text_only',
           ]
           if (!validLevels.includes(options.verbosity)) {
             cliLogger.error(
@@ -2255,9 +2271,9 @@ cli
           }
           store.setState({
             defaultVerbosity: options.verbosity as
-              | 'tools-and-text'
-              | 'text-and-essential-tools'
-              | 'text-only',
+              | 'tools_and_text'
+              | 'text_and_essential_tools'
+              | 'text_only',
           })
           cliLogger.log(`Default verbosity: ${options.verbosity}`)
         }

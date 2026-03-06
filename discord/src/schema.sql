@@ -24,7 +24,7 @@ CREATE TABLE IF NOT EXISTS "part_messages" (
 CREATE TABLE IF NOT EXISTS "bot_tokens" (
     "app_id" TEXT NOT NULL PRIMARY KEY,
     "token" TEXT NOT NULL,
-    "bot_mode" TEXT NOT NULL DEFAULT 'self-hosted',
+    "bot_mode" TEXT NOT NULL DEFAULT 'self_hosted',
     "client_id" TEXT,
     "client_secret" TEXT,
     "proxy_url" TEXT,
@@ -49,7 +49,7 @@ CREATE TABLE IF NOT EXISTS "thread_worktrees" (
     "worktree_name" TEXT NOT NULL,
     "worktree_directory" TEXT,
     "project_directory" TEXT NOT NULL,
-    "status" TEXT DEFAULT 'pending',
+    "status" TEXT NOT NULL DEFAULT 'pending',
     "error_message" TEXT,
     "created_at" DATETIME DEFAULT CURRENT_TIMESTAMP,
     CONSTRAINT "thread_worktrees_thread_id_fkey" FOREIGN KEY ("thread_id") REFERENCES "thread_sessions" ("thread_id") ON DELETE RESTRICT ON UPDATE CASCADE
@@ -89,7 +89,7 @@ CREATE TABLE IF NOT EXISTS "channel_worktrees" (
 );
 CREATE TABLE IF NOT EXISTS "channel_verbosity" (
     "channel_id" TEXT NOT NULL PRIMARY KEY,
-    "verbosity" TEXT NOT NULL DEFAULT 'tools-and-text',
+    "verbosity" TEXT NOT NULL DEFAULT 'tools_and_text',
     "updated_at" DATETIME DEFAULT CURRENT_TIMESTAMP,
     CONSTRAINT "channel_verbosity_channel_id_fkey" FOREIGN KEY ("channel_id") REFERENCES "channel_directories" ("channel_id") ON DELETE RESTRICT ON UPDATE CASCADE
 );

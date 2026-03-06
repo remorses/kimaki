@@ -312,7 +312,7 @@ e2eTest('voice message handling', () => {
     process.env['KIMAKI_LOCK_PORT'] = String(lockPort)
     setDataDir(directories.dataDir)
     previousDefaultVerbosity = store.getState().defaultVerbosity
-    store.setState({ defaultVerbosity: 'tools-and-text' })
+    store.setState({ defaultVerbosity: 'tools_and_text' })
 
     const digitalDiscordDbPath = path.join(
       directories.dataDir,
@@ -383,7 +383,7 @@ e2eTest('voice message handling', () => {
       directory: directories.projectDirectory,
       channelType: 'text',
     })
-    await setChannelVerbosity(TEXT_CHANNEL_ID, 'tools-and-text')
+    await setChannelVerbosity(TEXT_CHANNEL_ID, 'tools_and_text')
 
     botClient = createDiscordJsClient({ restUrl: discord.restUrl })
     await startDiscordBot({

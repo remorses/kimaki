@@ -3,7 +3,7 @@
 // API keys, and model preferences in <dataDir>/discord-sessions.db.
 
 import { getPrisma, closePrisma } from './db.js'
-import type { Prisma, session_events } from './generated/client.js'
+import type { Prisma, session_events, BotMode, VerbosityLevel, WorktreeStatus, ChannelType as PrismaChannelType } from './generated/client.js'
 
 import { store } from './store.js'
 import { createLogger, LogPrefix } from './logger.js'
@@ -30,24 +30,17 @@ export async function closeDatabase() {
   await closePrisma()
 }
 
-// Verbosity levels for controlling output detail
-// - tools-and-text: shows all output including tool executions
-// - text-and-essential-tools: shows text + edits + custom MCP tools, hides read/search/navigation tools
-// - text-only: only shows text responses (⬥ diamond parts)
-export type VerbosityLevel =
-  | 'tools-and-text'
-  | 'text-and-essential-tools'
-  | 'text-only'
-
-// Worktree status types
-export type WorktreeStatus = 'pending' | 'ready' | 'error'
+// Re-export enum types from generated Prisma client
+export type { VerbosityLevel }
+export type { WorktreeStatus }
+export type { PrismaChannelType }
 
 export type ThreadWorktree = {
   thread_id: string
   worktree_name: string
   worktree_directory: string | null
   project_directory: string
-  status: string | null
+  status: WorktreeStatus
   error_message: string | null
   created_at: Date | null
 }
@@ -1199,15 +1192,15 @@ export async function getBotTokenWithMode(): Promise<
     if (allBots.length === 1) {
       return mostRecent
     }
-    const preferredMode = store.getState().preferGateway ? 'gateway' : 'self-hosted'
+    const preferredMode = store.getState().preferGateway ? 'gateway' : 'self_hosted'
     const match = allBots.find((b) => {
-      const m = b.bot_mode === 'gateway' ? 'gateway' : 'self-hosted'
+      const m = b.bot_mode === 'gateway' ? 'gateway' : 'self_hosted'
       return m === preferredMode
     })
     // Fall back to most recent row if no row matches preferred mode
     return match || mostRecent
   })()
-  const mode: BotMode = row.bot_mode === 'gateway' ? 'gateway' : 'self-hosted'
+  const mode: BotMode = row.bot_mode === 'gateway' ? 'gateway' : 'self_hosted'
   const token = (mode === 'gateway' && row.client_id && row.client_secret)
     ? `${row.client_id}:${row.client_secret}`
     : row.token
@@ -1240,7 +1233,7 @@ export async function setBotToken(appId: string, token: string): Promise<void> {
   })
 }
 
-export type BotMode = 'self-hosted' | 'gateway'
+export type { BotMode }
 
 /**
  * Persist gateway bot mode credentials.
@@ -1382,7 +1375,7 @@ export async function setChannelDirectory({
 }: {
   channelId: string
   directory: string
-  channelType: 'text' | 'voice'
+  channelType: PrismaChannelType
   skipIfExists?: boolean
 }): Promise<void> {
   const prisma = await getPrisma()
@@ -1426,14 +1419,14 @@ export async function findChannelsByDirectory({
   channelType,
 }: {
   directory?: string
-  channelType?: 'text' | 'voice'
+  channelType?: PrismaChannelType
 }): Promise<
   Array<{ channel_id: string; directory: string; channel_type: string }>
 > {
   const prisma = await getPrisma()
   const where: {
     directory?: string
-    channel_type?: string
+    channel_type?: PrismaChannelType
   } = {}
   if (directory) {
     where.directory = directory
