@@ -26,7 +26,7 @@ import {
   captureGitDiff,
   execAsync,
   type CapturedDiff,
-} from '../worktree-utils.js'
+} from '../worktrees.js'
 import { WORKTREE_PREFIX } from './merge-worktree.js'
 import * as errore from 'errore'
 

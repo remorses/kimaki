@@ -42,7 +42,7 @@ import {
   setLogFilePath,
 } from './logger.js'
 import { initSentry, notifyError } from './sentry.js'
-import { execAsync } from './worktree-utils.js'
+import { execAsync } from './worktrees.js'
 
 // Regex to match emoji characters (covers most common emojis)
 // Includes: emoji presentation sequences, skin tone modifiers, ZWJ sequences, regional indicators

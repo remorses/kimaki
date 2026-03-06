@@ -6,7 +6,7 @@
 import fs from 'node:fs'
 import { createRequire } from 'node:module'
 import { createLogger, LogPrefix } from './logger.js'
-import { execAsync } from './worktree-utils.js'
+import { execAsync } from './worktrees.js'
 
 const logger = createLogger(LogPrefix.CLI)
 

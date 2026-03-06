@@ -7,7 +7,7 @@ import type { CommandContext } from './types.js'
 import { getThreadWorktree, getThreadSession } from '../database.js'
 import { createLogger, LogPrefix } from '../logger.js'
 import { notifyError } from '../sentry.js'
-import { mergeWorktree } from '../worktree-utils.js'
+import { mergeWorktree } from '../worktrees.js'
 import { sendThreadMessage, resolveWorkingDirectory } from '../discord-utils.js'
 import {
   getOrCreateRuntime,

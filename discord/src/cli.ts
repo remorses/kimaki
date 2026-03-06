@@ -103,7 +103,7 @@ import {
   sanitizeAgentName,
   buildQuickAgentCommandDescription,
 } from './commands/agent.js'
-import { execAsync } from './worktree-utils.js'
+import { execAsync } from './worktrees.js'
 import {
   backgroundUpgradeKimaki,
   upgrade,
@@ -4182,7 +4182,7 @@ cli
       name?: string
     }) => {
       try {
-        const { mergeWorktree } = await import('./worktree-utils.js')
+        const { mergeWorktree } = await import('./worktrees.js')
         const worktreeDir = path.resolve(options.directory || '.')
 
         // Auto-detect main repo: find the main worktree's toplevel.

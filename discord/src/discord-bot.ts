@@ -20,7 +20,7 @@ import {
 } from './opencode.js'
 import { formatWorktreeName } from './commands/worktree.js'
 import { WORKTREE_PREFIX } from './commands/merge-worktree.js'
-import { createWorktreeWithSubmodules } from './worktree-utils.js'
+import { createWorktreeWithSubmodules } from './worktrees.js'
 import {
   escapeBackticksInCodeBlocks,
   splitMarkdownForDiscord,

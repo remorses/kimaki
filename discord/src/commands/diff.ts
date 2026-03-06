@@ -14,7 +14,7 @@ import {
   SILENT_MESSAGE_FLAGS,
 } from '../discord-utils.js'
 import { createLogger, LogPrefix } from '../logger.js'
-import { execAsync } from '../worktree-utils.js'
+import { execAsync } from '../worktrees.js'
 
 const logger = createLogger(LogPrefix.DIFF)
 

@@ -109,7 +109,7 @@ import {
   getThinkingValuesForModel,
   matchThinkingValue,
 } from '../thinking-utils.js'
-import { execAsync } from '../worktree-utils.js'
+import { execAsync } from '../worktrees.js'
 import { notifyError } from '../sentry.js'
 import { createDebouncedProcessFlush } from '../debounced-process-flush.js'
 

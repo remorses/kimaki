@@ -11,7 +11,7 @@
 import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
-import { execAsync } from './worktree-utils.js'
+import { execAsync } from './worktrees.js'
 
 const SERVICE_NAME = 'xyz.kimaki'
 
