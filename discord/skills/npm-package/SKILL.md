@@ -98,3 +98,8 @@ Use Node ESM-compatible compiler settings:
   }
 }
 ```
+
+
+## tests location
+
+test files should be close with the associated source files. for example if you have an utils.ts file you will create utils.test.ts file next to it. with tests, importing from utils. preferred testing framework is vitest (or bun if project already using `bun test` or depends on bun APIs, rare)
