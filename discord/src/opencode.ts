@@ -223,6 +223,8 @@ const opencodeServers = new Map<
     port: number
     /** Original options used to spawn this server, reused on auto-restart */
     initOptions?: ServerInitOptions
+    /** Timestamp (ms) when the server last had active runtimes, used by idle sweep */
+    lastActivityMs: number
   }
 >()
 
@@ -569,6 +571,7 @@ export async function initializeOpencodeForDirectory(
     client,
     port,
     initOptions: options,
+    lastActivityMs: Date.now(),
   })
 
   return () => {
@@ -602,8 +605,10 @@ export async function stopOpencodeServer(
     return false
   }
 
+  const idleSinceMs = Date.now() - existing.lastActivityMs
+  const idleMinutes = Math.floor(idleSinceMs / 60_000)
   opencodeLogger.log(
-    `Stopping opencode server for directory: ${directory} (pid: ${existing.process.pid})`,
+    `Stopping opencode server for directory: ${directory} (pid: ${existing.process.pid}, idle: ${idleMinutes}m)`,
   )
   if (!existing.process.killed) {
     const killResult = errore.try({
@@ -632,15 +637,40 @@ export async function stopOpencodeServer(
   return true
 }
 
+/** Default idle threshold before an opencode server with no runtimes is stopped */
+export const DEFAULT_SERVER_IDLE_MS = 2 * 60 * 60 * 1000
+
 export async function stopOpencodeServersWithoutRuntimeDirectories({
   activeDirectories,
+  nowMs = Date.now(),
+  serverIdleMs = DEFAULT_SERVER_IDLE_MS,
 }: {
   activeDirectories: ReadonlyArray<string>
+  nowMs?: number
+  serverIdleMs?: number
 }): Promise<string[]> {
   const activeDirectorySet = new Set(activeDirectories)
-  const directoriesToStop = [...opencodeServers.keys()].filter((directory) => {
-    return !activeDirectorySet.has(directory)
-  })
+
+  // Update lastActivityMs for servers that still have active runtimes
+  for (const directory of activeDirectorySet) {
+    const entry = opencodeServers.get(directory)
+    if (entry) {
+      entry.lastActivityMs = nowMs
+    }
+  }
+
+  const directoriesToStop = [...opencodeServers.entries()]
+    .filter(([directory, entry]) => {
+      if (activeDirectorySet.has(directory)) {
+        return false
+      }
+      // Only stop if idle for longer than the threshold
+      const idleForMs = nowMs - entry.lastActivityMs
+      return idleForMs >= serverIdleMs
+    })
+    .map(([directory]) => {
+      return directory
+    })
 
   const stoppedDirectories: string[] = []
   for (const directory of directoriesToStop) {
