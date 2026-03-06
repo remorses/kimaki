@@ -112,7 +112,6 @@ e2eTest('queue advanced: abort and retry', () => {
         Reply with exactly: oscar
         --- from: assistant (TestBot)
         ⬥ ok
-        --- from: assistant (TestBot)
         *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2*
         --- from: user (queue-advanced-tester)
         PLUGIN_TIMEOUT_SLEEP_MARKER
@@ -122,7 +121,6 @@ e2eTest('queue advanced: abort and retry', () => {
         Reply with exactly: papa
         --- from: assistant (TestBot)
         ⬥ ok
-        --- from: assistant (TestBot)
         *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2*"
       `)
       expect(afterBotMessages.length).toBeGreaterThanOrEqual(beforeBotCount + 1)
@@ -188,16 +186,6 @@ e2eTest('queue advanced: abort and retry', () => {
 
       runtime.abortActiveRun('test-no-footer-on-abort')
 
-      expect(await th.text()).toMatchInlineSnapshot(`
-        "--- from: user (queue-advanced-tester)
-        Reply with exactly: abort-no-footer-setup
-        --- from: assistant (TestBot)
-        ⬥ ok
-        --- from: assistant (TestBot)
-        *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2*
-        --- from: user (queue-advanced-tester)
-        SLOW_ABORT_MARKER run long response"
-      `)
       for (let i = 0; i < 10; i++) {
         await new Promise((resolve) => {
           setTimeout(resolve, 20)
@@ -211,6 +199,16 @@ e2eTest('queue advanced: abort and retry', () => {
         })
         expect(hasFooter).toBe(false)
       }
+
+      expect(await th.text()).toMatchInlineSnapshot(`
+        "--- from: user (queue-advanced-tester)
+        Reply with exactly: abort-no-footer-setup
+        --- from: assistant (TestBot)
+        ⬥ ok
+        *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2*
+        --- from: user (queue-advanced-tester)
+        SLOW_ABORT_MARKER run long response"
+      `)
     },
     10_000,
   )
@@ -318,6 +316,14 @@ e2eTest('queue advanced: abort and retry', () => {
         content: 'Reply with exactly: model-switch-followup',
       })
 
+      await waitForBotReplyAfterUserMessage({
+        discord: ctx.discord,
+        threadId: thread.id,
+        userId: TEST_USER_ID,
+        userMessageIncludes: 'model-switch-followup',
+        timeout: 4_000,
+      })
+
       expect(await th.text()).toMatchInlineSnapshot(`
         "--- from: user (queue-advanced-tester)
         Reply with exactly: retry-setup
@@ -327,18 +333,12 @@ e2eTest('queue advanced: abort and retry', () => {
         PLUGIN_TIMEOUT_SLEEP_MARKER
         --- from: assistant (TestBot)
         *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2*
-        --- from: assistant (TestBot)
         ⬥ starting sleep 100
         --- from: user (queue-advanced-tester)
-        Reply with exactly: model-switch-followup"
+        Reply with exactly: model-switch-followup
+        --- from: assistant (TestBot)
+        ⬥ ok"
       `)
-      await waitForBotReplyAfterUserMessage({
-        discord: ctx.discord,
-        threadId: thread.id,
-        userId: TEST_USER_ID,
-        userMessageIncludes: 'model-switch-followup',
-        timeout: 4_000,
-      })
     },
     10_000,
   )

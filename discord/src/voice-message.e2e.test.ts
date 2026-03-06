@@ -518,11 +518,8 @@ e2eTest('voice message handling', () => {
         [attachment: voice-message.ogg]
         --- from: assistant (TestBot)
         🎤 Transcribing voice message...
-        --- from: assistant (TestBot)
         📝 **Transcribed message:** Fix the login bug in auth.ts
-        --- from: assistant (TestBot)
         ⬥ session-reply
-        --- from: assistant (TestBot)
         *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2*"
       `)
       expect(finalState.sessionId).toBeDefined()
@@ -628,17 +625,13 @@ e2eTest('voice message handling', () => {
         FAST_RESPONSE_MARKER initial setup
         --- from: assistant (TestBot)
         ⬥ fast-response-done
-        --- from: assistant (TestBot)
         *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2*
         --- from: user (voice-tester)
         [attachment: voice-message.ogg]
         --- from: assistant (TestBot)
         🎤 Transcribing voice message...
-        --- from: assistant (TestBot)
         📝 **Transcribed message:** Add error handling to the parser
-        --- from: assistant (TestBot)
         ⬥ session-reply
-        --- from: assistant (TestBot)
         *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2*"
       `)
       expect(finalState?.sessionId).toBeDefined()
@@ -880,25 +873,17 @@ e2eTest('voice message handling', () => {
       expect(await th.text()).toMatchInlineSnapshot(`
         "--- from: user (voice-tester)
         SLOW_RESPONSE_MARKER start queued task
-        --- from: user (voice-tester)
         [attachment: voice-message.ogg]
         --- from: assistant (TestBot)
         🎤 Transcribing voice message...
-        --- from: assistant (TestBot)
         📝 **Transcribed message:** Queue this task for later
-        --- from: assistant (TestBot)
         Queued at position 1
-        --- from: assistant (TestBot)
         ⬥ slow-response-done
-        --- from: assistant (TestBot)
         *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2*
-        --- from: assistant (TestBot)
         » **voice-tester:** Voice message transcription from Discord user:
 
         Queue this task for later
-        --- from: assistant (TestBot)
         ⬥ session-reply
-        --- from: assistant (TestBot)
         *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2*"
       `)
       expect(finalState.queueItems.length).toBe(0)
@@ -1016,17 +1001,13 @@ e2eTest('voice message handling', () => {
         FAST_RESPONSE_MARKER quick task
         --- from: assistant (TestBot)
         ⬥ fast-response-done
-        --- from: assistant (TestBot)
         *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2*
         --- from: user (voice-tester)
         [attachment: voice-message.ogg]
         --- from: assistant (TestBot)
         🎤 Transcribing voice message...
-        --- from: assistant (TestBot)
         📝 **Transcribed message:** Delayed transcription result
-        --- from: assistant (TestBot)
         ⬥ session-reply
-        --- from: assistant (TestBot)
         *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2*"
       `)
       expect(finalState.sessionId).toBeDefined()

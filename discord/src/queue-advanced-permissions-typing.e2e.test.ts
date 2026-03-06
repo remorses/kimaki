@@ -128,14 +128,11 @@ describe('queue advanced: typing around permissions', () => {
         **Type:** \`external_directory\`
         **Pattern:** \`/Users/morse/*\`
         ✅ Permission **accepted**
-        --- from: assistant (TestBot)
         ⬥ requesting external read permission
         [user clicks button]
         [bot typing]
-        --- from: assistant (TestBot)
         ⬥ permission-flow-done
         [bot typing]
-        --- from: assistant (TestBot)
         *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2*"
       `)
     },

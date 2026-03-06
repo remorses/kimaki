@@ -119,7 +119,6 @@ describe('threads and channels', () => {
     expect(await discord.thread(createdThreadId).text()).toMatchInlineSnapshot(`
       "--- from: assistant (TestBot)
       Thread starter message
-      --- from: assistant (TestBot)
       Message in thread"
     `)
     const messages = await discord.thread(createdThreadId).getMessages()

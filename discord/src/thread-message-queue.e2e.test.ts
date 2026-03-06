@@ -420,7 +420,6 @@ e2eTest('thread message queue ordering', () => {
         Reply with exactly: cold-start-stream
         --- from: assistant (TestBot)
         ⬥ ok
-        --- from: assistant (TestBot)
         *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2*"
       `)
     },
@@ -585,7 +584,6 @@ e2eTest('thread message queue ordering', () => {
         ⬥ ok
         --- from: user (queue-tester)
         Reply with exactly: two
-        --- from: user (queue-tester)
         Reply with exactly: three
         --- from: assistant (TestBot)
         *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2*"
@@ -678,13 +676,11 @@ e2eTest('thread message queue ordering', () => {
         Reply with exactly: opencode-queue-setup
         --- from: assistant (TestBot)
         ⬥ ok
-        --- from: assistant (TestBot)
         *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2*
         --- from: user (queue-tester)
         Prompt from test: respond with short text for opencode queue mode.
         --- from: assistant (TestBot)
         ⬥ ok
-        --- from: assistant (TestBot)
         *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2*"
       `)
       const followupUserIndex = messagesWithFollowupFooter.findIndex((message) => {
@@ -767,9 +763,7 @@ e2eTest('thread message queue ordering', () => {
         Reply with exactly: BASH_TOOL_FILE_MARKER
         --- from: assistant (TestBot)
         ⬥ running create file
-        --- from: assistant (TestBot)
         ⬥ ok
-        --- from: assistant (TestBot)
         *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2*"
       `)
       expect(fs.existsSync(markerPath)).toBe(true)
@@ -896,21 +890,13 @@ e2eTest('thread message queue ordering', () => {
         Reply with exactly: queue-slash-setup
         --- from: assistant (TestBot)
         ⬥ ok
-        --- from: assistant (TestBot)
         *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2*
-        --- from: assistant (TestBot)
         » **queue-tester:** Reply with exactly: race-final
-        --- from: assistant (TestBot)
         Queued message (position 1)
-        --- from: assistant (TestBot)
         ⬥ race-final
-        --- from: assistant (TestBot)
         *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2*
-        --- from: assistant (TestBot)
         » **queue-tester:** Reply with exactly: queued-from-slash
-        --- from: assistant (TestBot)
         ⬥ ok
-        --- from: assistant (TestBot)
         *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2*"
       `)
     },
@@ -999,9 +985,7 @@ e2eTest('thread message queue ordering', () => {
         Reply with exactly: foxtrot
         --- from: assistant (TestBot)
         ⬥ ok
-        --- from: assistant (TestBot)
         ⬥ ok
-        --- from: assistant (TestBot)
         *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2*"
       `)
       expect(userEchoIndex).toBeGreaterThan(-1)
@@ -1091,9 +1075,7 @@ e2eTest('thread message queue ordering', () => {
         Reply with exactly: india
         --- from: assistant (TestBot)
         ⬥ ok
-        --- from: assistant (TestBot)
         ⬥ ok
-        --- from: assistant (TestBot)
         *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2*"
       `)
       const userIndiaIndex = after.findIndex((m) => {
@@ -1195,9 +1177,7 @@ e2eTest('thread message queue ordering', () => {
         ⬥ ok
         --- from: user (queue-tester)
         Reply with exactly: kilo
-        --- from: user (queue-tester)
         Reply with exactly: lima
-        --- from: user (queue-tester)
         Reply with exactly: mike
         --- from: assistant (TestBot)
         *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2*
@@ -1205,9 +1185,7 @@ e2eTest('thread message queue ordering', () => {
         Reply with exactly: november
         --- from: assistant (TestBot)
         ⬥ ok
-        --- from: assistant (TestBot)
         ⬥ ok
-        --- from: assistant (TestBot)
         *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2*"
       `)
       // E's user message appears before the final bot response

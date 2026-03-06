@@ -341,19 +341,16 @@ describe('runtime lifecycle', () => {
         Reply with exactly: seq-alpha
         --- from: assistant (TestBot)
         ⬥ ok
-        --- from: assistant (TestBot)
         *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2*
         --- from: user (lifecycle-tester)
         Reply with exactly: seq-beta
         --- from: assistant (TestBot)
         ⬥ ok
-        --- from: assistant (TestBot)
         *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2*
         --- from: user (lifecycle-tester)
         Reply with exactly: seq-gamma
         --- from: assistant (TestBot)
         ⬥ ok
-        --- from: assistant (TestBot)
         *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2*"
       `)
       expect(runtimeAfterC).toBe(runtimeAfterA)
@@ -401,7 +398,6 @@ describe('runtime lifecycle', () => {
         Reply with exactly: footer-check
         --- from: assistant (TestBot)
         ⬥ ok
-        --- from: assistant (TestBot)
         *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2*"
       `)
       expect(footerMessage).toBeDefined()

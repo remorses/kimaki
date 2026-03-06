@@ -1,6 +1,6 @@
 // E2e test for queue + interrupt interaction.
-// Reproduces a bug where a user queues a command via /queue while a slow session
-// is in progress, then sends a normal (non-queued) message to interrupt.
+// Validates that a user can queue a command via /queue while a slow session
+// is in progress, then send a normal (non-queued) message to interrupt.
 //
 // Expected behavior:
 //   1. Slow session is running
@@ -9,21 +9,6 @@
 //   4. Session aborts the slow task, processes the interrupt message immediately
 //   5. Interrupt response appears in Discord with a ⬥ ok reply
 //   6. When interrupt response completes, the queued message drains and runs
-//
-// Current buggy behavior (captured in inline snapshot):
-//   - Normal messages go through submitViaOpencodeQueue → promptAsync which
-//     does NOT abort the running task. It just adds to opencode's internal queue.
-//   - The slow task runs to completion or times out, NOT interrupted by the
-//     normal user message.
-//   - The interrupt message's ⬥ ok reply is MISSING from Discord — opencode
-//     processes it internally but kimaki doesn't surface it as a separate response.
-//   - The queued message dispatches and runs, but the interrupt message
-//     never gets its own visible response in the thread.
-//
-// Root cause: submitViaOpencodeQueue needs to abort the active run before
-// calling promptAsync, so the interrupt message actually interrupts. Then
-// after the abort settles and the interrupt message's response completes,
-// the local queue should drain the /queue messages.
 //
 // Uses opencode-deterministic-provider (no real LLM calls).
 // Poll timeouts: 4s max, 100ms interval. Slow matcher uses 100s delay.
@@ -133,57 +118,43 @@ e2eTest('queue + interrupt drain ordering', () => {
         afterAuthorId: ctx.discord.botUserId,
       })
 
-      // 6. Capture current behavior with inline snapshot.
-      //
-      //    BUG visible in snapshot: the interrupt message "Reply with exactly:
-      //    interrupt-now" has NO ⬥ ok reply. The queued message dispatches and
-      //    runs fine, but the user's direct interrupt message is swallowed.
-      //
-      //    Expected (when fixed): there should be a ⬥ ok reply for interrupt-now
-      //    between the user's interrupt message and the queue dispatch indicator.
+      // 6. Capture the full interaction in an inline snapshot.
       expect(await th.text()).toMatchInlineSnapshot(`
         "--- from: user (interrupt-tester)
         Reply with exactly: setup-interrupt-drain
         --- from: assistant (TestBot)
         ⬥ ok
-        --- from: assistant (TestBot)
         *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2*
         --- from: user (interrupt-tester)
         PLUGIN_TIMEOUT_SLEEP_MARKER
         --- from: assistant (TestBot)
         ⬥ starting sleep 100
-        --- from: assistant (TestBot)
         Queued message (position 1)
         --- from: user (interrupt-tester)
         Reply with exactly: interrupt-now
         --- from: assistant (TestBot)
-        » **interrupt-tester:** Reply with exactly: queued-behind-slow
-        --- from: assistant (TestBot)
         ⬥ ok
-        --- from: assistant (TestBot)
+        *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2*
+        » **interrupt-tester:** Reply with exactly: queued-behind-slow
+        ⬥ ok
         *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2*"
       `)
 
-      // 7. Assert the expected behavior that should happen when the bug is fixed.
-      //    These assertions currently FAIL, demonstrating the bug.
+      // 7. Assert the interrupt message got its own ⬥ ok reply between the
+      //    user's interrupt message and the queue dispatch indicator.
       const text = await th.text()
       const lines = text.split('\n')
 
-      // Find the interrupt user message line
       const interruptUserLine = lines.findIndex((line) => {
         return line.includes('Reply with exactly: interrupt-now')
       })
       expect(interruptUserLine).toBeGreaterThan(-1)
 
-      // Find the queue dispatch indicator line
       const queueDispatchLine = lines.findIndex((line) => {
         return line.includes('» **interrupt-tester:** Reply with exactly: queued-behind-slow')
       })
       expect(queueDispatchLine).toBeGreaterThan(-1)
 
-      // There should be a ⬥ ok reply for the interrupt message BETWEEN the
-      // interrupt user message and the queue dispatch indicator.
-      // BUG: currently there is no such reply — the interrupt message is swallowed.
       const linesBetween = lines.slice(interruptUserLine + 1, queueDispatchLine)
       const hasInterruptReply = linesBetween.some((line) => {
         return line.includes('⬥ ok')

@@ -102,7 +102,6 @@ describe('messages and reactions', () => {
     expect(await discord.channel(channelId).text()).toMatchInlineSnapshot(`
       "--- from: user (TestUser)
       Hello from user!
-      --- from: user (TestUser)
       Actor helper message"
     `)
     expect(observed.content).toBe(content)
@@ -121,7 +120,6 @@ describe('messages and reactions', () => {
     expect(await discord.channel(channelId).text()).toMatchInlineSnapshot(`
       "--- from: user (TestUser)
       Hello from user!
-      --- from: user (TestUser)
       Actor helper message
       --- from: assistant (TestBot)
       Hello from bot!"
@@ -172,11 +170,9 @@ describe('messages and reactions', () => {
     expect(await discord.channel(channelId).text()).toMatchInlineSnapshot(`
       "--- from: user (TestUser)
       Hello from user!
-      --- from: user (TestUser)
       Actor helper message
       --- from: assistant (TestBot)
       Hello from bot!
-      --- from: assistant (TestBot)
       Edited content"
     `)
     const messages = await discord.channel(channelId).getMessages()
@@ -198,11 +194,9 @@ describe('messages and reactions', () => {
     expect(await discord.channel(channelId).text()).toMatchInlineSnapshot(`
       "--- from: user (TestUser)
       Hello from user!
-      --- from: user (TestUser)
       Actor helper message
       --- from: assistant (TestBot)
       Hello from bot!
-      --- from: assistant (TestBot)
       Edited content"
     `)
     const messages = await discord.channel(channelId).getMessages()
@@ -222,13 +216,10 @@ describe('messages and reactions', () => {
     expect(await discord.channel(channelId).text()).toMatchInlineSnapshot(`
       "--- from: user (TestUser)
       Hello from user!
-      --- from: user (TestUser)
       Actor helper message
       --- from: assistant (TestBot)
       Hello from bot!
-      --- from: assistant (TestBot)
       Edited content
-      --- from: assistant (TestBot)
       React to me"
     `)
     const reactions = await discord.prisma.reaction.findMany({

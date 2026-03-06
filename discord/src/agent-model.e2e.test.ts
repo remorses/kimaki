@@ -384,7 +384,6 @@ describe('agent model resolution', () => {
         Reply with exactly: agent-model-check
         --- from: assistant (TestBot)
         ⬥ ok
-        --- from: assistant (TestBot)
         *project ⋅ main ⋅ Ns ⋅ N% ⋅ agent-model-v2 ⋅ **test-agent***"
       `)
       expect(footerMessage).toBeDefined()
@@ -441,7 +440,6 @@ describe('agent model resolution', () => {
         Reply with exactly: system-context-check
         --- from: assistant (TestBot)
         ⬥ system-context-ok
-        --- from: assistant (TestBot)
         *project ⋅ main ⋅ Ns ⋅ N% ⋅ agent-model-v2 ⋅ **test-agent***"
       `)
     },
@@ -495,7 +493,6 @@ describe('agent model resolution', () => {
         Reply with exactly: channel-model-check
         --- from: assistant (TestBot)
         ⬥ ok
-        --- from: assistant (TestBot)
         *project ⋅ main ⋅ Ns ⋅ N% ⋅ channel-model-v2*"
       `)
       expect(footerMessage).toBeDefined()
@@ -567,7 +564,6 @@ describe('agent model resolution', () => {
         Reply with exactly: variant-check
         --- from: assistant (TestBot)
         ⬥ ok
-        --- from: assistant (TestBot)
         *project ⋅ main ⋅ Ns ⋅ N% ⋅ channel-model-v2*"
       `)
       expect(footerMessage).toBeDefined()

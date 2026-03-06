@@ -160,7 +160,6 @@ describe('interactions', () => {
     expect(await discord.channel(channelId).text()).toMatchInlineSnapshot(`
       "--- from: assistant (TestBot)
       ack via actor
-      --- from: assistant (TestBot)
       Reply from bot"
     `)
     const messages = await discord.channel(channelId).getMessages()
@@ -204,9 +203,7 @@ describe('interactions', () => {
     expect(await ch.text()).toMatchInlineSnapshot(`
       "--- from: assistant (TestBot)
       ack via actor
-      --- from: assistant (TestBot)
       Reply from bot
-      --- from: assistant (TestBot)
       Deferred then edited"
     `)
     const afterEdit = await ch.getInteractionResponse(id)
@@ -247,9 +244,7 @@ describe('interactions', () => {
     expect(await discord.channel(channelId).text()).toMatchInlineSnapshot(`
       "--- from: assistant (TestBot)
       ack via actor
-      --- from: assistant (TestBot)
       Reply from bot
-      --- from: assistant (TestBot)
       Deferred then edited"
     `)
     const messages = await discord.channel(channelId).getMessages()
@@ -288,13 +283,9 @@ describe('interactions', () => {
     expect(await discord.channel(channelId).text()).toMatchInlineSnapshot(`
       "--- from: assistant (TestBot)
       ack via actor
-      --- from: assistant (TestBot)
       Reply from bot
-      --- from: assistant (TestBot)
       Deferred then edited
-      --- from: assistant (TestBot)
       Initial reply
-      --- from: assistant (TestBot)
       Follow-up message"
     `)
     const messages = await discord.channel(channelId).getMessages()
@@ -329,15 +320,10 @@ describe('interactions', () => {
     expect(await discord.channel(channelId).text()).toMatchInlineSnapshot(`
       "--- from: assistant (TestBot)
       ack via actor
-      --- from: assistant (TestBot)
       Reply from bot
-      --- from: assistant (TestBot)
       Deferred then edited
-      --- from: assistant (TestBot)
       Initial reply
-      --- from: assistant (TestBot)
       Follow-up message
-      --- from: assistant (TestBot)
       Fetch this reply"
     `)
     expect(fetched.content).toBe('Fetch this reply')
@@ -371,17 +357,11 @@ describe('interactions', () => {
     expect(await discord.channel(channelId).text()).toMatchInlineSnapshot(`
       "--- from: assistant (TestBot)
       ack via actor
-      --- from: assistant (TestBot)
       Reply from bot
-      --- from: assistant (TestBot)
       Deferred then edited
-      --- from: assistant (TestBot)
       Initial reply
-      --- from: assistant (TestBot)
       Follow-up message
-      --- from: assistant (TestBot)
       Fetch this reply
-      --- from: assistant (TestBot)
       First reply"
     `)
     expect(interaction.replied).toBe(true)
@@ -414,19 +394,12 @@ describe('interactions', () => {
     expect(await discord.channel(channelId).text()).toMatchInlineSnapshot(`
       "--- from: assistant (TestBot)
       ack via actor
-      --- from: assistant (TestBot)
       Reply from bot
-      --- from: assistant (TestBot)
       Deferred then edited
-      --- from: assistant (TestBot)
       Initial reply
-      --- from: assistant (TestBot)
       Follow-up message
-      --- from: assistant (TestBot)
       Fetch this reply
-      --- from: assistant (TestBot)
       First reply
-      --- from: assistant (TestBot)
       Edited reply"
     `)
     const response = await discord.channel(channelId).getInteractionResponse(id)
@@ -472,21 +445,13 @@ describe('interactions', () => {
     expect(await discord.channel(channelId).text()).toMatchInlineSnapshot(`
       "--- from: assistant (TestBot)
       ack via actor
-      --- from: assistant (TestBot)
       Reply from bot
-      --- from: assistant (TestBot)
       Deferred then edited
-      --- from: assistant (TestBot)
       Initial reply
-      --- from: assistant (TestBot)
       Follow-up message
-      --- from: assistant (TestBot)
       Fetch this reply
-      --- from: assistant (TestBot)
       First reply
-      --- from: assistant (TestBot)
       Edited reply
-      --- from: assistant (TestBot)
       First edit
       [embed: "Test Embed"]"
     `)
@@ -526,24 +491,15 @@ describe('interactions', () => {
     expect(await discord.channel(channelId).text()).toMatchInlineSnapshot(`
       "--- from: assistant (TestBot)
       ack via actor
-      --- from: assistant (TestBot)
       Reply from bot
-      --- from: assistant (TestBot)
       Deferred then edited
-      --- from: assistant (TestBot)
       Initial reply
-      --- from: assistant (TestBot)
       Follow-up message
-      --- from: assistant (TestBot)
       Fetch this reply
-      --- from: assistant (TestBot)
       First reply
-      --- from: assistant (TestBot)
       Edited reply
-      --- from: assistant (TestBot)
       First edit
       [embed: "Test Embed"]
-      --- from: assistant (TestBot)
       Updated by component"
     `)
     const response = await discord.channel(channelId).getInteractionResponse(id)
@@ -585,26 +541,16 @@ describe('interactions', () => {
     expect(await discord.channel(channelId).text()).toMatchInlineSnapshot(`
       "--- from: assistant (TestBot)
       ack via actor
-      --- from: assistant (TestBot)
       Reply from bot
-      --- from: assistant (TestBot)
       Deferred then edited
-      --- from: assistant (TestBot)
       Initial reply
-      --- from: assistant (TestBot)
       Follow-up message
-      --- from: assistant (TestBot)
       Fetch this reply
-      --- from: assistant (TestBot)
       First reply
-      --- from: assistant (TestBot)
       Edited reply
-      --- from: assistant (TestBot)
       First edit
       [embed: "Test Embed"]
-      --- from: assistant (TestBot)
       Updated by component
-      --- from: assistant (TestBot)
       Edited after deferUpdate"
     `)
     const response = await discord.channel(channelId).getInteractionResponse(id)

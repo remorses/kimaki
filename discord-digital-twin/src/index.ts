@@ -848,6 +848,9 @@ export class ChannelScope {
     }
 
     const lines: string[] = []
+    // Track last author to skip repeated --- from: headers for consecutive
+    // messages from the same user, matching how Discord groups messages.
+    let lastAuthorId: string | null = null
     for (const entry of timeline) {
       if (entry.kind === 'typing') {
         lines.push('[bot typing]')
@@ -881,7 +884,10 @@ export class ChannelScope {
       }
       const msg = entry.msg
       const role = msg.author.bot ? 'assistant' : 'user'
-      lines.push(`--- from: ${role} (${msg.author.username})`)
+      if (msg.author.id !== lastAuthorId) {
+        lines.push(`--- from: ${role} (${msg.author.username})`)
+      }
+      lastAuthorId = msg.author.id
       if (msg.content) {
         let content = msg.content
         // Footer lines look like: *project ⋅ main ⋅ <1s ⋅ 2% ⋅ model-name*
