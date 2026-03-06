@@ -1390,6 +1390,12 @@ export class ThreadSessionRuntime {
     return Array.from(this.partBuffer.get(messageID)?.values() ?? [])
   }
 
+  private hasBufferedStepFinish(messageID: string): boolean {
+    return this.getBufferedParts(messageID).some((part) => {
+      return part.type === 'step-finish'
+    })
+  }
+
   private shouldSendPart({
     part,
     force,
@@ -1641,7 +1647,14 @@ export class ThreadSessionRuntime {
       force: false,
     })
 
-    // Context usage notice
+    // Context usage notice.
+    // Skip the final assistant update for a run: by the time the last
+    // message.updated arrives, the final text part has already ended and the
+    // buffered parts usually include step-finish, so a notice here would land
+    // immediately above the footer and add noise.
+    if (this.hasBufferedStepFinish(msg.id)) {
+      return
+    }
     const latestRunInfo = getLatestRunInfo({
       events: this.eventBuffer,
       sessionId,

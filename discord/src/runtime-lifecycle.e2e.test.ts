@@ -91,6 +91,29 @@ function createDiscordJsClient({ restUrl }: { restUrl: string }) {
 }
 
 function createDeterministicMatchers(): DeterministicMatcher[] {
+  const highUsageReplyMatcher: DeterministicMatcher = {
+    id: 'high-usage-reply',
+    priority: 20,
+    when: {
+      lastMessageRole: 'user',
+      rawPromptIncludes: 'Reply with exactly: footer-high-usage',
+    },
+    then: {
+      parts: [
+        { type: 'stream-start', warnings: [] },
+        { type: 'text-start', id: 'high-usage-reply' },
+        { type: 'text-delta', id: 'high-usage-reply', delta: 'ok' },
+        { type: 'text-end', id: 'high-usage-reply' },
+        {
+          type: 'finish',
+          finishReason: 'stop',
+          usage: { inputTokens: 15_000, outputTokens: 1, totalTokens: 15_001 },
+        },
+      ],
+      partDelaysMs: [0, 100, 0, 0, 0],
+    },
+  }
+
   // Simple reply matcher: model echoes back the requested text.
   // Uses 100ms delay on first text delta to keep streams async without adding
   // unnecessary latency. Tests verify ordering/serialization, not latency handling.
@@ -117,7 +140,7 @@ function createDeterministicMatchers(): DeterministicMatcher[] {
     },
   }
 
-  return [userReplyMatcher]
+  return [highUsageReplyMatcher, userReplyMatcher]
 }
 
 describe('runtime lifecycle', () => {
@@ -406,6 +429,43 @@ describe('runtime lifecycle', () => {
       }
       expect(footerMessage.content).toContain('deterministic-v2')
       expect(footerMessage.content).toMatch(/\d+%/)
+    },
+    10_000,
+  )
+
+  test(
+    'does not print a context-usage notice for the final text part right before the footer',
+    async () => {
+      const prompt = 'Reply with exactly: footer-high-usage'
+      await discord.channel(TEXT_CHANNEL_ID).user(TEST_USER_ID).sendMessage({
+        content: prompt,
+      })
+
+      const thread = await discord.channel(TEXT_CHANNEL_ID).waitForThread({
+        timeout: 4_000,
+        predicate: (t) => {
+          return t.name === prompt
+        },
+      })
+
+      await waitForBotMessageContaining({
+        discord,
+        threadId: thread.id,
+        userId: TEST_USER_ID,
+        text: 'deterministic-v2',
+        timeout: 4_000,
+      })
+
+      expect(await discord.thread(thread.id).text()).toMatchInlineSnapshot(`
+        "--- from: user (lifecycle-tester)
+        Reply with exactly: footer-high-usage
+        --- from: assistant (TestBot)
+        ⬥ ok
+        *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2*"
+      `)
+
+      const threadText = await discord.thread(thread.id).text()
+      expect(threadText).not.toContain('⬦ context usage')
     },
     10_000,
   )
