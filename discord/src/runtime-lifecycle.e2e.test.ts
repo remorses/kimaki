@@ -484,24 +484,10 @@ describe('runtime lifecycle', () => {
       //    producing a reply, so we can't assert +2 bot messages. What we
       //    CAN verify: both user messages exist, charlie (the last one) has
       //    a bot reply after it, and the replies are distinct messages.
+      //    No inline snapshot here — the concurrent abort race makes message
+      //    ordering nondeterministic (bravo may or may not get a reply).
       const messages = await th.getMessages()
 
-      expect(await th.text()).toMatchInlineSnapshot(`
-        "--- from: user (lifecycle-tester)
-        Reply with exactly: concurrent-setup
-        --- from: assistant (TestBot)
-        ⬥ ok
-        --- from: assistant (TestBot)
-        *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2*
-        --- from: user (lifecycle-tester)
-        Reply with exactly: concurrent-bravo
-        --- from: user (lifecycle-tester)
-        Reply with exactly: concurrent-charlie
-        --- from: assistant (TestBot)
-        ⬥ ok
-        --- from: assistant (TestBot)
-        *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2*"
-      `)
       const bravoIndex = messages.findIndex((m) => {
         return (
           m.author.id === TEST_USER_ID &&
