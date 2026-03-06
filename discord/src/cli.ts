@@ -791,6 +791,11 @@ async function registerCommands({
       .setDMPermission(false)
       .toJSON(),
     new SlashCommandBuilder()
+      .setName('worktrees')
+      .setDescription('List all active worktree sessions')
+      .setDMPermission(false)
+      .toJSON(),
+    new SlashCommandBuilder()
       .setName('toggle-mention-mode')
       .setDescription(
         'Toggle mention-only mode (bot only responds when @mentioned)',

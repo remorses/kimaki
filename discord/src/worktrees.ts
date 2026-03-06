@@ -834,7 +834,7 @@ export type MergeSuccess = {
   shortSha: string
 }
 
-async function git(
+export async function git(
   dir: string,
   args: string,
   opts?: { timeout?: number },
@@ -853,7 +853,7 @@ async function git(
   return result.stdout.trim()
 }
 
-async function getDefaultBranch(repoDir: string): Promise<string> {
+export async function getDefaultBranch(repoDir: string): Promise<string> {
   const ref = await git(repoDir, 'symbolic-ref refs/remotes/origin/HEAD')
   if (ref instanceof Error) {
     return 'main'
@@ -861,7 +861,7 @@ async function getDefaultBranch(repoDir: string): Promise<string> {
   return ref.replace(/^refs\/remotes\/origin\//, '') || 'main'
 }
 
-async function isDirty(dir: string): Promise<boolean> {
+export async function isDirty(dir: string): Promise<boolean> {
   const status = await git(dir, 'status --porcelain')
   if (status instanceof Error) {
     return false

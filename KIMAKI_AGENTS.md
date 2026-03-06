@@ -186,9 +186,9 @@ when adding new tables:
 
 1. add the model to `discord/schema.prisma`
 2. run `pnpm generate` inside discord folder
-3. add getter/setter functions in `database.ts` if needed
+3. add getter/setter functions in `database.ts` only if the query is complex or reused in many places
 
-database.ts has some functions that abstract complex prisma queries or inserts. ONLY add them there if they are very complex or used a lot. prefer inlining the prisma queries if possible
+do NOT add simple prisma query wrappers to database.ts. if a query is a straightforward `findMany`, `findUnique`, `create`, etc. with no complex logic, inline the prisma call directly at the call site. database.ts is not a repository layer — it only exists for queries that are genuinely complex (multi-step transactions, migrations) or called from 3+ places. when in doubt, inline it.
 
 prisma version in package.json MUST be pinned. no ^. this makes sure the generated prisma code is compatible with the prisma client used in the npm package
 

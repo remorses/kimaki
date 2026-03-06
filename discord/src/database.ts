@@ -47,8 +47,9 @@ export type ThreadWorktree = {
   worktree_name: string
   worktree_directory: string | null
   project_directory: string
-  status: WorktreeStatus
+  status: string | null
   error_message: string | null
+  created_at: Date | null
 }
 
 export type ScheduledTaskStatus =
@@ -710,20 +711,9 @@ export async function getThreadWorktree(
   threadId: string,
 ): Promise<ThreadWorktree | undefined> {
   const prisma = await getPrisma()
-  const row = await prisma.thread_worktrees.findUnique({
+  return (await prisma.thread_worktrees.findUnique({
     where: { thread_id: threadId },
-  })
-  if (!row) {
-    return undefined
-  }
-  return {
-    thread_id: row.thread_id,
-    worktree_name: row.worktree_name,
-    worktree_directory: row.worktree_directory,
-    project_directory: row.project_directory,
-    status: row.status as WorktreeStatus,
-    error_message: row.error_message,
-  }
+  })) ?? undefined
 }
 
 /**
