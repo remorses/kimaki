@@ -41,20 +41,27 @@ app.get('/discord-install', async (c) => {
   const baseURL = new URL(c.req.url).origin
   const auth = createAuth({ env: c.env, baseURL })
 
-  const result = await auth.api.signInSocial({
+  // signInSocial returns JSON data on server calls; use returnHeaders so we can
+  // forward Set-Cookie and still issue a real browser redirect.
+  const { response: result, headers } = await auth.api.signInSocial({
     body: {
       provider: 'discord',
       additionalData: { clientId, clientSecret },
       callbackURL: '/install-success',
     },
     headers: c.req.raw.headers,
+    returnHeaders: true,
   })
 
   if (!result?.url) {
     return c.text('Failed to generate Discord OAuth URL', 500)
   }
 
-  return c.redirect(result.url)
+  const redirect = c.redirect(result.url, 302)
+  for (const cookie of headers.getSetCookie()) {
+    redirect.headers.append('Set-Cookie', cookie)
+  }
+  return redirect
 })
 
 // Success page after the OAuth callback completes.
