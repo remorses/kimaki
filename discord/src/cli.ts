@@ -79,7 +79,7 @@ import {
   SlashCommandBuilder,
   AttachmentBuilder,
 } from 'discord.js'
-import { createDiscordRest, discordApiUrl, getGatewayProxyRestBaseUrl } from './discord-urls.js'
+import { createDiscordRest, discordApiUrl, getDiscordRestApiUrl, getGatewayProxyRestBaseUrl } from './discord-urls.js'
 import crypto from 'node:crypto'
 import path from 'node:path'
 import fs from 'node:fs'
@@ -1820,7 +1820,7 @@ async function run({
     },
   )
 
-  cliLogger.log('Connecting to Discord...')
+  cliLogger.log(`Connecting to ${getDiscordRestApiUrl()}...`)
   const discordClient = await createDiscordClient()
 
   const guilds: Guild[] = []
@@ -1876,7 +1876,7 @@ async function run({
     await startIpcPolling({ discordClient })
     process.on('exit', stopIpcPolling)
   } catch (error) {
-    cliLogger.log('Failed to connect to Discord')
+    cliLogger.log('Failed to connect to Discord', discordClient.ws.gateway)
     cliLogger.error(
       'Error: ' + (error instanceof Error ? error.message : String(error)),
     )
