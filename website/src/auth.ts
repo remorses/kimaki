@@ -3,7 +3,7 @@
 // Creates a new betterAuth instance per request because CF Workers cannot
 // reuse database connections across requests (Hyperdrive per-request pooling).
 //
-// Gateway onboarding persistence is handled in databaseHooks.account.create.after:
+// Gateway onboarding persistence is handled in hooks.after:
 // - reads guild_id from Discord callback query params
 // - reads clientId/clientSecret from getOAuthState() additionalData
 // - upserts gateway_clients for CLI onboarding polling
@@ -13,7 +13,7 @@
 // See: https://better-auth.com/docs/guides/optimizing-for-performance#bundle-size-optimization
 import { betterAuth } from 'better-auth/minimal'
 import { prismaAdapter } from 'better-auth/adapters/prisma'
-import { getOAuthState } from 'better-auth/api'
+import { createAuthMiddleware, getOAuthState } from 'better-auth/api'
 import { createPrisma } from 'db/src/prisma.js'
 import type { HonoBindings } from './env.js'
 
@@ -92,56 +92,55 @@ export function createAuth({ env, baseURL }: { env: HonoBindings; baseURL: strin
         },
       },
     },
-    databaseHooks: {
-      account: {
-        create: {
-          after: async (account, context) => {
-            if (account.providerId !== 'discord') {
-              return
-            }
-            if (context?.path !== '/callback/:id') {
-              return
-            }
+    hooks: {
+      after: createAuthMiddleware(async (ctx) => {
+        if (ctx.path !== '/callback/:id') {
+          return
+        }
 
-            const guildId = getGuildIdFromRequestUrl({ context })
-            if (!guildId) {
-              console.warn('better-auth callback: missing guild_id callback parameter')
-              return
-            }
+        const guildId = getGuildIdFromRequestUrl({ context: ctx })
+        if (!guildId) {
+          console.warn('better-auth callback: missing guild_id callback parameter')
+          return
+        }
 
-            const state = await getOAuthState()
-            const kimakiClientId = state?.clientId as string | undefined
-            const kimakiClientSecret = state?.clientSecret as string | undefined
-            if (!kimakiClientId || !kimakiClientSecret) {
-              console.warn('better-auth callback: no clientId/clientSecret in OAuth state')
-              return
-            }
+        const state = await getOAuthState()
+        const kimakiClientId = state?.clientId as string | undefined
+        const kimakiClientSecret = state?.clientSecret as string | undefined
+        if (!kimakiClientId || !kimakiClientSecret) {
+          console.warn('better-auth callback: no clientId/clientSecret in OAuth state')
+          return
+        }
 
-            await prisma.gateway_clients
-              .upsert({
-                where: {
-                  client_id_guild_id: {
-                    client_id: kimakiClientId,
-                    guild_id: guildId,
-                  },
-                },
-                create: {
-                  client_id: kimakiClientId,
-                  secret: kimakiClientSecret,
-                  guild_id: guildId,
-                  user_id: account.userId,
-                },
-                update: {
-                  secret: kimakiClientSecret,
-                  user_id: account.userId,
-                },
-              })
-              .catch((cause) => {
-                console.error('Failed to upsert gateway_clients:', cause)
-              })
-          },
-        },
-      },
+        const userId = ctx.context.newSession?.user?.id
+        if (!userId) {
+          console.warn('better-auth callback: missing user in new session')
+          return
+        }
+
+        await prisma.gateway_clients
+          .upsert({
+            where: {
+              client_id_guild_id: {
+                client_id: kimakiClientId,
+                guild_id: guildId,
+              },
+            },
+            create: {
+              client_id: kimakiClientId,
+              secret: kimakiClientSecret,
+              guild_id: guildId,
+              user_id: userId,
+            },
+            update: {
+              secret: kimakiClientSecret,
+              user_id: userId,
+            },
+          })
+          .catch((cause) => {
+            console.error('Failed to upsert gateway_clients:', cause)
+          })
+      }),
     },
   })
 
