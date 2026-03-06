@@ -2143,15 +2143,8 @@ async function run({
   )
 
   if (registrableCommands.length > 0) {
-    const commandList = registrableCommands
-      .map(
-        (cmd) =>
-          `  /${cmd.name}${getDiscordCommandSuffix(cmd)} - ${cmd.description || 'No description'}`,
-      )
-      .join('\n')
-
     note(
-      `Found ${registrableCommands.length} user-defined command(s):\n${commandList}`,
+      `Found ${registrableCommands.length} user-defined command(s)`,
       'OpenCode Commands/Skills',
     )
   }
