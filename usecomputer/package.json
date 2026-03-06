@@ -1,0 +1,69 @@
+{
+  "name": "usecomputer",
+  "version": "0.0.1",
+  "type": "module",
+  "description": "Fast computer automation CLI for AI agents. Control any desktop with accessibility snapshots, clicks, typing, scrolling, and more.",
+  "bin": {
+    "usecomputer": "./bin.js"
+  },
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    "./package.json": "./package.json",
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    },
+    "./src": {
+      "types": "./src/index.ts",
+      "default": "./src/index.ts"
+    },
+    "./src/*": {
+      "types": "./src/*.ts",
+      "default": "./src/*.ts"
+    }
+  },
+  "files": [
+    "src",
+    "dist",
+    "bin.js",
+    "README.md"
+  ],
+  "scripts": {
+    "build": "tsc",
+    "typecheck": "tsc --noEmit",
+    "prepublishOnly": "pnpm build"
+  },
+  "keywords": [
+    "computer-use",
+    "automation",
+    "accessibility",
+    "cli",
+    "ai-agent",
+    "desktop-automation",
+    "screen-control",
+    "macos",
+    "linux",
+    "windows",
+    "cross-platform"
+  ],
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/remorses/usecomputer",
+    "directory": "."
+  },
+  "homepage": "https://github.com/remorses/usecomputer",
+  "bugs": {
+    "url": "https://github.com/remorses/usecomputer/issues"
+  },
+  "dependencies": {
+    "goke": "^6.2.3",
+    "string-dedent": "^3.0.1",
+    "zod": "^4.3.6"
+  },
+  "devDependencies": {
+    "@types/node": "^22.15.3",
+    "typescript": "^5.8.3"
+  }
+}
