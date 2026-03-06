@@ -77,8 +77,8 @@ export function generateBotInstallUrl({
   return url.toString()
 }
 
-export const KIMAKI_SHARED_APP_ID =
-  process.env.KIMAKI_SHARED_APP_ID || '1477605701202481173'
+export const KIMAKI_GATEWAY_APP_ID =
+  process.env.KIMAKI_GATEWAY_APP_ID || '1477605701202481173'
 export const KIMAKI_WEBSITE_URL = process.env.KIMAKI_WEBSITE_URL || 'https://kimaki.xyz'
 
 export function generateDiscordInstallUrlForBot({
@@ -96,8 +96,8 @@ export function generateDiscordInstallUrlForBot({
     return generateBotInstallUrl({ clientId: appId })
   }
 
-  if (!KIMAKI_SHARED_APP_ID) {
-    return new Error('Gateway mode is not available: shared app ID is missing')
+  if (!KIMAKI_GATEWAY_APP_ID) {
+    return new Error('Gateway mode is not available: gateway app ID is missing')
   }
 
   if (!clientId || !clientSecret) {
@@ -110,7 +110,7 @@ export function generateDiscordInstallUrlForBot({
   } satisfies GatewayOAuthState)
 
   return generateBotInstallUrl({
-    clientId: KIMAKI_SHARED_APP_ID,
+    clientId: KIMAKI_GATEWAY_APP_ID,
     state: statePayload,
     redirectUri: `${KIMAKI_WEBSITE_URL}/api/auth/callback/discord`,
     responseType: 'code',

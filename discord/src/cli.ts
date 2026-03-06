@@ -21,11 +21,10 @@ import {
   deduplicateByKey,
   generateBotInstallUrl,
   generateDiscordInstallUrlForBot,
-  KIMAKI_SHARED_APP_ID,
+  KIMAKI_GATEWAY_APP_ID,
   KIMAKI_WEBSITE_URL,
   abbreviatePath,
 } from './utils.js'
-import type { GatewayOAuthState } from 'db/src/gateway-state.js'
 import {
   getChannelsWithDescriptions,
   createDiscordClient,
@@ -122,11 +121,11 @@ import {
 const cliLogger = createLogger(LogPrefix.CLI)
 
 // Gateway bot mode constants.
-// KIMAKI_SHARED_APP_ID is the Discord Application ID of the shared Kimaki bot.
+// KIMAKI_GATEWAY_APP_ID is the Discord Application ID of the gateway bot.
 // KIMAKI_WEBSITE_URL is the website that handles OAuth callback + onboarding status.
 // KIMAKI_GATEWAY_PROXY_URL is the gateway-proxy base URL.
 // We derive REST base from this URL by swapping ws/wss to http/https.
-// These are hardcoded because they're deploy-time constants for the shared infrastructure.
+// These are hardcoded because they're deploy-time constants for the gateway infrastructure.
 const KIMAKI_GATEWAY_PROXY_URL =
   process.env.KIMAKI_GATEWAY_PROXY_URL ||
   'wss://discord-gateway.kimaki.xyz'
@@ -153,7 +152,7 @@ function stripBracketedPaste(value: string | undefined): string {
 // Discord bot tokens have the format: base64(userId).timestamp.hmac
 // The first segment is the bot's user ID (= Application ID) base64-encoded.
 // For gateway mode tokens (client_id:secret format), this function returns
-// undefined -- the caller should use KIMAKI_SHARED_APP_ID instead.
+// undefined -- the caller should use KIMAKI_GATEWAY_APP_ID instead.
 function appIdFromToken(token: string): string | undefined {
   // Gateway mode tokens use "client_id:secret" format, not base64.
   if (token.includes(':')) {
@@ -1292,7 +1291,7 @@ async function run({
   // 1. KIMAKI_BOT_TOKEN env var (headless/CI deployments)
   // 2. Saved credentials in the database (self-hosted or gateway mode)
   // App ID is always derived from the token (base64 first segment),
-  // except in gateway mode where KIMAKI_SHARED_APP_ID is used.
+  // except in gateway mode where KIMAKI_GATEWAY_APP_ID is used.
   //
   // previousAppId is set when switching between modes so we can migrate
   const { appId, token, isQuickStart, isGatewayMode } = await (async (): Promise<{
@@ -1307,12 +1306,12 @@ async function run({
     // Get the most recent bot row (any mode) for general reuse checks
     const existingBot = await getBotTokenWithMode()
     // When --gateway is requested and the most recent bot is self-hosted,
-    // check if saved gateway credentials exist by looking up the shared app_id
+    // check if saved gateway credentials exist by looking up the gateway app_id
     // directly. This lets users switch back and forth between modes without
     // re-running the onboarding wizard each time.
     const hasGatewayCreds = (forceGateway && existingBot?.mode !== 'gateway')
       ? await (await getPrisma()).bot_tokens.findUnique({
-          where: { app_id: KIMAKI_SHARED_APP_ID },
+          where: { app_id: KIMAKI_GATEWAY_APP_ID },
         })
       : undefined
 
@@ -1394,7 +1393,7 @@ async function run({
               {
                 value: 'gateway' as const,
                 label: 'Gateway mode (simple, experimental)',
-                hint: 'Install the shared Kimaki bot to your server',
+                hint: 'Install the gateway Kimaki bot to your server',
               },
               {
                 value: 'self-hosted' as const,
@@ -1412,9 +1411,9 @@ async function run({
 
     // ── Gateway mode flow ──
     if (modeChoice === 'gateway') {
-      if (!KIMAKI_SHARED_APP_ID) {
+      if (!KIMAKI_GATEWAY_APP_ID) {
         cliLogger.error(
-          'Gateway mode is not available yet. KIMAKI_SHARED_APP_ID is not configured.',
+          'Gateway mode is not available yet. KIMAKI_GATEWAY_APP_ID is not configured.',
         )
         process.exit(EXIT_NO_RESTART)
       }
@@ -1423,13 +1422,16 @@ async function run({
       const clientId = crypto.randomUUID()
       const clientSecret = crypto.randomBytes(32).toString('hex')
 
-      const statePayload = JSON.stringify({ clientId, clientSecret } satisfies GatewayOAuthState)
-      const oauthUrl = generateBotInstallUrl({
-        clientId: KIMAKI_SHARED_APP_ID,
-        state: statePayload,
-        redirectUri: `${KIMAKI_WEBSITE_URL}/api/auth/callback/discord`,
-        responseType: 'code',
+      const oauthUrlResult = generateDiscordInstallUrlForBot({
+        appId: KIMAKI_GATEWAY_APP_ID,
+        mode: 'gateway',
+        clientId,
+        clientSecret,
       })
+      if (oauthUrlResult instanceof Error) {
+        throw oauthUrlResult
+      }
+      const oauthUrl = oauthUrlResult
 
       note(
         `Open this URL to install the Kimaki bot in your Discord server:\n\n${oauthUrl}\n\nDo not share this URL with anyone — it contains your credentials.\n\nIf you don't have a server, create one first (+ button in the Discord sidebar).`,
@@ -1511,7 +1513,7 @@ async function run({
       syncSpinner.stop('Gateway sync completed')
 
       await setBotMode({
-        appId: KIMAKI_SHARED_APP_ID,
+        appId: KIMAKI_GATEWAY_APP_ID,
         mode: 'gateway',
         clientId,
         clientSecret,
@@ -1519,7 +1521,7 @@ async function run({
       })
 
       return {
-        appId: KIMAKI_SHARED_APP_ID,
+        appId: KIMAKI_GATEWAY_APP_ID,
         token: `${clientId}:${clientSecret}`,
         isQuickStart: false,
         isGatewayMode: true,
@@ -1709,7 +1711,7 @@ async function run({
       throw new Error('Malformed gateway token: expected clientId:clientSecret format')
     }
     const installUrlResult = generateDiscordInstallUrlForBot({
-      appId: KIMAKI_SHARED_APP_ID,
+      appId: KIMAKI_GATEWAY_APP_ID,
       mode: 'gateway',
       clientId,
       clientSecret,
@@ -2043,7 +2045,7 @@ cli
   .option('--no-sentry', 'Disable Sentry error reporting')
   .option(
     '--gateway',
-    'Force gateway mode (use the shared Kimaki bot instead of a self-hosted bot)',
+    'Force gateway mode (use the gateway Kimaki bot instead of a self-hosted bot)',
   )
   .action(
     async (options: {
