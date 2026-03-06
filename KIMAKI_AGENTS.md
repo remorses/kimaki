@@ -118,6 +118,27 @@ always import from `@opencode-ai/sdk/v2`, never from `@opencode-ai/sdk` (v1). th
 - `session.create({ title, directory })` not `session.create({ body: { title }, query: { directory } })`
 - `provider.list({ directory })` not `provider.list({ query: { directory } })`
 
+## ai sdk provider stream protocol (v2)
+
+when editing deterministic provider matchers or debugging stream behavior, always
+confirm the protocol from both docs and installed types:
+
+- docs: `content/docs/07-reference/01-ai-sdk-core/02-stream-text.mdx`
+- installed types: `node_modules/.pnpm/@ai-sdk+provider@*/node_modules/@ai-sdk/provider/src/language-model/v2/language-model-v2-stream-part.ts`
+- built types: `node_modules/.pnpm/@ai-sdk+provider@*/node_modules/@ai-sdk/provider/dist/index.d.ts`
+
+use these shapes for realistic assistant output:
+
+- text assistant message: `stream-start` → `text-start` → one or more
+  `text-delta` → `text-end` → `finish`
+- tool-invoking assistant message: `stream-start` → `tool-call` → `finish`
+  (`finishReason: "tool-calls"`)
+
+for opencode-style tool calls in deterministic matchers, represent tool usage via
+`tool-call` parts with `toolName` and JSON `input` (for example `read`, `edit`,
+`write`, `bash`, `task`). do not fake these as plain text when the test is about
+tool execution or tool routing.
+
 # restarting the discord bot
 
 ONLY restart the discord bot if the user explicitly asks for it.

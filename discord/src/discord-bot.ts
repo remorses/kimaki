@@ -44,6 +44,7 @@ import {
   preprocessExistingThreadMessage,
   preprocessNewThreadMessage,
 } from './message-preprocessing.js'
+import { cancelPendingActionButtons } from './commands/action-buttons.js'
 import {
   ensureKimakiCategory,
   ensureKimakiAudioCategory,
@@ -404,6 +405,10 @@ export async function startDiscordBot({
       if (isThread) {
         const thread = channel as ThreadChannel
         discordLogger.log(`Message in thread ${thread.name} (${thread.id})`)
+
+        if (!message.author.bot && !isCliInjectedPrompt) {
+          cancelPendingActionButtons(thread.id)
+        }
 
         const parent = thread.parent as TextChannel | null
         let projectDirectory: string | undefined

@@ -246,9 +246,36 @@ export function createDeterministicMatchers(): DeterministicMatcher[] {
     },
   }
 
+  const actionButtonClickFollowupMatcher: DeterministicMatcher = {
+    id: 'action-button-click-followup',
+    priority: 109,
+    when: {
+      lastMessageRole: 'user',
+      latestUserTextIncludes: 'User clicked: Continue action-buttons flow',
+    },
+    then: {
+      parts: [
+        { type: 'stream-start', warnings: [] },
+        { type: 'text-start', id: 'action-button-click-followup' },
+        {
+          type: 'text-delta',
+          id: 'action-button-click-followup',
+          delta: 'action-buttons-click-continued',
+        },
+        { type: 'text-end', id: 'action-button-click-followup' },
+        {
+          type: 'finish',
+          finishReason: 'stop',
+          usage: { inputTokens: 1, outputTokens: 1, totalTokens: 2 },
+        },
+      ],
+    },
+  }
+
   return [
     slowAbortMatcher,
     pluginTimeoutSleepMatcher,
+    actionButtonClickFollowupMatcher,
     permissionTypingMatcher,
     permissionTypingFollowupMatcher,
     raceFinalReplyMatcher,
