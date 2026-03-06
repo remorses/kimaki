@@ -374,6 +374,20 @@ export type EnqueueResult = {
   position?: number
 }
 
+/**
+ * Result of the preprocess callback. Returns the resolved prompt, images,
+ * and mode after expensive async work (voice transcription, context fetch,
+ * attachment download) completes.
+ */
+export type PreprocessResult = {
+  prompt: string
+  images?: DiscordFileAttachment[]
+  /** Resolved mode based on voice transcription result. */
+  mode: 'opencode' | 'local-queue'
+  /** When true, preprocessing determined the message should be silently dropped. */
+  skip?: boolean
+}
+
 export type IngressInput = {
   prompt: string
   userId: string
@@ -397,6 +411,18 @@ export type IngressInput = {
   sessionStartSource?: { scheduleKind: 'at' | 'cron'; scheduledTaskId?: number }
   /** Optional guard for retries: skip enqueue when session has changed. */
   expectedSessionId?: string
+  /**
+   * Lazy preprocessing callback. When set, the runtime serializes it via a
+   * lightweight promise chain (preprocessChain) to resolve prompt/images/mode
+   * from the raw Discord message. This replaces the threadIngressQueue in
+   * discord-bot.ts: expensive async work (voice transcription, context fetch,
+   * attachment download) runs in arrival order but outside dispatchAction,
+   * so SSE event handling and permission UI are not blocked.
+   *
+   * The closure captures Discord objects (Message, ThreadChannel) so the
+   * runtime stays platform-agnostic — it just awaits the callback.
+   */
+  preprocess?: () => Promise<PreprocessResult>
 }
 
 type AbortRunOutcome = {
@@ -456,6 +482,14 @@ export class ThreadSessionRuntime {
   // deterministic and avoid interleaving shared mutable structures.
   private actionQueue: Array<() => Promise<void>> = []
   private processingAction = false
+
+  // Lightweight promise chain for serializing preprocess callbacks.
+  // Runs OUTSIDE dispatchAction so heavy work (voice transcription, context
+  // fetch, attachment download) doesn't block SSE event handling, permission
+  // UI, or queue drain. Only preprocess ordering is serialized here; the
+  // resolved input is then routed through the normal enqueue paths which
+  // use dispatchAction internally.
+  private preprocessChain: Promise<void> = Promise.resolve()
 
   constructor(opts: RuntimeOptions) {
     this.threadId = opts.threadId
@@ -2547,8 +2581,18 @@ export class ThreadSessionRuntime {
   /**
    * Ingress API for Discord handlers and commands.
    * Defaults to opencode queue mode; local queue mode is explicit.
+   *
+   * When input.preprocess is set, the preprocessor runs inside dispatchAction
+   * (serialized) to resolve prompt/images/mode before routing. This replaces
+   * the threadIngressQueue that previously serialized pre-enqueue work in
+   * discord-bot.ts.
    */
   async enqueueIncoming(input: IngressInput): Promise<EnqueueResult> {
+    // When a preprocessor is provided, we must resolve it inside
+    // dispatchAction before we know the final mode for routing.
+    if (input.preprocess) {
+      return this.enqueueWithPreprocess(input)
+    }
     if (input.mode === 'local-queue') {
       return this.enqueueViaLocalQueue(input)
     }
@@ -2557,6 +2601,62 @@ export class ThreadSessionRuntime {
       return this.enqueueViaLocalQueue(input)
     }
     return this.submitViaOpencodeQueue(input)
+  }
+
+  /**
+   * Serialize the preprocess callback via a lightweight promise chain, then
+   * route the resolved input through the normal enqueue paths.
+   *
+   * The preprocess chain is separate from dispatchAction so heavy work
+   * (voice transcription, context fetch, attachment download) doesn't
+   * block SSE event handling, permission UI, or queue drain. Only the
+   * preprocessing order is serialized here — the enqueue itself goes
+   * through dispatchAction as usual.
+   */
+  private async enqueueWithPreprocess(input: IngressInput): Promise<EnqueueResult> {
+    // Deferred result: the chain link resolves/rejects this promise.
+    let resolveOuter!: (value: EnqueueResult | PromiseLike<EnqueueResult>) => void
+    let rejectOuter!: (reason: unknown) => void
+    const resultPromise = new Promise<EnqueueResult>((resolve, reject) => {
+      resolveOuter = resolve
+      rejectOuter = reject
+    })
+
+    // Chain preprocess calls so they run in arrival order but outside
+    // dispatchAction. The chain itself never rejects (catch + re-throw
+    // via rejectOuter) so the next link always runs.
+    this.preprocessChain = this.preprocessChain.then(async () => {
+      try {
+        const result = await input.preprocess!()
+        if (result.skip) {
+          resolveOuter({ queued: false })
+          return
+        }
+        const resolvedInput: IngressInput = {
+          ...input,
+          prompt: result.prompt,
+          images: result.images,
+          mode: result.mode,
+          preprocess: undefined,
+        }
+
+        // Route with the resolved mode through normal paths
+        // (these enter dispatchAction internally)
+        if (resolvedInput.mode === 'local-queue') {
+          resolveOuter(this.enqueueViaLocalQueue(resolvedInput))
+          return
+        }
+        if (resolvedInput.command) {
+          resolveOuter(this.enqueueViaLocalQueue(resolvedInput))
+          return
+        }
+        resolveOuter(this.submitViaOpencodeQueue(resolvedInput))
+      } catch (err) {
+        rejectOuter(err)
+      }
+    })
+
+    return resultPromise
   }
 
   /**

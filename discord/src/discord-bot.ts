@@ -12,13 +12,10 @@ import {
   getChannelWorktreesEnabled,
   getChannelMentionMode,
   getChannelDirectory,
-  getThreadSession,
-  setThreadSession,
   getPrisma,
   cancelAllPendingIpcRequests,
 } from './database.js'
 import {
-  initializeOpencodeForDirectory,
   getOpencodeServers,
 } from './opencode.js'
 import { formatWorktreeName } from './commands/worktree.js'
@@ -40,10 +37,13 @@ import {
 } from './system-message.js'
 import yaml from 'js-yaml'
 import {
-  getFileAttachments,
   getTextAttachments,
   resolveMentions,
 } from './message-formatting.js'
+import {
+  preprocessExistingThreadMessage,
+  preprocessNewThreadMessage,
+} from './message-preprocessing.js'
 import {
   ensureKimakiCategory,
   ensureKimakiAudioCategory,
@@ -54,10 +54,8 @@ import {
 import {
   voiceConnections,
   cleanupVoiceConnection,
-  processVoiceAttachment,
   registerVoiceStateHandler,
 } from './voice-handler.js'
-import { getCompactSessionContext, getLastSessionId } from './markdown.js'
 import {
   type SessionStartSourceContext,
 } from './session-handler/model-utils.js'
@@ -294,11 +292,6 @@ export async function startDiscordBot({
     discordLogger.error('[GATEWAY] Session invalidated by Discord')
   })
 
-  // Per-thread promise chain to serialize the expensive pre-enqueue work
-  // (context fetch, voice transcription) that runs before runtime.enqueueIncoming().
-  // Without this, two overlapping messageCreate events can invert arrival order.
-  const threadIngressQueue = new Map<string, Promise<void>>()
-
   discordClient.on(Events.MessageCreate, async (message: Message) => {
     try {
       const isSelfBotMessage = Boolean(
@@ -483,257 +476,65 @@ export async function startDiscordBot({
           return a.contentType?.startsWith('audio/')
         })
 
-        // discord.js EventEmitter doesn't await async handlers, so two
-        // messageCreate events for the same thread can overlap. The expensive
-        // pre-enqueue work (context fetch, voice transcription) runs before
-        // runtime.enqueueIncoming(), so arrival order can invert without
-        // serialization. This lightweight per-thread promise chain preserves
-        // Discord arrival order for the pre-processing; the runtime's
-        // dispatchAction handles state serialization after enqueue.
-        const prev = threadIngressQueue.get(thread.id) ?? Promise.resolve()
-        // Chain must never reject so the next queued call always runs,
-        // but we re-throw the error so the outer MessageCreate try/catch
-        // can fire notifyError.
-        let caughtError: unknown
-        const queued = prev
-          .then(() => {
-            return processThreadMessage()
-          })
-          .catch((err: unknown) => {
-            caughtError = err
-          })
-          .finally(() => {
-            // Clean up resolved entry to avoid unbounded map growth.
-            if (threadIngressQueue.get(thread.id) === queued) {
-              threadIngressQueue.delete(thread.id)
-            }
-          })
-        threadIngressQueue.set(thread.id, queued)
-        await queued
-        if (caughtError) {
-          throw caughtError
+        if (!projectDirectory) {
+          discordLogger.log(
+            `Cannot process message: no project directory for thread ${thread.id}`,
+          )
+          return
         }
-        return
 
-        async function processThreadMessage() {
-          const sessionId = await getThreadSession(thread.id)
+        // Capture narrowed non-undefined value for use in the preprocess closure
+        const resolvedProjectDir = projectDirectory
+        const sdkDir =
+          worktreeInfo?.status === 'ready' &&
+          worktreeInfo.worktree_directory
+            ? worktreeInfo.worktree_directory
+            : resolvedProjectDir
+        const runtime = getOrCreateRuntime({
+          threadId: thread.id,
+          thread,
+          projectDirectory: resolvedProjectDir,
+          sdkDirectory: sdkDir,
+          channelId: parent?.id || undefined,
+          appId: currentAppId,
+        })
 
-          // No existing session - start a new one (e.g., replying to a notification thread)
-          if (!sessionId) {
-            discordLogger.log(
-              `No session for thread ${thread.id}, starting new session`,
-            )
-
-            if (!projectDirectory) {
-              discordLogger.log(
-                `Cannot start session: no project directory for thread ${thread.id}`,
-              )
-              return
-            }
-
-            let prompt = resolveMentions(message)
-            const voiceResult = await processVoiceAttachment({
+        // Expensive pre-processing (voice transcription, context fetch,
+        // attachment download) runs inside the runtime's serialized
+        // preprocess chain, preserving Discord arrival order without
+        // blocking SSE event handling in dispatchAction.
+        const enqueueResult = await runtime.enqueueIncoming({
+          prompt: '',
+          userId: cliInjectedUserId || message.author.id,
+          username:
+            cliInjectedUsername ||
+            message.member?.displayName ||
+            message.author.displayName,
+          appId: currentAppId,
+          agent: cliInjectedAgent,
+          model: cliInjectedModel,
+          sessionStartSource: sessionStartSource
+            ? {
+                scheduleKind: sessionStartSource.scheduleKind,
+                scheduledTaskId: sessionStartSource.scheduledTaskId,
+              }
+            : undefined,
+          preprocess: () => {
+            return preprocessExistingThreadMessage({
               message,
               thread,
-              projectDirectory,
-              appId: currentAppId,
-            })
-            if (voiceResult) {
-              prompt = `Voice message transcription from Discord user:\n\n${voiceResult.transcription}`
-            }
-
-            // If voice transcription failed and there's no text content, bail out
-            if (hasVoiceAttachment && !voiceResult && !prompt.trim()) {
-              return
-            }
-
-            const starterMessage = await thread
-              .fetchStarterMessage()
-              .catch((error) => {
-                discordLogger.warn(
-                  `[SESSION] Failed to fetch starter message for thread ${thread.id}:`,
-                  error instanceof Error ? error.message : String(error),
-                )
-                return null
-              })
-            if (starterMessage && starterMessage.content !== message.content) {
-              const starterTextAttachments = await getTextAttachments(starterMessage)
-              const starterContent = resolveMentions(starterMessage)
-              const starterText = starterTextAttachments
-                ? `${starterContent}\n\n${starterTextAttachments}`
-                : starterContent
-              if (starterText) {
-                prompt = `Context from thread:\n${starterText}\n\nUser request:\n${prompt}`
-              }
-            }
-
-            const sdkDir =
-              worktreeInfo?.status === 'ready' &&
-              worktreeInfo.worktree_directory
-                ? worktreeInfo.worktree_directory
-                : projectDirectory
-            const runtime = getOrCreateRuntime({
-              threadId: thread.id,
-              thread,
-              projectDirectory,
-              sdkDirectory: sdkDir,
+              projectDirectory: resolvedProjectDir,
               channelId: parent?.id || undefined,
+              isCliInjected: isCliInjectedPrompt,
+              hasVoiceAttachment,
               appId: currentAppId,
             })
-            await runtime.enqueueIncoming({
-              prompt,
-              userId: cliInjectedUserId || message.author.id,
-              username:
-                cliInjectedUsername ||
-                message.member?.displayName ||
-                message.author.displayName,
-              appId: currentAppId,
-              mode: voiceResult?.queueMessage ? 'local-queue' : 'opencode',
-              agent: cliInjectedAgent,
-              model: cliInjectedModel,
-              sessionStartSource: sessionStartSource
-                ? {
-                    scheduleKind: sessionStartSource.scheduleKind,
-                    scheduledTaskId: sessionStartSource.scheduledTaskId,
-                  }
-                : undefined,
-            })
-            return
-          }
+          },
+        })
 
-          voiceLogger.log(
-            `[SESSION] Found session ${sessionId} for thread ${thread.id}`,
-          )
-
-          let messageContent = resolveMentions(message)
-          if (isCliInjectedPrompt) {
-            messageContent = message.content || ''
-          }
-
-          let currentSessionContext: string | undefined
-          let lastSessionContext: string | undefined
-
-          if (projectDirectory) {
-            try {
-              const getClient = await initializeOpencodeForDirectory(
-                projectDirectory,
-                { channelId: parent?.id },
-              )
-              if (getClient instanceof Error) {
-                voiceLogger.error(
-                  `[SESSION] Failed to initialize OpenCode client:`,
-                  getClient.message,
-                )
-                throw new Error(getClient.message)
-              }
-              const client = getClient()
-
-              // get current session context (without system prompt, it would be duplicated)
-              const result = await getCompactSessionContext({
-                client,
-                sessionId: sessionId,
-                includeSystemPrompt: false,
-                maxMessages: 15,
-              })
-              if (errore.isOk(result)) {
-                currentSessionContext = result
-              }
-
-              // get last session context (with system prompt for project context)
-              const lastSessionResult = await getLastSessionId({
-                client,
-                excludeSessionId: sessionId,
-              })
-              const lastSessionId = errore.unwrapOr(lastSessionResult, null)
-              if (lastSessionId) {
-                const result = await getCompactSessionContext({
-                  client,
-                  sessionId: lastSessionId,
-                  includeSystemPrompt: true,
-                  maxMessages: 10,
-                })
-                if (errore.isOk(result)) {
-                  lastSessionContext = result
-                }
-              }
-            } catch (e) {
-              voiceLogger.error(`Could not get session context:`, e)
-              void notifyError(e, 'Failed to get session context')
-            }
-          }
-
-          const voiceResult = await processVoiceAttachment({
-            message,
-            thread,
-            projectDirectory,
-            appId: currentAppId,
-            currentSessionContext,
-            lastSessionContext,
-          })
-          if (voiceResult) {
-            messageContent = `Voice message transcription from Discord user:\n\n${voiceResult.transcription}`
-          }
-
-          // If voice transcription failed (returned null) and there's no text content,
-          // bail out — don't fire deferred interrupt or send an empty prompt.
-          if (hasVoiceAttachment && !voiceResult && !messageContent.trim()) {
-            return
-          }
-
-          const fileAttachments = await getFileAttachments(message)
-          const textAttachmentsContent = await getTextAttachments(message)
-          const promptWithAttachments = textAttachmentsContent
-            ? `${messageContent}\n\n${textAttachmentsContent}`
-            : messageContent
-
-          if (!projectDirectory) {
-            discordLogger.log(
-              `Cannot process message: no project directory for thread ${thread.id}`,
-            )
-            return
-          }
-
-          const sdkDir =
-            worktreeInfo?.status === 'ready' &&
-            worktreeInfo.worktree_directory
-              ? worktreeInfo.worktree_directory
-              : projectDirectory
-          const runtime = getOrCreateRuntime({
-            threadId: thread.id,
-            thread,
-            projectDirectory,
-            sdkDirectory: sdkDir,
-            channelId: parent?.id,
-            appId: currentAppId,
-          })
-          const enqueueResult = await runtime.enqueueIncoming({
-            prompt: promptWithAttachments,
-            userId: (isCliInjectedPrompt && cliInjectedUserId)
-              ? cliInjectedUserId
-              : message.author.id,
-            username:
-              cliInjectedUsername ||
-              message.member?.displayName ||
-              message.author.displayName,
-            images: fileAttachments,
-            appId: currentAppId,
-            mode: voiceResult?.queueMessage ? 'local-queue' : 'opencode',
-            agent: cliInjectedAgent,
-            model: cliInjectedModel,
-            sessionStartSource: sessionStartSource
-              ? {
-                  scheduleKind: sessionStartSource.scheduleKind,
-                  scheduledTaskId: sessionStartSource.scheduledTaskId,
-                }
-              : undefined,
-          })
-
-          // Notify when a voice message was queued instead of sent immediately.
-          // Position is computed atomically inside enqueueIncoming to avoid
-          // a race where the queue drains before we read its length.
-          if (voiceResult?.queueMessage && enqueueResult.queued && enqueueResult.position) {
-            await sendThreadMessage(thread, `Queued at position ${enqueueResult.position}`)
-          }
+        // Notify when a voice message was queued instead of sent immediately
+        if (enqueueResult.queued && enqueueResult.position) {
+          await sendThreadMessage(thread, `Queued at position ${enqueueResult.position}`)
         }
       }
 
@@ -878,28 +679,6 @@ export async function startDiscordBot({
           }
         }
 
-        let messageContent = resolveMentions(message)
-        const voiceResult = await processVoiceAttachment({
-          message,
-          thread,
-          projectDirectory: sessionDirectory,
-          isNewThread: true,
-          appId: currentAppId,
-        })
-        if (voiceResult) {
-          messageContent = `Voice message transcription from Discord user:\n\n${voiceResult.transcription}`
-        }
-
-        // If voice transcription failed and there's no text content, bail out
-        if (hasVoice && !voiceResult && !messageContent.trim()) {
-          return
-        }
-
-        const fileAttachments = await getFileAttachments(message)
-        const textAttachmentsContent = await getTextAttachments(message)
-        const promptWithAttachments = textAttachmentsContent
-          ? `${messageContent}\n\n${textAttachmentsContent}`
-          : messageContent
         const channelRuntime = getOrCreateRuntime({
           threadId: thread.id,
           thread,
@@ -909,13 +688,20 @@ export async function startDiscordBot({
           appId: currentAppId,
         })
         await channelRuntime.enqueueIncoming({
-          prompt: promptWithAttachments,
+          prompt: '',
           userId: message.author.id,
           username:
             message.member?.displayName || message.author.displayName,
-          images: fileAttachments,
           appId: currentAppId,
-          mode: voiceResult?.queueMessage ? 'local-queue' : 'opencode',
+          preprocess: () => {
+            return preprocessNewThreadMessage({
+              message,
+              thread,
+              projectDirectory: sessionDirectory,
+              hasVoiceAttachment: hasVoice,
+              appId: currentAppId,
+            })
+          },
         })
       } else {
         discordLogger.log(`Channel type ${channel.type} is not supported`)
