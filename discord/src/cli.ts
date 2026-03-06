@@ -1117,6 +1117,9 @@ async function registerCommands({
   }
 
   try {
+    // PUT is a bulk overwrite: Discord matches by name, updates changed fields
+    // (description, options, etc.) in place, creates new commands, and deletes
+    // any not present in the body. No local diffing needed.
     const results = await Promise.allSettled(
       uniqueGuildIds.map(async (guildId) => {
         const response = await rest.put(
