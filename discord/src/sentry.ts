@@ -95,6 +95,8 @@ export function notifyError(error: unknown, msg?: string): void {
       return
     }
 
+    // TODO re enable sentry?
+    if (!process.env.KIMAKI_SENTRY) return
     const safeMsg = (() => {
       if (!msg) {
         return undefined
