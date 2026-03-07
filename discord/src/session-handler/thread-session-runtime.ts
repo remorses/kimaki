@@ -1016,6 +1016,12 @@ export class ThreadSessionRuntime {
       }
       const client = getOpencodeClient(this.projectDirectory)
       if (!client) {
+        // This is expected during shared-server transitions: the listener can
+        // outlive the current opencode process across cold start, explicit
+        // restart, shutdown, or crash recovery. stopOpencodeServer()/exit clears
+        // the cached per-directory clients immediately, so existing runtimes may
+        // observe a brief no-client window before initialize/restart publishes
+        // the next shared server and repopulates the client cache.
         logger.warn(
           `[LISTENER] No OpenCode client for thread ${this.threadId}, retrying in ${backoffMs}ms`,
         )
