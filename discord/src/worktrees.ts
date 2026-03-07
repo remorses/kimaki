@@ -344,7 +344,11 @@ async function initializeSubmodulesWithLocalReferences({
         ),
     })
     if (result instanceof Error) {
-      return result
+      // Non-fatal: broken .gitmodules entries (e.g. path listed but not in tree)
+      // should not block worktree creation. Log and continue with remaining submodules.
+      logger.warn(
+        `Skipping submodule ${planItem.path}: ${result.message}`,
+      )
     }
   }
 }
@@ -653,14 +657,15 @@ export async function createWorktreeWithSubmodules({
   }
   logger.log(`Submodules initialized in ${worktreeDir}`)
 
-  // 4.5 Validate submodule pointers and git metadata before marking ready.
+  // 4.5 Validate submodule pointers and git metadata.
+  // Non-fatal: stale .gitmodules entries (path listed but removed from tree)
+  // should not block worktree creation.
   const submoduleValidationError = await validateSubmodulePointers(worktreeDir)
   if (submoduleValidationError instanceof Error) {
-    logger.error('Submodule validation failed after init', {
+    logger.error('Submodule validation issues (non-fatal)', {
       worktreeDir,
       error: submoduleValidationError.message,
     })
-    return submoduleValidationError
   }
 
   // 5. Dependency install disabled.
