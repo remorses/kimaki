@@ -652,8 +652,9 @@ export async function createWorktreeWithSubmodules({
       command: 'git submodule update --init --recursive [--reference ...]',
       error: submoduleInitResult.message,
     })
+  } else {
+    logger.log(`Submodules initialized in ${worktreeDir}`)
   }
-  logger.log(`Submodules initialized in ${worktreeDir}`)
 
   // 4.5 Validate submodule pointers and git metadata.
   // Non-fatal: stale .gitmodules entries (path listed but removed from tree)
