@@ -168,6 +168,7 @@ async function migrateSchema(prisma: PrismaClient): Promise<void> {
     'ALTER TABLE bot_tokens ADD COLUMN client_id TEXT',
     'ALTER TABLE bot_tokens ADD COLUMN client_secret TEXT',
     'ALTER TABLE bot_tokens ADD COLUMN proxy_url TEXT',
+    'ALTER TABLE bot_tokens ADD COLUMN last_used_at DATETIME',
   ]
   for (const stmt of botTokenAlters) {
     try {

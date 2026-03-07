@@ -1157,11 +1157,12 @@ export async function setPartMessagesBatch(
  *
  * Selection logic (when multiple bot rows exist):
  * - If only one bot exists, use it regardless of mode.
- * - If multiple bots exist: prefer gateway row when `preferGateway` is true,
- *   otherwise prefer the self-hosted row. Within the preferred mode, pick
- *   the most recently created row.
- * - Falls back to the most recent row of any mode if no row matches the
- *   preferred mode (e.g. preferGateway=true but only self-hosted rows exist).
+ * - Picks the bot row with the most recent `last_used_at` timestamp, which is
+ *   set by the `run()` command when the bot starts. This ensures subcommands
+ *   in separate processes (send, project list, etc.) automatically use
+ *   whichever bot mode (gateway or self-hosted) was last started.
+ * - Falls back to `created_at` ordering when no row has `last_used_at` set
+ *   (backward compat for existing DBs before this column was added).
  *
  * For gateway mode, the token is derived from client_id:client_secret
  * and REST routing is automatically enabled (idempotent env var set).
@@ -1180,26 +1181,16 @@ export async function getBotTokenWithMode(): Promise<
   | undefined
 > {
   const prisma = await getPrisma()
+  // Pick the bot that was most recently started via run(). last_used_at is the
+  // cross-process source of truth — no in-memory flags needed.
+  // Fall back to created_at for DBs that predate the last_used_at column.
   const allBots = await prisma.bot_tokens.findMany({
-    orderBy: { created_at: 'desc' },
+    orderBy: [{ last_used_at: 'desc' }, { created_at: 'desc' }],
   })
-  const [mostRecent] = allBots
-  if (!mostRecent) {
+  const row = allBots[0]
+  if (!row) {
     return undefined
   }
-  // If only one bot, use it. If multiple, prefer the mode matching store.preferGateway.
-  const row = (() => {
-    if (allBots.length === 1) {
-      return mostRecent
-    }
-    const preferredMode = store.getState().preferGateway ? 'gateway' : 'self_hosted'
-    const match = allBots.find((b) => {
-      const m = b.bot_mode === 'gateway' ? 'gateway' : 'self_hosted'
-      return m === preferredMode
-    })
-    // Fall back to most recent row if no row matches preferred mode
-    return match || mostRecent
-  })()
   const mode: BotMode = row.bot_mode === 'gateway' ? 'gateway' : 'self_hosted'
   const token = (mode === 'gateway' && row.client_id && row.client_secret)
     ? `${row.client_id}:${row.client_secret}`
@@ -1266,19 +1257,7 @@ export async function setBotMode({
   })
 }
 
-/**
- * Touch the bot_tokens row so it becomes the "most recent" via created_at.
- * Called after credential resolution in run() so that subcommands in separate
- * processes (send, upload-to-discord, project list, etc.) get the correct
- * active bot from getBotTokenWithMode() which returns the most recent row.
- */
-export async function touchBotTokenTimestamp(appId: string): Promise<void> {
-  const prisma = await getPrisma()
-  await prisma.bot_tokens.update({
-    where: { app_id: appId },
-    data: { created_at: new Date() },
-  })
-}
+
 
 // ============================================================================
 // Bot API Keys Functions

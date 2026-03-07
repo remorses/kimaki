@@ -62,12 +62,6 @@ export type KimakiState = {
   // Read by: opencode.ts (spawn args and log forwarding).
   verboseOpencodeServer: boolean
 
-  // When true, getBotTokenWithMode() prefers gateway bot rows over
-  // self-hosted when multiple bots exist in the DB.
-  // Changes: set once at startup from --gateway CLI flag.
-  // Read by: database.ts getBotTokenWithMode().
-  preferGateway: boolean
-
   // Base URL for Discord REST API calls (default https://discord.com).
   // Overridden when using a gateway-proxy or gateway Discord mode.
   // Changes: set by getBotTokenWithMode() which runs at startup and on
@@ -110,7 +104,6 @@ export const store = createStore<KimakiState>(() => ({
   defaultMentionMode: false,
   critiqueEnabled: true,
   verboseOpencodeServer: false,
-  preferGateway: false,
   discordBaseUrl: 'https://discord.com',
   registeredUserCommands: [],
   threads: new Map(),

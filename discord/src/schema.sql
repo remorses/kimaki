@@ -28,7 +28,8 @@ CREATE TABLE IF NOT EXISTS "bot_tokens" (
     "client_id" TEXT,
     "client_secret" TEXT,
     "proxy_url" TEXT,
-    "created_at" DATETIME DEFAULT CURRENT_TIMESTAMP
+    "created_at" DATETIME DEFAULT CURRENT_TIMESTAMP,
+    "last_used_at" DATETIME
 );
 CREATE TABLE IF NOT EXISTS "channel_directories" (
     "channel_id" TEXT NOT NULL PRIMARY KEY,

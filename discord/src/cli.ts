@@ -50,7 +50,6 @@ import {
   listScheduledTasks,
   cancelScheduledTask,
   getSessionStartSourcesBySessionIds,
-  touchBotTokenTimestamp,
 } from './database.js'
 import { ShareMarkdown } from './markdown.js'
 import {
@@ -1420,7 +1419,6 @@ async function run({
 
   const forceRestartOnboarding = Boolean(restartOnboarding)
   const forceGateway = Boolean(gateway)
-  store.setState({ preferGateway: forceGateway })
 
   // Step 0: Ensure required CLI tools are installed (OpenCode + Bun)
   await ensureCommandAvailable({
@@ -1790,11 +1788,14 @@ async function run({
     store.setState({ discordBaseUrl: KIMAKI_GATEWAY_PROXY_REST_BASE_URL })
   }
 
-  // Touch the active bot row so it has the most recent created_at timestamp.
-  // Subcommands in separate processes (send, upload-to-discord, project list)
-  // call getBotTokenWithMode() which returns the most recent row — this
-  // ensures they always get the bot that's actually running.
-  await touchBotTokenTimestamp(appId)
+  // Mark this bot as the most recently used so subcommands in separate
+  // processes (send, upload-to-discord, project list) pick the correct bot.
+  // getBotTokenWithMode() orders by last_used_at DESC as cross-process
+  // source of truth.
+  await (await getPrisma()).bot_tokens.update({
+    where: { app_id: appId },
+    data: { last_used_at: new Date() },
+  })
 
   const hasConfiguredTextChannels = Boolean(
     await (await getPrisma()).channel_directories.findFirst({

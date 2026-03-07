@@ -54,6 +54,7 @@ model bot_tokens {
   client_secret String?
   proxy_url     String?
   created_at    DateTime? @default(now())
+  last_used_at  DateTime?
 
   api_keys           bot_api_keys?
   forum_sync_configs forum_sync_configs[]
