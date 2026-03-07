@@ -375,7 +375,7 @@ export async function handleAgentSelectMenu(
 
     if (context.isThread && context.sessionId) {
       await interaction.editReply({
-        content: `Agent preference set for this session: **${selectedAgent}**`,
+        content: `Agent preference set for this session next messages: **${selectedAgent}**`,
         components: [],
       })
     } else {
@@ -453,7 +453,7 @@ export async function handleQuickAgentCommand({
 
     if (context.isThread && context.sessionId) {
       await command.editReply({
-        content: `Switched to **${resolvedAgentName}** agent for this session${previousText}`,
+        content: `Switched to **${resolvedAgentName}** agent for this session next messages${previousText}`,
       })
     } else {
       await command.editReply({
