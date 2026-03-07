@@ -772,16 +772,22 @@ export async function git(
   return result.stdout.trim()
 }
 
-export async function getDefaultBranch(repoDir: string): Promise<string> {
-  const ref = await git(repoDir, 'symbolic-ref refs/remotes/origin/HEAD')
+export async function getDefaultBranch(
+  repoDir: string,
+  opts?: { timeout?: number },
+): Promise<string> {
+  const ref = await git(repoDir, 'symbolic-ref refs/remotes/origin/HEAD', opts)
   if (ref instanceof Error) {
     return 'main'
   }
   return ref.replace(/^refs\/remotes\/origin\//, '') || 'main'
 }
 
-export async function isDirty(dir: string): Promise<boolean> {
-  const status = await git(dir, 'status --porcelain')
+export async function isDirty(
+  dir: string,
+  opts?: { timeout?: number },
+): Promise<boolean> {
+  const status = await git(dir, 'status --porcelain', opts)
   if (status instanceof Error) {
     return false
   }
