@@ -18,15 +18,10 @@ export class ServerStartError extends createTaggedError({
   message: 'Server failed to start on port $port: $reason',
 }) {}
 
-export class ServerNotFoundError extends createTaggedError({
-  name: 'ServerNotFoundError',
-  message: 'OpenCode server not found for directory: $directory',
-}) {}
-
 export class ServerNotReadyError extends createTaggedError({
   name: 'ServerNotReadyError',
   message:
-    'OpenCode server for directory "$directory" is in an error state (no client available)',
+    'OpenCode client for directory "$directory" is not available because the shared server is not ready',
 }) {}
 
 export class ApiKeyMissingError extends createTaggedError({
@@ -193,7 +188,6 @@ export type TranscriptionErrors =
 export type OpenCodeErrors =
   | DirectoryNotAccessibleError
   | ServerStartError
-  | ServerNotFoundError
   | ServerNotReadyError
 
 export type SessionErrors =

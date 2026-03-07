@@ -1,5 +1,5 @@
 // Deterministic markdown export tests.
-// Spawns an isolated opencode server with the deterministic provider,
+// Uses the shared opencode server manager with the deterministic provider,
 // creates sessions with known content, and validates markdown output.
 // No dependency on machine-local session state.
 
@@ -98,7 +98,7 @@ beforeAll(async () => {
     JSON.stringify(opencodeConfig, null, 2),
   )
 
-  // Spawn isolated opencode server via kimaki's server manager
+  // Start the shared opencode server via kimaki's server manager
   const getClient = await initializeOpencodeForDirectory(
     directories.projectDirectory,
   )

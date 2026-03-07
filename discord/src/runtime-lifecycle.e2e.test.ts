@@ -30,7 +30,11 @@ import {
   type VerbosityLevel,
 } from './database.js'
 import { startHranaServer, stopHranaServer } from './hrana-server.js'
-import { initializeOpencodeForDirectory, stopOpencodeServer } from './opencode.js'
+import {
+  initializeOpencodeForDirectory,
+  restartOpencodeServer,
+  stopOpencodeServer,
+} from './opencode.js'
 import {
   cleanupTestSessions,
   waitForBotMessageContaining,
@@ -430,6 +434,79 @@ describe('runtime lifecycle', () => {
       expect(footerMessage.content).toMatch(/\d+%/)
     },
     10_000,
+  )
+
+  test(
+    'existing runtime reconnects after shared opencode server restart',
+    async () => {
+      const prompt = 'Reply with exactly: reconnect-alpha'
+      await discord.channel(TEXT_CHANNEL_ID).user(TEST_USER_ID).sendMessage({
+        content: prompt,
+      })
+
+      const thread = await discord.channel(TEXT_CHANNEL_ID).waitForThread({
+        timeout: 4_000,
+        predicate: (t) => {
+          return t.name === prompt
+        },
+      })
+
+      const th = discord.thread(thread.id)
+
+      await waitForBotMessageContaining({
+        discord,
+        threadId: thread.id,
+        userId: TEST_USER_ID,
+        text: '*project',
+        timeout: 4_000,
+      })
+
+      const runtimeBeforeRestart = getRuntime(thread.id)
+      expect(runtimeBeforeRestart).toBeDefined()
+
+      const restartResult = await restartOpencodeServer()
+      if (restartResult instanceof Error) {
+        throw restartResult
+      }
+
+      await th.user(TEST_USER_ID).sendMessage({
+        content: 'Reply with exactly: reconnect-beta',
+      })
+
+      await waitForBotReplyAfterUserMessage({
+        discord,
+        threadId: thread.id,
+        userId: TEST_USER_ID,
+        userMessageIncludes: 'reconnect-beta',
+        timeout: 4_000,
+      })
+
+      await waitForBotMessageContaining({
+        discord,
+        threadId: thread.id,
+        userId: TEST_USER_ID,
+        text: '*project',
+        afterUserMessageIncludes: 'reconnect-beta',
+        timeout: 4_000,
+      })
+
+      expect(await th.text()).toMatchInlineSnapshot(`
+        "--- from: user (lifecycle-tester)
+        Reply with exactly: reconnect-alpha
+        --- from: assistant (TestBot)
+        ⬥ ok
+        *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2*
+        --- from: user (lifecycle-tester)
+        Reply with exactly: reconnect-beta
+        --- from: assistant (TestBot)
+        ⬥ ok
+        *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2*"
+      `)
+
+      const runtimeAfterRestart = getRuntime(thread.id)
+      expect(runtimeAfterRestart).toBe(runtimeBeforeRestart)
+    },
+    15_000,
   )
 
   test(

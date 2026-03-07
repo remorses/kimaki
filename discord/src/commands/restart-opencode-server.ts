@@ -1,8 +1,8 @@
 // /restart-opencode-server command - Restart the single shared opencode server.
 // Used for resolving opencode state issues, internal bugs, refreshing auth state, plugins, etc.
 // Aborts in-progress sessions in this channel before restarting. Note: since there is one
-// shared server, this restart affects all projects. Sessions in other channels will reconnect
-// automatically via the event listener's backoff loop.
+// shared server, this restart affects all projects. Other runtimes reconnect through their
+// listener backoff loop once the shared server comes back.
 
 import {
   ChannelType,

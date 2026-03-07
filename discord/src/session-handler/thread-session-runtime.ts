@@ -24,6 +24,7 @@ import {
   getOpencodeClient,
   initializeOpencodeForDirectory,
   buildSessionPermissions,
+  subscribeOpencodeServerLifecycle,
 } from '../opencode.js'
 import { isAbortError } from '../utils.js'
 import { createLogger, LogPrefix } from '../logger.js'
@@ -128,6 +129,15 @@ const shouldLogSessionEvents =
 
 const runtimes = new Map<string, ThreadSessionRuntime>()
 
+subscribeOpencodeServerLifecycle((event) => {
+  if (event.type !== 'started') {
+    return
+  }
+  for (const runtime of runtimes.values()) {
+    runtime.handleSharedServerStarted({ port: event.port })
+  }
+})
+
 export function getRuntime(
   threadId: string,
 ): ThreadSessionRuntime | undefined {
@@ -199,14 +209,6 @@ export function getRuntimeCount(): number {
   return runtimes.size
 }
 
-export function getActiveRuntimeProjectDirectories(): string[] {
-  const directories = new Set<string>()
-  for (const runtime of runtimes.values()) {
-    directories.add(runtime.projectDirectory)
-  }
-  return [...directories]
-}
-
 export function disposeInactiveRuntimes({
   idleMs,
   nowMs = Date.now(),
@@ -234,55 +236,6 @@ export function disposeInactiveRuntimes({
   return {
     disposedThreadIds,
     disposedDirectories: [...disposedDirectories],
-  }
-}
-
-export function getDirectoryRuntimeInactivitySnapshot({
-  directory,
-  nowMs = Date.now(),
-}: {
-  directory: string
-  nowMs?: number
-}): {
-  runtimeCount: number
-  hasNonIdleRuntime: boolean
-  inactiveForMs: number | null
-} {
-  const snapshots = [...runtimes.values()]
-    .filter((runtime) => {
-      return runtime.projectDirectory === directory
-    })
-    .map((runtime) => {
-      return runtime.getInactivitySnapshot({ nowMs })
-    })
-
-  if (snapshots.length === 0) {
-    return {
-      runtimeCount: 0,
-      hasNonIdleRuntime: false,
-      inactiveForMs: null,
-    }
-  }
-
-  const hasNonIdleRuntime = snapshots.some((snapshot) => {
-    return !snapshot.idleCandidate
-  })
-  if (hasNonIdleRuntime) {
-    return {
-      runtimeCount: snapshots.length,
-      hasNonIdleRuntime: true,
-      inactiveForMs: 0,
-    }
-  }
-
-  const inactiveForMs = snapshots.reduce((min, snapshot) => {
-    return Math.min(min, snapshot.inactiveForMs)
-  }, Number.POSITIVE_INFINITY)
-
-  return {
-    runtimeCount: snapshots.length,
-    hasNonIdleRuntime: false,
-    inactiveForMs: Number.isFinite(inactiveForMs) ? inactiveForMs : 0,
   }
 }
 
@@ -844,6 +797,27 @@ export class ThreadSessionRuntime {
     this.stopTyping()
   }
 
+  handleSharedServerStarted({
+    port,
+  }: {
+    port: number
+  }): void {
+    const currentController = this.state?.listenerController
+    if (!currentController) {
+      return
+    }
+    logger.log(
+      `[LISTENER] Refreshing listener for thread ${this.threadId} after shared server start on port ${port}`,
+    )
+    currentController.abort(new Error('Shared OpenCode server restarted'))
+    threadState.updateThread(this.threadId, (t) => ({
+      ...t,
+      listenerController: new AbortController(),
+    }))
+    this.listenerLoopRunning = false
+    void this.startEventListener()
+  }
+
   private compactTextForEventBuffer(text: string): string {
     if (text.length <= ThreadSessionRuntime.EVENT_BUFFER_TEXT_MAX_CHARS) {
       return text
@@ -1028,15 +1002,6 @@ export class ThreadSessionRuntime {
     }
     this.listenerLoopRunning = true
 
-    const client = getOpencodeClient(this.projectDirectory)
-    if (!client) {
-      logger.warn(
-        `[LISTENER] No OpenCode client for directory: ${this.projectDirectory}`,
-      )
-      this.listenerLoopRunning = false
-      return
-    }
-
     // Bootstrap sentPartIds from DB so we don't re-send parts that
     // were already sent in a previous runtime or before a reconnect.
     await this.bootstrapSentPartIds()
@@ -1048,6 +1013,15 @@ export class ThreadSessionRuntime {
       const signal = this.listenerSignal
       if (!signal) {
         return // disposed before we could subscribe
+      }
+      const client = getOpencodeClient(this.projectDirectory)
+      if (!client) {
+        logger.warn(
+          `[LISTENER] No OpenCode client for thread ${this.threadId}, retrying in ${backoffMs}ms`,
+        )
+        await delay(backoffMs)
+        backoffMs = Math.min(backoffMs * 2, maxBackoffMs)
+        continue
       }
       const subscribeResult = await errore.tryAsync(() => {
         return client.event.subscribe(

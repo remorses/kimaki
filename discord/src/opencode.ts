@@ -174,12 +174,32 @@ type SingleServer = {
   baseUrl: string
 }
 
+type ServerLifecycleEvent =
+  | { type: 'started'; port: number }
+  | { type: 'stopped' }
+
 let singleServer: SingleServer | null = null
 let serverRetryCount = 0
+const serverLifecycleListeners = new Set<(event: ServerLifecycleEvent) => void>()
 
 // Cached SDK clients per directory. Each client has a fixed
 // x-opencode-directory header pointing to its project directory.
 const clientCache = new Map<string, OpencodeClient>()
+
+function notifyServerLifecycle(event: ServerLifecycleEvent): void {
+  for (const listener of serverLifecycleListeners) {
+    listener(event)
+  }
+}
+
+export function subscribeOpencodeServerLifecycle(
+  listener: (event: ServerLifecycleEvent) => void,
+): () => void {
+  serverLifecycleListeners.add(listener)
+  return () => {
+    serverLifecycleListeners.delete(listener)
+  }
+}
 
 // ── Resolve opencode binary ──────────────────────────────────────
 // Resolve the full path to the opencode binary so we can spawn without
@@ -455,6 +475,7 @@ async function startSingleServer(): Promise<ServerStartError | SingleServer> {
     )
     singleServer = null
     clientCache.clear()
+    notifyServerLifecycle({ type: 'stopped' })
 
     // Intentional kills (SIGTERM from cleanup/restart) should not trigger
     // auto-restart. Only unexpected crashes (non-zero exit without signal)
@@ -518,6 +539,7 @@ async function startSingleServer(): Promise<ServerStartError | SingleServer> {
     baseUrl: `http://127.0.0.1:${port}`,
   }
   singleServer = server
+  notifyServerLifecycle({ type: 'started', port })
   return server
 }
 
