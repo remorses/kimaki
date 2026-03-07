@@ -1,5 +1,28 @@
 # Changelog
 
+## 0.4.74
+
+1. **`kimaki session archive` and `kimaki user list` CLI commands** — Discord REST operations previously done by plugin tools (`kimaki_archive_thread`, `kimaki_list_discord_users`) are now proper CLI subcommands. The plugin tools were silently broken in gateway mode because they had no way to route requests through the proxy:
+   ```bash
+   # archive a thread by session ID
+   kimaki session archive --session ses_abc123
+   # list Discord users in the guild (with optional search)
+   kimaki user list --guild 123456789 --query alice
+   ```
+   `kimaki_mark_thread` was removed (unused). The plugin no longer receives `KIMAKI_BOT_TOKEN`, eliminating the credential leak into child processes.
+
+2. **Fixed `kimaki send` failing with 401 in gateway mode** — `resolveBotCredentials` now reads from the database first (which correctly sets the gateway proxy URL), falling back to the `KIMAKI_BOT_TOKEN` env var only for headless/CI deployments. Previously, subcommands always sent credentials directly to discord.com instead of through the proxy.
+
+3. **Fixed bot mode selection for subcommands** — `send`, `project list`, `upload-to-discord` and other short-lived subcommands now correctly detect whether gateway or self-hosted mode is active. The fix uses a persistent `last_used_at` timestamp on the bot token row that the main bot stamps at startup, giving cross-process subcommands a reliable source of truth without any in-memory flags.
+
+4. **Fixed queued message interrupt timing** — queued follow-up messages now abort as soon as the current assistant turn hits a blocking step-finish, instead of waiting for a hard timeout. The interrupt plugin also correctly waits for the aborted assistant message to propagate before resuming, preventing race conditions where resume could fire before abort was fully settled.
+
+5. **Fixed empty resume messages appearing as queued work** — the interrupt plugin's internal `promptAsync({ parts: [] })` resume calls are no longer mistakenly tracked as pending user messages.
+
+6. **Worktree creation more resilient to broken submodule configs** — partially-removed submodules (deleted from the tree but still referenced in `.gitmodules`) no longer block worktree creation; the error is logged as a warning and the worktree is returned normally.
+
+7. **`/worktrees` capped at 10 entries** — keeps the ephemeral response compact when many worktree sessions have accumulated.
+
 ## 0.4.73
 
 1. **New `/worktrees` slash command** — list all active worktree sessions with branch, status, and age; handles deleted worktree folders gracefully
