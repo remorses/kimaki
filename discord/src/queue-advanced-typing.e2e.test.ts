@@ -76,8 +76,11 @@ e2eTest('queue advanced: typing lifecycle', () => {
         "--- from: user (queue-advanced-tester)
         Reply with exactly: typing-stop-normal
         [bot typing]
+        [bot typing]
+        [bot typing]
         --- from: assistant (TestBot)
         ⬥ ok
+        [bot typing]
         *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2*"
       `)
       expect(replyIndex).toBeGreaterThanOrEqual(0)
@@ -181,13 +184,19 @@ e2eTest('queue advanced: typing lifecycle', () => {
         --- from: user (queue-advanced-tester)
         PLUGIN_TIMEOUT_SLEEP_MARKER
         [bot typing]
+        [bot typing]
+        [bot typing]
         --- from: assistant (TestBot)
         ⬥ starting sleep 100
+        [bot typing]
         --- from: user (queue-advanced-tester)
         Reply with exactly: typing-stop-interrupt-final
         [bot typing]
+        [bot typing]
+        [bot typing]
         --- from: assistant (TestBot)
         ⬥ ok
+        [bot typing]
         *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2*"
       `)
       expect(finalUserIndex).toBeGreaterThanOrEqual(0)
@@ -201,6 +210,125 @@ e2eTest('queue advanced: typing lifecycle', () => {
 
     },
     12_000,
+  )
+
+  test(
+    'thread follow-up reply re-pulses typing after a visible assistant message while session stays busy',
+    async () => {
+      await ctx.discord.channel(TEXT_CHANNEL_ID).user(TEST_USER_ID).sendMessage({
+        content: 'Reply with exactly: typing-thread-reply-setup',
+      })
+
+      const thread = await ctx.discord.channel(TEXT_CHANNEL_ID).waitForThread({
+        timeout: 4_000,
+        predicate: (t) => {
+          return t.name === 'Reply with exactly: typing-thread-reply-setup'
+        },
+      })
+
+      const th = ctx.discord.thread(thread.id)
+
+      await waitForBotMessageContaining({
+        discord: ctx.discord,
+        threadId: thread.id,
+        userId: TEST_USER_ID,
+        text: 'ok',
+        timeout: 4_000,
+      })
+
+      await waitForFooterMessage({
+        discord: ctx.discord,
+        threadId: thread.id,
+        timeout: 4_000,
+        afterMessageIncludes: 'ok',
+        afterAuthorId: ctx.discord.botUserId,
+      })
+
+      th.clearTypingEvents()
+
+      await th.user(TEST_USER_ID).sendMessage({
+        content: 'TYPING_REPULSE_MARKER',
+      })
+
+      const messagesAfterFirstReply = await waitForBotMessageContaining({
+        discord: ctx.discord,
+        threadId: thread.id,
+        userId: TEST_USER_ID,
+        text: 'repulse-first',
+        afterUserMessageIncludes: 'TYPING_REPULSE_MARKER',
+        timeout: 4_000,
+      })
+
+      const markerUserIndex = messagesAfterFirstReply.findIndex((message) => {
+        return message.author.id === TEST_USER_ID
+          && message.content.includes('TYPING_REPULSE_MARKER')
+      })
+      const firstReply = messagesAfterFirstReply.find((message, index) => {
+        if (index <= markerUserIndex) {
+          return false
+        }
+        return message.author.id === ctx.discord.botUserId
+          && message.content.includes('repulse-first')
+      })
+      if (!firstReply) {
+        throw new Error('Expected first bot reply after TYPING_REPULSE_MARKER')
+      }
+
+      const typingAfterVisibleReply = await th.waitForTypingEvent({
+        timeout: 700,
+        afterTimestamp: new Date(firstReply.timestamp).getTime(),
+      }).then(
+        () => {
+          return true
+        },
+        () => {
+          return false
+        },
+      )
+
+      const messages = await waitForFooterMessage({
+        discord: ctx.discord,
+        threadId: thread.id,
+        timeout: 6_000,
+        afterMessageIncludes: 'TYPING_REPULSE_MARKER',
+        afterAuthorId: TEST_USER_ID,
+      })
+
+      const timeline = await th.text({ showTyping: true })
+      expect(timeline).toMatchInlineSnapshot(`
+        "--- from: user (queue-advanced-tester)
+        Reply with exactly: typing-thread-reply-setup
+        --- from: assistant (TestBot)
+        ⬥ ok
+        *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2*
+        --- from: user (queue-advanced-tester)
+        TYPING_REPULSE_MARKER
+        [bot typing]
+        [bot typing]
+        [bot typing]
+        --- from: assistant (TestBot)
+        ⬥ repulse-first
+        [bot typing]
+        *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2*"
+      `)
+
+      const followupUserIndex = messages.findIndex((message) => {
+        return message.author.id === TEST_USER_ID
+          && message.content.includes('TYPING_REPULSE_MARKER')
+      })
+      const followupReplyIndex = messages.findIndex((message, index) => {
+        if (index <= followupUserIndex) {
+          return false
+        }
+        return message.author.id === ctx.discord.botUserId
+          && message.content.includes('repulse-first')
+      })
+
+      expect(followupUserIndex).toBeGreaterThanOrEqual(0)
+      expect(followupReplyIndex).toBeGreaterThan(followupUserIndex)
+      expect(typingAfterVisibleReply).toBe(true)
+    },
+    10_000,
   )
 
 })

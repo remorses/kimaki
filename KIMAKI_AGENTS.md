@@ -216,7 +216,11 @@ when creating system messages like replies to commands never add new line spaces
 
 ## discord typing indicator
 
-discord typing indicators expire quickly (about 7 seconds), so keep a periodic `sendTyping()` interval active during long-running responses and tool calls.
+discord typing indicators come from `POST /channels/{id}/typing` / `sendTyping()`. one pulse only lasts about 10 seconds in the Discord UI, so long-running work must refresh it periodically (we usually pulse every ~7 seconds).
+
+Discord typically stops showing the indicator once the bot sends a visible message, so runs that emit multiple bot messages may need an immediate fresh pulse after each non-final message while the session is still busy.
+
+user messages do not automatically make the bot appear typing again. do not show typing just because a user sent a message; only start it when OpenCode events show the session is actually processing (for example `session.status: busy` or `step-start`).
 
 do not remove the typing interval to fix stuck typing; instead fix lifecycle bugs by clearing both the active interval and any scheduled restart timeout when a session ends, aborts, or pauses for permission/question prompts.
 

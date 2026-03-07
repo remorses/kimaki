@@ -1343,8 +1343,12 @@ export class ThreadSessionRuntime {
     if (!this.shouldTypeNow()) {
       return
     }
-    if (this.typingInterval) {
+    if (this.typingInterval && !sendImmediatePulse) {
       return
+    }
+    if (this.typingInterval) {
+      clearTimeout(this.typingInterval)
+      this.typingInterval = null
     }
     this.scheduleTypingPulse({ delayMs: sendImmediatePulse ? 0 : 7000 })
   }
@@ -1367,6 +1371,13 @@ export class ThreadSessionRuntime {
       return
     }
     this.startTyping({ sendImmediatePulse })
+  }
+
+  private repulseTypingAfterVisibleBotMessage(): void {
+    if (!this.shouldTypeNow()) {
+      return
+    }
+    this.reconcileTyping({ sendImmediatePulse: true })
   }
 
   // ── Part Buffering & Output ─────────────────────────────────
@@ -1460,6 +1471,7 @@ export class ThreadSessionRuntime {
       return
     }
     await setPartMessage(part.id, sendResult.id, this.thread.id)
+    this.repulseTypingAfterVisibleBotMessage()
   }
 
   private async flushBufferedParts({
@@ -1931,6 +1943,7 @@ export class ThreadSessionRuntime {
       return { ...t, sentPartIds: newIds }
     })
     await setPartMessage(part.id, sendResult.id, this.thread.id)
+    this.repulseTypingAfterVisibleBotMessage()
   }
 
   private async handleSessionIdle(idleSessionId: string): Promise<void> {

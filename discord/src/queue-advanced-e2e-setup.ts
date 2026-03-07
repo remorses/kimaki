@@ -161,6 +161,30 @@ export function createDeterministicMatchers(): DeterministicMatcher[] {
     },
   }
 
+  const typingRepulseMatcher: DeterministicMatcher = {
+    id: 'typing-repulse-marker',
+    priority: 101,
+    when: {
+      latestUserTextIncludes: 'TYPING_REPULSE_MARKER',
+    },
+    then: {
+      parts: [
+        { type: 'stream-start', warnings: [] },
+        { type: 'text-start', id: 'typing-repulse-text' },
+        { type: 'text-delta', id: 'typing-repulse-text', delta: 'repulse-first' },
+        { type: 'text-end', id: 'typing-repulse-text' },
+        {
+          type: 'finish',
+          finishReason: 'stop',
+          usage: { inputTokens: 1, outputTokens: 1, totalTokens: 2 },
+        },
+      ],
+      // Keep the run busy after the first visible assistant message so tests can
+      // assert that typing resumes while OpenCode is still working.
+      partDelaysMs: [0, 100, 0, 0, 1_800],
+    },
+  }
+
   const pluginTimeoutSleepMatcher: DeterministicMatcher = {
     id: 'plugin-timeout-sleep',
     priority: 100,
@@ -274,6 +298,7 @@ export function createDeterministicMatchers(): DeterministicMatcher[] {
 
   return [
     slowAbortMatcher,
+    typingRepulseMatcher,
     pluginTimeoutSleepMatcher,
     actionButtonClickFollowupMatcher,
     permissionTypingMatcher,
