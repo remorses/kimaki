@@ -874,8 +874,9 @@ async function getDirtyFiles(dir: string): Promise<string[]> {
 
 /**
  * Check if target worktree has dirty files overlapping with the push range.
- * updateInstead only rejects overlapping files; non-overlapping dirty files
- * are left untouched.
+ * updateInstead only modifies the working tree when pushing to the currently
+ * checked-out branch. If the main repo is on a different branch, the push
+ * won't touch the working tree at all, so there's nothing to conflict with.
  */
 async function checkTargetWorktreeConflicts({
   targetDir,
@@ -886,6 +887,14 @@ async function checkTargetWorktreeConflicts({
   sourceDir: string
   targetBranch: string
 }): Promise<string[] | null> {
+  // Only check for conflicts if the main repo has the target branch checked out.
+  // updateInstead only updates the working tree for the currently checked-out
+  // branch — if the main repo is on a different branch, the push to targetBranch
+  // won't touch the working tree at all.
+  const currentBranch = await git(targetDir, 'symbolic-ref --short HEAD')
+  if (currentBranch instanceof Error || currentBranch !== targetBranch) {
+    return null
+  }
   if (!(await isDirty(targetDir))) {
     return null
   }
