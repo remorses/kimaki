@@ -644,16 +644,14 @@ export async function createWorktreeWithSubmodules({
     worktreeDirectory: worktreeDir,
   })
   if (submoduleInitResult instanceof Error) {
-    logger.error('Submodule initialization failed', {
+    // Non-fatal: log and continue. The worktree itself is already created,
+    // only submodule init had issues (e.g. stale .gitmodules entries).
+    logger.error('Submodule initialization failed (non-fatal)', {
       worktreeDir,
       timeoutMs: SUBMODULE_INIT_TIMEOUT_MS,
       command: 'git submodule update --init --recursive [--reference ...]',
       error: submoduleInitResult.message,
     })
-    return new Error(
-      `Submodule initialization failed: ${submoduleInitResult.message}`,
-      { cause: submoduleInitResult },
-    )
   }
   logger.log(`Submodules initialized in ${worktreeDir}`)
 
