@@ -4,6 +4,8 @@ do not use spawnSync. use our util execAsync. which uses spawn under the hood
 
 the important package in this repo is discord. it contains the discord bot code.
 
+after making important changes to queueing or message handling always run the full test suite inside discord to make sure our changes did not break anything. also run with -u and see snapshots updates in git diff if needed. `pnpm test -u --run`
+
 # repo architecture
 
 kimaki is a monorepo with three main packages that communicate via a shared Postgres database hosted on PlanetScale.

@@ -3527,25 +3527,27 @@ export class ThreadSessionRuntime {
     const footerText = `*${projectInfo}${sessionDuration}${contextInfo}${modelInfo}${agentInfo}*`
     this.stopTyping()
 
-    // Delay sending by 500ms: when the interrupt plugin aborts at a step
-    // boundary, the abort error arrives ~317ms after session.idle. If we
-    // send immediately, the footer appears before we know about the abort.
-    // The delay lets the abort event land in the buffer; we re-check
-    // shouldEmitFooter before actually sending the Discord message.
-    setTimeout(() => {
-      void this.dispatchAction(async () => {
-        if (this.state?.sessionId !== sessionId) {
-          return
-        }
-        if (this.isMainSessionBusy()) {
-          return
-        }
-        await sendThreadMessage(this.thread, footerText, { flags: NOTIFY_MESSAGE_FLAGS })
-        logger.log(
-          `DURATION: Session completed in ${sessionDuration}, model ${runInfo.model}, tokens ${runInfo.tokensUsed}`,
-        )
-      })
-    }, ThreadSessionRuntime.FOOTER_DEBOUNCE_MS)
+    // TODO: delay footer send to fix abort-at-step-boundary race.
+    // When the interrupt plugin aborts at a step boundary, the event order
+    // can be: step-finish → session.idle → (~317ms) → MessageAbortedError.
+    // The idle fires before the abort error, so shouldEmitFooter sees no
+    // abort and emits the footer. A delay here would let the abort event
+    // arrive before sending. Disabled because the delay breaks ordering
+    // with tryDrainQueue (queue drain appears before footer) and causes
+    // e2e test timing failures. Needs a different approach — either
+    // debounce handleSessionIdle or fix the race in the interrupt plugin.
+    // await delay(ThreadSessionRuntime.FOOTER_DEBOUNCE_MS)
+    // if (this.state?.sessionId !== sessionId) {
+    //   return
+    // }
+    // if (this.isMainSessionBusy()) {
+    //   return
+    // }
+
+    await sendThreadMessage(this.thread, footerText, { flags: NOTIFY_MESSAGE_FLAGS })
+    logger.log(
+      `DURATION: Session completed in ${sessionDuration}, model ${runInfo.model}, tokens ${runInfo.tokensUsed}`,
+    )
   }
 
   /** Reset per-run state for the next prompt dispatch. */
