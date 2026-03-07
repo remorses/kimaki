@@ -10,7 +10,7 @@ import {
 import type { ThreadWorktree } from '../database.js'
 import { getPrisma } from '../db.js'
 import { splitTablesFromMarkdown } from '../format-tables.js'
-import { git, isDirty, getDefaultBranch } from '../worktrees.js'
+import { git, getDefaultBranch } from '../worktrees.js'
 
 export function formatTimeAgo(date: Date): string {
   const diffMs = Date.now() - date.getTime()
@@ -69,15 +69,22 @@ async function getWorktreeGitStatus({
   }
   try {
     const dir = wt.worktree_directory
-    const [dirtyResult, aheadResult] = await Promise.all([
-      isDirty(dir, { timeout: GIT_CMD_TIMEOUT }),
+    // Use raw git calls so errors/timeouts are visible — isDirty() swallows
+    // errors and returns false, which would render "merged" instead of "unknown".
+    const [statusResult, aheadResult] = await Promise.all([
+      git(dir, 'status --porcelain', { timeout: GIT_CMD_TIMEOUT }),
       git(dir, `rev-list --count "${defaultBranch}..HEAD"`, {
         timeout: GIT_CMD_TIMEOUT,
       }),
     ])
-    const aheadCount =
-      aheadResult instanceof Error ? 0 : parseInt(aheadResult, 10)
-    return { dirty: dirtyResult, aheadCount }
+    if (statusResult instanceof Error || aheadResult instanceof Error) {
+      return null
+    }
+    const aheadCount = parseInt(aheadResult, 10)
+    if (!Number.isFinite(aheadCount)) {
+      return null
+    }
+    return { dirty: statusResult.length > 0, aheadCount }
   } catch {
     return null
   }
@@ -123,6 +130,56 @@ function buildWorktreeTable({
   return [header, separator, ...rows].join('\n')
 }
 
+// Resolves git statuses for all worktrees within a single global deadline.
+// Caches getDefaultBranch per project_directory to avoid redundant spawns.
+// Returns null for any worktree whose git calls fail, timeout, or exceed
+// the global deadline — the table renders those as "unknown".
+async function resolveGitStatuses({
+  worktrees,
+  timeout,
+}: {
+  worktrees: ThreadWorktree[]
+  timeout: number
+}): Promise<(WorktreeGitStatus | null)[]> {
+  const nullFallback = worktrees.map(() => null)
+
+  let timer: ReturnType<typeof setTimeout> | undefined
+  const deadline = new Promise<(WorktreeGitStatus | null)[]>((resolve) => {
+    timer = setTimeout(() => {
+      resolve(nullFallback)
+    }, timeout)
+  })
+
+  const work = (async () => {
+    // Resolve default branch once per unique project directory (avoids
+    // redundant git subprocess spawns when multiple worktrees share a project).
+    const uniqueProjectDirs = [
+      ...new Set(worktrees.map((wt) => wt.project_directory)),
+    ]
+    const defaultBranchEntries = await Promise.all(
+      uniqueProjectDirs.map(async (dir) => {
+        const branch = await getDefaultBranch(dir, { timeout: GIT_CMD_TIMEOUT })
+        return [dir, branch] as const
+      }),
+    )
+    const defaultBranchByProject = new Map(defaultBranchEntries)
+
+    return Promise.all(
+      worktrees.map((wt) => {
+        const defaultBranch =
+          defaultBranchByProject.get(wt.project_directory) ?? 'main'
+        return getWorktreeGitStatus({ wt, defaultBranch })
+      }),
+    )
+  })()
+
+  try {
+    return await Promise.race([work, deadline])
+  } finally {
+    clearTimeout(timer)
+  }
+}
+
 export async function handleWorktreesCommand({
   command,
 }: {
@@ -151,37 +208,11 @@ export async function handleWorktreesCommand({
     return
   }
 
-  // Resolve default branch once per unique project directory (avoids redundant
-  // git subprocess spawns when multiple worktrees share a project).
-  const uniqueProjectDirs = [
-    ...new Set(worktrees.map((wt) => wt.project_directory)),
-  ]
-  const defaultBranchEntries = await Promise.all(
-    uniqueProjectDirs.map(async (dir) => {
-      const branch = await getDefaultBranch(dir, { timeout: GIT_CMD_TIMEOUT })
-      return [dir, branch] as const
-    }),
-  )
-  const defaultBranchByProject = new Map(defaultBranchEntries)
-
-  // Run git status checks in parallel across all worktrees.
-  // 10s global timeout ensures the command always responds within Discord's
-  // interaction deadline, even if some worktrees are slow or unreachable.
+  // 10s global deadline covers both default-branch prefetch and per-worktree
+  // git status checks. Guarantees the command responds within Discord's
+  // interaction window even if git is slow or unreachable.
   const GLOBAL_TIMEOUT = 10_000
-  const gitStatuses = await Promise.race([
-    Promise.all(
-      worktrees.map((wt) => {
-        const defaultBranch =
-          defaultBranchByProject.get(wt.project_directory) ?? 'main'
-        return getWorktreeGitStatus({ wt, defaultBranch })
-      }),
-    ),
-    new Promise<(WorktreeGitStatus | null)[]>((resolve) => {
-      setTimeout(() => {
-        resolve(worktrees.map(() => null))
-      }, GLOBAL_TIMEOUT)
-    }),
-  ])
+  const gitStatuses = await resolveGitStatuses({ worktrees, timeout: GLOBAL_TIMEOUT })
 
   const markdown = buildWorktreeTable({ worktrees, gitStatuses, guildId })
   const segments = splitTablesFromMarkdown(markdown)
