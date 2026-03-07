@@ -142,14 +142,16 @@ const interruptOpencodeSessionOnUserMessage: Plugin = async (ctx) => {
 
     recoveringSessions.add(sessionID)
     try {
-      const errorWait = waitForEvent({
+      const abortedAssistantWait = waitForEvent({
         match: (event) => {
           return (
-            event.type === 'session.error' &&
-            event.properties.sessionID === sessionID
+            event.type === 'message.updated'
+            && event.properties.info.role === 'assistant'
+            && event.properties.info.sessionID === sessionID
+            && event.properties.info.error?.name === 'MessageAbortedError'
           )
         },
-        timeoutMs: 2_000,
+        timeoutMs: 5_000,
       })
       const idleWait = waitForEvent({
         match: (event) => {
@@ -161,7 +163,7 @@ const interruptOpencodeSessionOnUserMessage: Plugin = async (ctx) => {
       await ctx.client.session.abort({
         path: { id: sessionID },
       })
-      await errorWait
+      await abortedAssistantWait
       await idleWait
 
       const currentPending = pendingByMessageId.get(messageID)

@@ -149,6 +149,32 @@ function createSessionIdleEvent({ sessionID }: { sessionID: string }): Interrupt
   } as InterruptEvent
 }
 
+function createAssistantAbortedEvent({
+  sessionID,
+  assistantMessageID,
+  parentID,
+}: {
+  sessionID: string
+  assistantMessageID: string
+  parentID: string
+}): InterruptEvent {
+  return {
+    type: 'message.updated',
+    properties: {
+      info: {
+        id: assistantMessageID,
+        role: 'assistant',
+        sessionID,
+        parentID,
+        error: {
+          name: 'MessageAbortedError',
+          data: { message: 'The operation was aborted.' },
+        },
+      },
+    },
+  } as InterruptEvent
+}
+
 function createAssistantStartedEvent({
   sessionID,
   messageID,
@@ -244,6 +270,13 @@ describe('interruptOpencodeSessionOnUserMessage', () => {
     })
     await eventHook({
       event: createSessionIdleEvent({ sessionID: REAL_RATE_LIMIT_CASE.sessionID }),
+    })
+    await eventHook({
+      event: createAssistantAbortedEvent({
+        sessionID: REAL_RATE_LIMIT_CASE.sessionID,
+        assistantMessageID: 'msg-rate-limit-aborted',
+        parentID: REAL_RATE_LIMIT_CASE.previousMessageID,
+      }),
     })
     await delay({ ms: 20 })
 
@@ -355,6 +388,13 @@ describe('interruptOpencodeSessionOnUserMessage', () => {
     // 4. Simulate abort completing (error + idle from opencode)
     await eventHook({ event: createSessionErrorEvent({ sessionID }) })
     await eventHook({ event: createSessionIdleEvent({ sessionID }) })
+    await eventHook({
+      event: createAssistantAbortedEvent({
+        sessionID,
+        assistantMessageID: 'msg-aborted-after-timeout',
+        parentID: firstMsgID,
+      }),
+    })
     await delay({ ms: 20 })
 
     // 5. Verify plugin aborted the session
@@ -432,6 +472,13 @@ describe('interruptOpencodeSessionOnUserMessage', () => {
     await delay({ ms: 30 })
     await eventHook({ event: REAL_SLEEP_INTERRUPT_CASE.idleEvent })
     await eventHook({ event: REAL_SLEEP_INTERRUPT_CASE.abortErrorEvent })
+    await eventHook({
+      event: createAssistantAbortedEvent({
+        sessionID: REAL_SLEEP_INTERRUPT_CASE.sessionID,
+        assistantMessageID: 'msg-sleep-aborted',
+        parentID: REAL_SLEEP_INTERRUPT_CASE.runningMessageID,
+      }),
+    })
     await delay({ ms: 20 })
 
     expect(abortCalls).toEqual([{ path: { id: REAL_SLEEP_INTERRUPT_CASE.sessionID } }])
