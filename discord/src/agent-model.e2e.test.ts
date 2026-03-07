@@ -21,7 +21,7 @@ import {
   test,
   expect,
 } from 'vitest'
-import { ChannelType, Client, GatewayIntentBits, Partials } from 'discord.js'
+import { ChannelType, Client, GatewayIntentBits, Partials, REST, Routes, SlashCommandBuilder } from 'discord.js'
 import { DigitalDiscord } from 'discord-digital-twin/src'
 import {
   buildDeterministicOpencodeConfig,
@@ -49,11 +49,13 @@ import {
   waitForBotMessageContaining,
   waitForFooterMessage,
 } from './test-utils.js'
+import { buildQuickAgentCommandDescription } from './commands/agent.js'
 
 
 const TEST_USER_ID = '200000000000000920'
 const TEXT_CHANNEL_ID = '200000000000000921'
 const AGENT_MODEL = 'agent-model-v2'
+const PLAN_AGENT_MODEL = 'plan-model-v2'
 const CHANNEL_MODEL = 'channel-model-v2'
 const DEFAULT_MODEL = 'deterministic-v2'
 const PROVIDER_NAME = 'deterministic-provider'
@@ -263,6 +265,7 @@ describe('agent model resolution', () => {
       models: Record<string, { name: string }>
     }
     providerConfig.models[AGENT_MODEL] = { name: AGENT_MODEL }
+    providerConfig.models[PLAN_AGENT_MODEL] = { name: PLAN_AGENT_MODEL }
     providerConfig.models[CHANNEL_MODEL] = { name: CHANNEL_MODEL }
 
     fs.writeFileSync(
@@ -270,11 +273,16 @@ describe('agent model resolution', () => {
       JSON.stringify(opencodeConfig, null, 2),
     )
 
-    // Create the agent .md file with custom model
+    // Create agent .md files with custom models
     createAgentFile({
       projectDirectory: directories.projectDirectory,
       agentName: 'test-agent',
       model: `${PROVIDER_NAME}/${AGENT_MODEL}`,
+    })
+    createAgentFile({
+      projectDirectory: directories.projectDirectory,
+      agentName: 'plan',
+      model: `${PROVIDER_NAME}/${PLAN_AGENT_MODEL}`,
     })
 
     const dbPath = path.join(directories.dataDir, 'discord-sessions.db')
@@ -299,6 +307,28 @@ describe('agent model resolution', () => {
       appId: discord.botUserId,
       discordClient: botClient,
     })
+
+    // Register quick agent slash commands so /plan-agent and /test-agent-agent
+    // are resolvable by handleQuickAgentCommand via guild.commands.fetch().
+    const agentCommands = ['test-agent', 'plan'].map((agentName) => {
+      return new SlashCommandBuilder()
+        .setName(`${agentName}-agent`)
+        .setDescription(
+          buildQuickAgentCommandDescription({
+            agentName,
+            description: `Switch to ${agentName} agent`,
+          }),
+        )
+        .setDMPermission(false)
+        .toJSON()
+    })
+    const rest = new REST({ version: '10', api: discord.restUrl }).setToken(
+      discord.botToken,
+    )
+    await rest.put(
+      Routes.applicationGuildCommands(discord.botUserId, discord.guildId),
+      { body: agentCommands },
+    )
 
     // Pre-warm the opencode server so agent discovery happens
     const warmup = await initializeOpencodeForDirectory(
@@ -581,5 +611,287 @@ describe('agent model resolution', () => {
       expect(footerMessage.content).not.toContain(DEFAULT_MODEL)
     },
     15_000,
+  )
+
+  test(
+    'changing channel agent via /plan-agent does not affect existing thread model',
+    async () => {
+      // 1. Set channel agent to test-agent (uses AGENT_MODEL)
+      await setChannelAgent(TEXT_CHANNEL_ID, 'test-agent')
+
+      // 2. Send a message to create a thread
+      await discord.channel(TEXT_CHANNEL_ID).user(TEST_USER_ID).sendMessage({
+        content: 'Reply with exactly: first-thread-msg',
+      })
+
+      const thread = await discord.channel(TEXT_CHANNEL_ID).waitForThread({
+        timeout: 4_000,
+        predicate: (t) => {
+          return t.name === 'Reply with exactly: first-thread-msg'
+        },
+      })
+
+      // Wait for footer — proves first run completed with test-agent's model
+      await waitForFooterMessage({
+        discord,
+        threadId: thread.id,
+        timeout: 4_000,
+        afterMessageIncludes: 'ok',
+        afterAuthorId: discord.botUserId,
+      })
+
+      const firstMessages = await discord.thread(thread.id).getMessages()
+      const firstFooter = firstMessages.find((m) => {
+        return (
+          m.author.id === discord.botUserId && m.content.startsWith('*')
+        )
+      })
+      expect(firstFooter).toBeDefined()
+      // Verify the first run used test-agent's model
+      expect(firstFooter!.content).toContain(AGENT_MODEL)
+
+      // 3. Switch channel agent to plan via /plan-agent in the CHANNEL
+      const { id: interactionId } = await discord
+        .channel(TEXT_CHANNEL_ID)
+        .user(TEST_USER_ID)
+        .runSlashCommand({ name: 'plan-agent' })
+
+      await discord
+        .channel(TEXT_CHANNEL_ID)
+        .waitForInteractionAck({ interactionId, timeout: 4_000 })
+
+      // 4. Send a second message in the EXISTING thread
+      const th = discord.thread(thread.id)
+      await th.user(TEST_USER_ID).sendMessage({
+        content: 'Reply with exactly: second-thread-msg',
+      })
+
+      // Wait for second footer (anchor on the user message, not bot reply)
+      await waitForFooterMessage({
+        discord,
+        threadId: thread.id,
+        timeout: 4_000,
+        afterMessageIncludes: 'second-thread-msg',
+        afterAuthorId: TEST_USER_ID,
+      })
+
+      expect(await discord.thread(thread.id).text()).toMatchInlineSnapshot(`
+        "--- from: user (agent-model-tester)
+        Reply with exactly: first-thread-msg
+        --- from: assistant (TestBot)
+        ⬥ ok
+        *project ⋅ main ⋅ Ns ⋅ N% ⋅ agent-model-v2 ⋅ **test-agent***
+        --- from: user (agent-model-tester)
+        Reply with exactly: second-thread-msg
+        --- from: assistant (TestBot)
+        ⬥ ok
+        *project ⋅ main ⋅ Ns ⋅ N% ⋅ agent-model-v2 ⋅ **test-agent***"
+      `)
+
+      const secondMessages = await discord.thread(thread.id).getMessages()
+      const secondFooter = [...secondMessages]
+        .reverse()
+        .find((m) => {
+          return (
+            m.author.id === discord.botUserId && m.content.startsWith('*')
+          )
+        })
+      expect(secondFooter).toBeDefined()
+
+      // The existing thread should still use test-agent's model (AGENT_MODEL),
+      // NOT plan agent's model (PLAN_AGENT_MODEL)
+      expect(secondFooter!.content).toContain(AGENT_MODEL)
+      expect(secondFooter!.content).not.toContain(PLAN_AGENT_MODEL)
+    },
+    20_000,
+  )
+
+  test(
+    'thread created with no agent keeps default model after channel agent is set',
+    async () => {
+      // Clear any channel agent — thread starts with default (no agent)
+      const prisma = await getPrisma()
+      await prisma.channel_agents.deleteMany({
+        where: { channel_id: TEXT_CHANNEL_ID },
+      })
+      // Also clear channel model so we get the pure default
+      await prisma.channel_models.deleteMany({
+        where: { channel_id: TEXT_CHANNEL_ID },
+      })
+
+      // 1. Send a message to create a thread (no channel agent set)
+      await discord.channel(TEXT_CHANNEL_ID).user(TEST_USER_ID).sendMessage({
+        content: 'Reply with exactly: default-thread-msg',
+      })
+
+      const thread = await discord.channel(TEXT_CHANNEL_ID).waitForThread({
+        timeout: 4_000,
+        predicate: (t) => {
+          return t.name === 'Reply with exactly: default-thread-msg'
+        },
+      })
+
+      // Wait for footer — should show the default model
+      await waitForFooterMessage({
+        discord,
+        threadId: thread.id,
+        timeout: 4_000,
+        afterMessageIncludes: 'ok',
+        afterAuthorId: discord.botUserId,
+      })
+
+      const firstMessages = await discord.thread(thread.id).getMessages()
+      const firstFooter = firstMessages.find((m) => {
+        return (
+          m.author.id === discord.botUserId && m.content.startsWith('*')
+        )
+      })
+      expect(firstFooter).toBeDefined()
+      // First run uses the default model (no agent set)
+      expect(firstFooter!.content).toContain(DEFAULT_MODEL)
+      expect(firstFooter!.content).not.toContain(AGENT_MODEL)
+
+      // 2. Set channel agent to test-agent via /test-agent-agent in the CHANNEL
+      const { id: interactionId } = await discord
+        .channel(TEXT_CHANNEL_ID)
+        .user(TEST_USER_ID)
+        .runSlashCommand({ name: 'test-agent-agent' })
+
+      await discord
+        .channel(TEXT_CHANNEL_ID)
+        .waitForInteractionAck({ interactionId, timeout: 4_000 })
+
+      // 3. Send a second message in the EXISTING thread
+      await discord
+        .thread(thread.id)
+        .user(TEST_USER_ID)
+        .sendMessage({
+          content: 'Reply with exactly: default-second-msg',
+        })
+
+      await waitForFooterMessage({
+        discord,
+        threadId: thread.id,
+        timeout: 4_000,
+        afterMessageIncludes: 'default-second-msg',
+        afterAuthorId: TEST_USER_ID,
+      })
+
+      expect(await discord.thread(thread.id).text()).toMatchInlineSnapshot(`
+        "--- from: user (agent-model-tester)
+        Reply with exactly: default-thread-msg
+        --- from: assistant (TestBot)
+        ⬥ ok
+        *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2*
+        --- from: user (agent-model-tester)
+        Reply with exactly: default-second-msg
+        --- from: assistant (TestBot)
+        ⬥ ok
+        *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2*"
+      `)
+
+      const secondMessages = await discord.thread(thread.id).getMessages()
+      const secondFooter = [...secondMessages]
+        .reverse()
+        .find((m) => {
+          return (
+            m.author.id === discord.botUserId && m.content.startsWith('*')
+          )
+        })
+      expect(secondFooter).toBeDefined()
+
+      // The existing thread should still use the DEFAULT model,
+      // NOT the test-agent's model (AGENT_MODEL)
+      expect(secondFooter!.content).toContain(DEFAULT_MODEL)
+      expect(secondFooter!.content).not.toContain(AGENT_MODEL)
+    },
+    20_000,
+  )
+
+  test(
+    '/plan-agent inside a thread switches the model for that thread',
+    async () => {
+      // 1. Start with test-agent on the channel
+      await setChannelAgent(TEXT_CHANNEL_ID, 'test-agent')
+
+      // 2. Create a thread — first run uses test-agent's model
+      await discord.channel(TEXT_CHANNEL_ID).user(TEST_USER_ID).sendMessage({
+        content: 'Reply with exactly: switch-in-thread-msg',
+      })
+
+      const thread = await discord.channel(TEXT_CHANNEL_ID).waitForThread({
+        timeout: 4_000,
+        predicate: (t) => {
+          return t.name === 'Reply with exactly: switch-in-thread-msg'
+        },
+      })
+
+      await waitForFooterMessage({
+        discord,
+        threadId: thread.id,
+        timeout: 4_000,
+        afterMessageIncludes: 'ok',
+        afterAuthorId: discord.botUserId,
+      })
+
+      const firstFooter = (await discord.thread(thread.id).getMessages()).find(
+        (m) => {
+          return (
+            m.author.id === discord.botUserId && m.content.startsWith('*')
+          )
+        },
+      )
+      expect(firstFooter).toBeDefined()
+      expect(firstFooter!.content).toContain(AGENT_MODEL)
+
+      // 3. Run /plan-agent INSIDE the thread
+      const th = discord.thread(thread.id)
+      const { id: interactionId } = await th
+        .user(TEST_USER_ID)
+        .runSlashCommand({ name: 'plan-agent' })
+
+      await th.waitForInteractionAck({ interactionId, timeout: 4_000 })
+
+      // 4. Send a second message in the same thread
+      await th.user(TEST_USER_ID).sendMessage({
+        content: 'Reply with exactly: after-switch-msg',
+      })
+
+      await waitForFooterMessage({
+        discord,
+        threadId: thread.id,
+        timeout: 4_000,
+        afterMessageIncludes: 'after-switch-msg',
+        afterAuthorId: TEST_USER_ID,
+      })
+
+      expect(await discord.thread(thread.id).text()).toMatchInlineSnapshot(`
+        "--- from: user (agent-model-tester)
+        Reply with exactly: switch-in-thread-msg
+        --- from: assistant (TestBot)
+        ⬥ ok
+        *project ⋅ main ⋅ Ns ⋅ N% ⋅ agent-model-v2 ⋅ **test-agent***
+        Switched to **plan** agent for this session (was **test-agent**)
+        --- from: user (agent-model-tester)
+        Reply with exactly: after-switch-msg
+        --- from: assistant (TestBot)
+        ⬥ ok
+        *project ⋅ main ⋅ Ns ⋅ N% ⋅ plan-model-v2 ⋅ **plan***"
+      `)
+
+      const secondFooter = [...(await discord.thread(thread.id).getMessages())]
+        .reverse()
+        .find((m) => {
+          return (
+            m.author.id === discord.botUserId && m.content.startsWith('*')
+          )
+        })
+      expect(secondFooter).toBeDefined()
+
+      // After /plan-agent in the thread, model should switch to plan's model
+      expect(secondFooter!.content).toContain(PLAN_AGENT_MODEL)
+      expect(secondFooter!.content).not.toContain(AGENT_MODEL)
+    },
+    20_000,
   )
 })

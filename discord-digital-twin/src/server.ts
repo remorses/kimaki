@@ -253,6 +253,100 @@ export function createServer({
         return results
       },
     })
+    .route({
+      method: 'PUT',
+      path: '/applications/:application_id/guilds/:guild_id/commands',
+      async handler({
+        params,
+        request,
+      }): Promise<RESTPutAPIApplicationCommandsResult> {
+        const commands =
+          (await request.json()) as RESTPutAPIApplicationCommandsJSONBody
+
+        await prisma.applicationCommand.deleteMany({
+          where: {
+            applicationId: params.application_id,
+            guildId: params.guild_id,
+          },
+        })
+
+        const results: APIApplicationCommand[] = []
+        for (const cmd of commands) {
+          const id = generateSnowflake()
+          const version = generateSnowflake()
+          const description =
+            'description' in cmd ? (cmd.description ?? '') : ''
+          const options = 'options' in cmd ? (cmd.options ?? []) : []
+          const type = cmd.type ?? ApplicationCommandType.ChatInput
+          await prisma.applicationCommand.create({
+            data: {
+              id,
+              applicationId: params.application_id,
+              guildId: params.guild_id,
+              name: cmd.name,
+              description,
+              type,
+              options: JSON.stringify(options),
+              defaultMemberPermissions: cmd.default_member_permissions ?? null,
+              dmPermission: cmd.dm_permission ?? true,
+              nsfw: cmd.nsfw ?? false,
+              version,
+            },
+          })
+          results.push({
+            id,
+            application_id: params.application_id,
+            guild_id: params.guild_id,
+            name: cmd.name,
+            description,
+            type,
+            options,
+            default_member_permissions: cmd.default_member_permissions ?? null,
+            dm_permission: cmd.dm_permission ?? true,
+            nsfw: cmd.nsfw ?? false,
+            version,
+          })
+        }
+
+        return results
+      },
+    })
+    .route({
+      method: 'GET',
+      path: '/applications/:application_id/guilds/:guild_id/commands/:command_id',
+      async handler({ params }): Promise<APIApplicationCommand> {
+        const cmd = await prisma.applicationCommand.findFirst({
+          where: {
+            id: params.command_id,
+            applicationId: params.application_id,
+            guildId: params.guild_id,
+          },
+        })
+        if (!cmd) {
+          throw new Response(
+            JSON.stringify({
+              code: 10063,
+              message: 'Unknown application command',
+              errors: {},
+            }),
+            { status: 404, headers: { 'Content-Type': 'application/json' } },
+          )
+        }
+        return {
+          id: cmd.id,
+          application_id: cmd.applicationId,
+          guild_id: cmd.guildId ?? undefined,
+          name: cmd.name,
+          description: cmd.description,
+          type: cmd.type as ApplicationCommandType,
+          options: JSON.parse(cmd.options),
+          default_member_permissions: cmd.defaultMemberPermissions ?? null,
+          dm_permission: cmd.dmPermission,
+          nsfw: cmd.nsfw,
+          version: cmd.version,
+        }
+      },
+    })
 
     // --- Messages ---
 

@@ -504,13 +504,42 @@ export class DigitalDiscord {
     options?: DigitalDiscordCommandOption[]
     guildId?: string
   }): Promise<{ id: string; token: string }> {
+    // Resolve the registered command ID by name so guild.commands.fetch()
+    // works when the bot looks up the command description at runtime.
+    // Prefer guild-scoped command over global to avoid returning a global ID
+    // that would 404 on the guild commands GET endpoint.
+    const resolvedCommandId = await (async () => {
+      if (commandId) {
+        return commandId
+      }
+      const resolvedGuildId = guildId ?? this.guildId
+      const guildCmd = await this.prisma.applicationCommand.findFirst({
+        where: {
+          applicationId: this.botUserId,
+          name,
+          guildId: resolvedGuildId,
+        },
+      })
+      if (guildCmd) {
+        return guildCmd.id
+      }
+      const globalCmd = await this.prisma.applicationCommand.findFirst({
+        where: {
+          applicationId: this.botUserId,
+          name,
+          guildId: null,
+        },
+      })
+      return globalCmd?.id ?? generateSnowflake()
+    })()
+
     return this.simulateInteraction({
       type: InteractionType.ApplicationCommand,
       channelId,
       userId,
       guildId,
       data: {
-        id: commandId ?? generateSnowflake(),
+        id: resolvedCommandId,
         name,
         type: 1,
         ...(options && options.length > 0 ? { options } : {}),
