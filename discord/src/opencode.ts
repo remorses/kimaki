@@ -16,7 +16,7 @@ import {
   type OpencodeClient,
   type Config as SdkConfig,
 } from '@opencode-ai/sdk/v2'
-import { getBotTokenWithMode } from './database.js'
+
 import {
   getDataDir,
   getLockPort,
@@ -365,10 +365,6 @@ export async function initializeOpencodeForDirectory(
     externalDirectoryPermissions[`${originalRepo}/*`] = 'allow'
   }
 
-  // Get bot token for plugin to use Discord API
-  const botTokenFromDb = await getBotTokenWithMode()
-  const kimakiBotToken = process.env.KIMAKI_BOT_TOKEN || botTokenFromDb?.token
-
   const serveArgs = ['serve', '--port', port.toString()]
   if (store.getState().verboseOpencodeServer) {
     serveArgs.push('--print-logs', '--log-level', 'DEBUG')
@@ -428,8 +424,6 @@ export async function initializeOpencodeForDirectory(
         OPENCODE_PORT: port.toString(),
         KIMAKI_DATA_DIR: getDataDir(),
         KIMAKI_LOCK_PORT: getLockPort().toString(),
-        ...(kimakiBotToken && { KIMAKI_BOT_TOKEN: kimakiBotToken }),
-
         ...(getHranaUrl() && { KIMAKI_DB_URL: getHranaUrl()! }),
         ...(process.env.KIMAKI_SENTRY_DSN && {
           KIMAKI_SENTRY_DSN: process.env.KIMAKI_SENTRY_DSN,

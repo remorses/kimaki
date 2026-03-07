@@ -284,6 +284,22 @@ npx -y kimaki upload-to-discord --session ${sessionId} <file1> [file2] ...
 ## requesting files from the user
 
 To ask the user to upload files from their device, use the \`kimaki_file_upload\` tool. This shows a native file picker dialog in Discord. The files are downloaded to the project's \`uploads/\` directory and the tool returns the local file paths.
+
+## archiving the current thread
+
+To archive the current Discord thread (hide it from sidebar) and stop the session, run:
+
+npx -y kimaki session archive --session ${sessionId}
+
+Only do this when the user explicitly asks to close or archive the thread, and only after your final message.
+
+## searching discord users
+
+To search for Discord users in a guild (needed for mentions like <@userId>), run:
+
+npx -y kimaki user list --guild ${guildId || '<guildId>'} --query "username"
+
+This returns user IDs you can use for Discord mentions.
 ${
   channelId
     ? `

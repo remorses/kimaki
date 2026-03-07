@@ -3535,6 +3535,71 @@ cli
   })
 
 cli
+  .command(
+    'user list',
+    'Search for Discord users in a guild/server. Returns user IDs for mentions.',
+  )
+  .option('-g, --guild <guildId>', 'Discord guild/server ID (required)')
+  .option('-q, --query [query]', 'Search query to filter users by name')
+  .action(async (options: { guild?: string; query?: string }) => {
+    try {
+      if (!options.guild) {
+        cliLogger.error('Guild ID is required. Use --guild <guildId>')
+        process.exit(EXIT_NO_RESTART)
+      }
+      const guildId = String(options.guild)
+
+      await initDatabase()
+      const { token: botToken } = await resolveBotCredentials()
+      const rest = createDiscordRest(botToken)
+
+      type GuildMember = {
+        user: { id: string; username: string; global_name?: string }
+        nick?: string
+      }
+
+      const members: GuildMember[] = await (async () => {
+        if (options.query) {
+          return (await rest.get(Routes.guildMembersSearch(guildId), {
+            query: new URLSearchParams({ query: options.query, limit: '20' }),
+          })) as GuildMember[]
+        }
+        return (await rest.get(Routes.guildMembers(guildId), {
+          query: new URLSearchParams({ limit: '20' }),
+        })) as GuildMember[]
+      })()
+
+      if (members.length === 0) {
+        const msg = options.query
+          ? `No users found matching "${options.query}"`
+          : 'No users found in guild'
+        cliLogger.log(msg)
+        process.exit(0)
+      }
+
+      const userList = members
+        .map((m) => {
+          const displayName = m.nick || m.user.global_name || m.user.username
+          return `- ${displayName} (ID: ${m.user.id}) - mention: <@${m.user.id}>`
+        })
+        .join('\n')
+
+      const header = options.query
+        ? `Found ${members.length} users matching "${options.query}":`
+        : `Found ${members.length} users:`
+
+      console.log(`${header}\n${userList}`)
+      process.exit(0)
+    } catch (error) {
+      cliLogger.error(
+        'Error:',
+        error instanceof Error ? error.message : String(error),
+      )
+      process.exit(EXIT_NO_RESTART)
+    }
+  })
+
+cli
   .command('tunnel', 'Expose a local port via tunnel')
   .option('-p, --port <port>', 'Local port to expose (required)')
   .option(
@@ -4072,17 +4137,35 @@ cli
 
 cli
   .command(
-    'session archive <threadId>',
+    'session archive [threadId]',
     'Archive a Discord thread and stop its mapped OpenCode session',
   )
-  .action(async (threadId: string) => {
+  .option('--session <sessionId>', 'Resolve thread from an OpenCode session ID')
+  .action(async (threadIdArg: string | undefined, options: { session?: string }) => {
     try {
       await initDatabase()
+
+      // Resolve threadId from --session or positional arg
+      const resolvedThreadId = await (async (): Promise<string> => {
+        if (threadIdArg) {
+          return threadIdArg
+        }
+        if (options.session) {
+          const id = await getThreadIdBySessionId(options.session)
+          if (!id) {
+            cliLogger.error(`No Discord thread found for session: ${options.session}`)
+            process.exit(EXIT_NO_RESTART)
+          }
+          return id
+        }
+        cliLogger.error('Provide a thread ID or --session <sessionId>')
+        process.exit(EXIT_NO_RESTART)
+      })()
 
       const { token: botToken } = await resolveBotCredentials()
 
       const rest = createDiscordRest(botToken)
-      const threadData = (await rest.get(Routes.channel(threadId))) as {
+      const threadData = (await rest.get(Routes.channel(resolvedThreadId))) as {
         id: string
         type: number
         name?: string
@@ -4090,11 +4173,11 @@ cli
       }
 
       if (!isThreadChannelType(threadData.type)) {
-        cliLogger.error(`Channel is not a thread: ${threadId}`)
+        cliLogger.error(`Channel is not a thread: ${resolvedThreadId}`)
         process.exit(EXIT_NO_RESTART)
       }
 
-      const sessionId = await getThreadSession(threadId)
+      const sessionId = options.session || await getThreadSession(resolvedThreadId)
       let client: OpencodeClient | null = null
       if (sessionId && threadData.parent_id) {
         const channelConfig = await getChannelDirectory(threadData.parent_id)
@@ -4116,21 +4199,21 @@ cli
         }
       } else {
         cliLogger.warn(
-          `No mapped OpenCode session found for thread ${threadId}`,
+          `No mapped OpenCode session found for thread ${resolvedThreadId}`,
         )
       }
 
       await archiveThread({
         rest,
-        threadId,
+        threadId: resolvedThreadId,
         parentChannelId: threadData.parent_id,
         sessionId,
         client,
       })
 
-      const threadLabel = threadData.name || threadId
+      const threadLabel = threadData.name || resolvedThreadId
       note(
-        `Archived thread: ${threadLabel}\nThread ID: ${threadId}`,
+        `Archived thread: ${threadLabel}\nThread ID: ${resolvedThreadId}`,
         '✅ Archived',
       )
       process.exit(0)

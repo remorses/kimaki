@@ -1,6 +1,9 @@
 // OpenCode plugin for Kimaki Discord bot.
-// Provides tools for Discord integration like listing users for mentions.
-// Also injects synthetic message parts for branch changes and idle-time awareness.
+// Provides IPC-based tools (file upload, action buttons) and injects synthetic
+// message parts for branch changes and idle-time awareness.
+// Discord REST tools (user listing, thread archiving) were moved to CLI
+// commands (kimaki user list, kimaki session archive) so the plugin no
+// longer needs a Discord bot token or REST client.
 import type { Plugin } from '@opencode-ai/plugin'
 import type { ToolContext } from '@opencode-ai/plugin/tool'
 import crypto from 'node:crypto'
@@ -28,13 +31,9 @@ function tool<Args extends z.ZodRawShape>(input: {
 }) {
   return input
 }
-import { createOpencodeClient } from '@opencode-ai/sdk/v2'
-import { Routes } from 'discord.js'
-import { createDiscordRest } from './discord-urls.js'
 import * as errore from 'errore'
 import { getPrisma, createIpcRequest, getIpcRequestById } from './database.js'
 import { setDataDir } from './config.js'
-import { archiveThread, reactToThread } from './discord-utils.js'
 import {
   createLogger,
   formatErrorWithStack,
@@ -43,15 +42,6 @@ import {
 } from './logger.js'
 import { initSentry, notifyError } from './sentry.js'
 import { execAsync } from './worktrees.js'
-
-// Regex to match emoji characters (covers most common emojis)
-// Includes: emoji presentation sequences, skin tone modifiers, ZWJ sequences, regional indicators
-const EMOJI_REGEX =
-  /^(?:\p{Emoji_Presentation}|\p{Emoji}\uFE0F|\p{Regional_Indicator}{2}|\p{Emoji_Modifier_Base}\p{Emoji_Modifier}?|[\u{1F3FB}-\u{1F3FF}]|(?:\p{Emoji}(?:\u{200D}\p{Emoji})+))$/u
-
-function isEmoji(str: string): boolean {
-  return EMOJI_REGEX.test(str)
-}
 
 const logger = createLogger(LogPrefix.OPENCODE)
 
@@ -135,25 +125,12 @@ const kimakiPlugin: Plugin = async ({ directory }) => {
   // Initialize Sentry in the plugin process (runs inside OpenCode server, not bot)
   initSentry()
 
-  const botToken = process.env.KIMAKI_BOT_TOKEN
   const dataDir = process.env.KIMAKI_DATA_DIR
   if (dataDir) {
     setDataDir(dataDir)
     // Append to the same log file the bot process created (no truncation)
     setLogFilePath(dataDir)
   }
-  if (!botToken) {
-    // No token available, skip Discord tools
-    return {}
-  }
-
-  const rest = createDiscordRest(botToken)
-  const port = process.env.OPENCODE_PORT
-  const client = port
-    ? createOpencodeClient({
-        baseUrl: `http://127.0.0.1:${port}`,
-      })
-    : null
 
   // Per-session state for synthetic part injection
   const sessionGitStates = new Map<string, GitState>()
@@ -163,137 +140,6 @@ const kimakiPlugin: Plugin = async ({ directory }) => {
 
   return {
     tool: {
-      kimaki_list_discord_users: tool({
-        description:
-          'Search for Discord users in a guild/server. Returns user IDs needed for mentions (<@userId>). Use the guildId from the system message.',
-        args: {
-          guildId: z.string().describe('Discord guild/server ID'),
-          query: z
-            .string()
-            .optional()
-            .describe(
-              'Search query to filter users by name (optional, returns first 20 if not provided)',
-            ),
-        },
-        async execute({ guildId, query }) {
-          type GuildMember = {
-            user: { id: string; username: string; global_name?: string }
-            nick?: string
-          }
-
-          const members: GuildMember[] = await (async () => {
-            if (query) {
-              return (await rest.get(Routes.guildMembersSearch(guildId), {
-                query: new URLSearchParams({ query, limit: '20' }),
-              })) as GuildMember[]
-            }
-            // No query, list first 20 members
-            return (await rest.get(Routes.guildMembers(guildId), {
-              query: new URLSearchParams({ limit: '20' }),
-            })) as GuildMember[]
-          })()
-
-          if (members.length === 0) {
-            return query
-              ? `No users found matching "${query}"`
-              : 'No users found in guild'
-          }
-
-          const userList = members
-            .map((m) => {
-              const displayName =
-                m.nick || m.user.global_name || m.user.username
-              return `- ${displayName} (ID: ${m.user.id}) - mention: <@${m.user.id}>`
-            })
-            .join('\n')
-
-          const header = query
-            ? `Found ${members.length} users matching "${query}":`
-            : `Found ${members.length} users:`
-
-          return `${header}\n${userList}`
-        },
-      }),
-      kimaki_mark_thread: tool({
-        description:
-          'Mark the current Discord thread with emoji reactions and update the session title. Only pass emoji characters (e.g., "🚀", "🐛", "📦"). Do NOT use ✅ as it is reserved for "session completed" indicator. This lets users create custom tagging systems visible in both Discord and OpenCode.',
-        args: {
-          emojis: z
-            .array(z.string())
-            .describe(
-              'Array of emoji characters to add as reactions and prepend to session title. Only emojis allowed, no text.',
-            ),
-        },
-        async execute({ emojis }, context) {
-          if (!emojis || emojis.length === 0) {
-            return 'No emojis provided'
-          }
-
-          // Validate all inputs are emojis
-          const invalidEmojis = emojis.filter((e) => {
-            return !isEmoji(e)
-          })
-          if (invalidEmojis.length > 0) {
-            throw new Error(
-              `Invalid emoji characters: ${invalidEmojis.join(', ')}. Only emoji characters are allowed.`,
-            )
-          }
-
-          const prisma = await getPrisma()
-          const row = await prisma.thread_sessions.findFirst({
-            where: { session_id: context.sessionID },
-            select: { thread_id: true },
-          })
-
-          if (!row?.thread_id) {
-            return 'Could not find thread for current session'
-          }
-
-          // Add reactions to thread starter message (reactToThread handles errors internally)
-          const addedEmojis: string[] = []
-          for (const emoji of emojis) {
-            await reactToThread({ rest, threadId: row.thread_id, emoji })
-            addedEmojis.push(emoji)
-          }
-
-          // Update session title with emoji prefix
-          if (client && addedEmojis.length > 0) {
-            const updateResult = await errore.tryAsync({
-              try: async () => {
-                const sessionResponse = await client.session.get({
-                  sessionID: context.sessionID,
-                })
-                if (sessionResponse.data) {
-                  const currentTitle = sessionResponse.data.title || ''
-                  const emojiPrefix = addedEmojis.join('')
-                  // Avoid duplicating emojis if they're already at the start
-                  const newTitle = currentTitle.startsWith(emojiPrefix)
-                    ? currentTitle
-                    : `${emojiPrefix} ${currentTitle}`.trim()
-                  await client.session.update({
-                    sessionID: context.sessionID,
-                    title: newTitle,
-                  })
-                }
-              },
-              catch: (error) => {
-                return new Error('Failed to update session title', {
-                  cause: error,
-                })
-              },
-            })
-            if (updateResult instanceof Error) {
-              logger.warn(
-                `[kimaki_mark_thread] ${formatErrorWithStack(updateResult)}`,
-              )
-            }
-          }
-
-          return addedEmojis.length > 0
-            ? `Marked thread with: ${addedEmojis.join(' ')}`
-            : 'Failed to add any emoji reactions'
-        },
-      }),
       kimaki_file_upload: tool({
         description:
           'Prompt the Discord user to upload files using a native file picker modal. ' +
@@ -455,32 +301,6 @@ const kimakiPlugin: Plugin = async ({ directory }) => {
           }
 
           return 'Action button request timed out'
-        },
-      }),
-      kimaki_archive_thread: tool({
-        description:
-          'Archive the current Discord thread to hide it from the Discord left sidebar. Only call this when the user explicitly asks to close or archive the thread and only after your final message contains no new information the user needs to read (for example, after confirming a git push). If the user asks to set a reminder or scheduled task and it is successfully created, archive the thread after sending the final confirmation. If you archive too early, the user may miss that message notification in Discord. This tool also aborts the current session, so it should ALWAYS be called as the last tool in your response.',
-        args: {},
-        async execute(_args, context) {
-          const prisma = await getPrisma()
-          const row = await prisma.thread_sessions.findFirst({
-            where: { session_id: context.sessionID },
-            select: { thread_id: true },
-          })
-
-          if (!row?.thread_id) {
-            return 'Could not find thread for current session'
-          }
-
-          await archiveThread({
-            rest,
-            threadId: row.thread_id,
-            sessionId: context.sessionID,
-            client,
-            archiveDelay: 10_000,
-          })
-
-          return 'Thread archived and session stopped'
         },
       }),
     },
