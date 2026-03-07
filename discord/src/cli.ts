@@ -184,24 +184,27 @@ async function resolveBotCredentials({ appIdOverride }: { appIdOverride?: string
   token: string
   appId: string | undefined
 }> {
-  const envToken = process.env.KIMAKI_BOT_TOKEN
-  if (envToken) {
-    // Prefer token-derived appId over stale DB values when using env token,
-    // since the DB may have credentials from a different bot.
-    const appId = appIdOverride || appIdFromToken(envToken)
-    return { token: envToken, appId }
-  }
-
+  // DB first: getBotTokenWithMode() sets store.discordBaseUrl which is
+  // required in gateway mode so REST calls route through the proxy.
+  // Without this, inherited KIMAKI_BOT_TOKEN (a gateway credential like
+  // clientId:clientSecret) would be sent directly to discord.com → 401.
   const botRow = await getBotTokenWithMode().catch((e: unknown) => {
     cliLogger.error('Database error:', e instanceof Error ? e.message : String(e))
     return null
   })
-  if (!botRow) {
-    cliLogger.error('No bot token found. Set KIMAKI_BOT_TOKEN env var or run `kimaki` first to set up.')
-    process.exit(EXIT_NO_RESTART)
+  if (botRow) {
+    return { token: botRow.token, appId: appIdOverride || botRow.appId }
   }
 
-  return { token: botRow.token, appId: appIdOverride || botRow.appId }
+  // Fall back to env var for CI/headless deployments with no database
+  const envToken = process.env.KIMAKI_BOT_TOKEN
+  if (envToken) {
+    const appId = appIdOverride || appIdFromToken(envToken)
+    return { token: envToken, appId }
+  }
+
+  cliLogger.error('No bot token found. Set KIMAKI_BOT_TOKEN env var or run `kimaki` first to set up.')
+  process.exit(EXIT_NO_RESTART)
 }
 
 function isThreadChannelType(type: number): boolean {
