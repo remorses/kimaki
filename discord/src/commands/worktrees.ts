@@ -137,6 +137,7 @@ export async function handleWorktreesCommand({
   const prisma = await getPrisma()
   const worktrees = await prisma.thread_worktrees.findMany({
     orderBy: { created_at: 'desc' },
+    take: 10,
   })
 
   if (worktrees.length === 0) {
