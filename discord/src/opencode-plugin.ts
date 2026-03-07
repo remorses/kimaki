@@ -312,16 +312,18 @@ const kimakiPlugin: Plugin = async ({ directory }) => {
       const hookResult = await errore.tryAsync({
         try: async () => {
           const now = Date.now()
-          const first = output.parts[0]
-          if (!first) {
+          const first = output.parts.find((part) => {
+            if (part.type !== 'text') {
+              return true
+            }
+            return part.synthetic !== true
+          })
+          if (!first || first.type !== 'text' || first.text.trim().length === 0) {
             return
           }
 
           const { sessionID } = input
-          const messageID =
-            typeof first === 'object' && first !== null && 'messageID' in first
-              ? first.messageID
-              : ''
+          const messageID = first.messageID
 
           // -- Branch / detached HEAD detection --
           // Injects context when git state first appears or changes mid-session.
