@@ -1018,6 +1018,11 @@ async function registerCommands({
       )
       .setDMPermission(false)
       .toJSON(),
+    new SlashCommandBuilder()
+      .setName('mcp')
+      .setDescription('List and manage MCP servers for this project')
+      .setDMPermission(false)
+      .toJSON(),
   ]
 
   // Add user-defined commands with source-based suffixes (-cmd / -skill)

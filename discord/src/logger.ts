@@ -31,6 +31,7 @@ export const LogPrefix = {
   IPC: 'IPC',
   LOGIN: 'LOGIN',
   MARKDOWN: 'MARKDOWN',
+  MCP: 'MCP',
   MODEL: 'MODEL',
   OPENAI: 'OPENAI',
   OPENCODE: 'OPENCODE',

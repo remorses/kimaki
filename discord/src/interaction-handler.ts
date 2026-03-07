@@ -83,6 +83,7 @@ import { handleRunCommand } from './commands/run-command.js'
 import { handleContextUsageCommand } from './commands/context-usage.js'
 import { handleSessionIdCommand } from './commands/session-id.js'
 import { handleUpgradeAndRestartCommand } from './commands/upgrade.js'
+import { handleMcpCommand, handleMcpSelectMenu } from './commands/mcp.js'
 import { handleModelVariantSelectMenu } from './commands/model.js'
 import { hasKimakiBotPermission } from './discord-utils.js'
 import { createLogger, LogPrefix } from './logger.js'
@@ -307,6 +308,10 @@ export function registerInteractionHandler({
                 appId,
               })
               return
+
+            case 'mcp':
+              await handleMcpCommand({ command: interaction, appId })
+              return
           }
 
           // Handle quick agent commands (ending with -agent suffix, but not the base /agent command)
@@ -414,6 +419,11 @@ export function registerInteractionHandler({
 
           if (customId.startsWith('ask_question:')) {
             await handleAskQuestionSelectMenu(interaction)
+            return
+          }
+
+          if (customId.startsWith('mcp_toggle:')) {
+            await handleMcpSelectMenu(interaction)
             return
           }
 
