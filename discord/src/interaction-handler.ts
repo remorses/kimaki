@@ -323,10 +323,11 @@ export function registerInteractionHandler({
             return
           }
 
-          // Handle user-defined commands (ending with -cmd or -skill suffix)
+          // Handle user-defined commands (ending with -cmd, -skill, or -mcp-prompt suffix)
           if (
             interaction.commandName.endsWith('-cmd') ||
-            interaction.commandName.endsWith('-skill')
+            interaction.commandName.endsWith('-skill') ||
+            interaction.commandName.endsWith('-mcp-prompt')
           ) {
             await handleUserCommand({ command: interaction, appId })
             return

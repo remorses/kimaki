@@ -28,7 +28,7 @@ export const handleUserCommand: CommandHandler = async ({
   const registered = store.getState().registeredUserCommands.find(
     (c) => c.discordCommandName === discordCommandName,
   )
-  const fallbackBase = discordCommandName.replace(/-(cmd|skill)$/, '')
+  const fallbackBase = discordCommandName.replace(/-(cmd|skill|mcp-prompt)$/, '')
   const commandName = registered?.name || fallbackBase
   const args = command.options.getString('arguments') || ''
 

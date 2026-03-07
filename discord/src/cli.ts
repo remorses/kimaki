@@ -615,9 +615,12 @@ const SKIP_USER_COMMANDS = ['init']
 
 function getDiscordCommandSuffix(
   command: OpencodeCommand,
-): '-cmd' | '-skill' {
+): '-cmd' | '-skill' | '-mcp-prompt' {
   if (command.source === 'skill') {
     return '-skill'
+  }
+  if (command.source === 'mcp') {
+    return '-mcp-prompt'
   }
   return '-cmd'
 }
