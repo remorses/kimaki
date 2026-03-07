@@ -36,10 +36,10 @@ import { setDataDir } from './config.js'
 import type { VerbosityLevel } from './database.js'
 import { startDiscordBot } from './discord-bot.js'
 import {
-  cleanupOpencodeServers,
   cleanupTestSessions,
   waitForFooterMessage,
 } from './test-utils.js'
+import { stopOpencodeServer } from './opencode.js'
 import { createDiscordRest } from './discord-urls.js'
 import { store } from './store.js'
 
@@ -373,7 +373,7 @@ describeIf('gateway-proxy e2e', () => {
       proxyProcess.kill('SIGTERM')
     }
 
-    await cleanupOpencodeServers()
+    await stopOpencodeServer()
     await Promise.all([
       closeDatabase().catch(() => {}),
       stopHranaServer().catch(() => {}),

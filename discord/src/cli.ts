@@ -968,14 +968,7 @@ async function registerCommands({
     new SlashCommandBuilder()
       .setName('restart-opencode-server')
       .setDescription(
-        'Restart the opencode server for this channel only (fixes state/auth/plugins)',
-      )
-      .setDMPermission(false)
-      .toJSON(),
-    new SlashCommandBuilder()
-      .setName('stop-opencode-server')
-      .setDescription(
-        'Stop the opencode server if inactivity is at least 60 minutes',
+        'Restart the shared opencode server (fixes state/auth/plugins)',
       )
       .setDMPermission(false)
       .toJSON(),

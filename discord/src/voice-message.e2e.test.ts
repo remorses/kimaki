@@ -30,10 +30,9 @@ import {
   setChannelVerbosity,
 } from './database.js'
 import { startHranaServer, stopHranaServer } from './hrana-server.js'
-import { initializeOpencodeForDirectory, getOpencodeClient } from './opencode.js'
+import { initializeOpencodeForDirectory, getOpencodeClient, stopOpencodeServer } from './opencode.js'
 import type { Part, Message } from '@opencode-ai/sdk/v2'
 import {
-  cleanupOpencodeServers,
   cleanupTestSessions,
   waitForFooterMessage,
   waitForBotMessageContaining,
@@ -416,7 +415,7 @@ e2eTest('voice message handling', () => {
       botClient.destroy()
     }
 
-    await cleanupOpencodeServers()
+    await stopOpencodeServer()
     await Promise.all([
       closeDatabase().catch(() => {
         return

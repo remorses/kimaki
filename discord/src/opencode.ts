@@ -1,6 +1,16 @@
-// OpenCode server process manager.
-// Spawns and maintains OpenCode API servers per project directory,
-// handles automatic restarts on failure, and provides typed SDK clients.
+// OpenCode single-server process manager.
+//
+// Architecture: ONE opencode serve process shared by all project directories.
+// Each SDK client uses the x-opencode-directory header to scope requests to a
+// specific project. The server lazily creates and caches an Instance per unique
+// directory path internally.
+//
+// Per-directory permissions (external_directory rules for worktrees, tmpdir,
+// etc.) are passed via session.create({ permission }) at session creation time,
+// NOT via the server config. The server config has permissive defaults
+// (edit: allow, bash: allow, external_directory: ask) and session-level rules
+// override them via opencode's findLast() evaluation (last matching rule wins).
+//
 // Uses errore for type-safe error handling.
 
 import { spawn, execFileSync, type ChildProcess } from 'node:child_process'
@@ -15,6 +25,7 @@ import {
   createOpencodeClient,
   type OpencodeClient,
   type Config as SdkConfig,
+  type PermissionRuleset,
 } from '@opencode-ai/sdk/v2'
 
 import {
@@ -153,8 +164,24 @@ function buildStartupTimeoutReason({
   })
 }
 
-type ServerInitOptions = { originalRepoDirectory?: string; channelId?: string }
+// ── Single server state ──────────────────────────────────────────
+// One opencode serve process, shared by all project directories.
+// Clients are created per-directory with the x-opencode-directory header.
 
+type SingleServer = {
+  process: ChildProcess
+  port: number
+  baseUrl: string
+}
+
+let singleServer: SingleServer | null = null
+let serverRetryCount = 0
+
+// Cached SDK clients per directory. Each client has a fixed
+// x-opencode-directory header pointing to its project directory.
+const clientCache = new Map<string, OpencodeClient>()
+
+// ── Resolve opencode binary ──────────────────────────────────────
 // Resolve the full path to the opencode binary so we can spawn without
 // shell: true. Using shell: true creates an intermediate sh process — when
 // cleanup sends SIGTERM it only kills the shell, leaving the actual opencode
@@ -215,21 +242,6 @@ function getSpawnCommandAndArgs(baseArgs: string[]): { command: string; args: st
   return { command: resolved, args: baseArgs }
 }
 
-const opencodeServers = new Map<
-  string,
-  {
-    process: ChildProcess
-    client: OpencodeClient
-    port: number
-    /** Original options used to spawn this server, reused on auto-restart */
-    initOptions?: ServerInitOptions
-    /** Timestamp (ms) when the server last had active runtimes, used by idle sweep */
-    lastActivityMs: number
-  }
->()
-
-const serverRetryCount = new Map<string, number>()
-
 async function getOpenPort(): Promise<number> {
   return new Promise((resolve, reject) => {
     const server = net.createServer()
@@ -287,83 +299,34 @@ async function waitForServer({
   })
 }
 
-/**
- * Initialize OpenCode server for a directory.
- * @param directory - The directory to run the server in (cwd)
- * @param options.originalRepoDirectory - For worktrees: the original repo directory to allow access to
- */
-export async function initializeOpencodeForDirectory(
-  directory: string,
-  options?: { originalRepoDirectory?: string; channelId?: string },
-): Promise<OpenCodeErrors | (() => OpencodeClient)> {
-  const existing = opencodeServers.get(directory)
-  if (existing && !existing.process.killed) {
-    existing.lastActivityMs = Date.now()
-    opencodeLogger.log(
-      `Reusing existing server on port ${existing.port} for directory: ${directory}`,
-    )
-    return () => {
-      const entry = opencodeServers.get(directory)
-      if (!entry?.client) {
-        throw new ServerNotReadyError({ directory })
-      }
-      return entry.client
-    }
+// ── Single server lifecycle ──────────────────────────────────────
+// The server is started lazily on first initializeOpencodeForDirectory() call.
+// It uses permissive defaults (edit: allow, bash: allow, external_directory: ask).
+// Per-directory permissions are applied at session creation time instead.
+
+// In-flight promise to prevent concurrent startups from racing
+let startingServer: Promise<ServerStartError | SingleServer> | null = null
+
+async function ensureSingleServer(): Promise<ServerStartError | SingleServer> {
+  if (singleServer && !singleServer.process.killed) {
+    return singleServer
   }
 
-  // Verify directory exists and is accessible before spawning
-  const accessCheck = errore.tryFn({
-    try: () => {
-      fs.accessSync(directory, fs.constants.R_OK | fs.constants.X_OK)
-    },
-    catch: () => new DirectoryNotAccessibleError({ directory }),
-  })
-  if (accessCheck instanceof Error) {
-    return accessCheck
+  // Deduplicate concurrent startup attempts
+  if (startingServer) {
+    return startingServer
   }
 
+  startingServer = startSingleServer()
+  try {
+    return await startingServer
+  } finally {
+    startingServer = null
+  }
+}
+
+async function startSingleServer(): Promise<ServerStartError | SingleServer> {
   const port = await getOpenPort()
-
-  const opencodeCommand = resolveOpencodeCommand()
-
-  // Normalize path separators for cross-platform compatibility (Windows uses backslashes)
-  const tmpdir = os.tmpdir().replaceAll('\\', '/')
-  const originalRepo = options?.originalRepoDirectory?.replaceAll('\\', '/')
-  const normalizedDirectory = directory.replaceAll('\\', '/')
-
-  // Build external_directory permissions, optionally including original repo for worktrees.
-  const externalDirectoryPermissions: Record<string, PermissionAction> = {
-    '*': 'ask',
-    '/tmp': 'allow',
-    '/tmp/*': 'allow',
-    '/private/tmp': 'allow',
-    '/private/tmp/*': 'allow',
-    [tmpdir]: 'allow',
-    [`${tmpdir}/*`]: 'allow',
-    [normalizedDirectory]: 'allow',
-    [`${normalizedDirectory}/*`]: 'allow',
-  }
-  // Allow ~/.config/opencode so the agent doesn't get permission prompts when
-  // it tries to read the global AGENTS.md or opencode config (the path is
-  // visible in the system prompt, so models sometimes try to read it).
-  const opencodeConfigDir = path
-    .join(os.homedir(), '.config', 'opencode')
-    .replaceAll('\\', '/')
-  externalDirectoryPermissions[opencodeConfigDir] = 'allow'
-  externalDirectoryPermissions[`${opencodeConfigDir}/*`] = 'allow'
-
-  // Allow ~/.kimaki so the agent can access kimaki data dir (logs, db, etc.)
-  // without permission prompts.
-  const kimakiDataDir = path
-    .join(os.homedir(), '.kimaki')
-    .replaceAll('\\', '/')
-  externalDirectoryPermissions[kimakiDataDir] = 'allow'
-  externalDirectoryPermissions[`${kimakiDataDir}/*`] = 'allow'
-
-  if (originalRepo) {
-    externalDirectoryPermissions[originalRepo] = 'allow'
-    externalDirectoryPermissions[`${originalRepo}/*`] = 'allow'
-  }
 
   const serveArgs = ['serve', '--port', port.toString()]
   if (store.getState().verboseOpencodeServer) {
@@ -372,18 +335,17 @@ export async function initializeOpencodeForDirectory(
 
   const { command: spawnCommand, args: spawnArgs } = getSpawnCommandAndArgs(serveArgs)
 
+  // Server config uses permissive defaults. Per-directory external_directory
+  // permissions are set at session creation time via session.create({ permission }).
   const serverProcess = spawn(
     spawnCommand,
     spawnArgs,
     {
       stdio: 'pipe',
       detached: false,
-      cwd: directory,
-      // No shell: true — the binary path is resolved upfront via
-      // resolveOpencodeCommand(), and Windows .cmd shims are handled via
-      // cmd.exe /c in getSpawnCommandAndArgs(). shell: true creates an
-      // intermediate sh process that eats SIGTERM on cleanup, leaving
-      // the real opencode process orphaned.
+      // No project-specific cwd — the server handles all directories via
+      // x-opencode-directory header. Use home dir as a neutral working dir.
+      cwd: os.homedir(),
       env: {
         ...process.env,
         OPENCODE_CONFIG_CONTENT: JSON.stringify({
@@ -394,7 +356,10 @@ export async function initializeOpencodeForDirectory(
           permission: {
             edit: 'allow',
             bash: 'allow',
-            external_directory: externalDirectoryPermissions,
+            // Permissive default — session-level rules override per directory.
+            // The server-level 'ask' is a safety net for directories that
+            // don't pass session permissions (shouldn't happen in practice).
+            external_directory: 'ask',
             webfetch: 'allow',
           },
           agent: {
@@ -413,7 +378,8 @@ export async function initializeOpencodeForDirectory(
                 webfetch: 'allow',
                 websearch: 'allow',
                 codesearch: 'allow',
-                external_directory: externalDirectoryPermissions,
+                // Same permissive default — session rules override at runtime
+                external_directory: 'ask',
               },
             },
           },
@@ -437,10 +403,9 @@ export async function initializeOpencodeForDirectory(
   const logBuffer: string[] = []
   const startupStderrTail: string[] = []
   let serverReady = false
-  const shortDir = path.basename(directory)
 
   logBuffer.push(
-    `Spawned opencode serve --port ${port} in ${directory} (pid: ${serverProcess.pid})`,
+    `Spawned opencode serve --port ${port} (pid: ${serverProcess.pid})`,
   )
 
   serverProcess.stdout?.on('data', (data) => {
@@ -453,7 +418,7 @@ export async function initializeOpencodeForDirectory(
       }
       if (store.getState().verboseOpencodeServer) {
         for (const line of lines) {
-          opencodeLogger.log(`[${shortDir}:${port}] ${line}`)
+          opencodeLogger.log(`[server:${port}] ${line}`)
         }
       }
     } catch (error) {
@@ -472,7 +437,7 @@ export async function initializeOpencodeForDirectory(
       }
       if (store.getState().verboseOpencodeServer) {
         for (const line of lines) {
-          opencodeLogger.error(`[${shortDir}:${port}] ${line}`)
+          opencodeLogger.error(`[server:${port}] ${line}`)
         }
       }
     } catch (error) {
@@ -486,43 +451,41 @@ export async function initializeOpencodeForDirectory(
 
   serverProcess.on('exit', (code, signal) => {
     opencodeLogger.log(
-      `Opencode server on ${directory} exited with code: ${code}, signal: ${signal}`,
+      `Opencode server exited with code: ${code}, signal: ${signal}`,
     )
-    // Capture init options before deleting the entry so auto-restart preserves
-    // worktree repo access.
-    const storedInitOptions = opencodeServers.get(directory)?.initOptions
-    opencodeServers.delete(directory)
+    singleServer = null
+    clientCache.clear()
+
     // Intentional kills (SIGTERM from cleanup/restart) should not trigger
     // auto-restart. Only unexpected crashes (non-zero exit without signal)
     // get retried.
     if (signal === 'SIGTERM') {
-      serverRetryCount.delete(directory)
+      serverRetryCount = 0
       return
     }
     if (code !== 0) {
-      const retryCount = serverRetryCount.get(directory) || 0
-      if (retryCount < 5) {
-        serverRetryCount.set(directory, retryCount + 1)
+      if (serverRetryCount < 5) {
+        serverRetryCount += 1
         opencodeLogger.log(
-          `Restarting server for directory: ${directory} (attempt ${retryCount + 1}/5)`,
+          `Restarting server (attempt ${serverRetryCount}/5)`,
         )
-        initializeOpencodeForDirectory(directory, storedInitOptions).then(
+        ensureSingleServer().then(
           (result) => {
             if (result instanceof Error) {
               opencodeLogger.error(`Failed to restart opencode server:`, result)
-              void notifyError(result, `OpenCode server restart failed for ${directory}`)
+              void notifyError(result, `OpenCode server restart failed`)
             }
           },
         )
       } else {
         const crashError = new Error(
-          `Server for ${directory} crashed too many times (5), not restarting`,
+          `Server crashed too many times (5), not restarting`,
         )
         opencodeLogger.error(crashError.message)
         void notifyError(crashError, `OpenCode server crash loop exhausted`)
       }
     } else {
-      serverRetryCount.delete(directory)
+      serverRetryCount = 0
     }
   })
 
@@ -532,7 +495,7 @@ export async function initializeOpencodeForDirectory(
   })
   if (waitResult instanceof Error) {
     // Dump buffered logs on failure
-    opencodeLogger.error(`Server failed to start for ${directory}:`)
+    opencodeLogger.error(`Server failed to start:`)
     for (const line of logBuffer) {
       opencodeLogger.error(`  ${line}`)
     }
@@ -545,11 +508,34 @@ export async function initializeOpencodeForDirectory(
   // errors and other startup output are visible in kimaki.log.
   if (store.getState().verboseOpencodeServer) {
     for (const line of logBuffer) {
-      opencodeLogger.log(`[${shortDir}:${port}:startup] ${line}`)
+      opencodeLogger.log(`[server:${port}:startup] ${line}`)
     }
   }
 
-  const baseUrl = `http://127.0.0.1:${port}`
+  const server: SingleServer = {
+    process: serverProcess,
+    port,
+    baseUrl: `http://127.0.0.1:${port}`,
+  }
+  singleServer = server
+  return server
+}
+
+// ── Client cache ─────────────────────────────────────────────────
+// One SDK client per directory, each with a fixed x-opencode-directory header.
+
+function getOrCreateClient({
+  baseUrl,
+  directory,
+}: {
+  baseUrl: string
+  directory: string
+}): OpencodeClient {
+  const cached = clientCache.get(directory)
+  if (cached) {
+    return cached
+  }
+
   const fetchWithTimeout = (request: Request) =>
     fetch(request, {
       // @ts-ignore
@@ -558,64 +544,166 @@ export async function initializeOpencodeForDirectory(
 
   const client = createOpencodeClient({
     baseUrl,
+    directory,
     fetch: fetchWithTimeout as typeof fetch,
   })
+  clientCache.set(directory, client)
+  return client
+}
 
-  opencodeServers.set(directory, {
-    process: serverProcess,
-    client,
-    port,
-    initOptions: options,
-    lastActivityMs: Date.now(),
+// ── Public API ───────────────────────────────────────────────────
+// Same signatures as before so callers don't need to change.
+
+/**
+ * Initialize OpenCode server for a directory.
+ * Starts the single shared server if not running, then returns a client
+ * factory scoped to the given directory via x-opencode-directory header.
+ *
+ * @param directory - The project directory to scope requests to
+ * @param options.originalRepoDirectory - For worktrees: the original repo directory
+ *   (no longer used for server-level permissions — use buildSessionPermissions
+ *   at session.create() time instead)
+ */
+export async function initializeOpencodeForDirectory(
+  directory: string,
+  _options?: { originalRepoDirectory?: string; channelId?: string },
+): Promise<OpenCodeErrors | (() => OpencodeClient)> {
+  // Verify directory exists and is accessible
+  const accessCheck = errore.tryFn({
+    try: () => {
+      fs.accessSync(directory, fs.constants.R_OK | fs.constants.X_OK)
+    },
+    catch: () => new DirectoryNotAccessibleError({ directory }),
   })
+  if (accessCheck instanceof Error) {
+    return accessCheck
+  }
+
+  const server = await ensureSingleServer()
+  if (server instanceof Error) {
+    return server
+  }
+
+  opencodeLogger.log(
+    `Using shared server on port ${server.port} for directory: ${directory}`,
+  )
 
   return () => {
-    const entry = opencodeServers.get(directory)
-    if (!entry?.client) {
+    if (!singleServer) {
       throw new ServerNotReadyError({ directory })
     }
-    return entry.client
+    return getOrCreateClient({
+      baseUrl: singleServer.baseUrl,
+      directory,
+    })
   }
 }
 
-export function getOpencodeServers() {
-  return opencodeServers
+/**
+ * Build per-session permission rules for external_directory access.
+ * These rules are passed to session.create({ permission }) and override
+ * the server-level defaults via opencode's findLast() evaluation.
+ *
+ * This replaces the old per-server OPENCODE_CONFIG_CONTENT external_directory
+ * permissions — now each session carries its own directory-scoped rules.
+ */
+export function buildSessionPermissions({
+  directory,
+  originalRepoDirectory,
+}: {
+  directory: string
+  originalRepoDirectory?: string
+}): PermissionRuleset {
+  // Normalize path separators for cross-platform compatibility (Windows uses backslashes)
+  const tmpdir = os.tmpdir().replaceAll('\\', '/')
+  const normalizedDirectory = directory.replaceAll('\\', '/')
+  const originalRepo = originalRepoDirectory?.replaceAll('\\', '/')
+
+  const rules: PermissionRuleset = [
+    // Base rule: ask for unknown external directories
+    { permission: 'external_directory', pattern: '*', action: 'ask' },
+    // Allow tmpdir access
+    { permission: 'external_directory', pattern: '/tmp', action: 'allow' },
+    { permission: 'external_directory', pattern: '/tmp/*', action: 'allow' },
+    { permission: 'external_directory', pattern: '/private/tmp', action: 'allow' },
+    { permission: 'external_directory', pattern: '/private/tmp/*', action: 'allow' },
+    { permission: 'external_directory', pattern: tmpdir, action: 'allow' },
+    { permission: 'external_directory', pattern: `${tmpdir}/*`, action: 'allow' },
+    // Allow the project directory itself
+    { permission: 'external_directory', pattern: normalizedDirectory, action: 'allow' },
+    { permission: 'external_directory', pattern: `${normalizedDirectory}/*`, action: 'allow' },
+  ]
+
+  // Allow ~/.config/opencode so the agent doesn't get permission prompts when
+  // it tries to read the global AGENTS.md or opencode config (the path is
+  // visible in the system prompt, so models sometimes try to read it).
+  const opencodeConfigDir = path
+    .join(os.homedir(), '.config', 'opencode')
+    .replaceAll('\\', '/')
+  rules.push(
+    { permission: 'external_directory', pattern: opencodeConfigDir, action: 'allow' },
+    { permission: 'external_directory', pattern: `${opencodeConfigDir}/*`, action: 'allow' },
+  )
+
+  // Allow ~/.kimaki so the agent can access kimaki data dir (logs, db, etc.)
+  // without permission prompts.
+  const kimakiDataDir = path
+    .join(os.homedir(), '.kimaki')
+    .replaceAll('\\', '/')
+  rules.push(
+    { permission: 'external_directory', pattern: kimakiDataDir, action: 'allow' },
+    { permission: 'external_directory', pattern: `${kimakiDataDir}/*`, action: 'allow' },
+  )
+
+  // For worktrees: allow access to the original repository directory
+  if (originalRepo) {
+    rules.push(
+      { permission: 'external_directory', pattern: originalRepo, action: 'allow' },
+      { permission: 'external_directory', pattern: `${originalRepo}/*`, action: 'allow' },
+    )
+  }
+
+  return rules
 }
 
-export function getOpencodeServerPort(directory: string): number | null {
-  const entry = opencodeServers.get(directory)
-  return entry?.port ?? null
+// ── Public helpers ───────────────────────────────────────────────
+// These helpers expose the single shared server and directory-scoped clients.
+
+export function getOpencodeServerPort(_directory?: string): number | null {
+  return singleServer?.port ?? null
 }
 
 export function getOpencodeClient(directory: string): OpencodeClient | null {
-  const entry = opencodeServers.get(directory)
-  return entry?.client ?? null
+  if (!singleServer) {
+    return null
+  }
+  return getOrCreateClient({
+    baseUrl: singleServer.baseUrl,
+    directory,
+  })
 }
 
-export async function stopOpencodeServer(
-  directory: string,
-): Promise<boolean> {
-  const existing = opencodeServers.get(directory)
-  if (!existing) {
+/**
+ * Stop the single opencode server.
+ * Used for process teardown, tests, and explicit restarts.
+ */
+export async function stopOpencodeServer(): Promise<boolean> {
+  if (!singleServer) {
     return false
   }
 
-  const idleSinceMs = Date.now() - existing.lastActivityMs
-  const idleMinutes = Math.floor(idleSinceMs / 60_000)
   opencodeLogger.log(
-    `Stopping opencode server for directory: ${directory} (pid: ${existing.process.pid}, idle: ${idleMinutes}m)`,
+    `Stopping opencode server (pid: ${singleServer.process.pid}, port: ${singleServer.port})`,
   )
-  if (!existing.process.killed) {
+  if (!singleServer.process.killed) {
     const killResult = errore.try({
       try: () => {
-        existing.process.kill('SIGTERM')
+        singleServer!.process.kill('SIGTERM')
       },
       catch: (error) => {
         return new Error(
-          `Failed to send SIGTERM to opencode server for ${directory}`,
-          {
-            cause: error,
-          },
+          `Failed to send SIGTERM to opencode server`,
+          { cause: error },
         )
       },
     })
@@ -624,84 +712,30 @@ export async function stopOpencodeServer(
     }
   }
 
-  opencodeServers.delete(directory)
-  serverRetryCount.delete(directory)
+  singleServer = null
+  clientCache.clear()
+  serverRetryCount = 0
   await new Promise((resolve) => {
     setTimeout(resolve, 1000)
   })
   return true
 }
 
-/** Default idle threshold before an opencode server with no runtimes is stopped */
-export const DEFAULT_SERVER_IDLE_MS = 2 * 60 * 60 * 1000
-
-export async function stopOpencodeServersWithoutRuntimeDirectories({
-  activeDirectories,
-  nowMs = Date.now(),
-  serverIdleMs = DEFAULT_SERVER_IDLE_MS,
-}: {
-  activeDirectories: ReadonlyArray<string>
-  nowMs?: number
-  serverIdleMs?: number
-}): Promise<string[]> {
-  const activeDirectorySet = new Set(activeDirectories)
-
-  // Update lastActivityMs for servers that still have active runtimes
-  for (const directory of activeDirectorySet) {
-    const entry = opencodeServers.get(directory)
-    if (entry) {
-      entry.lastActivityMs = nowMs
-    }
-  }
-
-  const directoriesToStop = [...opencodeServers.entries()]
-    .filter(([directory, entry]) => {
-      if (activeDirectorySet.has(directory)) {
-        return false
-      }
-      // Only stop if idle for longer than the threshold
-      const idleForMs = nowMs - entry.lastActivityMs
-      return idleForMs >= serverIdleMs
-    })
-    .map(([directory]) => {
-      return directory
-    })
-
-  const stoppedDirectories: string[] = []
-  for (const directory of directoriesToStop) {
-    const stopped = await stopOpencodeServer(directory)
-    if (!stopped) {
-      continue
-    }
-    stoppedDirectories.push(directory)
-  }
-  return stoppedDirectories
-}
-
 /**
- * Restart the opencode server for a directory.
- * Kills the existing process and reinitializes a new one.
+ * Restart the single opencode server.
+ * Kills the existing process and starts a new one.
+ * All directory clients are invalidated and recreated on next use.
  * Used for resolving opencode state issues, refreshing auth, plugins, etc.
  */
-export async function restartOpencodeServer(
-  directory: string,
-): Promise<OpenCodeErrors | true> {
-  const existing = opencodeServers.get(directory)
-  // Preserve init options (originalRepoDirectory) so the restarted
-  // server retains worktree access.
-  const storedInitOptions = existing?.initOptions
-
-  if (existing) {
-    await stopOpencodeServer(directory)
+export async function restartOpencodeServer(): Promise<OpenCodeErrors | true> {
+  if (singleServer) {
+    await stopOpencodeServer()
   }
 
   // Reset retry count for the fresh start
-  serverRetryCount.delete(directory)
+  serverRetryCount = 0
 
-  const result = await initializeOpencodeForDirectory(
-    directory,
-    storedInitOptions,
-  )
+  const result = await ensureSingleServer()
   if (result instanceof Error) {
     return result
   }

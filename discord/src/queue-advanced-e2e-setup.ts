@@ -25,9 +25,8 @@ import {
   type VerbosityLevel,
 } from './database.js'
 import { startHranaServer, stopHranaServer } from './hrana-server.js'
-import { initializeOpencodeForDirectory } from './opencode.js'
+import { initializeOpencodeForDirectory, stopOpencodeServer } from './opencode.js'
 import {
-  cleanupOpencodeServers,
   cleanupTestSessions,
 } from './test-utils.js'
 
@@ -436,7 +435,7 @@ export function setupQueueAdvancedSuite({
       ctx.botClient.destroy()
     }
 
-    await cleanupOpencodeServers()
+    await stopOpencodeServer()
     await Promise.all([
       closeDatabase().catch(() => {}),
       stopHranaServer().catch(() => {}),

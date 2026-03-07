@@ -42,9 +42,8 @@ import {
 } from './database.js'
 import { getPrisma } from './db.js'
 import { startHranaServer, stopHranaServer } from './hrana-server.js'
-import { initializeOpencodeForDirectory } from './opencode.js'
+import { initializeOpencodeForDirectory, stopOpencodeServer } from './opencode.js'
 import {
-  cleanupOpencodeServers,
   cleanupTestSessions,
   waitForBotMessageContaining,
   waitForFooterMessage,
@@ -349,7 +348,7 @@ describe('agent model resolution', () => {
     if (botClient) {
       botClient.destroy()
     }
-    await cleanupOpencodeServers()
+    await stopOpencodeServer()
     await Promise.all([
       closeDatabase().catch(() => {
         return

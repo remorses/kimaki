@@ -1,13 +1,10 @@
-// Runtime/server inactivity sweeper.
-// Periodically disposes thread runtimes that stayed idle past a timeout and
-// stops OpenCode servers that no longer have active runtimes.
+// Runtime inactivity sweeper.
+// Periodically disposes thread runtimes that stayed idle past a timeout.
 
 import { createLogger, LogPrefix } from './logger.js'
 import {
   disposeInactiveRuntimes,
-  getActiveRuntimeProjectDirectories,
 } from './session-handler/thread-session-runtime.js'
-import { stopOpencodeServersWithoutRuntimeDirectories } from './opencode.js'
 
 const logger = createLogger(LogPrefix.SESSION)
 
@@ -43,15 +40,6 @@ export function startRuntimeIdleSweeper({
         )
       }
 
-      const activeDirectories = getActiveRuntimeProjectDirectories()
-      const stoppedDirectories = await stopOpencodeServersWithoutRuntimeDirectories({
-        activeDirectories,
-      })
-      if (stoppedDirectories.length > 0) {
-        logger.log(
-          `[IDLE SWEEP] Stopped ${stoppedDirectories.length} idle opencode server(s) with no active runtimes`,
-        )
-      }
     })()
 
     sweepPromise = currentSweepPromise

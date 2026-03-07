@@ -35,9 +35,8 @@ import {
   type VerbosityLevel,
 } from './database.js'
 import { startHranaServer, stopHranaServer } from './hrana-server.js'
-import { initializeOpencodeForDirectory } from './opencode.js'
+import { initializeOpencodeForDirectory, stopOpencodeServer } from './opencode.js'
 import {
-  cleanupOpencodeServers,
   cleanupTestSessions,
   waitForFooterMessage,
   waitForBotMessageContaining,
@@ -357,7 +356,7 @@ e2eTest('thread message queue ordering', () => {
       botClient.destroy()
     }
 
-    await cleanupOpencodeServers()
+    await stopOpencodeServer()
     await Promise.all([
       closeDatabase().catch(() => {
         return
@@ -386,7 +385,7 @@ e2eTest('thread message queue ordering', () => {
       // Reproduce cold-start path: clear in-memory server/client registry so
       // runtime startEventListener() runs once before initialize and exits with
       // "No OpenCode client". The first prompt must still show text parts.
-      await cleanupOpencodeServers()
+      await stopOpencodeServer()
 
       const prompt = 'Reply with exactly: cold-start-stream'
 

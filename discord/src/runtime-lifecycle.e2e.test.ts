@@ -30,9 +30,8 @@ import {
   type VerbosityLevel,
 } from './database.js'
 import { startHranaServer, stopHranaServer } from './hrana-server.js'
-import { initializeOpencodeForDirectory } from './opencode.js'
+import { initializeOpencodeForDirectory, stopOpencodeServer } from './opencode.js'
 import {
-  cleanupOpencodeServers,
   cleanupTestSessions,
   waitForBotMessageContaining,
   waitForBotReplyAfterUserMessage,
@@ -257,7 +256,7 @@ describe('runtime lifecycle', () => {
     if (botClient) {
       botClient.destroy()
     }
-    await cleanupOpencodeServers()
+    await stopOpencodeServer()
     await Promise.all([
       closeDatabase().catch(() => { return }),
       stopHranaServer().catch(() => { return }),

@@ -22,8 +22,9 @@ import {
   type VerbosityLevel,
 } from './database.js'
 import { startHranaServer, stopHranaServer } from './hrana-server.js'
-import { cleanupOpencodeServers, cleanupTestSessions } from './test-utils.js'
+import { cleanupTestSessions } from './test-utils.js'
 import { waitForBotMessageContaining, waitForBotReplyAfterUserMessage } from './test-utils.js'
+import { stopOpencodeServer } from './opencode.js'
 import { disposeRuntime, pendingPermissions } from './session-handler/thread-session-runtime.js'
 import { pendingActionButtonContexts } from './commands/action-buttons.js'
 import { pendingQuestionContexts } from './commands/ask-question.js'
@@ -407,7 +408,7 @@ describe('real event stream capture fixtures (cached provider)', () => {
       botClient.destroy()
     }
 
-    await cleanupOpencodeServers()
+    await stopOpencodeServer()
     await Promise.all([
       closeDatabase().catch(() => {
         return

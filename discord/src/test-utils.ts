@@ -11,27 +11,12 @@ import type { APIMessage } from 'discord.js'
 import type { DigitalDiscord } from 'discord-digital-twin/src'
 import {
   getOpencodeClient,
-  getOpencodeServers,
   initializeOpencodeForDirectory,
 } from './opencode.js'
 import {
   getThreadState,
   type ThreadRunState,
 } from './session-handler/thread-runtime-state.js'
-
-/**
- * Kill all in-memory opencode server processes and clear the registry.
- * Does NOT delete sessions from the opencode DB — call cleanupTestSessions for that.
- */
-export async function cleanupOpencodeServers() {
-  const servers = getOpencodeServers()
-  for (const [, server] of servers) {
-    if (!server.process.killed) {
-      server.process.kill('SIGTERM')
-    }
-  }
-  servers.clear()
-}
 
 /**
  * Delete all opencode sessions created during a test run.

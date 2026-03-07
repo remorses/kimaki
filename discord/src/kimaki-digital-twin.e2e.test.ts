@@ -17,7 +17,8 @@ import {
   setChannelDirectory,
 } from './database.js'
 import { startHranaServer, stopHranaServer } from './hrana-server.js'
-import { cleanupOpencodeServers, cleanupTestSessions } from './test-utils.js'
+import { cleanupTestSessions } from './test-utils.js'
+import { stopOpencodeServer } from './opencode.js'
 
 const geminiApiKey =
   process.env['GEMINI_API_KEY'] ||
@@ -191,7 +192,7 @@ e2eTest(
         botClient.destroy()
       }
 
-      await cleanupOpencodeServers()
+      await stopOpencodeServer()
       await Promise.all([
         closeDatabase().catch(() => {
           return

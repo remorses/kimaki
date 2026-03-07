@@ -16,7 +16,7 @@ import {
   cancelAllPendingIpcRequests,
 } from './database.js'
 import {
-  getOpencodeServers,
+  stopOpencodeServer,
 } from './opencode.js'
 import { formatWorktreeName } from './commands/worktree.js'
 import { WORKTREE_PREFIX } from './commands/merge-worktree.js'
@@ -1079,15 +1079,8 @@ export async function startDiscordBot({
         discordLogger.log(`All voice connections cleaned up`)
       }
 
-      for (const [dir, server] of getOpencodeServers()) {
-        if (!server.process.killed) {
-          voiceLogger.log(
-            `[SHUTDOWN] Stopping OpenCode server on port ${server.port} for ${dir}`,
-          )
-          server.process.kill('SIGTERM')
-        }
-      }
-      getOpencodeServers().clear()
+      voiceLogger.log('[SHUTDOWN] Stopping OpenCode server')
+      await stopOpencodeServer()
 
       discordLogger.log('Closing database...')
       await closeDatabase()

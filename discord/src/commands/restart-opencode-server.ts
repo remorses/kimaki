@@ -1,6 +1,8 @@
-// /restart-opencode-server command - Restart the opencode server for the current channel.
+// /restart-opencode-server command - Restart the single shared opencode server.
 // Used for resolving opencode state issues, internal bugs, refreshing auth state, plugins, etc.
-// Aborts all in-progress sessions in this channel before restarting to avoid orphaned requests.
+// Aborts in-progress sessions in this channel before restarting. Note: since there is one
+// shared server, this restart affects all projects. Sessions in other channels will reconnect
+// automatically via the event listener's backoff loop.
 
 import {
   ChannelType,
@@ -77,11 +79,9 @@ export async function handleRestartOpencodeServerCommand({
     channelId: parentChannelId || undefined,
   })
 
-  logger.log(
-    `[RESTART] Restarting opencode server for directory: ${projectDirectory}`,
-  )
+  logger.log(`[RESTART] Restarting shared opencode server`)
 
-  const result = await restartOpencodeServer(projectDirectory)
+  const result = await restartOpencodeServer()
 
   if (result instanceof Error) {
     logger.error('[RESTART] Failed:', result)
@@ -98,7 +98,5 @@ export async function handleRestartOpencodeServerCommand({
   await command.editReply({
     content: `Opencode server **restarted** successfully${abortMsg}`,
   })
-  logger.log(
-    `[RESTART] Opencode server restarted for directory: ${projectDirectory}`,
-  )
+  logger.log('[RESTART] Shared opencode server restarted')
 }

@@ -15,8 +15,8 @@ import {
 } from 'opencode-deterministic-provider'
 import { ShareMarkdown, getCompactSessionContext } from './markdown.js'
 import { setDataDir } from './config.js'
-import { initializeOpencodeForDirectory, getOpencodeClient } from './opencode.js'
-import { cleanupOpencodeServers, cleanupTestSessions } from './test-utils.js'
+import { initializeOpencodeForDirectory, getOpencodeClient, stopOpencodeServer } from './opencode.js'
+import { cleanupTestSessions } from './test-utils.js'
 
 const ROOT = path.resolve(process.cwd(), 'tmp', 'markdown-test')
 
@@ -153,7 +153,7 @@ afterAll(async () => {
       testStartTime,
     })
   }
-  await cleanupOpencodeServers()
+  await stopOpencodeServer()
   if (directories) {
     fs.rmSync(directories.dataDir, { recursive: true, force: true })
   }

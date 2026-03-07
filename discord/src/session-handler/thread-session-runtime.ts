@@ -23,6 +23,7 @@ import type { OpencodeClient } from '@opencode-ai/sdk/v2'
 import {
   getOpencodeClient,
   initializeOpencodeForDirectory,
+  buildSessionPermissions,
 } from '../opencode.js'
 import { isAbortError } from '../utils.js'
 import { createLogger, LogPrefix } from '../logger.js'
@@ -3312,9 +3313,18 @@ export class ThreadSessionRuntime {
     if (!session) {
       const sessionTitle =
         prompt.length > 80 ? prompt.slice(0, 77) + '...' : prompt.slice(0, 80)
+      // Pass per-session external_directory permissions so this session can
+      // access its own project directory (and worktree origin if applicable)
+      // without prompts. These override the server-level 'ask' default via
+      // opencode's findLast() rule evaluation.
+      const sessionPermissions = buildSessionPermissions({
+        directory: this.sdkDirectory,
+        originalRepoDirectory,
+      })
       const sessionResponse = await getClient().session.create({
         title: sessionTitle,
         directory: this.sdkDirectory,
+        permission: sessionPermissions,
       })
       session = sessionResponse.data
       createdNewSession = true
