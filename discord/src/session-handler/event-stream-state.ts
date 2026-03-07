@@ -100,8 +100,17 @@ export function isSessionBusy({
 
 // Called after idle event is pushed. Skips the current idle, looks for
 // session.error(MessageAbortedError) preceding it.
-// Event order on abort: session.error(MessageAbortedError) → session.idle
+// Expected event order on abort: session.error(MessageAbortedError) → session.idle
 // Event order on normal: step-finish → session.idle (no error between)
+//
+// IMPORTANT: when the interrupt plugin aborts at a step boundary, the
+// actual event order can be:
+//   step-finish → session.idle → (gap) → MessageAbortedError → session.idle
+// The first idle fires BEFORE the abort error propagates. This function
+// will return false for that first idle because the error hasn't arrived
+// yet. The caller (handleSessionIdle) must debounce the footer decision
+// by ~500ms so the abort error has time to land in the buffer before
+// this function is called.
 export function wasRecentlyAborted({
   events,
   sessionId,

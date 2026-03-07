@@ -494,8 +494,55 @@ describe('real-session-footer-suppressed-on-pre-idle-interrupt', () => {
   // Regression: this real stream has a delayed idle from the previous run after
   // a newer run already moved the session back to busy. We must not emit footer
   // for that first idle because its latest assistant message never finished.
-  test('first idle should not emit footer when a newer run started before idle was emitted', () => {
+   test('first idle should not emit footer when a newer run started before idle was emitted', () => {
     expect(wasRecentlyAborted({ events, sessionId, idleEventIndex: idleAt(idles, 0) })).toBe(false)
     expect(shouldEmitFooter({ events, sessionId, idleEventIndex: idleAt(idles, 0) })).toBe(false)
+  })
+})
+
+// Reproduces the abort-after-idle race condition from the interrupt plugin.
+// Event order: step-finish → idle → (gap) → MessageAbortedError → idle → busy
+// The first idle fires BEFORE the abort error propagates. wasRecentlyAborted
+// correctly returns false for that first idle (the error hasn't arrived yet).
+// The second idle (after the error) correctly sees the abort.
+// The fix is a 300ms debounce in handleSessionIdle so the abort error has
+// time to land before shouldEmitFooter is called.
+describe('session-abort-after-idle-race', () => {
+  const events = loadFixture('session-abort-after-idle-race.jsonl')
+  const sessionId = getSessionId(events)
+  const idles = findIdleIndices(events, sessionId)
+
+  test('has three idle events (pre-abort, post-abort, final)', () => {
+    expect(idles.length).toBe(3)
+  })
+
+  // First idle: arrives BEFORE the MessageAbortedError.
+  // wasRecentlyAborted returns false because the error hasn't been pushed yet.
+  // This is the bug that the 300ms debounce fixes at the runtime level.
+  test('first idle: wasRecentlyAborted is false (error not yet in buffer)', () => {
+    expect(wasRecentlyAborted({ events, sessionId, idleEventIndex: idleAt(idles, 0) })).toBe(false)
+  })
+
+  test('first idle: shouldEmitFooter is true (pure derivation sees no abort)', () => {
+    expect(shouldEmitFooter({ events, sessionId, idleEventIndex: idleAt(idles, 0) })).toBe(true)
+  })
+
+  // Second idle: arrives AFTER the MessageAbortedError.
+  // wasRecentlyAborted correctly returns true.
+  test('second idle: wasRecentlyAborted is true (abort error now visible)', () => {
+    expect(wasRecentlyAborted({ events, sessionId, idleEventIndex: idleAt(idles, 1) })).toBe(true)
+  })
+
+  test('second idle: shouldEmitFooter is false', () => {
+    expect(shouldEmitFooter({ events, sessionId, idleEventIndex: idleAt(idles, 1) })).toBe(false)
+  })
+
+  // Final idle: after the resumed run completes normally. Footer should emit.
+  test('final idle: wasRecentlyAborted is false', () => {
+    expect(wasRecentlyAborted({ events, sessionId, idleEventIndex: lastIdle(idles) })).toBe(false)
+  })
+
+  test('final idle: shouldEmitFooter is true', () => {
+    expect(shouldEmitFooter({ events, sessionId, idleEventIndex: lastIdle(idles) })).toBe(true)
   })
 })

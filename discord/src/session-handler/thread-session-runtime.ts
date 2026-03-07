@@ -454,6 +454,11 @@ export class ThreadSessionRuntime {
   // Typing indicator scheduler handle (single stateful mechanism).
   private typingInterval: ReturnType<typeof setTimeout> | null = null
 
+  // Footer debounce delay (ms). When the interrupt plugin aborts at a step
+  // boundary, the abort error can arrive ~317ms after session.idle. The
+  // footer send is delayed by this amount so we can re-check before sending.
+  private static FOOTER_DEBOUNCE_MS = 400
+
   // Notification throttles for retry/context notices.
   private lastDisplayedContextPercentage = 0
   private lastRateLimitDisplayTime = 0
@@ -3519,15 +3524,28 @@ export class ThreadSessionRuntime {
     const projectInfo = branchName
       ? `${folderName} ⋅ ${branchName} ⋅ `
       : `${folderName} ⋅ `
+    const footerText = `*${projectInfo}${sessionDuration}${contextInfo}${modelInfo}${agentInfo}*`
     this.stopTyping()
-    await sendThreadMessage(
-      this.thread,
-      `*${projectInfo}${sessionDuration}${contextInfo}${modelInfo}${agentInfo}*`,
-      { flags: NOTIFY_MESSAGE_FLAGS },
-    )
-    logger.log(
-      `DURATION: Session completed in ${sessionDuration}, model ${runInfo.model}, tokens ${runInfo.tokensUsed}`,
-    )
+
+    // Delay sending by 500ms: when the interrupt plugin aborts at a step
+    // boundary, the abort error arrives ~317ms after session.idle. If we
+    // send immediately, the footer appears before we know about the abort.
+    // The delay lets the abort event land in the buffer; we re-check
+    // shouldEmitFooter before actually sending the Discord message.
+    setTimeout(() => {
+      void this.dispatchAction(async () => {
+        if (this.state?.sessionId !== sessionId) {
+          return
+        }
+        if (this.isMainSessionBusy()) {
+          return
+        }
+        await sendThreadMessage(this.thread, footerText, { flags: NOTIFY_MESSAGE_FLAGS })
+        logger.log(
+          `DURATION: Session completed in ${sessionDuration}, model ${runInfo.model}, tokens ${runInfo.tokensUsed}`,
+        )
+      })
+    }, ThreadSessionRuntime.FOOTER_DEBOUNCE_MS)
   }
 
   /** Reset per-run state for the next prompt dispatch. */
