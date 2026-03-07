@@ -4146,6 +4146,10 @@ cli
       await initDatabase()
 
       // Resolve threadId from --session or positional arg
+      if (threadIdArg && options.session) {
+        cliLogger.error('Use either a thread ID or --session, not both')
+        process.exit(EXIT_NO_RESTART)
+      }
       const resolvedThreadId = await (async (): Promise<string> => {
         if (threadIdArg) {
           return threadIdArg
