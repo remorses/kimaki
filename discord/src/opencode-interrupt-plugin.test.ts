@@ -125,7 +125,7 @@ function createChatOutput({
         modelID: 'deterministic-v2',
       },
     },
-    parts: [],
+    parts: [{ type: 'text', text: 'user message' }],
   } as InterruptChatOutput
 }
 
@@ -178,17 +178,48 @@ function createAssistantAbortedEvent({
 function createAssistantStartedEvent({
   sessionID,
   messageID,
+  assistantMessageID,
 }: {
   sessionID: string
   messageID: string
+  assistantMessageID: string
 }): InterruptEvent {
   return {
     type: 'message.updated',
     properties: {
       info: {
+        id: assistantMessageID,
         role: 'assistant',
         sessionID,
         parentID: messageID,
+      },
+    },
+  } as InterruptEvent
+}
+
+function createStepFinishEvent({
+  sessionID,
+  assistantMessageID,
+}: {
+  sessionID: string
+  assistantMessageID: string
+}): InterruptEvent {
+  return {
+    type: 'message.part.updated',
+    properties: {
+      part: {
+        id: 'prt-step-finish',
+        sessionID,
+        messageID: assistantMessageID,
+        type: 'step-finish',
+        reason: 'tool-calls',
+        cost: 0,
+        tokens: {
+          input: 0,
+          output: 0,
+          reasoning: 0,
+          cache: { read: 0, write: 0 },
+        },
       },
     },
   } as InterruptEvent
@@ -317,7 +348,11 @@ describe('interruptOpencodeSessionOnUserMessage', () => {
       createChatOutput({ sessionID, messageID }),
     )
     await eventHook({
-      event: createAssistantStartedEvent({ sessionID, messageID }),
+      event: createAssistantStartedEvent({
+        sessionID,
+        messageID,
+        assistantMessageID: 'msg-sent-assistant',
+      }),
     })
     await delay({ ms: 70 })
 
@@ -373,7 +408,11 @@ describe('interruptOpencodeSessionOnUserMessage', () => {
       createChatOutput({ sessionID, messageID: firstMsgID }),
     )
     await eventHook({
-      event: createAssistantStartedEvent({ sessionID, messageID: firstMsgID }),
+      event: createAssistantStartedEvent({
+        sessionID,
+        messageID: firstMsgID,
+        assistantMessageID: 'msg-first-assistant',
+      }),
     })
 
     // 2. User sends second message while session is busy streaming
@@ -485,6 +524,77 @@ describe('interruptOpencodeSessionOnUserMessage', () => {
     expect(promptAsyncCalls).toEqual([
       {
         path: { id: REAL_SLEEP_INTERRUPT_CASE.sessionID },
+        body: { parts: [] },
+      },
+    ])
+  })
+
+  test('queued follow-up aborts on next blocking assistant step-finish before hard timeout', async () => {
+    process.env['KIMAKI_INTERRUPT_STEP_TIMEOUT_MS'] = '500'
+
+    const abortCalls: Array<{ path: { id: string } }> = []
+    const promptAsyncCalls: Array<{
+      path: { id: string }
+      body: { parts: [] }
+    }> = []
+    const client: MockClient = {
+      session: {
+        abort: async (input) => {
+          abortCalls.push(input)
+        },
+        promptAsync: async (input) => {
+          promptAsyncCalls.push(input)
+        },
+      },
+    }
+
+    const { eventHook, chatHook } = await requireHooks({ client })
+    const sessionID = 'ses-step-finish'
+    const runningMessageID = 'msg-running'
+    const runningAssistantMessageID = 'msg-running-assistant'
+    const queuedMessageID = 'msg-queued'
+
+    await chatHook(
+      { sessionID, messageID: runningMessageID } as InterruptChatInput,
+      createChatOutput({ sessionID, messageID: runningMessageID }),
+    )
+    await eventHook({
+      event: createAssistantStartedEvent({
+        sessionID,
+        messageID: runningMessageID,
+        assistantMessageID: runningAssistantMessageID,
+      }),
+    })
+
+    await chatHook(
+      { sessionID, messageID: queuedMessageID } as InterruptChatInput,
+      createChatOutput({ sessionID, messageID: queuedMessageID }),
+    )
+
+    await eventHook({
+      event: createStepFinishEvent({
+        sessionID,
+        assistantMessageID: runningAssistantMessageID,
+      }),
+    })
+    await delay({ ms: 10 })
+
+    expect(abortCalls).toEqual([{ path: { id: sessionID } }])
+
+    await eventHook({ event: createSessionIdleEvent({ sessionID }) })
+    await eventHook({ event: createSessionErrorEvent({ sessionID }) })
+    await eventHook({
+      event: createAssistantAbortedEvent({
+        sessionID,
+        assistantMessageID: runningAssistantMessageID,
+        parentID: runningMessageID,
+      }),
+    })
+    await delay({ ms: 20 })
+
+    expect(promptAsyncCalls).toEqual([
+      {
+        path: { id: sessionID },
         body: { parts: [] },
       },
     ])

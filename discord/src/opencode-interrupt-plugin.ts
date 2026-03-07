@@ -11,6 +11,7 @@ type PendingMessage = {
   sessionID: string
   sent: boolean
   timer: ReturnType<typeof setTimeout>
+  blockingAssistantMessageID: string | undefined
 }
 
 type EventWaiter = {
@@ -39,6 +40,7 @@ function getInterruptStepTimeoutMsFromEnv(): number {
 const interruptOpencodeSessionOnUserMessage: Plugin = async (ctx) => {
   const interruptStepTimeoutMs = getInterruptStepTimeoutMsFromEnv()
   const pendingByMessageId = new Map<string, PendingMessage>()
+  const currentAssistantMessageIdBySession = new Map<string, string>()
   const recoveringSessions = new Set<string>()
   const waiters = new Set<EventWaiter>()
 
@@ -96,6 +98,7 @@ const interruptOpencodeSessionOnUserMessage: Plugin = async (ctx) => {
       sessionID,
       sent: false,
       timer,
+      blockingAssistantMessageID: currentAssistantMessageIdBySession.get(sessionID),
     })
   }
 
@@ -121,6 +124,20 @@ const interruptOpencodeSessionOnUserMessage: Plugin = async (ctx) => {
       return messageID
     }
     return undefined
+  }
+
+  function getNextUnsentMessage(input: { sessionID: string }):
+    | { messageID: string; pending: PendingMessage }
+    | undefined {
+    const messageID = getNextUnsentMessageId({ sessionID: input.sessionID })
+    if (!messageID) {
+      return undefined
+    }
+    const pending = pendingByMessageId.get(messageID)
+    if (!pending) {
+      return undefined
+    }
+    return { messageID, pending }
   }
 
   async function handleUnsentTimeout({ messageID }: { messageID: string }): Promise<void> {
@@ -197,14 +214,59 @@ const interruptOpencodeSessionOnUserMessage: Plugin = async (ctx) => {
         waiter.finish()
       })
 
+      if (event.type === 'message.part.updated' && event.properties.part.type === 'step-finish') {
+        const nextPending = getNextUnsentMessage({
+          sessionID: event.properties.part.sessionID,
+        })
+        if (!nextPending) {
+          return
+        }
+        if (recoveringSessions.has(nextPending.pending.sessionID)) {
+          return
+        }
+        if (!nextPending.pending.blockingAssistantMessageID) {
+          return
+        }
+        if (event.properties.part.messageID !== nextPending.pending.blockingAssistantMessageID) {
+          return
+        }
+        void handleUnsentTimeout({ messageID: nextPending.messageID })
+        return
+      }
+
       if (event.type === 'message.updated' && event.properties.info.role === 'assistant') {
+        if (!event.properties.info.error) {
+          currentAssistantMessageIdBySession.set(
+            event.properties.info.sessionID,
+            event.properties.info.id,
+          )
+        }
+
+        const nextPending = getNextUnsentMessage({
+          sessionID: event.properties.info.sessionID,
+        })
+        if (
+          nextPending
+          && !nextPending.pending.sent
+          && !event.properties.info.error
+          && event.properties.info.parentID !== nextPending.messageID
+        ) {
+          nextPending.pending.blockingAssistantMessageID = event.properties.info.id
+        }
+
         const parentID = event.properties.info.parentID
         markSent({ messageID: parentID })
         return
       }
 
+      if (event.type === 'session.idle') {
+        currentAssistantMessageIdBySession.delete(event.properties.sessionID)
+        return
+      }
+
       if (event.type === 'session.deleted') {
         const sessionID = event.properties.info.id
+        currentAssistantMessageIdBySession.delete(sessionID)
         Array.from(pendingByMessageId.entries()).forEach(([messageID, pending]) => {
           if (pending.sessionID !== sessionID) {
             return
@@ -217,6 +279,12 @@ const interruptOpencodeSessionOnUserMessage: Plugin = async (ctx) => {
     async 'chat.message'(input, output) {
       const sessionID = input.sessionID
       if (!sessionID) {
+        return
+      }
+
+      // Ignore empty-parts messages (e.g. our own promptAsync({ parts: [] })
+      // resume calls). These are synthetic and should not trigger interruption.
+      if (output.parts.length === 0) {
         return
       }
 

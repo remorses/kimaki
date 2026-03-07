@@ -985,7 +985,6 @@ e2eTest('thread message queue ordering', () => {
         Reply with exactly: foxtrot
         --- from: assistant (TestBot)
         ⬥ ok
-        ⬥ ok
         *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2*"
       `)
       expect(userEchoIndex).toBeGreaterThan(-1)
@@ -1074,7 +1073,6 @@ e2eTest('thread message queue ordering', () => {
         --- from: user (queue-tester)
         Reply with exactly: india
         --- from: assistant (TestBot)
-        ⬥ ok
         ⬥ ok
         *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2*"
       `)
@@ -1184,7 +1182,6 @@ e2eTest('thread message queue ordering', () => {
         --- from: user (queue-tester)
         Reply with exactly: november
         --- from: assistant (TestBot)
-        ⬥ ok
         ⬥ ok
         *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2*"
       `)
