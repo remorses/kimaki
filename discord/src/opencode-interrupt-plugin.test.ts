@@ -109,9 +109,11 @@ function createContext({ client }: { client: MockClient }): InterruptContext {
 function createChatOutput({
   sessionID,
   messageID,
+  parts,
 }: {
   sessionID: string
   messageID: string
+  parts?: InterruptChatOutput['parts']
 }): InterruptChatOutput {
   return {
     message: {
@@ -125,7 +127,7 @@ function createChatOutput({
         modelID: 'deterministic-v2',
       },
     },
-    parts: [{ type: 'text', text: 'user message' }],
+    parts: parts || [{ type: 'text', text: 'user message' }],
   } as InterruptChatOutput
 }
 
@@ -355,6 +357,41 @@ describe('interruptOpencodeSessionOnUserMessage', () => {
       }),
     })
     await delay({ ms: 70 })
+
+    expect(abortCalls).toEqual([])
+    expect(promptAsyncCalls).toEqual([])
+  })
+
+  test('empty resume messages do not schedule interruption tracking', async () => {
+    process.env['KIMAKI_INTERRUPT_STEP_TIMEOUT_MS'] = '20'
+
+    const abortCalls: Array<{ path: { id: string } }> = []
+    const promptAsyncCalls: Array<{
+      path: { id: string }
+      body: { parts: [] }
+    }> = []
+    const client: MockClient = {
+      session: {
+        abort: async (input) => {
+          abortCalls.push(input)
+        },
+        promptAsync: async (input) => {
+          promptAsyncCalls.push(input)
+        },
+      },
+    }
+
+    const { chatHook } = await requireHooks({ client })
+
+    await chatHook(
+      { sessionID: 'ses-empty-resume', messageID: 'msg-empty-resume' } as InterruptChatInput,
+      createChatOutput({
+        sessionID: 'ses-empty-resume',
+        messageID: 'msg-empty-resume',
+        parts: [],
+      }),
+    )
+    await delay({ ms: 40 })
 
     expect(abortCalls).toEqual([])
     expect(promptAsyncCalls).toEqual([])
