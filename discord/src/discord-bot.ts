@@ -1130,14 +1130,12 @@ export async function startDiscordBot({
 
   process.on('SIGUSR1', () => {
     discordLogger.log('Received SIGUSR1, writing heap snapshot...')
-    try {
-      writeHeapSnapshot()
-    } catch (e) {
+    writeHeapSnapshot().catch((e) => {
       discordLogger.error(
         'Failed to write heap snapshot:',
         e instanceof Error ? e.message : String(e),
       )
-    }
+    })
   })
 
   process.on('SIGUSR2', async () => {
