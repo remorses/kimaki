@@ -8,6 +8,7 @@ import {
   type ButtonInteraction,
   ActionRowBuilder,
   type ThreadChannel,
+  MessageFlags,
 } from 'discord.js'
 import crypto from 'node:crypto'
 import type { PermissionRequest } from '@opencode-ai/sdk/v2'
@@ -133,15 +134,20 @@ export async function showPermissionButtons({
   )
 
   const subtaskLine = subtaskLabel ? `**From:** \`${subtaskLabel}\`\n` : ''
+  const externalDirLine =
+    permission.permission === 'external_directory'
+      ? `Agent is accessing files outside the project. [Learn more](https://opencode.ai/docs/permissions/#external-directories)\n`
+      : ''
   const fullContent =
     `⚠️ **Permission Required**\n` +
     subtaskLine +
     `**Type:** \`${permission.permission}\`\n` +
+    externalDirLine +
     (patternStr ? `**Pattern:** \`${patternStr}\`` : '')
   const permissionMessage = await thread.send({
     content: fullContent.slice(0, 1900),
     components: [actionRow],
-    flags: NOTIFY_MESSAGE_FLAGS,
+    flags: NOTIFY_MESSAGE_FLAGS | MessageFlags.SuppressEmbeds,
   })
 
   logger.log(`Showed permission buttons for ${permission.id}`)
@@ -213,10 +219,15 @@ export async function handlePermissionButton(
     const patternStr = compactPermissionPatterns(
       context.permission.patterns,
     ).join(', ')
+    const externalDirLine =
+      context.permission.permission === 'external_directory'
+        ? `Agent is accessing files outside the project. [Learn more](https://opencode.ai/docs/permissions/#external-directories)\n`
+        : ''
     await interaction.editReply({
       content:
         `⚠️ **Permission Required**\n` +
         `**Type:** \`${context.permission.permission}\`\n` +
+        externalDirLine +
         (patternStr ? `**Pattern:** \`${patternStr}\`\n` : '') +
         resultText,
       components: [], // Remove the buttons
