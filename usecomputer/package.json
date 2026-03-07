@@ -58,7 +58,7 @@
     "url": "https://github.com/remorses/usecomputer/issues"
   },
   "dependencies": {
-    "goke": "^6.2.3",
+    "goke": "^6.3.0",
     "string-dedent": "^3.0.1",
     "zod": "^4.3.6"
   },
