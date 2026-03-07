@@ -391,6 +391,121 @@ The AI can update this file to store learnings, decisions, preferences, and cont
 
 **Graceful Restart** - Send `SIGUSR2` to restart the bot with new code without losing connections.
 
+## Customizing the Voice Assistant
+
+The voice assistant can be extended with custom tools and a personalized system prompt via `~/.kimaki/voice-config.json`. This lets you go beyond coding — check emails, manage notes, query APIs, or anything you can do from a shell.
+
+### Configuration File
+
+Create `~/.kimaki/voice-config.json`:
+
+```json
+{
+  "systemPrompt": "Extra instructions appended to the default voice prompt.",
+  "enableRunCommand": true,
+  "tools": []
+}
+```
+
+| Field | Type | Description |
+| --- | --- | --- |
+| `systemPrompt` | string | Extra text appended to the default Kimaki system prompt. Use this to describe your custom tools, set personality, or add context about yourself. |
+| `enableRunCommand` | boolean | Adds a generic `runCommand` tool that can execute any shell command. Default: `false`. |
+| `tools` | array | Custom tool definitions (see below). |
+
+### Custom Tools
+
+Each tool is a shell command template with named parameters. The voice assistant calls these as function calls, and Kimaki executes the interpolated command.
+
+```json
+{
+  "tools": [
+    {
+      "name": "checkEmail",
+      "description": "Search recent emails. Returns JSON.",
+      "command": "gog gmail search '{{query}}' --max {{max}} --json",
+      "parameters": {
+        "query": {
+          "type": "string",
+          "description": "Search query for emails"
+        },
+        "max": {
+          "type": "number",
+          "description": "Max results",
+          "default": 10
+        }
+      },
+      "env": {
+        "GOG_ACCOUNT": "user@example.com"
+      },
+      "timeoutSeconds": 60,
+      "workingDirectory": "/home/user/projects"
+    }
+  ]
+}
+```
+
+| Tool Field | Required | Description |
+| --- | --- | --- |
+| `name` | yes | Tool name (used as the function name in Gemini). |
+| `description` | yes | Shown to the AI so it knows when to use the tool. |
+| `command` | yes | Shell command template. Use `{{param}}` for parameter interpolation. |
+| `parameters` | no | Parameter definitions. Each has `type` (`string`, `number`, `boolean`), `description`, and optional `default` and `required` fields. |
+| `env` | no | Extra environment variables for this command. |
+| `timeoutSeconds` | no | Max execution time (default: 120). |
+| `workingDirectory` | no | Working directory (default: `$HOME`). |
+
+### Full Example
+
+A voice assistant that can check email, search notes, and run arbitrary commands:
+
+```json
+{
+  "systemPrompt": "You are a helpful personal assistant. You can check emails via gogCli, search notes via obsidianCli, and run shell commands. For simple lookups, use tools directly. Only proxy to opencode for actual coding tasks.",
+  "enableRunCommand": true,
+  "tools": [
+    {
+      "name": "gogCli",
+      "description": "Query Google services (Gmail, Calendar, Drive, Contacts). Always use --json.",
+      "command": "gog {{command}}",
+      "parameters": {
+        "command": {
+          "type": "string",
+          "description": "The gog subcommand. Examples: \"gmail search 'newer_than:1d' --max 5 --json\", \"calendar events primary --today --json\""
+        }
+      },
+      "env": { "GOG_ACCOUNT": "user@example.com" },
+      "timeoutSeconds": 60
+    },
+    {
+      "name": "obsidianCli",
+      "description": "Search and read Obsidian vault notes.",
+      "command": "\"/Applications/Obsidian.app/Contents/MacOS/Obsidian\" {{command}}",
+      "parameters": {
+        "command": {
+          "type": "string",
+          "description": "Obsidian CLI command. Examples: \"search query=\\\"meeting\\\" format=json\", \"daily:read\""
+        }
+      },
+      "timeoutSeconds": 30
+    }
+  ]
+}
+```
+
+### Environment Variables
+
+Custom tools inherit the environment of the Kimaki process. If your tools need API keys or credentials, make sure they're available in the shell where Kimaki runs (e.g., via `.envrc` with direnv, or exported in your shell profile).
+
+### How It Works
+
+1. On voice channel join, Kimaki reads `~/.kimaki/voice-config.json`
+2. Custom tools are merged with the built-in OpenCode tools (listChats, createNewChat, etc.)
+3. The `systemPrompt` text is appended to the default Kimaki voice prompt
+4. The Gemini Live Audio session receives all tools and the combined prompt
+
+The voice assistant can then use your custom tools alongside the built-in ones in a single conversation.
+
 ## Tool Permissions
 
 When the AI agent tries to run a tool that requires approval (like executing shell commands or accessing files outside the project), Kimaki shows a permission prompt directly in the Discord thread with three buttons:
