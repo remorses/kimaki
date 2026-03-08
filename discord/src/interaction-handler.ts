@@ -15,7 +15,7 @@ import {
 import {
   handleNewWorktreeCommand,
   handleNewWorktreeAutocomplete,
-} from './commands/worktree.js'
+} from './commands/new-worktree.js'
 import {
   handleMergeWorktreeCommand,
   handleMergeWorktreeAutocomplete,

@@ -18,7 +18,7 @@ import {
 import {
   stopOpencodeServer,
 } from './opencode.js'
-import { formatWorktreeName } from './commands/worktree.js'
+import { formatWorktreeName } from './commands/new-worktree.js'
 import { WORKTREE_PREFIX } from './commands/merge-worktree.js'
 import { createWorktreeWithSubmodules } from './worktrees.js'
 import {

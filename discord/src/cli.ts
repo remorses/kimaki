@@ -58,7 +58,7 @@ import {
   buildSessionSearchSnippet,
   getPartSearchTexts,
 } from './session-search.js'
-import { formatWorktreeName } from './commands/worktree.js'
+import { formatWorktreeName } from './commands/new-worktree.js'
 import { WORKTREE_PREFIX } from './commands/merge-worktree.js'
 import type { ThreadStartMarker } from './system-message.js'
 import { buildOpencodeEventLogLine } from './session-handler/opencode-session-event-log.js'
