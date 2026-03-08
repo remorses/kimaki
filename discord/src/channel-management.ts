@@ -11,7 +11,6 @@ import {
 import fs from 'node:fs'
 import path from 'node:path'
 import {
-  findChannelsByDirectory,
   getChannelDirectory,
   setChannelDirectory,
 } from './database.js'
@@ -189,45 +188,62 @@ __pycache__/
 *.egg-info/
 `
 
+// Topic marker embedded in the default kimaki channel topic.
+// Used for idempotency: scan guild channels for this marker instead of relying
+// on DB state, which can drift after DB resets or migrations.
+const DEFAULT_CHANNEL_TOPIC_MARKER = '[kimaki-default:'
+
+export function buildDefaultChannelTopic(appId: string): string {
+  return `General channel for misc tasks with Kimaki. Not connected to a specific OpenCode project or repository. ${DEFAULT_CHANNEL_TOPIC_MARKER}${appId}]`
+}
+
+export function findDefaultKimakiChannelInGuild({
+  guild,
+  appId,
+}: {
+  guild: Guild
+  appId: string
+}): TextChannel | null {
+  const marker = `${DEFAULT_CHANNEL_TOPIC_MARKER}${appId}]`
+  const found = guild.channels.cache.find((ch): ch is TextChannel => {
+    if (ch.type !== ChannelType.GuildText) {
+      return false
+    }
+    return (ch as TextChannel).topic?.includes(marker) ?? false
+  })
+  return found ?? null
+}
+
 /**
  * Create (or find) the default "kimaki" channel for general-purpose tasks.
  * Channel name is "kimaki-{botName}" for self-hosted bots, "kimaki" for gateway.
  * Directory is ~/.kimaki/projects/kimaki, git-initialized with a .gitignore.
- * Idempotent: skips if the directory already has a registered channel in this guild.
+ * Idempotent: scans guild channels for a topic marker [kimaki-default:{appId}]
+ * instead of relying on DB state, so it survives DB resets.
  */
 export async function createDefaultKimakiChannel({
   guild,
   botName,
+  appId,
   isGatewayMode,
 }: {
   guild: Guild
   botName?: string
+  appId: string
   isGatewayMode: boolean
 }): Promise<{
   textChannelId: string
   channelName: string
   projectDirectory: string
 } | null> {
-  const projectDirectory = path.join(getProjectsDir(), 'kimaki')
-
-  // Idempotency: check if this directory is already registered to a channel in this guild
-  const existingChannels = await findChannelsByDirectory({
-    directory: projectDirectory,
-    channelType: 'text',
-  })
-  for (const existing of existingChannels) {
-    try {
-      const ch = await guild.channels.fetch(existing.channel_id)
-      if (ch) {
-        logger.log(
-          `Default kimaki channel already exists: ${existing.channel_id}`,
-        )
-        return null
-      }
-    } catch {
-      // Channel may have been deleted from Discord, continue
-    }
+  // Idempotency: check for existing channel via topic marker in Discord cache
+  const existing = findDefaultKimakiChannelInGuild({ guild, appId })
+  if (existing) {
+    logger.log(`Default kimaki channel already exists: ${existing.id}`)
+    return null
   }
+
+  const projectDirectory = path.join(getProjectsDir(), 'kimaki')
 
   // Create directory and initialize git
   if (!fs.existsSync(projectDirectory)) {
@@ -276,8 +292,7 @@ export async function createDefaultKimakiChannel({
     name: channelName,
     type: ChannelType.GuildText,
     parent: kimakiCategory,
-    topic:
-      'General channel for misc tasks with Kimaki. Not connected to a specific OpenCode project or repository.',
+    topic: buildDefaultChannelTopic(appId),
   })
 
   await setChannelDirectory({

@@ -4,7 +4,7 @@
 import { ChannelType, type Guild, type TextChannel } from 'discord.js'
 import fs from 'node:fs'
 import path from 'node:path'
-import { execSync } from 'node:child_process'
+import { execAsync } from '../worktrees.js'
 import type { CommandContext } from './types.js'
 import { getProjectsDir } from '../config.js'
 import { createProjectChannels } from '../channel-management.js'
@@ -60,8 +60,15 @@ export async function createNewProject({
   fs.mkdirSync(projectDirectory, { recursive: true })
   logger.log(`Created project directory: ${projectDirectory}`)
 
-  execSync('git init', { cwd: projectDirectory, stdio: 'pipe' })
-  logger.log(`Initialized git in: ${projectDirectory}`)
+  // Git init — gracefully skip if git is not installed
+  try {
+    await execAsync('git init', { cwd: projectDirectory, timeout: 10_000 })
+    logger.log(`Initialized git in: ${projectDirectory}`)
+  } catch (error) {
+    logger.warn(
+      `Could not initialize git in ${projectDirectory}: ${error instanceof Error ? error.message : String(error)}`,
+    )
+  }
 
   const { textChannelId, voiceChannelId, channelName } =
     await createProjectChannels({

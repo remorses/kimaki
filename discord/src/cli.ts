@@ -2243,6 +2243,7 @@ async function run({
         const result = await createDefaultKimakiChannel({
           guild,
           botName: discordClient.user?.username,
+          appId,
           isGatewayMode,
         })
         if (result) {
