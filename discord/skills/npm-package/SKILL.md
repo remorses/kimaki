@@ -41,7 +41,66 @@ Use this skill when scaffolding or fixing npm packages.
    - if tests are inside src and gets included in dist, it's fine. don't try to exclude them
 10. `scripts.build` should be only `tsc` and no bundling. Optionall include running scripts with tsx if needed to generate build artifacts.
 11. `prepublishOnly` must always run `build` (optionally run generation before
-    build when required).
+     build when required).
+
+## Reading package version at runtime
+
+When Node code needs the package version, prefer reading it from `package.json`
+via `createRequire`. This works cleanly in ESM packages without adding a JSON
+import assertion.
+
+```ts
+import { createRequire } from "node:module";
+
+const require = createRequire(import.meta.url);
+const packageJson = require("../package.json") as {
+  version: string;
+};
+
+export const packageVersion = packageJson.version;
+```
+
+- Use a relative path from the current file to `package.json`.
+- Read only the fields you need, usually `version`.
+- Prefer this over hardcoding the version or duplicating it in source files.
+
+## Resolving paths relative to the package
+
+ESM does not have `__dirname`. Derive it from `import.meta.url` with the
+`node:url` and `node:path` modules, then resolve relative paths from there.
+
+```ts
+import url from "node:url";
+import path from "node:path";
+
+const __dirname = path.dirname(url.fileURLToPath(import.meta.url));
+
+// e.g. from src/cli.ts → read SKILL.md at the package root
+const skillPath = path.resolve(__dirname, "../SKILL.md");
+
+// from dist/cli.js (after tsc) → reach back to src/
+const srcFile = path.resolve(__dirname, "../src/template.md");
+```
+
+- Remember that `tsc` compiles `src/` → `dist/`. At runtime the file lives in
+  `dist/`, so one `..` gets you back to the package root.
+- From a file in `src/` during dev (running with `tsx`), `..` also reaches the
+  package root since `src/` is one level deep.
+- Use `path.resolve(__dirname, ...)` instead of string concatenation so it
+  works on all platforms.
+
+## Detecting development mode
+
+Check whether `import.meta.url` ends with `.ts` or `.tsx`. In dev you run
+source files directly (via `tsx` or `bun`), so the URL points to a `.ts` file.
+After `tsc` builds to `dist/`, the URL ends with `.js`.
+
+```ts
+const isDev = import.meta.url.endsWith(".ts") || import.meta.url.endsWith(".tsx");
+```
+
+This is useful for conditionally resolving paths that differ between `src/` and
+`dist/`, or enabling dev-only logging without relying on `NODE_ENV`.
 
 ## tsconfig rules
 
