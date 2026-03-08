@@ -1,6 +1,5 @@
 // In-process HTTP server speaking the Hrana v2 protocol.
-// Replaces the sqld child process (39MB Rust binary) with a lightweight
-// server backed by the `libsql` npm package (better-sqlite3 API).
+// Backed by the `libsql` npm package (better-sqlite3 API).
 // Binds to the fixed lock port for single-instance enforcement.
 //
 // Serves POST /v2/pipeline (Hrana v2 JSON), GET /v2, and GET /health.
