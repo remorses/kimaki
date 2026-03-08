@@ -612,6 +612,16 @@ const cli = goke('kimaki')
 
 process.title = 'kimaki'
 
+// Result of credential resolution. `credentialSource` indicates how the
+// credentials were obtained so downstream code can decide whether to show
+// channel setup prompts (wizard) or skip them (env/saved/headless).
+type CredentialResult = {
+  appId: string
+  token: string
+  credentialSource: 'env' | 'saved' | 'wizard'
+  isGatewayMode: boolean
+}
+
 type CliOptions = {
   restartOnboarding?: boolean
   addChannels?: boolean
@@ -1455,6 +1465,339 @@ async function backgroundInit({
   }
 }
 
+// Resolve bot credentials from (in priority order):
+// 1. KIMAKI_BOT_TOKEN env var (headless/CI deployments)
+// 2. Saved credentials in the database (self-hosted or gateway mode)
+// 3. Interactive wizard (gateway OAuth or self-hosted token entry)
+//
+// credentialSource tells the caller how creds were obtained:
+//   'env'    — KIMAKI_BOT_TOKEN env var
+//   'saved'  — reused from database
+//   'wizard' — user just completed onboarding (gateway OAuth or self-hosted)
+async function resolveCredentials({
+  forceRestartOnboarding,
+  forceGateway,
+  gatewayCallbackUrl,
+}: {
+  forceRestartOnboarding: boolean
+  forceGateway: boolean
+  gatewayCallbackUrl?: string
+}): Promise<CredentialResult> {
+  const envToken = process.env.KIMAKI_BOT_TOKEN
+  const existingBot = await getBotTokenWithMode()
+  // When --gateway is requested and the resolved bot is still self-hosted,
+  // check if saved gateway credentials exist by looking up the gateway app_id
+  // directly. This lets users switch back and forth between modes without
+  // re-running the onboarding wizard each time.
+  const hasGatewayCreds = (forceGateway && existingBot?.mode !== 'gateway')
+    ? await (await getPrisma()).bot_tokens.findUnique({
+        where: { app_id: KIMAKI_GATEWAY_APP_ID },
+      })
+    : undefined
+
+  // 1. Env var takes precedence (headless deployments)
+  if (envToken && !forceRestartOnboarding && !forceGateway) {
+    const derivedAppId = appIdFromToken(envToken)
+    if (!derivedAppId) {
+      cliLogger.error(
+        'Could not derive Application ID from KIMAKI_BOT_TOKEN. The token appears malformed.',
+      )
+      process.exit(EXIT_NO_RESTART)
+    }
+    await setBotToken(derivedAppId, envToken)
+    cliLogger.log(`Using KIMAKI_BOT_TOKEN env var (App ID: ${derivedAppId})`)
+    return { appId: derivedAppId, token: envToken, credentialSource: 'env', isGatewayMode: false }
+  }
+
+  // 2. Saved credentials in the database
+  // Reuse saved creds unless: --restart-onboarding forces re-setup, or --gateway
+  // overrides saved self-hosted creds (saved gateway creds are still used).
+  const canReuseSavedCreds = existingBot && !forceRestartOnboarding
+    && !(forceGateway && existingBot.mode !== 'gateway')
+  if (canReuseSavedCreds) {
+    const modeLabel =
+      existingBot.mode === 'gateway' ? ' (gateway mode)' : ''
+    note(
+      `Using saved bot credentials${modeLabel}:\nApp ID: ${existingBot.appId}\n\nTo use different credentials, run with --restart-onboarding`,
+      'Existing Bot Found',
+    )
+    if (existingBot.mode !== 'gateway') {
+      note(
+        `Bot install URL (in case you need to add it to another server):\n${generateBotInstallUrl({ clientId: existingBot.appId })}`,
+        'Install URL',
+      )
+    }
+    return { appId: existingBot.appId, token: existingBot.token, credentialSource: 'saved', isGatewayMode: existingBot.mode === 'gateway' }
+  }
+
+  // 2b. Switching to gateway: saved gateway credentials exist from a previous
+  // gateway setup. Reuse them without re-running the onboarding wizard.
+  if (hasGatewayCreds && !forceRestartOnboarding) {
+    const gatewayToken = (hasGatewayCreds.client_id && hasGatewayCreds.client_secret)
+      ? `${hasGatewayCreds.client_id}:${hasGatewayCreds.client_secret}`
+      : hasGatewayCreds.token
+    note(
+      `Switching to saved gateway credentials:\nApp ID: ${hasGatewayCreds.app_id}`,
+      'Mode Switch',
+    )
+    return {
+      appId: hasGatewayCreds.app_id,
+      token: gatewayToken,
+      credentialSource: 'saved',
+      isGatewayMode: true,
+    }
+  }
+
+  // 3. Interactive setup wizard (first-time users, --restart-onboarding, or --gateway override).
+  //    Non-TTY: gateway mode proceeds headlessly (JSON events on stdout),
+  //    self-hosted mode requires interactive prompts so we exit.
+  if (!canUseInteractivePrompts() && !forceGateway) {
+    exitNonInteractiveSetup()
+  }
+
+  if (existingBot && forceGateway && existingBot.mode !== 'gateway') {
+    note(
+      'Ignoring saved self-hosted credentials due to --gateway flag.\nSwitching to gateway mode.',
+      'Gateway Mode',
+    )
+  } else if (forceRestartOnboarding && existingBot) {
+    note('Ignoring saved credentials due to --restart-onboarding flag', 'Restart Onboarding')
+  }
+
+  // When --gateway is passed or we're in non-TTY mode, skip the mode selector.
+  // Non-TTY without --gateway was already rejected above.
+  const modeChoice: 'gateway' | 'self_hosted' = forceGateway
+    ? 'gateway'
+    : await (async () => {
+        const choice = await select({
+          message: 'How do you want to connect to Discord?',
+          options: [
+            {
+              value: 'gateway' as const,
+              label: 'Gateway mode (simple, experimental)',
+              hint: 'Install the gateway Kimaki bot to your server',
+            },
+            {
+              value: 'self_hosted' as const,
+              label: 'Self-hosted bot (5-10 minutes setup)',
+              hint: 'Full control: bring your own Discord bot token',
+            },
+          ],
+        })
+        if (isCancel(choice)) {
+          cancel('Setup cancelled')
+          process.exit(0)
+        }
+        return choice
+      })()
+
+  // ── Gateway mode flow ──
+  if (modeChoice === 'gateway') {
+    if (!KIMAKI_GATEWAY_APP_ID) {
+      cliLogger.error(
+        'Gateway mode is not available yet. KIMAKI_GATEWAY_APP_ID is not configured.',
+      )
+      process.exit(EXIT_NO_RESTART)
+    }
+
+    const gatewayCredentials = await resolveGatewayInstallCredentials()
+    if (gatewayCredentials instanceof Error) {
+      throw gatewayCredentials
+    }
+    const { clientId, clientSecret } = gatewayCredentials
+
+    const oauthUrlResult = generateDiscordInstallUrlForBot({
+      appId: KIMAKI_GATEWAY_APP_ID,
+      mode: 'gateway',
+      clientId,
+      clientSecret,
+      gatewayCallbackUrl,
+    })
+    if (oauthUrlResult instanceof Error) {
+      throw oauthUrlResult
+    }
+    const oauthUrl = oauthUrlResult
+    const isInteractive = canUseInteractivePrompts()
+
+    if (isInteractive) {
+      note(
+        `Open this URL to install the Kimaki bot in your Discord server:\n\n${oauthUrl}\n\nDo not share this URL with anyone — it contains your credentials.\n\nIf you don't have a server, create one first (+ button in the Discord sidebar).`,
+        'Install Bot',
+      )
+
+      // Open URL in default browser
+      const { exec } = await import('node:child_process')
+      const openCmd =
+        process.platform === 'darwin'
+          ? 'open'
+          : process.platform === 'win32'
+            ? 'start'
+            : 'xdg-open'
+      exec(`${openCmd} "${oauthUrl}"`)
+    } else {
+      // Non-TTY: emit structured JSON so the host process can show the URL to the user.
+      emitJsonEvent({ type: 'install_url', url: oauthUrl })
+    }
+
+    // Poll until the user installs the bot in a Discord server.
+    // 600 attempts x 2s = 20 minutes timeout.
+    const s = isInteractive ? spinner() : undefined
+    s?.start('Waiting for a Discord server with the bot installed...')
+
+    const pollUrl = new URL('/api/onboarding/status', KIMAKI_WEBSITE_URL)
+    pollUrl.searchParams.set('client_id', clientId)
+    pollUrl.searchParams.set('secret', clientSecret)
+
+    let guildId: string | undefined
+    for (let attempt = 0; attempt < 600; attempt++) {
+      await new Promise((resolve) => {
+        setTimeout(resolve, 2000)
+      })
+
+      // Progressive hints for interactive users who may be stuck
+      if (isInteractive) {
+        if (attempt === 15) {
+          s?.message(
+            'Still waiting... Select a server in the Discord authorization page and click "Authorize"',
+          )
+        } else if (attempt === 45) {
+          s?.message(
+            `Still waiting... If you don't see any servers, create one first (+ button in Discord sidebar), then reopen the URL above`,
+          )
+        } else if (attempt === 150) {
+          s?.message(
+            `Still waiting... Reopen the install URL if you closed it:\n${oauthUrl}`,
+          )
+        }
+      }
+
+      try {
+        const resp = await fetch(pollUrl.toString())
+        if (resp.ok) {
+          const data = (await resp.json()) as { guild_id?: string }
+          if (data.guild_id) {
+            guildId = data.guild_id
+            break
+          }
+        }
+      } catch {
+        // Network error, retry
+      }
+    }
+
+    if (!guildId) {
+      if (isInteractive) {
+        s?.stop('Authorization timed out')
+      } else {
+        emitJsonEvent({ type: 'error', message: 'Authorization timed out after 20 minutes' })
+      }
+      cliLogger.error(
+        'Bot authorization timed out after 20 minutes. Please try again.',
+      )
+      process.exit(EXIT_NO_RESTART)
+    }
+
+    if (isInteractive) {
+      s?.stop('Bot authorized successfully!')
+      const syncSpinner = spinner()
+      syncSpinner.start('Waiting for gateway sync...')
+      await new Promise((resolve) => {
+        setTimeout(resolve, 2000)
+      })
+      syncSpinner.stop('Gateway sync completed')
+    } else {
+      emitJsonEvent({ type: 'authorized', guild_id: guildId })
+      await new Promise((resolve) => {
+        setTimeout(resolve, 2000)
+      })
+    }
+
+    return {
+      appId: KIMAKI_GATEWAY_APP_ID,
+      token: `${clientId}:${clientSecret}`,
+      credentialSource: 'wizard',
+      isGatewayMode: true,
+    }
+  }
+
+  // ── Self-hosted mode flow (existing wizard) ──
+  note(
+    '1. Go to https://discord.com/developers/applications\n' +
+      '2. Click "New Application"\n' +
+      '3. Give your application a name',
+    'Step 1: Create Discord Application',
+  )
+
+  note(
+    '1. Go to the "Bot" section in the left sidebar\n' +
+      '2. Scroll down to "Privileged Gateway Intents"\n' +
+      '3. Enable these intents by toggling them ON:\n' +
+      '   • SERVER MEMBERS INTENT\n' +
+      '   • MESSAGE CONTENT INTENT\n' +
+      '4. Click "Save Changes" at the bottom',
+    'Step 2: Enable Required Intents',
+  )
+
+  const intentsConfirmed = await text({
+    message: 'Press Enter after enabling both intents:',
+    placeholder: 'Enter',
+  })
+  if (isCancel(intentsConfirmed)) {
+    cancel('Setup cancelled')
+    process.exit(0)
+  }
+
+  note(
+    '1. Still in the "Bot" section\n' +
+      '2. Click "Reset Token" to generate a new bot token (in case of errors try again)\n' +
+      "3. Copy the token (you won't be able to see it again!)",
+    'Step 3: Get Bot Token',
+  )
+  const tokenInput = await password({
+    message:
+      'Enter your Discord Bot Token (from "Bot" section - click "Reset Token" if needed):',
+    validate(value) {
+      const cleaned = stripBracketedPaste(value)
+      if (!cleaned) {
+        return 'Bot token is required'
+      }
+      if (cleaned.length < 50) {
+        return 'Invalid token format (too short)'
+      }
+    },
+  })
+  if (isCancel(tokenInput)) {
+    cancel('Setup cancelled')
+    process.exit(0)
+  }
+
+  const wizardToken = stripBracketedPaste(tokenInput)
+  const derivedAppId = appIdFromToken(wizardToken)
+  if (!derivedAppId) {
+    cliLogger.error(
+      'Could not derive Application ID from the bot token. The token appears malformed.',
+    )
+    process.exit(EXIT_NO_RESTART)
+  }
+
+  await setBotToken(derivedAppId, wizardToken)
+
+  note(
+    `Bot install URL:\n${generateBotInstallUrl({ clientId: derivedAppId })}\n\nYou MUST install the bot in your Discord server before continuing.`,
+    'Step 4: Install Bot to Server',
+  )
+  const installed = await text({
+    message: 'Press Enter AFTER you have installed the bot in your server:',
+    placeholder: 'Enter',
+  })
+  if (isCancel(installed)) {
+    cancel('Setup cancelled')
+    process.exit(0)
+  }
+
+  return { appId: derivedAppId, token: wizardToken, credentialSource: 'wizard', isGatewayMode: false }
+}
+
 async function run({
   restartOnboarding,
   addChannels,
@@ -1514,337 +1857,11 @@ async function run({
   // Initialize database (connects to hrana server via HTTP)
   await initDatabase()
 
-  // Resolve bot credentials from (in priority order):
-  // 1. KIMAKI_BOT_TOKEN env var (headless/CI deployments)
-  // 2. Saved credentials in the database (self-hosted or gateway mode)
-  // App ID is always derived from the token (base64 first segment),
-  // except in gateway mode where KIMAKI_GATEWAY_APP_ID is used.
-  //
-  // previousAppId is set when switching between modes so we can migrate
-  const { appId, token, isQuickStart, isGatewayMode } = await (async (): Promise<{
-    appId: string
-    token: string
-    // isQuickStart means startup can skip interactive onboarding/channel prompts
-    // and go straight to bot runtime using already-available credentials/config.
-    isQuickStart: boolean
-    isGatewayMode: boolean
-  }> => {
-    const envToken = process.env.KIMAKI_BOT_TOKEN
-    const existingBot = await getBotTokenWithMode()
-    // When --gateway is requested and the resolved bot is still self-hosted,
-    // check if saved gateway credentials exist by looking up the gateway app_id
-    // directly. This lets users switch back and forth between modes without
-    // re-running the onboarding wizard each time.
-    const hasGatewayCreds = (forceGateway && existingBot?.mode !== 'gateway')
-      ? await (await getPrisma()).bot_tokens.findUnique({
-          where: { app_id: KIMAKI_GATEWAY_APP_ID },
-        })
-      : undefined
-
-    // 1. Env var takes precedence (headless deployments)
-    if (envToken && !forceRestartOnboarding && !forceGateway) {
-      const derivedAppId = appIdFromToken(envToken)
-      if (!derivedAppId) {
-        cliLogger.error(
-          'Could not derive Application ID from KIMAKI_BOT_TOKEN. The token appears malformed.',
-        )
-        process.exit(EXIT_NO_RESTART)
-      }
-      await setBotToken(derivedAppId, envToken)
-      cliLogger.log(`Using KIMAKI_BOT_TOKEN env var (App ID: ${derivedAppId})`)
-      return { appId: derivedAppId, token: envToken, isQuickStart: !addChannels, isGatewayMode: false }
-    }
-
-    // 2. Saved credentials in the database
-    // Reuse saved creds unless: --restart-onboarding forces re-setup, or --gateway
-    // overrides saved self-hosted creds (saved gateway creds are still used).
-    const canReuseSavedCreds = existingBot && !forceRestartOnboarding
-      && !(forceGateway && existingBot.mode !== 'gateway')
-    if (canReuseSavedCreds) {
-      const modeLabel =
-        existingBot.mode === 'gateway' ? ' (gateway mode)' : ''
-      note(
-        `Using saved bot credentials${modeLabel}:\nApp ID: ${existingBot.appId}\n\nTo use different credentials, run with --restart-onboarding`,
-        'Existing Bot Found',
-      )
-      if (existingBot.mode !== 'gateway') {
-        note(
-          `Bot install URL (in case you need to add it to another server):\n${generateBotInstallUrl({ clientId: existingBot.appId })}`,
-          'Install URL',
-        )
-      }
-      return { appId: existingBot.appId, token: existingBot.token, isQuickStart: !addChannels, isGatewayMode: existingBot.mode === 'gateway' }
-    }
-
-    // 2b. Switching to gateway: saved gateway credentials exist from a previous
-    // gateway setup. Reuse them without re-running the onboarding wizard.
-    if (hasGatewayCreds && !forceRestartOnboarding) {
-      const gatewayToken = (hasGatewayCreds.client_id && hasGatewayCreds.client_secret)
-        ? `${hasGatewayCreds.client_id}:${hasGatewayCreds.client_secret}`
-        : hasGatewayCreds.token
-      note(
-        `Switching to saved gateway credentials:\nApp ID: ${hasGatewayCreds.app_id}`,
-        'Mode Switch',
-      )
-      return {
-        appId: hasGatewayCreds.app_id,
-        token: gatewayToken,
-        isQuickStart: !addChannels,
-        isGatewayMode: true,
-      }
-    }
-
-    // 3. Explain why saved credentials are being skipped, then enter
-    //    interactive setup wizard (first-time users, --restart-onboarding, or --gateway override).
-    //    Non-TTY: gateway mode proceeds headlessly (JSON events on stdout),
-    //    self-hosted mode requires interactive prompts so we exit.
-    if (!canUseInteractivePrompts() && !forceGateway) {
-      exitNonInteractiveSetup()
-    }
-
-    if (existingBot && forceGateway && existingBot.mode !== 'gateway') {
-      note(
-        'Ignoring saved self-hosted credentials due to --gateway flag.\nSwitching to gateway mode.',
-        'Gateway Mode',
-      )
-    } else if (forceRestartOnboarding && existingBot) {
-      note('Ignoring saved credentials due to --restart-onboarding flag', 'Restart Onboarding')
-    }
-
-    // When --gateway is passed or we're in non-TTY mode, skip the mode selector.
-    // Non-TTY without --gateway was already rejected above.
-    const modeChoice: 'gateway' | 'self_hosted' = forceGateway
-      ? 'gateway'
-      : await (async () => {
-          const choice = await select({
-            message: 'How do you want to connect to Discord?',
-            options: [
-              {
-                value: 'gateway' as const,
-                label: 'Gateway mode (simple, experimental)',
-                hint: 'Install the gateway Kimaki bot to your server',
-              },
-              {
-                value: 'self_hosted' as const,
-                label: 'Self-hosted bot (5-10 minutes setup)',
-                hint: 'Full control: bring your own Discord bot token',
-              },
-            ],
-          })
-          if (isCancel(choice)) {
-            cancel('Setup cancelled')
-            process.exit(0)
-          }
-          return choice
-        })()
-
-    // ── Gateway mode flow ──
-    if (modeChoice === 'gateway') {
-      if (!KIMAKI_GATEWAY_APP_ID) {
-        cliLogger.error(
-          'Gateway mode is not available yet. KIMAKI_GATEWAY_APP_ID is not configured.',
-        )
-        process.exit(EXIT_NO_RESTART)
-      }
-
-      const gatewayCredentials = await resolveGatewayInstallCredentials()
-      if (gatewayCredentials instanceof Error) {
-        throw gatewayCredentials
-      }
-      const { clientId, clientSecret } = gatewayCredentials
-
-      const oauthUrlResult = generateDiscordInstallUrlForBot({
-        appId: KIMAKI_GATEWAY_APP_ID,
-        mode: 'gateway',
-        clientId,
-        clientSecret,
-        gatewayCallbackUrl,
-      })
-      if (oauthUrlResult instanceof Error) {
-        throw oauthUrlResult
-      }
-      const oauthUrl = oauthUrlResult
-      const isInteractive = canUseInteractivePrompts()
-
-      if (isInteractive) {
-        note(
-          `Open this URL to install the Kimaki bot in your Discord server:\n\n${oauthUrl}\n\nDo not share this URL with anyone — it contains your credentials.\n\nIf you don't have a server, create one first (+ button in the Discord sidebar).`,
-          'Install Bot',
-        )
-
-        // Open URL in default browser
-        const { exec } = await import('node:child_process')
-        const openCmd =
-          process.platform === 'darwin'
-            ? 'open'
-            : process.platform === 'win32'
-              ? 'start'
-              : 'xdg-open'
-        exec(`${openCmd} "${oauthUrl}"`)
-      } else {
-        // Non-TTY: emit structured JSON so the host process can show the URL to the user.
-        emitJsonEvent({ type: 'install_url', url: oauthUrl })
-      }
-
-      // Poll until the user installs the bot in a Discord server.
-      // 600 attempts x 2s = 20 minutes timeout.
-      const s = isInteractive ? spinner() : undefined
-      s?.start('Waiting for a Discord server with the bot installed...')
-
-      const pollUrl = new URL('/api/onboarding/status', KIMAKI_WEBSITE_URL)
-      pollUrl.searchParams.set('client_id', clientId)
-      pollUrl.searchParams.set('secret', clientSecret)
-
-      let guildId: string | undefined
-      for (let attempt = 0; attempt < 600; attempt++) {
-        await new Promise((resolve) => {
-          setTimeout(resolve, 2000)
-        })
-
-        // Progressive hints for interactive users who may be stuck
-        if (isInteractive) {
-          if (attempt === 15) {
-            s?.message(
-              'Still waiting... Select a server in the Discord authorization page and click "Authorize"',
-            )
-          } else if (attempt === 45) {
-            s?.message(
-              `Still waiting... If you don't see any servers, create one first (+ button in Discord sidebar), then reopen the URL above`,
-            )
-          } else if (attempt === 150) {
-            s?.message(
-              `Still waiting... Reopen the install URL if you closed it:\n${oauthUrl}`,
-            )
-          }
-        }
-
-        try {
-          const resp = await fetch(pollUrl.toString())
-          if (resp.ok) {
-            const data = (await resp.json()) as { guild_id?: string }
-            if (data.guild_id) {
-              guildId = data.guild_id
-              break
-            }
-          }
-        } catch {
-          // Network error, retry
-        }
-      }
-
-      if (!guildId) {
-        if (isInteractive) {
-          s?.stop('Authorization timed out')
-        } else {
-          emitJsonEvent({ type: 'error', message: 'Authorization timed out after 20 minutes' })
-        }
-        cliLogger.error(
-          'Bot authorization timed out after 20 minutes. Please try again.',
-        )
-        process.exit(EXIT_NO_RESTART)
-      }
-
-      if (isInteractive) {
-        s?.stop('Bot authorized successfully!')
-        const syncSpinner = spinner()
-        syncSpinner.start('Waiting for gateway sync...')
-        await new Promise((resolve) => {
-          setTimeout(resolve, 2000)
-        })
-        syncSpinner.stop('Gateway sync completed')
-      } else {
-        emitJsonEvent({ type: 'authorized', guild_id: guildId })
-        await new Promise((resolve) => {
-          setTimeout(resolve, 2000)
-        })
-      }
-
-      return {
-        appId: KIMAKI_GATEWAY_APP_ID,
-        token: `${clientId}:${clientSecret}`,
-        // Non-TTY gateway: always quick-start (skip channel selection prompts)
-        isQuickStart: !isInteractive,
-        isGatewayMode: true,
-      }
-    }
-
-    // ── Self-hosted mode flow (existing wizard) ──
-    note(
-      '1. Go to https://discord.com/developers/applications\n' +
-        '2. Click "New Application"\n' +
-        '3. Give your application a name',
-      'Step 1: Create Discord Application',
-    )
-
-    note(
-      '1. Go to the "Bot" section in the left sidebar\n' +
-        '2. Scroll down to "Privileged Gateway Intents"\n' +
-        '3. Enable these intents by toggling them ON:\n' +
-        '   • SERVER MEMBERS INTENT\n' +
-        '   • MESSAGE CONTENT INTENT\n' +
-        '4. Click "Save Changes" at the bottom',
-      'Step 2: Enable Required Intents',
-    )
-
-    const intentsConfirmed = await text({
-      message: 'Press Enter after enabling both intents:',
-      placeholder: 'Enter',
-    })
-    if (isCancel(intentsConfirmed)) {
-      cancel('Setup cancelled')
-      process.exit(0)
-    }
-
-    note(
-      '1. Still in the "Bot" section\n' +
-        '2. Click "Reset Token" to generate a new bot token (in case of errors try again)\n' +
-        "3. Copy the token (you won't be able to see it again!)",
-      'Step 3: Get Bot Token',
-    )
-    const tokenInput = await password({
-      message:
-        'Enter your Discord Bot Token (from "Bot" section - click "Reset Token" if needed):',
-      validate(value) {
-        const cleaned = stripBracketedPaste(value)
-        if (!cleaned) {
-          return 'Bot token is required'
-        }
-        if (cleaned.length < 50) {
-          return 'Invalid token format (too short)'
-        }
-      },
-    })
-    if (isCancel(tokenInput)) {
-      cancel('Setup cancelled')
-      process.exit(0)
-    }
-
-    const wizardToken = stripBracketedPaste(tokenInput)
-    const derivedAppId = appIdFromToken(wizardToken)
-    if (!derivedAppId) {
-      cliLogger.error(
-        'Could not derive Application ID from the bot token. The token appears malformed.',
-      )
-      process.exit(EXIT_NO_RESTART)
-    }
-
-    await setBotToken(derivedAppId, wizardToken)
-
-    note(
-      `Bot install URL:\n${generateBotInstallUrl({ clientId: derivedAppId })}\n\nYou MUST install the bot in your Discord server before continuing.`,
-      'Step 4: Install Bot to Server',
-    )
-    const installed = await text({
-      message: 'Press Enter AFTER you have installed the bot in your server:',
-      placeholder: 'Enter',
-    })
-    if (isCancel(installed)) {
-      cancel('Setup cancelled')
-      process.exit(0)
-    }
-
-    return { appId: derivedAppId, token: wizardToken, isQuickStart: false, isGatewayMode: false }
-  })()
+  const { appId, token, credentialSource, isGatewayMode } = await resolveCredentials({
+    forceRestartOnboarding,
+    forceGateway,
+    gatewayCallbackUrl,
+  })
 
   // In gateway mode, ensure REST calls route through the gateway proxy.
   // getBotTokenWithMode() sets this for saved-credential paths, but the fresh
@@ -1865,19 +1882,35 @@ async function run({
     data: { last_used_at: new Date() },
   })
 
+  // skipChannelSetup: when true, skip interactive project/channel selection
+  // and go straight to bot startup. Channel sync happens in the background.
+  //
+  // Skip when: creds came from env/saved (not first-time wizard), OR non-TTY
+  // gateway (headless), OR user didn't pass --add-channels/--restart-onboarding.
+  // Force channel setup when: first-time quick-start with no channels configured
+  // and TTY is available, or user explicitly passed --add-channels.
+  const isHeadlessGateway = isGatewayMode && !canUseInteractivePrompts()
   const hasConfiguredTextChannels = Boolean(
     await (await getPrisma()).channel_directories.findFirst({
       where: { channel_type: 'text' },
       select: { channel_id: true },
     }),
   )
-  const shouldForceChannelSetup =
-    isQuickStart && !hasConfiguredTextChannels && canUseInteractivePrompts()
-  // Non-TTY gateway: never enter channel setup flow — there's no interactive
-  // prompt available and the cloud sandbox host manages projects differently.
-  const isHeadlessGateway = isGatewayMode && !canUseInteractivePrompts()
-  const shouldAddChannels = !isHeadlessGateway &&
-    (!isQuickStart || forceRestartOnboarding || Boolean(addChannels) || shouldForceChannelSetup)
+  const skipChannelSetup = isHeadlessGateway || (() => {
+    // Wizard source always shows channel setup (user just completed onboarding)
+    if (credentialSource === 'wizard') {
+      return false
+    }
+    // Env/saved source: skip unless user explicitly asked for channels
+    if (forceRestartOnboarding || Boolean(addChannels)) {
+      return false
+    }
+    // First-time quick start with no channels: force setup if TTY is available
+    if (!hasConfiguredTextChannels && canUseInteractivePrompts()) {
+      return false
+    }
+    return true
+  })()
 
   // Start OpenCode server EARLY - let it initialize in parallel with Discord login.
   // This is the biggest startup bottleneck (can take 1-30 seconds to spawn and wait for ready)
@@ -1918,7 +1951,7 @@ async function run({
         // }
         guilds.push(...Array.from(c.guilds.cache.values()))
 
-        if (isQuickStart) {
+        if (skipChannelSetup) {
           resolve(null)
           return
         }
@@ -1989,15 +2022,13 @@ async function run({
     process.exit(EXIT_NO_RESTART)
   }
 
-  // Quick start: start the bot first, then defer channel sync/role reconciliation.
-  // If there are no configured text channels for this bot yet, fall through to
-  // the channel setup flow (same behavior as --add-channels).
-  if (isQuickStart && !shouldForceChannelSetup) {
+  if (skipChannelSetup) {
+    // Start bot immediately — channel sync happens in the background.
     cliLogger.log('Starting Discord bot...')
     await startDiscordBot({ token, appId, discordClient, useWorktrees })
     cliLogger.log('Discord bot is running!')
 
-    // Background channel sync + role reconciliation should never block ready state.
+    // Background channel sync + role reconciliation — never blocks ready state.
     void (async () => {
       try {
         const backgroundChannels = await collectKimakiChannels({
@@ -2025,238 +2056,225 @@ async function run({
         return guild.id
       }),
     })
+  } else {
+    // ── Channel setup flow ──
+    // Store channel-directory mappings discovered during Discord login.
+    await storeChannelDirectories({ kimakiChannels })
 
-    if (!canUseInteractivePrompts()) {
-      // Non-TTY: emit structured JSON so the host process knows the bot is ready.
-      emitJsonEvent({
-        type: 'ready',
-        app_id: appId,
-        guild_ids: guilds.map((g) => { return g.id }),
-      })
-    } else {
-      showReadyMessage({ kimakiChannels: [], createdChannels })
-      outro('✨ Bot ready! Listening for messages...')
-    }
-    return
-  }
-
-  // Store channel-directory mappings
-  await storeChannelDirectories({ kimakiChannels })
-
-  if (shouldForceChannelSetup) {
-    note(
-      'No Kimaki project channels are configured yet. Opening project/channel setup.',
-      'Channel Setup',
-    )
-  }
-
-  if (kimakiChannels.length > 0) {
-    const channelList = kimakiChannels
-      .flatMap(({ guild, channels }) =>
-        channels.map((ch) => {
-          return `#${ch.name} in ${guild.name}: ${ch.kimakiDirectory}`
-        }),
+    if (!hasConfiguredTextChannels) {
+      note(
+        'No Kimaki project channels are configured yet. Opening project/channel setup.',
+        'Channel Setup',
       )
-      .join('\n')
-
-    note(channelList, 'Existing Kimaki Channels')
-  }
-
-  // Full setup path: wait for OpenCode, show prompts, create channels if needed
-  // Await the OpenCode server that was started in parallel with Discord login
-  cliLogger.log('Waiting for OpenCode server...')
-  const getClient = await opencodePromise
-  cliLogger.log('OpenCode server ready!')
-
-  cliLogger.log('Fetching OpenCode data...')
-
-  // Fetch projects, commands, and agents in parallel
-  const [projects, allUserCommands, allAgents] = await Promise.all([
-    getClient()
-      .project.list()
-      .then((r) => r.data || [])
-      .catch((error) => {
-        cliLogger.log('Failed to fetch projects')
-        cliLogger.error(
-          'Error:',
-          error instanceof Error ? error.message : String(error),
-        )
-        discordClient.destroy()
-        process.exit(EXIT_NO_RESTART)
-      }),
-    getClient()
-      .command.list({ directory: currentDir })
-      .then((r) => r.data || [])
-      .catch((error) => {
-        cliLogger.warn(
-          'Failed to load user commands during setup:',
-          error instanceof Error ? error.message : String(error),
-        )
-        return []
-      }),
-    getClient()
-      .app.agents({ directory: currentDir })
-      .then((r) => r.data || [])
-      .catch((error) => {
-        cliLogger.warn(
-          'Failed to load agents during setup:',
-          error instanceof Error ? error.message : String(error),
-        )
-        return []
-      }),
-  ])
-
-  cliLogger.log(`Found ${projects.length} OpenCode project(s)`)
-
-  const existingDirs = kimakiChannels.flatMap(({ channels }) =>
-    channels
-      .filter((ch) => ch.kimakiDirectory)
-      .map((ch) => ch.kimakiDirectory)
-      .filter(Boolean),
-  )
-
-  const availableProjects = deduplicateByKey(
-    projects.filter((project) => {
-      if (existingDirs.includes(project.worktree)) {
-        return false
-      }
-      if (path.basename(project.worktree).startsWith('opencode-test-')) {
-        return false
-      }
-      return true
-    }),
-    (x) => x.worktree,
-  )
-
-  if (availableProjects.length === 0) {
-    note(
-      'All OpenCode projects already have Discord channels',
-      'No New Projects',
-    )
-  }
-
-  if (
-    (!existingDirs?.length && availableProjects.length > 0) ||
-    shouldAddChannels
-  ) {
-    if (!canUseInteractivePrompts()) {
-      exitNonInteractiveSetup()
     }
 
-    const selectedProjects = await multiselect({
-      message: 'Select projects to create Discord channels for:',
-      options: availableProjects.map((project) => ({
-        value: project.id,
-        label: `${path.basename(project.worktree)} (${abbreviatePath(project.worktree)})`,
-      })),
-      required: false,
-    })
-
-    if (!isCancel(selectedProjects) && selectedProjects.length > 0) {
-      let targetGuild: Guild
-      if (guilds.length === 0) {
-        cliLogger.error(
-          'No Discord servers found! The bot must be installed in at least one server.',
+    if (kimakiChannels.length > 0) {
+      const channelList = kimakiChannels
+        .flatMap(({ guild, channels }) =>
+          channels.map((ch) => {
+            return `#${ch.name} in ${guild.name}: ${ch.kimakiDirectory}`
+          }),
         )
-        process.exit(EXIT_NO_RESTART)
+        .join('\n')
+
+      note(channelList, 'Existing Kimaki Channels')
+    }
+
+    // Wait for OpenCode, fetch projects, show prompts, create channels if needed
+    cliLogger.log('Waiting for OpenCode server...')
+    const getClient = await opencodePromise
+    cliLogger.log('OpenCode server ready!')
+
+    cliLogger.log('Fetching OpenCode data...')
+
+    // Fetch projects, commands, and agents in parallel
+    const [projects, allUserCommands, allAgents] = await Promise.all([
+      getClient()
+        .project.list()
+        .then((r) => r.data || [])
+        .catch((error) => {
+          cliLogger.log('Failed to fetch projects')
+          cliLogger.error(
+            'Error:',
+            error instanceof Error ? error.message : String(error),
+          )
+          discordClient.destroy()
+          process.exit(EXIT_NO_RESTART)
+        }),
+      getClient()
+        .command.list({ directory: currentDir })
+        .then((r) => r.data || [])
+        .catch((error) => {
+          cliLogger.warn(
+            'Failed to load user commands during setup:',
+            error instanceof Error ? error.message : String(error),
+          )
+          return []
+        }),
+      getClient()
+        .app.agents({ directory: currentDir })
+        .then((r) => r.data || [])
+        .catch((error) => {
+          cliLogger.warn(
+            'Failed to load agents during setup:',
+            error instanceof Error ? error.message : String(error),
+          )
+          return []
+        }),
+    ])
+
+    cliLogger.log(`Found ${projects.length} OpenCode project(s)`)
+
+    const existingDirs = kimakiChannels.flatMap(({ channels }) =>
+      channels
+        .filter((ch) => ch.kimakiDirectory)
+        .map((ch) => ch.kimakiDirectory)
+        .filter(Boolean),
+    )
+
+    const availableProjects = deduplicateByKey(
+      projects.filter((project) => {
+        if (existingDirs.includes(project.worktree)) {
+          return false
+        }
+        if (path.basename(project.worktree).startsWith('opencode-test-')) {
+          return false
+        }
+        return true
+      }),
+      (x) => x.worktree,
+    )
+
+    if (availableProjects.length === 0) {
+      note(
+        'All OpenCode projects already have Discord channels',
+        'No New Projects',
+      )
+    }
+
+    if (availableProjects.length > 0) {
+      if (!canUseInteractivePrompts()) {
+        exitNonInteractiveSetup()
       }
 
-      if (guilds.length === 1) {
-        targetGuild = guilds[0]!
-        note(`Using server: ${targetGuild.name}`, 'Server Selected')
-      } else {
-        const guildSelection = await multiselect({
-          message: 'Select a Discord server to create channels in:',
-          options: guilds.map((guild) => ({
-            value: guild.id,
-            label: `${guild.name} (${guild.memberCount} members)`,
-          })),
-          required: true,
-          maxItems: 1,
-        })
+      const selectedProjects = await multiselect({
+        message: 'Select projects to create Discord channels for:',
+        options: availableProjects.map((project) => ({
+          value: project.id,
+          label: `${path.basename(project.worktree)} (${abbreviatePath(project.worktree)})`,
+        })),
+        required: false,
+      })
 
-        if (isCancel(guildSelection)) {
-          cancel('Setup cancelled')
-          process.exit(0)
+      if (!isCancel(selectedProjects) && selectedProjects.length > 0) {
+        let targetGuild: Guild
+        if (guilds.length === 0) {
+          cliLogger.error(
+            'No Discord servers found! The bot must be installed in at least one server.',
+          )
+          process.exit(EXIT_NO_RESTART)
         }
 
-        targetGuild = guilds.find((g) => g.id === guildSelection[0])!
-      }
-
-      cliLogger.log('Creating Discord channels...')
-
-      for (const projectId of selectedProjects) {
-        const project = projects.find((p) => p.id === projectId)
-        if (!project) continue
-
-        try {
-          const { textChannelId, channelName } = await createProjectChannels({
-            guild: targetGuild,
-            projectDirectory: project.worktree,
-            botName: discordClient.user?.username,
-            enableVoiceChannels,
+        if (guilds.length === 1) {
+          targetGuild = guilds[0]!
+          note(`Using server: ${targetGuild.name}`, 'Server Selected')
+        } else {
+          const guildSelection = await multiselect({
+            message: 'Select a Discord server to create channels in:',
+            options: guilds.map((guild) => ({
+              value: guild.id,
+              label: `${guild.name} (${guild.memberCount} members)`,
+            })),
+            required: true,
+            maxItems: 1,
           })
 
-          createdChannels.push({
-            name: channelName,
-            id: textChannelId,
-            guildId: targetGuild.id,
-          })
-        } catch (error) {
-          cliLogger.error(
-            `Failed to create channels for ${path.basename(project.worktree)}:`,
-            error,
+          if (isCancel(guildSelection)) {
+            cancel('Setup cancelled')
+            process.exit(0)
+          }
+
+          targetGuild = guilds.find((g) => g.id === guildSelection[0])!
+        }
+
+        cliLogger.log('Creating Discord channels...')
+
+        for (const projectId of selectedProjects) {
+          const project = projects.find((p) => p.id === projectId)
+          if (!project) continue
+
+          try {
+            const { textChannelId, channelName } = await createProjectChannels({
+              guild: targetGuild,
+              projectDirectory: project.worktree,
+              botName: discordClient.user?.username,
+              enableVoiceChannels,
+            })
+
+            createdChannels.push({
+              name: channelName,
+              id: textChannelId,
+              guildId: targetGuild.id,
+            })
+          } catch (error) {
+            cliLogger.error(
+              `Failed to create channels for ${path.basename(project.worktree)}:`,
+              error,
+            )
+          }
+        }
+
+        cliLogger.log(`Created ${createdChannels.length} channel(s)`)
+
+        if (createdChannels.length > 0) {
+          note(
+            createdChannels.map((ch) => `#${ch.name}`).join('\n'),
+            'Created Channels',
           )
         }
       }
-
-      cliLogger.log(`Created ${createdChannels.length} channel(s)`)
-
-      if (createdChannels.length > 0) {
-        note(
-          createdChannels.map((ch) => `#${ch.name}`).join('\n'),
-          'Created Channels',
-        )
-      }
     }
-  }
 
-  // Log available user commands
-  const registrableCommands = allUserCommands.filter(
-    (cmd) => !SKIP_USER_COMMANDS.includes(cmd.name),
-  )
-
-  if (registrableCommands.length > 0) {
-    note(
-      `Found ${registrableCommands.length} user-defined command(s)`,
-      'OpenCode Commands/Skills',
+    // Log available user commands
+    const registrableCommands = allUserCommands.filter(
+      (cmd) => !SKIP_USER_COMMANDS.includes(cmd.name),
     )
+
+    if (registrableCommands.length > 0) {
+      note(
+        `Found ${registrableCommands.length} user-defined command(s)`,
+        'OpenCode Commands/Skills',
+      )
+    }
+
+    cliLogger.log('Registering slash commands asynchronously...')
+    void registerCommands({
+      token,
+      appId,
+      guildIds: guilds.map((guild) => {
+        return guild.id
+      }),
+      userCommands: allUserCommands,
+      agents: allAgents,
+    })
+      .then(() => {
+        cliLogger.log('Slash commands registered!')
+      })
+      .catch((error) => {
+        cliLogger.error(
+          'Failed to register slash commands:',
+          error instanceof Error ? error.message : String(error),
+        )
+      })
+
+    // Start bot after channel setup is complete so it doesn't handle
+    // messages/interactions while the user is still going through prompts.
+    cliLogger.log('Starting Discord bot...')
+    await startDiscordBot({ token, appId, discordClient, useWorktrees })
+    cliLogger.log('Discord bot is running!')
   }
 
-  cliLogger.log('Registering slash commands asynchronously...')
-  void registerCommands({
-    token,
-    appId,
-    guildIds: guilds.map((guild) => {
-      return guild.id
-    }),
-    userCommands: allUserCommands,
-    agents: allAgents,
-  })
-    .then(() => {
-      cliLogger.log('Slash commands registered!')
-    })
-    .catch((error) => {
-      cliLogger.error(
-        'Failed to register slash commands:',
-        error instanceof Error ? error.message : String(error),
-      )
-    })
-
-  cliLogger.log('Starting Discord bot...')
-  await startDiscordBot({ token, appId, discordClient, useWorktrees })
-  cliLogger.log('Discord bot is running!')
-
+  // ── Ready ──
   if (!canUseInteractivePrompts()) {
     emitJsonEvent({
       type: 'ready',
@@ -2265,9 +2283,7 @@ async function run({
     })
   } else {
     showReadyMessage({ kimakiChannels, createdChannels })
-    outro(
-      '✨ Setup complete! Listening for new messages... do not close this process.',
-    )
+    outro('✨ Bot ready! Listening for messages...')
   }
 }
 
