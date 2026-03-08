@@ -390,6 +390,7 @@ export function registerInteractionHandler({
             await handleHtmlActionButton(interaction)
             return
           }
+
           return
         }
 

@@ -62,6 +62,7 @@ import {
 import { formatWorktreeName } from './commands/new-worktree.js'
 import { WORKTREE_PREFIX } from './commands/merge-worktree.js'
 import type { ThreadStartMarker } from './system-message.js'
+import { sendWelcomeMessage } from './onboarding-welcome.js'
 import { buildOpencodeEventLogLine } from './session-handler/opencode-session-event-log.js'
 import yaml from 'js-yaml'
 import type {
@@ -2252,6 +2253,16 @@ async function run({
             id: result.textChannelId,
             guildId: guild.id,
           })
+
+          // Send welcome message to the newly created default channel
+          const defaultChannel = await guild.channels
+            .fetch(result.textChannelId)
+            .catch(() => null)
+          if (defaultChannel?.isTextBased()) {
+            await sendWelcomeMessage({
+              channel: defaultChannel as import('discord.js').TextChannel,
+            })
+          }
         }
       } catch (error) {
         cliLogger.warn(

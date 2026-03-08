@@ -138,6 +138,7 @@ const kimakiPlugin: Plugin = async ({ directory }) => {
   // Track whether we've already injected MEMORY.md contents for each session
   const sessionMemoryInjected = new Set<string>()
 
+
   return {
     tool: {
       kimaki_file_upload: tool({
@@ -479,3 +480,4 @@ const kimakiPlugin: Plugin = async ({ directory }) => {
 
 export { kimakiPlugin }
 export { interruptOpencodeSessionOnUserMessage } from './opencode-interrupt-plugin.js'
+export { onboardingTutorialPlugin } from './onboarding-tutorial-plugin.js'
