@@ -1,6 +1,15 @@
 // Onboarding tutorial system instructions injected by the plugin when the
 // user starts a 3D game tutorial session. The `markdown` tag is a no-op
 // identity function — it exists only for editor syntax highlighting.
+//
+// This file has no discord.js deps so it can be safely imported by both
+// the welcome message (discord side) and the opencode plugin.
+
+// Unique text used in the welcome message and detected by the plugin to
+// trigger tutorial instruction injection. Shared constant so they can't
+// drift out of sync.
+export const TUTORIAL_WELCOME_TEXT =
+  'Want to build an example browser game? Respond in this thread.'
 
 const markdown = String.raw
 const backticks = '```'

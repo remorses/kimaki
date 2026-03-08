@@ -6,6 +6,7 @@
 
 import { ThreadAutoArchiveDuration, type TextChannel } from 'discord.js'
 import { createLogger, LogPrefix } from './logger.js'
+import { TUTORIAL_WELCOME_TEXT } from './onboarding-tutorial.js'
 
 const logger = createLogger(LogPrefix.CHANNEL)
 
@@ -16,7 +17,7 @@ function buildWelcomeText({ mentionUserId }: { mentionUserId?: string }): string
 - Add your projects with \`/add-project\` and code from anywhere
 - Collaborate with teammates in the same session
 - Upload images and files, the bot can share screenshots back
-Want to build an example browser game? Respond in this thread.`
+${TUTORIAL_WELCOME_TEXT}`
 }
 
 export async function sendWelcomeMessage({

@@ -228,23 +228,19 @@ export async function createDefaultKimakiChannel({
     )
   }
 
-  // 1. Check database for existing channel mapped to this directory
+  // 1. Check database for existing channel mapped to this directory.
+  // Check ALL mappings (not just the first) since the same directory could
+  // have stale rows from deleted channels or other guilds.
   const existingMappings = await findChannelsByDirectory({
     directory: projectDirectory,
     channelType: 'text',
   })
-  if (existingMappings.length > 0) {
-    const channelId = existingMappings[0]!.channel_id
-    // Verify the channel still exists in the guild
-    const channel = guild.channels.cache.get(channelId)
-    if (channel && channel.type === ChannelType.GuildText) {
-      logger.log(`Default kimaki channel already exists: ${channelId}`)
-      return null
-    }
-    // Channel was deleted from Discord but DB mapping remains — fall through
-    logger.log(
-      `DB mapping exists for ${channelId} but channel not found in guild, creating new one`,
-    )
+  const mappedChannelInGuild = existingMappings
+    .map((row) => guild.channels.cache.get(row.channel_id))
+    .find((ch): ch is TextChannel => ch?.type === ChannelType.GuildText)
+  if (mappedChannelInGuild) {
+    logger.log(`Default kimaki channel already exists: ${mappedChannelInGuild.id}`)
+    return null
   }
 
   // 2. Fallback: detect existing channel by name+category

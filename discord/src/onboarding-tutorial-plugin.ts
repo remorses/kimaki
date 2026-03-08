@@ -1,7 +1,8 @@
 // OpenCode plugin that injects onboarding tutorial system instructions.
-// Detects the tutorial prompt (from onboarding-welcome.ts) in the first user
-// message of a session and injects ONBOARDING_TUTORIAL_INSTRUCTIONS as a
-// synthetic system-reminder part so the model knows how to guide the 3D game build.
+// Detects TUTORIAL_WELCOME_TEXT in any text part of the session (the thread
+// starter content appears in the user prompt via "Context from thread:..."
+// prepended by message-preprocessing.ts). When found, injects
+// ONBOARDING_TUTORIAL_INSTRUCTIONS as a synthetic system-reminder.
 //
 // Exported from opencode-plugin.ts — each export is treated as a separate
 // plugin by OpenCode's plugin loader.
@@ -15,49 +16,51 @@ import {
   LogPrefix,
 } from './logger.js'
 import { notifyError } from './sentry.js'
-import { ONBOARDING_TUTORIAL_INSTRUCTIONS } from './onboarding-tutorial.js'
+import {
+  ONBOARDING_TUTORIAL_INSTRUCTIONS,
+  TUTORIAL_WELCOME_TEXT,
+} from './onboarding-tutorial.js'
 
 const logger = createLogger(LogPrefix.OPENCODE)
 
-// Must match TUTORIAL_PROMPT in onboarding-welcome.ts. Hardcoded because
-// importing from onboarding-welcome.ts would pull in discord.js deps that
-// aren't available in the OpenCode plugin process.
-const TUTORIAL_PROMPT_SUBSTR = 'Build a 3D game with Three.js'
-
 const onboardingTutorialPlugin: Plugin = async () => {
-  // Track sessions where the first user message has already been seen.
-  // Only the very first message is checked for the tutorial prompt —
-  // later messages are ignored even if they contain the substring.
-  const sessionFirstMessageSeen = new Set<string>()
+  // Track sessions where tutorial instructions have been injected.
+  // Once injected, never inject again for the same session.
+  const sessionTutorialInjected = new Set<string>()
 
   return {
     'chat.message': async (input, output) => {
       const hookResult = await errore.tryAsync({
         try: async () => {
-          const first = output.parts.find((part) => {
-            if (part.type !== 'text') {
-              return true
-            }
-            return part.synthetic !== true
-          })
-          if (!first || first.type !== 'text' || first.text.trim().length === 0) {
-            return
-          }
-
           const { sessionID } = input
-          if (sessionFirstMessageSeen.has(sessionID)) {
+          if (sessionTutorialInjected.has(sessionID)) {
             return
           }
-          sessionFirstMessageSeen.add(sessionID)
 
-          if (!first.text.includes(TUTORIAL_PROMPT_SUBSTR)) {
+          // Check ALL text parts (including system/synthetic) for the
+          // welcome text. The thread starter content is prepended to the
+          // user prompt by message-preprocessing.ts as "Context from thread:".
+          const hasTutorialContext = output.parts.some((part) => {
+            return part.type === 'text' && part.text.includes(TUTORIAL_WELCOME_TEXT)
+          })
+          if (!hasTutorialContext) {
+            return
+          }
+
+          sessionTutorialInjected.add(sessionID)
+
+          // Use messageID from the first text part for the synthetic injection
+          const firstText = output.parts.find((part) => {
+            return part.type === 'text'
+          })
+          if (!firstText) {
             return
           }
 
           output.parts.push({
             id: crypto.randomUUID(),
             sessionID,
-            messageID: first.messageID,
+            messageID: firstText.messageID,
             type: 'text' as const,
             text: `<system-reminder>\n${ONBOARDING_TUTORIAL_INSTRUCTIONS}\n</system-reminder>`,
             synthetic: true,
@@ -81,7 +84,7 @@ const onboardingTutorialPlugin: Plugin = async () => {
       }
       const id = event.properties?.info?.id
       if (id) {
-        sessionFirstMessageSeen.delete(id)
+        sessionTutorialInjected.delete(id)
       }
     },
   }
