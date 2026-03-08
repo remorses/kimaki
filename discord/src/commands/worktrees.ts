@@ -1,16 +1,29 @@
 // /worktrees command — list all worktree sessions sorted by creation date.
-// Renders a markdown table that the CV2 pipeline auto-formats for Discord.
+// Renders a markdown table that the CV2 pipeline auto-formats for Discord,
+// including HTML-backed action buttons for deletable worktrees.
 
 import {
+  ButtonInteraction,
   ChatInputCommandInteraction,
+  ComponentType,
   MessageFlags,
   type APIMessageTopLevelComponent,
   type APITextDisplayComponent,
+  type InteractionEditReplyOptions,
 } from 'discord.js'
-import type { ThreadWorktree } from '../database.js'
+import {
+  deleteThreadWorktree,
+  getThreadWorktree,
+  type ThreadWorktree,
+} from '../database.js'
 import { getPrisma } from '../db.js'
 import { splitTablesFromMarkdown } from '../format-tables.js'
-import { git, getDefaultBranch } from '../worktrees.js'
+import {
+  buildHtmlActionCustomId,
+  cancelHtmlActionsForOwner,
+  registerHtmlAction,
+} from '../html-actions.js'
+import { deleteWorktree, git, getDefaultBranch } from '../worktrees.js'
 
 export function formatTimeAgo(date: Date): string {
   const diffMs = Date.now() - date.getTime()
@@ -50,9 +63,20 @@ type WorktreeGitStatus = {
   aheadCount: number
 }
 
+type WorktreesReplyTarget = {
+  guildId: string
+  userId: string
+  channelId: string
+  notice?: string
+  editReply: (
+    options: string | InteractionEditReplyOptions,
+  ) => Promise<unknown>
+}
+
 // 5s timeout per git call — prevents hangs from deleted dirs, git locks, slow disks.
 // Returns null on timeout/error so the table shows "unknown" for that worktree.
 const GIT_CMD_TIMEOUT = 5_000
+const GLOBAL_TIMEOUT = 10_000
 
 // Checks dirty state and commits ahead of default branch in parallel.
 // Returns null for worktrees that aren't ready or when the directory is
@@ -99,12 +123,12 @@ function buildWorktreeTable({
   gitStatuses: (WorktreeGitStatus | null)[]
   guildId: string
 }): string {
-  const header = '| Thread | Name | Status | Created | Folder |'
-  const separator = '|---|---|---|---|---|'
+  const header = '| Thread | Name | Status | Created | Folder | Action |'
+  const separator = '|---|---|---|---|---|---|'
   const rows = worktrees.map((wt, i) => {
     const threadLink = `[thread](https://discord.com/channels/${guildId}/${wt.thread_id})`
     const name = wt.worktree_name
-    const gs = gitStatuses[i]
+    const gs = gitStatuses[i] ?? null
     const status = (() => {
       if (wt.status !== 'ready') {
         return statusLabel(wt)
@@ -125,9 +149,53 @@ function buildWorktreeTable({
     })()
     const created = wt.created_at ? formatTimeAgo(wt.created_at) : 'unknown'
     const folder = wt.worktree_directory ?? wt.project_directory
-    return `| ${threadLink} | ${name} | ${status} | ${created} | ${folder} |`
+    const action = buildActionCell({ wt, gitStatus: gs })
+    return `| ${threadLink} | ${name} | ${status} | ${created} | ${folder} | ${action} |`
   })
   return [header, separator, ...rows].join('\n')
+}
+
+function buildActionCell({
+  wt,
+  gitStatus,
+}: {
+  wt: ThreadWorktree
+  gitStatus: WorktreeGitStatus | null
+}): string {
+  if (!canDeleteWorktree({ wt, gitStatus })) {
+    return '-'
+  }
+
+  return buildDeleteButtonHtml({
+    buttonId: `delete-worktree-${wt.thread_id}`,
+  })
+}
+
+function buildDeleteButtonHtml({
+  buttonId,
+}: {
+  buttonId: string
+}): string {
+  return `<button id="${buttonId}" variant="danger">Delete</button>`
+}
+
+function canDeleteWorktree({
+  wt,
+  gitStatus,
+}: {
+  wt: ThreadWorktree
+  gitStatus: WorktreeGitStatus | null
+}): boolean {
+  if (wt.status !== 'ready' || !wt.worktree_directory) {
+    return false
+  }
+  if (!gitStatus) {
+    return false
+  }
+  if (gitStatus.dirty) {
+    return false
+  }
+  return gitStatus.aheadCount === 0
 }
 
 // Resolves git statuses for all worktrees within a single global deadline.
@@ -180,6 +248,184 @@ async function resolveGitStatuses({
   }
 }
 
+async function getRecentWorktrees(): Promise<ThreadWorktree[]> {
+  const prisma = await getPrisma()
+  return await prisma.thread_worktrees.findMany({
+    orderBy: { created_at: 'desc' },
+    take: 10,
+  })
+}
+
+function getWorktreesActionOwnerKey({
+  userId,
+  channelId,
+}: {
+  userId: string
+  channelId: string
+}): string {
+  return `worktrees:${userId}:${channelId}`
+}
+
+async function renderWorktreesReply({
+  guildId,
+  userId,
+  channelId,
+  notice,
+  editReply,
+}: WorktreesReplyTarget): Promise<void> {
+  const ownerKey = getWorktreesActionOwnerKey({ userId, channelId })
+  cancelHtmlActionsForOwner(ownerKey)
+
+  const worktrees = await getRecentWorktrees()
+  if (worktrees.length === 0) {
+    const message = notice ? `${notice}\n\nNo worktrees found.` : 'No worktrees found.'
+    const textDisplay: APITextDisplayComponent = {
+      type: ComponentType.TextDisplay,
+      content: message,
+    }
+    await editReply({
+      components: [textDisplay],
+      flags: MessageFlags.IsComponentsV2,
+    })
+    return
+  }
+
+  const gitStatuses = await resolveGitStatuses({
+    worktrees,
+    timeout: GLOBAL_TIMEOUT,
+  })
+  const deletableWorktreesByButtonId = new Map<string, ThreadWorktree>()
+  worktrees.forEach((wt, index) => {
+    const gitStatus = gitStatuses[index] ?? null
+    if (!canDeleteWorktree({ wt, gitStatus })) {
+      return
+    }
+    deletableWorktreesByButtonId.set(`delete-worktree-${wt.thread_id}`, wt)
+  })
+
+  const tableMarkdown = buildWorktreeTable({
+    worktrees,
+    gitStatuses,
+    guildId,
+  })
+  const markdown = notice ? `${notice}\n\n${tableMarkdown}` : tableMarkdown
+  const segments = splitTablesFromMarkdown(markdown, {
+    resolveButtonCustomId: ({ button }) => {
+      const worktree = deletableWorktreesByButtonId.get(button.id)
+      if (!worktree) {
+        return new Error(`No worktree registered for button ${button.id}`)
+      }
+
+      const actionId = registerHtmlAction({
+        ownerKey,
+        threadId: worktree.thread_id,
+        run: async ({ interaction }) => {
+          await handleDeleteWorktreeAction({
+            interaction,
+            threadId: worktree.thread_id,
+          })
+        },
+      })
+      return buildHtmlActionCustomId(actionId)
+    },
+  })
+
+  const components: APIMessageTopLevelComponent[] = segments.flatMap((segment) => {
+    if (segment.type === 'components') {
+      return segment.components
+    }
+
+    const textDisplay: APITextDisplayComponent = {
+      type: ComponentType.TextDisplay,
+      content: segment.text,
+    }
+    return [textDisplay]
+  })
+
+  await editReply({
+    components,
+    flags: MessageFlags.IsComponentsV2,
+  })
+}
+
+async function handleDeleteWorktreeAction({
+  interaction,
+  threadId,
+}: {
+  interaction: ButtonInteraction
+  threadId: string
+}): Promise<void> {
+  const guildId = interaction.guildId
+  if (!guildId) {
+    await interaction.editReply({
+      components: [
+        {
+          type: ComponentType.TextDisplay,
+          content: 'This action can only be used in a server.',
+        },
+      ],
+      flags: MessageFlags.IsComponentsV2,
+    })
+    return
+  }
+
+  const worktree = await getThreadWorktree(threadId)
+  if (!worktree) {
+    await renderWorktreesReply({
+      guildId,
+      userId: interaction.user.id,
+      channelId: interaction.channelId,
+      notice: 'Worktree was already removed.',
+      editReply: (options) => {
+        return interaction.editReply(options)
+      },
+    })
+    return
+  }
+
+  if (worktree.status !== 'ready' || !worktree.worktree_directory) {
+    await renderWorktreesReply({
+      guildId,
+      userId: interaction.user.id,
+      channelId: interaction.channelId,
+      notice: `Cannot delete \`${worktree.worktree_name}\` because it is ${worktree.status}.`,
+      editReply: (options) => {
+        return interaction.editReply(options)
+      },
+    })
+    return
+  }
+
+  const deleteResult = await deleteWorktree({
+    projectDirectory: worktree.project_directory,
+    worktreeDirectory: worktree.worktree_directory,
+    worktreeName: worktree.worktree_name,
+  })
+  if (deleteResult instanceof Error) {
+    await renderWorktreesReply({
+      guildId,
+      userId: interaction.user.id,
+      channelId: interaction.channelId,
+      notice: `Failed to delete \`${worktree.worktree_name}\`: ${deleteResult.message}`,
+      editReply: (options) => {
+        return interaction.editReply(options)
+      },
+    })
+    return
+  }
+
+  await deleteThreadWorktree(threadId)
+  await renderWorktreesReply({
+    guildId,
+    userId: interaction.user.id,
+    channelId: interaction.channelId,
+    notice: `Deleted \`${worktree.worktree_name}\`.`,
+    editReply: (options) => {
+      return interaction.editReply(options)
+    },
+  })
+}
+
 export async function handleWorktreesCommand({
   command,
 }: {
@@ -196,44 +442,12 @@ export async function handleWorktreesCommand({
   }
 
   await command.deferReply({ flags: MessageFlags.Ephemeral })
-
-  const prisma = await getPrisma()
-  const worktrees = await prisma.thread_worktrees.findMany({
-    orderBy: { created_at: 'desc' },
-    take: 10,
-  })
-
-  if (worktrees.length === 0) {
-    await command.editReply({ content: 'No worktrees found.' })
-    return
-  }
-
-  // 10s global deadline covers both default-branch prefetch and per-worktree
-  // git status checks. Guarantees the command responds within Discord's
-  // interaction window even if git is slow or unreachable.
-  const GLOBAL_TIMEOUT = 10_000
-  const gitStatuses = await resolveGitStatuses({ worktrees, timeout: GLOBAL_TIMEOUT })
-
-  const markdown = buildWorktreeTable({ worktrees, gitStatuses, guildId })
-  const segments = splitTablesFromMarkdown(markdown)
-
-  // Convert segments to top-level CV2 components:
-  // text segments → TextDisplay, table segments → Container (from pipeline)
-  const components: APIMessageTopLevelComponent[] = segments.flatMap(
-    (segment) => {
-      if (segment.type === 'components') {
-        return segment.components
-      }
-      const textDisplay: APITextDisplayComponent = {
-        type: 10,
-        content: segment.text,
-      }
-      return [textDisplay as APIMessageTopLevelComponent]
+  await renderWorktreesReply({
+    guildId,
+    userId: command.user.id,
+    channelId: command.channelId,
+    editReply: (options) => {
+      return command.editReply(options)
     },
-  )
-
-  await command.editReply({
-    components,
-    flags: MessageFlags.IsComponentsV2,
   })
 }

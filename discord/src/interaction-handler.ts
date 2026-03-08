@@ -71,6 +71,7 @@ import {
   handleFileUploadModalSubmit,
 } from './commands/file-upload.js'
 import { handleActionButton } from './commands/action-buttons.js'
+import { handleHtmlActionButton } from './html-actions.js'
 import {
   handleQueueCommand,
   handleClearQueueCommand,
@@ -382,6 +383,11 @@ export function registerInteractionHandler({
 
           if (customId.startsWith('action_button:')) {
             await handleActionButton(interaction)
+            return
+          }
+
+          if (customId.startsWith('html_action:')) {
+            await handleHtmlActionButton(interaction)
             return
           }
           return

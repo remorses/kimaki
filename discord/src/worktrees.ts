@@ -786,6 +786,44 @@ export async function getDefaultBranch(
   return ref.replace(/^refs\/remotes\/origin\//, '') || 'main'
 }
 
+export async function deleteWorktree({
+  projectDirectory,
+  worktreeDirectory,
+  worktreeName,
+}: {
+  projectDirectory: string
+  worktreeDirectory: string
+  worktreeName: string
+}): Promise<void | Error> {
+  const removeResult = await git(
+    projectDirectory,
+    `worktree remove ${JSON.stringify(worktreeDirectory)}`,
+    {
+      timeout: SUBMODULE_INIT_TIMEOUT_MS,
+    },
+  )
+  if (removeResult instanceof Error) {
+    return new Error(`Failed to remove worktree ${worktreeName}`, {
+      cause: removeResult,
+    })
+  }
+
+  const deleteBranchResult = await git(
+    projectDirectory,
+    `branch -d ${JSON.stringify(worktreeName)}`,
+  )
+  if (deleteBranchResult instanceof Error) {
+    return new Error(`Failed to delete branch ${worktreeName}`, {
+      cause: deleteBranchResult,
+    })
+  }
+
+  const pruneResult = await git(projectDirectory, 'worktree prune')
+  if (pruneResult instanceof Error) {
+    logger.warn(`Failed to prune worktrees after deleting ${worktreeName}`)
+  }
+}
+
 export async function isDirty(
   dir: string,
   opts?: { timeout?: number },

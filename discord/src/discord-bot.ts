@@ -45,6 +45,7 @@ import {
   preprocessNewThreadMessage,
 } from './message-preprocessing.js'
 import { cancelPendingActionButtons } from './commands/action-buttons.js'
+import { cancelHtmlActionsForThread } from './html-actions.js'
 import {
   ensureKimakiCategory,
   ensureKimakiAudioCategory,
@@ -497,6 +498,7 @@ export async function startDiscordBot({
 
         if (!message.author.bot && !isCliInjectedPrompt) {
           cancelPendingActionButtons(thread.id)
+          cancelHtmlActionsForThread(thread.id)
         }
 
         const parent = thread.parent as TextChannel | null

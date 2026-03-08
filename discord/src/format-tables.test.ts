@@ -113,12 +113,12 @@ describe('buildTableComponents', () => {
     expect(result).toHaveLength(2)
     expect(result[0]!.type).toBe('components')
     expect(result[1]!.type).toBe('components')
-    // First container has 19 rows (19 TDs + 18 seps = 37 children)
+    // First container has 20 rows (20 TDs + 19 seps = 39 children)
     const firstChildren = getContainerChildren([result[0]!])
-    expect(firstChildren).toHaveLength(19 + 18)
-    // Second container has 6 rows (6 TDs + 5 seps = 11 children)
+    expect(firstChildren).toHaveLength(20 + 19)
+    // Second container has 5 rows (5 TDs + 4 seps = 9 children)
     const secondChildren = getContainerChildren([result[1]!])
-    expect(secondChildren).toHaveLength(6 + 5)
+    expect(secondChildren).toHaveLength(5 + 4)
   })
 
   test('strips formatting from cells', () => {
@@ -131,6 +131,73 @@ describe('buildTableComponents', () => {
     expect(children[0]!.content).toMatchInlineSnapshot(`
       "**Header** Bold text
       **Value** Normal"
+    `)
+  })
+
+  test('renders button cells as section accessories', () => {
+    const table = parseTable(`| Name | Action |
+| --- | --- |
+| feature-a | <button id="delete-a" variant="danger">Delete</button> |`)
+    const result = buildTableComponents(table, {
+      resolveButtonCustomId: ({ button }) => {
+        return `html_action:${button.id}`
+      },
+    })
+    expect(result).toMatchInlineSnapshot(`
+      [
+        {
+          "components": [
+            {
+              "components": [
+                {
+                  "accessory": {
+                    "custom_id": "html_action:delete-a",
+                    "disabled": false,
+                    "label": "Delete",
+                    "style": 4,
+                    "type": 2,
+                  },
+                  "components": [
+                    {
+                      "content": "**Name** feature-a",
+                      "type": 10,
+                    },
+                  ],
+                  "type": 9,
+                },
+              ],
+              "type": 17,
+            },
+          ],
+          "type": "components",
+        },
+      ]
+    `)
+  })
+
+  test('falls back to button text when no resolver is provided', () => {
+    const table = parseTable(`| Name | Action |
+| --- | --- |
+| feature-a | <button id="delete-a" variant="danger">Delete</button> |`)
+    const result = buildTableComponents(table)
+    expect(result).toMatchInlineSnapshot(`
+      [
+        {
+          "components": [
+            {
+              "components": [
+                {
+                  "content": "**Name** feature-a
+      **Action** Delete",
+                  "type": 10,
+                },
+              ],
+              "type": 17,
+            },
+          ],
+          "type": "components",
+        },
+      ]
     `)
   })
 })
