@@ -12,7 +12,6 @@ const WELCOME_TEXT = `**Kimaki** lets you code from Discord. Send a message in a
 - Add your projects with \`/add-project\` and code from anywhere
 - Collaborate with teammates in the same session
 - Upload images and files, the bot can share screenshots back
-- Expose dev servers with \`kimaki tunnel\` so anyone can access your localhost
 Send a message in this channel to get started.`
 
 export async function sendWelcomeMessage({

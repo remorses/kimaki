@@ -2255,14 +2255,7 @@ async function run({
           })
 
           // Send welcome message to the newly created default channel
-          const defaultChannel = await guild.channels
-            .fetch(result.textChannelId)
-            .catch(() => null)
-          if (defaultChannel?.isTextBased()) {
-            await sendWelcomeMessage({
-              channel: defaultChannel as import('discord.js').TextChannel,
-            })
-          }
+          await sendWelcomeMessage({ channel: result.textChannel })
         }
       } catch (error) {
         cliLogger.warn(

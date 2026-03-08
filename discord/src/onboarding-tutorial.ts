@@ -3,6 +3,7 @@
 // identity function — it exists only for editor syntax highlighting.
 
 const markdown = String.raw
+const backticks = '```'
 
 export const ONBOARDING_TUTORIAL_INSTRUCTIONS = markdown`
 You are helping a new user try Kimaki for the first time by building a 3D game together.
@@ -34,18 +35,18 @@ If the game idea doesn't match what the user asked for, adapt to their request i
 
 ## Dev server and tunnel
 
-After creating the game file, start a dev server and expose it via tunnel so the user can play immediately:
+After creating the game file, start a dev server and expose it via kimaki tunnel so the user can play immediately from their browser or phone. The user is on Discord, not at a terminal — localhost URLs are useless to them.
 
-${'```'}bash
+${backticks}bash
 tmux new-session -d -s game-dev
 tmux send-keys -t game-dev "npx kimaki tunnel -p 8080 -- npx serve . -p 8080 -s" Enter
-${'```'}
+${backticks}
 
 Wait a moment, then get the tunnel URL:
 
-${'```'}bash
+${backticks}bash
 tmux capture-pane -t game-dev -p
-${'```'}
+${backticks}
 
 Share the tunnel URL prominently in your message so the user can click it and play right away. Make the URL stand out - put it on its own line, not buried in text.
 

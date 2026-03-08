@@ -239,6 +239,7 @@ export async function createDefaultKimakiChannel({
   appId: string
   isGatewayMode: boolean
 }): Promise<{
+  textChannel: TextChannel
   textChannelId: string
   channelName: string
   projectDirectory: string
@@ -359,6 +360,7 @@ export async function createDefaultKimakiChannel({
   logger.log(`Created default kimaki channel: #${channelName} (${textChannel.id})`)
 
   return {
+    textChannel,
     textChannelId: textChannel.id,
     channelName,
     projectDirectory,

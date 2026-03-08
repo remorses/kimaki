@@ -25,7 +25,10 @@ const logger = createLogger(LogPrefix.OPENCODE)
 const TUTORIAL_PROMPT_SUBSTR = 'Build a 3D game with Three.js'
 
 const onboardingTutorialPlugin: Plugin = async () => {
-  const sessionTutorialInjected = new Set<string>()
+  // Track sessions where the first user message has already been seen.
+  // Only the very first message is checked for the tutorial prompt —
+  // later messages are ignored even if they contain the substring.
+  const sessionFirstMessageSeen = new Set<string>()
 
   return {
     'chat.message': async (input, output) => {
@@ -42,14 +45,14 @@ const onboardingTutorialPlugin: Plugin = async () => {
           }
 
           const { sessionID } = input
-          if (sessionTutorialInjected.has(sessionID)) {
+          if (sessionFirstMessageSeen.has(sessionID)) {
             return
           }
+          sessionFirstMessageSeen.add(sessionID)
+
           if (!first.text.includes(TUTORIAL_PROMPT_SUBSTR)) {
             return
           }
-
-          sessionTutorialInjected.add(sessionID)
 
           output.parts.push({
             id: crypto.randomUUID(),
@@ -78,7 +81,7 @@ const onboardingTutorialPlugin: Plugin = async () => {
       }
       const id = event.properties?.info?.id
       if (id) {
-        sessionTutorialInjected.delete(id)
+        sessionFirstMessageSeen.delete(id)
       }
     },
   }
