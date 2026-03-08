@@ -1763,7 +1763,7 @@ async function run({
         appId: KIMAKI_GATEWAY_APP_ID,
         token: `${clientId}:${clientSecret}`,
         // Non-TTY gateway: always quick-start (skip channel selection prompts)
-        isQuickStart: !isInteractive || false,
+        isQuickStart: !isInteractive,
         isGatewayMode: true,
       }
     }
@@ -1973,6 +1973,9 @@ async function run({
       throw installUrlResult
     }
     const installUrl = installUrlResult
+    if (!canUseInteractivePrompts()) {
+      emitJsonEvent({ type: 'error', message: 'No Discord servers found', install_url: installUrl })
+    }
     cliLogger.error(
       'No Discord servers found. The bot must be installed in at least one server.\n' +
         `Install URL: ${installUrl}\n` +
@@ -2020,8 +2023,17 @@ async function run({
       }),
     })
 
-    showReadyMessage({ kimakiChannels: [], createdChannels })
-    outro('✨ Bot ready! Listening for messages...')
+    if (!canUseInteractivePrompts()) {
+      // Non-TTY: emit structured JSON so the host process knows the bot is ready.
+      emitJsonEvent({
+        type: 'ready',
+        app_id: appId,
+        guild_ids: guilds.map((g) => { return g.id }),
+      })
+    } else {
+      showReadyMessage({ kimakiChannels: [], createdChannels })
+      outro('✨ Bot ready! Listening for messages...')
+    }
     return
   }
 
@@ -2242,10 +2254,18 @@ async function run({
   await startDiscordBot({ token, appId, discordClient, useWorktrees })
   cliLogger.log('Discord bot is running!')
 
-  showReadyMessage({ kimakiChannels, createdChannels })
-  outro(
-    '✨ Setup complete! Listening for new messages... do not close this process.',
-  )
+  if (!canUseInteractivePrompts()) {
+    emitJsonEvent({
+      type: 'ready',
+      app_id: appId,
+      guild_ids: guilds.map((g) => { return g.id }),
+    })
+  } else {
+    showReadyMessage({ kimakiChannels, createdChannels })
+    outro(
+      '✨ Setup complete! Listening for new messages... do not close this process.',
+    )
+  }
 }
 
 cli
@@ -2492,6 +2512,51 @@ cli
     }
   })
 
+// Max length for activity name/state — Discord silently truncates beyond 128 chars.
+const MAX_STATUS_TEXT_LENGTH = 128
+
+// Login timeout for temporary discord.js clients (10s).
+const BOT_LOGIN_TIMEOUT_MS = 10_000
+
+// Wait for gateway opcode 3 websocket frame to flush before destroying the client.
+const PRESENCE_FLUSH_DELAY_MS = 1200
+
+/**
+ * Create a temporary discord.js client, connect to gateway, run a callback,
+ * then tear down. Includes a login timeout so the command doesn't hang forever.
+ */
+async function withTempDiscordClient({
+  token,
+  onReady,
+}: {
+  token: string
+  onReady: (client: import('discord.js').Client<true>) => Promise<void>
+}) {
+  const client = await createDiscordClient()
+  try {
+    await Promise.race([
+      new Promise<void>((resolve, reject) => {
+        client.once(Events.ClientReady, () => {
+          resolve()
+        })
+        client.once(Events.Error, reject)
+        client.login(token).catch(reject)
+      }),
+      new Promise<void>((_, reject) => {
+        setTimeout(() => {
+          reject(new Error('Discord login timed out (10s)'))
+        }, BOT_LOGIN_TIMEOUT_MS)
+      }),
+    ])
+    if (!client.isReady() || !client.user) {
+      throw new Error('Discord client ready but user is missing')
+    }
+    await onReady(client)
+  } finally {
+    client.destroy()
+  }
+}
+
 cli
   .command('bot status set <text>', 'Set the bot presence/status in Discord')
   .option(
@@ -2534,6 +2599,13 @@ cli
           process.exit(EXIT_NO_RESTART)
         }
 
+        if (text.length > MAX_STATUS_TEXT_LENGTH) {
+          cliLogger.error(
+            `Status text too long (${text.length} chars, max ${MAX_STATUS_TEXT_LENGTH}).`,
+          )
+          process.exit(EXIT_NO_RESTART)
+        }
+
         const activityTypeKey = (options.type || 'custom').toLowerCase()
         const activityType = ACTIVITY_TYPE_MAP[activityTypeKey]
         if (activityType === undefined) {
@@ -2553,39 +2625,33 @@ cli
         }
 
         cliLogger.log('Connecting to Discord...')
-        const client = await createDiscordClient()
+        await withTempDiscordClient({
+          token: botRow.token,
+          onReady: async (client) => {
+            // For custom activity type, use state field (shows as the status text).
+            // For other types, use name field (shows as "Playing X", "Watching X", etc).
+            const activity =
+              activityType === ActivityType.Custom
+                ? { name: 'Custom Status', type: activityType, state: text }
+                : { name: text, type: activityType }
 
-        await new Promise<void>((resolve, reject) => {
-          client.once(Events.ClientReady, () => {
-            resolve()
-          })
-          client.once(Events.Error, reject)
-          client.login(botRow.token).catch(reject)
+            client.user.setPresence({
+              activities: [activity],
+              status: onlineStatus,
+            })
+
+            // setPresence queues a gateway opcode 3 over websocket.
+            // Wait so the frame flushes before we tear down the connection.
+            await new Promise((resolve) => {
+              setTimeout(resolve, PRESENCE_FLUSH_DELAY_MS)
+            })
+
+            cliLogger.log(
+              `Status set: ${activityTypeKey === 'custom' ? text : `${activityTypeKey} ${text}`} (${statusKey})`,
+            )
+          },
         })
 
-        // For custom activity type, use state field (shows as the status text).
-        // For other types, use name field (shows as "Playing X", "Watching X", etc).
-        const activity =
-          activityType === ActivityType.Custom
-            ? { name: 'Custom Status', type: activityType, state: text }
-            : { name: text, type: activityType }
-
-        client.user?.setPresence({
-          activities: [activity],
-          status: onlineStatus,
-        })
-
-        // setPresence queues a gateway opcode 3 over websocket.
-        // Wait briefly so the frame flushes before we tear down the connection.
-        await new Promise((resolve) => {
-          setTimeout(resolve, 500)
-        })
-
-        cliLogger.log(
-          `Status set: ${activityTypeKey === 'custom' ? text : `${activityTypeKey} ${text}`} (${statusKey})`,
-        )
-
-        client.destroy()
         process.exit(0)
       } catch (error) {
         cliLogger.error(
@@ -2624,30 +2690,22 @@ cli
       }
 
       cliLogger.log('Connecting to Discord...')
-      const client = await createDiscordClient()
+      await withTempDiscordClient({
+        token: botRow.token,
+        onReady: async (client) => {
+          client.user.setPresence({
+            activities: [],
+            status: 'online',
+          })
 
-      await new Promise<void>((resolve, reject) => {
-        client.once(Events.ClientReady, () => {
-          resolve()
-        })
-        client.once(Events.Error, reject)
-        client.login(botRow.token).catch(reject)
+          await new Promise((resolve) => {
+            setTimeout(resolve, PRESENCE_FLUSH_DELAY_MS)
+          })
+
+          cliLogger.log('Status cleared')
+        },
       })
 
-      client.user?.setPresence({
-        activities: [],
-        status: 'online',
-      })
-
-      // setPresence queues a gateway opcode 3 over websocket.
-      // Wait briefly so the frame flushes before we tear down the connection.
-      await new Promise((resolve) => {
-        setTimeout(resolve, 500)
-      })
-
-      cliLogger.log('Status cleared')
-
-      client.destroy()
       process.exit(0)
     } catch (error) {
       cliLogger.error(
