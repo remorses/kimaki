@@ -232,5 +232,8 @@ export async function handleWorktreesCommand({
     },
   )
 
-  await command.editReply({ components })
+  await command.editReply({
+    components,
+    flags: MessageFlags.IsComponentsV2,
+  })
 }
