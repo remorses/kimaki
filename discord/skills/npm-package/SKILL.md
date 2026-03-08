@@ -39,7 +39,9 @@ Use this skill when scaffolding or fixing npm packages.
    - any runtime-required extra files (for example `schema.prisma`)
    - docs like `README.md` and `CHANGELOG.md`
    - if tests are inside src and gets included in dist, it's fine. don't try to exclude them
-10. `scripts.build` should be only `tsc` and no bundling. Optionall include running scripts with tsx if needed to generate build artifacts.
+10. `scripts.build` should be `tsc && chmod +x dist/cli.js` (skip the chmod
+     if the package has no bin). No bundling.
+     Optionally include running scripts with tsx if needed to generate build artifacts.
 11. `prepublishOnly` must always run `build` (optionally run generation before
      build when required). Always add this script:
      ```json
@@ -68,12 +70,9 @@ Add the shebang as the first line of the source file (`src/cli.ts`):
 #!/usr/bin/env node
 ```
 
-`tsc` preserves the shebang in the emitted `.js` file. Add the `chmod +x` to
-`prepublishOnly` so it runs automatically before publish:
-
-```json
-{ "prepublishOnly": "pnpm build && chmod +x dist/cli.js" }
-```
+`tsc` preserves the shebang in the emitted `.js` file. The `chmod +x` is
+already part of the `build` script, so `prepublishOnly: "pnpm build"` handles
+it automatically.
 
 ## Reading package version at runtime
 
