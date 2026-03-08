@@ -26,6 +26,28 @@ import type { HonoBindings } from './env.js'
 // ManageRoles | ManageEvents | CreateEvents
 const DISCORD_BOT_PERMISSIONS = 17927465446480
 
+// Validates and parses a callback URL, allowing only https: and http://localhost.
+// Returns null for missing, malformed, or disallowed schemes (e.g. javascript:)
+// to prevent open redirect attacks through the OAuth flow.
+function parseAllowedCallbackUrl(raw: string | null | undefined): URL | null {
+  if (!raw) {
+    return null
+  }
+  let url: URL
+  try {
+    url = new URL(raw)
+  } catch {
+    return null
+  }
+  if (url.protocol === 'https:') {
+    return url
+  }
+  if (url.protocol === 'http:' && (url.hostname === 'localhost' || url.hostname === '127.0.0.1')) {
+    return url
+  }
+  return null
+}
+
 function getGuildIdFromRequestUrl({
   context,
 }: {
@@ -144,11 +166,13 @@ export function createAuth({ env, baseURL }: { env: HonoBindings; baseURL: strin
         // If the CLI passed a custom callback URL (--gateway-callback-url),
         // redirect there with ?guild_id instead of showing /install-success.
         // The callbackUrl was stored in additionalData during /discord-install.
-        const callbackUrl = state?.callbackUrl as string | undefined
-        if (callbackUrl) {
-          const redirectTarget = new URL(callbackUrl)
-          redirectTarget.searchParams.set('guild_id', guildId)
-          return { response: Response.redirect(redirectTarget.toString(), 302) }
+        // Only https: (and http: for localhost dev) are allowed to prevent
+        // open redirect / javascript: URI attacks. Invalid URLs fall through
+        // to the default /install-success page.
+        const parsedCallback = parseAllowedCallbackUrl(state?.callbackUrl as string | undefined)
+        if (parsedCallback) {
+          parsedCallback.searchParams.set('guild_id', guildId)
+          return { response: Response.redirect(parsedCallback.toString(), 302) }
         }
       }),
     },

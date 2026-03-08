@@ -39,6 +39,23 @@ app.get('/discord-install', async (c) => {
     return c.text('Missing clientId or clientSecret', 400)
   }
 
+  // Early validation: reject non-https callback URLs (http://localhost allowed for dev).
+  // Defense in depth — hooks.after also validates before redirecting.
+  if (callbackUrl) {
+    try {
+      const parsed = new URL(callbackUrl)
+      const isHttps = parsed.protocol === 'https:'
+      const isLocalHttp =
+        parsed.protocol === 'http:' &&
+        (parsed.hostname === 'localhost' || parsed.hostname === '127.0.0.1')
+      if (!isHttps && !isLocalHttp) {
+        return c.text('callbackUrl must use https (or http for localhost)', 400)
+      }
+    } catch {
+      return c.text('callbackUrl is not a valid URL', 400)
+    }
+  }
+
   const baseURL = new URL(c.req.url).origin
   const auth = createAuth({ env: c.env, baseURL })
 
