@@ -357,6 +357,30 @@ async function startSingleServer(): Promise<ServerStartError | SingleServer> {
 
   // Server config uses permissive defaults. Per-directory external_directory
   // permissions are set at session creation time via session.create({ permission }).
+  // Common directories (tmpdir, ~/.config/opencode, ~/.kimaki) are pre-allowed
+  // at the server level so they never trigger permission prompts regardless of
+  // whether session-level rules compose correctly.
+  const tmpdir = os.tmpdir().replaceAll('\\', '/')
+  const opencodeConfigDir = path
+    .join(os.homedir(), '.config', 'opencode')
+    .replaceAll('\\', '/')
+  const kimakiDataDir = path
+    .join(os.homedir(), '.kimaki')
+    .replaceAll('\\', '/')
+  const externalDirectoryPermissions: Record<string, 'ask' | 'allow' | 'deny'> = {
+    '*': 'ask',
+    '/tmp': 'allow',
+    '/tmp/*': 'allow',
+    '/private/tmp': 'allow',
+    '/private/tmp/*': 'allow',
+    [tmpdir]: 'allow',
+    [`${tmpdir}/*`]: 'allow',
+    [opencodeConfigDir]: 'allow',
+    [`${opencodeConfigDir}/*`]: 'allow',
+    [kimakiDataDir]: 'allow',
+    [`${kimakiDataDir}/*`]: 'allow',
+  }
+
   const serverProcess = spawn(
     spawnCommand,
     spawnArgs,
@@ -376,10 +400,7 @@ async function startSingleServer(): Promise<ServerStartError | SingleServer> {
           permission: {
             edit: 'allow',
             bash: 'allow',
-            // Permissive default — session-level rules override per directory.
-            // The server-level 'ask' is a safety net for directories that
-            // don't pass session permissions (shouldn't happen in practice).
-            external_directory: 'ask',
+            external_directory: externalDirectoryPermissions,
             webfetch: 'allow',
           },
           agent: {
@@ -398,8 +419,7 @@ async function startSingleServer(): Promise<ServerStartError | SingleServer> {
                 webfetch: 'allow',
                 websearch: 'allow',
                 codesearch: 'allow',
-                // Same permissive default — session rules override at runtime
-                external_directory: 'ask',
+                external_directory: externalDirectoryPermissions,
               },
             },
           },
