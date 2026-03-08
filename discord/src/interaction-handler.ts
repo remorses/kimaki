@@ -12,8 +12,14 @@ import {
   handleSessionCommand,
   handleSessionAutocomplete,
 } from './commands/session.js'
-import { handleNewWorktreeCommand } from './commands/worktree.js'
-import { handleMergeWorktreeCommand } from './commands/merge-worktree.js'
+import {
+  handleNewWorktreeCommand,
+  handleNewWorktreeAutocomplete,
+} from './commands/worktree.js'
+import {
+  handleMergeWorktreeCommand,
+  handleMergeWorktreeAutocomplete,
+} from './commands/merge-worktree.js'
 import { handleToggleWorktreesCommand } from './commands/worktree-settings.js'
 import { handleWorktreesCommand } from './commands/worktrees.js'
 import { handleToggleMentionModeCommand } from './commands/mention-mode.js'
@@ -133,6 +139,14 @@ export function registerInteractionHandler({
 
             case 'queue-command':
               await handleQueueCommandAutocomplete({ interaction, appId })
+              return
+
+            case 'new-worktree':
+              await handleNewWorktreeAutocomplete({ interaction, appId })
+              return
+
+            case 'merge-worktree':
+              await handleMergeWorktreeAutocomplete({ interaction, appId })
               return
 
             default:

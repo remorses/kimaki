@@ -2,13 +2,21 @@
 // Uses worktrunk-style pipeline: squash -> rebase -> local push.
 // On rebase conflicts, asks the AI model in the thread to resolve them.
 
-import { type ThreadChannel } from 'discord.js'
-import type { CommandContext } from './types.js'
-import { getThreadWorktree, getThreadSession } from '../database.js'
+import { type TextChannel, type ThreadChannel } from 'discord.js'
+import type { AutocompleteContext, CommandContext } from './types.js'
+import {
+  getThreadWorktree,
+  getThreadSession,
+  getChannelDirectory,
+} from '../database.js'
 import { createLogger, LogPrefix } from '../logger.js'
 import { notifyError } from '../sentry.js'
-import { mergeWorktree } from '../worktrees.js'
-import { sendThreadMessage, resolveWorkingDirectory } from '../discord-utils.js'
+import { mergeWorktree, listBranchesByLastCommit, validateBranchRef } from '../worktrees.js'
+import {
+  sendThreadMessage,
+  resolveWorkingDirectory,
+  resolveTextChannel,
+} from '../discord-utils.js'
 import {
   getOrCreateRuntime,
 } from '../session-handler/thread-session-runtime.js'
@@ -106,10 +114,25 @@ export async function handleMergeWorktreeCommand({
     return
   }
 
+  const rawTargetBranch = command.options.getString('target-branch') || undefined
+  let targetBranch = rawTargetBranch
+  if (targetBranch) {
+    const validated = await validateBranchRef({
+      directory: worktreeInfo.project_directory,
+      ref: targetBranch,
+    })
+    if (validated instanceof Error) {
+      await command.editReply(`Invalid target branch: \`${targetBranch}\``)
+      return
+    }
+    targetBranch = validated
+  }
+
   const result = await mergeWorktree({
     worktreeDir: worktreeInfo.worktree_directory,
     mainRepoDir: worktreeInfo.project_directory,
     worktreeName: worktreeInfo.worktree_name,
+    targetBranch,
     onProgress: (msg) => {
       logger.log(`[merge] ${msg}`)
     },
@@ -153,4 +176,59 @@ export async function handleMergeWorktreeCommand({
   await command.editReply(
     `Merged \`${result.branchName}\` into \`${result.defaultBranch}\` @ ${result.shortSha} (${result.commitCount} commit${result.commitCount === 1 ? '' : 's'})\nWorktree now at detached HEAD.`,
   )
+}
+
+/**
+ * Autocomplete handler for /merge-worktree target-branch option.
+ * Lists local branches only (no remotes) sorted by most recent commit date.
+ * Resolves directory from the thread's worktree info or parent channel.
+ */
+export async function handleMergeWorktreeAutocomplete({
+  interaction,
+}: AutocompleteContext): Promise<void> {
+  try {
+    const focusedValue = interaction.options.getFocused()
+
+    let projectDirectory: string | undefined
+
+    // Try to get directory from worktree info (we're in a thread)
+    if (interaction.channel?.isThread()) {
+      const worktreeInfo = await getThreadWorktree(interaction.channel.id)
+      if (worktreeInfo?.project_directory) {
+        projectDirectory = worktreeInfo.project_directory
+      }
+    }
+
+    // Fallback: resolve from parent channel
+    if (!projectDirectory && interaction.channel) {
+      const textChannel = await resolveTextChannel(
+        interaction.channel as TextChannel | ThreadChannel | null,
+      )
+      if (textChannel) {
+        const channelConfig = await getChannelDirectory(textChannel.id)
+        projectDirectory = channelConfig?.directory
+      }
+    }
+
+    if (!projectDirectory) {
+      await interaction.respond([])
+      return
+    }
+
+    // Local branches only — merge targets must be local refs
+    const branches = await listBranchesByLastCommit({
+      directory: projectDirectory,
+      query: focusedValue,
+      includeRemote: false,
+    })
+
+    await interaction.respond(
+      branches.map((name) => {
+        return { name, value: name }
+      }),
+    )
+  } catch (e) {
+    logger.error('[MERGE-WORKTREE] Autocomplete error:', e)
+    await interaction.respond([]).catch(() => {})
+  }
 }

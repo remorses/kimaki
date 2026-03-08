@@ -598,13 +598,16 @@ function getManagedWorktreeDirectory({
 export async function createWorktreeWithSubmodules({
   directory,
   name,
+  baseBranch,
 }: {
   directory: string
   name: string
+  /** Override the base branch to create the worktree from. Defaults to origin/HEAD → main → master → HEAD. */
+  baseBranch?: string
 }): Promise<WorktreeResult | Error> {
   // 1. Create worktree via git (checked out immediately).
   const worktreeDir = getManagedWorktreeDirectory({ directory, name })
-  const targetRef = await resolveDefaultWorktreeTarget(directory)
+  const targetRef = baseBranch || (await resolveDefaultWorktreeTarget(directory))
 
   if (fs.existsSync(worktreeDir)) {
     return new Error(`Worktree directory already exists: ${worktreeDir}`)
@@ -968,11 +971,14 @@ export async function mergeWorktree({
   worktreeDir,
   mainRepoDir,
   worktreeName,
+  targetBranch,
   onProgress,
 }: {
   worktreeDir: string
   mainRepoDir: string
   worktreeName: string
+  /** Override the branch to merge into. Defaults to origin/HEAD (or main). */
+  targetBranch?: string
   onProgress?: (message: string) => void
 }): Promise<MergeWorktreeErrors | MergeSuccess> {
   const log = (msg: string) => {
@@ -995,7 +1001,7 @@ export async function mergeWorktree({
     branchName = branchResult || worktreeName
   }
 
-  const defaultBranch = await getDefaultBranch(mainRepoDir)
+  const defaultBranch = targetBranch || (await getDefaultBranch(mainRepoDir))
   log(`Merging ${branchName} into ${defaultBranch}`)
 
   // Best-effort cleanup of temp branch on error paths
@@ -1168,4 +1174,72 @@ export async function mergeWorktree({
     commitCount,
     shortSha: shortSha instanceof Error ? 'unknown' : shortSha,
   }
+}
+
+/**
+ * List branches sorted by most recent commit date.
+ * Returns branch short names (e.g. "main", "origin/feature-x").
+ * Filters by optional query string (case-insensitive substring match).
+ * Limited to 25 results for Discord autocomplete.
+ *
+ * @param includeRemote - When true (default), includes remote tracking branches (`-a` flag).
+ *   Set to false for merge targets where only local branches make sense.
+ */
+export async function listBranchesByLastCommit({
+  directory,
+  query,
+  includeRemote = true,
+}: {
+  directory: string
+  query?: string
+  includeRemote?: boolean
+}): Promise<string[]> {
+  const branchFlag = includeRemote ? '-a' : ''
+  const result = await git(
+    directory,
+    `branch ${branchFlag} --sort=-committerdate --format=%(refname:short)`,
+  )
+  if (result instanceof Error) {
+    return []
+  }
+
+  const lowerQuery = query?.toLowerCase() || ''
+  return result
+    .split('\n')
+    .map((line) => {
+      return line.trim()
+    })
+    .filter((name) => {
+      if (!name) {
+        return false
+      }
+      // Skip HEAD pointer entries like "origin/HEAD -> origin/main"
+      if (name.includes('->')) {
+        return false
+      }
+      if (!lowerQuery) {
+        return true
+      }
+      return name.toLowerCase().includes(lowerQuery)
+    })
+    .slice(0, 25)
+}
+
+/**
+ * Validate that a branch name is safe for use in git commands.
+ * Uses `git check-ref-format --branch` which rejects names with shell metacharacters,
+ * double dots, trailing dots/locks, etc. Returns the normalized name or an Error.
+ */
+export async function validateBranchRef({
+  directory,
+  ref,
+}: {
+  directory: string
+  ref: string
+}): Promise<string | Error> {
+  const result = await git(directory, `check-ref-format --branch ${JSON.stringify(ref)}`)
+  if (result instanceof Error) {
+    return new Error(`Invalid branch name: ${ref}`)
+  }
+  return result
 }

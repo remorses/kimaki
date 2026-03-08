@@ -18,14 +18,21 @@ import {
   getChannelDirectory,
   getThreadWorktree,
 } from '../database.js'
-import { SILENT_MESSAGE_FLAGS, reactToThread } from '../discord-utils.js'
+import {
+  SILENT_MESSAGE_FLAGS,
+  reactToThread,
+  resolveTextChannel,
+} from '../discord-utils.js'
 import { createLogger, LogPrefix } from '../logger.js'
 import { notifyError } from '../sentry.js'
 import {
   createWorktreeWithSubmodules,
   execAsync,
+  listBranchesByLastCommit,
+  validateBranchRef,
 } from '../worktrees.js'
 import { WORKTREE_PREFIX } from './merge-worktree.js'
+import type { AutocompleteContext } from './types.js'
 import * as errore from 'errore'
 
 const logger = createLogger(LogPrefix.WORKTREE)
@@ -105,20 +112,23 @@ async function createWorktreeInBackground({
   starterMessage,
   worktreeName,
   projectDirectory,
+  baseBranch,
   rest,
 }: {
   thread: ThreadChannel
   starterMessage: Message
   worktreeName: string
   projectDirectory: string
+  baseBranch?: string
   rest: REST
 }): Promise<void> {
   logger.log(
-    `Creating worktree "${worktreeName}" for project ${projectDirectory}`,
+    `Creating worktree "${worktreeName}" for project ${projectDirectory}${baseBranch ? ` from ${baseBranch}` : ''}`,
   )
   const worktreeResult = await createWorktreeWithSubmodules({
     directory: projectDirectory,
     name: worktreeName,
+    baseBranch,
   })
 
   if (worktreeResult instanceof Error) {
@@ -221,6 +231,7 @@ export async function handleNewWorktreeCommand({
   }
 
   const rawName = command.options.getString('name')
+  const rawBaseBranch = command.options.getString('base-branch') || undefined
   if (!rawName) {
     await command.editReply(
       'Name is required when creating a worktree from a text channel. Use `/new-worktree name:my-feature`',
@@ -244,6 +255,19 @@ export async function handleNewWorktreeCommand({
   if (errore.isError(projectDirectory)) {
     await command.editReply(projectDirectory.message)
     return
+  }
+
+  let baseBranch = rawBaseBranch
+  if (baseBranch) {
+    const validated = await validateBranchRef({
+      directory: projectDirectory,
+      ref: baseBranch,
+    })
+    if (validated instanceof Error) {
+      await command.editReply(`Invalid base branch: \`${baseBranch}\``)
+      return
+    }
+    baseBranch = validated
   }
 
   const existingWorktree = await findExistingWorktreePath({
@@ -306,6 +330,7 @@ export async function handleNewWorktreeCommand({
     starterMessage,
     worktreeName,
     projectDirectory,
+    baseBranch,
     rest: command.client.rest,
   }).catch((e) => {
     logger.error('[NEW-WORKTREE] Background error:', e)
@@ -332,6 +357,7 @@ async function handleWorktreeInThread({
 
   // Get worktree name from parameter or derive from thread name
   const rawName = command.options.getString('name')
+  const rawBaseBranch = command.options.getString('base-branch') || undefined
   const worktreeName = rawName
     ? formatWorktreeName(rawName)
     : deriveWorktreeNameFromThread(thread.name)
@@ -356,6 +382,19 @@ async function handleWorktreeInThread({
   if (errore.isError(projectDirectory)) {
     await command.editReply(projectDirectory.message)
     return
+  }
+
+  let baseBranch = rawBaseBranch
+  if (baseBranch) {
+    const validated = await validateBranchRef({
+      directory: projectDirectory,
+      ref: baseBranch,
+    })
+    if (validated instanceof Error) {
+      await command.editReply(`Invalid base branch: \`${baseBranch}\``)
+      return
+    }
+    baseBranch = validated
   }
 
   const existingWorktreePath = await findExistingWorktreePath({
@@ -395,9 +434,52 @@ async function handleWorktreeInThread({
     starterMessage: statusMessage,
     worktreeName,
     projectDirectory,
+    baseBranch,
     rest: command.client.rest,
   }).catch((e) => {
     logger.error('[NEW-WORKTREE] Background error:', e)
     void notifyError(e, 'Background worktree creation failed (in-thread)')
   })
+}
+
+/**
+ * Autocomplete handler for /new-worktree base-branch option.
+ * Lists local + remote branches sorted by most recent commit date.
+ */
+export async function handleNewWorktreeAutocomplete({
+  interaction,
+}: AutocompleteContext): Promise<void> {
+  try {
+    const focusedValue = interaction.options.getFocused()
+
+    let projectDirectory: string | undefined
+    if (interaction.channel) {
+      const textChannel = await resolveTextChannel(
+        interaction.channel as TextChannel | ThreadChannel | null,
+      )
+      if (textChannel) {
+        const channelConfig = await getChannelDirectory(textChannel.id)
+        projectDirectory = channelConfig?.directory
+      }
+    }
+
+    if (!projectDirectory) {
+      await interaction.respond([])
+      return
+    }
+
+    const branches = await listBranchesByLastCommit({
+      directory: projectDirectory,
+      query: focusedValue,
+    })
+
+    await interaction.respond(
+      branches.map((name) => {
+        return { name, value: name }
+      }),
+    )
+  } catch (e) {
+    logger.error('[NEW-WORKTREE] Autocomplete error:', e)
+    await interaction.respond([]).catch(() => {})
+  }
 }

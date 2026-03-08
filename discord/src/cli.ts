@@ -769,7 +769,7 @@ async function registerCommands({
     new SlashCommandBuilder()
       .setName('new-worktree')
       .setDescription(
-        'Create a new git worktree (in thread: uses thread name if no name given)',
+        'Create a git worktree branch from origin/HEAD (or main). Optionally pick a base branch.',
       )
       .addStringOption((option) => {
         option
@@ -781,11 +781,35 @@ async function registerCommands({
 
         return option
       })
+      .addStringOption((option) => {
+        option
+          .setName('base-branch')
+          .setDescription(
+            'Branch to create the worktree from (default: origin/HEAD or main)',
+          )
+          .setRequired(false)
+          .setAutocomplete(true)
+
+        return option
+      })
       .setDMPermission(false)
       .toJSON(),
     new SlashCommandBuilder()
       .setName('merge-worktree')
-      .setDescription('Merge the worktree branch into the default branch')
+      .setDescription(
+        'Squash-merge worktree into the default branch. Optionally pick a target branch.',
+      )
+      .addStringOption((option) => {
+        option
+          .setName('target-branch')
+          .setDescription(
+            'Branch to merge into (default: origin/HEAD or main)',
+          )
+          .setRequired(false)
+          .setAutocomplete(true)
+
+        return option
+      })
       .setDMPermission(false)
       .toJSON(),
     new SlashCommandBuilder()
