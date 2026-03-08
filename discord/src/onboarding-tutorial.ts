@@ -140,7 +140,7 @@ ${backticks}
 Wait a moment, then get the tunnel URL:
 
 ${backticks}bash
-tmux capture-pane -t game-dev -p
+sleep 1 && tmux capture-pane -t game-dev -p
 ${backticks}
 
 Share the tunnel URL prominently in your message so the user can click it and play right away. Make the URL stand out - put it on its own line, not buried in text.
