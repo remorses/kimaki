@@ -189,7 +189,7 @@ function buildDeleteButtonHtml({
 }: {
   buttonId: string
 }): string {
-  return `<button id="${buttonId}" variant="danger">Delete</button>`
+  return `<button id="${buttonId}" variant="secondary">Delete</button>`
 }
 
 function canDeleteWorktree({

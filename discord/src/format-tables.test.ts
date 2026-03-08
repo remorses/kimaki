@@ -137,7 +137,7 @@ describe('buildTableComponents', () => {
   test('renders button cells as action rows inside the container', () => {
     const table = parseTable(`| Name | Action |
 | --- | --- |
-| feature-a | <button id="delete-a" variant="danger">Delete</button> |`)
+| feature-a | <button id="delete-a" variant="secondary">Delete</button> |`)
     const result = buildTableComponents(table, {
       resolveButtonCustomId: ({ button }) => {
         return `html_action:${button.id}`
@@ -159,7 +159,7 @@ describe('buildTableComponents', () => {
                       "custom_id": "html_action:delete-a",
                       "disabled": false,
                       "label": "Delete",
-                      "style": 4,
+                      "style": 2,
                       "type": 2,
                     },
                   ],
@@ -178,7 +178,7 @@ describe('buildTableComponents', () => {
   test('falls back to button text when no resolver is provided', () => {
     const table = parseTable(`| Name | Action |
 | --- | --- |
-| feature-a | <button id="delete-a" variant="danger">Delete</button> |`)
+| feature-a | <button id="delete-a" variant="secondary">Delete</button> |`)
     const result = buildTableComponents(table)
     expect(result).toMatchInlineSnapshot(`
       [
@@ -204,7 +204,7 @@ describe('buildTableComponents', () => {
   test('renders wide rows with buttons without using sections', () => {
     const table = parseTable(`| Thread | Name | Status | Created | Folder | Action |
 | --- | --- | --- | --- | --- | --- |
-| thread | feature-a | merged | 1m ago | /tmp/feature-a | <button id="delete-a" variant="danger">Delete</button> |`)
+| thread | feature-a | merged | 1m ago | /tmp/feature-a | <button id="delete-a" variant="secondary">Delete</button> |`)
     const result = buildTableComponents(table, {
       resolveButtonCustomId: ({ button }) => {
         return `html_action:${button.id}`
@@ -230,7 +230,7 @@ describe('buildTableComponents', () => {
                       "custom_id": "html_action:delete-a",
                       "disabled": false,
                       "label": "Delete",
-                      "style": 4,
+                      "style": 2,
                       "type": 2,
                     },
                   ],

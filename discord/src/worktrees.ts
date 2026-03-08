@@ -795,13 +795,28 @@ export async function deleteWorktree({
   worktreeDirectory: string
   worktreeName: string
 }): Promise<void | Error> {
-  const removeResult = await git(
+  let removeResult = await git(
     projectDirectory,
     `worktree remove ${JSON.stringify(worktreeDirectory)}`,
     {
       timeout: SUBMODULE_INIT_TIMEOUT_MS,
     },
   )
+  // git refuses to remove worktrees with submodule entries:
+  // "fatal: working trees containing submodules cannot be moved or removed"
+  // Retry with --force which bypasses this guard. This is safe because
+  // canDeleteWorktree already verified the worktree is clean and merged.
+  if (removeResult instanceof Error) {
+    const stderr =
+      (removeResult.cause as { stderr?: string } | undefined)?.stderr ?? ''
+    if (stderr.includes('containing submodules')) {
+      removeResult = await git(
+        projectDirectory,
+        `worktree remove --force ${JSON.stringify(worktreeDirectory)}`,
+        { timeout: SUBMODULE_INIT_TIMEOUT_MS },
+      )
+    }
+  }
   if (removeResult instanceof Error) {
     return new Error(`Failed to remove worktree ${worktreeName}`, {
       cause: removeResult,
