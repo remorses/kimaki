@@ -221,6 +221,7 @@ export function getOpencodeSystemMessage({
   username,
   userId,
   agents,
+  currentAgent,
 }: {
   sessionId: string
   channelId?: string
@@ -236,7 +237,10 @@ export function getOpencodeSystemMessage({
   userId?: string
   /** Available agents from OpenCode */
   agents?: AgentInfo[]
+  /** Currently active agent name for this session */
+  currentAgent?: string
 }) {
+  const agentFlag = currentAgent ? ` --agent ${currentAgent}` : ''
   const topicContext = channelTopic?.trim()
     ? `\n\n<channel-topic>\n${channelTopic.trim()}\n</channel-topic>`
     : ''
@@ -307,7 +311,7 @@ ${
 
 To start a new thread/session in this channel pro-grammatically, run:
 
-npx -y kimaki send --channel ${channelId} --prompt "your prompt here"${username ? ` --user "${username}"` : ''}
+npx -y kimaki send --channel ${channelId} --prompt "your prompt here"${agentFlag}${username ? ` --user "${username}"` : ''}
 
 You can use this to "spawn" parallel helper sessions like teammates: start new threads with focused prompts, then come back and collect the results.
 
@@ -331,7 +335,7 @@ npx -y kimaki send --channel ${channelId} --prompt "User cancelled subscription"
 
 Use --worktree to create a git worktree for the session (ONLY when the user explicitly asks for a worktree):
 
-npx -y kimaki send --channel ${channelId} --prompt "Add dark mode support" --worktree dark-mode${username ? ` --user "${username}"` : ''}
+npx -y kimaki send --channel ${channelId} --prompt "Add dark mode support" --worktree dark-mode${agentFlag}${username ? ` --user "${username}"` : ''}
 
 Important:
 - NEVER use \`--worktree\` unless the user explicitly requests a worktree. Most tasks should use normal threads without worktrees.
@@ -344,7 +348,7 @@ Use --agent to specify which agent to use for the session:
 npx -y kimaki send --channel ${channelId} --prompt "Plan the refactor of the auth module" --agent plan${username ? ` --user "${username}"` : ''}
 ${agents && agents.length > 0 ? `
 Available agents:
-${agents.map((a) => { return `- \`${a.name}\`${a.description ? `: ${a.description}` : ''}` }).join('\n')}
+${agents.map((a) => { return `- \`${a.name}\`${a.name === currentAgent ? ' (current)' : ''}${a.description ? `: ${a.description}` : ''}` }).join('\n')}
 ` : ''}
 
 ## scheduled sends and task management
@@ -405,7 +409,7 @@ ONLY create worktrees when the user explicitly asks for one. Never proactively u
 When the user asks to "create a worktree" or "make a worktree", they mean you should use the kimaki CLI to create it. Do NOT use raw \`git worktree add\` commands. Instead use:
 
 \`\`\`bash
-npx -y kimaki send --channel ${channelId} --prompt "your task description" --worktree worktree-name${username ? ` --user "${username}"` : ''}
+npx -y kimaki send --channel ${channelId} --prompt "your task description" --worktree worktree-name${agentFlag}${username ? ` --user "${username}"` : ''}
 \`\`\`
 
 This creates a new Discord thread with an isolated git worktree and starts a session in it. The worktree name should be kebab-case and descriptive of the task.
@@ -423,7 +427,7 @@ This is useful for automation (cron jobs, GitHub webhooks, n8n, etc.)
 When you are approaching the **context window limit** or the user explicitly asks to **handoff to a new thread**, use the \`kimaki send\` command to start a fresh session with context:
 
 \`\`\`bash
-npx -y kimaki send --channel ${channelId} --prompt "Continuing from previous session: <summary of current task and state>"${username ? ` --user "${username}"` : ''}
+npx -y kimaki send --channel ${channelId} --prompt "Continuing from previous session: <summary of current task and state>"${agentFlag}${username ? ` --user "${username}"` : ''}
 \`\`\`
 
 The command automatically handles long prompts (over 2000 chars) by sending them as file attachments.
