@@ -1042,7 +1042,7 @@ e2eTest('voice message handling', () => {
     8_000,
   )
 
-  // ── Test 6: Slow transcription with queueMessage=true arriving after session idle ──
+  // ── Test 6: Slow transcription with queueMessage=true arriving after idle queue drain ──
 
   test(
     'slow queued transcription completing after session idle is dispatched',
@@ -1073,7 +1073,7 @@ e2eTest('voice message handling', () => {
 
       const th = discord.thread(thread.id)
 
-      // Wait for the first run to fully complete (footer = session idle)
+      // Wait for the first run to fully complete before sending the queued voice message.
       await th.waitForBotReply({ timeout: 4_000 })
       await waitForFooterMessage({
         discord,

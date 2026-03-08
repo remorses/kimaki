@@ -3,7 +3,11 @@
 // Zero imports from thread-session-runtime.ts, store.ts, or state.ts.
 // Only types from @opencode-ai/sdk/v2 and the getOpencodeEventSessionId helper.
 
-import type { Event as OpenCodeEvent, Part } from '@opencode-ai/sdk/v2'
+import type {
+  Event as OpenCodeEvent,
+  Message as OpenCodeMessage,
+  Part,
+} from '@opencode-ai/sdk/v2'
 import { getOpencodeEventSessionId } from './opencode-session-event-log.js'
 
 export type EventBufferEntry = {
@@ -11,6 +15,9 @@ export type EventBufferEntry = {
   timestamp: number
   eventIndex?: number
 }
+
+type AssistantMessage = Extract<OpenCodeMessage, { role: 'assistant' }>
+type UserMessage = Extract<OpenCodeMessage, { role: 'user' }>
 
 function getTaskChildSessionId({
   part,
@@ -98,117 +105,93 @@ export function isSessionBusy({
   return false
 }
 
-// Called after idle event is pushed. Skips the current idle, looks for
-// session.error(MessageAbortedError) preceding it.
-// Expected event order on abort: session.error(MessageAbortedError) → session.idle
-// Event order on normal: step-finish → session.idle (no error between)
-//
-// IMPORTANT: when the interrupt plugin aborts at a step boundary, the
-// actual event order can be:
-//   step-finish → session.idle → (gap) → MessageAbortedError → session.idle
-// The first idle fires BEFORE the abort error propagates. This function
-// will return false for that first idle because the error hasn't arrived
-// yet. The caller (handleSessionIdle) must debounce the footer decision
-// by ~500ms so the abort error has time to land in the buffer before
-// this function is called.
-export function wasRecentlyAborted({
+export function isAssistantMessageNaturalCompletion({
+  message,
+}: {
+  message: AssistantMessage
+}): boolean {
+  if (typeof message.time.completed !== 'number') {
+    return false
+  }
+  if (message.error) {
+    return false
+  }
+  return message.finish !== 'tool-calls'
+}
+
+export function hasAssistantMessageCompletedBefore({
   events,
   sessionId,
-  idleEventIndex,
+  messageId,
+  upToIndex,
 }: {
   events: EventBufferEntry[]
   sessionId: string
-  idleEventIndex: number
+  messageId: string
+  upToIndex?: number
 }): boolean {
-  let skippedCurrentIdle = false
-  for (let i = idleEventIndex; i >= 0; i--) {
+  const end = upToIndex ?? events.length - 1
+  for (let i = end; i >= 0; i--) {
     const entry = events[i]
     if (!entry) {
       continue
     }
-    const e = entry.event
-    const eid = getOpencodeEventSessionId(e)
-    if (eid !== sessionId) {
+    const event = entry.event
+    if (event.type !== 'message.updated') {
       continue
     }
-    // Skip the current session.idle that triggered this call
-    if (!skippedCurrentIdle && e.type === 'session.idle') {
-      skippedCurrentIdle = true
+    const info = event.properties.info
+    if (info.sessionID !== sessionId || info.role !== 'assistant' || info.id !== messageId) {
       continue
     }
-    if (e.type === 'session.error') {
-      return e.properties.error?.name === 'MessageAbortedError'
-    }
-    // Hit a previous idle or busy — no abort preceded the current idle
-    if (e.type === 'session.idle') {
-      return false
-    }
-    if (e.type === 'session.status' && e.properties.status.type === 'busy') {
-      return false
-    }
+    return typeof info.time.completed === 'number'
   }
   return false
 }
 
-// Finds the timestamp of the session.status busy event that started the run
-// ending at the given idle event. Scans backward from idleEventIndex.
-export function getRunStartTimeForIdle({
+export function getLatestUserMessage({
   events,
   sessionId,
-  idleEventIndex,
+  upToIndex,
 }: {
   events: EventBufferEntry[]
   sessionId: string
-  idleEventIndex: number
-}): number | undefined {
-  // Scan backward from the idle to find the previous idle (run boundary).
-  // Then scan forward from that boundary to find the first busy — that's the run start.
-  // If no previous idle, scan from start of buffer for first busy.
-  for (let i = idleEventIndex - 1; i >= 0; i--) {
+  upToIndex?: number
+}): UserMessage | undefined {
+  const end = upToIndex ?? events.length - 1
+  for (let i = end; i >= 0; i--) {
     const entry = events[i]
     if (!entry) {
       continue
     }
-    const e = entry.event
-    const eid = getOpencodeEventSessionId(e)
-    if (eid !== sessionId) {
+    const event = entry.event
+    if (event.type !== 'message.updated') {
       continue
     }
-    if (e.type === 'session.idle') {
-      // Found previous idle — scan forward for first busy
-      for (let j = i + 1; j < idleEventIndex; j++) {
-        const entry2 = events[j]
-        if (!entry2) {
-          continue
-        }
-        const e2 = entry2.event
-        const eid2 = getOpencodeEventSessionId(e2)
-        if (eid2 !== sessionId) {
-          continue
-        }
-        if (e2.type === 'session.status' && e2.properties.status.type === 'busy') {
-          return entry2.timestamp
-        }
-      }
-      return undefined
-    }
-  }
-  // No previous idle — find the first busy for this session from start
-  for (let i = 0; i < idleEventIndex; i++) {
-    const entry = events[i]
-    if (!entry) {
+    const info = event.properties.info
+    if (info.sessionID !== sessionId || info.role !== 'user') {
       continue
     }
-    const e = entry.event
-    const eid = getOpencodeEventSessionId(e)
-    if (eid !== sessionId) {
-      continue
-    }
-    if (e.type === 'session.status' && e.properties.status.type === 'busy') {
-      return entry.timestamp
-    }
+    return info
   }
   return undefined
+}
+
+export function getCurrentTurnStartTime({
+  events,
+  sessionId,
+  upToIndex,
+}: {
+  events: EventBufferEntry[]
+  sessionId: string
+  upToIndex?: number
+}): number | undefined {
+  const latestUserMessage = getLatestUserMessage({
+    events,
+    sessionId,
+    upToIndex,
+  })
+  return latestUserMessage?.time.created
 }
 
 // Token total helper — sum of input + output + reasoning + cache.read + cache.write
@@ -269,79 +252,26 @@ export function getLatestRunInfo({
   return result
 }
 
-// Combines wasRecentlyAborted (false) + checks there was actually a run
-// (getRunStartTimeForIdle returns a value).
-export function shouldEmitFooter({
+export function getAssistantMessageIdsForLatestUserTurn({
   events,
   sessionId,
-  idleEventIndex,
-}: {
-  events: EventBufferEntry[]
-  sessionId: string
-  idleEventIndex: number
-}): boolean {
-  if (wasRecentlyAborted({ events, sessionId, idleEventIndex })) {
-    return false
-  }
-
-  const runWindowStart = getRunWindowStartIndex({
-    events,
-    sessionId,
-    idleEventIndex,
-  })
-  const latestAssistantMessageId = getLatestAssistantMessageIdInRunWindow({
-    events,
-    sessionId,
-    runWindowStart,
-    idleEventIndex,
-  })
-  if (!latestAssistantMessageId) {
-    return false
-  }
-
-  return hasAssistantStepFinishInRunWindow({
-    events,
-    sessionId,
-    runWindowStart,
-    idleEventIndex,
-    assistantMessageId: latestAssistantMessageId,
-  })
-}
-
-// Checks whether an assistant message ID belongs to the current run window.
-// The run window starts after the most recent session.idle for the session
-// before upToIndex and ends at upToIndex (exclusive).
-export function isAssistantMessageInCurrentRunWindow({
-  events,
-  sessionId,
-  messageId,
   upToIndex,
 }: {
   events: EventBufferEntry[]
   sessionId: string
-  messageId: string
   upToIndex?: number
-}): boolean {
-  const end = upToIndex ?? events.length
-  let runWindowStart = 0
-
-  for (let i = end - 1; i >= 0; i--) {
-    const entry = events[i]
-    if (!entry) {
-      continue
-    }
-    const e = entry.event
-    const eid = getOpencodeEventSessionId(e)
-    if (eid !== sessionId) {
-      continue
-    }
-    if (e.type === 'session.idle') {
-      runWindowStart = i + 1
-      break
-    }
+}): Set<string> {
+  const latestUserMessage = getLatestUserMessage({
+    events,
+    sessionId,
+    upToIndex,
+  })
+  if (!latestUserMessage) {
+    return new Set<string>()
   }
-
-  for (let i = runWindowStart; i < end; i++) {
+  const end = upToIndex === undefined ? events.length : upToIndex + 1
+  const assistantMessageIds = new Set<string>()
+  for (let i = 0; i < end; i++) {
     const entry = events[i]
     if (!entry) {
       continue
@@ -354,12 +284,109 @@ export function isAssistantMessageInCurrentRunWindow({
     if (msg.sessionID !== sessionId || msg.role !== 'assistant') {
       continue
     }
-    if (msg.id === messageId) {
-      return true
+    if (msg.parentID === latestUserMessage.id) {
+      assistantMessageIds.add(msg.id)
     }
+  }
+  return assistantMessageIds
+}
+
+export function getLatestAssistantMessageIdForLatestUserTurn({
+  events,
+  sessionId,
+  upToIndex,
+}: {
+  events: EventBufferEntry[]
+  sessionId: string
+  upToIndex?: number
+}): string | undefined {
+  const latestUserMessage = getLatestUserMessage({
+    events,
+    sessionId,
+    upToIndex,
+  })
+  if (!latestUserMessage) {
+    return undefined
+  }
+  const end = upToIndex ?? events.length - 1
+  for (let i = end; i >= 0; i--) {
+    const entry = events[i]
+    if (!entry) {
+      continue
+    }
+    const event = entry.event
+    if (event.type !== 'message.updated') {
+      continue
+    }
+    const info = event.properties.info
+    if (info.sessionID !== sessionId || info.role !== 'assistant') {
+      continue
+    }
+    if (info.parentID === latestUserMessage.id) {
+      return info.id
+    }
+  }
+  return undefined
+}
+
+export function doesLatestUserTurnHaveNaturalCompletion({
+  events,
+  sessionId,
+  upToIndex,
+}: {
+  events: EventBufferEntry[]
+  sessionId: string
+  upToIndex?: number
+}): boolean {
+  const latestAssistantMessageId = getLatestAssistantMessageIdForLatestUserTurn({
+    events,
+    sessionId,
+    upToIndex,
+  })
+  if (!latestAssistantMessageId) {
+    return false
+  }
+
+  const end = upToIndex ?? events.length - 1
+  for (let i = end; i >= 0; i--) {
+    const entry = events[i]
+    if (!entry) {
+      continue
+    }
+    const event = entry.event
+    if (event.type !== 'message.updated') {
+      continue
+    }
+    const info = event.properties.info
+    if (info.sessionID !== sessionId || info.role !== 'assistant') {
+      continue
+    }
+    if (info.id !== latestAssistantMessageId) {
+      continue
+    }
+    return isAssistantMessageNaturalCompletion({ message: info })
   }
 
   return false
+}
+
+export function isAssistantMessageInLatestUserTurn({
+  events,
+  sessionId,
+  messageId,
+  upToIndex,
+}: {
+  events: EventBufferEntry[]
+  sessionId: string
+  messageId: string
+  upToIndex?: number
+}): boolean {
+  const assistantMessageIds = getAssistantMessageIdsForLatestUserTurn({
+    events,
+    sessionId,
+    upToIndex,
+  })
+  return assistantMessageIds.has(messageId)
 }
 
 // Returns a stable 1-based subtask index for candidateSessionId.
@@ -452,97 +479,4 @@ export function getDerivedSubtaskAgentType({
     return candidate.subagentType
   }
   return undefined
-}
-
-function getRunWindowStartIndex({
-  events,
-  sessionId,
-  idleEventIndex,
-}: {
-  events: EventBufferEntry[]
-  sessionId: string
-  idleEventIndex: number
-}): number {
-  for (let i = idleEventIndex - 1; i >= 0; i--) {
-    const entry = events[i]
-    if (!entry) {
-      continue
-    }
-    const e = entry.event
-    const eid = getOpencodeEventSessionId(e)
-    if (eid !== sessionId) {
-      continue
-    }
-    if (e.type === 'session.idle') {
-      return i + 1
-    }
-  }
-
-  return 0
-}
-
-function getLatestAssistantMessageIdInRunWindow({
-  events,
-  sessionId,
-  runWindowStart,
-  idleEventIndex,
-}: {
-  events: EventBufferEntry[]
-  sessionId: string
-  runWindowStart: number
-  idleEventIndex: number
-}): string | undefined {
-  for (let i = idleEventIndex - 1; i >= runWindowStart; i--) {
-    const entry = events[i]
-    if (!entry) {
-      continue
-    }
-    const e = entry.event
-    if (e.type !== 'message.updated') {
-      continue
-    }
-    const msg = e.properties.info
-    if (msg.sessionID !== sessionId || msg.role !== 'assistant') {
-      continue
-    }
-    return msg.id
-  }
-  return undefined
-}
-
-function hasAssistantStepFinishInRunWindow({
-  events,
-  sessionId,
-  runWindowStart,
-  idleEventIndex,
-  assistantMessageId,
-}: {
-  events: EventBufferEntry[]
-  sessionId: string
-  runWindowStart: number
-  idleEventIndex: number
-  assistantMessageId: string
-}): boolean {
-  for (let i = runWindowStart; i < idleEventIndex; i++) {
-    const entry = events[i]
-    if (!entry) {
-      continue
-    }
-    const e = entry.event
-    const eid = getOpencodeEventSessionId(e)
-    if (eid !== sessionId) {
-      continue
-    }
-    if (e.type !== 'message.part.updated') {
-      continue
-    }
-    if (e.properties.part.type !== 'step-finish') {
-      continue
-    }
-    if (e.properties.part.messageID === assistantMessageId) {
-      return true
-    }
-  }
-
-  return false
 }

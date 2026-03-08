@@ -86,13 +86,17 @@ import {
   isOpencodeSessionEventLogEnabled,
 } from './opencode-session-event-log.js'
 import {
+  doesLatestUserTurnHaveNaturalCompletion,
+  getAssistantMessageIdsForLatestUserTurn,
+  getCurrentTurnStartTime,
   isSessionBusy,
   getLatestRunInfo,
-  getRunStartTimeForIdle,
   getDerivedSubtaskIndex,
   getDerivedSubtaskAgentType,
-  isAssistantMessageInCurrentRunWindow,
-  shouldEmitFooter,
+  getLatestAssistantMessageIdForLatestUserTurn,
+  hasAssistantMessageCompletedBefore,
+  isAssistantMessageInLatestUserTurn,
+  isAssistantMessageNaturalCompletion,
   type EventBufferEntry,
 } from './event-stream-state.js'
 
@@ -472,10 +476,6 @@ export class ThreadSessionRuntime {
   private typingKeepaliveTimeout: ReturnType<typeof setTimeout> | null = null
   private readonly typingRepulseDebounce: ReturnType<typeof createDebouncedTimeout>
 
-  // Footer debounce delay (ms). When the interrupt plugin aborts at a step
-  // boundary, the abort error can arrive ~317ms after session.idle. The
-  // footer send is delayed by this amount so we can re-check before sending.
-  private static FOOTER_DEBOUNCE_MS = 400
   private static TYPING_REPULSE_DEBOUNCE_MS = 500
 
   // Notification throttles for retry/context notices.
@@ -726,10 +726,10 @@ export class ThreadSessionRuntime {
     if (!sessionId) {
       return 'none'
     }
-    const latestAssistant = this.getLatestAssistantMessageIdForSession({
+    const latestAssistant = this.getLatestAssistantMessageIdForCurrentTurn({
       sessionId,
     }) || 'none'
-    const assistantCount = this.getAssistantMessageIdsForSession({
+    const assistantCount = this.getAssistantMessageIdsForCurrentTurn({
       sessionId,
     }).size
     const phase = this.getDerivedPhase()
@@ -744,90 +744,34 @@ export class ThreadSessionRuntime {
     return isSessionBusy({ events: this.eventBuffer, sessionId })
   }
 
-  private getRunWindowStartIndexForSession({
-    sessionId,
-    upToIndex,
-  }: {
-    sessionId: string
-    upToIndex?: number
-  }): number {
-    const end = upToIndex ?? this.eventBuffer.length
-    for (let i = end - 1; i >= 0; i--) {
-      const entry = this.eventBuffer[i]
-      if (!entry) {
-        continue
-      }
-      const event = entry.event
-      const eventSessionId = getOpencodeEventSessionId(event)
-      if (eventSessionId !== sessionId) {
-        continue
-      }
-      if (event.type === 'session.idle') {
-        return i + 1
-      }
-    }
-    return 0
-  }
-
-  private getAssistantMessageIdsForSession({
+  private getAssistantMessageIdsForCurrentTurn({
     sessionId,
     upToIndex,
   }: {
     sessionId: string
     upToIndex?: number
   }): Set<string> {
-    const end = upToIndex ?? this.eventBuffer.length
-    const runWindowStart = this.getRunWindowStartIndexForSession({
+    const normalizedIndex = upToIndex === undefined ? undefined : upToIndex - 1
+    return getAssistantMessageIdsForLatestUserTurn({
+      events: this.eventBuffer,
       sessionId,
-      upToIndex: end,
+      upToIndex: normalizedIndex,
     })
-    const assistantMessageIds = new Set<string>()
-    for (let i = runWindowStart; i < end; i++) {
-      const entry = this.eventBuffer[i]
-      if (!entry) {
-        continue
-      }
-      const event = entry.event
-      if (event.type !== 'message.updated') {
-        continue
-      }
-      const message = event.properties.info
-      if (message.sessionID !== sessionId || message.role !== 'assistant') {
-        continue
-      }
-      assistantMessageIds.add(message.id)
-    }
-    return assistantMessageIds
   }
 
-  private getLatestAssistantMessageIdForSession({
+  private getLatestAssistantMessageIdForCurrentTurn({
     sessionId,
     upToIndex,
   }: {
     sessionId: string
     upToIndex?: number
   }): string | undefined {
-    const end = upToIndex ?? this.eventBuffer.length
-    const runWindowStart = this.getRunWindowStartIndexForSession({
+    const normalizedIndex = upToIndex === undefined ? undefined : upToIndex - 1
+    return getLatestAssistantMessageIdForLatestUserTurn({
+      events: this.eventBuffer,
       sessionId,
-      upToIndex: end,
+      upToIndex: normalizedIndex,
     })
-    for (let i = end - 1; i >= runWindowStart; i--) {
-      const entry = this.eventBuffer[i]
-      if (!entry) {
-        continue
-      }
-      const event = entry.event
-      if (event.type !== 'message.updated') {
-        continue
-      }
-      const message = event.properties.info
-      if (message.sessionID !== sessionId || message.role !== 'assistant') {
-        continue
-      }
-      return message.id
-    }
-    return undefined
   }
 
   private getSubtaskInfoForSession(
@@ -852,7 +796,7 @@ export class ThreadSessionRuntime {
       candidateSessionId,
     })
     const label = `${agentType || 'task'}-${subtaskIndex}`
-    const assistantMessageId = this.getLatestAssistantMessageIdForSession({
+    const assistantMessageId = this.getLatestAssistantMessageIdForCurrentTurn({
       sessionId: candidateSessionId,
     })
     return { label, assistantMessageId }
@@ -1493,6 +1437,13 @@ export class ThreadSessionRuntime {
     return Array.from(this.partBuffer.get(messageID)?.values() ?? [])
   }
 
+  private clearBufferedPartsForMessages(messageIDs: ReadonlyArray<string>): void {
+    const uniqueMessageIDs = new Set(messageIDs)
+    uniqueMessageIDs.forEach((messageID) => {
+      this.partBuffer.delete(messageID)
+    })
+  }
+
   private hasBufferedStepFinish(messageID: string): boolean {
     return this.getBufferedParts(messageID).some((part) => {
       return part.type === 'step-finish'
@@ -1627,7 +1578,7 @@ export class ThreadSessionRuntime {
       if (!sessionId) {
         return undefined
       }
-      return this.getLatestAssistantMessageIdForSession({ sessionId })
+      return this.getLatestAssistantMessageIdForCurrentTurn({ sessionId })
     })()
     if (targetMessageId) {
       await this.flushBufferedParts({
@@ -1637,7 +1588,7 @@ export class ThreadSessionRuntime {
       })
     } else {
       const assistantMessageIds = sessionId
-        ? [...this.getAssistantMessageIdsForSession({ sessionId })]
+        ? [...this.getAssistantMessageIdsForCurrentTurn({ sessionId })]
         : []
       await this.flushBufferedPartsForMessages({
         messageIDs: assistantMessageIds,
@@ -1705,12 +1656,12 @@ export class ThreadSessionRuntime {
     if (!sessionId) {
       return
     }
-    if (!isAssistantMessageInCurrentRunWindow({
+    if (!isAssistantMessageInLatestUserTurn({
       events: this.eventBuffer,
       sessionId,
       messageId: msg.id,
     })) {
-      logger.info(`[SKIP] message.updated for old assistant message ${msg.id}, not in current run window`)
+      logger.info(`[SKIP] message.updated for old assistant message ${msg.id}, not in latest user turn`)
       return
     }
 
@@ -1750,6 +1701,25 @@ export class ThreadSessionRuntime {
       messageID: msg.id,
       force: false,
     })
+
+    const wasAlreadyCompleted = hasAssistantMessageCompletedBefore({
+      events: this.eventBuffer,
+      sessionId,
+      messageId: msg.id,
+      upToIndex: this.eventBuffer.length - 2,
+    })
+    const completedAt = msg.time.completed
+    if (
+      !wasAlreadyCompleted
+      && typeof completedAt === 'number'
+      && isAssistantMessageNaturalCompletion({ message: msg })
+    ) {
+      await this.handleNaturalAssistantCompletion({
+        completedMessageId: msg.id,
+        completedAt,
+      })
+      return
+    }
 
     // Context usage notice.
     // Skip the final assistant update for a run: by the time the last
@@ -1902,13 +1872,13 @@ export class ThreadSessionRuntime {
     if (part.type === 'tool' && part.state.status === 'completed') {
       const sessionId = this.state?.sessionId
       if (sessionId) {
-        const isCurrentRunMessage = isAssistantMessageInCurrentRunWindow({
+        const isCurrentRunMessage = isAssistantMessageInLatestUserTurn({
           events: this.eventBuffer,
           sessionId,
           messageId: part.messageID,
         })
         if (!isCurrentRunMessage) {
-          logger.info(`[SKIP] tool part ${part.id} for old assistant message ${part.messageID}, not in current run window`)
+          logger.info(`[SKIP] tool part ${part.id} for old assistant message ${part.messageID}, not in latest user turn`)
           return
         }
       }
@@ -2054,37 +2024,66 @@ export class ThreadSessionRuntime {
     // The event is also pushed into the event buffer by handleEvent(),
     // so waitForEvent() consumers (abort settlement) will see it too.
     if (idleSessionId === sessionId) {
-      const idleEventIndex = this.eventBuffer.length - 1
-
-      // Suppress footer if the run was interrupted before completing.
-      // Footer emission is derived from the current run window in the event
-      // buffer (including interruption semantics) via shouldEmitFooter.
-      const suppressFooter = !shouldEmitFooter({
+      const shouldDrainQueuedMessages = doesLatestUserTurnHaveNaturalCompletion({
         events: this.eventBuffer,
         sessionId: idleSessionId,
-        idleEventIndex,
       })
 
-      if (suppressFooter) {
-        logger.log(
-          `[SESSION IDLE] finishing run (no footer, unreplied user message) sessionId=${sessionId} ${this.formatRunStateForLog()}`,
-        )
-      } else {
-        logger.log(
-          `[SESSION IDLE] finishing run sessionId=${sessionId} ${this.formatRunStateForLog()}`,
-        )
-      }
-      await this.finishRun({
-        suppressFooter,
-        idleEventIndex,
-      })
+      logger.log(
+        `[SESSION IDLE] session became idle sessionId=${sessionId} drainQueue=${shouldDrainQueuedMessages} ${this.formatRunStateForLog()}`,
+      )
       await this.persistEventBufferDebounced.flush()
+      if (!shouldDrainQueuedMessages) {
+        return
+      }
       // Drain any local-queue items that arrived while the session was busy
       // (e.g. slow voice transcription with queueMessage=true completing
       // during or just before idle). Same pattern as handleSessionError.
       await this.tryDrainQueue({ showIndicator: true })
       return
     }
+  }
+
+  private async handleNaturalAssistantCompletion({
+    completedMessageId,
+    completedAt,
+  }: {
+    completedMessageId: string
+    completedAt: number
+  }): Promise<void> {
+    const sessionId = this.state?.sessionId
+    if (!sessionId) {
+      return
+    }
+
+    const assistantMessageIds = [
+      ...this.getAssistantMessageIdsForCurrentTurn({ sessionId }),
+    ]
+    if (assistantMessageIds.length === 0) {
+      return
+    }
+
+    await this.flushBufferedPartsForMessages({
+      messageIDs: assistantMessageIds,
+      force: true,
+    })
+
+    const turnStartTime = getCurrentTurnStartTime({
+      events: this.eventBuffer,
+      sessionId,
+    })
+    if (turnStartTime !== undefined) {
+      await this.emitFooter({
+        completedAt,
+        runStartTime: turnStartTime,
+      })
+    }
+
+    this.resetPerRunState()
+    this.clearBufferedPartsForMessages(assistantMessageIds)
+    logger.log(
+      `[ASSISTANT COMPLETED] footer emitted for message ${completedMessageId} sessionId=${sessionId} ${this.formatRunStateForLog()}`,
+    )
   }
 
   private async handleSessionError(properties: {
@@ -3457,74 +3456,16 @@ export class ThreadSessionRuntime {
     return { session, getClient, createdNewSession }
   }
 
-  // ── Run Finish + Footer ─────────────────────────────────────
-
-  /**
-   * Called when session.idle decision is 'process' — the run finished.
-   * Marks finished, flushes parts, emits footer, then drains queue only for
-   * idles that are allowed to emit the footer. Interrupted/stale idles must
-   * not advance the local queue, otherwise queued work can run before the
-   * resumed opencode turn finishes.
-   */
-  private async finishRun({
-    suppressFooter,
-    idleEventIndex,
-  }: {
-    suppressFooter?: boolean
-    idleEventIndex: number
-  }): Promise<void> {
-    const sessionId = this.state?.sessionId
-    if (!sessionId) {
-      return
-    }
-
-    const assistantMessageIds = [
-      ...this.getAssistantMessageIdsForSession({
-        sessionId,
-        upToIndex: idleEventIndex,
-      }),
-    ]
-
-    this.stopTyping()
-
-    // Flush remaining buffered parts for all assistant messages observed during
-    // this run. A single run can emit multiple assistant messages.
-    await this.flushBufferedPartsForMessages({
-      messageIDs: assistantMessageIds,
-      force: true,
-    })
-
-    // Emit footer (skip when the run was interrupted with a pending user message)
-    if (!suppressFooter) {
-      const runStartTime = getRunStartTimeForIdle({
-        events: this.eventBuffer,
-        sessionId,
-        idleEventIndex,
-      })
-      if (runStartTime !== undefined) {
-        await this.emitFooter({ runStartTime })
-      }
-    }
-
-    // Reset per-run caches
-    this.resetPerRunState()
-
-    if (suppressFooter) {
-      return
-    }
-
-    // Show indicator: previous run finished, any queued message has been
-    // waiting for this run to complete — show which one is starting next.
-    await this.tryDrainQueue({ showIndicator: true })
-  }
-
   /**
    * Emit the run footer: duration, model, context%, project info.
-   * Equivalent to session-handler.ts footer logic (lines 2232-2327).
+   * Triggered directly from the terminal assistant message.updated event so the
+   * footer lands next to the assistant output instead of waiting for session.idle.
    */
   private async emitFooter({
+    completedAt,
     runStartTime,
   }: {
+    completedAt: number
     runStartTime: number
   }): Promise<void> {
     const sessionId = this.state?.sessionId
@@ -3536,7 +3477,7 @@ export class ThreadSessionRuntime {
         agent: undefined,
         tokensUsed: 0,
       }
-    const elapsedMs = Date.now() - runStartTime
+    const elapsedMs = completedAt - runStartTime
     const sessionDuration =
       elapsedMs < 1000
         ? '<1s'
@@ -3636,23 +3577,6 @@ export class ThreadSessionRuntime {
     const footerText = `*${projectInfo}${sessionDuration}${contextInfo}${modelInfo}${agentInfo}*`
     this.stopTyping()
 
-    // TODO: delay footer send to fix abort-at-step-boundary race.
-    // When the interrupt plugin aborts at a step boundary, the event order
-    // can be: step-finish → session.idle → (~317ms) → MessageAbortedError.
-    // The idle fires before the abort error, so shouldEmitFooter sees no
-    // abort and emits the footer. A delay here would let the abort event
-    // arrive before sending. Disabled because the delay breaks ordering
-    // with tryDrainQueue (queue drain appears before footer) and causes
-    // e2e test timing failures. Needs a different approach — either
-    // debounce handleSessionIdle or fix the race in the interrupt plugin.
-    // await delay(ThreadSessionRuntime.FOOTER_DEBOUNCE_MS)
-    // if (this.state?.sessionId !== sessionId) {
-    //   return
-    // }
-    // if (this.isMainSessionBusy()) {
-    //   return
-    // }
-
     await sendThreadMessage(this.thread, footerText, { flags: NOTIFY_MESSAGE_FLAGS })
     logger.log(
       `DURATION: Session completed in ${sessionDuration}, model ${runInfo.model}, tokens ${runInfo.tokensUsed}`,
@@ -3665,9 +3589,6 @@ export class ThreadSessionRuntime {
     this.modelContextLimitKey = undefined
     this.lastDisplayedContextPercentage = 0
     this.lastRateLimitDisplayTime = 0
-    // Release part output cache from this run. Parts have already been flushed
-    // to Discord so the buffer is no longer needed until the next run.
-    this.partBuffer.clear()
   }
 
   // ── Retry Last User Prompt (for model-change flow) ──────────
