@@ -28,6 +28,18 @@ const voiceLogger = createLogger(LogPrefix.VOICE)
 
 export type { PreprocessResult }
 
+// Matches ". queue" at the end of a message (case-insensitive, ignoring trailing whitespace).
+// When present the suffix is stripped and the message is routed through
+// kimaki's local queue (same as /queue command).
+const QUEUE_SUFFIX_RE = /\.\s*queue\s*$/i
+
+function extractQueueSuffix(prompt: string): { prompt: string; forceQueue: boolean } {
+  if (!QUEUE_SUFFIX_RE.test(prompt)) {
+    return { prompt, forceQueue: false }
+  }
+  return { prompt: prompt.replace(QUEUE_SUFFIX_RE, '').trimEnd(), forceQueue: true }
+}
+
 /**
  * Pre-process a message in an existing thread (thread already has a session or
  * needs a new one). Handles voice transcription, text/file attachments, and
@@ -148,10 +160,11 @@ export async function preprocessExistingThreadMessage({
     ? `${messageContent}\n\n${textAttachmentsContent}`
     : messageContent
 
+  const qs = extractQueueSuffix(promptWithAttachments)
   return {
-    prompt: promptWithAttachments,
+    prompt: qs.prompt,
     images: fileAttachments.length > 0 ? fileAttachments : undefined,
-    mode: voiceResult?.queueMessage ? 'local-queue' : 'opencode',
+    mode: qs.forceQueue || voiceResult?.queueMessage ? 'local-queue' : 'opencode',
   }
 }
 
@@ -212,9 +225,10 @@ export async function preprocessNewSessionMessage({
     }
   }
 
+  const qs = extractQueueSuffix(prompt)
   return {
-    prompt,
-    mode: voiceResult?.queueMessage ? 'local-queue' : 'opencode',
+    prompt: qs.prompt,
+    mode: qs.forceQueue || voiceResult?.queueMessage ? 'local-queue' : 'opencode',
   }
 }
 
@@ -258,9 +272,10 @@ export async function preprocessNewThreadMessage({
     ? `${messageContent}\n\n${textAttachmentsContent}`
     : messageContent
 
+  const qs = extractQueueSuffix(promptWithAttachments)
   return {
-    prompt: promptWithAttachments,
+    prompt: qs.prompt,
     images: fileAttachments.length > 0 ? fileAttachments : undefined,
-    mode: voiceResult?.queueMessage ? 'local-queue' : 'opencode',
+    mode: qs.forceQueue || voiceResult?.queueMessage ? 'local-queue' : 'opencode',
   }
 }

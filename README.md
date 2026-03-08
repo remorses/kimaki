@@ -167,6 +167,8 @@ Requires a Gemini API key (prompted during setup).
 
 Use `/queue <message>` to queue a follow-up message while the AI is still responding. The queued message sends automatically when the current response finishes. If no response is in progress, it sends immediately. Useful for chaining tasks without waiting.
 
+You can also end any regular message with `. queue` to get the same behavior without using a slash command. The suffix is stripped before sending. For example, typing `fix the tests. queue` queues "fix the tests" for the next idle window.
+
 ## Commands Reference
 
 ### Text Interaction
