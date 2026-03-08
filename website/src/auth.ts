@@ -172,6 +172,7 @@ export function createAuth({ env, baseURL }: { env: HonoBindings; baseURL: strin
         const parsedCallback = parseAllowedCallbackUrl(state?.callbackUrl as string | undefined)
         if (parsedCallback) {
           parsedCallback.searchParams.set('guild_id', guildId)
+          parsedCallback.searchParams.set('client_id', kimakiClientId)
           return { response: Response.redirect(parsedCallback.toString(), 302) }
         }
       }),
