@@ -6,6 +6,8 @@ do not use spawnSync. use our util execAsync. which uses spawn under the hood
 
 the important package in this repo is discord. it contains the discord bot code.
 
+after making important changes to queueing or message handling always run the full test suite inside discord to make sure our changes did not break anything. also run with -u and see snapshots updates in git diff if needed. `pnpm test -u --run`
+
 # repo architecture
 
 kimaki is a monorepo with three main packages that communicate via a shared Postgres database hosted on PlanetScale.
@@ -218,7 +220,11 @@ when creating system messages like replies to commands never add new line spaces
 
 ## discord typing indicator
 
-discord typing indicators expire quickly (about 7 seconds), so keep a periodic `sendTyping()` interval active during long-running responses and tool calls.
+discord typing indicators come from `POST /channels/{id}/typing` / `sendTyping()`. one pulse only lasts about 10 seconds in the Discord UI, so long-running work must refresh it periodically (we usually pulse every ~7 seconds).
+
+Discord typically stops showing the indicator once the bot sends a visible message, so runs that emit multiple bot messages may need an immediate fresh pulse after each non-final message while the session is still busy.
+
+user messages do not automatically make the bot appear typing again. do not show typing just because a user sent a message; only start it when OpenCode events show the session is actually processing (for example `session.status: busy` or `step-start`).
 
 do not remove the typing interval to fix stuck typing; instead fix lifecycle bugs by clearing both the active interval and any scheduled restart timeout when a session ends, aborts, or pauses for permission/question prompts.
 
@@ -257,6 +263,25 @@ instead:
 - store only short identifiers in `custom_id` (eg `contextHash`, a db id, or a session id)
 - resolve anything else at interaction time (eg call `resolveWorkingDirectory({ channel })` from the thread)
 - if you need extra context, store it server-side keyed by the short hash/id rather than encoding it into `custom_id`
+
+## discord components v2 limits
+
+when editing Discord Components V2 (`IS_COMPONENTS_V2`) messages, always check the official docs first:
+
+- overview: `https://discord.com/developers/docs/components/overview`
+- reference: `https://discord.com/developers/docs/components/reference`
+
+important limits and rules to keep in mind:
+
+- components v2 messages cannot use normal `content` or `embeds`; send everything through `components`
+- messages allow up to **40 total components**, and nested children count toward that budget
+- `Section` is only for **1 to 3** text/content children plus at most one accessory (`button` or `thumbnail`)
+- do **not** use `Section` for wide table rows with many columns; this causes `BASE_TYPE_BAD_LENGTH` validation errors
+- `Button` can live inside an `Action Row` or in `Section.accessory`
+- `Action Row` can contain up to **5 buttons** or a single select menu
+- `Container` can hold `Action Row`, `Text Display`, `Section`, `Media Gallery`, `Separator`, and `File`
+
+for kimaki table rendering specifically: plain rows should stay as a single `TextDisplay`, and rows with actions should usually render as `TextDisplay` + `ActionRow` inside the `Container` instead of using `Section` for the whole row.
 
 ## heap snapshots and memory debugging
 
