@@ -10,6 +10,7 @@ function getCritiqueInstructions(sessionId: string) {
 ## showing diffs
 
 IMPORTANT: After editing any files, you MUST execute the critique command using the Bash tool to get a diff URL, then share that URL with the user.
+IMPORTANT: The user cannot see tool results directly. If critique prints a URL in the Bash tool output, you MUST copy that URL into your final message yourself.
 IMPORTANT: When the user asks to see a diff, show a diff, or review changes, ALWAYS use critique to generate a web URL instead of showing raw git diff output.
 
 Typical usage examples:
@@ -45,6 +46,7 @@ The command outputs a URL - share that URL with the user so they can see the dif
 ### always show diff at end of session
 
 If you edited any files during the current session, you MUST run \`bunx critique --web\` at the end of your final message to generate a diff URL and share it with the user. This applies even if the user did not ask to see a diff — always show what changed. Pass the file paths you edited as \`--filter\` arguments so the diff only includes your changes. Skip this only if the session was purely read-only (no file edits, no writes).
+The final user-facing message must include the actual critique URL as plain text or markdown link, because the user cannot see the Bash tool output.
 
 Example — if you edited \`src/config.ts\` and \`src/utils.ts\`:
 
