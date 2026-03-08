@@ -8,8 +8,18 @@ import {
   type Guild,
   type TextChannel,
 } from 'discord.js'
+import fs from 'node:fs'
 import path from 'node:path'
-import { getChannelDirectory, setChannelDirectory } from './database.js'
+import {
+  findChannelsByDirectory,
+  getChannelDirectory,
+  setChannelDirectory,
+} from './database.js'
+import { getProjectsDir } from './config.js'
+import { execAsync } from './worktrees.js'
+import { createLogger, LogPrefix } from './logger.js'
+
+const logger = createLogger(LogPrefix.CHANNEL)
 
 export async function ensureKimakiCategory(
   guild: Guild,
@@ -163,4 +173,124 @@ export async function getChannelsWithDescriptions(
   }
 
   return channels
+}
+
+const DEFAULT_GITIGNORE = `node_modules/
+dist/
+.env
+.env.*
+!.env.example
+.DS_Store
+tmp/
+*.log
+__pycache__/
+*.pyc
+.venv/
+*.egg-info/
+`
+
+/**
+ * Create (or find) the default "kimaki" channel for general-purpose tasks.
+ * Channel name is "kimaki-{botName}" for self-hosted bots, "kimaki" for gateway.
+ * Directory is ~/.kimaki/projects/kimaki, git-initialized with a .gitignore.
+ * Idempotent: skips if the directory already has a registered channel in this guild.
+ */
+export async function createDefaultKimakiChannel({
+  guild,
+  botName,
+  isGatewayMode,
+}: {
+  guild: Guild
+  botName?: string
+  isGatewayMode: boolean
+}): Promise<{
+  textChannelId: string
+  channelName: string
+  projectDirectory: string
+} | null> {
+  const projectDirectory = path.join(getProjectsDir(), 'kimaki')
+
+  // Idempotency: check if this directory is already registered to a channel in this guild
+  const existingChannels = await findChannelsByDirectory({
+    directory: projectDirectory,
+    channelType: 'text',
+  })
+  for (const existing of existingChannels) {
+    try {
+      const ch = await guild.channels.fetch(existing.channel_id)
+      if (ch) {
+        logger.log(
+          `Default kimaki channel already exists: ${existing.channel_id}`,
+        )
+        return null
+      }
+    } catch {
+      // Channel may have been deleted from Discord, continue
+    }
+  }
+
+  // Create directory and initialize git
+  if (!fs.existsSync(projectDirectory)) {
+    fs.mkdirSync(projectDirectory, { recursive: true })
+    logger.log(`Created default kimaki directory: ${projectDirectory}`)
+  }
+
+  // Git init — gracefully skip if git is not installed
+  const gitDir = path.join(projectDirectory, '.git')
+  if (!fs.existsSync(gitDir)) {
+    try {
+      await execAsync('git init', { cwd: projectDirectory, timeout: 10_000 })
+      logger.log(`Initialized git in: ${projectDirectory}`)
+    } catch (error) {
+      logger.warn(
+        `Could not initialize git in ${projectDirectory}: ${error instanceof Error ? error.message : String(error)}`,
+      )
+    }
+  }
+
+  // Write .gitignore if it doesn't exist
+  const gitignorePath = path.join(projectDirectory, '.gitignore')
+  if (!fs.existsSync(gitignorePath)) {
+    fs.writeFileSync(gitignorePath, DEFAULT_GITIGNORE)
+  }
+
+  // Channel name: "kimaki-{botName}" for self-hosted, "kimaki" for gateway
+  const channelName = (() => {
+    if (isGatewayMode || !botName) {
+      return 'kimaki'
+    }
+    const sanitized = botName
+      .toLowerCase()
+      .replace(/[^a-z0-9-]/g, '-')
+      .replace(/-+/g, '-')
+      .replace(/^-|-$/g, '')
+    if (!sanitized || sanitized === 'kimaki') {
+      return 'kimaki'
+    }
+    return `kimaki-${sanitized}`.slice(0, 100)
+  })()
+
+  const kimakiCategory = await ensureKimakiCategory(guild, botName)
+
+  const textChannel = await guild.channels.create({
+    name: channelName,
+    type: ChannelType.GuildText,
+    parent: kimakiCategory,
+    topic:
+      'General channel for misc tasks with Kimaki. Not connected to a specific OpenCode project or repository.',
+  })
+
+  await setChannelDirectory({
+    channelId: textChannel.id,
+    directory: projectDirectory,
+    channelType: 'text',
+  })
+
+  logger.log(`Created default kimaki channel: #${channelName} (${textChannel.id})`)
+
+  return {
+    textChannelId: textChannel.id,
+    channelName,
+    projectDirectory,
+  }
 }

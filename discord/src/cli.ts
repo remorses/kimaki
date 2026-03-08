@@ -34,6 +34,7 @@ import {
   initializeOpencodeForDirectory,
   ensureKimakiCategory,
   createProjectChannels,
+  createDefaultKimakiChannel,
   type ChannelWithTags,
 } from './discord-bot.js'
 import {
@@ -2232,6 +2233,29 @@ async function run({
             'Created Channels',
           )
         }
+      }
+    }
+
+    // Create default kimaki channel for general-purpose tasks.
+    // Runs for every guild the bot is in, idempotent (skips if already exists).
+    for (const guild of guilds) {
+      try {
+        const result = await createDefaultKimakiChannel({
+          guild,
+          botName: discordClient.user?.username,
+          isGatewayMode,
+        })
+        if (result) {
+          createdChannels.push({
+            name: result.channelName,
+            id: result.textChannelId,
+            guildId: guild.id,
+          })
+        }
+      } catch (error) {
+        cliLogger.warn(
+          `Failed to create default kimaki channel in ${guild.name}: ${error instanceof Error ? error.message : String(error)}`,
+        )
       }
     }
 

@@ -91,6 +91,7 @@ export {
   ensureKimakiCategory,
   ensureKimakiAudioCategory,
   createProjectChannels,
+  createDefaultKimakiChannel,
   getChannelsWithDescriptions,
 } from './channel-management.js'
 export type { ChannelWithTags } from './channel-management.js'
