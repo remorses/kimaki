@@ -1041,4 +1041,135 @@ e2eTest('voice message handling', () => {
     },
     8_000,
   )
+
+  // ── Test 6: Slow transcription with queueMessage=true arriving after session idle ──
+
+  test(
+    'slow queued transcription completing after session idle is dispatched',
+    async () => {
+      // Reproduces the bug where a voice message with queueMessage=true has
+      // slow transcription that completes after the session is already idle.
+      // The message gets inserted into the local queue but was never drained
+      // because handleSessionIdle() didn't call tryDrainQueue().
+      //
+      // 1. Send a fast text message → session starts and finishes quickly
+      // 2. Send a voice message with queueMessage=true and slow transcription
+      // 3. Fast session finishes → handleSessionIdle fires
+      // 4. Transcription completes → enqueueViaLocalQueue adds item
+      // 5. tryDrainQueue in handleSessionIdle should pick it up
+
+      // 1. Start a session with a fast response
+      setDeterministicTranscription(null)
+      await discord.channel(TEXT_CHANNEL_ID).user(TEST_USER_ID).sendMessage({
+        content: 'FAST_RESPONSE_MARKER fast before queued voice',
+      })
+
+      const thread = await discord.channel(TEXT_CHANNEL_ID).waitForThread({
+        timeout: 4_000,
+        predicate: (t) => {
+          return t.name?.includes('fast before queued voice') ?? false
+        },
+      })
+
+      const th = discord.thread(thread.id)
+
+      // Wait for the first run to fully complete (footer = session idle)
+      await th.waitForBotReply({ timeout: 4_000 })
+      await waitForFooterMessage({
+        discord,
+        threadId: thread.id,
+        timeout: 4_000,
+      })
+
+      // 2. Send voice message with queueMessage=true AND slow transcription.
+      // Session is already idle when this arrives. The transcription delay
+      // means the message enters the local queue after idle has fired.
+      setDeterministicTranscription({
+        transcription: 'Queued voice after idle',
+        queueMessage: true,
+        delayMs: 500,
+      })
+
+      await th.user(TEST_USER_ID).sendVoiceMessage()
+
+      // 3. The transcription should complete, and even though queueMessage=true
+      // routes through the local queue, the item should be drained immediately
+      // because the session is idle. No dispatch indicator (» prefix) appears
+      // because the message is dispatched immediately by enqueueViaLocalQueue's
+      // tryDrainQueue (showIndicator=false for first drain).
+      await waitForBotMessageContaining({
+        discord,
+        threadId: thread.id,
+        userId: TEST_USER_ID,
+        text: 'Queued voice after idle',
+        timeout: 4_000,
+      })
+
+      // Wait for the queued message response and footer
+      await waitForBotMessageContaining({
+        discord,
+        threadId: thread.id,
+        text: 'session-reply',
+        timeout: 4_000,
+      })
+
+      await waitForFooterMessage({
+        discord,
+        threadId: thread.id,
+        timeout: 4_000,
+        afterMessageIncludes: 'session-reply',
+        afterAuthorId: discord.botUserId,
+      })
+
+      // 4. Final state: queue should be empty
+      const finalState = await waitForThreadState({
+        threadId: thread.id,
+        predicate: (state) => {
+          return Boolean(state.sessionId) && state.queueItems.length === 0
+        },
+        timeout: 4_000,
+        description: 'queued voice after idle settled with empty queue',
+      })
+
+      expect(await th.text()).toMatchInlineSnapshot(`
+        "--- from: user (voice-tester)
+        FAST_RESPONSE_MARKER fast before queued voice
+        --- from: assistant (TestBot)
+        ⬥ fast-response-done
+        *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2*
+        --- from: user (voice-tester)
+        [attachment: voice-message.ogg]
+        --- from: assistant (TestBot)
+        🎤 Transcribing voice message...
+        📝 **Transcribed message:** Queued voice after idle
+        ⬥ session-reply
+        *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2*"
+      `)
+      expect(finalState.sessionId).toBeDefined()
+      expect(finalState.queueItems.length).toBe(0)
+
+      // 5. Verify the OpenCode session processed both prompts
+      const sessionMessages = await waitForSessionMessages({
+        projectDirectory: directories.projectDirectory,
+        sessionID: finalState.sessionId!,
+        timeout: 4_000,
+        description: 'queued-voice-idle: both prompts processed',
+        predicate: (all) => {
+          const userTexts = getUserTexts(all)
+          const aTexts = getAssistantTexts(all)
+          return (
+            userTexts.some((t) => t.includes('FAST_RESPONSE_MARKER fast before queued voice')) &&
+            userTexts.some((t) => t.includes('Queued voice after idle')) &&
+            aTexts.length >= 2
+          )
+        },
+      })
+      const userTexts = getUserTexts(sessionMessages)
+      expect(userTexts.some((t) => t.includes('FAST_RESPONSE_MARKER fast before queued voice'))).toBe(true)
+      expect(userTexts.some((t) => t.includes('Queued voice after idle'))).toBe(true)
+      const assistantTexts = getAssistantTexts(sessionMessages)
+      expect(assistantTexts.length).toBeGreaterThanOrEqual(2)
+    },
+    10_000,
+  )
 })

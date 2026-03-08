@@ -2079,6 +2079,10 @@ export class ThreadSessionRuntime {
         idleEventIndex,
       })
       await this.persistEventBufferDebounced.flush()
+      // Drain any local-queue items that arrived while the session was busy
+      // (e.g. slow voice transcription with queueMessage=true completing
+      // during or just before idle). Same pattern as handleSessionError.
+      await this.tryDrainQueue({ showIndicator: true })
       return
     }
   }
