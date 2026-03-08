@@ -577,6 +577,24 @@ if (res instanceof Error) return res
 
 > `isAbortError` detects three kinds of abort: (1) native `DOMException` from bare `controller.abort()`, (2) direct `errore.AbortError` instances, (3) tagged errors that extend `errore.AbortError` — even when wrapped in another error's `.cause` chain.
 
+#### Early Return on Abort (signal.aborted checks)
+
+Check `signal.aborted` before side effects or async operations — same early-return pattern as errors but for cancellation. Without these, cancelled work keeps running.
+
+```ts
+for (const item of items) {
+  if (signal.aborted) return                    // before work
+  const data = await fetchData(item.id, { signal })
+    .catch((e) => new FetchError({ id: item.id, cause: e }))
+  if (errore.isAbortError(data)) return         // after async
+  if (data instanceof Error) { console.warn(data.message); continue }
+  if (signal.aborted) return                    // before write
+  await db.save(data)
+}
+```
+
+> Place `signal.aborted` checks **before** expensive operations (network, db writes, file I/O). Check `isAbortError` **after** async calls that received the signal. Both keep the function responsive to cancellation.
+
 ## Pitfalls
 
 ### CustomError | Error is ambiguous when CustomError extends Error

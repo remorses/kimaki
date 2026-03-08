@@ -24,7 +24,22 @@ zele whoami
 zele login
 ```
 
-**Remote/headless login:** `zele login` prints an authorization URL. Open it in any browser, complete consent, then paste the `localhost` redirect URL back into the terminal. Works over SSH, tmux, etc.
+**Remote/headless login:** `zele login` is interactive — it prints an authorization URL and waits for a redirect URL to be pasted back. In agent/headless environments, run it inside tmux so the process persists:
+
+```bash
+# start login in a tmux session
+tmux new-session -d -s zele-login 'zele login'
+
+# read the authorization URL from tmux output
+tmux capture-pane -t zele-login -p
+
+# after the user completes consent in their browser, paste the redirect URL
+tmux send-keys -t zele-login 'http://localhost:...?code=...' Enter
+
+# verify login succeeded
+tmux capture-pane -t zele-login -p
+tmux kill-session -t zele-login
+```
 
 ## Important
 
@@ -34,7 +49,7 @@ Running `zele` with no subcommand launches a human-friendly TUI for browsing ema
 
 ## Capabilities
 
-- **Mail:** list, search, read, send, reply, forward, star, archive, trash, label, watch for new emails
+- **Mail:** list, search, read, send, reply, forward, star, archive, trash, label, watch for new emails, manage filters
 - **Drafts:** list, create, get, send, delete
 - **Calendar:** list calendars, list/search events, create/update/delete events, RSVP, free/busy
 - **Labels:** list, create, delete, unread counts
@@ -82,4 +97,7 @@ zele cal create --summary "Standup" --from tomorrow --to +30m --meet --attendees
 
 # check free/busy
 zele cal freebusy --from today --to +8h
+
+# list Gmail filters
+zele mail filter list
 ```

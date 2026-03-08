@@ -1,7 +1,0 @@
-node_modules
-/lib
-/types
-/api-doc
-coverage
-/dist
-/deno
