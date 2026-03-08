@@ -13,6 +13,7 @@ import path from 'node:path'
 import {
   getChannelDirectory,
   setChannelDirectory,
+  findChannelsByDirectory,
 } from './database.js'
 import { getProjectsDir } from './config.js'
 import { execAsync } from './worktrees.js'
@@ -188,45 +189,17 @@ __pycache__/
 *.egg-info/
 `
 
-// Topic marker embedded in the default kimaki channel topic.
-// Used for idempotency: scan guild channels for this marker instead of relying
-// on DB state, which can drift after DB resets or migrations.
-const DEFAULT_CHANNEL_TOPIC_MARKER = '[kimaki-default:'
-
-export function buildDefaultChannelTopic(appId: string): string {
-  return `General channel for misc tasks with Kimaki. Not connected to a specific OpenCode project or repository. ${DEFAULT_CHANNEL_TOPIC_MARKER}${appId}]`
-}
-
-export function findDefaultKimakiChannelInGuild({
-  guild,
-  appId,
-}: {
-  guild: Guild
-  appId: string
-}): TextChannel | null {
-  const marker = `${DEFAULT_CHANNEL_TOPIC_MARKER}${appId}]`
-  const found = guild.channels.cache.find((ch): ch is TextChannel => {
-    if (ch.type !== ChannelType.GuildText) {
-      return false
-    }
-    return (ch as TextChannel).topic?.includes(marker) ?? false
-  })
-  return found ?? null
-}
+const DEFAULT_CHANNEL_TOPIC =
+  'General channel for misc tasks with Kimaki. Not connected to a specific OpenCode project or repository.'
 
 /**
  * Create (or find) the default "kimaki" channel for general-purpose tasks.
  * Channel name is "kimaki-{botName}" for self-hosted bots, "kimaki" for gateway.
  * Directory is ~/.kimaki/projects/kimaki, git-initialized with a .gitignore.
  *
- * Idempotency (3 layers):
- * 1. Hydrate guild channels from API to avoid stale cache misses
- * 2. Scan for topic marker [kimaki-default:{appId}]
- * 3. Legacy fallback: detect unmarked channels by name+category from before
- *    the marker was introduced, backfill their topic with the marker
- *
- * When an existing channel is found (marked or legacy), the DB mapping is
- * always re-written so it recovers from DB resets.
+ * Idempotency: checks the database for an existing channel mapped to the
+ * kimaki projects directory. Also scans guild channels by name+category
+ * as a fallback for channels created before DB mapping existed.
  */
 export async function createDefaultKimakiChannel({
   guild,
@@ -255,47 +228,42 @@ export async function createDefaultKimakiChannel({
     )
   }
 
-  // 1. Check for existing channel via topic marker
-  const existing = findDefaultKimakiChannelInGuild({ guild, appId })
-  if (existing) {
-    logger.log(`Default kimaki channel already exists: ${existing.id}`)
-    // Ensure DB mapping is present (recovers from DB resets)
-    await setChannelDirectory({
-      channelId: existing.id,
-      directory: projectDirectory,
-      channelType: 'text',
-      skipIfExists: true,
-    })
-    return null
+  // 1. Check database for existing channel mapped to this directory
+  const existingMappings = await findChannelsByDirectory({
+    directory: projectDirectory,
+    channelType: 'text',
+  })
+  if (existingMappings.length > 0) {
+    const channelId = existingMappings[0]!.channel_id
+    // Verify the channel still exists in the guild
+    const channel = guild.channels.cache.get(channelId)
+    if (channel && channel.type === ChannelType.GuildText) {
+      logger.log(`Default kimaki channel already exists: ${channelId}`)
+      return null
+    }
+    // Channel was deleted from Discord but DB mapping remains — fall through
+    logger.log(
+      `DB mapping exists for ${channelId} but channel not found in guild, creating new one`,
+    )
   }
 
-  // 2. Legacy fallback: detect unmarked default channel by name+category
-  //    from before the topic marker was introduced. Backfill the marker
-  //    and restore DB mapping instead of creating a duplicate.
+  // 2. Fallback: detect existing channel by name+category
   const kimakiCategory = await ensureKimakiCategory(guild, botName)
-  const legacyChannel = guild.channels.cache.find((ch): ch is TextChannel => {
+  const existingByName = guild.channels.cache.find((ch): ch is TextChannel => {
     if (ch.type !== ChannelType.GuildText) {
       return false
     }
     if (ch.parentId !== kimakiCategory.id) {
       return false
     }
-    // Match channels named "kimaki" or "kimaki-{botname}"
     return ch.name === 'kimaki' || ch.name.startsWith('kimaki-')
   })
-  if (legacyChannel) {
+  if (existingByName) {
     logger.log(
-      `Found legacy default kimaki channel without marker: ${legacyChannel.id}, backfilling topic`,
+      `Found existing default kimaki channel by name: ${existingByName.id}, restoring DB mapping`,
     )
-    try {
-      await legacyChannel.setTopic(buildDefaultChannelTopic(appId))
-    } catch (error) {
-      logger.warn(
-        `Could not backfill topic marker on legacy channel ${legacyChannel.id}: ${error instanceof Error ? error.message : String(error)}`,
-      )
-    }
     await setChannelDirectory({
-      channelId: legacyChannel.id,
+      channelId: existingByName.id,
       directory: projectDirectory,
       channelType: 'text',
       skipIfExists: true,
@@ -348,7 +316,7 @@ export async function createDefaultKimakiChannel({
     name: channelName,
     type: ChannelType.GuildText,
     parent: kimakiCategory,
-    topic: buildDefaultChannelTopic(appId),
+    topic: DEFAULT_CHANNEL_TOPIC,
   })
 
   await setChannelDirectory({

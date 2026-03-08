@@ -1,8 +1,9 @@
 // Onboarding welcome message for the default kimaki channel.
-// Sends a plain text message explaining what Kimaki is and how to use it.
+// Sends a message explaining what Kimaki is, then creates a thread from it
+// so the user can respond there to start a tutorial session.
 // Posted once when the default channel is first created.
 
-import type { TextChannel } from 'discord.js'
+import { ThreadAutoArchiveDuration, type TextChannel } from 'discord.js'
 import { createLogger, LogPrefix } from './logger.js'
 
 const logger = createLogger(LogPrefix.CHANNEL)
@@ -12,7 +13,7 @@ const WELCOME_TEXT = `**Kimaki** lets you code from Discord. Send a message in a
 - Add your projects with \`/add-project\` and code from anywhere
 - Collaborate with teammates in the same session
 - Upload images and files, the bot can share screenshots back
-Send a message in this channel to get started.`
+Want to build an example browser game? Respond in this thread.`
 
 export async function sendWelcomeMessage({
   channel,
@@ -20,8 +21,13 @@ export async function sendWelcomeMessage({
   channel: TextChannel
 }): Promise<void> {
   try {
-    await channel.send(WELCOME_TEXT)
-    logger.log(`Sent welcome message to #${channel.name}`)
+    const message = await channel.send(WELCOME_TEXT)
+    await message.startThread({
+      name: 'Kimaki tutorial',
+      autoArchiveDuration: ThreadAutoArchiveDuration.OneDay,
+      reason: 'Onboarding tutorial thread',
+    })
+    logger.log(`Sent welcome message with thread to #${channel.name}`)
   } catch (error) {
     logger.warn(
       `Failed to send welcome message to #${channel.name}: ${error instanceof Error ? error.message : String(error)}`,

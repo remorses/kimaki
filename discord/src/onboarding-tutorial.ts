@@ -6,11 +6,45 @@ const markdown = String.raw
 const backticks = '```'
 
 export const ONBOARDING_TUTORIAL_INSTRUCTIONS = markdown`
-You are helping a new user try Kimaki for the first time by building a 3D game together.
+You are helping a new user try Kimaki for the first time. The default suggestion is building a 3D game, but if the user asks to build something else, build that instead. Adapt all instructions below to whatever the user wants.
+
+## Prerequisites
+
+Before doing anything else, check that these are installed:
+
+**Bun** (v1.2 or later) — runtime and bundler:
+
+${backticks}bash
+bun --version
+${backticks}
+
+If missing or below 1.2, tell the user to install it: https://bun.sh — or run:
+
+${backticks}bash
+curl -fsSL https://bun.sh/install | bash
+${backticks}
+
+**tmux** — needed to run the dev server in the background with kimaki tunnel:
+
+${backticks}bash
+tmux -V
+${backticks}
+
+If missing, tell the user to install it: https://github.com/tmux/tmux/wiki/Installing — or:
+
+${backticks}bash
+# macOS
+brew install tmux
+
+# Ubuntu/Debian
+sudo apt-get install tmux
+${backticks}
+
+Do NOT use Node.js, npm, or npx. Use Bun for everything.
 
 ## Goal
 
-Build a simple but visually impressive 3D game using Three.js that runs in the browser. The user should be able to play it within a few minutes of starting.
+Build a simple but visually impressive 3D game using Three.js that runs in the browser. The user should be able to play it within a few minutes of starting. If the user asked for something different, build that instead.
 
 ## Game idea
 
@@ -25,21 +59,82 @@ Build a "Space Dodge" game:
 
 If the game idea doesn't match what the user asked for, adapt to their request instead.
 
-## Technical approach
+## Project setup
 
-- Create a single index.html with all JS inlined (no build tools, no npm, no bundler)
-- Import Three.js from CDN: https://cdn.jsdelivr.net/npm/three@0.170.0/build/three.module.js
-- Use <script type="module"> for clean ES module imports
-- Keep the code clean and well-structured but all in one file for simplicity
-- Add basic mobile touch controls (swipe to move) so it works on phones too
+Create these files:
+
+**package.json** — install three as a dependency:
+${backticks}json
+{
+  "dependencies": {
+    "three": "^0.170.0"
+  }
+}
+${backticks}
+
+Run bun install after creating it.
+
+**tsconfig.json**:
+${backticks}json
+{
+  "compilerOptions": {
+    "target": "ESNext",
+    "module": "ESNext",
+    "moduleResolution": "bundler",
+    "strict": true,
+    "jsx": "react-jsx",
+    "types": ["three"]
+  }
+}
+${backticks}
+
+**index.html** — the entry point, references the TypeScript source:
+${backticks}html
+<!DOCTYPE html>
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Space Dodge</title>
+    <style>
+      body { margin: 0; overflow: hidden; }
+      canvas { display: block; }
+    </style>
+  </head>
+  <body>
+    <script type="module" src="./game.ts"></script>
+  </body>
+</html>
+${backticks}
+
+**game.ts** — all game logic in TypeScript, importing from "three":
+${backticks}ts
+import * as THREE from "three"
+// ... game code here
+${backticks}
+
+Write the full game code in game.ts. Import Three.js with normal imports (Bun bundles it automatically). Add basic mobile touch controls (swipe to move) so it works on phones too.
+
+**server.ts** — Bun fullstack dev server:
+${backticks}ts
+import homepage from "./index.html"
+
+Bun.serve({
+  routes: { "/": homepage },
+  development: true,
+})
+${backticks}
 
 ## Dev server and tunnel
 
-After creating the game file, start a dev server and expose it via kimaki tunnel so the user can play immediately from their browser or phone. The user is on Discord, not at a terminal — localhost URLs are useless to them.
+After creating all files and running bun install, start the dev server and expose it via kimaki tunnel so the user can play immediately from their browser or phone. The user is on Discord, not at a terminal — localhost URLs are useless to them.
+
+Pick a random port between 3000-9000 to avoid conflicts:
 
 ${backticks}bash
+PORT=$((RANDOM % 6000 + 3000))
 tmux new-session -d -s game-dev
-tmux send-keys -t game-dev "npx kimaki tunnel -p 8080 -- npx serve . -p 8080 -s" Enter
+tmux send-keys -t game-dev "kimaki tunnel -p $PORT -- bun run server.ts --port $PORT" Enter
 ${backticks}
 
 Wait a moment, then get the tunnel URL:
