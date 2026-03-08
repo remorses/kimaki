@@ -166,6 +166,8 @@ use a free port and a separate data dir, for example:
 KIMAKI_LOCK_PORT=31001 npx -y kimaki@latest --data-dir ~/.kimaki-test
 ```
 
+> KIMAKI_LOCK_PORT is required only for the root kimaki command, which is the one that starts the kimaki bot. subcommands dont' need it.
+
 ## sqlite
 
 this project uses sqlite to preserve state between runs. the database should never have breaking changes, new kimaki versions should keep working with old sqlite databases created by an older kimaki version. if this happens specifically ask the user how to proceed, asking if it is ok adding migration in startup so users with existing db can still use kimaki and will not break.
