@@ -2120,6 +2120,13 @@ export class ThreadSessionRuntime {
       `✗ opencode session error: ${errorMessage}`,
     )
     await this.persistEventBufferDebounced.flush()
+
+    // Inject synthetic idle so isSessionBusy() returns false and queued
+    // messages can drain. Without this, a session error leaves the event
+    // buffer in a "busy" state forever (no session.idle follows the error),
+    // causing local-queue items to be stuck indefinitely. See #74.
+    this.markQueueDispatchIdle(sessionId)
+    await this.tryDrainQueue({ showIndicator: true })
   }
 
   private async handlePermissionAsked(
