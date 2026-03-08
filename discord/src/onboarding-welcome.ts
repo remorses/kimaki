@@ -1,7 +1,8 @@
 // Onboarding welcome message for the default kimaki channel.
 // Sends a message explaining what Kimaki is, then creates a thread from it
 // so the user can respond there to start a tutorial session.
-// Mentions the installer so they get a Discord notification.
+// Sends a smaller follow-up message inside the thread with the installer
+// mention so the notification is less noisy.
 // Posted once when the default channel is first created.
 
 import { ThreadAutoArchiveDuration, type TextChannel } from 'discord.js'
@@ -10,14 +11,18 @@ import { TUTORIAL_WELCOME_TEXT } from './onboarding-tutorial.js'
 
 const logger = createLogger(LogPrefix.CHANNEL)
 
-function buildWelcomeText({ mentionUserId }: { mentionUserId?: string }): string {
-  const mention = mentionUserId ? ` <@${mentionUserId}>` : ''
-  return `**Kimaki** lets you code from Discord.${mention} Send a message in any project channel and an AI agent edits code, runs commands, and searches your codebase — all on your machine.
+function buildWelcomeText(): string {
+  return `**Kimaki** lets you code from Discord. Send a message in any project channel and an AI agent edits code, runs commands, and searches your codebase — all on your machine.
 **What you can do:**
 - Add your projects with \`/add-project\` and code from anywhere
 - Collaborate with teammates in the same session
 - Upload images and files, the bot can share screenshots back
 ${TUTORIAL_WELCOME_TEXT}`
+}
+
+function buildThreadPrompt({ mentionUserId }: { mentionUserId?: string }): string {
+  const mentionSuffix = mentionUserId ? ` <@${mentionUserId}>` : ''
+  return `Want to build an example browser game? Respond in this thread.${mentionSuffix}`
 }
 
 export async function sendWelcomeMessage({
@@ -28,12 +33,13 @@ export async function sendWelcomeMessage({
   mentionUserId?: string
 }): Promise<void> {
   try {
-    const message = await channel.send(buildWelcomeText({ mentionUserId }))
-    await message.startThread({
+    const message = await channel.send(buildWelcomeText())
+    const thread = await message.startThread({
       name: 'Kimaki tutorial',
       autoArchiveDuration: ThreadAutoArchiveDuration.OneDay,
       reason: 'Onboarding tutorial thread',
     })
+    await thread.send(buildThreadPrompt({ mentionUserId }))
     logger.log(`Sent welcome message with thread to #${channel.name}`)
   } catch (error) {
     logger.warn(
