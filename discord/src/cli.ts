@@ -1576,13 +1576,11 @@ async function resolveCredentials({
           options: [
             {
               value: 'gateway' as const,
-              label: 'Gateway mode (simple, experimental)',
-              hint: 'Install the gateway Kimaki bot to your server',
+              label: 'Gateway mode (simple)',
             },
             {
               value: 'self_hosted' as const,
               label: 'Self-hosted bot (5-10 minutes setup)',
-              hint: 'Full control: bring your own Discord bot token',
             },
           ],
         })
