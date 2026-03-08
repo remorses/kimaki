@@ -140,7 +140,7 @@ const transcriptionTool: LanguageModelV3FunctionTool = {
       transcription: {
         type: 'string',
         description:
-          'The final transcription of the audio. MUST be non-empty. If audio is unclear, transcribe your best interpretation. If silent, use "[inaudible audio]".',
+          'The final transcription of the audio. MUST be non-empty. If audio is unclear, transcribe your best interpretation. If silent, too short to understand, or completely incomprehensible, use "[inaudible audio]".',
       },
       queueMessage: {
         type: 'boolean',
@@ -411,7 +411,7 @@ This is a software development environment. The speaker is giving instructions t
  - If the user asks a question, keep it as a question. Do NOT answer it. Do NOT rephrase it as a statement.
  - Only fix grammar, punctuation, and markdown formatting. Preserve the original content faithfully.
  - If audio is unclear, transcribe your best interpretation, even with strong accents. Always provide an approximation.
- - If audio seems silent/empty, call transcriptionResult with "[inaudible audio]"
+ - If audio seems silent/empty, is too short to understand, or is completely incomprehensible, call transcriptionResult with "[inaudible audio]"
  - The session context below is ONLY for understanding technical terms, file names, and function names. It may contain previous transcriptions — NEVER copy or reuse them. Always transcribe fresh from the current audio.
 
  QUEUE DETECTION:
