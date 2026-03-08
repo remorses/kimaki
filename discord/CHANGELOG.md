@@ -1,5 +1,60 @@
 # Changelog
 
+## 0.4.75
+
+1. **Default Kimaki channel created on onboarding** — a `kimaki-{botName}` channel (or `kimaki` in gateway mode) is now automatically created in the Kimaki category for general-purpose tasks. It's not tied to a project — the backing directory is `~/.kimaki/projects/kimaki`, initialized with git. Idempotent: skipped if the channel already exists.
+
+2. **Welcome message and onboarding tutorial** — the default channel gets a welcome message on first creation explaining what Kimaki is. Sending your first message triggers a built-in tutorial that guides you through building a 3D Space Dodge game with Three.js + kimaki tunnel.
+
+3. **Non-TTY gateway mode with JSON event protocol** — `kimaki --gateway` now works in headless environments (cloud sandboxes, CI, Docker). Instead of interactive prompts, it emits structured JSON lines:
+   ```json
+   {"type":"install_url","url":"..."}
+   {"type":"authorized","guild_id":"..."}
+   {"type":"ready","app_id":"...","guild_ids":[...]}
+   {"type":"error","message":"..."}
+   ```
+   This makes it easy to script gateway onboarding without a terminal.
+
+4. **`kimaki bot` command group** — new CLI subcommands to manage bot presence:
+   ```bash
+   # set bot status
+   kimaki bot status set "Working on your code" --type playing --status online
+
+   # clear bot status
+   kimaki bot status clear
+
+   # print bot install URL
+   kimaki bot install-url
+   ```
+   Note: status commands are blocked in gateway mode since presence is global (shared bot).
+
+5. **`/model-variant` command** — quickly switch the thinking level for the current model without going through the full `/model` menu. Shows variant and scope pickers in a single reply.
+
+6. **`/mcp` command** — list and toggle MCP servers for the current project:
+   - Shows all configured MCP servers with their status (connected/disconnected/error)
+   - Select a server from the dropdown to connect or disconnect it
+
+7. **`. queue` suffix support** — append `. queue` to any regular text message to queue it for after the current session finishes, same as the `/queue` command:
+   ```
+   Fix the login bug. queue
+   ```
+
+8. **Queue drains after session errors** — messages stuck in the local queue are now dispatched even if the session ended with an error, preventing stuck voice transcriptions.
+
+9. **Worktree action buttons in `/worktrees` table** — delete buttons now appear directly in the worktrees table rows. Force-remove works even when the worktree folder contains submodules. Base and target branch autocomplete added to worktree commands.
+
+10. **Footer anchored to assistant completion** — the run footer (`kimakivoice ⋅ main ⋅ 2m 30s ⋅ 71% ⋅ ...`) is now sent immediately after the last text part instead of being delayed, preventing spurious footers from appearing after interruptions.
+
+11. **Runtimes reconnect after shared server restart** — `/restart-opencode-server` now properly reconnects all active thread runtimes after the server comes back up.
+
+12. **Common directories pre-allowed for permissions** — system paths like `~/.npm`, `~/.cargo`, `/tmp`, and similar build caches are automatically allowed at the guild level, reducing permission prompts for common tool operations.
+
+13. **Voice `[inaudible audio]` for incomprehensible input** — very short or inaudible voice messages now return `[inaudible audio]` instead of triggering a transcription error.
+
+14. **`--gateway-callback-url` CLI option** — customize the OAuth redirect URL after bot authorization, useful for self-hosted website deployments.
+
+15. **Memory leak fixes** — comprehensive cleanup of runtime and pending-UI state when sessions end, preventing accumulation of stale state across long-running bot processes.
+
 ## 0.4.74
 
 1. **`kimaki session archive` and `kimaki user list` CLI commands** — Discord REST operations previously done by plugin tools (`kimaki_archive_thread`, `kimaki_list_discord_users`) are now proper CLI subcommands. The plugin tools were silently broken in gateway mode because they had no way to route requests through the proxy:
