@@ -622,6 +622,7 @@ type CredentialResult = {
   token: string
   credentialSource: 'env' | 'saved' | 'wizard'
   isGatewayMode: boolean
+  installerDiscordUserId?: string
 }
 
 type CliOptions = {
@@ -1649,6 +1650,7 @@ async function resolveCredentials({
     pollUrl.searchParams.set('secret', clientSecret)
 
     let guildId: string | undefined
+    let installerDiscordUserId: string | undefined
     for (let attempt = 0; attempt < 600; attempt++) {
       await new Promise((resolve) => {
         setTimeout(resolve, 2000)
@@ -1674,9 +1676,13 @@ async function resolveCredentials({
       try {
         const resp = await fetch(pollUrl.toString())
         if (resp.ok) {
-          const data = (await resp.json()) as { guild_id?: string }
+          const data = (await resp.json()) as {
+            guild_id?: string
+            discord_user_id?: string
+          }
           if (data.guild_id) {
             guildId = data.guild_id
+            installerDiscordUserId = data.discord_user_id
             break
           }
         }
@@ -1717,6 +1723,7 @@ async function resolveCredentials({
       token: `${clientId}:${clientSecret}`,
       credentialSource: 'wizard',
       isGatewayMode: true,
+      installerDiscordUserId,
     }
   }
 
@@ -1857,7 +1864,7 @@ async function run({
   // Initialize database (connects to hrana server via HTTP)
   await initDatabase()
 
-  const { appId, token, credentialSource, isGatewayMode } = await resolveCredentials({
+  const { appId, token, credentialSource, isGatewayMode, installerDiscordUserId } = await resolveCredentials({
     forceRestartOnboarding,
     forceGateway,
     gatewayCallbackUrl,
@@ -2252,8 +2259,13 @@ async function run({
             guildId: guild.id,
           })
 
-          // Send welcome message to the newly created default channel
-          await sendWelcomeMessage({ channel: result.textChannel })
+          // Send welcome message to the newly created default channel.
+          // Mention the installer so they get a notification.
+          const mentionUserId = installerDiscordUserId || guild.ownerId
+          await sendWelcomeMessage({
+            channel: result.textChannel,
+            mentionUserId,
+          })
         }
       } catch (error) {
         cliLogger.warn(

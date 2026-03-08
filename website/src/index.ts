@@ -115,6 +115,17 @@ app.get('/api/onboarding/status', async (c) => {
   const row = await prisma.gateway_clients
     .findFirst({
       where: { client_id: clientId, secret },
+      include: {
+        user: {
+          include: {
+            accounts: {
+              where: { providerId: 'discord' },
+              select: { accountId: true },
+              take: 1,
+            },
+          },
+        },
+      },
     })
     .catch((cause) => {
       return new Error('Failed to lookup gateway client', { cause })
@@ -127,7 +138,9 @@ app.get('/api/onboarding/status', async (c) => {
     return c.json({ error: 'Not found' }, 404)
   }
 
-  return c.json({ guild_id: row.guild_id })
+  // accountId is the Discord user ID from the OAuth provider
+  const discordUserId = row.user?.accounts?.[0]?.accountId
+  return c.json({ guild_id: row.guild_id, discord_user_id: discordUserId })
 })
 
 export default app
