@@ -90,6 +90,11 @@ import { handleSessionIdCommand } from './commands/session-id.js'
 import { handleUpgradeAndRestartCommand } from './commands/upgrade.js'
 import { handleMcpCommand, handleMcpSelectMenu } from './commands/mcp.js'
 import { handleModelVariantSelectMenu } from './commands/model.js'
+import {
+  handleModelVariantCommand,
+  handleVariantQuickSelectMenu,
+  handleVariantScopeSelectMenu,
+} from './commands/model-variant.js'
 import { hasKimakiBotPermission } from './discord-utils.js'
 import { createLogger, LogPrefix } from './logger.js'
 import { notifyError } from './sentry.js'
@@ -244,6 +249,10 @@ export function registerInteractionHandler({
 
             case 'model':
               await handleModelCommand({ interaction, appId })
+              return
+
+            case 'model-variant':
+              await handleModelVariantCommand({ interaction, appId })
               return
 
             case 'unset-model-override':
@@ -411,6 +420,16 @@ export function registerInteractionHandler({
 
           if (customId.startsWith('model_variant:')) {
             await handleModelVariantSelectMenu(interaction)
+            return
+          }
+
+          if (customId.startsWith('variant_quick:')) {
+            await handleVariantQuickSelectMenu(interaction)
+            return
+          }
+
+          if (customId.startsWith('variant_scope:')) {
+            await handleVariantScopeSelectMenu(interaction)
             return
           }
 

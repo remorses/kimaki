@@ -916,6 +916,13 @@ async function registerCommands({
       .setDMPermission(false)
       .toJSON(),
     new SlashCommandBuilder()
+      .setName('model-variant')
+      .setDescription(
+        'Quickly change the thinking level variant for the current model',
+      )
+      .setDMPermission(false)
+      .toJSON(),
+    new SlashCommandBuilder()
       .setName('unset-model-override')
       .setDescription('Remove model override and use default instead')
       .setDMPermission(false)
