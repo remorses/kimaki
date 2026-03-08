@@ -164,6 +164,8 @@ use a free port and a separate data dir, for example:
 KIMAKI_LOCK_PORT=31001 npx -y kimaki@latest --data-dir ~/.kimaki-test
 ```
 
+> KIMAKI_LOCK_PORT is required only for the root kimaki command, which is the one that starts the kimaki bot. subcommands dont' need it.
+
 ## sqlite
 
 this project uses sqlite to preserve state between runs. the database should never have breaking changes, new kimaki versions should keep working with old sqlite databases created by an older kimaki version. if this happens specifically ask the user how to proceed, asking if it is ok adding migration in startup so users with existing db can still use kimaki and will not break.
@@ -261,6 +263,25 @@ instead:
 - store only short identifiers in `custom_id` (eg `contextHash`, a db id, or a session id)
 - resolve anything else at interaction time (eg call `resolveWorkingDirectory({ channel })` from the thread)
 - if you need extra context, store it server-side keyed by the short hash/id rather than encoding it into `custom_id`
+
+## discord components v2 limits
+
+when editing Discord Components V2 (`IS_COMPONENTS_V2`) messages, always check the official docs first:
+
+- overview: `https://discord.com/developers/docs/components/overview`
+- reference: `https://discord.com/developers/docs/components/reference`
+
+important limits and rules to keep in mind:
+
+- components v2 messages cannot use normal `content` or `embeds`; send everything through `components`
+- messages allow up to **40 total components**, and nested children count toward that budget
+- `Section` is only for **1 to 3** text/content children plus at most one accessory (`button` or `thumbnail`)
+- do **not** use `Section` for wide table rows with many columns; this causes `BASE_TYPE_BAD_LENGTH` validation errors
+- `Button` can live inside an `Action Row` or in `Section.accessory`
+- `Action Row` can contain up to **5 buttons** or a single select menu
+- `Container` can hold `Action Row`, `Text Display`, `Section`, `Media Gallery`, `Separator`, and `File`
+
+for kimaki table rendering specifically: plain rows should stay as a single `TextDisplay`, and rows with actions should usually render as `TextDisplay` + `ActionRow` inside the `Container` instead of using `Section` for the whole row.
 
 ## heap snapshots and memory debugging
 
