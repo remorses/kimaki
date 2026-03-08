@@ -106,8 +106,8 @@ async function resolveGitState({
       kind: 'detached-submodule',
       label: `detached submodule @ ${shortSha}`,
       warning:
-        `[Warning: Submodule is in detached HEAD at ${shortSha}. ` +
-        'Create or switch to a branch before committing.]',
+        `\n[warning: submodule is in detached HEAD at ${shortSha}. ` +
+'create or switch to a branch before committing.]',
     }
   }
 
@@ -116,8 +116,8 @@ async function resolveGitState({
     kind: 'detached-head',
     label: `detached HEAD @ ${shortSha}`,
     warning:
-      `[Warning: Repository is in detached HEAD at ${shortSha}. ` +
-      'Create or switch to a branch before committing.]',
+        `\n[warning: repository is in detached HEAD at ${shortSha}. ` +
+        'create or switch to a branch before committing.]',
   }
 }
 
@@ -326,32 +326,8 @@ const kimakiPlugin: Plugin = async ({ directory }) => {
           const messageID = first.messageID
 
           // -- Branch / detached HEAD detection --
-          // Injects context when git state first appears or changes mid-session.
+          // Resolved early but injected last so it appears at the end of parts.
           const gitState = await resolveGitState({ directory })
-          if (gitState) {
-            const previousState = sessionGitStates.get(sessionID)
-            if (!previousState || previousState.key !== gitState.key) {
-              const info = (() => {
-                if (gitState.warning) {
-                  return gitState.warning
-                }
-                if (previousState?.kind === 'branch') {
-                  return `[Branch changed: ${previousState.label} -> ${gitState.label}]`
-                }
-                return `[Current branch: ${gitState.label}]`
-              })()
-
-              sessionGitStates.set(sessionID, gitState)
-              output.parts.push({
-                id: crypto.randomUUID(),
-                sessionID,
-                messageID,
-                type: 'text' as const,
-                text: info,
-                synthetic: true,
-              })
-            }
-          }
 
           // -- MEMORY.md injection --
           // On the first user message in a session, read MEMORY.md from the
@@ -426,6 +402,33 @@ const kimakiPlugin: Plugin = async ({ directory }) => {
                 messageID,
                 type: 'text' as const,
                 text: '<system-reminder>Long gap since last message. If the previous conversation had important learnings, tips, insights that will help prevent same mistakes, or context worth preserving, update MEMORY.md before starting the new task.</system-reminder>',
+                synthetic: true,
+              })
+            }
+          }
+
+          // -- Branch injection (last synthetic part) --
+          // Placed last so branch context appears at the end of all injected parts.
+          if (gitState) {
+            const previousState = sessionGitStates.get(sessionID)
+            if (!previousState || previousState.key !== gitState.key) {
+              const info = (() => {
+                if (gitState.warning) {
+                  return gitState.warning
+                }
+                if (previousState?.kind === 'branch') {
+                  return `\n[current git branch is ${gitState.label}]`
+                }
+                return `\n[current git branch is ${gitState.label}]`
+              })()
+
+              sessionGitStates.set(sessionID, gitState)
+              output.parts.push({
+                id: crypto.randomUUID(),
+                sessionID,
+                messageID,
+                type: 'text' as const,
+                text: info,
                 synthetic: true,
               })
             }
