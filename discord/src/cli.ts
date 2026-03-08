@@ -375,8 +375,10 @@ async function resolveGatewayInstallCredentials(): Promise<
 
 async function printDiscordInstallUrlAndExit({
   gateway,
+  gatewayCallbackUrl,
 }: {
   gateway?: boolean
+  gatewayCallbackUrl?: string
 } = {}) {
   await initDatabase()
 
@@ -392,6 +394,7 @@ async function printDiscordInstallUrlAndExit({
       mode: 'gateway',
       clientId: gatewayCredentials.clientId,
       clientSecret: gatewayCredentials.clientSecret,
+      gatewayCallbackUrl,
     })
     if (installUrl instanceof Error) {
       cliLogger.error(`Failed to build install URL: ${installUrl.message}`)
@@ -608,6 +611,7 @@ type CliOptions = {
   useWorktrees?: boolean
   enableVoiceChannels?: boolean
   gateway?: boolean
+  gatewayCallbackUrl?: string
 }
 
 // Commands to skip when registering user commands (reserved names)
@@ -1449,6 +1453,7 @@ async function run({
   useWorktrees,
   enableVoiceChannels,
   gateway,
+  gatewayCallbackUrl,
 }: CliOptions) {
   startCaffeinate()
 
@@ -1642,6 +1647,7 @@ async function run({
         mode: 'gateway',
         clientId,
         clientSecret,
+        gatewayCallbackUrl,
       })
       if (oauthUrlResult instanceof Error) {
         throw oauthUrlResult
@@ -2260,6 +2266,10 @@ cli
     '--gateway',
     'Force gateway mode (use the gateway Kimaki bot instead of a self-hosted bot)',
   )
+  .option(
+    '--gateway-callback-url <url>',
+    'After gateway OAuth install, redirect to this URL instead of the default success page (appends ?guild_id=<id>)',
+  )
   .action(
     async (options: {
       restartOnboarding?: boolean
@@ -2275,6 +2285,7 @@ cli
       verboseOpencodeServer?: boolean
       noSentry?: boolean
       gateway?: boolean
+      gatewayCallbackUrl?: string
     }) => {
       try {
         // Set data directory early, before any database access
@@ -2340,7 +2351,10 @@ cli
         }
 
         if (options.installUrl) {
-          await printDiscordInstallUrlAndExit({ gateway: options.gateway })
+          await printDiscordInstallUrlAndExit({
+            gateway: options.gateway,
+            gatewayCallbackUrl: options.gatewayCallbackUrl,
+          })
         }
 
         // Single-instance enforcement is handled by the hrana server binding the lock port.
@@ -2352,6 +2366,7 @@ cli
           useWorktrees: options.useWorktrees,
           enableVoiceChannels: options.enableVoiceChannels,
           gateway: options.gateway,
+          gatewayCallbackUrl: options.gatewayCallbackUrl,
         })
       } catch (error) {
         cliLogger.error('Unhandled error:', formatErrorWithStack(error))
@@ -2370,6 +2385,10 @@ cli
     '--gateway',
     'Print the gateway install URL and create local gateway credentials if missing',
   )
+  .option(
+    '--gateway-callback-url <url>',
+    'After gateway OAuth install, redirect to this URL instead of the default success page (appends ?guild_id=<id>)',
+  )
   .action(async (options) => {
     try {
       if (options.dataDir) {
@@ -2378,7 +2397,10 @@ cli
       }
 
       initLogFile(getDataDir())
-      await printDiscordInstallUrlAndExit({ gateway: options.gateway })
+      await printDiscordInstallUrlAndExit({
+        gateway: options.gateway,
+        gatewayCallbackUrl: options.gatewayCallbackUrl,
+      })
     } catch (error) {
       cliLogger.error(
         'Error:',

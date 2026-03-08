@@ -140,6 +140,16 @@ export function createAuth({ env, baseURL }: { env: HonoBindings; baseURL: strin
           .catch((cause) => {
             console.error('Failed to upsert gateway_clients:', cause)
           })
+
+        // If the CLI passed a custom callback URL (--gateway-callback-url),
+        // redirect there with ?guild_id instead of showing /install-success.
+        // The callbackUrl was stored in additionalData during /discord-install.
+        const callbackUrl = state?.callbackUrl as string | undefined
+        if (callbackUrl) {
+          const redirectTarget = new URL(callbackUrl)
+          redirectTarget.searchParams.set('guild_id', guildId)
+          return { response: Response.redirect(redirectTarget.toString(), 302) }
+        }
       }),
     },
   })

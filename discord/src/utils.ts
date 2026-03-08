@@ -85,11 +85,15 @@ export function generateDiscordInstallUrlForBot({
   mode,
   clientId,
   clientSecret,
+  gatewayCallbackUrl,
 }: {
   appId: string
   mode: BotMode
   clientId: string | null
   clientSecret: string | null
+  /** Optional external URL to redirect to after OAuth completes instead of the
+   *  default success page. The website appends ?guild_id=<id> before redirecting. */
+  gatewayCallbackUrl?: string
 }): Error | string {
   if (mode !== 'gateway') {
     return generateBotInstallUrl({ clientId: appId })
@@ -106,6 +110,9 @@ export function generateDiscordInstallUrlForBot({
   const url = new URL(`${KIMAKI_WEBSITE_URL}/discord-install`)
   url.searchParams.set('clientId', clientId)
   url.searchParams.set('clientSecret', clientSecret)
+  if (gatewayCallbackUrl) {
+    url.searchParams.set('callbackUrl', gatewayCallbackUrl)
+  }
   return url.toString()
 }
 

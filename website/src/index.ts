@@ -33,6 +33,7 @@ app.get('/health', async (c) => {
 app.get('/discord-install', async (c) => {
   const clientId = c.req.query('clientId')
   const clientSecret = c.req.query('clientSecret')
+  const callbackUrl = c.req.query('callbackUrl')
 
   if (!clientId || !clientSecret) {
     return c.text('Missing clientId or clientSecret', 400)
@@ -43,10 +44,13 @@ app.get('/discord-install', async (c) => {
 
   // signInSocial returns JSON data on server calls; use returnHeaders so we can
   // forward Set-Cookie and still issue a real browser redirect.
+  // callbackUrl is an optional external URL passed by the CLI (--gateway-callback-url).
+  // It's stored in additionalData so the hooks.after callback can redirect there
+  // (with ?guild_id=<id>) instead of showing the default /install-success page.
   const { response: result, headers } = await auth.api.signInSocial({
     body: {
       provider: 'discord',
-      additionalData: { clientId, clientSecret },
+      additionalData: { clientId, clientSecret, callbackUrl },
       callbackURL: '/install-success',
     },
     headers: c.req.raw.headers,
