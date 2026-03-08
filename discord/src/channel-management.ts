@@ -219,6 +219,14 @@ export async function createDefaultKimakiChannel({
 } | null> {
   const projectDirectory = path.join(getProjectsDir(), 'kimaki')
 
+  // Ensure the default kimaki project directory exists before any DB mapping
+  // restoration or git setup. Custom data dirs may not have <dataDir>/projects
+  // created yet, and later writes assume the full path is present.
+  if (!fs.existsSync(projectDirectory)) {
+    fs.mkdirSync(projectDirectory, { recursive: true })
+    logger.log(`Created default kimaki directory: ${projectDirectory}`)
+  }
+
   // Hydrate guild channels from API so the cache scan is complete
   try {
     await guild.channels.fetch()
@@ -265,12 +273,6 @@ export async function createDefaultKimakiChannel({
       skipIfExists: true,
     })
     return null
-  }
-
-  // Create directory and initialize git
-  if (!fs.existsSync(projectDirectory)) {
-    fs.mkdirSync(projectDirectory, { recursive: true })
-    logger.log(`Created default kimaki directory: ${projectDirectory}`)
   }
 
   // Git init — gracefully skip if git is not installed
