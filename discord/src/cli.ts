@@ -1573,15 +1573,16 @@ async function resolveCredentials({
     ? 'gateway'
     : await (async () => {
         const choice = await select({
-          message: 'How do you want to connect to Discord?',
+          message:
+            'How do you want to connect to Discord?\n\nGateway: uses Kimaki\'s pre-built bot — no setup, instant. Self-hosted: you create your own Discord bot at discord.com/developers.',
           options: [
             {
               value: 'gateway' as const,
-              label: 'Gateway mode (simple)',
+              label: 'Gateway (pre-built Kimaki bot — no setup needed)',
             },
             {
               value: 'self_hosted' as const,
-              label: 'Self-hosted bot (5-10 minutes setup)',
+              label: 'Self-hosted (your own Discord bot, 5-10 min setup)',
             },
           ],
         })
