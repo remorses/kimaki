@@ -71,6 +71,8 @@ import type {
 import {
   Events,
   ChannelType,
+  ActivityType,
+  type PresenceStatusData,
   type CategoryChannel,
   type Guild,
   type REST,
@@ -333,6 +335,14 @@ function exitNonInteractiveSetup(): never {
   process.exit(EXIT_NO_RESTART)
 }
 
+// Emit a structured JSON line on stdout for non-TTY consumers (cloud sandboxes, CI).
+// Each line is a self-contained JSON object with a "type" field for easy parsing.
+// Consumers can detect these by reading stdout line-by-line and JSON.parse-ing lines
+// that start with '{'.
+function emitJsonEvent(event: Record<string, unknown>): void {
+  process.stdout.write(JSON.stringify(event) + '\n')
+}
+
 async function resolveGatewayInstallCredentials(): Promise<
   Error | { clientId: string; clientSecret: string; createdNow: boolean }
 > {
@@ -481,20 +491,18 @@ async function ensureCommandAvailable({
 
   note(`${name} is required but not found in your PATH.`, `${name} Not Found`)
 
-  if (!canUseInteractivePrompts()) {
-    cliLogger.error(
-      `Cannot prompt to install ${name} in non-interactive mode. Re-run kimaki in an interactive terminal.`,
-    )
-    process.exit(EXIT_NO_RESTART)
-  }
-
-  const shouldInstall = await confirm({
-    message: `Would you like to install ${name} right now?`,
-  })
-
-  if (isCancel(shouldInstall) || !shouldInstall) {
-    cancel(`${name} is required to run this bot`)
-    process.exit(EXIT_NO_RESTART)
+  // In non-TTY (cloud sandbox, CI), auto-install without prompting.
+  // In interactive mode, ask the user first.
+  if (canUseInteractivePrompts()) {
+    const shouldInstall = await confirm({
+      message: `Would you like to install ${name} right now?`,
+    })
+    if (isCancel(shouldInstall) || !shouldInstall) {
+      cancel(`${name} is required to run this bot`)
+      process.exit(EXIT_NO_RESTART)
+    }
+  } else {
+    cliLogger.log(`Auto-installing ${name} (non-interactive mode)...`)
   }
 
   cliLogger.log(`Installing ${name}...`)
@@ -1588,7 +1596,9 @@ async function run({
 
     // 3. Explain why saved credentials are being skipped, then enter
     //    interactive setup wizard (first-time users, --restart-onboarding, or --gateway override).
-    if (!canUseInteractivePrompts()) {
+    //    Non-TTY: gateway mode proceeds headlessly (JSON events on stdout),
+    //    self-hosted mode requires interactive prompts so we exit.
+    if (!canUseInteractivePrompts() && !forceGateway) {
       exitNonInteractiveSetup()
     }
 
@@ -1601,7 +1611,8 @@ async function run({
       note('Ignoring saved credentials due to --restart-onboarding flag', 'Restart Onboarding')
     }
 
-    // When --gateway is passed, skip the mode selector and go straight to gateway mode.
+    // When --gateway is passed or we're in non-TTY mode, skip the mode selector.
+    // Non-TTY without --gateway was already rejected above.
     const modeChoice: 'gateway' | 'self_hosted' = forceGateway
       ? 'gateway'
       : await (async () => {
@@ -1653,26 +1664,32 @@ async function run({
         throw oauthUrlResult
       }
       const oauthUrl = oauthUrlResult
+      const isInteractive = canUseInteractivePrompts()
 
-      note(
-        `Open this URL to install the Kimaki bot in your Discord server:\n\n${oauthUrl}\n\nDo not share this URL with anyone — it contains your credentials.\n\nIf you don't have a server, create one first (+ button in the Discord sidebar).`,
-        'Install Bot',
-      )
+      if (isInteractive) {
+        note(
+          `Open this URL to install the Kimaki bot in your Discord server:\n\n${oauthUrl}\n\nDo not share this URL with anyone — it contains your credentials.\n\nIf you don't have a server, create one first (+ button in the Discord sidebar).`,
+          'Install Bot',
+        )
 
-      // Open URL in default browser
-      const { exec } = await import('node:child_process')
-      const openCmd =
-        process.platform === 'darwin'
-          ? 'open'
-          : process.platform === 'win32'
-            ? 'start'
-            : 'xdg-open'
-      exec(`${openCmd} "${oauthUrl}"`)
+        // Open URL in default browser
+        const { exec } = await import('node:child_process')
+        const openCmd =
+          process.platform === 'darwin'
+            ? 'open'
+            : process.platform === 'win32'
+              ? 'start'
+              : 'xdg-open'
+        exec(`${openCmd} "${oauthUrl}"`)
+      } else {
+        // Non-TTY: emit structured JSON so the host process can show the URL to the user.
+        emitJsonEvent({ type: 'install_url', url: oauthUrl })
+      }
 
       // Poll until the user installs the bot in a Discord server.
       // 600 attempts x 2s = 20 minutes timeout.
-      const s = spinner()
-      s.start('Waiting for a Discord server with the bot installed...')
+      const s = isInteractive ? spinner() : undefined
+      s?.start('Waiting for a Discord server with the bot installed...')
 
       const pollUrl = new URL('/api/onboarding/status', KIMAKI_WEBSITE_URL)
       pollUrl.searchParams.set('client_id', clientId)
@@ -1684,22 +1701,21 @@ async function run({
           setTimeout(resolve, 2000)
         })
 
-        // Progressive hints for users who may be stuck
-        if (attempt === 15) {
-          // ~30s
-          s.message(
-            'Still waiting... Select a server in the Discord authorization page and click "Authorize"',
-          )
-        } else if (attempt === 45) {
-          // ~90s
-          s.message(
-            `Still waiting... If you don't see any servers, create one first (+ button in Discord sidebar), then reopen the URL above`,
-          )
-        } else if (attempt === 150) {
-          // ~5min
-          s.message(
-            `Still waiting... Reopen the install URL if you closed it:\n${oauthUrl}`,
-          )
+        // Progressive hints for interactive users who may be stuck
+        if (isInteractive) {
+          if (attempt === 15) {
+            s?.message(
+              'Still waiting... Select a server in the Discord authorization page and click "Authorize"',
+            )
+          } else if (attempt === 45) {
+            s?.message(
+              `Still waiting... If you don't see any servers, create one first (+ button in Discord sidebar), then reopen the URL above`,
+            )
+          } else if (attempt === 150) {
+            s?.message(
+              `Still waiting... Reopen the install URL if you closed it:\n${oauthUrl}`,
+            )
+          }
         }
 
         try {
@@ -1717,26 +1733,37 @@ async function run({
       }
 
       if (!guildId) {
-        s.stop('Authorization timed out')
+        if (isInteractive) {
+          s?.stop('Authorization timed out')
+        } else {
+          emitJsonEvent({ type: 'error', message: 'Authorization timed out after 20 minutes' })
+        }
         cliLogger.error(
           'Bot authorization timed out after 20 minutes. Please try again.',
         )
         process.exit(EXIT_NO_RESTART)
       }
 
-      s.stop('Bot authorized successfully!')
-
-      const syncSpinner = spinner()
-      syncSpinner.start('Waiting for gateway sync...')
-      await new Promise((resolve) => {
-        setTimeout(resolve, 2000)
-      })
-      syncSpinner.stop('Gateway sync completed')
+      if (isInteractive) {
+        s?.stop('Bot authorized successfully!')
+        const syncSpinner = spinner()
+        syncSpinner.start('Waiting for gateway sync...')
+        await new Promise((resolve) => {
+          setTimeout(resolve, 2000)
+        })
+        syncSpinner.stop('Gateway sync completed')
+      } else {
+        emitJsonEvent({ type: 'authorized', guild_id: guildId })
+        await new Promise((resolve) => {
+          setTimeout(resolve, 2000)
+        })
+      }
 
       return {
         appId: KIMAKI_GATEWAY_APP_ID,
         token: `${clientId}:${clientSecret}`,
-        isQuickStart: false,
+        // Non-TTY gateway: always quick-start (skip channel selection prompts)
+        isQuickStart: !isInteractive || false,
         isGatewayMode: true,
       }
     }
@@ -2401,6 +2428,227 @@ cli
         gateway: options.gateway,
         gatewayCallbackUrl: options.gatewayCallbackUrl,
       })
+    } catch (error) {
+      cliLogger.error(
+        'Error:',
+        error instanceof Error ? error.message : String(error),
+      )
+      process.exit(EXIT_NO_RESTART)
+    }
+  })
+
+// ── bot command group ────────────────────────────────────────────────────
+
+const ACTIVITY_TYPE_MAP: Record<string, ActivityType> = {
+  playing: ActivityType.Playing,
+  watching: ActivityType.Watching,
+  listening: ActivityType.Listening,
+  competing: ActivityType.Competing,
+  custom: ActivityType.Custom,
+}
+
+const STATUS_MAP: Record<string, PresenceStatusData> = {
+  online: 'online',
+  idle: 'idle',
+  dnd: 'dnd',
+  invisible: 'invisible',
+}
+
+cli
+  .command(
+    'bot install-url',
+    'Print the bot install URL',
+  )
+  .option(
+    '--data-dir <path>',
+    'Data directory for config and database (default: ~/.kimaki)',
+  )
+  .option(
+    '--gateway',
+    'Print the gateway install URL and create local gateway credentials if missing',
+  )
+  .option(
+    '--gateway-callback-url <url>',
+    'After gateway OAuth install, redirect to this URL instead of the default success page (appends ?guild_id=<id>)',
+  )
+  .action(async (options) => {
+    try {
+      if (options.dataDir) {
+        setDataDir(options.dataDir)
+        cliLogger.log(`Using data directory: ${getDataDir()}`)
+      }
+
+      initLogFile(getDataDir())
+      await printDiscordInstallUrlAndExit({
+        gateway: options.gateway,
+        gatewayCallbackUrl: options.gatewayCallbackUrl,
+      })
+    } catch (error) {
+      cliLogger.error(
+        'Error:',
+        error instanceof Error ? error.message : String(error),
+      )
+      process.exit(EXIT_NO_RESTART)
+    }
+  })
+
+cli
+  .command('bot status set <text>', 'Set the bot presence/status in Discord')
+  .option(
+    '--data-dir <path>',
+    'Data directory for config and database (default: ~/.kimaki)',
+  )
+  .option(
+    '--type <activityType>',
+    'Activity type: playing, watching, listening, competing, custom (default: custom)',
+  )
+  .option(
+    '--status <onlineStatus>',
+    'Online status: online, idle, dnd, invisible (default: online)',
+  )
+  .action(
+    async (
+      text: string,
+      options: {
+        dataDir?: string
+        type?: string
+        status?: string
+      },
+    ) => {
+      try {
+        if (options.dataDir) {
+          setDataDir(options.dataDir)
+        }
+        initLogFile(getDataDir())
+        await initDatabase()
+
+        const botRow = await getBotTokenWithMode()
+        if (!botRow) {
+          cliLogger.error('No bot configured. Run `kimaki` first.')
+          process.exit(EXIT_NO_RESTART)
+        }
+        if (botRow.mode === 'gateway') {
+          cliLogger.error(
+            'Cannot set status in gateway mode — it would change the shared bot status for all users.',
+          )
+          process.exit(EXIT_NO_RESTART)
+        }
+
+        const activityTypeKey = (options.type || 'custom').toLowerCase()
+        const activityType = ACTIVITY_TYPE_MAP[activityTypeKey]
+        if (activityType === undefined) {
+          cliLogger.error(
+            `Unknown activity type: ${options.type}. Use: playing, watching, listening, competing, custom`,
+          )
+          process.exit(EXIT_NO_RESTART)
+        }
+
+        const statusKey = (options.status || 'online').toLowerCase()
+        const onlineStatus = STATUS_MAP[statusKey]
+        if (!onlineStatus) {
+          cliLogger.error(
+            `Unknown status: ${options.status}. Use: online, idle, dnd, invisible`,
+          )
+          process.exit(EXIT_NO_RESTART)
+        }
+
+        cliLogger.log('Connecting to Discord...')
+        const client = await createDiscordClient()
+
+        await new Promise<void>((resolve, reject) => {
+          client.once(Events.ClientReady, () => {
+            resolve()
+          })
+          client.once(Events.Error, reject)
+          client.login(botRow.token).catch(reject)
+        })
+
+        // For custom activity type, use state field (shows as the status text).
+        // For other types, use name field (shows as "Playing X", "Watching X", etc).
+        const activity =
+          activityType === ActivityType.Custom
+            ? { name: 'Custom Status', type: activityType, state: text }
+            : { name: text, type: activityType }
+
+        client.user?.setPresence({
+          activities: [activity],
+          status: onlineStatus,
+        })
+
+        // setPresence queues a gateway opcode 3 over websocket.
+        // Wait briefly so the frame flushes before we tear down the connection.
+        await new Promise((resolve) => {
+          setTimeout(resolve, 500)
+        })
+
+        cliLogger.log(
+          `Status set: ${activityTypeKey === 'custom' ? text : `${activityTypeKey} ${text}`} (${statusKey})`,
+        )
+
+        client.destroy()
+        process.exit(0)
+      } catch (error) {
+        cliLogger.error(
+          'Error:',
+          error instanceof Error ? error.message : String(error),
+        )
+        process.exit(EXIT_NO_RESTART)
+      }
+    },
+  )
+
+cli
+  .command('bot status clear', 'Clear the bot presence/status')
+  .option(
+    '--data-dir <path>',
+    'Data directory for config and database (default: ~/.kimaki)',
+  )
+  .action(async (options: { dataDir?: string }) => {
+    try {
+      if (options.dataDir) {
+        setDataDir(options.dataDir)
+      }
+      initLogFile(getDataDir())
+      await initDatabase()
+
+      const botRow = await getBotTokenWithMode()
+      if (!botRow) {
+        cliLogger.error('No bot configured. Run `kimaki` first.')
+        process.exit(EXIT_NO_RESTART)
+      }
+      if (botRow.mode === 'gateway') {
+        cliLogger.error(
+          'Cannot clear status in gateway mode — it would change the shared bot status for all users.',
+        )
+        process.exit(EXIT_NO_RESTART)
+      }
+
+      cliLogger.log('Connecting to Discord...')
+      const client = await createDiscordClient()
+
+      await new Promise<void>((resolve, reject) => {
+        client.once(Events.ClientReady, () => {
+          resolve()
+        })
+        client.once(Events.Error, reject)
+        client.login(botRow.token).catch(reject)
+      })
+
+      client.user?.setPresence({
+        activities: [],
+        status: 'online',
+      })
+
+      // setPresence queues a gateway opcode 3 over websocket.
+      // Wait briefly so the frame flushes before we tear down the connection.
+      await new Promise((resolve) => {
+        setTimeout(resolve, 500)
+      })
+
+      cliLogger.log('Status cleared')
+
+      client.destroy()
+      process.exit(0)
     } catch (error) {
       cliLogger.error(
         'Error:',
