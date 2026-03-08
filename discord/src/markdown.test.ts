@@ -209,6 +209,8 @@ test('generate markdown with system info', async () => {
 
     ### 👤 User
 
+    [current git branch is main]
+
     hello markdown test
 
 
@@ -245,6 +247,8 @@ test('generate markdown without system info', async () => {
     ## Conversation
 
     ### 👤 User
+
+    [current git branch is main]
 
     hello markdown test
 

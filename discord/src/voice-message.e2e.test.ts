@@ -880,7 +880,6 @@ e2eTest('voice message handling', () => {
         ⬥ slow-response-done
         *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2*
         » **voice-tester:** Voice message transcription from Discord user:
-
         Queue this task for later
         ⬥ session-reply
         *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2*"
