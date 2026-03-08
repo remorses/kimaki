@@ -134,7 +134,7 @@ describe('buildTableComponents', () => {
     `)
   })
 
-  test('renders button cells as section accessories', () => {
+  test('renders button cells as action rows inside the container', () => {
     const table = parseTable(`| Name | Action |
 | --- | --- |
 | feature-a | <button id="delete-a" variant="danger">Delete</button> |`)
@@ -150,20 +150,20 @@ describe('buildTableComponents', () => {
             {
               "components": [
                 {
-                  "accessory": {
-                    "custom_id": "html_action:delete-a",
-                    "disabled": false,
-                    "label": "Delete",
-                    "style": 4,
-                    "type": 2,
-                  },
+                  "content": "**Name** feature-a",
+                  "type": 10,
+                },
+                {
                   "components": [
                     {
-                      "content": "**Name** feature-a",
-                      "type": 10,
+                      "custom_id": "html_action:delete-a",
+                      "disabled": false,
+                      "label": "Delete",
+                      "style": 4,
+                      "type": 2,
                     },
                   ],
-                  "type": 9,
+                  "type": 1,
                 },
               ],
               "type": 17,
@@ -190,6 +190,51 @@ describe('buildTableComponents', () => {
                   "content": "**Name** feature-a
       **Action** Delete",
                   "type": 10,
+                },
+              ],
+              "type": 17,
+            },
+          ],
+          "type": "components",
+        },
+      ]
+    `)
+  })
+
+  test('renders wide rows with buttons without using sections', () => {
+    const table = parseTable(`| Thread | Name | Status | Created | Folder | Action |
+| --- | --- | --- | --- | --- | --- |
+| thread | feature-a | merged | 1m ago | /tmp/feature-a | <button id="delete-a" variant="danger">Delete</button> |`)
+    const result = buildTableComponents(table, {
+      resolveButtonCustomId: ({ button }) => {
+        return `html_action:${button.id}`
+      },
+    })
+    expect(result).toMatchInlineSnapshot(`
+      [
+        {
+          "components": [
+            {
+              "components": [
+                {
+                  "content": "**Thread** thread
+      **Name** feature-a
+      **Status** merged
+      **Created** 1m ago
+      **Folder** /tmp/feature-a",
+                  "type": 10,
+                },
+                {
+                  "components": [
+                    {
+                      "custom_id": "html_action:delete-a",
+                      "disabled": false,
+                      "label": "Delete",
+                      "style": 4,
+                      "type": 2,
+                    },
+                  ],
+                  "type": 1,
                 },
               ],
               "type": 17,

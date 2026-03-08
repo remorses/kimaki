@@ -8,11 +8,11 @@ import {
   ButtonStyle,
   ComponentType,
   SeparatorSpacingSize,
+  type APIActionRowComponent,
   type APIButtonComponent,
   type APIContainerComponent,
   type APITextDisplayComponent,
   type APISeparatorComponent,
-  type APISectionComponent,
   type APIMessageTopLevelComponent,
 } from 'discord.js'
 import {
@@ -44,19 +44,15 @@ type RenderedTableCell =
     }
 
 type RenderedTableRow = {
-  component: APITextDisplayComponent | APISectionComponent
+  components: Array<
+    APITextDisplayComponent | APIActionRowComponent<APIButtonComponent>
+  >
   componentCost: number
 }
 
-type AccessoryButtonStyle =
-  | ButtonStyle.Primary
-  | ButtonStyle.Secondary
-  | ButtonStyle.Success
-  | ButtonStyle.Danger
-
 // Max 40 components per message (nested components count toward the limit).
 // Row cost is dynamic now because a table row can render as a plain TextDisplay
-// or as a Section with nested TextDisplays plus a button accessory.
+// or as a TextDisplay plus an Action Row holding one or more buttons.
 const MAX_COMPONENTS = 40
 
 /**
@@ -95,9 +91,10 @@ export function splitTablesFromMarkdown(
 
 /**
  * Build CV2 components for a table. Plain rows render as one TextDisplay with
- * bold key-value lines. Rows with exactly one resolved button cell render as a
- * Section with the button as an accessory. Large tables are split into multiple
- * Containers using a dynamic component-budget check.
+ * bold key-value lines. Rows with resolved button cells render as a TextDisplay
+ * plus an Action Row so wide tables do not violate Section's 1-3 text child
+ * limit. Large tables are split into multiple Containers using a dynamic
+ * component-budget check.
  */
 export function buildTableComponents(
   table: Tokens.Table,
@@ -118,7 +115,9 @@ export function buildTableComponents(
 
   return chunks.map((chunkRows) => {
     const children: Array<
-      APITextDisplayComponent | APISectionComponent | APISeparatorComponent
+      | APITextDisplayComponent
+      | APIActionRowComponent<APIButtonComponent>
+      | APISeparatorComponent
     > = []
 
     for (let i = 0; i < chunkRows.length; i++) {
@@ -129,7 +128,7 @@ export function buildTableComponents(
           spacing: SeparatorSpacingSize.Small,
         })
       }
-      children.push(chunkRows[i]!.component)
+      children.push(...chunkRows[i]!.components)
     }
 
     const container: APIContainerComponent = {
@@ -160,8 +159,8 @@ function buildRenderedRow({
     return cell.type === 'button'
   }).length
 
-  if (buttonCellCount === 1) {
-    return buildSectionRow({
+  if (buttonCellCount > 0) {
+    return buildButtonRow({
       headers,
       cells: renderedCells,
     })
@@ -187,57 +186,66 @@ function buildTextRow({
   })
 
   return {
-    component: {
-      type: ComponentType.TextDisplay,
-      content: lines.join('\n'),
-    },
+    components: [
+      {
+        type: ComponentType.TextDisplay,
+        content: lines.join('\n'),
+      },
+    ],
     componentCost: 1,
   }
 }
 
-function buildSectionRow({
+function buildButtonRow({
   headers,
   cells,
 }: {
   headers: string[]
   cells: RenderedTableCell[]
 }): RenderedTableRow {
-  const textDisplays: APITextDisplayComponent[] = headers.flatMap((header, index) => {
+  const buttonCells = cells.filter((cell) => {
+    return cell.type === 'button'
+  })
+  if (buttonCells.length === 0 || buttonCells.length > 5) {
+    return buildTextRow({ headers, cells })
+  }
+
+  const lines = headers.flatMap((header, index) => {
     const cell = cells[index]
     if (!cell || cell.type === 'button') {
       return []
     }
 
-    return [
-      {
-        type: ComponentType.TextDisplay,
-        content: `**${header}** ${cell.text}`,
-      },
-    ]
+    return [`**${header}** ${cell.text}`]
   })
-  const buttonCell = cells.find((cell) => {
-    return cell.type === 'button'
-  })
-
-  if (!buttonCell || buttonCell.type !== 'button') {
+  if (lines.length === 0) {
     return buildTextRow({ headers, cells })
   }
 
-  const accessory: APIButtonComponent = {
-    type: ComponentType.Button,
-    custom_id: buttonCell.customId,
-    label: buttonCell.label,
-    style: toButtonStyle({ variant: buttonCell.variant }),
-    disabled: buttonCell.disabled,
+  const buttons: APIButtonComponent[] = buttonCells.map((buttonCell) => {
+    return {
+      type: ComponentType.Button,
+      custom_id: buttonCell.customId,
+      label: buttonCell.label,
+      style: toButtonStyle({ variant: buttonCell.variant }),
+      disabled: buttonCell.disabled,
+    }
+  })
+
+  const actionRow: APIActionRowComponent<APIButtonComponent> = {
+    type: ComponentType.ActionRow,
+    components: buttons,
   }
 
   return {
-    component: {
-      type: ComponentType.Section,
-      components: textDisplays,
-      accessory,
-    },
-    componentCost: 1 + textDisplays.length + 1,
+    components: [
+      {
+        type: ComponentType.TextDisplay,
+        content: lines.join('\n'),
+      },
+      actionRow,
+    ],
+    componentCost: 2 + buttons.length,
   }
 }
 
@@ -382,7 +390,11 @@ function toButtonStyle({
   variant,
 }: {
   variant: HtmlButtonRenderable['variant']
-}): AccessoryButtonStyle {
+}):
+  | ButtonStyle.Primary
+  | ButtonStyle.Secondary
+  | ButtonStyle.Success
+  | ButtonStyle.Danger {
   if (variant === 'primary') {
     return ButtonStyle.Primary
   }
