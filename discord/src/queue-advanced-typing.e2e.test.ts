@@ -76,11 +76,8 @@ e2eTest('queue advanced: typing lifecycle', () => {
         "--- from: user (queue-advanced-tester)
         Reply with exactly: typing-stop-normal
         [bot typing]
-        [bot typing]
-        [bot typing]
         --- from: assistant (TestBot)
         ⬥ ok
-        [bot typing]
         *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2*"
       `)
       expect(replyIndex).toBeGreaterThanOrEqual(0)
@@ -184,19 +181,14 @@ e2eTest('queue advanced: typing lifecycle', () => {
         --- from: user (queue-advanced-tester)
         PLUGIN_TIMEOUT_SLEEP_MARKER
         [bot typing]
-        [bot typing]
-        [bot typing]
         --- from: assistant (TestBot)
         ⬥ starting sleep 100
-        [bot typing]
         --- from: user (queue-advanced-tester)
         Reply with exactly: typing-stop-interrupt-final
         [bot typing]
         [bot typing]
-        [bot typing]
         --- from: assistant (TestBot)
         ⬥ ok
-        [bot typing]
         *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2*"
       `)
       expect(finalUserIndex).toBeGreaterThanOrEqual(0)
@@ -303,8 +295,6 @@ e2eTest('queue advanced: typing lifecycle', () => {
         *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2*
         --- from: user (queue-advanced-tester)
         TYPING_REPULSE_MARKER
-        [bot typing]
-        [bot typing]
         [bot typing]
         --- from: assistant (TestBot)
         ⬥ repulse-first

@@ -126,13 +126,11 @@ describe('queue advanced: typing around permissions', () => {
         --- from: assistant (TestBot)
         ⚠️ **Permission Required**
         **Type:** \`external_directory\`
+        Agent is accessing files outside the project. [Learn more](https://opencode.ai/docs/permissions/#external-directories)
         **Pattern:** \`/Users/morse/*\`
         ✅ Permission **accepted**
         ⬥ requesting external read permission
         [user clicks button]
-        [bot typing]
-        [bot typing]
-        [bot typing]
         [bot typing]
         ⬥ permission-flow-done
         [bot typing]

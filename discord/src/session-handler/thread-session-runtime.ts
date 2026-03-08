@@ -115,6 +115,7 @@ import {
 import { execAsync } from '../worktrees.js'
 import { notifyError } from '../sentry.js'
 import { createDebouncedProcessFlush } from '../debounced-process-flush.js'
+import { createDebouncedTimeout } from '../debounce-timeout.js'
 
 const logger = createLogger(LogPrefix.SESSION)
 const discordLogger = createLogger(LogPrefix.DISCORD)
@@ -405,13 +406,19 @@ export class ThreadSessionRuntime {
   // just prevents calling the async loop twice).
   private listenerLoopRunning = false
 
-  // Typing indicator scheduler handle (single stateful mechanism).
-  private typingInterval: ReturnType<typeof setTimeout> | null = null
+  // Typing indicator scheduler handles.
+  // `typingKeepaliveTimeout` is the 7s keepalive loop while a run stays busy.
+  // `typingRepulseDebounce` collapses clustered immediate re-pulses after bot
+  // messages into one last pulse, because Discord hides typing on the next bot
+  // message and showing multiple back-to-back POSTs is wasteful.
+  private typingKeepaliveTimeout: ReturnType<typeof setTimeout> | null = null
+  private readonly typingRepulseDebounce: ReturnType<typeof createDebouncedTimeout>
 
   // Footer debounce delay (ms). When the interrupt plugin aborts at a step
   // boundary, the abort error can arrive ~317ms after session.idle. The
   // footer send is delayed by this amount so we can re-check before sending.
   private static FOOTER_DEBOUNCE_MS = 400
+  private static TYPING_REPULSE_DEBOUNCE_MS = 500
 
   // Notification throttles for retry/context notices.
   private lastDisplayedContextPercentage = 0
@@ -472,6 +479,15 @@ export class ThreadSessionRuntime {
           `[SESSION EVENT DB] Debounced persistence failed for thread ${this.threadId}:`,
           error,
         )
+      },
+    })
+    this.typingRepulseDebounce = createDebouncedTimeout({
+      delayMs: ThreadSessionRuntime.TYPING_REPULSE_DEBOUNCE_MS,
+      callback: () => {
+        if (!this.shouldTypeNow()) {
+          return
+        }
+        this.restartTypingKeepalive({ sendNow: true })
       },
     })
   }
@@ -1264,7 +1280,7 @@ export class ThreadSessionRuntime {
   }
 
   onInteractiveUiStateChanged(): void {
-    this.reconcileTyping({ sendImmediatePulse: true })
+    this.ensureTypingNow()
     void this.dispatchAction(() => {
       return this.tryDrainQueue({ showIndicator: true })
     })
@@ -1293,13 +1309,21 @@ export class ThreadSessionRuntime {
     }
   }
 
-  private scheduleTypingPulse({
+  private clearTypingKeepalive(): void {
+    if (!this.typingKeepaliveTimeout) {
+      return
+    }
+    clearTimeout(this.typingKeepaliveTimeout)
+    this.typingKeepaliveTimeout = null
+  }
+
+  private armTypingKeepalive({
     delayMs,
   }: {
     delayMs: number
   }): void {
-    this.typingInterval = setTimeout(() => {
-      const activeTimer = this.typingInterval
+    this.typingKeepaliveTimeout = setTimeout(() => {
+      const activeTimer = this.typingKeepaliveTimeout
       if (!activeTimer) {
         return
       }
@@ -1309,61 +1333,60 @@ export class ThreadSessionRuntime {
           return
         }
         await this.sendTypingPulse()
-        if (this.typingInterval !== activeTimer) {
+        if (this.typingKeepaliveTimeout !== activeTimer) {
           return
         }
         if (!this.shouldTypeNow()) {
           this.stopTyping()
           return
         }
-        this.scheduleTypingPulse({ delayMs: 7000 })
+        this.armTypingKeepalive({ delayMs: 7000 })
       })()
     }, delayMs)
   }
 
-  private startTyping({
-    sendImmediatePulse,
+  private restartTypingKeepalive({
+    sendNow,
   }: {
-    sendImmediatePulse: boolean
+    sendNow: boolean
   }): void {
-    if (!this.shouldTypeNow()) {
-      return
-    }
-    if (this.typingInterval && !sendImmediatePulse) {
-      return
-    }
-    if (this.typingInterval) {
-      clearTimeout(this.typingInterval)
-      this.typingInterval = null
-    }
-    this.scheduleTypingPulse({ delayMs: sendImmediatePulse ? 0 : 7000 })
+    this.clearTypingKeepalive()
+    this.armTypingKeepalive({ delayMs: sendNow ? 0 : 7000 })
   }
 
-  private stopTyping(): void {
-    if (!this.typingInterval) {
-      return
-    }
-    clearTimeout(this.typingInterval)
-    this.typingInterval = null
-  }
-
-  private reconcileTyping({
-    sendImmediatePulse,
-  }: {
-    sendImmediatePulse: boolean
-  }): void {
+  private ensureTypingNow(): void {
     if (!this.shouldTypeNow()) {
       this.stopTyping()
       return
     }
-    this.startTyping({ sendImmediatePulse })
+    if (!this.typingKeepaliveTimeout && !this.typingRepulseDebounce.isPending()) {
+      this.armTypingKeepalive({ delayMs: 0 })
+      return
+    }
+    this.typingRepulseDebounce.trigger()
   }
 
-  private repulseTypingAfterVisibleBotMessage(): void {
+  private ensureTypingKeepalive(): void {
+    if (!this.shouldTypeNow()) {
+      this.stopTyping()
+      return
+    }
+    if (this.typingKeepaliveTimeout || this.typingRepulseDebounce.isPending()) {
+      return
+    }
+    this.armTypingKeepalive({ delayMs: 7000 })
+  }
+
+  private stopTyping(): void {
+    this.typingRepulseDebounce.clear()
+    this.clearTypingKeepalive()
+  }
+
+  private requestTypingRepulse(): void {
     if (!this.shouldTypeNow()) {
       return
     }
-    this.reconcileTyping({ sendImmediatePulse: true })
+    this.typingRepulseDebounce.trigger()
   }
 
   // ── Part Buffering & Output ─────────────────────────────────
@@ -1457,7 +1480,7 @@ export class ThreadSessionRuntime {
       return
     }
     await setPartMessage(part.id, sendResult.id, this.thread.id)
-    this.repulseTypingAfterVisibleBotMessage()
+    this.requestTypingRepulse()
   }
 
   private async flushBufferedParts({
@@ -1712,7 +1735,7 @@ export class ThreadSessionRuntime {
 
   private async handleMainPart(part: Part): Promise<void> {
     if (part.type === 'step-start') {
-      this.reconcileTyping({ sendImmediatePulse: true })
+      this.ensureTypingNow()
       return
     }
 
@@ -1876,7 +1899,7 @@ export class ThreadSessionRuntime {
         messageID: part.messageID,
         force: true,
       })
-      this.reconcileTyping({ sendImmediatePulse: false })
+      this.ensureTypingKeepalive()
     }
   }
 
@@ -1929,7 +1952,7 @@ export class ThreadSessionRuntime {
       return { ...t, sentPartIds: newIds }
     })
     await setPartMessage(part.id, sendResult.id, this.thread.id)
-    this.repulseTypingAfterVisibleBotMessage()
+    this.requestTypingRepulse()
   }
 
   private async handleSessionIdle(idleSessionId: string): Promise<void> {
@@ -2200,12 +2223,12 @@ export class ThreadSessionRuntime {
     }
 
     if (properties.status.type === 'idle') {
-      this.reconcileTyping({ sendImmediatePulse: false })
+      this.stopTyping()
       return
     }
 
     if (properties.status.type === 'busy') {
-      this.reconcileTyping({ sendImmediatePulse: true })
+      this.ensureTypingNow()
       return
     }
 
