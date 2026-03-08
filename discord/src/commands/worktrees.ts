@@ -23,7 +23,20 @@ import {
   cancelHtmlActionsForOwner,
   registerHtmlAction,
 } from '../html-actions.js'
+import * as errore from 'errore'
+import { GitCommandError } from '../errors.js'
 import { deleteWorktree, git, getDefaultBranch } from '../worktrees.js'
+
+// Extracts the git stderr from a deleteWorktree error via errore.findCause.
+// Chain: Error { cause: GitCommandError { cause: CommandError { stderr } } }.
+export function extractGitStderr(error: Error): string | undefined {
+  const gitErr = errore.findCause(error, GitCommandError)
+  const stderr = (gitErr?.cause as { stderr?: string } | undefined)?.stderr?.trim()
+  if (stderr && stderr.length > 0) {
+    return stderr
+  }
+  return undefined
+}
 
 export function formatTimeAgo(date: Date): string {
   const diffMs = Date.now() - date.getTime()
@@ -402,15 +415,20 @@ async function handleDeleteWorktreeAction({
     worktreeName: worktree.worktree_name,
   })
   if (deleteResult instanceof Error) {
-    await renderWorktreesReply({
-      guildId,
-      userId: interaction.user.id,
-      channelId: interaction.channelId,
-      notice: `Failed to delete \`${worktree.worktree_name}\`: ${deleteResult.message}`,
-      editReply: (options) => {
-        return interaction.editReply(options)
-      },
-    })
+    // Send error as a separate ephemeral follow-up so the table stays intact.
+    // Dig into cause chain to surface the actual git stderr when available.
+    const gitStderr = extractGitStderr(deleteResult)
+    const detail = gitStderr
+      ? `\`\`\`\n${gitStderr}\n\`\`\``
+      : deleteResult.message
+    await interaction
+      .followUp({
+        content: `Failed to delete \`${worktree.worktree_name}\`\n${detail}`,
+        flags: MessageFlags.Ephemeral,
+      })
+      .catch(() => {
+        return undefined
+      })
     return
   }
 
