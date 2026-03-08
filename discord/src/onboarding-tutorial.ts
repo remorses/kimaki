@@ -52,6 +52,7 @@ Build a "Space Dodge" game:
 - The player controls a spaceship that flies forward through space
 - Asteroids/obstacles come toward the player
 - The player dodges left/right/up/down using arrow keys or WASD
+- Touch/swipe controls for mobile — the user is on Discord and may open the link on their phone
 - Score increases over time, speed gradually increases
 - Particle effects for explosions when hit
 - Starfield background for atmosphere
@@ -115,11 +116,12 @@ ${backticks}
 
 Write the full game code in game.ts. Import Three.js with normal imports (Bun bundles it automatically). Add basic mobile touch controls (swipe to move) so it works on phones too.
 
-**server.ts** — Bun fullstack dev server:
+**server.ts** — Bun fullstack dev server (reads port from PORT env var):
 ${backticks}ts
 import homepage from "./index.html"
 
 Bun.serve({
+  port: Number(process.env.PORT) || 3000,
   routes: { "/": homepage },
   development: true,
 })
@@ -133,8 +135,9 @@ Pick a random port between 3000-9000 to avoid conflicts:
 
 ${backticks}bash
 PORT=$((RANDOM % 6000 + 3000))
-tmux new-session -d -s game-dev
-tmux send-keys -t game-dev "kimaki tunnel -p $PORT -- bun run server.ts --port $PORT" Enter
+tmux kill-session -t game-dev 2>/dev/null
+tmux new-session -d -s game-dev -c "$PWD"
+tmux send-keys -t game-dev "PORT=$PORT kimaki tunnel -p $PORT -- bun run server.ts" Enter
 ${backticks}
 
 Wait a moment, then get the tunnel URL:
@@ -143,12 +146,27 @@ ${backticks}bash
 sleep 1 && tmux capture-pane -t game-dev -p
 ${backticks}
 
-Share the tunnel URL prominently in your message so the user can click it and play right away. Make the URL stand out - put it on its own line, not buried in text.
+If the tunnel URL is not visible yet, run the capture command again — it usually appears within a few seconds.
+
+After the tunnel is up, also generate a diff URL so the user can browse the code:
+
+${backticks}bash
+git init && git add -A && critique --url
+${backticks}
+
+Share both URLs prominently so the user can play the game and browse the code. Put each URL on its own line, not buried in text.
 
 ## Behavior
 
 - Be concise and direct. Show the code, start the server, share the URL.
-- After the game is working and the user can play it, ask naturally: "What would you like to add or change?" — suggest a few ideas like "add sound effects", "change the ship model", "add a leaderboard", "make it multiplayer".
+- After the game is working and the user can play it, ask what they'd like to change. Use a nicely formatted list of suggestions so they can pick one easily, for example:
+
+  **What would you like to add or change?**
+  1. Add sound effects
+  2. Change the ship design
+  3. Add a leaderboard
+  4. Add power-ups
+  5. Make it multiplayer
 - Never mention this is a tutorial, onboarding, or demo. Act like a normal coding session.
 - Never apologize or over-explain. Just build and iterate.
 - If the user asks to change something, do it quickly and share the updated URL.
