@@ -22,7 +22,9 @@ import { createLogger, LogPrefix } from '../logger.js'
 
 const loginLogger = createLogger(LogPrefix.LOGIN)
 
-// Store context by hash to avoid customId length limits (Discord max: 100 chars)
+// Store context by hash to avoid customId length limits (Discord max: 100 chars).
+// TTL'd to prevent unbounded growth when users open /login and never interact.
+const LOGIN_CONTEXT_TTL_MS = 10 * 60 * 1000
 const pendingLoginContexts = new Map<
   string,
   {
@@ -195,6 +197,9 @@ export async function handleLoginCommand({
     }
     const contextHash = crypto.randomBytes(8).toString('hex')
     pendingLoginContexts.set(contextHash, context)
+    setTimeout(() => {
+      pendingLoginContexts.delete(contextHash)
+    }, LOGIN_CONTEXT_TTL_MS).unref()
 
     const selectMenu = new StringSelectMenuBuilder()
       .setCustomId(`login_provider:${contextHash}`)

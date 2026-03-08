@@ -45,6 +45,8 @@ import {
   preprocessNewThreadMessage,
 } from './message-preprocessing.js'
 import { cancelPendingActionButtons } from './commands/action-buttons.js'
+import { cancelPendingQuestion } from './commands/ask-question.js'
+import { cancelPendingFileUpload } from './commands/file-upload.js'
 import { cancelHtmlActionsForThread } from './html-actions.js'
 import {
   ensureKimakiCategory,
@@ -63,6 +65,7 @@ import {
 } from './session-handler/model-utils.js'
 import {
   getOrCreateRuntime,
+  disposeRuntime,
 } from './session-handler/thread-session-runtime.js'
 import { runShellCommand } from './commands/run-command.js'
 import { registerInteractionHandler } from './interaction-handler.js'
@@ -499,6 +502,8 @@ export async function startDiscordBot({
         if (!message.author.bot && !isCliInjectedPrompt) {
           cancelPendingActionButtons(thread.id)
           cancelHtmlActionsForThread(thread.id)
+          void cancelPendingQuestion(thread.id, message.content)
+          void cancelPendingFileUpload(thread.id)
         }
 
         const parent = thread.parent as TextChannel | null
@@ -1029,6 +1034,12 @@ export async function startDiscordBot({
         )
       }
     }
+  })
+
+  // Dispose runtime when a thread is deleted so memory is freed immediately
+  // instead of waiting for the idle sweeper (1 hour default).
+  discordClient.on(Events.ThreadDelete, (thread) => {
+    disposeRuntime(thread.id)
   })
 
   await discordClient.login(token)

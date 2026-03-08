@@ -53,17 +53,23 @@ import {
   cleanupPermissionContext,
   addPermissionRequestToContext,
   arePatternsCoveredBy,
+  pendingPermissionContexts,
 } from '../commands/permissions.js'
 import {
   showAskUserQuestionDropdowns,
   pendingQuestionContexts,
+  cancelPendingQuestion,
 } from '../commands/ask-question.js'
 import {
   showActionButtons,
   waitForQueuedActionButtonsRequest,
   pendingActionButtonContexts,
+  cancelPendingActionButtons,
 } from '../commands/action-buttons.js'
-import { pendingFileUploadContexts } from '../commands/file-upload.js'
+import {
+  pendingFileUploadContexts,
+  cancelPendingFileUpload,
+} from '../commands/file-upload.js'
 import {
   getCurrentModelInfo,
   ensureSessionPreferencesSnapshot,
@@ -115,6 +121,7 @@ import {
 import { execAsync } from '../worktrees.js'
 import { notifyError } from '../sentry.js'
 import { createDebouncedProcessFlush } from '../debounced-process-flush.js'
+import { cancelHtmlActionsForThread } from '../html-actions.js'
 import { createDebouncedTimeout } from '../debounce-timeout.js'
 
 const logger = createLogger(LogPrefix.SESSION)
@@ -238,6 +245,53 @@ export function disposeInactiveRuntimes({
     disposedThreadIds,
     disposedDirectories: [...disposedDirectories],
   }
+}
+
+// ── Pending UI cleanup ───────────────────────────────────────────
+// Clears all pending interactive UI state for a thread on dispose/delete.
+// Uses existing cancel functions which handle upstream replies (so OpenCode
+// doesn't hang waiting for answers that will never come).
+
+function cleanupPendingUiForThread(threadId: string): void {
+  // Permissions: reject each pending permission so OpenCode doesn't hang,
+  // then delete the per-thread tracking map.
+  const threadPerms = pendingPermissions.get(threadId)
+  if (threadPerms) {
+    for (const [, entry] of threadPerms) {
+      const ctx = pendingPermissionContexts.get(entry.contextHash)
+      if (ctx) {
+        const client = getOpencodeClient(ctx.directory)
+        if (client) {
+          const requestIds: string[] = ctx.requestIds.length > 0
+            ? ctx.requestIds
+            : [ctx.permission.id]
+          void Promise.all(
+            requestIds.map((requestId) => {
+              return client.permission.reply({
+                requestID: requestId,
+                directory: ctx.permissionDirectory,
+                reply: 'reject',
+              })
+            }),
+          ).catch(() => {})
+        }
+        pendingPermissionContexts.delete(entry.contextHash)
+      }
+    }
+    pendingPermissions.delete(threadId)
+  }
+
+  // Questions: cancel sends "Other" as answer to OpenCode so it unblocks.
+  void cancelPendingQuestion(threadId)
+
+  // Action buttons: resolves context and clears timer.
+  cancelPendingActionButtons(threadId)
+
+  // File uploads: resolves with empty files so OpenCode unblocks.
+  void cancelPendingFileUpload(threadId)
+
+  // HTML actions: clears registered action callbacks for this thread.
+  cancelHtmlActionsForThread(threadId)
 }
 
 // ── Helpers ──────────────────────────────────────────────────────
@@ -405,6 +459,10 @@ export class ThreadSessionRuntime {
   // Reentrancy guard for startEventListener (not domain state —
   // just prevents calling the async loop twice).
   private listenerLoopRunning = false
+
+  // Set to true by dispose(). Guards against queued work running after cleanup
+  // and lets dispatchAction/startEventListener bail out early.
+  private disposed = false
 
   // Typing indicator scheduler handles.
   // `typingKeepaliveTimeout` is the 7s keepalive loop while a run stays busy.
@@ -803,6 +861,7 @@ export class ThreadSessionRuntime {
   // ── Lifecycle ────────────────────────────────────────────────
 
   dispose(): void {
+    this.disposed = true
     this.state?.listenerController?.abort()
     // waitForEvent loops check listenerAborted and exit naturally.
     threadState.updateThread(this.threadId, (t) => ({
@@ -811,6 +870,23 @@ export class ThreadSessionRuntime {
     }))
     void this.persistEventBufferDebounced.dispose()
     this.stopTyping()
+
+    // Release large internal buffers so GC can reclaim memory immediately
+    // instead of waiting for the runtime object itself to become unreachable.
+    this.eventBuffer = []
+    this.nextEventIndex = 0
+    this.partBuffer.clear()
+    this.preprocessChain = Promise.resolve()
+
+    // Don't clear actionQueue here — queued closures own resolve/reject for
+    // dispatchAction() promises. Dropping them would leave awaiting callers
+    // hanging forever. Instead, drain them: each closure checks this.disposed
+    // and resolves early without executing real work.
+    void this.processActionQueue()
+
+    // Clean up all pending UI state for this thread (permissions, questions,
+    // action buttons, file uploads, html actions).
+    cleanupPendingUiForThread(this.thread.id)
   }
 
   handleSharedServerStarted({
@@ -1013,7 +1089,7 @@ export class ThreadSessionRuntime {
   // Run abort never affects this loop.
 
   async startEventListener(): Promise<void> {
-    if (this.listenerLoopRunning) {
+    if (this.listenerLoopRunning || this.disposed) {
       return
     }
     this.listenerLoopRunning = true
@@ -1209,8 +1285,15 @@ export class ThreadSessionRuntime {
   // Serializes event handling + local-queue state mutations.
 
   async dispatchAction(action: () => Promise<void>): Promise<void> {
+    if (this.disposed) {
+      return
+    }
     return new Promise<void>((resolve, reject) => {
       this.actionQueue.push(async () => {
+        if (this.disposed) {
+          resolve()
+          return
+        }
         const result = await errore.tryAsync(action)
         if (result instanceof Error) {
           reject(result)
@@ -3571,6 +3654,9 @@ export class ThreadSessionRuntime {
     this.modelContextLimitKey = undefined
     this.lastDisplayedContextPercentage = 0
     this.lastRateLimitDisplayTime = 0
+    // Release part output cache from this run. Parts have already been flushed
+    // to Discord so the buffer is no longer needed until the next run.
+    this.partBuffer.clear()
   }
 
   // ── Retry Last User Prompt (for model-change flow) ──────────

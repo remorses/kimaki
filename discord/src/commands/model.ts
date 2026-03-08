@@ -34,23 +34,33 @@ import * as errore from 'errore'
 
 const modelLogger = createLogger(LogPrefix.MODEL)
 
-// Store context by hash to avoid customId length limits (Discord max: 100 chars)
-const pendingModelContexts = new Map<
-  string,
-  {
-    dir: string
-    channelId: string
-    sessionId?: string
-    isThread: boolean
-    providerId?: string
-    providerName?: string
-    thread?: ThreadChannel
-    appId?: string
-    selectedModelId?: string
-    selectedVariant?: string | null
-    availableVariants?: string[]
-  }
->()
+// Store context by hash to avoid customId length limits (Discord max: 100 chars).
+// Entries are TTL'd to prevent unbounded growth when users open /model and never
+// interact with the select menu.
+const MODEL_CONTEXT_TTL_MS = 10 * 60 * 1000
+
+type PendingModelContext = {
+  dir: string
+  channelId: string
+  sessionId?: string
+  isThread: boolean
+  providerId?: string
+  providerName?: string
+  thread?: ThreadChannel
+  appId?: string
+  selectedModelId?: string
+  selectedVariant?: string | null
+  availableVariants?: string[]
+}
+
+const pendingModelContexts = new Map<string, PendingModelContext>()
+
+function setModelContext(contextHash: string, context: PendingModelContext): void {
+  pendingModelContexts.set(contextHash, context)
+  setTimeout(() => {
+    pendingModelContexts.delete(contextHash)
+  }, MODEL_CONTEXT_TTL_MS).unref()
+}
 
 export type ProviderInfo = {
   id: string
@@ -463,7 +473,7 @@ export async function handleModelCommand({
       appId,
     }
     const contextHash = crypto.randomBytes(8).toString('hex')
-    pendingModelContexts.set(contextHash, context)
+    setModelContext(contextHash, context)
 
     const options = [...availableProviders]
       .sort((a, b) => a.name.localeCompare(b.name))
@@ -593,7 +603,7 @@ export async function handleProviderSelectMenu(
     // Update context with provider info and reuse the same hash
     context.providerId = selectedProviderId
     context.providerName = provider.name
-    pendingModelContexts.set(contextHash, context)
+    setModelContext(contextHash, context)
 
     const options = recentModels.map((model) => {
       const dateStr = model.releaseDate
@@ -668,7 +678,7 @@ export async function handleModelSelectMenu(
 
   try {
     context.selectedModelId = fullModelId
-    pendingModelContexts.set(contextHash, context)
+    setModelContext(contextHash, context)
 
     // Check if model has variants (thinking levels) - if so, show variant picker first
     const getClient = await initializeOpencodeForDirectory(context.dir)
@@ -684,7 +694,7 @@ export async function handleModelSelectMenu(
         })
         if (variants.length > 0) {
           context.availableVariants = variants
-          pendingModelContexts.set(contextHash, context)
+          setModelContext(contextHash, context)
 
           const variantOptions = [
             {
@@ -720,7 +730,7 @@ export async function handleModelSelectMenu(
 
     // No variants available - skip to scope
     context.selectedVariant = null
-    pendingModelContexts.set(contextHash, context)
+    setModelContext(contextHash, context)
     await showScopeMenu({ interaction, contextHash, context })
   } catch (error) {
     modelLogger.error('Error saving model preference:', error)
@@ -766,7 +776,7 @@ export async function handleModelVariantSelectMenu(
   }
 
   context.selectedVariant = selectedValue === '__none__' ? null : selectedValue
-  pendingModelContexts.set(contextHash, context)
+  setModelContext(contextHash, context)
 
   await showScopeMenu({ interaction, contextHash, context })
 }

@@ -41,7 +41,9 @@ type PendingQuestionContext = {
   contextHash: string
 }
 
-// Store pending question contexts by hash
+// Store pending question contexts by hash.
+// TTL prevents unbounded growth if user never answers a question.
+const QUESTION_CONTEXT_TTL_MS = 10 * 60 * 1000
 export const pendingQuestionContexts = new Map<string, PendingQuestionContext>()
 
 /**
@@ -76,6 +78,28 @@ export async function showAskUserQuestionDropdowns({
   }
 
   pendingQuestionContexts.set(contextHash, context)
+  // Auto-answer on TTL expiry so the OpenCode session doesn't hang forever
+  // waiting for a question reply that will never come.
+  setTimeout(async () => {
+    const ctx = pendingQuestionContexts.get(contextHash)
+    if (!ctx) {
+      return
+    }
+    const client = getOpencodeClient(ctx.directory)
+    if (client) {
+      const answers = ctx.questions.map((_, i) => {
+        return ctx.answers[i] || ['Other']
+      })
+      await client.question.reply({
+        requestID: ctx.requestId,
+        directory: ctx.directory,
+        answers,
+      }).catch((error) => {
+        logger.error('Failed to auto-answer expired question:', error)
+      })
+    }
+    pendingQuestionContexts.delete(contextHash)
+  }, QUESTION_CONTEXT_TTL_MS).unref()
 
   // Send one message per question with its dropdown directly underneath
   for (let i = 0; i < input.questions.length; i++) {

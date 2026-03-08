@@ -72,11 +72,24 @@ type PendingPermissionContext = {
   contextHash: string
 }
 
-// Store pending permission contexts by hash
+// Store pending permission contexts by hash.
+// TTL prevents unbounded growth if user never clicks a permission button.
+const PERMISSION_CONTEXT_TTL_MS = 10 * 60 * 1000
 export const pendingPermissionContexts = new Map<
   string,
   PendingPermissionContext
 >()
+
+// Atomic take: removes context from Map and returns it. Only the first caller
+// (TTL expiry or button click) wins, preventing duplicate permission replies.
+function takePendingPermissionContext(contextHash: string): PendingPermissionContext | undefined {
+  const ctx = pendingPermissionContexts.get(contextHash)
+  if (!ctx) {
+    return undefined
+  }
+  pendingPermissionContexts.delete(contextHash)
+  return ctx
+}
 
 /**
  * Show permission buttons for a permission request.
@@ -108,6 +121,32 @@ export async function showPermissionButtons({
   }
 
   pendingPermissionContexts.set(contextHash, context)
+  // Auto-reject on TTL expiry so the OpenCode session doesn't hang forever
+  // waiting for a permission reply that will never come. Uses atomic take
+  // so only one of TTL-expiry or button-click can win.
+  setTimeout(async () => {
+    const ctx = takePendingPermissionContext(contextHash)
+    if (!ctx) {
+      return
+    }
+    const client = getOpencodeClient(ctx.directory)
+    if (client) {
+      const requestIds = ctx.requestIds.length > 0
+        ? ctx.requestIds
+        : [ctx.permission.id]
+      await Promise.all(
+        requestIds.map((requestId) => {
+          return client.permission.reply({
+            requestID: requestId,
+            directory: ctx.permissionDirectory,
+            reply: 'reject',
+          })
+        }),
+      ).catch((error) => {
+        logger.error('Failed to auto-reject expired permission:', error)
+      })
+    }
+  }, PERMISSION_CONTEXT_TTL_MS).unref()
 
   const patternStr = compactPermissionPatterns(permission.patterns).join(', ')
 
@@ -174,7 +213,8 @@ export async function handlePermissionButton(
     | 'always'
     | 'reject'
 
-  const context = pendingPermissionContexts.get(contextHash)
+  // Atomic take: if TTL already expired and auto-rejected, context is gone.
+  const context = takePendingPermissionContext(contextHash)
 
   if (!context) {
     await interaction.update({ components: [] })
@@ -202,7 +242,7 @@ export async function handlePermissionButton(
       }),
     )
 
-    pendingPermissionContexts.delete(contextHash)
+    // Context already removed by takePendingPermissionContext above.
 
     // Update message: show result and remove dropdown
     const resultText = (() => {

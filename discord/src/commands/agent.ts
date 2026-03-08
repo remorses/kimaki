@@ -26,6 +26,7 @@ import { createLogger, LogPrefix } from '../logger.js'
 
 const agentLogger = createLogger(LogPrefix.AGENT)
 
+const AGENT_CONTEXT_TTL_MS = 10 * 60 * 1000
 const pendingAgentContexts = new Map<
   string,
   {
@@ -312,6 +313,9 @@ export async function handleAgentCommand({
 
     const contextHash = crypto.randomBytes(8).toString('hex')
     pendingAgentContexts.set(contextHash, context)
+    setTimeout(() => {
+      pendingAgentContexts.delete(contextHash)
+    }, AGENT_CONTEXT_TTL_MS).unref()
 
     const options = agents.map((agent) => ({
       label: agent.name.slice(0, 100),
