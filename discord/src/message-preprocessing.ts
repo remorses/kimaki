@@ -134,7 +134,7 @@ export async function preprocessExistingThreadMessage({
     lastSessionContext,
   })
   if (voiceResult) {
-    messageContent = `Voice message transcription from Discord user:\n\n${voiceResult.transcription}`
+    messageContent = `Voice message transcription from Discord user:\n${voiceResult.transcription}`
   }
 
   // Voice transcription failed and no text — drop silently
@@ -183,7 +183,7 @@ export async function preprocessNewSessionMessage({
     appId,
   })
   if (voiceResult) {
-    prompt = `Voice message transcription from Discord user:\n\n${voiceResult.transcription}`
+    prompt = `Voice message transcription from Discord user:\n${voiceResult.transcription}`
   }
 
   // Voice transcription failed and no text — drop silently
@@ -244,7 +244,7 @@ export async function preprocessNewThreadMessage({
     appId,
   })
   if (voiceResult) {
-    messageContent = `Voice message transcription from Discord user:\n\n${voiceResult.transcription}`
+    messageContent = `Voice message transcription from Discord user:\n${voiceResult.transcription}`
   }
 
   // Voice transcription failed and no text — drop silently
