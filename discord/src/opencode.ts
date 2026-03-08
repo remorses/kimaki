@@ -430,6 +430,9 @@ async function startSingleServer(): Promise<ServerStartError | SingleServer> {
         OPENCODE_PORT: port.toString(),
         KIMAKI_DATA_DIR: getDataDir(),
         KIMAKI_LOCK_PORT: getLockPort().toString(),
+        // Guard: prevents agents from running `kimaki` root command inside
+        // an OpenCode session, which would steal the lock port and break the bot.
+        KIMAKI_OPENCODE_PROCESS: '1',
         ...(getHranaUrl() && { KIMAKI_DB_URL: getHranaUrl()! }),
         ...(process.env.KIMAKI_SENTRY_DSN && {
           KIMAKI_SENTRY_DSN: process.env.KIMAKI_SENTRY_DSN,

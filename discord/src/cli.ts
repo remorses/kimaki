@@ -2353,6 +2353,18 @@ cli
       gateway?: boolean
       gatewayCallbackUrl?: string
     }) => {
+      // Guard: only one kimaki bot process can run at a time (they share a lock
+      // port). Running `kimaki` here would kill the already-running bot process
+      // and take over the lock port, breaking all active Discord sessions.
+      if (process.env.KIMAKI_OPENCODE_PROCESS) {
+        cliLogger.error(
+          'Cannot run `kimaki` inside an OpenCode session — it would kill the already-running bot process.\n' +
+          'Only one kimaki bot can run at a time (they share a lock port).\n' +
+          'Use `kimaki send`, `kimaki session`, or other subcommands instead.',
+        )
+        process.exit(EXIT_NO_RESTART)
+      }
+
       try {
         // Set data directory early, before any database access
         if (options.dataDir) {
