@@ -47,6 +47,34 @@ Use this skill when scaffolding or fixing npm packages.
      ```
      This ensures `dist/` is fresh before every `npm publish`.
 
+## bin field
+
+Use `bin` as a plain string pointing to the compiled entrypoint, not an object:
+
+```json
+{ "bin": "dist/cli.js" }
+```
+
+The bin file must be executable and start with a shebang. After creating or
+building it, always run:
+
+```bash
+chmod +x dist/cli.js
+```
+
+Add the shebang as the first line of the source file (`src/cli.ts`):
+
+```ts
+#!/usr/bin/env node
+```
+
+`tsc` preserves the shebang in the emitted `.js` file. Add the `chmod +x` to
+`prepublishOnly` so it runs automatically before publish:
+
+```json
+{ "prepublishOnly": "pnpm build && chmod +x dist/cli.js" }
+```
+
 ## Reading package version at runtime
 
 When Node code needs the package version, prefer reading it from `package.json`
