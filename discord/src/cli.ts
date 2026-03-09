@@ -1412,6 +1412,57 @@ function showReadyMessage({
 }
 
 /**
+ * Create the default kimaki channel in each guild and send a welcome message.
+ * Idempotent: skips guilds that already have the channel.
+ * Extracted so both the interactive and headless startup paths share the same logic.
+ */
+async function ensureDefaultChannelsWithWelcome({
+  guilds,
+  discordClient,
+  appId,
+  isGatewayMode,
+  installerDiscordUserId,
+}: {
+  guilds: Guild[]
+  discordClient: import('discord.js').Client
+  appId: string
+  isGatewayMode: boolean
+  installerDiscordUserId?: string
+}): Promise<{ name: string; id: string; guildId: string }[]> {
+  const created: { name: string; id: string; guildId: string }[] = []
+  for (const guild of guilds) {
+    try {
+      const result = await createDefaultKimakiChannel({
+        guild,
+        botName: discordClient.user?.username,
+        appId,
+        isGatewayMode,
+      })
+      if (result) {
+        created.push({
+          name: result.channelName,
+          id: result.textChannelId,
+          guildId: guild.id,
+        })
+
+        // Send welcome message to the newly created default channel.
+        // Mention the installer so they get a notification.
+        const mentionUserId = installerDiscordUserId || guild.ownerId
+        await sendWelcomeMessage({
+          channel: result.textChannel,
+          mentionUserId,
+        })
+      }
+    } catch (error) {
+      cliLogger.warn(
+        `Failed to create default kimaki channel in ${guild.name}: ${error instanceof Error ? error.message : String(error)}`,
+      )
+    }
+  }
+  return created
+}
+
+/**
  * Background initialization for quick start mode.
  * Starts OpenCode server and registers slash commands without blocking bot startup.
  */
@@ -2045,7 +2096,8 @@ async function run({
     await startDiscordBot({ token, appId, discordClient, useWorktrees })
     cliLogger.log('Discord bot is running!')
 
-    // Background channel sync + role reconciliation — never blocks ready state.
+    // Background channel sync + role reconciliation + default channel creation.
+    // Never blocks ready state.
     void (async () => {
       try {
         const backgroundChannels = await collectKimakiChannels({
@@ -2062,6 +2114,16 @@ async function run({
           error instanceof Error ? error.message : String(error),
         )
       }
+
+      // Create default kimaki channel + welcome message in each guild.
+      // Runs after channel sync so existing channels are detected correctly.
+      await ensureDefaultChannelsWithWelcome({
+        guilds,
+        discordClient,
+        appId,
+        isGatewayMode,
+        installerDiscordUserId,
+      })
     })()
 
     // Background: OpenCode init + slash command registration (non-blocking)
@@ -2254,35 +2316,14 @@ async function run({
 
     // Create default kimaki channel for general-purpose tasks.
     // Runs for every guild the bot is in, idempotent (skips if already exists).
-    for (const guild of guilds) {
-      try {
-        const result = await createDefaultKimakiChannel({
-          guild,
-          botName: discordClient.user?.username,
-          appId,
-          isGatewayMode,
-        })
-        if (result) {
-          createdChannels.push({
-            name: result.channelName,
-            id: result.textChannelId,
-            guildId: guild.id,
-          })
-
-          // Send welcome message to the newly created default channel.
-          // Mention the installer so they get a notification.
-          const mentionUserId = installerDiscordUserId || guild.ownerId
-          await sendWelcomeMessage({
-            channel: result.textChannel,
-            mentionUserId,
-          })
-        }
-      } catch (error) {
-        cliLogger.warn(
-          `Failed to create default kimaki channel in ${guild.name}: ${error instanceof Error ? error.message : String(error)}`,
-        )
-      }
-    }
+    const defaultChannelResults = await ensureDefaultChannelsWithWelcome({
+      guilds,
+      discordClient,
+      appId,
+      isGatewayMode,
+      installerDiscordUserId,
+    })
+    createdChannels.push(...defaultChannelResults)
 
     // Log available user commands
     const registrableCommands = allUserCommands.filter(
