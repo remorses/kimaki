@@ -28,10 +28,12 @@ const voiceLogger = createLogger(LogPrefix.VOICE)
 
 export type { PreprocessResult }
 
-// Matches ". queue" at the end of a message (case-insensitive, ignoring trailing whitespace).
+// Matches punctuation + "queue" at the end of a message (case-insensitive).
+// Supports any common punctuation before "queue" (. ! ? , ; :) and an optional
+// trailing period: ". queue", "! queue", ". queue.", "!queue." etc.
 // When present the suffix is stripped and the message is routed through
 // kimaki's local queue (same as /queue command).
-const QUEUE_SUFFIX_RE = /\.\s*queue\s*$/i
+const QUEUE_SUFFIX_RE = /[.!?,;:]\s*queue\.?\s*$/i
 
 function extractQueueSuffix(prompt: string): { prompt: string; forceQueue: boolean } {
   if (!QUEUE_SUFFIX_RE.test(prompt)) {
