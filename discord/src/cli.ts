@@ -2117,13 +2117,20 @@ async function run({
 
       // Create default kimaki channel + welcome message in each guild.
       // Runs after channel sync so existing channels are detected correctly.
-      await ensureDefaultChannelsWithWelcome({
-        guilds,
-        discordClient,
-        appId,
-        isGatewayMode,
-        installerDiscordUserId,
-      })
+      try {
+        await ensureDefaultChannelsWithWelcome({
+          guilds,
+          discordClient,
+          appId,
+          isGatewayMode,
+          installerDiscordUserId,
+        })
+      } catch (error) {
+        cliLogger.warn(
+          'Background default channel creation failed:',
+          error instanceof Error ? error.message : String(error),
+        )
+      }
     })()
 
     // Background: OpenCode init + slash command registration (non-blocking)
