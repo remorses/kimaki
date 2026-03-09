@@ -45,7 +45,7 @@ import {
   preprocessNewThreadMessage,
 } from './message-preprocessing.js'
 import { cancelPendingActionButtons } from './commands/action-buttons.js'
-import { cancelPendingQuestion } from './commands/ask-question.js'
+import { cancelPendingQuestion, type CancelQuestionResult } from './commands/ask-question.js'
 import { cancelPendingFileUpload } from './commands/file-upload.js'
 import { cancelHtmlActionsForThread } from './html-actions.js'
 import {
@@ -500,11 +500,18 @@ export async function startDiscordBot({
         const thread = channel as ThreadChannel
         discordLogger.log(`Message in thread ${thread.name} (${thread.id})`)
 
+        // Cancel interactive UI when a real user sends a message.
+        // If a question was pending and answered with the user's text,
+        // early-return: the message was consumed as the question answer
+        // and must NOT also be sent as a new prompt (causes abort loops).
         if (!message.author.bot && !isCliInjectedPrompt) {
           cancelPendingActionButtons(thread.id)
           cancelHtmlActionsForThread(thread.id)
-          void cancelPendingQuestion(thread.id, message.content)
+          const questionResult = await cancelPendingQuestion(thread.id, message.content)
           void cancelPendingFileUpload(thread.id)
+          if (questionResult === 'replied') {
+            return
+          }
         }
 
         const parent = thread.parent as TextChannel | null

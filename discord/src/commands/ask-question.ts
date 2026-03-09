@@ -29,6 +29,8 @@ export type AskUserQuestionInput = {
   }>
 }
 
+export type CancelQuestionResult = 'no-pending' | 'replied' | 'reply-failed'
+
 type PendingQuestionContext = {
   sessionId: string
   directory: string
@@ -305,11 +307,16 @@ export function parseAskUserQuestionTool(part: {
 /**
  * Cancel a pending question for a thread (e.g., when user sends a new message).
  * Sends the user's message as the answer to OpenCode so the model sees their actual response.
+ *
+ * Returns 'replied' if the question was answered successfully (caller should NOT
+ * enqueue the user message as a new prompt — it was consumed as the answer).
+ * Returns 'reply-failed' if reply failed (context kept pending so TTL can retry).
+ * Returns 'no-pending' if no question was pending for this thread.
  */
 export async function cancelPendingQuestion(
   threadId: string,
   userMessage?: string,
-): Promise<boolean> {
+): Promise<CancelQuestionResult> {
   // Find pending question for this thread
   let contextHash: string | undefined
   let context: PendingQuestionContext | undefined
@@ -322,7 +329,7 @@ export async function cancelPendingQuestion(
   }
 
   if (!contextHash || !context) {
-    return false
+    return 'no-pending'
   }
 
   try {
@@ -346,9 +353,11 @@ export async function cancelPendingQuestion(
     logger.log(`Answered question ${context.requestId} with user message`)
   } catch (error) {
     logger.error('Failed to answer question:', error)
+    // Keep context pending so TTL auto-answer can still fire.
+    // Caller should not consume the user message since reply failed.
+    return 'reply-failed'
   }
 
-  // Clean up regardless of whether the API call succeeded
   pendingQuestionContexts.delete(contextHash)
-  return true
+  return 'replied'
 }
