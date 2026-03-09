@@ -441,7 +441,7 @@ see `docs/e2e-testing-learnings.md` for detailed lessons. key points:
 
 ## event handler architecture
 
-our event handler should follow closely what opencode tui does. you can find opencode source code in opensrc folder.
+our event handler should follow closely what opencode tui does. you can find opencode source code in opensrc folder. opensrc anomalyco/opencode. notice opencode-ai/opencode is a different unrelated repo. ignore that
 
 see `packages/app/src/components/prompt-input/submit.ts` for where opencode tui calls promptAsync
 
