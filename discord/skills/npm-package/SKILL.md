@@ -140,6 +140,8 @@ Use Node ESM-compatible compiler settings:
 ```json
 {
   "compilerOptions": {
+    "allowImportingTsExtensions": true,
+    "rewriteRelativeImportExtensions": true,
     "rootDir": "src",
     "outDir": "dist",
     "module": "nodenext",
@@ -159,7 +161,25 @@ Use Node ESM-compatible compiler settings:
 
 - Always use "rootDir": "src"
 - Add `"DOM"` to `lib` only when browser globals are needed.
-- Keep source imports with `.js` extensions in TypeScript ESM files.
+- Use `.ts` and `.tsx` extensions in source imports. `tsc` rewrites them to
+  `.js` in the emitted `dist/` output automatically via
+  `rewriteRelativeImportExtensions`. This means source code works directly in
+  runtimes like `tsx`, `bun`, and frameworks like Next.js that expect `.ts`
+  extensions, while the published `dist/` has correct `.js` imports that Node.js
+  and other consumers resolve without issues.
+  ```ts
+  // source (src/index.ts) — use .ts/.tsx extensions
+  import { helper } from './utils.ts'
+  import { Button } from './button.tsx'
+
+  // emitted output (dist/index.js) — tsc rewrites to .js
+  // import { helper } from './utils.js'
+  // import { Button } from './button.js'
+  ```
+- Only relative imports are rewritten. Path aliases (`paths` in tsconfig) are
+  not supported by `rewriteRelativeImportExtensions` — this is fine since npm
+  packages should use relative imports anyway.
+- Requires TypeScript 5.7+. Pin the typescript devDependency to at least `5.7.0`.
 - Install `@types/node` as a dev dependency whenever Node APIs are used.
 - If generation is required, keep generators in `scripts/*.ts` and invoke them
   from package scripts before build/publish.
