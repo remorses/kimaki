@@ -337,12 +337,21 @@ function exitNonInteractiveSetup(): never {
   process.exit(EXIT_NO_RESTART)
 }
 
+// All structured events emitted on stdout in non-TTY mode (cloud sandboxes, CI).
+// Consumers parse these with the eventsource-parser npm package.
+export type ProgrammaticEvent =
+	| { type: 'install_url'; url: string }
+	| { type: 'authorized'; guild_id: string }
+	| { type: 'ready'; app_id: string; guild_ids: string[] }
+	| { type: 'error'; message: string; install_url?: string }
+
 // Emit a structured JSON line on stdout for non-TTY consumers (cloud sandboxes, CI).
 // Each line is a self-contained JSON object with a "type" field for easy parsing.
-// Consumers can detect these by reading stdout line-by-line and JSON.parse-ing lines
-// that start with '{'.
-function emitJsonEvent(event: Record<string, unknown>): void {
-  process.stdout.write(JSON.stringify(event) + '\n')
+// Lines are prefixed with "data: " and terminated with "\n\n" (SSE format) so consumers
+// can use the eventsource-parser npm package to robustly extract JSON events from noisy
+// process output (other log lines, warnings, etc. are ignored by the parser).
+function emitJsonEvent(event: ProgrammaticEvent): void {
+	process.stdout.write(`data: ${JSON.stringify(event)}\n\n`)
 }
 
 async function resolveGatewayInstallCredentials(): Promise<

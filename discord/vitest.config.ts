@@ -24,7 +24,7 @@ export default defineConfig({
     poolOptions: {
       forks: {
         // Single fork when profiling to keep output manageable and not hang CPU
-        maxForks: cpuProf ? 1 : 4,
+        maxForks: cpuProf ? 1 : 6,
         execArgv: cpuProf
           ? ['--cpu-prof', '--cpu-prof-dir=tmp/cpu-profiles']
           : [],
