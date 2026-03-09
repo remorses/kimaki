@@ -179,7 +179,14 @@ export function createAuth({ env, baseURL }: { env: HonoBindings; baseURL: strin
         if (parsedCallback) {
           parsedCallback.searchParams.set('guild_id', guildId)
           parsedCallback.searchParams.set('client_id', kimakiClientId)
-          return Response.redirect(parsedCallback.toString(), 302)
+          // Use new Response() instead of Response.redirect() because redirect()
+          // creates an immutable response. better-call's toResponse() calls
+          // data.headers.set() to merge headers, which throws on immutable
+          // responses and causes a 500.
+          return new Response(null, {
+            status: 302,
+            headers: { Location: parsedCallback.toString() },
+          })
         }
       }),
     },
