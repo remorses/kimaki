@@ -198,6 +198,30 @@ function createDeterministicMatchers() {
     },
   }
 
+  // Slow matcher for "hotel" so the 200ms sleep in the queueing test
+  // guarantees "india" arrives while hotel is still streaming.
+  const hotelSlowMatcher: DeterministicMatcher = {
+    id: 'hotel-slow-reply',
+    priority: 20,
+    when: {
+      latestUserTextIncludes: 'Reply with exactly: hotel',
+    },
+    then: {
+      parts: [
+        { type: 'stream-start', warnings: [] },
+        { type: 'text-start', id: 'hotel-reply' },
+        { type: 'text-delta', id: 'hotel-reply', delta: 'ok' },
+        { type: 'text-end', id: 'hotel-reply' },
+        {
+          type: 'finish',
+          finishReason: 'stop',
+          usage: { inputTokens: 1, outputTokens: 1, totalTokens: 2 },
+        },
+      ],
+      partDelaysMs: [0, 100, 300, 0, 0],
+    },
+  }
+
   const userReplyMatcher: DeterministicMatcher = {
     id: 'user-reply',
     priority: 10,
@@ -229,6 +253,7 @@ function createDeterministicMatchers() {
     bashCreateFileMatcher,
     bashCreateFileFollowupMatcher,
     raceFinalReplyMatcher,
+    hotelSlowMatcher,
     userReplyMatcher,
   ]
 }
@@ -1023,12 +1048,22 @@ e2eTest('thread message queue ordering', () => {
       const firstReply = await th.waitForBotReply({ timeout: 4_000 })
       expect(firstReply.content.trim().length).toBeGreaterThan(0)
 
+      // Wait for golf's footer so the golf→hotel transition is deterministic
+      await waitForFooterMessage({
+        discord,
+        threadId: thread.id,
+        timeout: 4_000,
+        afterMessageIncludes: 'ok',
+        afterAuthorId: discord.botUserId,
+      })
+
       const before = await th.getMessages()
       const beforeBotCount = before.filter((m) => {
         return m.author.id === discord.botUserId
       }).length
 
-      // 2. Start request B, then send C while B is still in progress.
+      // 2. Start request B (hotel, slow matcher ~400ms), then send C while B
+      //    is still in progress.
       await th.user(TEST_USER_ID).sendMessage({
         content: 'Reply with exactly: hotel',
       })
@@ -1066,11 +1101,9 @@ e2eTest('thread message queue ordering', () => {
         Reply with exactly: golf
         --- from: assistant (TestBot)
         ⬥ ok
-        --- from: user (queue-tester)
-        Reply with exactly: hotel
-        --- from: assistant (TestBot)
         *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2*
         --- from: user (queue-tester)
+        Reply with exactly: hotel
         Reply with exactly: india
         --- from: assistant (TestBot)
         ⬥ ok
