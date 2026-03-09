@@ -165,7 +165,7 @@ export function createAuth({ env, baseURL }: { env: HonoBindings; baseURL: strin
 
         // If the CLI passed a custom callback URL (--gateway-callback-url),
         // redirect there with ?guild_id instead of showing /install-success.
-        // The callbackUrl was stored in additionalData during /discord-install.
+        // The kimakiCallbackUrl was stored in additionalData during /discord-install.
         // Only https: (and http: for localhost dev) are allowed to prevent
         // open redirect / javascript: URI attacks. Invalid URLs fall through
         // to the default /install-success page.
@@ -175,7 +175,7 @@ export function createAuth({ env, baseURL }: { env: HonoBindings; baseURL: strin
         // { headers, response: <return> }. If we returned { response: Response },
         // it would become { response: { response: Response } } and toResponse()
         // would serialize it as JSON instead of issuing a redirect.
-        const parsedCallback = parseAllowedCallbackUrl(state?.callbackUrl as string | undefined)
+        const parsedCallback = parseAllowedCallbackUrl(state?.kimakiCallbackUrl as string | undefined)
         if (parsedCallback) {
           parsedCallback.searchParams.set('guild_id', guildId)
           parsedCallback.searchParams.set('client_id', kimakiClientId)
