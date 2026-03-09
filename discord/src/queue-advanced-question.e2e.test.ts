@@ -113,11 +113,11 @@ describe('queue advanced: question tool text answer', () => {
         timeoutMs: 4_000,
       })
 
-      // Verify the user message shows in thread but no duplicate bot error/reply
-      // from a stale promptAsync. The key assertion: no MessageAbortedError spam.
-      // Wait briefly and check thread state.
+      // Wait for second question dropdown (from question-answer followup —
+      // OpenCode calls LLM again with same prompt after question tool completes,
+      // deterministic matcher fires question tool again). This is expected.
       await new Promise<void>((resolve) => {
-        setTimeout(resolve, 500)
+        setTimeout(resolve, 3_000)
       })
 
       const timeline = await th.text({ showInteractions: true })
@@ -136,6 +136,13 @@ describe('queue advanced: question tool text answer', () => {
 
       // The user's "my text answer" message must appear in the thread
       expect(timeline).toContain('my text answer')
+
+      // Key regression assertion: without the fix, the user's text message
+      // is ALSO sent as a duplicate promptAsync which triggers a THIRD question
+      // dropdown. With the fix, only 2 dropdowns appear (initial + followup
+      // from question answer). Count occurrences of "Which option do you prefer?"
+      const questionCount = (timeline.match(/Which option do you prefer\?/g) || []).length
+      expect(questionCount).toBe(2)
     },
     20_000,
   )
