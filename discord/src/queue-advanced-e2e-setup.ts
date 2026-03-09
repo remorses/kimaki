@@ -295,11 +295,47 @@ export function createDeterministicMatchers(): DeterministicMatcher[] {
     },
   }
 
+  // Question tool: model asks a question, user answers via text, model follows up
+  const questionToolMatcher: DeterministicMatcher = {
+    id: 'question-text-answer-marker',
+    priority: 106,
+    when: {
+      lastMessageRole: 'user',
+      latestUserTextIncludes: 'QUESTION_TEXT_ANSWER_MARKER',
+    },
+    then: {
+      parts: [
+        { type: 'stream-start', warnings: [] },
+        {
+          type: 'tool-call',
+          toolCallId: 'question-text-answer-call',
+          toolName: 'question',
+          input: JSON.stringify({
+            questions: [{
+              question: 'Which option do you prefer?',
+              header: 'Pick one',
+              options: [
+                { label: 'Alpha', description: 'Alpha option' },
+                { label: 'Beta', description: 'Beta option' },
+              ],
+            }],
+          }),
+        },
+        {
+          type: 'finish',
+          finishReason: 'tool-calls',
+          usage: { inputTokens: 1, outputTokens: 1, totalTokens: 2 },
+        },
+      ],
+    },
+  }
+
   return [
     slowAbortMatcher,
     typingRepulseMatcher,
     pluginTimeoutSleepMatcher,
     actionButtonClickFollowupMatcher,
+    questionToolMatcher,
     permissionTypingMatcher,
     permissionTypingFollowupMatcher,
     raceFinalReplyMatcher,
