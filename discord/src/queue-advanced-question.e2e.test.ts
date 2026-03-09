@@ -116,9 +116,18 @@ describe('queue advanced: question tool text answer', () => {
       // Wait for second question dropdown (from question-answer followup —
       // OpenCode calls LLM again with same prompt after question tool completes,
       // deterministic matcher fires question tool again). This is expected.
-      await new Promise<void>((resolve) => {
-        setTimeout(resolve, 3_000)
-      })
+      // Poll for it instead of sleeping.
+      const start = Date.now()
+      while (Date.now() - start < 4_000) {
+        const msgs = await th.getMessages()
+        const questionMsgs = msgs.filter((m) => {
+          return m.content.includes('Which option do you prefer?')
+        })
+        if (questionMsgs.length >= 2) {
+          break
+        }
+        await new Promise<void>((r) => { setTimeout(r, 50) })
+      }
 
       const timeline = await th.text({ showInteractions: true })
       expect(timeline).toMatchInlineSnapshot(`
