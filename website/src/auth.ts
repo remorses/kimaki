@@ -169,11 +169,17 @@ export function createAuth({ env, baseURL }: { env: HonoBindings; baseURL: strin
         // Only https: (and http: for localhost dev) are allowed to prevent
         // open redirect / javascript: URI attacks. Invalid URLs fall through
         // to the default /install-success page.
+        //
+        // Return the Response directly (not wrapped in { response }) because
+        // createAuthMiddleware's returnHeaders logic wraps the return value as
+        // { headers, response: <return> }. If we returned { response: Response },
+        // it would become { response: { response: Response } } and toResponse()
+        // would serialize it as JSON instead of issuing a redirect.
         const parsedCallback = parseAllowedCallbackUrl(state?.callbackUrl as string | undefined)
         if (parsedCallback) {
           parsedCallback.searchParams.set('guild_id', guildId)
           parsedCallback.searchParams.set('client_id', kimakiClientId)
-          return { response: Response.redirect(parsedCallback.toString(), 302) }
+          return Response.redirect(parsedCallback.toString(), 302)
         }
       }),
     },
