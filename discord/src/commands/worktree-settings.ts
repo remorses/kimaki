@@ -3,11 +3,11 @@
 // as an alternative to the global --use-worktrees CLI flag.
 
 import {
-  ChatInputCommandInteraction,
   MessageFlags,
   ChannelType,
   type TextChannel,
 } from 'discord.js'
+import type { CommandEvent } from '../platform/types.js'
 import {
   getChannelWorktreesEnabled,
   setChannelWorktreesEnabled,
@@ -24,7 +24,7 @@ const worktreeSettingsLogger = createLogger(LogPrefix.WORKTREE)
 export async function handleToggleWorktreesCommand({
   command,
 }: {
-  command: ChatInputCommandInteraction
+  command: CommandEvent
   appId: string
 }): Promise<void> {
   worktreeSettingsLogger.log('[TOGGLE_WORKTREES] Command called')

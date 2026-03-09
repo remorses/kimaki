@@ -6,10 +6,7 @@
 import crypto from 'node:crypto'
 import {
   MessageFlags,
-  StringSelectMenuBuilder,
-  ActionRowBuilder,
   ChannelType,
-  type StringSelectMenuInteraction,
   type TextChannel,
   type ThreadChannel,
 } from 'discord.js'
@@ -21,6 +18,7 @@ import {
   SILENT_MESSAGE_FLAGS,
 } from '../discord-utils.js'
 import { createLogger, LogPrefix } from '../logger.js'
+import type { SelectMenuEvent } from '../platform/types.js'
 
 const logger = createLogger(LogPrefix.MCP)
 
@@ -170,22 +168,18 @@ export async function handleMcpCommand({
     description: `${formatStatusLabel(info.status)} — click to ${toggleActionLabel(info.status)}`.slice(0, 100),
   }))
 
-  const selectMenu = new StringSelectMenuBuilder()
-    .setCustomId(`mcp_toggle:${contextHash}`)
-    .setPlaceholder('Select MCP server to toggle')
-    .addOptions(options.slice(0, 25)) // Discord max 25 options
-
-  const actionRow =
-    new ActionRowBuilder<StringSelectMenuBuilder>().addComponents(selectMenu)
-
-  await command.editReply({
-    content,
-    components: [actionRow],
+  await command.editUiReply({
+    markdown: content,
+    selectMenu: {
+      id: `mcp_toggle:${contextHash}`,
+      placeholder: 'Select MCP server to toggle',
+      options: options.slice(0, 25),
+    },
   })
 }
 
 export async function handleMcpSelectMenu(
-  interaction: StringSelectMenuInteraction,
+  interaction: SelectMenuEvent,
 ): Promise<void> {
   const customId = interaction.customId
   if (!customId.startsWith('mcp_toggle:')) {

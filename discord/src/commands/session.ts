@@ -1,13 +1,16 @@
 // /new-session command - Start a new OpenCode session.
 
-import { ChannelType, type TextChannel } from 'discord.js'
+import { ChannelType, type TextChannel, type ThreadChannel } from 'discord.js'
 import fs from 'node:fs'
 import path from 'node:path'
 import type { CommandContext, AutocompleteContext } from './types.js'
 import { getChannelDirectory } from '../database.js'
 import { initializeOpencodeForDirectory } from '../opencode.js'
 import { SILENT_MESSAGE_FLAGS } from '../discord-utils.js'
-import { getOrCreateRuntime } from '../session-handler/thread-session-runtime.js'
+import {
+  getDefaultRuntimeAdapter,
+  getOrCreateRuntime,
+} from '../session-handler/thread-session-runtime.js'
 import { createLogger, LogPrefix } from '../logger.js'
 import * as errore from 'errore'
 
@@ -63,21 +66,30 @@ export async function handleSessionCommand({
       fullPrompt = `${prompt}\n\n@${files.join(' @')}`
     }
 
-    const starterMessage = await textChannel.send({
-      content: `🚀 **Starting OpenCode session**\n📝 ${prompt}${files.length > 0 ? `\n📎 Files: ${files.join(', ')}` : ''}`,
+    const adapter = getDefaultRuntimeAdapter()
+    if (!adapter) {
+      throw new Error('No runtime adapter configured')
+    }
+    const channelTarget = {
+      channelId: textChannel.id,
+    }
+    const starterMessage = await adapter.sendMessage(channelTarget, {
+      markdown: `🚀 **Starting OpenCode session**\n📝 ${prompt}${files.length > 0 ? `\n📎 Files: ${files.join(', ')}` : ''}`,
       flags: SILENT_MESSAGE_FLAGS,
     })
 
-    const thread = await starterMessage.startThread({
+    const { thread, target: threadTarget } = await adapter.createThread({
+      channelId: channelTarget.channelId,
+      messageId: starterMessage.id,
       name: prompt.slice(0, 100),
       autoArchiveDuration: 1440,
       reason: 'OpenCode session',
     })
 
-    // Add user to thread so it appears in their sidebar
-    await thread.members.add(command.user.id)
+    await adapter.addThreadMember(threadTarget.threadId, command.user.id)
 
-    await command.editReply(`Created new session in ${thread.toString()}`)
+    const threadReference = adapter.formatThreadReference?.(thread) || `<#${thread.id}>`
+    await command.editReply(`Created new session in ${threadReference}`)
 
     const runtime = getOrCreateRuntime({
       threadId: thread.id,

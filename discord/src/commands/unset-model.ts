@@ -1,7 +1,6 @@
 // /unset-model-override command - Remove model overrides and use default instead.
 
 import {
-  ChatInputCommandInteraction,
   ChannelType,
   type ThreadChannel,
   type TextChannel,
@@ -19,6 +18,7 @@ import { resolveTextChannel, getKimakiMetadata } from '../discord-utils.js'
 import { getRuntime } from '../session-handler/thread-session-runtime.js'
 import { getCurrentModelInfo } from './model.js'
 import { createLogger, LogPrefix } from '../logger.js'
+import type { CommandEvent } from '../platform/types.js'
 
 const unsetModelLogger = createLogger(LogPrefix.MODEL)
 
@@ -50,7 +50,7 @@ export async function handleUnsetModelCommand({
   interaction,
   appId,
 }: {
-  interaction: ChatInputCommandInteraction
+  interaction: CommandEvent
   appId: string
 }): Promise<void> {
   unsetModelLogger.log('[UNSET-MODEL] handleUnsetModelCommand called')

@@ -3,16 +3,16 @@
 // for each question and collects user responses.
 
 import {
-  StringSelectMenuBuilder,
-  StringSelectMenuInteraction,
-  ActionRowBuilder,
-  type ThreadChannel,
   MessageFlags,
+  type ThreadChannel,
 } from 'discord.js'
 import crypto from 'node:crypto'
-import { sendThreadMessage, NOTIFY_MESSAGE_FLAGS } from '../discord-utils.js'
+import { NOTIFY_MESSAGE_FLAGS } from '../discord-utils.js'
 import { getOpencodeClient } from '../opencode.js'
 import { createLogger, LogPrefix } from '../logger.js'
+import type { PlatformThread, SelectMenuEvent } from '../platform/types.js'
+import { platformThreadFromDiscord } from '../platform/platform-value.js'
+import { getDefaultRuntimeAdapter } from '../session-handler/thread-session-runtime.js'
 
 const logger = createLogger(LogPrefix.ASK_QUESTION)
 
@@ -34,7 +34,7 @@ export type CancelQuestionResult = 'no-pending' | 'replied' | 'reply-failed'
 type PendingQuestionContext = {
   sessionId: string
   directory: string
-  thread: ThreadChannel
+  thread: PlatformThread
   requestId: string // OpenCode question request ID for replying
   questions: AskUserQuestionInput['questions']
   answers: Record<number, string[]> // questionIndex -> selected labels
@@ -60,18 +60,19 @@ export async function showAskUserQuestionDropdowns({
   requestId,
   input,
 }: {
-  thread: ThreadChannel
+  thread: PlatformThread | ThreadChannel
   sessionId: string
   directory: string
   requestId: string // OpenCode question request ID
   input: AskUserQuestionInput
 }): Promise<void> {
   const contextHash = crypto.randomBytes(8).toString('hex')
+  const normalizedThread = 'raw' in thread ? thread : platformThreadFromDiscord(thread)
 
   const context: PendingQuestionContext = {
     sessionId,
     directory,
-    thread,
+    thread: normalizedThread,
     requestId,
     questions: input.questions,
     answers: {},
@@ -107,6 +108,14 @@ export async function showAskUserQuestionDropdowns({
   }, QUESTION_CONTEXT_TTL_MS).unref()
 
   // Send one message per question with its dropdown directly underneath
+  const adapter = getDefaultRuntimeAdapter()
+  if (!adapter) {
+    throw new Error('No runtime adapter configured')
+  }
+  const threadTarget = {
+    channelId: normalizedThread.parentId || normalizedThread.id,
+    threadId: normalizedThread.id,
+  }
   for (let i = 0; i < input.questions.length; i++) {
     const q = input.questions[i]!
 
@@ -125,25 +134,17 @@ export async function showAskUserQuestionDropdowns({
       },
     ]
 
-    const placeholder =
-      options.find((x) => x.label)?.label || 'Select an option'
-    const selectMenu = new StringSelectMenuBuilder()
-      .setCustomId(`ask_question:${contextHash}:${i}`)
-      .setPlaceholder(placeholder)
-      .addOptions(options)
+    const placeholder = options.find((x) => x.label)?.label || 'Select an option'
 
-    // Enable multi-select if the question supports it
-    if (q.multiple) {
-      selectMenu.setMinValues(1)
-      selectMenu.setMaxValues(options.length)
-    }
-
-    const actionRow =
-      new ActionRowBuilder<StringSelectMenuBuilder>().addComponents(selectMenu)
-
-    await thread.send({
-      content: `**${(q.header || '').slice(0, 200)}**\n${q.question.slice(0, 1700)}`,
-      components: [actionRow],
+    await adapter.sendMessage(threadTarget, {
+      markdown: `**${(q.header || '').slice(0, 200)}**\n${q.question.slice(0, 1700)}`,
+      selectMenu: {
+        id: `ask_question:${contextHash}:${i}`,
+        placeholder,
+        options,
+        minValues: q.multiple ? 1 : undefined,
+        maxValues: q.multiple ? options.length : undefined,
+      },
       flags: NOTIFY_MESSAGE_FLAGS,
     })
   }
@@ -157,7 +158,7 @@ export async function showAskUserQuestionDropdowns({
  * Handle dropdown selection for AskUserQuestion.
  */
 export async function handleAskQuestionSelectMenu(
-  interaction: StringSelectMenuInteraction,
+  interaction: SelectMenuEvent,
 ): Promise<void> {
   const customId = interaction.customId
 
@@ -256,9 +257,18 @@ async function submitQuestionAnswers(
     )
   } catch (error) {
     logger.error('Failed to submit answers:', error)
-    await sendThreadMessage(
-      context.thread,
-      `✗ Failed to submit answers: ${error instanceof Error ? error.message : 'Unknown error'}`,
+    const adapter = getDefaultRuntimeAdapter()
+    if (!adapter) {
+      return
+    }
+    await adapter.sendMessage(
+      {
+        channelId: context.thread.parentId || context.thread.id,
+        threadId: context.thread.id,
+      },
+      {
+        markdown: `✗ Failed to submit answers: ${error instanceof Error ? error.message : 'Unknown error'}`,
+      },
     )
   }
 }

@@ -2,14 +2,6 @@
 // Supports GitHub Copilot (device flow), OpenAI Codex (device flow), and API keys.
 
 import {
-  ChatInputCommandInteraction,
-  StringSelectMenuInteraction,
-  StringSelectMenuBuilder,
-  ActionRowBuilder,
-  ModalBuilder,
-  TextInputBuilder,
-  TextInputStyle,
-  ModalSubmitInteraction,
   ChannelType,
   type ThreadChannel,
   type TextChannel,
@@ -19,6 +11,12 @@ import crypto from 'node:crypto'
 import { initializeOpencodeForDirectory } from '../opencode.js'
 import { resolveTextChannel, getKimakiMetadata } from '../discord-utils.js'
 import { createLogger, LogPrefix } from '../logger.js'
+import type {
+  CommandEvent,
+  ModalSubmitEvent,
+  SelectMenuEvent,
+  UiModal,
+} from '../platform/types.js'
 
 const loginLogger = createLogger(LogPrefix.LOGIN)
 
@@ -82,7 +80,7 @@ export type ProviderAuthMethod = {
 export async function handleLoginCommand({
   interaction,
 }: {
-  interaction: ChatInputCommandInteraction
+  interaction: CommandEvent
   appId: string
 }): Promise<void> {
   loginLogger.log('[LOGIN] handleLoginCommand called')
@@ -201,17 +199,13 @@ export async function handleLoginCommand({
       pendingLoginContexts.delete(contextHash)
     }, LOGIN_CONTEXT_TTL_MS).unref()
 
-    const selectMenu = new StringSelectMenuBuilder()
-      .setCustomId(`login_provider:${contextHash}`)
-      .setPlaceholder('Select a provider to authenticate')
-      .addOptions(options)
-
-    const actionRow =
-      new ActionRowBuilder<StringSelectMenuBuilder>().addComponents(selectMenu)
-
-    await interaction.editReply({
-      content: '**Authenticate with Provider**\nSelect a provider:',
-      components: [actionRow],
+    await interaction.editUiReply({
+      markdown: '**Authenticate with Provider**\nSelect a provider:',
+      selectMenu: {
+        id: `login_provider:${contextHash}`,
+        placeholder: 'Select a provider to authenticate',
+        options,
+      },
     })
   } catch (error) {
     loginLogger.error('Error loading providers:', error)
@@ -226,7 +220,7 @@ export async function handleLoginCommand({
  * Shows a second select menu with auth methods for the chosen provider.
  */
 export async function handleLoginProviderSelectMenu(
-  interaction: StringSelectMenuInteraction,
+  interaction: SelectMenuEvent,
 ): Promise<void> {
   const customId = interaction.customId
 
@@ -345,17 +339,13 @@ export async function handleLoginProviderSelectMenu(
           : 'Enter API key manually',
     }))
 
-    const selectMenu = new StringSelectMenuBuilder()
-      .setCustomId(`login_method:${contextHash}`)
-      .setPlaceholder('Select authentication method')
-      .addOptions(options)
-
-    const actionRow =
-      new ActionRowBuilder<StringSelectMenuBuilder>().addComponents(selectMenu)
-
-    await interaction.editReply({
-      content: `**Authenticate with ${providerName}**\nSelect authentication method:`,
-      components: [actionRow],
+    await interaction.editUiReply({
+      markdown: `**Authenticate with ${providerName}**\nSelect authentication method:`,
+      selectMenu: {
+        id: `login_method:${contextHash}`,
+        placeholder: 'Select authentication method',
+        options,
+      },
     })
   } catch (error) {
     loginLogger.error('Error loading auth methods:', error)
@@ -374,7 +364,7 @@ export async function handleLoginProviderSelectMenu(
  * Starts OAuth flow or shows API key modal.
  */
 export async function handleLoginMethodSelectMenu(
-  interaction: StringSelectMenuInteraction,
+  interaction: SelectMenuEvent,
 ): Promise<void> {
   const customId = interaction.customId
 
@@ -460,25 +450,24 @@ export async function handleLoginMethodSelectMenu(
  * Show API key input modal.
  */
 async function showApiKeyModal(
-  interaction: StringSelectMenuInteraction,
+  interaction: SelectMenuEvent,
   contextHash: string,
   providerName: string,
 ): Promise<void> {
-  const modal = new ModalBuilder()
-    .setCustomId(`login_apikey:${contextHash}`)
-    .setTitle(`${providerName} API Key`.slice(0, 45))
-
-  const apiKeyInput = new TextInputBuilder()
-    .setCustomId('apikey')
-    .setLabel('API Key')
-    .setPlaceholder('sk-...')
-    .setStyle(TextInputStyle.Short)
-    .setRequired(true)
-
-  const actionRow = new ActionRowBuilder<TextInputBuilder>().addComponents(
-    apiKeyInput,
-  )
-  modal.addComponents(actionRow)
+  const modal: UiModal = {
+    id: `login_apikey:${contextHash}`,
+    title: `${providerName} API Key`.slice(0, 45),
+    inputs: [
+      {
+        type: 'text',
+        id: 'apikey',
+        label: 'API Key',
+        placeholder: 'sk-...',
+        style: 'short',
+        required: true,
+      },
+    ],
+  }
 
   await interaction.showModal(modal)
 }
@@ -487,7 +476,7 @@ async function showApiKeyModal(
  * Start OAuth authorization flow.
  */
 async function startOAuthFlow(
-  interaction: StringSelectMenuInteraction,
+  interaction: SelectMenuEvent,
   context: {
     dir: string
     providerId?: string
@@ -609,7 +598,7 @@ async function startOAuthFlow(
  * Handle API key modal submission.
  */
 export async function handleApiKeyModalSubmit(
-  interaction: ModalSubmitInteraction,
+  interaction: ModalSubmitEvent,
 ): Promise<void> {
   const customId = interaction.customId
 

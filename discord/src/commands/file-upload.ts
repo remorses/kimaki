@@ -7,15 +7,7 @@
 // polls until the response appears.
 
 import {
-  ButtonBuilder,
-  ButtonStyle,
-  ActionRowBuilder,
-  ModalBuilder,
-  FileUploadBuilder,
-  LabelBuilder,
   ComponentType,
-  type ButtonInteraction,
-  type ModalSubmitInteraction,
   type ThreadChannel,
   MessageFlags,
 } from 'discord.js'
@@ -25,6 +17,8 @@ import path from 'node:path'
 import { createLogger, LogPrefix } from '../logger.js'
 import { notifyError } from '../sentry.js'
 import { NOTIFY_MESSAGE_FLAGS } from '../discord-utils.js'
+import type { ButtonEvent, ModalSubmitEvent } from '../platform/types.js'
+import { getDefaultRuntimeAdapter } from '../session-handler/thread-session-runtime.js'
 
 const logger = createLogger(LogPrefix.FILE_UPLOAD)
 
@@ -124,17 +118,8 @@ export function showFileUploadButton({
           `File upload timed out for session ${sessionId}, hash=${contextHash}`,
         )
         resolveContext(ctx, [])
-        // Remove button from message
         if (ctx.messageId) {
-          ctx.thread.messages
-            .fetch(ctx.messageId)
-            .then((msg) => {
-              return msg.edit({
-                content: `**File Upload Requested**\n${prompt.slice(0, 1900)}\n_Timed out_`,
-                components: [],
-              })
-            })
-            .catch(() => {})
+          updateButtonMessage(ctx, '_Timed out_')
         }
       }
     }, PENDING_TTL_MS)
@@ -153,29 +138,37 @@ export function showFileUploadButton({
     }
 
     pendingFileUploadContexts.set(contextHash, context)
+    const adapter = getDefaultRuntimeAdapter()
+    if (!adapter) {
+      clearTimeout(timer)
+      pendingFileUploadContexts.delete(contextHash)
+      reject(new Error('No runtime adapter configured'))
+      return
+    }
+    const threadTarget = {
+      channelId: thread.parentId || thread.id,
+      threadId: thread.id,
+    }
 
-    const uploadButton = new ButtonBuilder()
-      .setCustomId(`file_upload_btn:${contextHash}`)
-      .setLabel('Upload Files')
-      .setStyle(ButtonStyle.Primary)
-
-    const actionRow = new ActionRowBuilder<ButtonBuilder>().addComponents(
-      uploadButton,
-    )
-
-    thread
-      .send({
-        content: `**File Upload Requested**\n${prompt.slice(0, 1900)}`,
-        components: [actionRow],
+    adapter
+      .sendMessage(threadTarget, {
+        markdown: `**File Upload Requested**\n${prompt.slice(0, 1900)}`,
+        buttons: [
+          {
+            id: `file_upload_btn:${contextHash}`,
+            label: 'Upload Files',
+            style: 'primary',
+          },
+        ],
         flags: NOTIFY_MESSAGE_FLAGS,
       })
-      .then((msg) => {
+      .then((msg: { id: string }) => {
         context.messageId = msg.id
         logger.log(
           `Showed file upload button for session ${sessionId}, hash=${contextHash}`,
         )
       })
-      .catch((err) => {
+      .catch((err: unknown) => {
         clearTimeout(timer)
         pendingFileUploadContexts.delete(contextHash)
         reject(new Error('Failed to send file upload button', { cause: err }))
@@ -187,7 +180,7 @@ export function showFileUploadButton({
  * Handle the file upload button click - opens a modal with FileUploadBuilder.
  */
 export async function handleFileUploadButton(
-  interaction: ButtonInteraction,
+  interaction: ButtonEvent,
 ): Promise<void> {
   const customId = interaction.customId
   if (!customId.startsWith('file_upload_btn:')) {
@@ -205,29 +198,27 @@ export async function handleFileUploadButton(
     return
   }
 
-  const fileUpload = new FileUploadBuilder()
-    .setCustomId('uploaded_files')
-    .setMinValues(1)
-    .setMaxValues(context.maxFiles)
-
-  const label = new LabelBuilder()
-    .setLabel('Files')
-    .setDescription(context.prompt.slice(0, 100))
-    .setFileUploadComponent(fileUpload)
-
-  const modal = new ModalBuilder()
-    .setCustomId(`file_upload_modal:${contextHash}`)
-    .setTitle('Upload Files')
-    .addLabelComponents(label)
-
-  await interaction.showModal(modal)
+  await interaction.showModal({
+    id: `file_upload_modal:${contextHash}`,
+    title: 'Upload Files',
+    inputs: [
+      {
+        type: 'file',
+        id: 'uploaded_files',
+        label: 'Files',
+        description: context.prompt.slice(0, 100),
+        minFiles: 1,
+        maxFiles: context.maxFiles,
+      },
+    ],
+  })
 }
 
 /**
  * Handle the modal submission - download files and resolve the pending promise.
  */
 export async function handleFileUploadModalSubmit(
-  interaction: ModalSubmitInteraction,
+  interaction: ModalSubmitEvent,
 ): Promise<void> {
   const customId = interaction.customId
   if (!customId.startsWith('file_upload_modal:')) {
@@ -345,15 +336,20 @@ function updateButtonMessage(
   if (!context.messageId) {
     return
   }
-  context.thread.messages
-    .fetch(context.messageId)
-    .then((msg) => {
-      return msg.edit({
-        content: `**File Upload Requested**\n${context.prompt.slice(0, 1900)}\n${status}`,
-        components: [],
-      })
-    })
-    .catch(() => {})
+  const adapter = getDefaultRuntimeAdapter()
+  if (!adapter) {
+    return
+  }
+  void adapter.updateMessage(
+    {
+      channelId: context.thread.parentId || context.thread.id,
+      threadId: context.thread.id,
+    },
+    context.messageId,
+    {
+      markdown: `**File Upload Requested**\n${context.prompt.slice(0, 1900)}\n${status}`,
+    },
+  ).catch(() => {})
 }
 
 /**

@@ -1,10 +1,6 @@
 // /model command - Set the preferred model for this channel or session.
 
 import {
-  ChatInputCommandInteraction,
-  StringSelectMenuInteraction,
-  StringSelectMenuBuilder,
-  ActionRowBuilder,
   ChannelType,
   type ThreadChannel,
   type TextChannel,
@@ -31,6 +27,7 @@ import { getRuntime } from '../session-handler/thread-session-runtime.js'
 import { getThinkingValuesForModel } from '../thinking-utils.js'
 import { createLogger, LogPrefix } from '../logger.js'
 import * as errore from 'errore'
+import type { CommandEvent, SelectMenuEvent } from '../platform/types.js'
 
 const modelLogger = createLogger(LogPrefix.MODEL)
 
@@ -320,7 +317,7 @@ export async function handleModelCommand({
   interaction,
   appId,
 }: {
-  interaction: ChatInputCommandInteraction
+  interaction: CommandEvent
   appId: string
 }): Promise<void> {
   modelLogger.log('[MODEL] handleModelCommand called')
@@ -491,17 +488,13 @@ export async function handleModelCommand({
         }
       })
 
-    const selectMenu = new StringSelectMenuBuilder()
-      .setCustomId(`model_provider:${contextHash}`)
-      .setPlaceholder('Select a provider')
-      .addOptions(options)
-
-    const actionRow =
-      new ActionRowBuilder<StringSelectMenuBuilder>().addComponents(selectMenu)
-
-    await interaction.editReply({
-      content: `**Set Model Preference**\n${currentModelText}${variantText}\nSelect a provider:`,
-      components: [actionRow],
+    await interaction.editUiReply({
+      markdown: `**Set Model Preference**\n${currentModelText}${variantText}\nSelect a provider:`,
+      selectMenu: {
+        id: `model_provider:${contextHash}`,
+        placeholder: 'Select a provider',
+        options,
+      },
     })
   } catch (error) {
     modelLogger.error('Error loading providers:', error)
@@ -516,7 +509,7 @@ export async function handleModelCommand({
  * Shows a second select menu with models for the chosen provider.
  */
 export async function handleProviderSelectMenu(
-  interaction: StringSelectMenuInteraction,
+  interaction: SelectMenuEvent,
 ): Promise<void> {
   const customId = interaction.customId
 
@@ -616,17 +609,13 @@ export async function handleProviderSelectMenu(
       }
     })
 
-    const selectMenu = new StringSelectMenuBuilder()
-      .setCustomId(`model_select:${contextHash}`)
-      .setPlaceholder('Select a model')
-      .addOptions(options)
-
-    const actionRow =
-      new ActionRowBuilder<StringSelectMenuBuilder>().addComponents(selectMenu)
-
-    await interaction.editReply({
-      content: `**Set Model Preference**\nProvider: **${provider.name}**\nSelect a model:`,
-      components: [actionRow],
+    await interaction.editUiReply({
+      markdown: `**Set Model Preference**\nProvider: **${provider.name}**\nSelect a model:`,
+      selectMenu: {
+        id: `model_select:${contextHash}`,
+        placeholder: 'Select a model',
+        options,
+      },
     })
   } catch (error) {
     modelLogger.error('Error loading models:', error)
@@ -642,7 +631,7 @@ export async function handleProviderSelectMenu(
  * Stores the model preference in the database.
  */
 export async function handleModelSelectMenu(
-  interaction: StringSelectMenuInteraction,
+  interaction: SelectMenuEvent,
 ): Promise<void> {
   const customId = interaction.customId
 
@@ -709,19 +698,13 @@ export async function handleModelSelectMenu(
             })),
           ]
 
-          const selectMenu = new StringSelectMenuBuilder()
-            .setCustomId(`model_variant:${contextHash}`)
-            .setPlaceholder('Select a thinking level')
-            .addOptions(variantOptions)
-
-          const actionRow =
-            new ActionRowBuilder<StringSelectMenuBuilder>().addComponents(
-              selectMenu,
-            )
-
-          await interaction.editReply({
-            content: `**Set Model Preference**\nModel: **${context.providerName}** / **${selectedModelId}**\n\`${fullModelId}\`\nSelect a thinking level:`,
-            components: [actionRow],
+          await interaction.editUiReply({
+            markdown: `**Set Model Preference**\nModel: **${context.providerName}** / **${selectedModelId}**\n\`${fullModelId}\`\nSelect a thinking level:`,
+            selectMenu: {
+              id: `model_variant:${contextHash}`,
+              placeholder: 'Select a thinking level',
+              options: variantOptions,
+            },
           })
           return
         }
@@ -746,7 +729,7 @@ export async function handleModelSelectMenu(
  * Stores the selected variant and shows the scope menu.
  */
 export async function handleModelVariantSelectMenu(
-  interaction: StringSelectMenuInteraction,
+  interaction: SelectMenuEvent,
 ): Promise<void> {
   const customId = interaction.customId
   if (!customId.startsWith('model_variant:')) {
@@ -786,7 +769,7 @@ async function showScopeMenu({
   contextHash,
   context,
 }: {
-  interaction: StringSelectMenuInteraction
+  interaction: SelectMenuEvent
   contextHash: string
   context: NonNullable<ReturnType<typeof pendingModelContexts.get>>
 }): Promise<void> {
@@ -818,17 +801,13 @@ async function showScopeMenu({
     },
   ]
 
-  const selectMenu = new StringSelectMenuBuilder()
-    .setCustomId(`model_scope:${contextHash}`)
-    .setPlaceholder('Apply to...')
-    .addOptions(scopeOptions)
-
-  const actionRow =
-    new ActionRowBuilder<StringSelectMenuBuilder>().addComponents(selectMenu)
-
-  await interaction.editReply({
-    content: `**Set Model Preference**\nModel: **${context.providerName}** / **${modelDisplay}**${variantSuffix}\n\`${modelId}\`\nApply to:`,
-    components: [actionRow],
+  await interaction.editUiReply({
+    markdown: `**Set Model Preference**\nModel: **${context.providerName}** / **${modelDisplay}**${variantSuffix}\n\`${modelId}\`\nApply to:`,
+    selectMenu: {
+      id: `model_scope:${contextHash}`,
+      placeholder: 'Apply to...',
+      options: scopeOptions,
+    },
   })
 }
 
@@ -837,7 +816,7 @@ async function showScopeMenu({
  * Applies the model to either the channel or globally.
  */
 export async function handleModelScopeSelectMenu(
-  interaction: StringSelectMenuInteraction,
+  interaction: SelectMenuEvent,
 ): Promise<void> {
   const customId = interaction.customId
 

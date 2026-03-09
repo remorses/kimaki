@@ -3,12 +3,11 @@
 // including HTML-backed action buttons for deletable worktrees.
 
 import {
-  ButtonInteraction,
-  ChatInputCommandInteraction,
   ComponentType,
   MessageFlags,
   type APIMessageTopLevelComponent,
   type APITextDisplayComponent,
+  type ButtonInteraction,
   type InteractionEditReplyOptions,
 } from 'discord.js'
 import {
@@ -26,6 +25,7 @@ import {
 import * as errore from 'errore'
 import { GitCommandError } from '../errors.js'
 import { deleteWorktree, git, getDefaultBranch } from '../worktrees.js'
+import type { ButtonEvent, CommandEvent } from '../platform/types.js'
 
 // Extracts the git stderr from a deleteWorktree error via errore.findCause.
 // Chain: Error { cause: GitCommandError { cause: CommandError { stderr } } }.
@@ -447,7 +447,7 @@ async function handleDeleteWorktreeAction({
 export async function handleWorktreesCommand({
   command,
 }: {
-  command: ChatInputCommandInteraction
+  command: CommandEvent
   appId: string
 }): Promise<void> {
   const guildId = command.guildId

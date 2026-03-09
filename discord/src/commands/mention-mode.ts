@@ -4,11 +4,11 @@
 // Messages in threads are not affected - they always work without mentions.
 
 import {
-  ChatInputCommandInteraction,
   MessageFlags,
   ChannelType,
   type TextChannel,
 } from 'discord.js'
+import type { CommandEvent } from '../platform/types.js'
 import { getChannelMentionMode, setChannelMentionMode } from '../database.js'
 import { getKimakiMetadata } from '../discord-utils.js'
 import { createLogger, LogPrefix } from '../logger.js'
@@ -22,7 +22,7 @@ const mentionModeLogger = createLogger(LogPrefix.CLI)
 export async function handleToggleMentionModeCommand({
   command,
 }: {
-  command: ChatInputCommandInteraction
+  command: CommandEvent
   appId: string
 }): Promise<void> {
   mentionModeLogger.log('[TOGGLE_MENTION_MODE] Command called')

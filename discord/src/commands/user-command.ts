@@ -8,12 +8,16 @@ import {
   type TextChannel,
   type ThreadChannel,
 } from 'discord.js'
-import { getOrCreateRuntime } from '../session-handler/thread-session-runtime.js'
-import { sendThreadMessage, SILENT_MESSAGE_FLAGS } from '../discord-utils.js'
+import {
+  getDefaultRuntimeAdapter,
+  getOrCreateRuntime,
+} from '../session-handler/thread-session-runtime.js'
+import { SILENT_MESSAGE_FLAGS } from '../discord-utils.js'
 import { createLogger, LogPrefix } from '../logger.js'
 import { getChannelDirectory, getThreadSession } from '../database.js'
 import { store } from '../store.js'
 import fs from 'node:fs'
+import { platformThreadFromDiscord } from '../platform/platform-value.js'
 
 const userCommandLogger = createLogger(LogPrefix.USER_CMD)
 
@@ -121,7 +125,7 @@ export const handleUserCommand: CommandHandler = async ({
 
       const runtime = getOrCreateRuntime({
         threadId: thread.id,
-        thread,
+        thread: platformThreadFromDiscord(thread),
         projectDirectory,
         sdkDirectory: projectDirectory,
         channelId: textChannel?.id,
@@ -137,29 +141,44 @@ export const handleUserCommand: CommandHandler = async ({
       })
     } else if (textChannel) {
       // Running in text channel - create a new thread
-      const starterMessage = await textChannel.send({
-        content: `**/${commandName}**`,
+      const adapter = getDefaultRuntimeAdapter()
+      if (!adapter) {
+        throw new Error('No runtime adapter configured')
+      }
+      const channelTarget = {
+        channelId: textChannel.id,
+      }
+      const starterMessage = await adapter.sendMessage(channelTarget, {
+        markdown: `**/${commandName}**`,
         flags: SILENT_MESSAGE_FLAGS,
       })
 
       const threadName = `/${commandName}`
-      const newThread = await starterMessage.startThread({
+      const { thread: newThread, target: threadTarget } = await adapter.createThread({
+        channelId: channelTarget.channelId,
+        messageId: starterMessage.id,
         name: threadName.slice(0, 100),
         autoArchiveDuration: 1440,
         reason: `OpenCode command: ${commandName}`,
       })
 
-      // Add user to thread so it appears in their sidebar
-      await newThread.members.add(command.user.id)
+      await adapter.addThreadMember(threadTarget.threadId, command.user.id)
 
       if (args) {
         const argsPreview =
           args.length > 1800 ? `${args.slice(0, 1800)}\n... truncated` : args
-        await sendThreadMessage(newThread, `Args: ${argsPreview}`)
+        await adapter.sendMessage(
+          {
+            channelId: newThread.parentId || newThread.id,
+            threadId: newThread.id,
+          },
+          { markdown: `Args: ${argsPreview}` },
+        )
       }
 
+      const threadReference = adapter.formatThreadReference?.(newThread) || `<#${newThread.id}>`
       await command.editReply(
-        `Started /${commandName} in ${newThread.toString()}`,
+        `Started /${commandName} in ${threadReference}`,
       )
 
       const runtime = getOrCreateRuntime({

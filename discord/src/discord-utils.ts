@@ -16,6 +16,7 @@ import {
 import { REST, Routes } from 'discord.js'
 import type { OpencodeClient } from '@opencode-ai/sdk/v2'
 import { discordApiUrl } from './discord-urls.js'
+import type { PlatformThread } from './platform/types.js'
 import { Lexer } from 'marked'
 import { splitTablesFromMarkdown } from './format-tables.js'
 import { getChannelDirectory, getThreadWorktree } from './database.js'
@@ -655,7 +656,7 @@ export async function getKimakiMetadata(
 export async function resolveWorkingDirectory({
   channel,
 }: {
-  channel: TextChannel | ThreadChannel
+  channel: TextChannel | ThreadChannel | PlatformThread
 }): Promise<
   | {
       projectDirectory: string
@@ -663,23 +664,31 @@ export async function resolveWorkingDirectory({
     }
   | undefined
 > {
-  const isThread = [
-    ChannelType.PublicThread,
-    ChannelType.PrivateThread,
-    ChannelType.AnnouncementThread,
-  ].includes(channel.type)
-
-  const textChannel = isThread
-    ? await resolveTextChannel(channel as ThreadChannel)
-    : (channel as TextChannel)
-
-  const metadata = await getKimakiMetadata(textChannel)
-  if (!metadata.projectDirectory) {
+  const isPlatformThread = 'parentId' in channel && !('type' in channel)
+  const isDiscordThread =
+    'type' in channel &&
+    [
+      ChannelType.PublicThread,
+      ChannelType.PrivateThread,
+      ChannelType.AnnouncementThread,
+    ].includes(channel.type)
+  const parentChannelId = isPlatformThread
+    ? channel.parentId
+    : isDiscordThread
+      ? channel.parentId
+      : channel.id
+  if (!parentChannelId) {
     return undefined
   }
 
-  let workingDirectory = metadata.projectDirectory
-  if (isThread) {
+  const channelConfig = await getChannelDirectory(parentChannelId)
+  const projectDirectory = channelConfig?.directory
+  if (!projectDirectory) {
+    return undefined
+  }
+
+  let workingDirectory = projectDirectory
+  if (isPlatformThread || isDiscordThread) {
     const worktreeInfo = await getThreadWorktree(channel.id)
     if (worktreeInfo?.status === 'ready' && worktreeInfo.worktree_directory) {
       workingDirectory = worktreeInfo.worktree_directory
@@ -687,7 +696,7 @@ export async function resolveWorkingDirectory({
   }
 
   return {
-    projectDirectory: metadata.projectDirectory,
+    projectDirectory,
     workingDirectory,
   }
 }

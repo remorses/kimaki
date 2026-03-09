@@ -7,10 +7,6 @@
 // Map. Whichever menu fires second sees the first selection stored and applies.
 
 import {
-  ChatInputCommandInteraction,
-  StringSelectMenuInteraction,
-  StringSelectMenuBuilder,
-  ActionRowBuilder,
   ChannelType,
   type ThreadChannel,
   type TextChannel,
@@ -25,6 +21,7 @@ import {
   getVariantCascade,
 } from '../database.js'
 import { initializeOpencodeForDirectory } from '../opencode.js'
+import type { CommandEvent, SelectMenuEvent } from '../platform/types.js'
 import { resolveTextChannel, getKimakiMetadata } from '../discord-utils.js'
 import {
   getCurrentModelInfo,
@@ -91,7 +88,7 @@ export async function handleModelVariantCommand({
   interaction,
   appId,
 }: {
-  interaction: ChatInputCommandInteraction
+  interaction: CommandEvent
   appId: string
 }): Promise<void> {
   await interaction.deferReply({ flags: MessageFlags.Ephemeral })
@@ -244,11 +241,6 @@ export async function handleModelVariantCommand({
     })),
   ]
 
-  const variantMenu = new StringSelectMenuBuilder()
-    .setCustomId(`variant_quick:${contextHash}`)
-    .setPlaceholder('Select a thinking level')
-    .addOptions(variantOptions)
-
   const scopeOptions = [
     ...(isThread && sessionId
       ? [
@@ -271,19 +263,20 @@ export async function handleModelVariantCommand({
     },
   ]
 
-  const scopeMenu = new StringSelectMenuBuilder()
-    .setCustomId(`variant_scope:${contextHash}`)
-    .setPlaceholder('Apply to...')
-    .addOptions(scopeOptions)
-
-  const variantRow =
-    new ActionRowBuilder<StringSelectMenuBuilder>().addComponents(variantMenu)
-  const scopeRow =
-    new ActionRowBuilder<StringSelectMenuBuilder>().addComponents(scopeMenu)
-
-  await interaction.editReply({
-    content: `${statusText}\nSelect a thinking level and where to apply it:`,
-    components: [variantRow, scopeRow],
+  await interaction.editUiReply({
+    markdown: `${statusText}\nSelect a thinking level and where to apply it:`,
+    selectMenus: [
+      {
+        id: `variant_quick:${contextHash}`,
+        placeholder: 'Select a thinking level',
+        options: variantOptions,
+      },
+      {
+        id: `variant_scope:${contextHash}`,
+        placeholder: 'Apply to...',
+        options: scopeOptions,
+      },
+    ],
   })
 }
 
@@ -292,7 +285,7 @@ export async function handleModelVariantCommand({
  * Stores the chosen variant in context. If scope was already picked, applies immediately.
  */
 export async function handleVariantQuickSelectMenu(
-  interaction: StringSelectMenuInteraction,
+  interaction: SelectMenuEvent,
 ): Promise<void> {
   const contextHash = interaction.customId.replace('variant_quick:', '')
   const context = pendingVariantContexts.get(contextHash)
@@ -341,7 +334,7 @@ export async function handleVariantQuickSelectMenu(
  * Stores the chosen scope in context. If variant was already picked, applies immediately.
  */
 export async function handleVariantScopeSelectMenu(
-  interaction: StringSelectMenuInteraction,
+  interaction: SelectMenuEvent,
 ): Promise<void> {
   const contextHash = interaction.customId.replace('variant_scope:', '')
   const context = pendingVariantContexts.get(contextHash)
@@ -391,7 +384,7 @@ async function applyVariant({
   scope,
   contextHash,
 }: {
-  interaction: StringSelectMenuInteraction
+  interaction: SelectMenuEvent
   context: PendingVariantContext
   variant: string | null
   scope: string

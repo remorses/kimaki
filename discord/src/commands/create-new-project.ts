@@ -1,14 +1,17 @@
 // /create-new-project command - Create a new project folder, initialize git, and start a session.
 // Also exports createNewProject() for reuse during onboarding (welcome channel creation).
 
-import { ChannelType, type Guild, type TextChannel } from 'discord.js'
+import { ChannelType, type Guild, type TextChannel, type ThreadChannel } from 'discord.js'
 import fs from 'node:fs'
 import path from 'node:path'
 import { execAsync } from '../worktrees.js'
 import type { CommandContext } from './types.js'
 import { getProjectsDir } from '../config.js'
 import { createProjectChannels } from '../channel-management.js'
-import { getOrCreateRuntime } from '../session-handler/thread-session-runtime.js'
+import {
+  getDefaultRuntimeAdapter,
+  getOrCreateRuntime,
+} from '../session-handler/thread-session-runtime.js'
 import { SILENT_MESSAGE_FLAGS } from '../discord-utils.js'
 import { createLogger, LogPrefix } from '../logger.js'
 
@@ -149,19 +152,27 @@ export async function handleCreateNewProjectCommand({
       `✅ Created new project **${sanitizedName}**\n📁 Directory: \`${projectDirectory}\`\n📝 Text: <#${textChannelId}>${voiceInfo}\n_Starting session..._`,
     )
 
-    const starterMessage = await textChannel.send({
-      content: `🚀 **New project initialized**\n📁 \`${projectDirectory}\``,
+    const adapter = getDefaultRuntimeAdapter()
+    if (!adapter) {
+      throw new Error('No runtime adapter configured')
+    }
+    const channelTarget = {
+      channelId: textChannel.id,
+    }
+    const starterMessage = await adapter.sendMessage(channelTarget, {
+      markdown: `🚀 **New project initialized**\n📁 \`${projectDirectory}\``,
       flags: SILENT_MESSAGE_FLAGS,
     })
 
-    const thread = await starterMessage.startThread({
+    const { thread, target: threadTarget } = await adapter.createThread({
+      channelId: channelTarget.channelId,
+      messageId: starterMessage.id,
       name: `Init: ${sanitizedName}`,
       autoArchiveDuration: 1440,
       reason: 'New project session',
     })
 
-    // Add user to thread so it appears in their sidebar
-    await thread.members.add(command.user.id)
+    await adapter.addThreadMember(threadTarget.threadId, command.user.id)
 
     const runtime = getOrCreateRuntime({
       threadId: thread.id,

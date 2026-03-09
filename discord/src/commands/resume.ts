@@ -15,10 +15,14 @@ import {
   getAllThreadSessionIds,
 } from '../database.js'
 import { initializeOpencodeForDirectory } from '../opencode.js'
-import { sendThreadMessage, resolveTextChannel } from '../discord-utils.js'
+import {
+  resolveTextChannel,
+  SILENT_MESSAGE_FLAGS,
+} from '../discord-utils.js'
 import { collectLastAssistantParts } from '../message-formatting.js'
 import { createLogger, LogPrefix } from '../logger.js'
 import * as errore from 'errore'
+import { getDefaultRuntimeAdapter } from '../session-handler/thread-session-runtime.js'
 
 const logger = createLogger(LogPrefix.RESUME)
 
@@ -85,14 +89,26 @@ export async function handleResumeCommand({
 
     const sessionTitle = sessionResponse.data.title
 
-    const thread = await textChannel.threads.create({
+    const adapter = getDefaultRuntimeAdapter()
+    if (!adapter) {
+      throw new Error('No runtime adapter configured')
+    }
+    const channelTarget = {
+      channelId: textChannel.id,
+    }
+    const starterMessage = await adapter.sendMessage(channelTarget, {
+      markdown: `**Resuming session:** ${sessionTitle}`,
+      flags: SILENT_MESSAGE_FLAGS,
+    })
+    const { thread, target: threadTarget } = await adapter.createThread({
+      channelId: channelTarget.channelId,
+      messageId: starterMessage.id,
       name: `Resume: ${sessionTitle}`.slice(0, 100),
       autoArchiveDuration: ThreadAutoArchiveDuration.OneDay,
       reason: `Resuming session ${sessionId}`,
     })
 
-    // Add user to thread so it appears in their sidebar
-    await thread.members.add(command.user.id)
+    await adapter.addThreadMember(threadTarget.threadId, command.user.id)
 
     await setThreadSession(thread.id, sessionId)
 
@@ -109,13 +125,12 @@ export async function handleResumeCommand({
     const messages = messagesResponse.data
 
     await command.editReply(
-      `Resumed session "${sessionTitle}" in ${thread.toString()}`,
+      `Resumed session "${sessionTitle}" in <#${thread.id}>`,
     )
 
-    await sendThreadMessage(
-      thread,
-      `**Resumed session:** ${sessionTitle}\n**Created:** ${new Date(sessionResponse.data.time.created).toLocaleString()}\n\n*Loading ${messages.length} messages...*`,
-    )
+    await adapter.sendMessage(threadTarget, {
+      markdown: `**Resumed session:** ${sessionTitle}\n**Created:** ${new Date(sessionResponse.data.time.created).toLocaleString()}\n\n*Loading ${messages.length} messages...*`,
+    })
 
     try {
       const { partIds, content, skippedCount } = collectLastAssistantParts({
@@ -123,14 +138,15 @@ export async function handleResumeCommand({
       })
 
       if (skippedCount > 0) {
-        await sendThreadMessage(
-          thread,
-          `*Skipped ${skippedCount} older assistant parts...*`,
-        )
+        await adapter.sendMessage(threadTarget, {
+          markdown: `*Skipped ${skippedCount} older assistant parts...*`,
+        })
       }
 
       if (content.trim()) {
-        const discordMessage = await sendThreadMessage(thread, content)
+        const discordMessage = await adapter.sendMessage(threadTarget, {
+          markdown: content,
+        })
 
         // Store part-message mappings atomically
         await setPartMessagesBatch(
@@ -144,16 +160,14 @@ export async function handleResumeCommand({
 
       const messageCount = messages.length
 
-      await sendThreadMessage(
-        thread,
-        `**Session resumed!** Loaded ${messageCount} messages.\n\nYou can now continue the conversation by sending messages in this thread.`,
-      )
+      await adapter.sendMessage(threadTarget, {
+        markdown: `**Session resumed!** Loaded ${messageCount} messages.\n\nYou can now continue the conversation by sending messages in this thread.`,
+      })
     } catch (sendError) {
       logger.error('[RESUME] Error sending messages to thread:', sendError)
-      await sendThreadMessage(
-        thread,
-        `Failed to load message history, but session is connected. You can still send new messages.`,
-      )
+      await adapter.sendMessage(threadTarget, {
+        markdown: `Failed to load message history, but session is connected. You can still send new messages.`,
+      })
     }
   } catch (error) {
     logger.error('[RESUME] Error:', error)

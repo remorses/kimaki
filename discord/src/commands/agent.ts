@@ -2,10 +2,6 @@
 // Also provides quick agent commands like /plan-agent, /build-agent that switch instantly.
 
 import {
-  ChatInputCommandInteraction,
-  StringSelectMenuInteraction,
-  StringSelectMenuBuilder,
-  ActionRowBuilder,
   ChannelType,
   type ThreadChannel,
   type TextChannel,
@@ -23,6 +19,7 @@ import {
 import { initializeOpencodeForDirectory } from '../opencode.js'
 import { resolveTextChannel, getKimakiMetadata } from '../discord-utils.js'
 import { createLogger, LogPrefix } from '../logger.js'
+import type { CommandEvent, SelectMenuEvent } from '../platform/types.js'
 
 const agentLogger = createLogger(LogPrefix.AGENT)
 
@@ -143,7 +140,7 @@ function parseQuickAgentNameFromDescription(
 async function resolveQuickAgentNameFromInteraction({
   command,
 }: {
-  command: ChatInputCommandInteraction
+  command: CommandEvent
 }): Promise<string | undefined> {
   const fromCommandObject = parseQuickAgentNameFromDescription(
     command.command?.description,
@@ -171,7 +168,7 @@ async function resolveQuickAgentNameFromInteraction({
 export async function resolveAgentCommandContext({
   interaction,
 }: {
-  interaction: ChatInputCommandInteraction
+  interaction: CommandEvent
   appId: string
 }): Promise<AgentCommandContext | null> {
   const channel = interaction.channel
@@ -257,7 +254,7 @@ export async function handleAgentCommand({
   interaction,
   appId,
 }: {
-  interaction: ChatInputCommandInteraction
+  interaction: CommandEvent
   appId: string
 }): Promise<void> {
   await interaction.deferReply({ flags: MessageFlags.Ephemeral })
@@ -323,17 +320,13 @@ export async function handleAgentCommand({
       description: (agent.description || `${agent.mode} agent`).slice(0, 100),
     }))
 
-    const selectMenu = new StringSelectMenuBuilder()
-      .setCustomId(`agent_select:${contextHash}`)
-      .setPlaceholder('Select an agent')
-      .addOptions(options)
-
-    const actionRow =
-      new ActionRowBuilder<StringSelectMenuBuilder>().addComponents(selectMenu)
-
-    await interaction.editReply({
-      content: `**Set Agent Preference**\n${currentAgentText}\nSelect an agent:`,
-      components: [actionRow],
+    await interaction.editUiReply({
+      markdown: `**Set Agent Preference**\n${currentAgentText}\nSelect an agent:`,
+      selectMenu: {
+        id: `agent_select:${contextHash}`,
+        placeholder: 'Select an agent',
+        options,
+      },
     })
   } catch (error) {
     agentLogger.error('Error loading agents:', error)
@@ -344,7 +337,7 @@ export async function handleAgentCommand({
 }
 
 export async function handleAgentSelectMenu(
-  interaction: StringSelectMenuInteraction,
+  interaction: SelectMenuEvent,
 ): Promise<void> {
   const customId = interaction.customId
 
@@ -412,7 +405,7 @@ export async function handleQuickAgentCommand({
   command,
   appId,
 }: {
-  command: ChatInputCommandInteraction
+  command: CommandEvent
   appId: string
 }): Promise<void> {
   const fallbackAgentName = command.commandName.replace(/-agent$/, '')

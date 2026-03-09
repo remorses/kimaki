@@ -2,38 +2,35 @@
 // Auto-detects provider from key prefix: sk-* = OpenAI, otherwise Gemini.
 
 import {
-  ActionRowBuilder,
-  type ButtonInteraction,
-  type ChatInputCommandInteraction,
-  ModalBuilder,
-  type ModalSubmitInteraction,
-  TextInputBuilder,
-  TextInputStyle,
   MessageFlags,
 } from 'discord.js'
 import { setGeminiApiKey, setOpenAIApiKey } from '../database.js'
+import type {
+  ButtonEvent,
+  CommandEvent,
+  ModalSubmitEvent,
+  UiModal,
+} from '../platform/types.js'
 
-function buildTranscriptionApiKeyModal(appId: string): ModalBuilder {
-  const modal = new ModalBuilder()
-    .setCustomId(`transcription_apikey_modal:${appId}`)
-    .setTitle('Transcription API Key')
-
-  const apiKeyInput = new TextInputBuilder()
-    .setCustomId('apikey')
-    .setLabel('OpenAI or Gemini API Key')
-    .setPlaceholder('sk-... or AIza...')
-    .setStyle(TextInputStyle.Short)
-    .setRequired(true)
-
-  const actionRow = new ActionRowBuilder<TextInputBuilder>().addComponents(
-    apiKeyInput,
-  )
-  modal.addComponents(actionRow)
-  return modal
+function buildTranscriptionApiKeyModal(appId: string): UiModal {
+  return {
+    id: `transcription_apikey_modal:${appId}`,
+    title: 'Transcription API Key',
+    inputs: [
+      {
+        type: 'text',
+        id: 'apikey',
+        label: 'OpenAI or Gemini API Key',
+        placeholder: 'sk-... or AIza...',
+        style: 'short',
+        required: true,
+      },
+    ],
+  }
 }
 
 export async function handleTranscriptionApiKeyButton(
-  interaction: ButtonInteraction,
+  interaction: ButtonEvent,
 ): Promise<void> {
   if (!interaction.customId.startsWith('transcription_apikey:')) return
 
@@ -55,14 +52,14 @@ export async function handleTranscriptionApiKeyCommand({
   interaction,
   appId,
 }: {
-  interaction: ChatInputCommandInteraction
+  interaction: CommandEvent
   appId: string
 }): Promise<void> {
   await interaction.showModal(buildTranscriptionApiKeyModal(appId))
 }
 
 export async function handleTranscriptionApiKeyModalSubmit(
-  interaction: ModalSubmitInteraction,
+  interaction: ModalSubmitEvent,
 ): Promise<void> {
   if (!interaction.customId.startsWith('transcription_apikey_modal:')) return
 

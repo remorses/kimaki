@@ -1,21 +1,19 @@
-// Message pre-processing pipeline for incoming Discord messages.
+// Message pre-processing pipeline for incoming platform messages.
 // Extracts prompt text, voice transcription, file/text attachments, and
-// session context from a Discord Message before handing off to the runtime.
+// session context before handing off to the runtime.
 //
 // This module exists so discord-bot.ts stays a thin event router and the
 // expensive async work (voice transcription, context fetch, attachment
 // download) runs inside the runtime's serialized preprocessChain —
 // preserving arrival order without a separate threadIngressQueue.
 
-import type { Message, ThreadChannel } from 'discord.js'
 import type { DiscordFileAttachment } from './message-formatting.js'
+import type {
+  KimakiAdapter,
+  PlatformMessage,
+  PlatformThread,
+} from './platform/types.js'
 import type { PreprocessResult } from './session-handler/thread-session-runtime.js'
-import {
-  resolveMentions,
-  getFileAttachments,
-  getTextAttachments,
-} from './message-formatting.js'
-import { processVoiceAttachment } from './voice-handler.js'
 import { initializeOpencodeForDirectory } from './opencode.js'
 import { getCompactSessionContext, getLastSessionId } from './markdown.js'
 import { getThreadSession } from './database.js'
@@ -52,6 +50,7 @@ function extractQueueSuffix(prompt: string): { prompt: string; forceQueue: boole
  * understand domain-specific terms).
  */
 export async function preprocessExistingThreadMessage({
+  adapter,
   message,
   thread,
   projectDirectory,
@@ -60,8 +59,9 @@ export async function preprocessExistingThreadMessage({
   hasVoiceAttachment,
   appId,
 }: {
-  message: Message
-  thread: ThreadChannel
+  adapter: KimakiAdapter
+  message: PlatformMessage
+  thread: PlatformThread
   projectDirectory: string
   channelId: string | undefined
   isCliInjected: boolean
@@ -73,6 +73,7 @@ export async function preprocessExistingThreadMessage({
   // ── No existing session: new session in an existing thread ──
   if (!sessionId) {
     return preprocessNewSessionMessage({
+      adapter,
       message,
       thread,
       projectDirectory,
@@ -86,7 +87,7 @@ export async function preprocessExistingThreadMessage({
 
   let messageContent = isCliInjected
     ? (message.content || '')
-    : resolveMentions(message)
+    : (await adapter.resolveMentions?.(message)) || message.content || ''
 
   // Fetch session context for voice transcription enrichment
   let currentSessionContext: string | undefined
@@ -139,7 +140,7 @@ export async function preprocessExistingThreadMessage({
     }
   }
 
-  const voiceResult = await processVoiceAttachment({
+  const voiceResult = await adapter.processVoiceAttachment?.({
     message,
     thread,
     projectDirectory,
@@ -156,8 +157,8 @@ export async function preprocessExistingThreadMessage({
     return { prompt: '', mode: 'opencode', skip: true }
   }
 
-  const fileAttachments = await getFileAttachments(message)
-  const textAttachmentsContent = await getTextAttachments(message)
+  const fileAttachments = await adapter.getFileAttachments?.(message) || []
+  const textAttachmentsContent = await adapter.getTextAttachments?.(message) || ''
   const promptWithAttachments = textAttachmentsContent
     ? `${messageContent}\n\n${textAttachmentsContent}`
     : messageContent
@@ -176,22 +177,24 @@ export async function preprocessExistingThreadMessage({
  * text/file attachments.
  */
 export async function preprocessNewSessionMessage({
+  adapter,
   message,
   thread,
   projectDirectory,
   hasVoiceAttachment,
   appId,
 }: {
-  message: Message
-  thread: ThreadChannel
+  adapter: KimakiAdapter
+  message: PlatformMessage
+  thread: PlatformThread
   projectDirectory: string
   hasVoiceAttachment: boolean
   appId?: string
 }): Promise<PreprocessResult> {
   logger.log(`No session for thread ${thread.id}, starting new session`)
 
-  let prompt = resolveMentions(message)
-  const voiceResult = await processVoiceAttachment({
+  let prompt = (await adapter.resolveMentions?.(message)) || message.content || ''
+  const voiceResult = await adapter.processVoiceAttachment?.({
     message,
     thread,
     projectDirectory,
@@ -207,18 +210,17 @@ export async function preprocessNewSessionMessage({
   }
 
   // Fetch starter message for thread context
-  const starterMessage = await thread
-    .fetchStarterMessage()
-    .catch((error) => {
-      logger.warn(
-        `[SESSION] Failed to fetch starter message for thread ${thread.id}:`,
-        error instanceof Error ? error.message : String(error),
-      )
-      return null
-    })
+  const starterMessage = await adapter.fetchStarterMessage(thread.id).catch((error) => {
+    logger.warn(
+      `[SESSION] Failed to fetch starter message for thread ${thread.id}:`,
+      error instanceof Error ? error.message : String(error),
+    )
+    return null
+  })
   if (starterMessage && starterMessage.content !== message.content) {
-    const starterTextAttachments = await getTextAttachments(starterMessage)
-    const starterContent = resolveMentions(starterMessage)
+    const starterTextAttachments = await adapter.getTextAttachments?.(starterMessage) || ''
+    const starterContent =
+      (await adapter.resolveMentions?.(starterMessage)) || starterMessage.content || ''
     const starterText = starterTextAttachments
       ? `${starterContent}\n\n${starterTextAttachments}`
       : starterContent
@@ -239,20 +241,22 @@ export async function preprocessNewSessionMessage({
  * Handles voice transcription and file/text attachments.
  */
 export async function preprocessNewThreadMessage({
+  adapter,
   message,
   thread,
   projectDirectory,
   hasVoiceAttachment,
   appId,
 }: {
-  message: Message
-  thread: ThreadChannel
+  adapter: KimakiAdapter
+  message: PlatformMessage
+  thread: PlatformThread
   projectDirectory: string
   hasVoiceAttachment: boolean
   appId?: string
 }): Promise<PreprocessResult> {
-  let messageContent = resolveMentions(message)
-  const voiceResult = await processVoiceAttachment({
+  let messageContent = (await adapter.resolveMentions?.(message)) || message.content || ''
+  const voiceResult = await adapter.processVoiceAttachment?.({
     message,
     thread,
     projectDirectory,
@@ -268,8 +272,8 @@ export async function preprocessNewThreadMessage({
     return { prompt: '', mode: 'opencode', skip: true }
   }
 
-  const fileAttachments = await getFileAttachments(message)
-  const textAttachmentsContent = await getTextAttachments(message)
+  const fileAttachments = await adapter.getFileAttachments?.(message) || []
+  const textAttachmentsContent = await adapter.getTextAttachments?.(message) || ''
   const promptWithAttachments = textAttachmentsContent
     ? `${messageContent}\n\n${textAttachmentsContent}`
     : messageContent

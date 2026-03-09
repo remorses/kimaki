@@ -57,6 +57,8 @@
     "@prisma/client": "7.4.2",
     "@purinton/resampler": "^1.0.4",
     "@sentry/node": "^10.40.0",
+    "@slack/socket-mode": "^2.0.5",
+    "@slack/web-api": "^7.14.1",
     "cron-parser": "^5.5.0",
     "discord.js": "^14.25.1",
     "domhandler": "^5.0.3",

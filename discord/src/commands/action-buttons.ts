@@ -2,26 +2,21 @@
 // Used by the kimaki_action_buttons tool to render up to 3 buttons and route
 // button clicks back into the session as a new user message.
 
-import {
-  ActionRowBuilder,
-  ButtonBuilder,
-  ButtonStyle,
-  MessageFlags,
-  type ButtonInteraction,
-  type ThreadChannel,
-} from 'discord.js'
+import { MessageFlags, type ThreadChannel } from 'discord.js'
 import crypto from 'node:crypto'
 import { getThreadSession } from '../database.js'
 import {
   NOTIFY_MESSAGE_FLAGS,
   resolveWorkingDirectory,
-  sendThreadMessage,
 } from '../discord-utils.js'
 import { createLogger } from '../logger.js'
 import { notifyError } from '../sentry.js'
 import {
+  getDefaultRuntimeAdapter,
   getOrCreateRuntime,
 } from '../session-handler/thread-session-runtime.js'
+import { platformThreadFromDiscord } from '../platform/platform-value.js'
+import type { ButtonEvent, PlatformThread, UiButtonStyle } from '../platform/types.js'
 
 const logger = createLogger('ACT_BTN')
 const PENDING_TTL_MS = 24 * 60 * 60 * 1000
@@ -43,7 +38,7 @@ export type ActionButtonsRequest = {
 type PendingActionButtonsContext = {
   sessionId: string
   directory: string
-  thread: ThreadChannel
+  thread: PlatformThread
   buttons: ActionButtonOption[]
   contextHash: string
   messageId?: string
@@ -104,17 +99,24 @@ export async function waitForQueuedActionButtonsRequest({
   })
 }
 
-function toButtonStyle(color?: ActionButtonColor): ButtonStyle {
+function toButtonStyle(color?: ActionButtonColor): UiButtonStyle {
   if (color === 'blue') {
-    return ButtonStyle.Primary
+    return 'primary'
   }
   if (color === 'green') {
-    return ButtonStyle.Success
+    return 'success'
   }
   if (color === 'red') {
-    return ButtonStyle.Danger
+    return 'danger'
   }
-  return ButtonStyle.Secondary
+  return 'secondary'
+}
+
+function normalizeThread(thread: PlatformThread | ThreadChannel): PlatformThread {
+  if ('raw' in thread) {
+    return thread
+  }
+  return platformThreadFromDiscord(thread)
 }
 
 function resolveContext(context: PendingActionButtonsContext): boolean {
@@ -137,15 +139,17 @@ function updateButtonMessage({
   if (!context.messageId) {
     return
   }
-  context.thread.messages
-    .fetch(context.messageId)
-    .then((message) => {
-      return message.edit({
-        content: `**Action Required**\n${status}`,
-        components: [],
-      })
-    })
-    .catch(() => {})
+  const adapter = getDefaultRuntimeAdapter()
+  if (!adapter) {
+    return
+  }
+  const threadTarget = {
+    channelId: context.thread.parentId || context.thread.id,
+    threadId: context.thread.id,
+  }
+  void adapter.updateMessage(threadTarget, context.messageId, {
+    markdown: `**Action Required**\n${status}`,
+  }).catch(() => {})
 }
 
 async function sendClickedActionToModel({
@@ -153,11 +157,12 @@ async function sendClickedActionToModel({
   thread,
   prompt,
 }: {
-  interaction: ButtonInteraction
-  thread: ThreadChannel
+  interaction: ButtonEvent
+  thread: PlatformThread | ThreadChannel
   prompt: string
 }): Promise<void> {
-  const resolved = await resolveWorkingDirectory({ channel: thread })
+  const normalizedThread = normalizeThread(thread)
+  const resolved = await resolveWorkingDirectory({ channel: normalizedThread })
   if (!resolved) {
     throw new Error('Could not resolve project directory for thread')
   }
@@ -166,11 +171,11 @@ async function sendClickedActionToModel({
 
   // Action button clicks use opencode queue mode.
   const runtime = getOrCreateRuntime({
-    threadId: thread.id,
-    thread,
+    threadId: normalizedThread.id,
+    thread: normalizedThread,
     projectDirectory: resolved.projectDirectory,
     sdkDirectory: resolved.workingDirectory,
-    channelId: thread.parentId || thread.id,
+    channelId: normalizedThread.parentId || normalizedThread.id,
   })
   await runtime.enqueueIncoming({
     prompt,
@@ -186,11 +191,12 @@ export async function showActionButtons({
   directory,
   buttons,
 }: {
-  thread: ThreadChannel
+  thread: PlatformThread | ThreadChannel
   sessionId: string
   directory: string
   buttons: ActionButtonOption[]
 }): Promise<void> {
+  const normalizedThread = normalizeThread(thread)
   const safeButtons = buttons
     .slice(0, 3)
     .map((button) => {
@@ -220,7 +226,7 @@ export async function showActionButtons({
   const context: PendingActionButtonsContext = {
     sessionId,
     directory,
-    thread,
+    thread: normalizedThread,
     buttons: safeButtons,
     contextHash,
     resolved: false,
@@ -228,21 +234,28 @@ export async function showActionButtons({
   }
 
   pendingActionButtonContexts.set(contextHash, context)
-
-  const row = new ActionRowBuilder<ButtonBuilder>().addComponents(
-    ...safeButtons.map((button, index) => {
-      return new ButtonBuilder()
-        .setCustomId(`action_button:${contextHash}:${index}`)
-        .setLabel(button.label)
-        .setStyle(toButtonStyle(button.color))
-    }),
-  )
+  const adapter = getDefaultRuntimeAdapter()
+  if (!adapter) {
+    clearTimeout(timer)
+    pendingActionButtonContexts.delete(contextHash)
+    throw new Error('No runtime adapter configured')
+  }
+  const threadTarget = {
+    channelId: normalizedThread.parentId || normalizedThread.id,
+    threadId: normalizedThread.id,
+  }
 
   try {
-    const message = await thread.send({
-      content: '**Action Required**',
-      components: [row],
+    const message = await adapter.sendMessage(threadTarget, {
+      markdown: '**Action Required**',
       flags: NOTIFY_MESSAGE_FLAGS,
+      buttons: safeButtons.map((button, index) => {
+        return {
+          id: `action_button:${contextHash}:${index}`,
+          label: button.label,
+          style: toButtonStyle(button.color),
+        }
+      }),
     })
 
     context.messageId = message.id
@@ -257,7 +270,7 @@ export async function showActionButtons({
 }
 
 export async function handleActionButton(
-  interaction: ButtonInteraction,
+  interaction: ButtonEvent,
 ): Promise<void> {
   const customId = interaction.customId
   if (!customId.startsWith('action_button:')) {
@@ -333,9 +346,18 @@ export async function handleActionButton(
   } catch (error) {
     logger.error('[ACTION] Failed to send click to model:', error)
     void notifyError(error, 'Action button click send to model failed')
-    await sendThreadMessage(
-      thread,
-      `Failed to send action click: ${error instanceof Error ? error.message : String(error)}`,
+    const adapter = getDefaultRuntimeAdapter()
+    if (!adapter) {
+      return
+    }
+    await adapter.sendMessage(
+      {
+        channelId: thread.parentId || thread.id,
+        threadId: thread.id,
+      },
+      {
+        markdown: `Failed to send action click: ${error instanceof Error ? error.message : String(error)}`,
+      },
     )
   }
 }

@@ -2,19 +2,15 @@
 // When OpenCode asks for permission, this module renders 3 buttons:
 // Accept, Accept Always, and Deny.
 
-import {
-  ButtonBuilder,
-  ButtonStyle,
-  type ButtonInteraction,
-  ActionRowBuilder,
-  type ThreadChannel,
-  MessageFlags,
-} from 'discord.js'
+import { MessageFlags, type ThreadChannel } from 'discord.js'
 import crypto from 'node:crypto'
 import type { PermissionRequest } from '@opencode-ai/sdk/v2'
 import { getOpencodeClient } from '../opencode.js'
 import { NOTIFY_MESSAGE_FLAGS } from '../discord-utils.js'
 import { createLogger, LogPrefix } from '../logger.js'
+import type { ButtonEvent, PlatformThread } from '../platform/types.js'
+import { platformThreadFromDiscord } from '../platform/platform-value.js'
+import { getDefaultRuntimeAdapter } from '../session-handler/thread-session-runtime.js'
 
 const logger = createLogger(LogPrefix.PERMISSIONS)
 
@@ -68,7 +64,7 @@ type PendingPermissionContext = {
   requestIds: string[]
   directory: string
   permissionDirectory: string
-  thread: ThreadChannel
+  thread: PlatformThread
   contextHash: string
 }
 
@@ -103,20 +99,21 @@ export async function showPermissionButtons({
   permissionDirectory,
   subtaskLabel,
 }: {
-  thread: ThreadChannel
+  thread: PlatformThread | ThreadChannel
   permission: PermissionRequest
   directory: string
   permissionDirectory: string
   subtaskLabel?: string
 }): Promise<{ messageId: string; contextHash: string }> {
   const contextHash = crypto.randomBytes(8).toString('hex')
+  const normalizedThread = 'raw' in thread ? thread : platformThreadFromDiscord(thread)
 
   const context: PendingPermissionContext = {
     permission,
     requestIds: [permission.id],
     directory,
     permissionDirectory,
-    thread,
+    thread: normalizedThread,
     contextHash,
   }
 
@@ -150,27 +147,10 @@ export async function showPermissionButtons({
 
   const patternStr = compactPermissionPatterns(permission.patterns).join(', ')
 
-  // Build 3 buttons for permission actions
-  const acceptButton = new ButtonBuilder()
-    .setCustomId(`permission_once:${contextHash}`)
-    .setLabel('Accept')
-    .setStyle(ButtonStyle.Success)
-
-  const acceptAlwaysButton = new ButtonBuilder()
-    .setCustomId(`permission_always:${contextHash}`)
-    .setLabel('Accept Always')
-    .setStyle(ButtonStyle.Success)
-
-  const denyButton = new ButtonBuilder()
-    .setCustomId(`permission_reject:${contextHash}`)
-    .setLabel('Deny')
-    .setStyle(ButtonStyle.Secondary)
-
-  const actionRow = new ActionRowBuilder<ButtonBuilder>().addComponents(
-    acceptButton,
-    acceptAlwaysButton,
-    denyButton,
-  )
+  const adapter = getDefaultRuntimeAdapter()
+  if (!adapter) {
+    throw new Error('No runtime adapter configured')
+  }
 
   const subtaskLine = subtaskLabel ? `**From:** \`${subtaskLabel}\`\n` : ''
   const externalDirLine =
@@ -183,11 +163,33 @@ export async function showPermissionButtons({
     `**Type:** \`${permission.permission}\`\n` +
     externalDirLine +
     (patternStr ? `**Pattern:** \`${patternStr}\`` : '')
-  const permissionMessage = await thread.send({
-    content: fullContent.slice(0, 1900),
-    components: [actionRow],
-    flags: NOTIFY_MESSAGE_FLAGS | MessageFlags.SuppressEmbeds,
-  })
+  const permissionMessage = await adapter.sendMessage(
+      {
+        channelId: normalizedThread.parentId || normalizedThread.id,
+        threadId: normalizedThread.id,
+      },
+    {
+      markdown: fullContent.slice(0, 1900),
+      buttons: [
+        {
+          id: `permission_once:${contextHash}`,
+          label: 'Accept',
+          style: 'success',
+        },
+        {
+          id: `permission_always:${contextHash}`,
+          label: 'Accept Always',
+          style: 'success',
+        },
+        {
+          id: `permission_reject:${contextHash}`,
+          label: 'Deny',
+          style: 'secondary',
+        },
+      ],
+      flags: NOTIFY_MESSAGE_FLAGS | MessageFlags.SuppressEmbeds,
+    },
+  )
 
   logger.log(`Showed permission buttons for ${permission.id}`)
 
@@ -198,7 +200,7 @@ export async function showPermissionButtons({
  * Handle button click for permission.
  */
 export async function handlePermissionButton(
-  interaction: ButtonInteraction,
+  interaction: ButtonEvent,
 ): Promise<void> {
   const customId = interaction.customId
 

@@ -5,10 +5,6 @@
 // 'text_only': only shows text responses
 
 import {
-  ChatInputCommandInteraction,
-  StringSelectMenuInteraction,
-  StringSelectMenuBuilder,
-  ActionRowBuilder,
   MessageFlags,
   ChannelType,
   type ThreadChannel,
@@ -21,6 +17,7 @@ import {
 import { getPrisma } from '../db.js'
 import { store } from '../store.js'
 import { createLogger, LogPrefix } from '../logger.js'
+import type { CommandEvent, SelectMenuEvent } from '../platform/types.js'
 
 const verbosityLogger = createLogger(LogPrefix.VERBOSITY)
 
@@ -46,7 +43,7 @@ const VERBOSITY_OPTIONS: Array<{
   },
 ]
 
-function resolveChannelId(channel: ChatInputCommandInteraction['channel']): string | null {
+function resolveChannelId(channel: CommandEvent['channel']): string | null {
   if (!channel) {
     return null
   }
@@ -87,7 +84,7 @@ async function getChannelVerbosityOverride(
 export async function handleVerbosityCommand({
   command,
 }: {
-  command: ChatInputCommandInteraction
+  command: CommandEvent
   appId: string
 }): Promise<void> {
   verbosityLogger.log('[VERBOSITY] Command called')
@@ -112,17 +109,13 @@ export async function handleVerbosityCommand({
     default: opt.value === currentLevel,
   }))
 
-  const selectMenu = new StringSelectMenuBuilder()
-    .setCustomId(`verbosity_select:${channelId}`)
-    .setPlaceholder('Select verbosity level')
-    .addOptions(options)
-
-  const actionRow =
-    new ActionRowBuilder<StringSelectMenuBuilder>().addComponents(selectMenu)
-
-  await command.reply({
-    content: `**Verbosity**\nCurrent: \`${currentLevel}\` (${source})`,
-    components: [actionRow],
+  await command.replyUi({
+    markdown: `**Verbosity**\nCurrent: \`${currentLevel}\` (${source})`,
+    selectMenu: {
+      id: `verbosity_select:${channelId}`,
+      placeholder: 'Select verbosity level',
+      options,
+    },
     flags: MessageFlags.Ephemeral,
   })
 }
@@ -132,7 +125,7 @@ export async function handleVerbosityCommand({
  * Sets the selected verbosity level for the channel.
  */
 export async function handleVerbositySelectMenu(
-  interaction: StringSelectMenuInteraction,
+  interaction: SelectMenuEvent,
 ): Promise<void> {
   const customId = interaction.customId
   if (!customId.startsWith('verbosity_select:')) {

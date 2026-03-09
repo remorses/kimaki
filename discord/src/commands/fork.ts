@@ -1,10 +1,6 @@
 // /fork command - Fork the session from a past user message.
 
 import {
-  ChatInputCommandInteraction,
-  StringSelectMenuInteraction,
-  StringSelectMenuBuilder,
-  ActionRowBuilder,
   ChannelType,
   ThreadAutoArchiveDuration,
   type ThreadChannel,
@@ -19,17 +15,19 @@ import { initializeOpencodeForDirectory } from '../opencode.js'
 import {
   resolveWorkingDirectory,
   resolveTextChannel,
-  sendThreadMessage,
+  SILENT_MESSAGE_FLAGS,
 } from '../discord-utils.js'
 import { collectLastAssistantParts } from '../message-formatting.js'
 import { createLogger, LogPrefix } from '../logger.js'
 import * as errore from 'errore'
+import type { CommandEvent, SelectMenuEvent } from '../platform/types.js'
+import { getDefaultRuntimeAdapter } from '../session-handler/thread-session-runtime.js'
 
 const sessionLogger = createLogger(LogPrefix.SESSION)
 const forkLogger = createLogger(LogPrefix.FORK)
 
 export async function handleForkCommand(
-  interaction: ChatInputCommandInteraction,
+  interaction: CommandEvent,
 ): Promise<void> {
   const channel = interaction.channel
 
@@ -149,21 +147,14 @@ export async function handleForkCommand(
         (o): o is NonNullable<typeof o> => o !== null,
       )
 
-    const selectMenu = new StringSelectMenuBuilder()
-      // Discord component custom_id max length is 100 chars.
-      // Avoid embedding long directory paths (or base64 of them) in the custom ID.
-      // handleForkSelectMenu resolves the directory from the current thread instead.
-      .setCustomId(`fork_select:${sessionId}`)
-      .setPlaceholder('Select a message to fork from')
-      .addOptions(options)
-
-    const actionRow =
-      new ActionRowBuilder<StringSelectMenuBuilder>().addComponents(selectMenu)
-
-    await interaction.editReply({
-      content:
+    await interaction.editUiReply({
+      markdown:
         '**Fork Session**\nSelect the user message to fork from. The forked session will continue as if you had not sent that message:',
-      components: [actionRow],
+      selectMenu: {
+        id: `fork_select:${sessionId}`,
+        placeholder: 'Select a message to fork from',
+        options,
+      },
     })
   } catch (error) {
     forkLogger.error('Error loading messages:', error)
@@ -174,7 +165,7 @@ export async function handleForkCommand(
 }
 
 export async function handleForkSelectMenu(
-  interaction: StringSelectMenuInteraction,
+  interaction: SelectMenuEvent,
 ): Promise<void> {
   const customId = interaction.customId
 
@@ -259,14 +250,26 @@ export async function handleForkSelectMenu(
       return
     }
 
-    const thread = await textChannel.threads.create({
+    const adapter = getDefaultRuntimeAdapter()
+    if (!adapter) {
+      throw new Error('No runtime adapter configured')
+    }
+    const channelTarget = {
+      channelId: textChannel.id,
+    }
+    const starterMessage = await adapter.sendMessage(channelTarget, {
+      markdown: `**Forking session:** ${forkedSession.title}`,
+      flags: SILENT_MESSAGE_FLAGS,
+    })
+    const { thread, target: threadTarget } = await adapter.createThread({
+      channelId: channelTarget.channelId,
+      messageId: starterMessage.id,
       name: `Fork: ${forkedSession.title}`.slice(0, 100),
       autoArchiveDuration: ThreadAutoArchiveDuration.OneDay,
       reason: `Forked from session ${sessionId}`,
     })
 
-    // Add user to thread so it appears in their sidebar
-    await thread.members.add(interaction.user.id)
+    await adapter.addThreadMember(threadTarget.threadId, interaction.user.id)
 
     await setThreadSession(thread.id, forkedSession.id)
 
@@ -274,10 +277,9 @@ export async function handleForkSelectMenu(
       `Created forked session ${forkedSession.id} in thread ${thread.id}`,
     )
 
-    await sendThreadMessage(
-      thread,
-      `**Forked session created!**\nFrom: \`${sessionId}\`\nNew session: \`${forkedSession.id}\``,
-    )
+    await adapter.sendMessage(threadTarget, {
+      markdown: `**Forked session created!**\nFrom: \`${sessionId}\`\nNew session: \`${forkedSession.id}\``,
+    })
 
     // Fetch and display the last assistant messages from the forked session
     const messagesResponse = await getClient().session.messages({
@@ -289,8 +291,10 @@ export async function handleForkSelectMenu(
         messages: messagesResponse.data,
       })
 
-      if (content.trim()) {
-        const discordMessage = await sendThreadMessage(thread, content)
+        if (content.trim()) {
+        const discordMessage = await adapter.sendMessage(threadTarget, {
+          markdown: content,
+        })
 
         // Store part-message mappings atomically
         await setPartMessagesBatch(
@@ -303,13 +307,12 @@ export async function handleForkSelectMenu(
       }
     }
 
-    await sendThreadMessage(
-      thread,
-      `You can now continue the conversation from this point.`,
-    )
+    await adapter.sendMessage(threadTarget, {
+      markdown: `You can now continue the conversation from this point.`,
+    })
 
     await interaction.editReply(
-      `Session forked! Continue in ${thread.toString()}`,
+      `Session forked! Continue in <#${thread.id}>`,
     )
   } catch (error) {
     forkLogger.error('Error forking session:', error)
