@@ -41,6 +41,7 @@ type PendingQuestionContext = {
   totalQuestions: number
   answeredCount: number
   contextHash: string
+
 }
 
 // Store pending question contexts by hash.
@@ -77,27 +78,31 @@ export async function showAskUserQuestionDropdowns({
     totalQuestions: input.questions.length,
     answeredCount: 0,
     contextHash,
+
   }
 
   pendingQuestionContexts.set(contextHash, context)
-  // Auto-answer on TTL expiry so the OpenCode session doesn't hang forever
-  // waiting for a question reply that will never come.
+  // On TTL expiry: hide the dropdown UI and abort the session so OpenCode
+  // unblocks. We intentionally do NOT call question.reply() — sending 'Other'
+  // made the model think the user chose an option when they didn't.
   setTimeout(async () => {
     const ctx = pendingQuestionContexts.get(contextHash)
     if (!ctx) {
       return
     }
+    // Re-check context before aborting — user may have answered during the
+    // async edits above, which deletes the context. Aborting after a
+    // successful late answer would kill a valid run.
+    if (!pendingQuestionContexts.has(contextHash)) {
+      return
+    }
+    // Abort the session so OpenCode isn't stuck waiting for a reply
     const client = getOpencodeClient(ctx.directory)
     if (client) {
-      const answers = ctx.questions.map((_, i) => {
-        return ctx.answers[i] || ['Other']
-      })
-      await client.question.reply({
-        requestID: ctx.requestId,
-        directory: ctx.directory,
-        answers,
+      await client.session.abort({
+        sessionID: ctx.sessionId,
       }).catch((error) => {
-        logger.error('Failed to auto-answer expired question:', error)
+        logger.error('Failed to abort session after question expiry:', error)
       })
     }
     pendingQuestionContexts.delete(contextHash)
@@ -332,16 +337,22 @@ export async function cancelPendingQuestion(
     return 'no-pending'
   }
 
+  // undefined means teardown/cleanup — just remove context, don't reply.
+  // The session is already being torn down. Empty string '' is a valid
+  // user message (attachment-only, voice, etc.) and must still go through.
+  if (userMessage === undefined) {
+    pendingQuestionContexts.delete(contextHash)
+    return 'no-pending'
+  }
+
   try {
     const client = getOpencodeClient(context.directory)
     if (!client) {
       throw new Error('OpenCode server not found for directory')
     }
 
-    // Use user's message as answer if provided, otherwise mark as "Other"
-    const customAnswer = userMessage || 'Other'
     const answers = context.questions.map((_, i) => {
-      return context.answers[i] || [customAnswer]
+      return context.answers[i] || [userMessage]
     })
 
     await client.question.reply({
@@ -353,7 +364,7 @@ export async function cancelPendingQuestion(
     logger.log(`Answered question ${context.requestId} with user message`)
   } catch (error) {
     logger.error('Failed to answer question:', error)
-    // Keep context pending so TTL auto-answer can still fire.
+    // Keep context pending so TTL can still fire.
     // Caller should not consume the user message since reply failed.
     return 'reply-failed'
   }
