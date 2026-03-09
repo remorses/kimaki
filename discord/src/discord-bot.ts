@@ -289,13 +289,8 @@ export async function startDiscordBot({
 
         if (kimakiChannels.length > 0) {
           discordLogger.log(
-            `  Found ${kimakiChannels.length} channel(s) for this bot:`,
+            `  Found ${kimakiChannels.length} channel(s) for this bot`,
           )
-          for (const channel of kimakiChannels) {
-            discordLogger.log(
-              `  - #${channel.name}: ${channel.kimakiDirectory}`,
-            )
-          }
           continue
         }
 
