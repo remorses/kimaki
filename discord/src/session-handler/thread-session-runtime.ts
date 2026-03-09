@@ -285,7 +285,7 @@ function cleanupPendingUiForThread(threadId: string): void {
     pendingPermissions.delete(threadId)
   }
 
-  // Questions: cancel sends "Other" as answer to OpenCode so it unblocks.
+  // Questions: cancel deletes pending context without replying to OpenCode.
   void cancelPendingQuestion(threadId)
 
   // Action buttons: resolves context and clears timer.

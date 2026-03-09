@@ -90,12 +90,11 @@ export async function showAskUserQuestionDropdowns({
     if (!ctx) {
       return
     }
-    // Re-check context before aborting — user may have answered during the
-    // async edits above, which deletes the context. Aborting after a
-    // successful late answer would kill a valid run.
-    if (!pendingQuestionContexts.has(contextHash)) {
-      return
-    }
+    // Delete context first so the dropdown becomes inert immediately.
+    // Without this, a user clicking during the abort() await would still
+    // be accepted by handleAskQuestionSelectMenu, then abort() would
+    // kill that valid run.
+    pendingQuestionContexts.delete(contextHash)
     // Abort the session so OpenCode isn't stuck waiting for a reply
     const client = getOpencodeClient(ctx.directory)
     if (client) {
@@ -105,7 +104,6 @@ export async function showAskUserQuestionDropdowns({
         logger.error('Failed to abort session after question expiry:', error)
       })
     }
-    pendingQuestionContexts.delete(contextHash)
   }, QUESTION_CONTEXT_TTL_MS).unref()
 
   // Send one message per question with its dropdown directly underneath
