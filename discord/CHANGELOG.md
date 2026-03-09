@@ -1,5 +1,31 @@
 # Changelog
 
+## 0.4.76
+
+1. **SSE wire format for programmatic gateway events** — `kimaki --gateway` in headless/non-TTY mode now emits events using the SSE wire format (`data: {...}\n\n`) instead of bare JSON lines. This lets consumers use the `eventsource-parser` npm package to reliably extract events even when log noise, warnings, or spinner output is interleaved on stdout:
+   ```ts
+   import { createParser } from 'eventsource-parser'
+   const parser = createParser((event) => {
+     if (event.type === 'event') {
+       const e = JSON.parse(event.data) // ProgrammaticEvent
+     }
+   })
+   // pipe kimaki stdout chunks into parser.feed(chunk)
+   ```
+   The event shape is unchanged (`install_url`, `authorized`, `ready`, `error`).
+
+2. **Default channel and welcome message created in headless mode** — when spawning `kimaki --gateway` programmatically (non-TTY), the default `#kimaki` channel and onboarding welcome thread are now created automatically after the bot connects, matching what the interactive setup flow does.
+
+3. **Fixed gateway `--gateway-callback-url` redirect** — the `--gateway-callback-url` CLI option was silently ignored: the OAuth callback hook returned a double-wrapped response object instead of a `302 Response`, so users always landed on `/install-success` regardless of the custom URL.
+
+4. **Fixed question tool duplicate prompt on text answer** — when the model used the question tool and the user replied with a plain text message instead of using the dropdown, the message was sent both as a question answer and as a new prompt, causing repeated abort/retry cycles. Text answers now skip the re-enqueue path.
+
+5. **Fixed question tool TTL expiry behavior** — when the 10-minute timeout expired on a pending question, the bot was sending `['Other']` as a fake answer — causing the model to act on a choice the user never made. On expiry it now aborts the session silently without faking a selection.
+
+6. **Fixed race between question dropdown click and session abort** — deleting the pending question context before calling `session.abort()` prevents a late dropdown click during the async abort from being accepted and then immediately killed.
+
+7. **More punctuation supported in `. queue` suffix** — `!`, `?`, `,`, `;`, `:` are now accepted before `queue` in addition to `.`, and a trailing period is optional. Patterns like `Fix the bug! queue` or `Do this? queue.` now work.
+
 ## 0.4.75
 
 1. **Default Kimaki channel created on onboarding** — a `kimaki-{botName}` channel (or `kimaki` in gateway mode) is now automatically created in the Kimaki category for general-purpose tasks. It's not tied to a project — the backing directory is `~/.kimaki/projects/kimaki`, initialized with git. Idempotent: skipped if the channel already exists.
