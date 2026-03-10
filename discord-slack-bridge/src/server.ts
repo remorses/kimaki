@@ -49,10 +49,10 @@ import {
 import * as rest from './rest-translator.js'
 import * as events from './event-translator.js'
 import {
+  encodeThreadId,
   encodeMessageId,
   resolveDiscordChannelId,
   resolveSlackTarget,
-  decodeSlackTs,
 } from './id-converter.js'
 import { decodeComponentActionId } from './component-id-codec.js'
 import type {
@@ -168,11 +168,22 @@ export function createServer(config: ServerConfig): ServerComponents {
   const seenEventIds = new Map<string, number>()
 
   // Track announced threads so we emit THREAD_CREATE exactly once per thread.
+  // Keyed by encoded thread ID (channel + thread_ts) to avoid cross-channel
+  // collisions when Slack thread_ts values are the same in different channels.
   // Bounded to prevent memory leaks on long-running bots.
   const KNOWN_THREADS_MAX = 10_000
   const knownThreads = new Set<string>()
 
-  const app = new Spiceflow({ basePath: '' })
+  const app = new Spiceflow({ basePath: '' }).onError(({ error }) => {
+    if (error instanceof Response) {
+      return error
+    }
+    return errorJsonResponse({
+      status: 500,
+      error: 'internal_server_error',
+      details: getErrorMessage(error),
+    })
+  })
 
   // ---- Slack Webhook Receiver ----
 
@@ -183,7 +194,7 @@ export function createServer(config: ServerConfig): ServerComponents {
     const timestamp = request.headers.get('x-slack-request-timestamp')
     const signature = request.headers.get('x-slack-signature')
     if (!verifySignature(body, timestamp, signature, signingSecret)) {
-      return new Response('Invalid signature', { status: 401 })
+      return errorJsonResponse({ status: 401, error: 'invalid_signature' })
     }
 
     // Check content type for interactive payloads (form-urlencoded)
@@ -212,12 +223,12 @@ export function createServer(config: ServerConfig): ServerComponents {
     try {
       payload = JSON.parse(body)
     } catch {
-      return new Response('Invalid JSON', { status: 400 })
+      return errorJsonResponse({ status: 400, error: 'invalid_json' })
     }
 
     const normalizedEnvelope = normalizeSlackEventEnvelope(payload)
     if (!normalizedEnvelope) {
-      return new Response('Unsupported event payload', { status: 400 })
+      return errorJsonResponse({ status: 400, error: 'unsupported_event_payload' })
     }
 
     // URL verification challenge
@@ -268,7 +279,7 @@ export function createServer(config: ServerConfig): ServerComponents {
   app.get('/api/v10/users/:user_id', async ({ params }) => {
     const userId = readString(params, 'user_id')
     if (!userId) {
-      return new Response('Missing user_id', { status: 400 })
+      return errorJsonResponse({ status: 400, error: 'missing_user_id' })
     }
     const user = await rest.getUser({
       slack,
@@ -295,7 +306,7 @@ export function createServer(config: ServerConfig): ServerComponents {
       const body = normalizePostMessageBody(await request.json())
       const channelId = readString(params, 'channel_id')
       if (!channelId) {
-        return new Response('Missing channel_id', { status: 400 })
+        return errorJsonResponse({ status: 400, error: 'missing_channel_id' })
       }
       const message = await rest.postMessage({
         slack,
@@ -317,7 +328,7 @@ export function createServer(config: ServerConfig): ServerComponents {
       const channelId = readString(params, 'channel_id')
       const messageId = readString(params, 'message_id')
       if (!(channelId && messageId)) {
-        return new Response('Missing channel_id or message_id', { status: 400 })
+        return errorJsonResponse({ status: 400, error: 'missing_channel_or_message_id' })
       }
       const message = await rest.editMessage({
         slack,
@@ -339,7 +350,7 @@ export function createServer(config: ServerConfig): ServerComponents {
       const channelId = readString(params, 'channel_id')
       const messageId = readString(params, 'message_id')
       if (!(channelId && messageId)) {
-        return new Response('Missing channel_id or message_id', { status: 400 })
+        return errorJsonResponse({ status: 400, error: 'missing_channel_or_message_id' })
       }
       await rest.deleteMessage({
         slack,
@@ -358,7 +369,7 @@ export function createServer(config: ServerConfig): ServerComponents {
       const url = new URL(request.url)
       const channelId = readString(params, 'channel_id')
       if (!channelId) {
-        return new Response('Missing channel_id', { status: 400 })
+        return errorJsonResponse({ status: 400, error: 'missing_channel_id' })
       }
       const messages = await rest.getMessages({
         slack,
@@ -383,7 +394,7 @@ export function createServer(config: ServerConfig): ServerComponents {
       const channelId = readString(params, 'channel_id')
       const messageId = readString(params, 'message_id')
       if (!(channelId && messageId)) {
-        return new Response('Missing channel_id or message_id', { status: 400 })
+        return errorJsonResponse({ status: 400, error: 'missing_channel_or_message_id' })
       }
 
       const message = await rest.getMessage({
@@ -407,7 +418,7 @@ export function createServer(config: ServerConfig): ServerComponents {
   app.get('/api/v10/channels/:channel_id', async ({ params }) => {
     const channelId = readString(params, 'channel_id')
     if (!channelId) {
-      return new Response('Missing channel_id', { status: 400 })
+      return errorJsonResponse({ status: 400, error: 'missing_channel_id' })
     }
     const channel = await rest.getChannel({
       slack,
@@ -422,7 +433,7 @@ export function createServer(config: ServerConfig): ServerComponents {
     const body = normalizePatchChannelBody(await request.json())
     const channelId = readString(params, 'channel_id')
     if (!channelId) {
-      return new Response('Missing channel_id', { status: 400 })
+      return errorJsonResponse({ status: 400, error: 'missing_channel_id' })
     }
 
     const channel = await rest.updateChannel({
@@ -442,7 +453,7 @@ export function createServer(config: ServerConfig): ServerComponents {
       const messageId = readString(params, 'message_id')
       const emoji = readString(params, 'emoji')
       if (!(channelId && messageId && emoji)) {
-        return new Response('Missing reaction route params', { status: 400 })
+        return errorJsonResponse({ status: 400, error: 'missing_reaction_route_params' })
       }
       await rest.addReaction({
         slack,
@@ -463,7 +474,7 @@ export function createServer(config: ServerConfig): ServerComponents {
       const messageId = readString(params, 'message_id')
       const emoji = readString(params, 'emoji')
       if (!(channelId && messageId && emoji)) {
-        return new Response('Missing reaction route params', { status: 400 })
+        return errorJsonResponse({ status: 400, error: 'missing_reaction_route_params' })
       }
       await rest.removeReaction({
         slack,
@@ -483,7 +494,7 @@ export function createServer(config: ServerConfig): ServerComponents {
       const body = normalizeCreateThreadBody(await request.json())
       const parentChannelId = readString(params, 'channel_id')
       if (!parentChannelId) {
-        return new Response('Missing channel_id', { status: 400 })
+        return errorJsonResponse({ status: 400, error: 'missing_channel_id' })
       }
       const thread = await rest.createThread({
         slack,
@@ -493,19 +504,45 @@ export function createServer(config: ServerConfig): ServerComponents {
         guildId: workspaceId,
       })
       // Register thread so we don't emit duplicate THREAD_CREATE events.
-      // thread.id now encodes both channel + ts, so no channel mapping needed.
-      const { threadTs } = (() => {
-        const decoded = thread.id.match(/^(\d{16})/)
-        return { threadTs: decoded ? decodeSlackTs(decoded[1]!) : '' }
-      })()
-      if (threadTs) {
-        evictIfFull(knownThreads, KNOWN_THREADS_MAX)
-        knownThreads.add(threadTs)
-      }
+      const threadKey = thread.id
+      evictIfFull(knownThreads, KNOWN_THREADS_MAX)
+      knownThreads.add(threadKey)
       gateway.broadcast(GatewayDispatchEvents.ThreadCreate, {
         ...thread,
         newly_created: true,
       })
+      return withRateLimitHeaders(Response.json(thread))
+    },
+  )
+
+  // POST /api/v10/channels/:channel_id/messages/:message_id/threads
+  app.post(
+    '/api/v10/channels/:channel_id/messages/:message_id/threads',
+    async ({ params, request }) => {
+      const body = normalizeCreateThreadBody(await request.json())
+      const parentChannelId = readString(params, 'channel_id')
+      const messageId = readString(params, 'message_id')
+      if (!(parentChannelId && messageId)) {
+        return errorJsonResponse({ status: 400, error: 'missing_channel_or_message_id' })
+      }
+
+      const thread = await rest.createThreadFromMessage({
+        slack,
+        parentChannelId,
+        messageId,
+        body,
+        botUserId,
+        guildId: workspaceId,
+      })
+
+      const threadKey = thread.id
+      evictIfFull(knownThreads, KNOWN_THREADS_MAX)
+      knownThreads.add(threadKey)
+      gateway.broadcast(GatewayDispatchEvents.ThreadCreate, {
+        ...thread,
+        newly_created: true,
+      })
+
       return withRateLimitHeaders(Response.json(thread))
     },
   )
@@ -581,7 +618,7 @@ export function createServer(config: ServerConfig): ServerComponents {
     }
     const userId = readString(params, 'uid')
     if (!userId) {
-      return new Response('Missing uid', { status: 400 })
+      return errorJsonResponse({ status: 400, error: 'missing_uid' })
     }
     const member = await rest.getGuildMember({
       slack,
@@ -608,14 +645,14 @@ export function createServer(config: ServerConfig): ServerComponents {
       const interactionId = readString(params, 'interaction_id')
       const interactionToken = readString(params, 'interaction_token')
       if (!(interactionId && interactionToken)) {
-        return new Response('Missing interaction route params', { status: 400 })
+        return errorJsonResponse({ status: 400, error: 'missing_interaction_route_params' })
       }
       const pending = pendingInteractions.get(interactionId)
       if (!pending) {
-        return new Response('Unknown interaction', { status: 404 })
+        return errorJsonResponse({ status: 404, error: 'unknown_interaction' })
       }
       if (pending.token !== interactionToken) {
-        return new Response('Invalid interaction token', { status: 401 })
+        return errorJsonResponse({ status: 401, error: 'invalid_interaction_token' })
       }
 
       pending.acknowledged = true
@@ -683,14 +720,14 @@ export function createServer(config: ServerConfig): ServerComponents {
       const body = normalizeWebhookBody(await request.json())
       const webhookToken = readString(params, 'webhook_token')
       if (!webhookToken) {
-        return new Response('Missing webhook_token', { status: 400 })
+        return errorJsonResponse({ status: 400, error: 'missing_webhook_token' })
       }
       // Find interaction by token
       const pending = [...pendingInteractions.values()].find(
         (p) => p.token === webhookToken,
       )
       if (!pending) {
-        return new Response('Unknown webhook token', { status: 404 })
+        return errorJsonResponse({ status: 404, error: 'unknown_webhook_token' })
       }
 
       const message = await rest.postMessage({
@@ -715,13 +752,13 @@ export function createServer(config: ServerConfig): ServerComponents {
       const webhookToken = readString(params, 'webhook_token')
       const rawMessageId = readString(params, 'message_id')
       if (!webhookToken) {
-        return new Response('Missing webhook_token', { status: 400 })
+        return errorJsonResponse({ status: 400, error: 'missing_webhook_token' })
       }
       const pending = [...pendingInteractions.values()].find((entry) => {
         return entry.token === webhookToken
       })
       if (!pending) {
-        return new Response('Unknown webhook token', { status: 404 })
+        return errorJsonResponse({ status: 404, error: 'unknown_webhook_token' })
       }
 
       // Resolve which message to edit: @original → source message, otherwise decode ID
@@ -732,9 +769,7 @@ export function createServer(config: ServerConfig): ServerComponents {
 
       })
       if (!resolvedMessageId) {
-        return new Response('No source message for webhook update', {
-          status: 400,
-        })
+        return errorJsonResponse({ status: 400, error: 'no_source_message_for_webhook_update' })
       }
 
       const message = await rest.editMessage({
@@ -762,13 +797,13 @@ export function createServer(config: ServerConfig): ServerComponents {
       const webhookToken = readString(params, 'webhook_token')
       const rawMessageId = readString(params, 'message_id')
       if (!webhookToken) {
-        return new Response('Missing webhook_token', { status: 400 })
+        return errorJsonResponse({ status: 400, error: 'missing_webhook_token' })
       }
       const pending = [...pendingInteractions.values()].find((entry) => {
         return entry.token === webhookToken
       })
       if (!pending) {
-        return new Response('Unknown webhook token', { status: 404 })
+        return errorJsonResponse({ status: 404, error: 'unknown_webhook_token' })
       }
 
       const resolvedMessageId = resolveWebhookMessageId({
@@ -778,9 +813,7 @@ export function createServer(config: ServerConfig): ServerComponents {
 
       })
       if (!resolvedMessageId) {
-        return new Response('No source message for webhook delete', {
-          status: 400,
-        })
+        return errorJsonResponse({ status: 400, error: 'no_source_message_for_webhook_delete' })
       }
 
       await rest.deleteMessage({
@@ -855,7 +888,7 @@ export function createServer(config: ServerConfig): ServerComponents {
         event.channel &&
         event.threadTs !== event.ts
       ) {
-        const threadKey = event.threadTs
+        const threadKey = encodeThreadId(event.channel, event.threadTs)
         if (!knownThreads.has(threadKey)) {
           evictIfFull(knownThreads, KNOWN_THREADS_MAX)
           knownThreads.add(threadKey)
@@ -1327,12 +1360,45 @@ function resolveWebhookMessageId({
   return rawMessageId
 }
 
+function errorJsonResponse({
+  status,
+  error,
+  code,
+  message,
+  details,
+}: {
+  status: number
+  error: string
+  code?: number
+  message?: string
+  details?: string
+}): Response {
+  return Response.json(
+    {
+      error,
+      ...(code !== undefined ? { code } : {}),
+      ...(message ? { message } : {}),
+      ...(details ? { details } : {}),
+    },
+    { status },
+  )
+}
+
+function getErrorMessage(error: unknown): string {
+  if (error instanceof Error) {
+    return error.message
+  }
+  return String(error)
+}
+
 /** Return a Discord-shaped 404 for unknown guild IDs. */
 function unknownGuildResponse(guildId: string): Response {
-  return Response.json(
-    { code: 10004, message: `Unknown Guild: ${guildId}` },
-    { status: 404 },
-  )
+  return errorJsonResponse({
+    status: 404,
+    error: 'unknown_guild',
+    code: 10004,
+    message: `Unknown Guild: ${guildId}`,
+  })
 }
 
 const SUPPORTED_SLACK_EVENT_TYPES: ReadonlySet<SupportedSlackEventType> =

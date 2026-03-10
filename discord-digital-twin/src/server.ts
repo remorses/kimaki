@@ -59,6 +59,13 @@ function resolveWebhookMessageId(raw: string): string {
   return decoded
 }
 
+function getErrorMessage(error: unknown): string {
+  if (error instanceof Error) {
+    return error.message
+  }
+  return String(error)
+}
+
 // Generous fake rate limit headers so discord.js never self-throttles
 const RATE_LIMIT_HEADERS: Record<string, string> = {
   'X-RateLimit-Limit': '50',
@@ -117,6 +124,19 @@ export function createServer({
   let gateway!: DiscordGateway
 
   const app = new Spiceflow({ basePath: '/api/v10' })
+    .onError(({ error }) => {
+      if (error instanceof Response) {
+        return error
+      }
+      return Response.json(
+        {
+          code: 0,
+          message: 'Internal Server Error',
+          error: getErrorMessage(error),
+        },
+        { status: 500 },
+      )
+    })
 
     // --- Gateway ---
 

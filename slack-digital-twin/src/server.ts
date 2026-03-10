@@ -56,7 +56,19 @@ async function parseBody(request: Request): Promise<Record<string, string>> {
 export function createServer(config: ServerConfig): ServerComponents {
   const { prisma, workspaceId, botUserId, botToken } = config
 
-  const app = new Spiceflow({ basePath: '' })
+  const app = new Spiceflow({ basePath: '' }).onError(({ error }) => {
+    if (error instanceof Response) {
+      return error
+    }
+    return Response.json(
+      {
+        ok: false,
+        error: 'internal_error',
+        details: getErrorMessage(error),
+      },
+      { status: 500 },
+    )
+  })
 
   // --- auth.test ---
   app.post('/api/auth.test', async ({ request }) => {
@@ -604,4 +616,11 @@ export async function stopServer(
       }
     })
   })
+}
+
+function getErrorMessage(error: unknown): string {
+  if (error instanceof Error) {
+    return error.message
+  }
+  return String(error)
 }

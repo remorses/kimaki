@@ -863,6 +863,61 @@ export async function createThread({
   }
 }
 
+export async function createThreadFromMessage({
+  slack,
+  parentChannelId,
+  messageId,
+  body,
+  botUserId,
+  guildId,
+}: {
+  slack: WebClient
+  parentChannelId: string
+  messageId: string
+  body: { name: string; auto_archive_duration?: number }
+  botUserId: string
+  guildId: string
+}): Promise<APIChannel> {
+  const { channel } = resolveSlackTarget(parentChannelId)
+
+  const threadTs = isEncodedMessageId(messageId)
+    ? decodeMessageId(messageId).ts
+    : messageId
+
+  const repliesArgs = {
+    channel,
+    ts: threadTs,
+    limit: 1,
+    inclusive: true,
+  } satisfies ConversationsRepliesArguments
+  const replies = await slack.conversations.replies(repliesArgs)
+  const hasParentMessage = (replies.messages ?? []).some((message) => {
+    return message.ts === threadTs
+  })
+  if (!hasParentMessage) {
+    throw new Error(`Unknown Message: ${messageId}`)
+  }
+
+  const threadChannelId = encodeThreadId(channel, threadTs)
+
+  return {
+    id: threadChannelId,
+    type: ChannelType.PublicThread,
+    name: body.name,
+    guild_id: guildId,
+    parent_id: parentChannelId,
+    owner_id: botUserId,
+    message_count: 0,
+    member_count: 1,
+    thread_metadata: {
+      archived: false,
+      auto_archive_duration: body.auto_archive_duration ?? 1440,
+      archive_timestamp: slackTsToIso(threadTs),
+      locked: false,
+    },
+  }
+}
+
 // ---- Helpers ----
 
 function buildApiMessage({
@@ -1123,4 +1178,3 @@ function extractSlackErrorCode(err: unknown): string | undefined {
   const match = err.message.match(/An API error occurred: (\S+)/)
   return match?.[1]
 }
-

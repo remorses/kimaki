@@ -2,6 +2,7 @@
 
 import { afterAll, beforeAll, describe, expect, test } from 'vitest'
 import type { TextChannel } from 'discord.js'
+import { Routes } from 'discord-api-types/v10'
 import { setupE2E, teardownE2E, type E2EContext } from './e2e-setup.js'
 
 describe('rest parity edge routes', () => {
@@ -62,6 +63,7 @@ describe('rest parity edge routes', () => {
         {
           "body": {
             "code": 10004,
+            "error": "unknown_guild",
             "message": "Unknown Guild: T_WRONG_GUILD",
           },
           "status": 404,
@@ -69,6 +71,7 @@ describe('rest parity edge routes', () => {
         {
           "body": {
             "code": 10004,
+            "error": "unknown_guild",
             "message": "Unknown Guild: T_WRONG_GUILD",
           },
           "status": 404,
@@ -76,6 +79,7 @@ describe('rest parity edge routes', () => {
         {
           "body": {
             "code": 10004,
+            "error": "unknown_guild",
             "message": "Unknown Guild: T_WRONG_GUILD",
           },
           "status": 404,
@@ -83,6 +87,7 @@ describe('rest parity edge routes', () => {
         {
           "body": {
             "code": 10004,
+            "error": "unknown_guild",
             "message": "Unknown Guild: T_WRONG_GUILD",
           },
           "status": 404,
@@ -90,6 +95,7 @@ describe('rest parity edge routes', () => {
         {
           "body": {
             "code": 10004,
+            "error": "unknown_guild",
             "message": "Unknown Guild: T_WRONG_GUILD",
           },
           "status": 404,
@@ -97,6 +103,7 @@ describe('rest parity edge routes', () => {
         {
           "body": {
             "code": 10004,
+            "error": "unknown_guild",
             "message": "Unknown Guild: T_WRONG_GUILD",
           },
           "status": 404,
@@ -131,14 +138,25 @@ describe('rest parity edge routes', () => {
     }).toMatchInlineSnapshot(`
       {
         "delete": {
-          "body": "Unknown webhook token",
+          "body": "{"error":"unknown_webhook_token"}",
           "status": 404,
         },
         "patch": {
-          "body": "Unknown webhook token",
+          "body": "{"error":"unknown_webhook_token"}",
           "status": 404,
         },
       }
     `)
+  })
+
+  test('discord.js surfaces bridge error payload in thrown DiscordAPIError', async () => {
+    await expect(
+      ctx.client.rest.patch(
+        Routes.webhookMessage('WH', 'random-token', '1700000000000001'),
+        {
+          body: { content: 'updated-content' },
+        },
+      ),
+    ).rejects.toThrowErrorMatchingInlineSnapshot(`[DiscordAPIError[unknown_webhook_token]: No Description]`)
   })
 })

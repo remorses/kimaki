@@ -68,4 +68,20 @@ describe('threads: Discord → Slack', () => {
     expect(texts).toContain('Reply A')
     expect(texts).toContain('Reply B')
   })
+
+  test('startThread from message uses message threads endpoint', async () => {
+    const parent = await channel.send('Parent message for thread')
+
+    const thread = await parent.startThread({
+      name: 'Message thread',
+    })
+
+    await (thread as ThreadChannel).send('Reply from message thread')
+
+    const channelId = ctx.twin.resolveChannelId('threads-test')
+    const text = await ctx.twin.channel(channelId).text()
+    expect(text).toContain('Parent message for thread')
+    expect(text).toContain('Reply from message thread')
+    expect(text).not.toContain('Message thread')
+  })
 })

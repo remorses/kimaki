@@ -3,7 +3,15 @@
 // Usage: cd discord-slack-bridge && pnpm echo-bot
 // Tunnel URL is stable — configure once in Slack Event Subscriptions.
 
-import { Client, GatewayIntentBits, Partials } from 'discord.js'
+import {
+  Client,
+  GatewayIntentBits,
+  Partials,
+  ThreadAutoArchiveDuration,
+  type Message,
+  type ThreadChannel,
+  type TextChannel,
+} from 'discord.js'
 import { WebClient } from '@slack/web-api'
 import { TunnelClient } from 'traforo/client'
 import { SlackBridge } from '../src/index.js'
@@ -70,12 +78,7 @@ async function main(): Promise<void> {
   console.log(`Channels: ${channelNames?.join(', ')}`)
 
   client.on('messageCreate', (message) => {
-    const isSelf = client.user && message.author.id === client.user.id
-    if (isSelf) {
-      return
-    }
-    console.log(`[echo] "${message.content}" from ${message.author.username}`)
-    void message.channel.send(`echo: ${message.content}`)
+    void handleMessageCreate({ client, message })
   })
 
   console.log('\nEcho bot running. Press Ctrl+C to stop.\n')
@@ -91,6 +94,91 @@ async function main(): Promise<void> {
 
   process.on('SIGINT', shutdown)
   process.on('SIGTERM', shutdown)
+}
+
+async function handleMessageCreate({
+  client,
+  message,
+}: {
+  client: Client
+  message: Message
+}): Promise<void> {
+  const isSelf = client.user && message.author.id === client.user.id
+  if (isSelf || message.author.bot) {
+    return
+  }
+
+  const thread = await resolveReplyThread({ message })
+  if (!thread) {
+    return
+  }
+
+  console.log(`[echo] "${message.content}" from ${message.author.username}`)
+  await thread.send(`echo: ${message.content}`)
+}
+
+async function resolveReplyThread({
+  message,
+}: {
+  message: Message
+}): Promise<ThreadChannel | undefined> {
+  if (message.channel.isThread()) {
+    return message.channel
+  }
+
+  const existingThread = message.thread
+  if (existingThread) {
+    return existingThread
+  }
+
+  if (!message.inGuild()) {
+    return undefined
+  }
+
+  const threadName = `echo-${message.author.username}`.slice(0, 100)
+  return createThreadForChannelMessage({ message, threadName })
+}
+
+async function createThreadForChannelMessage({
+  message,
+  threadName,
+}: {
+  message: Message<true>
+  threadName: string
+}): Promise<ThreadChannel | undefined> {
+  try {
+    return await message.startThread({
+      name: threadName,
+      autoArchiveDuration: ThreadAutoArchiveDuration.OneHour,
+    })
+  } catch (error) {
+    if (!isNotFoundError(error)) {
+      throw error
+    }
+  }
+
+  const channel = message.channel
+  if (!isThreadCreatableChannel(channel)) {
+    return undefined
+  }
+
+  return channel.threads.create({
+    name: threadName,
+    autoArchiveDuration: ThreadAutoArchiveDuration.OneHour,
+  })
+}
+
+function isNotFoundError(error: unknown): boolean {
+  if (!(error instanceof Error)) {
+    return false
+  }
+  return 'status' in error && typeof error.status === 'number' && error.status === 404
+}
+
+function isThreadCreatableChannel(
+  channel: Message<true>['channel'],
+): channel is TextChannel {
+  return 'threads' in channel
 }
 
 function requireEnv(name: string): string {
