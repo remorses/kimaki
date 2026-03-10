@@ -1134,7 +1134,7 @@ export async function startDiscordBot({
   await adapter.login(token)
 
   startHeapMonitor()
-  const stopTaskRunner = startTaskRunner({ token })
+  const stopTaskRunner = startTaskRunner({ adapter })
   const stopRuntimeIdleSweeper = startRuntimeIdleSweeper()
 
   const handleShutdown = async (signal: string, { skipExit = false } = {}) => {

@@ -1,8 +1,7 @@
 // Scheduled task runner for executing due `send --send-at` jobs in the bot process.
 
-import { createDiscordRest } from './discord-urls.js'
-import type { DiscordRestClient } from './discord-urls.js'
 import yaml from 'js-yaml'
+import * as errore from 'errore'
 import {
   claimScheduledTaskRunning,
   getDuePlannedScheduledTasks,
@@ -22,37 +21,23 @@ import {
   getPromptPreview,
   parseScheduledTaskPayload,
 } from './task-schedule.js'
-import { discordRoutes } from './platform/discord-routes.js'
+import type { KimakiAdapter } from './platform/types.js'
 
 const taskLogger = createLogger(LogPrefix.TASK)
 
 type StartTaskRunnerOptions = {
-  token: string
+  adapter: KimakiAdapter
   pollIntervalMs?: number
   staleRunningMs?: number
   dueBatchSize?: number
 }
 
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === 'object' && value !== null
-}
-
-function parseMessageId(value: unknown): string | Error {
-  if (!isRecord(value)) {
-    return new Error('Discord response is not an object')
-  }
-  if (typeof value.id !== 'string') {
-    return new Error('Discord response is missing message ID')
-  }
-  return value.id
-}
-
 async function executeThreadScheduledTask({
-  rest,
+  adapter,
   task,
   payload,
 }: {
-  rest: DiscordRestClient
+  adapter: KimakiAdapter
   task: ScheduledTask
   payload: {
     threadId: string
@@ -75,18 +60,19 @@ async function executeThreadScheduledTask({
   const embed = [{ color: 0x2b2d31, footer: { text: yaml.dump(marker) } }]
   const prefixedPrompt = `» **kimaki-cli:** ${payload.prompt}`
 
-  const postResult = await rest
-    .post(discordRoutes.channelMessages(payload.threadId), {
-      body: {
-        content: prefixedPrompt,
+  const postResult = await errore.tryAsync({
+    try: async () => {
+      await adapter.conversation({ channelId: payload.threadId }).send({
+        markdown: prefixedPrompt,
         embeds: embed,
-      },
-    })
-    .catch((error) => {
+      })
+    },
+    catch: (error) => {
       return new Error(`Failed to post scheduled thread task ${task.id}`, {
         cause: error,
       })
-    })
+    },
+  })
 
   if (postResult instanceof Error) {
     return postResult
@@ -94,11 +80,11 @@ async function executeThreadScheduledTask({
 }
 
 async function executeChannelScheduledTask({
-  rest,
+  adapter,
   task,
   payload,
 }: {
-  rest: DiscordRestClient
+  adapter: KimakiAdapter
   task: ScheduledTask
   payload: {
     channelId: string
@@ -128,46 +114,44 @@ async function executeChannelScheduledTask({
     ? [{ color: 0x2b2d31, footer: { text: yaml.dump(marker) } }]
     : undefined
 
-  const starterResult = await rest
-    .post(discordRoutes.channelMessages(payload.channelId), {
-      body: {
-        content: payload.prompt,
+  const starterResult = await errore.tryAsync({
+    try: async () => {
+      return adapter.conversation({ channelId: payload.channelId }).send({
+        markdown: payload.prompt,
         embeds,
-      },
-    })
-    .catch((error) => {
+      })
+    },
+    catch: (error) => {
       return new Error(`Failed to create starter message for task ${task.id}`, {
         cause: error,
       })
-    })
+    },
+  })
 
   if (starterResult instanceof Error) {
     return starterResult
-  }
-
-  const starterMessageId = parseMessageId(starterResult)
-  if (starterMessageId instanceof Error) {
-    return new Error(`Invalid starter message response for task ${task.id}`, {
-      cause: starterMessageId,
-    })
   }
 
   const threadName = (payload.name || getPromptPreview(payload.prompt)).slice(
     0,
     100,
   )
-  const threadResult = await rest
-    .post(discordRoutes.threads(payload.channelId, starterMessageId), {
-      body: {
+  const threadResult = await errore.tryAsync({
+    try: async () => {
+      const conversation = adapter.conversation({ channelId: payload.channelId })
+      const starterMessage = await conversation.message(starterResult.id)
+      return starterMessage.startThread({
         name: threadName,
-        auto_archive_duration: 1440,
-      },
-    })
-    .catch((error) => {
+        autoArchiveDuration: 1440,
+        reason: `Scheduled task ${task.id}`,
+      })
+    },
+    catch: (error) => {
       return new Error(`Failed to create thread for task ${task.id}`, {
         cause: error,
       })
-    })
+    },
+  })
 
   if (threadResult instanceof Error) {
     return threadResult
@@ -176,32 +160,38 @@ async function executeChannelScheduledTask({
   if (!payload.userId) {
     return
   }
+  const userId = payload.userId
 
-  const threadIdResult = parseMessageId(threadResult)
-  if (threadIdResult instanceof Error) {
-    return new Error(`Invalid thread response for task ${task.id}`, {
-      cause: threadIdResult,
-    })
-  }
-
-  const addMemberResult = await rest
-    .put(discordRoutes.threadMembers(threadIdResult, payload.userId))
-    .catch((error) => {
+  const addMemberResult = await errore.tryAsync({
+    try: async () => {
+      const threadHandle = await adapter.thread({
+        threadId: threadResult.target.threadId,
+        parentId: payload.channelId,
+      })
+      if (!threadHandle) {
+        throw new Error(
+          `Thread not found after creation for task ${task.id}: ${threadResult.target.threadId}`,
+        )
+      }
+      await threadHandle.addMember(userId)
+    },
+    catch: (error) => {
       return new Error(
         `Failed to add user to scheduled thread for task ${task.id}`,
         { cause: error },
       )
-    })
+    },
+  })
   if (addMemberResult instanceof Error) {
     return addMemberResult
   }
 }
 
 async function executeScheduledTask({
-  rest,
+  adapter,
   task,
 }: {
-  rest: DiscordRestClient
+  adapter: KimakiAdapter
   task: ScheduledTask
 }): Promise<void | Error> {
   const payloadResult = parseScheduledTaskPayload(task.payload_json)
@@ -213,14 +203,14 @@ async function executeScheduledTask({
 
   if (payloadResult.kind === 'thread') {
     return executeThreadScheduledTask({
-      rest,
+      adapter,
       task,
       payload: payloadResult,
     })
   }
 
   return executeChannelScheduledTask({
-    rest,
+    adapter,
     task,
     payload: payloadResult,
   })
@@ -304,10 +294,10 @@ async function finalizeFailedTask({
 }
 
 async function processDueTask({
-  rest,
+  adapter,
   task,
 }: {
-  rest: DiscordRestClient
+  adapter: KimakiAdapter
   task: ScheduledTask
 }): Promise<void> {
   const startedAt = new Date()
@@ -319,7 +309,7 @@ async function processDueTask({
     return
   }
 
-  const executeResult = await executeScheduledTask({ rest, task })
+  const executeResult = await executeScheduledTask({ adapter, task })
   const finishedAt = new Date()
 
   if (executeResult instanceof Error) {
@@ -338,11 +328,11 @@ async function processDueTask({
 }
 
 async function runTaskRunnerTick({
-  rest,
+  adapter,
   staleRunningMs,
   dueBatchSize,
 }: {
-  rest: DiscordRestClient
+  adapter: KimakiAdapter
   staleRunningMs: number
   dueBatchSize: number
 }): Promise<void> {
@@ -363,17 +353,16 @@ async function runTaskRunnerTick({
 
   await dueTasks.reduce<Promise<void>>(async (previous, task) => {
     await previous
-    await processDueTask({ rest, task })
+    await processDueTask({ adapter, task })
   }, Promise.resolve())
 }
 
 export function startTaskRunner({
-  token,
+  adapter,
   pollIntervalMs = 5_000,
   staleRunningMs = 120_000,
   dueBatchSize = 20,
 }: StartTaskRunnerOptions): () => Promise<void> {
-  const rest = createDiscordRest(token)
   let stopped = false
   let ticking = false
   let tickPromise: Promise<void> | null = null
@@ -385,7 +374,7 @@ export function startTaskRunner({
 
     ticking = true
     const currentTickPromise = runTaskRunnerTick({
-      rest,
+      adapter,
       staleRunningMs,
       dueBatchSize,
     }).catch((error) => {

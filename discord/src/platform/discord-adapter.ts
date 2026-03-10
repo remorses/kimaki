@@ -61,6 +61,7 @@ import type {
   PlatformMessage,
   PlatformModalFields,
   PlatformAdmin,
+  PlatformEmbed,
   PlatformServer,
   PlatformThread,
   PlatformThreadHandle,
@@ -528,6 +529,19 @@ function wrapGuildMemberSummary(member: GuildMember) {
   }
 }
 
+function normalizeDiscordEmbeds(embeds?: PlatformEmbed[]) {
+  if (!embeds || embeds.length === 0) {
+    return undefined
+  }
+  return embeds.map((embed) => {
+    const footerText = embed.footer?.text
+    return {
+      ...(embed.color !== undefined ? { color: embed.color } : {}),
+      ...(footerText ? { footer: { text: footerText } } : {}),
+    }
+  })
+}
+
 function createCommandOptions({
   interaction,
 }: {
@@ -937,7 +951,9 @@ export class DiscordAdapter implements KimakiAdapter {
       return wrapOtherChannel({
         id: channel.id,
         guildId: 'guildId' in channel ? channel.guildId || null : null,
-        name: 'name' in channel ? channel.name : undefined,
+        name: 'name' in channel && typeof channel.name === 'string'
+          ? channel.name
+          : undefined,
         parentId: 'parentId' in channel ? channel.parentId : null,
       })
     },
@@ -1102,7 +1118,7 @@ export class DiscordAdapter implements KimakiAdapter {
           const sent = await channel.send({
             content: message.markdown.slice(0, 2000),
             flags: message.flags,
-            embeds: message.embeds,
+            embeds: normalizeDiscordEmbeds(message.embeds),
             files: message.files.map((file) => {
               return {
                 attachment: Buffer.from(file.data),
@@ -1120,7 +1136,7 @@ export class DiscordAdapter implements KimakiAdapter {
           const sent = await channel.send({
             content: message.markdown.slice(0, 2000),
             flags: message.flags,
-            embeds: message.embeds,
+            embeds: normalizeDiscordEmbeds(message.embeds),
             components: buildMessageComponents({
               buttons: message.buttons,
               selectMenu: message.selectMenu,
@@ -1139,7 +1155,7 @@ export class DiscordAdapter implements KimakiAdapter {
         await targetMessage.edit({
           content: message.markdown,
           flags: message.flags,
-          embeds: message.embeds,
+          embeds: normalizeDiscordEmbeds(message.embeds),
           components: message.buttons || message.selectMenu || message.selectMenus
             ? buildMessageComponents({
                 buttons: message.buttons,
@@ -1307,7 +1323,9 @@ export class DiscordAdapter implements KimakiAdapter {
         const sent = await channel.send({
           components: segment.components,
           flags: MessageFlags.IsComponentsV2 | baseFlags,
-          embeds: firstMessage ? undefined : message.embeds,
+          embeds: firstMessage
+            ? undefined
+            : normalizeDiscordEmbeds(message.embeds),
           reply: shouldReply && message.replyToMessageId
             ? { messageReference: message.replyToMessageId }
             : undefined,
@@ -1343,7 +1361,9 @@ export class DiscordAdapter implements KimakiAdapter {
         const sent = await channel.send({
           content: chunk,
           flags: baseFlags,
-          embeds: firstMessage ? undefined : message.embeds,
+          embeds: firstMessage
+            ? undefined
+            : normalizeDiscordEmbeds(message.embeds),
           reply: shouldReply && message.replyToMessageId
             ? { messageReference: message.replyToMessageId }
             : undefined,
@@ -1359,7 +1379,7 @@ export class DiscordAdapter implements KimakiAdapter {
       const sent = await channel.send({
         content: '\u200b',
         flags: baseFlags,
-        embeds: message.embeds,
+        embeds: normalizeDiscordEmbeds(message.embeds),
         reply: message.replyToMessageId
           ? { messageReference: message.replyToMessageId }
           : undefined,

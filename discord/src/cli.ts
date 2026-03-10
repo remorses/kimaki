@@ -37,7 +37,12 @@ import {
   type ChannelWithTags,
 } from './discord-bot.js'
 import { createDiscordAdapter } from './platform/discord-adapter.js'
-import type { PlatformAdmin, PlatformGuildSummary } from './platform/types.js'
+import type {
+  KimakiAdapter,
+  PlatformAdmin,
+  PlatformGuildMemberSummary,
+  PlatformGuildSummary,
+} from './platform/types.js'
 import {
   getBotTokenWithMode,
   setBotToken,
@@ -72,12 +77,9 @@ import type {
   Event as OpenCodeEvent,
 } from '@opencode-ai/sdk/v2'
 import {
-  createDiscordRest,
-  discordApiUrl,
   getDiscordRestApiUrl,
   getGatewayProxyRestBaseUrl,
 } from './discord-urls.js'
-import type { DiscordRestClient } from './discord-urls.js'
 import crypto from 'node:crypto'
 import path from 'node:path'
 import fs from 'node:fs'
@@ -124,14 +126,6 @@ const cliLogger = createLogger(LogPrefix.CLI)
 const DISCORD_EVENT = {
   CLIENT_READY: 'clientReady',
   ERROR: 'error',
-} as const
-
-const CHANNEL_TYPE = {
-  GUILD_TEXT: 0,
-  GUILD_VOICE: 2,
-  ANNOUNCEMENT_THREAD: 10,
-  PUBLIC_THREAD: 11,
-  PRIVATE_THREAD: 12,
 } as const
 
 const ACTIVITY_TYPE = {
@@ -241,28 +235,15 @@ class SlashCommandBuilder {
   }
 }
 
-function routeChannelMessages(channelId: string): string {
-  return `/channels/${channelId}/messages`
-}
-
-function routeChannel(channelId: string): string {
-  return `/channels/${channelId}`
-}
-
-function routeGuildMembersSearch(guildId: string): string {
-  return `/guilds/${guildId}/members/search`
-}
-
-function routeThreads({ channelId, messageId }: { channelId: string; messageId: string }): string {
-  return `/channels/${channelId}/messages/${messageId}/threads`
-}
-
-function routeThreadMembers({ threadId, userId }: { threadId: string; userId: string }): string {
-  return `/channels/${threadId}/thread-members/${userId}`
-}
-
-function routeGuildMembers(guildId: string): string {
-  return `/guilds/${guildId}/members`
+async function createLoggedInDiscordAdapter({
+  token,
+}: {
+  token: string
+}): Promise<KimakiAdapter> {
+  const client = await createDiscordClient()
+  const adapter = await createDiscordAdapter({ client })
+  await adapter.login(token)
+  return adapter
 }
 
 // Gateway bot mode constants.
@@ -350,33 +331,24 @@ async function resolveBotCredentials({ appIdOverride }: { appIdOverride?: string
   process.exit(EXIT_NO_RESTART)
 }
 
-function isThreadChannelType(type: number): boolean {
-  const threadTypes: number[] = [
-    CHANNEL_TYPE.PUBLIC_THREAD,
-    CHANNEL_TYPE.PRIVATE_THREAD,
-    CHANNEL_TYPE.ANNOUNCEMENT_THREAD,
-  ]
-  return threadTypes.includes(type)
-}
-
 async function sendDiscordMessageWithOptionalAttachment({
-  channelId,
+  adapter,
+  target,
   prompt,
-  botToken,
   embeds,
-  rest,
 }: {
-  channelId: string
+  adapter: KimakiAdapter
+  target: { channelId: string; threadId?: string }
   prompt: string
-  botToken: string
   embeds?: Array<{ color: number; footer: { text: string } }>
-  rest: DiscordRestClient
 }): Promise<{ id: string }> {
+  const conversation = adapter.conversation(target)
   const discordMaxLength = 2000
   if (prompt.length <= discordMaxLength) {
-    return (await rest.post(routeChannelMessages(channelId), {
-      body: { content: prompt, embeds },
-    })) as { id: string }
+    return conversation.send({
+      markdown: prompt,
+      embeds,
+    })
   }
 
   const preview = prompt.slice(0, 100).replace(/\n/g, ' ')
@@ -390,41 +362,18 @@ async function sendDiscordMessageWithOptionalAttachment({
   fs.writeFileSync(tmpFile, prompt)
 
   try {
-    const formData = new FormData()
-    formData.append(
-      'payload_json',
-      JSON.stringify({
-        content: summaryContent,
-        attachments: [{ id: 0, filename: 'prompt.md' }],
-        embeds,
-      }),
-    )
     const buffer = fs.readFileSync(tmpFile)
-    formData.append(
-      'files[0]',
-      new Blob([buffer], { type: 'text/markdown' }),
-      'prompt.md',
-    )
-
-    const starterMessageResponse = await fetch(
-      discordApiUrl(`/channels/${channelId}/messages`),
-      {
-        method: 'POST',
-        headers: {
-          Authorization: `Bot ${botToken}`,
+    return conversation.send({
+      markdown: summaryContent,
+      embeds,
+      files: [
+        {
+          filename: 'prompt.md',
+          contentType: 'text/markdown',
+          data: buffer,
         },
-        body: formData,
-      },
-    )
-
-    if (!starterMessageResponse.ok) {
-      const error = await starterMessageResponse.text()
-      throw new Error(
-        `Discord API error: ${starterMessageResponse.status} - ${error}`,
-      )
-    }
-
-    return (await starterMessageResponse.json()) as { id: string }
+      ],
+    })
   } finally {
     fs.unlinkSync(tmpFile)
   }
@@ -2910,20 +2859,14 @@ cli
         process.exit(EXIT_NO_RESTART)
       }
 
-      const botRow = await getBotTokenWithMode()
-
-      if (!botRow) {
-        cliLogger.error(
-          'No bot credentials found. Run `kimaki` first to set up the bot.',
-        )
-        process.exit(EXIT_NO_RESTART)
-      }
+      const { token } = await resolveBotCredentials()
+      const adapter = await createLoggedInDiscordAdapter({ token })
 
       cliLogger.log(`Uploading ${resolvedFiles.length} file(s)...`)
 
       await uploadFilesToDiscord({
+        adapter,
         threadId: threadId,
-        botToken: botRow.token,
         files: resolvedFiles,
       })
 
@@ -3230,7 +3173,11 @@ cli
           }
         }
 
-        const rest = createDiscordRest(botToken)
+        const adapter = await createLoggedInDiscordAdapter({ token: botToken })
+        const admin = adapter.admin
+        if (!admin) {
+          throw new Error('Admin operations are not available for this adapter')
+        }
 
         if (existingThreadMode) {
           const targetThreadId = await (async (): Promise<string> => {
@@ -3249,25 +3196,23 @@ cli
             return resolvedThreadId
           })()
 
-          const threadData = (await rest.get(
-            routeChannel(targetThreadId),
-          )) as {
-            id: string
-            name: string
-            type: number
-            parent_id?: string
-            guild_id: string
-          }
-
-          if (!isThreadChannelType(threadData.type)) {
+          const threadHandle = await adapter.thread({ threadId: targetThreadId })
+          if (!threadHandle) {
             throw new Error(`Channel is not a thread: ${targetThreadId}`)
           }
-
-          if (!threadData.parent_id) {
+          if (!threadHandle.data.parentId) {
             throw new Error(`Thread has no parent channel: ${targetThreadId}`)
           }
+          const threadGuild = await admin.resolveGuild({
+            fromChannelId: threadHandle.data.parentId,
+          })
+          if (!threadGuild) {
+            throw new Error(
+              `Could not resolve guild for thread parent channel: ${threadHandle.data.parentId}`,
+            )
+          }
 
-          const channelConfig = await getChannelDirectory(threadData.parent_id)
+          const channelConfig = await getChannelDirectory(threadHandle.data.parentId)
           if (!channelConfig) {
             throw new Error(
               'Thread parent channel is not configured with a project directory',
@@ -3292,15 +3237,15 @@ cli
               nextRunAt: parsedSchedule.nextRunAt,
               payloadJson: serializeScheduledTaskPayload(payload),
               promptPreview: getPromptPreview(prompt),
-              channelId: threadData.parent_id,
+              channelId: threadHandle.data.parentId,
               threadId: targetThreadId,
               sessionId: sessionId || undefined,
               projectDirectory: channelConfig.directory,
             })
 
-            const threadUrl = `https://discord.com/channels/${threadData.guild_id}/${threadData.id}`
+            const threadUrl = `https://discord.com/channels/${threadGuild.id}/${threadHandle.data.id}`
             note(
-              `Task ID: ${taskId}\nTarget thread: ${threadData.name}\nSchedule: ${formatTaskScheduleLine(parsedSchedule)}\n\nURL: ${threadUrl}`,
+              `Task ID: ${taskId}\nTarget thread: ${threadHandle.data.name}\nSchedule: ${formatTaskScheduleLine(parsedSchedule)}\n\nURL: ${threadUrl}`,
               '✅ Task Scheduled',
             )
             cliLogger.log(threadUrl)
@@ -3321,16 +3266,18 @@ cli
           const prefixedPrompt = `» **kimaki-cli:** ${prompt}`
 
           await sendDiscordMessageWithOptionalAttachment({
-            channelId: targetThreadId,
+            adapter,
+            target: {
+              channelId: threadHandle.data.parentId,
+              threadId: targetThreadId,
+            },
             prompt: prefixedPrompt,
-            botToken,
             embeds: promptEmbed,
-            rest,
           })
 
-          const threadUrl = `https://discord.com/channels/${threadData.guild_id}/${threadData.id}`
+          const threadUrl = `https://discord.com/channels/${threadGuild.id}/${threadHandle.data.id}`
           note(
-            `Prompt sent to thread: ${threadData.name}\n\nURL: ${threadUrl}`,
+            `Prompt sent to thread: ${threadHandle.data.name}\n\nURL: ${threadUrl}`,
             '✅ Message Sent',
           )
           cliLogger.log(threadUrl)
@@ -3352,20 +3299,25 @@ cli
           throw new Error('Channel ID not resolved')
         }
 
-        // Get channel info to extract directory from topic
-        const channelData = (await rest.get(routeChannel(channelId))) as {
-          id: string
-          name: string
-          topic?: string
-          guild_id: string
+        const channelHandle = await adapter.channel(channelId)
+        if (!channelHandle) {
+          throw new Error(`Channel not found: ${channelId}`)
+        }
+        if (channelHandle.data.kind !== 'text') {
+          throw new Error(`Channel is not a text channel: ${channelId}`)
         }
 
-        const channelConfig = await getChannelDirectory(channelData.id)
+        const channelGuild = await admin.resolveGuild({ fromChannelId: channelId })
+        if (!channelGuild) {
+          throw new Error(`Could not resolve guild for channel ${channelId}`)
+        }
+
+        const channelConfig = await getChannelDirectory(channelHandle.data.id)
 
         if (!channelConfig) {
           cliLogger.log('Channel not configured')
           throw new Error(
-            `Channel #${channelData.name} is not configured with a project directory. Run the bot first to sync channel data.`,
+            `Channel #${channelHandle.data.name || channelHandle.data.id} is not configured with a project directory. Run the bot first to sync channel data.`,
           )
         }
 
@@ -3375,37 +3327,34 @@ cli
         const resolvedUser = await (async (): Promise<
           { id: string; username: string } | undefined
         > => {
-          if (!options.user) {
+          const requestedUser = options.user
+          if (!requestedUser) {
             return undefined
           }
-          cliLogger.log(`Searching for user "${options.user}" in guild...`)
-          const searchResults = (await rest.get(
-            routeGuildMembersSearch(channelData.guild_id),
-            {
-              query: new URLSearchParams({ query: options.user, limit: '10' }),
-            },
-          )) as Array<{
-            user: { id: string; username: string; global_name?: string }
-            nick?: string
-          }>
+          cliLogger.log(`Searching for user "${requestedUser}" in guild...`)
+          const searchResults: PlatformGuildMemberSummary[] =
+            await admin.searchGuildMembers({
+              guildId: channelGuild.id,
+              query: requestedUser,
+              limit: 10,
+            })
 
           // Find exact match by display name, nickname, or username
           const exactMatch = searchResults.find((member) => {
             const displayName =
-              member.nick || member.user.global_name || member.user.username
+              member.nick || member.globalName || member.username
             return (
-              displayName.toLowerCase() === options.user!.toLowerCase() ||
-              member.user.username.toLowerCase() === options.user!.toLowerCase()
+              displayName.toLowerCase() === requestedUser.toLowerCase() ||
+              member.username.toLowerCase() === requestedUser.toLowerCase()
             )
           })
           const member = exactMatch || searchResults[0]
           if (!member) {
-            throw new Error(`User "${options.user}" not found in guild`)
+            throw new Error(`User "${requestedUser}" not found in guild`)
           }
-          const username =
-            member.nick || member.user.global_name || member.user.username
-          cliLogger.log(`Found user: ${username} (${member.user.id})`)
-          return { id: member.user.id, username }
+          const username = member.nick || member.globalName || member.username
+          cliLogger.log(`Found user: ${username} (${member.id})`)
+          return { id: member.id, username }
         })()
 
         cliLogger.log('Creating starter message...')
@@ -3453,9 +3402,9 @@ cli
             projectDirectory,
           })
 
-          const channelUrl = `https://discord.com/channels/${channelData.guild_id}/${channelId}`
+          const channelUrl = `https://discord.com/channels/${channelGuild.id}/${channelId}`
           note(
-            `Task ID: ${taskId}\nTarget channel: #${channelData.name}\nSchedule: ${formatTaskScheduleLine(parsedSchedule)}\n\nURL: ${channelUrl}`,
+            `Task ID: ${taskId}\nTarget channel: #${channelHandle.data.name || channelHandle.data.id}\nSchedule: ${formatTaskScheduleLine(parsedSchedule)}\n\nURL: ${channelUrl}`,
             '✅ Task Scheduled',
           )
           cliLogger.log(channelUrl)
@@ -3481,43 +3430,48 @@ cli
           : undefined
 
         const starterMessage = await sendDiscordMessageWithOptionalAttachment({
-          channelId,
+          adapter,
+          target: { channelId },
           prompt,
-          botToken,
           embeds: autoStartEmbed,
-          rest,
         })
 
         cliLogger.log('Creating thread...')
 
-        const threadData = (await rest.post(
-          routeThreads({ channelId, messageId: starterMessage.id }),
-          {
-            body: {
-              name: threadName.slice(0, 100),
-              auto_archive_duration: 1440, // 1 day
-            },
-          },
-        )) as { id: string; name: string }
+        const starterMessageHandle = await adapter
+          .conversation({ channelId })
+          .message(starterMessage.id)
+        const threadData = await starterMessageHandle.startThread({
+          name: threadName.slice(0, 100),
+          autoArchiveDuration: 1440,
+          reason: 'kimaki send command',
+        })
 
         cliLogger.log('Thread created!')
 
         // Add user to thread if specified
         if (resolvedUser) {
           cliLogger.log(`Adding user ${resolvedUser.username} to thread...`)
-          await rest.put(
-            routeThreadMembers({ threadId: threadData.id, userId: resolvedUser.id }),
-          )
+          const createdThreadHandle = await adapter.thread({
+            threadId: threadData.thread.id,
+            parentId: channelId,
+          })
+          if (!createdThreadHandle) {
+            throw new Error(
+              `Thread not found after creation: ${threadData.thread.id}`,
+            )
+          }
+          await createdThreadHandle.addMember(resolvedUser.id)
         }
 
-        const threadUrl = `https://discord.com/channels/${channelData.guild_id}/${threadData.id}`
+        const threadUrl = `https://discord.com/channels/${channelGuild.id}/${threadData.thread.id}`
 
         const worktreeNote = worktreeName
           ? `\nWorktree: ${worktreeName} (will be created by bot)`
           : ''
         const successMessage = notifyOnly
-          ? `Thread: ${threadData.name}\nDirectory: ${projectDirectory}\n\nNotification created. Reply to start a session.\n\nURL: ${threadUrl}`
-          : `Thread: ${threadData.name}\nDirectory: ${projectDirectory}${worktreeNote}\n\nThe running bot will pick this up and start the session.\n\nURL: ${threadUrl}`
+          ? `Thread: ${threadData.thread.name}\nDirectory: ${projectDirectory}\n\nNotification created. Reply to start a session.\n\nURL: ${threadUrl}`
+          : `Thread: ${threadData.thread.name}\nDirectory: ${projectDirectory}${worktreeNote}\n\nThe running bot will pick this up and start the session.\n\nURL: ${threadUrl}`
 
         note(successMessage, '✅ Thread Created')
 
@@ -3526,7 +3480,7 @@ cli
         if (options.wait) {
           const { waitAndOutputSession } = await import('./wait-session.js')
           await waitAndOutputSession({
-            threadId: threadData.id,
+            threadId: threadData.thread.id,
             projectDirectory,
           })
         }
@@ -3796,19 +3750,19 @@ cli
       process.exit(0)
     }
 
-    // Fetch Discord channel names via REST API
+    // Fetch Discord channel names through adapter boundary
     const botRow = await getBotTokenWithMode()
-    const rest = botRow ? createDiscordRest(botRow.token) : null
+    const adapter = botRow
+      ? await createLoggedInDiscordAdapter({ token: botRow.token })
+      : null
 
     const enriched = await Promise.all(
       channels.map(async (ch) => {
         let channelName = ''
-        if (rest) {
+        if (adapter) {
           try {
-            const data = (await rest.get(routeChannel(ch.channel_id))) as {
-              name?: string
-            }
-            channelName = data.name || ''
+            const channel = await adapter.channel(ch.channel_id)
+            channelName = channel?.data.name || ''
           } catch {
             // Channel may have been deleted from Discord
           }
@@ -3887,16 +3841,28 @@ cli
       process.exit(EXIT_NO_RESTART)
     }
 
-    // Fetch channel from Discord to get guild_id
-    const rest = createDiscordRest(botToken)
-    const channelData = (await rest.get(
-      routeChannel(existingChannel.channel_id),
-    )) as {
-      id: string
-      guild_id: string
+    const adapter = await createLoggedInDiscordAdapter({ token: botToken })
+    const admin = adapter.admin
+    if (!admin) {
+      cliLogger.error('Admin operations are not available for this adapter')
+      process.exit(EXIT_NO_RESTART)
+    }
+    const channelData = await admin.fetchChannelById({
+      channelId: existingChannel.channel_id,
+    })
+    if (!channelData) {
+      cliLogger.error(`Channel not found: ${existingChannel.channel_id}`)
+      process.exit(EXIT_NO_RESTART)
+    }
+    const guild = await admin.resolveGuild({ fromChannelId: existingChannel.channel_id })
+    if (!guild) {
+      cliLogger.error(
+        `Could not resolve guild for channel: ${existingChannel.channel_id}`,
+      )
+      process.exit(EXIT_NO_RESTART)
     }
 
-    const channelUrl = `https://discord.com/channels/${channelData.guild_id}/${channelData.id}`
+    const channelUrl = `https://discord.com/channels/${guild.id}/${channelData.id}`
     cliLogger.log(channelUrl)
 
     // Open in browser if running in a TTY
@@ -4039,22 +4005,21 @@ cli
 
       await initDatabase()
       const { token: botToken } = await resolveBotCredentials()
-      const rest = createDiscordRest(botToken)
-
-      type GuildMember = {
-        user: { id: string; username: string; global_name?: string }
-        nick?: string
+      const adapter = await createLoggedInDiscordAdapter({ token: botToken })
+      const admin = adapter.admin
+      if (!admin) {
+        throw new Error('Admin operations are not available for this adapter')
       }
 
-      const members: GuildMember[] = await (async () => {
+      const members: PlatformGuildMemberSummary[] = await (async () => {
         if (options.query) {
-          return (await rest.get(routeGuildMembersSearch(guildId), {
-            query: new URLSearchParams({ query: options.query, limit: '20' }),
-          })) as GuildMember[]
+          return admin.searchGuildMembers({
+            guildId,
+            query: options.query,
+            limit: 20,
+          })
         }
-        return (await rest.get(routeGuildMembers(guildId), {
-          query: new URLSearchParams({ limit: '20' }),
-        })) as GuildMember[]
+        return admin.listGuildMembers({ guildId, limit: 20 })
       })()
 
       if (members.length === 0) {
@@ -4067,8 +4032,8 @@ cli
 
       const userList = members
         .map((m) => {
-          const displayName = m.nick || m.user.global_name || m.user.username
-          return `- ${displayName} (ID: ${m.user.id}) - mention: <@${m.user.id}>`
+          const displayName = m.nick || m.globalName || m.username
+          return `- ${displayName} (ID: ${m.id}) - mention: <@${m.id}>`
         })
         .join('\n')
 
@@ -4656,26 +4621,20 @@ cli
 
       const { token: botToken } = await resolveBotCredentials()
 
-      const rest = createDiscordRest(botToken)
-      const threadData = (await rest.get(routeChannel(resolvedThreadId))) as {
-        id: string
-        type: number
-        name?: string
-        parent_id?: string
-      }
-
-      if (!isThreadChannelType(threadData.type)) {
+      const adapter = await createLoggedInDiscordAdapter({ token: botToken })
+      const threadHandle = await adapter.thread({ threadId: resolvedThreadId })
+      if (!threadHandle) {
         cliLogger.error(`Channel is not a thread: ${resolvedThreadId}`)
         process.exit(EXIT_NO_RESTART)
       }
 
       const sessionId = options.session || await getThreadSession(resolvedThreadId)
       let client: OpencodeClient | null = null
-      if (sessionId && threadData.parent_id) {
-        const channelConfig = await getChannelDirectory(threadData.parent_id)
+      if (sessionId && threadHandle.data.parentId) {
+        const channelConfig = await getChannelDirectory(threadHandle.data.parentId)
         if (!channelConfig) {
           cliLogger.warn(
-            `No channel directory mapping found for parent channel ${threadData.parent_id}`,
+            `No channel directory mapping found for parent channel ${threadHandle.data.parentId}`,
           )
         } else {
           const getClient = await initializeOpencodeForDirectory(
@@ -4696,14 +4655,14 @@ cli
       }
 
       await archiveThread({
-        rest,
+        adapter,
         threadId: resolvedThreadId,
-        parentChannelId: threadData.parent_id,
+        parentChannelId: threadHandle.data.parentId || undefined,
         sessionId,
         client,
       })
 
-      const threadLabel = threadData.name || resolvedThreadId
+      const threadLabel = threadHandle.data.name || resolvedThreadId
       note(
         `Archived thread: ${threadLabel}\nThread ID: ${resolvedThreadId}`,
         '✅ Archived',
