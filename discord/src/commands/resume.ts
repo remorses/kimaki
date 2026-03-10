@@ -15,7 +15,7 @@ import {
   getAllThreadSessionIds,
 } from '../database.js'
 import { initializeOpencodeForDirectory } from '../opencode.js'
-import { sendThreadMessage, resolveTextChannel } from '../discord-utils.js'
+import { sendThreadMessage, resolveProjectDirectoryFromAutocomplete } from '../discord-utils.js'
 import { collectLastAssistantParts } from '../message-formatting.js'
 import { createLogger, LogPrefix } from '../logger.js'
 import * as errore from 'errore'
@@ -168,17 +168,10 @@ export async function handleResumeAutocomplete({
 }: AutocompleteContext): Promise<void> {
   const focusedValue = interaction.options.getFocused()
 
-  let projectDirectory: string | undefined
-
-  if (interaction.channel) {
-    const textChannel = await resolveTextChannel(
-      interaction.channel as TextChannel | ThreadChannel | null,
-    )
-    if (textChannel) {
-      const channelConfig = await getChannelDirectory(textChannel.id)
-      projectDirectory = channelConfig?.directory
-    }
-  }
+  // interaction.channel can be null when the channel isn't cached
+  // (common with gateway-proxy). Use channelId which is always available
+  // from the raw interaction payload.
+  const projectDirectory = await resolveProjectDirectoryFromAutocomplete(interaction)
 
   if (!projectDirectory) {
     await interaction.respond([])

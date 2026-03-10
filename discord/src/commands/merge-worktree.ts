@@ -15,7 +15,7 @@ import { mergeWorktree, listBranchesByLastCommit, validateBranchRef } from '../w
 import {
   sendThreadMessage,
   resolveWorkingDirectory,
-  resolveTextChannel,
+  resolveProjectDirectoryFromAutocomplete,
 } from '../discord-utils.js'
 import {
   getOrCreateRuntime,
@@ -189,26 +189,10 @@ export async function handleMergeWorktreeAutocomplete({
   try {
     const focusedValue = interaction.options.getFocused()
 
-    let projectDirectory: string | undefined
-
-    // Try to get directory from worktree info (we're in a thread)
-    if (interaction.channel?.isThread()) {
-      const worktreeInfo = await getThreadWorktree(interaction.channel.id)
-      if (worktreeInfo?.project_directory) {
-        projectDirectory = worktreeInfo.project_directory
-      }
-    }
-
-    // Fallback: resolve from parent channel
-    if (!projectDirectory && interaction.channel) {
-      const textChannel = await resolveTextChannel(
-        interaction.channel as TextChannel | ThreadChannel | null,
-      )
-      if (textChannel) {
-        const channelConfig = await getChannelDirectory(textChannel.id)
-        projectDirectory = channelConfig?.directory
-      }
-    }
+    // interaction.channel can be null when the channel isn't cached
+    // (common with gateway-proxy). Use channelId which is always available
+    // from the raw interaction payload.
+    const projectDirectory = await resolveProjectDirectoryFromAutocomplete(interaction)
 
     if (!projectDirectory) {
       await interaction.respond([])

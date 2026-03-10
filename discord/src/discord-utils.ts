@@ -4,6 +4,7 @@
 
 import {
   type APIInteractionGuildMember,
+  type AutocompleteInteraction,
   ChannelType,
   GuildMember,
   MessageFlags,
@@ -643,6 +644,58 @@ export async function getKimakiMetadata(
   return {
     projectDirectory: channelConfig.directory,
   }
+}
+
+/**
+ * Resolve project directory from an autocomplete interaction.
+ * Uses interaction.channelId (always available from raw payload) instead of
+ * interaction.channel (cache-based getter, often null with gateway-proxy).
+ * Checks the channel ID directly in DB, then tries thread worktree lookup,
+ * then falls back to fetching the channel to resolve thread parent.
+ */
+export async function resolveProjectDirectoryFromAutocomplete(
+  interaction: Pick<AutocompleteInteraction, 'channelId' | 'channel' | 'client'>,
+): Promise<string | undefined> {
+  const channelId = interaction.channelId
+
+  // Direct channel lookup — works when the command is run from a project text channel
+  const channelConfig = await getChannelDirectory(channelId)
+  if (channelConfig) {
+    return channelConfig.directory
+  }
+
+  // If we're in a thread, try worktree info first (has project_directory)
+  const worktreeInfo = await getThreadWorktree(channelId)
+  if (worktreeInfo?.project_directory) {
+    return worktreeInfo.project_directory
+  }
+
+  // Thread fallback: resolve parent channel ID and look up its directory.
+  // Try cached channel first, then fetch if cache misses (gateway-proxy scenario).
+  const cachedParentId = interaction.channel?.isThread() ? interaction.channel.parentId : null
+  if (cachedParentId) {
+    const parentConfig = await getChannelDirectory(cachedParentId)
+    if (parentConfig) {
+      return parentConfig.directory
+    }
+  }
+
+  // Last resort: fetch the channel from Discord API to get parentId for threads
+  // when the channel isn't cached at all (common with gateway-proxy).
+  if (!cachedParentId) {
+    const fetched = await errore.tryAsync({
+      try: () => { return interaction.client.channels.fetch(channelId) },
+      catch: (e) => { return e as Error },
+    })
+    if (!(fetched instanceof Error) && fetched?.isThread() && fetched.parentId) {
+      const parentConfig = await getChannelDirectory(fetched.parentId)
+      if (parentConfig) {
+        return parentConfig.directory
+      }
+    }
+  }
+
+  return undefined
 }
 
 /**

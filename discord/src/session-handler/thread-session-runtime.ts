@@ -173,7 +173,10 @@ export function getOrCreateRuntime(
     // Reconcile sdkDirectory: worktree threads transition from pending
     // (projectDirectory) to ready (worktree path) after runtime creation.
     if (existing.sdkDirectory !== opts.sdkDirectory) {
-      existing.sdkDirectory = opts.sdkDirectory
+      existing.handleDirectoryChanged({
+        oldDirectory: existing.sdkDirectory,
+        newDirectory: opts.sdkDirectory,
+      })
     }
     return existing
   }
@@ -831,6 +834,44 @@ export class ThreadSessionRuntime {
     // Clean up all pending UI state for this thread (permissions, questions,
     // action buttons, file uploads, html actions).
     cleanupPendingUiForThread(this.thread.id)
+  }
+
+  // Called when sdkDirectory changes (e.g. worktree becomes ready after
+  // /new-worktree in an existing thread). The event listener was subscribed
+  // to the old directory's Instance in opencode — events from the new
+  // directory's Instance won't reach it. We must reconnect the listener
+  // and clear the old session so ensureSession creates a fresh one under
+  // the new Instance.
+  handleDirectoryChanged({
+    oldDirectory,
+    newDirectory,
+  }: {
+    oldDirectory: string
+    newDirectory: string
+  }): void {
+    logger.log(
+      `[LISTENER] sdkDirectory changed for thread ${this.threadId}: ${oldDirectory} → ${newDirectory}`,
+    )
+    this.sdkDirectory = newDirectory
+
+    // Clear cached session — it was created under the old directory's
+    // opencode Instance and can't be reused from the new one.
+    threadState.updateThread(this.threadId, (t) => ({
+      ...t,
+      sessionId: undefined,
+    }))
+
+    // Restart event listener to subscribe under the new directory.
+    const currentController = this.state?.listenerController
+    if (currentController) {
+      currentController.abort(new Error('sdkDirectory changed'))
+      threadState.updateThread(this.threadId, (t) => ({
+        ...t,
+        listenerController: new AbortController(),
+      }))
+      this.listenerLoopRunning = false
+      void this.startEventListener()
+    }
   }
 
   handleSharedServerStarted({
