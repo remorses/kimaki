@@ -14,14 +14,32 @@ import type {
   ConversationsRenameArguments,
   ConversationsRepliesArguments,
   ConversationsSetTopicArguments,
+  ConversationsHistoryResponse,
+  ConversationsInfoResponse,
+  ConversationsListResponse,
+  ConversationsCreateResponse,
   ReactionsAddArguments,
   ReactionsRemoveArguments,
   UsergroupsListArguments,
+  UsergroupsListResponse,
   UsersInfoArguments,
+  UsersInfoResponse,
   UsersListArguments,
+  UsersListResponse,
   ViewsOpenArguments,
   WebClient,
 } from '@slack/web-api'
+
+// Extract nested types from Slack SDK response types via indexed access.
+// These are not re-exported from @slack/web-api directly because they
+// have colliding names across response modules (Channel, User, etc.).
+type SlackChannel = NonNullable<ConversationsInfoResponse['channel']>
+type SlackListChannel = NonNullable<ConversationsListResponse['channels']>[number]
+type SlackMessage = NonNullable<ConversationsHistoryResponse['messages']>[number]
+type SlackCreateChannel = NonNullable<ConversationsCreateResponse['channel']>
+type SlackUser = NonNullable<UsersInfoResponse['user']>
+type SlackMember = NonNullable<UsersListResponse['members']>[number]
+type SlackUsergroup = NonNullable<UsergroupsListResponse['usergroups']>[number]
 import {
   ChannelType,
   ComponentType,
@@ -112,7 +130,7 @@ export async function postMessage({
     unfurl_media: false,
   } satisfies ChatPostMessageArguments
   const result = await slack.chat.postMessage(postArgs)
-  const messageTs = readStringFromUnknown(result, 'ts')
+  const messageTs = result.ts
   if (!messageTs) {
     throw new Error('Slack chat.postMessage response missing ts')
   }
@@ -267,9 +285,8 @@ export async function getMessages({
     const result = await slack.conversations.replies(repliesArgs)
 
     return (result.messages ?? []).map((msg) => {
-      const normalizedMessage = normalizeSlackMessage(msg)
       return buildApiMessageFromSlack({
-        msg: normalizedMessage,
+        msg,
         channel,
         channelId,
         botUserId,
@@ -288,9 +305,8 @@ export async function getMessages({
   const result = await slack.conversations.history(historyArgs)
 
   return (result.messages ?? []).map((msg) => {
-    const normalizedMessage = normalizeSlackMessage(msg)
     return buildApiMessageFromSlack({
-      msg: normalizedMessage,
+      msg,
       channel,
       channelId,
       botUserId,
@@ -377,14 +393,11 @@ export async function getChannel({
 
   const infoArgs = { channel: channelId } satisfies ConversationsInfoArguments
   const result = await slack.conversations.info(infoArgs)
-  const ch = normalizeSlackChannelInfo(result.channel)
-  if (!ch) {
-    throw new Error('Slack conversations.info returned invalid channel payload')
-  }
+  const ch = requireSlackChannelId(result.channel)
 
   return {
     id: ch.id,
-    type: ch.is_private ? ChannelType.GuildText : ChannelType.GuildText,
+    type: ChannelType.GuildText,
     name: ch.name ?? '',
     guild_id: guildId,
     topic: ch.topic?.value ?? null,
@@ -410,13 +423,10 @@ export async function listChannels({
   const result = await slack.conversations.list(listArgs)
 
   return (result.channels ?? []).map((ch) => {
-    const c = normalizeSlackChannelInfo(ch)
-    if (!c) {
-      throw new Error('Slack conversations.list returned invalid channel payload')
-    }
+    const c = requireSlackChannelId(ch)
     return {
       id: c.id,
-      type: c.is_private ? ChannelType.GuildText : ChannelType.GuildText,
+      type: ChannelType.GuildText,
       name: c.name ?? '',
       guild_id: guildId,
       topic: c.topic?.value ?? null,
@@ -486,10 +496,7 @@ export async function createChannel({
     is_private: false,
   } satisfies ConversationsCreateArguments
   const result = await slack.conversations.create(createArgs)
-  const channel = normalizeSlackChannelInfo(result.channel)
-  if (!channel) {
-    throw new Error('Slack conversations.create returned invalid channel payload')
-  }
+  const channel = requireSlackChannelId(result.channel)
 
   return {
     id: channel.id,
@@ -513,29 +520,28 @@ export async function listGuildMembers({
     limit: 200,
   } satisfies UsersListArguments
   const result = await slack.users.list(args)
-  const members = (result.members ?? [])
-    .map((member) => {
-      return normalizeSlackUserInfo(member)
-    })
-    .filter(isDefined)
 
-  return members.map((member) => {
-    return {
-      user: {
-        id: member.id,
-        username: member.name ?? member.id,
-        discriminator: '0',
-        avatar: member.profile?.image_72 ?? null,
-        bot: member.is_bot ?? false,
-        global_name: member.real_name ?? member.name ?? null,
-      },
-      roles: [],
-      joined_at: new Date().toISOString(),
-      deaf: false,
-      mute: false,
-      flags: GuildMemberFlags.CompletedOnboarding,
-    }
-  })
+  return (result.members ?? [])
+    .filter((member): member is SlackMember & { id: string } => {
+      return !!member.id
+    })
+    .map((member) => {
+      return {
+        user: {
+          id: member.id,
+          username: member.name ?? member.id,
+          discriminator: '0',
+          avatar: member.profile?.image_72 ?? null,
+          bot: member.is_bot ?? false,
+          global_name: member.real_name ?? member.name ?? null,
+        },
+        roles: [],
+        joined_at: new Date().toISOString(),
+        deaf: false,
+        mute: false,
+        flags: GuildMemberFlags.CompletedOnboarding,
+      }
+    })
 }
 
 /**
@@ -576,13 +582,12 @@ export async function listGuildRoles({
     include_users: false,
   } satisfies UsergroupsListArguments
   const result = await slack.usergroups.list(args)
-  const groups = (result.usergroups ?? [])
-    .map((group) => {
-      return normalizeSlackUserGroup(group)
-    })
-    .filter(isDefined)
 
-  return groups.map((group) => {
+  return (result.usergroups ?? [])
+    .filter((group): group is SlackUsergroup & { id: string; name: string } => {
+      return !!(group.id && group.name)
+    })
+    .map((group) => {
     return {
       id: group.id,
       name: group.name,
@@ -761,10 +766,7 @@ export async function getUser({
 }): Promise<APIUser> {
   const userInfoArgs = { user: userId } satisfies UsersInfoArguments
   const result = await slack.users.info(userInfoArgs)
-  const user = normalizeSlackUserInfo(result.user)
-  if (!user) {
-    throw new Error('Slack users.info returned invalid user payload')
-  }
+  const user = requireSlackUserId(result.user)
 
   return {
     id: user.id,
@@ -801,7 +803,7 @@ export async function createThread({
     text: body.name,
   } satisfies ChatPostMessageArguments
   const result = await slack.chat.postMessage(createThreadArgs)
-  const threadTs = readStringFromUnknown(result, 'ts')
+  const threadTs = result.ts
   if (!threadTs) {
     throw new Error('Slack chat.postMessage response missing ts for thread creation')
   }
@@ -875,15 +877,15 @@ function buildApiMessageFromSlack({
   botUserId,
   guildId,
 }: {
-  msg: Record<string, unknown>
+  msg: SlackMessage
   channel: string
   channelId: string
   botUserId: string
   guildId: string
 }): APIMessage {
-  const msgTs = readString(msg, 'ts') ?? ''
-  const msgUser = readString(msg, 'user') ?? botUserId
-  const msgText = readString(msg, 'text') ?? ''
+  const msgTs = msg.ts ?? ''
+  const msgUser = msg.user ?? botUserId
+  const msgText = msg.text ?? ''
 
   return {
     id: encodeMessageId(channel, msgTs),
@@ -909,125 +911,39 @@ function buildApiMessageFromSlack({
   }
 }
 
-function normalizeSlackMessage(value: unknown): Record<string, unknown> {
-  if (!isRecord(value)) {
-    return {}
-  }
-  return value
-}
 
-function normalizeSlackUserGroup(value: unknown):
-  | {
-      id: string
-      name: string
-    }
-  | null {
-  if (!isRecord(value)) {
-    return null
-  }
-  const id = readString(value, 'id')
-  const name = readString(value, 'name')
-  if (!(id && name)) {
-    return null
+
+function requireSlackChannelId(
+  channel: SlackChannel | SlackListChannel | SlackCreateChannel | undefined,
+): { id: string; name?: string; topic?: { value?: string }; is_private?: boolean } {
+  if (!channel?.id) {
+    throw new Error('Slack channel payload missing id')
   }
   return {
-    id,
-    name,
-  }
-}
-
-function normalizeSlackChannelInfo(value: unknown): {
-  id: string
-  name?: string
-  topic?: { value?: string }
-  is_private?: boolean
-} | null {
-  if (!isRecord(value)) {
-    return null
-  }
-  const id = readString(value, 'id')
-  if (!id) {
-    return null
-  }
-  const topic = readRecord(value, 'topic')
-  return {
-    id,
-    name: readString(value, 'name'),
-    topic: topic
-      ? {
-          value: readString(topic, 'value'),
-        }
+    id: channel.id,
+    name: channel.name,
+    topic: channel.topic
+      ? { value: channel.topic.value }
       : undefined,
-    is_private: readBoolean(value, 'is_private'),
+    is_private: 'is_private' in channel ? channel.is_private : undefined,
   }
 }
 
-function normalizeSlackUserInfo(value: unknown): {
-  id: string
-  name?: string
-  real_name?: string
-  is_bot?: boolean
-  profile?: { image_72?: string }
-} | null {
-  if (!isRecord(value)) {
-    return null
+function requireSlackUserId(
+  user: SlackUser | SlackMember | undefined,
+): { id: string; name?: string; real_name?: string; is_bot?: boolean; profile?: { image_72?: string } } {
+  if (!user?.id) {
+    throw new Error('Slack user payload missing id')
   }
-  const id = readString(value, 'id')
-  if (!id) {
-    return null
-  }
-  const profile = readRecord(value, 'profile')
   return {
-    id,
-    name: readString(value, 'name'),
-    real_name: readString(value, 'real_name'),
-    is_bot: readBoolean(value, 'is_bot'),
-    profile: profile
-      ? {
-          image_72: readString(profile, 'image_72'),
-        }
+    id: user.id,
+    name: user.name,
+    real_name: user.real_name,
+    is_bot: user.is_bot,
+    profile: user.profile
+      ? { image_72: user.profile.image_72 }
       : undefined,
   }
 }
 
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === 'object' && value !== null
-}
 
-function readRecord(
-  record: Record<string, unknown>,
-  key: string,
-): Record<string, unknown> | undefined {
-  const value = record[key]
-  return isRecord(value) ? value : undefined
-}
-
-function readString(
-  record: Record<string, unknown>,
-  key: string,
-): string | undefined {
-  const value = record[key]
-  return typeof value === 'string' ? value : undefined
-}
-
-function readStringFromUnknown(
-  value: unknown,
-  key: string,
-): string | undefined {
-  if (!isRecord(value)) {
-    return undefined
-  }
-  return readString(value, key)
-}
-
-function readBoolean(
-  record: Record<string, unknown>,
-  key: string,
-): boolean | undefined {
-  const value = record[key]
-  return typeof value === 'boolean' ? value : undefined
-}
-
-function isDefined<T>(value: T | null | undefined): value is T {
-  return value !== null && value !== undefined
-}

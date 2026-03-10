@@ -114,8 +114,8 @@ async function lookupUser(
   try {
     const args = { user: userId } satisfies UsersInfoArguments
     const result = await slack.users.info(args)
-    const user = normalizeSlackUserInfo(result.user)
-    if (!user) {
+    const user = result.user
+    if (!user?.id) {
       throw new Error('Slack users.info returned invalid user payload')
     }
     const cachedUser: CachedSlackUser = {
@@ -1065,25 +1065,22 @@ export function createServer(config: ServerConfig): ServerComponents {
     } satisfies ConversationsListArguments
     const channelsList = await slack.conversations.list(listArgs)
 
-    const channels: GatewayGuildState['channels'] = (channelsList.channels ?? []).map(
-      (ch) => {
-        const c = normalizeSlackChannelInfo(ch)
-        if (!c) {
-          throw new Error('Slack conversations.list returned invalid channel payload')
-        }
+    const channels: GatewayGuildState['channels'] = (channelsList.channels ?? [])
+      .filter((ch): ch is typeof ch & { id: string } => {
+        return !!ch.id
+      })
+      .map((ch) => {
         return {
-          id: c.id,
+          id: ch.id,
           type: ChannelType.GuildText,
-          name: c.name ?? '',
+          name: ch.name ?? '',
           guild_id: workspaceId,
-          topic: c.topic?.value ?? null,
+          topic: ch.topic?.value ?? null,
           position: 0,
         }
-      },
-    )
+      })
 
-    const workspaceName =
-      readStringFromUnknown(authResult, 'team') ?? 'Slack Workspace'
+    const workspaceName = authResult.team ?? 'Slack Workspace'
     const gatewayGuild = buildGatewayGuild({
       workspaceId,
       workspaceName,
@@ -1961,57 +1958,7 @@ export function normalizeModalComponents(
   return normalizedRows
 }
 
-function normalizeSlackUserInfo(value: unknown): {
-  id: string
-  name?: string
-  real_name?: string
-  is_bot?: boolean
-  profile?: { image_72?: string }
-} | null {
-  if (!isRecord(value)) {
-    return null
-  }
-  const id = readString(value, 'id')
-  if (!id) {
-    return null
-  }
-  const profile = readRecord(value, 'profile')
-  return {
-    id,
-    name: readString(value, 'name'),
-    real_name: readString(value, 'real_name'),
-    is_bot: readBoolean(value, 'is_bot'),
-    profile: profile
-      ? {
-          image_72: readString(profile, 'image_72'),
-        }
-      : undefined,
-  }
-}
 
-function normalizeSlackChannelInfo(value: unknown): {
-  id: string
-  name?: string
-  topic?: { value?: string }
-} | null {
-  if (!isRecord(value)) {
-    return null
-  }
-  const id = readString(value, 'id')
-  if (!id) {
-    return null
-  }
-  const topic = readRecord(value, 'topic')
-  return {
-    id,
-    name: readString(value, 'name'),
-    topic: topic
-      ? {
-          value: readString(topic, 'value'),
-        }
-      : undefined,
-  }
-}
 
 function buildGatewayGuild({
   workspaceId,
@@ -2076,13 +2023,6 @@ function readNumber(
 ): number | undefined {
   const value = record[key]
   return typeof value === 'number' ? value : undefined
-}
-
-function readStringFromUnknown(value: unknown, key: string): string | undefined {
-  if (!isRecord(value)) {
-    return undefined
-  }
-  return readString(value, key)
 }
 
 function slackActionTypeToDiscordComponentType(

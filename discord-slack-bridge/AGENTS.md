@@ -38,7 +38,22 @@ to how it behaves in Discord, with this bridge handling protocol translation.
 
 - Do not use `as` assertions/casts in bridge source code.
 - Do not duplicate Slack payload types when official SDK/types are available.
-- Prefer `@slack/web-api` concrete request argument types for API calls.
+- Prefer `@slack/web-api` concrete request argument types for API calls
+  (e.g. `satisfies ChatPostMessageArguments`).
+- **Slack API response types**: use the SDK response types for all Slack API
+  call results. The WebClient methods return typed responses
+  (`ChatPostMessageResponse`, `ConversationsInfoResponse`, etc.) — access
+  fields directly on the result (e.g. `result.ts`, `result.channel?.name`)
+  instead of passing them through `Record<string, unknown>` + `readString`
+  helpers. This ensures misspelled field names are caught at compile time.
+- **Extracting nested Slack types**: the SDK does not re-export nested types
+  like `Channel`, `User`, `MessageElement` from the main entry because they
+  collide across response modules. Use indexed access on the response type:
+  ```ts
+  import type { ConversationsInfoResponse } from '@slack/web-api'
+  type SlackChannel = NonNullable<ConversationsInfoResponse['channel']>
+  ```
+  See `rest-translator.ts` imports for the full set of extracted types.
 - Prefer importing Slack types from the official Slack SDK instead of defining
   bridge-local copies. This keeps bridge code aligned with Slack's source of
   truth and automatically in sync when Slack updates type definitions.
@@ -46,6 +61,9 @@ to how it behaves in Discord, with this bridge handling protocol translation.
   - parse as `unknown`
   - validate/narrow at runtime
   - pass normalized typed objects downstream
+- The `Record<string, unknown>` + `readString`/`readRecord` pattern is ONLY
+  acceptable for inbound webhook payloads from Slack Events API (raw JSON that
+  needs runtime validation). Never use it for Slack SDK WebClient responses.
 
 ## Protocol/constants rules
 
