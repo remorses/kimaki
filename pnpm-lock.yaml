@@ -278,6 +278,9 @@ importers:
       discord.js:
         specifier: ^14.25.1
         version: 14.25.1
+      slack-digital-twin:
+        specifier: workspace:^
+        version: link:../slack-digital-twin
       typescript:
         specifier: ^5.7.0
         version: 5.9.2

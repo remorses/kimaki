@@ -53,6 +53,7 @@ export class SlackBridgeGateway {
   wss: WebSocketServer
   clients: ConnectedClient[] = []
   private loadState: () => Promise<GatewayState>
+  /** Mutable: updated via setPort() after OS-assigned bind (port:0). */
   private port: number
   private expectedToken: string
 
@@ -104,6 +105,12 @@ export class SlackBridgeGateway {
       mentions: [],
     }
     this.broadcast(GatewayDispatchEvents.MessageCreate, data)
+  }
+
+  /** Update the port used in resume_gateway_url. Call after server bind
+   *  when using port:0 (OS-assigned) so READY payloads have the real port. */
+  setPort(port: number): void {
+    this.port = port
   }
 
   close(): void {

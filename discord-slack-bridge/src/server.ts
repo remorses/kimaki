@@ -52,6 +52,7 @@ import {
   encodeMessageId,
   resolveDiscordChannelId,
   resolveSlackTarget,
+  decodeSlackTs,
 } from './id-converter.js'
 import { decodeComponentActionId } from './component-id-codec.js'
 import type {
@@ -166,8 +167,11 @@ export function createServer(config: ServerConfig): ServerComponents {
   // Slack event replay protection (event_id -> expiresAt)
   const seenEventIds = new Map<string, number>()
 
-  // Track known threads so we can emit THREAD_CREATE on first sight
-  const knownThreads = new Set<string>()
+  // Track known threads: threadTs → parentChannelId.
+  // Populated on first sight of a thread (webhook event or REST create-thread).
+  // Used by resolveSlackTarget to map numeric thread channel IDs back to
+  // the parent Slack channel, since thread IDs are now pure numeric ts.
+  const knownThreads = new Map<string, string>()
 
   const app = new Spiceflow({ basePath: '' })
 
@@ -300,6 +304,7 @@ export function createServer(config: ServerConfig): ServerComponents {
         body,
         botUserId,
         guildId: workspaceId,
+        threadMap: knownThreads,
       })
       return withRateLimitHeaders(Response.json(message))
     },
@@ -322,6 +327,7 @@ export function createServer(config: ServerConfig): ServerComponents {
         body,
         botUserId,
         guildId: workspaceId,
+        threadMap: knownThreads,
       })
       return withRateLimitHeaders(Response.json(message))
     },
@@ -340,6 +346,7 @@ export function createServer(config: ServerConfig): ServerComponents {
         slack,
         channelId,
         messageId,
+        threadMap: knownThreads,
       })
       return withRateLimitHeaders(new Response(null, { status: 204 }))
     },
@@ -364,6 +371,7 @@ export function createServer(config: ServerConfig): ServerComponents {
         },
         botUserId,
         guildId: workspaceId,
+        threadMap: knownThreads,
       })
       return withRateLimitHeaders(Response.json(messages))
     },
@@ -385,6 +393,7 @@ export function createServer(config: ServerConfig): ServerComponents {
         messageId,
         botUserId,
         guildId: workspaceId,
+        threadMap: knownThreads,
       })
       return withRateLimitHeaders(Response.json(message))
     },
@@ -405,6 +414,7 @@ export function createServer(config: ServerConfig): ServerComponents {
       slack,
       channelId,
       guildId: workspaceId,
+      threadMap: knownThreads,
     })
     return withRateLimitHeaders(Response.json(channel))
   })
@@ -441,6 +451,7 @@ export function createServer(config: ServerConfig): ServerComponents {
         channelId,
         messageId,
         emoji: decodeURIComponent(emoji),
+        threadMap: knownThreads,
       })
       return withRateLimitHeaders(new Response(null, { status: 204 }))
     },
@@ -461,6 +472,7 @@ export function createServer(config: ServerConfig): ServerComponents {
         channelId,
         messageId,
         emoji: decodeURIComponent(emoji),
+        threadMap: knownThreads,
       })
       return withRateLimitHeaders(new Response(null, { status: 204 }))
     },
@@ -482,6 +494,10 @@ export function createServer(config: ServerConfig): ServerComponents {
         botUserId,
         guildId: workspaceId,
       })
+      // Register thread in knownThreads so resolveSlackTarget can map
+      // the numeric thread channel ID back to the parent Slack channel
+      const threadTs = decodeSlackTs(thread.id)
+      knownThreads.set(threadTs, parentChannelId)
       gateway.broadcast(GatewayDispatchEvents.ThreadCreate, {
         ...thread,
         newly_created: true,
@@ -584,6 +600,7 @@ export function createServer(config: ServerConfig): ServerComponents {
           body: { content: body.data.content },
           botUserId,
           guildId: workspaceId,
+          threadMap: knownThreads,
         })
         gateway.broadcastMessageCreate(message, workspaceId)
       }
@@ -593,7 +610,7 @@ export function createServer(config: ServerConfig): ServerComponents {
           slack,
           channelId: pending.channelId,
           messageId: encodeMessageId(
-            resolveSlackTarget(pending.channelId).channel,
+            resolveSlackTarget(pending.channelId, knownThreads).channel,
             pending.messageTs,
           ),
           body: {
@@ -602,6 +619,7 @@ export function createServer(config: ServerConfig): ServerComponents {
           },
           botUserId,
           guildId: workspaceId,
+          threadMap: knownThreads,
         })
         gateway.broadcast(GatewayDispatchEvents.MessageUpdate, {
           ...message,
@@ -653,6 +671,7 @@ export function createServer(config: ServerConfig): ServerComponents {
         body: { content: body.content },
         botUserId,
         guildId: workspaceId,
+        threadMap: knownThreads,
       })
       return withRateLimitHeaders(Response.json(message))
     },
@@ -683,7 +702,7 @@ export function createServer(config: ServerConfig): ServerComponents {
         slack,
         channelId: pending.channelId,
         messageId: encodeMessageId(
-          resolveSlackTarget(pending.channelId).channel,
+          resolveSlackTarget(pending.channelId, knownThreads).channel,
           pending.messageTs,
         ),
         body: {
@@ -691,6 +710,7 @@ export function createServer(config: ServerConfig): ServerComponents {
         },
         botUserId,
         guildId: workspaceId,
+        threadMap: knownThreads,
       })
 
       return withRateLimitHeaders(Response.json(message))
@@ -759,9 +779,9 @@ export function createServer(config: ServerConfig): ServerComponents {
         event.channel &&
         event.threadTs !== event.ts
       ) {
-        const threadKey = `${event.channel}:${event.threadTs}`
+        const threadKey = event.threadTs
         if (!knownThreads.has(threadKey)) {
-          knownThreads.add(threadKey)
+          knownThreads.set(threadKey, event.channel)
           const threadChannel = events.buildThreadChannel({
             parentChannel: event.channel,
             threadTs: event.threadTs,

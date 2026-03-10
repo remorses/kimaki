@@ -45,7 +45,8 @@ describe('translateReaction', () => {
       threadTs: '1700000000.123456',
     })
 
-    expect(translated.data.channel_id).toBe('THR_C123_1700000000123456')
+    // Thread channel IDs are now pure numeric (encoded Slack ts)
+    expect(translated.data.channel_id).toBe('1700000000123456')
   })
 })
 

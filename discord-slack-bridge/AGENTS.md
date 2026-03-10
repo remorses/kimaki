@@ -71,6 +71,82 @@ to how it behaves in Discord, with this bridge handling protocol translation.
 - Prefer enums and protocol types from `discord-api-types/v10`.
 - Follow payload-shaping patterns used by `discord-digital-twin`.
 
+## ID mapping between Discord and Slack
+
+discord.js parses certain IDs as BigInt snowflakes internally (for
+`createdTimestamp`, sorting, caching). Any ID that discord.js treats as a
+snowflake **must** be a valid BigInt string — non-numeric IDs like
+`MSG_C04_17000...` cause `Cannot convert to BigInt` crashes at runtime.
+
+### Which IDs must be snowflake-compatible
+
+**Message IDs** — always parsed as BigInt by discord.js (`Snowflake.timestampFrom`
+in `Message._patch`). Must be pure numeric.
+
+**Thread channel IDs** — also parsed as snowflakes because discord.js treats
+threads as channels and accesses `createdTimestamp` on them. Must be pure
+numeric.
+
+**Guild/channel/user IDs** — discord.js does NOT parse these as snowflakes in
+tested code paths (only `createdTimestamp` getter would break, which typical
+bot code doesn't call). These keep their Slack format as-is (`T04ABC123`,
+`C04ABC123`, `U04ABC123`).
+
+### Encoding scheme
+
+```
+Guild ID    →  Slack workspace ID as-is    (T04ABC123)
+Channel ID  →  Slack channel ID as-is      (C04ABC123)
+User ID     →  Slack user ID as-is         (U04ABC123)
+Message ID  →  Slack ts with dot stripped   (1700000000000001)
+Thread ID   →  Slack ts with dot stripped   (1700000000000001)
+```
+
+Slack timestamps have format `"1700000000.000001"` (integer seconds + 6-digit
+microsecond suffix). Stripping the dot produces a numeric string parseable as
+BigInt.
+
+### Thread ID = parent message ID
+
+In Slack, a thread IS its parent message — identified by `thread_ts` which
+equals the parent message's `ts`. So the thread channel ID and the parent
+message ID are the same numeric value. This is natural and avoids inventing
+synthetic IDs.
+
+### Thread → parent channel resolution
+
+The numeric thread ID only encodes the `thread_ts`, not which Slack channel
+the thread lives in. To send messages to a thread, we need the parent Slack
+channel ID. This is maintained at runtime in `knownThreads: Map<string, string>`
+(threadTs → parentChannelId) in `server.ts`. It gets populated when:
+
+1. **Webhook event** arrives with `thread_ts` (Slack → Discord direction)
+2. **REST create-thread** request from discord.js (Discord → Slack direction)
+
+All functions that need to resolve a Discord channel ID to a Slack target
+(`resolveSlackTarget`) accept a `threadMap` parameter for this lookup.
+
+### Distinguishing threads from channels
+
+`isThreadChannelId(id)` checks if an ID is pure numeric with 7+ digits.
+Slack channel IDs always start with a letter (`C`, `G`, `D`), so there's
+no ambiguity.
+
+### Legacy format support
+
+The decoders (`decodeMessageId`, `decodeThreadId`) still accept the old
+`MSG_channel_ts` and `THR_channel_ts` prefixed formats for backward
+compatibility. New code always produces numeric-only IDs.
+
+### Implementation files
+
+- `id-converter.ts` — all encode/decode/resolve functions
+- `server.ts` — `knownThreads` map, thread registration on create/discover
+- `event-translator.ts` — uses `encodeThreadId`/`encodeMessageId` for
+  gateway events
+- `rest-translator.ts` — uses `resolveSlackTarget` with `threadMap` for
+  all REST operations
+
 ## Validation rules
 
 - After bridge changes, always run:

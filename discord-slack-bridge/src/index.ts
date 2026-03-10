@@ -67,9 +67,9 @@ export class SlackBridge {
     return this._port
   }
 
-  /** REST API base URL for discord.js */
+  /** REST API base URL for discord.js (without /v10 — discord.js appends the version) */
   get restUrl(): string {
-    return `http://127.0.0.1:${this._port}/api/v10`
+    return `http://127.0.0.1:${this._port}/api`
   }
 
   /** Gateway WebSocket URL for discord.js */
@@ -101,10 +101,12 @@ export class SlackBridge {
 
     await startServer(this.server, this._port)
 
-    // Read actual bound port (important when port=0 for OS-assigned)
+    // Read actual bound port (important when port=0 for OS-assigned).
+    // Also update the gateway so READY resume_gateway_url has the real port.
     const addr = this.server.httpServer.address()
     if (typeof addr === 'object' && addr) {
       this._port = addr.port
+      this.server.gateway.setPort(addr.port)
     }
   }
 

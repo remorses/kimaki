@@ -86,6 +86,7 @@ export async function postMessage({
   body,
   botUserId,
   guildId,
+  threadMap,
 }: {
   slack: WebClient
   channelId: string
@@ -97,8 +98,9 @@ export async function postMessage({
   }
   botUserId: string
   guildId: string
+  threadMap?: Map<string, string>
 }): Promise<APIMessage> {
-  const { channel, threadTs } = resolveSlackTarget(channelId)
+  const { channel, threadTs } = resolveSlackTarget(channelId, threadMap)
 
   // Upload file attachments first (Slack shares them to the channel)
   if (body.attachments && body.attachments.length > 0) {
@@ -156,6 +158,7 @@ export async function editMessage({
   body,
   botUserId,
   guildId,
+  threadMap,
 }: {
   slack: WebClient
   channelId: string
@@ -163,8 +166,9 @@ export async function editMessage({
   body: { content?: string; components?: unknown[] }
   botUserId: string
   guildId: string
+  threadMap?: Map<string, string>
 }): Promise<APIMessage> {
-  const { channel } = resolveSlackTarget(channelId)
+  const { channel } = resolveSlackTarget(channelId, threadMap)
 
   let ts: string
   if (isEncodedMessageId(messageId)) {
@@ -206,12 +210,14 @@ export async function deleteMessage({
   slack,
   channelId,
   messageId,
+  threadMap,
 }: {
   slack: WebClient
   channelId: string
   messageId: string
+  threadMap?: Map<string, string>
 }): Promise<void> {
-  const { channel } = resolveSlackTarget(channelId)
+  const { channel } = resolveSlackTarget(channelId, threadMap)
 
   let ts: string
   if (isEncodedMessageId(messageId)) {
@@ -238,14 +244,16 @@ export async function getMessages({
   query,
   botUserId,
   guildId,
+  threadMap,
 }: {
   slack: WebClient
   channelId: string
   query: { limit?: string; before?: string; after?: string }
   botUserId: string
   guildId: string
+  threadMap?: Map<string, string>
 }): Promise<APIMessage[]> {
-  const { channel, threadTs } = resolveSlackTarget(channelId)
+  const { channel, threadTs } = resolveSlackTarget(channelId, threadMap)
   const limit = query.limit ? Number.parseInt(query.limit, 10) : 50
 
   // Discord uses snowflake-based before/after cursors.
@@ -324,12 +332,14 @@ export async function getMessage({
   messageId,
   botUserId,
   guildId,
+  threadMap,
 }: {
   slack: WebClient
   channelId: string
   messageId: string
   botUserId: string
   guildId: string
+  threadMap?: Map<string, string>
 }): Promise<APIMessage> {
   const messages = await getMessages({
     slack,
@@ -341,11 +351,12 @@ export async function getMessage({
     },
     botUserId,
     guildId,
+    threadMap,
   })
 
   const requestedId = isEncodedMessageId(messageId)
     ? messageId
-    : encodeMessageId(resolveSlackTarget(channelId).channel, messageId)
+    : encodeMessageId(resolveSlackTarget(channelId, threadMap).channel, messageId)
 
   const requestedMessage = messages.find((message) => {
     return message.id === requestedId
@@ -366,13 +377,15 @@ export async function getChannel({
   slack,
   channelId,
   guildId,
+  threadMap,
 }: {
   slack: WebClient
   channelId: string
   guildId: string
+  threadMap?: Map<string, string>
 }): Promise<APIChannel> {
   if (isThreadChannelId(channelId)) {
-    const { channel, threadTs } = resolveSlackTarget(channelId)
+    const { channel, threadTs } = resolveSlackTarget(channelId, threadMap)
     // For threads, build a synthetic channel object
     return {
       id: channelId,
@@ -691,13 +704,15 @@ export async function addReaction({
   channelId,
   messageId,
   emoji,
+  threadMap,
 }: {
   slack: WebClient
   channelId: string
   messageId: string
   emoji: string
+  threadMap?: Map<string, string>
 }): Promise<void> {
-  const { channel } = resolveSlackTarget(channelId)
+  const { channel } = resolveSlackTarget(channelId, threadMap)
 
   let ts: string
   if (isEncodedMessageId(messageId)) {
@@ -726,13 +741,15 @@ export async function removeReaction({
   channelId,
   messageId,
   emoji,
+  threadMap,
 }: {
   slack: WebClient
   channelId: string
   messageId: string
   emoji: string
+  threadMap?: Map<string, string>
 }): Promise<void> {
-  const { channel } = resolveSlackTarget(channelId)
+  const { channel } = resolveSlackTarget(channelId, threadMap)
 
   let ts: string
   if (isEncodedMessageId(messageId)) {

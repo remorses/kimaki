@@ -16,12 +16,11 @@ describe('encodeThreadId / decodeThreadId', () => {
     const channel = 'C04ABC123'
     const threadTs = '1503435956.000247'
     const encoded = encodeThreadId(channel, threadTs)
-    expect(encoded).toMatchInlineSnapshot(`"THR_C04ABC123_1503435956000247"`)
+    expect(encoded).toMatchInlineSnapshot(`"1503435956000247"`)
 
     const decoded = decodeThreadId(encoded)
     expect(decoded).toMatchInlineSnapshot(`
       {
-        "channel": "C04ABC123",
         "threadTs": "1503435956.000247",
       }
     `)
@@ -29,7 +28,7 @@ describe('encodeThreadId / decodeThreadId', () => {
 
   test('handles different channels', () => {
     expect(encodeThreadId('G0PRIVATE', '1700000000.123456')).toMatchInlineSnapshot(
-      `"THR_G0PRIVATE_1700000000123456"`,
+      `"1700000000123456"`,
     )
   })
 
@@ -54,12 +53,11 @@ describe('encodeMessageId / decodeMessageId', () => {
     const channel = 'C04ABC123'
     const ts = '1503435956.000247'
     const encoded = encodeMessageId(channel, ts)
-    expect(encoded).toMatchInlineSnapshot(`"MSG_C04ABC123_1503435956000247"`)
+    expect(encoded).toMatchInlineSnapshot(`"1503435956000247"`)
 
     const decoded = decodeMessageId(encoded)
     expect(decoded).toMatchInlineSnapshot(`
       {
-        "channel": "C04ABC123",
         "ts": "1503435956.000247",
       }
     `)
@@ -82,8 +80,11 @@ describe('encodeMessageId / decodeMessageId', () => {
 
 describe('isThreadChannelId', () => {
   test('identifies thread IDs', () => {
-    expect(isThreadChannelId('THR_C04ABC123_1503435956000247')).toBe(true)
+    // Thread IDs are pure numeric (encoded Slack ts, 7+ digits)
+    expect(isThreadChannelId('1503435956000247')).toBe(true)
     expect(isThreadChannelId('C04ABC123')).toBe(false)
+    // Legacy THR_ format is no longer produced
+    expect(isThreadChannelId('THR_C04ABC123_1503435956000247')).toBe(false)
     expect(isThreadChannelId('MSG_C04ABC123_1503435956000247')).toBe(false)
   })
 })
@@ -97,7 +98,18 @@ describe('isEncodedMessageId', () => {
 })
 
 describe('resolveSlackTarget', () => {
-  test('resolves thread channel to channel + threadTs', () => {
+  test('resolves numeric thread ID with threadMap', () => {
+    const threadMap = new Map([['1503435956.000247', 'C04ABC123']])
+    const result = resolveSlackTarget('1503435956000247', threadMap)
+    expect(result).toMatchInlineSnapshot(`
+      {
+        "channel": "C04ABC123",
+        "threadTs": "1503435956.000247",
+      }
+    `)
+  })
+
+  test('resolves legacy THR_ format without threadMap', () => {
     const result = resolveSlackTarget('THR_C04ABC123_1503435956000247')
     expect(result).toMatchInlineSnapshot(`
       {
@@ -129,7 +141,7 @@ describe('resolveDiscordChannelId', () => {
       '1503435900.000100',
       '1503435956.000247',
     )
-    expect(result).toMatchInlineSnapshot(`"THR_C04ABC123_1503435900000100"`)
+    expect(result).toMatchInlineSnapshot(`"1503435900000100"`)
   })
 
   test('returns channel ID for parent messages', () => {

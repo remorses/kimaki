@@ -47,6 +47,7 @@
     "@types/node": "^24.11.0",
     "@types/ws": "^8.5.0",
     "discord.js": "^14.25.1",
+    "slack-digital-twin": "workspace:^",
     "typescript": "^5.7.0",
     "vitest": "^3.0.0"
   }
