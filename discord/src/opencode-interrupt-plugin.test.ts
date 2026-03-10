@@ -121,11 +121,6 @@ function createChatOutput({
       sessionID,
       role: 'user',
       time: { created: Date.now() },
-      agent: 'build',
-      model: {
-        providerID: 'deterministic-provider',
-        modelID: 'deterministic-v2',
-      },
     },
     parts: parts || [{ type: 'text', text: 'user message' }],
   } as InterruptChatOutput

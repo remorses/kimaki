@@ -13,6 +13,13 @@ type PendingMessage = {
   started: boolean
   timer: ReturnType<typeof setTimeout>
   abortAfterStepMessageID: string | undefined
+  agent: string | undefined
+  model:
+    | {
+        providerID: string
+        modelID: string
+      }
+    | undefined
 }
 
 type EventWaiter = {
@@ -100,6 +107,8 @@ const interruptOpencodeSessionOnUserMessage: Plugin = async (ctx) => {
       started: false,
       timer,
       abortAfterStepMessageID: latestAssistantMessageIDBySession.get(sessionID),
+      agent: undefined,
+      model: undefined,
     })
   }
 
@@ -176,9 +185,24 @@ const interruptOpencodeSessionOnUserMessage: Plugin = async (ctx) => {
         return
       }
 
+      const resumeBody: {
+        parts: []
+        agent?: string
+        model?: {
+          providerID: string
+          modelID: string
+        }
+      } = { parts: [] }
+      if (currentPending.agent) {
+        resumeBody.agent = currentPending.agent
+      }
+      if (currentPending.model) {
+        resumeBody.model = currentPending.model
+      }
+
       await ctx.client.session.promptAsync({
         path: { id: sessionID },
-        body: { parts: [] },
+        body: resumeBody,
       })
       clearPendingByMessageId({ messageID })
 
@@ -287,6 +311,12 @@ const interruptOpencodeSessionOnUserMessage: Plugin = async (ctx) => {
         sessionID,
         delayMs: interruptStepTimeoutMs,
       })
+      const pending = pendingByMessageId.get(messageID)
+      if (!pending) {
+        return
+      }
+      pending.agent = output.message.agent
+      pending.model = output.message.model
     },
   }
 }
