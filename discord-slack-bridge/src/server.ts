@@ -10,12 +10,23 @@ import http from 'node:http'
 import { createHmac, timingSafeEqual } from 'node:crypto'
 import type { WebClient } from '@slack/web-api'
 import { Spiceflow } from 'spiceflow'
-import { GatewayDispatchEvents, GuildMemberFlags } from 'discord-api-types/v10'
+import {
+  ApplicationCommandOptionType,
+  ApplicationCommandType,
+  ChannelType,
+  ComponentType,
+  GatewayDispatchEvents,
+  GuildMemberFlags,
+  InteractionResponseType,
+  InteractionType,
+  MessageType,
+} from 'discord-api-types/v10'
 import type { APIChannel, APIGuild } from 'discord-api-types/v10'
 import { SlackBridgeGateway, type GatewayState } from './gateway.js'
 import * as rest from './rest-translator.js'
 import * as events from './event-translator.js'
 import { encodeMessageId, resolveDiscordChannelId } from './id-converter.js'
+import { decodeComponentActionId } from './component-id-codec.js'
 import type {
   SlackEventEnvelope,
   SlackEvent,
@@ -418,8 +429,8 @@ export function createServer(config: ServerConfig): ServerComponents {
 
       pending.acknowledged = true
 
-      // Type 4: CHANNEL_MESSAGE_WITH_SOURCE
-      if (body.type === 4 && body.data) {
+      // CHANNEL_MESSAGE_WITH_SOURCE
+      if (body.type === InteractionResponseType.ChannelMessageWithSource && body.data) {
         const message = await rest.postMessage({
           slack,
           channelId: pending.channelId,
@@ -602,13 +613,13 @@ export function createServer(config: ServerConfig): ServerComponents {
       acknowledged: false,
     })
 
-    // Broadcast as INTERACTION_CREATE
-    gateway.broadcast(GatewayDispatchEvents.InteractionCreate, {
-      id: interactionId,
-      application_id: botUserId,
-      type: 2, // ApplicationCommand
-      token: interactionToken,
-      version: 1,
+      // Broadcast as INTERACTION_CREATE
+      gateway.broadcast(GatewayDispatchEvents.InteractionCreate, {
+        id: interactionId,
+        application_id: botUserId,
+        type: InteractionType.ApplicationCommand,
+        token: interactionToken,
+        version: 1,
       channel_id: channelId,
       guild_id: workspaceId,
       member: {
@@ -626,9 +637,9 @@ export function createServer(config: ServerConfig): ServerComponents {
       data: {
         id: interactionId,
         name: command.replace(/^\//, ''),
-        type: 1, // ChatInput
+        type: ApplicationCommandType.ChatInput,
         options: text
-          ? [{ name: 'text', type: 3, value: text }]
+          ? [{ name: 'text', type: ApplicationCommandOptionType.String, value: text }]
           : [],
       },
     })
@@ -662,6 +673,12 @@ export function createServer(config: ServerConfig): ServerComponents {
         const componentType = slackActionTypeToDiscordComponentType(
           action.type,
         )
+        const decodedAction = decodeComponentActionId(action.action_id)
+        const resolvedComponentType =
+          decodedAction.componentType ??
+          componentType ??
+          ComponentType.Button
+        const values = extractActionValues(action)
 
         pendingInteractions.set(interactionId, {
           id: interactionId,
@@ -681,7 +698,7 @@ export function createServer(config: ServerConfig): ServerComponents {
         gateway.broadcast(GatewayDispatchEvents.InteractionCreate, {
           id: interactionId,
           application_id: botUserId,
-          type: 3, // MessageComponent
+          type: InteractionType.MessageComponent,
           token: interactionToken,
           version: 1,
           channel_id: channelId,
@@ -699,11 +716,13 @@ export function createServer(config: ServerConfig): ServerComponents {
             mute: false,
           },
           data: {
-            custom_id: action.action_id,
-            component_type: componentType,
-            values: action.selected_option
-              ? [action.selected_option.value]
-              : [],
+            custom_id: decodedAction.customId,
+            component_type: resolvedComponentType,
+            values,
+            ...(buildResolvedData({
+              componentType: resolvedComponentType,
+              values,
+            }) ?? {}),
           },
           message: {
             id: messageId,
@@ -725,7 +744,7 @@ export function createServer(config: ServerConfig): ServerComponents {
             mentions: [],
             mention_roles: [],
             pinned: false,
-            type: 0,
+            type: MessageType.Default,
           },
         })
       }
@@ -757,7 +776,7 @@ export function createServer(config: ServerConfig): ServerComponents {
         }
         return {
           id: c.id,
-          type: 0, // GuildText
+          type: ChannelType.GuildText,
           name: c.name ?? '',
           guild_id: workspaceId,
           topic: c.topic?.value ?? null,
@@ -865,11 +884,146 @@ function pruneExpiredEventIds({
   }
 }
 
-function slackActionTypeToDiscordComponentType(actionType: string): number {
-  if (actionType === 'static_select') {
-    return 3
+function slackActionTypeToDiscordComponentType(
+  actionType: string,
+): ComponentType | undefined {
+  if (actionType === 'button') {
+    return ComponentType.Button
   }
-  return 2
+  if (actionType === 'static_select') {
+    return ComponentType.StringSelect
+  }
+  if (actionType === 'multi_static_select') {
+    return ComponentType.StringSelect
+  }
+  if (actionType === 'users_select') {
+    return ComponentType.UserSelect
+  }
+  if (actionType === 'multi_users_select') {
+    return ComponentType.UserSelect
+  }
+  if (actionType === 'conversations_select') {
+    return ComponentType.ChannelSelect
+  }
+  if (actionType === 'multi_conversations_select') {
+    return ComponentType.ChannelSelect
+  }
+  if (actionType === 'channels_select') {
+    return ComponentType.ChannelSelect
+  }
+  if (actionType === 'multi_channels_select') {
+    return ComponentType.ChannelSelect
+  }
+  return undefined
+}
+
+function extractActionValues(
+  action: NonNullable<SlackInteractivePayload['actions']>[number],
+): string[] {
+  const selectedOptions = (action.selected_options ?? []).map((option) => {
+    return option.value
+  })
+  if (selectedOptions.length > 0) {
+    return selectedOptions
+  }
+
+  if (action.selected_option?.value) {
+    return [action.selected_option.value]
+  }
+  if (action.selected_user) {
+    return [action.selected_user]
+  }
+  if (action.selected_users && action.selected_users.length > 0) {
+    return action.selected_users
+  }
+  if (action.selected_channel) {
+    return [action.selected_channel]
+  }
+  if (action.selected_channels && action.selected_channels.length > 0) {
+    return action.selected_channels
+  }
+  if (action.selected_conversation) {
+    return [action.selected_conversation]
+  }
+  if (action.selected_conversations && action.selected_conversations.length > 0) {
+    return action.selected_conversations
+  }
+  return []
+}
+
+function buildResolvedData({
+  componentType,
+  values,
+}: {
+  componentType: ComponentType
+  values: string[]
+}):
+  | { resolved: Record<string, unknown> }
+  | undefined {
+  if (values.length === 0) {
+    return undefined
+  }
+
+  if (componentType === ComponentType.UserSelect) {
+    const users = values.reduce<Record<string, unknown>>((acc, id) => {
+      acc[id] = {
+        id,
+        username: id,
+        discriminator: '0',
+        avatar: null,
+      }
+      return acc
+    }, {})
+    return { resolved: { users } }
+  }
+
+  if (componentType === ComponentType.ChannelSelect) {
+    const channels = values.reduce<Record<string, unknown>>((acc, id) => {
+      acc[id] = {
+        id,
+        type: ChannelType.GuildText,
+        name: id,
+        permissions: '0',
+      }
+      return acc
+    }, {})
+    return { resolved: { channels } }
+  }
+
+  if (componentType === ComponentType.RoleSelect) {
+    const roles = values.reduce<Record<string, unknown>>((acc, id) => {
+      acc[id] = {
+        id,
+        name: id,
+        color: 0,
+        hoist: false,
+        icon: null,
+        unicode_emoji: null,
+        position: 0,
+        permissions: '0',
+        managed: false,
+        mentionable: false,
+        flags: 0,
+      }
+      return acc
+    }, {})
+    return { resolved: { roles } }
+  }
+
+  if (componentType === ComponentType.MentionableSelect) {
+    const users = values.reduce<Record<string, unknown>>((acc, id) => {
+      acc[id] = {
+        id,
+        username: id,
+        discriminator: '0',
+        avatar: null,
+      }
+      return acc
+    }, {})
+    return { resolved: { users } }
+  }
+
+  return undefined
 }
 
 async function resolveThreadTsForReaction({

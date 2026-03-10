@@ -98,6 +98,13 @@ export interface SlackInteractivePayload {
     type: string
     value?: string
     selected_option?: { value: string }
+    selected_options?: Array<{ value: string }>
+    selected_user?: string
+    selected_users?: string[]
+    selected_channel?: string
+    selected_channels?: string[]
+    selected_conversation?: string
+    selected_conversations?: string[]
   }>
   view?: {
     id: string

@@ -133,7 +133,7 @@ describe('componentsToBlocks', () => {
         {
           "elements": [
             {
-              "action_id": "model_select",
+              "action_id": "dsbcmp:3:model_select",
               "initial_option": {
                 "text": {
                   "emoji": true,
@@ -168,6 +168,160 @@ describe('componentsToBlocks', () => {
                 "text": "Choose a model",
                 "type": "plain_text",
               },
+              "type": "static_select",
+            },
+          ],
+          "type": "actions",
+        },
+      ]
+    `)
+  })
+
+  test('converts UserSelect', () => {
+    const components = [
+      {
+        type: ComponentType.ActionRow,
+        components: [
+          {
+            type: ComponentType.UserSelect,
+            custom_id: 'assignee_select',
+            placeholder: 'Pick user',
+            max_values: 1,
+          },
+        ],
+      },
+    ]
+
+    expect(componentsToBlocks(components)).toMatchInlineSnapshot(`
+      [
+        {
+          "elements": [
+            {
+              "action_id": "dsbcmp:5:assignee_select",
+              "placeholder": {
+                "text": "Pick user",
+                "type": "plain_text",
+              },
+              "type": "users_select",
+            },
+          ],
+          "type": "actions",
+        },
+      ]
+    `)
+  })
+
+  test('converts ChannelSelect', () => {
+    const components = [
+      {
+        type: ComponentType.ActionRow,
+        components: [
+          {
+            type: ComponentType.ChannelSelect,
+            custom_id: 'channel_select',
+            max_values: 2,
+          },
+        ],
+      },
+    ]
+
+    expect(componentsToBlocks(components)).toMatchInlineSnapshot(`
+      [
+        {
+          "elements": [
+            {
+              "action_id": "dsbcmp:8:channel_select",
+              "filter": {
+                "exclude_bot_users": true,
+                "exclude_external_shared_channels": false,
+                "include": [
+                  "public",
+                  "private",
+                ],
+              },
+              "max_selected_items": 2,
+              "type": "multi_conversations_select",
+            },
+          ],
+          "type": "actions",
+        },
+      ]
+    `)
+  })
+
+  test('converts MentionableSelect to users select', () => {
+    const components = [
+      {
+        type: ComponentType.ActionRow,
+        components: [
+          {
+            type: ComponentType.MentionableSelect,
+            custom_id: 'mentionable_select',
+          },
+        ],
+      },
+    ]
+
+    expect(componentsToBlocks(components)).toMatchInlineSnapshot(`
+      [
+        {
+          "elements": [
+            {
+              "action_id": "dsbcmp:7:mentionable_select",
+              "type": "users_select",
+            },
+          ],
+          "type": "actions",
+        },
+      ]
+    `)
+  })
+
+  test('converts RoleSelect with fallback option', () => {
+    const components = [
+      {
+        type: ComponentType.ActionRow,
+        components: [
+          {
+            type: ComponentType.RoleSelect,
+            custom_id: 'role_select',
+          },
+        ],
+      },
+    ]
+
+    expect(componentsToBlocks(components)).toMatchInlineSnapshot(`
+      [
+        {
+          "elements": [
+            {
+              "action_id": "dsbcmp:6:role_select",
+              "initial_option": {
+                "description": {
+                  "text": "Slack has no role picker; this bridge uses role IDs when available.",
+                  "type": "plain_text",
+                },
+                "text": {
+                  "emoji": true,
+                  "text": "No roles available",
+                  "type": "plain_text",
+                },
+                "value": "__no_roles_available__",
+              },
+              "options": [
+                {
+                  "description": {
+                    "text": "Slack has no role picker; this bridge uses role IDs when available.",
+                    "type": "plain_text",
+                  },
+                  "text": {
+                    "emoji": true,
+                    "text": "No roles available",
+                    "type": "plain_text",
+                  },
+                  "value": "__no_roles_available__",
+                },
+              ],
               "type": "static_select",
             },
           ],
