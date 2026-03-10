@@ -185,6 +185,9 @@ const interruptOpencodeSessionOnUserMessage: Plugin = async (ctx) => {
         return
       }
 
+      // Keep the queued user message execution context across abort+resume.
+      // Without this, OpenCode re-resolves model defaults and can ignore
+      // /model session overrides (issue #77).
       const resumeBody: {
         parts: []
         agent?: string
