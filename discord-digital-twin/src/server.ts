@@ -66,6 +66,13 @@ function getErrorMessage(error: unknown): string {
   return String(error)
 }
 
+function getErrorStack(error: unknown): string | undefined {
+  if (error instanceof Error) {
+    return error.stack
+  }
+  return undefined
+}
+
 // Generous fake rate limit headers so discord.js never self-throttles
 const RATE_LIMIT_HEADERS: Record<string, string> = {
   'X-RateLimit-Limit': '50',
@@ -128,11 +135,23 @@ export function createServer({
       if (error instanceof Response) {
         return error
       }
+      const message = getErrorMessage(error) || 'Internal Server Error'
+      const details = getErrorStack(error) ?? message
       return Response.json(
         {
           code: 0,
-          message: 'Internal Server Error',
-          error: getErrorMessage(error),
+          message,
+          error: 'internal_server_error',
+          details,
+          error_description: details,
+          errors: {
+            _errors: [
+              {
+                code: 'STACK_TRACE',
+                message: details,
+              },
+            ],
+          },
         },
         { status: 500 },
       )

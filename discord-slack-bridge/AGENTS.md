@@ -126,19 +126,13 @@ value (0-9 → 00-09, A-Z → 10-35). The encoding is fully reversible via
 This design guarantees **no cross-channel thread ID collisions** — same
 `thread_ts` in different channels always produces different Discord IDs.
 
-### Why not a runtime map?
-
-An earlier design used a `Map<threadTs, channelId>` to resolve threads.
-This was replaced because:
-- Same `ts` in different channels would collide (Slack ts is channel-scoped)
-- Map is empty after restart — existing threads wouldn't resolve
-- Map grows unbounded on long-running bots
-
 With reversible encoding, `resolveSlackTarget` decodes the channel directly
 from the thread ID. No runtime map is needed for ID resolution.
 
 `knownThreads` in `server.ts` is now a bounded `Set<string>` used only for
-THREAD_CREATE event dedup (don't announce the same thread twice).
+THREAD_CREATE event dedup (don't announce the same thread twice). Entries are
+keyed by encoded thread ID (`encodeThreadId(channel, threadTs)`) so same
+`thread_ts` values in different channels do not collide.
 
 ### Distinguishing threads from channels
 
@@ -155,7 +149,8 @@ compatibility. `resolveSlackTarget` also handles legacy `THR_` IDs.
 ### Implementation files
 
 - `id-converter.ts` — all encode/decode/resolve functions, base36 helpers
-- `server.ts` — `knownThreads` Set (event dedup only), bounded with eviction
+- `server.ts` — `knownThreads` Set (event dedup only), bounded with eviction,
+  channel-scoped keys
 - `event-translator.ts` — uses `encodeThreadId`/`encodeMessageId` for
   gateway events
 - `rest-translator.ts` — uses `resolveSlackTarget` (no map param needed)

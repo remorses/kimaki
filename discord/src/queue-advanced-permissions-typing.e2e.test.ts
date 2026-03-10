@@ -132,6 +132,7 @@ describe('queue advanced: typing around permissions', () => {
         ⬥ requesting external read permission
         [user clicks button]
         [bot typing]
+        [bot typing]
         ⬥ permission-flow-done
         [bot typing]
         [bot typing]

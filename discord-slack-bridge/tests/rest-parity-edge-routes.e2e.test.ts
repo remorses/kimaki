@@ -64,6 +64,7 @@ describe('rest parity edge routes', () => {
           "body": {
             "code": 10004,
             "error": "unknown_guild",
+            "error_description": "Unknown Guild: T_WRONG_GUILD",
             "message": "Unknown Guild: T_WRONG_GUILD",
           },
           "status": 404,
@@ -72,6 +73,7 @@ describe('rest parity edge routes', () => {
           "body": {
             "code": 10004,
             "error": "unknown_guild",
+            "error_description": "Unknown Guild: T_WRONG_GUILD",
             "message": "Unknown Guild: T_WRONG_GUILD",
           },
           "status": 404,
@@ -80,6 +82,7 @@ describe('rest parity edge routes', () => {
           "body": {
             "code": 10004,
             "error": "unknown_guild",
+            "error_description": "Unknown Guild: T_WRONG_GUILD",
             "message": "Unknown Guild: T_WRONG_GUILD",
           },
           "status": 404,
@@ -88,6 +91,7 @@ describe('rest parity edge routes', () => {
           "body": {
             "code": 10004,
             "error": "unknown_guild",
+            "error_description": "Unknown Guild: T_WRONG_GUILD",
             "message": "Unknown Guild: T_WRONG_GUILD",
           },
           "status": 404,
@@ -96,6 +100,7 @@ describe('rest parity edge routes', () => {
           "body": {
             "code": 10004,
             "error": "unknown_guild",
+            "error_description": "Unknown Guild: T_WRONG_GUILD",
             "message": "Unknown Guild: T_WRONG_GUILD",
           },
           "status": 404,
@@ -104,6 +109,7 @@ describe('rest parity edge routes', () => {
           "body": {
             "code": 10004,
             "error": "unknown_guild",
+            "error_description": "Unknown Guild: T_WRONG_GUILD",
             "message": "Unknown Guild: T_WRONG_GUILD",
           },
           "status": 404,
@@ -138,11 +144,11 @@ describe('rest parity edge routes', () => {
     }).toMatchInlineSnapshot(`
       {
         "delete": {
-          "body": "{"error":"unknown_webhook_token"}",
+          "body": "{"error":"unknown_webhook_token","message":"Unknown webhook token","error_description":"Unknown webhook token"}",
           "status": 404,
         },
         "patch": {
-          "body": "{"error":"unknown_webhook_token"}",
+          "body": "{"error":"unknown_webhook_token","message":"Unknown webhook token","error_description":"Unknown webhook token"}",
           "status": 404,
         },
       }
@@ -157,6 +163,6 @@ describe('rest parity edge routes', () => {
           body: { content: 'updated-content' },
         },
       ),
-    ).rejects.toThrowErrorMatchingInlineSnapshot(`[DiscordAPIError[unknown_webhook_token]: No Description]`)
+    ).rejects.toThrowErrorMatchingInlineSnapshot(`[DiscordAPIError[unknown_webhook_token]: Unknown webhook token]`)
   })
 })

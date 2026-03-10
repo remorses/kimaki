@@ -5,13 +5,15 @@ import { describe, test, expect, beforeAll, afterAll } from 'vitest'
 import type { Message, MessageReaction, PartialMessageReaction } from 'discord.js'
 import { setupE2E, teardownE2E, waitFor, type E2EContext } from './e2e-setup.js'
 import type { TextChannel } from 'discord.js'
+import { sendWebhookEvent } from 'slack-digital-twin/src'
+import { encodeThreadId } from '../src/id-converter.js'
 
 describe('Slack → Discord events', () => {
   let ctx: E2EContext
 
   beforeAll(async () => {
     ctx = await setupE2E({
-      channels: [{ name: 'slack-events' }],
+      channels: [{ name: 'slack-events' }, { name: 'slack-events-2' }],
       users: [{ name: 'alice', realName: 'Alice' }],
     })
   }, 30_000)
@@ -95,5 +97,68 @@ describe('Slack → Discord events', () => {
 
     const reaction = await received
     expect(reaction.emoji.name).toBe('thumbsup')
+  })
+
+  test('same thread_ts across two channels emits two distinct THREAD_CREATE events', async () => {
+    const webhookConfig = ctx.twin.webhookSenderConfig
+    expect(webhookConfig).toBeDefined()
+    if (!webhookConfig) {
+      return
+    }
+
+    const channelA = ctx.twin.resolveChannelId('slack-events')
+    const channelB = ctx.twin.resolveChannelId('slack-events-2')
+    const aliceId = ctx.twin.resolveUserId('alice')
+    const sharedThreadTs = '1700000000.123456'
+
+    const threadCreates: string[] = []
+    const onThreadCreate = (thread: { id: string }) => {
+      threadCreates.push(thread.id)
+    }
+    ctx.client.on('threadCreate', onThreadCreate)
+
+    await sendWebhookEvent({
+      config: webhookConfig,
+      event: {
+        type: 'message',
+        channel: channelA,
+        user: aliceId,
+        text: 'reply in channel A',
+        ts: '1700000001.000001',
+        thread_ts: sharedThreadTs,
+      },
+    })
+
+    await new Promise((resolve) => {
+      setTimeout(resolve, 2)
+    })
+
+    await sendWebhookEvent({
+      config: webhookConfig,
+      event: {
+        type: 'message',
+        channel: channelB,
+        user: aliceId,
+        text: 'reply in channel B',
+        ts: '1700000002.000001',
+        thread_ts: sharedThreadTs,
+      },
+    })
+
+    const createdThreadIds = await waitFor({
+      fn: async () => {
+        if (threadCreates.length >= 2) {
+          return [...threadCreates]
+        }
+        return null
+      },
+      label: 'threadCreate events across channels',
+    })
+
+    ctx.client.off('threadCreate', onThreadCreate)
+
+    expect(createdThreadIds).toContain(encodeThreadId(channelA, sharedThreadTs))
+    expect(createdThreadIds).toContain(encodeThreadId(channelB, sharedThreadTs))
+    expect(new Set(createdThreadIds).size).toBeGreaterThanOrEqual(2)
   })
 })

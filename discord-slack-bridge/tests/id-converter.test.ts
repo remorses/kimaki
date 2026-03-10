@@ -33,6 +33,16 @@ describe('encodeThreadId / decodeThreadId', () => {
     )
   })
 
+  test('same thread ts in different channels produces different IDs', () => {
+    const threadTs = '1700000000.123456'
+    const idA = encodeThreadId('C123', threadTs)
+    const idB = encodeThreadId('C999', threadTs)
+
+    expect(idA).not.toBe(idB)
+    expect(decodeThreadId(idA)).toEqual({ channel: 'C123', threadTs })
+    expect(decodeThreadId(idB)).toEqual({ channel: 'C999', threadTs })
+  })
+
   test('throws on invalid thread ID', () => {
     expect(() => decodeThreadId('C04ABC123')).toThrow('Invalid thread channel ID')
     expect(() => decodeThreadId('MSG_C04_123')).toThrow('Invalid thread channel ID')

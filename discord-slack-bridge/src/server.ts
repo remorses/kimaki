@@ -178,10 +178,13 @@ export function createServer(config: ServerConfig): ServerComponents {
     if (error instanceof Response) {
       return error
     }
+    const details = getErrorStack(error) ?? getErrorMessage(error)
     return errorJsonResponse({
       status: 500,
       error: 'internal_server_error',
-      details: getErrorMessage(error),
+      message: getErrorMessage(error),
+      details,
+      errorDescription: details,
     })
   })
 
@@ -1366,19 +1369,28 @@ function errorJsonResponse({
   code,
   message,
   details,
+  errorDescription,
 }: {
   status: number
   error: string
   code?: number
   message?: string
   details?: string
+  errorDescription?: string
 }): Response {
+  const resolvedMessage = message ?? humanizeErrorCode(error)
+  const resolvedErrorDescription =
+    errorDescription ?? details ?? resolvedMessage
+
   return Response.json(
     {
       error,
       ...(code !== undefined ? { code } : {}),
-      ...(message ? { message } : {}),
+      ...(resolvedMessage ? { message: resolvedMessage } : {}),
       ...(details ? { details } : {}),
+      ...(resolvedErrorDescription
+        ? { error_description: resolvedErrorDescription }
+        : {}),
     },
     { status },
   )
@@ -1389,6 +1401,18 @@ function getErrorMessage(error: unknown): string {
     return error.message
   }
   return String(error)
+}
+
+function getErrorStack(error: unknown): string | undefined {
+  if (error instanceof Error) {
+    return error.stack
+  }
+  return undefined
+}
+
+function humanizeErrorCode(error: string): string {
+  const withSpaces = error.replaceAll('_', ' ')
+  return withSpaces.charAt(0).toUpperCase() + withSpaces.slice(1)
 }
 
 /** Return a Discord-shaped 404 for unknown guild IDs. */
