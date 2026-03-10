@@ -1072,12 +1072,25 @@ export class MissingPermissionsError extends DiscordApiError {
 export function mapSlackErrorToDiscordError(err: unknown): DiscordApiError {
   const slackError = extractSlackErrorCode(err)
   switch (slackError) {
+    case 'invalid_auth':
+    case 'not_authed':
+    case 'account_inactive':
+    case 'token_revoked':
+      return new DiscordApiError({
+        httpStatus: 401,
+        discordCode: 50014,
+        message: 'Invalid authentication token',
+      })
     case 'channel_not_found':
       return new UnknownChannelError('unknown')
     case 'message_not_found':
+    case 'thread_not_found':
       return new MessageNotFoundError('unknown')
     case 'not_in_channel':
       return new MissingAccessError()
+    case 'no_permission':
+    case 'cant_update_message':
+    case 'cant_delete_message':
     case 'missing_scope':
     case 'not_allowed_token_type':
       return new MissingPermissionsError()
@@ -1110,5 +1123,4 @@ function extractSlackErrorCode(err: unknown): string | undefined {
   const match = err.message.match(/An API error occurred: (\S+)/)
   return match?.[1]
 }
-
 
