@@ -50,21 +50,22 @@ webhooks, and needs capabilities chat doesn't provide (thread creation, channel
 management, voice, permissions, command registration). So for **Discord**, we write
 our own adapter implementation directly with discord.js.
 
-For **Slack**, we plan to use chat SDK as a dependency. The `SlackAdapter`
-implementation will wrap chat's Slack adapter internally, translating between
-Kimaki's `KimakiAdapter` interface and chat's `Adapter` interface. This gives us
-battle-tested Slack support (Block Kit rendering, event parsing, OAuth) without
-reimplementing it.
+For **Slack**, we plan to run in HTTP webhook mode instead of a long-lived
+gateway client. Slack events and interaction payloads arrive over HTTP, then the
+Kimaki process receives them through the exposed Hrana-backed bridge. The core
+`KimakiAdapter` interface stays the same from the runtime's point of view: the
+adapter still emits normalized inbound events and accepts outbound message/UI
+requests. Only the transport differs.
 
 ```
 KimakiAdapter interface
   ├── DiscordAdapter  → discord.js directly (Gateway + REST)
-  └── SlackAdapter    → chat SDK's Slack adapter under the hood (webhooks)
+  └── SlackAdapter    → HTTP webhooks + Web API, bridged into Kimaki via Hrana
 ```
 
-**Decision:** Our own `KimakiAdapter` interface as the abstraction layer. Discord
-adapter is standalone. Slack adapter wraps chat SDK. Method naming follows chat's
-conventions where they overlap for consistency.
+**Decision:** Our own `KimakiAdapter` interface is the abstraction layer. Discord
+and Slack use the same runtime-facing interface, but different transports:
+Discord is gateway-first, Slack is webhook-first.
 
 ## 4. Discord API Surface Area — 13 Capability Domains
 
@@ -159,433 +160,334 @@ The caller sets `ephemeral: true`. The adapter handles it:
 - Discord: `MessageFlags.Ephemeral` on interaction reply
 - Slack: `response_type: "ephemeral"` in webhook response
 
-## 7. KimakiAdapter Interface (simplified)
+## 7. KimakiAdapter Interface (revised)
 
-Removed from chat SDK patterns: `{ raw: string }` format, `{ ast: Root }`,
-cards/JSX, streaming-through-messages, StateAdapter, dedup/locking,
-subscription model, `SentMessage.edit()/.delete()` on returned objects.
+The previous draft still leaked too much Discord structure into the base
+interface. The main fix is replacing a bare `threadId` with a richer
+`ConversationRef`.
+
+### 7.1 Why `ConversationRef` instead of `threadId`
+
+Slack **does** have threads, but they are not first-class channels. A Slack
+thread is addressed as:
+
+- parent channel ID
+- thread timestamp (`thread_ts`)
+
+Discord threads are also not truly standalone from Kimaki's point of view:
+
+- they always belong to a parent channel
+- permissions and channel config often come from the parent channel
+- thread creation often starts from a parent-channel message
+
+So the cross-platform identity should be "conversation inside a space", not
+"thread object".
 
 ```ts
-// ─── Shared Types ─────────────────────────────────────────
-// These are referenced across multiple methods and events.
+type ConversationRef = {
+  spaceId: string
+  channelId: string
+  threadId?: string
+}
+```
+
+This keeps Slack threads supported while avoiding a Discord-shaped API.
+
+### 7.2 Keep the base adapter small
+
+The base adapter should only cover shared chat transport and interactive UI.
+Do **not** put these in the base interface:
+
+- voice
+- forum sync
+- categories
+- role creation
+- Discord-only onboarding
+- other platform admin/setup flows
+
+Those belong in optional platform sidecars.
+
+### 7.2.1 Rendering should be intent-level, not Discord-widget-level
+
+The shared API should preserve current Discord UX without forcing the core to
+build Discord-specific components.
+
+The core should describe **intent**:
+
+- markdown content
+- a few structured UI primitives (buttons, selects, modals)
+- optional row/context actions for things like `/worktrees`
+- autocomplete intent for command options
+
+The adapter should decide **rendering**:
+
+- Discord: Components V2, action rows, select menus, modals, native autocomplete
+- Slack: Block Kit, selects, modal views, webhook/Web API interaction flows
+
+This keeps current Discord features like selects in messages, autocomplete, and
+table-adjacent actions, while still allowing Slack to render them differently.
+
+Important constraint: **HTML should not be the canonical shared UI format**.
+The shared layer should use typed UI items, not HTML snippets, because typed
+items are easier to validate, test, and map cleanly to Discord and Slack.
+
+### 7.2.2 Inbound message handling should be a single `onMessage`
+
+`onThreadMessage` and `onChannelMessage` were removed on purpose.
+
+Why:
+
+- Slack ingress is naturally a single webhook entry that dispatches by payload type
+- a Slack thread is still just a message in a channel with a thread reference
+- Discord also benefits from a single normalized message event with conversation context
+- most core routing logic only needs to know where the message belongs, not which native event family produced it
+
+The adapter should normalize all inbound chat messages to one event shape and
+include enough context for the core to branch when needed.
+
+```ts
+type MessageContext = {
+  conversation: ConversationRef
+  kind: 'channel' | 'thread'
+  parentChannelId?: string
+  isMention: boolean
+}
+```
+
+So the core still knows whether the message came from a top-level channel or a
+thread, but it does not need separate adapter subscriptions for each platform.
+
+This follows the same general direction as Vercel Chat's Slack adapter: one
+webhook entry point, one normalized message flow, then internal/core dispatch.
+
+### 7.3 Shared types
+
+```ts
+interface ConversationRef {
+  spaceId: string
+  channelId: string
+  threadId?: string
+}
+
+interface PlatformUser {
+  userId: string
+  username: string
+  displayName: string
+  isBot: boolean
+  isMe: boolean
+}
+
+interface PlatformAttachment {
+  filename: string
+  url: string
+  contentType?: string
+  size: number
+}
 
 interface PlatformMessage {
   id: string
-  channelId: string
-  threadId?: string
+  conversation: ConversationRef
   content: string
-  author: {
-    userId: string
-    username: string
-    displayName: string
-    isBot: boolean
-    isMe: boolean
-  }
-  attachments: Array<{
-    filename: string
-    url: string
-    contentType?: string
-    size: number
-  }>
-  /**
-   * Invisible metadata attached to this message.
-   * Discord: parsed from embed footer YAML (ThreadStartMarker etc.)
-   * Slack: parsed from message metadata event payload.
-   */
+  author: PlatformUser
+  attachments: PlatformAttachment[]
   metadata?: Record<string, unknown>
 }
 
-// ─── The Adapter ──────────────────────────────────────────
+interface OutgoingFile {
+  filename: string
+  data: Buffer
+  contentType?: string
+}
 
+interface UiButton {
+  id: string
+  label: string
+  style: 'primary' | 'secondary' | 'success' | 'danger'
+}
+
+interface UiSelectMenu {
+  id: string
+  placeholder: string
+  options: Array<{ label: string; value: string; description?: string }>
+  maxValues?: number
+}
+
+interface UiRowActions {
+  rows: Array<{
+    key: string
+    actions: UiButton[]
+  }>
+}
+
+interface UiModal {
+  id: string
+  title: string
+  inputs: Array<
+    | { type: 'text'; id: string; label: string; placeholder?: string; required?: boolean; style: 'short' | 'paragraph' }
+    | { type: 'file'; id: string; label: string; description?: string; maxFiles?: number }
+  >
+}
+
+interface OutgoingMessage {
+  markdown: string
+  visibility?: 'normal' | 'silent' | 'ephemeral'
+  replyToMessageId?: string
+  buttons?: UiButton[]
+  selectMenu?: UiSelectMenu
+  rowActions?: UiRowActions
+  files?: OutgoingFile[]
+  metadata?: Record<string, unknown>
+}
+```
+
+### 7.4 The base adapter
+
+```ts
 interface KimakiAdapter {
-  readonly name: string         // 'discord' | 'slack'
+  readonly name: 'discord' | 'slack'
   readonly botUserId: string
-  readonly botUsername: string   // for channel naming, mention detection
+  readonly botUsername: string
+  readonly capabilities: {
+    threads: boolean
+    ephemeralMessages: boolean
+    typing: boolean
+    adminChannels: boolean
+  }
 
-  // ── Lifecycle ──
-  login(token: string): Promise<void>
+  start(): Promise<void>
   destroy(): Promise<void>
 
-  // ── Messages ──
-  // Content is always markdown. The adapter owns the full rendering
-  // pipeline for its platform:
-  //
-  // DiscordAdapter.send():
-  //   1. splitTablesFromMarkdown(content) → segments
-  //   2. Table segments → Components V2 (ContainerBuilder, TextDisplay)
-  //   3. Text segments → escapeBackticks, limitHeadingDepth, splitAt2000
-  //   4. Each chunk → thread.send({ content, flags })
-  //
-  // SlackAdapter.send():
-  //   1. Convert markdown to Slack mrkdwn (bold, links, code blocks)
-  //   2. GFM tables render natively in Slack — no conversion needed
-  //   3. Split at 40,000 chars if needed (rare)
-  //   4. Each chunk → chat.postMessage({ channel, text, thread_ts })
-  //
-  // This means no table/CV2 types leak into the interface. The caller
-  // just passes markdown and the adapter decides how to render it.
-  send(threadId: string, options: {
-    /** Markdown content. Adapter handles splitting and formatting. */
-    content: string
-    /** Suppress notifications. Default: true (silent). */
-    silent?: boolean
-    /** Reply to a specific message (shows reference). */
-    replyTo?: string
-    /** Buttons to attach. Adapter wraps in ActionRow / Block Kit. */
-    buttons?: Array<{
-      id: string
-      label: string
-      style: 'primary' | 'secondary' | 'success' | 'danger'
-    }>
-    /** Select menu to attach. One per message. */
-    selectMenu?: {
-      id: string
-      placeholder: string
-      options: Array<{ label: string; value: string; description?: string }>
-      maxValues?: number
-    }
-    /** Invisible metadata. Discord: embed footer YAML. Slack: message metadata. */
-    metadata?: Record<string, unknown>
-    /** File attachments to upload with the message. */
-    files?: Array<{ filename: string; data: Buffer; contentType?: string }>
-  }): Promise<{ id: string; threadId: string }>
+  sendMessage(
+    conversation: ConversationRef,
+    message: OutgoingMessage,
+  ): Promise<{ messageId: string }>
 
-  edit(threadId: string, messageId: string, content: string): Promise<void>
-  delete(threadId: string, messageId: string): Promise<void>
+  updateMessage(
+    conversation: ConversationRef,
+    messageId: string,
+    message: OutgoingMessage,
+  ): Promise<void>
 
-  // ── Typing ──
-  startTyping(threadId: string): Promise<void>
+  deleteMessage(
+    conversation: ConversationRef,
+    messageId: string,
+  ): Promise<void>
 
-  // ── Reactions ──
-  addReaction(channelId: string, messageId: string, emoji: string): Promise<void>
+  startTyping(conversation: ConversationRef): Promise<void>
 
-  // ── Threads ──
-  createThread(options: {
-    channelId: string
+  createThread(input: {
+    conversation: ConversationRef
     name: string
-    /** Create from existing message (Discord: message thread). */
     messageId?: string
     autoArchiveMinutes?: number
-  }): Promise<{ threadId: string }>
-  archiveThread(threadId: string): Promise<void>
-  renameThread(threadId: string, name: string): Promise<void>
-  addThreadMember(threadId: string, userId: string): Promise<void>
+  }): Promise<ConversationRef>
 
-  // ── Servers ──
-  // Used at startup to discover servers, create project channels,
-  // and display server info in CLI onboarding.
-  listServers(): Promise<Array<{
+  archiveThread(conversation: ConversationRef): Promise<void>
+  renameThread(conversation: ConversationRef, name: string): Promise<void>
+  addThreadMember?(conversation: ConversationRef, userId: string): Promise<void>
+
+  fetchMessage(
+    conversation: ConversationRef,
+    messageId: string,
+  ): Promise<PlatformMessage | null>
+
+  fetchMessages(
+    conversation: ConversationRef,
+    options?: { limit?: number; before?: string },
+  ): Promise<PlatformMessage[]>
+
+  resolveMentions(
+    content: string,
+    conversation: ConversationRef,
+  ): Promise<string>
+
+  listSpaces(): Promise<Array<{
     id: string
     name: string
-    ownerId: string
-    memberCount: number
+    ownerId?: string
+    memberCount?: number
   }>>
-  getServer(serverId: string): Promise<{
-    id: string
-    name: string
-    ownerId: string
-    memberCount: number
-  } | null>
 
-  // ── Channels ──
-  createChannel(options: {
-    serverId: string
+  searchMembers(input: {
+    spaceId: string
+    query: string
+  }): Promise<Array<{
+    userId: string
+    username: string
+    displayName: string
+    isOwner?: boolean
+    isAdmin?: boolean
+    roles?: string[]
+  }>>
+
+  createChannel?(input: {
+    spaceId: string
     name: string
     type: 'text' | 'voice'
     parentId?: string
     topic?: string
   }): Promise<{ channelId: string }>
-  createCategory?(options: {
-    serverId: string
-    name: string
-  }): Promise<{ channelId: string }>
-  getChannel(channelId: string): Promise<{
-    id: string
-    name: string
-    type: 'text' | 'voice' | 'forum' | 'category'
-    parentId?: string
-    topic?: string
-  } | null>
-  listChannels(serverId: string): Promise<Array<{
-    id: string
-    name: string
-    type: 'text' | 'voice' | 'forum' | 'category'
-    parentId?: string
-    topic?: string
-  }>>
 
-  // ── Thread Data ──
-  getThread(threadId: string): Promise<{
-    id: string
-    name: string
-    parentChannelId: string
-    serverId: string
-    archived: boolean
-  } | null>
-  fetchStarterMessage(threadId: string): Promise<PlatformMessage | null>
+  encodeConversationRef?(conversation: ConversationRef): string
+  decodeConversationRef?(value: string): ConversationRef
 
-  // ── Message Data ──
-  /** Fetch a single message by ID (for editing buttons, reading markers). */
-  fetchMessage(channelOrThread: string, messageId: string): Promise<PlatformMessage | null>
-  /** Paginated message history (for forum sync, thread context). */
-  fetchMessages(channelOrThread: string, options?: {
-    limit?: number
-    before?: string
-  }): Promise<PlatformMessage[]>
-  /**
-   * Convert platform mention syntax to display names.
-   * Discord: `<@123>` → `@Tommy`, `<#456>` → `#general`
-   * Slack: `<@U123>` → `@Tommy`, `<#C456|general>` → `#general`
-   * Called automatically on incoming messages by the adapter,
-   * so handlers receive human-readable content.
-   */
-  resolveMentions(content: string, serverId: string): Promise<string>
-
-  // ── Commands ──
-  // Commands declare intent (what options they need, whether choices
-  // are static or dynamic). The adapter decides the mechanism:
-  //   Static choices:  Discord → autocomplete list. Slack → select menu.
-  //   Dynamic resolve: Discord → autocomplete on keystroke. Slack → external_select.
-  //   No choices:      Discord → free text. Slack → free text.
-  // The handler always receives resolved final values in event.options.
-  registerCommands(serverId: string, commands: Array<{
-    name: string
-    description: string
-    options?: Array<{
-      name: string
-      description: string
-      type: 'string' | 'integer' | 'boolean' | 'number'
-      required?: boolean
-      /** Static choices. Discord: autocomplete list. Slack: select menu. */
-      choices?: Array<{ name: string; value: string }>
-      /**
-       * Dynamic choice resolver. Called with the user's current input.
-       * Discord: called on each keystroke via autocomplete interaction.
-       * Slack: called via external_select typeahead, or once with ''
-       *        to populate initial menu options.
-       */
-      resolve?: (query: string) => Promise<Array<{ name: string; value: string }>>
-    }>
-  }>): Promise<void>
-  deleteCommands?(serverId: string): Promise<void>
-
-  // ── Permissions ──
-  getMember(serverId: string, userId: string): Promise<{
-    userId: string
-    username: string
-    displayName: string
-    roles: string[]
-    isOwner: boolean
-    isAdmin: boolean
-  } | null>
-  searchMembers(serverId: string, query: string): Promise<Array<{
-    userId: string
-    username: string
-    displayName: string
-    roles: string[]
-    isOwner: boolean
-    isAdmin: boolean
-  }>>
-  hasPermission(member: {
-    roles: string[]
-    isOwner: boolean
-    isAdmin: boolean
-  }): boolean
-  createRole?(serverId: string, name: string): Promise<void>
-
-  // ── Files ──
-  uploadFiles(channelOrThread: string, files: Array<{
-    filename: string
-    data: Buffer
-    contentType?: string
-  }>): Promise<string>
-  downloadAttachment(url: string): Promise<Buffer>
-
-  // ── Voice (optional — Discord only, Slack has no API) ──
-  joinVoice?(options: {
-    channelId: string
-    serverId: string
-    guild: unknown
-  }): Promise<{
-    channelId: string
-    serverId: string
-    /** Subscribe to a user's audio stream. Returns unsubscribe fn. */
-    onUserAudio: (
-      userId: string,
-      handler: (pcmData: Buffer) => void,
-    ) => () => void
-    disconnect: () => void
-  }>
-
-  // ── Events ──
   onReady(handler: () => void): void
-
-  // Channel messages (not in threads). Handler decides whether to act
-  // based on isMention and channel config (dedicated vs mention-only).
-  //   Discord default: fires for every message (dedicated channel mode).
-  //   Slack default: fires only for @mentions (shared channel mode).
-  onChannelMessage(handler: (event: {
+  onMessage(handler: (event: {
     message: PlatformMessage
-    serverId: string
-    /** True if the bot was @mentioned in this message. */
-    isMention: boolean
+    context: MessageContext
   }) => void): void
-
-  // Thread messages. Always fires — threads are implicitly subscribed.
-  onThreadMessage(handler: (event: {
-    message: PlatformMessage
-    serverId: string
-    parentChannelId: string
-    /** True if the bot was @mentioned in this message. */
-    isMention: boolean
-  }) => void): void
-
-  // No onAutocomplete — the adapter resolves dynamic choices internally
-  // using CommandOption.resolve() and delivers final values to onCommand.
-  onCommand(handler: (event: {
-    commandName: string
-    serverId: string
-    channelId: string
-    threadId?: string
-    userId: string
-    /** Final resolved option values. */
-    options: Record<string, string | number | boolean>
-    /** Reply to the command. Markdown content. */
-    reply(response: {
-      content: string
-      /** Only the invoker sees this message. */
-      ephemeral?: boolean
-      buttons?: Array<{ id: string; label: string; style: 'primary' | 'secondary' | 'success' | 'danger' }>
-      selectMenu?: { id: string; placeholder: string; options: Array<{ label: string; value: string; description?: string }>; maxValues?: number }
-    }): Promise<void>
-    /** Show "thinking..." indicator while processing. */
-    defer(options?: { ephemeral?: boolean }): Promise<void>
-    /** Edit the deferred reply. */
-    editReply(response: {
-      content: string
-      ephemeral?: boolean
-      buttons?: Array<{ id: string; label: string; style: 'primary' | 'secondary' | 'success' | 'danger' }>
-      selectMenu?: { id: string; placeholder: string; options: Array<{ label: string; value: string; description?: string }>; maxValues?: number }
-    }): Promise<void>
-    /** Open a modal dialog. */
-    showModal(modal: {
-      id: string
-      title: string
-      inputs: Array<
-        | { type: 'text'; id: string; label: string; placeholder?: string; required?: boolean; style: 'short' | 'paragraph' }
-        | { type: 'file'; id: string; label: string; description?: string; maxFiles?: number }
-      >
-    }): Promise<void>
-  }) => void): void
-
-  onButton(handler: (event: {
-    buttonId: string
-    userId: string
-    serverId: string
-    channelId: string
-    threadId?: string
-    messageId: string
-    /** Reply to the button click. */
-    reply(response: {
-      content: string
-      ephemeral?: boolean
-      buttons?: Array<{ id: string; label: string; style: 'primary' | 'secondary' | 'success' | 'danger' }>
-      selectMenu?: { id: string; placeholder: string; options: Array<{ label: string; value: string; description?: string }>; maxValues?: number }
-    }): Promise<void>
-    /** Replace the message that contains the button. */
-    update(response: {
-      content: string
-      buttons?: Array<{ id: string; label: string; style: 'primary' | 'secondary' | 'success' | 'danger' }>
-      selectMenu?: { id: string; placeholder: string; options: Array<{ label: string; value: string; description?: string }>; maxValues?: number }
-    }): Promise<void>
-    defer(options?: { ephemeral?: boolean }): Promise<void>
-    editReply(response: {
-      content: string
-      ephemeral?: boolean
-      buttons?: Array<{ id: string; label: string; style: 'primary' | 'secondary' | 'success' | 'danger' }>
-      selectMenu?: { id: string; placeholder: string; options: Array<{ label: string; value: string; description?: string }>; maxValues?: number }
-    }): Promise<void>
-    /** Open a modal from button click. */
-    showModal(modal: {
-      id: string
-      title: string
-      inputs: Array<
-        | { type: 'text'; id: string; label: string; placeholder?: string; required?: boolean; style: 'short' | 'paragraph' }
-        | { type: 'file'; id: string; label: string; description?: string; maxFiles?: number }
-      >
-    }): Promise<void>
-  }) => void): void
-
-  onSelectMenu(handler: (event: {
-    menuId: string
-    selectedValues: string[]
-    userId: string
-    serverId: string
-    channelId: string
-    threadId?: string
-    messageId: string
-    reply(response: {
-      content: string
-      ephemeral?: boolean
-      buttons?: Array<{ id: string; label: string; style: 'primary' | 'secondary' | 'success' | 'danger' }>
-      selectMenu?: { id: string; placeholder: string; options: Array<{ label: string; value: string; description?: string }>; maxValues?: number }
-    }): Promise<void>
-    /** Replace the message that contains the select menu. */
-    update(response: {
-      content: string
-      buttons?: Array<{ id: string; label: string; style: 'primary' | 'secondary' | 'success' | 'danger' }>
-      selectMenu?: { id: string; placeholder: string; options: Array<{ label: string; value: string; description?: string }>; maxValues?: number }
-    }): Promise<void>
-    defer(options?: { ephemeral?: boolean }): Promise<void>
-    editReply(response: {
-      content: string
-      ephemeral?: boolean
-      buttons?: Array<{ id: string; label: string; style: 'primary' | 'secondary' | 'success' | 'danger' }>
-      selectMenu?: { id: string; placeholder: string; options: Array<{ label: string; value: string; description?: string }>; maxValues?: number }
-    }): Promise<void>
-  }) => void): void
-
-  onModalSubmit(handler: (event: {
-    modalId: string
-    userId: string
-    serverId: string
-    channelId: string
-    threadId?: string
-    /** Map of input ID → submitted value. */
-    values: Record<string, string>
-    /** File attachments from file upload inputs. */
-    files?: Array<{ filename: string; url: string; contentType?: string; size: number }>
-    reply(response: {
-      content: string
-      ephemeral?: boolean
-    }): Promise<void>
-    defer(options?: { ephemeral?: boolean }): Promise<void>
-    editReply(response: {
-      content: string
-      ephemeral?: boolean
-    }): Promise<void>
-  }) => void): void
-
-  onVoiceState?(handler: (event: {
-    userId: string
-    serverId: string
-    channelId: string | null
-    previousChannelId: string | null
-  }) => void): void
-
-  onThreadCreate?(handler: (event: {
-    threadId: string
-    channelId: string
-    serverId: string
-  }) => void): void
-
-  onConnectionState?(handler: (state:
-    'connecting' | 'ready' | 'reconnecting' | 'disconnected'
-  ) => void): void
-
+  onCommand(handler: (event: CommandEvent) => void): void
+  onButton(handler: (event: ButtonEvent) => void): void
+  onSelectMenu(handler: (event: SelectMenuEvent) => void): void
+  onModalSubmit(handler: (event: ModalSubmitEvent) => void): void
   onError(handler: (error: Error) => void): void
 }
 ```
+
+### 7.4.1 Shared command definition should express autocomplete intent
+
+Command definitions should also stay high-level. The core defines whether an
+option has static choices or dynamic choice resolution. The adapter chooses the
+native mechanism.
+
+```ts
+interface CommandOptionDefinition {
+  name: string
+  description: string
+  type: 'string' | 'integer' | 'boolean' | 'number'
+  required?: boolean
+  choices?: Array<{ name: string; value: string }>
+  resolveChoices?: (
+    query: string,
+  ) => Promise<Array<{ name: string; value: string }>>
+}
+
+interface CommandDefinition {
+  name: string
+  description: string
+  options?: CommandOptionDefinition[]
+}
+```
+
+Rendering examples:
+
+- Discord: native slash autocomplete interactions
+- Slack: external select, follow-up select, or equivalent webhook-driven choice UI
+
+This keeps `/resume`, `/model`, `/agent`, and similar flows fully supported.
+
+### 7.5 What stays outside the adapter
+
+These should be separate services, called by the core only when the platform
+supports them:
+
+- `DiscordVoiceService`
+- `DiscordForumSyncService`
+- `DiscordWorkspaceProvisioner`
+- `SlackInstallService`
+
+This keeps the base adapter small and lets the runtime keep using the same API in
+Discord gateway mode and Slack webhook mode.
 
 ## 8. Before / After Examples
 
@@ -652,9 +554,9 @@ adapter.onCommand(async (event) => {
 
 ```ts
 // Platform-agnostic — identical call site for Discord and Slack
-await adapter.send(threadId, {
-  content: 'Allow edit to `src/config.ts`?',
-  silent: false,  // notify user
+await adapter.sendMessage(conversation, {
+  markdown: 'Allow edit to `src/config.ts`?',
+  visibility: 'normal',
   buttons: [
     { id: `perm:${hash}:accept`, label: 'Accept', style: 'success' },
     { id: `perm:${hash}:always`, label: 'Accept Always', style: 'primary' },
@@ -744,13 +646,44 @@ Current:
 
 Target:
   discord-bot.ts ──→ KimakiAdapter interface
-                      ├── discord-adapter.ts (wraps discord.js)
-                      └── slack-adapter.ts (wraps @slack/web-api)
+                      ├── discord-adapter.ts (gateway + REST)
+                      └── slack-adapter.ts (HTTP events + Web API via Hrana bridge)
 ```
 
 The `discord-adapter.ts` wraps all discord.js code currently scattered across
 `discord-utils.ts`, `discord-urls.ts`, `channel-management.ts`, and
-`interaction-handler.ts` into a single Adapter implementation.
+`interaction-handler.ts` into a single adapter implementation.
+
+The `slack-adapter.ts` receives inbound Slack HTTP webhooks and interaction
+payloads through the exposed Hrana-backed bridge, normalizes them into the same
+runtime-facing events, and uses Slack Web API methods for outbound sends and
+updates.
+
+The adapter boundary should be split like this:
+
+```text
+Core runtime / command logic
+  -> markdown
+  -> typed UI primitives
+  -> command definitions with autocomplete intent
+  -> row/context actions
+
+Adapter
+  -> single webhook/gateway ingress
+  -> native message rendering
+  -> native buttons/selects/modals
+  -> native autocomplete behavior
+  -> platform transport details
+```
+
+Notes from Vercel Chat Slack adapter research:
+
+- Slack uses one `handleWebhook(request)` entry and internally routes message,
+  slash command, action, and modal payloads
+- Slack thread identity is channel + thread timestamp, not a standalone thread object
+- opaque adapter-owned thread encoding is useful at boundaries; for Kimaki we can
+  keep `ConversationRef` in the core and optionally let adapters encode/decode it
+  when they need a compact string form
 
 ## 10. Files Requiring Updates — By Migration Tier
 
@@ -758,19 +691,19 @@ The `discord-adapter.ts` wraps all discord.js code currently scattered across
 
 | File | Discord APIs Used | What Changes |
 |---|---|---|
-| `discord-bot.ts` | `Client`, `Events.*`, `GatewayIntentBits`, `Partials`, `Message`, `ThreadChannel`, `TextChannel` | Replace with `adapter.onMessage()`, `.onReady()`, `.createThread()`, `.postMessage()`. Main event loop. |
+| `discord-bot.ts` | `Client`, `Events.*`, `GatewayIntentBits`, `Partials`, `Message`, `ThreadChannel`, `TextChannel` | Replace with `adapter.onMessage()`, `.onReady()`, `.createThread()`, `.sendMessage()`. Main event loop. Normalize thread and channel events into one inbound message flow. |
 | `discord-urls.ts` | `REST` factory, base URL config | Moves inside `DiscordAdapter` |
 | `discord-utils.ts` | `sendThreadMessage`, `archiveThread`, `reactToThread`, `hasKimakiBotPermission`, `uploadFilesToDiscord`, `splitMarkdownForDiscord`, `resolveTextChannel`, `resolveWorkingDirectory`, `getKimakiMetadata` | Split: platform-agnostic utils stay, Discord-specific ops move into `DiscordAdapter` |
-| `interaction-handler.ts` | `Events.InteractionCreate`, `Interaction`, `MessageFlags` | Replace with `adapter.onCommand()`, `.onButton()`, `.onSelectMenu()`, `.onModalSubmit()` dispatchers |
+| `interaction-handler.ts` | `Events.InteractionCreate`, `Interaction`, `MessageFlags` | Replace with `adapter.onCommand()`, `.onButton()`, `.onSelectMenu()`, `.onModalSubmit()` dispatchers. Keep native rendering inside the adapter. |
 | `commands/types.ts` | `ChatInputCommandInteraction`, `AutocompleteInteraction`, `StringSelectMenuInteraction` | Replace with `CommandEvent`, `AutocompleteEvent`, `SelectMenuEvent` |
-| `format-tables.ts` | `APIContainerComponent`, `APITextDisplayComponent`, `APISeparatorComponent`, `SeparatorSpacingSize` | Move to Discord adapter; Slack renders tables as mrkdwn |
-| `channel-management.ts` | `Guild`, `CategoryChannel`, `ChannelType`, `TextChannel` | Replace with `adapter.createChannel()`, `.createCategory()`, `.listChannels()` |
+| `format-tables.ts` | `APIContainerComponent`, `APITextDisplayComponent`, `APISeparatorComponent`, `SeparatorSpacingSize` | Move to Discord adapter; core emits markdown plus optional row actions |
+| `channel-management.ts` | `Guild`, `CategoryChannel`, `ChannelType`, `TextChannel` | Split into optional workspace/admin provisioner. Keep categories out of the base adapter. |
 
 ### Tier 2: Session Handler
 
 | File | Discord APIs Used | What Changes |
 |---|---|---|
-| `session-handler/thread-session-runtime.ts` | `ThreadChannel`, `ChannelType`, `thread.sendTyping()` | Replace `ThreadChannel` with thread ID + `adapter.*` methods |
+| `session-handler/thread-session-runtime.ts` | `ThreadChannel`, `ChannelType`, `thread.sendTyping()` | Replace `ThreadChannel` with `ConversationRef` + `adapter.*` methods |
 
 ### Tier 3: Command Handlers (30+ files)
 
@@ -779,20 +712,20 @@ Every command file uses Discord interaction types. They all switch from
 
 | File | Key Discord APIs | What Changes |
 |---|---|---|
-| `commands/permissions.ts` | `ButtonBuilder`, `ButtonStyle`, `ButtonInteraction` | Use `PostableMessage` with buttons + `adapter.onButton()` |
-| `commands/action-buttons.ts` | `ButtonBuilder`, `ButtonStyle`, `ActionRowBuilder` | Same |
-| `commands/ask-question.ts` | `StringSelectMenuBuilder`, `StringSelectMenuInteraction` | Use select menus in `PostableMessage` + `adapter.onSelectMenu()` |
-| `commands/file-upload.ts` | `ModalBuilder`, `FileUploadBuilder`, `ButtonBuilder` | Use `adapter.onModalSubmit()` + modal API |
-| `commands/model.ts` | `StringSelectMenuBuilder` (4-step chained flow) | Platform select menus + events |
-| `commands/agent.ts` | `StringSelectMenuBuilder` | Platform select menus |
-| `commands/login.ts` | `ModalBuilder`, `TextInputBuilder`, `StringSelectMenuBuilder` | Platform modals + select menus |
-| `commands/gemini-apikey.ts` | `ModalBuilder`, `TextInputBuilder` | Platform modal |
-| `commands/fork.ts` | `StringSelectMenuBuilder`, `ThreadAutoArchiveDuration` | Select menu + `.createThread()` |
-| `commands/worktree.ts` | `REST`, `TextChannel`, `ThreadChannel`, `Message` | Adapter methods |
-| `commands/resume.ts` | `ThreadAutoArchiveDuration`, `TextChannel` | `.createThread()` |
-| `commands/session.ts` | `ChannelType`, `TextChannel` | `.createThread()` |
+| `commands/permissions.ts` | `ButtonBuilder`, `ButtonStyle`, `ButtonInteraction` | Emit typed button intents; adapter renders native buttons |
+| `commands/action-buttons.ts` | `ButtonBuilder`, `ButtonStyle`, `ActionRowBuilder` | Emit typed button intents |
+| `commands/ask-question.ts` | `StringSelectMenuBuilder`, `StringSelectMenuInteraction` | Emit typed select intents |
+| `commands/file-upload.ts` | `ModalBuilder`, `FileUploadBuilder`, `ButtonBuilder` | Emit typed modal + file-upload intents |
+| `commands/model.ts` | `StringSelectMenuBuilder` (4-step chained flow) | Typed select intents + command autocomplete intent |
+| `commands/agent.ts` | `StringSelectMenuBuilder` | Typed select intents + command autocomplete intent |
+| `commands/login.ts` | `ModalBuilder`, `TextInputBuilder`, `StringSelectMenuBuilder` | Typed modal + select intents |
+| `commands/gemini-apikey.ts` | `ModalBuilder`, `TextInputBuilder` | Typed modal intents |
+| `commands/fork.ts` | `StringSelectMenuBuilder`, `ThreadAutoArchiveDuration` | Select menu + `.createThread()` returning `ConversationRef` |
+| `commands/worktree.ts` | `REST`, `TextChannel`, `ThreadChannel`, `Message` | Adapter methods + `ConversationRef` |
+| `commands/resume.ts` | `ThreadAutoArchiveDuration`, `TextChannel` | `.createThread()` with channel + optional thread identity |
+| `commands/session.ts` | `ChannelType`, `TextChannel` | `.createThread()` with channel + optional thread identity |
 | `commands/create-new-project.ts` | `Guild`, `TextChannel` | `.createChannel()` |
-| `commands/diff.ts` | `EmbedBuilder` | Embed component in `PostableMessage` |
+| `commands/diff.ts` | `EmbedBuilder` | Render as markdown + optional actions; avoid embed-specific core types |
 | `commands/verbosity.ts` | `StringSelectMenuBuilder` | Platform select menu |
 | `commands/merge-worktree.ts` | `ThreadChannel` | Thread ID + `.postMessage()` |
 | `commands/queue.ts` | `ChannelType`, `ThreadChannel` | Thread/channel ID checks |
@@ -832,9 +765,9 @@ Every command file uses Discord interaction types. They all switch from
 
 | File | Discord APIs Used | What Changes |
 |---|---|---|
-| `cli.ts` | `SlashCommandBuilder`, `REST`, `Routes`, `Events`, `Client`, `AttachmentBuilder`, `Guild` | Command registration → `adapter.registerCommands()`. OAuth stays platform-specific. |
+| `cli.ts` | `SlashCommandBuilder`, `REST`, `Routes`, `Events`, `Client`, `AttachmentBuilder`, `Guild` | Command registration → adapter command-definition registration. OAuth stays platform-specific. |
 | `opencode-plugin.ts` | `Routes.guildMembersSearch`, `REST` | Replace with `adapter.searchMembers()` |
-| `task-runner.ts` | `REST`, `Routes.channelMessages`, `Routes.threads` | Replace with `adapter.postMessage()`, `adapter.createThread()` |
+| `task-runner.ts` | `REST`, `Routes.channelMessages`, `Routes.threads` | Replace with `adapter.sendMessage()`, `adapter.createThread()` |
 | `message-formatting.ts` | `Message` type, `TextChannel` | Replace with `PlatformMessage` |
 | `utils.ts` | `PermissionsBitField` | Move to Discord adapter |
 | `ipc-polling.ts` | `Client` | Replace with `KimakiAdapter` |
@@ -847,11 +780,11 @@ All test files create discord.js `Client` instances — need a
 
 ## 11. Implementation Order
 
-1. Create `KimakiAdapter` interface in `discord/src/platform/types.ts`
-2. Create `DiscordAdapter` in `discord/src/platform/discord-adapter.ts`
-   wrapping existing discord.js code
-3. Update `discord-bot.ts` to use adapter (Tier 1)
+1. Create `ConversationRef`, `OutgoingMessage`, and the smaller `KimakiAdapter` interface in `discord/src/platform/types.ts`
+2. Create `DiscordAdapter` in `discord/src/platform/discord-adapter.ts` wrapping existing discord.js code
+3. Update `discord-bot.ts` and `thread-session-runtime.ts` to speak `ConversationRef`
 4. Update `commands/types.ts` to use platform-agnostic event types
-5. Update commands one by one (Tier 3 — all follow the same pattern)
-6. Create `SlackAdapter` in `discord/src/platform/slack-adapter.ts`
-7. Add platform selection to `cli.ts` startup
+5. Move interactive UI building out of command handlers and into typed UI primitives rendered by adapters
+6. Split Discord-only sidecars (`voice`, `forum-sync`, workspace provisioning`) from the base adapter
+7. Create `SlackAdapter` in `discord/src/platform/slack-adapter.ts` using HTTP webhooks + Web API through the Hrana bridge
+8. Add platform selection to `cli.ts` startup

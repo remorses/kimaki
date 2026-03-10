@@ -1,28 +1,23 @@
 // /agent command - Set the preferred agent for this channel or session.
 // Also provides quick agent commands like /plan-agent, /build-agent that switch instantly.
 
-import {
-  ChatInputCommandInteraction,
-  StringSelectMenuInteraction,
-  StringSelectMenuBuilder,
-  ActionRowBuilder,
-  ChannelType,
-  type ThreadChannel,
-  type TextChannel,
-  MessageFlags,
-} from 'discord.js'
+
 import crypto from 'node:crypto'
+import { PLATFORM_MESSAGE_FLAGS } from '../platform/message-flags.js'
 import {
   setChannelAgent,
   setSessionAgent,
   clearSessionModel,
+  getChannelDirectory,
   getThreadSession,
   getSessionAgent,
   getChannelAgent,
 } from '../database.js'
 import { initializeOpencodeForDirectory } from '../opencode.js'
-import { resolveTextChannel, getKimakiMetadata } from '../discord-utils.js'
 import { createLogger, LogPrefix } from '../logger.js'
+import type { CommandEvent, SelectMenuEvent } from '../platform/types.js'
+import { getRootChannelId, isTextChannel, isThreadChannel } from './channel-ref.js'
+import { getDefaultRuntimeAdapter } from '../session-handler/thread-session-runtime.js'
 
 const agentLogger = createLogger(LogPrefix.AGENT)
 
@@ -143,25 +138,24 @@ function parseQuickAgentNameFromDescription(
 async function resolveQuickAgentNameFromInteraction({
   command,
 }: {
-  command: ChatInputCommandInteraction
+  command: CommandEvent
 }): Promise<string | undefined> {
-  const fromCommandObject = parseQuickAgentNameFromDescription(
-    command.command?.description,
-  )
+  const fromCommandObject = parseQuickAgentNameFromDescription(command.commandDescription)
   if (fromCommandObject) {
     return fromCommandObject
   }
 
-  if (!command.guild) {
+  const adapter = getDefaultRuntimeAdapter()
+  const admin = adapter?.admin
+  if (!admin?.fetchCommandDescription || !command.guildId) {
     return undefined
   }
 
-  const fetchedCommand = await command.guild.commands.fetch(command.commandId)
-  if (!fetchedCommand) {
-    return undefined
-  }
-
-  return parseQuickAgentNameFromDescription(fetchedCommand.description)
+  const description = await admin.fetchCommandDescription({
+    guildId: command.guildId,
+    commandId: command.commandId,
+  })
+  return parseQuickAgentNameFromDescription(description)
 }
 
 /**
@@ -171,7 +165,7 @@ async function resolveQuickAgentNameFromInteraction({
 export async function resolveAgentCommandContext({
   interaction,
 }: {
-  interaction: ChatInputCommandInteraction
+  interaction: CommandEvent
   appId: string
 }): Promise<AgentCommandContext | null> {
   const channel = interaction.channel
@@ -183,29 +177,21 @@ export async function resolveAgentCommandContext({
     return null
   }
 
-  const isThread = [
-    ChannelType.PublicThread,
-    ChannelType.PrivateThread,
-    ChannelType.AnnouncementThread,
-  ].includes(channel.type)
+  const isThread = isThreadChannel(channel)
 
   let projectDirectory: string | undefined
   let targetChannelId: string
   let sessionId: string | undefined
 
   if (isThread) {
-    const thread = channel as ThreadChannel
-    const textChannel = await resolveTextChannel(thread)
-    const metadata = await getKimakiMetadata(textChannel)
-    projectDirectory = metadata.projectDirectory
-    targetChannelId = textChannel?.id || channel.id
-
-    sessionId = await getThreadSession(thread.id)
-  } else if (channel.type === ChannelType.GuildText) {
-    const textChannel = channel as TextChannel
-    const metadata = await getKimakiMetadata(textChannel)
-    projectDirectory = metadata.projectDirectory
+    targetChannelId = getRootChannelId(channel) || channel.id
+    const channelConfig = await getChannelDirectory(targetChannelId)
+    projectDirectory = channelConfig?.directory
+    sessionId = await getThreadSession(channel.id)
+  } else if (isTextChannel(channel)) {
     targetChannelId = channel.id
+    const channelConfig = await getChannelDirectory(channel.id)
+    projectDirectory = channelConfig?.directory
   } else {
     await interaction.editReply({
       content: 'This command can only be used in text channels or threads',
@@ -257,10 +243,10 @@ export async function handleAgentCommand({
   interaction,
   appId,
 }: {
-  interaction: ChatInputCommandInteraction
+  interaction: CommandEvent
   appId: string
 }): Promise<void> {
-  await interaction.deferReply({ flags: MessageFlags.Ephemeral })
+  await interaction.deferReply({ flags: PLATFORM_MESSAGE_FLAGS.EPHEMERAL })
 
   const context = await resolveAgentCommandContext({ interaction, appId })
   if (!context) {
@@ -323,17 +309,13 @@ export async function handleAgentCommand({
       description: (agent.description || `${agent.mode} agent`).slice(0, 100),
     }))
 
-    const selectMenu = new StringSelectMenuBuilder()
-      .setCustomId(`agent_select:${contextHash}`)
-      .setPlaceholder('Select an agent')
-      .addOptions(options)
-
-    const actionRow =
-      new ActionRowBuilder<StringSelectMenuBuilder>().addComponents(selectMenu)
-
-    await interaction.editReply({
-      content: `**Set Agent Preference**\n${currentAgentText}\nSelect an agent:`,
-      components: [actionRow],
+    await interaction.editUiReply({
+      markdown: `**Set Agent Preference**\n${currentAgentText}\nSelect an agent:`,
+      selectMenu: {
+        id: `agent_select:${contextHash}`,
+        placeholder: 'Select an agent',
+        options,
+      },
     })
   } catch (error) {
     agentLogger.error('Error loading agents:', error)
@@ -344,7 +326,7 @@ export async function handleAgentCommand({
 }
 
 export async function handleAgentSelectMenu(
-  interaction: StringSelectMenuInteraction,
+  interaction: SelectMenuEvent,
 ): Promise<void> {
   const customId = interaction.customId
 
@@ -412,12 +394,12 @@ export async function handleQuickAgentCommand({
   command,
   appId,
 }: {
-  command: ChatInputCommandInteraction
+  command: CommandEvent
   appId: string
 }): Promise<void> {
   const fallbackAgentName = command.commandName.replace(/-agent$/, '')
 
-  await command.deferReply({ flags: MessageFlags.Ephemeral })
+  await command.deferReply({ flags: PLATFORM_MESSAGE_FLAGS.EPHEMERAL })
 
   const context = await resolveAgentCommandContext({
     interaction: command,

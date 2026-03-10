@@ -3,13 +3,9 @@
 // Also used by the ! prefix shortcut in discord messages (e.g. "!ls -la").
 // Messages starting with ! are intercepted before session handling and routed here.
 
-import {
-  ChannelType,
-  MessageFlags,
-  type TextChannel,
-  type ThreadChannel,
-} from 'discord.js'
+
 import type { CommandContext } from './types.js'
+import { PLATFORM_MESSAGE_FLAGS } from '../platform/message-flags.js'
 import {
   resolveWorkingDirectory,
   SILENT_MESSAGE_FLAGS,
@@ -17,6 +13,7 @@ import {
 import { createLogger, LogPrefix } from '../logger.js'
 import { execAsync } from '../worktrees.js'
 import { stripAnsi } from '../utils.js'
+import { isTextChannel, isThreadChannel } from './channel-ref.js'
 
 const logger = createLogger(LogPrefix.INTERACTION)
 
@@ -67,35 +64,25 @@ export async function handleRunCommand({
   if (!channel) {
     await command.reply({
       content: 'This command can only be used in a channel.',
-      flags: MessageFlags.Ephemeral | SILENT_MESSAGE_FLAGS,
+      flags: PLATFORM_MESSAGE_FLAGS.EPHEMERAL | SILENT_MESSAGE_FLAGS,
     })
     return
   }
 
-  const isThread = [
-    ChannelType.PublicThread,
-    ChannelType.PrivateThread,
-    ChannelType.AnnouncementThread,
-  ].includes(channel.type)
-
-  const isTextChannel = channel.type === ChannelType.GuildText
-
-  if (!isThread && !isTextChannel) {
+  if (!isThreadChannel(channel) && !isTextChannel(channel)) {
     await command.reply({
       content: 'This command can only be used in a text channel or thread.',
-      flags: MessageFlags.Ephemeral | SILENT_MESSAGE_FLAGS,
+      flags: PLATFORM_MESSAGE_FLAGS.EPHEMERAL | SILENT_MESSAGE_FLAGS,
     })
     return
   }
 
-  const resolved = await resolveWorkingDirectory({
-    channel: channel as TextChannel | ThreadChannel,
-  })
+  const resolved = await resolveWorkingDirectory({ channel })
 
   if (!resolved) {
     await command.reply({
       content: 'Could not determine project directory for this channel.',
-      flags: MessageFlags.Ephemeral | SILENT_MESSAGE_FLAGS,
+      flags: PLATFORM_MESSAGE_FLAGS.EPHEMERAL | SILENT_MESSAGE_FLAGS,
     })
     return
   }

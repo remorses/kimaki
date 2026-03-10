@@ -1,13 +1,14 @@
 // Queue commands - /queue, /queue-command, /clear-queue
 
-import { ChannelType, MessageFlags, type ThreadChannel } from 'discord.js'
+
 import type { AutocompleteContext, CommandContext } from './types.js'
+import { PLATFORM_MESSAGE_FLAGS } from '../platform/message-flags.js'
 import { getThreadSession } from '../database.js'
 import {
   resolveWorkingDirectory,
-  sendThreadMessage,
   SILENT_MESSAGE_FLAGS,
 } from '../discord-utils.js'
+import { isThreadChannel } from './channel-ref.js'
 import {
   getRuntime,
   getOrCreateRuntime,
@@ -28,33 +29,27 @@ export async function handleQueueCommand({
   if (!channel) {
     await command.reply({
       content: 'This command can only be used in a channel',
-      flags: MessageFlags.Ephemeral | SILENT_MESSAGE_FLAGS,
+      flags: PLATFORM_MESSAGE_FLAGS.EPHEMERAL | SILENT_MESSAGE_FLAGS,
     })
     return
   }
 
-  const isThread = [
-    ChannelType.PublicThread,
-    ChannelType.PrivateThread,
-    ChannelType.AnnouncementThread,
-  ].includes(channel.type)
-
-  if (!isThread) {
+  if (!isThreadChannel(channel)) {
     await command.reply({
       content:
         'This command can only be used in a thread with an active session',
-      flags: MessageFlags.Ephemeral | SILENT_MESSAGE_FLAGS,
+      flags: PLATFORM_MESSAGE_FLAGS.EPHEMERAL | SILENT_MESSAGE_FLAGS,
     })
     return
   }
 
-  const thread = channel as ThreadChannel
+  const thread = channel
   const sessionId = await getThreadSession(thread.id)
   if (!sessionId) {
     await command.reply({
       content:
         'No active session in this thread. Send a message directly instead.',
-      flags: MessageFlags.Ephemeral | SILENT_MESSAGE_FLAGS,
+      flags: PLATFORM_MESSAGE_FLAGS.EPHEMERAL | SILENT_MESSAGE_FLAGS,
     })
     return
   }
@@ -63,7 +58,7 @@ export async function handleQueueCommand({
   if (!resolved) {
     await command.reply({
       content: 'Could not determine project directory',
-      flags: MessageFlags.Ephemeral | SILENT_MESSAGE_FLAGS,
+      flags: PLATFORM_MESSAGE_FLAGS.EPHEMERAL | SILENT_MESSAGE_FLAGS,
     })
     return
   }
@@ -104,21 +99,15 @@ export async function handleClearQueueCommand({
   if (!channel) {
     await command.reply({
       content: 'This command can only be used in a channel',
-      flags: MessageFlags.Ephemeral | SILENT_MESSAGE_FLAGS,
+      flags: PLATFORM_MESSAGE_FLAGS.EPHEMERAL | SILENT_MESSAGE_FLAGS,
     })
     return
   }
 
-  const isThread = [
-    ChannelType.PublicThread,
-    ChannelType.PrivateThread,
-    ChannelType.AnnouncementThread,
-  ].includes(channel.type)
-
-  if (!isThread) {
+  if (!isThreadChannel(channel)) {
     await command.reply({
       content: 'This command can only be used in a thread',
-      flags: MessageFlags.Ephemeral | SILENT_MESSAGE_FLAGS,
+      flags: PLATFORM_MESSAGE_FLAGS.EPHEMERAL | SILENT_MESSAGE_FLAGS,
     })
     return
   }
@@ -129,7 +118,7 @@ export async function handleClearQueueCommand({
   if (queueLength === 0) {
     await command.reply({
       content: 'No messages in queue',
-      flags: MessageFlags.Ephemeral | SILENT_MESSAGE_FLAGS,
+      flags: PLATFORM_MESSAGE_FLAGS.EPHEMERAL | SILENT_MESSAGE_FLAGS,
     })
     return
   }
@@ -157,22 +146,16 @@ export async function handleQueueCommandCommand({
   if (!channel) {
     await command.reply({
       content: 'This command can only be used in a channel',
-      flags: MessageFlags.Ephemeral | SILENT_MESSAGE_FLAGS,
+      flags: PLATFORM_MESSAGE_FLAGS.EPHEMERAL | SILENT_MESSAGE_FLAGS,
     })
     return
   }
 
-  const isThread = [
-    ChannelType.PublicThread,
-    ChannelType.PrivateThread,
-    ChannelType.AnnouncementThread,
-  ].includes(channel.type)
-
-  if (!isThread) {
+  if (!isThreadChannel(channel)) {
     await command.reply({
       content:
         'This command can only be used in a thread with an active session',
-      flags: MessageFlags.Ephemeral | SILENT_MESSAGE_FLAGS,
+      flags: PLATFORM_MESSAGE_FLAGS.EPHEMERAL | SILENT_MESSAGE_FLAGS,
     })
     return
   }
@@ -183,7 +166,7 @@ export async function handleQueueCommandCommand({
     await command.reply({
       content:
         'No active session in this thread. Send a message directly instead.',
-      flags: MessageFlags.Ephemeral | SILENT_MESSAGE_FLAGS,
+      flags: PLATFORM_MESSAGE_FLAGS.EPHEMERAL | SILENT_MESSAGE_FLAGS,
     })
     return
   }
@@ -195,20 +178,20 @@ export async function handleQueueCommandCommand({
   if (!isKnownCommand) {
     await command.reply({
       content: `Unknown command: /${commandName}. Use autocomplete to pick from available commands.`,
-      flags: MessageFlags.Ephemeral | SILENT_MESSAGE_FLAGS,
+      flags: PLATFORM_MESSAGE_FLAGS.EPHEMERAL | SILENT_MESSAGE_FLAGS,
     })
     return
   }
 
   const commandPayload = { name: commandName, arguments: args }
   const displayText = `/${commandName}`
-  const thread = channel as ThreadChannel
+  const thread = channel
 
   const resolved = await resolveWorkingDirectory({ channel: thread })
   if (!resolved) {
     await command.reply({
       content: 'Could not determine project directory',
-      flags: MessageFlags.Ephemeral | SILENT_MESSAGE_FLAGS,
+      flags: PLATFORM_MESSAGE_FLAGS.EPHEMERAL | SILENT_MESSAGE_FLAGS,
     })
     return
   }
@@ -250,8 +233,7 @@ export async function handleQueueCommandAutocomplete({
   interaction,
 }: AutocompleteContext): Promise<void> {
   const focused = interaction.options.getFocused(true)
-
-  if (focused.name !== 'command') {
+  if (typeof focused === 'string' || focused.name !== 'command') {
     await interaction.respond([])
     return
   }

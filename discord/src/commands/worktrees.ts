@@ -3,14 +3,11 @@
 // including HTML-backed action buttons for deletable worktrees.
 
 import {
-  ButtonInteraction,
-  ChatInputCommandInteraction,
-  ComponentType,
-  MessageFlags,
-  type APIMessageTopLevelComponent,
-  type APITextDisplayComponent,
-  type InteractionEditReplyOptions,
-} from 'discord.js'
+  PLATFORM_COMPONENT_TYPE,
+  type PlatformMessageTopLevelComponent,
+  type PlatformTextDisplayComponent,
+} from '../platform/components-v2.js'
+import { PLATFORM_MESSAGE_FLAGS } from '../platform/message-flags.js'
 import {
   deleteThreadWorktree,
   getThreadWorktree,
@@ -26,6 +23,7 @@ import {
 import * as errore from 'errore'
 import { GitCommandError } from '../errors.js'
 import { deleteWorktree, git, getDefaultBranch } from '../worktrees.js'
+import type { ButtonEvent, CommandEvent, LegacyEditReplyOptions } from '../platform/types.js'
 
 // Extracts the git stderr from a deleteWorktree error via errore.findCause.
 // Chain: Error { cause: GitCommandError { cause: CommandError { stderr } } }.
@@ -81,9 +79,7 @@ type WorktreesReplyTarget = {
   userId: string
   channelId: string
   notice?: string
-  editReply: (
-    options: string | InteractionEditReplyOptions,
-  ) => Promise<unknown>
+  editReply: (options: LegacyEditReplyOptions) => Promise<unknown>
 }
 
 // 5s timeout per git call — prevents hangs from deleted dirs, git locks, slow disks.
@@ -292,13 +288,13 @@ async function renderWorktreesReply({
   const worktrees = await getRecentWorktrees()
   if (worktrees.length === 0) {
     const message = notice ? `${notice}\n\nNo worktrees found.` : 'No worktrees found.'
-    const textDisplay: APITextDisplayComponent = {
-      type: ComponentType.TextDisplay,
+    const textDisplay: PlatformTextDisplayComponent = {
+      type: PLATFORM_COMPONENT_TYPE.TEXT_DISPLAY,
       content: message,
     }
     await editReply({
       components: [textDisplay],
-      flags: MessageFlags.IsComponentsV2,
+      flags: PLATFORM_MESSAGE_FLAGS.IS_COMPONENTS_V2,
     })
     return
   }
@@ -343,13 +339,13 @@ async function renderWorktreesReply({
     },
   })
 
-  const components: APIMessageTopLevelComponent[] = segments.flatMap((segment) => {
+  const components: PlatformMessageTopLevelComponent[] = segments.flatMap((segment) => {
     if (segment.type === 'components') {
       return segment.components
     }
 
-    const textDisplay: APITextDisplayComponent = {
-      type: ComponentType.TextDisplay,
+    const textDisplay: PlatformTextDisplayComponent = {
+      type: PLATFORM_COMPONENT_TYPE.TEXT_DISPLAY,
       content: segment.text,
     }
     return [textDisplay]
@@ -357,7 +353,7 @@ async function renderWorktreesReply({
 
   await editReply({
     components,
-    flags: MessageFlags.IsComponentsV2,
+    flags: PLATFORM_MESSAGE_FLAGS.IS_COMPONENTS_V2,
   })
 }
 
@@ -365,19 +361,20 @@ async function handleDeleteWorktreeAction({
   interaction,
   threadId,
 }: {
-  interaction: ButtonInteraction
+  interaction: ButtonEvent
   threadId: string
 }): Promise<void> {
   const guildId = interaction.guildId
+  const channelId = interaction.channelId || ''
   if (!guildId) {
     await interaction.editReply({
       components: [
         {
-          type: ComponentType.TextDisplay,
+          type: PLATFORM_COMPONENT_TYPE.TEXT_DISPLAY,
           content: 'This action can only be used in a server.',
         },
       ],
-      flags: MessageFlags.IsComponentsV2,
+      flags: PLATFORM_MESSAGE_FLAGS.IS_COMPONENTS_V2,
     })
     return
   }
@@ -387,10 +384,10 @@ async function handleDeleteWorktreeAction({
     await renderWorktreesReply({
       guildId,
       userId: interaction.user.id,
-      channelId: interaction.channelId,
+      channelId,
       notice: 'Worktree was already removed.',
       editReply: (options) => {
-        return interaction.editReply(options)
+        return interaction.editReply(options as never)
       },
     })
     return
@@ -400,10 +397,10 @@ async function handleDeleteWorktreeAction({
     await renderWorktreesReply({
       guildId,
       userId: interaction.user.id,
-      channelId: interaction.channelId,
+      channelId,
       notice: `Cannot delete \`${worktree.worktree_name}\` because it is ${worktree.status}.`,
       editReply: (options) => {
-        return interaction.editReply(options)
+        return interaction.editReply(options as never)
       },
     })
     return
@@ -424,7 +421,7 @@ async function handleDeleteWorktreeAction({
     await interaction
       .followUp({
         content: `Failed to delete \`${worktree.worktree_name}\`\n${detail}`,
-        flags: MessageFlags.Ephemeral,
+        flags: PLATFORM_MESSAGE_FLAGS.EPHEMERAL,
       })
       .catch(() => {
         return undefined
@@ -436,10 +433,10 @@ async function handleDeleteWorktreeAction({
   await renderWorktreesReply({
     guildId,
     userId: interaction.user.id,
-    channelId: interaction.channelId,
+    channelId,
     notice: `Deleted \`${worktree.worktree_name}\`.`,
     editReply: (options) => {
-      return interaction.editReply(options)
+      return interaction.editReply(options as never)
     },
   })
 }
@@ -447,25 +444,25 @@ async function handleDeleteWorktreeAction({
 export async function handleWorktreesCommand({
   command,
 }: {
-  command: ChatInputCommandInteraction
+  command: CommandEvent
   appId: string
 }): Promise<void> {
   const guildId = command.guildId
   if (!guildId) {
     await command.reply({
       content: 'This command can only be used in a server.',
-      flags: MessageFlags.Ephemeral,
+      flags: PLATFORM_MESSAGE_FLAGS.EPHEMERAL,
     })
     return
   }
 
-  await command.deferReply({ flags: MessageFlags.Ephemeral })
+  await command.deferReply({ flags: PLATFORM_MESSAGE_FLAGS.EPHEMERAL })
   await renderWorktreesReply({
     guildId,
     userId: command.user.id,
-    channelId: command.channelId,
+    channelId: command.channelId || guildId,
     editReply: (options) => {
-      return command.editReply(options)
+      return command.editReply(options as never)
     },
   })
 }

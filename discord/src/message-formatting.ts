@@ -3,12 +3,12 @@
 // handles file attachments, and provides tool summary generation.
 
 import type { Part, FilePartInput } from '@opencode-ai/sdk/v2'
-import type { Message, TextChannel } from 'discord.js'
 
 // Extended FilePartInput with original Discord URL for reference in prompts
-export type DiscordFileAttachment = FilePartInput & {
+export type PlatformFileAttachment = FilePartInput & {
   sourceUrl?: string
 }
+export type DiscordFileAttachment = PlatformFileAttachment
 import * as errore from 'errore'
 import { createLogger, LogPrefix } from './logger.js'
 import { FetchError } from './errors.js'
@@ -22,36 +22,7 @@ type GenericSessionMessage = {
 
 const logger = createLogger(LogPrefix.FORMATTING)
 
-/**
- * Resolves Discord mentions in message content to human-readable names.
- * Replaces <@userId> with @displayName, <@&roleId> with @roleName, <#channelId> with #channelName.
- */
-export function resolveMentions(message: Message): string {
-  let content = message.content || ''
 
-  // Replace user mentions <@userId> or <@!userId> with @displayName
-  for (const [userId, user] of message.mentions.users) {
-    const member = message.guild?.members.cache.get(userId)
-    const displayName = member?.displayName || user.displayName || user.username
-    content = content.replace(
-      new RegExp(`<@!?${userId}>`, 'g'),
-      `@${displayName}`,
-    )
-  }
-
-  // Replace role mentions <@&roleId> with @roleName
-  for (const [roleId, role] of message.mentions.roles) {
-    content = content.replace(new RegExp(`<@&${roleId}>`, 'g'), `@${role.name}`)
-  }
-
-  // Replace channel mentions <#channelId> with #channelName
-  for (const [channelId, channel] of message.mentions.channels) {
-    const name = 'name' in channel ? (channel as TextChannel).name : channelId
-    content = content.replace(new RegExp(`<#${channelId}>`, 'g'), `#${name}`)
-  }
-
-  return content
-}
 
 /**
  * Escapes Discord inline markdown characters so dynamic content
@@ -185,96 +156,7 @@ export function isTextMimeType(contentType: string | null): boolean {
   return TEXT_MIME_TYPES.some((prefix) => contentType.startsWith(prefix))
 }
 
-export async function getTextAttachments(message: Message): Promise<string> {
-  const textAttachments = Array.from(message.attachments.values()).filter(
-    (attachment) => isTextMimeType(attachment.contentType),
-  )
 
-  if (textAttachments.length === 0) {
-    return ''
-  }
-
-  const textContents = await Promise.all(
-    textAttachments.map(async (attachment) => {
-      const response = await errore.tryAsync({
-        try: () => fetch(attachment.url),
-        catch: (e) => new FetchError({ url: attachment.url, cause: e }),
-      })
-      if (response instanceof Error) {
-        return `<attachment filename="${attachment.name}" error="${response.message}" />`
-      }
-      if (!response.ok) {
-        return `<attachment filename="${attachment.name}" error="Failed to fetch: ${response.status}" />`
-      }
-      const text = await response.text()
-      return `<attachment filename="${attachment.name}" mime="${attachment.contentType}">\n${text}\n</attachment>`
-    }),
-  )
-
-  return textContents.join('\n\n')
-}
-
-export async function getFileAttachments(
-  message: Message,
-): Promise<DiscordFileAttachment[]> {
-  const fileAttachments = Array.from(message.attachments.values()).filter(
-    (attachment) => {
-      const contentType = attachment.contentType || ''
-      return (
-        contentType.startsWith('image/') || contentType === 'application/pdf'
-      )
-    },
-  )
-
-  if (fileAttachments.length === 0) {
-    return []
-  }
-
-  const results = await Promise.all(
-    fileAttachments.map(async (attachment) => {
-      const response = await errore.tryAsync({
-        try: () => fetch(attachment.url),
-        catch: (e) => new FetchError({ url: attachment.url, cause: e }),
-      })
-      if (response instanceof Error) {
-        logger.error(
-          `Error downloading attachment ${attachment.name}:`,
-          response.message,
-        )
-        return null
-      }
-      if (!response.ok) {
-        logger.error(
-          `Failed to fetch attachment ${attachment.name}: ${response.status}`,
-        )
-        return null
-      }
-
-      const rawBuffer = Buffer.from(await response.arrayBuffer())
-      const originalMime = attachment.contentType || 'application/octet-stream'
-
-      // Process image (resize if needed, convert to JPEG)
-      const { buffer, mime } = await processImage(rawBuffer, originalMime)
-
-      const base64 = buffer.toString('base64')
-      const dataUrl = `data:${mime};base64,${base64}`
-
-      logger.log(
-        `Attachment ${attachment.name}: ${rawBuffer.length} → ${buffer.length} bytes, ${mime}`,
-      )
-
-      return {
-        type: 'file' as const,
-        mime,
-        filename: attachment.name,
-        url: dataUrl,
-        sourceUrl: attachment.url,
-      }
-    }),
-  )
-
-  return results.filter((r) => r !== null) as DiscordFileAttachment[]
-}
 
 const MAX_BASH_COMMAND_INLINE_LENGTH = 100
 

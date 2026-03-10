@@ -1,15 +1,8 @@
 // /fork command - Fork the session from a past user message.
 
-import {
-  ChatInputCommandInteraction,
-  StringSelectMenuInteraction,
-  StringSelectMenuBuilder,
-  ActionRowBuilder,
-  ChannelType,
-  ThreadAutoArchiveDuration,
-  type ThreadChannel,
-  MessageFlags,
-} from 'discord.js'
+// ThreadAutoArchiveDuration.OneDay = 1440 minutes
+const THREAD_AUTO_ARCHIVE_ONE_DAY = 1440
+import { PLATFORM_MESSAGE_FLAGS } from '../platform/message-flags.js'
 import {
   getThreadSession,
   setThreadSession,
@@ -18,52 +11,46 @@ import {
 import { initializeOpencodeForDirectory } from '../opencode.js'
 import {
   resolveWorkingDirectory,
-  resolveTextChannel,
-  sendThreadMessage,
+  SILENT_MESSAGE_FLAGS,
 } from '../discord-utils.js'
 import { collectLastAssistantParts } from '../message-formatting.js'
 import { createLogger, LogPrefix } from '../logger.js'
 import * as errore from 'errore'
+import type { CommandEvent, SelectMenuEvent } from '../platform/types.js'
+import { getDefaultRuntimeAdapter } from '../session-handler/thread-session-runtime.js'
+import { isThreadChannel, getRootChannelId } from './channel-ref.js'
 
 const sessionLogger = createLogger(LogPrefix.SESSION)
 const forkLogger = createLogger(LogPrefix.FORK)
 
 export async function handleForkCommand(
-  interaction: ChatInputCommandInteraction,
+  interaction: CommandEvent,
 ): Promise<void> {
   const channel = interaction.channel
 
   if (!channel) {
     await interaction.reply({
       content: 'This command can only be used in a channel',
-      flags: MessageFlags.Ephemeral,
+      flags: PLATFORM_MESSAGE_FLAGS.EPHEMERAL,
     })
     return
   }
 
-  const isThread = [
-    ChannelType.PublicThread,
-    ChannelType.PrivateThread,
-    ChannelType.AnnouncementThread,
-  ].includes(channel.type)
-
-  if (!isThread) {
+  if (!isThreadChannel(channel)) {
     await interaction.reply({
       content:
         'This command can only be used in a thread with an active session',
-      flags: MessageFlags.Ephemeral,
+      flags: PLATFORM_MESSAGE_FLAGS.EPHEMERAL,
     })
     return
   }
 
-  const resolved = await resolveWorkingDirectory({
-    channel: channel as ThreadChannel,
-  })
+  const resolved = await resolveWorkingDirectory({ channel })
 
   if (!resolved) {
     await interaction.reply({
       content: 'Could not determine project directory for this channel',
-      flags: MessageFlags.Ephemeral,
+      flags: PLATFORM_MESSAGE_FLAGS.EPHEMERAL,
     })
     return
   }
@@ -75,13 +62,13 @@ export async function handleForkCommand(
   if (!sessionId) {
     await interaction.reply({
       content: 'No active session in this thread',
-      flags: MessageFlags.Ephemeral,
+      flags: PLATFORM_MESSAGE_FLAGS.EPHEMERAL,
     })
     return
   }
 
   // Defer reply before API calls to avoid 3-second timeout
-  await interaction.deferReply({ flags: MessageFlags.Ephemeral })
+  await interaction.deferReply({ flags: PLATFORM_MESSAGE_FLAGS.EPHEMERAL })
 
   const getClient = await initializeOpencodeForDirectory(projectDirectory)
   if (getClient instanceof Error) {
@@ -149,21 +136,14 @@ export async function handleForkCommand(
         (o): o is NonNullable<typeof o> => o !== null,
       )
 
-    const selectMenu = new StringSelectMenuBuilder()
-      // Discord component custom_id max length is 100 chars.
-      // Avoid embedding long directory paths (or base64 of them) in the custom ID.
-      // handleForkSelectMenu resolves the directory from the current thread instead.
-      .setCustomId(`fork_select:${sessionId}`)
-      .setPlaceholder('Select a message to fork from')
-      .addOptions(options)
-
-    const actionRow =
-      new ActionRowBuilder<StringSelectMenuBuilder>().addComponents(selectMenu)
-
-    await interaction.editReply({
-      content:
+    await interaction.editUiReply({
+      markdown:
         '**Fork Session**\nSelect the user message to fork from. The forked session will continue as if you had not sent that message:',
-      components: [actionRow],
+      selectMenu: {
+        id: `fork_select:${sessionId}`,
+        placeholder: 'Select a message to fork from',
+        options,
+      },
     })
   } catch (error) {
     forkLogger.error('Error loading messages:', error)
@@ -174,7 +154,7 @@ export async function handleForkCommand(
 }
 
 export async function handleForkSelectMenu(
-  interaction: StringSelectMenuInteraction,
+  interaction: SelectMenuEvent,
 ): Promise<void> {
   const customId = interaction.customId
 
@@ -186,7 +166,7 @@ export async function handleForkSelectMenu(
   if (!sessionId) {
     await interaction.reply({
       content: 'Invalid selection data',
-      flags: MessageFlags.Ephemeral,
+      flags: PLATFORM_MESSAGE_FLAGS.EPHEMERAL,
     })
     return
   }
@@ -195,22 +175,20 @@ export async function handleForkSelectMenu(
   if (!selectedMessageId) {
     await interaction.reply({
       content: 'No message selected',
-      flags: MessageFlags.Ephemeral,
+      flags: PLATFORM_MESSAGE_FLAGS.EPHEMERAL,
     })
     return
   }
 
   await interaction.deferReply({ ephemeral: false })
 
-  const threadChannel = interaction.channel
-  if (!threadChannel) {
+    const threadChannel = interaction.channel
+    if (!threadChannel) {
     await interaction.editReply('Could not access thread channel')
     return
   }
 
-  const resolved = await resolveWorkingDirectory({
-    channel: threadChannel as ThreadChannel,
-  })
+    const resolved = await resolveWorkingDirectory({ channel: threadChannel })
   if (!resolved) {
     await interaction.editReply(
       'Could not determine project directory for this channel',
@@ -240,33 +218,47 @@ export async function handleForkSelectMenu(
     const forkedSession = forkResponse.data
     const parentChannel = interaction.channel
 
-    if (
-      !parentChannel ||
-      ![
-        ChannelType.PublicThread,
-        ChannelType.PrivateThread,
-        ChannelType.AnnouncementThread,
-      ].includes(parentChannel.type)
-    ) {
+    if (!isThreadChannel(parentChannel)) {
       await interaction.editReply('Could not access parent channel')
       return
     }
 
-    const textChannel = await resolveTextChannel(parentChannel as ThreadChannel)
-
-    if (!textChannel) {
+    const rootChannelId = getRootChannelId(parentChannel)
+    if (!rootChannelId) {
       await interaction.editReply('Could not resolve parent text channel')
       return
     }
 
-    const thread = await textChannel.threads.create({
-      name: `Fork: ${forkedSession.title}`.slice(0, 100),
-      autoArchiveDuration: ThreadAutoArchiveDuration.OneDay,
-      reason: `Forked from session ${sessionId}`,
+    const adapter = getDefaultRuntimeAdapter()
+    if (!adapter) {
+      throw new Error('No runtime adapter configured')
+    }
+    const channelTarget = {
+      channelId: rootChannelId,
+    }
+    const starterMessage = await adapter.conversation(channelTarget).send({
+      markdown: `**Forking session:** ${forkedSession.title}`,
+      flags: SILENT_MESSAGE_FLAGS,
     })
+    const { thread, target: threadTarget } = await adapter
+      .conversation(channelTarget)
+      .message(starterMessage.id)
+      .then((messageHandle) => {
+        return messageHandle.startThread({
+          name: `Fork: ${forkedSession.title}`.slice(0, 100),
+          autoArchiveDuration: THREAD_AUTO_ARCHIVE_ONE_DAY,
+          reason: `Forked from session ${sessionId}`,
+        })
+      })
 
-    // Add user to thread so it appears in their sidebar
-    await thread.members.add(interaction.user.id)
+    const threadHandle = await adapter.thread({
+      threadId: threadTarget.threadId,
+      parentId: thread.parentId,
+    })
+    if (!threadHandle) {
+      throw new Error(`Thread not found: ${threadTarget.threadId}`)
+    }
+    await threadHandle.addMember(interaction.user.id)
 
     await setThreadSession(thread.id, forkedSession.id)
 
@@ -274,10 +266,9 @@ export async function handleForkSelectMenu(
       `Created forked session ${forkedSession.id} in thread ${thread.id}`,
     )
 
-    await sendThreadMessage(
-      thread,
-      `**Forked session created!**\nFrom: \`${sessionId}\`\nNew session: \`${forkedSession.id}\``,
-    )
+    await adapter.conversation(threadTarget).send({
+      markdown: `**Forked session created!**\nFrom: \`${sessionId}\`\nNew session: \`${forkedSession.id}\``,
+    })
 
     // Fetch and display the last assistant messages from the forked session
     const messagesResponse = await getClient().session.messages({
@@ -289,8 +280,10 @@ export async function handleForkSelectMenu(
         messages: messagesResponse.data,
       })
 
-      if (content.trim()) {
-        const discordMessage = await sendThreadMessage(thread, content)
+        if (content.trim()) {
+        const discordMessage = await adapter.conversation(threadTarget).send({
+          markdown: content,
+        })
 
         // Store part-message mappings atomically
         await setPartMessagesBatch(
@@ -303,13 +296,12 @@ export async function handleForkSelectMenu(
       }
     }
 
-    await sendThreadMessage(
-      thread,
-      `You can now continue the conversation from this point.`,
-    )
+    await adapter.conversation(threadTarget).send({
+      markdown: `You can now continue the conversation from this point.`,
+    })
 
     await interaction.editReply(
-      `Session forked! Continue in ${thread.toString()}`,
+      `Session forked! Continue in <#${thread.id}>`,
     )
   } catch (error) {
     forkLogger.error('Error forking session:', error)

@@ -4,15 +4,7 @@
 // 'tools_and_text': shows all output including tool executions
 // 'text_only': only shows text responses
 
-import {
-  ChatInputCommandInteraction,
-  StringSelectMenuInteraction,
-  StringSelectMenuBuilder,
-  ActionRowBuilder,
-  MessageFlags,
-  ChannelType,
-  type ThreadChannel,
-} from 'discord.js'
+import { PLATFORM_MESSAGE_FLAGS } from '../platform/message-flags.js'
 import {
   getChannelVerbosity,
   setChannelVerbosity,
@@ -21,6 +13,7 @@ import {
 import { getPrisma } from '../db.js'
 import { store } from '../store.js'
 import { createLogger, LogPrefix } from '../logger.js'
+import type { CommandEvent, SelectMenuEvent } from '../platform/types.js'
 
 const verbosityLogger = createLogger(LogPrefix.VERBOSITY)
 
@@ -46,19 +39,15 @@ const VERBOSITY_OPTIONS: Array<{
   },
 ]
 
-function resolveChannelId(channel: ChatInputCommandInteraction['channel']): string | null {
+function resolveChannelId(channel: CommandEvent['channel']): string | null {
   if (!channel) {
     return null
   }
-  if (channel.type === ChannelType.GuildText) {
+  if (channel.kind === 'text') {
     return channel.id
   }
-  if (
-    channel.type === ChannelType.PublicThread ||
-    channel.type === ChannelType.PrivateThread ||
-    channel.type === ChannelType.AnnouncementThread
-  ) {
-    return (channel as ThreadChannel).parentId || channel.id
+  if (channel.kind === 'thread') {
+    return channel.parentId || channel.id
   }
   return channel.id
 }
@@ -87,7 +76,7 @@ async function getChannelVerbosityOverride(
 export async function handleVerbosityCommand({
   command,
 }: {
-  command: ChatInputCommandInteraction
+  command: CommandEvent
   appId: string
 }): Promise<void> {
   verbosityLogger.log('[VERBOSITY] Command called')
@@ -96,7 +85,7 @@ export async function handleVerbosityCommand({
   if (!channelId) {
     await command.reply({
       content: 'Could not determine channel.',
-      flags: MessageFlags.Ephemeral,
+      flags: PLATFORM_MESSAGE_FLAGS.EPHEMERAL,
     })
     return
   }
@@ -112,18 +101,14 @@ export async function handleVerbosityCommand({
     default: opt.value === currentLevel,
   }))
 
-  const selectMenu = new StringSelectMenuBuilder()
-    .setCustomId(`verbosity_select:${channelId}`)
-    .setPlaceholder('Select verbosity level')
-    .addOptions(options)
-
-  const actionRow =
-    new ActionRowBuilder<StringSelectMenuBuilder>().addComponents(selectMenu)
-
-  await command.reply({
-    content: `**Verbosity**\nCurrent: \`${currentLevel}\` (${source})`,
-    components: [actionRow],
-    flags: MessageFlags.Ephemeral,
+  await command.replyUi({
+    markdown: `**Verbosity**\nCurrent: \`${currentLevel}\` (${source})`,
+    selectMenu: {
+      id: `verbosity_select:${channelId}`,
+      placeholder: 'Select verbosity level',
+      options,
+    },
+    flags: PLATFORM_MESSAGE_FLAGS.EPHEMERAL,
   })
 }
 
@@ -132,7 +117,7 @@ export async function handleVerbosityCommand({
  * Sets the selected verbosity level for the channel.
  */
 export async function handleVerbositySelectMenu(
-  interaction: StringSelectMenuInteraction,
+  interaction: SelectMenuEvent,
 ): Promise<void> {
   const customId = interaction.customId
   if (!customId.startsWith('verbosity_select:')) {

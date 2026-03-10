@@ -11,7 +11,7 @@
 // STATE DISCIPLINE: keep as little state as possible. Before adding any new
 // state field, ask if it can be derived from existing state instead.
 
-import type { DiscordFileAttachment } from '../message-formatting.js'
+import type { PlatformFileAttachment } from '../message-formatting.js'
 import { store } from '../store.js'
 
 // ── Shared types ─────────────────────────────────────────────────
@@ -27,7 +27,7 @@ export type QueuedMessage = {
   username: string
   // Image/file attachments extracted from the Discord message. Sent as
   // file parts alongside the prompt in the SDK call.
-  images?: DiscordFileAttachment[]
+  images?: PlatformFileAttachment[]
   // Bot application ID. Used for model-preference resolution fallback
   // (looking up channel/session model overrides keyed by appId).
   appId?: string

@@ -1,12 +1,8 @@
 // /context-usage command - Show token usage and context window percentage for the current session.
 
-import {
-  ChannelType,
-  MessageFlags,
-  type TextChannel,
-  type ThreadChannel,
-} from 'discord.js'
+
 import type { CommandContext } from './types.js'
+import { PLATFORM_MESSAGE_FLAGS } from '../platform/message-flags.js'
 import { getThreadSession } from '../database.js'
 import { initializeOpencodeForDirectory } from '../opencode.js'
 import {
@@ -15,6 +11,7 @@ import {
 } from '../discord-utils.js'
 import { createLogger, LogPrefix } from '../logger.js'
 import * as errore from 'errore'
+import { isThreadChannel } from './channel-ref.js'
 
 const logger = createLogger(LogPrefix.SESSION)
 
@@ -40,34 +37,26 @@ export async function handleContextUsageCommand({
   if (!channel) {
     await command.reply({
       content: 'This command can only be used in a channel',
-      flags: MessageFlags.Ephemeral | SILENT_MESSAGE_FLAGS,
+      flags: PLATFORM_MESSAGE_FLAGS.EPHEMERAL | SILENT_MESSAGE_FLAGS,
     })
     return
   }
 
-  const isThread = [
-    ChannelType.PublicThread,
-    ChannelType.PrivateThread,
-    ChannelType.AnnouncementThread,
-  ].includes(channel.type)
-
-  if (!isThread) {
+  if (!isThreadChannel(channel)) {
     await command.reply({
       content:
         'This command can only be used in a thread with an active session',
-      flags: MessageFlags.Ephemeral | SILENT_MESSAGE_FLAGS,
+      flags: PLATFORM_MESSAGE_FLAGS.EPHEMERAL | SILENT_MESSAGE_FLAGS,
     })
     return
   }
 
-  const resolved = await resolveWorkingDirectory({
-    channel: channel as TextChannel | ThreadChannel,
-  })
+  const resolved = await resolveWorkingDirectory({ channel })
 
   if (!resolved) {
     await command.reply({
       content: 'Could not determine project directory for this channel',
-      flags: MessageFlags.Ephemeral | SILENT_MESSAGE_FLAGS,
+      flags: PLATFORM_MESSAGE_FLAGS.EPHEMERAL | SILENT_MESSAGE_FLAGS,
     })
     return
   }
@@ -79,7 +68,7 @@ export async function handleContextUsageCommand({
   if (!sessionId) {
     await command.reply({
       content: 'No active session in this thread',
-      flags: MessageFlags.Ephemeral | SILENT_MESSAGE_FLAGS,
+      flags: PLATFORM_MESSAGE_FLAGS.EPHEMERAL | SILENT_MESSAGE_FLAGS,
     })
     return
   }
@@ -88,7 +77,7 @@ export async function handleContextUsageCommand({
   if (getClient instanceof Error) {
     await command.reply({
       content: `Failed to get context usage: ${getClient.message}`,
-      flags: MessageFlags.Ephemeral | SILENT_MESSAGE_FLAGS,
+      flags: PLATFORM_MESSAGE_FLAGS.EPHEMERAL | SILENT_MESSAGE_FLAGS,
     })
     return
   }

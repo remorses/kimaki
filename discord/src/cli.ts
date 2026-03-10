@@ -32,11 +32,17 @@ import {
   getChannelDirectory,
   startDiscordBot,
   initializeOpencodeForDirectory,
-  ensureKimakiCategory,
   createProjectChannels,
   createDefaultKimakiChannel,
   type ChannelWithTags,
 } from './discord-bot.js'
+import { createDiscordAdapter } from './platform/discord-adapter.js'
+import type {
+  KimakiAdapter,
+  PlatformAdmin,
+  PlatformGuildMemberSummary,
+  PlatformGuildSummary,
+} from './platform/types.js'
 import {
   getBotTokenWithMode,
   setBotToken,
@@ -62,7 +68,7 @@ import {
 import { formatWorktreeName } from './commands/new-worktree.js'
 import { WORKTREE_PREFIX } from './commands/merge-worktree.js'
 import type { ThreadStartMarker } from './system-message.js'
-import { sendWelcomeMessage } from './onboarding-welcome.js'
+import { sendWelcomeMessage } from './channel-management.js'
 import { buildOpencodeEventLogLine } from './session-handler/opencode-session-event-log.js'
 import yaml from 'js-yaml'
 import type {
@@ -71,18 +77,9 @@ import type {
   Event as OpenCodeEvent,
 } from '@opencode-ai/sdk/v2'
 import {
-  Events,
-  ChannelType,
-  ActivityType,
-  type PresenceStatusData,
-  type CategoryChannel,
-  type Guild,
-  type REST,
-  Routes,
-  SlashCommandBuilder,
-  AttachmentBuilder,
-} from 'discord.js'
-import { createDiscordRest, discordApiUrl, getDiscordRestApiUrl, getGatewayProxyRestBaseUrl } from './discord-urls.js'
+  getDiscordRestApiUrl,
+  getGatewayProxyRestBaseUrl,
+} from './discord-urls.js'
 import crypto from 'node:crypto'
 import path from 'node:path'
 import fs from 'node:fs'
@@ -125,6 +122,129 @@ import {
 } from './task-schedule.js'
 
 const cliLogger = createLogger(LogPrefix.CLI)
+
+const DISCORD_EVENT = {
+  CLIENT_READY: 'clientReady',
+  ERROR: 'error',
+} as const
+
+const ACTIVITY_TYPE = {
+  PLAYING: 0,
+  WATCHING: 3,
+  LISTENING: 2,
+  COMPETING: 5,
+  CUSTOM: 4,
+} as const
+
+type PresenceStatusData = 'online' | 'idle' | 'dnd' | 'invisible'
+
+type DiscordClient = Awaited<ReturnType<typeof createDiscordClient>>
+type ReadyDiscordClient = DiscordClient & {
+  user: NonNullable<DiscordClient['user']>
+}
+type Guild = PlatformGuildSummary
+
+type SlashOption = {
+  type: 3
+  name: string
+  description: string
+  required?: boolean
+  autocomplete?: boolean
+  max_length?: number
+}
+
+type SlashCommandPayload = {
+  name: string
+  description: string
+  options?: SlashOption[]
+  dm_permission?: boolean
+}
+
+class StringOptionBuilder {
+  private option: SlashOption = {
+    type: 3,
+    name: '',
+    description: '',
+  }
+
+  setName(name: string) {
+    this.option.name = name
+    return this
+  }
+
+  setDescription(description: string) {
+    this.option.description = description
+    return this
+  }
+
+  setRequired(required: boolean) {
+    this.option.required = required
+    return this
+  }
+
+  setAutocomplete(autocomplete: boolean) {
+    this.option.autocomplete = autocomplete
+    return this
+  }
+
+  setMaxLength(maxLength: number) {
+    this.option.max_length = maxLength
+    return this
+  }
+
+  build(): SlashOption {
+    return { ...this.option }
+  }
+}
+
+class SlashCommandBuilder {
+  private payload: SlashCommandPayload = {
+    name: '',
+    description: '',
+    options: [],
+  }
+
+  setName(name: string) {
+    this.payload.name = name
+    return this
+  }
+
+  setDescription(description: string) {
+    this.payload.description = description
+    return this
+  }
+
+  addStringOption(
+    callback: (option: StringOptionBuilder) => StringOptionBuilder,
+  ) {
+    const builtOption = callback(new StringOptionBuilder()).build()
+    this.payload.options = [...(this.payload.options || []), builtOption]
+    return this
+  }
+
+  setDMPermission(enabled: boolean) {
+    this.payload.dm_permission = enabled
+    return this
+  }
+
+  toJSON(): SlashCommandPayload {
+    return {
+      ...this.payload,
+      options: this.payload.options?.length ? this.payload.options : undefined,
+    }
+  }
+}
+
+async function createLoggedInDiscordAdapter({
+  token,
+}: {
+  token: string
+}): Promise<KimakiAdapter> {
+  const client = await createDiscordClient()
+  const adapter = await createDiscordAdapter({ client })
+  await adapter.login(token)
+  return adapter
+}
 
 // Gateway bot mode constants.
 // KIMAKI_GATEWAY_APP_ID is the Discord Application ID of the gateway bot.
@@ -211,32 +331,24 @@ async function resolveBotCredentials({ appIdOverride }: { appIdOverride?: string
   process.exit(EXIT_NO_RESTART)
 }
 
-function isThreadChannelType(type: number): boolean {
-  return [
-    ChannelType.PublicThread,
-    ChannelType.PrivateThread,
-    ChannelType.AnnouncementThread,
-  ].includes(type)
-}
-
 async function sendDiscordMessageWithOptionalAttachment({
-  channelId,
+  adapter,
+  target,
   prompt,
-  botToken,
   embeds,
-  rest,
 }: {
-  channelId: string
+  adapter: KimakiAdapter
+  target: { channelId: string; threadId?: string }
   prompt: string
-  botToken: string
   embeds?: Array<{ color: number; footer: { text: string } }>
-  rest: REST
 }): Promise<{ id: string }> {
+  const conversation = adapter.conversation(target)
   const discordMaxLength = 2000
   if (prompt.length <= discordMaxLength) {
-    return (await rest.post(Routes.channelMessages(channelId), {
-      body: { content: prompt, embeds },
-    })) as { id: string }
+    return conversation.send({
+      markdown: prompt,
+      embeds,
+    })
   }
 
   const preview = prompt.slice(0, 100).replace(/\n/g, ' ')
@@ -250,41 +362,18 @@ async function sendDiscordMessageWithOptionalAttachment({
   fs.writeFileSync(tmpFile, prompt)
 
   try {
-    const formData = new FormData()
-    formData.append(
-      'payload_json',
-      JSON.stringify({
-        content: summaryContent,
-        attachments: [{ id: 0, filename: 'prompt.md' }],
-        embeds,
-      }),
-    )
     const buffer = fs.readFileSync(tmpFile)
-    formData.append(
-      'files[0]',
-      new Blob([buffer], { type: 'text/markdown' }),
-      'prompt.md',
-    )
-
-    const starterMessageResponse = await fetch(
-      discordApiUrl(`/channels/${channelId}/messages`),
-      {
-        method: 'POST',
-        headers: {
-          Authorization: `Bot ${botToken}`,
+    return conversation.send({
+      markdown: summaryContent,
+      embeds,
+      files: [
+        {
+          filename: 'prompt.md',
+          contentType: 'text/markdown',
+          data: buffer,
         },
-        body: formData,
-      },
-    )
-
-    if (!starterMessageResponse.ok) {
-      const error = await starterMessageResponse.text()
-      throw new Error(
-        `Discord API error: ${starterMessageResponse.status} - ${error}`,
-      )
-    }
-
-    return (await starterMessageResponse.json()) as { id: string }
+      ],
+    })
   } finally {
     fs.unlinkSync(tmpFile)
   }
@@ -668,86 +757,14 @@ type AgentInfo = {
   hidden?: boolean
 }
 
-type DiscordCommandSummary = {
-  id: string
-  name: string
-}
-
-function isDiscordCommandSummary(value: unknown): value is DiscordCommandSummary {
-  if (typeof value !== 'object' || value === null) {
-    return false
-  }
-
-  const id = Reflect.get(value, 'id')
-  const name = Reflect.get(value, 'name')
-  return typeof id === 'string' && typeof name === 'string'
-}
-
-async function deleteLegacyGlobalCommands({
-  rest,
-  appId,
-  commandNames,
-}: {
-  rest: REST
-  appId: string
-  commandNames: Set<string>
-}) {
-  try {
-    const response = await rest.get(Routes.applicationCommands(appId))
-    if (!Array.isArray(response)) {
-      cliLogger.warn(
-        'COMMANDS: Unexpected global command payload while cleaning legacy global commands',
-      )
-      return
-    }
-
-    const legacyGlobalCommands = response
-      .filter(isDiscordCommandSummary)
-      .filter((command) => {
-        return commandNames.has(command.name)
-      })
-
-    if (legacyGlobalCommands.length === 0) {
-      return
-    }
-
-    const deletionResults = await Promise.allSettled(
-      legacyGlobalCommands.map(async (command) => {
-        await rest.delete(Routes.applicationCommand(appId, command.id))
-        return command
-      }),
-    )
-
-    const failedDeletions = deletionResults.filter((result) => {
-      return result.status === 'rejected'
-    })
-    if (failedDeletions.length > 0) {
-      cliLogger.warn(
-        `COMMANDS: Failed to delete ${failedDeletions.length} legacy global command(s)`,
-      )
-    }
-
-    const deletedCount = deletionResults.length - failedDeletions.length
-    if (deletedCount > 0) {
-      cliLogger.info(
-        `COMMANDS: Deleted ${deletedCount} legacy global command(s) to avoid guild/global duplicates`,
-      )
-    }
-  } catch (error) {
-    cliLogger.warn(
-      `COMMANDS: Could not clean legacy global commands: ${error instanceof Error ? error.message : String(error)}`,
-    )
-  }
-}
-
 async function registerCommands({
-  token,
+  admin,
   appId,
   guildIds,
   userCommands = [],
   agents = [],
 }: {
-  token: string
+  admin?: PlatformAdmin
   appId: string
   guildIds: string[]
   userCommands?: OpencodeCommand[]
@@ -1172,7 +1189,6 @@ async function registerCommands({
     )
   }
 
-  const rest = createDiscordRest(token)
   const uniqueGuildIds = Array.from(new Set(guildIds.filter((guildId) => guildId)))
   const guildCommandNames = new Set(
     commands
@@ -1190,76 +1206,21 @@ async function registerCommands({
   }
 
   try {
-    // PUT is a bulk overwrite: Discord matches by name, updates changed fields
-    // (description, options, etc.) in place, creates new commands, and deletes
-    // any not present in the body. No local diffing needed.
-    const results = await Promise.allSettled(
-      uniqueGuildIds.map(async (guildId) => {
-        const response = await rest.put(
-          Routes.applicationGuildCommands(appId, guildId),
-          {
-            body: commands,
-          },
-        )
-
-        const registeredCount = Array.isArray(response)
-          ? response.length
-          : commands.length
-
-        return { guildId, registeredCount }
-      }),
-    )
-
-    const failedGuilds = results
-      .map((result, index) => {
-        if (result.status === 'fulfilled') {
-          return null
-        }
-
-        return {
-          guildId: uniqueGuildIds[index],
-          error:
-            result.reason instanceof Error
-              ? result.reason.message
-              : String(result.reason),
-        }
-      })
-      .filter((value): value is { guildId: string; error: string } => {
-        return value !== null
-      })
-
-    if (failedGuilds.length > 0) {
-      failedGuilds.forEach((failure) => {
-        cliLogger.warn(
-          `COMMANDS: Failed to register slash commands for guild ${failure.guildId}: ${failure.error}`,
-        )
-      })
-      throw new Error(
-        `Failed to register slash commands for ${failedGuilds.length} guild(s)`,
-      )
-    }
-
-    const successfulGuilds = results.length
-    const firstRegisteredCount = results[0]
-    const registeredCommandCount =
-      firstRegisteredCount && firstRegisteredCount.status === 'fulfilled'
-        ? firstRegisteredCount.value.registeredCount
-        : commands.length
-
-    // In gateway mode, global application routes (/applications/{app_id}/commands)
-    // are denied by the proxy (DeniedWithoutGuild). Legacy global commands only
-    // exist for self-hosted bots that previously registered commands globally.
     const isGateway = store.getState().discordBaseUrl !== 'https://discord.com'
-    if (!isGateway) {
-      await deleteLegacyGlobalCommands({
-        rest,
-        appId,
-        commandNames: guildCommandNames,
-      })
+    const activeAdmin = admin || (await createDiscordAdapter()).admin
+    if (!activeAdmin) {
+      throw new Error('Admin operations are not available for command registration')
     }
+    const registrationResult = await activeAdmin.registerCommands({
+      appId,
+      guildIds: uniqueGuildIds,
+      commands: commands as Array<Record<string, unknown>>,
+      commandNamesForLegacyCleanup: [...guildCommandNames],
+      allowLegacyGlobalCleanup: !isGateway,
+    })
 
     cliLogger.info(
-      `COMMANDS: Successfully registered ${registeredCommandCount} slash commands for ${successfulGuilds} guild(s)`,
+      `COMMANDS: Successfully registered ${registrationResult.registeredCommandCount} slash commands for ${registrationResult.registeredGuildCount} guild(s)`,
     )
   } catch (error) {
     cliLogger.error(
@@ -1269,49 +1230,44 @@ async function registerCommands({
   }
 }
 
-async function reconcileKimakiRole({ guild }: { guild: Guild }): Promise<void> {
+async function reconcileKimakiRole({
+  admin,
+  guild,
+}: {
+  admin: PlatformAdmin
+  guild: Guild
+}): Promise<void> {
   try {
-    const roles = await guild.roles.fetch()
-    const existingRole = roles.find(
-      (role) => role.name.toLowerCase() === 'kimaki',
-    )
-
-    if (existingRole) {
-      if (existingRole.position > 1) {
-        await existingRole.setPosition(1)
-        cliLogger.info(`Moved "Kimaki" role to bottom in ${guild.name}`)
-      }
-      return
-    }
-
-    await guild.roles.create({
-      name: 'Kimaki',
-      position: 1,
-      reason:
-        'Kimaki bot permission role - assign to users who can start sessions, send messages in threads, and use voice features',
+    await admin.ensureGuildAccessPolicy({
+      guildId: guild.id,
     })
-    cliLogger.info(`Created "Kimaki" role in ${guild.name}`)
+    cliLogger.info(`Reconciled "Kimaki" role in ${guild.name || guild.id}`)
   } catch (error) {
     cliLogger.warn(
-      `Could not reconcile Kimaki role in ${guild.name}: ${error instanceof Error ? error.message : String(error)}`,
+      `Could not reconcile Kimaki role in ${guild.name || guild.id}: ${error instanceof Error ? error.message : String(error)}`,
     )
   }
 }
 
 async function collectKimakiChannels({
+  admin,
   guilds,
   reconcileRoles,
 }: {
+  admin: PlatformAdmin
   guilds: Guild[]
   reconcileRoles: boolean
 }): Promise<{ guild: Guild; channels: ChannelWithTags[] }[]> {
   const guildResults = await Promise.all(
     guilds.map(async (guild) => {
       if (reconcileRoles) {
-        void reconcileKimakiRole({ guild })
+        void reconcileKimakiRole({ admin, guild })
       }
 
-      const channels = await getChannelsWithDescriptions(guild)
+      const channels = await getChannelsWithDescriptions({
+        admin,
+        guildId: guild.id,
+      })
       const kimakiChans = channels.filter((ch) => ch.kimakiDirectory)
 
       return { guild, channels: kimakiChans }
@@ -1328,11 +1284,14 @@ async function collectKimakiChannels({
  * Called after Discord login to persist channel configurations.
  */
 async function storeChannelDirectories({
+  admin,
   kimakiChannels,
 }: {
+  admin: PlatformAdmin
   kimakiChannels: { guild: Guild; channels: ChannelWithTags[] }[]
 }): Promise<void> {
   for (const { guild, channels } of kimakiChannels) {
+    const guildChannels = await admin.listChannels({ guildId: guild.id })
     for (const channel of channels) {
       if (channel.kimakiDirectory) {
         await setChannelDirectory({
@@ -1342,10 +1301,13 @@ async function storeChannelDirectories({
           skipIfExists: true,
         })
 
-        const voiceChannel = guild.channels.cache.find(
-          (ch) =>
-            ch.type === ChannelType.GuildVoice && ch.name === channel.name,
-        )
+        const voiceChannel = guildChannels.find((ch) => {
+          return (
+            ch.kind === 'other' &&
+            Boolean(ch.parentId) &&
+            ch.name === channel.name
+          )
+        })
 
         if (voiceChannel) {
           await setChannelDirectory({
@@ -1417,15 +1379,15 @@ function showReadyMessage({
  * Extracted so both the interactive and headless startup paths share the same logic.
  */
 async function ensureDefaultChannelsWithWelcome({
+  admin,
+  adapter,
   guilds,
-  discordClient,
-  appId,
   isGatewayMode,
   installerDiscordUserId,
 }: {
+  admin: PlatformAdmin
+  adapter: NonNullable<Awaited<ReturnType<typeof createDiscordAdapter>>>
   guilds: Guild[]
-  discordClient: import('discord.js').Client
-  appId: string
   isGatewayMode: boolean
   installerDiscordUserId?: string
 }): Promise<{ name: string; id: string; guildId: string }[]> {
@@ -1433,9 +1395,9 @@ async function ensureDefaultChannelsWithWelcome({
   for (const guild of guilds) {
     try {
       const result = await createDefaultKimakiChannel({
-        guild,
-        botName: discordClient.user?.username,
-        appId,
+        admin,
+        guildId: guild.id,
+        botName: adapter.client.user?.username,
         isGatewayMode,
       })
       if (result) {
@@ -1449,13 +1411,14 @@ async function ensureDefaultChannelsWithWelcome({
         // Mention the installer so they get a notification.
         const mentionUserId = installerDiscordUserId || guild.ownerId
         await sendWelcomeMessage({
-          channel: result.textChannel,
+          adapter,
+          channelId: result.textChannelId,
           mentionUserId,
         })
       }
     } catch (error) {
       cliLogger.warn(
-        `Failed to create default kimaki channel in ${guild.name}: ${error instanceof Error ? error.message : String(error)}`,
+        `Failed to create default kimaki channel in ${guild.name || guild.id}: ${error instanceof Error ? error.message : String(error)}`,
       )
     }
   }
@@ -1467,13 +1430,13 @@ async function ensureDefaultChannelsWithWelcome({
  * Starts OpenCode server and registers slash commands without blocking bot startup.
  */
 async function backgroundInit({
+  admin,
   currentDir,
-  token,
   appId,
   guildIds,
 }: {
+  admin: PlatformAdmin
   currentDir: string
-  token: string
   appId: string
   guildIds: string[]
 }): Promise<void> {
@@ -1483,7 +1446,7 @@ async function backgroundInit({
       cliLogger.warn('Background OpenCode init failed:', opencodeResult.message)
       // Still try to register basic commands without user commands/agents
       await registerCommands({
-        token,
+        admin,
         appId,
         guildIds,
         userCommands: [],
@@ -1517,7 +1480,13 @@ async function backgroundInit({
         }),
     ])
 
-    await registerCommands({ token, appId, guildIds, userCommands, agents })
+    await registerCommands({
+      admin,
+      appId,
+      guildIds,
+      userCommands,
+      agents,
+    })
     cliLogger.log('Slash commands registered!')
   } catch (error) {
     cliLogger.error(
@@ -1995,6 +1964,11 @@ async function run({
 
   cliLogger.log(`Connecting to ${getDiscordRestApiUrl()}...`)
   const discordClient = await createDiscordClient()
+  const adminAdapter = await createDiscordAdapter({ client: discordClient })
+  const admin = adminAdapter.admin
+  if (!admin) {
+    throw new Error('Admin adapter is not available')
+  }
 
   const guilds: Guild[] = []
   const kimakiChannels: { guild: Guild; channels: ChannelWithTags[] }[] = []
@@ -2002,7 +1976,7 @@ async function run({
 
   try {
     await new Promise((resolve, reject) => {
-      discordClient.once(Events.ClientReady, async (c) => {
+      discordClient.once(DISCORD_EVENT.CLIENT_READY, async (c) => {
         // Guild discovery comes from the Gateway WebSocket READY payload, not
         // from a separate REST fetch. discord.js consumes READY and hydrates
         // client.guilds.cache from d.guilds. In gateway mode, gateway-proxy
@@ -2017,7 +1991,8 @@ async function run({
         //     ]
         //   }
         // }
-        guilds.push(...Array.from(c.guilds.cache.values()))
+        const discoveredGuilds = await admin.listGuilds()
+        guilds.push(...discoveredGuilds)
 
         if (skipChannelSetup) {
           resolve(null)
@@ -2026,6 +2001,7 @@ async function run({
 
         // Process guild metadata when setup flow needs channel prompts.
         const guildResults = await collectKimakiChannels({
+          admin,
           guilds,
           reconcileRoles: true,
         })
@@ -2038,7 +2014,7 @@ async function run({
         resolve(null)
       })
 
-      discordClient.once(Events.Error, reject)
+      discordClient.once(DISCORD_EVENT.ERROR, reject)
 
       discordClient.login(token).catch(reject)
     })
@@ -2046,7 +2022,7 @@ async function run({
     cliLogger.log('Connected to Discord!')
     // Start IPC polling now that Discord client is ready.
     // Register cleanup on process exit since the shutdown handler lives in discord-bot.ts.
-    await startIpcPolling({ discordClient })
+    await startIpcPolling()
     process.on('exit', stopIpcPolling)
   } catch (error) {
     cliLogger.log('Failed to connect to Discord', discordClient.ws.gateway)
@@ -2101,10 +2077,11 @@ async function run({
     void (async () => {
       try {
         const backgroundChannels = await collectKimakiChannels({
+          admin,
           guilds,
           reconcileRoles: true,
         })
-        await storeChannelDirectories({ kimakiChannels: backgroundChannels })
+        await storeChannelDirectories({ admin, kimakiChannels: backgroundChannels })
         cliLogger.log(
           `Background channel sync completed for ${backgroundChannels.length} guild(s)`,
         )
@@ -2119,9 +2096,9 @@ async function run({
       // Runs after channel sync so existing channels are detected correctly.
       try {
         await ensureDefaultChannelsWithWelcome({
+          admin,
+          adapter: adminAdapter,
           guilds,
-          discordClient,
-          appId,
           isGatewayMode,
           installerDiscordUserId,
         })
@@ -2135,8 +2112,8 @@ async function run({
 
     // Background: OpenCode init + slash command registration (non-blocking)
     void backgroundInit({
+      admin,
       currentDir,
-      token,
       appId,
       guildIds: guilds.map((guild) => {
         return guild.id
@@ -2145,7 +2122,7 @@ async function run({
   } else {
     // ── Channel setup flow ──
     // Store channel-directory mappings discovered during Discord login.
-    await storeChannelDirectories({ kimakiChannels })
+    await storeChannelDirectories({ admin, kimakiChannels })
 
     if (!hasConfiguredTextChannels) {
       note(
@@ -2269,7 +2246,7 @@ async function run({
             message: 'Select a Discord server to create channels in:',
             options: guilds.map((guild) => ({
               value: guild.id,
-              label: `${guild.name} (${guild.memberCount} members)`,
+              label: `${guild.name || guild.id} (${guild.memberCount || 0} members)`,
             })),
             required: true,
             maxItems: 1,
@@ -2291,7 +2268,8 @@ async function run({
 
           try {
             const { textChannelId, channelName } = await createProjectChannels({
-              guild: targetGuild,
+              admin,
+              guildId: targetGuild.id,
               projectDirectory: project.worktree,
               botName: discordClient.user?.username,
               enableVoiceChannels,
@@ -2324,9 +2302,9 @@ async function run({
     // Create default kimaki channel for general-purpose tasks.
     // Runs for every guild the bot is in, idempotent (skips if already exists).
     const defaultChannelResults = await ensureDefaultChannelsWithWelcome({
+      admin,
+      adapter: adminAdapter,
       guilds,
-      discordClient,
-      appId,
       isGatewayMode,
       installerDiscordUserId,
     })
@@ -2346,7 +2324,7 @@ async function run({
 
     cliLogger.log('Registering slash commands asynchronously...')
     void registerCommands({
-      token,
+      admin,
       appId,
       guildIds: guilds.map((guild) => {
         return guild.id
@@ -2587,12 +2565,12 @@ cli
 
 // ── bot command group ────────────────────────────────────────────────────
 
-const ACTIVITY_TYPE_MAP: Record<string, ActivityType> = {
-  playing: ActivityType.Playing,
-  watching: ActivityType.Watching,
-  listening: ActivityType.Listening,
-  competing: ActivityType.Competing,
-  custom: ActivityType.Custom,
+const ACTIVITY_TYPE_MAP: Record<string, number> = {
+  playing: ACTIVITY_TYPE.PLAYING,
+  watching: ACTIVITY_TYPE.WATCHING,
+  listening: ACTIVITY_TYPE.LISTENING,
+  competing: ACTIVITY_TYPE.COMPETING,
+  custom: ACTIVITY_TYPE.CUSTOM,
 }
 
 const STATUS_MAP: Record<string, PresenceStatusData> = {
@@ -2658,16 +2636,16 @@ async function withTempDiscordClient({
   onReady,
 }: {
   token: string
-  onReady: (client: import('discord.js').Client<true>) => Promise<void>
+  onReady: (client: ReadyDiscordClient) => Promise<void>
 }) {
   const client = await createDiscordClient()
   try {
     await Promise.race([
       new Promise<void>((resolve, reject) => {
-        client.once(Events.ClientReady, () => {
+        client.once(DISCORD_EVENT.CLIENT_READY, () => {
           resolve()
         })
-        client.once(Events.Error, reject)
+        client.once(DISCORD_EVENT.ERROR, reject)
         client.login(token).catch(reject)
       }),
       new Promise<void>((_, reject) => {
@@ -2679,7 +2657,7 @@ async function withTempDiscordClient({
     if (!client.isReady() || !client.user) {
       throw new Error('Discord client ready but user is missing')
     }
-    await onReady(client)
+    await onReady(client as ReadyDiscordClient)
   } finally {
     client.destroy()
   }
@@ -2759,7 +2737,7 @@ cli
             // For custom activity type, use state field (shows as the status text).
             // For other types, use name field (shows as "Playing X", "Watching X", etc).
             const activity =
-              activityType === ActivityType.Custom
+              activityType === ACTIVITY_TYPE.CUSTOM
                 ? { name: 'Custom Status', type: activityType, state: text }
                 : { name: text, type: activityType }
 
@@ -2881,20 +2859,14 @@ cli
         process.exit(EXIT_NO_RESTART)
       }
 
-      const botRow = await getBotTokenWithMode()
-
-      if (!botRow) {
-        cliLogger.error(
-          'No bot credentials found. Run `kimaki` first to set up the bot.',
-        )
-        process.exit(EXIT_NO_RESTART)
-      }
+      const { token } = await resolveBotCredentials()
+      const adapter = await createLoggedInDiscordAdapter({ token })
 
       cliLogger.log(`Uploading ${resolvedFiles.length} file(s)...`)
 
       await uploadFilesToDiscord({
+        adapter,
         threadId: threadId,
-        botToken: botRow.token,
         files: resolvedFiles,
       })
 
@@ -3151,12 +3123,17 @@ cli
               const client = await createDiscordClient()
 
               await new Promise<void>((resolve, reject) => {
-                client.once(Events.ClientReady, () => {
+                client.once(DISCORD_EVENT.CLIENT_READY, () => {
                   resolve()
                 })
-                client.once(Events.Error, reject)
+                client.once(DISCORD_EVENT.ERROR, reject)
                 client.login(botToken)
               })
+              const adapter = await createDiscordAdapter({ client })
+              const admin = adapter.admin
+              if (!admin) {
+                throw new Error('Admin operations are not available for this adapter')
+              }
 
               // Get guild from existing channels or first available
               const guild = await (async () => {
@@ -3166,39 +3143,21 @@ cli
                   select: { channel_id: true },
                 }).then((row) => row?.channel_id)
 
-                if (existingChannelId) {
-                  try {
-                    const ch = await client.channels.fetch(existingChannelId)
-                    if (ch && 'guild' in ch && ch.guild) {
-                      return ch.guild
-                    }
-                  } catch (error) {
-                    cliLogger.debug(
-                      'Failed to fetch existing channel while selecting guild:',
-                      error instanceof Error ? error.message : String(error),
-                    )
-                  }
-                }
-                // Fall back to first guild the bot is in
-                let firstGuild = client.guilds.cache.first()
-                if (!firstGuild) {
-                  // Cache might be empty, try fetching guilds from API
-                  const fetched = await client.guilds.fetch()
-                  const firstOAuth2Guild = fetched.first()
-                  if (firstOAuth2Guild) {
-                    firstGuild = await client.guilds.fetch(firstOAuth2Guild.id)
-                  }
-                }
-                if (!firstGuild) {
+                const resolvedGuild = await admin.resolveGuild({
+                  fromChannelId: existingChannelId,
+                  fallbackFirst: true,
+                })
+                if (!resolvedGuild) {
                   throw new Error(
                     'No guild found. Add the bot to a server first.',
                   )
                 }
-                return firstGuild
+                return resolvedGuild
               })()
 
               const { textChannelId } = await createProjectChannels({
-                guild,
+                admin,
+                guildId: guild.id,
                 projectDirectory: absolutePath,
                 botName: client.user?.username,
               })
@@ -3214,7 +3173,11 @@ cli
           }
         }
 
-        const rest = createDiscordRest(botToken)
+        const adapter = await createLoggedInDiscordAdapter({ token: botToken })
+        const admin = adapter.admin
+        if (!admin) {
+          throw new Error('Admin operations are not available for this adapter')
+        }
 
         if (existingThreadMode) {
           const targetThreadId = await (async (): Promise<string> => {
@@ -3233,25 +3196,23 @@ cli
             return resolvedThreadId
           })()
 
-          const threadData = (await rest.get(
-            Routes.channel(targetThreadId),
-          )) as {
-            id: string
-            name: string
-            type: number
-            parent_id?: string
-            guild_id: string
-          }
-
-          if (!isThreadChannelType(threadData.type)) {
+          const threadHandle = await adapter.thread({ threadId: targetThreadId })
+          if (!threadHandle) {
             throw new Error(`Channel is not a thread: ${targetThreadId}`)
           }
-
-          if (!threadData.parent_id) {
+          if (!threadHandle.data.parentId) {
             throw new Error(`Thread has no parent channel: ${targetThreadId}`)
           }
+          const threadGuild = await admin.resolveGuild({
+            fromChannelId: threadHandle.data.parentId,
+          })
+          if (!threadGuild) {
+            throw new Error(
+              `Could not resolve guild for thread parent channel: ${threadHandle.data.parentId}`,
+            )
+          }
 
-          const channelConfig = await getChannelDirectory(threadData.parent_id)
+          const channelConfig = await getChannelDirectory(threadHandle.data.parentId)
           if (!channelConfig) {
             throw new Error(
               'Thread parent channel is not configured with a project directory',
@@ -3276,15 +3237,15 @@ cli
               nextRunAt: parsedSchedule.nextRunAt,
               payloadJson: serializeScheduledTaskPayload(payload),
               promptPreview: getPromptPreview(prompt),
-              channelId: threadData.parent_id,
+              channelId: threadHandle.data.parentId,
               threadId: targetThreadId,
               sessionId: sessionId || undefined,
               projectDirectory: channelConfig.directory,
             })
 
-            const threadUrl = `https://discord.com/channels/${threadData.guild_id}/${threadData.id}`
+            const threadUrl = `https://discord.com/channels/${threadGuild.id}/${threadHandle.data.id}`
             note(
-              `Task ID: ${taskId}\nTarget thread: ${threadData.name}\nSchedule: ${formatTaskScheduleLine(parsedSchedule)}\n\nURL: ${threadUrl}`,
+              `Task ID: ${taskId}\nTarget thread: ${threadHandle.data.name}\nSchedule: ${formatTaskScheduleLine(parsedSchedule)}\n\nURL: ${threadUrl}`,
               '✅ Task Scheduled',
             )
             cliLogger.log(threadUrl)
@@ -3305,16 +3266,18 @@ cli
           const prefixedPrompt = `» **kimaki-cli:** ${prompt}`
 
           await sendDiscordMessageWithOptionalAttachment({
-            channelId: targetThreadId,
+            adapter,
+            target: {
+              channelId: threadHandle.data.parentId,
+              threadId: targetThreadId,
+            },
             prompt: prefixedPrompt,
-            botToken,
             embeds: promptEmbed,
-            rest,
           })
 
-          const threadUrl = `https://discord.com/channels/${threadData.guild_id}/${threadData.id}`
+          const threadUrl = `https://discord.com/channels/${threadGuild.id}/${threadHandle.data.id}`
           note(
-            `Prompt sent to thread: ${threadData.name}\n\nURL: ${threadUrl}`,
+            `Prompt sent to thread: ${threadHandle.data.name}\n\nURL: ${threadUrl}`,
             '✅ Message Sent',
           )
           cliLogger.log(threadUrl)
@@ -3336,20 +3299,25 @@ cli
           throw new Error('Channel ID not resolved')
         }
 
-        // Get channel info to extract directory from topic
-        const channelData = (await rest.get(Routes.channel(channelId))) as {
-          id: string
-          name: string
-          topic?: string
-          guild_id: string
+        const channelHandle = await adapter.channel(channelId)
+        if (!channelHandle) {
+          throw new Error(`Channel not found: ${channelId}`)
+        }
+        if (channelHandle.data.kind !== 'text') {
+          throw new Error(`Channel is not a text channel: ${channelId}`)
         }
 
-        const channelConfig = await getChannelDirectory(channelData.id)
+        const channelGuild = await admin.resolveGuild({ fromChannelId: channelId })
+        if (!channelGuild) {
+          throw new Error(`Could not resolve guild for channel ${channelId}`)
+        }
+
+        const channelConfig = await getChannelDirectory(channelHandle.data.id)
 
         if (!channelConfig) {
           cliLogger.log('Channel not configured')
           throw new Error(
-            `Channel #${channelData.name} is not configured with a project directory. Run the bot first to sync channel data.`,
+            `Channel #${channelHandle.data.name || channelHandle.data.id} is not configured with a project directory. Run the bot first to sync channel data.`,
           )
         }
 
@@ -3359,37 +3327,34 @@ cli
         const resolvedUser = await (async (): Promise<
           { id: string; username: string } | undefined
         > => {
-          if (!options.user) {
+          const requestedUser = options.user
+          if (!requestedUser) {
             return undefined
           }
-          cliLogger.log(`Searching for user "${options.user}" in guild...`)
-          const searchResults = (await rest.get(
-            Routes.guildMembersSearch(channelData.guild_id),
-            {
-              query: new URLSearchParams({ query: options.user, limit: '10' }),
-            },
-          )) as Array<{
-            user: { id: string; username: string; global_name?: string }
-            nick?: string
-          }>
+          cliLogger.log(`Searching for user "${requestedUser}" in guild...`)
+          const searchResults: PlatformGuildMemberSummary[] =
+            await admin.searchGuildMembers({
+              guildId: channelGuild.id,
+              query: requestedUser,
+              limit: 10,
+            })
 
           // Find exact match by display name, nickname, or username
           const exactMatch = searchResults.find((member) => {
             const displayName =
-              member.nick || member.user.global_name || member.user.username
+              member.nick || member.globalName || member.username
             return (
-              displayName.toLowerCase() === options.user!.toLowerCase() ||
-              member.user.username.toLowerCase() === options.user!.toLowerCase()
+              displayName.toLowerCase() === requestedUser.toLowerCase() ||
+              member.username.toLowerCase() === requestedUser.toLowerCase()
             )
           })
           const member = exactMatch || searchResults[0]
           if (!member) {
-            throw new Error(`User "${options.user}" not found in guild`)
+            throw new Error(`User "${requestedUser}" not found in guild`)
           }
-          const username =
-            member.nick || member.user.global_name || member.user.username
-          cliLogger.log(`Found user: ${username} (${member.user.id})`)
-          return { id: member.user.id, username }
+          const username = member.nick || member.globalName || member.username
+          cliLogger.log(`Found user: ${username} (${member.id})`)
+          return { id: member.id, username }
         })()
 
         cliLogger.log('Creating starter message...')
@@ -3437,9 +3402,9 @@ cli
             projectDirectory,
           })
 
-          const channelUrl = `https://discord.com/channels/${channelData.guild_id}/${channelId}`
+          const channelUrl = `https://discord.com/channels/${channelGuild.id}/${channelId}`
           note(
-            `Task ID: ${taskId}\nTarget channel: #${channelData.name}\nSchedule: ${formatTaskScheduleLine(parsedSchedule)}\n\nURL: ${channelUrl}`,
+            `Task ID: ${taskId}\nTarget channel: #${channelHandle.data.name || channelHandle.data.id}\nSchedule: ${formatTaskScheduleLine(parsedSchedule)}\n\nURL: ${channelUrl}`,
             '✅ Task Scheduled',
           )
           cliLogger.log(channelUrl)
@@ -3465,41 +3430,48 @@ cli
           : undefined
 
         const starterMessage = await sendDiscordMessageWithOptionalAttachment({
-          channelId,
+          adapter,
+          target: { channelId },
           prompt,
-          botToken,
           embeds: autoStartEmbed,
-          rest,
         })
 
         cliLogger.log('Creating thread...')
 
-        const threadData = (await rest.post(
-          Routes.threads(channelId, starterMessage.id),
-          {
-            body: {
-              name: threadName.slice(0, 100),
-              auto_archive_duration: 1440, // 1 day
-            },
-          },
-        )) as { id: string; name: string }
+        const starterMessageHandle = await adapter
+          .conversation({ channelId })
+          .message(starterMessage.id)
+        const threadData = await starterMessageHandle.startThread({
+          name: threadName.slice(0, 100),
+          autoArchiveDuration: 1440,
+          reason: 'kimaki send command',
+        })
 
         cliLogger.log('Thread created!')
 
         // Add user to thread if specified
         if (resolvedUser) {
           cliLogger.log(`Adding user ${resolvedUser.username} to thread...`)
-          await rest.put(Routes.threadMembers(threadData.id, resolvedUser.id))
+          const createdThreadHandle = await adapter.thread({
+            threadId: threadData.thread.id,
+            parentId: channelId,
+          })
+          if (!createdThreadHandle) {
+            throw new Error(
+              `Thread not found after creation: ${threadData.thread.id}`,
+            )
+          }
+          await createdThreadHandle.addMember(resolvedUser.id)
         }
 
-        const threadUrl = `https://discord.com/channels/${channelData.guild_id}/${threadData.id}`
+        const threadUrl = `https://discord.com/channels/${channelGuild.id}/${threadData.thread.id}`
 
         const worktreeNote = worktreeName
           ? `\nWorktree: ${worktreeName} (will be created by bot)`
           : ''
         const successMessage = notifyOnly
-          ? `Thread: ${threadData.name}\nDirectory: ${projectDirectory}\n\nNotification created. Reply to start a session.\n\nURL: ${threadUrl}`
-          : `Thread: ${threadData.name}\nDirectory: ${projectDirectory}${worktreeNote}\n\nThe running bot will pick this up and start the session.\n\nURL: ${threadUrl}`
+          ? `Thread: ${threadData.thread.name}\nDirectory: ${projectDirectory}\n\nNotification created. Reply to start a session.\n\nURL: ${threadUrl}`
+          : `Thread: ${threadData.thread.name}\nDirectory: ${projectDirectory}${worktreeNote}\n\nThe running bot will pick this up and start the session.\n\nURL: ${threadUrl}`
 
         note(successMessage, '✅ Thread Created')
 
@@ -3508,7 +3480,7 @@ cli
         if (options.wait) {
           const { waitAndOutputSession } = await import('./wait-session.js')
           await waitAndOutputSession({
-            threadId: threadData.id,
+            threadId: threadData.thread.id,
             projectDirectory,
           })
         }
@@ -3649,12 +3621,19 @@ cli
       const client = await createDiscordClient()
 
       await new Promise<void>((resolve, reject) => {
-        client.once(Events.ClientReady, () => {
+        client.once(DISCORD_EVENT.CLIENT_READY, () => {
           resolve()
         })
-        client.once(Events.Error, reject)
+        client.once(DISCORD_EVENT.ERROR, reject)
         client.login(botToken)
       })
+      const adapter = await createDiscordAdapter({ client })
+      const admin = adapter.admin
+      if (!admin) {
+        cliLogger.error('Admin operations are not available for this adapter')
+        client.destroy()
+        process.exit(EXIT_NO_RESTART)
+      }
 
       cliLogger.log('Finding guild...')
 
@@ -3662,7 +3641,7 @@ cli
       let guild: Guild
       if (options.guild) {
         const guildId = String(options.guild)
-        const foundGuild = client.guilds.cache.get(guildId)
+        const foundGuild = await admin.resolveGuild({ guildId })
         if (!foundGuild) {
           cliLogger.log('Guild not found')
           cliLogger.error(`Guild not found: ${guildId}`)
@@ -3677,54 +3656,17 @@ cli
           select: { channel_id: true },
         }).then((row) => row?.channel_id)
 
-        if (existingChannelId) {
-          try {
-            const ch = await client.channels.fetch(existingChannelId)
-            if (ch && 'guild' in ch && ch.guild) {
-              guild = ch.guild
-            } else {
-              throw new Error('Channel has no guild')
-            }
-          } catch (error) {
-            cliLogger.debug(
-              'Failed to fetch existing channel while selecting guild:',
-              error instanceof Error ? error.message : String(error),
-            )
-            let firstGuild = client.guilds.cache.first()
-            if (!firstGuild) {
-              // Cache might be empty, try fetching guilds from API
-              const fetched = await client.guilds.fetch()
-              const firstOAuth2Guild = fetched.first()
-              if (firstOAuth2Guild) {
-                firstGuild = await client.guilds.fetch(firstOAuth2Guild.id)
-              }
-            }
-            if (!firstGuild) {
-              cliLogger.log('No guild found')
-              cliLogger.error('No guild found. Add the bot to a server first.')
-              client.destroy()
-              process.exit(EXIT_NO_RESTART)
-            }
-            guild = firstGuild
-          }
-        } else {
-          let firstGuild = client.guilds.cache.first()
-          if (!firstGuild) {
-            // Cache might be empty, try fetching guilds from API
-            const fetched = await client.guilds.fetch()
-            const firstOAuth2Guild = fetched.first()
-            if (firstOAuth2Guild) {
-              firstGuild = await client.guilds.fetch(firstOAuth2Guild.id)
-            }
-          }
-          if (!firstGuild) {
-            cliLogger.log('No guild found')
-            cliLogger.error('No guild found. Add the bot to a server first.')
-            client.destroy()
-            process.exit(EXIT_NO_RESTART)
-          }
-          guild = firstGuild
+        const resolvedGuild = await admin.resolveGuild({
+          fromChannelId: existingChannelId,
+          fallbackFirst: true,
+        })
+        if (!resolvedGuild) {
+          cliLogger.log('No guild found')
+          cliLogger.error('No guild found. Add the bot to a server first.')
+          client.destroy()
+          process.exit(EXIT_NO_RESTART)
         }
+        guild = resolvedGuild
       }
 
       // Check if channel already exists in this guild
@@ -3737,11 +3679,14 @@ cli
 
         for (const existingChannel of existingChannels) {
           try {
-            const ch = await client.channels.fetch(existingChannel.channel_id)
-            if (ch && 'guild' in ch && ch.guild?.id === guild.id) {
+            const ch = await admin.fetchChannel({
+              guildId: guild.id,
+              channelId: existingChannel.channel_id,
+            })
+            if (ch) {
               client.destroy()
               cliLogger.error(
-                `Channel already exists for this directory in ${guild.name}. Channel ID: ${existingChannel.channel_id}`,
+                `Channel already exists for this directory in ${guild.name || guild.id}. Channel ID: ${existingChannel.channel_id}`,
               )
               process.exit(EXIT_NO_RESTART)
             }
@@ -3759,11 +3704,12 @@ cli
         )
       }
 
-      cliLogger.log(`Creating channels in ${guild.name}...`)
+      cliLogger.log(`Creating channels in ${guild.name || guild.id}...`)
 
       const { textChannelId, voiceChannelId, channelName } =
         await createProjectChannels({
-          guild,
+          admin,
+          guildId: guild.id,
           projectDirectory: absolutePath,
           botName: client.user?.username,
         })
@@ -3804,19 +3750,19 @@ cli
       process.exit(0)
     }
 
-    // Fetch Discord channel names via REST API
+    // Fetch Discord channel names through adapter boundary
     const botRow = await getBotTokenWithMode()
-    const rest = botRow ? createDiscordRest(botRow.token) : null
+    const adapter = botRow
+      ? await createLoggedInDiscordAdapter({ token: botRow.token })
+      : null
 
     const enriched = await Promise.all(
       channels.map(async (ch) => {
         let channelName = ''
-        if (rest) {
+        if (adapter) {
           try {
-            const data = (await rest.get(Routes.channel(ch.channel_id))) as {
-              name?: string
-            }
-            channelName = data.name || ''
+            const channel = await adapter.channel(ch.channel_id)
+            channelName = channel?.data.name || ''
           } catch {
             // Channel may have been deleted from Discord
           }
@@ -3895,16 +3841,28 @@ cli
       process.exit(EXIT_NO_RESTART)
     }
 
-    // Fetch channel from Discord to get guild_id
-    const rest = createDiscordRest(botToken)
-    const channelData = (await rest.get(
-      Routes.channel(existingChannel.channel_id),
-    )) as {
-      id: string
-      guild_id: string
+    const adapter = await createLoggedInDiscordAdapter({ token: botToken })
+    const admin = adapter.admin
+    if (!admin) {
+      cliLogger.error('Admin operations are not available for this adapter')
+      process.exit(EXIT_NO_RESTART)
+    }
+    const channelData = await admin.fetchChannelById({
+      channelId: existingChannel.channel_id,
+    })
+    if (!channelData) {
+      cliLogger.error(`Channel not found: ${existingChannel.channel_id}`)
+      process.exit(EXIT_NO_RESTART)
+    }
+    const guild = await admin.resolveGuild({ fromChannelId: existingChannel.channel_id })
+    if (!guild) {
+      cliLogger.error(
+        `Could not resolve guild for channel: ${existingChannel.channel_id}`,
+      )
+      process.exit(EXIT_NO_RESTART)
     }
 
-    const channelUrl = `https://discord.com/channels/${channelData.guild_id}/${channelData.id}`
+    const channelUrl = `https://discord.com/channels/${guild.id}/${channelData.id}`
     cliLogger.log(channelUrl)
 
     // Open in browser if running in a TTY
@@ -3977,16 +3935,23 @@ cli
     const client = await createDiscordClient()
 
     await new Promise<void>((resolve, reject) => {
-      client.once(Events.ClientReady, () => {
+      client.once(DISCORD_EVENT.CLIENT_READY, () => {
         resolve()
       })
-      client.once(Events.Error, reject)
+      client.once(DISCORD_EVENT.ERROR, reject)
       client.login(botToken).catch(reject)
     })
+    const adapter = await createDiscordAdapter({ client })
+    const admin = adapter.admin
+    if (!admin) {
+      cliLogger.error('Admin operations are not available for this adapter')
+      client.destroy()
+      process.exit(EXIT_NO_RESTART)
+    }
 
     let guild: Guild
     if (options.guild) {
-      const found = client.guilds.cache.get(options.guild)
+      const found = await admin.resolveGuild({ guildId: options.guild })
       if (!found) {
         cliLogger.error(`Guild not found: ${options.guild}`)
         client.destroy()
@@ -3994,7 +3959,7 @@ cli
       }
       guild = found
     } else {
-      const first = client.guilds.cache.first()
+      const first = await admin.resolveGuild({ fallbackFirst: true })
       if (!first) {
         cliLogger.error('No guild found. Add the bot to a server first.')
         client.destroy()
@@ -4004,7 +3969,8 @@ cli
     }
 
     const { textChannelId, channelName } = await createProjectChannels({
-      guild,
+      admin,
+      guildId: guild.id,
       projectDirectory,
       botName: client.user?.username,
     })
@@ -4039,22 +4005,21 @@ cli
 
       await initDatabase()
       const { token: botToken } = await resolveBotCredentials()
-      const rest = createDiscordRest(botToken)
-
-      type GuildMember = {
-        user: { id: string; username: string; global_name?: string }
-        nick?: string
+      const adapter = await createLoggedInDiscordAdapter({ token: botToken })
+      const admin = adapter.admin
+      if (!admin) {
+        throw new Error('Admin operations are not available for this adapter')
       }
 
-      const members: GuildMember[] = await (async () => {
+      const members: PlatformGuildMemberSummary[] = await (async () => {
         if (options.query) {
-          return (await rest.get(Routes.guildMembersSearch(guildId), {
-            query: new URLSearchParams({ query: options.query, limit: '20' }),
-          })) as GuildMember[]
+          return admin.searchGuildMembers({
+            guildId,
+            query: options.query,
+            limit: 20,
+          })
         }
-        return (await rest.get(Routes.guildMembers(guildId), {
-          query: new URLSearchParams({ limit: '20' }),
-        })) as GuildMember[]
+        return admin.listGuildMembers({ guildId, limit: 20 })
       })()
 
       if (members.length === 0) {
@@ -4067,8 +4032,8 @@ cli
 
       const userList = members
         .map((m) => {
-          const displayName = m.nick || m.user.global_name || m.user.username
-          return `- ${displayName} (ID: ${m.user.id}) - mention: <@${m.user.id}>`
+          const displayName = m.nick || m.globalName || m.username
+          return `- ${displayName} (ID: ${m.id}) - mention: <@${m.id}>`
         })
         .join('\n')
 
@@ -4656,26 +4621,20 @@ cli
 
       const { token: botToken } = await resolveBotCredentials()
 
-      const rest = createDiscordRest(botToken)
-      const threadData = (await rest.get(Routes.channel(resolvedThreadId))) as {
-        id: string
-        type: number
-        name?: string
-        parent_id?: string
-      }
-
-      if (!isThreadChannelType(threadData.type)) {
+      const adapter = await createLoggedInDiscordAdapter({ token: botToken })
+      const threadHandle = await adapter.thread({ threadId: resolvedThreadId })
+      if (!threadHandle) {
         cliLogger.error(`Channel is not a thread: ${resolvedThreadId}`)
         process.exit(EXIT_NO_RESTART)
       }
 
       const sessionId = options.session || await getThreadSession(resolvedThreadId)
       let client: OpencodeClient | null = null
-      if (sessionId && threadData.parent_id) {
-        const channelConfig = await getChannelDirectory(threadData.parent_id)
+      if (sessionId && threadHandle.data.parentId) {
+        const channelConfig = await getChannelDirectory(threadHandle.data.parentId)
         if (!channelConfig) {
           cliLogger.warn(
-            `No channel directory mapping found for parent channel ${threadData.parent_id}`,
+            `No channel directory mapping found for parent channel ${threadHandle.data.parentId}`,
           )
         } else {
           const getClient = await initializeOpencodeForDirectory(
@@ -4696,14 +4655,14 @@ cli
       }
 
       await archiveThread({
-        rest,
+        adapter,
         threadId: resolvedThreadId,
-        parentChannelId: threadData.parent_id,
+        parentChannelId: threadHandle.data.parentId || undefined,
         sessionId,
         client,
       })
 
-      const threadLabel = threadData.name || resolvedThreadId
+      const threadLabel = threadHandle.data.name || resolvedThreadId
       note(
         `Archived thread: ${threadLabel}\nThread ID: ${resolvedThreadId}`,
         '✅ Archived',

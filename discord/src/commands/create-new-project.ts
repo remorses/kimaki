@@ -1,16 +1,20 @@
 // /create-new-project command - Create a new project folder, initialize git, and start a session.
 // Also exports createNewProject() for reuse during onboarding (welcome channel creation).
 
-import { ChannelType, type Guild, type TextChannel } from 'discord.js'
 import fs from 'node:fs'
 import path from 'node:path'
 import { execAsync } from '../worktrees.js'
 import type { CommandContext } from './types.js'
 import { getProjectsDir } from '../config.js'
 import { createProjectChannels } from '../channel-management.js'
-import { getOrCreateRuntime } from '../session-handler/thread-session-runtime.js'
+import {
+  getDefaultRuntimeAdapter,
+  getOrCreateRuntime,
+} from '../session-handler/thread-session-runtime.js'
 import { SILENT_MESSAGE_FLAGS } from '../discord-utils.js'
 import { createLogger, LogPrefix } from '../logger.js'
+import type { PlatformAdmin } from '../platform/types.js'
+import { isTextChannel } from './channel-ref.js'
 
 const logger = createLogger(LogPrefix.CREATE_PROJECT)
 
@@ -20,11 +24,13 @@ const logger = createLogger(LogPrefix.CREATE_PROJECT)
  * Returns null if the project directory already exists.
  */
 export async function createNewProject({
-  guild,
+  admin,
+  guildId,
   projectName,
   botName,
 }: {
-  guild: Guild
+  admin: PlatformAdmin
+  guildId: string
   projectName: string
   botName?: string
 }): Promise<{
@@ -72,7 +78,8 @@ export async function createNewProject({
 
   const { textChannelId, voiceChannelId, channelName } =
     await createProjectChannels({
-      guild,
+      admin,
+      guildId,
       projectDirectory,
       botName,
     })
@@ -93,24 +100,31 @@ export async function handleCreateNewProjectCommand({
   await command.deferReply({ ephemeral: false })
 
   const projectName = command.options.getString('name', true)
-  const guild = command.guild
+  const guildId = command.guildId
   const channel = command.channel
+  const adapter = getDefaultRuntimeAdapter()
+  const admin = adapter?.admin
 
-  if (!guild) {
+  if (!guildId) {
     await command.editReply('This command can only be used in a guild')
     return
   }
+  if (!admin) {
+    await command.editReply('Project creation is not available here')
+    return
+  }
 
-  if (!channel || channel.type !== ChannelType.GuildText) {
+  if (!isTextChannel(channel)) {
     await command.editReply('This command can only be used in a text channel')
     return
   }
 
   try {
     const result = await createNewProject({
-      guild,
+      admin,
+      guildId,
       projectName,
-      botName: command.client.user?.username,
+      botName: command.botUserName,
     })
 
     if (!result) {
@@ -140,35 +154,49 @@ export async function handleCreateNewProjectCommand({
       projectDirectory,
       sanitizedName,
     } = result
-    const textChannel = (await guild.channels.fetch(
-      textChannelId,
-    )) as TextChannel
-
     const voiceInfo = voiceChannelId ? `\n🔊 Voice: <#${voiceChannelId}>` : ''
     await command.editReply(
       `✅ Created new project **${sanitizedName}**\n📁 Directory: \`${projectDirectory}\`\n📝 Text: <#${textChannelId}>${voiceInfo}\n_Starting session..._`,
     )
 
-    const starterMessage = await textChannel.send({
-      content: `🚀 **New project initialized**\n📁 \`${projectDirectory}\``,
+    const adapter = getDefaultRuntimeAdapter()
+    if (!adapter) {
+      throw new Error('No runtime adapter configured')
+    }
+    const channelTarget = {
+      channelId: textChannelId,
+    }
+    const starterMessage = await adapter.conversation(channelTarget).send({
+      markdown: `🚀 **New project initialized**\n📁 \`${projectDirectory}\``,
       flags: SILENT_MESSAGE_FLAGS,
     })
 
-    const thread = await starterMessage.startThread({
-      name: `Init: ${sanitizedName}`,
-      autoArchiveDuration: 1440,
-      reason: 'New project session',
-    })
+    const { thread, target: threadTarget } = await adapter
+      .conversation(channelTarget)
+      .message(starterMessage.id)
+      .then((messageHandle) => {
+        return messageHandle.startThread({
+          name: `Init: ${sanitizedName}`,
+          autoArchiveDuration: 1440,
+          reason: 'New project session',
+        })
+      })
 
-    // Add user to thread so it appears in their sidebar
-    await thread.members.add(command.user.id)
+    const threadHandle = await adapter.thread({
+      threadId: threadTarget.threadId,
+      parentId: thread.parentId,
+    })
+    if (!threadHandle) {
+      throw new Error(`Thread not found: ${threadTarget.threadId}`)
+    }
+    await threadHandle.addMember(command.user.id)
 
     const runtime = getOrCreateRuntime({
       threadId: thread.id,
       thread,
       projectDirectory,
       sdkDirectory: projectDirectory,
-      channelId: textChannel.id,
+      channelId: textChannelId,
       appId,
     })
     await runtime.enqueueIncoming({

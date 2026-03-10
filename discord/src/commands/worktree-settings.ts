@@ -2,18 +2,16 @@
 // Allows per-channel opt-in for automatic worktree creation,
 // as an alternative to the global --use-worktrees CLI flag.
 
+
+import type { CommandEvent } from '../platform/types.js'
+import { PLATFORM_MESSAGE_FLAGS } from '../platform/message-flags.js'
 import {
-  ChatInputCommandInteraction,
-  MessageFlags,
-  ChannelType,
-  type TextChannel,
-} from 'discord.js'
-import {
+  getChannelDirectory,
   getChannelWorktreesEnabled,
   setChannelWorktreesEnabled,
 } from '../database.js'
-import { getKimakiMetadata } from '../discord-utils.js'
 import { createLogger, LogPrefix } from '../logger.js'
+import { isTextChannel } from './channel-ref.js'
 
 const worktreeSettingsLogger = createLogger(LogPrefix.WORKTREE)
 
@@ -24,29 +22,27 @@ const worktreeSettingsLogger = createLogger(LogPrefix.WORKTREE)
 export async function handleToggleWorktreesCommand({
   command,
 }: {
-  command: ChatInputCommandInteraction
+  command: CommandEvent
   appId: string
 }): Promise<void> {
   worktreeSettingsLogger.log('[TOGGLE_WORKTREES] Command called')
 
   const channel = command.channel
 
-  if (!channel || channel.type !== ChannelType.GuildText) {
+  if (!isTextChannel(channel)) {
     await command.reply({
       content: 'This command can only be used in text channels (not threads).',
-      flags: MessageFlags.Ephemeral,
+      flags: PLATFORM_MESSAGE_FLAGS.EPHEMERAL,
     })
     return
   }
+  const textChannel = channel
 
-  const textChannel = channel as TextChannel
-  const metadata = await getKimakiMetadata(textChannel)
-
-  if (!metadata.projectDirectory) {
+  if (!(await getChannelDirectory(textChannel.id))?.directory) {
     await command.reply({
       content:
         'This channel is not configured with a project directory.\nUse `/add-project` to set up this channel.',
-      flags: MessageFlags.Ephemeral,
+      flags: PLATFORM_MESSAGE_FLAGS.EPHEMERAL,
     })
     return
   }
@@ -63,8 +59,8 @@ export async function handleToggleWorktreesCommand({
 
   await command.reply({
     content: nextEnabled
-      ? `Worktrees **enabled** for this channel.\n\nNew sessions started from messages in **#${textChannel.name}** will now automatically create git worktrees.\n\nNew setting for **#${textChannel.name}**: **enabled**.`
-      : `Worktrees **disabled** for this channel.\n\nNew sessions started from messages in **#${textChannel.name}** will use the main project directory.\n\nNew setting for **#${textChannel.name}**: **disabled**.`,
-    flags: MessageFlags.Ephemeral,
+      ? `Worktrees **enabled** for this channel.\n\nNew sessions started from messages in **#${textChannel.name || textChannel.id}** will now automatically create git worktrees.\n\nNew setting for **#${textChannel.name || textChannel.id}**: **enabled**.`
+      : `Worktrees **disabled** for this channel.\n\nNew sessions started from messages in **#${textChannel.name || textChannel.id}** will use the main project directory.\n\nNew setting for **#${textChannel.name || textChannel.id}**: **disabled**.`,
+    flags: PLATFORM_MESSAGE_FLAGS.EPHEMERAL,
   })
 }

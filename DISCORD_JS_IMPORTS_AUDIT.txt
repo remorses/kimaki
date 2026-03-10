@@ -1,0 +1,320 @@
+================================================================================
+                    COMPLETE DISCORD.JS IMPORT AUDIT
+                    kimakivoice/discord/src/
+================================================================================
+
+OVERVIEW:
+  Total files with discord.js imports: 66
+  Allowed files: 9
+  Files needing fixes: 57
+
+================================================================================
+                            ALLOWED FILES (9)
+================================================================================
+
+These files are allowed to import from discord.js because they are the primary
+Discord integration points.
+
+1. /Users/morse/Documents/GitHub/kimakivoice/discord/src/platform/discord-adapter.ts
+   Rationale: Primary Discord adapter - owns client lifecycle & operations
+
+2. /Users/morse/Documents/GitHub/kimakivoice/discord/src/voice-handler.ts
+   Rationale: Voice channel management and audio streaming
+
+3-9. Forum Sync package (6 files):
+   /Users/morse/Documents/GitHub/kimakivoice/discord/src/forum-sync/sync-to-discord.ts
+   /Users/morse/Documents/GitHub/kimakivoice/discord/src/forum-sync/sync-to-files.ts
+   /Users/morse/Documents/GitHub/kimakivoice/discord/src/forum-sync/types.ts
+   /Users/morse/Documents/GitHub/kimakivoice/discord/src/forum-sync/markdown.ts
+   /Users/morse/Documents/GitHub/kimakivoice/discord/src/forum-sync/discord-operations.ts
+   /Users/morse/Documents/GitHub/kimakivoice/discord/src/forum-sync/index.ts
+   Rationale: Separate feature requiring direct Discord forum integration
+
+================================================================================
+                         FILES NEEDING FIXES (57)
+================================================================================
+
+CATEGORY A: COMMAND FILES (31 files)
+================================================================================
+
+discord/src/commands/abort.ts
+  Imports: MessageFlags
+
+discord/src/commands/action-buttons.ts
+  Imports: MessageFlags, ThreadChannel (type)
+
+discord/src/commands/agent.ts
+  Imports: MessageFlags
+
+discord/src/commands/ask-question.ts
+  Imports: SlashCommandBuilder, REST, Routes, EmbedBuilder, ChatInputCommandInteraction
+
+discord/src/commands/compact.ts
+  Imports: MessageFlags
+
+discord/src/commands/context-usage.ts
+  Imports: MessageFlags
+
+discord/src/commands/create-new-project.ts
+  Imports: TextChannel (type), ThreadChannel (type)
+
+discord/src/commands/diff.ts
+  Imports: REST, Routes, EmbedBuilder, ChatInputCommandInteraction, SlashCommandBuilder
+
+discord/src/commands/file-upload.ts
+  Imports: REST, Routes, EmbedBuilder, ButtonBuilder, ActionRowBuilder, 
+           ButtonInteraction, ChatInputCommandInteraction, AttachmentBuilder
+
+discord/src/commands/fork.ts
+  Imports: REST, Routes, EmbedBuilder, SlashCommandBuilder, ChatInputCommandInteraction
+
+discord/src/commands/gemini-apikey.ts
+  Imports: REST, Routes, ModalBuilder, TextInputBuilder, TextInputStyle,
+           ModalSubmitInteraction
+
+discord/src/commands/login.ts
+  Imports: REST, Routes, ModalBuilder, TextInputBuilder, TextInputStyle,
+           ModalSubmitInteraction, EmbedBuilder, ButtonBuilder, ActionRowBuilder
+
+discord/src/commands/mcp.ts
+  Imports: REST, Routes, SlashCommandBuilder, ChatInputCommandInteraction,
+           EmbedBuilder, ModalBuilder, TextInputBuilder, TextInputStyle,
+           AutocompleteInteraction, ModalSubmitInteraction
+
+discord/src/commands/mention-mode.ts
+  Imports: MessageFlags
+
+discord/src/commands/merge-worktree.ts
+  Imports: TextChannel (type), ThreadChannel (type)
+
+discord/src/commands/model-variant.ts
+  Imports: REST, Routes, SlashCommandBuilder, ChatInputCommandInteraction,
+           EmbedBuilder, ButtonBuilder, ActionRowBuilder, StringSelectMenuBuilder
+
+discord/src/commands/model.ts
+  Imports: REST, Routes, SlashCommandBuilder, ChatInputCommandInteraction,
+           EmbedBuilder, ButtonBuilder, ActionRowBuilder
+
+discord/src/commands/new-worktree.ts
+  Imports: REST, Routes, SlashCommandBuilder, ChatInputCommandInteraction,
+           EmbedBuilder
+
+discord/src/commands/permissions.ts
+  Imports: MessageFlags, ThreadChannel (type)
+
+discord/src/commands/queue.ts
+  Imports: MessageFlags
+
+discord/src/commands/restart-opencode-server.ts
+  Imports: REST, Routes, SlashCommandBuilder, ChatInputCommandInteraction
+
+discord/src/commands/resume.ts
+  Imports: REST, Routes, SlashCommandBuilder, ChatInputCommandInteraction,
+           EmbedBuilder
+
+discord/src/commands/run-command.ts
+  Imports: MessageFlags
+
+discord/src/commands/session-id.ts
+  Imports: MessageFlags
+
+discord/src/commands/share.ts
+  Imports: MessageFlags
+
+discord/src/commands/undo-redo.ts
+  Imports: REST, Routes, SlashCommandBuilder, ChatInputCommandInteraction
+
+discord/src/commands/unset-model.ts
+  Imports: REST, Routes, SlashCommandBuilder, ChatInputCommandInteraction,
+           EmbedBuilder
+
+discord/src/commands/user-command.ts
+  Imports: REST, Routes, SlashCommandBuilder, ChatInputCommandInteraction,
+           EmbedBuilder, ButtonBuilder, ActionRowBuilder
+
+discord/src/commands/verbosity.ts
+  Imports: REST, Routes, SlashCommandBuilder, ChatInputCommandInteraction,
+           EmbedBuilder
+
+discord/src/commands/worktree-settings.ts
+  Imports: MessageFlags
+
+discord/src/commands/worktrees.ts
+  Imports: REST, Routes, SlashCommandBuilder, ChatInputCommandInteraction,
+           EmbedBuilder, SelectMenuInteraction
+
+================================================================================
+CATEGORY B: TEST FILES (9 files)
+================================================================================
+
+discord/src/agent-model.e2e.test.ts
+  Imports: ChannelType, Client, GatewayIntentBits, Partials, REST, Routes, 
+           SlashCommandBuilder
+
+discord/src/event-stream-real-capture.e2e.test.ts
+  Imports: ChannelType, Client, GatewayIntentBits, Partials, APIMessage (type)
+
+discord/src/gateway-proxy-reconnect.e2e.test.ts
+  Imports: Client, GatewayIntentBits, ChannelType, Partials, EmbedBuilder
+
+discord/src/gateway-proxy.e2e.test.ts
+  Imports: Client, GatewayIntentBits, ChannelType, Partials
+
+discord/src/kimaki-digital-twin.e2e.test.ts
+  Imports: ChannelType, Client, GatewayIntentBits, Partials
+
+discord/src/queue-advanced-e2e-setup.ts
+  Imports: ChannelType, Client, GatewayIntentBits, Partials
+
+discord/src/runtime-lifecycle.e2e.test.ts
+  Imports: ChannelType, Client, GatewayIntentBits, Partials
+
+discord/src/thread-message-queue.e2e.test.ts
+  Imports: ChannelType, Client, GatewayIntentBits, Partials
+
+discord/src/voice-message.e2e.test.ts
+  Imports: ChannelType, Client, GatewayIntentBits, Partials
+
+================================================================================
+CATEGORY C: CORE/UTILITY FILES (18 files)
+================================================================================
+
+discord/src/channel-management.ts
+  Imports: REST, Routes, SlashCommandBuilder, ChannelType, PermissionFlagsBits,
+           OverwriteType
+
+discord/src/cli.ts
+  Imports: Client (as dynamic type import('discord.js').Client)
+
+discord/src/discord-bot.ts
+  Imports: Client, Events, GatewayIntentBits, Partials, Collection,
+           VoiceConnection, IntentsBitField, PermissionsBitField
+
+discord/src/discord-urls.ts
+  Imports: REST
+
+discord/src/discord-utils.ts
+  Imports: REST, Routes, GuildMember (type), PermissionsBitField
+
+discord/src/discord-utils.test.ts
+  Imports: PermissionsBitField
+
+discord/src/format-tables.ts
+  Imports: SlashCommandBuilder, REST, Routes, APIEmbedField
+
+discord/src/html-actions.ts
+  Imports: REST, Routes, SlashCommandBuilder, InteractionReplyOptions
+
+discord/src/interaction-handler.ts
+  Imports: MessageFlags
+
+discord/src/ipc-polling.ts
+  Imports: Client (type only)
+
+discord/src/message-formatting.ts
+  Imports: Message (type), TextChannel (type)
+
+discord/src/onboarding-welcome.ts
+  Imports: ThreadAutoArchiveDuration, TextChannel (type)
+
+discord/src/platform/platform-value.ts
+  Imports: Message (type), ThreadChannel (type)
+  Note: This file has comment "Helpers that normalize discord.js values"
+
+discord/src/task-runner.ts
+  Imports: REST (type), Routes
+
+discord/src/test-utils.ts
+  Imports: APIMessage (type)
+
+discord/src/utils.ts
+  Imports: PermissionsBitField
+
+================================================================================
+                         IMPORT SUMMARY BY TYPE
+================================================================================
+
+MOST COMMON IMPORTS (need highest priority abstraction):
+  1. MessageFlags                    → 30+ files (commands & core)
+  2. REST                            → 15+ files (API calls)
+  3. Routes                          → 15+ files (API routes)
+  4. ChannelType                     → 9 files (mostly tests)
+  5. Client                          → 12+ files (bot lifecycle & tests)
+  6. SlashCommandBuilder             → 12+ files (command definitions)
+  7. GatewayIntentBits               → 9 files (tests)
+  8. Partials                        → 9 files (tests)
+  9. TextChannel (type)              → 6 files
+  10. ThreadChannel (type)           → 6 files
+  11. EmbedBuilder                   → 8 files (command responses)
+  12. ButtonBuilder                  → 6 files (action buttons)
+  13. ActionRowBuilder               → 6 files (action components)
+  14. PermissionsBitField            → 4 files (permission checks)
+
+TYPE IMPORTS (safe to abstract as interfaces/types):
+  - Message                          → 3 files (type only)
+  - TextChannel                      → 6 files (type only)
+  - ThreadChannel                    → 6 files (type only)
+  - GuildMember                      → 1 file (type only)
+  - APIMessage                       → 2 files (type only)
+  - ForumChannel                     → forum-sync (type only)
+  - VoiceChannel                     → voice-handler (type only)
+  - VoiceState                       → voice-handler (type only)
+
+VALUE IMPORTS (need constants/utility abstraction):
+  - ThreadAutoArchiveDuration        → 1 file
+  - PermissionFlagsBits              → 1 file
+  - OverwriteType                    → 1 file
+
+CLASS IMPORTS (need wrapper abstraction):
+  - SlashCommandBuilder              → 12+ files
+  - EmbedBuilder                     → 8 files
+  - ButtonBuilder                    → 6 files
+  - ActionRowBuilder                 → 6 files
+  - ModalBuilder                     → 3 files
+  - TextInputBuilder                 → 3 files
+  - StringSelectMenuBuilder           → 2 files
+  - AttachmentBuilder                → 1 file
+  - FileUploadBuilder                → discord-adapter only
+
+================================================================================
+                        RECOMMENDED FIXES PRIORITY
+================================================================================
+
+HIGH PRIORITY (affects 30+ files):
+  [ ] Create discord-constants.ts exporting MessageFlags
+  [ ] Create discord-rest.ts wrapping REST client
+  [ ] Create discord-routes.ts exposing Routes
+
+MEDIUM PRIORITY (affects 10-15 files):
+  [ ] Create discord-builders.ts for SlashCommandBuilder, EmbedBuilder
+  [ ] Create discord-types.ts for TextChannel, ThreadChannel types
+  [ ] Abstract Client instantiation (cli.ts, discord-bot.ts)
+
+LOW PRIORITY (affects <5 files):
+  [ ] Create discord-enums.ts for ChannelType, GatewayIntentBits, Partials
+  [ ] Create discord-components.ts for ButtonBuilder, ActionRowBuilder, etc.
+  [ ] Extract ThreadAutoArchiveDuration constant
+
+================================================================================
+                              KEY INSIGHTS
+================================================================================
+
+1. discord-adapter.ts is the ONLY file that should import heavily from
+   discord.js. All other files should go through abstractions.
+
+2. Commands should NOT import REST/Routes directly - they should call helper
+   functions from a centralized API layer.
+
+3. Test files can be temporarily exempted since they're not shipped code, but
+   still worth abstracting for consistency.
+
+4. Type imports are safe but should still be abstracted behind common interfaces
+   to decouple from discord.js version changes.
+
+5. MessageFlags is used in 30+ command files - this is the highest ROI
+   abstraction point.
+
+6. discord.js imports in forum-sync and voice-handler are acceptable because
+   they're feature-specific modules (not general-purpose utilities).
+
+================================================================================

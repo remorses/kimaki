@@ -1,6 +1,7 @@
 import { PermissionsBitField } from 'discord.js'
 import { describe, expect, test } from 'vitest'
-import { hasKimakiBotPermission, splitMarkdownForDiscord } from './discord-utils.js'
+import { hasKimakiBotPermission } from './platform/discord-adapter.js'
+import { splitMarkdownForDiscord } from './discord-utils.js'
 
 describe('splitMarkdownForDiscord', () => {
   test('never returns chunks over the max length with code fences', () => {

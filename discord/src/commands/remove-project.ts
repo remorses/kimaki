@@ -6,10 +6,10 @@ import type { CommandContext, AutocompleteContext } from './types.js'
 import {
   findChannelsByDirectory,
   deleteChannelDirectoriesByDirectory,
-  getAllTextChannelDirectories,
 } from '../database.js'
 import { createLogger, LogPrefix } from '../logger.js'
 import { abbreviatePath } from '../utils.js'
+import { getDefaultRuntimeAdapter } from '../session-handler/thread-session-runtime.js'
 
 const logger = createLogger(LogPrefix.REMOVE_PROJECT)
 
@@ -20,10 +20,16 @@ export async function handleRemoveProjectCommand({
   await command.deferReply({ ephemeral: false })
 
   const directory = command.options.getString('project', true)
-  const guild = command.guild
+  const guildId = command.guildId
+  const adapter = getDefaultRuntimeAdapter()
+  const admin = adapter?.admin
 
-  if (!guild) {
+  if (!guildId) {
     await command.editReply('This command can only be used in a guild')
+    return
+  }
+  if (!admin) {
+    await command.editReply('Project removal is not available here')
     return
   }
 
@@ -46,7 +52,9 @@ export async function handleRemoveProjectCommand({
       channel_type: string
     }>) {
       const channel = await errore.tryAsync({
-        try: () => guild.channels.fetch(channel_id),
+        try: async () => {
+          return admin.fetchChannel({ guildId, channelId: channel_id })
+        },
         catch: (e) => e as Error,
       })
 
@@ -58,7 +66,11 @@ export async function handleRemoveProjectCommand({
 
       if (channel) {
         try {
-          await channel.delete(`Removed by /remove-project command`)
+          await admin.deleteChannel({
+            guildId,
+            channelId: channel_id,
+            reason: 'Removed by /remove-project command',
+          })
           deletedChannels.push(`${channel_type}: ${channel_id}`)
         } catch (error) {
           logger.error(`Failed to delete channel ${channel_id}:`, error)
@@ -98,10 +110,18 @@ export async function handleRemoveProjectAutocomplete({
   interaction,
   appId,
 }: AutocompleteContext): Promise<void> {
-  const focusedValue = interaction.options.getFocused()
-  const guild = interaction.guild
+  const focused = interaction.options.getFocused()
+  const focusedValue = typeof focused === 'string' ? focused : focused.value
+  const guildId = interaction.guildId
+  const adapter = getDefaultRuntimeAdapter()
+  const admin = adapter?.admin
 
-  if (!guild) {
+  if (!guildId) {
+    await interaction.respond([])
+    return
+  }
+
+  if (!admin) {
     await interaction.respond([])
     return
   }
@@ -120,7 +140,9 @@ export async function handleRemoveProjectAutocomplete({
 
     for (const { directory, channel_id } of allChannels) {
       const channel = await errore.tryAsync({
-        try: () => guild.channels.fetch(channel_id),
+        try: async () => {
+          return admin.fetchChannel({ guildId, channelId: channel_id })
+        },
         catch: (e) => e as Error,
       })
       if (channel instanceof Error) {

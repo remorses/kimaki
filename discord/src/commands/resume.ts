@@ -1,11 +1,7 @@
 // /resume command - Resume an existing OpenCode session.
 
-import {
-  ChannelType,
-  ThreadAutoArchiveDuration,
-  type TextChannel,
-  type ThreadChannel,
-} from 'discord.js'
+// ThreadAutoArchiveDuration.OneDay = 1440 minutes
+const THREAD_AUTO_ARCHIVE_ONE_DAY = 1440
 import fs from 'node:fs'
 import type { CommandContext, AutocompleteContext } from './types.js'
 import {
@@ -15,10 +11,14 @@ import {
   getAllThreadSessionIds,
 } from '../database.js'
 import { initializeOpencodeForDirectory } from '../opencode.js'
-import { sendThreadMessage, resolveTextChannel } from '../discord-utils.js'
+import {
+  SILENT_MESSAGE_FLAGS,
+} from '../discord-utils.js'
 import { collectLastAssistantParts } from '../message-formatting.js'
 import { createLogger, LogPrefix } from '../logger.js'
 import * as errore from 'errore'
+import { getDefaultRuntimeAdapter } from '../session-handler/thread-session-runtime.js'
+import { isTextChannel, isThreadChannel, getRootChannelId } from './channel-ref.js'
 
 const logger = createLogger(LogPrefix.RESUME)
 
@@ -30,27 +30,18 @@ export async function handleResumeCommand({
   const sessionId = command.options.getString('session', true)
   const channel = command.channel
 
-  const isThread =
-    channel &&
-    [
-      ChannelType.PublicThread,
-      ChannelType.PrivateThread,
-      ChannelType.AnnouncementThread,
-    ].includes(channel.type)
-
-  if (isThread) {
+  if (isThreadChannel(channel)) {
     await command.editReply(
       'This command can only be used in project channels, not threads',
     )
     return
   }
 
-  if (!channel || channel.type !== ChannelType.GuildText) {
+  if (!isTextChannel(channel)) {
     await command.editReply('This command can only be used in text channels')
     return
   }
-
-  const textChannel = channel as TextChannel
+  const textChannel = channel
 
   const channelConfig = await getChannelDirectory(textChannel.id)
   const projectDirectory = channelConfig?.directory
@@ -85,14 +76,36 @@ export async function handleResumeCommand({
 
     const sessionTitle = sessionResponse.data.title
 
-    const thread = await textChannel.threads.create({
-      name: `Resume: ${sessionTitle}`.slice(0, 100),
-      autoArchiveDuration: ThreadAutoArchiveDuration.OneDay,
-      reason: `Resuming session ${sessionId}`,
+    const adapter = getDefaultRuntimeAdapter()
+    if (!adapter) {
+      throw new Error('No runtime adapter configured')
+    }
+    const channelTarget = {
+      channelId: textChannel.id,
+    }
+    const starterMessage = await adapter.conversation(channelTarget).send({
+      markdown: `**Resuming session:** ${sessionTitle}`,
+      flags: SILENT_MESSAGE_FLAGS,
     })
+    const { thread, target: threadTarget } = await adapter
+      .conversation(channelTarget)
+      .message(starterMessage.id)
+      .then((messageHandle) => {
+        return messageHandle.startThread({
+          name: `Resume: ${sessionTitle}`.slice(0, 100),
+          autoArchiveDuration: THREAD_AUTO_ARCHIVE_ONE_DAY,
+          reason: `Resuming session ${sessionId}`,
+        })
+      })
 
-    // Add user to thread so it appears in their sidebar
-    await thread.members.add(command.user.id)
+    const threadHandle = await adapter.thread({
+      threadId: threadTarget.threadId,
+      parentId: thread.parentId,
+    })
+    if (!threadHandle) {
+      throw new Error(`Thread not found: ${threadTarget.threadId}`)
+    }
+    await threadHandle.addMember(command.user.id)
 
     await setThreadSession(thread.id, sessionId)
 
@@ -109,13 +122,12 @@ export async function handleResumeCommand({
     const messages = messagesResponse.data
 
     await command.editReply(
-      `Resumed session "${sessionTitle}" in ${thread.toString()}`,
+      `Resumed session "${sessionTitle}" in <#${thread.id}>`,
     )
 
-    await sendThreadMessage(
-      thread,
-      `**Resumed session:** ${sessionTitle}\n**Created:** ${new Date(sessionResponse.data.time.created).toLocaleString()}\n\n*Loading ${messages.length} messages...*`,
-    )
+    await adapter.conversation(threadTarget).send({
+      markdown: `**Resumed session:** ${sessionTitle}\n**Created:** ${new Date(sessionResponse.data.time.created).toLocaleString()}\n\n*Loading ${messages.length} messages...*`,
+    })
 
     try {
       const { partIds, content, skippedCount } = collectLastAssistantParts({
@@ -123,14 +135,15 @@ export async function handleResumeCommand({
       })
 
       if (skippedCount > 0) {
-        await sendThreadMessage(
-          thread,
-          `*Skipped ${skippedCount} older assistant parts...*`,
-        )
+        await adapter.conversation(threadTarget).send({
+          markdown: `*Skipped ${skippedCount} older assistant parts...*`,
+        })
       }
 
       if (content.trim()) {
-        const discordMessage = await sendThreadMessage(thread, content)
+        const discordMessage = await adapter.conversation(threadTarget).send({
+          markdown: content,
+        })
 
         // Store part-message mappings atomically
         await setPartMessagesBatch(
@@ -144,16 +157,14 @@ export async function handleResumeCommand({
 
       const messageCount = messages.length
 
-      await sendThreadMessage(
-        thread,
-        `**Session resumed!** Loaded ${messageCount} messages.\n\nYou can now continue the conversation by sending messages in this thread.`,
-      )
+      await adapter.conversation(threadTarget).send({
+        markdown: `**Session resumed!** Loaded ${messageCount} messages.\n\nYou can now continue the conversation by sending messages in this thread.`,
+      })
     } catch (sendError) {
       logger.error('[RESUME] Error sending messages to thread:', sendError)
-      await sendThreadMessage(
-        thread,
-        `Failed to load message history, but session is connected. You can still send new messages.`,
-      )
+      await adapter.conversation(threadTarget).send({
+        markdown: `Failed to load message history, but session is connected. You can still send new messages.`,
+      })
     }
   } catch (error) {
     logger.error('[RESUME] Error:', error)
@@ -166,16 +177,15 @@ export async function handleResumeCommand({
 export async function handleResumeAutocomplete({
   interaction,
 }: AutocompleteContext): Promise<void> {
-  const focusedValue = interaction.options.getFocused()
+  const focused = interaction.options.getFocused()
+  const focusedValue = typeof focused === 'string' ? focused : focused.value
 
   let projectDirectory: string | undefined
 
   if (interaction.channel) {
-    const textChannel = await resolveTextChannel(
-      interaction.channel as TextChannel | ThreadChannel | null,
-    )
-    if (textChannel) {
-      const channelConfig = await getChannelDirectory(textChannel.id)
+    const rootChannelId = getRootChannelId(interaction.channel)
+    if (rootChannelId) {
+      const channelConfig = await getChannelDirectory(rootChannelId)
       projectDirectory = channelConfig?.directory
     }
   }

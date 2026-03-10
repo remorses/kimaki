@@ -2,7 +2,7 @@
 // Uses worktrunk-style pipeline: squash -> rebase -> local push.
 // On rebase conflicts, asks the AI model in the thread to resolve them.
 
-import { type TextChannel, type ThreadChannel } from 'discord.js'
+import type { PlatformThread } from '../platform/types.js'
 import type { AutocompleteContext, CommandContext } from './types.js'
 import {
   getThreadWorktree,
@@ -13,14 +13,14 @@ import { createLogger, LogPrefix } from '../logger.js'
 import { notifyError } from '../sentry.js'
 import { mergeWorktree, listBranchesByLastCommit, validateBranchRef } from '../worktrees.js'
 import {
-  sendThreadMessage,
   resolveWorkingDirectory,
-  resolveTextChannel,
 } from '../discord-utils.js'
 import {
+  getDefaultRuntimeAdapter,
   getOrCreateRuntime,
 } from '../session-handler/thread-session-runtime.js'
 import { RebaseConflictError, DirtyWorktreeError } from '../errors.js'
+import { getRootChannelId, isThreadChannel } from './channel-ref.js'
 
 const logger = createLogger(LogPrefix.WORKTREE)
 
@@ -28,15 +28,24 @@ const logger = createLogger(LogPrefix.WORKTREE)
 export const WORKTREE_PREFIX = '⬦ '
 
 async function removeWorktreePrefixFromTitle(
-  thread: ThreadChannel,
+  thread: PlatformThread,
 ): Promise<void> {
   if (!thread.name.startsWith(WORKTREE_PREFIX)) {
     return
   }
   const newName = thread.name.slice(WORKTREE_PREFIX.length)
   const timeoutMs = 5000
+  const adapter = getDefaultRuntimeAdapter()
+  if (!adapter) {
+    return
+  }
   await Promise.race([
-    thread.setName(newName).catch((e) => {
+    adapter.thread({ threadId: thread.id, parentId: thread.parentId }).then(async (threadHandle) => {
+      if (!threadHandle) {
+        throw new Error(`Thread not found: ${thread.id}`)
+      }
+      await threadHandle.rename(newName)
+    }).catch((e) => {
       logger.warn(
         `Failed to update thread title: ${e instanceof Error ? e.message : String(e)}`,
       )
@@ -63,7 +72,7 @@ async function sendPromptToModel({
   appId,
 }: {
   prompt: string
-  thread: ThreadChannel
+  thread: PlatformThread
   projectDirectory: string
   command: CommandContext['command']
   appId?: string
@@ -95,12 +104,12 @@ export async function handleMergeWorktreeCommand({
   await command.deferReply({ ephemeral: false })
 
   const channel = command.channel
-  if (!channel || !channel.isThread()) {
+  if (!isThreadChannel(channel)) {
     await command.editReply('This command can only be used in a thread')
     return
   }
 
-  const thread = channel as ThreadChannel
+  const thread = channel
   const worktreeInfo = await getThreadWorktree(thread.id)
   if (!worktreeInfo) {
     await command.editReply('This thread is not associated with a worktree')
@@ -187,12 +196,13 @@ export async function handleMergeWorktreeAutocomplete({
   interaction,
 }: AutocompleteContext): Promise<void> {
   try {
-    const focusedValue = interaction.options.getFocused()
+    const focused = interaction.options.getFocused()
+    const focusedValue = typeof focused === 'string' ? focused : focused.value
 
     let projectDirectory: string | undefined
 
     // Try to get directory from worktree info (we're in a thread)
-    if (interaction.channel?.isThread()) {
+    if (isThreadChannel(interaction.channel)) {
       const worktreeInfo = await getThreadWorktree(interaction.channel.id)
       if (worktreeInfo?.project_directory) {
         projectDirectory = worktreeInfo.project_directory
@@ -201,11 +211,9 @@ export async function handleMergeWorktreeAutocomplete({
 
     // Fallback: resolve from parent channel
     if (!projectDirectory && interaction.channel) {
-      const textChannel = await resolveTextChannel(
-        interaction.channel as TextChannel | ThreadChannel | null,
-      )
-      if (textChannel) {
-        const channelConfig = await getChannelDirectory(textChannel.id)
+      const rootChannelId = getRootChannelId(interaction.channel)
+      if (rootChannelId) {
+        const channelConfig = await getChannelDirectory(rootChannelId)
         projectDirectory = channelConfig?.directory
       }
     }

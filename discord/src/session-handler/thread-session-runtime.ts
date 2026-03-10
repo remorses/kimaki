@@ -6,7 +6,6 @@
 // call runtime APIs (enqueueIncoming, abortActiveRun, etc.) without inspecting
 // run internals.
 
-import { ChannelType, type ThreadChannel } from 'discord.js'
 import type {
   Event as OpenCodeEvent,
   Part,
@@ -29,11 +28,9 @@ import {
 import { isAbortError } from '../utils.js'
 import { createLogger, LogPrefix } from '../logger.js'
 import {
-  sendThreadMessage,
   SILENT_MESSAGE_FLAGS,
   NOTIFY_MESSAGE_FLAGS,
 } from '../discord-utils.js'
-import type { DiscordFileAttachment } from '../message-formatting.js'
 import { formatPart } from '../message-formatting.js'
 import {
   getChannelVerbosity,
@@ -127,6 +124,12 @@ import { notifyError } from '../sentry.js'
 import { createDebouncedProcessFlush } from '../debounced-process-flush.js'
 import { cancelHtmlActionsForThread } from '../html-actions.js'
 import { createDebouncedTimeout } from '../debounce-timeout.js'
+import type {
+  KimakiAdapter,
+  MessageTarget,
+  PlatformFileAttachment,
+  PlatformThread,
+} from '../platform/types.js'
 
 const logger = createLogger(LogPrefix.SESSION)
 const discordLogger = createLogger(LogPrefix.DISCORD)
@@ -140,6 +143,15 @@ const shouldLogSessionEvents =
 // is not reactive state, just a lookup for resource handles).
 
 const runtimes = new Map<string, ThreadSessionRuntime>()
+let defaultRuntimeAdapter: KimakiAdapter | null = null
+
+export function setDefaultRuntimeAdapter(adapter: KimakiAdapter) {
+  defaultRuntimeAdapter = adapter
+}
+
+export function getDefaultRuntimeAdapter(): KimakiAdapter | null {
+  return defaultRuntimeAdapter
+}
 
 subscribeOpencodeServerLifecycle((event) => {
   if (event.type !== 'started') {
@@ -158,7 +170,7 @@ export function getRuntime(
 
 export type RuntimeOptions = {
   threadId: string
-  thread: ThreadChannel
+  thread: PlatformThread
   projectDirectory: string
   sdkDirectory: string
   channelId?: string
@@ -395,7 +407,7 @@ export type EnqueueResult = {
  */
 export type PreprocessResult = {
   prompt: string
-  images?: DiscordFileAttachment[]
+  images?: PlatformFileAttachment[]
   /** Resolved mode based on voice transcription result. */
   mode: 'opencode' | 'local-queue'
   /** When true, preprocessing determined the message should be silently dropped. */
@@ -406,7 +418,7 @@ export type IngressInput = {
   prompt: string
   userId: string
   username: string
-  images?: DiscordFileAttachment[]
+  images?: PlatformFileAttachment[]
   appId?: string
   command?: { name: string; arguments: string }
   /**
@@ -433,8 +445,8 @@ export type IngressInput = {
    * attachment download) runs in arrival order but outside dispatchAction,
    * so SSE event handling and permission UI are not blocked.
    *
-   * The closure captures Discord objects (Message, ThreadChannel) so the
-   * runtime stays platform-agnostic — it just awaits the callback.
+   * The closure captures platform message/thread values so the runtime stays
+   * transport-agnostic — it just awaits the callback.
    */
   preprocess?: () => Promise<PreprocessResult>
 }
@@ -456,7 +468,9 @@ export class ThreadSessionRuntime {
   sdkDirectory: string
   readonly channelId: string | undefined
   readonly appId: string | undefined
-  readonly thread: ThreadChannel
+  readonly thread: PlatformThread
+  readonly adapter: KimakiAdapter
+  readonly threadTarget: MessageTarget
 
   // ── Resource handles (mechanisms, not domain state) ──
 
@@ -517,12 +531,21 @@ export class ThreadSessionRuntime {
   private preprocessChain: Promise<void> = Promise.resolve()
 
   constructor(opts: RuntimeOptions) {
+    const adapter = getDefaultRuntimeAdapter()
+    if (!adapter) {
+      throw new Error('No runtime adapter configured')
+    }
     this.threadId = opts.threadId
     this.projectDirectory = opts.projectDirectory
     this.sdkDirectory = opts.sdkDirectory
     this.channelId = opts.channelId
     this.appId = opts.appId
     this.thread = opts.thread
+    this.adapter = adapter
+    this.threadTarget = {
+      channelId: opts.channelId || opts.thread.parentId || opts.thread.id,
+      threadId: opts.thread.id,
+    }
     threadState.updateThread(this.threadId, (t) => ({
       ...t,
       listenerController: new AbortController(),
@@ -1297,7 +1320,7 @@ export class ThreadSessionRuntime {
     }
     const hasPendingFileUpload = [...pendingFileUploadContexts.values()].some(
       (ctx) => {
-        return ctx.thread.id === this.thread.id
+        return ctx.threadId === this.thread.id
       },
     )
     if (hasPendingFileUpload) {
@@ -1329,11 +1352,36 @@ export class ThreadSessionRuntime {
 
   private async sendTypingPulse(): Promise<void> {
     const result = await errore.tryAsync(() => {
-      return this.thread.sendTyping()
+      return this.adapter.conversation(this.threadTarget).startTyping()
     })
     if (result instanceof Error) {
       discordLogger.log(`Failed to send typing: ${result}`)
     }
+  }
+
+  private async sendThreadMessage({
+    markdown,
+    flags = SILENT_MESSAGE_FLAGS,
+  }: {
+    markdown: string
+    flags?: number
+  }): Promise<{ id: string }> {
+    return this.adapter.conversation(this.threadTarget).send({
+      markdown,
+      flags,
+    })
+  }
+
+  private async getChannelTopic(): Promise<string | undefined> {
+    if (!this.channelId) {
+      return undefined
+    }
+    const channelHandle = await this.adapter.channel(this.channelId)
+    const channel = channelHandle?.data
+    if (!channel || channel.kind !== 'text') {
+      return undefined
+    }
+    return channel.topic?.trim() || undefined
   }
 
   private clearTypingKeepalive(): void {
@@ -1499,7 +1547,7 @@ export class ThreadSessionRuntime {
     })
 
     const sendResult = await errore.tryAsync(() => {
-      return sendThreadMessage(this.thread, content)
+      return this.sendThreadMessage({ markdown: content })
     })
     if (sendResult instanceof Error) {
       threadState.updateThread(this.threadId, (t) => {
@@ -1760,7 +1808,7 @@ export class ThreadSessionRuntime {
     this.lastDisplayedContextPercentage = thresholdCrossed
     const chunk = `⬦ context usage ${currentPercentage}%`
     const sendResult = await errore.tryAsync(() => {
-      return this.thread.send({ content: chunk, flags: SILENT_MESSAGE_FLAGS })
+      return this.sendThreadMessage({ markdown: chunk, flags: SILENT_MESSAGE_FLAGS })
     })
     if (sendResult instanceof Error) {
       discordLogger.error('Failed to send context usage notice:', sendResult)
@@ -1808,7 +1856,7 @@ export class ThreadSessionRuntime {
         if (description && childSessionId) {
           if ((await this.getVerbosity()) !== 'text_only') {
             const taskDisplay = `┣ ${agent} **${description}**`
-            await sendThreadMessage(this.thread, taskDisplay + '\n\n')
+            await this.sendThreadMessage({ markdown: taskDisplay + '\n\n' })
           }
         }
       }
@@ -1858,10 +1906,9 @@ export class ThreadSessionRuntime {
               '[ACTION] Failed to show action buttons:',
               showResult,
             )
-            await sendThreadMessage(
-              this.thread,
-              `Failed to show action buttons: ${showResult.message}`,
-            )
+            await this.sendThreadMessage({
+              markdown: `Failed to show action buttons: ${showResult.message}`,
+            })
           }
         },
       })
@@ -1925,8 +1972,8 @@ export class ThreadSessionRuntime {
           })()
           const chunk = `⬦ ${part.tool} returned ${formattedTokens} tokens${percentageSuffix}`
           const largeOutputResult = await errore.tryAsync(() => {
-            return this.thread.send({
-              content: chunk,
+            return this.sendThreadMessage({
+              markdown: chunk,
               flags: SILENT_MESSAGE_FLAGS,
             })
           })
@@ -1990,7 +2037,7 @@ export class ThreadSessionRuntime {
       return
     }
     const sendResult = await errore.tryAsync(() => {
-      return sendThreadMessage(this.thread, content + '\n\n')
+      return this.sendThreadMessage({ markdown: content + '\n\n' })
     })
     if (sendResult instanceof Error) {
       discordLogger.error(
@@ -2118,10 +2165,9 @@ export class ThreadSessionRuntime {
 
     const errorMessage = formatSessionErrorFromProps(properties.error)
     logger.error(`Sending error to thread: ${errorMessage}`)
-    await sendThreadMessage(
-      this.thread,
-      `✗ opencode session error: ${errorMessage}`,
-    )
+    await this.sendThreadMessage({
+      markdown: `✗ opencode session error: ${errorMessage}`,
+    })
     await this.persistEventBufferDebounced.flush()
 
     // Inject synthetic idle so isSessionBusy() returns false and queued
@@ -2350,7 +2396,7 @@ export class ThreadSessionRuntime {
 
     const chunk = `⬦ ${message} - retrying in ${duration} (attempt #${attempt})`
     const retryResult = await errore.tryAsync(() => {
-      return this.thread.send({ content: chunk, flags: SILENT_MESSAGE_FLAGS })
+      return this.sendThreadMessage({ markdown: chunk, flags: SILENT_MESSAGE_FLAGS })
     })
     if (retryResult instanceof Error) {
       discordLogger.error('Failed to send retry notice:', retryResult)
@@ -2375,7 +2421,7 @@ export class ThreadSessionRuntime {
       : ''
     const chunk = `⬦ ${properties.variant}: ${titlePrefix}${toastMessage}`
     const toastResult = await errore.tryAsync(() => {
-      return this.thread.send({ content: chunk, flags: SILENT_MESSAGE_FLAGS })
+      return this.sendThreadMessage({ markdown: chunk, flags: SILENT_MESSAGE_FLAGS })
     })
     if (toastResult instanceof Error) {
       discordLogger.error('Failed to send toast notice:', toastResult)
@@ -2414,7 +2460,7 @@ export class ThreadSessionRuntime {
       // Helper: stop typing and drain queued local messages on error.
       const cleanupOnError = async (errorMessage: string) => {
         this.stopTyping()
-        await sendThreadMessage(this.thread, errorMessage)
+        await this.sendThreadMessage({ markdown: errorMessage })
         await this.tryDrainQueue({ showIndicator: true })
       }
 
@@ -2576,24 +2622,7 @@ export class ThreadSessionRuntime {
             }
           : undefined
 
-      const channelTopic = await (async () => {
-        if (this.thread.parent?.type === ChannelType.GuildText) {
-          return this.thread.parent.topic?.trim() || undefined
-        }
-        if (!channelId) {
-          return undefined
-        }
-        const fetched = await errore.tryAsync(() => {
-          return this.thread.guild.channels.fetch(channelId)
-        })
-        if (fetched instanceof Error || !fetched) {
-          return undefined
-        }
-        if (fetched.type !== ChannelType.GuildText) {
-          return undefined
-        }
-        return fetched.topic?.trim() || undefined
-      })()
+      const channelTopic = await this.getChannelTopic()
 
       const request = {
         sessionID: session.id,
@@ -2602,7 +2631,7 @@ export class ThreadSessionRuntime {
         system: getOpencodeSystemMessage({
           sessionId: session.id,
           channelId,
-          guildId: this.thread.guildId,
+          guildId: this.thread.guildId || undefined,
           threadId: this.thread.id,
           worktree,
           channelTopic,
@@ -2945,10 +2974,9 @@ export class ThreadSessionRuntime {
         ? `/${next.command.name}`
         : `${next.prompt.slice(0, 150)}${next.prompt.length > 150 ? '...' : ''}`
       if (displayText.trim()) {
-        await sendThreadMessage(
-          this.thread,
-          `» **${next.username}:** ${displayText}`,
-        )
+          await this.sendThreadMessage({
+            markdown: `» **${next.username}:** ${displayText}`,
+          })
       }
     }
 
@@ -2992,10 +3020,9 @@ export class ThreadSessionRuntime {
     })
     if (sessionResult instanceof Error) {
       this.stopTyping()
-      await sendThreadMessage(
-        this.thread,
-        `✗ ${sessionResult.message}`,
-      )
+      await this.sendThreadMessage({
+        markdown: `✗ ${sessionResult.message}`,
+      })
       // Show indicator: this dispatch failed, so the next queued message
       // has been waiting — the user needs to see which one is starting.
       await this.tryDrainQueue({ showIndicator: true })
@@ -3038,10 +3065,9 @@ export class ThreadSessionRuntime {
     })
     if (earlyAgentResult instanceof Error) {
       this.stopTyping()
-      await sendThreadMessage(
-        this.thread,
-        `Failed to resolve agent: ${earlyAgentResult.message}`,
-      )
+      await this.sendThreadMessage({
+        markdown: `Failed to resolve agent: ${earlyAgentResult.message}`,
+      })
       // Show indicator: dispatch failed mid-setup, next queued message was waiting.
       await this.tryDrainQueue({ showIndicator: true })
       return
@@ -3078,10 +3104,9 @@ export class ThreadSessionRuntime {
     ])
     if (earlyModelResult instanceof Error) {
       this.stopTyping()
-      await sendThreadMessage(
-        this.thread,
-        `Failed to resolve model: ${earlyModelResult.message}`,
-      )
+      await this.sendThreadMessage({
+        markdown: `Failed to resolve model: ${earlyModelResult.message}`,
+      })
       // Show indicator: dispatch failed mid-setup, next queued message was waiting.
       await this.tryDrainQueue({ showIndicator: true })
       return
@@ -3089,10 +3114,9 @@ export class ThreadSessionRuntime {
     const earlyModelParam = earlyModelResult
     if (!earlyModelParam) {
       this.stopTyping()
-      await sendThreadMessage(
-        this.thread,
-        'No AI provider connected. Configure a provider in OpenCode with `/connect` command.',
-      )
+      await this.sendThreadMessage({
+        markdown: 'No AI provider connected. Configure a provider in OpenCode with `/connect` command.',
+      })
       // Show indicator: dispatch failed, next queued message was waiting.
       await this.tryDrainQueue({ showIndicator: true })
       return
@@ -3163,24 +3187,7 @@ export class ThreadSessionRuntime {
           }
         : undefined
 
-    const channelTopic = await (async () => {
-      if (this.thread.parent?.type === ChannelType.GuildText) {
-        return this.thread.parent.topic?.trim() || undefined
-      }
-      if (!channelId) {
-        return undefined
-      }
-      const fetched = await errore.tryAsync(() => {
-        return this.thread.guild.channels.fetch(channelId)
-      })
-      if (fetched instanceof Error || !fetched) {
-        return undefined
-      }
-      if (fetched.type !== ChannelType.GuildText) {
-        return undefined
-      }
-      return fetched.topic?.trim() || undefined
-    })()
+    const channelTopic = await this.getChannelTopic()
 
     const variantField = earlyThinkingValue
       ? { variant: earlyThinkingValue }
@@ -3238,10 +3245,9 @@ export class ThreadSessionRuntime {
             `[DISPATCH] Command timed out after 30s sessionId=${session.id}`,
           )
           this.stopTyping()
-          await sendThreadMessage(
-            this.thread,
-            '✗ Command timed out after 30 seconds. Try a shorter command or run it with /run-shell-command.',
-          )
+          await this.sendThreadMessage({
+            markdown: '✗ Command timed out after 30 seconds. Try a shorter command or run it with /run-shell-command.',
+          })
           await this.dispatchAction(() => {
             return this.tryDrainQueue({ showIndicator: true })
           })
@@ -3262,10 +3268,9 @@ export class ThreadSessionRuntime {
         )
         void notifyError(commandResponse, 'Failed to send command to OpenCode')
         this.stopTyping()
-        await sendThreadMessage(
-          this.thread,
-          `✗ Unexpected bot Error: ${commandResponse.message}`,
-        )
+        await this.sendThreadMessage({
+          markdown: `✗ Unexpected bot Error: ${commandResponse.message}`,
+        })
         await this.dispatchAction(() => {
           return this.tryDrainQueue({ showIndicator: true })
         })
@@ -3285,7 +3290,7 @@ export class ThreadSessionRuntime {
         logger.error(`[DISPATCH] ${apiError.message}`)
         void notifyError(apiError, 'OpenCode API error during command')
         this.stopTyping()
-        await sendThreadMessage(this.thread, `✗ ${apiError.message}`)
+        await this.sendThreadMessage({ markdown: `✗ ${apiError.message}` })
         await this.dispatchAction(() => {
           return this.tryDrainQueue({ showIndicator: true })
         })
@@ -3304,7 +3309,7 @@ export class ThreadSessionRuntime {
         system: getOpencodeSystemMessage({
           sessionId: session.id,
           channelId,
-          guildId: this.thread.guildId,
+          guildId: this.thread.guildId || undefined,
           threadId: this.thread.id,
           worktree,
           channelTopic,
@@ -3332,7 +3337,9 @@ export class ThreadSessionRuntime {
       logger.error(`[DISPATCH] Prompt API call failed: ${errorMessage}`)
       void notifyError(errorObject, 'OpenCode API error during local queue prompt')
       this.stopTyping()
-      await sendThreadMessage(this.thread, `✗ OpenCode API error: ${errorMessage}`)
+      await this.sendThreadMessage({
+        markdown: `✗ OpenCode API error: ${errorMessage}`,
+      })
       await this.dispatchAction(() => {
         return this.tryDrainQueue({ showIndicator: true })
       })
@@ -3577,7 +3584,10 @@ export class ThreadSessionRuntime {
     const footerText = `*${projectInfo}${sessionDuration}${contextInfo}${modelInfo}${agentInfo}*`
     this.stopTyping()
 
-    await sendThreadMessage(this.thread, footerText, { flags: NOTIFY_MESSAGE_FLAGS })
+    await this.sendThreadMessage({
+      markdown: footerText,
+      flags: NOTIFY_MESSAGE_FLAGS,
+    })
     logger.log(
       `DURATION: Session completed in ${sessionDuration}, model ${runInfo.model}, tokens ${runInfo.tokensUsed}`,
     )

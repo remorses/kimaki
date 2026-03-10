@@ -4,13 +4,9 @@
 // shared server, this restart affects all projects. Other runtimes reconnect through their
 // listener backoff loop once the shared server comes back.
 
-import {
-  ChannelType,
-  MessageFlags,
-  type ThreadChannel,
-  type TextChannel,
-} from 'discord.js'
+
 import type { CommandContext } from './types.js'
+import { PLATFORM_MESSAGE_FLAGS } from '../platform/message-flags.js'
 import { restartOpencodeServer } from '../opencode.js'
 import {
   resolveWorkingDirectory,
@@ -18,6 +14,7 @@ import {
 } from '../discord-utils.js'
 import { createLogger, LogPrefix } from '../logger.js'
 import { disposeRuntimesForDirectory } from '../session-handler/thread-session-runtime.js'
+import { getRootChannelId, isTextChannel, isThreadChannel } from './channel-ref.js'
 
 const logger = createLogger(LogPrefix.OPENCODE)
 
@@ -29,35 +26,27 @@ export async function handleRestartOpencodeServerCommand({
   if (!channel) {
     await command.reply({
       content: 'This command can only be used in a channel',
-      flags: MessageFlags.Ephemeral | SILENT_MESSAGE_FLAGS,
+      flags: PLATFORM_MESSAGE_FLAGS.EPHEMERAL | SILENT_MESSAGE_FLAGS,
     })
     return
   }
 
-  const isThread = [
-    ChannelType.PublicThread,
-    ChannelType.PrivateThread,
-    ChannelType.AnnouncementThread,
-  ].includes(channel.type)
+  const isThread = isThreadChannel(channel)
 
-  const isTextChannel = channel.type === ChannelType.GuildText
-
-  if (!isThread && !isTextChannel) {
+  if (!isThread && !isTextChannel(channel)) {
     await command.reply({
       content: 'This command can only be used in text channels or threads',
-      flags: MessageFlags.Ephemeral | SILENT_MESSAGE_FLAGS,
+      flags: PLATFORM_MESSAGE_FLAGS.EPHEMERAL | SILENT_MESSAGE_FLAGS,
     })
     return
   }
 
-  const resolved = await resolveWorkingDirectory({
-    channel: channel as TextChannel | ThreadChannel,
-  })
+  const resolved = await resolveWorkingDirectory({ channel })
 
   if (!resolved) {
     await command.reply({
       content: 'Could not determine project directory for this channel',
-      flags: MessageFlags.Ephemeral | SILENT_MESSAGE_FLAGS,
+      flags: PLATFORM_MESSAGE_FLAGS.EPHEMERAL | SILENT_MESSAGE_FLAGS,
     })
     return
   }
@@ -71,9 +60,7 @@ export async function handleRestartOpencodeServerCommand({
   // disposeRuntimesForDirectory aborts active runs, kills listeners, and
   // removes runtimes from the registry. Scoped by channelId so runtimes
   // in other channels sharing the same project directory are not affected.
-  const parentChannelId = isThread
-    ? (channel as ThreadChannel).parentId
-    : channel.id
+  const parentChannelId = getRootChannelId(channel)
   const abortedCount = disposeRuntimesForDirectory({
     directory: projectDirectory,
     channelId: parentChannelId || undefined,

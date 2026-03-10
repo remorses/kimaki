@@ -2,155 +2,53 @@
 // Handles markdown splitting for Discord's 2000-char limit, code block escaping,
 // thread message sending, and channel metadata extraction from topic tags.
 
-import {
-  type APIInteractionGuildMember,
-  ChannelType,
-  GuildMember,
-  MessageFlags,
-  PermissionsBitField,
-  type Guild,
-  type Message,
-  type TextChannel,
-  type ThreadChannel,
-} from 'discord.js'
-import { REST, Routes } from 'discord.js'
 import type { OpencodeClient } from '@opencode-ai/sdk/v2'
-import { discordApiUrl } from './discord-urls.js'
+import type { KimakiAdapter, PlatformChannel, PlatformThread } from './platform/types.js'
 import { Lexer } from 'marked'
-import { splitTablesFromMarkdown } from './format-tables.js'
 import { getChannelDirectory, getThreadWorktree } from './database.js'
-import { limitHeadingDepth } from './limit-heading-depth.js'
-import { unnestCodeBlocksFromLists } from './unnest-code-blocks.js'
 import { createLogger, LogPrefix } from './logger.js'
 import * as errore from 'errore'
 import mime from 'mime'
 import fs from 'node:fs'
 import path from 'node:path'
+import { PLATFORM_MESSAGE_FLAGS } from './platform/message-flags.js'
 
 const discordLogger = createLogger(LogPrefix.DISCORD)
-
-/**
- * Centralized permission check for Kimaki bot access.
- * Returns true if the member has permission to use the bot:
- * - Server owner, Administrator, Manage Server, or "Kimaki" role (case-insensitive).
- * Returns false if member is null or has the "no-kimaki" role (overrides all).
- */
-export function hasKimakiBotPermission(
-  member: GuildMember | APIInteractionGuildMember | null,
-  guild?: Guild | null,
-): boolean {
-  if (!member) {
-    return false
-  }
-  const hasNoKimakiRole = hasRoleByName(member, 'no-kimaki', guild)
-  if (hasNoKimakiRole) {
-    return false
-  }
-  const memberPermissions =
-    member instanceof GuildMember
-      ? member.permissions
-      : new PermissionsBitField(BigInt(member.permissions))
-  const ownerId = member instanceof GuildMember ? member.guild.ownerId : guild?.ownerId
-  const memberId = member instanceof GuildMember ? member.id : member.user.id
-  const isOwner = ownerId ? memberId === ownerId : false
-  const isAdmin = memberPermissions.has(PermissionsBitField.Flags.Administrator)
-  const canManageServer = memberPermissions.has(PermissionsBitField.Flags.ManageGuild)
-  const hasKimakiRole = hasRoleByName(member, 'kimaki', guild)
-  return isOwner || isAdmin || canManageServer || hasKimakiRole
-}
-
-function hasRoleByName(
-  member: GuildMember | APIInteractionGuildMember,
-  roleName: string,
-  guild?: Guild | null,
-): boolean {
-  const target = roleName.toLowerCase()
-
-  if (member instanceof GuildMember) {
-    return member.roles.cache.some((role) => role.name.toLowerCase() === target)
-  }
-
-  if (!guild) {
-    return false
-  }
-
-  const roleIds = Array.isArray(member.roles) ? member.roles : []
-  for (const roleId of roleIds) {
-    const role = guild.roles.cache.get(roleId)
-    if (role?.name.toLowerCase() === target) {
-      return true
-    }
-  }
-  return false
-}
-
-/**
- * Check if the member has the "no-kimaki" role that blocks bot access.
- * Separate from hasKimakiBotPermission so callers can show a specific error message.
- */
-export function hasNoKimakiRole(member: GuildMember | null): boolean {
-  if (!member?.roles?.cache) {
-    return false
-  }
-  return member.roles.cache.some(
-    (role) => role.name.toLowerCase() === 'no-kimaki',
-  )
-}
 
 /**
  * React to a thread's starter message with an emoji.
  * Thread ID equals the starter message ID in Discord.
  */
 export async function reactToThread({
-  rest,
+  adapter,
   threadId,
-  channelId,
+  parentChannelId,
   emoji,
 }: {
-  rest: REST
+  adapter: KimakiAdapter
   threadId: string
-  /** Parent channel ID where the thread starter message lives.
-   * If not provided, fetches the thread info from Discord API to resolve it. */
-  channelId?: string
+  /** Parent channel ID where the thread starter message lives. */
+  parentChannelId?: string
   emoji: string
 }): Promise<void> {
-  const parentChannelId = await (async () => {
-    if (channelId) {
-      return channelId
-    }
-    // Fetch the thread to get its parent channel ID
-    const threadResult = await errore.tryAsync(() => {
-      return rest.get(Routes.channel(threadId)) as Promise<{
-        parent_id?: string
-      }>
-    })
-    if (threadResult instanceof Error) {
-      discordLogger.warn(
-        `Failed to fetch thread ${threadId}:`,
-        threadResult.message,
-      )
-      return null
-    }
-    return threadResult.parent_id || null
-  })()
-
-  if (!parentChannelId) {
+  const threadHandle = await adapter.thread({
+    threadId,
+    parentId: parentChannelId,
+  })
+  if (!threadHandle) {
     discordLogger.warn(
-      `Could not resolve parent channel for thread ${threadId}`,
+      `Could not resolve thread for starter reaction: ${threadId}`,
     )
     return
   }
 
-  // React to the thread starter message in the parent channel.
-  // Thread ID equals the starter message ID for threads created from messages.
-  const result = await errore.tryAsync(() => {
-    return rest.put(
-      Routes.channelMessageOwnReaction(
-        parentChannelId,
-        threadId,
-        encodeURIComponent(emoji),
-      ),
-    )
+  const result = await errore.tryAsync({
+    try: async () => {
+      await threadHandle.addStarterReaction(emoji)
+    },
+    catch: (e) => {
+      return new Error(`Failed to react to thread ${threadId}`, { cause: e })
+    },
   })
   if (result instanceof Error) {
     discordLogger.warn(
@@ -161,14 +59,14 @@ export async function reactToThread({
 }
 
 export async function archiveThread({
-  rest,
+  adapter,
   threadId,
   parentChannelId,
   sessionId,
   client,
   archiveDelay = 0,
 }: {
-  rest: REST
+  adapter: KimakiAdapter
   threadId: string
   parentChannelId?: string
   sessionId?: string
@@ -176,9 +74,9 @@ export async function archiveThread({
   archiveDelay?: number
 }): Promise<void> {
   await reactToThread({
-    rest,
+    adapter,
     threadId,
-    channelId: parentChannelId,
+    parentChannelId,
     emoji: '📁',
   })
 
@@ -225,9 +123,14 @@ export async function archiveThread({
     })
   }
 
-  await rest.patch(Routes.channel(threadId), {
-    body: { archived: true },
+  const threadHandle = await adapter.thread({
+    threadId,
+    parentId: parentChannelId,
   })
+  if (!threadHandle) {
+    throw new Error(`Thread not found for archive: ${threadId}`)
+  }
+  await threadHandle.archive()
 }
 
 /** Remove Discord mentions from text so they don't appear in thread titles */
@@ -240,9 +143,11 @@ export function stripMentions(text: string): string {
     .trim()
 }
 
-export const SILENT_MESSAGE_FLAGS = 4 | 4096
+export const SILENT_MESSAGE_FLAGS =
+  PLATFORM_MESSAGE_FLAGS.SUPPRESS_EMBEDS |
+  PLATFORM_MESSAGE_FLAGS.SUPPRESS_NOTIFICATIONS
 // Same as SILENT but without SuppressNotifications - triggers badge/notification
-export const NOTIFY_MESSAGE_FLAGS = 4
+export const NOTIFY_MESSAGE_FLAGS = PLATFORM_MESSAGE_FLAGS.SUPPRESS_EMBEDS
 
 export function escapeBackticksInCodeBlocks(markdown: string): string {
   const lexer = new Lexer()
@@ -528,121 +433,8 @@ export function splitMarkdownForDiscord({
   return chunks
 }
 
-export async function sendThreadMessage(
-  thread: ThreadChannel,
-  content: string,
-  options?: { flags?: number },
-): Promise<Message> {
-  const MAX_LENGTH = 2000
-
-  // Split content into text and CV2 component segments (tables → Container components)
-  const segments = splitTablesFromMarkdown(content)
-  const baseFlags = options?.flags ?? SILENT_MESSAGE_FLAGS
-
-  let firstMessage: Message | undefined
-
-  for (const segment of segments) {
-    if (segment.type === 'components') {
-      const message = await thread.send({
-        components: segment.components,
-        flags: MessageFlags.IsComponentsV2 | baseFlags,
-      })
-      if (!firstMessage) {
-        firstMessage = message
-      }
-      continue
-    }
-
-    // Apply text transformations to text segments
-    let text = segment.text
-    text = unnestCodeBlocksFromLists(text)
-    text = limitHeadingDepth(text)
-    text = escapeBackticksInCodeBlocks(text)
-
-    if (!text.trim()) {
-      continue
-    }
-
-    const sendFlags = options?.flags ?? SILENT_MESSAGE_FLAGS
-    const chunks = splitMarkdownForDiscord({
-      content: text,
-      maxLength: MAX_LENGTH,
-    })
-
-    if (chunks.length > 1) {
-      discordLogger.log(
-        `MESSAGE: Splitting ${text.length} chars into ${chunks.length} messages`,
-      )
-    }
-
-    for (let chunk of chunks) {
-      if (!chunk) {
-        continue
-      }
-      // Safety net: hard-truncate if splitting still produced an oversized chunk
-      if (chunk.length > MAX_LENGTH) {
-        chunk = chunk.slice(0, MAX_LENGTH - 4) + '...'
-      }
-      const message = await thread.send({ content: chunk, flags: sendFlags })
-      if (!firstMessage) {
-        firstMessage = message
-      }
-    }
-  }
-
-  return firstMessage!
-}
-
-export async function resolveTextChannel(
-  channel: TextChannel | ThreadChannel | null | undefined,
-): Promise<TextChannel | null> {
-  if (!channel) {
-    return null
-  }
-
-  if (channel.type === ChannelType.GuildText) {
-    return channel as TextChannel
-  }
-
-  if (
-    channel.type === ChannelType.PublicThread ||
-    channel.type === ChannelType.PrivateThread ||
-    channel.type === ChannelType.AnnouncementThread
-  ) {
-    const parentId = channel.parentId
-    if (parentId) {
-      const parent = await channel.guild.channels.fetch(parentId)
-      if (parent?.type === ChannelType.GuildText) {
-        return parent as TextChannel
-      }
-    }
-  }
-
-  return null
-}
-
 export function escapeDiscordFormatting(text: string): string {
   return text.replace(/```/g, '\\`\\`\\`').replace(/````/g, '\\`\\`\\`\\`')
-}
-
-export async function getKimakiMetadata(
-  textChannel: TextChannel | null,
-): Promise<{
-  projectDirectory?: string
-}> {
-  if (!textChannel) {
-    return {}
-  }
-
-  const channelConfig = await getChannelDirectory(textChannel.id)
-
-  if (!channelConfig) {
-    return {}
-  }
-
-  return {
-    projectDirectory: channelConfig.directory,
-  }
 }
 
 /**
@@ -655,7 +447,7 @@ export async function getKimakiMetadata(
 export async function resolveWorkingDirectory({
   channel,
 }: {
-  channel: TextChannel | ThreadChannel
+  channel: PlatformThread | PlatformChannel
 }): Promise<
   | {
       projectDirectory: string
@@ -663,22 +455,19 @@ export async function resolveWorkingDirectory({
     }
   | undefined
 > {
-  const isThread = [
-    ChannelType.PublicThread,
-    ChannelType.PrivateThread,
-    ChannelType.AnnouncementThread,
-  ].includes(channel.type)
-
-  const textChannel = isThread
-    ? await resolveTextChannel(channel as ThreadChannel)
-    : (channel as TextChannel)
-
-  const metadata = await getKimakiMetadata(textChannel)
-  if (!metadata.projectDirectory) {
+  const isThread = channel.kind === 'thread'
+  const parentChannelId = isThread ? channel.parentId : channel.id
+  if (!parentChannelId) {
     return undefined
   }
 
-  let workingDirectory = metadata.projectDirectory
+  const channelConfig = await getChannelDirectory(parentChannelId)
+  const projectDirectory = channelConfig?.directory
+  if (!projectDirectory) {
+    return undefined
+  }
+
+  let workingDirectory = projectDirectory
   if (isThread) {
     const worktreeInfo = await getThreadWorktree(channel.id)
     if (worktreeInfo?.status === 'ready' && worktreeInfo.worktree_directory) {
@@ -687,7 +476,7 @@ export async function resolveWorkingDirectory({
   }
 
   return {
-    projectDirectory: metadata.projectDirectory,
+    projectDirectory,
     workingDirectory,
   }
 }
@@ -697,51 +486,29 @@ export async function resolveWorkingDirectory({
  * Sending all files in one message causes Discord to display images in a grid layout.
  */
 export async function uploadFilesToDiscord({
+  adapter,
   threadId,
-  botToken,
   files,
 }: {
+  adapter: KimakiAdapter
   threadId: string
-  botToken: string
   files: string[]
 }): Promise<void> {
   if (files.length === 0) {
     return
   }
 
-  // Build attachments array for all files
-  const attachments = files.map((file, index) => ({
-    id: index,
-    filename: path.basename(file),
-  }))
-
-  const formData = new FormData()
-  formData.append('payload_json', JSON.stringify({ attachments }))
-
-  // Append each file with its array index, with correct MIME type for grid display
-  files.forEach((file, index) => {
+  const attachments = files.map((file) => {
     const buffer = fs.readFileSync(file)
-    const mimeType = mime.getType(file) || 'application/octet-stream'
-    formData.append(
-      `files[${index}]`,
-      new Blob([buffer], { type: mimeType }),
-      path.basename(file),
-    )
+    const contentType = mime.getType(file) || 'application/octet-stream'
+    return {
+      filename: path.basename(file),
+      contentType,
+      data: buffer,
+    }
   })
-
-  const response = await fetch(
-    discordApiUrl(`/channels/${threadId}/messages`),
-    {
-      method: 'POST',
-      headers: {
-        Authorization: `Bot ${botToken}`,
-      },
-      body: formData,
-    },
-  )
-
-  if (!response.ok) {
-    const error = await response.text()
-    throw new Error(`Discord API error: ${response.status} - ${error}`)
-  }
+  await adapter.conversation({ channelId: threadId }).send({
+    markdown: '\u200b',
+    files: attachments,
+  })
 }

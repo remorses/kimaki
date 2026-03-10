@@ -8,8 +8,92 @@
 //   endpoint should return the desired gateway URL. This constant is provided
 //   for non-discord.js consumers (e.g. the Rust gateway-proxy config).
 
-import { REST } from 'discord.js'
 import { store } from './store.js'
+
+export type DiscordRestClient = {
+  get(route: string, options?: { query?: URLSearchParams }): Promise<unknown>
+  post(
+    route: string,
+    options?: { body?: unknown; query?: URLSearchParams },
+  ): Promise<unknown>
+  put(
+    route: string,
+    options?: { body?: unknown; query?: URLSearchParams },
+  ): Promise<unknown>
+  patch(
+    route: string,
+    options?: { body?: unknown; query?: URLSearchParams },
+  ): Promise<unknown>
+  delete(
+    route: string,
+    options?: { body?: unknown; query?: URLSearchParams },
+  ): Promise<unknown>
+}
+
+function buildDiscordRestUrl({
+  route,
+  query,
+}: {
+  route: string
+  query?: URLSearchParams
+}): string {
+  if (route.startsWith('http://') || route.startsWith('https://')) {
+    const builtUrl = new URL(route)
+    if (query) {
+      builtUrl.search = query.toString()
+    }
+    return builtUrl.toString()
+  }
+  const normalizedRoute = route.startsWith('/') ? route : `/${route}`
+  const builtUrl = new URL(discordApiUrl(normalizedRoute))
+  if (query) {
+    builtUrl.search = query.toString()
+  }
+  return builtUrl.toString()
+}
+
+async function requestDiscordRest({
+  token,
+  method,
+  route,
+  body,
+  query,
+}: {
+  token: string
+  method: 'GET' | 'POST' | 'PUT' | 'PATCH' | 'DELETE'
+  route: string
+  body?: unknown
+  query?: URLSearchParams
+}): Promise<unknown> {
+  const response = await fetch(buildDiscordRestUrl({ route, query }), {
+    method,
+    headers: {
+      Authorization: `Bot ${token}`,
+      ...(body === undefined ? {} : { 'Content-Type': 'application/json' }),
+    },
+    body: body === undefined ? undefined : JSON.stringify(body),
+  })
+
+  if (!response.ok) {
+    const errorText = await response.text().catch(() => {
+      return ''
+    })
+    throw new Error(
+      `Discord REST ${method} ${route} failed: ${response.status} ${errorText}`,
+    )
+  }
+
+  if (response.status === 204) {
+    return undefined
+  }
+
+  const contentType = response.headers.get('content-type') || ''
+  if (contentType.includes('application/json')) {
+    return response.json()
+  }
+
+  return response.text()
+}
 
 /**
  * Base URL for Discord (default: https://discord.com).
@@ -52,8 +136,53 @@ export function discordApiUrl(path: string): string {
  * Create a discord.js REST client pointed at the configured base URL.
  * Centralizes the REST instantiation so all call sites use the override.
  */
-export function createDiscordRest(token: string): REST {
-  return new REST({ api: getDiscordRestApiUrl() }).setToken(token)
+export function createDiscordRest(token: string): DiscordRestClient {
+  return {
+    get(route, options) {
+      return requestDiscordRest({
+        token,
+        method: 'GET',
+        route,
+        query: options?.query,
+      })
+    },
+    post(route, options) {
+      return requestDiscordRest({
+        token,
+        method: 'POST',
+        route,
+        body: options?.body,
+        query: options?.query,
+      })
+    },
+    put(route, options) {
+      return requestDiscordRest({
+        token,
+        method: 'PUT',
+        route,
+        body: options?.body,
+        query: options?.query,
+      })
+    },
+    patch(route, options) {
+      return requestDiscordRest({
+        token,
+        method: 'PATCH',
+        route,
+        body: options?.body,
+        query: options?.query,
+      })
+    },
+    delete(route, options) {
+      return requestDiscordRest({
+        token,
+        method: 'DELETE',
+        route,
+        body: options?.body,
+        query: options?.query,
+      })
+    },
+  }
 }
 
 /**

@@ -3,9 +3,17 @@
 // abort error detection, and date/time formatting helpers.
 
 import os from 'node:os'
-import { PermissionsBitField } from 'discord.js'
 import type { BotMode } from './database.js'
 import * as errore from 'errore'
+
+const DEFAULT_INSTALL_PERMISSION_BITS = 17927465446480n
+
+function combinePermissionBits(permissionBits: bigint[]): string {
+  const combined = permissionBits.reduce((sum, bit) => {
+    return sum | bit
+  }, 0n)
+  return combined.toString()
+}
 
 type GenerateInstallUrlOptions = {
   clientId: string
@@ -20,24 +28,7 @@ type GenerateInstallUrlOptions = {
 
 export function generateBotInstallUrl({
   clientId,
-  permissions = [
-    PermissionsBitField.Flags.ViewChannel,
-    PermissionsBitField.Flags.ManageChannels,
-    PermissionsBitField.Flags.SendMessages,
-    PermissionsBitField.Flags.SendMessagesInThreads,
-    PermissionsBitField.Flags.CreatePublicThreads,
-    PermissionsBitField.Flags.ManageThreads,
-    PermissionsBitField.Flags.ReadMessageHistory,
-    PermissionsBitField.Flags.AddReactions,
-    PermissionsBitField.Flags.ManageMessages,
-    PermissionsBitField.Flags.UseExternalEmojis,
-    PermissionsBitField.Flags.AttachFiles,
-    PermissionsBitField.Flags.Connect,
-    PermissionsBitField.Flags.Speak,
-    PermissionsBitField.Flags.ManageRoles,
-    PermissionsBitField.Flags.ManageEvents,
-    PermissionsBitField.Flags.CreateEvents,
-  ],
+  permissions = [DEFAULT_INSTALL_PERMISSION_BITS],
   scopes = ['bot', 'applications.commands', 'identify', 'email'],
   guildId,
   disableGuildSelect = false,
@@ -45,8 +36,7 @@ export function generateBotInstallUrl({
   redirectUri,
   responseType,
 }: GenerateInstallUrlOptions): string {
-  const permissionsBitField = new PermissionsBitField(permissions)
-  const permissionsValue = permissionsBitField.bitfield.toString()
+  const permissionsValue = combinePermissionBits(permissions)
 
   const url = new URL('https://discord.com/api/oauth2/authorize')
   url.searchParams.set('client_id', clientId)

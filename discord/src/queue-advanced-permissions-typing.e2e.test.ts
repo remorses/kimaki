@@ -135,7 +135,7 @@ describe('queue advanced: typing around permissions', () => {
         ⬥ permission-flow-done
         [bot typing]
         [bot typing]
-        *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2*"
+        *project ⋅ adapters ⋅ Ns ⋅ N% ⋅ deterministic-v2*"
       `)
     },
     20_000,

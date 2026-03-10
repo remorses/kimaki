@@ -367,17 +367,17 @@ describe('runtime lifecycle', () => {
         Reply with exactly: seq-alpha
         --- from: assistant (TestBot)
         ⬥ ok
-        *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2*
+        *project ⋅ adapters ⋅ Ns ⋅ N% ⋅ deterministic-v2*
         --- from: user (lifecycle-tester)
         Reply with exactly: seq-beta
         --- from: assistant (TestBot)
         ⬥ ok
-        *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2*
+        *project ⋅ adapters ⋅ Ns ⋅ N% ⋅ deterministic-v2*
         --- from: user (lifecycle-tester)
         Reply with exactly: seq-gamma
         --- from: assistant (TestBot)
         ⬥ ok
-        *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2*"
+        *project ⋅ adapters ⋅ Ns ⋅ N% ⋅ deterministic-v2*"
       `)
       expect(runtimeAfterC).toBe(runtimeAfterA)
     },
@@ -424,7 +424,7 @@ describe('runtime lifecycle', () => {
         Reply with exactly: footer-check
         --- from: assistant (TestBot)
         ⬥ ok
-        *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2*"
+        *project ⋅ adapters ⋅ Ns ⋅ N% ⋅ deterministic-v2*"
       `)
       expect(footerMessage).toBeDefined()
       if (!footerMessage) {
@@ -495,12 +495,12 @@ describe('runtime lifecycle', () => {
         Reply with exactly: reconnect-alpha
         --- from: assistant (TestBot)
         ⬥ ok
-        *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2*
+        *project ⋅ adapters ⋅ Ns ⋅ N% ⋅ deterministic-v2*
         --- from: user (lifecycle-tester)
         Reply with exactly: reconnect-beta
         --- from: assistant (TestBot)
         ⬥ ok
-        *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2*"
+        *project ⋅ adapters ⋅ Ns ⋅ N% ⋅ deterministic-v2*"
       `)
 
       const runtimeAfterRestart = getRuntime(thread.id)
@@ -537,7 +537,7 @@ describe('runtime lifecycle', () => {
         Reply with exactly: footer-high-usage
         --- from: assistant (TestBot)
         ⬥ ok
-        *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2*"
+        *project ⋅ adapters ⋅ Ns ⋅ N% ⋅ deterministic-v2*"
       `)
 
       const threadText = await discord.thread(thread.id).text()

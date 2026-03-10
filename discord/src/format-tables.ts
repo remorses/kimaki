@@ -5,16 +5,16 @@
 
 import { Lexer, type Token, type Tokens } from 'marked'
 import {
-  ButtonStyle,
-  ComponentType,
-  SeparatorSpacingSize,
-  type APIActionRowComponent,
-  type APIButtonComponent,
-  type APIContainerComponent,
-  type APITextDisplayComponent,
-  type APISeparatorComponent,
-  type APIMessageTopLevelComponent,
-} from 'discord.js'
+  PLATFORM_BUTTON_STYLE,
+  PLATFORM_COMPONENT_TYPE,
+  PLATFORM_SEPARATOR_SPACING,
+  type PlatformActionRowComponent,
+  type PlatformButtonComponent,
+  type PlatformContainerComponent,
+  type PlatformTextDisplayComponent,
+  type PlatformSeparatorComponent,
+  type PlatformMessageTopLevelComponent,
+} from './platform/components-v2.js'
 import {
   parseInlineHtmlRenderables,
   type HtmlButtonRenderable,
@@ -23,7 +23,7 @@ import {
 
 export type ContentSegment =
   | { type: 'text'; text: string }
-  | { type: 'components'; components: APIMessageTopLevelComponent[] }
+  | { type: 'components'; components: PlatformMessageTopLevelComponent[] }
 
 type TableRenderOptions = {
   resolveButtonCustomId?: ({
@@ -44,9 +44,7 @@ type RenderedTableCell =
     }
 
 type RenderedTableRow = {
-  components: Array<
-    APITextDisplayComponent | APIActionRowComponent<APIButtonComponent>
-  >
+  components: Array<PlatformTextDisplayComponent | PlatformActionRowComponent>
   componentCost: number
 }
 
@@ -115,30 +113,30 @@ export function buildTableComponents(
 
   return chunks.map((chunkRows) => {
     const children: Array<
-      | APITextDisplayComponent
-      | APIActionRowComponent<APIButtonComponent>
-      | APISeparatorComponent
+      | PlatformTextDisplayComponent
+      | PlatformActionRowComponent
+      | PlatformSeparatorComponent
     > = []
 
     for (let i = 0; i < chunkRows.length; i++) {
       if (i > 0) {
         children.push({
-          type: ComponentType.Separator,
+          type: PLATFORM_COMPONENT_TYPE.SEPARATOR,
           divider: true,
-          spacing: SeparatorSpacingSize.Small,
+          spacing: PLATFORM_SEPARATOR_SPACING.SMALL,
         })
       }
       children.push(...chunkRows[i]!.components)
     }
 
-    const container: APIContainerComponent = {
-      type: ComponentType.Container,
+    const container: PlatformContainerComponent = {
+      type: PLATFORM_COMPONENT_TYPE.CONTAINER,
       components: children,
     }
 
     return {
       type: 'components' as const,
-      components: [container] as APIMessageTopLevelComponent[],
+      components: [container] as PlatformMessageTopLevelComponent[],
     }
   })
 }
@@ -187,10 +185,10 @@ function buildTextRow({
 
   return {
     components: [
-      {
-        type: ComponentType.TextDisplay,
-        content: lines.join('\n'),
-      },
+        {
+          type: PLATFORM_COMPONENT_TYPE.TEXT_DISPLAY,
+          content: lines.join('\n'),
+        },
     ],
     componentCost: 1,
   }
@@ -222,9 +220,9 @@ function buildButtonRow({
     return buildTextRow({ headers, cells })
   }
 
-  const buttons: APIButtonComponent[] = buttonCells.map((buttonCell) => {
+  const buttons: PlatformButtonComponent[] = buttonCells.map((buttonCell) => {
     return {
-      type: ComponentType.Button,
+      type: PLATFORM_COMPONENT_TYPE.BUTTON,
       custom_id: buttonCell.customId,
       label: buttonCell.label,
       style: toButtonStyle({ variant: buttonCell.variant }),
@@ -232,17 +230,17 @@ function buildButtonRow({
     }
   })
 
-  const actionRow: APIActionRowComponent<APIButtonComponent> = {
-    type: ComponentType.ActionRow,
+  const actionRow: PlatformActionRowComponent = {
+    type: PLATFORM_COMPONENT_TYPE.ACTION_ROW,
     components: buttons,
   }
 
   return {
     components: [
-      {
-        type: ComponentType.TextDisplay,
-        content: lines.join('\n'),
-      },
+        {
+          type: PLATFORM_COMPONENT_TYPE.TEXT_DISPLAY,
+          content: lines.join('\n'),
+        },
       actionRow,
     ],
     componentCost: 2 + buttons.length,
@@ -391,20 +389,20 @@ function toButtonStyle({
 }: {
   variant: HtmlButtonRenderable['variant']
 }):
-  | ButtonStyle.Primary
-  | ButtonStyle.Secondary
-  | ButtonStyle.Success
-  | ButtonStyle.Danger {
+  | typeof PLATFORM_BUTTON_STYLE.PRIMARY
+  | typeof PLATFORM_BUTTON_STYLE.SECONDARY
+  | typeof PLATFORM_BUTTON_STYLE.SUCCESS
+  | typeof PLATFORM_BUTTON_STYLE.DANGER {
   if (variant === 'primary') {
-    return ButtonStyle.Primary
+    return PLATFORM_BUTTON_STYLE.PRIMARY
   }
   if (variant === 'success') {
-    return ButtonStyle.Success
+    return PLATFORM_BUTTON_STYLE.SUCCESS
   }
   if (variant === 'danger') {
-    return ButtonStyle.Danger
+    return PLATFORM_BUTTON_STYLE.DANGER
   }
-  return ButtonStyle.Secondary
+  return PLATFORM_BUTTON_STYLE.SECONDARY
 }
 
 function extractCellText(tokens: Token[]): string {
