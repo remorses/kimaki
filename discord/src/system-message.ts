@@ -352,6 +352,9 @@ ${agents && agents.length > 0 ? `
 Available agents:
 ${agents.map((a) => { return `- \`${a.name}\`${a.name === currentAgent ? ' (current)' : ''}${a.description ? `: ${a.description}` : ''}` }).join('\n')}
 ` : ''}
+## switching agents in the current session
+
+The user can switch the active agent mid-session using the Discord slash command \`/<agentname>-agent\`. For example if you are in plan mode and the user asks you to edit files, tell them to run \`/build-agent\` to switch to the build agent first.
 
 ## scheduled sends and task management
 
