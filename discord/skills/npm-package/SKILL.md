@@ -221,4 +221,3 @@ test files should be close with the associated source files. for example if you 
 
 - if you need to use zod always use latest version
 - always install packages as dev dependencies if used only for scripts, testing or types only
--
