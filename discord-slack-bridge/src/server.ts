@@ -167,11 +167,10 @@ export function createServer(config: ServerConfig): ServerComponents {
   // Slack event replay protection (event_id -> expiresAt)
   const seenEventIds = new Map<string, number>()
 
-  // Track known threads: threadTs → parentChannelId.
-  // Populated on first sight of a thread (webhook event or REST create-thread).
-  // Used by resolveSlackTarget to map numeric thread channel IDs back to
-  // the parent Slack channel, since thread IDs are now pure numeric ts.
-  const knownThreads = new Map<string, string>()
+  // Track announced threads so we emit THREAD_CREATE exactly once per thread.
+  // Bounded to prevent memory leaks on long-running bots.
+  const KNOWN_THREADS_MAX = 10_000
+  const knownThreads = new Set<string>()
 
   const app = new Spiceflow({ basePath: '' })
 
@@ -304,7 +303,7 @@ export function createServer(config: ServerConfig): ServerComponents {
         body,
         botUserId,
         guildId: workspaceId,
-        threadMap: knownThreads,
+
       })
       return withRateLimitHeaders(Response.json(message))
     },
@@ -327,7 +326,7 @@ export function createServer(config: ServerConfig): ServerComponents {
         body,
         botUserId,
         guildId: workspaceId,
-        threadMap: knownThreads,
+
       })
       return withRateLimitHeaders(Response.json(message))
     },
@@ -346,7 +345,7 @@ export function createServer(config: ServerConfig): ServerComponents {
         slack,
         channelId,
         messageId,
-        threadMap: knownThreads,
+
       })
       return withRateLimitHeaders(new Response(null, { status: 204 }))
     },
@@ -371,7 +370,7 @@ export function createServer(config: ServerConfig): ServerComponents {
         },
         botUserId,
         guildId: workspaceId,
-        threadMap: knownThreads,
+
       })
       return withRateLimitHeaders(Response.json(messages))
     },
@@ -393,7 +392,7 @@ export function createServer(config: ServerConfig): ServerComponents {
         messageId,
         botUserId,
         guildId: workspaceId,
-        threadMap: knownThreads,
+
       })
       return withRateLimitHeaders(Response.json(message))
     },
@@ -414,7 +413,6 @@ export function createServer(config: ServerConfig): ServerComponents {
       slack,
       channelId,
       guildId: workspaceId,
-      threadMap: knownThreads,
     })
     return withRateLimitHeaders(Response.json(channel))
   })
@@ -451,7 +449,7 @@ export function createServer(config: ServerConfig): ServerComponents {
         channelId,
         messageId,
         emoji: decodeURIComponent(emoji),
-        threadMap: knownThreads,
+
       })
       return withRateLimitHeaders(new Response(null, { status: 204 }))
     },
@@ -472,7 +470,7 @@ export function createServer(config: ServerConfig): ServerComponents {
         channelId,
         messageId,
         emoji: decodeURIComponent(emoji),
-        threadMap: knownThreads,
+
       })
       return withRateLimitHeaders(new Response(null, { status: 204 }))
     },
@@ -494,10 +492,16 @@ export function createServer(config: ServerConfig): ServerComponents {
         botUserId,
         guildId: workspaceId,
       })
-      // Register thread in knownThreads so resolveSlackTarget can map
-      // the numeric thread channel ID back to the parent Slack channel
-      const threadTs = decodeSlackTs(thread.id)
-      knownThreads.set(threadTs, parentChannelId)
+      // Register thread so we don't emit duplicate THREAD_CREATE events.
+      // thread.id now encodes both channel + ts, so no channel mapping needed.
+      const { threadTs } = (() => {
+        const decoded = thread.id.match(/^(\d{16})/)
+        return { threadTs: decoded ? decodeSlackTs(decoded[1]!) : '' }
+      })()
+      if (threadTs) {
+        evictIfFull(knownThreads, KNOWN_THREADS_MAX)
+        knownThreads.add(threadTs)
+      }
       gateway.broadcast(GatewayDispatchEvents.ThreadCreate, {
         ...thread,
         newly_created: true,
@@ -507,7 +511,11 @@ export function createServer(config: ServerConfig): ServerComponents {
   )
 
   // GET /api/v10/guilds/:guild_id
-  app.get('/api/v10/guilds/:guild_id', () => {
+  app.get('/api/v10/guilds/:guild_id', ({ params }) => {
+    const guildId = readString(params, 'guild_id')
+    if (guildId && guildId !== workspaceId) {
+      return unknownGuildResponse(guildId)
+    }
     return withRateLimitHeaders(
       Response.json({
         id: workspaceId,
@@ -528,7 +536,11 @@ export function createServer(config: ServerConfig): ServerComponents {
   })
 
   // GET /api/v10/guilds/:guild_id/channels
-  app.get('/api/v10/guilds/:guild_id/channels', async () => {
+  app.get('/api/v10/guilds/:guild_id/channels', async ({ params }) => {
+    const guildId = readString(params, 'guild_id')
+    if (guildId && guildId !== workspaceId) {
+      return unknownGuildResponse(guildId)
+    }
     const channels = await rest.listChannels({
       slack,
       guildId: workspaceId,
@@ -537,7 +549,11 @@ export function createServer(config: ServerConfig): ServerComponents {
   })
 
   // POST /api/v10/guilds/:guild_id/channels
-  app.post('/api/v10/guilds/:guild_id/channels', async ({ request }) => {
+  app.post('/api/v10/guilds/:guild_id/channels', async ({ params, request }) => {
+    const guildId = readString(params, 'guild_id')
+    if (guildId && guildId !== workspaceId) {
+      return unknownGuildResponse(guildId)
+    }
     const body = normalizeCreateGuildChannelBody(await request.json())
     const channel = await rest.createChannel({
       slack,
@@ -548,13 +564,21 @@ export function createServer(config: ServerConfig): ServerComponents {
   })
 
   // GET /api/v10/guilds/:guild_id/members
-  app.get('/api/v10/guilds/:guild_id/members', async () => {
+  app.get('/api/v10/guilds/:guild_id/members', async ({ params }) => {
+    const guildId = readString(params, 'guild_id')
+    if (guildId && guildId !== workspaceId) {
+      return unknownGuildResponse(guildId)
+    }
     const members = await rest.listGuildMembers({ slack })
     return withRateLimitHeaders(Response.json(members))
   })
 
   // GET /api/v10/guilds/:guild_id/members/:uid
   app.get('/api/v10/guilds/:guild_id/members/:uid', async ({ params }) => {
+    const guildId = readString(params, 'guild_id')
+    if (guildId && guildId !== workspaceId) {
+      return unknownGuildResponse(guildId)
+    }
     const userId = readString(params, 'uid')
     if (!userId) {
       return new Response('Missing uid', { status: 400 })
@@ -567,7 +591,11 @@ export function createServer(config: ServerConfig): ServerComponents {
   })
 
   // GET /api/v10/guilds/:guild_id/roles
-  app.get('/api/v10/guilds/:guild_id/roles', async () => {
+  app.get('/api/v10/guilds/:guild_id/roles', async ({ params }) => {
+    const guildId = readString(params, 'guild_id')
+    if (guildId && guildId !== workspaceId) {
+      return unknownGuildResponse(guildId)
+    }
     const roles = await rest.listGuildRoles({ slack })
     return withRateLimitHeaders(Response.json(roles))
   })
@@ -600,7 +628,7 @@ export function createServer(config: ServerConfig): ServerComponents {
           body: { content: body.data.content },
           botUserId,
           guildId: workspaceId,
-          threadMap: knownThreads,
+  
         })
         gateway.broadcastMessageCreate(message, workspaceId)
       }
@@ -610,7 +638,7 @@ export function createServer(config: ServerConfig): ServerComponents {
           slack,
           channelId: pending.channelId,
           messageId: encodeMessageId(
-            resolveSlackTarget(pending.channelId, knownThreads).channel,
+            resolveSlackTarget(pending.channelId).channel,
             pending.messageTs,
           ),
           body: {
@@ -619,7 +647,7 @@ export function createServer(config: ServerConfig): ServerComponents {
           },
           botUserId,
           guildId: workspaceId,
-          threadMap: knownThreads,
+  
         })
         gateway.broadcast(GatewayDispatchEvents.MessageUpdate, {
           ...message,
@@ -671,18 +699,21 @@ export function createServer(config: ServerConfig): ServerComponents {
         body: { content: body.content },
         botUserId,
         guildId: workspaceId,
-        threadMap: knownThreads,
+
       })
       return withRateLimitHeaders(Response.json(message))
     },
   )
 
   // PATCH /api/v10/webhooks/:webhook_id/:webhook_token/messages/:message_id
+  // Supports @original (edits the interaction source message) and specific
+  // message IDs (edits follow-up messages).
   app.patch(
     '/api/v10/webhooks/:webhook_id/:webhook_token/messages/:message_id',
     async ({ params, request }) => {
       const body = normalizeWebhookBody(await request.json())
       const webhookToken = readString(params, 'webhook_token')
+      const rawMessageId = readString(params, 'message_id')
       if (!webhookToken) {
         return new Response('Missing webhook_token', { status: 400 })
       }
@@ -692,7 +723,15 @@ export function createServer(config: ServerConfig): ServerComponents {
       if (!pending) {
         return new Response('Unknown webhook token', { status: 404 })
       }
-      if (!pending.messageTs) {
+
+      // Resolve which message to edit: @original → source message, otherwise decode ID
+      const resolvedMessageId = resolveWebhookMessageId({
+        rawMessageId,
+        pending,
+        channelId: pending.channelId,
+
+      })
+      if (!resolvedMessageId) {
         return new Response('No source message for webhook update', {
           status: 400,
         })
@@ -701,19 +740,56 @@ export function createServer(config: ServerConfig): ServerComponents {
       const message = await rest.editMessage({
         slack,
         channelId: pending.channelId,
-        messageId: encodeMessageId(
-          resolveSlackTarget(pending.channelId, knownThreads).channel,
-          pending.messageTs,
-        ),
+        messageId: resolvedMessageId,
         body: {
           content: body.content,
         },
         botUserId,
         guildId: workspaceId,
-        threadMap: knownThreads,
+
       })
 
       return withRateLimitHeaders(Response.json(message))
+    },
+  )
+
+  // DELETE /api/v10/webhooks/:webhook_id/:webhook_token/messages/:message_id
+  // Supports @original (deletes the interaction source message) and specific
+  // message IDs (deletes follow-up messages).
+  app.delete(
+    '/api/v10/webhooks/:webhook_id/:webhook_token/messages/:message_id',
+    async ({ params }) => {
+      const webhookToken = readString(params, 'webhook_token')
+      const rawMessageId = readString(params, 'message_id')
+      if (!webhookToken) {
+        return new Response('Missing webhook_token', { status: 400 })
+      }
+      const pending = [...pendingInteractions.values()].find((entry) => {
+        return entry.token === webhookToken
+      })
+      if (!pending) {
+        return new Response('Unknown webhook token', { status: 404 })
+      }
+
+      const resolvedMessageId = resolveWebhookMessageId({
+        rawMessageId,
+        pending,
+        channelId: pending.channelId,
+
+      })
+      if (!resolvedMessageId) {
+        return new Response('No source message for webhook delete', {
+          status: 400,
+        })
+      }
+
+      await rest.deleteMessage({
+        slack,
+        channelId: pending.channelId,
+        messageId: resolvedMessageId,
+
+      })
+      return withRateLimitHeaders(new Response(null, { status: 204 }))
     },
   )
 
@@ -781,7 +857,8 @@ export function createServer(config: ServerConfig): ServerComponents {
       ) {
         const threadKey = event.threadTs
         if (!knownThreads.has(threadKey)) {
-          knownThreads.set(threadKey, event.channel)
+          evictIfFull(knownThreads, KNOWN_THREADS_MAX)
+          knownThreads.add(threadKey)
           const threadChannel = events.buildThreadChannel({
             parentChannel: event.channel,
             threadTs: event.threadTs,
@@ -1071,8 +1148,22 @@ export function createServer(config: ServerConfig): ServerComponents {
 
   // ---- Gateway Setup ----
 
-  const httpServer = http.createServer((req, res) => {
-    return app.handleForNode(req, res)
+  // Wrap the HTTP handler to catch Slack API errors and return Discord-shaped
+  // error responses instead of generic 500s.
+  const httpServer = http.createServer(async (req, res) => {
+    try {
+      await app.handleForNode(req, res)
+    } catch (err) {
+      if (err instanceof rest.DiscordApiError) {
+        res.writeHead(err.httpStatus, { 'content-type': 'application/json' })
+        res.end(JSON.stringify({ code: err.discordCode, message: err.message }))
+        return
+      }
+      // Try mapping Slack SDK errors to Discord-shaped responses
+      const mapped = rest.mapSlackErrorToDiscordError(err)
+      res.writeHead(mapped.httpStatus, { 'content-type': 'application/json' })
+      res.end(JSON.stringify({ code: mapped.discordCode, message: mapped.message }))
+    }
   })
 
   const loadGatewayState = async (): Promise<GatewayState> => {
@@ -1178,6 +1269,23 @@ export function stopServer(components: ServerComponents): Promise<void> {
 
 // ---- Helpers ----
 
+/** Evict oldest entries from a Set when it exceeds maxSize. */
+function evictIfFull(set: Set<string>, maxSize: number): void {
+  if (set.size < maxSize) {
+    return
+  }
+  // Evict oldest 10% to avoid frequent evictions
+  const evictCount = Math.max(1, Math.floor(maxSize * 0.1))
+  let removed = 0
+  for (const key of set) {
+    if (removed >= evictCount) {
+      break
+    }
+    set.delete(key)
+    removed++
+  }
+}
+
 function pruneExpiredEventIds({
   seenEventIds,
   now,
@@ -1190,6 +1298,41 @@ function pruneExpiredEventIds({
       seenEventIds.delete(eventId)
     }
   }
+}
+
+/**
+ * Resolve the actual message ID to use for webhook follow-up routes.
+ * - `@original` → use the interaction's source message ts (pending.messageTs)
+ * - any other value → use it as-is (already an encoded message ID or raw ts)
+ * Returns undefined if @original is requested but no source message exists.
+ */
+function resolveWebhookMessageId({
+  rawMessageId,
+  pending,
+  channelId,
+}: {
+  rawMessageId: string | undefined
+  pending: PendingInteraction
+  channelId: string
+}): string | undefined {
+  if (!rawMessageId || rawMessageId === '@original') {
+    if (!pending.messageTs) {
+      return undefined
+    }
+    return encodeMessageId(
+      resolveSlackTarget(channelId).channel,
+      pending.messageTs,
+    )
+  }
+  return rawMessageId
+}
+
+/** Return a Discord-shaped 404 for unknown guild IDs. */
+function unknownGuildResponse(guildId: string): Response {
+  return Response.json(
+    { code: 10004, message: `Unknown Guild: ${guildId}` },
+    { status: 404 },
+  )
 }
 
 const SUPPORTED_SLACK_EVENT_TYPES: ReadonlySet<SupportedSlackEventType> =

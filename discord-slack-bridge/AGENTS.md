@@ -98,54 +98,67 @@ bot code doesn't call). These keep their Slack format as-is (`T04ABC123`,
 Guild ID    →  Slack workspace ID as-is    (T04ABC123)
 Channel ID  →  Slack channel ID as-is      (C04ABC123)
 User ID     →  Slack user ID as-is         (U04ABC123)
-Message ID  →  Slack ts with dot stripped   (1700000000000001)
-Thread ID   →  Slack ts with dot stripped   (1700000000000001)
+Message ID  →  Slack ts with dot stripped   (1700000000000001)  [16 digits]
+Thread ID   →  {ts_16}{channelLen_2}{channelBase36Pairs}       [20+ digits]
 ```
 
 Slack timestamps have format `"1700000000.000001"` (integer seconds + 6-digit
-microsecond suffix). Stripping the dot produces a numeric string parseable as
-BigInt.
+microsecond suffix). Stripping the dot produces a 16-digit numeric string.
 
-### Thread ID = parent message ID
+### Thread ID format
 
-In Slack, a thread IS its parent message — identified by `thread_ts` which
-equals the parent message's `ts`. So the thread channel ID and the parent
-message ID are the same numeric value. This is natural and avoids inventing
-synthetic IDs.
+Thread IDs are **reversible** — they encode both the Slack channel and
+thread_ts so `decodeThreadId` can recover the original values without any
+runtime state:
 
-### Thread → parent channel resolution
+```
+{ts_no_dot_16}{channel_char_count_2}{channel_base36_pairs}
 
-The numeric thread ID only encodes the `thread_ts`, not which Slack channel
-the thread lives in. To send messages to a thread, we need the parent Slack
-channel ID. This is maintained at runtime in `knownThreads: Map<string, string>`
-(threadTs → parentChannelId) in `server.ts`. It gets populated when:
+Example: channel "C04ABC123" (9 chars) + ts "1700000000.000001"
+→ "1700000000000001" + "09" + "120004101112010203"
+→ "170000000000000109120004101112010203"  (36 digits)
+```
 
-1. **Webhook event** arrives with `thread_ts` (Slack → Discord direction)
-2. **REST create-thread** request from discord.js (Discord → Slack direction)
+Each character of the Slack channel ID is encoded as a 2-digit base-36
+value (0-9 → 00-09, A-Z → 10-35). The encoding is fully reversible via
+`channelToNumeric`/`numericToChannel` in `id-converter.ts`.
 
-All functions that need to resolve a Discord channel ID to a Slack target
-(`resolveSlackTarget`) accept a `threadMap` parameter for this lookup.
+This design guarantees **no cross-channel thread ID collisions** — same
+`thread_ts` in different channels always produces different Discord IDs.
+
+### Why not a runtime map?
+
+An earlier design used a `Map<threadTs, channelId>` to resolve threads.
+This was replaced because:
+- Same `ts` in different channels would collide (Slack ts is channel-scoped)
+- Map is empty after restart — existing threads wouldn't resolve
+- Map grows unbounded on long-running bots
+
+With reversible encoding, `resolveSlackTarget` decodes the channel directly
+from the thread ID. No runtime map is needed for ID resolution.
+
+`knownThreads` in `server.ts` is now a bounded `Set<string>` used only for
+THREAD_CREATE event dedup (don't announce the same thread twice).
 
 ### Distinguishing threads from channels
 
-`isThreadChannelId(id)` checks if an ID is pure numeric with 7+ digits.
-Slack channel IDs always start with a letter (`C`, `G`, `D`), so there's
-no ambiguity.
+Thread IDs are 20+ digits (16 ts + 2 len + 2+ channel encoding).
+Message IDs are exactly 16 digits. Slack channel IDs start with a letter.
+`isThreadChannelId(id)` checks `^\d{20,}$` — unambiguous discrimination.
 
 ### Legacy format support
 
 The decoders (`decodeMessageId`, `decodeThreadId`) still accept the old
 `MSG_channel_ts` and `THR_channel_ts` prefixed formats for backward
-compatibility. New code always produces numeric-only IDs.
+compatibility. `resolveSlackTarget` also handles legacy `THR_` IDs.
 
 ### Implementation files
 
-- `id-converter.ts` — all encode/decode/resolve functions
-- `server.ts` — `knownThreads` map, thread registration on create/discover
+- `id-converter.ts` — all encode/decode/resolve functions, base36 helpers
+- `server.ts` — `knownThreads` Set (event dedup only), bounded with eviction
 - `event-translator.ts` — uses `encodeThreadId`/`encodeMessageId` for
   gateway events
-- `rest-translator.ts` — uses `resolveSlackTarget` with `threadMap` for
-  all REST operations
+- `rest-translator.ts` — uses `resolveSlackTarget` (no map param needed)
 
 ## Validation rules
 

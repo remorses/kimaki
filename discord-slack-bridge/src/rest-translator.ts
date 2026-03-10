@@ -86,7 +86,6 @@ export async function postMessage({
   body,
   botUserId,
   guildId,
-  threadMap,
 }: {
   slack: WebClient
   channelId: string
@@ -98,9 +97,8 @@ export async function postMessage({
   }
   botUserId: string
   guildId: string
-  threadMap?: Map<string, string>
 }): Promise<APIMessage> {
-  const { channel, threadTs } = resolveSlackTarget(channelId, threadMap)
+  const { channel, threadTs } = resolveSlackTarget(channelId)
 
   // Upload file attachments first (Slack shares them to the channel)
   if (body.attachments && body.attachments.length > 0) {
@@ -158,7 +156,6 @@ export async function editMessage({
   body,
   botUserId,
   guildId,
-  threadMap,
 }: {
   slack: WebClient
   channelId: string
@@ -166,9 +163,8 @@ export async function editMessage({
   body: { content?: string; components?: unknown[] }
   botUserId: string
   guildId: string
-  threadMap?: Map<string, string>
 }): Promise<APIMessage> {
-  const { channel } = resolveSlackTarget(channelId, threadMap)
+  const { channel } = resolveSlackTarget(channelId)
 
   let ts: string
   if (isEncodedMessageId(messageId)) {
@@ -210,14 +206,12 @@ export async function deleteMessage({
   slack,
   channelId,
   messageId,
-  threadMap,
 }: {
   slack: WebClient
   channelId: string
   messageId: string
-  threadMap?: Map<string, string>
 }): Promise<void> {
-  const { channel } = resolveSlackTarget(channelId, threadMap)
+  const { channel } = resolveSlackTarget(channelId)
 
   let ts: string
   if (isEncodedMessageId(messageId)) {
@@ -244,16 +238,14 @@ export async function getMessages({
   query,
   botUserId,
   guildId,
-  threadMap,
 }: {
   slack: WebClient
   channelId: string
   query: { limit?: string; before?: string; after?: string }
   botUserId: string
   guildId: string
-  threadMap?: Map<string, string>
 }): Promise<APIMessage[]> {
-  const { channel, threadTs } = resolveSlackTarget(channelId, threadMap)
+  const { channel, threadTs } = resolveSlackTarget(channelId)
   const limit = query.limit ? Number.parseInt(query.limit, 10) : 50
 
   // Discord uses snowflake-based before/after cursors.
@@ -325,6 +317,9 @@ export async function getMessages({
 
 /**
  * GET /channels/:id/messages/:mid -> single message fetch.
+ * Uses conversations.history (or conversations.replies for threads) with
+ * oldest=ts, latest=ts, inclusive=true to fetch the exact target message
+ * by its Slack timestamp.
  */
 export async function getMessage({
   slack,
@@ -332,40 +327,67 @@ export async function getMessage({
   messageId,
   botUserId,
   guildId,
-  threadMap,
 }: {
   slack: WebClient
   channelId: string
   messageId: string
   botUserId: string
   guildId: string
-  threadMap?: Map<string, string>
 }): Promise<APIMessage> {
-  const messages = await getMessages({
-    slack,
-    channelId,
-    query: {
-      before: undefined,
-      after: undefined,
-      limit: '1',
-    },
-    botUserId,
-    guildId,
-    threadMap,
-  })
+  const { channel, threadTs } = resolveSlackTarget(channelId)
 
-  const requestedId = isEncodedMessageId(messageId)
-    ? messageId
-    : encodeMessageId(resolveSlackTarget(channelId, threadMap).channel, messageId)
+  const targetTs = isEncodedMessageId(messageId)
+    ? decodeMessageId(messageId).ts
+    : messageId
 
-  const requestedMessage = messages.find((message) => {
-    return message.id === requestedId
-  })
-  if (requestedMessage) {
-    return requestedMessage
+  if (threadTs) {
+    // Thread message: use conversations.replies with inclusive range
+    const repliesArgs = {
+      channel,
+      ts: threadTs,
+      oldest: targetTs,
+      latest: targetTs,
+      inclusive: true,
+      limit: 1,
+    } satisfies ConversationsRepliesArguments
+    const result = await slack.conversations.replies(repliesArgs)
+    const msg = (result.messages ?? []).find((m) => {
+      return m.ts === targetTs
+    })
+    if (msg) {
+      return buildApiMessageFromSlack({
+        msg,
+        channel,
+        channelId,
+        botUserId,
+        guildId,
+      })
+    }
+    throw new MessageNotFoundError(messageId)
   }
 
-  throw new Error('Message not found')
+  // Channel message: use conversations.history with inclusive range
+  const historyArgs = {
+    channel,
+    oldest: targetTs,
+    latest: targetTs,
+    inclusive: true,
+    limit: 1,
+  } satisfies ConversationsHistoryArguments
+  const result = await slack.conversations.history(historyArgs)
+  const msg = (result.messages ?? []).find((m) => {
+    return m.ts === targetTs
+  })
+  if (msg) {
+    return buildApiMessageFromSlack({
+      msg,
+      channel,
+      channelId,
+      botUserId,
+      guildId,
+    })
+  }
+  throw new MessageNotFoundError(messageId)
 }
 
 // ---- Channels ----
@@ -377,15 +399,16 @@ export async function getChannel({
   slack,
   channelId,
   guildId,
-  threadMap,
 }: {
   slack: WebClient
   channelId: string
   guildId: string
-  threadMap?: Map<string, string>
 }): Promise<APIChannel> {
   if (isThreadChannelId(channelId)) {
-    const { channel, threadTs } = resolveSlackTarget(channelId, threadMap)
+    const { channel, threadTs } = resolveSlackTarget(channelId)
+    if (!threadTs) {
+      throw new Error(`Thread channel ${channelId} resolved without threadTs`)
+    }
     // For threads, build a synthetic channel object
     return {
       id: channelId,
@@ -398,7 +421,7 @@ export async function getChannel({
       thread_metadata: {
         archived: false,
         auto_archive_duration: 1440,
-        archive_timestamp: slackTsToIso(threadTs!),
+        archive_timestamp: slackTsToIso(threadTs),
         locked: false,
       },
     }
@@ -704,15 +727,13 @@ export async function addReaction({
   channelId,
   messageId,
   emoji,
-  threadMap,
 }: {
   slack: WebClient
   channelId: string
   messageId: string
   emoji: string
-  threadMap?: Map<string, string>
 }): Promise<void> {
-  const { channel } = resolveSlackTarget(channelId, threadMap)
+  const { channel } = resolveSlackTarget(channelId)
 
   let ts: string
   if (isEncodedMessageId(messageId)) {
@@ -741,15 +762,13 @@ export async function removeReaction({
   channelId,
   messageId,
   emoji,
-  threadMap,
 }: {
   slack: WebClient
   channelId: string
   messageId: string
   emoji: string
-  threadMap?: Map<string, string>
 }): Promise<void> {
-  const { channel } = resolveSlackTarget(channelId, threadMap)
+  const { channel } = resolveSlackTarget(channelId)
 
   let ts: string
   if (isEncodedMessageId(messageId)) {
@@ -961,6 +980,135 @@ function requireSlackUserId(
       ? { image_72: user.profile.image_72 }
       : undefined,
   }
+}
+
+// ---- Discord-shaped errors ----
+
+/**
+ * Bridge error that maps to a specific Discord REST API error shape.
+ * Route handlers catch these and return { code, message } JSON with the
+ * appropriate HTTP status.
+ */
+export class DiscordApiError extends Error {
+  readonly httpStatus: number
+  readonly discordCode: number
+
+  constructor({
+    httpStatus,
+    discordCode,
+    message,
+  }: {
+    httpStatus: number
+    discordCode: number
+    message: string
+  }) {
+    super(message)
+    this.httpStatus = httpStatus
+    this.discordCode = discordCode
+  }
+
+  toResponse(): Response {
+    return Response.json(
+      { code: this.discordCode, message: this.message },
+      { status: this.httpStatus },
+    )
+  }
+}
+
+export class MessageNotFoundError extends DiscordApiError {
+  constructor(messageId: string) {
+    super({
+      httpStatus: 404,
+      discordCode: 10008,
+      message: `Unknown Message: ${messageId}`,
+    })
+  }
+}
+
+export class UnknownChannelError extends DiscordApiError {
+  constructor(channelId: string) {
+    super({
+      httpStatus: 404,
+      discordCode: 10003,
+      message: `Unknown Channel: ${channelId}`,
+    })
+  }
+}
+
+export class UnknownGuildError extends DiscordApiError {
+  constructor(guildId: string) {
+    super({
+      httpStatus: 404,
+      discordCode: 10004,
+      message: `Unknown Guild: ${guildId}`,
+    })
+  }
+}
+
+export class MissingAccessError extends DiscordApiError {
+  constructor() {
+    super({
+      httpStatus: 403,
+      discordCode: 50001,
+      message: 'Missing Access',
+    })
+  }
+}
+
+export class MissingPermissionsError extends DiscordApiError {
+  constructor() {
+    super({
+      httpStatus: 403,
+      discordCode: 50013,
+      message: 'Missing Permissions',
+    })
+  }
+}
+
+/**
+ * Maps a Slack API error (from WebClient) to a DiscordApiError.
+ * Slack errors have a `data.error` string like "channel_not_found".
+ */
+export function mapSlackErrorToDiscordError(err: unknown): DiscordApiError {
+  const slackError = extractSlackErrorCode(err)
+  switch (slackError) {
+    case 'channel_not_found':
+      return new UnknownChannelError('unknown')
+    case 'message_not_found':
+      return new MessageNotFoundError('unknown')
+    case 'not_in_channel':
+      return new MissingAccessError()
+    case 'missing_scope':
+    case 'not_allowed_token_type':
+      return new MissingPermissionsError()
+    case 'is_archived':
+      return new DiscordApiError({
+        httpStatus: 403,
+        discordCode: 50001,
+        message: 'Channel is archived',
+      })
+    default:
+      return new DiscordApiError({
+        httpStatus: 500,
+        discordCode: 0,
+        message: `Slack API error: ${slackError || 'unknown'}`,
+      })
+  }
+}
+
+/** Extract the error code string from a Slack WebClient error. */
+function extractSlackErrorCode(err: unknown): string | undefined {
+  if (!(err instanceof Error)) {
+    return undefined
+  }
+  // @slack/web-api errors have a `data` property with { ok: false, error: '...' }
+  const data = (err as Error & { data?: { error?: string } }).data
+  if (data?.error) {
+    return data.error
+  }
+  // Some errors embed the code in the message like "An API error occurred: channel_not_found"
+  const match = err.message.match(/An API error occurred: (\S+)/)
+  return match?.[1]
 }
 
 

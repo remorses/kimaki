@@ -8,6 +8,7 @@ import {
   translateReaction,
 } from '../src/event-translator.js'
 import { GatewayDispatchEvents } from 'discord-api-types/v10'
+import { encodeThreadId } from '../src/id-converter.js'
 
 describe('translateReaction', () => {
   test('uses parent channel for top-level message reactions', () => {
@@ -45,8 +46,8 @@ describe('translateReaction', () => {
       threadTs: '1700000000.123456',
     })
 
-    // Thread channel IDs are now pure numeric (encoded Slack ts)
-    expect(translated.data.channel_id).toBe('1700000000123456')
+    // Thread channel IDs encode both channel and thread_ts (20+ digits)
+    expect(translated.data.channel_id).toBe(encodeThreadId('C123', '1700000000.123456'))
   })
 })
 

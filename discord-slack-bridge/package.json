@@ -35,7 +35,8 @@
   "scripts": {
     "build": "tsc",
     "test": "vitest",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "echo-bot": "doppler run -p website -c dev -- tsx scripts/echo-bot.ts"
   },
   "dependencies": {
     "@slack/web-api": "^7.14.1",
@@ -48,6 +49,7 @@
     "@types/ws": "^8.5.0",
     "discord.js": "^14.25.1",
     "slack-digital-twin": "workspace:^",
+    "traforo": "workspace:^",
     "typescript": "^5.7.0",
     "vitest": "^3.0.0"
   }
