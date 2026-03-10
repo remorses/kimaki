@@ -21,7 +21,7 @@ import {
 import {
   SILENT_MESSAGE_FLAGS,
   reactToThread,
-  resolveTextChannel,
+  resolveProjectDirectoryFromAutocomplete,
 } from '../discord-utils.js'
 import { createLogger, LogPrefix } from '../logger.js'
 import { notifyError } from '../sentry.js'
@@ -452,16 +452,10 @@ export async function handleNewWorktreeAutocomplete({
   try {
     const focusedValue = interaction.options.getFocused()
 
-    let projectDirectory: string | undefined
-    if (interaction.channel) {
-      const textChannel = await resolveTextChannel(
-        interaction.channel as TextChannel | ThreadChannel | null,
-      )
-      if (textChannel) {
-        const channelConfig = await getChannelDirectory(textChannel.id)
-        projectDirectory = channelConfig?.directory
-      }
-    }
+    // interaction.channel can be null when the channel isn't cached
+    // (common with gateway-proxy). Use channelId which is always available
+    // from the raw interaction payload.
+    const projectDirectory = await resolveProjectDirectoryFromAutocomplete(interaction)
 
     if (!projectDirectory) {
       await interaction.respond([])

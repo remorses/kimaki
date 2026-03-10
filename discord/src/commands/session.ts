@@ -6,7 +6,7 @@ import path from 'node:path'
 import type { CommandContext, AutocompleteContext } from './types.js'
 import { getChannelDirectory } from '../database.js'
 import { initializeOpencodeForDirectory } from '../opencode.js'
-import { SILENT_MESSAGE_FLAGS } from '../discord-utils.js'
+import { SILENT_MESSAGE_FLAGS, resolveProjectDirectoryFromAutocomplete } from '../discord-utils.js'
 import { getOrCreateRuntime } from '../session-handler/thread-session-runtime.js'
 import { createLogger, LogPrefix } from '../logger.js'
 import * as errore from 'errore'
@@ -110,17 +110,10 @@ async function handleAgentAutocomplete({
 }): Promise<void> {
   const focusedValue = interaction.options.getFocused()
 
-  let projectDirectory: string | undefined
-
-  if (
-    interaction.channel &&
-    interaction.channel.type === ChannelType.GuildText
-  ) {
-    const channelConfig = await getChannelDirectory(interaction.channel.id)
-    if (channelConfig) {
-      projectDirectory = channelConfig.directory
-    }
-  }
+  // interaction.channel can be null when the channel isn't cached
+  // (common with gateway-proxy). Use channelId which is always available
+  // from the raw interaction payload.
+  const projectDirectory = await resolveProjectDirectoryFromAutocomplete(interaction)
 
   if (!projectDirectory) {
     await interaction.respond([])
@@ -186,17 +179,7 @@ export async function handleSessionAutocomplete({
     .filter((f) => f)
   const currentQuery = (parts[parts.length - 1] || '').trim()
 
-  let projectDirectory: string | undefined
-
-  if (
-    interaction.channel &&
-    interaction.channel.type === ChannelType.GuildText
-  ) {
-    const channelConfig = await getChannelDirectory(interaction.channel.id)
-    if (channelConfig) {
-      projectDirectory = channelConfig.directory
-    }
-  }
+  const projectDirectory = await resolveProjectDirectoryFromAutocomplete(interaction)
 
   if (!projectDirectory) {
     await interaction.respond([])
