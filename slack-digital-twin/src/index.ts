@@ -9,6 +9,9 @@
 //   - Webhook sender for simulating Events API delivery
 //   - No WebSocket/Socket Mode — Slack Events API uses HTTP webhooks
 
+import fs from 'node:fs'
+import path from 'node:path'
+import url from 'node:url'
 import { createPrismaClient, type PrismaClient } from './db.js'
 import {
   generateWorkspaceId,
@@ -140,78 +143,47 @@ export class SlackDigitalTwin {
   // --- Schema & Seeding ---
 
   private async applySchema(): Promise<void> {
-    // Create tables from Prisma schema manually for in-memory SQLite.
-    // Prisma doesn't support db push on libsql adapter, so we create
-    // tables with raw SQL matching the schema.prisma models.
-    await this.prisma.$executeRawUnsafe(`
-      CREATE TABLE IF NOT EXISTS "Workspace" (
-        "id" TEXT PRIMARY KEY,
-        "name" TEXT NOT NULL,
-        "domain" TEXT NOT NULL
+    // Read the generated schema.sql (created by `pnpm generate:sql` from
+    // schema.prisma via prisma db push + sqlite3 .schema). This avoids
+    // hand-writing CREATE TABLE statements that can drift from the prisma schema.
+    // src/ is always shipped in the package, so ../src/schema.sql works from
+    // both src/ (dev with tsx) and dist/ (built with tsc).
+    const __dirname = path.dirname(url.fileURLToPath(import.meta.url))
+    const schemaPath = path.resolve(__dirname, '../src/schema.sql')
+
+    const sql = fs.readFileSync(schemaPath, 'utf-8')
+
+    // Same parsing approach as discord/src/db.ts migrateSchema():
+    // 1. Split on semicolons into statements
+    // 2. Strip per-line SQL comments within each statement
+    // 3. Filter out empty and sqlite_sequence statements
+    // 4. Make CREATE INDEX idempotent with IF NOT EXISTS
+    const statements = sql
+      .split(';')
+      .map((s) =>
+        s
+          .split('\n')
+          .filter((line) => !line.trimStart().startsWith('--'))
+          .join('\n')
+          .trim(),
       )
-    `)
-    await this.prisma.$executeRawUnsafe(`
-      CREATE TABLE IF NOT EXISTS "Channel" (
-        "id" TEXT PRIMARY KEY,
-        "workspaceId" TEXT NOT NULL,
-        "name" TEXT NOT NULL,
-        "topic" TEXT NOT NULL DEFAULT '',
-        "purpose" TEXT NOT NULL DEFAULT '',
-        "isPrivate" BOOLEAN NOT NULL DEFAULT false,
-        "isArchived" BOOLEAN NOT NULL DEFAULT false,
-        "createdAt" DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
-        FOREIGN KEY ("workspaceId") REFERENCES "Workspace"("id") ON DELETE CASCADE
+      .filter(
+        (s) =>
+          s.length > 0 &&
+          !/^CREATE\s+TABLE\s+["']?sqlite_sequence["']?\s*\(/i.test(s),
       )
-    `)
-    await this.prisma.$executeRawUnsafe(`
-      CREATE TABLE IF NOT EXISTS "User" (
-        "id" TEXT PRIMARY KEY,
-        "workspaceId" TEXT NOT NULL,
-        "name" TEXT NOT NULL,
-        "realName" TEXT NOT NULL DEFAULT '',
-        "isBot" BOOLEAN NOT NULL DEFAULT false,
-        "avatar" TEXT,
-        FOREIGN KEY ("workspaceId") REFERENCES "Workspace"("id") ON DELETE CASCADE
+      .map((s) =>
+        s
+          .replace(
+            /^CREATE\s+UNIQUE\s+INDEX\b(?!\s+IF)/i,
+            'CREATE UNIQUE INDEX IF NOT EXISTS',
+          )
+          .replace(/^CREATE\s+INDEX\b(?!\s+IF)/i, 'CREATE INDEX IF NOT EXISTS'),
       )
-    `)
-    await this.prisma.$executeRawUnsafe(`
-      CREATE TABLE IF NOT EXISTS "Message" (
-        "id" INTEGER PRIMARY KEY AUTOINCREMENT,
-        "channelId" TEXT NOT NULL,
-        "userId" TEXT NOT NULL,
-        "botId" TEXT,
-        "text" TEXT NOT NULL DEFAULT '',
-        "ts" TEXT NOT NULL UNIQUE,
-        "threadTs" TEXT,
-        "editedTs" TEXT,
-        "blocks" TEXT NOT NULL DEFAULT '[]',
-        "attachments" TEXT NOT NULL DEFAULT '[]',
-        "files" TEXT NOT NULL DEFAULT '[]',
-        "isDeleted" BOOLEAN NOT NULL DEFAULT false,
-        "createdAt" DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
-        FOREIGN KEY ("channelId") REFERENCES "Channel"("id") ON DELETE CASCADE
-      )
-    `)
-    await this.prisma.$executeRawUnsafe(`
-      CREATE INDEX IF NOT EXISTS "Message_channelId_ts_idx" ON "Message"("channelId", "ts")
-    `)
-    await this.prisma.$executeRawUnsafe(`
-      CREATE INDEX IF NOT EXISTS "Message_channelId_threadTs_idx" ON "Message"("channelId", "threadTs")
-    `)
-    await this.prisma.$executeRawUnsafe(`
-      CREATE TABLE IF NOT EXISTS "Reaction" (
-        "id" INTEGER PRIMARY KEY AUTOINCREMENT,
-        "channelId" TEXT NOT NULL,
-        "messageTs" TEXT NOT NULL,
-        "userId" TEXT NOT NULL,
-        "name" TEXT NOT NULL,
-        FOREIGN KEY ("messageTs") REFERENCES "Message"("ts") ON DELETE CASCADE
-      )
-    `)
-    await this.prisma.$executeRawUnsafe(`
-      CREATE UNIQUE INDEX IF NOT EXISTS "Reaction_channelId_messageTs_userId_name_key"
-      ON "Reaction"("channelId", "messageTs", "userId", "name")
-    `)
+
+    for (const statement of statements) {
+      await this.prisma.$executeRawUnsafe(statement)
+    }
   }
 
   private async seed(): Promise<void> {

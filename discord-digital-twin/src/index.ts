@@ -3,6 +3,9 @@
 // can connect to. Used for automated testing of the Kimaki bot without
 // hitting real Discord.
 
+import fs from 'node:fs'
+import path from 'node:path'
+import url from 'node:url'
 import {
   ChannelType,
   GatewayDispatchEvents,
@@ -645,25 +648,46 @@ export class DigitalDiscord {
   // --- Internal ---
 
   private async applySchema(): Promise<void> {
-    // Create tables one at a time -- libsql doesn't support multiple
-    // statements in a single $executeRawUnsafe call.
-    const statements = [
-      `CREATE TABLE IF NOT EXISTS "Guild" ("id" TEXT NOT NULL PRIMARY KEY, "name" TEXT NOT NULL, "ownerId" TEXT NOT NULL, "icon" TEXT, "description" TEXT, "features" TEXT NOT NULL DEFAULT '[]', "createdAt" DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP)`,
-      `CREATE TABLE IF NOT EXISTS "User" ("id" TEXT NOT NULL PRIMARY KEY, "username" TEXT NOT NULL, "discriminator" TEXT NOT NULL DEFAULT '0', "avatar" TEXT, "bot" BOOLEAN NOT NULL DEFAULT false, "system" BOOLEAN NOT NULL DEFAULT false, "flags" INTEGER NOT NULL DEFAULT 0, "globalName" TEXT)`,
-      `CREATE TABLE IF NOT EXISTS "Channel" ("id" TEXT NOT NULL PRIMARY KEY, "guildId" TEXT, "type" INTEGER NOT NULL, "name" TEXT, "topic" TEXT, "parentId" TEXT, "position" INTEGER NOT NULL DEFAULT 0, "ownerId" TEXT, "archived" BOOLEAN NOT NULL DEFAULT false, "locked" BOOLEAN NOT NULL DEFAULT false, "autoArchiveDuration" INTEGER NOT NULL DEFAULT 1440, "archiveTimestamp" DATETIME, "lastMessageId" TEXT, "messageCount" INTEGER NOT NULL DEFAULT 0, "memberCount" INTEGER NOT NULL DEFAULT 0, "totalMessageSent" INTEGER NOT NULL DEFAULT 0, "rateLimitPerUser" INTEGER NOT NULL DEFAULT 0, "starterMessageId" TEXT, "createdAt" DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP, CONSTRAINT "Channel_guildId_fkey" FOREIGN KEY ("guildId") REFERENCES "Guild" ("id") ON DELETE CASCADE ON UPDATE CASCADE)`,
-      `CREATE TABLE IF NOT EXISTS "Message" ("id" TEXT NOT NULL PRIMARY KEY, "channelId" TEXT NOT NULL, "authorId" TEXT NOT NULL, "content" TEXT NOT NULL DEFAULT '', "timestamp" DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP, "editedTimestamp" DATETIME, "tts" BOOLEAN NOT NULL DEFAULT false, "mentionEveryone" BOOLEAN NOT NULL DEFAULT false, "pinned" BOOLEAN NOT NULL DEFAULT false, "type" INTEGER NOT NULL DEFAULT 0, "flags" INTEGER NOT NULL DEFAULT 0, "embeds" TEXT NOT NULL DEFAULT '[]', "components" TEXT NOT NULL DEFAULT '[]', "attachments" TEXT NOT NULL DEFAULT '[]', "mentions" TEXT NOT NULL DEFAULT '[]', "mentionRoles" TEXT NOT NULL DEFAULT '[]', "nonce" TEXT, "webhookId" TEXT, "applicationId" TEXT, "messageReference" TEXT, "createdAt" DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP, CONSTRAINT "Message_channelId_fkey" FOREIGN KEY ("channelId") REFERENCES "Channel" ("id") ON DELETE CASCADE ON UPDATE CASCADE)`,
-      `CREATE TABLE IF NOT EXISTS "GuildMember" ("guildId" TEXT NOT NULL, "userId" TEXT NOT NULL, "nick" TEXT, "roles" TEXT NOT NULL DEFAULT '[]', "joinedAt" DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP, "deaf" BOOLEAN NOT NULL DEFAULT false, "mute" BOOLEAN NOT NULL DEFAULT false, "permissions" TEXT, PRIMARY KEY ("guildId", "userId"), CONSTRAINT "GuildMember_guildId_fkey" FOREIGN KEY ("guildId") REFERENCES "Guild" ("id") ON DELETE CASCADE ON UPDATE CASCADE, CONSTRAINT "GuildMember_userId_fkey" FOREIGN KEY ("userId") REFERENCES "User" ("id") ON DELETE CASCADE ON UPDATE CASCADE)`,
-      `CREATE TABLE IF NOT EXISTS "Role" ("id" TEXT NOT NULL PRIMARY KEY, "guildId" TEXT NOT NULL, "name" TEXT NOT NULL, "color" INTEGER NOT NULL DEFAULT 0, "hoist" BOOLEAN NOT NULL DEFAULT false, "position" INTEGER NOT NULL DEFAULT 0, "permissions" TEXT NOT NULL DEFAULT '0', "managed" BOOLEAN NOT NULL DEFAULT false, "mentionable" BOOLEAN NOT NULL DEFAULT false, "flags" INTEGER NOT NULL DEFAULT 0, CONSTRAINT "Role_guildId_fkey" FOREIGN KEY ("guildId") REFERENCES "Guild" ("id") ON DELETE CASCADE ON UPDATE CASCADE)`,
-      `CREATE TABLE IF NOT EXISTS "Reaction" ("id" INTEGER NOT NULL PRIMARY KEY AUTOINCREMENT, "messageId" TEXT NOT NULL, "userId" TEXT NOT NULL, "emoji" TEXT NOT NULL, CONSTRAINT "Reaction_messageId_fkey" FOREIGN KEY ("messageId") REFERENCES "Message" ("id") ON DELETE CASCADE ON UPDATE CASCADE)`,
-      `CREATE UNIQUE INDEX IF NOT EXISTS "Reaction_messageId_userId_emoji_key" ON "Reaction"("messageId", "userId", "emoji")`,
-      `CREATE TABLE IF NOT EXISTS "ThreadMember" ("channelId" TEXT NOT NULL, "userId" TEXT NOT NULL, "joinedAt" DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP, PRIMARY KEY ("channelId", "userId"), CONSTRAINT "ThreadMember_channelId_fkey" FOREIGN KEY ("channelId") REFERENCES "Channel" ("id") ON DELETE CASCADE ON UPDATE CASCADE)`,
-      `CREATE TABLE IF NOT EXISTS "ApplicationCommand" ("id" TEXT NOT NULL PRIMARY KEY, "applicationId" TEXT NOT NULL, "guildId" TEXT, "name" TEXT NOT NULL, "description" TEXT NOT NULL DEFAULT '', "type" INTEGER NOT NULL DEFAULT 1, "options" TEXT NOT NULL DEFAULT '[]', "defaultMemberPermissions" TEXT, "dmPermission" BOOLEAN NOT NULL DEFAULT true, "nsfw" BOOLEAN NOT NULL DEFAULT false, "version" TEXT NOT NULL)`,
-      `CREATE UNIQUE INDEX IF NOT EXISTS "ApplicationCommand_applicationId_guildId_name_key" ON "ApplicationCommand"("applicationId", "guildId", "name")`,
-      `CREATE TABLE IF NOT EXISTS "InteractionResponse" ("interactionId" TEXT NOT NULL PRIMARY KEY, "interactionToken" TEXT NOT NULL, "applicationId" TEXT NOT NULL, "channelId" TEXT NOT NULL, "type" INTEGER NOT NULL, "messageId" TEXT, "data" TEXT, "acknowledged" BOOLEAN NOT NULL DEFAULT false, "createdAt" DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP)`,
-      `CREATE UNIQUE INDEX IF NOT EXISTS "InteractionResponse_interactionToken_key" ON "InteractionResponse"("interactionToken")`,
-    ]
-    for (const sql of statements) {
-      await this.prisma.$executeRawUnsafe(sql)
+    // Read the generated schema.sql (created by `pnpm generate:sql` from
+    // schema.prisma via prisma db push + sqlite3 .schema). This avoids
+    // hand-writing CREATE TABLE statements that can drift from the prisma schema.
+    // src/ is always shipped in the package, so ../src/schema.sql works from
+    // both src/ (dev with tsx) and dist/ (built with tsc).
+    const __dirname = path.dirname(url.fileURLToPath(import.meta.url))
+    const schemaPath = path.resolve(__dirname, '../src/schema.sql')
+
+    const sql = fs.readFileSync(schemaPath, 'utf-8')
+
+    // Same parsing approach as discord/src/db.ts migrateSchema():
+    // 1. Split on semicolons into statements
+    // 2. Strip per-line SQL comments within each statement
+    // 3. Filter out empty and sqlite_sequence statements
+    // 4. Make CREATE INDEX idempotent with IF NOT EXISTS
+    const statements = sql
+      .split(';')
+      .map((s) =>
+        s
+          .split('\n')
+          .filter((line) => !line.trimStart().startsWith('--'))
+          .join('\n')
+          .trim(),
+      )
+      .filter(
+        (s) =>
+          s.length > 0 &&
+          !/^CREATE\s+TABLE\s+["']?sqlite_sequence["']?\s*\(/i.test(s),
+      )
+      .map((s) =>
+        s
+          .replace(
+            /^CREATE\s+UNIQUE\s+INDEX\b(?!\s+IF)/i,
+            'CREATE UNIQUE INDEX IF NOT EXISTS',
+          )
+          .replace(/^CREATE\s+INDEX\b(?!\s+IF)/i, 'CREATE INDEX IF NOT EXISTS'),
+      )
+
+    for (const statement of statements) {
+      await this.prisma.$executeRawUnsafe(statement)
     }
   }
 

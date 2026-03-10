@@ -296,7 +296,7 @@ describe('slack digital twin with @slack/web-api', () => {
   // --- users.list ---
 
   test('users.list returns all workspace users', async () => {
-    const result = await client.users.list()
+    const result = await client.users.list({})
     expect(result.ok).toBe(true)
     const names = result.members?.map((m) => m.name) ?? []
     expect(names).toContain('alice')
