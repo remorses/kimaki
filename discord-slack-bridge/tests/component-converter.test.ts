@@ -97,7 +97,7 @@ describe('componentsToBlocks', () => {
     expect(blocks[0]!.elements).toMatchInlineSnapshot(`
       [
         {
-          "action_id": "link_https://example.com/docs",
+          "action_id": "link_de106e607d0e711199de3fb7eb98fe5d",
           "text": {
             "emoji": true,
             "text": "Open docs",

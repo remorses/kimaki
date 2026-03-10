@@ -37,6 +37,15 @@ describe('encodeThreadId / decodeThreadId', () => {
     expect(() => decodeThreadId('C04ABC123')).toThrow('Invalid thread channel ID')
     expect(() => decodeThreadId('MSG_C04_123')).toThrow('Invalid thread channel ID')
     expect(() => decodeThreadId('')).toThrow('Invalid thread channel ID')
+    expect(() => decodeThreadId('THR_C04ABC123_123456')).toThrow(
+      'Invalid encoded Slack timestamp',
+    )
+  })
+
+  test('throws when encoding malformed Slack timestamp', () => {
+    expect(() => encodeThreadId('C04ABC123', '1503435956')).toThrow(
+      'Invalid Slack timestamp',
+    )
   })
 })
 
@@ -59,6 +68,15 @@ describe('encodeMessageId / decodeMessageId', () => {
   test('throws on invalid message ID', () => {
     expect(() => decodeMessageId('THR_C04_123')).toThrow('Invalid message ID')
     expect(() => decodeMessageId('random')).toThrow('Invalid message ID')
+    expect(() => decodeMessageId('MSG_C04ABC123_123456')).toThrow(
+      'Invalid encoded Slack timestamp',
+    )
+  })
+
+  test('throws when encoding malformed message timestamp', () => {
+    expect(() => encodeMessageId('C04ABC123', '1503435956')).toThrow(
+      'Invalid Slack timestamp',
+    )
   })
 })
 

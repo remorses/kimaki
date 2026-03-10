@@ -15,6 +15,7 @@ import type { APIChannel, APIGuild } from 'discord-api-types/v10'
 import { SlackBridgeGateway, type GatewayState } from './gateway.js'
 import * as rest from './rest-translator.js'
 import * as events from './event-translator.js'
+import { encodeMessageId, resolveDiscordChannelId } from './id-converter.js'
 import type {
   SlackEventEnvelope,
   SlackEvent,
@@ -46,6 +47,8 @@ export interface ServerComponents {
 const USER_CACHE_TTL_MS = 60 * 60 * 1000
 const USER_CACHE_MAX = 500
 const userCache = new Map<string, { user: CachedSlackUser; expiresAt: number }>()
+
+const EVENT_DEDUPE_TTL_MS = 5 * 60 * 1000
 
 /**
  * Look up a Slack user with caching.
@@ -114,6 +117,9 @@ export function createServer(config: ServerConfig): ServerComponents {
   // Pending interactions awaiting discord.js responses
   const pendingInteractions = new Map<string, PendingInteraction>()
 
+  // Slack event replay protection (event_id -> expiresAt)
+  const seenEventIds = new Map<string, number>()
+
   // Track known threads so we can emit THREAD_CREATE on first sight
   const knownThreads = new Set<string>()
 
@@ -167,6 +173,14 @@ export function createServer(config: ServerConfig): ServerComponents {
 
     // Event callback
     if (payload.type === 'event_callback' && payload.event) {
+      const eventId = payload.event_id
+      if (eventId) {
+        pruneExpiredEventIds({ seenEventIds, now: Date.now() })
+        if (seenEventIds.has(eventId)) {
+          return new Response('ok', { status: 200 })
+        }
+        seenEventIds.set(eventId, Date.now() + EVENT_DEDUPE_TTL_MS)
+      }
       void handleEvent(payload.event)
     }
 
@@ -234,7 +248,6 @@ export function createServer(config: ServerConfig): ServerComponents {
         botUserId,
         guildId: workspaceId,
       })
-      gateway.broadcastMessageCreate(message, workspaceId)
       return withRateLimitHeaders(Response.json(message))
     },
   )
@@ -252,10 +265,6 @@ export function createServer(config: ServerConfig): ServerComponents {
         botUserId,
         guildId: workspaceId,
       })
-      gateway.broadcast(GatewayDispatchEvents.MessageUpdate, {
-        ...message,
-        guild_id: workspaceId,
-      })
       return withRateLimitHeaders(Response.json(message))
     },
   )
@@ -268,11 +277,6 @@ export function createServer(config: ServerConfig): ServerComponents {
         slack,
         channelId: params.channel_id as string,
         messageId: params.message_id as string,
-      })
-      gateway.broadcast(GatewayDispatchEvents.MessageDelete, {
-        id: params.message_id,
-        channel_id: params.channel_id,
-        guild_id: workspaceId,
       })
       return withRateLimitHeaders(new Response(null, { status: 204 }))
     },
@@ -403,9 +407,13 @@ export function createServer(config: ServerConfig): ServerComponents {
         data?: { content?: string; flags?: number }
       }
       const interactionId = params.interaction_id as string
+      const interactionToken = params.interaction_token as string
       const pending = pendingInteractions.get(interactionId)
       if (!pending) {
         return new Response('Unknown interaction', { status: 404 })
+      }
+      if (pending.token !== interactionToken) {
+        return new Response('Invalid interaction token', { status: 401 })
       }
 
       pending.acknowledged = true
@@ -450,7 +458,6 @@ export function createServer(config: ServerConfig): ServerComponents {
         botUserId,
         guildId: workspaceId,
       })
-      gateway.broadcastMessageCreate(message, workspaceId)
       return withRateLimitHeaders(Response.json(message))
     },
   )
@@ -548,9 +555,14 @@ export function createServer(config: ServerConfig): ServerComponents {
       eventType === 'reaction_removed'
     ) {
       const reactionEvent = event as unknown as SlackReactionEvent
+      const threadTs = await resolveThreadTsForReaction({
+        slack,
+        event: reactionEvent,
+      })
       const translated = events.translateReaction({
         event: reactionEvent,
         guildId: workspaceId,
+        threadTs,
       })
       gateway.broadcast(translated.eventName, translated.data)
       return
@@ -634,10 +646,22 @@ export function createServer(config: ServerConfig): ServerComponents {
       for (const action of payload.actions) {
         const interactionId = crypto.randomUUID()
         const interactionToken = crypto.randomUUID()
-        const channelId =
+        const slackChannelId =
           payload.channel?.id ??
           payload.container?.channel_id ??
           ''
+        const threadTs =
+          payload.message?.thread_ts ??
+          payload.container?.thread_ts
+        const messageTs = payload.message?.ts ?? payload.container?.message_ts
+        const channelId = resolveDiscordChannelId(
+          slackChannelId,
+          threadTs,
+          messageTs,
+        )
+        const componentType = slackActionTypeToDiscordComponentType(
+          action.type,
+        )
 
         pendingInteractions.set(interactionId, {
           id: interactionId,
@@ -647,8 +671,12 @@ export function createServer(config: ServerConfig): ServerComponents {
           triggerId: payload.trigger_id,
           responseUrl: payload.response_url,
           acknowledged: false,
-          messageTs: payload.message?.ts,
+          messageTs,
         })
+
+        const messageId = messageTs
+          ? encodeMessageId(slackChannelId, messageTs)
+          : interactionId
 
         gateway.broadcast(GatewayDispatchEvents.InteractionCreate, {
           id: interactionId,
@@ -672,10 +700,32 @@ export function createServer(config: ServerConfig): ServerComponents {
           },
           data: {
             custom_id: action.action_id,
-            component_type: 2, // Button
+            component_type: componentType,
             values: action.selected_option
               ? [action.selected_option.value]
               : [],
+          },
+          message: {
+            id: messageId,
+            channel_id: channelId,
+            content: '',
+            attachments: [],
+            embeds: [],
+            components: [],
+            author: {
+              id: botUserId,
+              username: botUsername,
+              discriminator: '0',
+              avatar: null,
+            },
+            timestamp: new Date().toISOString(),
+            edited_timestamp: null,
+            tts: false,
+            mention_everyone: false,
+            mentions: [],
+            mention_roles: [],
+            pinned: false,
+            type: 0,
           },
         })
       }
@@ -800,6 +850,54 @@ export function stopServer(components: ServerComponents): Promise<void> {
 }
 
 // ---- Helpers ----
+
+function pruneExpiredEventIds({
+  seenEventIds,
+  now,
+}: {
+  seenEventIds: Map<string, number>
+  now: number
+}): void {
+  for (const [eventId, expiresAt] of seenEventIds.entries()) {
+    if (expiresAt <= now) {
+      seenEventIds.delete(eventId)
+    }
+  }
+}
+
+function slackActionTypeToDiscordComponentType(actionType: string): number {
+  if (actionType === 'static_select') {
+    return 3
+  }
+  return 2
+}
+
+async function resolveThreadTsForReaction({
+  slack,
+  event,
+}: {
+  slack: WebClient
+  event: SlackReactionEvent
+}): Promise<string | undefined> {
+  if (event.item.type !== 'message') {
+    return undefined
+  }
+
+  try {
+    const result = await slack.conversations.replies({
+      channel: event.item.channel,
+      ts: event.item.ts,
+      limit: 1,
+    })
+    const first = result.messages?.[0] as
+      | { thread_ts?: string }
+      | undefined
+
+    return first?.thread_ts
+  } catch {
+    return undefined
+  }
+}
 
 function verifySignature(
   body: string,

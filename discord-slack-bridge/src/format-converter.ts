@@ -30,9 +30,9 @@ export function mrkdwnToMarkdown(text: string): string {
     return `\x00INLINE${inlineCode.length - 1}\x00`
   })
 
-  // Convert Slack links <url|text> to markdown [text](url)
-  // Also handles <url> (no display text) -> url
-  result = result.replace(/<([^|>]+)\|([^>]+)>/g, '[$2]($1)')
+  // Convert plain URL links only. Keep Slack entities like <@U...|name>
+  // untouched, otherwise mentions/channels get corrupted.
+  result = result.replace(/<(https?:\/\/[^|>]+)\|([^>]+)>/g, '[$2]($1)')
   result = result.replace(/<(https?:\/\/[^>]+)>/g, '$1')
 
   // Convert bold: *text* -> **text** (but not inside words or URLs)

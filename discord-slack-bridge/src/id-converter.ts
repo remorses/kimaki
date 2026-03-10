@@ -14,7 +14,7 @@
 
 /** Encode a Slack (channel, thread_ts) pair into a Discord thread channel ID */
 export function encodeThreadId(channel: string, threadTs: string): string {
-  return `THR_${channel}_${threadTs.replace('.', '')}`
+  return `THR_${channel}_${encodeSlackTs(threadTs)}`
 }
 
 /** Decode a Discord thread channel ID back to Slack (channel, thread_ts) */
@@ -27,13 +27,13 @@ export function decodeThreadId(threadChannelId: string): {
     throw new Error(`Invalid thread channel ID: ${threadChannelId}`)
   }
   const raw = match[2]!
-  const ts = raw.slice(0, -6) + '.' + raw.slice(-6)
+  const ts = decodeSlackTs(raw)
   return { channel: match[1]!, threadTs: ts }
 }
 
 /** Encode a Slack (channel, ts) pair into a Discord message ID */
 export function encodeMessageId(channel: string, ts: string): string {
-  return `MSG_${channel}_${ts.replace('.', '')}`
+  return `MSG_${channel}_${encodeSlackTs(ts)}`
 }
 
 /** Decode a Discord message ID back to Slack (channel, ts) */
@@ -46,7 +46,7 @@ export function decodeMessageId(messageId: string): {
     throw new Error(`Invalid message ID: ${messageId}`)
   }
   const raw = match[2]!
-  const ts = raw.slice(0, -6) + '.' + raw.slice(-6)
+  const ts = decodeSlackTs(raw)
   return { channel: match[1]!, ts }
 }
 
@@ -83,6 +83,28 @@ export function resolveSlackTarget(discordChannelId: string): {
 export function slackTsToIso(ts: string): string {
   const seconds = Number.parseFloat(ts)
   return new Date(seconds * 1000).toISOString()
+}
+
+function encodeSlackTs(ts: string): string {
+  if (!/^\d+\.\d{6}$/.test(ts)) {
+    throw new Error(`Invalid Slack timestamp: ${ts}`)
+  }
+  return ts.replace(/\./g, '')
+}
+
+function decodeSlackTs(raw: string): string {
+  if (!/^\d+$/.test(raw)) {
+    throw new Error(`Invalid encoded Slack timestamp: ${raw}`)
+  }
+  if (raw.length <= 6) {
+    throw new Error(`Invalid encoded Slack timestamp: ${raw}`)
+  }
+
+  const ts = `${raw.slice(0, -6)}.${raw.slice(-6)}`
+  if (!/^\d+\.\d{6}$/.test(ts)) {
+    throw new Error(`Invalid encoded Slack timestamp: ${raw}`)
+  }
+  return ts
 }
 
 /**

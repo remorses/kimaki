@@ -80,18 +80,19 @@ async function uploadSingleFile({
     )
   }
 
-  // Step 3: PUT the file to the presigned URL
-  const putResponse = await fetch(uploadResult.upload_url, {
-    method: 'PUT',
-    body: fileBuffer,
-    headers: {
-      'Content-Type': attachment.content_type ?? 'application/octet-stream',
-    },
+  // Step 3: Upload file bytes to the presigned URL.
+  // Slack docs currently describe POST, but some upload URLs accept PUT.
+  // We try POST first and fall back to PUT for compatibility.
+  const contentType = attachment.content_type ?? 'application/octet-stream'
+  const uploadResponse = await uploadToSlackUrl({
+    uploadUrl: uploadResult.upload_url,
+    fileBuffer,
+    contentType,
   })
 
-  if (!putResponse.ok) {
+  if (!uploadResponse.ok) {
     throw new Error(
-      `Failed to upload file to Slack: ${putResponse.status}`,
+      `Failed to upload file to Slack: ${uploadResponse.status}`,
     )
   }
 
@@ -109,4 +110,33 @@ async function uploadSingleFile({
       channel_id: channel,
     })
   }
+}
+
+async function uploadToSlackUrl({
+  uploadUrl,
+  fileBuffer,
+  contentType,
+}: {
+  uploadUrl: string
+  fileBuffer: Buffer
+  contentType: string
+}): Promise<Response> {
+  const postResponse = await fetch(uploadUrl, {
+    method: 'POST',
+    body: fileBuffer,
+    headers: {
+      'Content-Type': contentType,
+    },
+  })
+  if (postResponse.ok) {
+    return postResponse
+  }
+
+  return fetch(uploadUrl, {
+    method: 'PUT',
+    body: fileBuffer,
+    headers: {
+      'Content-Type': contentType,
+    },
+  })
 }

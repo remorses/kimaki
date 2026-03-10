@@ -13,6 +13,7 @@
 // Slack uses actions block > [button | static_select] structure.
 // The mapping is nearly 1:1.
 
+import crypto from 'node:crypto'
 import {
   ComponentType,
   ButtonStyle,
@@ -27,7 +28,6 @@ import type {
   APITextDisplayComponent,
   APISectionComponent,
   APIContainerComponent,
-  APISeparatorComponent,
   APIComponentInMessageActionRow,
 } from 'discord-api-types/v10'
 import { markdownToMrkdwn } from './format-converter.js'
@@ -157,9 +157,15 @@ function convertButton(
   // Link buttons have a URL, no custom_id
   if (button.style === ButtonStyle.Link) {
     const linkBtn = button as APIButtonComponentWithURL
+    const actionId = `link_${crypto
+      .createHash('sha256')
+      .update(linkBtn.url)
+      .digest('hex')
+      .slice(0, 32)}`
+
     return {
       type: 'button',
-      action_id: `link_${linkBtn.url}`,
+      action_id: actionId,
       text: {
         type: 'plain_text',
         text: labelFromButton(button),

@@ -14,8 +14,8 @@ import type {
 } from 'discord-api-types/v10'
 import {
   encodeMessageId,
-  encodeThreadId,
   resolveDiscordChannelId,
+  encodeThreadId,
   slackTsToIso,
 } from './id-converter.js'
 import { mrkdwnToMarkdown } from './format-converter.js'
@@ -181,9 +181,11 @@ export function translateMessageDelete({
 export function translateReaction({
   event,
   guildId,
+  threadTs,
 }: {
   event: SlackReactionEvent
   guildId: string
+  threadTs?: string
 }): {
   eventName: string
   data: {
@@ -195,6 +197,11 @@ export function translateReaction({
   }
 } {
   const messageId = encodeMessageId(event.item.channel, event.item.ts)
+  const channelId = resolveDiscordChannelId(
+    event.item.channel,
+    threadTs,
+    event.item.ts,
+  )
 
   return {
     eventName:
@@ -203,7 +210,7 @@ export function translateReaction({
         : GatewayDispatchEvents.MessageReactionRemove,
     data: {
       user_id: event.user,
-      channel_id: event.item.channel,
+      channel_id: channelId,
       message_id: messageId,
       guild_id: guildId,
       emoji: { name: event.reaction, id: null },

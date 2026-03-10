@@ -50,6 +50,12 @@ describe('mrkdwnToMarkdown', () => {
   test('preserves mentions', () => {
     expect(mrkdwnToMarkdown('Hello <@U123>')).toMatchInlineSnapshot(`"Hello <@U123>"`)
   })
+
+  test('preserves mentions with display text', () => {
+    expect(mrkdwnToMarkdown('Hello <@U123|tommy>')).toMatchInlineSnapshot(
+      `"Hello <@U123|tommy>"`,
+    )
+  })
 })
 
 describe('markdownToMrkdwn', () => {
