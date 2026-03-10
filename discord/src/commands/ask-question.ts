@@ -2,16 +2,14 @@
 // When the AI uses the AskUserQuestion tool, this module renders dropdowns
 // for each question and collects user responses.
 
-import {
-  MessageFlags,
-  type ThreadChannel,
-} from 'discord.js'
+
+import { PLATFORM_MESSAGE_FLAGS } from '../platform/message-flags.js'
 import crypto from 'node:crypto'
 import { NOTIFY_MESSAGE_FLAGS } from '../discord-utils.js'
 import { getOpencodeClient } from '../opencode.js'
 import { createLogger, LogPrefix } from '../logger.js'
 import type { PlatformThread, SelectMenuEvent } from '../platform/types.js'
-import { platformThreadFromDiscord } from '../platform/platform-value.js'
+
 import { getDefaultRuntimeAdapter } from '../session-handler/thread-session-runtime.js'
 
 const logger = createLogger(LogPrefix.ASK_QUESTION)
@@ -60,14 +58,14 @@ export async function showAskUserQuestionDropdowns({
   requestId,
   input,
 }: {
-  thread: PlatformThread | ThreadChannel
+  thread: PlatformThread
   sessionId: string
   directory: string
   requestId: string // OpenCode question request ID
   input: AskUserQuestionInput
 }): Promise<void> {
   const contextHash = crypto.randomBytes(8).toString('hex')
-  const normalizedThread = 'raw' in thread ? thread : platformThreadFromDiscord(thread)
+  const normalizedThread = thread
 
   const context: PendingQuestionContext = {
     sessionId,
@@ -136,7 +134,7 @@ export async function showAskUserQuestionDropdowns({
 
     const placeholder = options.find((x) => x.label)?.label || 'Select an option'
 
-    await adapter.sendMessage(threadTarget, {
+    await adapter.conversation(threadTarget).send({
       markdown: `**${(q.header || '').slice(0, 200)}**\n${q.question.slice(0, 1700)}`,
       selectMenu: {
         id: `ask_question:${contextHash}:${i}`,
@@ -173,7 +171,7 @@ export async function handleAskQuestionSelectMenu(
   if (!contextHash) {
     await interaction.reply({
       content: 'Invalid selection.',
-      flags: MessageFlags.Ephemeral,
+      flags: PLATFORM_MESSAGE_FLAGS.EPHEMERAL,
     })
     return
   }
@@ -183,7 +181,7 @@ export async function handleAskQuestionSelectMenu(
   if (!context) {
     await interaction.reply({
       content: 'This question has expired. Please ask the AI again.',
-      flags: MessageFlags.Ephemeral,
+      flags: PLATFORM_MESSAGE_FLAGS.EPHEMERAL,
     })
     return
   }
@@ -261,15 +259,12 @@ async function submitQuestionAnswers(
     if (!adapter) {
       return
     }
-    await adapter.sendMessage(
-      {
-        channelId: context.thread.parentId || context.thread.id,
-        threadId: context.thread.id,
-      },
-      {
+    await adapter.conversation({
+      channelId: context.thread.parentId || context.thread.id,
+      threadId: context.thread.id,
+    }).send({
         markdown: `✗ Failed to submit answers: ${error instanceof Error ? error.message : 'Unknown error'}`,
-      },
-    )
+      })
   }
 }
 

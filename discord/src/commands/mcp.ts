@@ -4,12 +4,8 @@
 // No database storage needed — state lives in OpenCode's config.
 
 import crypto from 'node:crypto'
-import {
-  MessageFlags,
-  ChannelType,
-  type TextChannel,
-  type ThreadChannel,
-} from 'discord.js'
+import { PLATFORM_MESSAGE_FLAGS } from '../platform/message-flags.js'
+
 import type { McpStatus } from '@opencode-ai/sdk/v2'
 import type { CommandContext } from './types.js'
 import { initializeOpencodeForDirectory } from '../opencode.js'
@@ -19,6 +15,7 @@ import {
 } from '../discord-utils.js'
 import { createLogger, LogPrefix } from '../logger.js'
 import type { SelectMenuEvent } from '../platform/types.js'
+import { isTextChannel, isThreadChannel } from './channel-ref.js'
 
 const logger = createLogger(LogPrefix.MCP)
 
@@ -85,40 +82,31 @@ export async function handleMcpCommand({
   if (!channel) {
     await command.reply({
       content: 'This command can only be used in a channel.',
-      flags: MessageFlags.Ephemeral | SILENT_MESSAGE_FLAGS,
+      flags: PLATFORM_MESSAGE_FLAGS.EPHEMERAL | SILENT_MESSAGE_FLAGS,
     })
     return
   }
 
-  const isThread = [
-    ChannelType.PublicThread,
-    ChannelType.PrivateThread,
-    ChannelType.AnnouncementThread,
-  ].includes(channel.type)
-  const isTextChannel = channel.type === ChannelType.GuildText
-
-  if (!isThread && !isTextChannel) {
+  if (!isThreadChannel(channel) && !isTextChannel(channel)) {
     await command.reply({
       content: 'This command can only be used in text channels or threads.',
-      flags: MessageFlags.Ephemeral | SILENT_MESSAGE_FLAGS,
+      flags: PLATFORM_MESSAGE_FLAGS.EPHEMERAL | SILENT_MESSAGE_FLAGS,
     })
     return
   }
 
-  const resolved = await resolveWorkingDirectory({
-    channel: channel as TextChannel | ThreadChannel,
-  })
+  const resolved = await resolveWorkingDirectory({ channel })
   if (!resolved) {
     await command.reply({
       content: 'Could not determine project directory for this channel.',
-      flags: MessageFlags.Ephemeral | SILENT_MESSAGE_FLAGS,
+      flags: PLATFORM_MESSAGE_FLAGS.EPHEMERAL | SILENT_MESSAGE_FLAGS,
     })
     return
   }
 
   const { projectDirectory } = resolved
 
-  await command.deferReply({ flags: MessageFlags.Ephemeral | SILENT_MESSAGE_FLAGS })
+  await command.deferReply({ flags: PLATFORM_MESSAGE_FLAGS.EPHEMERAL | SILENT_MESSAGE_FLAGS })
 
   const getClient = await initializeOpencodeForDirectory(projectDirectory)
   if (getClient instanceof Error) {

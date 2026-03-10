@@ -78,7 +78,7 @@ e2eTest('queue advanced: typing lifecycle', () => {
         [bot typing]
         --- from: assistant (TestBot)
         ⬥ ok
-        *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2*"
+        *project ⋅ adapters ⋅ Ns ⋅ N% ⋅ deterministic-v2*"
       `)
       expect(replyIndex).toBeGreaterThanOrEqual(0)
       expect(footerIndex).toBeGreaterThan(replyIndex)
@@ -180,14 +180,14 @@ e2eTest('queue advanced: typing lifecycle', () => {
         Reply with exactly: typing-thread-reply-setup
         --- from: assistant (TestBot)
         ⬥ ok
-        *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2*
+        *project ⋅ adapters ⋅ Ns ⋅ N% ⋅ deterministic-v2*
         --- from: user (queue-advanced-tester)
         TYPING_REPULSE_MARKER
         [bot typing]
         --- from: assistant (TestBot)
         ⬥ repulse-first
         [bot typing]
-        *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2*"
+        *project ⋅ adapters ⋅ Ns ⋅ N% ⋅ deterministic-v2*"
       `)
 
       const followupUserIndex = messages.findIndex((message) => {

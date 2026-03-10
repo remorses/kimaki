@@ -13,6 +13,7 @@ import type {
   MessageTarget,
   ModalSubmitEvent,
   OutgoingMessage,
+  PlatformAdmin,
   PlatformMessage,
   PlatformThread,
   SelectMenuEvent,
@@ -285,6 +286,8 @@ function wrapSlackMessage(message: SlackApiMessage): PlatformMessage {
     author: {
       id: message.user || message.bot_id || 'unknown',
       username: message.username || message.user || message.bot_id || 'unknown',
+      displayName: message.username || message.user || message.bot_id || 'unknown',
+      globalName: message.username || message.user || message.bot_id || 'unknown',
       bot: Boolean(message.bot_id),
     },
     attachments: new Map(
@@ -305,7 +308,6 @@ function wrapSlackMessage(message: SlackApiMessage): PlatformMessage {
       }),
     ),
     embeds: [],
-    raw: message,
   }
 }
 
@@ -313,25 +315,18 @@ function wrapSlackThread(input: {
   channelId: string
   threadId: string
   name: string
-  raw?: unknown
 }): PlatformThread {
   return {
     id: input.threadId,
     name: input.name,
+    kind: 'thread',
+    type: 'thread',
     parentId: input.channelId,
-    raw: input.raw || {
-      channelId: input.channelId,
-      threadId: input.threadId,
-      name: input.name,
+    guildId: null,
+    isThread() {
+      return true
     },
   }
-}
-
-function unwrapSlackMessage(message: PlatformMessage): SlackApiMessage {
-  if (!message.raw || typeof message.raw !== 'object') {
-    throw new Error('Platform message is missing Slack raw message')
-  }
-  return message.raw as SlackApiMessage
 }
 
 function createSlackModalView({
@@ -419,6 +414,58 @@ function createSlackModalView({
 
 export class SlackAdapter implements KimakiAdapter {
   readonly name = 'slack'
+  readonly admin: PlatformAdmin = {
+    listGuilds: async () => {
+      return []
+    },
+    resolveGuild: async () => {
+      return null
+    },
+    registerCommands: async () => {
+      throw new Error('Slack adapter does not support Discord slash command registration')
+    },
+    ensureGuildAccessPolicy: async () => {},
+    listChannels: async () => {
+      return []
+    },
+    createCategory: async () => {
+      throw new Error('Slack adapter does not support guild category creation')
+    },
+    createTextChannel: async () => {
+      throw new Error('Slack adapter does not support guild text channel creation')
+    },
+    fetchChannel: async () => {
+      return null
+    },
+    fetchChannelById: async () => {
+      return null
+    },
+    deleteChannel: async () => {
+      return 'missing'
+    },
+    listGuildMembers: async () => {
+      return []
+    },
+    searchGuildMembers: async () => {
+      return []
+    },
+  }
+  readonly content = {
+    resolveMentions: async (message: PlatformMessage) => {
+      return message.content || ''
+    },
+    getTextAttachments: async (_message: PlatformMessage) => {
+      return ''
+    },
+    getFileAttachments: async (_message: PlatformMessage) => {
+      return []
+    },
+  }
+  readonly permissions = {
+    getMessageAccess: async () => {
+      return 'allowed' as const
+    },
+  }
   client: WebClient
   private appId = 'slack'
   private botUserId?: string
@@ -459,6 +506,99 @@ export class SlackAdapter implements KimakiAdapter {
   }
 
   destroy() {}
+
+  conversation(target: MessageTarget) {
+    return {
+      target,
+      send: async (message: OutgoingMessage) => {
+        return this.postUiMessage({
+          channelId: target.channelId,
+          message,
+          threadId: target.threadId || message.replyToMessageId,
+        })
+      },
+      update: async (messageId: string, message: OutgoingMessage) => {
+        await this.updateUiMessage({
+          channelId: target.channelId,
+          message,
+          messageId,
+        })
+      },
+      delete: async (messageId: string) => {
+        await this.client.chat.delete({ channel: target.channelId, ts: messageId })
+      },
+      message: async (messageId: string) => {
+        const data = await this.fetchMessage(target, messageId)
+        return {
+          data,
+          startThread: async ({
+            name,
+            autoArchiveDuration,
+            reason,
+          }: {
+            name: string
+            autoArchiveDuration: number
+            reason: string
+          }) => {
+            return this.createThreadFromMessage({
+              message: data,
+              name,
+              autoArchiveDuration,
+              reason,
+            })
+          },
+        }
+      },
+      startTyping: async () => {},
+    }
+  }
+
+  async channel(channelId: string) {
+    return {
+      data: {
+        id: channelId,
+        kind: 'text' as const,
+        type: 'text' as const,
+        parentId: null,
+        guildId: null,
+        isThread() {
+          return false
+        },
+      },
+      conversation: () => {
+        return this.conversation({ channelId })
+      },
+    }
+  }
+
+  async thread({ threadId, parentId }: { threadId: string; parentId?: string | null }) {
+    const channelId = parentId || this.threadChannelIds.get(threadId)
+    if (!channelId) {
+      return null
+    }
+    const data = wrapSlackThread({ channelId, threadId, name: threadId })
+    return {
+      data,
+      conversation: () => {
+        return this.conversation({ channelId, threadId })
+      },
+      message: async (messageId: string) => {
+        return this.conversation({ channelId, threadId }).message(messageId)
+      },
+      starterMessage: async () => {
+        return this.fetchStarterMessage(threadId)
+      },
+      rename: async (_name: string) => {},
+      archive: async () => {},
+      addMember: async (_userId: string) => {},
+      addStarterReaction: async (emoji: string) => {
+        await this.addThreadStarterReaction({ channelId, threadId }, emoji)
+      },
+      reference: () => {
+        return `#${threadId}`
+      },
+    }
+  }
 
   private rememberThread({ channelId, threadId }: { channelId: string; threadId: string }) {
     this.threadChannelIds.set(threadId, channelId)
@@ -524,33 +664,6 @@ export class SlackAdapter implements KimakiAdapter {
     })
   }
 
-  async sendMessage(target: MessageTarget, message: OutgoingMessage) {
-    return this.postUiMessage({
-      channelId: target.channelId,
-      message,
-      threadId: target.threadId || message.replyToMessageId,
-    })
-  }
-
-  async updateMessage(
-    target: MessageTarget,
-    messageId: string,
-    message: OutgoingMessage,
-  ) {
-    await this.updateUiMessage({
-      channelId: target.channelId,
-      message,
-      messageId,
-    })
-  }
-
-  async deleteMessage(target: MessageTarget, messageId: string) {
-    await this.client.chat.delete({
-      channel: target.channelId,
-      ts: messageId,
-    })
-  }
-
   async fetchMessage(target: MessageTarget, messageId: string) {
     if (target.threadId && target.threadId !== messageId) {
       const replies = await this.client.conversations.replies({
@@ -597,15 +710,8 @@ export class SlackAdapter implements KimakiAdapter {
     autoArchiveDuration: number
     reason: string
   }) {
-    const message = unwrapSlackMessage(input.message)
-    const rootTs = message.thread_ts || message.ts
-    const channelId = message.channel || input.message.channelId
-    if (!rootTs) {
-      throw new Error('Slack message is missing a root timestamp')
-    }
-    if (!channelId) {
-      throw new Error('Slack message is missing a channel ID')
-    }
+    const rootTs = input.message.id
+    const channelId = input.message.channelId
 
     await this.postUiMessage({
       channelId,
@@ -621,12 +727,6 @@ export class SlackAdapter implements KimakiAdapter {
         channelId,
         threadId: rootTs,
         name: input.name,
-        raw: {
-          autoArchiveDuration: input.autoArchiveDuration,
-          channelId,
-          reason: input.reason,
-          threadId: rootTs,
-        },
       }),
       target: {
         channelId,
@@ -746,7 +846,14 @@ export class SlackAdapter implements KimakiAdapter {
         ...payload,
         channel: payload.channel,
       }),
-      target,
+      conversation: this.conversation(target),
+      thread: payload.thread_ts
+        ? wrapSlackThread({
+            channelId: payload.channel,
+            threadId: payload.thread_ts,
+            name: payload.thread_ts,
+          })
+        : undefined,
       kind: payload.thread_ts ? 'thread' : 'channel',
       isMention,
     }
@@ -762,17 +869,25 @@ export class SlackAdapter implements KimakiAdapter {
 
   async dispatchThreadCreate(payload: SlackThreadPayload) {
     this.rememberThread({ channelId: payload.channelId, threadId: payload.threadId })
+    const thread = wrapSlackThread({
+      channelId: payload.channelId,
+      threadId: payload.threadId,
+      name: payload.threadName || payload.threadId,
+    })
+    const threadHandle = await this.thread({
+      threadId: payload.threadId,
+      parentId: payload.channelId,
+    })
+    if (!threadHandle) {
+      throw new Error(`Slack thread not found: ${payload.threadId}`)
+    }
     const event: IncomingThreadEvent = {
-      thread: wrapSlackThread({
+      thread,
+      threadHandle,
+      conversation: this.conversation({
         channelId: payload.channelId,
         threadId: payload.threadId,
-        name: payload.threadName || payload.threadId,
-        raw: payload,
       }),
-      target: {
-        channelId: payload.channelId,
-        threadId: payload.threadId,
-      },
       newlyCreated: payload.newlyCreated,
     }
 

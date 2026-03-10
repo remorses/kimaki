@@ -4,11 +4,7 @@
 // 'tools_and_text': shows all output including tool executions
 // 'text_only': only shows text responses
 
-import {
-  MessageFlags,
-  ChannelType,
-  type ThreadChannel,
-} from 'discord.js'
+import { PLATFORM_MESSAGE_FLAGS } from '../platform/message-flags.js'
 import {
   getChannelVerbosity,
   setChannelVerbosity,
@@ -47,15 +43,11 @@ function resolveChannelId(channel: CommandEvent['channel']): string | null {
   if (!channel) {
     return null
   }
-  if (channel.type === ChannelType.GuildText) {
+  if (channel.kind === 'text') {
     return channel.id
   }
-  if (
-    channel.type === ChannelType.PublicThread ||
-    channel.type === ChannelType.PrivateThread ||
-    channel.type === ChannelType.AnnouncementThread
-  ) {
-    return (channel as ThreadChannel).parentId || channel.id
+  if (channel.kind === 'thread') {
+    return channel.parentId || channel.id
   }
   return channel.id
 }
@@ -93,7 +85,7 @@ export async function handleVerbosityCommand({
   if (!channelId) {
     await command.reply({
       content: 'Could not determine channel.',
-      flags: MessageFlags.Ephemeral,
+      flags: PLATFORM_MESSAGE_FLAGS.EPHEMERAL,
     })
     return
   }
@@ -116,7 +108,7 @@ export async function handleVerbosityCommand({
       placeholder: 'Select verbosity level',
       options,
     },
-    flags: MessageFlags.Ephemeral,
+    flags: PLATFORM_MESSAGE_FLAGS.EPHEMERAL,
   })
 }
 

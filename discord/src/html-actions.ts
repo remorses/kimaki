@@ -3,13 +3,11 @@
 // attach interactions without leaking closures across rerenders.
 
 import crypto from 'node:crypto'
-import {
-  ComponentType,
-  MessageFlags,
-  type ButtonInteraction,
-} from 'discord.js'
+import { PLATFORM_COMPONENT_TYPE } from './platform/components-v2.js'
+import { PLATFORM_MESSAGE_FLAGS } from './platform/message-flags.js'
 import { createLogger } from './logger.js'
 import { notifyError } from './sentry.js'
+import type { ButtonEvent } from './platform/types.js'
 
 const logger = createLogger('HTML_ACT')
 const DEFAULT_TTL_MS = 24 * 60 * 60 * 1000
@@ -20,7 +18,7 @@ type PendingHtmlAction = {
   threadId?: string
   resolved: boolean
   timer: ReturnType<typeof setTimeout>
-  run: ({ interaction }: { interaction: ButtonInteraction }) => Promise<void>
+  run: ({ interaction }: { interaction: ButtonEvent }) => Promise<void>
 }
 
 export const pendingHtmlActions = new Map<string, PendingHtmlAction>()
@@ -38,7 +36,7 @@ export function registerHtmlAction({
 }: {
   ownerKey: string
   threadId?: string
-  run: ({ interaction }: { interaction: ButtonInteraction }) => Promise<void>
+  run: ({ interaction }: { interaction: ButtonEvent }) => Promise<void>
   ttlMs?: number
 }): string {
   const actionId = crypto.randomBytes(8).toString('hex')
@@ -98,7 +96,7 @@ export function cancelHtmlActionsForThread(threadId: string): number {
 }
 
 export async function handleHtmlActionButton(
-  interaction: ButtonInteraction,
+  interaction: ButtonEvent,
 ): Promise<void> {
   const customId = interaction.customId
   if (!customId.startsWith('html_action:')) {
@@ -109,7 +107,7 @@ export async function handleHtmlActionButton(
   if (!actionId) {
     await interaction.reply({
       content: 'Invalid action button.',
-      flags: MessageFlags.Ephemeral,
+      flags: PLATFORM_MESSAGE_FLAGS.EPHEMERAL,
     })
     return
   }
@@ -118,7 +116,7 @@ export async function handleHtmlActionButton(
   if (!action || action.resolved) {
     await interaction.reply({
       content: 'This action is no longer available.',
-      flags: MessageFlags.Ephemeral,
+      flags: PLATFORM_MESSAGE_FLAGS.EPHEMERAL,
     })
     return
   }
@@ -138,11 +136,11 @@ export async function handleHtmlActionButton(
       .editReply({
         components: [
           {
-            type: ComponentType.TextDisplay,
+            type: PLATFORM_COMPONENT_TYPE.TEXT_DISPLAY,
             content: `Action failed: ${error instanceof Error ? error.message : String(error)}`,
           },
         ],
-        flags: MessageFlags.IsComponentsV2,
+        flags: PLATFORM_MESSAGE_FLAGS.IS_COMPONENTS_V2,
       })
       .catch(() => {
         return undefined

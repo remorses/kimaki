@@ -116,7 +116,15 @@ describe('queue advanced: action buttons', () => {
       }
 
       await showActionButtons({
-        thread: channel,
+        thread: {
+          ...channel,
+          kind: 'thread',
+          type: 'thread',
+          name: channel.name || channel.id,
+          isThread() {
+            return true
+          },
+        },
         sessionId: currentSessionId,
         directory: ctx.directories.projectDirectory,
         buttons: [{ label: 'Continue action-buttons flow', color: 'green' }],
@@ -166,12 +174,12 @@ describe('queue advanced: action buttons', () => {
         Reply with exactly: action-button-setup
         --- from: assistant (TestBot)
         ⬥ ok
-        *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2*
+        *project ⋅ adapters ⋅ Ns ⋅ N% ⋅ deterministic-v2*
         **Action Required**
         _Selected: Continue action-buttons flow_
         [user clicks button]
         ⬥ action-buttons-click-continued
-        *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2*"
+        *project ⋅ adapters ⋅ Ns ⋅ N% ⋅ deterministic-v2*"
       `)
       expect(timeline).toContain('action-buttons-click-continued')
     },
@@ -221,7 +229,15 @@ describe('queue advanced: action buttons', () => {
       }
 
       await showActionButtons({
-        thread: channel,
+        thread: {
+          ...channel,
+          kind: 'thread',
+          type: 'thread',
+          name: channel.name || channel.id,
+          isThread() {
+            return true
+          },
+        },
         sessionId: currentSessionId,
         directory: ctx.directories.projectDirectory,
         buttons: [{ label: 'Dismiss me', color: 'white' }],
@@ -254,7 +270,7 @@ describe('queue advanced: action buttons', () => {
         Reply with exactly: action-button-dismiss-setup
         --- from: assistant (TestBot)
         ⬥ ok
-        *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2*
+        *project ⋅ adapters ⋅ Ns ⋅ N% ⋅ deterministic-v2*
         **Action Required**
         _Buttons dismissed._
         --- from: user (queue-action-tester)

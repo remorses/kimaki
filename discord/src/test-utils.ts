@@ -7,7 +7,6 @@
 // spawning a new server process during teardown. Falls back to initializing
 // a new server only if no existing client is available.
 
-import type { APIMessage } from 'discord.js'
 import type { DigitalDiscord } from 'discord-digital-twin/src'
 import {
   getOpencodeClient,
@@ -17,6 +16,15 @@ import {
   getThreadState,
   type ThreadRunState,
 } from './session-handler/thread-runtime-state.js'
+
+type DiscordApiMessage = {
+  id: string
+  content: string
+  timestamp: string
+  author: {
+    id: string
+  }
+}
 
 /**
  * Delete all opencode sessions created during a test run.
@@ -77,7 +85,7 @@ export async function waitForBotMessageCount({
   threadId: string
   count: number
   timeout: number
-}): Promise<APIMessage[]> {
+}): Promise<DiscordApiMessage[]> {
   const start = Date.now()
   while (Date.now() - start < timeout) {
     const messages = await discord.thread(threadId).getMessages()
@@ -112,7 +120,7 @@ export async function waitForBotReplyAfterUserMessage({
   userId: string
   userMessageIncludes: string
   timeout: number
-}): Promise<APIMessage[]> {
+}): Promise<DiscordApiMessage[]> {
   const start = Date.now()
   while (Date.now() - start < timeout) {
     const messages = await discord.thread(threadId).getMessages()
@@ -157,9 +165,9 @@ export async function waitForBotMessageContaining({
   afterUserMessageIncludes?: string
   afterMessageId?: string
   timeout: number
-}): Promise<APIMessage[]> {
+}): Promise<DiscordApiMessage[]> {
   const start = Date.now()
-  let lastMessages: APIMessage[] = []
+  let lastMessages: DiscordApiMessage[] = []
   while (Date.now() - start < timeout) {
     const messages = await discord.thread(threadId).getMessages()
     lastMessages = messages
@@ -226,7 +234,7 @@ export async function waitForMessageById({
   threadId: string
   messageId: string
   timeout: number
-}): Promise<APIMessage> {
+}): Promise<DiscordApiMessage> {
   const start = Date.now()
   while (Date.now() - start < timeout) {
     const messages = await discord.thread(threadId).getMessages()
@@ -250,7 +258,7 @@ function isFooterMessage({
   message,
   botUserId,
 }: {
-  message: APIMessage
+  message: DiscordApiMessage
   botUserId: string
 }): boolean {
   if (message.author.id !== botUserId) {
@@ -278,9 +286,9 @@ export async function waitForFooterMessage({
   timeout: number
   afterMessageIncludes?: string
   afterAuthorId?: string
-}): Promise<APIMessage[]> {
+}): Promise<DiscordApiMessage[]> {
   const start = Date.now()
-  let lastMessages: APIMessage[] = []
+  let lastMessages: DiscordApiMessage[] = []
   while (Date.now() - start < timeout) {
     const messages = await discord.thread(threadId).getMessages()
     lastMessages = messages

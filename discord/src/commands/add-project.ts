@@ -8,10 +8,10 @@ import {
   getAllTextChannelDirectories,
 } from '../database.js'
 import { initializeOpencodeForDirectory } from '../opencode.js'
-import { createProjectChannels } from '../channel-management.js'
 import { createLogger, LogPrefix } from '../logger.js'
 import { abbreviatePath } from '../utils.js'
-import * as errore from 'errore'
+import { getDefaultRuntimeAdapter } from '../session-handler/thread-session-runtime.js'
+import { createProjectChannels } from '../channel-management.js'
 
 const logger = createLogger(LogPrefix.ADD_PROJECT)
 
@@ -21,10 +21,16 @@ export async function handleAddProjectCommand({
   await command.deferReply({ ephemeral: false })
 
   const projectId = command.options.getString('project', true)
-  const guild = command.guild
+  const guildId = command.guildId
+  const adapter = getDefaultRuntimeAdapter()
+  const admin = adapter?.admin
 
-  if (!guild) {
+  if (!guildId) {
     await command.editReply('This command can only be used in a guild')
+    return
+  }
+  if (!admin) {
+    await command.editReply('Project channel creation is not available here')
     return
   }
 
@@ -70,9 +76,10 @@ export async function handleAddProjectCommand({
 
     const { textChannelId, voiceChannelId, channelName } =
       await createProjectChannels({
-        guild,
+        admin,
+        guildId,
         projectDirectory: directory,
-        botName: command.client.user?.username,
+        botName: command.botUserName,
       })
 
     const voiceInfo = voiceChannelId ? `\n🔊 Voice: <#${voiceChannelId}>` : ''
@@ -92,7 +99,8 @@ export async function handleAddProjectCommand({
 export async function handleAddProjectAutocomplete({
   interaction,
 }: AutocompleteContext): Promise<void> {
-  const focusedValue = interaction.options.getFocused()
+  const focused = interaction.options.getFocused()
+  const focusedValue = typeof focused === 'string' ? focused : focused.value
 
   try {
     const currentDir = process.cwd()

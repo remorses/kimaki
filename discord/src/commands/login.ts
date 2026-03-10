@@ -1,22 +1,19 @@
 // /login command - Authenticate with AI providers (OAuth or API key).
 // Supports GitHub Copilot (device flow), OpenAI Codex (device flow), and API keys.
 
-import {
-  ChannelType,
-  type ThreadChannel,
-  type TextChannel,
-  MessageFlags,
-} from 'discord.js'
+
 import crypto from 'node:crypto'
+import { PLATFORM_MESSAGE_FLAGS } from '../platform/message-flags.js'
 import { initializeOpencodeForDirectory } from '../opencode.js'
-import { resolveTextChannel, getKimakiMetadata } from '../discord-utils.js'
 import { createLogger, LogPrefix } from '../logger.js'
+import { getChannelDirectory } from '../database.js'
 import type {
   CommandEvent,
   ModalSubmitEvent,
   SelectMenuEvent,
   UiModal,
 } from '../platform/types.js'
+import { getRootChannelId, isTextChannel, isThreadChannel } from './channel-ref.js'
 
 const loginLogger = createLogger(LogPrefix.LOGIN)
 
@@ -86,7 +83,7 @@ export async function handleLoginCommand({
   loginLogger.log('[LOGIN] handleLoginCommand called')
 
   // Defer reply immediately to avoid 3-second timeout
-  await interaction.deferReply({ flags: MessageFlags.Ephemeral })
+  await interaction.deferReply({ flags: PLATFORM_MESSAGE_FLAGS.EPHEMERAL })
   loginLogger.log('[LOGIN] Deferred reply')
 
   const channel = interaction.channel
@@ -99,26 +96,17 @@ export async function handleLoginCommand({
   }
 
   // Determine if we're in a thread or text channel
-  const isThread = [
-    ChannelType.PublicThread,
-    ChannelType.PrivateThread,
-    ChannelType.AnnouncementThread,
-  ].includes(channel.type)
+  const isThread = isThreadChannel(channel)
 
   let projectDirectory: string | undefined
   let targetChannelId: string
 
   if (isThread) {
-    const thread = channel as ThreadChannel
-    const textChannel = await resolveTextChannel(thread)
-    const metadata = await getKimakiMetadata(textChannel)
-    projectDirectory = metadata.projectDirectory
-    targetChannelId = textChannel?.id || channel.id
-  } else if (channel.type === ChannelType.GuildText) {
-    const textChannel = channel as TextChannel
-    const metadata = await getKimakiMetadata(textChannel)
-    projectDirectory = metadata.projectDirectory
+    targetChannelId = getRootChannelId(channel) || channel.id
+    projectDirectory = (await getChannelDirectory(targetChannelId))?.directory
+  } else if (isTextChannel(channel)) {
     targetChannelId = channel.id
+    projectDirectory = (await getChannelDirectory(channel.id))?.directory
   } else {
     await interaction.editReply({
       content: 'This command can only be used in text channels or threads',
@@ -606,7 +594,7 @@ export async function handleApiKeyModalSubmit(
     return
   }
 
-  await interaction.deferReply({ flags: MessageFlags.Ephemeral })
+  await interaction.deferReply({ flags: PLATFORM_MESSAGE_FLAGS.EPHEMERAL })
 
   const contextHash = customId.replace('login_apikey:', '')
   const context = pendingLoginContexts.get(contextHash)

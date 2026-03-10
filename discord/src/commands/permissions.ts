@@ -2,14 +2,15 @@
 // When OpenCode asks for permission, this module renders 3 buttons:
 // Accept, Accept Always, and Deny.
 
-import { MessageFlags, type ThreadChannel } from 'discord.js'
+
+import { PLATFORM_MESSAGE_FLAGS } from '../platform/message-flags.js'
 import crypto from 'node:crypto'
 import type { PermissionRequest } from '@opencode-ai/sdk/v2'
 import { getOpencodeClient } from '../opencode.js'
 import { NOTIFY_MESSAGE_FLAGS } from '../discord-utils.js'
 import { createLogger, LogPrefix } from '../logger.js'
 import type { ButtonEvent, PlatformThread } from '../platform/types.js'
-import { platformThreadFromDiscord } from '../platform/platform-value.js'
+
 import { getDefaultRuntimeAdapter } from '../session-handler/thread-session-runtime.js'
 
 const logger = createLogger(LogPrefix.PERMISSIONS)
@@ -99,14 +100,14 @@ export async function showPermissionButtons({
   permissionDirectory,
   subtaskLabel,
 }: {
-  thread: PlatformThread | ThreadChannel
+  thread: PlatformThread
   permission: PermissionRequest
   directory: string
   permissionDirectory: string
   subtaskLabel?: string
 }): Promise<{ messageId: string; contextHash: string }> {
   const contextHash = crypto.randomBytes(8).toString('hex')
-  const normalizedThread = 'raw' in thread ? thread : platformThreadFromDiscord(thread)
+  const normalizedThread = thread
 
   const context: PendingPermissionContext = {
     permission,
@@ -163,12 +164,10 @@ export async function showPermissionButtons({
     `**Type:** \`${permission.permission}\`\n` +
     externalDirLine +
     (patternStr ? `**Pattern:** \`${patternStr}\`` : '')
-  const permissionMessage = await adapter.sendMessage(
-      {
-        channelId: normalizedThread.parentId || normalizedThread.id,
-        threadId: normalizedThread.id,
-      },
-    {
+  const permissionMessage = await adapter.conversation({
+      channelId: normalizedThread.parentId || normalizedThread.id,
+      threadId: normalizedThread.id,
+    }).send({
       markdown: fullContent.slice(0, 1900),
       buttons: [
         {
@@ -187,9 +186,8 @@ export async function showPermissionButtons({
           style: 'secondary',
         },
       ],
-      flags: NOTIFY_MESSAGE_FLAGS | MessageFlags.SuppressEmbeds,
-    },
-  )
+      flags: NOTIFY_MESSAGE_FLAGS | PLATFORM_MESSAGE_FLAGS.SUPPRESS_EMBEDS,
+    })
 
   logger.log(`Showed permission buttons for ${permission.id}`)
 

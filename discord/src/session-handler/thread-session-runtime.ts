@@ -31,7 +31,6 @@ import {
   SILENT_MESSAGE_FLAGS,
   NOTIFY_MESSAGE_FLAGS,
 } from '../discord-utils.js'
-import type { DiscordFileAttachment } from '../message-formatting.js'
 import { formatPart } from '../message-formatting.js'
 import {
   getChannelVerbosity,
@@ -128,6 +127,7 @@ import { createDebouncedTimeout } from '../debounce-timeout.js'
 import type {
   KimakiAdapter,
   MessageTarget,
+  PlatformFileAttachment,
   PlatformThread,
 } from '../platform/types.js'
 
@@ -407,7 +407,7 @@ export type EnqueueResult = {
  */
 export type PreprocessResult = {
   prompt: string
-  images?: DiscordFileAttachment[]
+  images?: PlatformFileAttachment[]
   /** Resolved mode based on voice transcription result. */
   mode: 'opencode' | 'local-queue'
   /** When true, preprocessing determined the message should be silently dropped. */
@@ -418,7 +418,7 @@ export type IngressInput = {
   prompt: string
   userId: string
   username: string
-  images?: DiscordFileAttachment[]
+  images?: PlatformFileAttachment[]
   appId?: string
   command?: { name: string; arguments: string }
   /**
@@ -1320,7 +1320,7 @@ export class ThreadSessionRuntime {
     }
     const hasPendingFileUpload = [...pendingFileUploadContexts.values()].some(
       (ctx) => {
-        return ctx.thread.id === this.thread.id
+        return ctx.threadId === this.thread.id
       },
     )
     if (hasPendingFileUpload) {
@@ -1352,7 +1352,7 @@ export class ThreadSessionRuntime {
 
   private async sendTypingPulse(): Promise<void> {
     const result = await errore.tryAsync(() => {
-      return this.adapter.startTyping(this.threadTarget)
+      return this.adapter.conversation(this.threadTarget).startTyping()
     })
     if (result instanceof Error) {
       discordLogger.log(`Failed to send typing: ${result}`)
@@ -1366,7 +1366,7 @@ export class ThreadSessionRuntime {
     markdown: string
     flags?: number
   }): Promise<{ id: string }> {
-    return this.adapter.sendMessage(this.threadTarget, {
+    return this.adapter.conversation(this.threadTarget).send({
       markdown,
       flags,
     })
@@ -1376,7 +1376,8 @@ export class ThreadSessionRuntime {
     if (!this.channelId) {
       return undefined
     }
-    const channel = await this.adapter.fetchChannel?.(this.channelId)
+    const channelHandle = await this.adapter.channel(this.channelId)
+    const channel = channelHandle?.data
     if (!channel || channel.kind !== 'text') {
       return undefined
     }

@@ -1,20 +1,9 @@
-// Platform adapter types for Kimaki's chat transport boundary.
-// Keeps core runtime code on a small message/thread API while adapters own
-// native gateway, webhook, and message rendering details.
+// Platform adapter types for Kimaki's transport boundary.
+// Shared runtime code only sees normalized resources, interactions, and
+// explicit capabilities. Adapters keep platform SDK values private.
 
-import type {
-  ChatInputCommandInteraction,
-  AutocompleteInteraction,
-  ButtonInteraction,
-  StringSelectMenuInteraction,
-  ModalSubmitInteraction,
-  CacheType,
-  InteractionReplyOptions,
-  InteractionEditReplyOptions,
-  InteractionUpdateOptions,
-  InteractionDeferReplyOptions,
-} from 'discord.js'
-import type { DiscordFileAttachment } from '../message-formatting.js'
+import type { FilePartInput } from '@opencode-ai/sdk/v2'
+import type { PlatformMessageTopLevelComponent } from './components-v2.js'
 import type { TranscriptionResult } from '../voice.js'
 
 export type MessageTarget = {
@@ -22,18 +11,31 @@ export type MessageTarget = {
   threadId?: string
 }
 
+export type PlatformEmbed = {
+  color?: number
+  footer?: {
+    text?: string
+  }
+}
+
+export type OutgoingFileAttachment = {
+  filename: string
+  contentType: string
+  data: Uint8Array
+}
+
+
 export type OutgoingMessage = {
   markdown: string
   flags?: number
   replyToMessageId?: string
+  embeds?: PlatformEmbed[]
+  files?: OutgoingFileAttachment[]
   buttons?: UiButton[]
   selectMenu?: UiSelectMenu
   selectMenus?: UiSelectMenu[]
 }
 
-// Platform-agnostic button style.
-// Discord adapter maps these to discord.js ButtonStyle enum values.
-// Slack adapter maps 'success'/'danger' to Block Kit 'primary'/'danger' styles.
 export type UiButtonStyle = 'primary' | 'secondary' | 'success' | 'danger' | 'link'
 
 export type UiButton = {
@@ -46,6 +48,7 @@ export type UiSelectOption = {
   label: string
   value: string
   description?: string
+  default?: boolean
 }
 
 export type UiSelectMenu = {
@@ -80,12 +83,35 @@ export type UiModal = {
   inputs: UiModalInput[]
 }
 
+export type PlatformChannelKind = 'text' | 'thread' | 'other'
+
+export type PlatformUser = {
+  id: string
+  username: string
+  displayName: string
+  globalName?: string
+  bot: boolean
+}
+
 export type PlatformChannel = {
   id: string
   name?: string
-  kind: 'text' | 'thread' | 'other'
+  kind: PlatformChannelKind
+  type: PlatformChannelKind
+  parentId: string | null
+  guildId?: string | null
   topic?: string | null
-  raw: unknown
+  createdTimestamp?: number | null
+  isThread(): boolean
+}
+
+export type PlatformThread = PlatformChannel & {
+  kind: 'thread'
+  name: string
+}
+
+export type PlatformFileAttachment = FilePartInput & {
+  sourceUrl?: string
 }
 
 export type MessageAccess = 'allowed' | 'blocked' | 'denied'
@@ -94,12 +120,7 @@ export type PlatformMessage = {
   id: string
   content: string | null
   channelId: string
-  author: {
-    id: string
-    username: string
-    displayName?: string
-    bot: boolean
-  }
+  author: PlatformUser
   attachments: ReadonlyMap<
     string,
     {
@@ -115,22 +136,57 @@ export type PlatformMessage = {
       }
     }
   }>
-  raw: unknown
 }
 
-export type PlatformThread = {
+export interface PlatformConversationMessage {
+  readonly data: PlatformMessage
+  startThread(input: {
+    name: string
+    autoArchiveDuration: number
+    reason: string
+  }): Promise<{
+    thread: PlatformThread
+    target: MessageTarget & { threadId: string }
+  }>
+}
+
+export interface PlatformConversation {
+  readonly target: MessageTarget
+  send(message: OutgoingMessage): Promise<{ id: string }>
+  update(messageId: string, message: OutgoingMessage): Promise<void>
+  delete(messageId: string): Promise<void>
+  message(messageId: string): Promise<PlatformConversationMessage>
+  startTyping(): Promise<void>
+}
+
+export interface PlatformChannelHandle {
+  readonly data: PlatformChannel
+  conversation(): PlatformConversation
+}
+
+export interface PlatformThreadHandle {
+  readonly data: PlatformThread
+  conversation(): PlatformConversation
+  message(messageId: string): Promise<PlatformConversationMessage>
+  starterMessage(): Promise<PlatformMessage | null>
+  rename(name: string): Promise<void>
+  archive(): Promise<void>
+  addMember(userId: string): Promise<void>
+  addStarterReaction(emoji: string): Promise<void>
+  reference(): string
+}
+
+export type PlatformGuildMemberSummary = {
   id: string
-  name: string
-  parentId: string | null
-  guildId?: string | null
-  createdTimestamp?: number | null
-  raw: unknown
+  username: string
+  globalName?: string
+  nick?: string
 }
 
 export type IncomingMessageEvent = {
   message: PlatformMessage
   thread?: PlatformThread
-  target: MessageTarget
+  conversation: PlatformConversation
   kind: 'channel' | 'thread'
   isMention: boolean
   isSelf?: boolean
@@ -138,98 +194,179 @@ export type IncomingMessageEvent = {
 
 export type IncomingThreadEvent = {
   thread: PlatformThread
-  target: MessageTarget & { threadId: string }
+  threadHandle: PlatformThreadHandle
+  conversation: PlatformConversation
   newlyCreated: boolean
 }
 
-export type LegacyReplyOptions = string | InteractionReplyOptions
-export type LegacyEditReplyOptions = string | InteractionEditReplyOptions
-export type LegacyUpdateOptions = string | InteractionUpdateOptions
+export type PlatformInteractionMessage = {
+  content?: string
+  flags?: number
+  components?: PlatformMessageTopLevelComponent[]
+}
 
-export type CommandEvent = {
-  raw: ChatInputCommandInteraction<CacheType>
+export type LegacyReplyOptions = string | PlatformInteractionMessage
+export type LegacyEditReplyOptions = string | PlatformInteractionMessage
+export type LegacyUpdateOptions = string | PlatformInteractionMessage
+
+export type PlatformDeferReplyOptions = {
+  flags?: number
+  ephemeral?: boolean
+}
+
+export type PlatformInteractionAccess = {
+  canUseKimaki: boolean
+  isBlocked: boolean
+}
+
+export type PlatformServer = {
+  id: string
+  name?: string
+}
+
+export type PlatformGuildSummary = PlatformServer & {
+  memberCount?: number
+  ownerId?: string
+}
+
+export type PlatformAdmin = {
+  listGuilds(): Promise<PlatformGuildSummary[]>
+  resolveGuild(input: {
+    guildId?: string
+    fromChannelId?: string
+    fallbackFirst?: boolean
+  }): Promise<PlatformGuildSummary | null>
+  registerCommands(input: {
+    appId: string
+    guildIds: string[]
+    commands: Array<Record<string, unknown>>
+    commandNamesForLegacyCleanup: string[]
+    allowLegacyGlobalCleanup: boolean
+  }): Promise<{
+    registeredGuildCount: number
+    registeredCommandCount: number
+  }>
+  ensureGuildAccessPolicy(input: {
+    guildId: string
+  }): Promise<void>
+  listChannels(input: { guildId: string }): Promise<PlatformChannel[]>
+  createCategory(input: {
+    guildId: string
+    name: string
+  }): Promise<PlatformChannel>
+  createTextChannel(input: {
+    guildId: string
+    name: string
+    parentId?: string
+    topic?: string
+  }): Promise<PlatformChannel>
+  createVoiceChannel?(input: {
+    guildId: string
+    name: string
+    parentId?: string
+  }): Promise<PlatformChannel>
+  fetchChannel(input: {
+    guildId: string
+    channelId: string
+  }): Promise<PlatformChannel | null>
+  fetchChannelById(input: { channelId: string }): Promise<PlatformChannel | null>
+  deleteChannel(input: {
+    guildId: string
+    channelId: string
+    reason?: string
+  }): Promise<'deleted' | 'missing'>
+  listGuildMembers(input: {
+    guildId: string
+    limit?: number
+  }): Promise<PlatformGuildMemberSummary[]>
+  searchGuildMembers(input: {
+    guildId: string
+    query: string
+    limit?: number
+  }): Promise<PlatformGuildMemberSummary[]>
+  fetchCommandDescription?(input: {
+    guildId: string
+    commandId: string
+  }): Promise<string | undefined>
+}
+
+export interface PlatformCommandOptions {
+  getString(name: string, required?: boolean): string
+  getFocused(withMeta?: true): string | { name: string; value: string }
+}
+
+export type PlatformUploadedFile = {
+  id: string
+  url: string
+  name: string
+  contentType?: string | null
+}
+
+export interface PlatformModalFields {
+  getTextInputValue(id: string): string
+  getFiles(id: string): PlatformUploadedFile[]
+}
+
+export type BaseInteractionEvent = {
   appId: string
-  commandName: string
-  commandId: string
-  client: ChatInputCommandInteraction<CacheType>['client']
-  channel: ChatInputCommandInteraction<CacheType>['channel']
-  channelId: string
-  guild: ChatInputCommandInteraction<CacheType>['guild']
+  channel: PlatformChannel | null
+  channelId: string | null
+  guild: PlatformServer | null
   guildId: string | null
-  member: ChatInputCommandInteraction<CacheType>['member']
-  user: ChatInputCommandInteraction<CacheType>['user']
-  options: ChatInputCommandInteraction<CacheType>['options']
-  command: ChatInputCommandInteraction<CacheType>['command']
+  user: PlatformUser
+  access: PlatformInteractionAccess
   deferred: boolean
   replied: boolean
+  botUserName?: string
+}
+
+export type CommandEvent = BaseInteractionEvent & {
+  commandName: string
+  commandId: string
+  commandDescription?: string
+  options: PlatformCommandOptions
   reply(options: LegacyReplyOptions): Promise<void>
   replyUi(message: OutgoingMessage): Promise<void>
-  deferReply(options?: InteractionDeferReplyOptions): Promise<void>
+  deferReply(options?: PlatformDeferReplyOptions): Promise<void>
   editReply(options: LegacyEditReplyOptions): Promise<void>
   editUiReply(message: OutgoingMessage): Promise<void>
   showModal(modal: UiModal): Promise<void>
 }
 
-export type AutocompleteEvent = {
-  raw: AutocompleteInteraction<CacheType>
-  appId: string
+export type AutocompleteEvent = Pick<
+  BaseInteractionEvent,
+  'appId' | 'channel' | 'channelId' | 'guild' | 'guildId' | 'user' | 'botUserName'
+> & {
   commandName: string
-  channel: AutocompleteInteraction<CacheType>['channel']
-  channelId: string | null
-  guild: AutocompleteInteraction<CacheType>['guild']
-  guildId: string | null
-  member: AutocompleteInteraction<CacheType>['member']
-  user: AutocompleteInteraction<CacheType>['user']
-  options: AutocompleteInteraction<CacheType>['options']
+  options: PlatformCommandOptions
   respond(
     options: Array<{ name: string; value: string | number }>,
   ): Promise<void>
 }
 
-export type ButtonEvent = {
-  raw: ButtonInteraction<CacheType>
-  appId: string
+export type ButtonEvent = BaseInteractionEvent & {
   customId: string
-  client: ButtonInteraction<CacheType>['client']
-  channel: ButtonInteraction<CacheType>['channel']
-  channelId: string
-  guild: ButtonInteraction<CacheType>['guild']
-  guildId: string | null
-  member: ButtonInteraction<CacheType>['member']
-  user: ButtonInteraction<CacheType>['user']
-  message: ButtonInteraction<CacheType>['message']
-  deferred: boolean
-  replied: boolean
+  message: PlatformMessage
   reply(options: LegacyReplyOptions): Promise<void>
   replyUi(message: OutgoingMessage): Promise<void>
-  deferReply(options?: InteractionDeferReplyOptions): Promise<void>
+  deferReply(options?: PlatformDeferReplyOptions): Promise<void>
   editReply(options: LegacyEditReplyOptions): Promise<void>
   editUiReply(message: OutgoingMessage): Promise<void>
-  followUp(options: string | InteractionReplyOptions): Promise<void>
+  followUp(options: LegacyReplyOptions): Promise<void>
   deferUpdate(options?: { withResponse?: boolean }): Promise<void>
   update(options: LegacyUpdateOptions): Promise<void>
   updateUi(message: OutgoingMessage): Promise<void>
   showModal(modal: UiModal): Promise<void>
+  runHtmlAction?(): Promise<boolean>
 }
 
-export type SelectMenuEvent = {
-  raw: StringSelectMenuInteraction<CacheType>
-  appId: string
+export type SelectMenuEvent = BaseInteractionEvent & {
   customId: string
-  client: StringSelectMenuInteraction<CacheType>['client']
-  channel: StringSelectMenuInteraction<CacheType>['channel']
-  channelId: string
-  guild: StringSelectMenuInteraction<CacheType>['guild']
-  guildId: string | null
-  member: StringSelectMenuInteraction<CacheType>['member']
-  user: StringSelectMenuInteraction<CacheType>['user']
-  message: StringSelectMenuInteraction<CacheType>['message']
+  message: PlatformMessage
   values: string[]
-  deferred: boolean
-  replied: boolean
   reply(options: LegacyReplyOptions): Promise<void>
   replyUi(message: OutgoingMessage): Promise<void>
-  deferReply(options?: InteractionDeferReplyOptions): Promise<void>
+  deferReply(options?: PlatformDeferReplyOptions): Promise<void>
   editReply(options: LegacyEditReplyOptions): Promise<void>
   editUiReply(message: OutgoingMessage): Promise<void>
   deferUpdate(options?: { withResponse?: boolean }): Promise<void>
@@ -238,23 +375,12 @@ export type SelectMenuEvent = {
   showModal(modal: UiModal): Promise<void>
 }
 
-export type ModalSubmitEvent = {
-  raw: ModalSubmitInteraction<CacheType>
-  appId: string
+export type ModalSubmitEvent = BaseInteractionEvent & {
   customId: string
-  client: ModalSubmitInteraction<CacheType>['client']
-  channel: ModalSubmitInteraction<CacheType>['channel']
-  channelId: string | null
-  guild: ModalSubmitInteraction<CacheType>['guild']
-  guildId: string | null
-  member: ModalSubmitInteraction<CacheType>['member']
-  user: ModalSubmitInteraction<CacheType>['user']
-  fields: ModalSubmitInteraction<CacheType>['fields']
-  deferred: boolean
-  replied: boolean
+  fields: PlatformModalFields
   reply(options: LegacyReplyOptions): Promise<void>
   replyUi(message: OutgoingMessage): Promise<void>
-  deferReply(options?: InteractionDeferReplyOptions): Promise<void>
+  deferReply(options?: PlatformDeferReplyOptions): Promise<void>
   editReply(options: LegacyEditReplyOptions): Promise<void>
   editUiReply(message: OutgoingMessage): Promise<void>
 }
@@ -262,79 +388,38 @@ export type ModalSubmitEvent = {
 export interface KimakiAdapter {
   readonly name: string
 
+  readonly admin?: PlatformAdmin
+
+  readonly content: {
+    resolveMentions(message: PlatformMessage): Promise<string>
+    getTextAttachments(message: PlatformMessage): Promise<string>
+    getFileAttachments(message: PlatformMessage): Promise<PlatformFileAttachment[]>
+  }
+
+  readonly permissions: {
+    getMessageAccess(message: PlatformMessage): Promise<MessageAccess>
+  }
+
+  readonly voice?: {
+    processAttachment(input: {
+      message: PlatformMessage
+      thread: PlatformThread
+      projectDirectory?: string
+      isNewThread?: boolean
+      appId?: string
+      currentSessionContext?: string
+      lastSessionContext?: string
+    }): Promise<TranscriptionResult | null>
+  }
+
   login(token: string): Promise<void>
   destroy(): void
-
-  sendMessage(
-    target: MessageTarget,
-    message: OutgoingMessage,
-  ): Promise<{ id: string }>
-
-  updateMessage(
-    target: MessageTarget,
-    messageId: string,
-    message: OutgoingMessage,
-  ): Promise<void>
-
-  deleteMessage(target: MessageTarget, messageId: string): Promise<void>
-
-  fetchMessage(target: MessageTarget, messageId: string): Promise<PlatformMessage>
-
-  fetchChannel?(channelId: string): Promise<PlatformChannel | null>
-
-  startTyping(target: MessageTarget): Promise<void>
-
-  renameThread(threadId: string, name: string): Promise<void>
-
-  formatThreadReference?(thread: PlatformThread): string
-
-  resolveMentions?(message: PlatformMessage): Promise<string>
-
-  getTextAttachments?(message: PlatformMessage): Promise<string>
-
-  getFileAttachments?(message: PlatformMessage): Promise<DiscordFileAttachment[]>
-
-  getMessageAccess?(message: PlatformMessage): Promise<MessageAccess>
-
-  processVoiceAttachment?(input: {
-    message: PlatformMessage
-    thread: PlatformThread
-    projectDirectory?: string
-    isNewThread?: boolean
-    appId?: string
-    currentSessionContext?: string
-    lastSessionContext?: string
-  }): Promise<TranscriptionResult | null>
-
-  createThreadFromMessage(input: {
-    message: PlatformMessage
-    name: string
-    autoArchiveDuration: number
-    reason: string
-  }): Promise<{
-    thread: PlatformThread
-    target: MessageTarget & { threadId: string }
-  }>
-
-  createThread(input: {
-    channelId: string
-    messageId: string
-    name: string
-    autoArchiveDuration: number
-    reason: string
-  }): Promise<{
-    thread: PlatformThread
-    target: MessageTarget & { threadId: string }
-  }>
-
-  addThreadMember(threadId: string, userId: string): Promise<void>
-
-  addThreadStarterReaction(
-    input: { channelId: string; threadId: string },
-    emoji: string,
-  ): Promise<void>
-
-  fetchStarterMessage(threadId: string): Promise<PlatformMessage | null>
+  conversation(target: MessageTarget): PlatformConversation
+  channel(channelId: string): Promise<PlatformChannelHandle | null>
+  thread(input: {
+    threadId: string
+    parentId?: string | null
+  }): Promise<PlatformThreadHandle | null>
 
   onReady(handler: () => void): void
   onMessage(handler: (event: IncomingMessageEvent) => void | Promise<void>): void

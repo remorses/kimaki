@@ -5,7 +5,7 @@
 
 import * as errore from 'errore'
 import { createTaggedError } from 'errore'
-import type { Client } from 'discord.js'
+import { getDefaultRuntimeAdapter } from './session-handler/thread-session-runtime.js'
 import {
   claimPendingIpcRequests,
   completeIpcRequest,
@@ -70,11 +70,17 @@ type ClaimedRequest = {
 
 async function dispatchRequest({
   req,
-  discordClient,
 }: {
   req: ClaimedRequest
-  discordClient: Client
 }) {
+  const adapter = getDefaultRuntimeAdapter()
+  if (!adapter) {
+    await completeIpcRequest({
+      id: req.id,
+      response: JSON.stringify({ error: 'Adapter not ready' }),
+    })
+    return
+  }
   switch (req.type) {
     case 'file_upload': {
       const parsed = errore.try({
@@ -99,8 +105,8 @@ async function dispatchRequest({
         return parsed
       }
 
-      const thread = await discordClient.channels
-        .fetch(req.thread_id)
+      const threadHandle = await adapter
+        .thread({ threadId: req.thread_id })
         .catch(
           (e) =>
             new IpcDispatchError({
@@ -109,14 +115,14 @@ async function dispatchRequest({
               cause: e,
             }),
         )
-      if (thread instanceof Error) {
+      if (threadHandle instanceof Error) {
         await completeIpcRequest({
           id: req.id,
           response: JSON.stringify({ error: 'Thread not found' }),
         })
-        return thread
+        return threadHandle
       }
-      if (!thread?.isThread()) {
+      if (!threadHandle) {
         await completeIpcRequest({
           id: req.id,
           response: JSON.stringify({ error: 'Thread not found' }),
@@ -131,7 +137,8 @@ async function dispatchRequest({
       // (button click + modal + file download) which can take minutes.
       // Don't block the dispatch loop — complete the IPC request asynchronously.
       showFileUploadButton({
-        thread,
+        threadId: threadHandle.data.id,
+        parentId: threadHandle.data.parentId,
         sessionId: req.session_id,
         directory: parsed.directory || '',
         prompt: parsed.prompt || 'Please upload files',
@@ -189,8 +196,9 @@ async function dispatchRequest({
         return
       }
 
-      const thread = await discordClient.channels
-        .fetch(req.thread_id)
+      // Verify thread exists before queuing
+      const actionThreadHandle = await adapter
+        .thread({ threadId: req.thread_id })
         .catch(
           (e) =>
             new IpcDispatchError({
@@ -199,14 +207,14 @@ async function dispatchRequest({
               cause: e,
             }),
         )
-      if (thread instanceof Error) {
+      if (actionThreadHandle instanceof Error) {
         await completeIpcRequest({
           id: req.id,
           response: JSON.stringify({ error: 'Thread not found' }),
         })
-        return thread
+        return actionThreadHandle
       }
-      if (!thread?.isThread()) {
+      if (!actionThreadHandle) {
         await completeIpcRequest({
           id: req.id,
           response: JSON.stringify({ error: 'Thread not found' }),
@@ -256,11 +264,7 @@ let lastStaleCheck = 0
  * Claims rows atomically (pending -> processing) to prevent duplicate dispatch.
  * Uses an in-flight guard to prevent overlapping poll ticks.
  */
-export async function startIpcPolling({
-  discordClient,
-}: {
-  discordClient: Client
-}) {
+export async function startIpcPolling() {
   // Clean up stale requests from previous runs before first poll tick
   await cancelAllPendingIpcRequests().catch((e) => {
     ipcLogger.warn('Failed to cancel stale IPC requests:', (e as Error).message)
@@ -300,7 +304,7 @@ export async function startIpcPolling({
     }
 
     for (const req of claimed) {
-      const result = await dispatchRequest({ req, discordClient }).catch(
+      const result = await dispatchRequest({ req }).catch(
         (e) =>
           new IpcDispatchError({
             requestId: req.id,

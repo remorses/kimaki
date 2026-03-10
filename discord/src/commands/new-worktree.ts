@@ -2,11 +2,6 @@
 // Uses OpenCode SDK v2 to create worktrees with kimaki- prefix
 // Creates thread immediately, then worktree in background so user can type
 
-import {
-  ChannelType,
-  type TextChannel,
-  type ThreadChannel,
-} from 'discord.js'
 import fs from 'node:fs'
 import type { CommandContext } from './types.js'
 import {
@@ -18,7 +13,6 @@ import {
 } from '../database.js'
 import {
   SILENT_MESSAGE_FLAGS,
-  resolveTextChannel,
 } from '../discord-utils.js'
 import { createLogger, LogPrefix } from '../logger.js'
 import { notifyError } from '../sentry.js'
@@ -33,7 +27,7 @@ import { WORKTREE_PREFIX } from './merge-worktree.js'
 import type { AutocompleteContext } from './types.js'
 import * as errore from 'errore'
 import type { MessageTarget, PlatformThread } from '../platform/types.js'
-import { platformThreadFromDiscord } from '../platform/platform-value.js'
+import { getRootChannelId, isTextChannel, isThreadChannel } from './channel-ref.js'
 
 const logger = createLogger(LogPrefix.WORKTREE)
 
@@ -85,7 +79,7 @@ function deriveWorktreeNameFromThread(threadName: string): string {
  * Get project directory from database.
  */
 async function getProjectDirectoryFromChannel(
-  channel: TextChannel,
+  channel: { id: string },
 ): Promise<string | WorktreeError> {
   const channelConfig = await getChannelDirectory(channel.id)
 
@@ -139,7 +133,7 @@ async function createWorktreeInBackground({
     const errorMsg = worktreeResult.message
     logger.error('[NEW-WORKTREE] Error:', worktreeResult)
     await setWorktreeError({ threadId: thread.id, errorMessage: errorMsg })
-    await adapter.updateMessage(statusTarget, statusMessageId, {
+    await adapter.conversation(statusTarget).update(statusMessageId, {
       markdown: `🌳 **Worktree: ${worktreeName}**\n❌ ${errorMsg}`,
     })
     return
@@ -152,9 +146,16 @@ async function createWorktreeInBackground({
   })
 
   // React with tree emoji to mark as worktree thread
-  await adapter.addThreadStarterReaction(threadTarget, '🌳')
+  const threadHandle = await adapter.thread({
+    threadId: threadTarget.threadId,
+    parentId: thread.parentId,
+  })
+  if (!threadHandle) {
+    throw new Error(`Thread not found: ${threadTarget.threadId}`)
+  }
+  await threadHandle.addStarterReaction('🌳')
 
-  await adapter.updateMessage(statusTarget, statusMessageId, {
+  await adapter.conversation(statusTarget).update(statusMessageId, {
     markdown:
       `🌳 **Worktree: ${worktreeName}**\n` +
       `📁 \`${worktreeResult.directory}\`\n` +
@@ -209,21 +210,17 @@ export async function handleNewWorktreeCommand({
     return
   }
 
-  const isThread =
-    channel.type === ChannelType.PublicThread ||
-    channel.type === ChannelType.PrivateThread
-
   // Handle command in existing thread - attach worktree to this thread
-  if (isThread) {
+  if (isThreadChannel(channel)) {
     await handleWorktreeInThread({
       command,
-      thread: channel as ThreadChannel,
+      thread: channel,
     })
     return
   }
 
   // Handle command in text channel - create new thread with worktree (existing behavior)
-  if (channel.type !== ChannelType.GuildText) {
+  if (!isTextChannel(channel)) {
     await command.editReply(
       'This command can only be used in text channels or threads',
     )
@@ -247,10 +244,8 @@ export async function handleNewWorktreeCommand({
     return
   }
 
-  const textChannel = channel as TextChannel
-
   const projectDirectory = await getProjectDirectoryFromChannel(
-    textChannel,
+    channel,
   )
   if (errore.isError(projectDirectory)) {
     await command.editReply(projectDirectory.message)
@@ -294,22 +289,32 @@ export async function handleNewWorktreeCommand({
   const result = await errore.tryAsync({
     try: async () => {
       const channelTarget = {
-        channelId: textChannel.id,
+        channelId: channel.id,
       }
-      const starterMessage = await adapter.sendMessage(channelTarget, {
+      const starterMessage = await adapter.conversation(channelTarget).send({
         markdown: `🌳 **Creating worktree: ${worktreeName}**\n⏳ Setting up...`,
         flags: SILENT_MESSAGE_FLAGS,
       })
 
-      const { thread, target: threadTarget } = await adapter.createThread({
-        channelId: channelTarget.channelId,
-        messageId: starterMessage.id,
-        name: `${WORKTREE_PREFIX}worktree: ${worktreeName}`,
-        autoArchiveDuration: 1440,
-        reason: 'Worktree session',
-      })
+      const { thread, target: threadTarget } = await adapter
+        .conversation(channelTarget)
+        .message(starterMessage.id)
+        .then((messageHandle) => {
+          return messageHandle.startThread({
+            name: `${WORKTREE_PREFIX}worktree: ${worktreeName}`,
+            autoArchiveDuration: 1440,
+            reason: 'Worktree session',
+          })
+        })
 
-      await adapter.addThreadMember(threadTarget.threadId, command.user.id)
+      const threadHandle = await adapter.thread({
+        threadId: threadTarget.threadId,
+        parentId: thread.parentId,
+      })
+      if (!threadHandle) {
+        throw new Error(`Thread not found: ${threadTarget.threadId}`)
+      }
+      await threadHandle.addMember(command.user.id)
 
       return {
         thread,
@@ -363,7 +368,7 @@ async function handleWorktreeInThread({
   thread,
 }: {
   command: CommandContext['command']
-  thread: ThreadChannel
+  thread: PlatformThread
 }): Promise<void> {
   // Error if thread already has a worktree
   if (await getThreadWorktree(thread.id)) {
@@ -386,14 +391,14 @@ async function handleWorktreeInThread({
   }
 
   // Get parent channel for project directory
-  const parent = await resolveTextChannel(thread)
-  if (!parent || parent.type !== ChannelType.GuildText) {
+  const parentChannelId = getRootChannelId(thread)
+  if (!parentChannelId) {
     await command.editReply('Cannot determine parent channel')
     return
   }
 
   const projectDirectory = await getProjectDirectoryFromChannel(
-    parent as TextChannel,
+    { id: parentChannelId },
   )
   if (errore.isError(projectDirectory)) {
     await command.editReply(projectDirectory.message)
@@ -440,12 +445,12 @@ async function handleWorktreeInThread({
   if (!adapter) {
     throw new Error('No runtime adapter configured')
   }
-  const platformThread = platformThreadFromDiscord(thread)
+  const platformThread = thread
   const threadTarget = {
     channelId: platformThread.parentId || platformThread.id,
     threadId: platformThread.id,
   }
-  const statusMessage = await adapter.sendMessage(threadTarget, {
+  const statusMessage = await adapter.conversation(threadTarget).send({
     markdown: `🌳 **Creating worktree: ${worktreeName}**\n⏳ Setting up...`,
     flags: SILENT_MESSAGE_FLAGS,
   })
@@ -477,15 +482,14 @@ export async function handleNewWorktreeAutocomplete({
   interaction,
 }: AutocompleteContext): Promise<void> {
   try {
-    const focusedValue = interaction.options.getFocused()
+    const focused = interaction.options.getFocused()
+    const focusedValue = typeof focused === 'string' ? focused : focused.value
 
     let projectDirectory: string | undefined
     if (interaction.channel) {
-      const textChannel = await resolveTextChannel(
-        interaction.channel as TextChannel | ThreadChannel | null,
-      )
-      if (textChannel) {
-        const channelConfig = await getChannelDirectory(textChannel.id)
+      const rootChannelId = getRootChannelId(interaction.channel)
+      if (rootChannelId) {
+        const channelConfig = await getChannelDirectory(rootChannelId)
         projectDirectory = channelConfig?.directory
       }
     }

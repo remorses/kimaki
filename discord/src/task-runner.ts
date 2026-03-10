@@ -1,7 +1,7 @@
 // Scheduled task runner for executing due `send --send-at` jobs in the bot process.
 
-import { type REST, Routes } from 'discord.js'
 import { createDiscordRest } from './discord-urls.js'
+import type { DiscordRestClient } from './discord-urls.js'
 import yaml from 'js-yaml'
 import {
   claimScheduledTaskRunning,
@@ -22,6 +22,7 @@ import {
   getPromptPreview,
   parseScheduledTaskPayload,
 } from './task-schedule.js'
+import { discordRoutes } from './platform/discord-routes.js'
 
 const taskLogger = createLogger(LogPrefix.TASK)
 
@@ -51,7 +52,7 @@ async function executeThreadScheduledTask({
   task,
   payload,
 }: {
-  rest: REST
+  rest: DiscordRestClient
   task: ScheduledTask
   payload: {
     threadId: string
@@ -75,7 +76,7 @@ async function executeThreadScheduledTask({
   const prefixedPrompt = `» **kimaki-cli:** ${payload.prompt}`
 
   const postResult = await rest
-    .post(Routes.channelMessages(payload.threadId), {
+    .post(discordRoutes.channelMessages(payload.threadId), {
       body: {
         content: prefixedPrompt,
         embeds: embed,
@@ -97,7 +98,7 @@ async function executeChannelScheduledTask({
   task,
   payload,
 }: {
-  rest: REST
+  rest: DiscordRestClient
   task: ScheduledTask
   payload: {
     channelId: string
@@ -128,7 +129,7 @@ async function executeChannelScheduledTask({
     : undefined
 
   const starterResult = await rest
-    .post(Routes.channelMessages(payload.channelId), {
+    .post(discordRoutes.channelMessages(payload.channelId), {
       body: {
         content: payload.prompt,
         embeds,
@@ -156,7 +157,7 @@ async function executeChannelScheduledTask({
     100,
   )
   const threadResult = await rest
-    .post(Routes.threads(payload.channelId, starterMessageId), {
+    .post(discordRoutes.threads(payload.channelId, starterMessageId), {
       body: {
         name: threadName,
         auto_archive_duration: 1440,
@@ -184,7 +185,7 @@ async function executeChannelScheduledTask({
   }
 
   const addMemberResult = await rest
-    .put(Routes.threadMembers(threadIdResult, payload.userId))
+    .put(discordRoutes.threadMembers(threadIdResult, payload.userId))
     .catch((error) => {
       return new Error(
         `Failed to add user to scheduled thread for task ${task.id}`,
@@ -200,7 +201,7 @@ async function executeScheduledTask({
   rest,
   task,
 }: {
-  rest: REST
+  rest: DiscordRestClient
   task: ScheduledTask
 }): Promise<void | Error> {
   const payloadResult = parseScheduledTaskPayload(task.payload_json)
@@ -306,7 +307,7 @@ async function processDueTask({
   rest,
   task,
 }: {
-  rest: REST
+  rest: DiscordRestClient
   task: ScheduledTask
 }): Promise<void> {
   const startedAt = new Date()
@@ -341,7 +342,7 @@ async function runTaskRunnerTick({
   staleRunningMs,
   dueBatchSize,
 }: {
-  rest: REST
+  rest: DiscordRestClient
   staleRunningMs: number
   dueBatchSize: number
 }): Promise<void> {

@@ -6,11 +6,8 @@
 // The bot writes file paths back to ipc_requests.response, and the plugin
 // polls until the response appears.
 
-import {
-  ComponentType,
-  type ThreadChannel,
-  MessageFlags,
-} from 'discord.js'
+
+import { PLATFORM_MESSAGE_FLAGS } from '../platform/message-flags.js'
 import crypto from 'node:crypto'
 import fs from 'node:fs'
 import path from 'node:path'
@@ -37,7 +34,8 @@ export type FileUploadRequest = {
 type PendingFileUploadContext = {
   sessionId: string
   directory: string
-  thread: ThreadChannel
+  threadId: string
+  parentId: string | null
   prompt: string
   maxFiles: number
   contextHash: string
@@ -95,13 +93,15 @@ function resolveContext(
  * Returns a promise that resolves with the downloaded file paths.
  */
 export function showFileUploadButton({
-  thread,
+  threadId,
+  parentId,
   sessionId,
   directory,
   prompt,
   maxFiles,
 }: {
-  thread: ThreadChannel
+  threadId: string
+  parentId: string | null
   sessionId: string
   directory: string
   prompt: string
@@ -127,7 +127,8 @@ export function showFileUploadButton({
     const context: PendingFileUploadContext = {
       sessionId,
       directory,
-      thread,
+      threadId,
+      parentId,
       prompt,
       maxFiles,
       contextHash,
@@ -146,12 +147,13 @@ export function showFileUploadButton({
       return
     }
     const threadTarget = {
-      channelId: thread.parentId || thread.id,
-      threadId: thread.id,
+      channelId: parentId || threadId,
+      threadId,
     }
 
     adapter
-      .sendMessage(threadTarget, {
+      .conversation(threadTarget)
+      .send({
         markdown: `**File Upload Requested**\n${prompt.slice(0, 1900)}`,
         buttons: [
           {
@@ -193,7 +195,7 @@ export async function handleFileUploadButton(
   if (!context || context.resolved) {
     await interaction.reply({
       content: 'This file upload request has expired.',
-      flags: MessageFlags.Ephemeral,
+      flags: PLATFORM_MESSAGE_FLAGS.EPHEMERAL,
     })
     return
   }
@@ -231,21 +233,17 @@ export async function handleFileUploadModalSubmit(
   if (!context || context.resolved) {
     await interaction.reply({
       content: 'This file upload request has expired.',
-      flags: MessageFlags.Ephemeral,
+      flags: PLATFORM_MESSAGE_FLAGS.EPHEMERAL,
     })
     return
   }
 
   try {
-    await interaction.deferReply({ flags: MessageFlags.Ephemeral })
+    await interaction.deferReply({ flags: PLATFORM_MESSAGE_FLAGS.EPHEMERAL })
 
     // File upload data is nested in the LabelModalData -> FileUploadModalData
-    const fileField = interaction.fields.getField(
-      'uploaded_files',
-      ComponentType.FileUpload,
-    )
-    const attachments = fileField.attachments
-    if (!attachments || attachments.size === 0) {
+    const attachments = interaction.fields.getFiles('uploaded_files')
+    if (attachments.length === 0) {
       await interaction.editReply({ content: 'No files were uploaded.' })
       updateButtonMessage(context, '_No files uploaded_')
       resolveContext(context, [])
@@ -258,7 +256,7 @@ export async function handleFileUploadModalSubmit(
     const downloadedPaths: string[] = []
     const errors: string[] = []
 
-    for (const [, attachment] of attachments) {
+    for (const attachment of attachments) {
       // Check if context was cancelled (e.g. user sent new message) while
       // we were downloading previous files - stop downloading more
       if (context.resolved) {
@@ -340,16 +338,12 @@ function updateButtonMessage(
   if (!adapter) {
     return
   }
-  void adapter.updateMessage(
-    {
-      channelId: context.thread.parentId || context.thread.id,
-      threadId: context.thread.id,
-    },
-    context.messageId,
-    {
+  void adapter.conversation({
+    channelId: context.parentId || context.threadId,
+    threadId: context.threadId,
+  }).update(context.messageId, {
       markdown: `**File Upload Requested**\n${context.prompt.slice(0, 1900)}\n${status}`,
-    },
-  ).catch(() => {})
+    }).catch(() => {})
 }
 
 /**
@@ -360,7 +354,7 @@ export async function cancelPendingFileUpload(
 ): Promise<boolean> {
   const toCancel: PendingFileUploadContext[] = []
   for (const [, ctx] of pendingFileUploadContexts) {
-    if (ctx.thread.id === threadId) {
+    if (ctx.threadId === threadId) {
       toCancel.push(ctx)
     }
   }

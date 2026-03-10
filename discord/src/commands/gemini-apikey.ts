@@ -1,10 +1,9 @@
 // Transcription API key button, slash command, and modal handlers.
 // Auto-detects provider from key prefix: sk-* = OpenAI, otherwise Gemini.
 
-import {
-  MessageFlags,
-} from 'discord.js'
+
 import { setGeminiApiKey, setOpenAIApiKey } from '../database.js'
+import { PLATFORM_MESSAGE_FLAGS } from '../platform/message-flags.js'
 import type {
   ButtonEvent,
   CommandEvent,
@@ -40,7 +39,7 @@ export async function handleTranscriptionApiKeyButton(
   if (!appId) {
     await interaction.reply({
       content: 'Missing app id for API key setup.',
-      flags: MessageFlags.Ephemeral,
+      flags: PLATFORM_MESSAGE_FLAGS.EPHEMERAL,
     })
     return
   }
@@ -67,7 +66,7 @@ export async function handleTranscriptionApiKeyModalSubmit(
     .slice('transcription_apikey_modal:'.length)
     .trim()
 
-  await interaction.deferReply({ flags: MessageFlags.Ephemeral })
+  await interaction.deferReply({ flags: PLATFORM_MESSAGE_FLAGS.EPHEMERAL })
 
   if (!appId) {
     await interaction.editReply({

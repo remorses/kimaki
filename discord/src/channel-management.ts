@@ -2,12 +2,6 @@
 // Creates and manages Kimaki project channels (text + voice pairs),
 // extracts channel metadata from topic tags, and ensures category structure.
 
-import {
-  ChannelType,
-  type CategoryChannel,
-  type Guild,
-  type TextChannel,
-} from 'discord.js'
 import fs from 'node:fs'
 import path from 'node:path'
 import {
@@ -18,73 +12,103 @@ import {
 import { getProjectsDir } from './config.js'
 import { execAsync } from './worktrees.js'
 import { createLogger, LogPrefix } from './logger.js'
+import { TUTORIAL_WELCOME_TEXT } from './onboarding-tutorial.js'
+import type { KimakiAdapter, PlatformAdmin, PlatformChannel } from './platform/types.js'
 
 const logger = createLogger(LogPrefix.CHANNEL)
 
+const THREAD_AUTO_ARCHIVE_ONE_DAY = 1440
+
+function isCategoryChannel(channel: PlatformChannel): boolean {
+  return channel.kind === 'other' && channel.parentId === null
+}
+
+function isTextChannel(channel: PlatformChannel): boolean {
+  return channel.kind === 'text'
+}
+
 export async function ensureKimakiCategory(
-  guild: Guild,
-  botName?: string,
-): Promise<CategoryChannel> {
+  {
+    admin,
+    guildId,
+    botName,
+  }: {
+    admin: PlatformAdmin
+    guildId: string
+    botName?: string
+  },
+): Promise<PlatformChannel> {
   // Skip appending bot name if it's already "kimaki" to avoid "Kimaki kimaki"
   const isKimakiBot = botName?.toLowerCase() === 'kimaki'
   const categoryName = botName && !isKimakiBot ? `Kimaki ${botName}` : 'Kimaki'
 
-  const existingCategory = guild.channels.cache.find(
-    (channel): channel is CategoryChannel => {
-      if (channel.type !== ChannelType.GuildCategory) {
-        return false
-      }
-
-      return channel.name.toLowerCase() === categoryName.toLowerCase()
-    },
-  )
+  const channels = await admin.listChannels({ guildId })
+  const existingCategory = channels.find((channel) => {
+    if (!isCategoryChannel(channel)) {
+      return false
+    }
+    if (!channel.name) {
+      return false
+    }
+    return channel.name.toLowerCase() === categoryName.toLowerCase()
+  })
 
   if (existingCategory) {
     return existingCategory
   }
 
-  return guild.channels.create({
+  return admin.createCategory({
+    guildId,
     name: categoryName,
-    type: ChannelType.GuildCategory,
   })
 }
 
 export async function ensureKimakiAudioCategory(
-  guild: Guild,
-  botName?: string,
-): Promise<CategoryChannel> {
+  {
+    admin,
+    guildId,
+    botName,
+  }: {
+    admin: PlatformAdmin
+    guildId: string
+    botName?: string
+  },
+): Promise<PlatformChannel> {
   // Skip appending bot name if it's already "kimaki" to avoid "Kimaki Audio kimaki"
   const isKimakiBot = botName?.toLowerCase() === 'kimaki'
   const categoryName =
     botName && !isKimakiBot ? `Kimaki Audio ${botName}` : 'Kimaki Audio'
 
-  const existingCategory = guild.channels.cache.find(
-    (channel): channel is CategoryChannel => {
-      if (channel.type !== ChannelType.GuildCategory) {
-        return false
-      }
-
-      return channel.name.toLowerCase() === categoryName.toLowerCase()
-    },
-  )
+  const channels = await admin.listChannels({ guildId })
+  const existingCategory = channels.find((channel) => {
+    if (!isCategoryChannel(channel)) {
+      return false
+    }
+    if (!channel.name) {
+      return false
+    }
+    return channel.name.toLowerCase() === categoryName.toLowerCase()
+  })
 
   if (existingCategory) {
     return existingCategory
   }
 
-  return guild.channels.create({
+  return admin.createCategory({
+    guildId,
     name: categoryName,
-    type: ChannelType.GuildCategory,
   })
 }
 
 export async function createProjectChannels({
-  guild,
+  admin,
+  guildId,
   projectDirectory,
   botName,
   enableVoiceChannels = false,
 }: {
-  guild: Guild
+  admin: PlatformAdmin
+  guildId: string
   projectDirectory: string
   botName?: string
   enableVoiceChannels?: boolean
@@ -99,13 +123,16 @@ export async function createProjectChannels({
     .replace(/[^a-z0-9-]/g, '-')
     .slice(0, 100)
 
-  const kimakiCategory = await ensureKimakiCategory(guild, botName)
+  const kimakiCategory = await ensureKimakiCategory({
+    admin,
+    guildId,
+    botName,
+  })
 
-  const textChannel = await guild.channels.create({
+  const textChannel = await admin.createTextChannel({
+    guildId,
     name: channelName,
-    type: ChannelType.GuildText,
-    parent: kimakiCategory,
-    // Channel configuration is stored in SQLite, not in the topic
+    parentId: kimakiCategory.id,
   })
 
   await setChannelDirectory({
@@ -117,13 +144,25 @@ export async function createProjectChannels({
   let voiceChannelId: string | null = null
 
   if (enableVoiceChannels) {
-    const kimakiAudioCategory = await ensureKimakiAudioCategory(guild, botName)
-
-    const voiceChannel = await guild.channels.create({
-      name: channelName,
-      type: ChannelType.GuildVoice,
-      parent: kimakiAudioCategory,
+    const kimakiAudioCategory = await ensureKimakiAudioCategory({
+      admin,
+      guildId,
+      botName,
     })
+
+    const voiceChannel = await admin.createVoiceChannel?.({
+      guildId,
+      name: channelName,
+      parentId: kimakiAudioCategory.id,
+    })
+
+    if (!voiceChannel) {
+      return {
+        textChannelId: textChannel.id,
+        voiceChannelId: null,
+        channelName,
+      }
+    }
 
     await setChannelDirectory({
       channelId: voiceChannel.id,
@@ -149,16 +188,21 @@ export type ChannelWithTags = {
 }
 
 export async function getChannelsWithDescriptions(
-  guild: Guild,
+  {
+    admin,
+    guildId,
+  }: {
+    admin: PlatformAdmin
+    guildId: string
+  },
 ): Promise<ChannelWithTags[]> {
   const channels: ChannelWithTags[] = []
 
-  const textChannels = guild.channels.cache.filter((channel) =>
-    channel.isTextBased(),
-  )
+  const textChannels = (await admin.listChannels({ guildId })).filter((channel) => {
+    return isTextChannel(channel)
+  })
 
-  for (const channel of textChannels.values()) {
-    const textChannel = channel as TextChannel
+  for (const textChannel of textChannels) {
     const description = textChannel.topic || null
 
     // Get channel config from database instead of parsing XML from topic
@@ -166,7 +210,7 @@ export async function getChannelsWithDescriptions(
 
     channels.push({
       id: textChannel.id,
-      name: textChannel.name,
+      name: textChannel.name || textChannel.id,
       description,
       kimakiDirectory: channelConfig?.directory,
     })
@@ -202,17 +246,16 @@ const DEFAULT_CHANNEL_TOPIC =
  * as a fallback for channels created before DB mapping existed.
  */
 export async function createDefaultKimakiChannel({
-  guild,
+  admin,
+  guildId,
   botName,
-  appId,
   isGatewayMode,
 }: {
-  guild: Guild
+  admin: PlatformAdmin
+  guildId: string
   botName?: string
-  appId: string
   isGatewayMode: boolean
 }): Promise<{
-  textChannel: TextChannel
   textChannelId: string
   channelName: string
   projectDirectory: string
@@ -227,15 +270,6 @@ export async function createDefaultKimakiChannel({
     logger.log(`Created default kimaki directory: ${projectDirectory}`)
   }
 
-  // Hydrate guild channels from API so the cache scan is complete
-  try {
-    await guild.channels.fetch()
-  } catch (error) {
-    logger.warn(
-      `Could not fetch guild channels for ${guild.name}: ${error instanceof Error ? error.message : String(error)}`,
-    )
-  }
-
   // 1. Check database for existing channel mapped to this directory.
   // Check ALL mappings (not just the first) since the same directory could
   // have stale rows from deleted channels or other guilds.
@@ -243,24 +277,31 @@ export async function createDefaultKimakiChannel({
     directory: projectDirectory,
     channelType: 'text',
   })
-  const mappedChannelInGuild = existingMappings
-    .map((row) => guild.channels.cache.get(row.channel_id))
-    .find((ch): ch is TextChannel => ch?.type === ChannelType.GuildText)
+  const mappedChannelInGuildResults = await Promise.all(
+    existingMappings.map(async (row) => {
+      return admin.fetchChannel({ guildId, channelId: row.channel_id })
+    }),
+  )
+  const mappedChannelInGuild = mappedChannelInGuildResults.find((channel) => {
+    return channel?.kind === 'text'
+  })
   if (mappedChannelInGuild) {
     logger.log(`Default kimaki channel already exists: ${mappedChannelInGuild.id}`)
     return null
   }
 
   // 2. Fallback: detect existing channel by name+category
-  const kimakiCategory = await ensureKimakiCategory(guild, botName)
-  const existingByName = guild.channels.cache.find((ch): ch is TextChannel => {
-    if (ch.type !== ChannelType.GuildText) {
+  const kimakiCategory = await ensureKimakiCategory({ admin, guildId, botName })
+  const guildChannels = await admin.listChannels({ guildId })
+  const existingByName = guildChannels.find((ch) => {
+    if (!isTextChannel(ch)) {
       return false
     }
     if (ch.parentId !== kimakiCategory.id) {
       return false
     }
-    return ch.name === 'kimaki' || ch.name.startsWith('kimaki-')
+    const channelName = ch.name || ''
+    return channelName === 'kimaki' || channelName.startsWith('kimaki-')
   })
   if (existingByName) {
     logger.log(
@@ -310,10 +351,10 @@ export async function createDefaultKimakiChannel({
     return `kimaki-${sanitized}`.slice(0, 100)
   })()
 
-  const textChannel = await guild.channels.create({
+  const textChannel = await admin.createTextChannel({
+    guildId,
     name: channelName,
-    type: ChannelType.GuildText,
-    parent: kimakiCategory,
+    parentId: kimakiCategory.id,
     topic: DEFAULT_CHANNEL_TOPIC,
   })
 
@@ -326,9 +367,54 @@ export async function createDefaultKimakiChannel({
   logger.log(`Created default kimaki channel: #${channelName} (${textChannel.id})`)
 
   return {
-    textChannel,
     textChannelId: textChannel.id,
     channelName,
     projectDirectory,
+  }
+}
+
+// ── Onboarding welcome message ──────────────────────────────────────────
+
+function buildWelcomeText(): string {
+  return `**Kimaki** lets you code from Discord. Send a message in any project channel and an AI agent edits code, runs commands, and searches your codebase — all on your machine.
+**What you can do:**
+- Use \`/add-project\` to create a Discord channel linked to one OpenCode project (git repo)
+- Collaborate with teammates in the same session
+- Upload images and files, the bot can share screenshots back
+${TUTORIAL_WELCOME_TEXT}`
+}
+
+function buildThreadPrompt({ mentionUserId }: { mentionUserId?: string }): string {
+  const mentionSuffix = mentionUserId ? ` <@${mentionUserId}>` : ''
+  return `Want to build an example browser game? Respond in this thread.${mentionSuffix}`
+}
+
+export async function sendWelcomeMessage({
+  adapter,
+  channelId,
+  mentionUserId,
+}: {
+  adapter: KimakiAdapter
+  channelId: string
+  mentionUserId?: string
+}): Promise<void> {
+  try {
+    const conversation = adapter.conversation({ channelId })
+    const message = await conversation.send({ markdown: buildWelcomeText() })
+    const thread = await conversation.message(message.id).then((messageHandle) => {
+      return messageHandle.startThread({
+      name: 'Kimaki tutorial',
+      autoArchiveDuration: THREAD_AUTO_ARCHIVE_ONE_DAY,
+      reason: 'Onboarding tutorial thread',
+    })
+    })
+    await adapter.conversation(thread.target).send({
+      markdown: buildThreadPrompt({ mentionUserId }),
+    })
+    logger.log(`Sent welcome message with thread to channel ${channelId}`)
+  } catch (error) {
+    logger.warn(
+      `Failed to send welcome message to channel ${channelId}: ${error instanceof Error ? error.message : String(error)}`,
+    )
   }
 }

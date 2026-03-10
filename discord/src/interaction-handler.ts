@@ -1,8 +1,9 @@
 // Discord slash command and interaction handler.
 // Routes adapter-normalized command and component events to existing command handlers.
 
-import { MessageFlags } from 'discord.js'
+
 import type { DiscordAdapter } from './platform/discord-adapter.js'
+import { PLATFORM_MESSAGE_FLAGS } from './platform/message-flags.js'
 import {
   handleSessionCommand,
   handleSessionAutocomplete,
@@ -67,7 +68,6 @@ import {
   handleFileUploadModalSubmit,
 } from './commands/file-upload.js'
 import { handleActionButton } from './commands/action-buttons.js'
-import { handleHtmlActionButton } from './html-actions.js'
 import {
   handleQueueCommand,
   handleClearQueueCommand,
@@ -91,7 +91,6 @@ import {
   handleVariantQuickSelectMenu,
   handleVariantScopeSelectMenu,
 } from './commands/model-variant.js'
-import { hasKimakiBotPermission } from './discord-utils.js'
 import { createLogger, LogPrefix } from './logger.js'
 import type {
   AutocompleteEvent,
@@ -120,7 +119,7 @@ async function handleInteractionError({
   try {
     await interaction.reply({
       content: 'An error occurred processing this command.',
-      flags: MessageFlags.Ephemeral,
+      flags: PLATFORM_MESSAGE_FLAGS.EPHEMERAL,
     })
   } catch (replyError) {
     interactionLogger.error(
@@ -135,12 +134,12 @@ function ensurePermission({
 }: {
   interaction: CommandEvent | ButtonEvent | SelectMenuEvent | ModalSubmitEvent
 }) {
-  if (hasKimakiBotPermission(interaction.member, interaction.guild)) {
+  if (interaction.access.canUseKimaki) {
     return true
   }
   void interaction.reply({
     content: `You don't have permission to use this.\nTo use Kimaki, ask a server admin to give you the **Kimaki** role.`,
-    flags: MessageFlags.Ephemeral,
+    flags: PLATFORM_MESSAGE_FLAGS.EPHEMERAL,
   })
   return false
 }
@@ -337,7 +336,7 @@ async function handleButton({ interaction }: { interaction: ButtonEvent }) {
   }
 
   if (interaction.customId.startsWith('html_action:')) {
-    await handleHtmlActionButton(interaction.raw)
+    await interaction.runHtmlAction?.()
   }
 }
 

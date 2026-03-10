@@ -51,7 +51,7 @@ e2eTest('queue advanced: footer emission', () => {
         Reply with exactly: footer-check
         --- from: assistant (TestBot)
         ⬥ ok
-        *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2*"
+        *project ⋅ adapters ⋅ Ns ⋅ N% ⋅ deterministic-v2*"
       `)
       const foundFooter = footerMessages.some((m) => {
         return m.author.id === ctx.discord.botUserId
@@ -119,12 +119,12 @@ e2eTest('queue advanced: footer emission', () => {
         Reply with exactly: footer-multi-setup
         --- from: assistant (TestBot)
         ⬥ ok
-        *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2*
+        *project ⋅ adapters ⋅ Ns ⋅ N% ⋅ deterministic-v2*
         --- from: user (queue-advanced-tester)
         Reply with exactly: footer-multi-second
         --- from: assistant (TestBot)
         ⬥ ok
-        *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2*"
+        *project ⋅ adapters ⋅ Ns ⋅ N% ⋅ deterministic-v2*"
       `)
       if (footerCount >= 2) {
         expect(footerCount).toBeGreaterThanOrEqual(2)
@@ -232,7 +232,7 @@ e2eTest('queue advanced: footer emission', () => {
         Reply with exactly: interrupt-footer-setup
         --- from: assistant (TestBot)
         ⬥ ok
-        *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2*
+        *project ⋅ adapters ⋅ Ns ⋅ N% ⋅ deterministic-v2*
         --- from: user (queue-advanced-tester)
         PLUGIN_TIMEOUT_SLEEP_MARKER
         --- from: assistant (TestBot)
@@ -241,7 +241,7 @@ e2eTest('queue advanced: footer emission', () => {
         Reply with exactly: interrupt-footer-followup
         --- from: assistant (TestBot)
         ⬥ ok
-        *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2*"
+        *project ⋅ adapters ⋅ Ns ⋅ N% ⋅ deterministic-v2*"
       `)
       expect(followupUserIdx).toBeGreaterThanOrEqual(0)
       expect(okReplyIdx).toBeGreaterThan(followupUserIdx)
@@ -328,7 +328,7 @@ e2eTest('queue advanced: footer emission', () => {
         Reply with exactly: plugin-timeout-setup
         --- from: assistant (TestBot)
         ⬥ ok
-        *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2*
+        *project ⋅ adapters ⋅ Ns ⋅ N% ⋅ deterministic-v2*
         --- from: user (queue-advanced-tester)
         PLUGIN_TIMEOUT_SLEEP_MARKER
         --- from: assistant (TestBot)
@@ -337,7 +337,7 @@ e2eTest('queue advanced: footer emission', () => {
         Reply with exactly: plugin-timeout-after
         --- from: assistant (TestBot)
         ⬥ ok
-        *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2*"
+        *project ⋅ adapters ⋅ Ns ⋅ N% ⋅ deterministic-v2*"
       `)
       expect(afterIndex).toBeGreaterThanOrEqual(0)
 

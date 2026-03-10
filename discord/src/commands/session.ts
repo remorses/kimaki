@@ -1,12 +1,12 @@
 // /new-session command - Start a new OpenCode session.
 
-import { ChannelType, type TextChannel, type ThreadChannel } from 'discord.js'
 import fs from 'node:fs'
 import path from 'node:path'
 import type { CommandContext, AutocompleteContext } from './types.js'
 import { getChannelDirectory } from '../database.js'
 import { initializeOpencodeForDirectory } from '../opencode.js'
 import { SILENT_MESSAGE_FLAGS } from '../discord-utils.js'
+import { isTextChannel } from './channel-ref.js'
 import {
   getDefaultRuntimeAdapter,
   getOrCreateRuntime,
@@ -27,12 +27,11 @@ export async function handleSessionCommand({
   const agent = command.options.getString('agent') || undefined
   const channel = command.channel
 
-  if (!channel || channel.type !== ChannelType.GuildText) {
+  if (!isTextChannel(channel)) {
     await command.editReply('This command can only be used in text channels')
     return
   }
-
-  const textChannel = channel as TextChannel
+  const textChannel = channel
 
   const channelConfig = await getChannelDirectory(textChannel.id)
   const projectDirectory = channelConfig?.directory
@@ -73,22 +72,32 @@ export async function handleSessionCommand({
     const channelTarget = {
       channelId: textChannel.id,
     }
-    const starterMessage = await adapter.sendMessage(channelTarget, {
+    const starterMessage = await adapter.conversation(channelTarget).send({
       markdown: `🚀 **Starting OpenCode session**\n📝 ${prompt}${files.length > 0 ? `\n📎 Files: ${files.join(', ')}` : ''}`,
       flags: SILENT_MESSAGE_FLAGS,
     })
 
-    const { thread, target: threadTarget } = await adapter.createThread({
-      channelId: channelTarget.channelId,
-      messageId: starterMessage.id,
-      name: prompt.slice(0, 100),
-      autoArchiveDuration: 1440,
-      reason: 'OpenCode session',
+    const { thread, target: threadTarget } = await adapter
+      .conversation(channelTarget)
+      .message(starterMessage.id)
+      .then((messageHandle) => {
+        return messageHandle.startThread({
+          name: prompt.slice(0, 100),
+          autoArchiveDuration: 1440,
+          reason: 'OpenCode session',
+        })
+      })
+
+    const threadHandle = await adapter.thread({
+      threadId: threadTarget.threadId,
+      parentId: thread.parentId,
     })
+    if (!threadHandle) {
+      throw new Error(`Thread not found: ${threadTarget.threadId}`)
+    }
+    await threadHandle.addMember(command.user.id)
 
-    await adapter.addThreadMember(threadTarget.threadId, command.user.id)
-
-    const threadReference = adapter.formatThreadReference?.(thread) || `<#${thread.id}>`
+    const threadReference = threadHandle.reference()
     await command.editReply(`Created new session in ${threadReference}`)
 
     const runtime = getOrCreateRuntime({
@@ -120,13 +129,14 @@ async function handleAgentAutocomplete({
 }: {
   interaction: AutocompleteContext['interaction']
 }): Promise<void> {
-  const focusedValue = interaction.options.getFocused()
+  const focused = interaction.options.getFocused()
+  const focusedValue = typeof focused === 'string' ? focused : focused.value
 
   let projectDirectory: string | undefined
 
   if (
     interaction.channel &&
-    interaction.channel.type === ChannelType.GuildText
+    interaction.channel.kind === 'text'
   ) {
     const channelConfig = await getChannelDirectory(interaction.channel.id)
     if (channelConfig) {
@@ -179,6 +189,10 @@ export async function handleSessionAutocomplete({
   interaction,
 }: AutocompleteContext): Promise<void> {
   const focusedOption = interaction.options.getFocused(true)
+  if (typeof focusedOption === 'string') {
+    await interaction.respond([])
+    return
+  }
 
   if (focusedOption.name === 'agent') {
     await handleAgentAutocomplete({ interaction })
@@ -192,17 +206,17 @@ export async function handleSessionAutocomplete({
   const focusedValue = focusedOption.value
 
   const parts = focusedValue.split(',')
-  const previousFiles = parts
+  const previousFiles: string[] = parts
     .slice(0, -1)
-    .map((f) => f.trim())
-    .filter((f) => f)
+    .map((f: string) => f.trim())
+    .filter((f: string) => f.length > 0)
   const currentQuery = (parts[parts.length - 1] || '').trim()
 
   let projectDirectory: string | undefined
 
   if (
     interaction.channel &&
-    interaction.channel.type === ChannelType.GuildText
+    interaction.channel.kind === 'text'
   ) {
     const channelConfig = await getChannelDirectory(interaction.channel.id)
     if (channelConfig) {

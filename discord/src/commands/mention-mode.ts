@@ -3,15 +3,16 @@
 // When enabled, bot only responds to messages that @mention it.
 // Messages in threads are not affected - they always work without mentions.
 
-import {
-  MessageFlags,
-  ChannelType,
-  type TextChannel,
-} from 'discord.js'
+
 import type { CommandEvent } from '../platform/types.js'
-import { getChannelMentionMode, setChannelMentionMode } from '../database.js'
-import { getKimakiMetadata } from '../discord-utils.js'
+import { PLATFORM_MESSAGE_FLAGS } from '../platform/message-flags.js'
+import {
+  getChannelDirectory,
+  getChannelMentionMode,
+  setChannelMentionMode,
+} from '../database.js'
 import { createLogger, LogPrefix } from '../logger.js'
+import { isTextChannel } from './channel-ref.js'
 
 const mentionModeLogger = createLogger(LogPrefix.CLI)
 
@@ -29,22 +30,21 @@ export async function handleToggleMentionModeCommand({
 
   const channel = command.channel
 
-  if (!channel || channel.type !== ChannelType.GuildText) {
+  if (!isTextChannel(channel)) {
     await command.reply({
       content: 'This command can only be used in text channels (not threads).',
-      flags: MessageFlags.Ephemeral,
+      flags: PLATFORM_MESSAGE_FLAGS.EPHEMERAL,
     })
     return
   }
+  const textChannel = channel
 
-  const textChannel = channel as TextChannel
-  const metadata = await getKimakiMetadata(textChannel)
-
-  if (!metadata.projectDirectory) {
+  const channelConfig = await getChannelDirectory(textChannel.id)
+  if (!channelConfig?.directory) {
     await command.reply({
       content:
         'This channel is not configured with a project directory.\nUse `/add-project` to set up this channel.',
-      flags: MessageFlags.Ephemeral,
+      flags: PLATFORM_MESSAGE_FLAGS.EPHEMERAL,
     })
     return
   }
@@ -62,7 +62,7 @@ export async function handleToggleMentionModeCommand({
   await command.reply({
     content: nextEnabled
       ? `Mention mode **enabled** for this channel.\nThe bot will only start new sessions when @mentioned.\nMessages in existing threads are not affected.`
-      : `Mention mode **disabled** for this channel.\nThe bot will respond to all messages in **#${textChannel.name}**.`,
-    flags: MessageFlags.Ephemeral,
+       : `Mention mode **disabled** for this channel.\nThe bot will respond to all messages in **#${textChannel.name || textChannel.id}**.`,
+    flags: PLATFORM_MESSAGE_FLAGS.EPHEMERAL,
   })
 }

@@ -93,11 +93,8 @@ export {
 } from './channel-management.js'
 export type { ChannelWithTags } from './channel-management.js'
 
-import {
-  Client,
-  Events,
-  ThreadAutoArchiveDuration,
-} from 'discord.js'
+// ThreadAutoArchiveDuration.OneDay = 1440 minutes
+const THREAD_AUTO_ARCHIVE_ONE_DAY = 1440
 import fs from 'node:fs'
 import * as errore from 'errore'
 import { createLogger, formatErrorWithStack, LogPrefix } from './logger.js'
@@ -114,6 +111,17 @@ setGlobalDispatcher(
 
 const discordLogger = createLogger(LogPrefix.DISCORD)
 const voiceLogger = createLogger(LogPrefix.VOICE)
+
+const DISCORD_EVENT = {
+  CLIENT_READY: 'clientReady',
+  ERROR: 'error',
+  SHARD_ERROR: 'shardError',
+  SHARD_DISCONNECT: 'shardDisconnect',
+  SHARD_RECONNECTING: 'shardReconnecting',
+  SHARD_RESUME: 'shardResume',
+  SHARD_READY: 'shardReady',
+  INVALIDATED: 'invalidated',
+} as const
 
 // Well-known WebSocket and Discord Gateway close codes for diagnostic logging.
 // Gateway proxy redeploys cause an abrupt TCP drop (code 1006) because the proxy
@@ -232,7 +240,7 @@ export async function startDiscordBot({
   appId,
   discordClient,
   useWorktrees,
-}: StartOptions & { discordClient?: Client }) {
+}: StartOptions & { discordClient?: Awaited<ReturnType<typeof createDiscordClient>> }) {
   if (!discordClient) {
     discordClient = await createDiscordClient()
   }
@@ -249,11 +257,11 @@ export async function startDiscordBot({
     markdown: string
     flags?: number
     replyToMessageId?: string
-  }) => {
-    return adapter.sendMessage(target, {
-      markdown,
-      flags,
-      replyToMessageId,
+    }) => {
+      return adapter.conversation(target).send({
+        markdown,
+        flags,
+        replyToMessageId,
     })
   }
 
@@ -267,17 +275,20 @@ export async function startDiscordBot({
     message: PlatformMessage
     markdown: string
     flags?: number
-  }) => {
-    return adapter.sendMessage(target, {
-      markdown,
-      flags,
-      replyToMessageId: message.id,
+    }) => {
+      return adapter.conversation(target).send({
+        markdown,
+        flags,
+        replyToMessageId: message.id,
     })
   }
 
   let currentAppId: string | undefined = appId
 
-  const setupHandlers = async (c: Client<true>) => {
+  const setupHandlers = async (c: NonNullable<typeof discordClient>) => {
+    if (!c.user) {
+      throw new Error('Discord client is ready but user is missing')
+    }
     discordLogger.log(`Discord bot logged in as ${c.user.tag}`)
     discordLogger.log(`Connected to ${c.guilds.cache.size} guild(s)`)
     discordLogger.log(`Bot user ID: ${c.user.id}`)
@@ -305,7 +316,14 @@ export async function startDiscordBot({
       for (const guild of c.guilds.cache.values()) {
         discordLogger.log(`${guild.name} (${guild.id})`)
 
-        const channels = await getChannelsWithDescriptions(guild)
+        const admin = adapter.admin
+        if (!admin) {
+          continue
+        }
+        const channels = await getChannelsWithDescriptions({
+          admin,
+          guildId: guild.id,
+        })
         const kimakiChannels = channels.filter((ch) => ch.kimakiDirectory)
 
         if (kimakiChannels.length > 0) {
@@ -329,14 +347,14 @@ export async function startDiscordBot({
   if (discordClient.isReady()) {
     await setupHandlers(discordClient)
   } else {
-    discordClient.once(Events.ClientReady, setupHandlers)
+    discordClient.once(DISCORD_EVENT.CLIENT_READY, setupHandlers)
   }
 
-  discordClient.on(Events.Error, (error) => {
+  discordClient.on(DISCORD_EVENT.ERROR, (error) => {
     discordLogger.error('[GATEWAY] Client error:', formatErrorWithStack(error))
   })
 
-  discordClient.on(Events.ShardError, (error, shardId) => {
+  discordClient.on(DISCORD_EVENT.SHARD_ERROR, (error, shardId) => {
     const state = getOrCreateShardState(shardId)
     state.lastError = error
     discordLogger.error(
@@ -344,7 +362,7 @@ export async function startDiscordBot({
     )
   })
 
-  discordClient.on(Events.ShardDisconnect, (event, shardId) => {
+  discordClient.on(DISCORD_EVENT.SHARD_DISCONNECT, (event, shardId) => {
     // ShardDisconnect fires for unrecoverable close codes (4004, 4010-4014).
     // For recoverable codes discord.js fires ShardReconnecting instead.
     const state = getOrCreateShardState(shardId)
@@ -354,7 +372,7 @@ export async function startDiscordBot({
     )
   })
 
-  discordClient.on(Events.ShardReconnecting, (shardId) => {
+  discordClient.on(DISCORD_EVENT.SHARD_RECONNECTING, (shardId) => {
     // discord.js strips the close code before emitting this event.
     // We log whatever context we captured from preceding ShardError events.
     const state = getOrCreateShardState(shardId)
@@ -372,7 +390,7 @@ export async function startDiscordBot({
     )
   })
 
-  discordClient.on(Events.ShardResume, (shardId, replayedEvents) => {
+  discordClient.on(DISCORD_EVENT.SHARD_RESUME, (shardId, replayedEvents) => {
     const state = shardReconnectState.get(shardId)
     if (state?.attempts) {
       discordLogger.log(
@@ -389,7 +407,7 @@ export async function startDiscordBot({
   // ShardReady fires when a shard completes a fresh IDENTIFY (not RESUME).
   // After a gateway proxy redeploy, sessions are lost (in-memory), so RESUME
   // fails with INVALID_SESSION and discord.js falls back to fresh IDENTIFY.
-  discordClient.on(Events.ShardReady, (shardId) => {
+  discordClient.on(DISCORD_EVENT.SHARD_READY, (shardId) => {
     const state = shardReconnectState.get(shardId)
     if (state?.attempts) {
       discordLogger.log(
@@ -399,18 +417,19 @@ export async function startDiscordBot({
     shardReconnectState.delete(shardId)
   })
 
-  discordClient.on(Events.Invalidated, () => {
+  discordClient.on(DISCORD_EVENT.INVALIDATED, () => {
     discordLogger.error('[GATEWAY] Session invalidated by Discord')
   })
 
   adapter.onMessage(async ({
     message,
     thread: platformThread,
-    target,
+    conversation,
     kind,
     isMention,
     isSelf,
   }) => {
+    const target = conversation.target
     try {
       const isSelfBotMessage = Boolean(isSelf)
       const promptMarker = parseEmbedFooterMarker<ThreadStartMarker>({
@@ -444,10 +463,8 @@ export async function startDiscordBot({
       // Allow bot messages through if the bot has the "Kimaki" role assigned.
       // This enables multi-agent orchestration where other bots (e.g. an
       // orchestrator) can @mention Kimaki and trigger sessions like a human.
-      if (message.author?.bot) {
-        const access = adapter.getMessageAccess
-          ? await adapter.getMessageAccess(message)
-          : 'denied'
+        if (message.author?.bot) {
+        const access = await adapter.permissions.getMessageAccess(message)
         if (access !== 'allowed') {
           return
         }
@@ -478,9 +495,7 @@ export async function startDiscordBot({
       }
 
       if (!isCliInjectedPrompt && message.author?.bot !== true) {
-        const access = adapter.getMessageAccess
-          ? await adapter.getMessageAccess(message)
-          : 'denied'
+        const access = await adapter.permissions.getMessageAccess(message)
         if (access === 'blocked') {
           await replyToIncomingMessage({
             target,
@@ -597,7 +612,7 @@ export async function startDiscordBot({
               command: shellCmd,
               directory: shellDir,
             })
-            await adapter.updateMessage(threadTarget, loadingReply.id, {
+            await adapter.conversation(threadTarget).update(loadingReply.id, {
               markdown: result,
             })
             return
@@ -732,7 +747,7 @@ export async function startDiscordBot({
               command: shellCmd,
               directory: projectDirectory,
             })
-            await adapter.updateMessage(target, loadingReply.id, { markdown: result })
+            await adapter.conversation(target).update(loadingReply.id, { markdown: result })
             return
           }
         }
@@ -756,15 +771,27 @@ export async function startDiscordBot({
           ? `${WORKTREE_PREFIX}${baseThreadName}`
           : baseThreadName
 
-        const { thread, target: threadTarget } = await adapter.createThreadFromMessage({
-          message,
-          name: threadName.slice(0, 80),
-          autoArchiveDuration: ThreadAutoArchiveDuration.OneDay,
-          reason: 'Start Claude session',
-        })
+        const { thread, target: threadTarget } = await adapter
+          .conversation(target)
+          .message(message.id)
+          .then((conversationMessage) => {
+            return conversationMessage.startThread({
+              name: threadName.slice(0, 80),
+              autoArchiveDuration: THREAD_AUTO_ARCHIVE_ONE_DAY,
+              reason: 'Start Claude session',
+            })
+          })
 
         // Add user to thread so it appears in their sidebar
-        await adapter.addThreadMember(threadTarget.threadId, message.author.id)
+        await adapter.thread({
+          threadId: threadTarget.threadId,
+          parentId: thread.parentId,
+        }).then(async (threadHandle) => {
+          if (!threadHandle) {
+            throw new Error(`Thread not found: ${threadTarget.threadId}`)
+          }
+          await threadHandle.addMember(message.author.id)
+        })
 
         discordLogger.log(`Created thread "${thread.name}" (${thread.id})`)
 
@@ -810,7 +837,15 @@ export async function startDiscordBot({
               `[WORKTREE] Created: ${worktreeResult.directory} (branch: ${worktreeResult.branch})`,
             )
             // React with tree emoji to mark as worktree thread
-            await adapter.addThreadStarterReaction(threadTarget, '🌳')
+            await adapter.thread({
+              threadId: threadTarget.threadId,
+              parentId: thread.parentId,
+            }).then(async (threadHandle) => {
+              if (!threadHandle) {
+                throw new Error(`Thread not found: ${threadTarget.threadId}`)
+              }
+              await threadHandle.addStarterReaction('🌳')
+            })
           }
         }
 
@@ -865,14 +900,23 @@ export async function startDiscordBot({
 
   // Handle bot-initiated threads created by `kimaki send` (without --notify-only)
   // Uses JSON embed marker to pass options (start, worktree name)
-  adapter.onThreadCreate(async ({ thread, target: threadRef, newlyCreated }) => {
+  adapter.onThreadCreate(async ({ thread, conversation, newlyCreated }) => {
+    const threadRef = {
+      channelId: conversation.target.channelId,
+      threadId: thread.id,
+    }
     try {
       if (!newlyCreated) {
         return
       }
 
       // Get the starter message to check for auto-start marker
-      const starterMessage = await adapter.fetchStarterMessage(thread.id).catch((error) => {
+      const starterMessage = await adapter.thread({
+        threadId: thread.id,
+        parentId: thread.parentId,
+      }).then(async (threadHandle) => {
+        return threadHandle?.starterMessage() || null
+      }).catch((error) => {
         discordLogger.warn(
           `[THREAD_CREATE] Failed to fetch starter message for thread ${thread.id}:`,
           error instanceof Error ? error.message : String(error),
@@ -907,8 +951,8 @@ export async function startDiscordBot({
         `[BOT_SESSION] Detected bot-initiated thread: ${thread.name}`,
       )
 
-      const textAttachmentsContent = await adapter.getTextAttachments?.(starterMessage) || ''
-      const messageText = ((await adapter.resolveMentions?.(starterMessage)) || starterMessage.content || '').trim()
+      const textAttachmentsContent = await adapter.content.getTextAttachments(starterMessage)
+      const messageText = ((await adapter.content.resolveMentions(starterMessage)) || starterMessage.content || '').trim()
       const prompt = textAttachmentsContent
         ? `${messageText}\n\n${textAttachmentsContent}`
         : messageText
@@ -982,7 +1026,7 @@ export async function startDiscordBot({
             errorMessage: worktreeResult.message,
           })
           if (worktreeStatusMessage) {
-            await adapter.updateMessage(threadTarget, worktreeStatusMessage.id, {
+            await adapter.conversation(threadTarget).update(worktreeStatusMessage.id, {
               markdown: `⚠️ Failed to create worktree: ${worktreeResult.message}\nUsing main project directory instead.`,
               flags: SILENT_MESSAGE_FLAGS,
             })
@@ -1004,9 +1048,17 @@ export async function startDiscordBot({
           `[BOT_SESSION] Worktree created: ${worktreeResult.directory}`,
         )
         // React with tree emoji to mark as worktree thread
-        await adapter.addThreadStarterReaction(threadTarget, '🌳')
+        await adapter.thread({
+          threadId: threadTarget.threadId,
+          parentId: thread.parentId,
+        }).then(async (threadHandle) => {
+          if (!threadHandle) {
+            throw new Error(`Thread not found: ${threadTarget.threadId}`)
+          }
+          await threadHandle.addStarterReaction('🌳')
+        })
         if (worktreeStatusMessage) {
-          await adapter.updateMessage(threadTarget, worktreeStatusMessage.id, {
+          await adapter.conversation(threadTarget).update(worktreeStatusMessage.id, {
             markdown: `🌳 **Worktree ready: ${marker.worktree}**\n📁 \`${worktreeResult.directory}\`\n🌿 Branch: \`${worktreeResult.branch}\``,
             flags: SILENT_MESSAGE_FLAGS,
           })

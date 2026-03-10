@@ -6,23 +6,19 @@
 // select menus in the same message. We track partial selections in the context
 // Map. Whichever menu fires second sees the first selection stored and applies.
 
-import {
-  ChannelType,
-  type ThreadChannel,
-  type TextChannel,
-  MessageFlags,
-} from 'discord.js'
+
 import crypto from 'node:crypto'
+import { PLATFORM_MESSAGE_FLAGS } from '../platform/message-flags.js'
 import {
   setChannelModel,
   setSessionModel,
   getThreadSession,
   setGlobalModel,
   getVariantCascade,
+  getChannelDirectory,
 } from '../database.js'
 import { initializeOpencodeForDirectory } from '../opencode.js'
-import type { CommandEvent, SelectMenuEvent } from '../platform/types.js'
-import { resolveTextChannel, getKimakiMetadata } from '../discord-utils.js'
+import type { CommandEvent, PlatformThread, SelectMenuEvent } from '../platform/types.js'
 import {
   getCurrentModelInfo,
   ensureSessionPreferencesSnapshot,
@@ -31,6 +27,7 @@ import {
 import { getRuntime } from '../session-handler/thread-session-runtime.js'
 import { getThinkingValuesForModel } from '../thinking-utils.js'
 import { createLogger, LogPrefix } from '../logger.js'
+import { getRootChannelId, isTextChannel, isThreadChannel } from './channel-ref.js'
 
 const logger = createLogger(LogPrefix.MODEL)
 
@@ -39,7 +36,7 @@ type PendingVariantContext = {
   channelId: string
   sessionId?: string
   isThread: boolean
-  thread?: ThreadChannel
+  thread?: PlatformThread
   appId: string
   /** Full model ID (provider/model) that stays constant */
   modelId: string
@@ -91,7 +88,7 @@ export async function handleModelVariantCommand({
   interaction: CommandEvent
   appId: string
 }): Promise<void> {
-  await interaction.deferReply({ flags: MessageFlags.Ephemeral })
+  await interaction.deferReply({ flags: PLATFORM_MESSAGE_FLAGS.EPHEMERAL })
 
   const channel = interaction.channel
   if (!channel) {
@@ -101,30 +98,22 @@ export async function handleModelVariantCommand({
     return
   }
 
-  const isThread = [
-    ChannelType.PublicThread,
-    ChannelType.PrivateThread,
-    ChannelType.AnnouncementThread,
-  ].includes(channel.type)
+  const isThread = isThreadChannel(channel)
 
   let projectDirectory: string | undefined
   let targetChannelId: string
   let sessionId: string | undefined
 
   if (isThread) {
-    const thread = channel as ThreadChannel
-    const [textChannel, threadSessionId] = await Promise.all([
-      resolveTextChannel(thread),
-      getThreadSession(thread.id),
+    targetChannelId = getRootChannelId(channel) || channel.id
+    const [channelConfig, threadSessionId] = await Promise.all([
+      getChannelDirectory(targetChannelId),
+      getThreadSession(channel.id),
     ])
-    const metadata = await getKimakiMetadata(textChannel)
-    projectDirectory = metadata.projectDirectory
-    targetChannelId = textChannel?.id || channel.id
+    projectDirectory = channelConfig?.directory
     sessionId = threadSessionId
-  } else if (channel.type === ChannelType.GuildText) {
-    const textChannel = channel as TextChannel
-    const metadata = await getKimakiMetadata(textChannel)
-    projectDirectory = metadata.projectDirectory
+  } else if (isTextChannel(channel)) {
+    projectDirectory = (await getChannelDirectory(channel.id))?.directory
     targetChannelId = channel.id
   } else {
     await interaction.editReply({
@@ -213,7 +202,7 @@ export async function handleModelVariantCommand({
     channelId: targetChannelId,
     sessionId,
     isThread,
-    thread: isThread ? (channel as ThreadChannel) : undefined,
+    thread: isThread ? channel : undefined,
     appId,
     modelId: fullModelId,
     providerId: providerID,
@@ -293,7 +282,7 @@ export async function handleVariantQuickSelectMenu(
   if (!context) {
     await interaction.reply({
       content: 'Selection expired. Please run /model-variant again.',
-      flags: MessageFlags.Ephemeral,
+      flags: PLATFORM_MESSAGE_FLAGS.EPHEMERAL,
     })
     return
   }
@@ -342,7 +331,7 @@ export async function handleVariantScopeSelectMenu(
   if (!context) {
     await interaction.reply({
       content: 'Selection expired. Please run /model-variant again.',
-      flags: MessageFlags.Ephemeral,
+      flags: PLATFORM_MESSAGE_FLAGS.EPHEMERAL,
     })
     return
   }
@@ -428,7 +417,7 @@ async function applyVariant({
         : ''
       await interaction.editReply({
         content: `Variant set for this session:\n**${context.providerName}** / **${context.modelName}**${variantSuffix}\n\`${modelId}\`${retryNote}${agentTip}`,
-        flags: MessageFlags.SuppressEmbeds,
+        flags: PLATFORM_MESSAGE_FLAGS.SUPPRESS_EMBEDS,
         components: [],
       })
     } else if (scope === 'global') {
@@ -444,7 +433,7 @@ async function applyVariant({
 
       await interaction.editReply({
         content: `Variant set for this channel and as global default:\n**${context.providerName}** / **${context.modelName}**${variantSuffix}\n\`${modelId}\`\nAll channels will use this variant (unless they have their own override).${agentTip}`,
-        flags: MessageFlags.SuppressEmbeds,
+        flags: PLATFORM_MESSAGE_FLAGS.SUPPRESS_EMBEDS,
         components: [],
       })
     } else {
@@ -460,7 +449,7 @@ async function applyVariant({
 
       await interaction.editReply({
         content: `Variant set for this channel:\n**${context.providerName}** / **${context.modelName}**${variantSuffix}\n\`${modelId}\`\nAll new sessions in this channel will use this variant.${agentTip}`,
-        flags: MessageFlags.SuppressEmbeds,
+        flags: PLATFORM_MESSAGE_FLAGS.SUPPRESS_EMBEDS,
         components: [],
       })
     }

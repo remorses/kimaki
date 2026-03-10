@@ -4,6 +4,7 @@
 
 import {
   ActionRowBuilder,
+  type APIInteractionGuildMember,
   type AutocompleteInteraction,
   ButtonBuilder,
   type ButtonInteraction,
@@ -18,11 +19,15 @@ import {
   type InteractionReplyOptions,
   type InteractionUpdateOptions,
   MessageFlags,
+  type Guild,
+  GuildMember,
   type ModalSubmitInteraction,
+  type Attachment,
   ModalBuilder,
   FileUploadBuilder,
   LabelBuilder,
   Partials,
+  PermissionsBitField,
   Routes,
   type Message,
   type StringSelectMenuInteraction,
@@ -45,51 +50,228 @@ import type {
   LegacyUpdateOptions,
   ModalSubmitEvent,
   PlatformChannel,
+  PlatformChannelHandle,
+  PlatformConversation,
+  PlatformConversationMessage,
+  PlatformDeferReplyOptions,
+  PlatformFileAttachment,
+  PlatformGuildSummary,
   MessageTarget,
   OutgoingMessage,
   PlatformMessage,
+  PlatformModalFields,
+  PlatformAdmin,
+  PlatformServer,
   PlatformThread,
+  PlatformThreadHandle,
+  PlatformUser,
   SelectMenuEvent,
   UiButton,
   UiButtonStyle,
   UiModal,
+  PlatformCommandOptions,
+  PlatformUploadedFile,
   UiSelectMenu,
 } from './types.js'
 import { getDiscordRestApiUrl } from '../discord-urls.js'
 import {
   escapeBackticksInCodeBlocks,
-  hasKimakiBotPermission,
-  hasNoKimakiRole,
   splitMarkdownForDiscord,
 } from '../discord-utils.js'
 import { splitTablesFromMarkdown } from '../format-tables.js'
 import { limitHeadingDepth } from '../limit-heading-depth.js'
 import { unnestCodeBlocksFromLists } from '../unnest-code-blocks.js'
-import {
-  getFileAttachments,
-  getTextAttachments,
-  resolveMentions,
-} from '../message-formatting.js'
+import { isTextMimeType } from '../message-formatting.js'
+import { createLogger, LogPrefix } from '../logger.js'
+import { processImage } from '../image-utils.js'
+import { FetchError } from '../errors.js'
+import * as errore from 'errore'
 import { processVoiceAttachment } from '../voice-handler.js'
+import { handleHtmlActionButton } from '../html-actions.js'
+
+// ── Permission helpers (discord.js-specific, used by adapter + voice-handler) ──
+
+/**
+ * Check if a guild member has permission to use the Kimaki bot.
+ * Returns true for: server owner, Administrator, Manage Server, or "Kimaki" role.
+ * Returns false if member has the "no-kimaki" role (overrides all).
+ */
+export function hasKimakiBotPermission(
+  member: GuildMember | APIInteractionGuildMember | null,
+  guild?: Guild | null,
+): boolean {
+  if (!member) {
+    return false
+  }
+  if (hasRoleByName(member, 'no-kimaki', guild)) {
+    return false
+  }
+  const memberPermissions =
+    member instanceof GuildMember
+      ? member.permissions
+      : new PermissionsBitField(BigInt(member.permissions))
+  const ownerId = member instanceof GuildMember ? member.guild.ownerId : guild?.ownerId
+  const memberId = member instanceof GuildMember ? member.id : member.user.id
+  const isOwner = ownerId ? memberId === ownerId : false
+  const isAdmin = memberPermissions.has(PermissionsBitField.Flags.Administrator)
+  const canManageServer = memberPermissions.has(PermissionsBitField.Flags.ManageGuild)
+  const hasKimakiRole = hasRoleByName(member, 'kimaki', guild)
+  return isOwner || isAdmin || canManageServer || hasKimakiRole
+}
+
+function hasRoleByName(
+  member: GuildMember | APIInteractionGuildMember,
+  roleName: string,
+  guild?: Guild | null,
+): boolean {
+  const target = roleName.toLowerCase()
+
+  if (member instanceof GuildMember) {
+    return member.roles.cache.some((role) => role.name.toLowerCase() === target)
+  }
+
+  if (!guild) {
+    return false
+  }
+
+  const roleIds = Array.isArray(member.roles) ? member.roles : []
+  for (const roleId of roleIds) {
+    const role = guild.roles.cache.get(roleId)
+    if (role?.name.toLowerCase() === target) {
+      return true
+    }
+  }
+  return false
+}
+
+/**
+ * Check if the member has the "no-kimaki" role that blocks bot access.
+ */
+export function hasNoKimakiRole(member: GuildMember | null): boolean {
+  if (!member?.roles?.cache) {
+    return false
+  }
+  return member.roles.cache.some(
+    (role) => role.name.toLowerCase() === 'no-kimaki',
+  )
+}
+
+// ── Discord message content helpers (discord.js-specific) ──────────────
+
+const contentLogger = createLogger(LogPrefix.FORMATTING)
+
+function resolveMentions(message: Message): string {
+  let content = message.content || ''
+  for (const [userId, user] of message.mentions.users) {
+    const member = message.guild?.members.cache.get(userId)
+    const displayName = member?.displayName || user.displayName || user.username
+    content = content.replace(
+      new RegExp(`<@!?${userId}>`, 'g'),
+      `@${displayName}`,
+    )
+  }
+  for (const [roleId, role] of message.mentions.roles) {
+    content = content.replace(new RegExp(`<@&${roleId}>`, 'g'), `@${role.name}`)
+  }
+  for (const [channelId, channel] of message.mentions.channels) {
+    const name = 'name' in channel ? (channel as TextChannel).name : channelId
+    content = content.replace(new RegExp(`<#${channelId}>`, 'g'), `#${name}`)
+  }
+  return content
+}
+
+async function getTextAttachments(message: Message): Promise<string> {
+  const textAttachments = Array.from(message.attachments.values()).filter(
+    (attachment) => isTextMimeType(attachment.contentType),
+  )
+  if (textAttachments.length === 0) {
+    return ''
+  }
+  const textContents = await Promise.all(
+    textAttachments.map(async (attachment) => {
+      const response = await errore.tryAsync({
+        try: () => fetch(attachment.url),
+        catch: (e) => new FetchError({ url: attachment.url, cause: e }),
+      })
+      if (response instanceof Error) {
+        return `<attachment filename="${attachment.name}" error="${response.message}" />`
+      }
+      if (!response.ok) {
+        return `<attachment filename="${attachment.name}" error="Failed to fetch: ${response.status}" />`
+      }
+      const text = await response.text()
+      return `<attachment filename="${attachment.name}" mime="${attachment.contentType}">\n${text}\n</attachment>`
+    }),
+  )
+  return textContents.join('\n\n')
+}
+
+async function getFileAttachments(
+  message: Message,
+): Promise<PlatformFileAttachment[]> {
+  const fileAttachments = Array.from(message.attachments.values()).filter(
+    (attachment) => {
+      const contentType = attachment.contentType || ''
+      return (
+        contentType.startsWith('image/') || contentType === 'application/pdf'
+      )
+    },
+  )
+  if (fileAttachments.length === 0) {
+    return []
+  }
+  const results = await Promise.all(
+    fileAttachments.map(async (attachment) => {
+      const response = await errore.tryAsync({
+        try: () => fetch(attachment.url),
+        catch: (e) => new FetchError({ url: attachment.url, cause: e }),
+      })
+      if (response instanceof Error) {
+        contentLogger.error(
+          `Error downloading attachment ${attachment.name}:`,
+          response.message,
+        )
+        return null
+      }
+      if (!response.ok) {
+        contentLogger.error(
+          `Failed to fetch attachment ${attachment.name}: ${response.status}`,
+        )
+        return null
+      }
+      const rawBuffer = Buffer.from(await response.arrayBuffer())
+      const originalMime = attachment.contentType || 'application/octet-stream'
+      const { buffer, mime } = await processImage(rawBuffer, originalMime)
+      const base64 = buffer.toString('base64')
+      const dataUrl = `data:${mime};base64,${base64}`
+      contentLogger.log(
+        `Attachment ${attachment.name}: ${rawBuffer.length} → ${buffer.length} bytes, ${mime}`,
+      )
+      return {
+        type: 'file' as const,
+        mime,
+        filename: attachment.name,
+        url: dataUrl,
+        sourceUrl: attachment.url,
+      }
+    }),
+  )
+  return results.filter(isTruthy)
+}
 
 type DiscordTextTarget = TextChannel | ThreadChannel
 
-function normalizeReplyOptions(
-  options: LegacyReplyOptions,
-): string | InteractionReplyOptions {
-  return options
-}
+const discordMessageStore = new Map<string, Message>()
+const discordGuildStore = new Map<string, Guild>()
 
-function normalizeEditReplyOptions(
-  options: LegacyEditReplyOptions,
-): string | InteractionEditReplyOptions {
-  return options
-}
-
-function normalizeUpdateOptions(
-  options: LegacyUpdateOptions,
-): string | InteractionUpdateOptions {
-  return options
+function getDiscordMessageStoreKey({
+  channelId,
+  messageId,
+}: {
+  channelId: string
+  messageId: string
+}) {
+  return `${channelId}:${messageId}`
 }
 
 function buildInteractionUiMessage(message: OutgoingMessage) {
@@ -161,17 +343,32 @@ function buildMessageComponents({
   return components
 }
 
+function wrapUser({
+  user,
+  displayName,
+}: {
+  user: Message['author'] | ChatInputCommandInteraction['user']
+  displayName?: string | null
+}): PlatformUser {
+  return {
+    id: user.id,
+    username: user.username,
+    displayName: displayName || user.displayName || user.username,
+    globalName: user.displayName || undefined,
+    bot: user.bot,
+  }
+}
+
 function wrapMessage(message: Message): PlatformMessage {
+  discordMessageStore.set(
+    getDiscordMessageStoreKey({ channelId: message.channelId, messageId: message.id }),
+    message,
+  )
   return {
     id: message.id,
     content: message.content,
     channelId: message.channelId,
-    author: {
-      id: message.author.id,
-      username: message.author.username,
-      displayName: message.member?.displayName || message.author.displayName,
-      bot: message.author.bot,
-    },
+    author: wrapUser({ user: message.author, displayName: message.member?.displayName }),
     attachments: message.attachments,
     embeds: message.embeds.map((embed) => {
       return {
@@ -182,7 +379,6 @@ function wrapMessage(message: Message): PlatformMessage {
         },
       }
     }),
-    raw: message,
   }
 }
 
@@ -190,43 +386,247 @@ function wrapThread(thread: ThreadChannel): PlatformThread {
   return {
     id: thread.id,
     name: thread.name,
+    kind: 'thread',
+    type: 'thread',
     parentId: thread.parentId,
     guildId: thread.guildId,
     createdTimestamp: thread.createdTimestamp ?? null,
-    raw: thread,
+    isThread() {
+      return true
+    },
   }
 }
 
 function wrapChannel(channel: TextChannel | ThreadChannel): PlatformChannel {
   if (channel instanceof ThreadChannel) {
-    return {
-      id: channel.id,
-      name: channel.name,
-      kind: 'thread',
-      raw: channel,
-    }
+      return {
+        id: channel.id,
+        name: channel.name,
+        kind: 'thread',
+        type: 'thread',
+        parentId: channel.parentId,
+        guildId: channel.guildId,
+        createdTimestamp: channel.createdTimestamp ?? null,
+        isThread() {
+          return true
+        },
+      }
   }
   return {
     id: channel.id,
     name: channel.name,
     kind: 'text',
+    type: 'text',
+    parentId: null,
+    guildId: channel.guildId,
     topic: channel.topic,
-    raw: channel,
+    isThread() {
+      return false
+    },
   }
 }
 
-function unwrapDiscordMessage(message: PlatformMessage): Message {
-  if (!(message.raw instanceof Object)) {
-    throw new Error('Platform message is missing Discord raw message')
+function wrapOtherChannel({
+  id,
+  guildId,
+  name,
+  parentId,
+}: {
+  id: string
+  guildId?: string | null
+  name?: string
+  parentId?: string | null
+}): PlatformChannel {
+  return {
+    id,
+    name,
+    kind: 'other',
+    type: 'other',
+    parentId: parentId || null,
+    guildId: guildId || null,
+    isThread() {
+      return false
+    },
   }
-  return message.raw as Message
 }
 
-function unwrapDiscordThread(thread: PlatformThread): ThreadChannel {
-  if (!(thread.raw instanceof ThreadChannel)) {
-    throw new Error('Platform thread is missing Discord raw thread')
+function wrapOptionalChannel(channel: ChatInputCommandInteraction['channel']): PlatformChannel | null {
+  if (!channel) {
+    return null
   }
-  return thread.raw
+  if (channel.type === ChannelType.GuildText) {
+    return wrapChannel(channel)
+  }
+  if (
+    channel.type === ChannelType.PublicThread ||
+    channel.type === ChannelType.PrivateThread ||
+    channel.type === ChannelType.AnnouncementThread
+  ) {
+    return wrapChannel(channel)
+  }
+  return wrapOtherChannel({
+    id: channel.id,
+    guildId: 'guildId' in channel ? channel.guildId || null : null,
+    name: 'name' in channel ? channel.name || undefined : undefined,
+    parentId: 'parentId' in channel ? channel.parentId : null,
+  })
+}
+
+function getInteractionDisplayName({
+  member,
+  user,
+}: {
+  member: ChatInputCommandInteraction['member'] | ButtonInteraction['member'] | StringSelectMenuInteraction['member'] | ModalSubmitInteraction['member'] | AutocompleteInteraction['member']
+  user: ChatInputCommandInteraction['user']
+}): string {
+  if (member instanceof Object && 'displayName' in member && typeof member.displayName === 'string') {
+    return member.displayName
+  }
+  return user.displayName || user.username
+}
+
+function getInteractionAccess({
+  member,
+  guild,
+}: {
+  member: ChatInputCommandInteraction['member'] | ButtonInteraction['member'] | StringSelectMenuInteraction['member'] | ModalSubmitInteraction['member'] | AutocompleteInteraction['member']
+  guild: Guild | null
+}) {
+  const canUseKimaki = member && 'permissions' in member && !Array.isArray(member.roles)
+    ? hasKimakiBotPermission(member, guild)
+    : false
+  const isBlocked = member instanceof GuildMember
+    ? hasNoKimakiRole(member)
+    : false
+  return {
+    canUseKimaki,
+    isBlocked,
+  }
+}
+
+function wrapServer({
+  guild,
+}: {
+  guild: Guild | null
+}): PlatformServer | null {
+  if (!guild) {
+    return null
+  }
+  discordGuildStore.set(guild.id, guild)
+  return {
+    id: guild.id,
+    name: guild.name,
+  }
+}
+
+function wrapGuildMemberSummary(member: GuildMember) {
+  return {
+    id: member.user.id,
+    username: member.user.username,
+    globalName: member.user.globalName || undefined,
+    nick: member.nickname || undefined,
+  }
+}
+
+function createCommandOptions({
+  interaction,
+}: {
+  interaction: ChatInputCommandInteraction | AutocompleteInteraction
+}): PlatformCommandOptions {
+  return {
+    getString(name: string, required?: boolean) {
+      return interaction.options.getString(name, required ?? false) || ''
+    },
+    getFocused(withMeta?: true) {
+      if (withMeta && 'respond' in interaction) {
+        const focused = interaction.options.getFocused(true)
+        return {
+          name: focused.name,
+          value: String(focused.value),
+        }
+      }
+      if ('respond' in interaction) {
+        return String(interaction.options.getFocused())
+      }
+      return ''
+    },
+  }
+}
+
+function normalizeReplyOptions(
+  options: LegacyReplyOptions,
+): string | InteractionReplyOptions {
+  if (typeof options === 'string') {
+    return options
+  }
+  return options as InteractionReplyOptions
+}
+
+function normalizeEditReplyOptions(
+  options: LegacyEditReplyOptions,
+): string | InteractionEditReplyOptions {
+  if (typeof options === 'string') {
+    return options
+  }
+  return options as InteractionEditReplyOptions
+}
+
+function normalizeUpdateOptions(
+  options: LegacyUpdateOptions,
+): string | InteractionUpdateOptions {
+  if (typeof options === 'string') {
+    return options
+  }
+  return options as InteractionUpdateOptions
+}
+
+function normalizeDeferReplyOptions(
+  options?: PlatformDeferReplyOptions,
+): InteractionDeferReplyOptions | undefined {
+  if (!options) {
+    return undefined
+  }
+  if (options.flags !== undefined) {
+    return { flags: options.flags }
+  }
+  if (options.ephemeral !== undefined) {
+    return { flags: options.ephemeral ? MessageFlags.Ephemeral : undefined }
+  }
+  return undefined
+}
+
+function createModalFields({
+  interaction,
+}: {
+  interaction: ModalSubmitInteraction
+}): PlatformModalFields {
+  return {
+    getTextInputValue(id: string) {
+      return interaction.fields.getTextInputValue(id)
+    },
+    getFiles(id: string) {
+      const field = interaction.fields.fields.get(id)
+      if (!field || field.type !== 19) {
+        return []
+      }
+      const attachments = field.attachments
+      if (!attachments) {
+        return []
+      }
+      return [...attachments.values()].map((attachment) => {
+        return wrapUploadedFile({ attachment })
+      })
+    },
+  }
+}
+
+function wrapUploadedFile({ attachment }: { attachment: Attachment }): PlatformUploadedFile {
+  return {
+    id: attachment.id,
+    url: attachment.url,
+    name: attachment.name,
+    contentType: attachment.contentType,
+  }
 }
 
 function buildDiscordModal(modal: UiModal) {
@@ -282,7 +682,347 @@ export async function createDiscordClient() {
 
 export class DiscordAdapter implements KimakiAdapter {
   readonly name = 'discord'
+  readonly admin: PlatformAdmin = {
+    listGuilds: async () => {
+      const cacheValues = [...this.client.guilds.cache.values()]
+      const guilds = cacheValues.length > 0
+        ? cacheValues
+        : [...(await this.client.guilds.fetch()).values()]
+
+      const hydratedGuilds = await Promise.all(
+        guilds.map(async (guildRef) => {
+          const guild = await this.client.guilds.fetch(guildRef.id)
+          discordGuildStore.set(guild.id, guild)
+          const summary: PlatformGuildSummary = {
+            id: guild.id,
+            name: guild.name,
+            memberCount: guild.memberCount,
+            ownerId: guild.ownerId,
+          }
+          return summary
+        }),
+      )
+      return hydratedGuilds
+    },
+    resolveGuild: async ({ guildId, fromChannelId, fallbackFirst }) => {
+      if (guildId) {
+        const guild = await this.client.guilds.fetch(guildId).catch(() => {
+          return null
+        })
+        if (guild) {
+          discordGuildStore.set(guild.id, guild)
+          return {
+            id: guild.id,
+            name: guild.name,
+            memberCount: guild.memberCount,
+            ownerId: guild.ownerId,
+          }
+        }
+      }
+
+      if (fromChannelId) {
+        const channel = await this.client.channels.fetch(fromChannelId).catch(() => {
+          return null
+        })
+        if (channel && 'guild' in channel && channel.guild) {
+          const guild = channel.guild
+          discordGuildStore.set(guild.id, guild)
+          return {
+            id: guild.id,
+            name: guild.name,
+            memberCount: guild.memberCount,
+            ownerId: guild.ownerId,
+          }
+        }
+      }
+
+      if (!fallbackFirst) {
+        return null
+      }
+      const firstGuild = await this.admin.listGuilds().then((guilds) => {
+        return guilds[0] || null
+      })
+      return firstGuild
+    },
+    registerCommands: async ({
+      appId,
+      guildIds,
+      commands,
+      commandNamesForLegacyCleanup,
+      allowLegacyGlobalCleanup,
+    }) => {
+      const results = await Promise.allSettled(
+        guildIds.map(async (guildId) => {
+          const route = Routes.applicationGuildCommands(appId, guildId)
+          const result = await this.client.rest.put(route, {
+            body: commands,
+          })
+          const registeredCount = Array.isArray(result) ? result.length : 0
+          return {
+            guildId,
+            registeredCount,
+          }
+        }),
+      )
+
+      const failedGuilds = results.flatMap((result) => {
+        if (result.status === 'fulfilled') {
+          return []
+        }
+        return [result.reason instanceof Error ? result.reason : new Error(String(result.reason))]
+      })
+      if (failedGuilds.length > 0) {
+        throw new Error(
+          `Failed to register slash commands for ${failedGuilds.length} guild(s)`,
+        )
+      }
+
+      if (allowLegacyGlobalCleanup) {
+        const globalRoute = Routes.applicationCommands(appId)
+        const response = await this.client.rest.get(globalRoute)
+        if (Array.isArray(response)) {
+          const commandNames = new Set(commandNamesForLegacyCleanup)
+          const legacyCommands = response.filter((command): command is { id: string; name: string } => {
+            if (!command || typeof command !== 'object') {
+              return false
+            }
+            const commandName = 'name' in command ? command.name : undefined
+            const commandId = 'id' in command ? command.id : undefined
+            if (typeof commandName !== 'string' || typeof commandId !== 'string') {
+              return false
+            }
+            return commandNames.has(commandName)
+          })
+          await Promise.allSettled(
+            legacyCommands.map(async (command) => {
+              await this.client.rest.delete(
+                Routes.applicationCommand(appId, command.id),
+              )
+            }),
+          )
+        }
+      }
+
+      const firstFulfilled = results.find((result) => {
+        return result.status === 'fulfilled'
+      })
+      return {
+        registeredGuildCount: results.length,
+        registeredCommandCount:
+          firstFulfilled && firstFulfilled.status === 'fulfilled'
+            ? firstFulfilled.value.registeredCount
+            : commands.length,
+      }
+    },
+    ensureGuildAccessPolicy: async ({ guildId }) => {
+      const guild = await this.client.guilds.fetch(guildId)
+      discordGuildStore.set(guild.id, guild)
+      const roles = await guild.roles.fetch()
+      const existingRole = roles.find((role) => {
+        return role.name.toLowerCase() === 'kimaki'
+      })
+      if (existingRole) {
+        if (existingRole.position > 1) {
+          await existingRole.setPosition(1)
+        }
+        return
+      }
+      await guild.roles.create({
+        name: 'Kimaki',
+        position: 1,
+        reason:
+          'Kimaki bot permission role - assign to users who can start sessions, send messages in threads, and use voice features',
+      })
+    },
+    listChannels: async ({ guildId }) => {
+      const guild = await this.client.guilds.fetch(guildId)
+      discordGuildStore.set(guild.id, guild)
+      await guild.channels.fetch()
+      return [...guild.channels.cache.values()].map((channel) => {
+        if (channel.type === ChannelType.GuildText) {
+          return wrapChannel(channel)
+        }
+        if (
+          channel.type === ChannelType.PublicThread ||
+          channel.type === ChannelType.PrivateThread ||
+          channel.type === ChannelType.AnnouncementThread
+        ) {
+          return wrapChannel(channel)
+        }
+        return wrapOtherChannel({
+          id: channel.id,
+          guildId,
+          name: 'name' in channel ? channel.name : undefined,
+          parentId: 'parentId' in channel ? channel.parentId : null,
+        })
+      })
+    },
+    createCategory: async ({ guildId, name }) => {
+      const guild = await this.client.guilds.fetch(guildId)
+      discordGuildStore.set(guild.id, guild)
+      const created = await guild.channels.create({
+        name,
+        type: ChannelType.GuildCategory,
+      })
+      return wrapOtherChannel({ id: created.id, guildId, name: created.name })
+    },
+    createTextChannel: async ({ guildId, name, parentId, topic }) => {
+      const guild = await this.client.guilds.fetch(guildId)
+      discordGuildStore.set(guild.id, guild)
+      const created = await guild.channels.create({
+        name,
+        type: ChannelType.GuildText,
+        parent: parentId,
+        topic,
+      })
+      if (created.type !== ChannelType.GuildText) {
+        throw new Error(`Created non-text channel for ${name}`)
+      }
+      return wrapChannel(created)
+    },
+    createVoiceChannel: async ({ guildId, name, parentId }) => {
+      const guild = await this.client.guilds.fetch(guildId)
+      discordGuildStore.set(guild.id, guild)
+      const created = await guild.channels.create({
+        name,
+        type: ChannelType.GuildVoice,
+        parent: parentId,
+      })
+      return wrapOtherChannel({
+        id: created.id,
+        guildId,
+        name: created.name,
+        parentId: created.parentId,
+      })
+    },
+    fetchChannel: async ({ guildId, channelId }) => {
+      const guild = await this.client.guilds.fetch(guildId)
+      discordGuildStore.set(guild.id, guild)
+      const channel = guild.channels.cache.get(channelId) || (await guild.channels.fetch(channelId))
+      if (!channel) {
+        return null
+      }
+      if (channel.type === ChannelType.GuildText) {
+        return wrapChannel(channel)
+      }
+      if (
+        channel.type === ChannelType.PublicThread ||
+        channel.type === ChannelType.PrivateThread ||
+        channel.type === ChannelType.AnnouncementThread
+      ) {
+        return wrapChannel(channel)
+      }
+      return wrapOtherChannel({
+        id: channel.id,
+        guildId,
+        name: 'name' in channel ? channel.name : undefined,
+        parentId: 'parentId' in channel ? channel.parentId : null,
+      })
+    },
+    fetchChannelById: async ({ channelId }) => {
+      const channel = await this.client.channels.fetch(channelId)
+      if (!channel) {
+        return null
+      }
+      if (channel.type === ChannelType.GuildText) {
+        return wrapChannel(channel)
+      }
+      if (
+        channel.type === ChannelType.PublicThread ||
+        channel.type === ChannelType.PrivateThread ||
+        channel.type === ChannelType.AnnouncementThread
+      ) {
+        return wrapChannel(channel)
+      }
+      return wrapOtherChannel({
+        id: channel.id,
+        guildId: 'guildId' in channel ? channel.guildId || null : null,
+        name: 'name' in channel ? channel.name : undefined,
+        parentId: 'parentId' in channel ? channel.parentId : null,
+      })
+    },
+    deleteChannel: async ({ guildId, channelId, reason }) => {
+      const guild = await this.client.guilds.fetch(guildId)
+      discordGuildStore.set(guild.id, guild)
+      const channel = await guild.channels.fetch(channelId)
+      if (!channel) {
+        return 'missing'
+      }
+      await channel.delete(reason)
+      return 'deleted'
+    },
+    listGuildMembers: async ({ guildId, limit }) => {
+      const guild = await this.client.guilds.fetch(guildId)
+      discordGuildStore.set(guild.id, guild)
+      const members = await guild.members.list({ limit: limit || 20 })
+      return [...members.values()].map((member) => {
+        return wrapGuildMemberSummary(member)
+      })
+    },
+    searchGuildMembers: async ({ guildId, query, limit }) => {
+      const guild = await this.client.guilds.fetch(guildId)
+      discordGuildStore.set(guild.id, guild)
+      const members = await guild.members.search({ query, limit: limit || 10 })
+      return [...members.values()].map((member) => {
+        return wrapGuildMemberSummary(member)
+      })
+    },
+    fetchCommandDescription: async ({ guildId, commandId }) => {
+      const guild = await this.client.guilds.fetch(guildId)
+      discordGuildStore.set(guild.id, guild)
+      const command = await guild.commands.fetch(commandId)
+      return command?.description
+    },
+  }
   readonly client: Client
+  readonly content = {
+    resolveMentions: async (message: PlatformMessage) => {
+      const discordMessage = this.getStoredMessage(message)
+      return resolveMentions(discordMessage)
+    },
+    getTextAttachments: async (message: PlatformMessage) => {
+      const discordMessage = this.getStoredMessage(message)
+      return getTextAttachments(discordMessage)
+    },
+    getFileAttachments: async (message: PlatformMessage) => {
+      const discordMessage = this.getStoredMessage(message)
+      return getFileAttachments(discordMessage)
+    },
+  }
+  readonly permissions = {
+    getMessageAccess: async (message: PlatformMessage): Promise<MessageAccess> => {
+      const discordMessage = this.getStoredMessage(message)
+      if (hasNoKimakiRole(discordMessage.member)) {
+        return 'blocked'
+      }
+      if (!hasKimakiBotPermission(discordMessage.member)) {
+        return 'denied'
+      }
+      return 'allowed'
+    },
+  }
+  readonly voice = {
+    processAttachment: async (input: {
+      message: PlatformMessage
+      thread: PlatformThread
+      projectDirectory?: string
+      isNewThread?: boolean
+      appId?: string
+      currentSessionContext?: string
+      lastSessionContext?: string
+    }) => {
+      return processVoiceAttachment({
+        adapter: this,
+        message: input.message,
+        thread: input.thread,
+        projectDirectory: input.projectDirectory,
+        isNewThread: input.isNewThread,
+        appId: input.appId,
+        currentSessionContext: input.currentSessionContext,
+        lastSessionContext: input.lastSessionContext,
+      })
+    },
+  }
 
   constructor({ client }: { client: Client }) {
     this.client = client
@@ -326,6 +1066,233 @@ export class DiscordAdapter implements KimakiAdapter {
     return channel.messages.fetch(messageId)
   }
 
+  private getStoredMessage(message: PlatformMessage): Message {
+    const stored = discordMessageStore.get(
+      getDiscordMessageStoreKey({ channelId: message.channelId, messageId: message.id }),
+    )
+    if (!stored) {
+      throw new Error(`Discord message is not available in adapter cache: ${message.id}`)
+    }
+    return stored
+  }
+
+  private async getThreadChannel({
+    threadId,
+    parentId,
+  }: {
+    threadId: string
+    parentId?: string | null
+  }): Promise<ThreadChannel> {
+    const channel = await this.getTargetChannel({
+      channelId: parentId || threadId,
+      threadId,
+    })
+    if (!(channel instanceof ThreadChannel)) {
+      throw new Error(`Channel ${threadId} is not a thread target`)
+    }
+    return channel
+  }
+
+  private createConversation(target: MessageTarget): PlatformConversation {
+    return {
+      target,
+      send: async (message) => {
+        const channel = await this.getTargetChannel(target)
+        if (message.files && message.files.length > 0) {
+          const sent = await channel.send({
+            content: message.markdown.slice(0, 2000),
+            flags: message.flags,
+            embeds: message.embeds,
+            files: message.files.map((file) => {
+              return {
+                attachment: Buffer.from(file.data),
+                name: file.filename,
+                contentType: file.contentType,
+              }
+            }),
+            reply: message.replyToMessageId
+              ? { messageReference: message.replyToMessageId }
+              : undefined,
+          })
+          return { id: sent.id }
+        }
+        if (message.buttons || message.selectMenu || message.selectMenus) {
+          const sent = await channel.send({
+            content: message.markdown.slice(0, 2000),
+            flags: message.flags,
+            embeds: message.embeds,
+            components: buildMessageComponents({
+              buttons: message.buttons,
+              selectMenu: message.selectMenu,
+              selectMenus: message.selectMenus,
+            }),
+            reply: message.replyToMessageId
+              ? { messageReference: message.replyToMessageId }
+              : undefined,
+          })
+          return { id: sent.id }
+        }
+        return this.sendMarkdownSegments(channel, message)
+      },
+      update: async (messageId, message) => {
+        const targetMessage = await this.getMessageTarget(target, messageId)
+        await targetMessage.edit({
+          content: message.markdown,
+          flags: message.flags,
+          embeds: message.embeds,
+          components: message.buttons || message.selectMenu || message.selectMenus
+            ? buildMessageComponents({
+                buttons: message.buttons,
+                selectMenu: message.selectMenu,
+                selectMenus: message.selectMenus,
+              })
+            : [],
+        })
+      },
+      delete: async (messageId) => {
+        const targetMessage = await this.getMessageTarget(target, messageId)
+        await targetMessage.delete()
+      },
+      message: async (messageId): Promise<PlatformConversationMessage> => {
+        const message = await this.getMessageTarget(target, messageId)
+        return {
+          data: wrapMessage(message),
+          startThread: async ({ name, autoArchiveDuration, reason }) => {
+            const thread = await message.startThread({
+              name,
+              autoArchiveDuration,
+              reason,
+            })
+            return {
+              thread: wrapThread(thread),
+              target: {
+                channelId: thread.parentId || thread.id,
+                threadId: thread.id,
+              },
+            }
+          },
+        }
+      },
+      startTyping: async () => {
+        const channel = await this.getTargetChannel(target)
+        await channel.sendTyping()
+      },
+    }
+  }
+
+  conversation(target: MessageTarget): PlatformConversation {
+    return this.createConversation(target)
+  }
+
+  async channel(channelId: string): Promise<PlatformChannelHandle | null> {
+    const cached = this.client.channels.cache.get(channelId)
+    const channel = cached || (await this.client.channels.fetch(channelId))
+    if (!channel) {
+      return null
+    }
+    if (channel.type === ChannelType.GuildText) {
+      const data = wrapChannel(channel)
+      return {
+        data,
+        conversation: () => {
+          return this.createConversation({ channelId: data.id })
+        },
+      }
+    }
+    if (
+      channel.type === ChannelType.PublicThread ||
+      channel.type === ChannelType.PrivateThread ||
+      channel.type === ChannelType.AnnouncementThread
+    ) {
+      const data = wrapChannel(channel)
+      return {
+        data,
+        conversation: () => {
+          return this.createConversation({
+            channelId: data.parentId || data.id,
+            threadId: data.id,
+          })
+        },
+      }
+    }
+    return {
+      data: {
+        id: channel.id,
+        kind: 'other',
+        type: 'other',
+        parentId: null,
+        guildId: 'guildId' in channel ? channel.guildId || null : null,
+        isThread() {
+          return false
+        },
+      },
+      conversation: () => {
+        return this.createConversation({ channelId: channel.id })
+      },
+    }
+  }
+
+  async thread({
+    threadId,
+    parentId,
+  }: {
+    threadId: string
+    parentId?: string | null
+  }): Promise<PlatformThreadHandle | null> {
+    const thread = await this.getThreadChannel({ threadId, parentId }).catch(() => {
+      return null
+    })
+    if (!thread) {
+      return null
+    }
+    const data = wrapThread(thread)
+    return {
+      data,
+      conversation: () => {
+        return this.createConversation({
+          channelId: data.parentId || data.id,
+          threadId: data.id,
+        })
+      },
+      message: async (messageId) => {
+        return this.createConversation({
+          channelId: data.parentId || data.id,
+          threadId: data.id,
+        }).message(messageId)
+      },
+      starterMessage: async () => {
+        const starter = await thread.fetchStarterMessage().catch(() => {
+          return null
+        })
+        if (!starter) {
+          return null
+        }
+        return wrapMessage(starter)
+      },
+      rename: async (name) => {
+        await thread.setName(name)
+      },
+      archive: async () => {
+        await thread.setArchived(true)
+      },
+      addMember: async (userId) => {
+        await thread.members.add(userId)
+      },
+      addStarterReaction: async (emoji) => {
+        await this.client.rest.put(
+          Routes.channelMessageOwnReaction(
+            data.parentId || data.id,
+            data.id,
+            encodeURIComponent(emoji),
+          ),
+        )
+      },
+      reference: () => {
+        return `<#${data.id}>`
+      },
+    }
+  }
+
   private async sendMarkdownSegments(
     channel: DiscordTextTarget,
     message: OutgoingMessage,
@@ -340,6 +1307,7 @@ export class DiscordAdapter implements KimakiAdapter {
         const sent = await channel.send({
           components: segment.components,
           flags: MessageFlags.IsComponentsV2 | baseFlags,
+          embeds: firstMessage ? undefined : message.embeds,
           reply: shouldReply && message.replyToMessageId
             ? { messageReference: message.replyToMessageId }
             : undefined,
@@ -375,6 +1343,7 @@ export class DiscordAdapter implements KimakiAdapter {
         const sent = await channel.send({
           content: chunk,
           flags: baseFlags,
+          embeds: firstMessage ? undefined : message.embeds,
           reply: shouldReply && message.replyToMessageId
             ? { messageReference: message.replyToMessageId }
             : undefined,
@@ -390,6 +1359,7 @@ export class DiscordAdapter implements KimakiAdapter {
       const sent = await channel.send({
         content: '\u200b',
         flags: baseFlags,
+        embeds: message.embeds,
         reply: message.replyToMessageId
           ? { messageReference: message.replyToMessageId }
           : undefined,
@@ -398,213 +1368,6 @@ export class DiscordAdapter implements KimakiAdapter {
     }
 
     return { id: firstMessage.id }
-  }
-
-  async sendMessage(target: MessageTarget, message: OutgoingMessage) {
-    const channel = await this.getTargetChannel(target)
-    if (message.buttons || message.selectMenu || message.selectMenus) {
-      const sent = await channel.send({
-        content: message.markdown.slice(0, 2000),
-        flags: message.flags,
-        components: buildMessageComponents({
-          buttons: message.buttons,
-          selectMenu: message.selectMenu,
-          selectMenus: message.selectMenus,
-        }),
-        reply: message.replyToMessageId
-          ? { messageReference: message.replyToMessageId }
-          : undefined,
-      })
-      return { id: sent.id }
-    }
-    return this.sendMarkdownSegments(channel, message)
-  }
-
-  async updateMessage(
-    target: MessageTarget,
-    messageId: string,
-    message: OutgoingMessage,
-  ) {
-    const targetMessage = await this.getMessageTarget(target, messageId)
-    await targetMessage.edit({
-      content: message.markdown,
-      flags: message.flags,
-      components: message.buttons || message.selectMenu || message.selectMenus
-        ? buildMessageComponents({
-            buttons: message.buttons,
-            selectMenu: message.selectMenu,
-            selectMenus: message.selectMenus,
-          })
-        : [],
-    })
-  }
-
-  async deleteMessage(target: MessageTarget, messageId: string) {
-    const targetMessage = await this.getMessageTarget(target, messageId)
-    await targetMessage.delete()
-  }
-
-  async fetchMessage(target: MessageTarget, messageId: string) {
-    return wrapMessage(await this.getMessageTarget(target, messageId))
-  }
-
-  async fetchChannel(channelId: string): Promise<PlatformChannel | null> {
-    const cached = this.client.channels.cache.get(channelId)
-    const channel = cached || (await this.client.channels.fetch(channelId))
-    if (!channel) {
-      return null
-    }
-    if (channel.type === ChannelType.GuildText) {
-      return wrapChannel(channel)
-    }
-    if (
-      channel.type === ChannelType.PublicThread ||
-      channel.type === ChannelType.PrivateThread ||
-      channel.type === ChannelType.AnnouncementThread
-    ) {
-      return wrapChannel(channel)
-    }
-    return {
-      id: channel.id,
-      kind: 'other' as const,
-      raw: channel,
-    }
-  }
-
-  async startTyping(target: MessageTarget) {
-    const channel = await this.getTargetChannel(target)
-    await channel.sendTyping()
-  }
-
-  async renameThread(threadId: string, name: string) {
-    const channel = await this.getTargetChannel({ channelId: threadId, threadId })
-    if (!(channel instanceof ThreadChannel)) {
-      throw new Error('renameThread requires a thread target')
-    }
-    await channel.setName(name)
-  }
-
-  formatThreadReference(thread: PlatformThread) {
-    return `<#${thread.id}>`
-  }
-
-  async resolveMentions(message: PlatformMessage) {
-    return resolveMentions(unwrapDiscordMessage(message))
-  }
-
-  async getTextAttachments(message: PlatformMessage) {
-    return getTextAttachments(unwrapDiscordMessage(message))
-  }
-
-  async getFileAttachments(message: PlatformMessage) {
-    return getFileAttachments(unwrapDiscordMessage(message))
-  }
-
-  async getMessageAccess(message: PlatformMessage): Promise<MessageAccess> {
-    const discordMessage = unwrapDiscordMessage(message)
-    if (hasNoKimakiRole(discordMessage.member)) {
-      return 'blocked'
-    }
-    if (!hasKimakiBotPermission(discordMessage.member)) {
-      return 'denied'
-    }
-    return 'allowed'
-  }
-
-  async processVoiceAttachment(input: {
-    message: PlatformMessage
-    thread: PlatformThread
-    projectDirectory?: string
-    isNewThread?: boolean
-    appId?: string
-    currentSessionContext?: string
-    lastSessionContext?: string
-  }) {
-    return processVoiceAttachment({
-      adapter: this,
-      message: input.message,
-      thread: input.thread,
-      projectDirectory: input.projectDirectory,
-      isNewThread: input.isNewThread,
-      appId: input.appId,
-      currentSessionContext: input.currentSessionContext,
-      lastSessionContext: input.lastSessionContext,
-    })
-  }
-
-  async createThreadFromMessage(input: {
-    message: PlatformMessage
-    name: string
-    autoArchiveDuration: number
-    reason: string
-  }) {
-    const message = unwrapDiscordMessage(input.message)
-    const thread = await message.startThread({
-      name: input.name,
-      autoArchiveDuration: input.autoArchiveDuration,
-      reason: input.reason,
-    })
-    return {
-      thread: wrapThread(thread),
-      target: {
-        channelId: thread.parentId || thread.id,
-        threadId: thread.id,
-      },
-    }
-  }
-
-  async createThread(input: {
-    channelId: string
-    messageId: string
-    name: string
-    autoArchiveDuration: number
-    reason: string
-  }) {
-    const message = await this.getMessageTarget(
-      { channelId: input.channelId },
-      input.messageId,
-    )
-    return this.createThreadFromMessage({
-      message: wrapMessage(message),
-      name: input.name,
-      autoArchiveDuration: input.autoArchiveDuration,
-      reason: input.reason,
-    })
-  }
-
-  async addThreadMember(threadId: string, userId: string) {
-    const channel = await this.getTargetChannel({ channelId: threadId, threadId })
-    if (!(channel instanceof ThreadChannel)) {
-      throw new Error('addThreadMember requires a thread target')
-    }
-    await channel.members.add(userId)
-  }
-
-  async addThreadStarterReaction(
-    input: { channelId: string; threadId: string },
-    emoji: string,
-  ) {
-    await this.client.rest.put(
-      Routes.channelMessageOwnReaction(
-        input.channelId,
-        input.threadId,
-        encodeURIComponent(emoji),
-      ),
-    )
-  }
-
-  async fetchStarterMessage(threadId: string) {
-    const channel = await this.getTargetChannel({ channelId: threadId, threadId })
-    if (!(channel instanceof ThreadChannel)) {
-      return null
-    }
-    const starter = await channel.fetchStarterMessage().catch(() => {
-      return null
-    })
-    if (!starter) {
-      return null
-    }
-    return wrapMessage(starter)
   }
 
   onReady(handler: () => void) {
@@ -639,12 +1402,13 @@ export class DiscordAdapter implements KimakiAdapter {
       const isMention = Boolean(
         this.client.user && normalizedMessage.mentions.has(this.client.user.id),
       )
+      const conversation = this.createConversation(target)
       void handler({
         message: wrapMessage(normalizedMessage),
         thread: isThread
           ? wrapThread(normalizedMessage.channel as ThreadChannel)
           : undefined,
-        target,
+        conversation,
         kind: isThread ? 'thread' : 'channel',
         isMention,
         isSelf: Boolean(
@@ -658,13 +1422,56 @@ export class DiscordAdapter implements KimakiAdapter {
     handler: (event: IncomingThreadEvent) => void | Promise<void>,
   ) {
     this.client.on(Events.ThreadCreate, (thread, newlyCreated) => {
-      void handler({
-        thread: wrapThread(thread),
-        newlyCreated,
-        target: {
-          channelId: thread.parentId || thread.id,
-          threadId: thread.id,
+      const threadHandle: PlatformThreadHandle = {
+        data: wrapThread(thread),
+        conversation: () => {
+          return this.createConversation({
+            channelId: thread.parentId || thread.id,
+            threadId: thread.id,
+          })
         },
+        message: async (messageId) => {
+          return this.createConversation({
+            channelId: thread.parentId || thread.id,
+            threadId: thread.id,
+          }).message(messageId)
+        },
+        starterMessage: async () => {
+          const starter = await thread.fetchStarterMessage().catch(() => {
+            return null
+          })
+          if (!starter) {
+            return null
+          }
+          return wrapMessage(starter)
+        },
+        rename: async (name) => {
+          await thread.setName(name)
+        },
+        archive: async () => {
+          await thread.setArchived(true)
+        },
+        addMember: async (userId) => {
+          await thread.members.add(userId)
+        },
+        addStarterReaction: async (emoji) => {
+          await this.client.rest.put(
+            Routes.channelMessageOwnReaction(
+              thread.parentId || thread.id,
+              thread.id,
+              encodeURIComponent(emoji),
+            ),
+          )
+        },
+        reference: () => {
+          return `<#${thread.id}>`
+        },
+      }
+      void handler({
+        thread: threadHandle.data,
+        threadHandle,
+        conversation: threadHandle.conversation(),
+        newlyCreated,
       })
     })
   }
@@ -683,29 +1490,31 @@ export class DiscordAdapter implements KimakiAdapter {
     appId: string
   }): CommandEvent {
     return {
-      raw: interaction,
       appId,
       commandName: interaction.commandName,
       commandId: interaction.commandId,
-      client: interaction.client,
-      channel: interaction.channel,
+      commandDescription: interaction.command?.description,
+      channel: wrapOptionalChannel(interaction.channel),
       channelId: interaction.channelId,
-      guild: interaction.guild,
+      guild: wrapServer({ guild: interaction.guild }),
       guildId: interaction.guildId,
-      member: interaction.member,
-      user: interaction.user,
-      options: interaction.options,
-      command: interaction.command,
+      user: wrapUser({
+        user: interaction.user,
+        displayName: getInteractionDisplayName({ member: interaction.member, user: interaction.user }),
+      }),
+      access: getInteractionAccess({ member: interaction.member, guild: interaction.guild }),
+      options: createCommandOptions({ interaction }),
       deferred: interaction.deferred,
       replied: interaction.replied,
+      botUserName: interaction.client.user?.username,
       reply: async (options) => {
         await interaction.reply(normalizeReplyOptions(options))
       },
       replyUi: async (message) => {
         await interaction.reply(buildInteractionUiMessage(message))
       },
-      deferReply: async (options?: InteractionDeferReplyOptions) => {
-        await interaction.deferReply(options)
+      deferReply: async (options?: PlatformDeferReplyOptions) => {
+        await interaction.deferReply(normalizeDeferReplyOptions(options))
       },
       editReply: async (options) => {
         await interaction.editReply(normalizeEditReplyOptions(options))
@@ -727,16 +1536,18 @@ export class DiscordAdapter implements KimakiAdapter {
     appId: string
   }): AutocompleteEvent {
     return {
-      raw: interaction,
       appId,
       commandName: interaction.commandName,
-      channel: interaction.channel,
+      channel: wrapOptionalChannel(interaction.channel),
       channelId: interaction.channelId,
-      guild: interaction.guild,
+      guild: wrapServer({ guild: interaction.guild }),
       guildId: interaction.guildId,
-      member: interaction.member,
-      user: interaction.user,
-      options: interaction.options,
+      user: wrapUser({
+        user: interaction.user,
+        displayName: getInteractionDisplayName({ member: interaction.member, user: interaction.user }),
+      }),
+      botUserName: interaction.client.user?.username,
+      options: createCommandOptions({ interaction }),
       respond: async (options) => {
         await interaction.respond(options)
       },
@@ -750,28 +1561,30 @@ export class DiscordAdapter implements KimakiAdapter {
     interaction: ButtonInteraction
     appId: string
   }): ButtonEvent {
-    return {
-      raw: interaction,
+    const event: ButtonEvent = {
       appId,
       customId: interaction.customId,
-      client: interaction.client,
-      channel: interaction.channel,
+      channel: wrapOptionalChannel(interaction.channel),
       channelId: interaction.channelId,
-      guild: interaction.guild,
+      guild: wrapServer({ guild: interaction.guild }),
       guildId: interaction.guildId,
-      member: interaction.member,
-      user: interaction.user,
-      message: interaction.message,
+      user: wrapUser({
+        user: interaction.user,
+        displayName: getInteractionDisplayName({ member: interaction.member, user: interaction.user }),
+      }),
+      access: getInteractionAccess({ member: interaction.member, guild: interaction.guild }),
+      message: wrapMessage(interaction.message),
       deferred: interaction.deferred,
       replied: interaction.replied,
+      botUserName: interaction.client.user?.username,
       reply: async (options) => {
         await interaction.reply(normalizeReplyOptions(options))
       },
       replyUi: async (message) => {
         await interaction.reply(buildInteractionUiMessage(message))
       },
-      deferReply: async (options?: InteractionDeferReplyOptions) => {
-        await interaction.deferReply(options)
+      deferReply: async (options?: PlatformDeferReplyOptions) => {
+        await interaction.deferReply(normalizeDeferReplyOptions(options))
       },
       editReply: async (options) => {
         await interaction.editReply(normalizeEditReplyOptions(options))
@@ -780,7 +1593,7 @@ export class DiscordAdapter implements KimakiAdapter {
         await interaction.editReply(buildInteractionUiMessage(message))
       },
       followUp: async (options) => {
-        await interaction.followUp(options)
+        await interaction.followUp(normalizeReplyOptions(options))
       },
       deferUpdate: async (options?: { withResponse?: boolean }) => {
         await interaction.deferUpdate(options)
@@ -794,7 +1607,16 @@ export class DiscordAdapter implements KimakiAdapter {
       showModal: async (modal) => {
         await interaction.showModal(buildDiscordModal(modal))
       },
+      // Self-referential: passes the wrapped event to handleHtmlActionButton
+      runHtmlAction: async () => {
+        if (!interaction.customId.startsWith('html_action:')) {
+          return false
+        }
+        await handleHtmlActionButton(event)
+        return true
+      },
     }
+    return event
   }
 
   private wrapSelectMenuEvent({
@@ -805,28 +1627,30 @@ export class DiscordAdapter implements KimakiAdapter {
     appId: string
   }): SelectMenuEvent {
     return {
-      raw: interaction,
       appId,
       customId: interaction.customId,
-      client: interaction.client,
-      channel: interaction.channel,
+      channel: wrapOptionalChannel(interaction.channel),
       channelId: interaction.channelId,
-      guild: interaction.guild,
+      guild: wrapServer({ guild: interaction.guild }),
       guildId: interaction.guildId,
-      member: interaction.member,
-      user: interaction.user,
-      message: interaction.message,
+      user: wrapUser({
+        user: interaction.user,
+        displayName: getInteractionDisplayName({ member: interaction.member, user: interaction.user }),
+      }),
+      access: getInteractionAccess({ member: interaction.member, guild: interaction.guild }),
+      message: wrapMessage(interaction.message),
       values: [...interaction.values],
       deferred: interaction.deferred,
       replied: interaction.replied,
+      botUserName: interaction.client.user?.username,
       reply: async (options) => {
         await interaction.reply(normalizeReplyOptions(options))
       },
       replyUi: async (message) => {
         await interaction.reply(buildInteractionUiMessage(message))
       },
-      deferReply: async (options?: InteractionDeferReplyOptions) => {
-        await interaction.deferReply(options)
+      deferReply: async (options?: PlatformDeferReplyOptions) => {
+        await interaction.deferReply(normalizeDeferReplyOptions(options))
       },
       editReply: async (options) => {
         await interaction.editReply(normalizeEditReplyOptions(options))
@@ -857,27 +1681,29 @@ export class DiscordAdapter implements KimakiAdapter {
     appId: string
   }): ModalSubmitEvent {
     return {
-      raw: interaction,
       appId,
       customId: interaction.customId,
-      client: interaction.client,
-      channel: interaction.channel,
+      channel: wrapOptionalChannel(interaction.channel),
       channelId: interaction.channelId,
-      guild: interaction.guild,
+      guild: wrapServer({ guild: interaction.guild }),
       guildId: interaction.guildId,
-      member: interaction.member,
-      user: interaction.user,
-      fields: interaction.fields,
+      user: wrapUser({
+        user: interaction.user,
+        displayName: getInteractionDisplayName({ member: interaction.member, user: interaction.user }),
+      }),
+      access: getInteractionAccess({ member: interaction.member, guild: interaction.guild }),
+      fields: createModalFields({ interaction }),
       deferred: interaction.deferred,
       replied: interaction.replied,
+      botUserName: interaction.client.user?.username,
       reply: async (options) => {
         await interaction.reply(normalizeReplyOptions(options))
       },
       replyUi: async (message) => {
         await interaction.reply(buildInteractionUiMessage(message))
       },
-      deferReply: async (options?: InteractionDeferReplyOptions) => {
-        await interaction.deferReply(options)
+      deferReply: async (options?: PlatformDeferReplyOptions) => {
+        await interaction.deferReply(normalizeDeferReplyOptions(options))
       },
       editReply: async (options) => {
         await interaction.editReply(normalizeEditReplyOptions(options))

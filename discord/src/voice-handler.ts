@@ -34,8 +34,8 @@ import {
 import {
   escapeDiscordFormatting,
   SILENT_MESSAGE_FLAGS,
-  hasKimakiBotPermission,
 } from './discord-utils.js'
+import { hasKimakiBotPermission } from './platform/discord-adapter.js'
 import { transcribeAudio, type TranscriptionResult } from './voice.js'
 import { FetchError } from './errors.js'
 import { store } from './store.js'
@@ -465,6 +465,19 @@ function getThreadTarget(thread: PlatformThread): MessageTarget & { threadId: st
   }
 }
 
+async function getThreadHandle({
+  adapter,
+  thread,
+}: {
+  adapter: KimakiAdapter
+  thread: PlatformThread
+}) {
+  return adapter.thread({
+    threadId: thread.id,
+    parentId: thread.parentId,
+  })
+}
+
 // Per-thread serialization is handled by ThreadSessionRuntime.enqueueIncoming()
 // via the runtime action queue; no local serialization is needed here.
 export async function processVoiceAttachment({
@@ -488,7 +501,7 @@ export async function processVoiceAttachment({
   )
 
   const threadTarget = getThreadTarget(thread)
-  await adapter.sendMessage(threadTarget, {
+  await adapter.conversation(threadTarget).send({
     markdown: '🎤 Transcribing voice message...',
   })
 
@@ -517,12 +530,18 @@ export async function processVoiceAttachment({
         const threadName = result.transcription.replace(/\s+/g, ' ').trim().slice(0, 80)
         if (threadName) {
           await errore.tryAsync({
-          try: () => adapter.renameThread(thread.id, threadName),
+          try: async () => {
+            const threadHandle = await getThreadHandle({ adapter, thread })
+            if (!threadHandle) {
+              throw new Error(`Thread not found: ${thread.id}`)
+            }
+            await threadHandle.rename(threadName)
+          },
           catch: (e) => e as Error,
         })
       }
     }
-    await adapter.sendMessage(threadTarget, {
+    await adapter.conversation(threadTarget).send({
       markdown: `📝 **Transcribed message:** ${escapeDiscordFormatting(result.transcription)}`,
     })
     return result
@@ -537,7 +556,7 @@ export async function processVoiceAttachment({
       `Failed to download audio attachment:`,
       audioResponse.message,
     )
-    await adapter.sendMessage(threadTarget, {
+    await adapter.conversation(threadTarget).send({
       markdown: `⚠️ Failed to download audio: ${audioResponse.message}`,
     })
     return null
@@ -587,7 +606,7 @@ export async function processVoiceAttachment({
 
   if (!transcriptionApiKey) {
     if (appId) {
-      await adapter.sendMessage(threadTarget, {
+      await adapter.conversation(threadTarget).send({
         markdown:
           'Voice transcription requires an API key (OpenAI or Gemini). Set one to enable voice message transcription.',
         buttons: [
@@ -600,7 +619,7 @@ export async function processVoiceAttachment({
         flags: SILENT_MESSAGE_FLAGS,
       })
     } else {
-      await adapter.sendMessage(threadTarget, {
+      await adapter.conversation(threadTarget).send({
         markdown:
           'Voice transcription requires an API key. Set OPENAI_API_KEY or GEMINI_API_KEY, or use /login in this channel.',
       })
@@ -629,7 +648,7 @@ export async function processVoiceAttachment({
       Error: (e) => e.message,
     })
     voiceLogger.error(`Transcription failed:`, transcription)
-    await adapter.sendMessage(threadTarget, {
+    await adapter.conversation(threadTarget).send({
       markdown: `⚠️ Transcription failed: ${errMsg}`,
     })
     return null
@@ -646,7 +665,13 @@ export async function processVoiceAttachment({
         if (threadName) {
           const renamed = await Promise.race([
             errore.tryAsync({
-          try: () => adapter.renameThread(thread.id, threadName),
+          try: async () => {
+            const threadHandle = await getThreadHandle({ adapter, thread })
+            if (!threadHandle) {
+              throw new Error(`Thread not found: ${thread.id}`)
+            }
+            await threadHandle.rename(threadName)
+          },
           catch: (e) => e as Error,
         }),
             new Promise<null>((resolve) => {
@@ -665,7 +690,7 @@ export async function processVoiceAttachment({
     }
   }
 
-  await adapter.sendMessage(threadTarget, {
+  await adapter.conversation(threadTarget).send({
     markdown: `📝 **Transcribed message:** ${escapeDiscordFormatting(text)}`,
   })
   return transcription

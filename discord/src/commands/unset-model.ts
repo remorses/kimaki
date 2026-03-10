@@ -1,24 +1,20 @@
 // /unset-model-override command - Remove model overrides and use default instead.
 
-import {
-  ChannelType,
-  type ThreadChannel,
-  type TextChannel,
-  MessageFlags,
-} from 'discord.js'
+import { PLATFORM_MESSAGE_FLAGS } from '../platform/message-flags.js'
 import {
   getChannelModel,
   getSessionModel,
   getThreadSession,
   clearSessionModel,
+  getChannelDirectory,
 } from '../database.js'
 import { getPrisma } from '../db.js'
 import { initializeOpencodeForDirectory } from '../opencode.js'
-import { resolveTextChannel, getKimakiMetadata } from '../discord-utils.js'
 import { getRuntime } from '../session-handler/thread-session-runtime.js'
 import { getCurrentModelInfo } from './model.js'
 import { createLogger, LogPrefix } from '../logger.js'
 import type { CommandEvent } from '../platform/types.js'
+import { getRootChannelId, isTextChannel, isThreadChannel } from './channel-ref.js'
 
 const unsetModelLogger = createLogger(LogPrefix.MODEL)
 
@@ -55,7 +51,7 @@ export async function handleUnsetModelCommand({
 }): Promise<void> {
   unsetModelLogger.log('[UNSET-MODEL] handleUnsetModelCommand called')
 
-  await interaction.deferReply({ flags: MessageFlags.Ephemeral })
+  await interaction.deferReply({ flags: PLATFORM_MESSAGE_FLAGS.EPHEMERAL })
 
   const channel = interaction.channel
 
@@ -66,27 +62,18 @@ export async function handleUnsetModelCommand({
     return
   }
 
-  const isThread = [
-    ChannelType.PublicThread,
-    ChannelType.PrivateThread,
-    ChannelType.AnnouncementThread,
-  ].includes(channel.type)
+  const isThread = isThreadChannel(channel)
 
   let projectDirectory: string | undefined
   let targetChannelId: string
   let sessionId: string | undefined
 
   if (isThread) {
-    const thread = channel as ThreadChannel
-    const textChannel = await resolveTextChannel(thread)
-    const metadata = await getKimakiMetadata(textChannel)
-    projectDirectory = metadata.projectDirectory
-    targetChannelId = textChannel?.id || channel.id
-    sessionId = await getThreadSession(thread.id)
-  } else if (channel.type === ChannelType.GuildText) {
-    const textChannel = channel as TextChannel
-    const metadata = await getKimakiMetadata(textChannel)
-    projectDirectory = metadata.projectDirectory
+    targetChannelId = getRootChannelId(channel) || channel.id
+    projectDirectory = (await getChannelDirectory(targetChannelId))?.directory
+    sessionId = await getThreadSession(channel.id)
+  } else if (isTextChannel(channel)) {
+    projectDirectory = (await getChannelDirectory(channel.id))?.directory
     targetChannelId = channel.id
   } else {
     await interaction.editReply({

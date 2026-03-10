@@ -7,7 +7,6 @@
 // download) runs inside the runtime's serialized preprocessChain —
 // preserving arrival order without a separate threadIngressQueue.
 
-import type { DiscordFileAttachment } from './message-formatting.js'
 import type {
   KimakiAdapter,
   PlatformMessage,
@@ -87,7 +86,7 @@ export async function preprocessExistingThreadMessage({
 
   let messageContent = isCliInjected
     ? (message.content || '')
-    : (await adapter.resolveMentions?.(message)) || message.content || ''
+    : (await adapter.content.resolveMentions(message)) || message.content || ''
 
   // Fetch session context for voice transcription enrichment
   let currentSessionContext: string | undefined
@@ -140,7 +139,7 @@ export async function preprocessExistingThreadMessage({
     }
   }
 
-  const voiceResult = await adapter.processVoiceAttachment?.({
+  const voiceResult = await adapter.voice?.processAttachment({
     message,
     thread,
     projectDirectory,
@@ -157,8 +156,8 @@ export async function preprocessExistingThreadMessage({
     return { prompt: '', mode: 'opencode', skip: true }
   }
 
-  const fileAttachments = await adapter.getFileAttachments?.(message) || []
-  const textAttachmentsContent = await adapter.getTextAttachments?.(message) || ''
+  const fileAttachments = await adapter.content.getFileAttachments(message)
+  const textAttachmentsContent = await adapter.content.getTextAttachments(message)
   const promptWithAttachments = textAttachmentsContent
     ? `${messageContent}\n\n${textAttachmentsContent}`
     : messageContent
@@ -193,8 +192,8 @@ export async function preprocessNewSessionMessage({
 }): Promise<PreprocessResult> {
   logger.log(`No session for thread ${thread.id}, starting new session`)
 
-  let prompt = (await adapter.resolveMentions?.(message)) || message.content || ''
-  const voiceResult = await adapter.processVoiceAttachment?.({
+  let prompt = (await adapter.content.resolveMentions(message)) || message.content || ''
+  const voiceResult = await adapter.voice?.processAttachment({
     message,
     thread,
     projectDirectory,
@@ -210,7 +209,12 @@ export async function preprocessNewSessionMessage({
   }
 
   // Fetch starter message for thread context
-  const starterMessage = await adapter.fetchStarterMessage(thread.id).catch((error) => {
+  const starterMessage = await adapter.thread({
+    threadId: thread.id,
+    parentId: thread.parentId,
+  }).then(async (threadHandle) => {
+    return threadHandle?.starterMessage() || null
+  }).catch((error) => {
     logger.warn(
       `[SESSION] Failed to fetch starter message for thread ${thread.id}:`,
       error instanceof Error ? error.message : String(error),
@@ -218,9 +222,9 @@ export async function preprocessNewSessionMessage({
     return null
   })
   if (starterMessage && starterMessage.content !== message.content) {
-    const starterTextAttachments = await adapter.getTextAttachments?.(starterMessage) || ''
+    const starterTextAttachments = await adapter.content.getTextAttachments(starterMessage)
     const starterContent =
-      (await adapter.resolveMentions?.(starterMessage)) || starterMessage.content || ''
+      (await adapter.content.resolveMentions(starterMessage)) || starterMessage.content || ''
     const starterText = starterTextAttachments
       ? `${starterContent}\n\n${starterTextAttachments}`
       : starterContent
@@ -255,8 +259,8 @@ export async function preprocessNewThreadMessage({
   hasVoiceAttachment: boolean
   appId?: string
 }): Promise<PreprocessResult> {
-  let messageContent = (await adapter.resolveMentions?.(message)) || message.content || ''
-  const voiceResult = await adapter.processVoiceAttachment?.({
+  let messageContent = (await adapter.content.resolveMentions(message)) || message.content || ''
+  const voiceResult = await adapter.voice?.processAttachment({
     message,
     thread,
     projectDirectory,
@@ -272,8 +276,8 @@ export async function preprocessNewThreadMessage({
     return { prompt: '', mode: 'opencode', skip: true }
   }
 
-  const fileAttachments = await adapter.getFileAttachments?.(message) || []
-  const textAttachmentsContent = await adapter.getTextAttachments?.(message) || ''
+  const fileAttachments = await adapter.content.getFileAttachments(message)
+  const textAttachmentsContent = await adapter.content.getTextAttachments(message)
   const promptWithAttachments = textAttachmentsContent
     ? `${messageContent}\n\n${textAttachmentsContent}`
     : messageContent

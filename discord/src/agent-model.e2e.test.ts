@@ -413,7 +413,7 @@ describe('agent model resolution', () => {
         Reply with exactly: agent-model-check
         --- from: assistant (TestBot)
         ⬥ ok
-        *project ⋅ main ⋅ Ns ⋅ N% ⋅ agent-model-v2 ⋅ **test-agent***"
+        *project ⋅ adapters ⋅ Ns ⋅ N% ⋅ agent-model-v2 ⋅ **test-agent***"
       `)
       expect(footerMessage).toBeDefined()
       if (!footerMessage) {
@@ -469,7 +469,7 @@ describe('agent model resolution', () => {
         Reply with exactly: system-context-check
         --- from: assistant (TestBot)
         ⬥ system-context-ok
-        *project ⋅ main ⋅ Ns ⋅ N% ⋅ agent-model-v2 ⋅ **test-agent***"
+        *project ⋅ adapters ⋅ Ns ⋅ N% ⋅ agent-model-v2 ⋅ **test-agent***"
       `)
     },
     15_000,
@@ -522,7 +522,7 @@ describe('agent model resolution', () => {
         Reply with exactly: channel-model-check
         --- from: assistant (TestBot)
         ⬥ ok
-        *project ⋅ main ⋅ Ns ⋅ N% ⋅ channel-model-v2*"
+        *project ⋅ adapters ⋅ Ns ⋅ N% ⋅ channel-model-v2*"
       `)
       expect(footerMessage).toBeDefined()
       if (!footerMessage) {
@@ -593,7 +593,7 @@ describe('agent model resolution', () => {
         Reply with exactly: variant-check
         --- from: assistant (TestBot)
         ⬥ ok
-        *project ⋅ main ⋅ Ns ⋅ N% ⋅ channel-model-v2*"
+        *project ⋅ adapters ⋅ Ns ⋅ N% ⋅ channel-model-v2*"
       `)
       expect(footerMessage).toBeDefined()
       if (!footerMessage) {
@@ -679,12 +679,12 @@ describe('agent model resolution', () => {
         Reply with exactly: first-thread-msg
         --- from: assistant (TestBot)
         ⬥ ok
-        *project ⋅ main ⋅ Ns ⋅ N% ⋅ agent-model-v2 ⋅ **test-agent***
+        *project ⋅ adapters ⋅ Ns ⋅ N% ⋅ agent-model-v2 ⋅ **test-agent***
         --- from: user (agent-model-tester)
         Reply with exactly: second-thread-msg
         --- from: assistant (TestBot)
         ⬥ ok
-        *project ⋅ main ⋅ Ns ⋅ N% ⋅ agent-model-v2 ⋅ **test-agent***"
+        *project ⋅ adapters ⋅ Ns ⋅ N% ⋅ agent-model-v2 ⋅ **test-agent***"
       `)
 
       const secondMessages = await discord.thread(thread.id).getMessages()
@@ -781,12 +781,12 @@ describe('agent model resolution', () => {
         Reply with exactly: default-thread-msg
         --- from: assistant (TestBot)
         ⬥ ok
-        *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2*
+        *project ⋅ adapters ⋅ Ns ⋅ N% ⋅ deterministic-v2*
         --- from: user (agent-model-tester)
         Reply with exactly: default-second-msg
         --- from: assistant (TestBot)
         ⬥ ok
-        *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2*"
+        *project ⋅ adapters ⋅ Ns ⋅ N% ⋅ deterministic-v2*"
       `)
 
       const secondMessages = await discord.thread(thread.id).getMessages()
@@ -869,13 +869,13 @@ describe('agent model resolution', () => {
         Reply with exactly: switch-in-thread-msg
         --- from: assistant (TestBot)
         ⬥ ok
-        *project ⋅ main ⋅ Ns ⋅ N% ⋅ agent-model-v2 ⋅ **test-agent***
+        *project ⋅ adapters ⋅ Ns ⋅ N% ⋅ agent-model-v2 ⋅ **test-agent***
         Switched to **plan** agent for this session next messages (was **test-agent**)
         --- from: user (agent-model-tester)
         Reply with exactly: after-switch-msg
         --- from: assistant (TestBot)
         ⬥ ok
-        *project ⋅ main ⋅ Ns ⋅ N% ⋅ plan-model-v2 ⋅ **plan***"
+        *project ⋅ adapters ⋅ Ns ⋅ N% ⋅ plan-model-v2 ⋅ **plan***"
       `)
 
       const secondFooter = [...(await discord.thread(thread.id).getMessages())]
