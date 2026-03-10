@@ -5,30 +5,13 @@
 
 import { spawn, type ChildProcess } from 'node:child_process'
 import fs from 'node:fs'
-import net from 'node:net'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { test, expect } from 'vitest'
 import { resolveOpencodeCommand } from './opencode.js'
+import { chooseLockPort } from './test-utils.js'
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
-
-async function getOpenPort(): Promise<number> {
-  return new Promise((resolve, reject) => {
-    const server = net.createServer()
-    server.listen(0, () => {
-      const address = server.address()
-      if (address && typeof address === 'object') {
-        server.close(() => {
-          resolve(address.port)
-        })
-      } else {
-        reject(new Error('Failed to get port'))
-      }
-    })
-    server.on('error', reject)
-  })
-}
 
 async function waitForHealth({
   port,
@@ -59,7 +42,7 @@ test(
     const projectDir = path.resolve(process.cwd(), 'tmp', 'plugin-loading-e2e')
     fs.mkdirSync(projectDir, { recursive: true })
 
-    const port = await getOpenPort()
+    const port = chooseLockPort({ key: 'opencode-plugin-loading-e2e' })
     const pluginPath = new URL('../src/opencode-plugin.ts', import.meta.url).href
     const stderrLines: string[] = []
 

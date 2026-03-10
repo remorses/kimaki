@@ -116,13 +116,12 @@ export function isAssistantMessageNaturalCompletion({
   if (message.error) {
     return false
   }
-  // A completed message is a natural completion regardless of finish reason.
-  // finish="tool-calls" with completed set means the model's final action was
-  // tool execution and all tools ran successfully (e.g. agent calls `kimaki send`
-  // then follows up with summary text in a new assistant message). The previous
-  // filter `finish !== 'tool-calls'` blocked footers for these messages even
-  // though they completed normally.
-  return true
+  // finish="tool-calls" means the model's last step was tool execution.
+  // Mid-turn tool-call steps don't get footers — the footer comes from the
+  // final text response (finish="stop") that follows. If the turn ends with
+  // only tool-calls and no text follow-up, no footer is emitted. This is
+  // acceptable since models almost always follow up with text after tools.
+  return message.finish !== 'tool-calls'
 }
 
 export function hasAssistantMessageCompletedBefore({

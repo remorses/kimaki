@@ -430,15 +430,147 @@ e2eTest('queue advanced: footer emission', () => {
         TOOL_CALL_FOOTER_MARKER
         --- from: assistant (TestBot)
         ⬥ running tool
-        *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2*
         ⬥ ok
         *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2*"
       `)
 
-      // Both assistant messages (tool-call step and text follow-up) should
-      // get their own footer since both completed normally.
-      expect(footerCount).toBe(2)
+      // Only ONE footer at the end — the tool-call step's footer is NOT
+      // emitted mid-turn. The final text follow-up gets the footer.
+      expect(footerCount).toBe(1)
     },
     10_000,
+  )
+
+  test(
+    'multi-step tool chain should only have one footer at the end',
+    async () => {
+      // Model does 3 sequential tool calls (each a separate assistant message
+      // with finish="tool-calls") then a final text response. Only the final
+      // text response should get a footer — intermediate tool-call steps
+      // should NOT get footers since they're mid-turn work.
+      await ctx.discord.channel(TEXT_CHANNEL_ID).user(TEST_USER_ID).sendMessage({
+        content: 'MULTI_TOOL_FOOTER_MARKER',
+      })
+
+      const thread = await ctx.discord.channel(TEXT_CHANNEL_ID).waitForThread({
+        timeout: 4_000,
+        predicate: (t) => {
+          return t.name === 'MULTI_TOOL_FOOTER_MARKER'
+        },
+      })
+
+      const th = ctx.discord.thread(thread.id)
+
+      // Wait for the final text response after all 3 tool steps
+      await waitForBotMessageContaining({
+        discord: ctx.discord,
+        threadId: thread.id,
+        userId: TEST_USER_ID,
+        text: 'all done, fixed 3 files',
+        timeout: 4_000,
+      })
+
+      // Wait for the footer after the final response
+      await waitForFooterMessage({
+        discord: ctx.discord,
+        threadId: thread.id,
+        timeout: 4_000,
+      })
+
+      // Give any spurious extra footers time to arrive
+      await new Promise((resolve) => {
+        setTimeout(resolve, 500)
+      })
+
+      const messages = await th.getMessages()
+      const footerCount = messages.filter((m) => {
+        return m.author.id === ctx.discord.botUserId
+          && m.content.startsWith('*')
+          && m.content.includes('⋅')
+      }).length
+
+      expect(await th.text()).toMatchInlineSnapshot(`
+        "--- from: user (queue-advanced-tester)
+        MULTI_TOOL_FOOTER_MARKER
+        --- from: assistant (TestBot)
+        ⬥ investigating the issue
+        ⬥ all done, fixed 3 files
+        *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2*"
+      `)
+
+      // Only ONE footer should appear — after the final text response.
+      // Intermediate tool-call steps should NOT get footers.
+      expect(footerCount).toBe(1)
+    },
+    10_000,
+  )
+
+  test(
+    '3 sequential tool-call steps produce exactly 1 footer, not 3',
+    async () => {
+      // This is the most obvious reproduction of the multi-footer bug:
+      // the model runs 3 sequential tool-call steps (each a SEPARATE
+      // assistant message with finish="tool-calls"), then a final text.
+      // With a naive fix that treats tool-calls as natural completions,
+      // you'd see 4 footers (one per assistant message). Only the final
+      // text response should produce a footer.
+      await ctx.discord.channel(TEXT_CHANNEL_ID).user(TEST_USER_ID).sendMessage({
+        content: 'MULTI_STEP_CHAIN_MARKER',
+      })
+
+      const thread = await ctx.discord.channel(TEXT_CHANNEL_ID).waitForThread({
+        timeout: 4_000,
+        predicate: (t) => {
+          return t.name === 'MULTI_STEP_CHAIN_MARKER'
+        },
+      })
+
+      const th = ctx.discord.thread(thread.id)
+
+      // Wait for the final text after all 3 sequential tool steps
+      await waitForBotMessageContaining({
+        discord: ctx.discord,
+        threadId: thread.id,
+        userId: TEST_USER_ID,
+        text: 'chain complete: all 3 steps done',
+        timeout: 8_000,
+      })
+
+      // Wait for footer
+      await waitForFooterMessage({
+        discord: ctx.discord,
+        threadId: thread.id,
+        timeout: 4_000,
+      })
+
+      // Give any spurious extra footers time to arrive
+      await new Promise((resolve) => {
+        setTimeout(resolve, 500)
+      })
+
+      const messages = await th.getMessages()
+      const footerCount = messages.filter((m) => {
+        return m.author.id === ctx.discord.botUserId
+          && m.content.startsWith('*')
+          && m.content.includes('⋅')
+      }).length
+
+      expect(await th.text()).toMatchInlineSnapshot(`
+        "--- from: user (queue-advanced-tester)
+        MULTI_STEP_CHAIN_MARKER
+        --- from: assistant (TestBot)
+        ⬥ chain step 1: reading config
+        ⬥ chain step 2: analyzing results
+        ⬥ chain step 3: applying fix
+        ⬥ chain complete: all 3 steps done
+        *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2*"
+      `)
+
+      // The critical assertion: only 1 footer at the very end.
+      // With the naive "allow tool-calls as natural completion" fix,
+      // this would be 4 (one per assistant message). We want 1.
+      expect(footerCount).toBe(1)
+    },
+    15_000,
   )
 })

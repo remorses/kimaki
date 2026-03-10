@@ -36,6 +36,7 @@ import { setDataDir } from './config.js'
 import type { VerbosityLevel } from './database.js'
 import { startDiscordBot } from './discord-bot.js'
 import {
+  chooseLockPort,
   cleanupTestSessions,
   waitForFooterMessage,
 } from './test-utils.js'
@@ -89,10 +90,6 @@ function createRunDirectories() {
   const projectDirectory = path.join(root, 'project')
   fs.mkdirSync(projectDirectory, { recursive: true })
   return { root, dataDir, projectDirectory }
-}
-
-function chooseLockPort(): Promise<number> {
-  return getAvailablePort()
 }
 
 function createDiscordJsClient({ restUrl }: { restUrl: string }) {
@@ -253,7 +250,7 @@ describeIf('gateway-proxy e2e', () => {
 
   beforeAll(async () => {
     testStartTime = Date.now()
-    const lockPort = await chooseLockPort()
+    const lockPort = chooseLockPort({ key: CHANNEL_1_ID })
     directories = createRunDirectories()
     process.env['KIMAKI_LOCK_PORT'] = String(lockPort)
     process.env['KIMAKI_VITEST'] = '1'

@@ -10,7 +10,6 @@
 // so vitest can parallelize across files.
 
 import fs from 'node:fs'
-import net from 'node:net'
 import path from 'node:path'
 import url from 'node:url'
 import { describe, beforeAll, afterAll, test, expect } from 'vitest'
@@ -37,6 +36,7 @@ import {
 import { startHranaServer, stopHranaServer } from './hrana-server.js'
 import { initializeOpencodeForDirectory, stopOpencodeServer } from './opencode.js'
 import {
+  chooseLockPort,
   cleanupTestSessions,
   waitForFooterMessage,
   waitForBotMessageContaining,
@@ -58,24 +58,6 @@ function createRunDirectories() {
   fs.mkdirSync(projectDirectory, { recursive: true })
 
   return { root, dataDir, projectDirectory }
-}
-
-function chooseLockPort(): Promise<number> {
-  return new Promise((resolve, reject) => {
-    const server = net.createServer()
-    server.listen(0, () => {
-      const address = server.address()
-      if (!address || typeof address === 'string') {
-        server.close()
-        reject(new Error('Failed to resolve lock port'))
-        return
-      }
-      const port = address.port
-      server.close(() => {
-        resolve(port)
-      })
-    })
-  })
 }
 
 function createDiscordJsClient({ restUrl }: { restUrl: string }) {
@@ -272,7 +254,7 @@ e2eTest('thread message queue ordering', () => {
   beforeAll(async () => {
     testStartTime = Date.now()
     directories = createRunDirectories()
-    const lockPort = await chooseLockPort()
+    const lockPort = chooseLockPort({ key: TEXT_CHANNEL_ID })
 
     process.env['KIMAKI_LOCK_PORT'] = String(lockPort)
     setDataDir(directories.dataDir)
@@ -787,8 +769,8 @@ e2eTest('thread message queue ordering', () => {
         Reply with exactly: BASH_TOOL_FILE_MARKER
         --- from: assistant (TestBot)
         ⬥ running create file
-        *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2*
-        ⬥ ok"
+        ⬥ ok
+        *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2*"
       `)
       expect(fs.existsSync(markerPath)).toBe(true)
       const markerContents = fs.readFileSync(markerPath, 'utf8')

@@ -389,6 +389,212 @@ export function createDeterministicMatchers(): DeterministicMatcher[] {
     },
   }
 
+  // Multi-step tool chain: model emits text + 3 parallel tool calls in one
+  // response (finish="tool-calls"). All tools complete, then the follow-up
+  // matcher responds with final text (finish="stop"). This creates 2 assistant
+  // messages — one with finish="tool-calls" + completed, one with finish="stop".
+  // With the naive fix (allowing tool-calls as natural completion), we'd get
+  // 2 footers. Only the final text response should get a footer.
+  const multiToolMatcher: DeterministicMatcher = {
+    id: 'multi-tool',
+    priority: 115,
+    when: {
+      lastMessageRole: 'user',
+      latestUserTextIncludes: 'MULTI_TOOL_FOOTER_MARKER',
+    },
+    then: {
+      parts: [
+        { type: 'stream-start', warnings: [] },
+        { type: 'text-start', id: 'multi-tool-text' },
+        { type: 'text-delta', id: 'multi-tool-text', delta: 'investigating the issue' },
+        { type: 'text-end', id: 'multi-tool-text' },
+        {
+          type: 'tool-call',
+          toolCallId: 'multi-tool-bash-1',
+          toolName: 'bash',
+          input: JSON.stringify({
+            command: 'echo search-done',
+            description: 'Search codebase',
+          }),
+        },
+        {
+          type: 'tool-call',
+          toolCallId: 'multi-tool-bash-2',
+          toolName: 'bash',
+          input: JSON.stringify({
+            command: 'echo read-done',
+            description: 'Read config file',
+          }),
+        },
+        {
+          type: 'tool-call',
+          toolCallId: 'multi-tool-bash-3',
+          toolName: 'bash',
+          input: JSON.stringify({
+            command: 'echo fix-done',
+            description: 'Apply fix',
+          }),
+        },
+        {
+          type: 'finish',
+          finishReason: 'tool-calls',
+          usage: { inputTokens: 10, outputTokens: 15, totalTokens: 25 },
+        },
+      ],
+    },
+  }
+
+  const multiToolFollowupMatcher: DeterministicMatcher = {
+    id: 'multi-tool-followup',
+    priority: 114,
+    when: {
+      latestUserTextIncludes: 'MULTI_TOOL_FOOTER_MARKER',
+      rawPromptIncludes: 'investigating the issue',
+    },
+    then: {
+      parts: [
+        { type: 'stream-start', warnings: [] },
+        { type: 'text-start', id: 'multi-tool-followup-text' },
+        { type: 'text-delta', id: 'multi-tool-followup-text', delta: 'all done, fixed 3 files' },
+        { type: 'text-end', id: 'multi-tool-followup-text' },
+        {
+          type: 'finish',
+          finishReason: 'stop',
+          usage: { inputTokens: 30, outputTokens: 10, totalTokens: 40 },
+        },
+      ],
+    },
+  }
+
+  // Multi-step sequential tool chain: 3 separate tool-call steps (each a
+  // separate assistant message with finish="tool-calls"), then a final text
+  // response. This creates 4 assistant messages total. Without proper
+  // deferred footer logic, each tool-call step would emit its own footer,
+  // producing 3 spurious footers before the real one.
+  //
+  // Flow: user → step1 (text + tool-call) → tool result →
+  //       step2 (text + tool-call) → tool result →
+  //       step3 (text + tool-call) → tool result →
+  //       final text (finish="stop")
+  //
+  // Matcher priority ensures each step fires in order: the highest-priority
+  // matcher that matches wins, and each step's rawPromptIncludes check only
+  // matches once the previous step's output text is in the conversation.
+  const multiStepChainInitMatcher: DeterministicMatcher = {
+    id: 'multi-step-chain-init',
+    priority: 119,
+    when: {
+      lastMessageRole: 'user',
+      latestUserTextIncludes: 'MULTI_STEP_CHAIN_MARKER',
+    },
+    then: {
+      parts: [
+        { type: 'stream-start', warnings: [] },
+        { type: 'text-start', id: 'chain-step1-text' },
+        { type: 'text-delta', id: 'chain-step1-text', delta: 'chain step 1: reading config' },
+        { type: 'text-end', id: 'chain-step1-text' },
+        {
+          type: 'tool-call',
+          toolCallId: 'chain-step1-bash',
+          toolName: 'bash',
+          input: JSON.stringify({
+            command: 'echo chain-step-1-output',
+            description: 'Read config',
+          }),
+        },
+        {
+          type: 'finish',
+          finishReason: 'tool-calls',
+          usage: { inputTokens: 5, outputTokens: 10, totalTokens: 15 },
+        },
+      ],
+    },
+  }
+
+  const multiStepChainStep2Matcher: DeterministicMatcher = {
+    id: 'multi-step-chain-step2',
+    priority: 120,
+    when: {
+      latestUserTextIncludes: 'MULTI_STEP_CHAIN_MARKER',
+      rawPromptIncludes: 'chain step 1: reading config',
+    },
+    then: {
+      parts: [
+        { type: 'stream-start', warnings: [] },
+        { type: 'text-start', id: 'chain-step2-text' },
+        { type: 'text-delta', id: 'chain-step2-text', delta: 'chain step 2: analyzing results' },
+        { type: 'text-end', id: 'chain-step2-text' },
+        {
+          type: 'tool-call',
+          toolCallId: 'chain-step2-bash',
+          toolName: 'bash',
+          input: JSON.stringify({
+            command: 'echo chain-step-2-output',
+            description: 'Analyze results',
+          }),
+        },
+        {
+          type: 'finish',
+          finishReason: 'tool-calls',
+          usage: { inputTokens: 15, outputTokens: 10, totalTokens: 25 },
+        },
+      ],
+    },
+  }
+
+  const multiStepChainStep3Matcher: DeterministicMatcher = {
+    id: 'multi-step-chain-step3',
+    priority: 121,
+    when: {
+      latestUserTextIncludes: 'MULTI_STEP_CHAIN_MARKER',
+      rawPromptIncludes: 'chain step 2: analyzing results',
+    },
+    then: {
+      parts: [
+        { type: 'stream-start', warnings: [] },
+        { type: 'text-start', id: 'chain-step3-text' },
+        { type: 'text-delta', id: 'chain-step3-text', delta: 'chain step 3: applying fix' },
+        { type: 'text-end', id: 'chain-step3-text' },
+        {
+          type: 'tool-call',
+          toolCallId: 'chain-step3-bash',
+          toolName: 'bash',
+          input: JSON.stringify({
+            command: 'echo chain-step-3-output',
+            description: 'Apply fix',
+          }),
+        },
+        {
+          type: 'finish',
+          finishReason: 'tool-calls',
+          usage: { inputTokens: 25, outputTokens: 10, totalTokens: 35 },
+        },
+      ],
+    },
+  }
+
+  const multiStepChainFinalMatcher: DeterministicMatcher = {
+    id: 'multi-step-chain-final',
+    priority: 122,
+    when: {
+      latestUserTextIncludes: 'MULTI_STEP_CHAIN_MARKER',
+      rawPromptIncludes: 'chain step 3: applying fix',
+    },
+    then: {
+      parts: [
+        { type: 'stream-start', warnings: [] },
+        { type: 'text-start', id: 'chain-final-text' },
+        { type: 'text-delta', id: 'chain-final-text', delta: 'chain complete: all 3 steps done' },
+        { type: 'text-end', id: 'chain-final-text' },
+        {
+          type: 'finish',
+          finishReason: 'stop',
+          usage: { inputTokens: 35, outputTokens: 5, totalTokens: 40 },
+        },
+      ],
+    },
+  }
+
   return [
     slowAbortMatcher,
     typingRepulseMatcher,
@@ -397,6 +603,12 @@ export function createDeterministicMatchers(): DeterministicMatcher[] {
     questionToolMatcher,
     permissionTypingMatcher,
     permissionTypingFollowupMatcher,
+    multiToolMatcher,
+    multiToolFollowupMatcher,
+    multiStepChainInitMatcher,
+    multiStepChainStep2Matcher,
+    multiStepChainStep3Matcher,
+    multiStepChainFinalMatcher,
     raceFinalReplyMatcher,
     toolCallFooterMatcher,
     toolCallFooterFollowupMatcher,

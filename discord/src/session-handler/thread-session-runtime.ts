@@ -2074,6 +2074,7 @@ export class ThreadSessionRuntime {
         `[SESSION IDLE] session became idle sessionId=${sessionId} drainQueue=${shouldDrainQueuedMessages} ${this.formatRunStateForLog()}`,
       )
       await this.persistEventBufferDebounced.flush()
+
       if (!shouldDrainQueuedMessages) {
         return
       }

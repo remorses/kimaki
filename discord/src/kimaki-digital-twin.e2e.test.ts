@@ -2,7 +2,6 @@
 // Verifies onboarding channel creation, message -> thread creation, and assistant reply.
 
 import fs from 'node:fs'
-import net from 'node:net'
 import path from 'node:path'
 import { expect, test } from 'vitest'
 import { ChannelType, Client, GatewayIntentBits, Partials } from 'discord.js'
@@ -17,7 +16,7 @@ import {
   setChannelDirectory,
 } from './database.js'
 import { startHranaServer, stopHranaServer } from './hrana-server.js'
-import { cleanupTestSessions } from './test-utils.js'
+import { cleanupTestSessions, chooseLockPort } from './test-utils.js'
 import { stopOpencodeServer } from './opencode.js'
 
 const geminiApiKey =
@@ -42,24 +41,6 @@ function createRunDirectories() {
     projectDirectory,
     providerCacheDbPath,
   }
-}
-
-function chooseLockPort(): Promise<number> {
-  return new Promise((resolve, reject) => {
-    const server = net.createServer()
-    server.listen(0, () => {
-      const address = server.address()
-      if (!address || typeof address === 'string') {
-        server.close()
-        reject(new Error('Failed to resolve lock port'))
-        return
-      }
-      const port = address.port
-      server.close(() => {
-        resolve(port)
-      })
-    })
-  })
 }
 
 function createDiscordJsClient({ restUrl }: { restUrl: string }) {
@@ -88,7 +69,7 @@ e2eTest(
   async () => {
     const testStartTime = Date.now()
     const directories = createRunDirectories()
-    const lockPort = await chooseLockPort()
+    const lockPort = chooseLockPort({ key: 'kimaki-digital-twin-e2e' })
 
     process.env['KIMAKI_LOCK_PORT'] = String(lockPort)
     setDataDir(directories.dataDir)

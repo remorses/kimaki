@@ -11,7 +11,7 @@
 // Poll timeouts: 4s max, 100ms interval.
 
 import fs from 'node:fs'
-import net from 'node:net'
+
 import path from 'node:path'
 import url from 'node:url'
 import {
@@ -44,6 +44,7 @@ import { getPrisma } from './db.js'
 import { startHranaServer, stopHranaServer } from './hrana-server.js'
 import { initializeOpencodeForDirectory, stopOpencodeServer } from './opencode.js'
 import {
+  chooseLockPort,
   cleanupTestSessions,
   waitForBotMessageContaining,
   waitForFooterMessage,
@@ -68,23 +69,7 @@ function createRunDirectories() {
   return { root, dataDir, projectDirectory }
 }
 
-function chooseLockPort(): Promise<number> {
-  return new Promise((resolve, reject) => {
-    const server = net.createServer()
-    server.listen(0, () => {
-      const address = server.address()
-      if (!address || typeof address === 'string') {
-        server.close()
-        reject(new Error('Failed to resolve lock port'))
-        return
-      }
-      const port = address.port
-      server.close(() => {
-        resolve(port)
-      })
-    })
-  })
-}
+
 
 function createDiscordJsClient({ restUrl }: { restUrl: string }) {
   return new Client({
@@ -200,7 +185,7 @@ describe('agent model resolution', () => {
   beforeAll(async () => {
     testStartTime = Date.now()
     directories = createRunDirectories()
-    const lockPort = await chooseLockPort()
+    const lockPort = chooseLockPort({ key: TEXT_CHANNEL_ID })
 
     process.env['KIMAKI_LOCK_PORT'] = String(lockPort)
     setDataDir(directories.dataDir)

@@ -411,7 +411,7 @@ describe('real-session-task-user-interruption', () => {
   const firstAssistantId = 'msg_cb9b0ba96001SpPjgzxWPmRuW9'
   const secondAssistantId = 'msg_cb9b1ae5c001E5G3Ql6aXNpst2'
 
-  test('tool-call handoff assistant is also a natural completion when completed', () => {
+  test('tool-call handoff assistant is not a natural completion but the resumed reply is', () => {
     const firstAssistant = getAssistantMessageById({
       events,
       sessionId,
@@ -422,9 +422,9 @@ describe('real-session-task-user-interruption', () => {
       sessionId,
       messageId: secondAssistantId,
     })
-    // Both messages completed — the first one finished with tool-calls which
-    // is a valid natural completion (model's final action was tool execution).
-    expect(isAssistantMessageNaturalCompletion({ message: firstAssistant })).toBe(true)
+    // The first message finished with tool-calls — not a natural completion
+    // (footer is deferred to session.idle). The second message IS natural.
+    expect(isAssistantMessageNaturalCompletion({ message: firstAssistant })).toBe(false)
     expect(isAssistantMessageNaturalCompletion({ message: secondAssistant })).toBe(true)
   })
 
@@ -560,7 +560,7 @@ describe('real-session-action-buttons', () => {
   const toolCallAssistantId = 'msg_cb9b55c3b001hXC9qxjVxLMypM'
   const finalAssistantId = 'msg_cb9b5ddd1001FALqKNM6xW98u6'
 
-  test('tool-call handoff assistant is also a natural completion when completed', () => {
+  test('tool-call handoff assistant is not a natural completion but final reply is', () => {
     const toolCallAssistant = getAssistantMessageById({
       events,
       sessionId,
@@ -571,10 +571,9 @@ describe('real-session-action-buttons', () => {
       sessionId,
       messageId: finalAssistantId,
     })
-    // Both messages completed normally — the tool-call message has
-    // finish="tool-calls" + completed timestamp, which is a valid natural
-    // completion (the model's final action was tool execution).
-    expect(isAssistantMessageNaturalCompletion({ message: toolCallAssistant })).toBe(true)
+    // The tool-call message has finish="tool-calls" — not a natural completion
+    // (footer is deferred to session.idle). The final text message IS natural.
+    expect(isAssistantMessageNaturalCompletion({ message: toolCallAssistant })).toBe(false)
     expect(isAssistantMessageNaturalCompletion({ message: finalAssistant })).toBe(true)
   })
 

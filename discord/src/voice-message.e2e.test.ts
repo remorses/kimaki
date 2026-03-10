@@ -9,7 +9,7 @@
 // transitions (via getThreadState from the zustand store).
 
 import fs from 'node:fs'
-import net from 'node:net'
+
 import path from 'node:path'
 import url from 'node:url'
 import { describe, beforeAll, afterAll, beforeEach, test, expect } from 'vitest'
@@ -33,6 +33,7 @@ import { startHranaServer, stopHranaServer } from './hrana-server.js'
 import { initializeOpencodeForDirectory, getOpencodeClient, stopOpencodeServer } from './opencode.js'
 import type { Part, Message } from '@opencode-ai/sdk/v2'
 import {
+  chooseLockPort,
   cleanupTestSessions,
   waitForFooterMessage,
   waitForBotMessageContaining,
@@ -54,24 +55,6 @@ function createRunDirectories() {
   fs.mkdirSync(projectDirectory, { recursive: true })
 
   return { root, dataDir, projectDirectory }
-}
-
-function chooseLockPort(): Promise<number> {
-  return new Promise((resolve, reject) => {
-    const server = net.createServer()
-    server.listen(0, () => {
-      const address = server.address()
-      if (!address || typeof address === 'string') {
-        server.close()
-        reject(new Error('Failed to resolve lock port'))
-        return
-      }
-      const port = address.port
-      server.close(() => {
-        resolve(port)
-      })
-    })
-  })
 }
 
 function createDiscordJsClient({ restUrl }: { restUrl: string }) {
@@ -306,7 +289,7 @@ e2eTest('voice message handling', () => {
   beforeAll(async () => {
     testStartTime = Date.now()
     directories = createRunDirectories()
-    const lockPort = await chooseLockPort()
+    const lockPort = chooseLockPort({ key: TEXT_CHANNEL_ID })
 
     process.env['KIMAKI_LOCK_PORT'] = String(lockPort)
     setDataDir(directories.dataDir)

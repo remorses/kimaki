@@ -8,7 +8,7 @@
 // involves real git operations — 10s timeout there).
 
 import fs from 'node:fs'
-import net from 'node:net'
+
 import path from 'node:path'
 import url from 'node:url'
 import { describe, beforeAll, afterAll, test, expect } from 'vitest'
@@ -36,6 +36,7 @@ import {
   stopOpencodeServer,
 } from './opencode.js'
 import {
+  chooseLockPort,
   cleanupTestSessions,
   waitForBotMessageContaining,
   waitForBotReplyAfterUserMessage,
@@ -55,24 +56,6 @@ function createRunDirectories() {
   const projectDirectory = path.join(root, 'project')
   fs.mkdirSync(projectDirectory, { recursive: true })
   return { root, dataDir, projectDirectory }
-}
-
-function chooseLockPort(): Promise<number> {
-  return new Promise((resolve, reject) => {
-    const server = net.createServer()
-    server.listen(0, () => {
-      const address = server.address()
-      if (!address || typeof address === 'string') {
-        server.close()
-        reject(new Error('Failed to resolve lock port'))
-        return
-      }
-      const port = address.port
-      server.close(() => {
-        resolve(port)
-      })
-    })
-  })
 }
 
 function createDiscordJsClient({ restUrl }: { restUrl: string }) {
@@ -150,7 +133,7 @@ describe('worktree lifecycle', () => {
   beforeAll(async () => {
     testStartTime = Date.now()
     directories = createRunDirectories()
-    const lockPort = await chooseLockPort()
+    const lockPort = chooseLockPort({ key: TEXT_CHANNEL_ID })
 
     process.env['KIMAKI_LOCK_PORT'] = String(lockPort)
     setDataDir(directories.dataDir)

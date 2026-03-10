@@ -3,7 +3,7 @@
 // (task, interruption, permission, action buttons, and question flows).
 
 import fs from 'node:fs'
-import net from 'node:net'
+
 import path from 'node:path'
 import { afterAll, afterEach, beforeAll, describe, expect, test } from 'vitest'
 import { ChannelType, Client, GatewayIntentBits, Partials, type APIMessage } from 'discord.js'
@@ -22,7 +22,7 @@ import {
   type VerbosityLevel,
 } from './database.js'
 import { startHranaServer, stopHranaServer } from './hrana-server.js'
-import { cleanupTestSessions } from './test-utils.js'
+import { chooseLockPort, cleanupTestSessions } from './test-utils.js'
 import { waitForBotMessageContaining, waitForBotReplyAfterUserMessage } from './test-utils.js'
 import { stopOpencodeServer } from './opencode.js'
 import { disposeRuntime, pendingPermissions } from './session-handler/thread-session-runtime.js'
@@ -69,23 +69,7 @@ function createRunDirectories() {
   }
 }
 
-function chooseLockPort(): Promise<number> {
-  return new Promise((resolve, reject) => {
-    const server = net.createServer()
-    server.listen(0, () => {
-      const address = server.address()
-      if (!address || typeof address === 'string') {
-        server.close()
-        reject(new Error('Failed to resolve lock port'))
-        return
-      }
-      const port = address.port
-      server.close(() => {
-        resolve(port)
-      })
-    })
-  })
-}
+
 
 function createDiscordJsClient({ restUrl }: { restUrl: string }) {
   return new Client({
@@ -327,7 +311,7 @@ describe('real event stream capture fixtures (cached provider)', () => {
 
   beforeAll(async () => {
     testStartTime = Date.now()
-    lockPort = await chooseLockPort()
+    lockPort = chooseLockPort({ key: TEXT_CHANNEL_ID })
 
     listJsonlFiles(directories.sessionEventsDir).forEach((fileName) => {
       fs.rmSync(path.join(directories.sessionEventsDir, fileName), {

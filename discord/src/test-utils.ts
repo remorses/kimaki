@@ -8,6 +8,23 @@
 // a new server only if no existing client is available.
 
 import type { APIMessage } from 'discord.js'
+
+/**
+ * Deterministic port from a string key (channel ID, test file name, etc.).
+ * Uses a hash to pick a stable port in range 53000-54999, avoiding overlap
+ * with queue-advanced tests (51000-52999) and getLockPort (30000-39999).
+ * Replaces the old TOCTOU-prone pattern of binding port 0, reading the
+ * assigned port, closing, then rebinding — which races under parallel vitest.
+ */
+export function chooseLockPort({ key }: { key: string }): number {
+  let hash = 0
+  for (let i = 0; i < key.length; i++) {
+    const char = key.charCodeAt(i)
+    hash = (hash << 5) - hash + char
+    hash |= 0
+  }
+  return 53_000 + (Math.abs(hash) % 2_000)
+}
 import type { DigitalDiscord } from 'discord-digital-twin/src'
 import {
   getOpencodeClient,
