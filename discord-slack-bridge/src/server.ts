@@ -2197,11 +2197,7 @@ async function resolveThreadTsForReaction({
       limit: 1,
     } satisfies ConversationsRepliesArguments
     const result = await slack.conversations.replies(args)
-    const first = result.messages?.[0]
-    if (!isRecord(first)) {
-      return undefined
-    }
-    return readString(first, 'thread_ts')
+    return result.messages?.[0]?.thread_ts
   } catch {
     return undefined
   }
