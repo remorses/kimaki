@@ -2,6 +2,20 @@
 
 # discord-slack-bridge
 
+## Package purpose
+
+This package exists to let Kimaki (from the `discord` package) run on Slack in
+the future with minimal behavior differences. The adapter translates Discord
+Gateway and REST semantics to Slack APIs so Kimaki can keep the same runtime
+model:
+
+- Discord `guild` maps to Slack `team` (workspace).
+- Discord channels map to Slack channels.
+- Discord threads map to Slack threads (similar reply-thread model).
+
+The goal is feature parity where Kimaki behaves in Slack as close as possible
+to how it behaves in Discord, with this bridge handling protocol translation.
+
 ## Canonical references
 
 - Bridge behavior spec: `docs/discord-slack-bridge-spec.md`
