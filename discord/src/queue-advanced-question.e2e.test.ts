@@ -139,7 +139,6 @@ describe('queue advanced: question tool text answer', () => {
         --- from: user (queue-question-tester)
         my text answer
         --- from: assistant (TestBot)
-        *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2*
         **Pick one**
         Which option do you prefer?"
       `)
