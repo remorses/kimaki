@@ -8,32 +8,66 @@
 import crypto from 'node:crypto'
 import http from 'node:http'
 import { createHmac, timingSafeEqual } from 'node:crypto'
-import type { WebClient } from '@slack/web-api'
+import type {
+  ConversationsListArguments,
+  ConversationsRepliesArguments,
+  UsersInfoArguments,
+  WebClient,
+} from '@slack/web-api'
 import { Spiceflow } from 'spiceflow'
 import {
   ApplicationCommandOptionType,
   ApplicationCommandType,
   ChannelType,
   ComponentType,
+  GuildDefaultMessageNotifications,
   GatewayDispatchEvents,
+  GuildExplicitContentFilter,
   GuildMemberFlags,
+  GuildMFALevel,
+  GuildNSFWLevel,
+  GuildPremiumTier,
+  GuildSystemChannelFlags,
+  GuildVerificationLevel,
   InteractionResponseType,
   InteractionType,
+  Locale,
   MessageType,
+  TextInputStyle,
 } from 'discord-api-types/v10'
-import type { APIChannel, APIGuild } from 'discord-api-types/v10'
-import { SlackBridgeGateway, type GatewayState } from './gateway.js'
+import type {
+  APIActionRowComponent,
+  APIChannel,
+  APIGuild,
+  APITextInputComponent,
+} from 'discord-api-types/v10'
+import {
+  SlackBridgeGateway,
+  type GatewayGuildState,
+  type GatewayState,
+} from './gateway.js'
 import * as rest from './rest-translator.js'
 import * as events from './event-translator.js'
-import { encodeMessageId, resolveDiscordChannelId } from './id-converter.js'
+import {
+  encodeMessageId,
+  resolveDiscordChannelId,
+  resolveSlackTarget,
+} from './id-converter.js'
 import { decodeComponentActionId } from './component-id-codec.js'
 import type {
-  SlackEventEnvelope,
-  SlackEvent,
-  SlackReactionEvent,
-  SlackInteractivePayload,
   CachedSlackUser,
+  NormalizedSlackAction,
+  NormalizedSlackBlockActionsPayload,
+  NormalizedSlackEvent,
+  NormalizedSlackEventEnvelope,
+  NormalizedSlackMessageEvent,
+  NormalizedSlackMessage,
+  NormalizedSlackReactionEvent,
   PendingInteraction,
+  NormalizedSlackInteractivePayload,
+  NormalizedSlackViewSubmissionPayload,
+  NormalizedSlackViewSubmissionStateValue,
+  SupportedSlackEventType,
 } from './types.js'
 
 export interface ServerConfig {
@@ -61,6 +95,9 @@ const userCache = new Map<string, { user: CachedSlackUser; expiresAt: number }>(
 
 const EVENT_DEDUPE_TTL_MS = 5 * 60 * 1000
 
+const DISCORD_DEFAULT_DISCRIMINATOR = '0'
+const DISCORD_ZERO_PERMISSIONS = '0'
+
 /**
  * Look up a Slack user with caching.
  * Falls back to the user ID as username if lookup fails.
@@ -75,13 +112,11 @@ async function lookupUser(
   }
 
   try {
-    const result = await slack.users.info({ user: userId })
-    const user = result.user as {
-      id: string
-      name?: string
-      real_name?: string
-      is_bot?: boolean
-      profile?: { image_72?: string }
+    const args = { user: userId } satisfies UsersInfoArguments
+    const result = await slack.users.info(args)
+    const user = normalizeSlackUserInfo(result.user)
+    if (!user) {
+      throw new Error('Slack users.info returned invalid user payload')
     }
     const cachedUser: CachedSlackUser = {
       id: user.id,
@@ -159,7 +194,7 @@ export function createServer(config: ServerConfig): ServerComponents {
         return new Response('', { status: 200 })
       }
 
-      // Interactive payload (button clicks, modals)
+      // Interactive payload (button clicks, selects)
       const payloadStr = params.get('payload')
       if (payloadStr) {
         handleInteractivePayload(payloadStr)
@@ -170,30 +205,33 @@ export function createServer(config: ServerConfig): ServerComponents {
     }
 
     // JSON event payload
-    let payload: SlackEventEnvelope
+    let payload: unknown
     try {
-      payload = JSON.parse(body) as SlackEventEnvelope
+      payload = JSON.parse(body)
     } catch {
       return new Response('Invalid JSON', { status: 400 })
     }
 
+    const normalizedEnvelope = normalizeSlackEventEnvelope(payload)
+    if (!normalizedEnvelope) {
+      return new Response('Unsupported event payload', { status: 400 })
+    }
+
     // URL verification challenge
-    if (payload.type === 'url_verification' && payload.challenge) {
-      return Response.json({ challenge: payload.challenge })
+    if (normalizedEnvelope.type === 'url_verification') {
+      return Response.json({ challenge: normalizedEnvelope.challenge })
     }
 
     // Event callback
-    if (payload.type === 'event_callback' && payload.event) {
-      const eventId = payload.event_id
-      if (eventId) {
-        pruneExpiredEventIds({ seenEventIds, now: Date.now() })
-        if (seenEventIds.has(eventId)) {
-          return new Response('ok', { status: 200 })
-        }
-        seenEventIds.set(eventId, Date.now() + EVENT_DEDUPE_TTL_MS)
+    const eventId = normalizedEnvelope.eventId
+    if (eventId) {
+      pruneExpiredEventIds({ seenEventIds, now: Date.now() })
+      if (seenEventIds.has(eventId)) {
+        return new Response('ok', { status: 200 })
       }
-      void handleEvent(payload.event)
+      seenEventIds.set(eventId, Date.now() + EVENT_DEDUPE_TTL_MS)
     }
+    void handleEvent(normalizedEnvelope.event)
 
     return new Response('ok', { status: 200 })
   })
@@ -225,9 +263,13 @@ export function createServer(config: ServerConfig): ServerComponents {
 
   // GET /api/v10/users/:user_id
   app.get('/api/v10/users/:user_id', async ({ params }) => {
+    const userId = readString(params, 'user_id')
+    if (!userId) {
+      return new Response('Missing user_id', { status: 400 })
+    }
     const user = await rest.getUser({
       slack,
-      userId: params.user_id as string,
+      userId,
     })
     return withRateLimitHeaders(Response.json(user))
   })
@@ -247,15 +289,15 @@ export function createServer(config: ServerConfig): ServerComponents {
   app.post(
     '/api/v10/channels/:channel_id/messages',
     async ({ params, request }) => {
-      const body = (await request.json()) as {
-        content?: string
-        embeds?: unknown[]
-        components?: unknown[]
+      const body = normalizePostMessageBody(await request.json())
+      const channelId = readString(params, 'channel_id')
+      if (!channelId) {
+        return new Response('Missing channel_id', { status: 400 })
       }
       const message = await rest.postMessage({
         slack,
-        channelId: params.channel_id as string,
-        body: body as Parameters<typeof rest.postMessage>[0]['body'],
+        channelId,
+        body,
         botUserId,
         guildId: workspaceId,
       })
@@ -267,11 +309,16 @@ export function createServer(config: ServerConfig): ServerComponents {
   app.patch(
     '/api/v10/channels/:channel_id/messages/:message_id',
     async ({ params, request }) => {
-      const body = (await request.json()) as { content?: string }
+      const body = normalizeEditMessageBody(await request.json())
+      const channelId = readString(params, 'channel_id')
+      const messageId = readString(params, 'message_id')
+      if (!(channelId && messageId)) {
+        return new Response('Missing channel_id or message_id', { status: 400 })
+      }
       const message = await rest.editMessage({
         slack,
-        channelId: params.channel_id as string,
-        messageId: params.message_id as string,
+        channelId,
+        messageId,
         body,
         botUserId,
         guildId: workspaceId,
@@ -284,10 +331,15 @@ export function createServer(config: ServerConfig): ServerComponents {
   app.delete(
     '/api/v10/channels/:channel_id/messages/:message_id',
     async ({ params }) => {
+      const channelId = readString(params, 'channel_id')
+      const messageId = readString(params, 'message_id')
+      if (!(channelId && messageId)) {
+        return new Response('Missing channel_id or message_id', { status: 400 })
+      }
       await rest.deleteMessage({
         slack,
-        channelId: params.channel_id as string,
-        messageId: params.message_id as string,
+        channelId,
+        messageId,
       })
       return withRateLimitHeaders(new Response(null, { status: 204 }))
     },
@@ -298,9 +350,13 @@ export function createServer(config: ServerConfig): ServerComponents {
     '/api/v10/channels/:channel_id/messages',
     async ({ params, request }) => {
       const url = new URL(request.url)
+      const channelId = readString(params, 'channel_id')
+      if (!channelId) {
+        return new Response('Missing channel_id', { status: 400 })
+      }
       const messages = await rest.getMessages({
         slack,
-        channelId: params.channel_id as string,
+        channelId,
         query: {
           limit: url.searchParams.get('limit') ?? undefined,
           before: url.searchParams.get('before') ?? undefined,
@@ -313,6 +369,27 @@ export function createServer(config: ServerConfig): ServerComponents {
     },
   )
 
+  // GET /api/v10/channels/:channel_id/messages/:message_id
+  app.get(
+    '/api/v10/channels/:channel_id/messages/:message_id',
+    async ({ params }) => {
+      const channelId = readString(params, 'channel_id')
+      const messageId = readString(params, 'message_id')
+      if (!(channelId && messageId)) {
+        return new Response('Missing channel_id or message_id', { status: 400 })
+      }
+
+      const message = await rest.getMessage({
+        slack,
+        channelId,
+        messageId,
+        botUserId,
+        guildId: workspaceId,
+      })
+      return withRateLimitHeaders(Response.json(message))
+    },
+  )
+
   // POST /api/v10/channels/:channel_id/typing (no-op)
   app.post('/api/v10/channels/:channel_id/typing', () => {
     return withRateLimitHeaders(new Response(null, { status: 204 }))
@@ -320,9 +397,30 @@ export function createServer(config: ServerConfig): ServerComponents {
 
   // GET /api/v10/channels/:channel_id
   app.get('/api/v10/channels/:channel_id', async ({ params }) => {
+    const channelId = readString(params, 'channel_id')
+    if (!channelId) {
+      return new Response('Missing channel_id', { status: 400 })
+    }
     const channel = await rest.getChannel({
       slack,
-      channelId: params.channel_id as string,
+      channelId,
+      guildId: workspaceId,
+    })
+    return withRateLimitHeaders(Response.json(channel))
+  })
+
+  // PATCH /api/v10/channels/:channel_id
+  app.patch('/api/v10/channels/:channel_id', async ({ params, request }) => {
+    const body = normalizePatchChannelBody(await request.json())
+    const channelId = readString(params, 'channel_id')
+    if (!channelId) {
+      return new Response('Missing channel_id', { status: 400 })
+    }
+
+    const channel = await rest.updateChannel({
+      slack,
+      channelId,
+      body,
       guildId: workspaceId,
     })
     return withRateLimitHeaders(Response.json(channel))
@@ -332,11 +430,17 @@ export function createServer(config: ServerConfig): ServerComponents {
   app.put(
     '/api/v10/channels/:channel_id/messages/:message_id/reactions/:emoji/@me',
     async ({ params }) => {
+      const channelId = readString(params, 'channel_id')
+      const messageId = readString(params, 'message_id')
+      const emoji = readString(params, 'emoji')
+      if (!(channelId && messageId && emoji)) {
+        return new Response('Missing reaction route params', { status: 400 })
+      }
       await rest.addReaction({
         slack,
-        channelId: params.channel_id as string,
-        messageId: params.message_id as string,
-        emoji: decodeURIComponent(params.emoji as string),
+        channelId,
+        messageId,
+        emoji: decodeURIComponent(emoji),
       })
       return withRateLimitHeaders(new Response(null, { status: 204 }))
     },
@@ -346,11 +450,17 @@ export function createServer(config: ServerConfig): ServerComponents {
   app.delete(
     '/api/v10/channels/:channel_id/messages/:message_id/reactions/:emoji/@me',
     async ({ params }) => {
+      const channelId = readString(params, 'channel_id')
+      const messageId = readString(params, 'message_id')
+      const emoji = readString(params, 'emoji')
+      if (!(channelId && messageId && emoji)) {
+        return new Response('Missing reaction route params', { status: 400 })
+      }
       await rest.removeReaction({
         slack,
-        channelId: params.channel_id as string,
-        messageId: params.message_id as string,
-        emoji: decodeURIComponent(params.emoji as string),
+        channelId,
+        messageId,
+        emoji: decodeURIComponent(emoji),
       })
       return withRateLimitHeaders(new Response(null, { status: 204 }))
     },
@@ -360,13 +470,14 @@ export function createServer(config: ServerConfig): ServerComponents {
   app.post(
     '/api/v10/channels/:channel_id/threads',
     async ({ params, request }) => {
-      const body = (await request.json()) as {
-        name: string
-        auto_archive_duration?: number
+      const body = normalizeCreateThreadBody(await request.json())
+      const parentChannelId = readString(params, 'channel_id')
+      if (!parentChannelId) {
+        return new Response('Missing channel_id', { status: 400 })
       }
       const thread = await rest.createThread({
         slack,
-        parentChannelId: params.channel_id as string,
+        parentChannelId,
         body,
         botUserId,
         guildId: workspaceId,
@@ -389,13 +500,13 @@ export function createServer(config: ServerConfig): ServerComponents {
         roles: [],
         emojis: [],
         features: [],
-        verification_level: 0,
-        default_message_notifications: 0,
-        explicit_content_filter: 0,
-        mfa_level: 0,
-        system_channel_flags: 0,
-        premium_tier: 0,
-        nsfw_level: 0,
+        verification_level: GuildVerificationLevel.None,
+        default_message_notifications: GuildDefaultMessageNotifications.AllMessages,
+        explicit_content_filter: GuildExplicitContentFilter.Disabled,
+        mfa_level: GuildMFALevel.None,
+        system_channel_flags: GuildSystemChannelFlags.SuppressJoinNotifications,
+        premium_tier: GuildPremiumTier.None,
+        nsfw_level: GuildNSFWLevel.Default,
       }),
     )
   })
@@ -409,16 +520,52 @@ export function createServer(config: ServerConfig): ServerComponents {
     return withRateLimitHeaders(Response.json(channels))
   })
 
+  // POST /api/v10/guilds/:guild_id/channels
+  app.post('/api/v10/guilds/:guild_id/channels', async ({ request }) => {
+    const body = normalizeCreateGuildChannelBody(await request.json())
+    const channel = await rest.createChannel({
+      slack,
+      guildId: workspaceId,
+      body,
+    })
+    return withRateLimitHeaders(Response.json(channel))
+  })
+
+  // GET /api/v10/guilds/:guild_id/members
+  app.get('/api/v10/guilds/:guild_id/members', async () => {
+    const members = await rest.listGuildMembers({ slack })
+    return withRateLimitHeaders(Response.json(members))
+  })
+
+  // GET /api/v10/guilds/:guild_id/members/:uid
+  app.get('/api/v10/guilds/:guild_id/members/:uid', async ({ params }) => {
+    const userId = readString(params, 'uid')
+    if (!userId) {
+      return new Response('Missing uid', { status: 400 })
+    }
+    const member = await rest.getGuildMember({
+      slack,
+      userId,
+    })
+    return withRateLimitHeaders(Response.json(member))
+  })
+
+  // GET /api/v10/guilds/:guild_id/roles
+  app.get('/api/v10/guilds/:guild_id/roles', async () => {
+    const roles = await rest.listGuildRoles({ slack })
+    return withRateLimitHeaders(Response.json(roles))
+  })
+
   // POST /api/v10/interactions/:interaction_id/:interaction_token/callback
   app.post(
     '/api/v10/interactions/:interaction_id/:interaction_token/callback',
     async ({ params, request }) => {
-      const body = (await request.json()) as {
-        type: number
-        data?: { content?: string; flags?: number }
+      const body = normalizeInteractionCallbackBody(await request.json())
+      const interactionId = readString(params, 'interaction_id')
+      const interactionToken = readString(params, 'interaction_token')
+      if (!(interactionId && interactionToken)) {
+        return new Response('Missing interaction route params', { status: 400 })
       }
-      const interactionId = params.interaction_id as string
-      const interactionToken = params.interaction_token as string
       const pending = pendingInteractions.get(interactionId)
       if (!pending) {
         return new Response('Unknown interaction', { status: 404 })
@@ -441,6 +588,40 @@ export function createServer(config: ServerConfig): ServerComponents {
         gateway.broadcastMessageCreate(message, workspaceId)
       }
 
+      if (body.type === InteractionResponseType.UpdateMessage && body.data && pending.messageTs) {
+        const message = await rest.editMessage({
+          slack,
+          channelId: pending.channelId,
+          messageId: encodeMessageId(
+            resolveSlackTarget(pending.channelId).channel,
+            pending.messageTs,
+          ),
+          body: {
+            content: body.data.content,
+            components: body.data.components,
+          },
+          botUserId,
+          guildId: workspaceId,
+        })
+        gateway.broadcast(GatewayDispatchEvents.MessageUpdate, {
+          ...message,
+          guild_id: workspaceId,
+        })
+      }
+
+      if (
+        body.type === InteractionResponseType.Modal &&
+        body.data &&
+        pending.triggerId
+      ) {
+        const modalData = normalizeModalInteractionResponseData(body.data)
+        await rest.openModalView({
+          slack,
+          triggerId: pending.triggerId,
+          modal: modalData,
+        })
+      }
+
       // Type 5: DEFERRED_CHANNEL_MESSAGE_WITH_SOURCE (ack, respond later)
       // Type 6: DEFERRED_UPDATE_MESSAGE (ack)
       // These just acknowledge -- the actual response comes via webhook edit
@@ -453,10 +634,14 @@ export function createServer(config: ServerConfig): ServerComponents {
   app.post(
     '/api/v10/webhooks/:webhook_id/:webhook_token',
     async ({ params, request }) => {
-      const body = (await request.json()) as { content?: string }
+      const body = normalizeWebhookBody(await request.json())
+      const webhookToken = readString(params, 'webhook_token')
+      if (!webhookToken) {
+        return new Response('Missing webhook_token', { status: 400 })
+      }
       // Find interaction by token
       const pending = [...pendingInteractions.values()].find(
-        (p) => p.token === (params.webhook_token as string),
+        (p) => p.token === webhookToken,
       )
       if (!pending) {
         return new Response('Unknown webhook token', { status: 404 })
@@ -473,11 +658,50 @@ export function createServer(config: ServerConfig): ServerComponents {
     },
   )
 
+  // PATCH /api/v10/webhooks/:webhook_id/:webhook_token/messages/:message_id
+  app.patch(
+    '/api/v10/webhooks/:webhook_id/:webhook_token/messages/:message_id',
+    async ({ params, request }) => {
+      const body = normalizeWebhookBody(await request.json())
+      const webhookToken = readString(params, 'webhook_token')
+      if (!webhookToken) {
+        return new Response('Missing webhook_token', { status: 400 })
+      }
+      const pending = [...pendingInteractions.values()].find((entry) => {
+        return entry.token === webhookToken
+      })
+      if (!pending) {
+        return new Response('Unknown webhook token', { status: 404 })
+      }
+      if (!pending.messageTs) {
+        return new Response('No source message for webhook update', {
+          status: 400,
+        })
+      }
+
+      const message = await rest.editMessage({
+        slack,
+        channelId: pending.channelId,
+        messageId: encodeMessageId(
+          resolveSlackTarget(pending.channelId).channel,
+          pending.messageTs,
+        ),
+        body: {
+          content: body.content,
+        },
+        botUserId,
+        guildId: workspaceId,
+      })
+
+      return withRateLimitHeaders(Response.json(message))
+    },
+  )
+
   // ---- Internal Event Handlers ----
 
-  async function handleEvent(event: SlackEvent): Promise<void> {
+  async function handleEvent(event: NormalizedSlackEvent): Promise<void> {
     const eventType = event.type
-    const subtype = event.subtype
+    const subtype = 'subtype' in event ? event.subtype : undefined
 
     if (eventType === 'message' || eventType === 'app_mention') {
       if (subtype === 'message_changed') {
@@ -525,22 +749,22 @@ export function createServer(config: ServerConfig): ServerComponents {
       }
 
       // New message
-      const userId = event.user ?? event.bot_id ?? botUserId
+      const userId = event.user ?? event.botId ?? botUserId
       const author = await lookupUser(slack, userId)
 
       // If this message is a thread reply and we haven't seen this thread,
       // emit THREAD_CREATE first
       if (
-        event.thread_ts &&
+        event.threadTs &&
         event.channel &&
-        event.thread_ts !== event.ts
+        event.threadTs !== event.ts
       ) {
-        const threadKey = `${event.channel}:${event.thread_ts}`
+        const threadKey = `${event.channel}:${event.threadTs}`
         if (!knownThreads.has(threadKey)) {
           knownThreads.add(threadKey)
           const threadChannel = events.buildThreadChannel({
             parentChannel: event.channel,
-            threadTs: event.thread_ts,
+            threadTs: event.threadTs,
             guildId: workspaceId,
           })
           gateway.broadcast(GatewayDispatchEvents.ThreadCreate, {
@@ -565,13 +789,12 @@ export function createServer(config: ServerConfig): ServerComponents {
       eventType === 'reaction_added' ||
       eventType === 'reaction_removed'
     ) {
-      const reactionEvent = event as unknown as SlackReactionEvent
       const threadTs = await resolveThreadTsForReaction({
         slack,
-        event: reactionEvent,
+        event,
       })
       const translated = events.translateReaction({
-        event: reactionEvent,
+        event,
         guildId: workspaceId,
         threadTs,
       })
@@ -580,14 +803,44 @@ export function createServer(config: ServerConfig): ServerComponents {
     }
 
     if (eventType === 'channel_created') {
-      const ch = (event as unknown as { channel: { id: string; name: string } })
-        .channel
       const translated = events.translateChannelCreate({
-        channelId: ch.id,
-        channelName: ch.name,
+        channelId: event.channelId,
+        channelName: event.channelName,
         guildId: workspaceId,
       })
       gateway.broadcast(translated.eventName, translated.data)
+      return
+    }
+
+    if (eventType === 'channel_deleted') {
+      const translated = events.translateChannelDelete({
+        channelId: event.channelId,
+        guildId: workspaceId,
+      })
+      gateway.broadcast(translated.eventName, translated.data)
+      return
+    }
+
+    if (eventType === 'channel_rename') {
+      const translated = events.translateChannelRename({
+        channelId: event.channelId,
+        channelName: event.channelName,
+        guildId: workspaceId,
+      })
+      gateway.broadcast(translated.eventName, translated.data)
+      return
+    }
+
+    if (eventType === 'member_joined_channel') {
+      const memberUser = await lookupUser(slack, event.userId)
+      const translated = events.translateMemberJoinedChannel({
+        event,
+        user: memberUser,
+      })
+      gateway.broadcast(translated.eventName, {
+        ...translated.data,
+        guild_id: workspaceId,
+      })
       return
     }
   }
@@ -626,7 +879,7 @@ export function createServer(config: ServerConfig): ServerComponents {
         user: {
           id: userId,
           username: params.get('user_name') ?? userId,
-          discriminator: '0',
+          discriminator: DISCORD_DEFAULT_DISCRIMINATOR,
           avatar: null,
         },
         roles: [],
@@ -646,47 +899,42 @@ export function createServer(config: ServerConfig): ServerComponents {
   }
 
   function handleInteractivePayload(payloadStr: string): void {
-    let payload: SlackInteractivePayload
+    let payload: unknown
     try {
-      payload = JSON.parse(payloadStr) as SlackInteractivePayload
+      payload = JSON.parse(payloadStr)
     } catch {
       return
     }
 
-    if (payload.type === 'block_actions' && payload.actions) {
-      for (const action of payload.actions) {
+    const normalizedPayload = normalizeSlackInteractivePayload(payload)
+    if (!normalizedPayload) {
+      return
+    }
+
+    if (normalizedPayload.type === 'block_actions') {
+      for (const action of normalizedPayload.actions) {
         const interactionId = crypto.randomUUID()
         const interactionToken = crypto.randomUUID()
-        const slackChannelId =
-          payload.channel?.id ??
-          payload.container?.channel_id ??
-          ''
-        const threadTs =
-          payload.message?.thread_ts ??
-          payload.container?.thread_ts
-        const messageTs = payload.message?.ts ?? payload.container?.message_ts
+        const slackChannelId = normalizedPayload.channelId ?? ''
+        const threadTs = normalizedPayload.threadTs
+        const messageTs = normalizedPayload.messageTs
         const channelId = resolveDiscordChannelId(
           slackChannelId,
           threadTs,
           messageTs,
         )
-        const componentType = slackActionTypeToDiscordComponentType(
-          action.type,
-        )
-        const decodedAction = decodeComponentActionId(action.action_id)
-        const resolvedComponentType =
-          decodedAction.componentType ??
-          componentType ??
-          ComponentType.Button
-        const values = extractActionValues(action)
+        const interactionData = buildDiscordComponentDataFromSlackAction({
+          action,
+        })
+        const decodedAction = decodeComponentActionId(action.actionId)
 
         pendingInteractions.set(interactionId, {
           id: interactionId,
           token: interactionToken,
           channelId,
           guildId: workspaceId,
-          triggerId: payload.trigger_id,
-          responseUrl: payload.response_url,
+          triggerId: normalizedPayload.triggerId,
+          responseUrl: normalizedPayload.responseUrl,
           acknowledged: false,
           messageTs,
         })
@@ -704,12 +952,15 @@ export function createServer(config: ServerConfig): ServerComponents {
           channel_id: channelId,
           guild_id: workspaceId,
           member: {
-            user: {
-              id: payload.user.id,
-              username: payload.user.username ?? payload.user.name ?? 'unknown',
-              discriminator: '0',
-              avatar: null,
-            },
+              user: {
+                id: normalizedPayload.user.id,
+                username:
+                  normalizedPayload.user.username ??
+                  normalizedPayload.user.name ??
+                  'unknown',
+                discriminator: DISCORD_DEFAULT_DISCRIMINATOR,
+                avatar: null,
+              },
             roles: [],
             joined_at: new Date().toISOString(),
             deaf: false,
@@ -717,11 +968,11 @@ export function createServer(config: ServerConfig): ServerComponents {
           },
           data: {
             custom_id: decodedAction.customId,
-            component_type: resolvedComponentType,
-            values,
+            component_type: interactionData.componentType,
+            values: interactionData.values,
             ...(buildResolvedData({
-              componentType: resolvedComponentType,
-              values,
+              componentType: interactionData.componentType,
+              values: interactionData.values,
             }) ?? {}),
           },
           message: {
@@ -734,7 +985,7 @@ export function createServer(config: ServerConfig): ServerComponents {
             author: {
               id: botUserId,
               username: botUsername,
-              discriminator: '0',
+              discriminator: DISCORD_DEFAULT_DISCRIMINATOR,
               avatar: null,
             },
             timestamp: new Date().toISOString(),
@@ -748,7 +999,54 @@ export function createServer(config: ServerConfig): ServerComponents {
           },
         })
       }
+      return
     }
+
+    const modalInteractionId = crypto.randomUUID()
+    const modalInteractionToken = crypto.randomUUID()
+    const modalChannelId = normalizedPayload.channelId ?? ''
+
+    pendingInteractions.set(modalInteractionId, {
+      id: modalInteractionId,
+      token: modalInteractionToken,
+      channelId: modalChannelId,
+      guildId: workspaceId,
+      triggerId: normalizedPayload.triggerId,
+      responseUrl: normalizedPayload.responseUrl,
+      acknowledged: false,
+    })
+
+    gateway.broadcast(GatewayDispatchEvents.InteractionCreate, {
+      id: modalInteractionId,
+      application_id: botUserId,
+      type: InteractionType.ModalSubmit,
+      token: modalInteractionToken,
+      version: 1,
+      channel_id: modalChannelId,
+      guild_id: workspaceId,
+      member: {
+        user: {
+          id: normalizedPayload.user.id,
+          username:
+            normalizedPayload.user.username ??
+            normalizedPayload.user.name ??
+            'unknown',
+          discriminator: DISCORD_DEFAULT_DISCRIMINATOR,
+          avatar: null,
+        },
+        roles: [],
+        joined_at: new Date().toISOString(),
+        deaf: false,
+        mute: false,
+      },
+      data: {
+        custom_id: normalizedPayload.callbackId ?? 'modal',
+        components: toDiscordModalComponents({
+          stateValues: normalizedPayload.stateValues,
+        }),
+      },
+    })
+    return
   }
 
   // ---- Gateway Setup ----
@@ -760,19 +1058,18 @@ export function createServer(config: ServerConfig): ServerComponents {
   const loadGatewayState = async (): Promise<GatewayState> => {
     // Build gateway state from Slack API
     const authResult = await slack.auth.test()
-    const channelsList = await slack.conversations.list({
+    const listArgs = {
       types: 'public_channel,private_channel',
       exclude_archived: true,
       limit: 200,
-    })
+    } satisfies ConversationsListArguments
+    const channelsList = await slack.conversations.list(listArgs)
 
-    const channels: APIChannel[] = (channelsList.channels ?? []).map(
+    const channels: GatewayGuildState['channels'] = (channelsList.channels ?? []).map(
       (ch) => {
-        const c = ch as {
-          id: string
-          name?: string
-          topic?: { value?: string }
-          is_private?: boolean
+        const c = normalizeSlackChannelInfo(ch)
+        if (!c) {
+          throw new Error('Slack conversations.list returned invalid channel payload')
         }
         return {
           id: c.id,
@@ -781,43 +1078,37 @@ export function createServer(config: ServerConfig): ServerComponents {
           guild_id: workspaceId,
           topic: c.topic?.value ?? null,
           position: 0,
-        } as APIChannel
+        }
       },
     )
+
+    const workspaceName =
+      readStringFromUnknown(authResult, 'team') ?? 'Slack Workspace'
+    const gatewayGuild = buildGatewayGuild({
+      workspaceId,
+      workspaceName,
+      botUserId,
+    })
 
     return {
       botUser: {
         id: botUserId,
         username: botUsername,
-        discriminator: '0',
+        discriminator: DISCORD_DEFAULT_DISCRIMINATOR,
         avatar: null,
         global_name: botUsername,
       },
       guilds: [
         {
           id: workspaceId,
-          apiGuild: {
-            id: workspaceId,
-            name: (authResult.team as string) ?? 'Slack Workspace',
-            owner_id: botUserId,
-            roles: [],
-            emojis: [],
-            features: [],
-            verification_level: 0,
-            default_message_notifications: 0,
-            explicit_content_filter: 0,
-            mfa_level: 0,
-            system_channel_flags: 0,
-            premium_tier: 0,
-            nsfw_level: 0,
-          } as unknown as APIGuild,
+          apiGuild: gatewayGuild,
           joinedAt: new Date().toISOString(),
           members: [
             {
               user: {
                 id: botUserId,
                 username: botUsername,
-                discriminator: '0',
+                discriminator: DISCORD_DEFAULT_DISCRIMINATOR,
                 avatar: null,
                 global_name: botUsername,
               },
@@ -884,8 +1175,918 @@ function pruneExpiredEventIds({
   }
 }
 
+const SUPPORTED_SLACK_EVENT_TYPES: ReadonlySet<SupportedSlackEventType> =
+  new Set<SupportedSlackEventType>([
+    'message',
+    'app_mention',
+    'reaction_added',
+    'reaction_removed',
+    'channel_created',
+    'channel_deleted',
+    'channel_rename',
+    'member_joined_channel',
+  ])
+
+const SUPPORTED_SLACK_ACTION_TYPES: ReadonlySet<NormalizedSlackAction['type']> =
+  new Set<NormalizedSlackAction['type']>([
+    'button',
+    'static_select',
+    'multi_static_select',
+    'users_select',
+    'multi_users_select',
+    'conversations_select',
+    'multi_conversations_select',
+    'channels_select',
+    'multi_channels_select',
+  ])
+
+function normalizeSlackEventEnvelope(
+  payload: unknown,
+): NormalizedSlackEventEnvelope | undefined {
+  if (!isRecord(payload)) {
+    return undefined
+  }
+  const payloadType = readString(payload, 'type')
+
+  if (payloadType === 'url_verification') {
+    const challenge = readString(payload, 'challenge')
+    if (!challenge) {
+      return undefined
+    }
+    return {
+      type: 'url_verification',
+      challenge,
+    }
+  }
+
+  if (payloadType !== 'event_callback') {
+    return undefined
+  }
+
+  const rawEvent = payload['event']
+  const event = normalizeSlackEvent(rawEvent)
+  if (!event) {
+    return undefined
+  }
+
+  return {
+    type: 'event_callback',
+    eventId: readString(payload, 'event_id'),
+    event,
+  }
+}
+
+function normalizeSlackEvent(event: unknown): NormalizedSlackEvent | undefined {
+  if (!isRecord(event)) {
+    return undefined
+  }
+
+  const eventType = readString(event, 'type')
+  if (!eventType) {
+    return undefined
+  }
+  const supportedType = normalizeSupportedSlackEventType(eventType)
+  if (!supportedType) {
+    return undefined
+  }
+
+  if (supportedType === 'reaction_added' || supportedType === 'reaction_removed') {
+    return normalizeSlackReactionEvent({
+      event,
+      type: supportedType,
+    })
+  }
+
+  if (supportedType === 'channel_created') {
+    const channel = readRecord(event, 'channel')
+    const channelId = channel ? readString(channel, 'id') : undefined
+    const channelName = channel ? readString(channel, 'name') : undefined
+    if (!(channelId && channelName)) {
+      return undefined
+    }
+    return {
+      type: 'channel_created',
+      channelId,
+      channelName,
+    }
+  }
+
+  if (supportedType === 'channel_deleted') {
+    const channel = readString(event, 'channel')
+    if (!channel) {
+      return undefined
+    }
+    return {
+      type: 'channel_deleted',
+      channelId: channel,
+    }
+  }
+
+  if (supportedType === 'channel_rename') {
+    const channel = readRecord(event, 'channel')
+    const channelId = channel ? readString(channel, 'id') : undefined
+    const channelName = channel ? readString(channel, 'name') : undefined
+    if (!(channelId && channelName)) {
+      return undefined
+    }
+    return {
+      type: 'channel_rename',
+      channelId,
+      channelName,
+    }
+  }
+
+  if (supportedType === 'member_joined_channel') {
+    const userId = readString(event, 'user')
+    const channelId = readString(event, 'channel')
+    if (!(userId && channelId)) {
+      return undefined
+    }
+    return {
+      type: 'member_joined_channel',
+      userId,
+      channelId,
+    }
+  }
+
+  return normalizeSlackMessageEvent({
+    event,
+    type: supportedType,
+  })
+}
+
+function normalizeSlackMessageEvent({
+  event,
+  type,
+}: {
+  event: Record<string, unknown>
+  type: 'message' | 'app_mention'
+}): NormalizedSlackMessageEvent | undefined {
+  const channel = readString(event, 'channel')
+  if (!channel) {
+    return undefined
+  }
+
+  return {
+    type,
+    subtype: readString(event, 'subtype'),
+    channel,
+    user: readString(event, 'user'),
+    botId: readString(event, 'bot_id'),
+    text: readString(event, 'text'),
+    ts: readString(event, 'ts'),
+    threadTs: readString(event, 'thread_ts'),
+    message: normalizeSlackMessage(readRecord(event, 'message')),
+    previousMessage: normalizeSlackMessage(readRecord(event, 'previous_message')),
+    deletedTs: readString(event, 'deleted_ts'),
+  }
+}
+
+function normalizeSlackMessage(
+  message: Record<string, unknown> | undefined,
+): NormalizedSlackMessage | undefined {
+  if (!message) {
+    return undefined
+  }
+  const ts = readString(message, 'ts')
+  if (!ts) {
+    return undefined
+  }
+
+  const edited = readRecord(message, 'edited')
+  return {
+    user: readString(message, 'user'),
+    botId: readString(message, 'bot_id'),
+    text: readString(message, 'text'),
+    ts,
+    threadTs: readString(message, 'thread_ts'),
+    editedTs: edited ? readString(edited, 'ts') : undefined,
+  }
+}
+
+function normalizeSlackReactionEvent({
+  event,
+  type,
+}: {
+  event: Record<string, unknown>
+  type: 'reaction_added' | 'reaction_removed'
+}): NormalizedSlackReactionEvent | undefined {
+  const user = readString(event, 'user')
+  const reaction = readString(event, 'reaction')
+  const item = readRecord(event, 'item')
+  if (!(user && reaction && item)) {
+    return undefined
+  }
+  const itemType = readString(item, 'type')
+  const itemChannel = readString(item, 'channel')
+  const itemTs = readString(item, 'ts')
+  if (!(itemType && itemChannel && itemTs)) {
+    return undefined
+  }
+
+  return {
+    type,
+    user,
+    reaction,
+    item: {
+      type: itemType,
+      channel: itemChannel,
+      ts: itemTs,
+    },
+    item_user: readString(event, 'item_user'),
+    event_ts: readString(event, 'event_ts'),
+  }
+}
+
+function normalizeSlackBlockActionsPayload(
+  payload: unknown,
+): NormalizedSlackBlockActionsPayload | undefined {
+  if (!isRecord(payload)) {
+    return undefined
+  }
+  if (readString(payload, 'type') !== 'block_actions') {
+    return undefined
+  }
+
+  const user = readRecord(payload, 'user')
+  const userId = user ? readString(user, 'id') : undefined
+  if (!userId) {
+    return undefined
+  }
+
+  const channel = readRecord(payload, 'channel')
+  const message = readRecord(payload, 'message')
+  const container = readRecord(payload, 'container')
+  const actions = readArray(payload, 'actions')
+    .map((rawAction) => {
+      return normalizeSlackAction(rawAction)
+    })
+    .filter(isDefined)
+  if (actions.length === 0) {
+    return undefined
+  }
+
+  return {
+    type: 'block_actions',
+    triggerId: readString(payload, 'trigger_id'),
+    responseUrl: readString(payload, 'response_url'),
+    user: {
+      id: userId,
+      username: user ? readString(user, 'username') : undefined,
+      name: user ? readString(user, 'name') : undefined,
+    },
+    channelId:
+      (channel ? readString(channel, 'id') : undefined) ??
+      (container ? readString(container, 'channel_id') : undefined),
+    messageTs:
+      (message ? readString(message, 'ts') : undefined) ??
+      (container ? readString(container, 'message_ts') : undefined),
+    threadTs:
+      (message ? readString(message, 'thread_ts') : undefined) ??
+      (container ? readString(container, 'thread_ts') : undefined),
+    actions,
+  }
+}
+
+function normalizeSlackViewSubmissionPayload(
+  payload: unknown,
+): NormalizedSlackViewSubmissionPayload | undefined {
+  if (!isRecord(payload)) {
+    return undefined
+  }
+  if (readString(payload, 'type') !== 'view_submission') {
+    return undefined
+  }
+
+  const user = readRecord(payload, 'user')
+  const userId = user ? readString(user, 'id') : undefined
+  if (!userId) {
+    return undefined
+  }
+
+  const view = readRecord(payload, 'view')
+  const stateValues = normalizeSlackViewSubmissionStateValues(view)
+  const channelId = extractChannelIdFromViewPayload(view)
+  const responseUrl = extractResponseUrlFromViewPayload(view)
+
+  return {
+    type: 'view_submission',
+    triggerId: readString(payload, 'trigger_id'),
+    responseUrl,
+    user: {
+      id: userId,
+      username: user ? readString(user, 'username') : undefined,
+      name: user ? readString(user, 'name') : undefined,
+    },
+    channelId,
+    viewId: view ? readString(view, 'id') : undefined,
+    callbackId: view ? readString(view, 'callback_id') : undefined,
+    privateMetadata: view ? readString(view, 'private_metadata') : undefined,
+    stateValues,
+  }
+}
+
+export function normalizeSlackInteractivePayload(
+  payload: unknown,
+): NormalizedSlackInteractivePayload | undefined {
+  const blockActionsPayload = normalizeSlackBlockActionsPayload(payload)
+  if (blockActionsPayload) {
+    return blockActionsPayload
+  }
+  return normalizeSlackViewSubmissionPayload(payload)
+}
+
+function normalizeSlackViewSubmissionStateValues(
+  view: Record<string, unknown> | undefined,
+): NormalizedSlackViewSubmissionStateValue[] {
+  if (!view) {
+    return []
+  }
+  const state = readRecord(view, 'state')
+  const values = state ? readRecord(state, 'values') : undefined
+  if (!values) {
+    return []
+  }
+
+  const collectedValues: NormalizedSlackViewSubmissionStateValue[] = []
+  for (const [blockId, rawBlockValue] of Object.entries(values)) {
+    if (!isRecord(rawBlockValue)) {
+      continue
+    }
+    for (const [actionId, rawActionValue] of Object.entries(rawBlockValue)) {
+      if (!isRecord(rawActionValue)) {
+        continue
+      }
+      const extractedValue =
+        readString(rawActionValue, 'value') ??
+        readViewOptionValue(rawActionValue, 'selected_option') ??
+        readString(rawActionValue, 'selected_user') ??
+        readString(rawActionValue, 'selected_channel') ??
+        readString(rawActionValue, 'selected_conversation') ??
+        ''
+      collectedValues.push({
+        blockId,
+        actionId,
+        value: extractedValue,
+      })
+    }
+  }
+
+  return collectedValues
+}
+
+function readViewOptionValue(
+  record: Record<string, unknown>,
+  key: string,
+): string | undefined {
+  const option = readRecord(record, key)
+  return option ? readString(option, 'value') : undefined
+}
+
+function extractChannelIdFromViewPayload(
+  view: Record<string, unknown> | undefined,
+): string | undefined {
+  if (!view) {
+    return undefined
+  }
+  const privateMetadata = readString(view, 'private_metadata')
+  if (!privateMetadata) {
+    return undefined
+  }
+  try {
+    const metadata = JSON.parse(privateMetadata)
+    if (!isRecord(metadata)) {
+      return undefined
+    }
+    return readString(metadata, 'channel_id')
+  } catch {
+    return undefined
+  }
+}
+
+function extractResponseUrlFromViewPayload(
+  view: Record<string, unknown> | undefined,
+): string | undefined {
+  if (!view) {
+    return undefined
+  }
+  const responseUrls = readArray(view, 'response_urls')
+  for (const responseUrlEntry of responseUrls) {
+    if (!isRecord(responseUrlEntry)) {
+      continue
+    }
+    const responseUrl = readString(responseUrlEntry, 'response_url')
+    if (responseUrl) {
+      return responseUrl
+    }
+  }
+  return undefined
+}
+
+export function toDiscordModalComponents({
+  stateValues,
+}: {
+  stateValues: NormalizedSlackViewSubmissionStateValue[]
+}): Array<{
+  type: number
+  components: Array<{ type: number; custom_id: string; value: string }>
+}> {
+  return stateValues.map((entry) => {
+    return {
+      type: ComponentType.ActionRow,
+      components: [
+        {
+          type: ComponentType.TextInput,
+          custom_id: entry.actionId,
+          value: entry.value,
+        },
+      ],
+    }
+  })
+}
+
+function normalizeSlackAction(rawAction: unknown): NormalizedSlackAction | undefined {
+  if (!isRecord(rawAction)) {
+    return undefined
+  }
+  const actionId = readString(rawAction, 'action_id')
+  const actionType = readString(rawAction, 'type')
+  if (!(actionId && actionType)) {
+    return undefined
+  }
+  const normalizedActionType = normalizeSupportedSlackActionType(actionType)
+  if (!normalizedActionType) {
+    return undefined
+  }
+
+  return {
+    actionId,
+    type: normalizedActionType,
+    value: readString(rawAction, 'value'),
+    selectedOptionValue: readOptionValue(rawAction, 'selected_option'),
+    selectedOptionValues: readOptionValues(rawAction, 'selected_options'),
+    selectedUser: readString(rawAction, 'selected_user'),
+    selectedUsers: readStringArray(rawAction, 'selected_users'),
+    selectedChannel: readString(rawAction, 'selected_channel'),
+    selectedChannels: readStringArray(rawAction, 'selected_channels'),
+    selectedConversation: readString(rawAction, 'selected_conversation'),
+    selectedConversations: readStringArray(rawAction, 'selected_conversations'),
+  }
+}
+
+function readOptionValue(
+  record: Record<string, unknown>,
+  key: string,
+): string | undefined {
+  const option = readRecord(record, key)
+  return option ? readString(option, 'value') : undefined
+}
+
+function readOptionValues(
+  record: Record<string, unknown>,
+  key: string,
+): string[] {
+  return readArray(record, key)
+    .map((entry) => {
+      return isRecord(entry) ? readString(entry, 'value') : undefined
+    })
+    .filter(isDefined)
+}
+
+function readStringArray(
+  record: Record<string, unknown>,
+  key: string,
+): string[] {
+  return readArray(record, key)
+    .filter((entry): entry is string => {
+      return typeof entry === 'string'
+    })
+}
+
+function readArray(record: Record<string, unknown>, key: string): unknown[] {
+  const value = record[key]
+  return Array.isArray(value) ? value : []
+}
+
+function readRecord(
+  record: Record<string, unknown>,
+  key: string,
+): Record<string, unknown> | undefined {
+  const value = record[key]
+  return isRecord(value) ? value : undefined
+}
+
+function readString(
+  record: Record<string, unknown>,
+  key: string,
+): string | undefined {
+  const value = record[key]
+  return typeof value === 'string' ? value : undefined
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null
+}
+
+function isDefined<T>(value: T | undefined): value is T {
+  return value !== undefined
+}
+
+function normalizeSupportedSlackEventType(
+  value: string,
+): SupportedSlackEventType | undefined {
+  if (value === 'message') {
+    return value
+  }
+  if (value === 'app_mention') {
+    return value
+  }
+  if (value === 'reaction_added') {
+    return value
+  }
+  if (value === 'reaction_removed') {
+    return value
+  }
+  if (value === 'channel_created') {
+    return value
+  }
+  if (value === 'channel_deleted') {
+    return value
+  }
+  if (value === 'channel_rename') {
+    return value
+  }
+  if (value === 'member_joined_channel') {
+    return value
+  }
+  return undefined
+}
+
+function normalizeSupportedSlackActionType(
+  value: string,
+): NormalizedSlackAction['type'] | undefined {
+  if (value === 'button') {
+    return value
+  }
+  if (value === 'static_select') {
+    return value
+  }
+  if (value === 'multi_static_select') {
+    return value
+  }
+  if (value === 'users_select') {
+    return value
+  }
+  if (value === 'multi_users_select') {
+    return value
+  }
+  if (value === 'conversations_select') {
+    return value
+  }
+  if (value === 'multi_conversations_select') {
+    return value
+  }
+  if (value === 'channels_select') {
+    return value
+  }
+  if (value === 'multi_channels_select') {
+    return value
+  }
+  return undefined
+}
+
+function normalizePostMessageBody(value: unknown): {
+  content?: string
+  embeds?: unknown[]
+  components?: unknown[]
+} {
+  if (!isRecord(value)) {
+    return {}
+  }
+  const embeds = Array.isArray(value.embeds) ? value.embeds : undefined
+  const components = Array.isArray(value.components) ? value.components : undefined
+  return {
+    content: readString(value, 'content'),
+    embeds,
+    components,
+  }
+}
+
+function normalizeEditMessageBody(value: unknown): { content?: string } {
+  if (!isRecord(value)) {
+    return {}
+  }
+  return {
+    content: readString(value, 'content'),
+  }
+}
+
+function normalizeCreateThreadBody(value: unknown): {
+  name: string
+  auto_archive_duration?: number
+} {
+  if (!isRecord(value)) {
+    return { name: 'thread' }
+  }
+  return {
+    name: readString(value, 'name') ?? 'thread',
+    auto_archive_duration: readNumber(value, 'auto_archive_duration'),
+  }
+}
+
+function normalizePatchChannelBody(value: unknown): {
+  name?: string
+  topic?: string
+  archived?: boolean
+} {
+  if (!isRecord(value)) {
+    return {}
+  }
+
+  return {
+    name: readString(value, 'name'),
+    topic: readString(value, 'topic'),
+    archived: readBoolean(value, 'archived'),
+  }
+}
+
+function normalizeCreateGuildChannelBody(value: unknown): {
+  name: string
+  type?: ChannelType
+} {
+  if (!isRecord(value)) {
+    return { name: 'channel' }
+  }
+
+  const channelType = readNumber(value, 'type')
+  const normalizedType =
+    channelType === ChannelType.GuildText ||
+    channelType === ChannelType.GuildAnnouncement
+      ? channelType
+      : undefined
+
+  return {
+    name: readString(value, 'name') ?? 'channel',
+    type: normalizedType,
+  }
+}
+
+function normalizeInteractionCallbackBody(value: unknown): {
+  type: number
+  data?: {
+    content?: string
+    flags?: number
+    components?: unknown[]
+    custom_id?: string
+    title?: string
+    submit?: string
+    cancel?: string
+  }
+} {
+  if (!isRecord(value)) {
+    return { type: InteractionResponseType.DeferredMessageUpdate }
+  }
+  const rawData = readRecord(value, 'data')
+  const data = rawData
+    ? {
+        content: readString(rawData, 'content'),
+        flags: readNumber(rawData, 'flags'),
+        components: readArray(rawData, 'components'),
+        custom_id: readString(rawData, 'custom_id'),
+        title: readString(rawData, 'title'),
+        submit: readString(rawData, 'submit'),
+        cancel: readString(rawData, 'cancel'),
+      }
+    : undefined
+  return {
+    type: readNumber(value, 'type') ?? InteractionResponseType.DeferredMessageUpdate,
+    data,
+  }
+}
+
+function normalizeWebhookBody(value: unknown): { content?: string } {
+  if (!isRecord(value)) {
+    return {}
+  }
+  return {
+    content: readString(value, 'content'),
+  }
+}
+
+function normalizeModalInteractionResponseData(data: {
+  custom_id?: string
+  title?: string
+  submit?: string
+  cancel?: string
+  components?: unknown[]
+}): {
+  custom_id?: string
+  title?: string
+  submit?: string
+  cancel?: string
+  components?: APIActionRowComponent<APITextInputComponent>[]
+} {
+  return {
+    custom_id: data.custom_id,
+    title: data.title,
+    submit: data.submit,
+    cancel: data.cancel,
+    components: normalizeModalComponents(data.components),
+  }
+}
+
+export function normalizeModalComponents(
+  components: unknown[] | undefined,
+): APIActionRowComponent<APITextInputComponent>[] {
+  const rows = Array.isArray(components) ? components : []
+  const normalizedRows = rows
+    .map((row) => {
+      if (!isRecord(row)) {
+        return undefined
+      }
+      if (readNumber(row, 'type') !== ComponentType.ActionRow) {
+        return undefined
+      }
+
+      const rowComponents = readArray(row, 'components')
+        .map((component) => {
+          if (!isRecord(component)) {
+            return undefined
+          }
+          if (readNumber(component, 'type') !== ComponentType.TextInput) {
+            return undefined
+          }
+
+          const customId = readString(component, 'custom_id')
+          const style = readNumber(component, 'style')
+          const label = readString(component, 'label')
+          if (!(customId && label && style)) {
+            return undefined
+          }
+
+          const normalizedStyle =
+            style === TextInputStyle.Paragraph
+              ? TextInputStyle.Paragraph
+              : TextInputStyle.Short
+
+          const normalizedComponent = {
+            type: ComponentType.TextInput,
+            custom_id: customId,
+            style: normalizedStyle,
+            label,
+            required: readBoolean(component, 'required'),
+            value: readString(component, 'value'),
+            placeholder: readString(component, 'placeholder'),
+            min_length: readNumber(component, 'min_length'),
+            max_length: readNumber(component, 'max_length'),
+          } satisfies APITextInputComponent
+
+          return normalizedComponent
+        })
+        .filter(isDefined)
+
+      if (rowComponents.length === 0) {
+        return undefined
+      }
+
+      const normalizedRow = {
+        type: ComponentType.ActionRow,
+        components: rowComponents,
+      } satisfies APIActionRowComponent<APITextInputComponent>
+
+      return normalizedRow
+    })
+    .filter(isDefined)
+
+  return normalizedRows
+}
+
+function normalizeSlackUserInfo(value: unknown): {
+  id: string
+  name?: string
+  real_name?: string
+  is_bot?: boolean
+  profile?: { image_72?: string }
+} | null {
+  if (!isRecord(value)) {
+    return null
+  }
+  const id = readString(value, 'id')
+  if (!id) {
+    return null
+  }
+  const profile = readRecord(value, 'profile')
+  return {
+    id,
+    name: readString(value, 'name'),
+    real_name: readString(value, 'real_name'),
+    is_bot: readBoolean(value, 'is_bot'),
+    profile: profile
+      ? {
+          image_72: readString(profile, 'image_72'),
+        }
+      : undefined,
+  }
+}
+
+function normalizeSlackChannelInfo(value: unknown): {
+  id: string
+  name?: string
+  topic?: { value?: string }
+} | null {
+  if (!isRecord(value)) {
+    return null
+  }
+  const id = readString(value, 'id')
+  if (!id) {
+    return null
+  }
+  const topic = readRecord(value, 'topic')
+  return {
+    id,
+    name: readString(value, 'name'),
+    topic: topic
+      ? {
+          value: readString(topic, 'value'),
+        }
+      : undefined,
+  }
+}
+
+function buildGatewayGuild({
+  workspaceId,
+  workspaceName,
+  botUserId,
+}: {
+  workspaceId: string
+  workspaceName: string
+  botUserId: string
+}): APIGuild {
+  const guild: APIGuild = {
+    id: workspaceId,
+    name: workspaceName,
+    icon: null,
+    splash: null,
+    discovery_splash: null,
+    owner_id: botUserId,
+    afk_channel_id: null,
+    afk_timeout: 300,
+    verification_level: GuildVerificationLevel.None,
+    default_message_notifications: GuildDefaultMessageNotifications.AllMessages,
+    explicit_content_filter: GuildExplicitContentFilter.Disabled,
+    roles: [],
+    emojis: [],
+    features: [],
+    mfa_level: GuildMFALevel.None,
+    application_id: null,
+    system_channel_id: null,
+    system_channel_flags: GuildSystemChannelFlags.SuppressJoinNotifications,
+    rules_channel_id: null,
+    vanity_url_code: null,
+    description: null,
+    banner: null,
+    premium_tier: GuildPremiumTier.None,
+    premium_subscription_count: 0,
+    preferred_locale: Locale.EnglishUS,
+    public_updates_channel_id: null,
+    nsfw_level: GuildNSFWLevel.Default,
+    max_video_channel_users: 0,
+    max_stage_video_channel_users: 0,
+    premium_progress_bar_enabled: false,
+    safety_alerts_channel_id: null,
+    stickers: [],
+    region: '',
+    hub_type: null,
+    incidents_data: null,
+  }
+  return guild
+}
+
+function readBoolean(
+  record: Record<string, unknown>,
+  key: string,
+): boolean | undefined {
+  const value = record[key]
+  return typeof value === 'boolean' ? value : undefined
+}
+
+function readNumber(
+  record: Record<string, unknown>,
+  key: string,
+): number | undefined {
+  const value = record[key]
+  return typeof value === 'number' ? value : undefined
+}
+
+function readStringFromUnknown(value: unknown, key: string): string | undefined {
+  if (!isRecord(value)) {
+    return undefined
+  }
+  return readString(value, key)
+}
+
 function slackActionTypeToDiscordComponentType(
-  actionType: string,
+  actionType: NormalizedSlackAction['type'],
 ): ComponentType | undefined {
   if (actionType === 'button') {
     return ComponentType.Button
@@ -917,41 +2118,53 @@ function slackActionTypeToDiscordComponentType(
   return undefined
 }
 
-function extractActionValues(
-  action: NonNullable<SlackInteractivePayload['actions']>[number],
-): string[] {
-  const selectedOptions = (action.selected_options ?? []).map((option) => {
-    return option.value
-  })
+function extractActionValues(action: NormalizedSlackAction): string[] {
+  const selectedOptions = action.selectedOptionValues
   if (selectedOptions.length > 0) {
     return selectedOptions
   }
 
-  if (action.selected_option?.value) {
-    return [action.selected_option.value]
+  if (action.selectedOptionValue) {
+    return [action.selectedOptionValue]
   }
-  if (action.selected_user) {
-    return [action.selected_user]
+  if (action.selectedUser) {
+    return [action.selectedUser]
   }
-  if (action.selected_users && action.selected_users.length > 0) {
-    return action.selected_users
+  if (action.selectedUsers.length > 0) {
+    return action.selectedUsers
   }
-  if (action.selected_channel) {
-    return [action.selected_channel]
+  if (action.selectedChannel) {
+    return [action.selectedChannel]
   }
-  if (action.selected_channels && action.selected_channels.length > 0) {
-    return action.selected_channels
+  if (action.selectedChannels.length > 0) {
+    return action.selectedChannels
   }
-  if (action.selected_conversation) {
-    return [action.selected_conversation]
+  if (action.selectedConversation) {
+    return [action.selectedConversation]
   }
-  if (action.selected_conversations && action.selected_conversations.length > 0) {
-    return action.selected_conversations
+  if (action.selectedConversations.length > 0) {
+    return action.selectedConversations
   }
   return []
 }
 
-function buildResolvedData({
+export function buildDiscordComponentDataFromSlackAction({
+  action,
+}: {
+  action: NormalizedSlackAction
+}): {
+  componentType: ComponentType
+  values: string[]
+} {
+  const componentType = slackActionTypeToDiscordComponentType(action.type)
+  const decodedAction = decodeComponentActionId(action.actionId)
+  return {
+    componentType: decodedAction.componentType ?? componentType ?? ComponentType.Button,
+    values: extractActionValues(action),
+  }
+}
+
+export function buildResolvedData({
   componentType,
   values,
 }: {
@@ -969,7 +2182,7 @@ function buildResolvedData({
       acc[id] = {
         id,
         username: id,
-        discriminator: '0',
+        discriminator: DISCORD_DEFAULT_DISCRIMINATOR,
         avatar: null,
       }
       return acc
@@ -983,7 +2196,7 @@ function buildResolvedData({
         id,
         type: ChannelType.GuildText,
         name: id,
-        permissions: '0',
+        permissions: DISCORD_ZERO_PERMISSIONS,
       }
       return acc
     }, {})
@@ -1000,7 +2213,7 @@ function buildResolvedData({
         icon: null,
         unicode_emoji: null,
         position: 0,
-        permissions: '0',
+        permissions: DISCORD_ZERO_PERMISSIONS,
         managed: false,
         mentionable: false,
         flags: 0,
@@ -1015,7 +2228,7 @@ function buildResolvedData({
       acc[id] = {
         id,
         username: id,
-        discriminator: '0',
+        discriminator: DISCORD_DEFAULT_DISCRIMINATOR,
         avatar: null,
       }
       return acc
@@ -1031,23 +2244,24 @@ async function resolveThreadTsForReaction({
   event,
 }: {
   slack: WebClient
-  event: SlackReactionEvent
+  event: NormalizedSlackReactionEvent
 }): Promise<string | undefined> {
   if (event.item.type !== 'message') {
     return undefined
   }
 
   try {
-    const result = await slack.conversations.replies({
+    const args = {
       channel: event.item.channel,
       ts: event.item.ts,
       limit: 1,
-    })
-    const first = result.messages?.[0] as
-      | { thread_ts?: string }
-      | undefined
-
-    return first?.thread_ts
+    } satisfies ConversationsRepliesArguments
+    const result = await slack.conversations.replies(args)
+    const first = result.messages?.[0]
+    if (!isRecord(first)) {
+      return undefined
+    }
+    return readString(first, 'thread_ts')
   } catch {
     return undefined
   }

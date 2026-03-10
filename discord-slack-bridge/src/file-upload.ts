@@ -8,7 +8,11 @@
 //
 // This module downloads Discord attachment URLs and re-uploads to Slack.
 
-import type { WebClient } from '@slack/web-api'
+import type {
+  FilesCompleteUploadExternalArguments,
+  FilesGetUploadURLExternalArguments,
+  WebClient,
+} from '@slack/web-api'
 
 export interface DiscordAttachment {
   id: string
@@ -69,10 +73,11 @@ async function uploadSingleFile({
   const fileBuffer = Buffer.from(await response.arrayBuffer())
 
   // Step 2: Get upload URL from Slack
-  const uploadResult = await slack.files.getUploadURLExternal({
+  const uploadUrlArgs = {
     filename: attachment.filename,
     length: fileBuffer.length,
-  })
+  } satisfies FilesGetUploadURLExternalArguments
+  const uploadResult = await slack.files.getUploadURLExternal(uploadUrlArgs)
 
   if (!uploadResult.ok || !uploadResult.upload_url || !uploadResult.file_id) {
     throw new Error(
@@ -97,19 +102,21 @@ async function uploadSingleFile({
   }
 
   // Step 4: Complete the upload (shares file to channel)
-  // Slack's types require channel_id as non-optional string when thread_ts is set
-  if (threadTs) {
-    await slack.files.completeUploadExternal({
-      files: [{ id: uploadResult.file_id, title: attachment.filename }],
-      channel_id: channel,
-      thread_ts: threadTs,
-    })
-  } else {
-    await slack.files.completeUploadExternal({
-      files: [{ id: uploadResult.file_id, title: attachment.filename }],
-      channel_id: channel,
-    })
-  }
+  // Slack's arg type is a destination union: channel-only or thread reply.
+  const files: [{ id: string; title: string }] = [
+    { id: uploadResult.file_id, title: attachment.filename },
+  ]
+  const completeArgs: FilesCompleteUploadExternalArguments = threadTs
+    ? {
+        files,
+        channel_id: channel,
+        thread_ts: threadTs,
+      }
+    : {
+        files,
+        channel_id: channel,
+      }
+  await slack.files.completeUploadExternal(completeArgs)
 }
 
 async function uploadToSlackUrl({

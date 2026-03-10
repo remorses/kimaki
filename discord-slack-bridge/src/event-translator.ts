@@ -5,12 +5,14 @@
 import {
   ChannelType,
   GatewayDispatchEvents,
+  GuildMemberFlags,
   MessageType,
 } from 'discord-api-types/v10'
 import type {
   APIMessage,
   APIUser,
   APIChannel,
+  APIGuildMember,
 } from 'discord-api-types/v10'
 import {
   encodeMessageId,
@@ -20,10 +22,13 @@ import {
 } from './id-converter.js'
 import { mrkdwnToMarkdown } from './format-converter.js'
 import type {
-  SlackEvent,
-  SlackReactionEvent,
+  NormalizedSlackMessageEvent,
+  NormalizedSlackReactionEvent,
+  NormalizedSlackMemberJoinedChannelEvent,
   CachedSlackUser,
 } from './types.js'
+
+const DISCORD_DEFAULT_DISCRIMINATOR = '0'
 
 /**
  * Translate a Slack message event into a Discord MESSAGE_CREATE payload.
@@ -33,7 +38,7 @@ export function translateMessageCreate({
   guildId,
   author,
 }: {
-  event: SlackEvent
+  event: NormalizedSlackMessageEvent
   guildId: string
   author: CachedSlackUser
 }): { eventName: string; data: APIMessage & { guild_id: string } } | null {
@@ -43,7 +48,7 @@ export function translateMessageCreate({
 
   const channelId = resolveDiscordChannelId(
     event.channel,
-    event.thread_ts,
+    event.threadTs,
     event.ts,
   )
   const messageId = encodeMessageId(event.channel, event.ts)
@@ -52,7 +57,7 @@ export function translateMessageCreate({
   const apiUser: APIUser = {
     id: author.id,
     username: author.name,
-    discriminator: '0',
+    discriminator: DISCORD_DEFAULT_DISCRIMINATOR,
     avatar: author.avatar ?? null,
     bot: author.isBot,
     global_name: author.realName,
@@ -64,7 +69,7 @@ export function translateMessageCreate({
     author: apiUser,
     content,
     timestamp: slackTsToIso(event.ts),
-    edited_timestamp: event.edited ? slackTsToIso(event.edited.ts) : null,
+    edited_timestamp: null,
     tts: false,
     mention_everyone: false,
     mentions: [],
@@ -90,7 +95,7 @@ export function translateMessageUpdate({
   guildId,
   author,
 }: {
-  event: SlackEvent
+  event: NormalizedSlackMessageEvent
   guildId: string
   author: CachedSlackUser
 }): { eventName: string; data: APIMessage & { guild_id: string } } | null {
@@ -102,7 +107,7 @@ export function translateMessageUpdate({
 
   const channelId = resolveDiscordChannelId(
     event.channel,
-    inner.thread_ts,
+    inner.threadTs,
     inner.ts,
   )
   const messageId = encodeMessageId(event.channel, inner.ts)
@@ -111,7 +116,7 @@ export function translateMessageUpdate({
   const apiUser: APIUser = {
     id: author.id,
     username: author.name,
-    discriminator: '0',
+    discriminator: DISCORD_DEFAULT_DISCRIMINATOR,
     avatar: author.avatar ?? null,
     bot: author.isBot,
     global_name: author.realName,
@@ -123,7 +128,7 @@ export function translateMessageUpdate({
     author: apiUser,
     content,
     timestamp: slackTsToIso(inner.ts),
-    edited_timestamp: inner.edited ? slackTsToIso(inner.edited.ts) : null,
+    edited_timestamp: inner.editedTs ? slackTsToIso(inner.editedTs) : null,
     tts: false,
     mention_everyone: false,
     mentions: [],
@@ -148,22 +153,22 @@ export function translateMessageDelete({
   event,
   guildId,
 }: {
-  event: SlackEvent
+  event: NormalizedSlackMessageEvent
   guildId: string
 }): {
   eventName: string
   data: { id: string; channel_id: string; guild_id: string }
 } | null {
-  if (!(event.channel && event.deleted_ts)) {
+  if (!(event.channel && event.deletedTs)) {
     return null
   }
 
   const channelId = resolveDiscordChannelId(
     event.channel,
-    event.previous_message?.thread_ts,
-    event.deleted_ts,
+    event.previousMessage?.threadTs,
+    event.deletedTs,
   )
-  const messageId = encodeMessageId(event.channel, event.deleted_ts)
+  const messageId = encodeMessageId(event.channel, event.deletedTs)
 
   return {
     eventName: GatewayDispatchEvents.MessageDelete,
@@ -183,7 +188,7 @@ export function translateReaction({
   guildId,
   threadTs,
 }: {
-  event: SlackReactionEvent
+  event: NormalizedSlackReactionEvent
   guildId: string
   threadTs?: string
 }): {
@@ -236,11 +241,79 @@ export function translateChannelCreate({
     name: channelName,
     guild_id: guildId,
     position: 0,
-  } as APIChannel
+  }
 
   return {
     eventName: GatewayDispatchEvents.ChannelCreate,
     data: channel,
+  }
+}
+
+export function translateChannelDelete({
+  channelId,
+  guildId,
+}: {
+  channelId: string
+  guildId: string
+}): { eventName: string; data: { id: string; guild_id: string } } {
+  return {
+    eventName: GatewayDispatchEvents.ChannelDelete,
+    data: {
+      id: channelId,
+      guild_id: guildId,
+    },
+  }
+}
+
+export function translateChannelRename({
+  channelId,
+  channelName,
+  guildId,
+}: {
+  channelId: string
+  channelName: string
+  guildId: string
+}): { eventName: string; data: APIChannel } {
+  const channel: APIChannel = {
+    id: channelId,
+    type: ChannelType.GuildText,
+    name: channelName,
+    guild_id: guildId,
+    position: 0,
+  }
+
+  return {
+    eventName: GatewayDispatchEvents.ChannelUpdate,
+    data: channel,
+  }
+}
+
+export function translateMemberJoinedChannel({
+  event,
+  user,
+}: {
+  event: NormalizedSlackMemberJoinedChannelEvent
+  user: CachedSlackUser
+}): { eventName: string; data: APIGuildMember } {
+  const member: APIGuildMember = {
+    user: {
+      id: user.id,
+      username: user.name,
+      discriminator: DISCORD_DEFAULT_DISCRIMINATOR,
+      avatar: user.avatar ?? null,
+      bot: user.isBot,
+      global_name: user.realName,
+    },
+    roles: [],
+    joined_at: new Date().toISOString(),
+    deaf: false,
+    mute: false,
+    flags: GuildMemberFlags.CompletedOnboarding,
+  }
+
+  return {
+    eventName: GatewayDispatchEvents.GuildMemberAdd,
+    data: member,
   }
 }
 
@@ -274,5 +347,5 @@ export function buildThreadChannel({
       archive_timestamp: slackTsToIso(threadTs),
       locked: false,
     },
-  } as APIChannel
+  }
 }

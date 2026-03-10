@@ -21,7 +21,6 @@ import type {
   APIUser,
   APIGuild,
   APIGuildMember,
-  APIChannel,
   APIMessage,
   APIBaseVoiceState,
   APIStageInstance,
@@ -42,7 +41,7 @@ export interface GatewayGuildState {
   apiGuild: APIGuild
   joinedAt: string
   members: APIGuildMember[]
-  channels: APIChannel[]
+  channels: GatewayGuildCreateDispatchData['channels']
 }
 
 export interface GatewayState {
@@ -179,7 +178,10 @@ export class SlackBridgeGateway {
     client: ConnectedClient,
     raw: string,
   ): Promise<void> {
-    const payload = JSON.parse(raw) as GatewaySendPayload
+    const payload = parseGatewaySendPayload(raw)
+    if (!payload) {
+      return
+    }
 
     switch (payload.op) {
       case GatewayOpcodes.Heartbeat: {
@@ -230,9 +232,6 @@ export class SlackBridgeGateway {
     const emptySoundboardSounds: APISoundboardSound[] = []
 
     for (const guild of state.guilds) {
-      type GuildCreateChannels = GatewayGuildCreateDispatchData['channels']
-      type GuildCreateThreads = GatewayGuildCreateDispatchData['threads']
-
       const guildData: GatewayGuildCreateDispatchData = {
         ...guild.apiGuild,
         joined_at: guild.joinedAt,
@@ -241,8 +240,8 @@ export class SlackBridgeGateway {
         member_count: guild.members.length,
         voice_states: emptyVoiceStates,
         members: guild.members,
-        channels: guild.channels as GuildCreateChannels,
-        threads: [] as GuildCreateThreads,
+        channels: guild.channels,
+        threads: [],
         presences: emptyPresences,
         stage_instances: emptyStageInstances,
         guild_scheduled_events: emptyScheduledEvents,
@@ -251,4 +250,71 @@ export class SlackBridgeGateway {
       this.sendDispatch(client, GatewayDispatchEvents.GuildCreate, guildData)
     }
   }
+}
+
+function parseGatewaySendPayload(raw: string): GatewaySendPayload | undefined {
+  let payload: unknown
+  try {
+    payload = JSON.parse(raw)
+  } catch {
+    return undefined
+  }
+
+  if (!isRecord(payload)) {
+    return undefined
+  }
+  const op = readNumber(payload, 'op')
+  if (op === undefined) {
+    return undefined
+  }
+  if (op === GatewayOpcodes.Heartbeat) {
+    return {
+      op,
+      d: null,
+    }
+  }
+  if (op === GatewayOpcodes.Identify) {
+    const data = payload.d
+    if (!isRecord(data)) {
+      return undefined
+    }
+    const token = readString(data, 'token')
+    const intents = readNumber(data, 'intents')
+    if (!(token && intents !== undefined)) {
+      return undefined
+    }
+    return {
+      op,
+      d: {
+        token,
+        intents,
+        properties: {
+          os: 'linux',
+          browser: 'discord-slack-bridge',
+          device: 'discord-slack-bridge',
+        },
+      },
+    }
+  }
+  return undefined
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null
+}
+
+function readString(
+  record: Record<string, unknown>,
+  key: string,
+): string | undefined {
+  const value = record[key]
+  return typeof value === 'string' ? value : undefined
+}
+
+function readNumber(
+  record: Record<string, unknown>,
+  key: string,
+): number | undefined {
+  const value = record[key]
+  return typeof value === 'number' ? value : undefined
 }

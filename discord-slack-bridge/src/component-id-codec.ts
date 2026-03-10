@@ -3,6 +3,14 @@
 import { ComponentType } from 'discord-api-types/v10'
 
 const ACTION_PREFIX = 'dsbcmp'
+const SUPPORTED_COMPONENT_TYPES = new Set<number>([
+  ComponentType.Button,
+  ComponentType.StringSelect,
+  ComponentType.UserSelect,
+  ComponentType.RoleSelect,
+  ComponentType.MentionableSelect,
+  ComponentType.ChannelSelect,
+])
 
 export function encodeComponentActionId({
   componentType,
@@ -27,9 +35,12 @@ export function decodeComponentActionId(actionId: string): {
   if (!Number.isFinite(componentType)) {
     return { customId: actionId }
   }
+  if (!SUPPORTED_COMPONENT_TYPES.has(componentType)) {
+    return { customId: actionId }
+  }
 
   return {
-    componentType: componentType as ComponentType,
+    componentType,
     customId: parts.slice(2).join(':'),
   }
 }

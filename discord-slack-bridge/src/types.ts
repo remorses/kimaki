@@ -13,59 +13,40 @@ export interface SlackBridgeConfig {
   gatewayUrlOverride?: string
 }
 
-/** Slack event envelope (Events API) */
-export interface SlackEventEnvelope {
-  token?: string
-  team_id?: string
-  api_app_id?: string
-  event?: SlackEvent
-  type: 'url_verification' | 'event_callback'
-  challenge?: string
-  event_id?: string
-  event_time?: number
+export type SupportedSlackEventType =
+  | 'message'
+  | 'app_mention'
+  | 'reaction_added'
+  | 'reaction_removed'
+  | 'channel_created'
+  | 'channel_deleted'
+  | 'channel_rename'
+  | 'member_joined_channel'
+
+export interface NormalizedSlackMessage {
+  user?: string
+  botId?: string
+  text?: string
+  ts: string
+  threadTs?: string
+  editedTs?: string
 }
 
-/** Slack message event */
-export interface SlackEvent {
-  type: string
+export interface NormalizedSlackMessageEvent {
+  type: 'message' | 'app_mention'
   subtype?: string
-  channel?: string
-  channel_type?: string
+  channel: string
   user?: string
-  bot_id?: string
+  botId?: string
   text?: string
   ts?: string
-  thread_ts?: string
-  edited?: { user: string; ts: string }
-  team?: string
-  team_id?: string
-  files?: SlackFile[]
-  blocks?: SlackBlock[]
-  /** For message_changed subtype */
-  message?: SlackEvent
-  /** For message_deleted subtype */
-  previous_message?: SlackEvent
-  deleted_ts?: string
+  threadTs?: string
+  message?: NormalizedSlackMessage
+  previousMessage?: NormalizedSlackMessage
+  deletedTs?: string
 }
 
-export interface SlackFile {
-  id: string
-  name?: string
-  title?: string
-  mimetype?: string
-  filetype?: string
-  size?: number
-  url_private?: string
-  url_private_download?: string
-  permalink?: string
-}
-
-// Using unknown for blocks since the full Block Kit type is very complex
-// and we pass them through as-is in most cases
-export type SlackBlock = Record<string, unknown>
-
-/** Slack reaction event */
-export interface SlackReactionEvent {
+export interface NormalizedSlackReactionEvent {
   type: 'reaction_added' | 'reaction_removed'
   user: string
   reaction: string
@@ -78,58 +59,98 @@ export interface SlackReactionEvent {
   event_ts?: string
 }
 
-/** Slack interactive payload (block_actions, view_submission, etc.) */
-export interface SlackInteractivePayload {
-  type: string
-  trigger_id?: string
-  user: { id: string; username?: string; name?: string }
-  channel?: { id: string; name?: string }
-  message?: { ts?: string; thread_ts?: string }
-  container?: {
-    type?: string
-    channel_id?: string
-    message_ts?: string
-    thread_ts?: string
-    is_ephemeral?: boolean
-  }
-  actions?: Array<{
-    action_id: string
-    block_id?: string
-    type: string
-    value?: string
-    selected_option?: { value: string }
-    selected_options?: Array<{ value: string }>
-    selected_user?: string
-    selected_users?: string[]
-    selected_channel?: string
-    selected_channels?: string[]
-    selected_conversation?: string
-    selected_conversations?: string[]
-  }>
-  view?: {
-    id: string
-    callback_id?: string
-    private_metadata?: string
-    state?: {
-      values: Record<string, Record<string, { value?: string; selected_option?: { value: string } }>>
-    }
-  }
-  response_url?: string
+export interface NormalizedSlackChannelCreatedEvent {
+  type: 'channel_created'
+  channelId: string
+  channelName: string
 }
 
-/** Slack slash command payload (form-urlencoded fields) */
-export interface SlackSlashCommand {
-  command: string
-  text: string
-  user_id: string
-  user_name: string
-  channel_id: string
-  channel_name: string
-  team_id: string
-  team_domain: string
-  trigger_id: string
-  response_url: string
+export interface NormalizedSlackChannelDeletedEvent {
+  type: 'channel_deleted'
+  channelId: string
 }
+
+export interface NormalizedSlackChannelRenameEvent {
+  type: 'channel_rename'
+  channelId: string
+  channelName: string
+}
+
+export interface NormalizedSlackMemberJoinedChannelEvent {
+  type: 'member_joined_channel'
+  userId: string
+  channelId: string
+}
+
+export type NormalizedSlackEvent =
+  | NormalizedSlackMessageEvent
+  | NormalizedSlackReactionEvent
+  | NormalizedSlackChannelCreatedEvent
+  | NormalizedSlackChannelDeletedEvent
+  | NormalizedSlackChannelRenameEvent
+  | NormalizedSlackMemberJoinedChannelEvent
+
+export type NormalizedSlackEventEnvelope =
+  | { type: 'url_verification'; challenge: string }
+  | { type: 'event_callback'; eventId?: string; event: NormalizedSlackEvent }
+
+export type NormalizedSlackActionType =
+  | 'button'
+  | 'static_select'
+  | 'multi_static_select'
+  | 'users_select'
+  | 'multi_users_select'
+  | 'conversations_select'
+  | 'multi_conversations_select'
+  | 'channels_select'
+  | 'multi_channels_select'
+
+export interface NormalizedSlackAction {
+  actionId: string
+  type: NormalizedSlackActionType
+  value?: string
+  selectedOptionValue?: string
+  selectedOptionValues: string[]
+  selectedUser?: string
+  selectedUsers: string[]
+  selectedChannel?: string
+  selectedChannels: string[]
+  selectedConversation?: string
+  selectedConversations: string[]
+}
+
+export interface NormalizedSlackBlockActionsPayload {
+  type: 'block_actions'
+  triggerId?: string
+  responseUrl?: string
+  user: { id: string; username?: string; name?: string }
+  channelId?: string
+  messageTs?: string
+  threadTs?: string
+  actions: NormalizedSlackAction[]
+}
+
+export interface NormalizedSlackViewSubmissionStateValue {
+  blockId: string
+  actionId: string
+  value: string
+}
+
+export interface NormalizedSlackViewSubmissionPayload {
+  type: 'view_submission'
+  triggerId?: string
+  responseUrl?: string
+  user: { id: string; username?: string; name?: string }
+  channelId?: string
+  viewId?: string
+  callbackId?: string
+  privateMetadata?: string
+  stateValues: NormalizedSlackViewSubmissionStateValue[]
+}
+
+export type NormalizedSlackInteractivePayload =
+  | NormalizedSlackBlockActionsPayload
+  | NormalizedSlackViewSubmissionPayload
 
 /** Cached Slack user info for serialization */
 export interface CachedSlackUser {

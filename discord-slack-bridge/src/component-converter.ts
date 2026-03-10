@@ -23,8 +23,6 @@ import {
 import type {
   APIActionRowComponent,
   APIButtonComponent,
-  APIButtonComponentWithCustomId,
-  APIButtonComponentWithURL,
   APIStringSelectComponent,
   APIUserSelectComponent,
   APIRoleSelectComponent,
@@ -109,29 +107,42 @@ export function componentsToBlocks(
   const blocks: SlackBlock[] = []
 
   for (const component of components) {
-    const comp = component as { type: number }
-    const converted = convertComponent(comp)
+    const converted = convertComponent(component)
     blocks.push(...converted)
   }
 
   return blocks
 }
 
-function convertComponent(component: { type: number }): SlackBlock[] {
+function convertComponent(component: unknown): SlackBlock[] {
+  if (!isTypeObject(component)) {
+    return []
+  }
+
   switch (component.type) {
     case ComponentType.ActionRow: {
-      return convertActionRow(
-        component as APIActionRowComponent<APIComponentInMessageActionRow>,
-      )
+      if (!isActionRowComponent(component)) {
+        return []
+      }
+      return convertActionRow(component)
     }
     case ComponentType.TextDisplay: {
-      return convertTextDisplay(component as APITextDisplayComponent)
+      if (!isTextDisplayComponent(component)) {
+        return []
+      }
+      return convertTextDisplay(component)
     }
     case ComponentType.Section: {
-      return convertSection(component as APISectionComponent)
+      if (!isSectionComponent(component)) {
+        return []
+      }
+      return convertSection(component)
     }
     case ComponentType.Container: {
-      return convertContainer(component as APIContainerComponent)
+      if (!isContainerComponent(component)) {
+        return []
+      }
+      return convertContainer(component)
     }
     case ComponentType.Separator: {
       return [{ type: 'divider' }]
@@ -151,7 +162,7 @@ function convertActionRow(
 
   for (const child of row.components) {
     if (child.type === ComponentType.Button) {
-      const btn = convertButton(child as APIButtonComponent)
+      const btn = convertButton(child)
       if (btn) {
         elements.push(btn)
       }
@@ -182,11 +193,10 @@ function convertButton(
   button: APIButtonComponent,
 ): SlackButtonElement | null {
   // Link buttons have a URL, no custom_id
-  if (button.style === ButtonStyle.Link) {
-    const linkBtn = button as APIButtonComponentWithURL
+  if (button.style === ButtonStyle.Link && 'url' in button && button.url) {
     const actionId = `link_${crypto
       .createHash('sha256')
-      .update(linkBtn.url)
+      .update(button.url)
       .digest('hex')
       .slice(0, 32)}`
 
@@ -198,7 +208,7 @@ function convertButton(
         text: labelFromButton(button),
         emoji: true,
       },
-      url: linkBtn.url,
+      url: button.url,
     }
   }
 
@@ -208,29 +218,32 @@ function convertButton(
   }
 
   // Interactive buttons with custom_id
-  const interactiveBtn = button as APIButtonComponentWithCustomId
-  const slackStyle = (() => {
+  if (!('custom_id' in button) || typeof button.custom_id !== 'string') {
+    return null
+  }
+
+  const slackStyle: 'primary' | 'danger' | undefined = (() => {
     if (
       button.style === ButtonStyle.Primary ||
       button.style === ButtonStyle.Success
     ) {
-      return 'primary' as const
+      return 'primary'
     }
     if (button.style === ButtonStyle.Danger) {
-      return 'danger' as const
+      return 'danger'
     }
     return undefined
   })()
 
   return {
     type: 'button',
-    action_id: interactiveBtn.custom_id,
+    action_id: button.custom_id,
     text: {
       type: 'plain_text',
       text: labelFromButton(button),
       emoji: true,
     },
-    value: interactiveBtn.custom_id,
+    value: button.custom_id,
     style: slackStyle,
   }
 }
@@ -241,8 +254,10 @@ function labelFromButton(button: APIButtonComponent): string {
   }
   // Fallback for emoji-only buttons
   if ('emoji' in button && button.emoji) {
-    const emoji = button.emoji as { name?: string }
-    return emoji.name ?? 'button'
+    if (typeof button.emoji.name === 'string') {
+      return button.emoji.name
+    }
+    return 'button'
   }
   return 'button'
 }
@@ -253,19 +268,19 @@ function convertSelect(
   component: APIComponentInMessageActionRow,
 ): SlackSelectElement | null {
   if (component.type === ComponentType.StringSelect) {
-    return convertStringSelect(component as APIStringSelectComponent)
+    return convertStringSelect(component)
   }
   if (component.type === ComponentType.UserSelect) {
-    return convertUserSelect(component as APIUserSelectComponent)
+    return convertUserSelect(component)
   }
   if (component.type === ComponentType.ChannelSelect) {
-    return convertChannelSelect(component as APIChannelSelectComponent)
+    return convertChannelSelect(component)
   }
   if (component.type === ComponentType.MentionableSelect) {
-    return convertMentionableSelect(component as APIMentionableSelectComponent)
+    return convertMentionableSelect(component)
   }
   if (component.type === ComponentType.RoleSelect) {
-    return convertRoleSelect(component as APIRoleSelectComponent)
+    return convertRoleSelect(component)
   }
   return null
 }
@@ -585,7 +600,13 @@ function convertSection(
   // Section has 1-3 text components + optional accessory (button or thumbnail)
   const textParts = component.components
     .map((c) => {
-      return (c as APITextDisplayComponent).content
+      if (isTextDisplayComponent(c)) {
+        return c.content
+      }
+      return ''
+    })
+    .filter((value) => {
+      return value.length > 0
     })
     .join('\n')
 
@@ -602,7 +623,7 @@ function convertSection(
     component.accessory &&
     component.accessory.type === ComponentType.Button
   ) {
-    const btn = convertButton(component.accessory as APIButtonComponent)
+    const btn = convertButton(component.accessory)
     if (btn) {
       block.accessory = btn
     }
@@ -617,11 +638,39 @@ function convertContainer(
   component: APIContainerComponent,
 ): SlackBlock[] {
   // Container is a wrapper — just convert its children
-  const children = (component as { components?: unknown[] }).components ?? []
+  const children = Array.isArray(component.components)
+    ? component.components
+    : []
   const blocks: SlackBlock[] = []
   for (const child of children) {
-    const comp = child as { type: number }
-    blocks.push(...convertComponent(comp))
+    blocks.push(...convertComponent(child))
   }
   return blocks
+}
+
+function isTypeObject(value: unknown): value is { type: number } {
+  return (
+    typeof value === 'object' &&
+    value !== null &&
+    'type' in value &&
+    typeof value.type === 'number'
+  )
+}
+
+function isActionRowComponent(
+  value: unknown,
+): value is APIActionRowComponent<APIComponentInMessageActionRow> {
+  return isTypeObject(value) && value.type === ComponentType.ActionRow
+}
+
+function isTextDisplayComponent(value: unknown): value is APITextDisplayComponent {
+  return isTypeObject(value) && value.type === ComponentType.TextDisplay
+}
+
+function isSectionComponent(value: unknown): value is APISectionComponent {
+  return isTypeObject(value) && value.type === ComponentType.Section
+}
+
+function isContainerComponent(value: unknown): value is APIContainerComponent {
+  return isTypeObject(value) && value.type === ComponentType.Container
 }

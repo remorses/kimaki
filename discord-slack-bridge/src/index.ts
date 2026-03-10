@@ -73,8 +73,9 @@ export class SlackBridge {
   async start(): Promise<void> {
     // Resolve bot identity
     const authResult = await this.slack.auth.test()
-    this.botUserId = authResult.user_id as string
-    this.botUsername = (authResult.user as string) ?? 'bot'
+    const botIdentity = normalizeAuthIdentity(authResult)
+    this.botUserId = botIdentity.userId
+    this.botUsername = botIdentity.username
 
     this.server = createServer({
       slack: this.slack,
@@ -108,4 +109,33 @@ export class SlackBridge {
   get webhookUrl(): string {
     return `http://127.0.0.1:${this.port}/slack/events`
   }
+}
+
+function normalizeAuthIdentity(value: unknown): {
+  userId: string
+  username: string
+} {
+  if (!isRecord(value)) {
+    throw new Error('Slack auth.test returned unexpected payload')
+  }
+  const userId = readString(value, 'user_id')
+  if (!userId) {
+    throw new Error('Slack auth.test missing user_id')
+  }
+  return {
+    userId,
+    username: readString(value, 'user') ?? 'bot',
+  }
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null
+}
+
+function readString(
+  record: Record<string, unknown>,
+  key: string,
+): string | undefined {
+  const value = record[key]
+  return typeof value === 'string' ? value : undefined
 }
