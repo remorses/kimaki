@@ -1,0 +1,70 @@
+{
+  "name": "slack-digital-twin",
+  "version": "0.1.0",
+  "description": "Local Slack API twin for testing Slack bots and integrations without hitting real Slack servers",
+  "type": "module",
+  "license": "MIT",
+  "author": "remorses <beats.by.morse@gmail.com>",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/remorses/kimaki.git",
+    "directory": "slack-digital-twin"
+  },
+  "homepage": "https://github.com/remorses/kimaki/tree/main/slack-digital-twin",
+  "bugs": "https://github.com/remorses/kimaki/issues",
+  "keywords": [
+    "slack",
+    "testing",
+    "mock",
+    "typescript",
+    "esm",
+    "test-utils",
+    "e2e",
+    "integration-test",
+    "slack-api"
+  ],
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "files": [
+    "src",
+    "dist",
+    "schema.prisma",
+    "README.md"
+  ],
+  "exports": {
+    "./package.json": "./package.json",
+    "./schema.prisma": "./schema.prisma",
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    },
+    "./src": {
+      "types": "./src/index.ts",
+      "default": "./src/index.ts"
+    },
+    "./src/*": {
+      "types": "./src/*.ts",
+      "default": "./src/*.ts"
+    }
+  },
+  "scripts": {
+    "generate": "prisma generate",
+    "build": "tsc",
+    "prepublishOnly": "pnpm generate && pnpm build",
+    "test": "vitest",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@libsql/client": "^0.15.15",
+    "@prisma/adapter-libsql": "7.4.2",
+    "@prisma/client": "7.4.2",
+    "spiceflow": "^1.17.12"
+  },
+  "devDependencies": {
+    "@slack/web-api": "^7.14.1",
+    "@types/node": "^24.11.0",
+    "prisma": "7.4.2",
+    "typescript": "^5.7.0",
+    "vitest": "^3.0.0"
+  }
+}

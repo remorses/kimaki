@@ -787,8 +787,8 @@ e2eTest('thread message queue ordering', () => {
         Reply with exactly: BASH_TOOL_FILE_MARKER
         --- from: assistant (TestBot)
         ⬥ running create file
-        ⬥ ok
-        *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2*"
+        *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2*
+        ⬥ ok"
       `)
       expect(fs.existsSync(markerPath)).toBe(true)
       const markerContents = fs.readFileSync(markerPath, 'utf8')

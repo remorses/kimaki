@@ -411,7 +411,7 @@ describe('real-session-task-user-interruption', () => {
   const firstAssistantId = 'msg_cb9b0ba96001SpPjgzxWPmRuW9'
   const secondAssistantId = 'msg_cb9b1ae5c001E5G3Ql6aXNpst2'
 
-  test('tool-call handoff assistant is not terminal but the resumed reply is', () => {
+  test('tool-call handoff assistant is also a natural completion when completed', () => {
     const firstAssistant = getAssistantMessageById({
       events,
       sessionId,
@@ -422,7 +422,9 @@ describe('real-session-task-user-interruption', () => {
       sessionId,
       messageId: secondAssistantId,
     })
-    expect(isAssistantMessageNaturalCompletion({ message: firstAssistant })).toBe(false)
+    // Both messages completed — the first one finished with tool-calls which
+    // is a valid natural completion (model's final action was tool execution).
+    expect(isAssistantMessageNaturalCompletion({ message: firstAssistant })).toBe(true)
     expect(isAssistantMessageNaturalCompletion({ message: secondAssistant })).toBe(true)
   })
 
@@ -558,7 +560,7 @@ describe('real-session-action-buttons', () => {
   const toolCallAssistantId = 'msg_cb9b55c3b001hXC9qxjVxLMypM'
   const finalAssistantId = 'msg_cb9b5ddd1001FALqKNM6xW98u6'
 
-  test('tool-call handoff assistant is not terminal but final reply is', () => {
+  test('tool-call handoff assistant is also a natural completion when completed', () => {
     const toolCallAssistant = getAssistantMessageById({
       events,
       sessionId,
@@ -569,7 +571,10 @@ describe('real-session-action-buttons', () => {
       sessionId,
       messageId: finalAssistantId,
     })
-    expect(isAssistantMessageNaturalCompletion({ message: toolCallAssistant })).toBe(false)
+    // Both messages completed normally — the tool-call message has
+    // finish="tool-calls" + completed timestamp, which is a valid natural
+    // completion (the model's final action was tool execution).
+    expect(isAssistantMessageNaturalCompletion({ message: toolCallAssistant })).toBe(true)
     expect(isAssistantMessageNaturalCompletion({ message: finalAssistant })).toBe(true)
   })
 

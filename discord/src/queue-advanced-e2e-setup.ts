@@ -330,6 +330,65 @@ export function createDeterministicMatchers(): DeterministicMatcher[] {
     },
   }
 
+  // Model responds with text + tool call, then after tool result the
+  // follow-up matcher responds with text. This creates two assistant messages:
+  // first with finish="tool-calls" + completed, second with finish="stop".
+  // Reproduces the bug where the first message gets no footer even though
+  // it completed normally (isAssistantMessageNaturalCompletion rejects
+  // finish="tool-calls").
+  const toolCallFooterMatcher: DeterministicMatcher = {
+    id: 'tool-call-footer',
+    priority: 108,
+    when: {
+      lastMessageRole: 'user',
+      latestUserTextIncludes: 'TOOL_CALL_FOOTER_MARKER',
+    },
+    then: {
+      parts: [
+        { type: 'stream-start', warnings: [] },
+        { type: 'text-start', id: 'tool-call-footer-text' },
+        { type: 'text-delta', id: 'tool-call-footer-text', delta: 'running tool' },
+        { type: 'text-end', id: 'tool-call-footer-text' },
+        {
+          type: 'tool-call',
+          toolCallId: 'tool-call-footer-bash',
+          toolName: 'bash',
+          input: JSON.stringify({
+            command: 'echo tool-call-footer-test',
+            description: 'Echo for footer test',
+          }),
+        },
+        {
+          type: 'finish',
+          finishReason: 'tool-calls',
+          usage: { inputTokens: 1, outputTokens: 1, totalTokens: 2 },
+        },
+      ],
+    },
+  }
+
+  const toolCallFooterFollowupMatcher: DeterministicMatcher = {
+    id: 'tool-call-footer-followup',
+    priority: 109,
+    when: {
+      lastMessageRole: 'tool',
+      latestUserTextIncludes: 'TOOL_CALL_FOOTER_MARKER',
+    },
+    then: {
+      parts: [
+        { type: 'stream-start', warnings: [] },
+        { type: 'text-start', id: 'tool-call-footer-followup' },
+        { type: 'text-delta', id: 'tool-call-footer-followup', delta: 'tool call completed' },
+        { type: 'text-end', id: 'tool-call-footer-followup' },
+        {
+          type: 'finish',
+          finishReason: 'stop',
+          usage: { inputTokens: 1, outputTokens: 1, totalTokens: 2 },
+        },
+      ],
+    },
+  }
+
   return [
     slowAbortMatcher,
     typingRepulseMatcher,
@@ -339,6 +398,8 @@ export function createDeterministicMatchers(): DeterministicMatcher[] {
     permissionTypingMatcher,
     permissionTypingFollowupMatcher,
     raceFinalReplyMatcher,
+    toolCallFooterMatcher,
+    toolCallFooterFollowupMatcher,
     toolFollowupMatcher,
     userReplyMatcher,
   ]

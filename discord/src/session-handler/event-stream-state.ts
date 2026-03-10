@@ -116,7 +116,13 @@ export function isAssistantMessageNaturalCompletion({
   if (message.error) {
     return false
   }
-  return message.finish !== 'tool-calls'
+  // A completed message is a natural completion regardless of finish reason.
+  // finish="tool-calls" with completed set means the model's final action was
+  // tool execution and all tools ran successfully (e.g. agent calls `kimaki send`
+  // then follows up with summary text in a new assistant message). The previous
+  // filter `finish !== 'tool-calls'` blocked footers for these messages even
+  // though they completed normally.
+  return true
 }
 
 export function hasAssistantMessageCompletedBefore({

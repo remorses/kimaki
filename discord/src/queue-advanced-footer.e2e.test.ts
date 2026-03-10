@@ -362,4 +362,83 @@ e2eTest('queue advanced: footer emission', () => {
     },
     15_000,
   )
+
+  test(
+    'tool-call assistant message gets footer when it completes normally',
+    async () => {
+      // Reproduces the bug: model responds with text + tool call,
+      // finish="tool-calls", message gets completed timestamp. Then the tool
+      // result triggers a follow-up text response in a second assistant message.
+      // The second message gets a footer, but the first (tool-call) message
+      // should ALSO get a footer since it completed normally.
+      // This matches the real-world scenario where an agent calls a bash tool
+      // (e.g. `kimaki send`) and then follows up with a summary text.
+      await ctx.discord.channel(TEXT_CHANNEL_ID).user(TEST_USER_ID).sendMessage({
+        content: 'TOOL_CALL_FOOTER_MARKER',
+      })
+
+      const thread = await ctx.discord.channel(TEXT_CHANNEL_ID).waitForThread({
+        timeout: 4_000,
+        predicate: (t) => {
+          return t.name === 'TOOL_CALL_FOOTER_MARKER'
+        },
+      })
+
+      const th = ctx.discord.thread(thread.id)
+
+      // Wait for the follow-up text response after tool completion.
+      // The tool call completes and the model follows up with a second
+      // assistant message containing text.
+      await waitForBotReplyAfterUserMessage({
+        discord: ctx.discord,
+        threadId: thread.id,
+        userId: TEST_USER_ID,
+        userMessageIncludes: 'TOOL_CALL_FOOTER_MARKER',
+        timeout: 4_000,
+      })
+
+      // Wait for at least one footer to appear
+      await waitForFooterMessage({
+        discord: ctx.discord,
+        threadId: thread.id,
+        timeout: 4_000,
+      })
+
+      // Poll until both footers have arrived — the first footer (after the
+      // tool-call step) and the second (after the text follow-up) are emitted
+      // by sequential handleNaturalAssistantCompletion calls but the second
+      // may not have hit the Discord thread by the time we first check.
+      const deadline = Date.now() + 4_000
+      let footerCount = 0
+      while (Date.now() < deadline) {
+        const msgs = await th.getMessages()
+        footerCount = msgs.filter((m) => {
+          return m.author.id === ctx.discord.botUserId
+            && m.content.startsWith('*')
+            && m.content.includes('⋅')
+        }).length
+        if (footerCount >= 2) {
+          break
+        }
+        await new Promise((resolve) => {
+          setTimeout(resolve, 100)
+        })
+      }
+
+      expect(await th.text()).toMatchInlineSnapshot(`
+        "--- from: user (queue-advanced-tester)
+        TOOL_CALL_FOOTER_MARKER
+        --- from: assistant (TestBot)
+        ⬥ running tool
+        *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2*
+        ⬥ ok
+        *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2*"
+      `)
+
+      // Both assistant messages (tool-call step and text follow-up) should
+      // get their own footer since both completed normally.
+      expect(footerCount).toBe(2)
+    },
+    10_000,
+  )
 })

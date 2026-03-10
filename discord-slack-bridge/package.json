@@ -1,0 +1,53 @@
+{
+  "name": "discord-slack-bridge",
+  "version": "0.1.0",
+  "description": "discord.js-to-Slack adapter. Lets any discord.js bot control a Slack workspace without code changes.",
+  "type": "module",
+  "license": "MIT",
+  "author": "remorses <beats.by.morse@gmail.com>",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/remorses/kimaki.git",
+    "directory": "discord-slack-bridge"
+  },
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "files": [
+    "src",
+    "dist",
+    "README.md"
+  ],
+  "exports": {
+    "./package.json": "./package.json",
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    },
+    "./src": {
+      "types": "./dist/index.d.ts",
+      "default": "./src/index.ts"
+    },
+    "./src/*": {
+      "types": "./dist/*.d.ts",
+      "default": "./src/*.ts"
+    }
+  },
+  "scripts": {
+    "build": "tsc",
+    "test": "vitest",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@slack/web-api": "^7.14.1",
+    "discord-api-types": "^0.38.40",
+    "spiceflow": "^1.17.12",
+    "ws": "^8.18.0"
+  },
+  "devDependencies": {
+    "@types/node": "^24.11.0",
+    "@types/ws": "^8.5.0",
+    "discord.js": "^14.25.1",
+    "typescript": "^5.7.0",
+    "vitest": "^3.0.0"
+  }
+}

@@ -1,0 +1,71 @@
+generator client {
+  provider = "prisma-client"
+  output   = "./src/generated"
+}
+
+datasource db {
+  provider = "sqlite"
+}
+
+model Workspace {
+  id       String    @id
+  name     String
+  domain   String
+  channels Channel[]
+  users    User[]
+}
+
+model Channel {
+  id          String    @id
+  workspaceId String
+  workspace   Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  name        String
+  topic       String    @default("")
+  purpose     String    @default("")
+  isPrivate   Boolean   @default(false)
+  isArchived  Boolean   @default(false)
+  createdAt   DateTime  @default(now())
+  messages    Message[]
+}
+
+model User {
+  id          String    @id
+  workspaceId String
+  workspace   Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  name        String
+  realName    String    @default("")
+  isBot       Boolean   @default(false)
+  avatar      String?
+}
+
+model Message {
+  id          Int       @id @default(autoincrement())
+  channelId   String
+  channel     Channel   @relation(fields: [channelId], references: [id], onDelete: Cascade)
+  userId      String
+  botId       String?
+  text        String    @default("")
+  ts          String    @unique
+  threadTs    String?
+  editedTs    String?
+  blocks      String    @default("[]")
+  attachments String    @default("[]")
+  files       String    @default("[]")
+  isDeleted   Boolean   @default(false)
+  createdAt   DateTime  @default(now())
+  reactions   Reaction[]
+
+  @@index([channelId, ts])
+  @@index([channelId, threadTs])
+}
+
+model Reaction {
+  id        Int     @id @default(autoincrement())
+  channelId String
+  messageTs String
+  message   Message @relation(fields: [messageTs], references: [ts], onDelete: Cascade)
+  userId    String
+  name      String
+
+  @@unique([channelId, messageTs, userId, name])
+}
