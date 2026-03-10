@@ -41,14 +41,10 @@ export { componentsToBlocks } from './component-converter.js'
 export { uploadAttachmentsToSlack } from './file-upload.js'
 
 export class SlackBridge {
-  readonly port: number
   /** Token that discord.js should use to connect to this bridge's gateway */
   readonly discordToken: string
-  /** REST API base URL for discord.js */
-  readonly restUrl: string
-  /** Gateway WebSocket URL for discord.js */
-  readonly gatewayUrl: string
 
+  private _port: number
   private slack: WebClient
   private config: SlackBridgeConfig
   private server: ServerComponents | null = null
@@ -57,13 +53,28 @@ export class SlackBridge {
 
   constructor(config: SlackBridgeConfig) {
     this.config = config
-    this.port = config.port ?? 3710
+    this._port = config.port ?? 3710
     // Use the Slack bot token as the discord.js "token" so the gateway
     // can authenticate the connection
     this.discordToken = config.slackBotToken
-    this.restUrl = `http://127.0.0.1:${this.port}/api/v10`
-    this.gatewayUrl = config.gatewayUrlOverride ?? `ws://127.0.0.1:${this.port}/gateway`
-    this.slack = new WebClient(config.slackBotToken)
+    this.slack = new WebClient(config.slackBotToken, {
+      ...(config.slackApiUrl ? { slackApiUrl: config.slackApiUrl } : {}),
+    })
+  }
+
+  /** Actual bound port. Reflects OS-assigned port after start() when port=0. */
+  get port(): number {
+    return this._port
+  }
+
+  /** REST API base URL for discord.js */
+  get restUrl(): string {
+    return `http://127.0.0.1:${this._port}/api/v10`
+  }
+
+  /** Gateway WebSocket URL for discord.js */
+  get gatewayUrl(): string {
+    return this.config.gatewayUrlOverride ?? `ws://127.0.0.1:${this._port}/gateway`
   }
 
   /**
@@ -84,11 +95,17 @@ export class SlackBridge {
       botToken: this.config.slackBotToken,
       signingSecret: this.config.slackSigningSecret,
       workspaceId: this.config.workspaceId,
-      port: this.port,
+      port: this._port,
       gatewayUrlOverride: this.config.gatewayUrlOverride,
     })
 
-    await startServer(this.server, this.port)
+    await startServer(this.server, this._port)
+
+    // Read actual bound port (important when port=0 for OS-assigned)
+    const addr = this.server.httpServer.address()
+    if (typeof addr === 'object' && addr) {
+      this._port = addr.port
+    }
   }
 
   /**

@@ -28,6 +28,7 @@ import {
 } from './server.js'
 import { messageToSlack } from './serializers.js'
 import type { SlackMessage } from './types.js'
+import { sendWebhookEvent, type WebhookSenderConfig } from './webhook-sender.js'
 
 export type { SlackMessage }
 
@@ -58,6 +59,12 @@ export interface SlackDigitalTwinOptions {
   }
   botToken?: string
   dbUrl?: string
+  /** When set, user actions (sendMessage, addReaction) auto-emit signed
+   *  webhooks. Call setWebhookUrl() after start() to wire the target URL
+   *  (solves chicken-egg: twin starts before bridge). */
+  webhookConfig?: {
+    signingSecret: string
+  }
 }
 
 export class SlackDigitalTwin {
@@ -65,6 +72,10 @@ export class SlackDigitalTwin {
   botToken: string
   botUserId: string
   workspaceId: string
+
+  /** Webhook sender config — set via setWebhookUrl() after bridge starts.
+   *  Package-private: accessed by UserActor in the same file. */
+  webhookSenderConfig: WebhookSenderConfig | null = null
 
   private server: ServerComponents | null = null
   private options: SlackDigitalTwinOptions
@@ -138,6 +149,20 @@ export class SlackDigitalTwin {
   // Resolve a channel name to its ID
   resolveChannelId(nameOrId: string): string {
     return this.channelIds.get(nameOrId) ?? nameOrId
+  }
+
+  // Wire the webhook target URL. Call after bridge.start() so the port is known.
+  // Requires webhookConfig.signingSecret to be set in the constructor options.
+  setWebhookUrl(url: string): void {
+    const signingSecret = this.options.webhookConfig?.signingSecret
+    if (!signingSecret) {
+      throw new Error('Cannot setWebhookUrl without webhookConfig.signingSecret in constructor options')
+    }
+    this.webhookSenderConfig = {
+      webhookUrl: url,
+      signingSecret,
+      workspaceId: this.workspaceId,
+    }
   }
 
   // --- Schema & Seeding ---
@@ -328,7 +353,9 @@ export class UserActor {
     this.userId = userId
   }
 
-  // Send a message as this user to a channel
+  // Send a message as this user to a channel.
+  // When webhookSenderConfig is set, auto-emits a signed webhook event
+  // so the bridge receives it via /slack/events.
   async sendMessage({
     channel,
     text,
@@ -351,6 +378,20 @@ export class UserActor {
       },
     })
 
+    if (this.twin.webhookSenderConfig) {
+      await sendWebhookEvent({
+        config: this.twin.webhookSenderConfig,
+        event: {
+          type: 'message',
+          channel: channelId,
+          user: this.userId,
+          text,
+          ts,
+          ...(threadTs ? { thread_ts: threadTs } : {}),
+        },
+      })
+    }
+
     return {
       type: 'message',
       user: this.userId,
@@ -360,7 +401,8 @@ export class UserActor {
     }
   }
 
-  // Add a reaction as this user
+  // Add a reaction as this user.
+  // When webhookSenderConfig is set, auto-emits a reaction_added webhook.
   async addReaction({
     channel,
     messageTs,
@@ -379,6 +421,18 @@ export class UserActor {
         name,
       },
     })
+
+    if (this.twin.webhookSenderConfig) {
+      await sendWebhookEvent({
+        config: this.twin.webhookSenderConfig,
+        event: {
+          type: 'reaction_added',
+          user: this.userId,
+          reaction: name,
+          item: { type: 'message', channel: channelId, ts: messageTs },
+        },
+      })
+    }
   }
 }
 

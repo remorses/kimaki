@@ -8,7 +8,7 @@
 import http from 'node:http'
 import { Spiceflow } from 'spiceflow'
 import type { PrismaClient } from './generated/client.js'
-import { generateMessageTs } from './slack-ids.js'
+import { generateMessageTs, generateChannelId } from './slack-ids.js'
 import { userToSlack, channelToSlack, messageToSlack } from './serializers.js'
 
 export interface ServerConfig {
@@ -408,6 +408,142 @@ export function createServer(config: ServerConfig): ServerComponents {
     return Response.json({
       ok: true,
       members: users.map((u) => userToSlack({ user: u, workspaceId })),
+    })
+  })
+
+  // --- conversations.create ---
+  app.post('/api/conversations.create', async ({ request }) => {
+    const body = await parseBody(request)
+    const name = body['name']
+    const isPrivate = body['is_private'] === 'true'
+
+    if (!name) {
+      return Response.json({ ok: false, error: 'invalid_name_required' })
+    }
+
+    // Check for duplicate name
+    const existing = await prisma.channel.findFirst({
+      where: { workspaceId, name },
+    })
+    if (existing) {
+      return Response.json({ ok: false, error: 'name_taken' })
+    }
+
+    const channelId = generateChannelId()
+    const channel = await prisma.channel.create({
+      data: {
+        id: channelId,
+        workspaceId,
+        name,
+        isPrivate,
+      },
+    })
+
+    return Response.json({
+      ok: true,
+      channel: channelToSlack({ channel }),
+    })
+  })
+
+  // --- conversations.rename ---
+  app.post('/api/conversations.rename', async ({ request }) => {
+    const body = await parseBody(request)
+    const channelId = body['channel']
+    const name = body['name']
+
+    if (!channelId || !name) {
+      return Response.json({ ok: false, error: 'missing_required_field' })
+    }
+
+    const channel = await prisma.channel.findUnique({ where: { id: channelId } })
+    if (!channel) {
+      return Response.json({ ok: false, error: 'channel_not_found' })
+    }
+
+    const updated = await prisma.channel.update({
+      where: { id: channelId },
+      data: { name },
+    })
+
+    return Response.json({
+      ok: true,
+      channel: channelToSlack({ channel: updated }),
+    })
+  })
+
+  // --- conversations.setTopic ---
+  app.post('/api/conversations.setTopic', async ({ request }) => {
+    const body = await parseBody(request)
+    const channelId = body['channel']
+    const topic = body['topic'] ?? ''
+
+    if (!channelId) {
+      return Response.json({ ok: false, error: 'channel_not_found' })
+    }
+
+    const channel = await prisma.channel.findUnique({ where: { id: channelId } })
+    if (!channel) {
+      return Response.json({ ok: false, error: 'channel_not_found' })
+    }
+
+    const updated = await prisma.channel.update({
+      where: { id: channelId },
+      data: { topic },
+    })
+
+    return Response.json({
+      ok: true,
+      channel: channelToSlack({ channel: updated }),
+    })
+  })
+
+  // --- conversations.archive ---
+  app.post('/api/conversations.archive', async ({ request }) => {
+    const body = await parseBody(request)
+    const channelId = body['channel']
+
+    if (!channelId) {
+      return Response.json({ ok: false, error: 'channel_not_found' })
+    }
+
+    const channel = await prisma.channel.findUnique({ where: { id: channelId } })
+    if (!channel) {
+      return Response.json({ ok: false, error: 'channel_not_found' })
+    }
+    if (channel.isArchived) {
+      return Response.json({ ok: false, error: 'already_archived' })
+    }
+
+    await prisma.channel.update({
+      where: { id: channelId },
+      data: { isArchived: true },
+    })
+
+    return Response.json({ ok: true })
+  })
+
+  // --- usergroups.list ---
+  // Stub: returns empty list (no Slack usergroups by default).
+  // The discord-slack-bridge maps these to Discord guild roles.
+  app.post('/api/usergroups.list', async () => {
+    return Response.json({
+      ok: true,
+      usergroups: [],
+    })
+  })
+
+  // --- views.open ---
+  // Stub: acknowledges modal open without rendering.
+  // The discord-slack-bridge calls this for type-9 interaction responses.
+  app.post('/api/views.open', async ({ request }) => {
+    const body = await parseBody(request)
+    return Response.json({
+      ok: true,
+      view: {
+        id: `V${Date.now()}`,
+        type: 'modal',
+        title: { type: 'plain_text', text: 'Modal' },
+      },
     })
   })
 

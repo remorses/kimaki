@@ -11,6 +11,8 @@ export interface SlackBridgeConfig {
   port?: number
   /** Override gateway URL returned by GET /gateway/bot (useful behind proxies) */
   gatewayUrlOverride?: string
+  /** Override Slack API base URL (for testing with slack-digital-twin) */
+  slackApiUrl?: string
 }
 
 export type SupportedSlackEventType =
