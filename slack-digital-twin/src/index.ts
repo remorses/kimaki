@@ -337,7 +337,7 @@ export class UserActor {
     channel: string
     text: string
     threadTs?: string
-  }): Promise<SlackMessage> {
+  }): Promise<SlackMessage & { ts: string }> {
     const channelId = this.twin.resolveChannelId(channel)
     const ts = generateMessageTs()
 

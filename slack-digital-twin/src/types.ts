@@ -1,77 +1,29 @@
 // Slack API types for the digital twin server.
-// These mirror the shapes returned by the Slack Web API.
+// Response types (User, Channel, Message, Reaction, File) are extracted from
+// the official @slack/web-api SDK response types to guarantee shape compliance.
+// Events API envelope types stay custom — they represent inbound webhook
+// payloads that aren't modeled by the SDK's response types.
 
-export interface SlackApiResponse {
-  ok: boolean
-  error?: string
-}
+import type {
+  ConversationsHistoryResponse,
+  ConversationsListResponse,
+  UsersInfoResponse,
+} from '@slack/web-api'
+import type { Block, KnownBlock } from '@slack/types'
 
-export interface SlackUser {
-  id: string
-  team_id: string
-  name: string
-  real_name: string
-  is_bot: boolean
-  profile: {
-    image_48?: string
-    real_name?: string
-    display_name?: string
-  }
-}
+// --- SDK response types (extracted from top-level response interfaces) ---
+// The inner interfaces (MessageElement, Channel, User, etc.) are not
+// re-exported from @slack/web-api's main index, so we extract them with
+// NonNullable<T>[number] from the response arrays / fields.
 
-export interface SlackChannel {
-  id: string
-  name: string
-  is_channel: boolean
-  is_private: boolean
-  is_archived: boolean
-  topic: { value: string }
-  purpose: { value: string }
-  created: number
-  num_members?: number
-}
+export type SlackUser = NonNullable<UsersInfoResponse['user']>
+export type SlackChannel = NonNullable<ConversationsListResponse['channels']>[number]
+export type SlackMessage = NonNullable<ConversationsHistoryResponse['messages']>[number]
+export type SlackReaction = NonNullable<SlackMessage['reactions']>[number]
+export type SlackFile = NonNullable<SlackMessage['files']>[number]
+export type SlackEdited = NonNullable<SlackMessage['edited']>
 
-export interface SlackMessage {
-  type: 'message'
-  user?: string
-  bot_id?: string
-  text: string
-  ts: string
-  thread_ts?: string
-  edited?: { user: string; ts: string }
-  blocks?: SlackBlock[]
-  attachments?: SlackAttachment[]
-  files?: SlackFile[]
-  reactions?: SlackReaction[]
-}
-
-export interface SlackBlock {
-  type: string
-  block_id?: string
-  [key: string]: unknown
-}
-
-export interface SlackAttachment {
-  [key: string]: unknown
-}
-
-export interface SlackFile {
-  id: string
-  name: string
-  title: string
-  mimetype: string
-  filetype: string
-  size: number
-  url_private: string
-  url_private_download: string
-  permalink: string
-}
-
-export interface SlackReaction {
-  name: string
-  users: string[]
-  count: number
-}
+// --- Events API types (custom — not in the SDK response types) ---
 
 // Slack Events API envelope posted to webhook endpoints
 export interface SlackEventEnvelope {
@@ -99,7 +51,7 @@ export interface SlackEventPayload {
   previous_message?: SlackEventPayload
   deleted_ts?: string
   files?: SlackFile[]
-  blocks?: SlackBlock[]
+  blocks?: (KnownBlock | Block)[]
   // Reaction events
   reaction?: string
   item?: { type: string; channel: string; ts: string }

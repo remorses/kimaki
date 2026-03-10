@@ -62,6 +62,7 @@
     "spiceflow": "^1.17.12"
   },
   "devDependencies": {
+    "@slack/types": "^2.20.0",
     "@slack/web-api": "^7.14.1",
     "@types/node": "^24.11.0",
     "prisma": "7.4.2",

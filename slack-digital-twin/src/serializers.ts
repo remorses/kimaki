@@ -9,6 +9,8 @@ import type {
   SlackReaction,
 } from './types.js'
 
+// SDK types have all fields optional. We return objects satisfying those shapes.
+
 export function userToSlack({
   user,
   workspaceId,
@@ -69,14 +71,14 @@ export function messageToSlack({
     result.edited = { user: message.userId, ts: message.editedTs }
   }
 
-  const blocks = JSON.parse(message.blocks) as unknown[]
-  if (blocks.length > 0) {
-    result.blocks = blocks as SlackMessage['blocks']
+  const blocks: SlackMessage['blocks'] = JSON.parse(message.blocks)
+  if (blocks && blocks.length > 0) {
+    result.blocks = blocks
   }
 
-  const files = JSON.parse(message.files) as unknown[]
-  if (files.length > 0) {
-    result.files = files as SlackMessage['files']
+  const files: SlackMessage['files'] = JSON.parse(message.files)
+  if (files && files.length > 0) {
+    result.files = files
   }
 
   if (reactions && reactions.length > 0) {
