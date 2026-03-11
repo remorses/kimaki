@@ -27,8 +27,9 @@ pub fn build(b: *std.Build) void {
     });
 
     if (target.result.os.tag == .macos) {
-        lib.root_module.linkFramework("ApplicationServices", .{});
+        lib.root_module.linkFramework("CoreGraphics", .{});
         lib.root_module.linkFramework("CoreFoundation", .{});
+        lib.root_module.linkFramework("ImageIO", .{});
     }
 
     napigen.setup(lib);

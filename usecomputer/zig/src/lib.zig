@@ -6,8 +6,9 @@ const std = @import("std");
 const builtin = @import("builtin");
 const napigen = if (builtin.is_test) undefined else @import("napigen");
 const c = if (builtin.target.os.tag == .macos) @cImport({
-    @cInclude("ApplicationServices/ApplicationServices.h");
+    @cInclude("CoreGraphics/CoreGraphics.h");
     @cInclude("CoreFoundation/CoreFoundation.h");
+    @cInclude("ImageIO/ImageIO.h");
 }) else struct {};
 
 pub const std_options: std.Options = .{
@@ -54,7 +55,7 @@ fn execute(command: []const u8, payload_json: []const u8) ![]const u8 {
         return makeOkJson(allocator, "{\"text\":\"\"}");
     }
     if (std.mem.eql(u8, command, "screenshot")) {
-        return makeOkJson(allocator, "{\"path\":\"./screenshot.png\"}");
+        return executeScreenshotCommand(allocator, payload_json);
     }
 
     if (
@@ -63,7 +64,8 @@ fn execute(command: []const u8, payload_json: []const u8) ![]const u8 {
         std.mem.eql(u8, command, "scroll") or
         std.mem.eql(u8, command, "clipboard-set")
     ) {
-        return makeOkJson(allocator, "null");
+        const message = try std.fmt.allocPrint(allocator, "TODO not implemented: {s}", .{command});
+        return makeErrorJson(allocator, message);
     }
 
     return makeErrorJson(allocator, "unknown command");
@@ -85,7 +87,9 @@ fn executeClickCommand(allocator: std.mem.Allocator, payload_json: []const u8) !
         return makeErrorJson(allocator, "click is only supported on macOS");
     }
 
-    var parsed = std.json.parseFromSlice(ClickPayload, allocator, payload_json, .{}) catch {
+    var parsed = std.json.parseFromSlice(ClickPayload, allocator, payload_json, .{
+        .ignore_unknown_fields = true,
+    }) catch {
         return makeErrorJson(allocator, "invalid click payload json");
     };
     defer parsed.deinit();
@@ -137,6 +141,130 @@ const DragPayload = struct {
     durationMs: ?u64 = null,
     button: ?[]const u8 = null,
 };
+
+const ScreenshotRegion = struct {
+    x: f64,
+    y: f64,
+    width: f64,
+    height: f64,
+};
+
+const ScreenshotPayload = struct {
+    path: ?[]const u8 = null,
+    display: ?usize = null,
+    region: ?ScreenshotRegion = null,
+};
+
+fn executeScreenshotCommand(allocator: std.mem.Allocator, payload_json: []const u8) ![]const u8 {
+    if (builtin.target.os.tag != .macos) {
+        return makeErrorJson(allocator, "screenshot is only supported on macOS");
+    }
+
+    var parsed = std.json.parseFromSlice(ScreenshotPayload, allocator, payload_json, .{
+        .ignore_unknown_fields = true,
+    }) catch {
+        return makeErrorJson(allocator, "invalid screenshot payload json");
+    };
+    defer parsed.deinit();
+
+    const screenshot_payload = parsed.value;
+    const output_path = screenshot_payload.path orelse "./screenshot.png";
+
+    const image = createScreenshotImage(.{
+        .display_index = screenshot_payload.display,
+        .region = screenshot_payload.region,
+    }) catch {
+        return makeErrorJson(allocator, "failed to capture screenshot image");
+    };
+    defer c.CFRelease(image);
+
+    writeScreenshotPng(.{
+        .image = image,
+        .output_path = output_path,
+    }) catch {
+        return makeErrorJson(allocator, "failed to write screenshot file");
+    };
+
+    const path_json = try std.fmt.allocPrint(allocator, "\"{s}\"", .{output_path});
+    const payload_json_response = try std.fmt.allocPrint(allocator, "{{\"path\":{s}}}", .{path_json});
+    return makeOkJson(allocator, payload_json_response);
+}
+
+fn createScreenshotImage(input: struct {
+    display_index: ?usize,
+    region: ?ScreenshotRegion,
+}) !c.CGImageRef {
+    const display_id = resolveDisplayId(input.display_index) catch {
+        return error.DisplayResolutionFailed;
+    };
+
+    if (input.region) |region| {
+        const rect: c.CGRect = .{
+            .origin = .{ .x = region.x, .y = region.y },
+            .size = .{ .width = region.width, .height = region.height },
+        };
+        const region_image = c.CGDisplayCreateImageForRect(display_id, rect);
+        if (region_image == null) {
+            return error.CaptureFailed;
+        }
+        return region_image;
+    }
+
+    const full_image = c.CGDisplayCreateImage(display_id);
+    if (full_image == null) {
+        return error.CaptureFailed;
+    }
+    return full_image;
+}
+
+fn resolveDisplayId(display_index: ?usize) !c.CGDirectDisplayID {
+    const selected_index = display_index orelse 0;
+    var display_ids: [16]c.CGDirectDisplayID = undefined;
+    var display_count: u32 = 0;
+    const list_result = c.CGGetActiveDisplayList(display_ids.len, &display_ids, &display_count);
+    if (list_result != c.kCGErrorSuccess) {
+        return error.DisplayQueryFailed;
+    }
+    if (selected_index >= display_count) {
+        return error.InvalidDisplayIndex;
+    }
+    return display_ids[selected_index];
+}
+
+fn writeScreenshotPng(input: struct {
+    image: c.CGImageRef,
+    output_path: []const u8,
+}) !void {
+    const path_as_u8: [*]const u8 = @ptrCast(input.output_path.ptr);
+    const file_url = c.CFURLCreateFromFileSystemRepresentation(
+        null,
+        path_as_u8,
+        @as(c_long, @intCast(input.output_path.len)),
+        0,
+    );
+    if (file_url == null) {
+        return error.FileUrlCreateFailed;
+    }
+    defer c.CFRelease(file_url);
+
+    const png_type = c.CFStringCreateWithCString(null, "public.png", c.kCFStringEncodingUTF8);
+    if (png_type == null) {
+        return error.PngTypeCreateFailed;
+    }
+    defer c.CFRelease(png_type);
+
+    const destination = c.CGImageDestinationCreateWithURL(file_url, png_type, 1, null);
+    if (destination == null) {
+        return error.ImageDestinationCreateFailed;
+    }
+    defer c.CFRelease(destination);
+
+    c.CGImageDestinationAddImage(destination, input.image, null);
+    const did_finalize = c.CGImageDestinationFinalize(destination);
+    if (!did_finalize) {
+        return error.ImageDestinationFinalizeFailed;
+    }
+}
 
 fn executeMouseMoveCommand(allocator: std.mem.Allocator, payload_json: []const u8) ![]const u8 {
     if (builtin.target.os.tag != .macos) {

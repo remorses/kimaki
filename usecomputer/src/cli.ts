@@ -4,6 +4,8 @@ import { goke } from 'goke'
 import { z } from 'zod'
 import dedent from 'string-dedent'
 import { createRequire } from 'node:module'
+import fs from 'node:fs'
+import pathModule from 'node:path'
 import url from 'node:url'
 import { createBridge } from './bridge.js'
 import { parseDirection, parseModifiers, parsePoint, parseRegion } from './command-parsers.js'
@@ -59,7 +61,7 @@ function parseButton(input?: string): MouseButton {
 }
 
 function notImplemented({ command }: { command: string }): never {
-  throw new Error(`Command \"${command}\" is not implemented yet`)
+  throw new Error(`TODO not implemented: ${command}`)
 }
 
 export function createCli({ bridge = createBridge() }: { bridge?: UseComputerBridge } = {}) {
@@ -75,16 +77,29 @@ export function createCli({ bridge = createBridge() }: { bridge?: UseComputerBri
       `,
     )
     .option('-r, --region [region]', z.string().describe('Capture region as x,y,width,height'))
-    .option('--display [display]', z.number().describe('Display index for multi-monitor setups'))
+    .option(
+      '--display [display]',
+      z.number().describe('Display index for multi-monitor setups (0-based: first display is index 0)'),
+    )
     .option('--annotate', 'Annotate screenshot with labels')
     .option('--json', 'Output as JSON')
     .action(async (path, options) => {
+      const outputPath = path
+        ? path.startsWith('/')
+          ? path
+          : `${process.cwd()}/${path}`
+        : undefined
+
+      if (path) {
+        const parentDirectory = pathModule.dirname(outputPath)
+        fs.mkdirSync(parentDirectory, { recursive: true })
+      }
       const region = options.region ? parseRegion(options.region) : undefined
       if (region instanceof Error) {
         throw region
       }
       const result = await bridge.screenshot({
-        path,
+        path: outputPath,
         region,
         display: options.display,
         annotate: options.annotate,
@@ -316,7 +331,12 @@ export function createCli({ bridge = createBridge() }: { bridge?: UseComputerBri
   return cli
 }
 
-const isEntrypoint = (() => {
+export function runCli(): void {
+  const cli = createCli()
+  cli.parse()
+}
+
+const isDirectEntrypoint = (() => {
   const argvPath = process.argv[1]
   if (!argvPath) {
     return false
@@ -324,7 +344,6 @@ const isEntrypoint = (() => {
   return import.meta.url === url.pathToFileURL(argvPath).href
 })()
 
-if (isEntrypoint) {
-  const cli = createCli()
-  cli.parse()
+if (isDirectEntrypoint) {
+  runCli()
 }

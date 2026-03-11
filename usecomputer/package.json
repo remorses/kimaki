@@ -1,11 +1,9 @@
 {
   "name": "usecomputer",
-  "version": "0.0.1",
+  "version": "0.0.3",
   "type": "module",
   "description": "Fast computer automation CLI for AI agents. Control any desktop with accessibility snapshots, clicks, typing, scrolling, and more.",
-  "bin": {
-    "usecomputer": "./bin.js"
-  },
+  "bin": "./bin.js",
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
   "exports": {
@@ -30,15 +28,17 @@
     "build.zig",
     "build.zig.zon",
     "bin.js",
-    "README.md"
+    "README.md",
+    "CHANGELOG.md"
   ],
   "scripts": {
-    "build": "tsc",
+    "build": "tsc && chmod +x bin.js",
     "build:zig": "zig build",
     "build:native": "tsx scripts/build.ts",
+    "build:native:macos": "tsx scripts/build.ts darwin-arm64 darwin-x64",
     "test": "vitest --run",
     "typecheck": "tsc --noEmit",
-    "prepublishOnly": "pnpm build"
+    "prepublishOnly": "pnpm build && pnpm build:native:macos"
   },
   "keywords": [
     "computer-use",
@@ -56,13 +56,16 @@
   "license": "MIT",
   "repository": {
     "type": "git",
-    "url": "https://github.com/remorses/usecomputer",
-    "directory": "."
+    "url": "git+https://github.com/remorses/kimakivoice.git",
+    "directory": "usecomputer"
   },
-  "homepage": "https://github.com/remorses/usecomputer",
+  "homepage": "https://github.com/remorses/kimakivoice/tree/main/usecomputer",
   "bugs": {
-    "url": "https://github.com/remorses/usecomputer/issues"
+    "url": "https://github.com/remorses/kimakivoice/issues"
   },
+  "os": [
+    "darwin"
+  ],
   "dependencies": {
     "goke": "^6.3.0",
     "string-dedent": "^3.0.1",
