@@ -4,6 +4,20 @@
   "minify": true,
   "compatibility_flags": ["nodejs_compat"],
   "compatibility_date": "2025-04-01",
+  "durable_objects": {
+    "bindings": [
+      {
+        "name": "SLACK_BRIDGE",
+        "class_name": "SlackBridgeDO"
+      }
+    ]
+  },
+  "migrations": [
+    {
+      "tag": "v2",
+      "new_sqlite_classes": ["SlackBridgeDO"]
+    }
+  ],
   "hyperdrive": [
     {
       "binding": "HYPERDRIVE",
@@ -15,5 +29,30 @@
       "pattern": "kimaki.xyz/*",
       "zone_name": "kimaki.xyz"
     }
-  ]
+  ],
+  "env": {
+    "preview": {
+      "name": "kimaki-website-preview",
+      "durable_objects": {
+        "bindings": [
+          {
+            "name": "SLACK_BRIDGE",
+            "class_name": "SlackBridgeDO"
+          }
+        ]
+      },
+      "hyperdrive": [
+        {
+          "binding": "HYPERDRIVE",
+          "id": "fc242a96a2d5472bb5d6a84eabaab910"
+        }
+      ],
+      "routes": [
+        {
+          "pattern": "preview.kimaki.xyz/*",
+          "zone_name": "kimaki.xyz"
+        }
+      ]
+    }
+  }
 }

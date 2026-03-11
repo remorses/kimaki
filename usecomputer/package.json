@@ -26,11 +26,17 @@
   "files": [
     "src",
     "dist",
+    "zig",
+    "build.zig",
+    "build.zig.zon",
     "bin.js",
     "README.md"
   ],
   "scripts": {
     "build": "tsc",
+    "build:zig": "zig build",
+    "build:native": "tsx scripts/build.ts",
+    "test": "vitest --run",
     "typecheck": "tsc --noEmit",
     "prepublishOnly": "pnpm build"
   },
@@ -64,6 +70,8 @@
   },
   "devDependencies": {
     "@types/node": "^22.15.3",
-    "typescript": "^5.8.3"
+    "tsx": "^4.21.0",
+    "typescript": "^5.8.3",
+    "vitest": "^4.0.18"
   }
 }

@@ -40,6 +40,7 @@ import type {
   APIApplicationCommand,
   APIChannel,
   APIGuild,
+  APIMessage,
   APIThreadList,
   APIThreadMember,
   APITextInputComponent,
@@ -100,8 +101,21 @@ export interface ServerConfig {
 
 export interface ServerComponents {
   httpServer: http.Server
-  gateway: SlackBridgeGateway
+  gateway: GatewayEmitter
   app: Spiceflow
+}
+
+export interface BridgeAppComponents {
+  app: Spiceflow
+  loadGatewayState: () => Promise<GatewayState>
+  setGateway: (gateway: GatewayEmitter) => void
+}
+
+export interface GatewayEmitter {
+  broadcast<T>(event: string, data: T): void
+  broadcastMessageCreate(message: APIMessage, guildId: string): void
+  close(): void
+  setPort?(port: number): void
 }
 
 type NormalizedPostMessageBody = {
@@ -182,7 +196,7 @@ async function lookupUser(
   }
 }
 
-export function createServer(config: ServerConfig): ServerComponents {
+export function createBridgeApp(config: ServerConfig): BridgeAppComponents {
   const {
     slack,
     botUserId,
@@ -193,6 +207,8 @@ export function createServer(config: ServerConfig): ServerComponents {
     port,
     authorize,
   } = config
+
+  let gateway: GatewayEmitter = createNoopGatewayEmitter()
 
   // Pending interactions awaiting discord.js responses
   const pendingInteractions = new Map<string, PendingInteraction>()
@@ -1788,41 +1804,6 @@ export function createServer(config: ServerConfig): ServerComponents {
     },
   })
 
-  // ---- Gateway Setup ----
-
-  // Wrap the HTTP handler to catch Slack API errors and return Discord-shaped
-  // error responses instead of generic 500s.
-  const httpServer = http.createServer(async (req, res) => {
-    try {
-      const unauthorizedResponse = await authorizeIncomingRestRequest({
-        authorize,
-        request: req,
-        workspaceId,
-      })
-      if (unauthorizedResponse) {
-        res.writeHead(unauthorizedResponse.status, {
-          'content-type': 'application/json',
-        })
-        res.end(JSON.stringify({
-          code: unauthorizedResponse.code,
-          message: unauthorizedResponse.message,
-        }))
-        return
-      }
-      await app.handleForNode(req, res)
-    } catch (err) {
-      if (err instanceof rest.DiscordApiError) {
-        res.writeHead(err.httpStatus, { 'content-type': 'application/json' })
-        res.end(JSON.stringify({ code: err.discordCode, message: err.message }))
-        return
-      }
-      // Try mapping Slack SDK errors to Discord-shaped responses
-      const mapped = rest.mapSlackErrorToDiscordError(err)
-      res.writeHead(mapped.httpStatus, { 'content-type': 'application/json' })
-      res.end(JSON.stringify({ code: mapped.discordCode, message: mapped.message }))
-    }
-  })
-
   const loadGatewayState = async (): Promise<GatewayState> => {
     // Build gateway state from Slack API
     const authResult = await slack.auth.test()
@@ -1890,21 +1871,65 @@ export function createServer(config: ServerConfig): ServerComponents {
     }
   }
 
+  return {
+    app,
+    loadGatewayState,
+    setGateway: (nextGateway) => {
+      gateway = nextGateway
+    },
+  }
+}
+
+export function createServer(config: ServerConfig): ServerComponents {
+  const bridgeApp = createBridgeApp(config)
+
+  const httpServer = http.createServer(async (req, res) => {
+    try {
+      const unauthorizedResponse = await authorizeIncomingRestRequest({
+        authorize: config.authorize,
+        request: req,
+        workspaceId: config.workspaceId,
+      })
+      if (unauthorizedResponse) {
+        res.writeHead(unauthorizedResponse.status, {
+          'content-type': 'application/json',
+        })
+        res.end(JSON.stringify({
+          code: unauthorizedResponse.code,
+          message: unauthorizedResponse.message,
+        }))
+        return
+      }
+      await bridgeApp.app.handleForNode(req, res)
+    } catch (err) {
+      if (err instanceof rest.DiscordApiError) {
+        res.writeHead(err.httpStatus, { 'content-type': 'application/json' })
+        res.end(JSON.stringify({ code: err.discordCode, message: err.message }))
+        return
+      }
+      const mapped = rest.mapSlackErrorToDiscordError(err)
+      res.writeHead(mapped.httpStatus, { 'content-type': 'application/json' })
+      res.end(JSON.stringify({ code: mapped.discordCode, message: mapped.message }))
+    }
+  })
+
   const gateway = new SlackBridgeGateway({
     httpServer,
-    port,
-    loadState: loadGatewayState,
-    expectedToken: botToken,
-    authorize,
-    workspaceId,
+    port: config.port,
+    loadState: bridgeApp.loadGatewayState,
+    expectedToken: config.botToken,
+    authorize: config.authorize,
+    workspaceId: config.workspaceId,
     gatewayUrlOverride: resolveGatewayUrl({
       gatewayUrlOverride: config.gatewayUrlOverride,
       publicBaseUrl: config.publicBaseUrl,
-      port,
+      port: config.port,
     }),
   })
 
-  return { httpServer, gateway, app }
+  bridgeApp.setGateway(gateway)
+
+  return { httpServer, gateway, app: bridgeApp.app }
 }
 
 export function startServer(
@@ -1973,6 +1998,20 @@ function buildWebSocketUrlFromHttpBase({
   const protocol = baseUrl.protocol === 'https:' ? 'wss:' : 'ws:'
   const wsBase = `${protocol}//${baseUrl.host}`
   return new URL(path, wsBase).toString()
+}
+
+function createNoopGatewayEmitter(): GatewayEmitter {
+  return {
+    broadcast: () => {
+      return undefined
+    },
+    broadcastMessageCreate: () => {
+      return undefined
+    },
+    close: () => {
+      return undefined
+    },
+  }
 }
 
 async function authorizeIncomingRestRequest({
@@ -4108,7 +4147,7 @@ async function resolveAutocompleteSuggestions({
   applicationCommandRegistry: Map<string, APIApplicationCommand[]>
   botUserId: string
   workspaceId: string
-  gateway: SlackBridgeGateway
+  gateway: GatewayEmitter
 }): Promise<Array<{ name: string; value: string }>> {
   const metadata = parseSlashCommandModalMetadata(payload.privateMetadata)
   if (!metadata) {

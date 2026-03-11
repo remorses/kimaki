@@ -43,6 +43,7 @@ import { SlackBridge } from '../src/index.js'
 
 const TUNNEL_ID = 'dsb-echo-bot'
 const BRIDGE_PORT = Number(process.env.ECHO_BOT_PORT ?? '3710')
+const PREVIEW_GATEWAY_BASE_URL = 'https://preview.kimaki.xyz'
 const OPEN_MODAL_BUTTON_ID = 'demo-open-modal'
 const STATUS_BUTTON_ID = 'demo-status-button'
 const TABLE_BUTTON_ID = 'demo-table-button'
@@ -65,6 +66,7 @@ const DEMO_COMMANDS: RESTPostAPIApplicationCommandsJSONBody[] = [
 async function main(): Promise<void> {
   const slackBotToken = requireEnv('SLACK_BOT_TOKEN')
   const slackSigningSecret = requireEnv('SLACK_SIGNING_SECRET')
+  const gatewayMode = readGatewayModeArgv()
 
   const tempClient = new WebClient(slackBotToken)
   const authResult = await tempClient.auth.test()
@@ -75,24 +77,37 @@ async function main(): Promise<void> {
   console.log(`Slack workspace: ${authResult.team} (${workspaceId})`)
   console.log(`Bot user: ${authResult.user} (${authResult.user_id})`)
 
-  const bridge = new SlackBridge({
-    slackBotToken,
-    slackSigningSecret,
-    workspaceId,
-    port: BRIDGE_PORT,
-  })
-  await bridge.start()
-  console.log(`Bridge: REST=${bridge.restUrl} Gateway=${bridge.gatewayUrl}`)
+  const localRuntime = gatewayMode
+    ? null
+    : await startLocalRuntime({
+        slackBotToken,
+        slackSigningSecret,
+        workspaceId,
+      })
 
-  const tunnel = new TunnelClient({
-    localPort: bridge.port,
-    tunnelId: TUNNEL_ID,
-  })
-  await tunnel.connect()
-  const webhookUrl = `${tunnel.url}/slack/events`
-  console.log(`Tunnel: ${tunnel.url}`)
-  console.log(`Slack Event Subscriptions URL: ${webhookUrl}`)
-  console.log(`Slack Interactivity Request URL: ${webhookUrl}`)
+  const gatewayRuntime = gatewayMode
+    ? createDeployedRuntime({
+        slackBotToken,
+        gatewayMode,
+      })
+    : {
+        restUrl: localRuntime?.bridge.restUrl ?? '',
+        gatewayUrl: localRuntime?.bridge.gatewayUrl ?? '',
+        discordToken: localRuntime?.bridge.discordToken ?? '',
+        slackWebhookUrl: localRuntime?.slackWebhookUrl ?? '',
+      }
+
+  if (!gatewayMode && localRuntime) {
+    console.log(`Bridge: REST=${localRuntime.bridge.restUrl} Gateway=${localRuntime.bridge.gatewayUrl}`)
+    console.log(`Tunnel: ${localRuntime.tunnel.url}`)
+  }
+
+  if (gatewayMode) {
+    console.log(`Gateway mode: using deployed bridge at ${gatewayMode.baseUrl}`)
+  }
+
+  console.log(`Slack Event Subscriptions URL: ${gatewayRuntime.slackWebhookUrl}`)
+  console.log(`Slack Interactivity Request URL: ${gatewayRuntime.slackWebhookUrl}`)
   console.log(
     'Required bot scopes for demos: chat:write, channels:read, channels:history, groups:read, groups:history, files:write',
   )
@@ -104,7 +119,7 @@ async function main(): Promise<void> {
       GatewayIntentBits.MessageContent,
     ],
     partials: [Partials.Channel, Partials.Message],
-    rest: { api: bridge.restUrl, version: '10' },
+    rest: { api: gatewayRuntime.restUrl, version: '10' },
   })
 
   const readyPromise = new Promise<void>((resolve) => {
@@ -113,7 +128,7 @@ async function main(): Promise<void> {
     })
   })
 
-  await client.login(bridge.discordToken)
+  await client.login(gatewayRuntime.discordToken)
   await readyPromise
 
   const guild = client.guilds.cache.first()
@@ -148,8 +163,8 @@ async function main(): Promise<void> {
   const shutdown = (): void => {
     console.log('\nShutting down...')
     client.destroy()
-    tunnel.close()
-    void bridge.stop().then(() => {
+    localRuntime?.tunnel.close()
+    void (localRuntime?.bridge.stop() ?? Promise.resolve()).then(() => {
       process.exit(0)
     })
   }
@@ -162,6 +177,80 @@ async function main(): Promise<void> {
   process.on('uncaughtException', (error) => {
     console.error('uncaughtException', describeError(error))
   })
+}
+
+async function startLocalRuntime({
+  slackBotToken,
+  slackSigningSecret,
+  workspaceId,
+}: {
+  slackBotToken: string
+  slackSigningSecret: string
+  workspaceId: string
+}): Promise<{
+  bridge: SlackBridge
+  tunnel: TunnelClient
+  slackWebhookUrl: string
+}> {
+  const bridge = new SlackBridge({
+    slackBotToken,
+    slackSigningSecret,
+    workspaceId,
+    port: BRIDGE_PORT,
+  })
+  await bridge.start()
+
+  const tunnel = new TunnelClient({
+    localPort: bridge.port,
+    tunnelId: TUNNEL_ID,
+  })
+  await tunnel.connect()
+
+  return {
+    bridge,
+    tunnel,
+    slackWebhookUrl: `${tunnel.url}/slack/events`,
+  }
+}
+
+function createDeployedRuntime({
+  slackBotToken,
+  gatewayMode,
+}: {
+  slackBotToken: string
+  gatewayMode: { baseUrl: string }
+}): {
+  restUrl: string
+  gatewayUrl: string
+  discordToken: string
+  slackWebhookUrl: string
+} {
+  const baseUrl = new URL(gatewayMode.baseUrl)
+  const gatewayUrl = new URL('/api/slack-bridge/gateway', baseUrl)
+  gatewayUrl.protocol = gatewayUrl.protocol === 'https:' ? 'wss:' : 'ws:'
+  return {
+    restUrl: new URL('/api/slack-bridge', baseUrl).toString(),
+    gatewayUrl: gatewayUrl.toString(),
+    discordToken: process.env.ECHO_BOT_GATEWAY_TOKEN ?? slackBotToken,
+    slackWebhookUrl: new URL('/api/webhooks/slack-bridge', baseUrl).toString(),
+  }
+}
+
+function readGatewayModeArgv(): { baseUrl: string } | null {
+  const args = process.argv.slice(2)
+  const gatewayFlag = args.find((arg) => {
+    return arg === '--gateway' || arg.startsWith('--gateway=')
+  })
+
+  if (!gatewayFlag) {
+    return null
+  }
+
+  const value = gatewayFlag.startsWith('--gateway=')
+    ? gatewayFlag.slice('--gateway='.length)
+    : PREVIEW_GATEWAY_BASE_URL
+  const baseUrl = new URL(value).toString()
+  return { baseUrl }
 }
 
 async function handleMessageCreate({

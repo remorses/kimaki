@@ -91,7 +91,7 @@ export class SlackBridge {
     const addr = this.server.httpServer.address()
     if (typeof addr === 'object' && addr) {
       this._port = addr.port
-      this.server.gateway.setPort(addr.port)
+      this.server.gateway.setPort?.(addr.port)
     }
   }
 

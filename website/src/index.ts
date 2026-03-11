@@ -9,9 +9,11 @@ import { Hono } from 'hono'
 import { createPrisma } from 'db/src/prisma.js'
 import { createAuth } from './auth.js'
 import { renderSuccessPage } from './components/success-page.js'
+import { SlackBridgeDO } from './slack-bridge-do.js'
 import type { HonoBindings } from './env.js'
 
 export type { HonoBindings }
+export { SlackBridgeDO }
 
 const app = new Hono<{ Bindings: HonoBindings }>()
 
@@ -91,6 +93,59 @@ app.get('/install-success', (c) => {
   return c.html(renderSuccessPage())
 })
 
+app.get('/api/slack-bridge/config', (c) => {
+  const requestUrl = new URL(c.req.url)
+  const origin = requestUrl.origin
+  const restBaseUrl = new URL('/api/slack-bridge', origin).toString()
+  const gatewayBotEndpoint = new URL('/api/slack-bridge/v10/gateway/bot', origin).toString()
+  const gatewayWsUrl = new URL('/api/slack-bridge/gateway', origin)
+  gatewayWsUrl.protocol = gatewayWsUrl.protocol === 'https:' ? 'wss:' : 'ws:'
+
+  return c.json({
+    rest_base_url: restBaseUrl,
+    gateway_bot_endpoint: gatewayBotEndpoint,
+    gateway_ws_url: gatewayWsUrl.toString(),
+  })
+})
+
+app.all('/api/slack-bridge/v10/*', async (c) => {
+  const stub = c.env.SLACK_BRIDGE.getByName('default')
+  const response = await stub.handleDiscordRest({
+    url: c.req.url,
+    path: c.req.path.replace('/api/slack-bridge', '/api'),
+    method: c.req.method,
+    headers: headersToPairs(c.req.raw.headers),
+    body: await c.req.text(),
+  })
+  return toResponse(response)
+})
+
+app.post('/api/webhooks/slack-bridge', async (c) => {
+  const stub = c.env.SLACK_BRIDGE.getByName('default')
+  const response = await stub.handleSlackWebhook({
+    url: c.req.url,
+    path: '/slack/events',
+    method: c.req.method,
+    headers: headersToPairs(c.req.raw.headers),
+    body: await c.req.text(),
+  })
+  return toResponse(response)
+})
+
+app.all('/api/slack-bridge/gateway', async (c) => {
+  return proxyGatewayToDurableObject({
+    request: c.req.raw,
+    durableObjectNamespace: c.env.SLACK_BRIDGE,
+  })
+})
+
+app.all('/api/slack-bridge/gateway/*', async (c) => {
+  return proxyGatewayToDurableObject({
+    request: c.req.raw,
+    durableObjectNamespace: c.env.SLACK_BRIDGE,
+  })
+})
+
 // Mount better-auth handler for all auth routes.
 // Handles /api/auth/callback/discord (OAuth callback) and other
 // better-auth endpoints (session management, etc.).
@@ -144,3 +199,46 @@ app.get('/api/onboarding/status', async (c) => {
 })
 
 export default app
+
+function toResponse(response: {
+  status: number
+  headers: string[][]
+  body: string
+}): Response {
+  return new Response(response.body, {
+    status: response.status,
+    headers: new Headers(normalizeHeaderPairs(response.headers)),
+  })
+}
+
+function proxyGatewayToDurableObject({
+  request,
+  durableObjectNamespace,
+}: {
+  request: Request
+  durableObjectNamespace: DurableObjectNamespace<SlackBridgeDO>
+}): Promise<Response> {
+  const stub = durableObjectNamespace.getByName('default')
+  const url = new URL(request.url)
+  const rewrittenPath = `${url.pathname.replace('/api/slack-bridge', '')}${url.search}`
+  const durableObjectUrl = new URL(rewrittenPath, 'https://do.local')
+  return stub.fetch(new Request(durableObjectUrl, request))
+}
+
+function headersToPairs(headers: Headers): Array<[string, string]> {
+  const result: Array<[string, string]> = []
+  headers.forEach((value, key) => {
+    result.push([key, value])
+  })
+  return result
+}
+
+function normalizeHeaderPairs(headers: string[][]): Array<[string, string]> {
+  return headers
+    .filter((pair): pair is [string, string] => {
+      return pair.length === 2
+    })
+    .map(([key, value]) => {
+      return [key, value]
+    })
+}

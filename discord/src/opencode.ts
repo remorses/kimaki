@@ -181,6 +181,7 @@ type ServerLifecycleEvent =
 let singleServer: SingleServer | null = null
 let serverRetryCount = 0
 const serverLifecycleListeners = new Set<(event: ServerLifecycleEvent) => void>()
+let processCleanupHandlersRegistered = false
 
 // Cached SDK clients per directory. Each client has a fixed
 // x-opencode-directory header pointing to its project directory.
@@ -199,6 +200,66 @@ export function subscribeOpencodeServerLifecycle(
   return () => {
     serverLifecycleListeners.delete(listener)
   }
+}
+
+function killSingleServerProcessNow({
+  reason,
+}: {
+  reason: string
+}): void {
+  if (!singleServer) {
+    return
+  }
+
+  const serverProcess = singleServer.process
+  const pid = serverProcess.pid
+  if (!pid || serverProcess.killed) {
+    return
+  }
+
+  const killResult = errore.try({
+    try: () => {
+      serverProcess.kill('SIGTERM')
+    },
+    catch: (error) => {
+      return new Error('Failed to send SIGTERM to opencode server', {
+        cause: error,
+      })
+    },
+  })
+
+  if (killResult instanceof Error) {
+    opencodeLogger.warn(
+      `[cleanup:${reason}] ${killResult.message} (pid: ${pid}, port: ${singleServer.port})`,
+    )
+    return
+  }
+
+  opencodeLogger.log(
+    `[cleanup:${reason}] Sent SIGTERM to opencode server (pid: ${pid}, port: ${singleServer.port})`,
+  )
+}
+
+function ensureProcessCleanupHandlersRegistered(): void {
+  if (processCleanupHandlersRegistered) {
+    return
+  }
+  processCleanupHandlersRegistered = true
+
+  opencodeLogger.log('Registering process cleanup handlers for opencode server')
+
+  process.on('exit', () => {
+    killSingleServerProcessNow({ reason: 'process-exit' })
+  })
+
+  // Fallback for short-lived CLI subcommands that call process.exit without
+  // running discord-bot.ts shutdown handlers.
+  process.on('SIGINT', () => {
+    killSingleServerProcessNow({ reason: 'sigint' })
+  })
+  process.on('SIGTERM', () => {
+    killSingleServerProcessNow({ reason: 'sigterm' })
+  })
 }
 
 // ── Resolve opencode binary ──────────────────────────────────────
@@ -346,6 +407,8 @@ async function ensureSingleServer(): Promise<ServerStartError | SingleServer> {
 }
 
 async function startSingleServer(): Promise<ServerStartError | SingleServer> {
+  ensureProcessCleanupHandlersRegistered()
+
   const port = await getOpenPort()
 
   const serveArgs = ['serve', '--port', port.toString()]

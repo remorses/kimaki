@@ -1,5 +1,6 @@
-// usecomputer — fast computer automation CLI for AI agents.
-// Controls any desktop via accessibility APIs, mouse, keyboard, and screen capture.
-// Cross-platform: macOS, Linux, Windows.
+// Public API exports for usecomputer parser, bridge, and CLI modules.
 
-export {}
+export { createCli } from './cli.js'
+export { createBridge, createBridgeFromNative } from './bridge.js'
+export * from './types.js'
+export * from './command-parsers.js'

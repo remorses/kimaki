@@ -29,3 +29,4 @@ export type {
   TypingStateConfig,
 } from './typing-state.js'
 export { SlackBridge } from './node-bridge.js'
+export { createBridgeApp, createServer } from './server.js'
