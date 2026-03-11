@@ -3,6 +3,8 @@
 export interface SlackBridgeConfig {
   /** Slack bot token (xoxb-...) */
   slackBotToken: string
+  /** Optional Discord-facing client token (for example client_id:secret). */
+  discordToken?: string
   /** Slack signing secret for webhook verification */
   slackSigningSecret: string
   /** Slack workspace ID (T...) */
@@ -17,9 +19,36 @@ export interface SlackBridgeConfig {
   restUrlOverride?: string
   /** Optional explicit webhook URL override (/slack/events endpoint). */
   webhookUrlOverride?: string
+  /** Optional authorization callback for REST/Gateway and Slack inbound payloads. */
+  authorize?: BridgeAuthorizeCallback
   /** Override Slack API base URL (for testing with slack-digital-twin) */
   slackApiUrl?: string
 }
+
+export type BridgeAuthorizeKind =
+  | 'gateway-identify'
+  | 'rest'
+  | 'webhook-event'
+  | 'webhook-action'
+
+export interface BridgeAuthorizeContext {
+  kind: BridgeAuthorizeKind
+  token?: string
+  teamId?: string
+  request?: Request
+  path?: string
+  method?: string
+}
+
+export interface BridgeAuthorizeResult {
+  allow: boolean
+  clientId?: string
+  authorizedTeamIds?: string[]
+}
+
+export type BridgeAuthorizeCallback = (
+  context: BridgeAuthorizeContext,
+) => Promise<BridgeAuthorizeResult>
 
 export type SupportedSlackEventType =
   | 'message'

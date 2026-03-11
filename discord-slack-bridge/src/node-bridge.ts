@@ -24,7 +24,7 @@ export class SlackBridge {
   constructor(config: SlackBridgeConfig) {
     this.config = config
     this._port = config.port ?? 3710
-    this.discordToken = config.slackBotToken
+    this.discordToken = config.discordToken ?? config.slackBotToken
     this.slack = new WebClient(config.slackBotToken, {
       ...(config.slackApiUrl ? { slackApiUrl: config.slackApiUrl } : {}),
     })
@@ -83,6 +83,7 @@ export class SlackBridge {
       port: this._port,
       gatewayUrlOverride: this.config.gatewayUrlOverride,
       publicBaseUrl: this.config.publicBaseUrl,
+      authorize: this.config.authorize,
     })
 
     await startServer(this.server, this._port)

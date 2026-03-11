@@ -72,7 +72,11 @@ import type {
   NormalizedSlackInteractivePayload,
   NormalizedSlackViewSubmissionPayload,
   NormalizedSlackViewSubmissionStateValue,
+  SlackBlockActionsPayload,
+  SlackInteractivePayload,
+  SlackViewSubmissionPayload,
   SupportedSlackEventType,
+  BridgeAuthorizeCallback,
 } from './types.js'
 
 export interface ServerConfig {
@@ -85,6 +89,7 @@ export interface ServerConfig {
   port: number
   gatewayUrlOverride?: string
   publicBaseUrl?: string
+  authorize?: BridgeAuthorizeCallback
 }
 
 export interface ServerComponents {
@@ -171,6 +176,7 @@ export function createServer(config: ServerConfig): ServerComponents {
     signingSecret,
     workspaceId,
     port,
+    authorize,
   } = config
 
   // Pending interactions awaiting discord.js responses
@@ -221,6 +227,15 @@ export function createServer(config: ServerConfig): ServerComponents {
 
       // Slash command
       if (params.has('command') && !params.has('payload')) {
+        const allowSlashAction = await authorizeSlackInbound({
+          authorize,
+          kind: 'webhook-action',
+          teamId: params.get('team_id') ?? undefined,
+          request,
+        })
+        if (!allowSlashAction) {
+          return errorJsonResponse({ status: 403, error: 'unauthorized_team' })
+        }
         handleSlashCommand(params)
         return new Response('', { status: 200 })
       }
@@ -228,6 +243,15 @@ export function createServer(config: ServerConfig): ServerComponents {
       // Interactive payload (button clicks, selects)
       const payloadStr = params.get('payload')
       if (payloadStr) {
+        const allowInteractiveAction = await authorizeSlackInbound({
+          authorize,
+          kind: 'webhook-action',
+          teamId: readInteractiveTeamId(payloadStr),
+          request,
+        })
+        if (!allowInteractiveAction) {
+          return errorJsonResponse({ status: 403, error: 'unauthorized_team' })
+        }
         handleInteractivePayload(payloadStr)
         return new Response('', { status: 200 })
       }
@@ -247,8 +271,20 @@ export function createServer(config: ServerConfig): ServerComponents {
     if (!normalizedEnvelope) {
       console.warn('Unsupported Slack webhook payload', {
         payloadType: isRecord(payload) ? readString(payload, 'type') : undefined,
+        contentType,
+        bodyPreview: body.slice(0, 300),
       })
       return errorJsonResponse({ status: 400, error: 'unsupported_event_payload' })
+    }
+
+    const allowEvent = await authorizeSlackInbound({
+      authorize,
+      kind: 'webhook-event',
+      teamId: readSlackEventTeamId(payload),
+      request,
+    })
+    if (!allowEvent) {
+      return errorJsonResponse({ status: 403, error: 'unauthorized_team' })
     }
 
     // URL verification challenge
@@ -1508,6 +1544,21 @@ export function createServer(config: ServerConfig): ServerComponents {
   // error responses instead of generic 500s.
   const httpServer = http.createServer(async (req, res) => {
     try {
+      const unauthorizedResponse = await authorizeIncomingRestRequest({
+        authorize,
+        request: req,
+        workspaceId,
+      })
+      if (unauthorizedResponse) {
+        res.writeHead(unauthorizedResponse.status, {
+          'content-type': 'application/json',
+        })
+        res.end(JSON.stringify({
+          code: unauthorizedResponse.code,
+          message: unauthorizedResponse.message,
+        }))
+        return
+      }
       await app.handleForNode(req, res)
     } catch (err) {
       if (err instanceof rest.DiscordApiError) {
@@ -1594,6 +1645,8 @@ export function createServer(config: ServerConfig): ServerComponents {
     port,
     loadState: loadGatewayState,
     expectedToken: botToken,
+    authorize,
+    workspaceId,
     gatewayUrlOverride: resolveGatewayUrl({
       gatewayUrlOverride: config.gatewayUrlOverride,
       publicBaseUrl: config.publicBaseUrl,
@@ -1670,6 +1723,227 @@ function buildWebSocketUrlFromHttpBase({
   const protocol = baseUrl.protocol === 'https:' ? 'wss:' : 'ws:'
   const wsBase = `${protocol}//${baseUrl.host}`
   return new URL(path, wsBase).toString()
+}
+
+async function authorizeIncomingRestRequest({
+  authorize,
+  request,
+  workspaceId,
+}: {
+  authorize?: BridgeAuthorizeCallback
+  request: http.IncomingMessage
+  workspaceId: string
+}): Promise<
+  | { status: number; code: number; message: string }
+  | undefined
+> {
+  if (!authorize) {
+    return undefined
+  }
+
+  const method = request.method ?? 'GET'
+  const pathname = new URL(request.url ?? '/', 'http://localhost').pathname
+  if (!pathname.startsWith('/api/v10/')) {
+    return undefined
+  }
+  if (isRestRouteAllowedWithoutAuth({ method, pathname })) {
+    return undefined
+  }
+
+  const token = extractAuthorizationToken(request.headers.authorization)
+  if (!token) {
+    return {
+      status: 401,
+      code: 0,
+      message: 'Missing authorization token',
+    }
+  }
+
+  const result = await authorize({
+    kind: 'rest',
+    token,
+    teamId: workspaceId,
+    path: pathname,
+    method,
+  })
+  if (!result.allow) {
+    return {
+      status: 401,
+      code: 0,
+      message: 'Authentication failed',
+    }
+  }
+
+  if (
+    result.authorizedTeamIds &&
+    !result.authorizedTeamIds.includes(workspaceId)
+  ) {
+    return {
+      status: 403,
+      code: 50001,
+      message: 'Missing access to Slack workspace',
+    }
+  }
+
+  return undefined
+}
+
+function isRestRouteAllowedWithoutAuth({
+  method,
+  pathname,
+}: {
+  method: string
+  pathname: string
+}): boolean {
+  const routeSegments = pathname.split('/').filter((segment) => {
+    return segment.length > 0
+  })
+  if (routeSegments[0] !== 'api' || routeSegments[1] !== 'v10') {
+    return false
+  }
+
+  const route = routeSegments.slice(2)
+  const normalizedMethod = method.toUpperCase()
+  if (route[0] === 'interactions') {
+    return (
+      normalizedMethod === 'POST' &&
+      route[1] !== undefined &&
+      route[1].length > 0 &&
+      route[2] !== undefined &&
+      route[2].length > 0 &&
+      route[3] === 'callback' &&
+      route.length === 4
+    )
+  }
+  if (route[0] === 'webhooks') {
+    return isTokenizedWebhookRouteAllowedWithoutAuth({
+      method: normalizedMethod,
+      route,
+    })
+  }
+
+  return false
+}
+
+function isTokenizedWebhookRouteAllowedWithoutAuth({
+  method,
+  route,
+}: {
+  method: string
+  route: string[]
+}): boolean {
+  if (!(route[1] && route[2])) {
+    return false
+  }
+
+  if (route.length === 3) {
+    return method === 'POST'
+  }
+
+  if (
+    route.length === 5 &&
+    route[3] === 'messages' &&
+    route[4] !== undefined &&
+    route[4].length > 0
+  ) {
+    return method === 'GET' || method === 'PATCH' || method === 'DELETE'
+  }
+
+  return (
+    route.length >= 4 &&
+    route[3] === 'messages' &&
+    method === 'POST'
+  )
+}
+
+function extractAuthorizationToken(
+  authorizationHeader: string | string[] | undefined,
+): string | undefined {
+  const rawValue = Array.isArray(authorizationHeader)
+    ? authorizationHeader[0]
+    : authorizationHeader
+  if (!rawValue) {
+    return undefined
+  }
+  const parts = rawValue.trim().split(/\s+/)
+  const token = parts[parts.length - 1]
+  return token || undefined
+}
+
+async function authorizeSlackInbound({
+  authorize,
+  kind,
+  teamId,
+  request,
+}: {
+  authorize?: BridgeAuthorizeCallback
+  kind: 'webhook-event' | 'webhook-action'
+  teamId?: string
+  request: Request
+}): Promise<boolean> {
+  if (!authorize) {
+    return true
+  }
+  const result = await authorize({
+    kind,
+    teamId,
+    request,
+  })
+  if (!result.allow) {
+    return false
+  }
+  if (teamId && result.authorizedTeamIds) {
+    return result.authorizedTeamIds.includes(teamId)
+  }
+  return true
+}
+
+function readInteractiveTeamId(payloadStr: string): string | undefined {
+  try {
+    const payload = JSON.parse(payloadStr)
+    if (!isRecord(payload)) {
+      return undefined
+    }
+    const teamRecord = readRecord(payload, 'team')
+    if (teamRecord) {
+      return readString(teamRecord, 'id')
+    }
+    return undefined
+  } catch {
+    return undefined
+  }
+}
+
+function readSlackEventTeamId(payload: unknown): string | undefined {
+  if (!isRecord(payload)) {
+    return undefined
+  }
+
+  const topLevelTeamId = readString(payload, 'team_id')
+  if (topLevelTeamId) {
+    return topLevelTeamId
+  }
+
+  const teamRecord = readRecord(payload, 'team')
+  if (teamRecord) {
+    const nestedTeamId = readString(teamRecord, 'id')
+    if (nestedTeamId) {
+      return nestedTeamId
+    }
+  }
+
+  const authorizations = readArray(payload, 'authorizations')
+  for (const authorization of authorizations) {
+    if (!isRecord(authorization)) {
+      continue
+    }
+    const teamId = readString(authorization, 'team_id')
+    if (teamId) {
+      return teamId
+    }
+  }
+
+  return undefined
 }
 
 /** Evict oldest entries from a Set when it exceeds maxSize. */

@@ -4,6 +4,7 @@
 
 import { Client, GatewayIntentBits, Partials } from 'discord.js'
 import { SlackBridge } from '../src/index.js'
+import type { SlackBridgeConfig } from '../src/index.js'
 import { SlackDigitalTwin } from 'slack-digital-twin/src'
 import type { SlackDigitalTwinChannelOption, SlackDigitalTwinUserOption } from 'slack-digital-twin/src'
 
@@ -19,6 +20,7 @@ export interface E2ESetupOptions {
   channels?: SlackDigitalTwinChannelOption[]
   users?: SlackDigitalTwinUserOption[]
   signingSecret?: string
+  bridgeConfig?: Partial<SlackBridgeConfig>
 }
 
 export async function setupE2E(options: E2ESetupOptions = {}): Promise<E2EContext> {
@@ -41,6 +43,7 @@ export async function setupE2E(options: E2ESetupOptions = {}): Promise<E2EContex
     workspaceId: twin.workspaceId,
     port: 0, // OS-assigned for parallel test safety
     slackApiUrl: twin.apiUrl,
+    ...options.bridgeConfig,
   })
   await bridge.start()
 

@@ -27,6 +27,7 @@ import type {
   APIGuildScheduledEvent,
   APISoundboardSound,
 } from 'discord-api-types/v10'
+import type { BridgeAuthorizeCallback } from './types.js'
 
 interface ConnectedClient {
   ws: WebSocket
@@ -34,6 +35,8 @@ interface ConnectedClient {
   sequence: number
   identified: boolean
   intents: number
+  clientId?: string
+  authorizedTeamIds?: Set<string>
 }
 
 export interface GatewayGuildState {
@@ -57,6 +60,8 @@ export class SlackBridgeGateway {
   private port: number
   private expectedToken: string
   private gatewayUrlOverride?: string
+  private authorize?: BridgeAuthorizeCallback
+  private workspaceId: string
 
   constructor({
     httpServer,
@@ -64,17 +69,23 @@ export class SlackBridgeGateway {
     loadState,
     expectedToken,
     gatewayUrlOverride,
+    authorize,
+    workspaceId,
   }: {
     httpServer: http.Server
     port: number
     loadState: () => Promise<GatewayState>
     expectedToken: string
     gatewayUrlOverride?: string
+    authorize?: BridgeAuthorizeCallback
+    workspaceId: string
   }) {
     this.port = port
     this.loadState = loadState
     this.expectedToken = expectedToken
     this.gatewayUrlOverride = gatewayUrlOverride
+    this.authorize = authorize
+    this.workspaceId = workspaceId
     this.wss = new WebSocketServer({ noServer: true })
     this.wss.on('connection', (ws) => {
       this.handleConnection(ws)
@@ -96,7 +107,7 @@ export class SlackBridgeGateway {
 
   broadcast<T>(event: string, data: T): void {
     for (const client of this.clients) {
-      if (client.identified) {
+      if (client.identified && this.isClientAuthorizedForTeam(client, this.workspaceId)) {
         this.sendDispatch(client, event, data)
       }
     }
@@ -169,6 +180,8 @@ export class SlackBridgeGateway {
       sequence: 0,
       identified: false,
       intents: 0,
+      authorizedTeamIds: undefined,
+      clientId: undefined,
     }
     this.clients.push(client)
     this.sendHello(client)
@@ -202,10 +215,15 @@ export class SlackBridgeGateway {
       case GatewayOpcodes.Identify: {
         const { token, intents } = payload.d
         const cleanToken = token.replace(/^Bot\s+/i, '')
-        if (cleanToken !== this.expectedToken) {
+        const authResult = await this.authenticateGatewayIdentify(cleanToken)
+        if (!authResult.allow) {
           client.ws.close(4004, 'Authentication failed')
           return
         }
+        client.clientId = authResult.clientId
+        client.authorizedTeamIds = authResult.authorizedTeamIds
+          ? new Set(authResult.authorizedTeamIds)
+          : undefined
         client.identified = true
         client.intents = intents
         await this.sendReadySequence(client)
@@ -261,6 +279,40 @@ export class SlackBridgeGateway {
       }
       this.sendDispatch(client, GatewayDispatchEvents.GuildCreate, guildData)
     }
+  }
+
+  private async authenticateGatewayIdentify(token: string): Promise<{
+    allow: boolean
+    clientId?: string
+    authorizedTeamIds?: string[]
+  }> {
+    if (this.authorize) {
+      return this.authorize({
+        kind: 'gateway-identify',
+        token,
+        teamId: this.workspaceId,
+      })
+    }
+
+    if (token !== this.expectedToken) {
+      return { allow: false }
+    }
+
+    return {
+      allow: true,
+      clientId: 'bot-token',
+      authorizedTeamIds: [this.workspaceId],
+    }
+  }
+
+  private isClientAuthorizedForTeam(
+    client: ConnectedClient,
+    teamId: string,
+  ): boolean {
+    if (!client.authorizedTeamIds) {
+      return true
+    }
+    return client.authorizedTeamIds.has(teamId)
   }
 }
 
