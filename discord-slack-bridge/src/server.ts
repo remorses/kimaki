@@ -10,6 +10,7 @@ import type {
   ConversationsListArguments,
   ConversationsRepliesArguments,
   UsersInfoArguments,
+  ViewsOpenArguments,
   WebClient,
 } from '@slack/web-api'
 import { Spiceflow } from 'spiceflow'
@@ -197,6 +198,10 @@ export function createServer(config: ServerConfig): ServerComponents {
   const knownThreads = new Set<string>()
   const knownThreadChannels = new Map<string, APIChannel>()
   const applicationCommandRegistry = new Map<string, APIApplicationCommand[]>()
+  const applicationCommandInputRegistry = new Map<
+    string,
+    NormalizedApplicationCommandInput[]
+  >()
   const typingCoordinator = createTypingCoordinator({
     setStatus: ({ threadChannelId, statusText }) => {
       return rest.setThreadTypingStatus({
@@ -403,6 +408,7 @@ export function createServer(config: ServerConfig): ServerComponents {
       })
     })
     applicationCommandRegistry.set(key, stored)
+    applicationCommandInputRegistry.set(key, commands)
     return withRateLimitHeaders(Response.json(stored))
   })
 
@@ -440,6 +446,7 @@ export function createServer(config: ServerConfig): ServerComponents {
       })
     })
     applicationCommandRegistry.set(key, stored)
+    applicationCommandInputRegistry.set(key, commands)
     return withRateLimitHeaders(Response.json(stored))
   })
 
@@ -1376,11 +1383,42 @@ export function createServer(config: ServerConfig): ServerComponents {
 
   function handleSlashCommand(params: URLSearchParams): void {
     const command = params.get('command') ?? ''
-    const text = params.get('text') ?? ''
     const userId = params.get('user_id') ?? ''
     const channelId = params.get('channel_id') ?? ''
     const triggerId = params.get('trigger_id') ?? ''
     const responseUrl = params.get('response_url') ?? ''
+
+    const commandName = command.replace(/^\//, '')
+    const resolvedCommand = findRegisteredCommandByName({
+      commandName,
+      applicationId: botUserId,
+      guildId: workspaceId,
+      applicationCommandRegistry,
+    })
+    const resolvedCommandInput = findRegisteredCommandInputByName({
+      commandName,
+      applicationId: botUserId,
+      guildId: workspaceId,
+      applicationCommandInputRegistry,
+    })
+
+    if (triggerId) {
+      const modalPayload = buildSlashCommandModalPayload({
+        commandName,
+        channelId,
+        commandInput: resolvedCommandInput,
+      })
+      void slack.views.open({
+        trigger_id: triggerId,
+        view: modalPayload.view,
+      }).catch((error) => {
+        console.warn('Failed to open slash command modal', {
+          commandName,
+          error: getErrorMessage(error),
+        })
+      })
+      return
+    }
 
     const interactionId = crypto.randomUUID()
     const interactionToken = crypto.randomUUID()
@@ -1418,12 +1456,10 @@ export function createServer(config: ServerConfig): ServerComponents {
         mute: false,
       },
       data: {
-        id: interactionId,
-        name: command.replace(/^\//, ''),
+        id: resolvedCommand?.id ?? interactionId,
+        name: commandName,
         type: ApplicationCommandType.ChatInput,
-        options: text
-          ? [{ name: 'text', type: ApplicationCommandOptionType.String, value: text }]
-          : [],
+        options: [],
       },
     })
   }
@@ -1570,6 +1606,67 @@ export function createServer(config: ServerConfig): ServerComponents {
     const modalInteractionId = crypto.randomUUID()
     const modalInteractionToken = crypto.randomUUID()
     const modalChannelId = normalizedPayload.channelId ?? ''
+
+    const slashModalMetadata = parseSlashCommandModalMetadata(
+      normalizedPayload.privateMetadata,
+    )
+
+    if (slashModalMetadata) {
+      const commandChannelId = modalChannelId || slashModalMetadata.channelId
+      const options = buildInteractionOptionsFromModalSubmission({
+        metadata: slashModalMetadata,
+        stateValues: normalizedPayload.stateValues,
+      })
+      const registeredCommand = findRegisteredCommandByName({
+        commandName: slashModalMetadata.commandName,
+        applicationId: botUserId,
+        guildId: workspaceId,
+        applicationCommandRegistry,
+      })
+
+      pendingInteractions.set(modalInteractionId, {
+        id: modalInteractionId,
+        token: modalInteractionToken,
+        channelId: commandChannelId,
+        guildId: workspaceId,
+        triggerId: normalizedPayload.triggerId,
+        responseUrl: normalizedPayload.responseUrl,
+        acknowledged: false,
+      })
+
+      gateway.broadcast(GatewayDispatchEvents.InteractionCreate, {
+        id: modalInteractionId,
+        application_id: botUserId,
+        type: InteractionType.ApplicationCommand,
+        token: modalInteractionToken,
+        version: 1,
+        entitlements: [],
+        channel_id: commandChannelId,
+        guild_id: workspaceId,
+        member: {
+          user: {
+            id: normalizedPayload.user.id,
+            username:
+              normalizedPayload.user.username ??
+              normalizedPayload.user.name ??
+              'unknown',
+            discriminator: DISCORD_DEFAULT_DISCRIMINATOR,
+            avatar: null,
+          },
+          roles: [],
+          joined_at: new Date().toISOString(),
+          deaf: false,
+          mute: false,
+        },
+        data: {
+          id: registeredCommand?.id ?? modalInteractionId,
+          name: slashModalMetadata.commandName,
+          type: ApplicationCommandType.ChatInput,
+          options,
+        },
+      })
+      return
+    }
 
     console.log('Slack interactive view_submission received', {
       channelId: modalChannelId,
@@ -3019,6 +3116,12 @@ function normalizeSupportedSlackActionType(
   if (value === 'multi_channels_select') {
     return value
   }
+  if (value === 'external_select') {
+    return value
+  }
+  if (value === 'multi_external_select') {
+    return value
+  }
   return undefined
 }
 
@@ -3292,6 +3395,19 @@ type NormalizedApplicationCommandInput = {
   defaultMemberPermissions?: string | null
   dmPermission?: boolean
   nsfw?: boolean
+  options: NormalizedApplicationCommandOptionInput[]
+}
+
+type NormalizedApplicationCommandOptionInput = {
+  type: ApplicationCommandOptionType
+  name: string
+  description: string
+  required?: boolean
+  autocomplete?: boolean
+  choices: Array<{
+    name: string
+    value: string
+  }>
 }
 
 function normalizeApplicationCommandsBody(
@@ -3317,6 +3433,9 @@ function normalizeApplicationCommandsBody(
           ? rawType
           : ApplicationCommandType.ChatInput
       const description = readString(entry, 'description') ?? ''
+      const options = normalizeApplicationCommandOptions(
+        readArray(entry, 'options'),
+      )
       return {
         name,
         description,
@@ -3324,9 +3443,93 @@ function normalizeApplicationCommandsBody(
         defaultMemberPermissions: readString(entry, 'default_member_permissions') ?? null,
         dmPermission: readBoolean(entry, 'dm_permission'),
         nsfw: readBoolean(entry, 'nsfw'),
+        options,
       } satisfies NormalizedApplicationCommandInput
     })
     .filter(isDefined)
+}
+
+function normalizeApplicationCommandOptions(
+  value: unknown[],
+): NormalizedApplicationCommandOptionInput[] {
+  return value
+    .map((entry) => {
+      if (!isRecord(entry)) {
+        return undefined
+      }
+      const name = readString(entry, 'name')
+      const description = readString(entry, 'description')
+      const rawType = readNumber(entry, 'type')
+      if (!(name && description && rawType)) {
+        return undefined
+      }
+      const type = normalizeCommandOptionType(rawType)
+      if (!type) {
+        return undefined
+      }
+
+      const choices = normalizeApplicationCommandOptionChoices(
+        readArray(entry, 'choices'),
+      )
+
+      return {
+        type,
+        name,
+        description,
+        required: readBoolean(entry, 'required'),
+        autocomplete: readBoolean(entry, 'autocomplete'),
+        choices,
+      } satisfies NormalizedApplicationCommandOptionInput
+    })
+    .filter(isDefined)
+}
+
+function normalizeApplicationCommandOptionChoices(
+  value: unknown[],
+): Array<{ name: string; value: string }> {
+  return value
+    .map((entry) => {
+      if (!isRecord(entry)) {
+        return undefined
+      }
+      const name = readString(entry, 'name')
+      const rawValue = entry['value']
+      const valueText = (() => {
+        if (typeof rawValue === 'string') {
+          return rawValue
+        }
+        if (typeof rawValue === 'number' || typeof rawValue === 'boolean') {
+          return String(rawValue)
+        }
+        return undefined
+      })()
+      if (!(name && valueText)) {
+        return undefined
+      }
+      return {
+        name,
+        value: valueText,
+      }
+    })
+    .filter(isDefined)
+}
+
+function normalizeCommandOptionType(
+  value: number,
+): ApplicationCommandOptionType | undefined {
+  if (
+    value === ApplicationCommandOptionType.String ||
+    value === ApplicationCommandOptionType.Integer ||
+    value === ApplicationCommandOptionType.Boolean ||
+    value === ApplicationCommandOptionType.User ||
+    value === ApplicationCommandOptionType.Channel ||
+    value === ApplicationCommandOptionType.Role ||
+    value === ApplicationCommandOptionType.Mentionable ||
+    value === ApplicationCommandOptionType.Number
+  ) {
+    return value
+  }
+  return undefined
 }
 
 function createApplicationCommandRecord({
@@ -3370,6 +3573,411 @@ function getGuildCommandRegistryKey({
   guildId: string
 }): string {
   return `guild:${applicationId}:${guildId}`
+}
+
+type SlashCommandModalMetadata = {
+  commandName: string
+  channelId: string
+  options: Array<{
+    name: string
+    type: ApplicationCommandOptionType
+  }>
+}
+
+type SlackPlainTextObject = {
+  type: 'plain_text'
+  text: string
+}
+
+type SlackStaticOption = {
+  text: SlackPlainTextObject
+  value: string
+}
+
+type SlackCommandModalElement =
+  | {
+      type: 'plain_text_input'
+      action_id: string
+      multiline: boolean
+      placeholder: SlackPlainTextObject
+    }
+  | {
+      type: 'static_select'
+      action_id: string
+      placeholder: SlackPlainTextObject
+      options: SlackStaticOption[]
+    }
+  | {
+      type: 'external_select'
+      action_id: string
+      min_query_length: number
+      placeholder: SlackPlainTextObject
+    }
+
+type SlackCommandModalBlock = {
+  type: 'input'
+  block_id: string
+  optional: boolean
+  label: SlackPlainTextObject
+  element: SlackCommandModalElement
+}
+
+function findRegisteredCommandByName({
+  commandName,
+  applicationId,
+  guildId,
+  applicationCommandRegistry,
+}: {
+  commandName: string
+  applicationId: string
+  guildId: string
+  applicationCommandRegistry: Map<string, APIApplicationCommand[]>
+}): APIApplicationCommand | undefined {
+  const guildKey = getGuildCommandRegistryKey({
+    applicationId,
+    guildId,
+  })
+  const guildCommand = (applicationCommandRegistry.get(guildKey) ?? []).find(
+    (entry) => {
+      return entry.name === commandName
+    },
+  )
+  if (guildCommand) {
+    return guildCommand
+  }
+
+  const globalKey = getGlobalCommandRegistryKey({ applicationId })
+  return (applicationCommandRegistry.get(globalKey) ?? []).find((entry) => {
+    return entry.name === commandName
+  })
+}
+
+function findRegisteredCommandInputByName({
+  commandName,
+  applicationId,
+  guildId,
+  applicationCommandInputRegistry,
+}: {
+  commandName: string
+  applicationId: string
+  guildId: string
+  applicationCommandInputRegistry: Map<string, NormalizedApplicationCommandInput[]>
+}): NormalizedApplicationCommandInput | undefined {
+  const guildKey = getGuildCommandRegistryKey({
+    applicationId,
+    guildId,
+  })
+  const guildCommand = (applicationCommandInputRegistry.get(guildKey) ?? []).find(
+    (entry) => {
+      return entry.name === commandName
+    },
+  )
+  if (guildCommand) {
+    return guildCommand
+  }
+
+  const globalKey = getGlobalCommandRegistryKey({ applicationId })
+  return (applicationCommandInputRegistry.get(globalKey) ?? []).find((entry) => {
+    return entry.name === commandName
+  })
+}
+
+function buildSlashCommandModalPayload({
+  commandName,
+  channelId,
+  commandInput,
+}: {
+  commandName: string
+  channelId: string
+  commandInput: NormalizedApplicationCommandInput | undefined
+}): {
+  view: ViewsOpenArguments['view']
+} {
+  const commandOptions = commandInput?.options ?? []
+  const metadataOptions = commandOptions.map((option) => {
+    return {
+      name: option.name,
+      type: option.type,
+    }
+  })
+  const metadata: SlashCommandModalMetadata = {
+    commandName,
+    channelId,
+    options: metadataOptions,
+  }
+
+  const blocks =
+    commandOptions.length > 0
+      ? commandOptions.map((option) => {
+        return buildModalBlockFromCommandOption(option)
+      })
+      : [buildFallbackArgumentsBlock()]
+
+  return {
+    view: {
+      type: 'modal',
+      callback_id: commandName,
+      title: {
+        type: 'plain_text',
+        text: normalizeModalLabelText(commandName, 'Command').slice(0, 24),
+      },
+      submit: {
+        type: 'plain_text',
+        text: 'Run',
+      },
+      close: {
+        type: 'plain_text',
+        text: 'Cancel',
+      },
+      private_metadata: JSON.stringify(metadata),
+      blocks,
+    },
+  }
+}
+
+function buildModalBlockFromCommandOption(
+  option: NormalizedApplicationCommandOptionInput,
+): SlackCommandModalBlock {
+  if (option.choices.length > 0) {
+    return {
+      type: 'input',
+      block_id: option.name,
+      optional: option.required !== true,
+      label: {
+        type: 'plain_text',
+        text: normalizeModalLabelText(option.description, option.name),
+      },
+      element: {
+        type: 'static_select',
+        action_id: option.name,
+        placeholder: {
+          type: 'plain_text',
+          text: normalizeModalLabelText(option.name, option.name),
+        },
+        options: option.choices.map((choice) => {
+          return {
+            text: {
+              type: 'plain_text',
+              text: normalizeModalLabelText(choice.name, choice.name),
+            },
+            value: choice.value,
+          }
+        }),
+      },
+    }
+  }
+
+  if (option.autocomplete) {
+    return {
+      type: 'input',
+      block_id: option.name,
+      optional: option.required !== true,
+      label: {
+        type: 'plain_text',
+        text: normalizeModalLabelText(option.description, option.name),
+      },
+      element: {
+        type: 'external_select',
+        action_id: option.name,
+        min_query_length: 1,
+        placeholder: {
+          type: 'plain_text',
+          text: normalizeModalLabelText(option.name, option.name),
+        },
+      },
+    }
+  }
+
+  if (option.type === ApplicationCommandOptionType.Boolean) {
+    return {
+      type: 'input',
+      block_id: option.name,
+      optional: option.required !== true,
+      label: {
+        type: 'plain_text',
+        text: normalizeModalLabelText(option.description, option.name),
+      },
+      element: {
+        type: 'static_select',
+        action_id: option.name,
+        placeholder: {
+          type: 'plain_text',
+          text: normalizeModalLabelText(option.name, option.name),
+        },
+        options: [
+          {
+            text: { type: 'plain_text', text: 'true' },
+            value: 'true',
+          },
+          {
+            text: { type: 'plain_text', text: 'false' },
+            value: 'false',
+          },
+        ],
+      },
+    }
+  }
+
+  return {
+    type: 'input',
+    block_id: option.name,
+    optional: option.required !== true,
+    label: {
+      type: 'plain_text',
+      text: normalizeModalLabelText(option.description, option.name),
+    },
+    element: {
+      type: 'plain_text_input',
+      action_id: option.name,
+      multiline: false,
+      placeholder: {
+        type: 'plain_text',
+        text: normalizeModalLabelText(option.name, option.name),
+      },
+    },
+  }
+}
+
+function buildFallbackArgumentsBlock(): SlackCommandModalBlock {
+  return {
+    type: 'input',
+    block_id: 'arguments',
+    optional: true,
+    label: {
+      type: 'plain_text',
+      text: 'Arguments',
+    },
+    element: {
+      type: 'plain_text_input',
+      action_id: 'arguments',
+      multiline: true,
+      placeholder: {
+        type: 'plain_text',
+        text: 'Optional arguments',
+      },
+    },
+  }
+}
+
+function normalizeModalLabelText(value: string, fallback: string): string {
+  const trimmed = value.trim()
+  if (!trimmed) {
+    return fallback.slice(0, 75)
+  }
+  return trimmed.slice(0, 75)
+}
+
+function parseSlashCommandModalMetadata(
+  value: string | undefined,
+): SlashCommandModalMetadata | undefined {
+  if (!value) {
+    return undefined
+  }
+  try {
+    const parsed = JSON.parse(value)
+    if (!isRecord(parsed)) {
+      return undefined
+    }
+    const commandName = readString(parsed, 'commandName')
+    const channelId = readString(parsed, 'channelId')
+    const options = readArray(parsed, 'options')
+      .map((entry) => {
+        if (!isRecord(entry)) {
+          return undefined
+        }
+        const name = readString(entry, 'name')
+        const typeValue = readNumber(entry, 'type')
+        if (!(name && typeValue)) {
+          return undefined
+        }
+        const type = normalizeCommandOptionType(typeValue)
+        if (!type) {
+          return undefined
+        }
+        return {
+          name,
+          type,
+        }
+      })
+      .filter(isDefined)
+
+    if (!(commandName && channelId)) {
+      return undefined
+    }
+
+    return {
+      commandName,
+      channelId,
+      options,
+    }
+  } catch {
+    return undefined
+  }
+}
+
+function buildInteractionOptionsFromModalSubmission({
+  metadata,
+  stateValues,
+}: {
+  metadata: SlashCommandModalMetadata
+  stateValues: NormalizedSlackViewSubmissionStateValue[]
+}): Array<{ name: string; type: ApplicationCommandOptionType; value: string | number | boolean }> {
+  const valuesByName = stateValues.reduce<Record<string, string>>((acc, entry) => {
+    const key = entry.actionId || entry.blockId
+    if (!key) {
+      return acc
+    }
+    acc[key] = entry.value
+    return acc
+  }, {})
+
+  return metadata.options
+    .map((option) => {
+      const rawValue = valuesByName[option.name]
+      if (!rawValue) {
+        return undefined
+      }
+      const parsedValue = parseInteractionOptionValue({
+        type: option.type,
+        rawValue,
+      })
+      if (parsedValue === undefined) {
+        return undefined
+      }
+      return {
+        name: option.name,
+        type: option.type,
+        value: parsedValue,
+      }
+    })
+    .filter(isDefined)
+}
+
+function parseInteractionOptionValue({
+  type,
+  rawValue,
+}: {
+  type: ApplicationCommandOptionType
+  rawValue: string
+}): string | number | boolean | undefined {
+  if (type === ApplicationCommandOptionType.Integer) {
+    const parsed = Number.parseInt(rawValue, 10)
+    return Number.isFinite(parsed) ? parsed : undefined
+  }
+  if (type === ApplicationCommandOptionType.Number) {
+    const parsed = Number.parseFloat(rawValue)
+    return Number.isFinite(parsed) ? parsed : undefined
+  }
+  if (type === ApplicationCommandOptionType.Boolean) {
+    if (rawValue === 'true') {
+      return true
+    }
+    if (rawValue === 'false') {
+      return false
+    }
+    return undefined
+  }
+  return rawValue
 }
 
 function mergeActiveThreadsWithKnown({
@@ -3635,6 +4243,12 @@ function slackActionTypeToDiscordComponentType(
     return ComponentType.StringSelect
   }
   if (actionType === 'multi_static_select') {
+    return ComponentType.StringSelect
+  }
+  if (actionType === 'external_select') {
+    return ComponentType.StringSelect
+  }
+  if (actionType === 'multi_external_select') {
     return ComponentType.StringSelect
   }
   if (actionType === 'users_select') {

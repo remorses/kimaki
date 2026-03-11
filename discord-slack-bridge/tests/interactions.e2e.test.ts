@@ -13,6 +13,8 @@ import {
 import { afterAll, beforeAll, describe, expect, test } from 'vitest'
 import { sendInteractivePayload } from 'slack-digital-twin/src'
 import type { SlackMessage } from 'slack-digital-twin/src'
+import { ComponentType } from 'discord-api-types/v10'
+import { encodeComponentActionId } from '../src/component-id-codec.js'
 import { setupE2E, teardownE2E, waitFor, type E2EContext } from './e2e-setup.js'
 
 describe('interactive payloads: Slack -> Discord', () => {
@@ -357,6 +359,93 @@ describe('interactive payloads: Slack -> Discord', () => {
       },
       label: 'select reply posted to slack',
     })
+  })
+
+  test('external select block action maps to StringSelectMenuInteraction values', async () => {
+    const channelId = ctx.twin.resolveChannelId('interactions')
+    const sourceMessage = await ctx.twin.user('alice').sendMessage({
+      channel: channelId,
+      text: 'external select source',
+    })
+
+    const webhookConfig = ctx.twin.webhookSenderConfig
+    expect(webhookConfig).toBeDefined()
+    if (!webhookConfig) {
+      return
+    }
+
+    let received: StringSelectMenuInteraction | undefined
+    const onInteraction = (interaction: Interaction): void => {
+      if (!interaction.isStringSelectMenu()) {
+        return
+      }
+      received = interaction
+    }
+    ctx.client.on('interactionCreate', onInteraction)
+
+    const actionId = encodeComponentActionId({
+      componentType: ComponentType.StringSelect,
+      customId: 'agent-autocomplete',
+    })
+
+    await sendInteractivePayload({
+      config: webhookConfig,
+      payload: {
+        type: 'block_actions',
+        user: {
+          id: ctx.twin.resolveUserId('alice'),
+          username: 'alice',
+          name: 'alice',
+        },
+        channel: { id: channelId },
+        message: { ts: sourceMessage.ts },
+        container: {
+          type: 'message',
+          channel_id: channelId,
+          message_ts: sourceMessage.ts,
+        },
+        trigger_id: 'trigger-external-select',
+        response_url: 'https://example.invalid/response',
+        actions: [
+          {
+            action_id: actionId,
+            type: 'external_select',
+            selected_option: {
+              value: 'plan',
+              text: {
+                type: 'plain_text',
+                text: 'plan',
+              },
+            },
+            block_id: 'b-external-select',
+            action_ts: '1700000000.000030',
+          },
+        ],
+      },
+    })
+
+    const interaction = await waitFor({
+      fn: async () => {
+        return received
+      },
+      label: 'external select interaction event',
+    })
+
+    ctx.client.off('interactionCreate', onInteraction)
+
+    expect({
+      customId: interaction.customId,
+      values: interaction.values,
+      componentType: interaction.componentType,
+    }).toMatchInlineSnapshot(`
+      {
+        "componentType": 3,
+        "customId": "agent-autocomplete",
+        "values": [
+          "plan",
+        ],
+      }
+    `)
   })
 })
 

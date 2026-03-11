@@ -146,6 +146,8 @@ export type NormalizedSlackActionType =
   | 'button'
   | 'static_select'
   | 'multi_static_select'
+  | 'external_select'
+  | 'multi_external_select'
   | 'users_select'
   | 'multi_users_select'
   | 'conversations_select'

@@ -125,6 +125,76 @@ describe('slack digital twin with @slack/web-api', () => {
     expect(reply.message?.thread_ts).toBe(parent.ts)
   })
 
+  test('views.open stores opened modal payload for assertions', async () => {
+    twin.clearOpenedViews()
+
+    const result = await client.views.open({
+      trigger_id: 'trigger-views-open-1',
+      view: {
+        type: 'modal',
+        callback_id: 'session-modal',
+        title: { type: 'plain_text', text: 'New session' },
+        submit: { type: 'plain_text', text: 'Run' },
+        close: { type: 'plain_text', text: 'Cancel' },
+        blocks: [
+          {
+            type: 'input',
+            block_id: 'prompt',
+            label: { type: 'plain_text', text: 'Prompt' },
+            element: {
+              type: 'plain_text_input',
+              action_id: 'prompt',
+            },
+          },
+        ],
+      },
+    })
+
+    expect(result.ok).toBe(true)
+
+    const openedView = await twin.waitForOpenedView({
+      predicate: (view) => {
+        return view.trigger_id === 'trigger-views-open-1'
+      },
+    })
+
+    expect(openedView).toMatchInlineSnapshot(`
+      {
+        "trigger_id": "trigger-views-open-1",
+        "view": {
+          "blocks": [
+            {
+              "block_id": "prompt",
+              "element": {
+                "action_id": "prompt",
+                "type": "plain_text_input",
+              },
+              "label": {
+                "text": "Prompt",
+                "type": "plain_text",
+              },
+              "type": "input",
+            },
+          ],
+          "callback_id": "session-modal",
+          "close": {
+            "text": "Cancel",
+            "type": "plain_text",
+          },
+          "submit": {
+            "text": "Run",
+            "type": "plain_text",
+          },
+          "title": {
+            "text": "New session",
+            "type": "plain_text",
+          },
+          "type": "modal",
+        },
+      }
+    `)
+  })
+
   test('chat.postMessage returns error for unknown channel', async () => {
     try {
       await client.chat.postMessage({

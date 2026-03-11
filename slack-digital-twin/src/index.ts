@@ -27,10 +27,10 @@ import {
   type ServerComponents,
 } from './server.js'
 import { messageToSlack } from './serializers.js'
-import type { SlackMessage } from './types.js'
+import type { SlackMessage, SlackOpenedView } from './types.js'
 import { sendWebhookEvent, type WebhookSenderConfig } from './webhook-sender.js'
 
-export type { SlackMessage }
+export type { SlackMessage, SlackOpenedView }
 
 export type SlackDigitalTwinChannelOption = {
   id?: string
@@ -82,6 +82,9 @@ export class SlackDigitalTwin {
   private seeded = false
   private userIds: Map<string, string> = new Map() // name → id
   private channelIds: Map<string, string> = new Map() // name → id
+  private openedViews: SlackOpenedView[] = []
+
+  private static readonly OPENED_VIEWS_MAX = 200
 
   constructor(options: SlackDigitalTwinOptions = {}) {
     this.options = options
@@ -116,6 +119,9 @@ export class SlackDigitalTwin {
       workspaceId: this.workspaceId,
       botUserId: this.botUserId,
       botToken: this.botToken,
+      onViewOpen: (view) => {
+        this.recordOpenedView(view)
+      },
     })
 
     const port = await startServer(this.server)
@@ -130,6 +136,33 @@ export class SlackDigitalTwin {
   }
 
   // --- Scoped accessors ---
+
+  getOpenedViews(): SlackOpenedView[] {
+    return [...this.openedViews]
+  }
+
+  clearOpenedViews(): void {
+    this.openedViews = []
+  }
+
+  async waitForOpenedView({
+    timeout = 3000,
+    predicate,
+  }: {
+    timeout?: number
+    predicate?: (view: SlackOpenedView) => boolean
+  } = {}): Promise<SlackOpenedView> {
+    const start = Date.now()
+    while (Date.now() - start < timeout) {
+      const views = this.getOpenedViews()
+      const match = predicate ? views.find(predicate) : views[views.length - 1]
+      if (match) {
+        return match
+      }
+      await sleep(50)
+    }
+    throw new Error(`waitForOpenedView timed out after ${timeout}ms`)
+  }
 
   channel(channelIdOrName: string): ChannelScope {
     const channelId = this.channelIds.get(channelIdOrName) ?? channelIdOrName
@@ -266,6 +299,13 @@ export class SlackDigitalTwin {
           purpose: chanOpt.purpose ?? '',
         },
       })
+    }
+  }
+
+  private recordOpenedView(view: SlackOpenedView): void {
+    this.openedViews.push(view)
+    if (this.openedViews.length > SlackDigitalTwin.OPENED_VIEWS_MAX) {
+      this.openedViews.shift()
     }
   }
 }

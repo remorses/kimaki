@@ -58,3 +58,8 @@ export interface SlackEventPayload {
   item_user?: string
   event_ts?: string
 }
+
+export type SlackOpenedView = {
+  trigger_id?: string
+  view?: Record<string, unknown>
+}

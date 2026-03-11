@@ -10,12 +10,14 @@ import { Spiceflow } from 'spiceflow'
 import type { PrismaClient } from './generated/client.js'
 import { generateMessageTs, generateChannelId } from './slack-ids.js'
 import { userToSlack, channelToSlack, messageToSlack } from './serializers.js'
+import type { SlackOpenedView } from './types.js'
 
 export interface ServerConfig {
   prisma: PrismaClient
   workspaceId: string
   botUserId: string
   botToken: string
+  onViewOpen?: (view: SlackOpenedView) => void
 }
 
 export interface ServerComponents {
@@ -53,8 +55,36 @@ async function parseBody(request: Request): Promise<Record<string, string>> {
   }
 }
 
+async function parseUnknownBody(request: Request): Promise<unknown> {
+  const contentType = request.headers.get('content-type') ?? ''
+  if (contentType.includes('application/json')) {
+    return await request.json()
+  }
+  if (
+    contentType.includes('application/x-www-form-urlencoded') ||
+    contentType.includes('multipart/form-data')
+  ) {
+    const text = await request.text()
+    const params = new URLSearchParams(text)
+    const result: Record<string, unknown> = {}
+    for (const [key, value] of params.entries()) {
+      result[key] = value
+    }
+    return result
+  }
+  const text = await request.text()
+  if (!text) {
+    return {}
+  }
+  try {
+    return JSON.parse(text)
+  } catch {
+    return {}
+  }
+}
+
 export function createServer(config: ServerConfig): ServerComponents {
-  const { prisma, workspaceId, botUserId, botToken } = config
+  const { prisma, workspaceId, botUserId, botToken, onViewOpen } = config
   const assistantThreadStatusByThread = new Map<string, string>()
 
   const app = new Spiceflow({ basePath: '' }).onError(({ error }) => {
@@ -577,13 +607,17 @@ export function createServer(config: ServerConfig): ServerComponents {
   // Stub: acknowledges modal open without rendering.
   // The discord-slack-bridge calls this for type-9 interaction responses.
   app.post('/api/views.open', async ({ request }) => {
-    const body = await parseBody(request)
+    const body = await parseUnknownBody(request)
+    const openedView = normalizeOpenedView(body)
+    onViewOpen?.(openedView)
+    const viewTitle = resolveOpenedViewTitle(openedView)
+
     return Response.json({
       ok: true,
       view: {
         id: `V${Date.now()}`,
         type: 'modal',
-        title: { type: 'plain_text', text: 'Modal' },
+        title: { type: 'plain_text', text: viewTitle },
       },
     })
   })
@@ -662,4 +696,52 @@ function getErrorMessage(error: unknown): string {
     return error.message
   }
   return String(error)
+}
+
+function normalizeOpenedView(value: unknown): SlackOpenedView {
+  if (!isRecord(value)) {
+    return {}
+  }
+
+  const triggerId = readString(value, 'trigger_id')
+  const rawView = value['view']
+  const view = isRecord(rawView)
+    ? rawView
+    : (() => {
+        if (typeof rawView !== 'string') {
+          return undefined
+        }
+        try {
+          const parsed = JSON.parse(rawView)
+          return isRecord(parsed) ? parsed : undefined
+        } catch {
+          return undefined
+        }
+      })()
+
+  return {
+    trigger_id: triggerId,
+    view,
+  }
+}
+
+function resolveOpenedViewTitle(openedView: SlackOpenedView): string {
+  const title = openedView.view?.['title']
+  if (!isRecord(title)) {
+    return 'Modal'
+  }
+  const text = readString(title, 'text')
+  if (!text) {
+    return 'Modal'
+  }
+  return text
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null
+}
+
+function readString(record: Record<string, unknown>, key: string): string | undefined {
+  const value = record[key]
+  return typeof value === 'string' ? value : undefined
 }
