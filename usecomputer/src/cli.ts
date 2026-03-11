@@ -28,6 +28,29 @@ function parsePointOrThrow(input: string): Point {
   return parsed
 }
 
+function resolvePointInput({
+  x,
+  y,
+  target,
+  command,
+}: {
+  x?: number
+  y?: number
+  target?: string
+  command: string
+}): Point {
+  if (typeof x === 'number' || typeof y === 'number') {
+    if (typeof x !== 'number' || typeof y !== 'number') {
+      throw new Error(`Command \"${command}\" requires both -x and -y when using coordinate flags`)
+    }
+    return { x, y }
+  }
+  if (target) {
+    return parsePointOrThrow(target)
+  }
+  throw new Error(`Command \"${command}\" requires coordinates. Use -x <n> -y <n>`)
+}
+
 function parseButton(input?: string): MouseButton {
   if (input === 'right' || input === 'middle') {
     return input
@@ -74,12 +97,19 @@ export function createCli({ bridge = createBridge() }: { bridge?: UseComputerBri
     })
 
   cli
-    .command('click <target>', 'Click at x,y coordinates')
+    .command('click [target]', 'Click at coordinates')
+    .option('-x [x]', z.number().describe('X coordinate'))
+    .option('-y [y]', z.number().describe('Y coordinate'))
     .option('--button [button]', z.enum(['left', 'right', 'middle']).default('left').describe('Mouse button'))
     .option('--count [count]', z.number().default(1).describe('Number of clicks'))
     .option('--modifiers [modifiers]', z.string().describe('Modifiers as ctrl,shift,alt,meta'))
     .action(async (target, options) => {
-      const point = parsePointOrThrow(target)
+      const point = resolvePointInput({
+        x: options.x,
+        y: options.y,
+        target,
+        command: 'click',
+      })
       await bridge.click({
         point,
         button: options.button,
@@ -137,15 +167,31 @@ export function createCli({ bridge = createBridge() }: { bridge?: UseComputerBri
     })
 
   cli
-    .command('hover <target>', 'Move mouse cursor to x,y without clicking')
-    .action(async (target) => {
-      await bridge.hover(parsePointOrThrow(target))
+    .command('hover [target]', 'Move mouse cursor to coordinates without clicking')
+    .option('-x [x]', z.number().describe('X coordinate'))
+    .option('-y [y]', z.number().describe('Y coordinate'))
+    .action(async (target, options) => {
+      const point = resolvePointInput({
+        x: options.x,
+        y: options.y,
+        target,
+        command: 'hover',
+      })
+      await bridge.hover(point)
     })
 
   cli
-    .command('mouse move <x> <y>', 'Move mouse cursor to absolute coordinates')
-    .action(async (x, y) => {
-      await bridge.mouseMove({ x: Number(x), y: Number(y) })
+    .command('mouse move [x] [y]', 'Move mouse cursor to absolute coordinates')
+    .option('-x [x]', z.number().describe('X coordinate'))
+    .option('-y [y]', z.number().describe('Y coordinate'))
+    .action(async (x, y, options) => {
+      const point = resolvePointInput({
+        x: options.x,
+        y: options.y,
+        target: x && y ? `${x},${y}` : undefined,
+        command: 'mouse move',
+      })
+      await bridge.mouseMove(point)
     })
 
   cli

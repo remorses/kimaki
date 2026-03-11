@@ -15,12 +15,21 @@ pub fn build(b: *std.Build) void {
         .optimize = optimize,
     });
     lib_mod.addImport("napigen", b.dependency("napigen", .{}).module("napigen"));
+    lib_mod.addImport("objc", b.dependency("zig_objc", .{
+        .target = target,
+        .optimize = optimize,
+    }).module("objc"));
 
     const lib = b.addLibrary(.{
         .name = LIB_NAME,
         .root_module = lib_mod,
         .linkage = .dynamic,
     });
+
+    if (target.result.os.tag == .macos) {
+        lib.root_module.linkFramework("ApplicationServices", .{});
+        lib.root_module.linkFramework("CoreFoundation", .{});
+    }
 
     napigen.setup(lib);
     b.installArtifact(lib);
