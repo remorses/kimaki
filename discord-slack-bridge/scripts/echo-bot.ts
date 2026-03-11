@@ -39,6 +39,7 @@ import {
   type RESTPostAPIApplicationCommandsJSONBody,
 } from 'discord-api-types/v10'
 import { TunnelClient } from 'traforo/client'
+import { createPrisma } from 'db/src/prisma.js'
 import { SlackBridge } from '../src/index.js'
 
 const TUNNEL_ID = 'dsb-echo-bot'
@@ -46,6 +47,7 @@ const BRIDGE_PORT = Number(process.env.ECHO_BOT_PORT ?? '3710')
 const PREVIEW_GATEWAY_BASE_URL = 'https://preview-slack-gateway.kimaki.xyz'
 const PREVIEW_WORKSPACE_ID = 'T08NQ7ULTUL'
 const PREVIEW_CLIENT_ID = 'echo-bot-client'
+const PREVIEW_MAPPING_USER_EMAIL = 'beats.by.morse@gmail.com'
 const OPEN_MODAL_BUTTON_ID = 'demo-open-modal'
 const STATUS_BUTTON_ID = 'demo-status-button'
 const TABLE_BUTTON_ID = 'demo-table-button'
@@ -106,6 +108,10 @@ async function main(): Promise<void> {
   }
 
   if (gatewayMode) {
+    await ensureGatewayClientMapping({
+      workspaceId,
+      clientId: process.env.ECHO_BOT_CLIENT_ID ?? PREVIEW_CLIENT_ID,
+    })
     console.log(`Gateway mode: using deployed bridge at ${gatewayMode.baseUrl}`)
   }
 
@@ -1092,6 +1098,56 @@ function requireEnv(name: string): string {
     throw new Error(`Missing required env var: ${name}`)
   }
   return value
+}
+
+async function ensureGatewayClientMapping({
+  workspaceId,
+  clientId,
+}: {
+  workspaceId: string
+  clientId: string
+}): Promise<void> {
+  const clientSecret = requireEnv('SLACK_CLIENT_SECRET')
+  const databaseUrl = requireEnv('DATABASE_URL')
+  const prisma = createPrisma(databaseUrl)
+
+  const user = await prisma.user.findUnique({
+    where: {
+      email: PREVIEW_MAPPING_USER_EMAIL,
+    },
+    select: {
+      id: true,
+    },
+  })
+  if (!user) {
+    throw new Error(`Could not find user ${PREVIEW_MAPPING_USER_EMAIL} for gateway client mapping`)
+  }
+
+  await prisma.gateway_clients.upsert({
+    where: {
+      client_id_guild_id: {
+        client_id: clientId,
+        guild_id: workspaceId,
+      },
+    },
+    update: {
+      secret: clientSecret,
+      user_id: user.id,
+      updated_at: new Date(),
+    },
+    create: {
+      client_id: clientId,
+      secret: clientSecret,
+      guild_id: workspaceId,
+      user_id: user.id,
+    },
+  })
+
+  console.log('Ensured gateway client mapping in database', {
+    clientId,
+    workspaceId,
+    userEmail: PREVIEW_MAPPING_USER_EMAIL,
+  })
 }
 
 main().catch((err) => {

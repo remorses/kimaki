@@ -109,21 +109,13 @@ app.all('/api/v10/*', async (c, next) => {
 
   const clientId = clientIdResult
   const stub = c.env.SLACK_GATEWAY.getByName(clientId)
-  const requestUrlWithClientId = appendClientIdQueryToGatewayUrl({
-    requestUrl: c.req.url,
-    clientId,
-  })
   const response = await stub.handleDiscordRest({
-    url: requestUrlWithClientId,
+    url: c.req.url,
     path: c.req.path,
     method: c.req.method,
     headers: headersToPairs(c.req.raw.headers),
     body: await c.req.text(),
   })
-
-  if (c.req.path === '/api/v10/gateway/bot') {
-    return toResponse(appendClientIdToGatewayBotResponse({ response, clientId }))
-  }
 
   return toResponse(response)
 })
@@ -346,59 +338,6 @@ function getClientIdFromAuthorizationHeader(headers: Headers): string | Error {
   }
 
   return clientId
-}
-
-function appendClientIdQueryToGatewayUrl({
-  requestUrl,
-  clientId,
-}: {
-  requestUrl: string
-  clientId: string
-}): string {
-  const url = new URL(requestUrl)
-  if (url.pathname === '/api/v10/gateway/bot') {
-    url.searchParams.set('clientId', clientId)
-  }
-  return url.toString()
-}
-
-function appendClientIdToGatewayBotResponse({
-  response,
-  clientId,
-}: {
-  response: {
-    status: number
-    headers: string[][]
-    body: string
-  }
-  clientId: string
-}): {
-  status: number
-  headers: string[][]
-  body: string
-} {
-  if (response.status !== 200) {
-    return response
-  }
-
-  try {
-    const parsedBody = JSON.parse(response.body) as { url?: string }
-    const gatewayUrl = parsedBody.url
-    if (!gatewayUrl) {
-      return response
-    }
-    const parsedGatewayUrl = new URL(gatewayUrl)
-    parsedGatewayUrl.searchParams.set('clientId', clientId)
-    return {
-      ...response,
-      body: JSON.stringify({
-        ...parsedBody,
-        url: parsedGatewayUrl.toString(),
-      }),
-    }
-  } catch {
-    return response
-  }
 }
 
 async function resolveClientIdsForTeamId({
