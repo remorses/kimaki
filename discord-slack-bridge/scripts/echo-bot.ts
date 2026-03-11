@@ -1,7 +1,10 @@
 // Echo bot: tests discord-slack-bridge against a real Slack workspace.
-// Requires doppler env: SLACK_BOT_TOKEN, SLACK_SIGNING_SECRET.
+// Required env vars: SLACK_BOT_TOKEN, SLACK_SIGNING_SECRET.
+// Required Slack app setup:
+// - Event Subscriptions Request URL -> {tunnel}/slack/events
+// - Interactivity & Shortcuts Request URL -> {tunnel}/slack/events
+// - Bot token scope includes files:write for demo:image and demo:text-file.
 // Usage: cd discord-slack-bridge && pnpm echo-bot
-// Tunnel URL is stable — configure once in Slack Event Subscriptions.
 
 import {
   ActionRowBuilder,
@@ -9,9 +12,12 @@ import {
   ButtonBuilder,
   ButtonStyle,
   Client,
+  ComponentType,
   GatewayIntentBits,
   ModalBuilder,
   Partials,
+  SeparatorSpacingSize,
+  type ChatInputCommandInteraction,
   StringSelectMenuBuilder,
   TextInputBuilder,
   TextInputStyle,
@@ -24,7 +30,14 @@ import {
   type ThreadChannel,
   type TextChannel,
 } from 'discord.js'
+import fs from 'node:fs'
 import { WebClient } from '@slack/web-api'
+import {
+  MessageFlags,
+  Routes,
+  type APIContainerComponent,
+  type RESTPostAPIApplicationCommandsJSONBody,
+} from 'discord-api-types/v10'
 import { TunnelClient } from 'traforo/client'
 import { SlackBridge } from '../src/index.js'
 
@@ -36,6 +49,18 @@ const TABLE_BUTTON_ID = 'demo-table-button'
 const DEMO_SELECT_ID = 'demo-select'
 const DEMO_MODAL_ID = 'demo-modal'
 const DEMO_MODAL_INPUT_ID = 'demo-modal-input'
+const DEMO_IMAGE_FILE_URL = new URL('./demo-image.jpeg', import.meta.url)
+const DEMO_COMMANDS: RESTPostAPIApplicationCommandsJSONBody[] = [
+  { name: 'demo-buttons', description: 'Send button demo message' },
+  { name: 'demo-select', description: 'Send select demo message' },
+  { name: 'demo-modal', description: 'Send modal demo trigger button' },
+  { name: 'demo-typing', description: 'Show typing indicator then send reply' },
+  { name: 'demo-image', description: 'Send image upload demo' },
+  { name: 'demo-text-file', description: 'Send text file upload demo' },
+  { name: 'demo-table', description: 'Send table demo' },
+  { name: 'demo-all', description: 'Run all demos' },
+  { name: 'demo-help', description: 'Show available demo commands' },
+]
 
 async function main(): Promise<void> {
   const slackBotToken = requireEnv('SLACK_BOT_TOKEN')
@@ -99,11 +124,23 @@ async function main(): Promise<void> {
   }).filter(Boolean)
   console.log(`Channels: ${channelNames?.join(', ')}`)
 
+  if (guild && client.user) {
+    await registerDemoCommands({
+      client,
+      applicationId: client.user.id,
+      guildId: guild.id,
+    })
+  }
+
   client.on('messageCreate', (message) => {
-    void handleMessageCreate({ client, message })
+    void handleMessageCreate({ client, message }).catch((error) => {
+      console.error('messageCreate handler failed', error)
+    })
   })
   client.on('interactionCreate', (interaction) => {
-    void handleInteractionCreate({ interaction })
+    void handleInteractionCreate({ interaction }).catch((error) => {
+      console.error('interactionCreate handler failed', error)
+    })
   })
 
   console.log('\nEcho bot running. Press Ctrl+C to stop.\n')
@@ -119,6 +156,12 @@ async function main(): Promise<void> {
 
   process.on('SIGINT', shutdown)
   process.on('SIGTERM', shutdown)
+  process.on('unhandledRejection', (error) => {
+    console.error('unhandledRejection', describeError(error))
+  })
+  process.on('uncaughtException', (error) => {
+    console.error('uncaughtException', describeError(error))
+  })
 }
 
 async function handleMessageCreate({
@@ -140,13 +183,30 @@ async function handleMessageCreate({
 
   console.log(`[echo] "${message.content}" from ${message.author.username}`)
 
+  await pulseTyping({
+    thread,
+    context: 'message:start',
+  })
+
   if (message.attachments.size > 0) {
-    await thread.send(formatAttachmentSummary({ message }))
+    const sent = await trySend({
+      thread,
+      payload: formatAttachmentSummary({ message }),
+      context: 'attachment summary response',
+    })
+    if (!sent) {
+      await trySend({
+        thread,
+        payload: 'Could not send attachment summary (bridge returned an error).',
+        context: 'attachment summary fallback',
+      })
+    }
     return
   }
 
   const normalized = message.content.trim().toLowerCase()
   const handled = await handleDemoSwitch({
+    client,
     command: normalized,
     thread,
     username: message.author.username,
@@ -155,18 +215,36 @@ async function handleMessageCreate({
     return
   }
 
-  await thread.send(`echo: ${message.content}`)
+  const sent = await trySend({
+    thread,
+    payload: `echo: ${message.content}`,
+    context: 'default echo',
+  })
+  if (!sent) {
+    await trySend({
+      thread,
+      payload: 'Echo failed (bridge returned an error).',
+      context: 'default echo fallback',
+    })
+  }
 }
 
 async function handleDemoSwitch({
+  client,
   command,
   thread,
   username,
 }: {
+  client: Client
   command: string
   thread: ThreadChannel
   username: string
 }): Promise<boolean> {
+  await pulseTyping({
+    thread,
+    context: `demo:${command || 'empty'}`,
+  })
+
   switch (command) {
     case 'demo:buttons': {
       const row = new ActionRowBuilder<ButtonBuilder>().addComponents(
@@ -220,14 +298,39 @@ async function handleDemoSwitch({
       })
       return true
     }
+    case 'demo:typing': {
+      await pulseTyping({
+        thread,
+        context: 'demo:typing pre-delay',
+      })
+      await sleep({
+        ms: 3000,
+      })
+      const sent = await trySend({
+        thread,
+        payload: 'Typing demo done after 3 seconds.',
+        context: 'demo:typing message',
+      })
+      if (!sent) {
+        await thread.send('Typing demo failed (bridge returned an error).')
+      }
+      return true
+    }
     case 'demo:image': {
-      const image = new AttachmentBuilder(Buffer.from(SMALL_PNG_BASE64, 'base64'), {
-        name: 'demo-image.png',
+      const image = createDemoImageAttachment()
+      const sent = await trySend({
+        thread,
+        payload: {
+          content: 'Image upload demo',
+          files: [image],
+        },
+        context: 'demo:image upload',
       })
-      await thread.send({
-        content: 'Image upload demo',
-        files: [image],
-      })
+      if (!sent) {
+        await thread.send(
+          'Image upload demo failed. Check bridge logs for missing_scope (files:write) or multipart upload issues.',
+        )
+      }
       return true
     }
     case 'demo:text-file': {
@@ -237,24 +340,41 @@ async function handleDemoSwitch({
           name: 'demo-note.txt',
         },
       )
-      await thread.send({
-        content: 'Text file upload demo',
-        files: [file],
+      const sent = await trySend({
+        thread,
+        payload: {
+          content: 'Text file upload demo',
+          files: [file],
+        },
+        context: 'demo:text-file upload',
       })
+      if (!sent) {
+        await thread.send(
+          'Text file upload demo failed. Check bridge logs for missing_scope (files:write) or multipart upload issues.',
+        )
+      }
       return true
     }
     case 'demo:table': {
-      await thread.send({
-        content: [
-          'Runtime table',
-          '| Field | Value |',
-          '| --- | --- |',
-          `| User | ${username} |`,
-          `| Channel | ${thread.parentId ?? 'unknown'} |`,
-          `| Thread | ${thread.id} |`,
-          `| Timestamp | ${new Date().toISOString()} |`,
-        ].join('\n'),
+      const sent = await sendV2TableMessage({
+        client,
+        thread,
+        username,
+        title: 'Runtime table',
       })
+      if (!sent) {
+        await thread.send({
+          content: [
+            'Runtime table',
+            '| Field | Value |',
+            '| --- | --- |',
+            `| User | ${username} |`,
+            `| Channel | ${thread.parentId ?? 'unknown'} |`,
+            `| Thread | ${thread.id} |`,
+            `| Timestamp | ${new Date().toISOString()} |`,
+          ].join('\n'),
+        })
+      }
       return true
     }
     case 'demo:all': {
@@ -292,13 +412,20 @@ async function handleDemoSwitch({
         components: [selectRow],
       })
 
-      const image = new AttachmentBuilder(Buffer.from(SMALL_PNG_BASE64, 'base64'), {
-        name: 'demo-image.png',
+      const image = createDemoImageAttachment()
+      const imageSent = await trySend({
+        thread,
+        payload: {
+          content: 'Image upload demo',
+          files: [image],
+        },
+        context: 'demo:all image upload',
       })
-      await thread.send({
-        content: 'Image upload demo',
-        files: [image],
-      })
+      if (!imageSent) {
+        await thread.send(
+          'Image upload demo failed. Check bridge logs for missing_scope (files:write) or multipart upload issues.',
+        )
+      }
 
       const file = new AttachmentBuilder(
         Buffer.from('demo text file\nbridge: discord-slack-bridge\n', 'utf8'),
@@ -306,22 +433,39 @@ async function handleDemoSwitch({
           name: 'demo-note.txt',
         },
       )
-      await thread.send({
-        content: 'Text file upload demo',
-        files: [file],
+      const fileSent = await trySend({
+        thread,
+        payload: {
+          content: 'Text file upload demo',
+          files: [file],
+        },
+        context: 'demo:all text upload',
       })
+      if (!fileSent) {
+        await thread.send(
+          'Text file upload demo failed. Check bridge logs for missing_scope (files:write) or multipart upload issues.',
+        )
+      }
 
-      await thread.send({
-        content: [
-          'Runtime table',
-          '| Field | Value |',
-          '| --- | --- |',
-          `| User | ${username} |`,
-          `| Channel | ${thread.parentId ?? 'unknown'} |`,
-          `| Thread | ${thread.id} |`,
-          `| Timestamp | ${new Date().toISOString()} |`,
-        ].join('\n'),
+      const tableSent = await sendV2TableMessage({
+        client,
+        thread,
+        username,
+        title: 'Runtime table',
       })
+      if (!tableSent) {
+        await thread.send({
+          content: [
+            'Runtime table',
+            '| Field | Value |',
+            '| --- | --- |',
+            `| User | ${username} |`,
+            `| Channel | ${thread.parentId ?? 'unknown'} |`,
+            `| Thread | ${thread.id} |`,
+            `| Timestamp | ${new Date().toISOString()} |`,
+          ].join('\n'),
+        })
+      }
 
       await thread.send({
         content: 'Modal demo: click "Open modal" from the button message above.',
@@ -334,9 +478,10 @@ async function handleDemoSwitch({
           'Available demo commands:',
           '- demo:buttons',
           '- demo:select',
-          '- demo:modal',
-          '- demo:image',
-          '- demo:text-file',
+            '- demo:modal',
+            '- demo:typing',
+            '- demo:image',
+            '- demo:text-file',
           '- demo:table',
           '- demo:all',
           '- demo:help',
@@ -356,18 +501,107 @@ async function handleInteractionCreate({
   interaction: Interaction
 }): Promise<void> {
   if (interaction.isButton()) {
+    console.log('interactionCreate button', {
+      customId: interaction.customId,
+      userId: interaction.user.id,
+    })
     await handleButtonInteraction({ interaction })
     return
   }
 
+  if (interaction.isChatInputCommand()) {
+    console.log('interactionCreate slash command', {
+      name: interaction.commandName,
+      userId: interaction.user.id,
+    })
+    await handleSlashCommandInteraction({
+      client: interaction.client,
+      interaction,
+    })
+    return
+  }
+
   if (interaction.isStringSelectMenu()) {
+    console.log('interactionCreate select', {
+      customId: interaction.customId,
+      values: interaction.values,
+      userId: interaction.user.id,
+    })
     await handleSelectInteraction({ interaction })
     return
   }
 
   if (interaction.isModalSubmit()) {
+    console.log('interactionCreate modal', {
+      customId: interaction.customId,
+      userId: interaction.user.id,
+    })
     await handleModalSubmitInteraction({ interaction })
   }
+}
+
+async function handleSlashCommandInteraction({
+  client,
+  interaction,
+}: {
+  client: Client
+  interaction: ChatInputCommandInteraction
+}): Promise<void> {
+  await interaction.deferReply({
+    ephemeral: true,
+  })
+
+  const thread = await resolveReplyThreadFromInteraction({ interaction })
+  if (!thread) {
+    await interaction.editReply('Could not resolve or create a reply thread in this channel.')
+    return
+  }
+
+  await pulseTyping({
+    thread,
+    context: `slash:${interaction.commandName}`,
+  })
+
+  const handled = await handleDemoSwitch({
+    client,
+    command: toDemoTextCommand({ slashCommandName: interaction.commandName }),
+    thread,
+    username: interaction.user.username,
+  })
+  if (!handled) {
+    await interaction.editReply(`Unknown demo command: ${interaction.commandName}`)
+    return
+  }
+
+  await interaction.editReply(`Ran ${interaction.commandName} in <#${thread.id}>`)
+}
+
+function toDemoTextCommand({
+  slashCommandName,
+}: {
+  slashCommandName: string
+}): string {
+  return slashCommandName.replace('-', ':')
+}
+
+async function registerDemoCommands({
+  client,
+  applicationId,
+  guildId,
+}: {
+  client: Client
+  applicationId: string
+  guildId: string
+}): Promise<void> {
+  await client.rest.put(Routes.applicationGuildCommands(applicationId, guildId), {
+    body: DEMO_COMMANDS,
+  })
+  console.log('Registered guild slash commands', {
+    commandNames: DEMO_COMMANDS.map((command) => {
+      return command.name
+    }),
+    guildId,
+  })
 }
 
 async function handleButtonInteraction({
@@ -436,7 +670,6 @@ async function handleModalSubmitInteraction({
   const value = interaction.fields.getTextInputValue(DEMO_MODAL_INPUT_ID)
   await interaction.reply({
     content: `Modal input: ${value}`,
-    ephemeral: true,
   })
 }
 
@@ -468,8 +701,197 @@ function formatBytes(size: number): string {
   return `${(size / (1024 * 1024)).toFixed(1)} MB`
 }
 
-const SMALL_PNG_BASE64 =
-  'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAusB9Y9n0WcAAAAASUVORK5CYII='
+async function sleep({ ms }: { ms: number }): Promise<void> {
+  await new Promise<void>((resolve) => {
+    setTimeout(() => {
+      resolve()
+    }, ms)
+  })
+}
+
+async function sendV2TableMessage({
+  client,
+  thread,
+  username,
+  title,
+}: {
+  client: Client
+  thread: ThreadChannel
+  username: string
+  title: string
+}): Promise<boolean> {
+  const container: APIContainerComponent = {
+    type: ComponentType.Container,
+    components: [
+      {
+        type: ComponentType.TextDisplay,
+        content: `**Field** User\n**Value** ${username}`,
+      },
+      {
+        type: ComponentType.Separator,
+        divider: true,
+        spacing: SeparatorSpacingSize.Small,
+      },
+      {
+        type: ComponentType.TextDisplay,
+        content: `**Field** Channel\n**Value** ${thread.parentId ?? 'unknown'}`,
+      },
+      {
+        type: ComponentType.Separator,
+        divider: true,
+        spacing: SeparatorSpacingSize.Small,
+      },
+      {
+        type: ComponentType.TextDisplay,
+        content: `**Field** Thread\n**Value** ${thread.id}`,
+      },
+      {
+        type: ComponentType.Separator,
+        divider: true,
+        spacing: SeparatorSpacingSize.Small,
+      },
+      {
+        type: ComponentType.TextDisplay,
+        content: `**Field** Title\n**Value** ${title}`,
+      },
+    ],
+  }
+
+  try {
+    await client.rest.post(Routes.channelMessages(thread.id), {
+      body: {
+        flags: MessageFlags.IsComponentsV2,
+        components: [container],
+      },
+    })
+    return true
+  } catch (error) {
+    console.warn('v2 table send failed', {
+      details: describeError(error),
+    })
+    return false
+  }
+}
+
+async function pulseTyping({
+  thread,
+  context,
+}: {
+  thread: ThreadChannel
+  context: string
+}): Promise<void> {
+  try {
+    await thread.sendTyping()
+  } catch (error) {
+    console.warn('sendTyping failed', {
+      context,
+      details: describeError(error),
+    })
+  }
+}
+
+async function trySend({
+  thread,
+  payload,
+  context,
+}: {
+  thread: ThreadChannel
+  payload: Parameters<ThreadChannel['send']>[0]
+  context: string
+}): Promise<boolean> {
+  try {
+    await thread.send(payload)
+    return true
+  } catch (error) {
+    console.warn('thread.send failed', {
+      context,
+      details: describeError(error),
+    })
+    return false
+  }
+}
+
+function describeError(error: unknown): {
+  name: string
+  message: string
+  stack?: string
+  status?: number
+  method?: string
+  url?: string
+  rawErrorText?: string
+} {
+  if (!(error instanceof Error)) {
+    return {
+      name: 'UnknownError',
+      message: String(error),
+    }
+  }
+
+  return {
+    name: error.name,
+    message: error.message,
+    stack: error.stack,
+    status: readNumberProp({ value: error, key: 'status' }),
+    method: readStringProp({ value: error, key: 'method' }),
+    url: readStringProp({ value: error, key: 'url' }),
+    rawErrorText: decodeRawErrorText(error),
+  }
+}
+
+function readStringProp({
+  value,
+  key,
+}: {
+  value: object
+  key: string
+}): string | undefined {
+  if (!(key in value)) {
+    return undefined
+  }
+  const raw = Reflect.get(value, key)
+  if (typeof raw === 'string') {
+    return raw
+  }
+  return undefined
+}
+
+function readNumberProp({
+  value,
+  key,
+}: {
+  value: object
+  key: string
+}): number | undefined {
+  if (!(key in value)) {
+    return undefined
+  }
+  const raw = Reflect.get(value, key)
+  if (typeof raw === 'number') {
+    return raw
+  }
+  return undefined
+}
+
+function decodeRawErrorText(error: Error): string | undefined {
+  if (!('rawError' in error)) {
+    return undefined
+  }
+  const raw = Reflect.get(error, 'rawError')
+  if (typeof raw === 'string') {
+    return raw
+  }
+  if (raw instanceof ArrayBuffer) {
+    return new TextDecoder().decode(raw)
+  }
+  return undefined
+}
+
+function createDemoImageAttachment(): AttachmentBuilder {
+  const imageBuffer = fs.readFileSync(DEMO_IMAGE_FILE_URL)
+  return new AttachmentBuilder(imageBuffer, {
+    name: 'demo-image.jpeg',
+  })
+}
 
 async function resolveReplyThread({
   message,
@@ -491,6 +913,26 @@ async function resolveReplyThread({
 
   const threadName = `echo-${message.author.username}`.slice(0, 100)
   return createThreadForChannelMessage({ message, threadName })
+}
+
+async function resolveReplyThreadFromInteraction({
+  interaction,
+}: {
+  interaction: ChatInputCommandInteraction
+}): Promise<ThreadChannel | undefined> {
+  if (interaction.channel?.isThread()) {
+    return interaction.channel
+  }
+
+  if (!(interaction.channel && 'threads' in interaction.channel)) {
+    return undefined
+  }
+
+  const threadName = `echo-${interaction.user.username}`.slice(0, 100)
+  return interaction.channel.threads.create({
+    name: threadName,
+    autoArchiveDuration: ThreadAutoArchiveDuration.OneHour,
+  })
 }
 
 async function createThreadForChannelMessage({

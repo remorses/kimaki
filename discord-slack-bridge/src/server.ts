@@ -1080,7 +1080,11 @@ export function createServer(config: ServerConfig): ServerComponents {
         await rest.openModalView({
           slack,
           triggerId: pending.triggerId,
-          modal: modalData,
+          modal: {
+            ...modalData,
+            submit: modalData.submit ?? pending.submitLabel,
+            private_metadata: modalData.private_metadata ?? pending.channelId,
+          },
         })
       }
 
@@ -1485,6 +1489,7 @@ export function createServer(config: ServerConfig): ServerComponents {
           responseUrl: normalizedPayload.responseUrl,
           acknowledged: false,
           messageTs,
+          submitLabel: action.buttonText,
         })
 
       const messageId = messageTs
@@ -1615,6 +1620,22 @@ export function createServer(config: ServerConfig): ServerComponents {
     })
     return
   }
+
+  app.route({
+    method: '*',
+    path: '/*',
+    handler({ request }) {
+      const method = request.method
+      const url = request.url
+      console.warn('Unhandled bridge route', {
+        method,
+        url,
+      })
+      return new Response(`Cannot ${method} ${url}`, {
+        status: 404,
+      })
+    },
+  })
 
   // ---- Gateway Setup ----
 
@@ -2673,6 +2694,15 @@ function parseSlackInteractiveAction(
   return {
     action_id: actionId,
     type,
+    text: (() => {
+      const text = readRecord(value, 'text')
+      if (!text) {
+        return undefined
+      }
+      return {
+        text: readString(text, 'text'),
+      }
+    })(),
     value: readString(value, 'value'),
     selected_option: (() => {
       const option = readRecord(value, 'selected_option')
@@ -2838,6 +2868,7 @@ function normalizeSlackAction(rawAction: SlackBlockActionsPayload['actions'][num
   return {
     actionId,
     type: normalizedActionType,
+    buttonText: rawAction.text?.text,
     value: rawAction.value,
     selectedOptionValue: rawAction.selected_option?.value,
     selectedOptionValues: normalizeOptionValues(rawAction.selected_options),
@@ -3402,6 +3433,7 @@ function normalizeInteractionCallbackBody(value: unknown): {
     title?: string
     submit?: string
     cancel?: string
+    private_metadata?: string
   }
 } {
   if (!isRecord(value)) {
@@ -3417,6 +3449,7 @@ function normalizeInteractionCallbackBody(value: unknown): {
         title: readString(rawData, 'title'),
         submit: readString(rawData, 'submit'),
         cancel: readString(rawData, 'cancel'),
+        private_metadata: readString(rawData, 'private_metadata'),
       }
     : undefined
   return {
@@ -3439,12 +3472,14 @@ function normalizeModalInteractionResponseData(data: {
   title?: string
   submit?: string
   cancel?: string
+  private_metadata?: string
   components?: unknown[]
 }): {
   custom_id?: string
   title?: string
   submit?: string
   cancel?: string
+  private_metadata?: string
   components?: APIActionRowComponent<APITextInputComponent>[]
 } {
   return {
@@ -3452,6 +3487,7 @@ function normalizeModalInteractionResponseData(data: {
     title: data.title,
     submit: data.submit,
     cancel: data.cancel,
+    private_metadata: data.private_metadata,
     components: normalizeModalComponents(data.components),
   }
 }

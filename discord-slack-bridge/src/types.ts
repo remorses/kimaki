@@ -156,6 +156,7 @@ export type NormalizedSlackActionType =
 export interface NormalizedSlackAction {
   actionId: string
   type: NormalizedSlackActionType
+  buttonText?: string
   value?: string
   selectedOptionValue?: string
   selectedOptionValues: string[]
@@ -228,6 +229,7 @@ export type SlackInteractiveOption = {
 export type SlackInteractiveActionPayload = {
   action_id: string
   type: string
+  text?: { text?: string | undefined } | undefined
   value?: string | undefined
   selected_option?: SlackInteractiveOption | undefined
   selected_options?: SlackInteractiveOption[] | undefined
@@ -298,4 +300,6 @@ export interface PendingInteraction {
   acknowledged: boolean
   /** Slack message ts for update-type responses */
   messageTs?: string
+  /** Fallback label to reuse as Slack modal submit text. */
+  submitLabel?: string
 }

@@ -712,9 +712,15 @@ export async function openModalView({
     title?: string
     submit?: string
     cancel?: string
+    private_metadata?: string
     components?: APIActionRowComponent<APITextInputComponent>[]
   }
 }): Promise<void> {
+  const submitLabel = normalizeSlackModalLabel({
+    value: modal.submit,
+    fallback: 'Submit',
+  })
+
   const blocks = (modal.components ?? [])
     .flatMap((row) => {
       return row.components
@@ -755,23 +761,39 @@ export async function openModalView({
         type: 'plain_text',
         text: modal.title ?? 'Modal',
       },
-      submit: modal.submit
-        ? {
-            type: 'plain_text',
-            text: modal.submit,
-          }
-        : undefined,
+      submit: {
+        type: 'plain_text',
+        text: submitLabel,
+      },
       close: modal.cancel
         ? {
             type: 'plain_text',
-            text: modal.cancel,
+            text: normalizeSlackModalLabel({
+              value: modal.cancel,
+              fallback: 'Cancel',
+            }),
           }
         : undefined,
+      private_metadata: modal.private_metadata,
       blocks,
     },
   } satisfies ViewsOpenArguments
 
   await slack.views.open(openArgs)
+}
+
+function normalizeSlackModalLabel({
+  value,
+  fallback,
+}: {
+  value: string | undefined
+  fallback: string
+}): string {
+  const normalized = value?.trim()
+  if (!normalized) {
+    return fallback
+  }
+  return normalized.slice(0, 24)
 }
 
 // ---- Reactions ----
