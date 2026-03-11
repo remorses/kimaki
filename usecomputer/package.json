@@ -12,6 +12,14 @@
       "types": "./dist/index.d.ts",
       "default": "./dist/index.js"
     },
+    "./lib": {
+      "types": "./dist/lib.d.ts",
+      "default": "./dist/lib.js"
+    },
+    "./coord-map": {
+      "types": "./dist/coord-map.d.ts",
+      "default": "./dist/coord-map.js"
+    },
     "./src": {
       "types": "./src/index.ts",
       "default": "./src/index.ts"
@@ -56,12 +64,12 @@
   "license": "MIT",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/remorses/kimakivoice.git",
+    "url": "git+https://github.com/remorses/kimaki.git",
     "directory": "usecomputer"
   },
-  "homepage": "https://github.com/remorses/kimakivoice/tree/main/usecomputer",
+  "homepage": "https://github.com/remorses/kimaki/tree/main/usecomputer",
   "bugs": {
-    "url": "https://github.com/remorses/kimakivoice/issues"
+    "url": "https://github.com/remorses/kimaki/issues"
   },
   "os": [
     "darwin"
