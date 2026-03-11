@@ -182,22 +182,18 @@ for (const block of message.content) {
   }
 
   const toolUse = block as BetaToolUseBlock
-  const beforeActionScreenshot = await usecomputer.screenshot({
+  await usecomputer.screenshot({
     path: './tmp/claude-current-screen.png',
     display: null,
     window: null,
     region: null,
     annotate: null,
   })
-  const coordMap = usecomputer.parseCoordMapOrThrow(beforeActionScreenshot.coordMap)
   const coordinate = Array.isArray(toolUse.input.coordinate)
     ? toolUse.input.coordinate
     : null
   const point = coordinate
-    ? usecomputer.mapPointFromCoordMap({
-        point: { x: coordinate[0] ?? 0, y: coordinate[1] ?? 0 },
-        coordMap,
-      })
+    ? { x: coordinate[0] ?? 0, y: coordinate[1] ?? 0 }
     : null
 
   switch (toolUse.input.action) {
@@ -268,10 +264,6 @@ for (const block of message.content) {
           media_type: 'image/png',
           data: imageBase64,
         },
-      },
-      {
-        type: 'text',
-        text: afterActionScreenshot.coordMap,
       },
     ],
   }
