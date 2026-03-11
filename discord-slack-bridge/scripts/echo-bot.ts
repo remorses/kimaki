@@ -45,6 +45,7 @@ const TUNNEL_ID = 'dsb-echo-bot'
 const BRIDGE_PORT = Number(process.env.ECHO_BOT_PORT ?? '3710')
 const PREVIEW_GATEWAY_BASE_URL = 'https://preview-slack-gateway.kimaki.xyz'
 const PREVIEW_WORKSPACE_ID = 'T08NQ7ULTUL'
+const PREVIEW_CLIENT_ID = 'echo-bot-client'
 const OPEN_MODAL_BUTTON_ID = 'demo-open-modal'
 const STATUS_BUTTON_ID = 'demo-status-button'
 const TABLE_BUTTON_ID = 'demo-table-button'
@@ -232,6 +233,10 @@ function createDeployedRuntime({
   const baseUrl = new URL(gatewayMode.baseUrl)
   const gatewayUrl = new URL('/gateway', baseUrl)
   gatewayUrl.protocol = gatewayUrl.protocol === 'https:' ? 'wss:' : 'ws:'
+  gatewayUrl.searchParams.set(
+    'clientId',
+    process.env.ECHO_BOT_CLIENT_ID ?? PREVIEW_CLIENT_ID,
+  )
   return {
     restUrl: new URL('/api', baseUrl).toString(),
     gatewayUrl: gatewayUrl.toString(),

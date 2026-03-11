@@ -68,6 +68,24 @@ describe('authorization callbacks', () => {
     expect(validBearer.status).toBe(200)
   })
 
+  test('gateway/bot includes clientId query for client tokens', async () => {
+    const response = await fetch(`${ctx.bridge.restUrl}/v10/gateway/bot`, {
+      headers: { authorization: 'Bearer client-1:secret-1' },
+    })
+    expect(response.status).toBe(200)
+
+    const payload = await response.json()
+    if (!(payload && typeof payload === 'object' && 'url' in payload)) {
+      throw new Error('Missing url in /gateway/bot response')
+    }
+    const gatewayUrlRaw = payload.url
+    if (typeof gatewayUrlRaw !== 'string') {
+      throw new Error('Invalid url in /gateway/bot response')
+    }
+    const gatewayUrl = new URL(gatewayUrlRaw)
+    expect(gatewayUrl.searchParams.get('clientId')).toBe('client-1')
+  })
+
   test('tokenized interaction/webhook routes bypass rest auth callback checks', async () => {
     const interactionCallback = await fetch(
       `${ctx.bridge.restUrl}/v10/interactions/123/token-abc/callback`,

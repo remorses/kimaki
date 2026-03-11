@@ -85,6 +85,7 @@ import type {
   SupportedSlackEventType,
   BridgeAuthorizeCallback,
 } from './types.js'
+import { getTeamIdForWebhookEvent } from './webhook-team-id.js'
 
 export interface ServerConfig {
   slack: WebClient
@@ -281,6 +282,10 @@ export function createBridgeApp(config: ServerConfig): BridgeAppComponents {
 
     // Check content type for interactive payloads (form-urlencoded)
     const contentType = request.headers.get('content-type') ?? ''
+    const teamIdForWebhookEvent = getTeamIdForWebhookEvent({
+      body,
+      contentType,
+    })
     if (contentType.includes('application/x-www-form-urlencoded')) {
       const params = new URLSearchParams(body)
 
@@ -289,7 +294,7 @@ export function createBridgeApp(config: ServerConfig): BridgeAppComponents {
         const allowSlashAction = await authorizeSlackInbound({
           authorize,
           kind: 'webhook-action',
-          teamId: params.get('team_id') ?? undefined,
+          teamId: teamIdForWebhookEvent,
           request,
           workspaceId,
         })
@@ -306,7 +311,7 @@ export function createBridgeApp(config: ServerConfig): BridgeAppComponents {
         const allowInteractiveAction = await authorizeSlackInbound({
           authorize,
           kind: 'webhook-action',
-          teamId: readInteractiveTeamId(payloadStr),
+          teamId: teamIdForWebhookEvent,
           request,
           workspaceId,
         })
@@ -344,7 +349,7 @@ export function createBridgeApp(config: ServerConfig): BridgeAppComponents {
     const allowEvent = await authorizeSlackInbound({
       authorize,
       kind: 'webhook-event',
-      teamId: readSlackEventTeamId(payload),
+      teamId: teamIdForWebhookEvent,
       request,
       workspaceId,
     })
@@ -381,8 +386,17 @@ export function createBridgeApp(config: ServerConfig): BridgeAppComponents {
       publicBaseUrl: config.publicBaseUrl,
       port,
     })
+    const clientId = getClientIdFromGatewayAuthorizationHeader(
+      request.headers.get('authorization'),
+    )
+    const gatewayUrlWithClientId = clientId
+      ? appendClientIdToGatewayUrl({
+          gatewayUrl,
+          clientId,
+        })
+      : gatewayUrl
     return Response.json({
-      url: gatewayUrl,
+      url: gatewayUrlWithClientId,
       shards: 1,
       session_start_limit: {
         total: 1000,
@@ -2000,6 +2014,39 @@ function buildWebSocketUrlFromHttpBase({
   return new URL(path, wsBase).toString()
 }
 
+function getClientIdFromGatewayAuthorizationHeader(
+  authorizationHeader: string | null,
+): string | undefined {
+  if (!authorizationHeader) {
+    return undefined
+  }
+  const token = authorizationHeader.trim().split(/\s+/).at(-1)
+  if (!token) {
+    return undefined
+  }
+  const tokenParts = token.split(':')
+  if (tokenParts.length !== 2) {
+    return undefined
+  }
+  return tokenParts[0] || undefined
+}
+
+function appendClientIdToGatewayUrl({
+  gatewayUrl,
+  clientId,
+}: {
+  gatewayUrl: string
+  clientId: string
+}): string {
+  try {
+    const url = new URL(gatewayUrl)
+    url.searchParams.set('clientId', clientId)
+    return url.toString()
+  } catch {
+    return gatewayUrl
+  }
+}
+
 function createNoopGatewayEmitter(): GatewayEmitter {
   return {
     broadcast: () => {
@@ -2189,54 +2236,6 @@ async function authorizeSlackInbound({
     return result.authorizedTeamIds.includes(teamId)
   }
   return true
-}
-
-function readInteractiveTeamId(payloadStr: string): string | undefined {
-  try {
-    const payload = JSON.parse(payloadStr)
-    if (!isRecord(payload)) {
-      return undefined
-    }
-    const teamRecord = readRecord(payload, 'team')
-    if (teamRecord) {
-      return readString(teamRecord, 'id')
-    }
-    return undefined
-  } catch {
-    return undefined
-  }
-}
-
-function readSlackEventTeamId(payload: unknown): string | undefined {
-  if (!isRecord(payload)) {
-    return undefined
-  }
-
-  const topLevelTeamId = readString(payload, 'team_id')
-  if (topLevelTeamId) {
-    return topLevelTeamId
-  }
-
-  const teamRecord = readRecord(payload, 'team')
-  if (teamRecord) {
-    const nestedTeamId = readString(teamRecord, 'id')
-    if (nestedTeamId) {
-      return nestedTeamId
-    }
-  }
-
-  const authorizations = readArray(payload, 'authorizations')
-  for (const authorization of authorizations) {
-    if (!isRecord(authorization)) {
-      continue
-    }
-    const teamId = readString(authorization, 'team_id')
-    if (teamId) {
-      return teamId
-    }
-  }
-
-  return undefined
 }
 
 /** Evict oldest entries from a Set when it exceeds maxSize. */

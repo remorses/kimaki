@@ -7,6 +7,7 @@
 
 import { Hono } from 'hono'
 import { createPrisma } from 'db/src/prisma.js'
+import { getTeamIdForWebhookEvent } from 'discord-slack-bridge/src/webhook-team-id'
 import { createAuth } from './auth.js'
 import { renderSuccessPage } from './components/success-page.js'
 import { SlackBridgeDO } from './slack-bridge-do.js'
@@ -16,6 +17,9 @@ export type { HonoBindings }
 export { SlackBridgeDO }
 
 const app = new Hono<{ Bindings: HonoBindings }>()
+
+const TEAM_TO_CLIENT_IDS_CACHE_TTL_SECONDS = 30
+const TEAM_TO_CLIENT_IDS_CACHE_NAME = 'kimaki-team-client-ids'
 
 app.get('/', (c) => {
   return c.redirect('https://github.com/remorses/kimaki', 302)
@@ -98,14 +102,29 @@ app.all('/api/v10/*', async (c, next) => {
     return next()
   }
 
-  const stub = c.env.SLACK_GATEWAY.getByName('default')
+  const clientIdResult = getClientIdFromAuthorizationHeader(c.req.raw.headers)
+  if (clientIdResult instanceof Error) {
+    return c.json({ error: clientIdResult.message }, 401)
+  }
+
+  const clientId = clientIdResult
+  const stub = c.env.SLACK_GATEWAY.getByName(clientId)
+  const requestUrlWithClientId = appendClientIdQueryToGatewayUrl({
+    requestUrl: c.req.url,
+    clientId,
+  })
   const response = await stub.handleDiscordRest({
-    url: c.req.url,
+    url: requestUrlWithClientId,
     path: c.req.path,
     method: c.req.method,
     headers: headersToPairs(c.req.raw.headers),
     body: await c.req.text(),
   })
+
+  if (c.req.path === '/api/v10/gateway/bot') {
+    return toResponse(appendClientIdToGatewayBotResponse({ response, clientId }))
+  }
+
   return toResponse(response)
 })
 
@@ -113,16 +132,86 @@ app.post('/slack/events', async (c, next) => {
   if (!isSlackGatewayHost(c.req.url)) {
     return next()
   }
-
-  const stub = c.env.SLACK_GATEWAY.getByName('default')
-  const response = await stub.handleSlackWebhook({
-    url: c.req.url,
-    path: c.req.path,
-    method: c.req.method,
-    headers: headersToPairs(c.req.raw.headers),
-    body: await c.req.text(),
+  const body = await c.req.text()
+  const teamId = getTeamIdForWebhookEvent({
+    body,
+    contentType: c.req.header('content-type') || undefined,
   })
-  return toResponse(response)
+  if (!teamId) {
+    console.error('[slack-webhook-team-id-missing]', {
+      path: c.req.path,
+      contentType: c.req.header('content-type') || '',
+      bodySummary: summarizeSlackWebhookBodyForLogs({
+        body,
+        contentType: c.req.header('content-type') || undefined,
+      }),
+    })
+    return c.json({ error: 'Could not resolve Slack team_id from webhook payload' }, 400)
+  }
+
+  const clientIdsResult = await resolveClientIdsForTeamId({
+    teamId,
+    env: c.env,
+    requestUrl: c.req.url,
+  })
+  if (clientIdsResult instanceof Error) {
+    return c.json({ error: clientIdsResult.message }, 500)
+  }
+  if (clientIdsResult.length === 0) {
+    return c.json({ error: 'No clients found for Slack team_id' }, 404)
+  }
+
+  const fanoutResults = await Promise.allSettled(clientIdsResult.map(async (clientId) => {
+    const stub = c.env.SLACK_GATEWAY.getByName(clientId)
+    const response = await stub.handleSlackWebhook({
+      url: c.req.url,
+      path: c.req.path,
+      method: c.req.method,
+      headers: headersToPairs(c.req.raw.headers),
+      body,
+    })
+    return {
+      clientId,
+      response,
+    }
+  }))
+
+  const rejectedResults = fanoutResults.filter((result) => {
+    return result.status === 'rejected'
+  })
+  if (rejectedResults.length > 0) {
+    console.error('[slack-webhook-fanout-rejected]', {
+      teamId,
+      rejectedCount: rejectedResults.length,
+      totalClients: clientIdsResult.length,
+      reasons: rejectedResults.map((result) => {
+        return summarizeErrorReason(result.reason)
+      }),
+    })
+  }
+
+  const fulfilledResults = fanoutResults.flatMap((result) => {
+    if (result.status !== 'fulfilled') {
+      return []
+    }
+    return [result.value]
+  })
+
+  const successfulResult = fulfilledResults.find((result) => {
+    return result.response.status < 400
+  })
+  if (successfulResult) {
+    return toResponse(successfulResult.response)
+  }
+
+  const failedResponse = fulfilledResults.find((result) => {
+    return result.response.status >= 400
+  })
+  if (failedResponse) {
+    return toResponse(failedResponse.response)
+  }
+
+  return c.json({ error: 'Failed to fan out Slack webhook to client durable objects' }, 502)
 })
 
 app.all('/gateway', async (c, next) => {
@@ -130,9 +219,14 @@ app.all('/gateway', async (c, next) => {
     return next()
   }
 
+  const clientId = c.req.query('clientId')
+  if (!clientId) {
+    return c.json({ error: 'Missing clientId query parameter' }, 400)
+  }
+
   return proxyGatewayToDurableObject({
     request: c.req.raw,
-    durableObjectNamespace: c.env.SLACK_GATEWAY,
+    stub: c.env.SLACK_GATEWAY.getByName(clientId),
   })
 })
 
@@ -141,9 +235,14 @@ app.all('/gateway/*', async (c, next) => {
     return next()
   }
 
+  const clientId = c.req.query('clientId')
+  if (!clientId) {
+    return c.json({ error: 'Missing clientId query parameter' }, 400)
+  }
+
   return proxyGatewayToDurableObject({
     request: c.req.raw,
-    durableObjectNamespace: c.env.SLACK_GATEWAY,
+    stub: c.env.SLACK_GATEWAY.getByName(clientId),
   })
 })
 
@@ -214,16 +313,261 @@ function toResponse(response: {
 
 function proxyGatewayToDurableObject({
   request,
-  durableObjectNamespace,
+  stub,
 }: {
   request: Request
-  durableObjectNamespace: DurableObjectNamespace<SlackBridgeDO>
+  stub: DurableObjectStub<SlackBridgeDO>
 }): Promise<Response> {
-  const stub = durableObjectNamespace.getByName('default')
   const url = new URL(request.url)
   const rewrittenPath = `${url.pathname}${url.search}`
   const durableObjectUrl = new URL(rewrittenPath, 'https://do.local')
   return stub.fetch(new Request(durableObjectUrl, request))
+}
+
+function getClientIdFromAuthorizationHeader(headers: Headers): string | Error {
+  const authorizationHeader = headers.get('authorization')
+  if (!authorizationHeader) {
+    return new Error('Missing authorization header')
+  }
+
+  const token = authorizationHeader.trim().split(/\s+/).at(-1)
+  if (!token) {
+    return new Error('Missing authorization token')
+  }
+
+  const tokenParts = token.split(':')
+  if (tokenParts.length !== 2) {
+    return new Error('Expected gateway token in clientId:secret format')
+  }
+
+  const clientId = tokenParts[0]
+  if (!clientId) {
+    return new Error('Malformed gateway token: missing clientId')
+  }
+
+  return clientId
+}
+
+function appendClientIdQueryToGatewayUrl({
+  requestUrl,
+  clientId,
+}: {
+  requestUrl: string
+  clientId: string
+}): string {
+  const url = new URL(requestUrl)
+  if (url.pathname === '/api/v10/gateway/bot') {
+    url.searchParams.set('clientId', clientId)
+  }
+  return url.toString()
+}
+
+function appendClientIdToGatewayBotResponse({
+  response,
+  clientId,
+}: {
+  response: {
+    status: number
+    headers: string[][]
+    body: string
+  }
+  clientId: string
+}): {
+  status: number
+  headers: string[][]
+  body: string
+} {
+  if (response.status !== 200) {
+    return response
+  }
+
+  try {
+    const parsedBody = JSON.parse(response.body) as { url?: string }
+    const gatewayUrl = parsedBody.url
+    if (!gatewayUrl) {
+      return response
+    }
+    const parsedGatewayUrl = new URL(gatewayUrl)
+    parsedGatewayUrl.searchParams.set('clientId', clientId)
+    return {
+      ...response,
+      body: JSON.stringify({
+        ...parsedBody,
+        url: parsedGatewayUrl.toString(),
+      }),
+    }
+  } catch {
+    return response
+  }
+}
+
+async function resolveClientIdsForTeamId({
+  teamId,
+  env,
+  requestUrl,
+}: {
+  teamId: string
+  env: HonoBindings
+  requestUrl: string
+}): Promise<string[] | Error> {
+  const cache = await caches.open(TEAM_TO_CLIENT_IDS_CACHE_NAME)
+  const cacheRequest = buildTeamIdToClientIdsCacheRequest({
+    requestUrl,
+    teamId,
+  })
+
+  try {
+    const cachedResponse = await cache.match(cacheRequest)
+    if (cachedResponse) {
+      const cachedPayload = await cachedResponse.json().catch(() => {
+        return null
+      })
+      if (
+        cachedPayload
+        && typeof cachedPayload === 'object'
+        && 'clientIds' in cachedPayload
+        && Array.isArray(cachedPayload.clientIds)
+      ) {
+        const cachedClientIds = cachedPayload.clientIds.filter((clientId) => {
+          return typeof clientId === 'string'
+        })
+        return cachedClientIds
+      }
+    }
+  } catch (error) {
+    console.warn('[slack-team-client-cache-read-failed]', {
+      teamId,
+      reason: summarizeErrorReason(error),
+    })
+  }
+
+  const prisma = createPrisma(env.HYPERDRIVE.connectionString)
+  const rows = await prisma.gateway_clients.findMany({
+    // In Slack bridge mode, gateway_clients.guild_id stores Slack team_id.
+    // We intentionally reuse the same column to avoid a separate mapping table.
+    where: { guild_id: teamId },
+    select: { client_id: true },
+    orderBy: [
+      { updated_at: 'desc' },
+      { created_at: 'desc' },
+    ],
+  }).catch((cause) => {
+    return new Error('Failed to resolve client IDs for Slack team_id', { cause })
+  })
+  if (rows instanceof Error) {
+    return rows
+  }
+
+  const seenClientIds = new Set<string>()
+  const uniqueClientIds: string[] = []
+  rows.forEach((row) => {
+    if (seenClientIds.has(row.client_id)) {
+      return
+    }
+    seenClientIds.add(row.client_id)
+    uniqueClientIds.push(row.client_id)
+  })
+
+  try {
+    const cacheResponse = new Response(
+      JSON.stringify({ clientIds: uniqueClientIds }),
+      {
+        headers: {
+          'content-type': 'application/json',
+          'cache-control': `public, max-age=${TEAM_TO_CLIENT_IDS_CACHE_TTL_SECONDS}`,
+        },
+      },
+    )
+    await cache.put(cacheRequest, cacheResponse)
+  } catch (error) {
+    console.warn('[slack-team-client-cache-write-failed]', {
+      teamId,
+      reason: summarizeErrorReason(error),
+    })
+  }
+
+  return uniqueClientIds
+}
+
+function buildTeamIdToClientIdsCacheRequest({
+  requestUrl,
+  teamId,
+}: {
+  requestUrl: string
+  teamId: string
+}): Request {
+  const requestOrigin = new URL(requestUrl).origin
+  const cacheUrl = new URL(
+    `/__cache/slack-team-client-ids/${encodeURIComponent(teamId)}`,
+    requestOrigin,
+  )
+  return new Request(cacheUrl.toString(), {
+    method: 'GET',
+  })
+}
+
+function summarizeSlackWebhookBodyForLogs({
+  body,
+  contentType,
+}: {
+  body: string
+  contentType?: string
+}): Record<string, unknown> {
+  const normalizedContentType = contentType?.toLowerCase() ?? ''
+  if (normalizedContentType.includes('application/x-www-form-urlencoded')) {
+    const params = new URLSearchParams(body)
+    const paramKeys = [...new Set([...params.keys()])]
+    if (params.has('payload')) {
+      const payload = params.get('payload')
+      if (payload) {
+        try {
+          const parsedPayload = JSON.parse(payload)
+          if (parsedPayload && typeof parsedPayload === 'object') {
+            return {
+              format: 'form-urlencoded-payload-json',
+              paramKeys,
+              payloadKeys: Object.keys(parsedPayload),
+            }
+          }
+        } catch {
+          return {
+            format: 'form-urlencoded-payload-invalid-json',
+            paramKeys,
+          }
+        }
+      }
+    }
+    return {
+      format: 'form-urlencoded',
+      paramKeys,
+    }
+  }
+
+  try {
+    const parsedBody = JSON.parse(body)
+    if (parsedBody && typeof parsedBody === 'object') {
+      return {
+        format: 'json',
+        payloadKeys: Object.keys(parsedBody),
+      }
+    }
+    return {
+      format: 'json-non-object',
+      valueType: typeof parsedBody,
+    }
+  } catch {
+    return {
+      format: 'unknown',
+      bodyLength: body.length,
+    }
+  }
+}
+
+function summarizeErrorReason(reason: unknown): string {
+  if (reason instanceof Error) {
+    return `${reason.name}: ${reason.message}`
+  }
+  return String(reason)
 }
 
 function isSlackGatewayHost(requestUrl: string): boolean {
