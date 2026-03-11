@@ -6,7 +6,7 @@
 // because CF Workers cannot reuse connections across requests.
 
 import { Hono } from 'hono'
-import { createPrisma } from 'db/src/prisma.js'
+import { createPrisma } from 'db/src'
 import { getTeamIdForWebhookEvent } from 'discord-slack-bridge/src/webhook-team-id'
 import { createAuth } from './auth.js'
 import { renderSuccessPage } from './components/success-page.js'

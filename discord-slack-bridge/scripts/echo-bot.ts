@@ -39,7 +39,7 @@ import {
   type RESTPostAPIApplicationCommandsJSONBody,
 } from 'discord-api-types/v10'
 import { TunnelClient } from 'traforo/client'
-import { createPrisma } from 'db/src/prisma.js'
+import { createPrisma } from 'db/src'
 import { SlackBridge } from '../src/index.js'
 
 const TUNNEL_ID = 'dsb-echo-bot'

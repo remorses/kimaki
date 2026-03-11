@@ -1,6 +1,13 @@
-generator client {
+generator client_node {
+  provider     = "prisma-client"
+  output       = "src/generated/node"
+  moduleFormat = "esm"
+  runtime      = "nodejs"
+}
+
+generator client_cloudflare {
   provider      = "prisma-client"
-  output        = "src/generated"
+  output        = "src/generated/cloudflare"
   moduleFormat  = "esm"
   runtime       = "workerd"
   // "small" trades slightly slower query compilation for a much smaller WASM

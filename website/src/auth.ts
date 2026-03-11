@@ -14,7 +14,7 @@
 import { betterAuth } from 'better-auth/minimal'
 import { prismaAdapter } from 'better-auth/adapters/prisma'
 import { createAuthMiddleware, getOAuthState } from 'better-auth/api'
-import { createPrisma } from 'db/src/prisma.js'
+import { createPrisma } from 'db/src'
 import type { HonoBindings } from './env.js'
 
 // Same permissions list used in discord/src/utils.ts generateBotInstallUrl.
