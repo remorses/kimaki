@@ -1,7 +1,7 @@
 // Validates screenshot coord-map parsing and reverse mapping edge cases.
 
 import { describe, expect, test } from 'vitest'
-import { mapPointFromCoordMap, mapPointToCoordMap, parseCoordMapOrThrow } from './cli.js'
+import { mapPointFromCoordMap, mapPointToCoordMap, parseCoordMapOrThrow } from './coord-map.js'
 
 describe('coord-map reverse mapping', () => {
   test('maps full-display scaled screenshot coordinates to desktop coordinates', () => {

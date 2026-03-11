@@ -16,6 +16,15 @@ export type Region = {
   height: number
 }
 
+export type CoordMap = {
+  captureX: number
+  captureY: number
+  captureWidth: number
+  captureHeight: number
+  imageWidth: number
+  imageHeight: number
+}
+
 export type DisplayInfo = {
   id: number
   index: number
