@@ -1321,13 +1321,14 @@ export function createServer(config: ServerConfig): ServerComponents {
       return
     }
 
-    const normalizedPayload = normalizeSlackInteractivePayload(payload)
-    if (!normalizedPayload) {
-      console.warn('Unhandled Slack interactive payload', {
-        payloadType: isRecord(payload) ? readString(payload, 'type') : undefined,
-      })
-      return
-    }
+  const normalizedPayload = normalizeSlackInteractivePayload(payload)
+  if (!normalizedPayload) {
+    console.warn('Unhandled Slack interactive payload', {
+      ...collectInteractivePayloadDebugInfo(payload),
+      payloadPreview: payloadStr.slice(0, 300),
+    })
+    return
+  }
 
     if (normalizedPayload.type === 'block_actions') {
       console.log('Slack interactive block_actions received', {
@@ -1336,15 +1337,24 @@ export function createServer(config: ServerConfig): ServerComponents {
         messageTs: normalizedPayload.messageTs,
         threadTs: normalizedPayload.threadTs,
       })
-      for (const action of normalizedPayload.actions) {
-        const interactionId = crypto.randomUUID()
-        const interactionToken = crypto.randomUUID()
-        const slackChannelId = normalizedPayload.channelId ?? ''
-        const threadTs = normalizedPayload.threadTs
-        const messageTs = normalizedPayload.messageTs
-        const channelId = resolveDiscordChannelId(
-          slackChannelId,
-          threadTs,
+    for (const action of normalizedPayload.actions) {
+      const interactionId = crypto.randomUUID()
+      const interactionToken = crypto.randomUUID()
+      const slackChannelId = normalizedPayload.channelId
+      if (!slackChannelId) {
+        console.warn('Dropping Slack block_actions payload without channel id', {
+          actionId: action.actionId,
+          actionType: action.type,
+          messageTs: normalizedPayload.messageTs,
+          threadTs: normalizedPayload.threadTs,
+        })
+        continue
+      }
+      const threadTs = normalizedPayload.threadTs
+      const messageTs = normalizedPayload.messageTs
+      const channelId = resolveDiscordChannelId(
+        slackChannelId,
+        threadTs,
           messageTs,
         )
         const interactionData = buildDiscordComponentDataFromSlackAction({
@@ -1363,9 +1373,20 @@ export function createServer(config: ServerConfig): ServerComponents {
           messageTs,
         })
 
-        const messageId = messageTs
-          ? encodeMessageId(slackChannelId, messageTs)
-          : interactionId
+      const messageId = messageTs
+        ? encodeMessageId(slackChannelId, messageTs)
+        : interactionId
+
+      console.log('Emitting Discord interaction from Slack block action', {
+        interactionId,
+        actionId: action.actionId,
+        actionType: action.type,
+        customId: decodedAction.customId,
+        componentType: interactionData.componentType,
+        channelId,
+        messageTs,
+        threadTs,
+      })
 
         gateway.broadcast(GatewayDispatchEvents.InteractionCreate, {
           id: interactionId,
@@ -2033,25 +2054,17 @@ function normalizeSlackReactionEvent({
 }
 
 function normalizeSlackBlockActionsPayload(
-  payload: unknown,
+  payload: SlackBlockActionsPayload,
 ): NormalizedSlackBlockActionsPayload | undefined {
-  if (!isRecord(payload)) {
-    return undefined
-  }
-  if (readString(payload, 'type') !== 'block_actions') {
-    return undefined
-  }
-
-  const user = readRecord(payload, 'user')
-  const userId = user ? readString(user, 'id') : undefined
+  const userId = payload.user.id
   if (!userId) {
     return undefined
   }
 
-  const channel = readRecord(payload, 'channel')
-  const message = readRecord(payload, 'message')
-  const container = readRecord(payload, 'container')
-  const actions = readArray(payload, 'actions')
+  const channel = payload.channel
+  const message = payload.message
+  const container = payload.container
+  const actions = payload.actions
     .map((rawAction) => {
       return normalizeSlackAction(rawAction)
     })
@@ -2062,82 +2075,301 @@ function normalizeSlackBlockActionsPayload(
 
   return {
     type: 'block_actions',
-    triggerId: readString(payload, 'trigger_id'),
-    responseUrl: readString(payload, 'response_url'),
+    triggerId: payload.trigger_id,
+    responseUrl: payload.response_url,
     user: {
       id: userId,
-      username: user ? readString(user, 'username') : undefined,
-      name: user ? readString(user, 'name') : undefined,
+      username: payload.user.username,
+      name: payload.user.name,
     },
     channelId:
-      (channel ? readString(channel, 'id') : undefined) ??
-      (container ? readString(container, 'channel_id') : undefined),
+      (channel ? channel.id : undefined) ??
+      (container ? container.channel_id : undefined),
     messageTs:
-      (message ? readString(message, 'ts') : undefined) ??
-      (container ? readString(container, 'message_ts') : undefined),
+      (message ? message.ts : undefined) ??
+      (container ? container.message_ts : undefined),
     threadTs:
-      (message ? readString(message, 'thread_ts') : undefined) ??
-      (container ? readString(container, 'thread_ts') : undefined),
+      (message ? message.thread_ts : undefined) ??
+      (container ? container.thread_ts : undefined),
     actions,
   }
 }
 
 function normalizeSlackViewSubmissionPayload(
-  payload: unknown,
+  payload: SlackViewSubmissionPayload,
 ): NormalizedSlackViewSubmissionPayload | undefined {
-  if (!isRecord(payload)) {
-    return undefined
-  }
-  if (readString(payload, 'type') !== 'view_submission') {
-    return undefined
-  }
-
-  const user = readRecord(payload, 'user')
-  const userId = user ? readString(user, 'id') : undefined
+  const userId = payload.user.id
   if (!userId) {
     return undefined
   }
 
-  const view = readRecord(payload, 'view')
+  const view = payload.view
   const stateValues = normalizeSlackViewSubmissionStateValues(view)
   const channelId = extractChannelIdFromViewPayload(view)
   const responseUrl = extractResponseUrlFromViewPayload(view)
 
   return {
     type: 'view_submission',
-    triggerId: readString(payload, 'trigger_id'),
+    triggerId: payload.trigger_id,
     responseUrl,
     user: {
       id: userId,
-      username: user ? readString(user, 'username') : undefined,
-      name: user ? readString(user, 'name') : undefined,
+      username: payload.user.username,
+      name: payload.user.name,
     },
     channelId,
-    viewId: view ? readString(view, 'id') : undefined,
-    callbackId: view ? readString(view, 'callback_id') : undefined,
-    privateMetadata: view ? readString(view, 'private_metadata') : undefined,
+    viewId: view ? view.id : undefined,
+    callbackId: view ? view.callback_id : undefined,
+    privateMetadata: view ? view.private_metadata : undefined,
     stateValues,
+  }
+}
+
+function parseSlackInteractivePayload(payload: unknown): SlackInteractivePayload | undefined {
+  if (!isRecord(payload)) {
+    return undefined
+  }
+
+  const payloadType = readString(payload, 'type')
+  if (payloadType === 'block_actions') {
+    const user = readRecord(payload, 'user')
+    const userId = user ? readString(user, 'id') : undefined
+    if (!userId) {
+      return undefined
+    }
+
+    const actions = readArray(payload, 'actions')
+    if (actions.length === 0) {
+      return undefined
+    }
+
+    const typedPayload: SlackBlockActionsPayload = {
+      type: 'block_actions',
+      trigger_id: readString(payload, 'trigger_id'),
+      response_url: readString(payload, 'response_url'),
+      user: {
+        id: userId,
+        username: user ? readString(user, 'username') : undefined,
+        name: user ? readString(user, 'name') : undefined,
+      },
+      channel: (() => {
+        const channel = readRecord(payload, 'channel')
+        return channel
+          ? {
+              id: readString(channel, 'id'),
+            }
+          : undefined
+      })(),
+      message: (() => {
+        const message = readRecord(payload, 'message')
+        return message
+          ? {
+              ts: readString(message, 'ts'),
+              thread_ts: readString(message, 'thread_ts'),
+            }
+          : undefined
+      })(),
+      container: (() => {
+        const container = readRecord(payload, 'container')
+        return container
+          ? {
+              channel_id: readString(container, 'channel_id'),
+              message_ts: readString(container, 'message_ts'),
+              thread_ts: readString(container, 'thread_ts'),
+            }
+          : undefined
+      })(),
+      actions: actions
+        .map((rawAction) => {
+          return parseSlackInteractiveAction(rawAction)
+        })
+        .filter(isDefined),
+    }
+
+    if (typedPayload.actions.length === 0) {
+      return undefined
+    }
+    return typedPayload
+  }
+
+  if (payloadType === 'view_submission') {
+    const user = readRecord(payload, 'user')
+    const userId = user ? readString(user, 'id') : undefined
+    if (!userId) {
+      return undefined
+    }
+
+    const view = readRecord(payload, 'view')
+    const typedPayload: SlackViewSubmissionPayload = {
+      type: 'view_submission',
+      trigger_id: readString(payload, 'trigger_id'),
+      response_url: readString(payload, 'response_url'),
+      user: {
+        id: userId,
+        username: user ? readString(user, 'username') : undefined,
+        name: user ? readString(user, 'name') : undefined,
+      },
+      view: view
+        ? {
+            id: readString(view, 'id'),
+            callback_id: readString(view, 'callback_id'),
+            private_metadata: readString(view, 'private_metadata'),
+            response_urls: readArray(view, 'response_urls')
+              .map((entry) => {
+                if (!isRecord(entry)) {
+                  return undefined
+                }
+                return {
+                  response_url: readString(entry, 'response_url'),
+                }
+              })
+              .filter(isDefined),
+            state: (() => {
+              const state = readRecord(view, 'state')
+              const values = state ? readRecord(state, 'values') : undefined
+              if (!values) {
+                return undefined
+              }
+
+              const typedValues = Object.entries(values).reduce<
+                Record<
+                  string,
+                  Record<
+                    string,
+                    {
+                      value?: string
+                      selected_option?: { value?: string }
+                      selected_user?: string
+                      selected_channel?: string
+                      selected_conversation?: string
+                    }
+                  >
+                >
+              >((acc, [blockId, rawBlockValue]) => {
+                if (!isRecord(rawBlockValue)) {
+                  return acc
+                }
+
+                const typedBlockValues = Object.entries(rawBlockValue).reduce<
+                  Record<
+                    string,
+                    {
+                      value?: string
+                      selected_option?: { value?: string }
+                      selected_user?: string
+                      selected_channel?: string
+                      selected_conversation?: string
+                    }
+                  >
+                >((blockAcc, [actionId, rawActionValue]) => {
+                  if (!isRecord(rawActionValue)) {
+                    return blockAcc
+                  }
+
+                  blockAcc[actionId] = {
+                    value: readString(rawActionValue, 'value'),
+                    selected_option: (() => {
+                      const selectedOption = readRecord(rawActionValue, 'selected_option')
+                      if (!selectedOption) {
+                        return undefined
+                      }
+                      return {
+                        value: readString(selectedOption, 'value'),
+                      }
+                    })(),
+                    selected_user: readString(rawActionValue, 'selected_user'),
+                    selected_channel: readString(rawActionValue, 'selected_channel'),
+                    selected_conversation: readString(rawActionValue, 'selected_conversation'),
+                  }
+                  return blockAcc
+                }, {})
+
+                acc[blockId] = typedBlockValues
+                return acc
+              }, {})
+
+              return {
+                values: typedValues,
+              }
+            })(),
+          }
+        : undefined,
+    }
+
+    return typedPayload
+  }
+
+  return undefined
+}
+
+function parseSlackInteractiveAction(
+  value: unknown,
+): SlackBlockActionsPayload['actions'][number] | undefined {
+  if (!isRecord(value)) {
+    return undefined
+  }
+  const actionId = readString(value, 'action_id')
+  const type = readString(value, 'type')
+  if (!(actionId && type)) {
+    return undefined
+  }
+
+  return {
+    action_id: actionId,
+    type,
+    value: readString(value, 'value'),
+    selected_option: (() => {
+      const option = readRecord(value, 'selected_option')
+      if (!option) {
+        return undefined
+      }
+      return { value: readString(option, 'value') }
+    })(),
+    selected_options: readArray(value, 'selected_options')
+      .map((entry) => {
+        if (!isRecord(entry)) {
+          return undefined
+        }
+        return {
+          value: readString(entry, 'value'),
+        }
+      })
+      .filter(isDefined),
+    selected_user: readString(value, 'selected_user'),
+    selected_users: readArray(value, 'selected_users').filter((entry): entry is string => {
+      return typeof entry === 'string'
+    }),
+    selected_channel: readString(value, 'selected_channel'),
+    selected_channels: readArray(value, 'selected_channels').filter((entry): entry is string => {
+      return typeof entry === 'string'
+    }),
+    selected_conversation: readString(value, 'selected_conversation'),
+    selected_conversations: readArray(value, 'selected_conversations').filter((entry): entry is string => {
+      return typeof entry === 'string'
+    }),
   }
 }
 
 export function normalizeSlackInteractivePayload(
   payload: unknown,
 ): NormalizedSlackInteractivePayload | undefined {
-  const blockActionsPayload = normalizeSlackBlockActionsPayload(payload)
-  if (blockActionsPayload) {
-    return blockActionsPayload
+  const typedPayload = parseSlackInteractivePayload(payload)
+  if (!typedPayload) {
+    return undefined
   }
-  return normalizeSlackViewSubmissionPayload(payload)
+  if (typedPayload.type === 'block_actions') {
+    return normalizeSlackBlockActionsPayload(typedPayload)
+  }
+  return normalizeSlackViewSubmissionPayload(typedPayload)
 }
 
 function normalizeSlackViewSubmissionStateValues(
-  view: Record<string, unknown> | undefined,
+  view: SlackViewSubmissionPayload['view'] | undefined,
 ): NormalizedSlackViewSubmissionStateValue[] {
   if (!view) {
     return []
   }
-  const state = readRecord(view, 'state')
-  const values = state ? readRecord(state, 'values') : undefined
+  const values = view.state?.values
   if (!values) {
     return []
   }
@@ -2178,12 +2410,12 @@ function readViewOptionValue(
 }
 
 function extractChannelIdFromViewPayload(
-  view: Record<string, unknown> | undefined,
+  view: SlackViewSubmissionPayload['view'] | undefined,
 ): string | undefined {
   if (!view) {
     return undefined
   }
-  const privateMetadata = readString(view, 'private_metadata')
+  const privateMetadata = view.private_metadata
   if (!privateMetadata) {
     return undefined
   }
@@ -2199,17 +2431,14 @@ function extractChannelIdFromViewPayload(
 }
 
 function extractResponseUrlFromViewPayload(
-  view: Record<string, unknown> | undefined,
+  view: SlackViewSubmissionPayload['view'] | undefined,
 ): string | undefined {
   if (!view) {
     return undefined
   }
-  const responseUrls = readArray(view, 'response_urls')
+  const responseUrls = Array.isArray(view.response_urls) ? view.response_urls : []
   for (const responseUrlEntry of responseUrls) {
-    if (!isRecord(responseUrlEntry)) {
-      continue
-    }
-    const responseUrl = readString(responseUrlEntry, 'response_url')
+    const responseUrl = responseUrlEntry.response_url
     if (responseUrl) {
       return responseUrl
     }
@@ -2239,12 +2468,9 @@ export function toDiscordModalComponents({
   })
 }
 
-function normalizeSlackAction(rawAction: unknown): NormalizedSlackAction | undefined {
-  if (!isRecord(rawAction)) {
-    return undefined
-  }
-  const actionId = readString(rawAction, 'action_id')
-  const actionType = readString(rawAction, 'type')
+function normalizeSlackAction(rawAction: SlackBlockActionsPayload['actions'][number]): NormalizedSlackAction | undefined {
+  const actionId = rawAction.action_id
+  const actionType = rawAction.type
   if (!(actionId && actionType)) {
     return undefined
   }
@@ -2256,16 +2482,36 @@ function normalizeSlackAction(rawAction: unknown): NormalizedSlackAction | undef
   return {
     actionId,
     type: normalizedActionType,
-    value: readString(rawAction, 'value'),
-    selectedOptionValue: readOptionValue(rawAction, 'selected_option'),
-    selectedOptionValues: readOptionValues(rawAction, 'selected_options'),
-    selectedUser: readString(rawAction, 'selected_user'),
-    selectedUsers: readStringArray(rawAction, 'selected_users'),
-    selectedChannel: readString(rawAction, 'selected_channel'),
-    selectedChannels: readStringArray(rawAction, 'selected_channels'),
-    selectedConversation: readString(rawAction, 'selected_conversation'),
-    selectedConversations: readStringArray(rawAction, 'selected_conversations'),
+    value: rawAction.value,
+    selectedOptionValue: rawAction.selected_option?.value,
+    selectedOptionValues: normalizeOptionValues(rawAction.selected_options),
+    selectedUser: rawAction.selected_user,
+    selectedUsers: normalizeStringValues(rawAction.selected_users),
+    selectedChannel: rawAction.selected_channel,
+    selectedChannels: normalizeStringValues(rawAction.selected_channels),
+    selectedConversation: rawAction.selected_conversation,
+    selectedConversations: normalizeStringValues(rawAction.selected_conversations),
   }
+}
+
+function normalizeOptionValues(
+  options: SlackBlockActionsPayload['actions'][number]['selected_options'],
+): string[] {
+  if (!Array.isArray(options)) {
+    return []
+  }
+  return options
+    .map((option) => {
+      return option?.value
+    })
+    .filter(isDefined)
+}
+
+function normalizeStringValues(values: string[] | undefined): string[] {
+  if (!Array.isArray(values)) {
+    return []
+  }
+  return values
 }
 
 function readOptionValue(
@@ -2387,6 +2633,57 @@ function normalizeSupportedSlackActionType(
     return value
   }
   return undefined
+}
+
+function collectInteractivePayloadDebugInfo(payload: unknown): {
+  payloadType?: string
+  actionTypes: string[]
+  actionCount: number
+  hasChannelId: boolean
+  hasContainerChannelId: boolean
+  hasMessageTs: boolean
+  hasContainerMessageTs: boolean
+  hasThreadTs: boolean
+} {
+  if (!isRecord(payload)) {
+    return {
+      actionTypes: [],
+      actionCount: 0,
+      hasChannelId: false,
+      hasContainerChannelId: false,
+      hasMessageTs: false,
+      hasContainerMessageTs: false,
+      hasThreadTs: false,
+    }
+  }
+
+  const actions = readArray(payload, 'actions')
+  const actionTypes = actions
+    .map((entry) => {
+      return isRecord(entry) ? readString(entry, 'type') : undefined
+    })
+    .filter(isDefined)
+  const channel = readRecord(payload, 'channel')
+  const container = readRecord(payload, 'container')
+  const message = readRecord(payload, 'message')
+
+  return {
+    payloadType: readString(payload, 'type'),
+    actionTypes,
+    actionCount: actions.length,
+    hasChannelId: Boolean(channel ? readString(channel, 'id') : undefined),
+    hasContainerChannelId: Boolean(
+      container ? readString(container, 'channel_id') : undefined,
+    ),
+    hasMessageTs: Boolean(message ? readString(message, 'ts') : undefined),
+    hasContainerMessageTs: Boolean(
+      container ? readString(container, 'message_ts') : undefined,
+    ),
+    hasThreadTs: Boolean(
+      (message ? readString(message, 'thread_ts') : undefined) ??
+        (container ? readString(container, 'thread_ts') : undefined),
+    ),
+  }
 }
 
 async function normalizePostMessageRequestBody(

@@ -67,6 +67,10 @@ async function main(): Promise<void> {
   const webhookUrl = `${tunnel.url}/slack/events`
   console.log(`Tunnel: ${tunnel.url}`)
   console.log(`Slack Event Subscriptions URL: ${webhookUrl}`)
+  console.log(`Slack Interactivity Request URL: ${webhookUrl}`)
+  console.log(
+    'Required bot scopes for demos: chat:write, channels:read, channels:history, groups:read, groups:history, files:write',
+  )
 
   const client = new Client({
     intents: [

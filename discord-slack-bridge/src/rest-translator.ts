@@ -28,7 +28,9 @@ import type {
   UsersListResponse,
   ViewsOpenArguments,
   WebClient,
+  WebAPIPlatformError,
 } from '@slack/web-api'
+import { ErrorCode } from '@slack/web-api'
 
 // Extract nested types from Slack SDK response types via indexed access.
 // These are not re-exported from @slack/web-api directly because they
@@ -1448,11 +1450,11 @@ export class MissingAccessError extends DiscordApiError {
 }
 
 export class MissingPermissionsError extends DiscordApiError {
-  constructor() {
+  constructor(message = 'Missing Permissions') {
     super({
       httpStatus: 403,
       discordCode: 50013,
-      message: 'Missing Permissions',
+      message,
     })
   }
 }
@@ -1462,7 +1464,8 @@ export class MissingPermissionsError extends DiscordApiError {
  * Slack errors have a `data.error` string like "channel_not_found".
  */
 export function mapSlackErrorToDiscordError(err: unknown): DiscordApiError {
-  const slackError = extractSlackErrorCode(err)
+  const slackErrorContext = extractSlackErrorContext(err)
+  const slackError = slackErrorContext.code
   switch (slackError) {
     case 'invalid_auth':
     case 'not_authed':
@@ -1483,9 +1486,14 @@ export function mapSlackErrorToDiscordError(err: unknown): DiscordApiError {
     case 'no_permission':
     case 'cant_update_message':
     case 'cant_delete_message':
-    case 'missing_scope':
     case 'not_allowed_token_type':
       return new MissingPermissionsError()
+    case 'missing_scope': {
+      const scopeMessage = slackErrorContext.needed
+        ? `Missing Permissions (Slack missing scope: ${slackErrorContext.needed})`
+        : 'Missing Permissions (Slack missing required scope)'
+      return new MissingPermissionsError(scopeMessage)
+    }
     case 'is_archived':
       return new DiscordApiError({
         httpStatus: 403,
@@ -1503,15 +1511,61 @@ export function mapSlackErrorToDiscordError(err: unknown): DiscordApiError {
 
 /** Extract the error code string from a Slack WebClient error. */
 function extractSlackErrorCode(err: unknown): string | undefined {
+  return extractSlackErrorContext(err).code
+}
+
+function extractSlackErrorContext(err: unknown): {
+  code?: string
+  needed?: string
+  provided?: string
+} {
   if (!(err instanceof Error)) {
-    return undefined
+    return {}
   }
-  // @slack/web-api errors have a `data` property with { ok: false, error: '...' }
-  const data = (err as Error & { data?: { error?: string } }).data
-  if (data?.error) {
-    return data.error
+
+  const platformError = isWebApiPlatformError(err) ? err : undefined
+  const code = platformError?.data.error
+  const needed = platformError
+    ? readOptionalString(Reflect.get(platformError.data, 'needed'))
+    : undefined
+  const provided = platformError
+    ? readOptionalString(Reflect.get(platformError.data, 'provided'))
+    : undefined
+  if (code) {
+    return {
+      code,
+      needed,
+      provided,
+    }
   }
+
   // Some errors embed the code in the message like "An API error occurred: channel_not_found"
   const match = err.message.match(/An API error occurred: (\S+)/)
-  return match?.[1]
+  return {
+    code: match?.[1],
+  }
+}
+
+function isWebApiPlatformError(error: Error): error is WebAPIPlatformError {
+  if (!('code' in error)) {
+    return false
+  }
+  if (error.code !== ErrorCode.PlatformError) {
+    return false
+  }
+  if (!('data' in error)) {
+    return false
+  }
+
+  const data = error.data
+  return (
+    typeof data === 'object' &&
+    data !== null &&
+    'error' in data &&
+    typeof data.error === 'string'
+  )
+}
+
+function readOptionalString(value: unknown): string | undefined {
+  return typeof value === 'string' ? value : undefined
 }
