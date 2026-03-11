@@ -10,10 +10,21 @@ import type {
   Region,
 } from './types.js'
 
+type NativeScreenshotOutput = {
+  path: string
+  desktopIndex: number
+  captureX: number
+  captureY: number
+  captureWidth: number
+  captureHeight: number
+  imageWidth: number
+  imageHeight: number
+}
+
 const require = createRequire(import.meta.url)
 
 export interface NativeModule {
-  screenshot(input: { path: string | null; display: number | null; region: Region | null; annotate: boolean | null }): NativeCommandResult
+  screenshot(input: { path: string | null; display: number | null; region: Region | null; annotate: boolean | null }): NativeDataResult<NativeScreenshotOutput>
   click(input: { point: Point; button: MouseButton | null; count: number | null }): NativeCommandResult
   typeText(input: { text: string; delayMs: number | null }): NativeCommandResult
   press(input: { key: string; count: number | null; delayMs: number | null }): NativeCommandResult
@@ -24,7 +35,7 @@ export interface NativeModule {
   mouseDown(input: { button: MouseButton | null }): NativeCommandResult
   mouseUp(input: { button: MouseButton | null }): NativeCommandResult
   mousePosition(): NativeDataResult<Point>
-  displayList(): NativeCommandResult
+  displayList(): NativeDataResult<string>
   clipboardGet(): NativeDataResult<string>
   clipboardSet(input: { text: string }): NativeCommandResult
 }

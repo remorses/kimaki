@@ -22,6 +22,7 @@ const c_x11 = if (builtin.target.os.tag == .linux) @cImport({
 }) else struct {};
 
 const c = c_macos;
+const screenshot_max_long_edge_px: f64 = 1568;
 
 const mac_keycode = struct {
     const a = 0x00;
@@ -106,6 +107,18 @@ const mac_keycode = struct {
 
 pub const std_options: std.Options = .{
     .log_level = .err,
+};
+
+const DisplayInfoOutput = struct {
+    id: u32,
+    index: u32,
+    name: []const u8,
+    x: f64,
+    y: f64,
+    width: f64,
+    height: f64,
+    scale: f64,
+    isPrimary: bool,
 };
 
 const NativeErrorObject = struct {
@@ -210,6 +223,34 @@ const ScreenshotInput = struct {
 
 const ScreenshotOutput = struct {
     path: []const u8,
+    desktopIndex: f64,
+    captureX: f64,
+    captureY: f64,
+    captureWidth: f64,
+    captureHeight: f64,
+    imageWidth: f64,
+    imageHeight: f64,
+};
+
+const SelectedDisplay = struct {
+    id: c.CGDirectDisplayID,
+    index: usize,
+    bounds: c.CGRect,
+};
+
+const ScreenshotCapture = struct {
+    image: c.CGImageRef,
+    capture_x: f64,
+    capture_y: f64,
+    capture_width: f64,
+    capture_height: f64,
+    desktop_index: usize,
+};
+
+const ScaledScreenshotImage = struct {
+    image: c.CGImageRef,
+    width: f64,
+    height: f64,
 };
 
 const TypeTextInput = struct {
@@ -241,22 +282,36 @@ pub fn screenshot(input: ScreenshotInput) DataResult(ScreenshotOutput) {
     _ = input.annotate;
     const output_path = input.path orelse "./screenshot.png";
 
-    const image = createScreenshotImage(.{
+    const capture = createScreenshotImage(.{
         .display_index = input.display,
         .region = input.region,
     }) catch {
         return failData(ScreenshotOutput, "screenshot", "CAPTURE_FAILED", "failed to capture screenshot image");
     };
-    defer c.CFRelease(image);
+    defer c.CFRelease(capture.image);
+
+    const scaled_image = scaleScreenshotImageIfNeeded(capture.image) catch {
+        return failData(ScreenshotOutput, "screenshot", "SCALE_FAILED", "failed to scale screenshot image");
+    };
+    defer c.CFRelease(scaled_image.image);
 
     writeScreenshotPng(.{
-        .image = image,
+        .image = scaled_image.image,
         .output_path = output_path,
     }) catch {
         return failData(ScreenshotOutput, "screenshot", "WRITE_FAILED", "failed to write screenshot file");
     };
 
-    return okData(ScreenshotOutput, .{ .path = output_path });
+    return okData(ScreenshotOutput, .{
+        .path = output_path,
+        .desktopIndex = @as(f64, @floatFromInt(capture.desktop_index)),
+        .captureX = capture.capture_x,
+        .captureY = capture.capture_y,
+        .captureWidth = capture.capture_width,
+        .captureHeight = capture.capture_height,
+        .imageWidth = scaled_image.width,
+        .imageHeight = scaled_image.height,
+    });
 }
 
 pub fn click(input: ClickInput) CommandResult {
@@ -414,8 +469,64 @@ pub fn drag(input: DragInput) CommandResult {
     return okCommand();
 }
 
-pub fn displayList() CommandResult {
-    return todoNotImplemented("display-list");
+pub fn displayList() DataResult([]const u8) {
+    if (builtin.target.os.tag != .macos) {
+        return failData([]const u8, "display-list", "UNSUPPORTED_PLATFORM", "display-list is only supported on macOS");
+    }
+
+    var display_ids: [16]c.CGDirectDisplayID = undefined;
+    var display_count: u32 = 0;
+    const list_result = c.CGGetActiveDisplayList(display_ids.len, &display_ids, &display_count);
+    if (list_result != c.kCGErrorSuccess) {
+        return failData([]const u8, "display-list", "DISPLAY_QUERY_FAILED", "failed to query active displays");
+    }
+
+    var write_buffer: [32 * 1024]u8 = undefined;
+    var stream = std.io.fixedBufferStream(&write_buffer);
+    const writer = stream.writer();
+
+    writer.writeByte('[') catch {
+        return failData([]const u8, "display-list", "SERIALIZE_FAILED", "failed to serialize display list");
+    };
+
+    var i: usize = 0;
+    while (i < display_count) : (i += 1) {
+        if (i > 0) {
+            writer.writeByte(',') catch {
+                return failData([]const u8, "display-list", "SERIALIZE_FAILED", "failed to serialize display list");
+            };
+        }
+
+        const display_id = display_ids[i];
+        const bounds = c.CGDisplayBounds(display_id);
+        var name_buffer: [64]u8 = undefined;
+        const fallback_name = std.fmt.bufPrint(&name_buffer, "Display {d}", .{display_id}) catch "Display";
+        const item = DisplayInfoOutput{
+            .id = display_id,
+            .index = @intCast(i),
+            .name = fallback_name,
+            .x = std.math.round(bounds.origin.x),
+            .y = std.math.round(bounds.origin.y),
+            .width = std.math.round(bounds.size.width),
+            .height = std.math.round(bounds.size.height),
+            .scale = 1,
+            .isPrimary = c.CGDisplayIsMain(display_id) != 0,
+        };
+
+        writer.print("{f}", .{std.json.fmt(item, .{})}) catch {
+            return failData([]const u8, "display-list", "SERIALIZE_FAILED", "failed to serialize display list");
+        };
+    }
+
+    writer.writeByte(']') catch {
+        return failData([]const u8, "display-list", "SERIALIZE_FAILED", "failed to serialize display list");
+    };
+
+    // TODO: Add Mission Control desktop/space enumeration via private SkyLight APIs.
+    const payload = std.heap.c_allocator.dupe(u8, stream.getWritten()) catch {
+        return failData([]const u8, "display-list", "ALLOC_FAILED", "failed to allocate display list response");
+    };
+    return okData([]const u8, payload);
 }
 
 pub fn clipboardGet() DataResult([]const u8) {
@@ -928,31 +1039,107 @@ fn pressX11(input: PressInput) !void {
 fn createScreenshotImage(input: struct {
     display_index: ?f64,
     region: ?ScreenshotRegion,
-}) !c.CGImageRef {
-    const display_id = resolveDisplayId(input.display_index) catch {
+}) !ScreenshotCapture {
+    const selected_display = resolveDisplayId(input.display_index) catch {
         return error.DisplayResolutionFailed;
     };
 
     if (input.region) |region| {
         const rect: c.CGRect = .{
-            .origin = .{ .x = region.x, .y = region.y },
+            .origin = .{
+                .x = selected_display.bounds.origin.x + region.x,
+                .y = selected_display.bounds.origin.y + region.y,
+            },
             .size = .{ .width = region.width, .height = region.height },
         };
-        const region_image = c.CGDisplayCreateImageForRect(display_id, rect);
+        const region_image = c.CGDisplayCreateImageForRect(selected_display.id, rect);
         if (region_image == null) {
             return error.CaptureFailed;
         }
-        return region_image;
+        return .{
+            .image = region_image,
+            .capture_x = rect.origin.x,
+            .capture_y = rect.origin.y,
+            .capture_width = rect.size.width,
+            .capture_height = rect.size.height,
+            .desktop_index = selected_display.index,
+        };
     }
 
-    const full_image = c.CGDisplayCreateImage(display_id);
+    const full_image = c.CGDisplayCreateImage(selected_display.id);
     if (full_image == null) {
         return error.CaptureFailed;
     }
-    return full_image;
+    return .{
+        .image = full_image,
+        .capture_x = selected_display.bounds.origin.x,
+        .capture_y = selected_display.bounds.origin.y,
+        .capture_width = selected_display.bounds.size.width,
+        .capture_height = selected_display.bounds.size.height,
+        .desktop_index = selected_display.index,
+    };
 }
 
-fn resolveDisplayId(display_index: ?f64) !c.CGDirectDisplayID {
+fn scaleScreenshotImageIfNeeded(image: c.CGImageRef) !ScaledScreenshotImage {
+    const image_width = @as(f64, @floatFromInt(c.CGImageGetWidth(image)));
+    const image_height = @as(f64, @floatFromInt(c.CGImageGetHeight(image)));
+    const long_edge = @max(image_width, image_height);
+    if (long_edge <= screenshot_max_long_edge_px) {
+        _ = c.CFRetain(image);
+        return .{
+            .image = image,
+            .width = image_width,
+            .height = image_height,
+        };
+    }
+
+    const scale = screenshot_max_long_edge_px / long_edge;
+    const target_width = @max(1, @as(usize, @intFromFloat(std.math.round(image_width * scale))));
+    const target_height = @max(1, @as(usize, @intFromFloat(std.math.round(image_height * scale))));
+
+    const color_space = c.CGColorSpaceCreateDeviceRGB();
+    if (color_space == null) {
+        return error.ScaleFailed;
+    }
+    defer c.CFRelease(color_space);
+
+    const bitmap_info: c.CGBitmapInfo = c.kCGImageAlphaPremultipliedLast;
+    const context = c.CGBitmapContextCreate(
+        null,
+        target_width,
+        target_height,
+        8,
+        0,
+        color_space,
+        bitmap_info,
+    );
+    if (context == null) {
+        return error.ScaleFailed;
+    }
+    defer c.CFRelease(context);
+
+    c.CGContextSetInterpolationQuality(context, c.kCGInterpolationHigh);
+    const draw_rect: c.CGRect = .{
+        .origin = .{ .x = 0, .y = 0 },
+        .size = .{
+            .width = @as(c.CGFloat, @floatFromInt(target_width)),
+            .height = @as(c.CGFloat, @floatFromInt(target_height)),
+        },
+    };
+    c.CGContextDrawImage(context, draw_rect, image);
+
+    const scaled = c.CGBitmapContextCreateImage(context);
+    if (scaled == null) {
+        return error.ScaleFailed;
+    }
+    return .{
+        .image = scaled,
+        .width = @as(f64, @floatFromInt(target_width)),
+        .height = @as(f64, @floatFromInt(target_height)),
+    };
+}
+
+fn resolveDisplayId(display_index: ?f64) !SelectedDisplay {
     const selected_index: usize = if (display_index) |value| blk: {
         const normalized = @as(i64, @intFromFloat(std.math.round(value)));
         if (normalized < 0) {
@@ -969,7 +1156,13 @@ fn resolveDisplayId(display_index: ?f64) !c.CGDirectDisplayID {
     if (selected_index >= display_count) {
         return error.InvalidDisplayIndex;
     }
-    return display_ids[selected_index];
+    const selected_id = display_ids[selected_index];
+    const bounds = c.CGDisplayBounds(selected_id);
+    return .{
+        .id = selected_id,
+        .index = selected_index,
+        .bounds = bounds,
+    };
 }
 
 fn writeScreenshotPng(input: struct {

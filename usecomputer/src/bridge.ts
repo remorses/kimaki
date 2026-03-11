@@ -1,6 +1,7 @@
 // Native bridge that maps typed TS calls to direct Zig N-API methods.
 
 import { native, type NativeModule } from './native-lib.js'
+import { z } from 'zod'
 import type {
   ClickInput,
   DisplayInfo,
@@ -16,6 +17,20 @@ import type {
   TypeInput,
   UseComputerBridge,
 } from './types.js'
+
+const displayInfoSchema = z.object({
+  id: z.number(),
+  index: z.number(),
+  name: z.string(),
+  x: z.number(),
+  y: z.number(),
+  width: z.number(),
+  height: z.number(),
+  scale: z.number(),
+  isPrimary: z.boolean(),
+})
+
+const displayListSchema = z.array(displayInfoSchema)
 
 const unavailableError =
   'Native backend is unavailable. Build it with `pnpm build:native` or `zig build` in usecomputer/.'
@@ -118,13 +133,35 @@ export function createBridgeFromNative({ nativeModule }: { nativeModule: NativeM
         annotate: input.annotate ?? null,
       }
 
-      const result = nativeModule.screenshot(nativeInput)
-      const maybeError = unwrapCommand({ result, fallbackCommand: 'screenshot' })
-      if (maybeError instanceof Error) {
-        throw maybeError
+      const result = unwrapData({
+        result: nativeModule.screenshot(nativeInput),
+        fallbackCommand: 'screenshot',
+      })
+      if (result instanceof Error) {
+        throw result
       }
-      const resolvedPath = input.path || `${process.cwd()}/screenshot.png`
-      return { path: resolvedPath }
+      const coordMap = [
+        result.captureX,
+        result.captureY,
+        result.captureWidth,
+        result.captureHeight,
+        result.imageWidth,
+        result.imageHeight,
+      ].join(',')
+      const hint = 'use --coord-map coordmap to use command like click, move etc on the coordinate system of this screenshot'
+
+      return {
+        path: result.path,
+        desktopIndex: result.desktopIndex,
+        captureX: result.captureX,
+        captureY: result.captureY,
+        captureWidth: result.captureWidth,
+        captureHeight: result.captureHeight,
+        imageWidth: result.imageWidth,
+        imageHeight: result.imageHeight,
+        coordMap,
+        hint,
+      }
     },
     async click(input: ClickInput): Promise<void> {
       const nativeInput: { point: Point; button: 'left' | 'right' | 'middle' | null; count: number | null } = {
@@ -235,12 +272,47 @@ export function createBridgeFromNative({ nativeModule }: { nativeModule: NativeM
       return result
     },
     async displayList(): Promise<DisplayInfo[]> {
-      const result = nativeModule.displayList()
-      const maybeError = unwrapCommand({ result, fallbackCommand: 'displayList' })
-      if (maybeError instanceof Error) {
-        throw maybeError
+      const payload = unwrapData({
+        result: nativeModule.displayList(),
+        fallbackCommand: 'displayList',
+      })
+      if (payload instanceof Error) {
+        throw payload
       }
-      return []
+
+      let parsedJson: unknown
+      try {
+        parsedJson = JSON.parse(payload)
+      } catch (e) {
+        throw new NativeBridgeError({
+          message: 'Native displayList returned invalid JSON',
+          command: 'displayList',
+          code: 'INVALID_NATIVE_JSON',
+        })
+      }
+
+      const parsed = displayListSchema.safeParse(parsedJson)
+      if (!parsed.success) {
+        throw new NativeBridgeError({
+          message: 'Native displayList returned invalid payload shape',
+          command: 'displayList',
+          code: 'INVALID_NATIVE_PAYLOAD',
+        })
+      }
+
+      return parsed.data.map((display) => {
+        return {
+          id: display.id,
+          index: display.index,
+          name: display.name,
+          x: display.x,
+          y: display.y,
+          width: display.width,
+          height: display.height,
+          scale: display.scale,
+          isPrimary: display.isPrimary,
+        }
+      })
     },
     async clipboardGet(): Promise<string> {
       const result = unwrapData({

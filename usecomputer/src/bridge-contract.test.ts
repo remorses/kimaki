@@ -38,21 +38,57 @@ describe('native bridge contract', () => {
 
     const screenshot = await bridge.screenshot({ path: `${process.cwd()}/tmp/bridge-contract-shot.png` })
 
-    await bridge.typeText({ text: 'hello', delayMs: 30 })
-    await bridge.press({ key: 'enter', count: 1 })
+    await bridge.typeText({ text: 'h', delayMs: 30 })
+    await bridge.press({ key: 'h', count: 1 })
     await expect(bridge.scroll({ direction: 'down', amount: 300 })).rejects.toThrowError('TODO not implemented')
-    await expect(bridge.displayList()).rejects.toThrowError('TODO not implemented')
+    const displays = await bridge.displayList()
     await expect(bridge.clipboardGet()).rejects.toThrowError('TODO not implemented')
     await expect(bridge.clipboardSet({ text: 'copied' })).rejects.toThrowError('TODO not implemented')
 
     expect({
-      screenshot,
+      screenshotShape: {
+        path: screenshot.path,
+        desktopIndex: typeof screenshot.desktopIndex,
+        captureX: typeof screenshot.captureX,
+        captureY: typeof screenshot.captureY,
+        captureWidth: screenshot.captureWidth > 0,
+        captureHeight: screenshot.captureHeight > 0,
+        imageWidth: screenshot.imageWidth > 0,
+        imageHeight: screenshot.imageHeight > 0,
+        coordMapHasSixValues: screenshot.coordMap.split(',').length === 6,
+        hint: screenshot.hint,
+      },
+      firstDisplayShape: displays[0]
+        ? {
+            id: typeof displays[0].id,
+            index: typeof displays[0].index,
+            width: displays[0].width > 0,
+            height: displays[0].height > 0,
+          }
+        : null,
     }).toMatchInlineSnapshot(`
       {
-        "screenshot": {
+        "firstDisplayShape": {
+          "height": true,
+          "id": "number",
+          "index": "number",
+          "width": true,
+        },
+        "screenshotShape": {
+          "captureHeight": true,
+          "captureWidth": true,
+          "captureX": "number",
+          "captureY": "number",
+          "coordMapHasSixValues": true,
+          "desktopIndex": "number",
+          "hint": "use --coord-map coordmap to use command like click, move etc on the coordinate system of this screenshot",
+          "imageHeight": true,
+          "imageWidth": true,
           "path": "/Users/morse/Documents/GitHub/kimakivoice/usecomputer/tmp/bridge-contract-shot.png",
         },
       }
     `)
+
+    expect(displays.length).toBeGreaterThan(0)
   })
 })

@@ -18,6 +18,7 @@ export type Region = {
 
 export type DisplayInfo = {
   id: number
+  index: number
   name: string
   x: number
   y: number
@@ -36,6 +37,15 @@ export type ScreenshotInput = {
 
 export type ScreenshotResult = {
   path: string
+  desktopIndex: number
+  captureX: number
+  captureY: number
+  captureWidth: number
+  captureHeight: number
+  imageWidth: number
+  imageHeight: number
+  coordMap: string
+  hint: string
 }
 
 export type ClickInput = {

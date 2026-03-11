@@ -9,7 +9,19 @@ import pathModule from 'node:path'
 import url from 'node:url'
 import { createBridge } from './bridge.js'
 import { parseDirection, parseModifiers, parsePoint, parseRegion } from './command-parsers.js'
-import type { MouseButton, Point, UseComputerBridge } from './types.js'
+import type { DisplayInfo, MouseButton, Point, UseComputerBridge } from './types.js'
+
+const SCREENSHOT_COORD_MAP_HINT =
+  'use --coord-map coordmap to use command like click, move etc on the coordinate system of this screenshot'
+
+type CoordMap = {
+  captureX: number
+  captureY: number
+  captureWidth: number
+  captureHeight: number
+  imageWidth: number
+  imageHeight: number
+}
 
 const require = createRequire(import.meta.url)
 const packageJson = require('../package.json') as { version: string }
@@ -22,12 +34,115 @@ function printLine(value: string): void {
   process.stdout.write(`${value}\n`)
 }
 
+function readTextFromStdin(): string {
+  return fs.readFileSync(0, 'utf8')
+}
+
+function parsePositiveInteger({
+  value,
+  option,
+}: {
+  value?: number
+  option: string
+}): number | undefined {
+  if (typeof value !== 'number') {
+    return undefined
+  }
+  if (!Number.isFinite(value) || value <= 0) {
+    throw new Error(`Option ${option} must be a positive number`)
+  }
+  return Math.round(value)
+}
+
+function splitIntoChunks({
+  text,
+  chunkSize,
+}: {
+  text: string
+  chunkSize?: number
+}): string[] {
+  if (!chunkSize || text.length <= chunkSize) {
+    return [text]
+  }
+  const chunkCount = Math.ceil(text.length / chunkSize)
+  return Array.from({ length: chunkCount }, (_, index) => {
+    const start = index * chunkSize
+    const end = start + chunkSize
+    return text.slice(start, end)
+  }).filter((chunk) => {
+    return chunk.length > 0
+  })
+}
+
+function sleep({
+  ms,
+}: {
+  ms: number
+}): Promise<void> {
+  return new Promise((resolve) => {
+    setTimeout(() => {
+      resolve()
+    }, ms)
+  })
+}
+
 function parsePointOrThrow(input: string): Point {
   const parsed = parsePoint(input)
   if (parsed instanceof Error) {
     throw parsed
   }
   return parsed
+}
+
+function parseCoordMapOrThrow(input?: string): CoordMap | undefined {
+  if (!input) {
+    return undefined
+  }
+
+  const values = input.split(',').map((value) => {
+    return Number(value.trim())
+  })
+  if (values.length !== 6 || values.some((value) => {
+    return !Number.isFinite(value)
+  })) {
+    throw new Error('Option --coord-map must be x,y,width,height,imageWidth,imageHeight')
+  }
+
+  const [captureX, captureY, captureWidth, captureHeight, imageWidth, imageHeight] = values
+  if (captureWidth <= 0 || captureHeight <= 0 || imageWidth <= 0 || imageHeight <= 0) {
+    throw new Error('Option --coord-map must have positive width and height values')
+  }
+
+  return {
+    captureX,
+    captureY,
+    captureWidth,
+    captureHeight,
+    imageWidth,
+    imageHeight,
+  }
+}
+
+function mapPointFromCoordMap({
+  point,
+  coordMap,
+}: {
+  point: Point
+  coordMap?: CoordMap
+}): Point {
+  if (!coordMap) {
+    return point
+  }
+
+  const mappedX = coordMap.captureX + (point.x / coordMap.imageWidth) * coordMap.captureWidth
+  const mappedY = coordMap.captureY + (point.y / coordMap.imageHeight) * coordMap.captureHeight
+
+  const clampedX = Math.max(coordMap.captureX, Math.min(coordMap.captureX + coordMap.captureWidth, mappedX))
+  const clampedY = Math.max(coordMap.captureY, Math.min(coordMap.captureY + coordMap.captureHeight, mappedY))
+  return {
+    x: Math.round(clampedX),
+    y: Math.round(clampedY),
+  }
 }
 
 function resolvePointInput({
@@ -58,6 +173,15 @@ function parseButton(input?: string): MouseButton {
     return input
   }
   return 'left'
+}
+
+function printDesktopList({ displays }: { displays: DisplayInfo[] }) {
+  displays.forEach((display) => {
+    const primary = display.isPrimary ? ' (primary)' : ''
+    printLine(
+      `#${display.index}${primary} ${display.width}x${display.height} @ (${display.x},${display.y}) id=${display.id} scale=${display.scale} ${display.name}`,
+    )
+  })
 }
 
 function notImplemented({ command }: { command: string }): never {
@@ -109,6 +233,9 @@ export function createCli({ bridge = createBridge() }: { bridge?: UseComputerBri
         return
       }
       printLine(result.path)
+      printLine(result.hint)
+      printLine(`coordmap=${result.coordMap}`)
+      printLine(`desktop-index=${String(result.desktopIndex)}`)
     })
 
   cli
@@ -118,6 +245,7 @@ export function createCli({ bridge = createBridge() }: { bridge?: UseComputerBri
     .option('--button [button]', z.enum(['left', 'right', 'middle']).default('left').describe('Mouse button'))
     .option('--count [count]', z.number().default(1).describe('Number of clicks'))
     .option('--modifiers [modifiers]', z.string().describe('Modifiers as ctrl,shift,alt,meta'))
+    .option('--coord-map [coordMap]', z.string().describe('Map input coordinates from screenshot space'))
     .action(async (target, options) => {
       const point = resolvePointInput({
         x: options.x,
@@ -125,8 +253,9 @@ export function createCli({ bridge = createBridge() }: { bridge?: UseComputerBri
         target,
         command: 'click',
       })
+      const coordMap = parseCoordMapOrThrow(options.coordMap)
       await bridge.click({
-        point,
+        point: mapPointFromCoordMap({ point, coordMap }),
         button: options.button,
         count: options.count,
         modifiers: parseModifiers(options.modifiers),
@@ -134,16 +263,87 @@ export function createCli({ bridge = createBridge() }: { bridge?: UseComputerBri
     })
 
   cli
-    .command('type <text>', 'Type text in the focused element')
-    .option('--delay [delay]', z.number().describe('Delay in milliseconds between keystrokes'))
+    .command(
+      'type [text]',
+      dedent`
+        Type text in the currently focused input.
+
+        Supports direct text arguments or --stdin for long/multiline content.
+        For very long text, use --chunk-size to split input into multiple native
+        type calls so shells and apps are less likely to drop input.
+      `,
+    )
+    .option('--stdin', 'Read text from stdin instead of [text] argument')
+    .option('--delay [delay]', z.number().describe('Delay in milliseconds between typed characters'))
+    .option('--chunk-size [size]', z.number().describe('Split text into fixed-size chunks before typing'))
+    .option('--chunk-delay [delay]', z.number().describe('Delay in milliseconds between chunks'))
+    .option('--max-length [length]', z.number().describe('Fail when input text exceeds this maximum length'))
+    .example('# Type a short string')
+    .example('usecomputer type "hello"')
+    .example('# Type multiline text from a file')
+    .example('cat ./notes.txt | usecomputer type --stdin --chunk-size 4000 --chunk-delay 15')
     .action(async (text, options) => {
-      await bridge.typeText({ text, delayMs: options.delay })
+      const fromStdin = Boolean(options.stdin)
+      if (fromStdin && text) {
+        throw new Error('Use either [text] or --stdin, not both')
+      }
+      if (!fromStdin && !text) {
+        throw new Error('Command "type" requires [text] or --stdin')
+      }
+
+      const sourceText = fromStdin ? readTextFromStdin() : text ?? ''
+      const chunkSize = parsePositiveInteger({
+        value: options.chunkSize,
+        option: '--chunk-size',
+      })
+      const maxLength = parsePositiveInteger({
+        value: options.maxLength,
+        option: '--max-length',
+      })
+      const chunkDelay = parsePositiveInteger({
+        value: options.chunkDelay,
+        option: '--chunk-delay',
+      })
+
+      if (typeof maxLength === 'number' && sourceText.length > maxLength) {
+        throw new Error(`Input text length ${String(sourceText.length)} exceeds --max-length ${String(maxLength)}`)
+      }
+
+      const chunks = splitIntoChunks({
+        text: sourceText,
+        chunkSize,
+      })
+      await chunks.reduce(async (previousChunk, chunk, index) => {
+        await previousChunk
+        await bridge.typeText({
+          text: chunk,
+          delayMs: options.delay,
+        })
+        if (typeof chunkDelay === 'number' && index < chunks.length - 1) {
+          await sleep({ ms: chunkDelay })
+        }
+      }, Promise.resolve())
     })
 
   cli
-    .command('press <key>', 'Press a key or key combo')
+    .command(
+      'press <key>',
+      dedent`
+        Press a key or key combo in the focused app.
+
+        Key combos use plus syntax such as cmd+s or ctrl+shift+p.
+        Platform behavior: cmd maps to Command on macOS, Win/Super on
+        Windows/Linux. For cross-platform app shortcuts, prefer ctrl+... .
+      `,
+    )
     .option('--count [count]', z.number().default(1).describe('How many times to press'))
     .option('--delay [delay]', z.number().describe('Delay between presses in milliseconds'))
+    .example('# Save in the current app on macOS')
+    .example('usecomputer press "cmd+s"')
+    .example('# Portable save shortcut across most apps')
+    .example('usecomputer press "ctrl+s"')
+    .example('# Open command palette in many editors')
+    .example('usecomputer press "cmd+shift+p"')
     .action(async (key, options) => {
       await bridge.press({ key, count: options.count, delayMs: options.delay })
     })
@@ -172,10 +372,12 @@ export function createCli({ bridge = createBridge() }: { bridge?: UseComputerBri
     .command('drag <from> <to>', 'Drag from one coordinate to another')
     .option('--duration [duration]', z.number().describe('Duration in milliseconds'))
     .option('--button [button]', z.enum(['left', 'right', 'middle']).default('left').describe('Mouse button'))
+    .option('--coord-map [coordMap]', z.string().describe('Map input coordinates from screenshot space'))
     .action(async (from, to, options) => {
+      const coordMap = parseCoordMapOrThrow(options.coordMap)
       await bridge.drag({
-        from: parsePointOrThrow(from),
-        to: parsePointOrThrow(to),
+        from: mapPointFromCoordMap({ point: parsePointOrThrow(from), coordMap }),
+        to: mapPointFromCoordMap({ point: parsePointOrThrow(to), coordMap }),
         durationMs: options.duration,
         button: options.button,
       })
@@ -185,6 +387,7 @@ export function createCli({ bridge = createBridge() }: { bridge?: UseComputerBri
     .command('hover [target]', 'Move mouse cursor to coordinates without clicking')
     .option('-x [x]', z.number().describe('X coordinate'))
     .option('-y [y]', z.number().describe('Y coordinate'))
+    .option('--coord-map [coordMap]', z.string().describe('Map input coordinates from screenshot space'))
     .action(async (target, options) => {
       const point = resolvePointInput({
         x: options.x,
@@ -192,13 +395,15 @@ export function createCli({ bridge = createBridge() }: { bridge?: UseComputerBri
         target,
         command: 'hover',
       })
-      await bridge.hover(point)
+      const coordMap = parseCoordMapOrThrow(options.coordMap)
+      await bridge.hover(mapPointFromCoordMap({ point, coordMap }))
     })
 
   cli
     .command('mouse move [x] [y]', 'Move mouse cursor to absolute coordinates (optional before click; click can target coordinates directly)')
     .option('-x [x]', z.number().describe('X coordinate'))
     .option('-y [y]', z.number().describe('Y coordinate'))
+    .option('--coord-map [coordMap]', z.string().describe('Map input coordinates from screenshot space'))
     .action(async (x, y, options) => {
       const point = resolvePointInput({
         x: options.x,
@@ -206,7 +411,8 @@ export function createCli({ bridge = createBridge() }: { bridge?: UseComputerBri
         target: x && y ? `${x},${y}` : undefined,
         command: 'mouse move',
       })
-      await bridge.mouseMove(point)
+      const coordMap = parseCoordMapOrThrow(options.coordMap)
+      await bridge.mouseMove(mapPointFromCoordMap({ point, coordMap }))
     })
 
   cli
@@ -244,12 +450,19 @@ export function createCli({ bridge = createBridge() }: { bridge?: UseComputerBri
         printJson(displays)
         return
       }
-      displays.forEach((display) => {
-        const primary = display.isPrimary ? ' (primary)' : ''
-        printLine(
-          `#${display.id} ${display.name}${primary} ${display.width}x${display.height} @ (${display.x},${display.y}) scale=${display.scale}`,
-        )
-      })
+      printDesktopList({ displays })
+    })
+
+  cli
+    .command('desktop list', 'List desktops as display indexes and sizes (#0 is the primary display)')
+    .option('--json', 'Output as JSON')
+    .action(async (options) => {
+      const displays = await bridge.displayList()
+      if (options.json) {
+        printJson(displays)
+        return
+      }
+      printDesktopList({ displays })
     })
 
   cli
