@@ -1,7 +1,7 @@
 // Validates screenshot coord-map parsing and reverse mapping edge cases.
 
 import { describe, expect, test } from 'vitest'
-import { mapPointFromCoordMap, parseCoordMapOrThrow } from './cli.js'
+import { mapPointFromCoordMap, mapPointToCoordMap, parseCoordMapOrThrow } from './cli.js'
 
 describe('coord-map reverse mapping', () => {
   test('maps full-display scaled screenshot coordinates to desktop coordinates', () => {
@@ -102,6 +102,65 @@ describe('coord-map reverse mapping', () => {
         {
           "x": 799,
           "y": 599,
+        },
+      ]
+    `)
+  })
+
+  test('maps desktop coordinates back into screenshot image coordinates', () => {
+    const coordMap = parseCoordMapOrThrow('0,0,1720,1440,1568,1313')
+
+    const mapped = [
+      mapPointToCoordMap({ point: { x: 0, y: 0 }, coordMap }),
+      mapPointToCoordMap({ point: { x: 1719, y: 1439 }, coordMap }),
+      mapPointToCoordMap({ point: { x: 230, y: 614 }, coordMap }),
+    ]
+
+    expect(mapped).toMatchInlineSnapshot(`
+      [
+        {
+          "x": 0,
+          "y": 0,
+        },
+        {
+          "x": 1567,
+          "y": 1312,
+        },
+        {
+          "x": 210,
+          "y": 560,
+        },
+      ]
+    `)
+  })
+
+  test('round-trips screenshot coordinates through desktop space', () => {
+    const coordMap = parseCoordMapOrThrow('0,0,1720,1440,1568,1313')
+
+    const roundTrip = [
+      { x: 0, y: 0 },
+      { x: 210, y: 560 },
+      { x: 1567, y: 1312 },
+    ].map((point) => {
+      return mapPointToCoordMap({
+        point: mapPointFromCoordMap({ point, coordMap }),
+        coordMap,
+      })
+    })
+
+    expect(roundTrip).toMatchInlineSnapshot(`
+      [
+        {
+          "x": 0,
+          "y": 0,
+        },
+        {
+          "x": 210,
+          "y": 560,
+        },
+        {
+          "x": 1567,
+          "y": 1312,
         },
       ]
     `)

@@ -36,4 +36,26 @@ describe('usecomputer cli parsing', () => {
     expect(clickParsed.options.coordMap).toBe('0,0,1600,900,1568,882')
     expect(moveParsed.options.coordMap).toBe('0,0,1600,900,1568,882')
   })
+
+  test('parses debug-point options', () => {
+    const cli = createCli()
+    const parsed = cli.parse([
+      'node',
+      'usecomputer',
+      'debug-point',
+      '-x',
+      '210',
+      '-y',
+      '560',
+      '--coord-map',
+      '0,0,1720,1440,1568,1313',
+      '--output',
+      './tmp/debug-point.png',
+    ], { run: false })
+
+    expect(parsed.options.coordMap).toBe('0,0,1720,1440,1568,1313')
+    expect(parsed.options.output).toBe('./tmp/debug-point.png')
+    expect(parsed.options.x).toBe(210)
+    expect(parsed.options.y).toBe(560)
+  })
 })

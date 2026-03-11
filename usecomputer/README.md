@@ -44,13 +44,24 @@ Screenshot output includes:
 - `coordMap` in the form `captureX,captureY,captureWidth,captureHeight,imageWidth,imageHeight`
 - `hint` with usage text for coordinate mapping
 
-Use `--coord-map` on pointer commands to map screenshot-space coordinates back
-to real screen coordinates:
+Always pass the exact `--coord-map` value emitted by `usecomputer screenshot`
+to pointer commands when you are clicking coordinates from that screenshot.
+This maps screenshot-space coordinates back to real screen coordinates:
 
 ```bash
 usecomputer screenshot ./shot.png --json
 usecomputer click -x 400 -y 220 --coord-map "0,0,1600,900,1568,882"
 usecomputer mouse move -x 100 -y 80 --coord-map "0,0,1600,900,1568,882"
+```
+
+To validate a target before clicking, use `debug-point`. It takes the same
+coordinates and `--coord-map`, captures a fresh full-desktop screenshot, and
+draws a red marker where the click would land. When `--coord-map` is present,
+it captures that same region so the overlay matches the screenshot you are
+targeting:
+
+```bash
+usecomputer debug-point -x 400 -y 220 --coord-map "0,0,1600,900,1568,882"
 ```
 
 ## Keyboard commands

@@ -1,6 +1,7 @@
 // usecomputer CLI entrypoint and command wiring for desktop automation actions.
 
 import { goke } from 'goke'
+import pc from 'picocolors'
 import { z } from 'zod'
 import dedent from 'string-dedent'
 import { createRequire } from 'node:module'
@@ -9,10 +10,9 @@ import pathModule from 'node:path'
 import url from 'node:url'
 import { createBridge } from './bridge.js'
 import { parseDirection, parseModifiers, parsePoint, parseRegion } from './command-parsers.js'
-import type { DisplayInfo, MouseButton, Point, UseComputerBridge, WindowInfo } from './types.js'
-
-const SCREENSHOT_COORD_MAP_HINT =
-  'use --coord-map coordmap to use command like click, move etc on the coordinate system of this screenshot'
+import { drawDebugPointOnImage } from './debug-point-image.js'
+import { renderAlignedTable } from './terminal-table.js'
+import type { DisplayInfo, MouseButton, Point, Region, UseComputerBridge, WindowInfo } from './types.js'
 
 type CoordMap = {
   captureX: number
@@ -152,6 +152,66 @@ export function mapPointFromCoordMap({
   }
 }
 
+export function mapPointToCoordMap({
+  point,
+  coordMap,
+}: {
+  point: Point
+  coordMap?: CoordMap
+}): Point {
+  if (!coordMap) {
+    return point
+  }
+
+  const captureWidthSpan = Math.max(coordMap.captureWidth - 1, 1)
+  const captureHeightSpan = Math.max(coordMap.captureHeight - 1, 1)
+  const imageWidthSpan = Math.max(coordMap.imageWidth - 1, 0)
+  const imageHeightSpan = Math.max(coordMap.imageHeight - 1, 0)
+  const relativeX = (point.x - coordMap.captureX) / captureWidthSpan
+  const relativeY = (point.y - coordMap.captureY) / captureHeightSpan
+  const mappedX = relativeX * imageWidthSpan
+  const mappedY = relativeY * imageHeightSpan
+  const clampedX = Math.max(0, Math.min(imageWidthSpan, mappedX))
+  const clampedY = Math.max(0, Math.min(imageHeightSpan, mappedY))
+
+  return {
+    x: Math.round(clampedX),
+    y: Math.round(clampedY),
+  }
+}
+
+function resolveOutputPath({ path }: { path?: string }): string | undefined {
+  if (!path) {
+    return undefined
+  }
+
+  return path.startsWith('/')
+    ? path
+    : `${process.cwd()}/${path}`
+}
+
+function ensureParentDirectory({ filePath }: { filePath?: string }): void {
+  if (!filePath) {
+    return
+  }
+
+  const parentDirectory = pathModule.dirname(filePath)
+  fs.mkdirSync(parentDirectory, { recursive: true })
+}
+
+function getRegionFromCoordMap({ coordMap }: { coordMap?: CoordMap }): Region | undefined {
+  if (!coordMap) {
+    return undefined
+  }
+
+  return {
+    x: coordMap.captureX,
+    y: coordMap.captureY,
+    width: coordMap.captureWidth,
+    height: coordMap.captureHeight,
+  }
+}
+
 function resolvePointInput({
   x,
   y,
@@ -183,11 +243,32 @@ function parseButton(input?: string): MouseButton {
 }
 
 function printDesktopList({ displays }: { displays: DisplayInfo[] }) {
-  displays.forEach((display) => {
-    const primary = display.isPrimary ? ' (primary)' : ''
-    printLine(
-      `#${display.index}${primary} ${display.width}x${display.height} @ (${display.x},${display.y}) id=${display.id} scale=${display.scale} ${display.name}`,
-    )
+  const rows = displays.map((display) => {
+    return {
+      desktop: `#${display.index}`,
+      primary: display.isPrimary ? pc.green('yes') : 'no',
+      size: `${display.width}x${display.height}`,
+      position: `${display.x},${display.y}`,
+      id: String(display.id),
+      scale: String(display.scale),
+      name: display.name,
+    }
+  })
+
+  const lines = renderAlignedTable({
+    rows,
+    columns: [
+      { header: pc.bold('desktop'), value: (row) => { return row.desktop } },
+      { header: pc.bold('primary'), value: (row) => { return row.primary } },
+      { header: pc.bold('size'), value: (row) => { return row.size }, align: 'right' },
+      { header: pc.bold('position'), value: (row) => { return row.position }, align: 'right' },
+      { header: pc.bold('id'), value: (row) => { return row.id }, align: 'right' },
+      { header: pc.bold('scale'), value: (row) => { return row.scale }, align: 'right' },
+      { header: pc.bold('name'), value: (row) => { return row.name } },
+    ],
+  })
+  lines.forEach((line) => {
+    printLine(line)
   })
 }
 
@@ -212,25 +293,50 @@ function printDesktopListWithWindows({
   windows: WindowInfo[]
 }) {
   const windowsByDesktop = mapWindowsByDesktopIndex({ windows })
+  printDesktopList({ displays })
+
   displays.forEach((display) => {
-    const primary = display.isPrimary ? ' (primary)' : ''
-    printLine(
-      `#${display.index}${primary} ${display.width}x${display.height} @ (${display.x},${display.y}) id=${display.id} scale=${display.scale} ${display.name}`,
-    )
+    printLine('')
+    printLine(pc.bold(pc.cyan(`desktop #${display.index} windows`)))
 
     const desktopWindows = windowsByDesktop.get(display.index) ?? []
     if (desktopWindows.length === 0) {
-      printLine('  windows: none')
+      printLine(pc.dim('none'))
       return
     }
 
-    printLine(`  windows: ${String(desktopWindows.length)}`)
-    desktopWindows.forEach((window) => {
-      const titleSuffix = window.title ? ` title=${window.title}` : ''
-      printLine(
-        `  - id=${window.id} app=${window.ownerName} pid=${window.ownerPid} ${window.width}x${window.height} @ (${window.x},${window.y})${titleSuffix}`,
-      )
+    const lines = renderAlignedTable({
+      rows: desktopWindows,
+      columns: [
+        { header: pc.bold('id'), value: (row) => { return String(row.id) }, align: 'right' },
+        { header: pc.bold('app'), value: (row) => { return row.ownerName } },
+        { header: pc.bold('pid'), value: (row) => { return String(row.ownerPid) }, align: 'right' },
+        { header: pc.bold('size'), value: (row) => { return `${row.width}x${row.height}` }, align: 'right' },
+        { header: pc.bold('position'), value: (row) => { return `${row.x},${row.y}` }, align: 'right' },
+        { header: pc.bold('title'), value: (row) => { return row.title } },
+      ],
     })
+    lines.forEach((line) => {
+      printLine(line)
+    })
+  })
+}
+
+function printWindowList({ windows }: { windows: WindowInfo[] }) {
+  const lines = renderAlignedTable({
+    rows: windows,
+    columns: [
+      { header: pc.bold('id'), value: (row) => { return String(row.id) }, align: 'right' },
+      { header: pc.bold('desktop'), value: (row) => { return `#${row.desktopIndex}` }, align: 'right' },
+      { header: pc.bold('app'), value: (row) => { return row.ownerName } },
+      { header: pc.bold('pid'), value: (row) => { return String(row.ownerPid) }, align: 'right' },
+      { header: pc.bold('size'), value: (row) => { return `${row.width}x${row.height}` }, align: 'right' },
+      { header: pc.bold('position'), value: (row) => { return `${row.x},${row.y}` }, align: 'right' },
+      { header: pc.bold('title'), value: (row) => { return row.title } },
+    ],
+  })
+  lines.forEach((line) => {
+    printLine(line)
   })
 }
 
@@ -259,16 +365,8 @@ export function createCli({ bridge = createBridge() }: { bridge?: UseComputerBri
     .option('--annotate', 'Annotate screenshot with labels')
     .option('--json', 'Output as JSON')
     .action(async (path, options) => {
-      const outputPath = path
-        ? path.startsWith('/')
-          ? path
-          : `${process.cwd()}/${path}`
-        : undefined
-
-      if (path) {
-        const parentDirectory = pathModule.dirname(outputPath)
-        fs.mkdirSync(parentDirectory, { recursive: true })
-      }
+      const outputPath = resolveOutputPath({ path })
+      ensureParentDirectory({ filePath: outputPath })
       const region = options.region ? parseRegion(options.region) : undefined
       if (region instanceof Error) {
         throw region
@@ -292,18 +390,30 @@ export function createCli({ bridge = createBridge() }: { bridge?: UseComputerBri
       }
       printLine(result.path)
       printLine(result.hint)
-      printLine(`coordmap=${result.coordMap}`)
       printLine(`desktop-index=${String(result.desktopIndex)}`)
     })
 
   cli
-    .command('click [target]', 'Click at coordinates')
-    .option('-x [x]', z.number().describe('X coordinate'))
-    .option('-y [y]', z.number().describe('Y coordinate'))
+    .command(
+      'click [target]',
+      dedent`
+        Click at coordinates.
+
+        When you are clicking from a screenshot, use the exact pixel coordinates
+        of the target in that screenshot image and always pass the exact
+        --coord-map value printed by usecomputer screenshot. The coord map
+        scales screenshot-space pixels back into the real captured desktop or
+        window rectangle before sending the native click.
+      `,
+    )
+    .option('-x [x]', z.number().describe('X coordinate. When using --coord-map, this must be the exact pixel from the screenshot image'))
+    .option('-y [y]', z.number().describe('Y coordinate. When using --coord-map, this must be the exact pixel from the screenshot image'))
     .option('--button [button]', z.enum(['left', 'right', 'middle']).default('left').describe('Mouse button'))
     .option('--count [count]', z.number().default(1).describe('Number of clicks'))
     .option('--modifiers [modifiers]', z.string().describe('Modifiers as ctrl,shift,alt,meta'))
-    .option('--coord-map [coordMap]', z.string().describe('Map input coordinates from screenshot space'))
+    .option('--coord-map [coordMap]', z.string().describe('Map exact screenshot-space pixels back into the real captured desktop or window rectangle'))
+    .example('# Click the exact pixel you saw in a screenshot')
+    .example('usecomputer click -x 155 -y 446 --coord-map "0,0,1720,1440,1568,1313"')
     .action(async (target, options) => {
       const point = resolvePointInput({
         x: options.x,
@@ -318,6 +428,72 @@ export function createCli({ bridge = createBridge() }: { bridge?: UseComputerBri
         count: options.count,
         modifiers: parseModifiers(options.modifiers),
       })
+    })
+
+  cli
+    .command(
+      'debug-point [target]',
+      dedent`
+        Capture a screenshot and draw a red marker where a click would land.
+
+        Pass the same --coord-map you plan to use for click. This validates
+        screenshot-space coordinates before you send a real click. When
+        --coord-map is present, debug-point captures that same region so the
+        overlay matches the screenshot you are targeting.
+      `,
+    )
+    .option('-x [x]', z.number().describe('X coordinate'))
+    .option('-y [y]', z.number().describe('Y coordinate'))
+    .option('--coord-map [coordMap]', z.string().describe('Map input coordinates from screenshot space'))
+    .option('--output [path]', z.string().describe('Write the annotated screenshot to this path'))
+    .option('--json', 'Output as JSON')
+    .example('# Validate the same coordinates you plan to click')
+    .example('usecomputer debug-point -x 210 -y 560 --coord-map "0,0,1720,1440,1568,1313"')
+    .action(async (target, options) => {
+      const point = resolvePointInput({
+        x: options.x,
+        y: options.y,
+        target,
+        command: 'debug-point',
+      })
+      const inputCoordMap = parseCoordMapOrThrow(options.coordMap)
+      const desktopPoint = mapPointFromCoordMap({ point, coordMap: inputCoordMap })
+      const outputPath = resolveOutputPath({ path: options.output ?? './tmp/debug-point.png' })
+      ensureParentDirectory({ filePath: outputPath })
+      const screenshotRegion = getRegionFromCoordMap({ coordMap: inputCoordMap })
+
+      const screenshot = await bridge.screenshot({
+        path: outputPath,
+        region: screenshotRegion,
+      })
+      const screenshotCoordMap = parseCoordMapOrThrow(screenshot.coordMap)
+      const screenshotPoint = mapPointToCoordMap({ point: desktopPoint, coordMap: screenshotCoordMap })
+
+      await drawDebugPointOnImage({
+        imagePath: screenshot.path,
+        point: screenshotPoint,
+        imageWidth: screenshot.imageWidth,
+        imageHeight: screenshot.imageHeight,
+      })
+
+      if (options.json) {
+        printJson({
+          path: screenshot.path,
+          inputPoint: point,
+          desktopPoint,
+          screenshotPoint,
+          inputCoordMap: options.coordMap ?? null,
+          screenshotCoordMap: screenshot.coordMap,
+          hint: screenshot.hint,
+        })
+        return
+      }
+
+      printLine(screenshot.path)
+      printLine(`input-point=${point.x},${point.y}`)
+      printLine(`desktop-point=${desktopPoint.x},${desktopPoint.y}`)
+      printLine(`screenshot-point=${screenshotPoint.x},${screenshotPoint.y}`)
+      printLine(screenshot.hint)
     })
 
   cli
@@ -570,12 +746,7 @@ export function createCli({ bridge = createBridge() }: { bridge?: UseComputerBri
       printJson(windows)
       return
     }
-    windows.forEach((window) => {
-      const titleSuffix = window.title ? ` title=${window.title}` : ''
-      printLine(
-        `id=${window.id} app=${window.ownerName} pid=${window.ownerPid} desktop=#${window.desktopIndex} ${window.width}x${window.height} @ (${window.x},${window.y})${titleSuffix}`,
-      )
-    })
+    printWindowList({ windows })
   })
   cli.command('window focus <target>').action(() => {
     notImplemented({ command: 'window focus' })

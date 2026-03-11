@@ -171,7 +171,13 @@ export function createBridgeFromNative({ nativeModule }: { nativeModule: NativeM
         result.imageWidth,
         result.imageHeight,
       ].join(',')
-      const hint = 'use --coord-map coordmap to use command like click, move etc on the coordinate system of this screenshot'
+      const hint = [
+        'ALWAYS pass this exact coord map to click, hover, drag, and mouse move when using coordinates from this screenshot:',
+        `--coord-map "${coordMap}"`,
+        '',
+        'Example:',
+        `usecomputer click -x 400 -y 220 --coord-map "${coordMap}"`,
+      ].join('\n')
 
       return {
         path: result.path,

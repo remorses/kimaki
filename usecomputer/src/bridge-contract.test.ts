@@ -138,7 +138,11 @@ describe('native bridge contract', () => {
           "captureY": "number",
           "coordMapHasSixValues": true,
           "desktopIndex": "number",
-          "hint": "use --coord-map coordmap to use command like click, move etc on the coordinate system of this screenshot",
+          "hint": "ALWAYS pass this exact coord map to click, hover, drag, and mouse move when using coordinates from this screenshot:
+      --coord-map "0,0,3440,1440,1568,656"
+
+      Example:
+      usecomputer click -x 400 -y 220 --coord-map "0,0,3440,1440,1568,656"",
           "imageHeight": true,
           "imageWidth": true,
           "path": "/Users/morse/Documents/GitHub/kimakivoice/usecomputer/tmp/bridge-contract-shot.png",
