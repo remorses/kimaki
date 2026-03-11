@@ -521,6 +521,57 @@ export async function updateChannel({
   })
 }
 
+export async function setThreadTypingStatus({
+  slack,
+  threadChannelId,
+  statusText,
+}: {
+  slack: WebClient
+  threadChannelId: string
+  statusText: string
+}): Promise<{ channelId: string; threadTs: string }> {
+  const target = resolveSlackTarget(threadChannelId)
+  if (!target.threadTs) {
+    throw new Error(`Thread channel ${threadChannelId} resolved without threadTs`)
+  }
+
+  await slack.apiCall('assistant.threads.setStatus', {
+    channel_id: target.channel,
+    thread_ts: target.threadTs,
+    status: statusText,
+    loading_messages: [statusText],
+  })
+
+  return {
+    channelId: target.channel,
+    threadTs: target.threadTs,
+  }
+}
+
+export async function clearThreadTypingStatus({
+  slack,
+  threadChannelId,
+}: {
+  slack: WebClient
+  threadChannelId: string
+}): Promise<{ channelId: string; threadTs: string }> {
+  const target = resolveSlackTarget(threadChannelId)
+  if (!target.threadTs) {
+    throw new Error(`Thread channel ${threadChannelId} resolved without threadTs`)
+  }
+
+  await slack.apiCall('assistant.threads.setStatus', {
+    channel_id: target.channel,
+    thread_ts: target.threadTs,
+    status: '',
+  })
+
+  return {
+    channelId: target.channel,
+    threadTs: target.threadTs,
+  }
+}
+
 /**
  * POST /guilds/:id/channels -> conversations.create
  */

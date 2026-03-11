@@ -55,6 +55,7 @@ async function parseBody(request: Request): Promise<Record<string, string>> {
 
 export function createServer(config: ServerConfig): ServerComponents {
   const { prisma, workspaceId, botUserId, botToken } = config
+  const assistantThreadStatusByThread = new Map<string, string>()
 
   const app = new Spiceflow({ basePath: '' }).onError(({ error }) => {
     if (error instanceof Response) {
@@ -202,6 +203,34 @@ export function createServer(config: ServerConfig): ServerComponents {
     })
 
     return Response.json({ ok: true, channel: channelId, ts })
+  })
+
+  // --- assistant.threads.setStatus ---
+  app.post('/api/assistant.threads.setStatus', async ({ request }) => {
+    const body = await parseBody(request)
+    const channelId = body['channel_id']
+    const threadTs = body['thread_ts']
+    const status = body['status'] ?? ''
+
+    if (!(channelId && threadTs)) {
+      return Response.json({ ok: false, error: 'missing_required_field' })
+    }
+
+    const parentMessage = await prisma.message.findUnique({ where: { ts: threadTs } })
+    if (!parentMessage || parentMessage.channelId !== channelId) {
+      return Response.json({ ok: false, error: 'thread_not_found' })
+    }
+
+    const threadKey = `${channelId}:${threadTs}`
+    if (status) {
+      assistantThreadStatusByThread.set(threadKey, status)
+    } else {
+      assistantThreadStatusByThread.delete(threadKey)
+    }
+
+    return Response.json({
+      ok: true,
+    })
   })
 
   // --- conversations.history ---

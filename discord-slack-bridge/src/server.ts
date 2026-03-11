@@ -57,6 +57,9 @@ import {
   resolveDiscordChannelId,
   resolveSlackTarget,
 } from './id-converter.js'
+import {
+  createTypingCoordinator,
+} from './typing-state.js'
 import { decodeComponentActionId } from './component-id-codec.js'
 import type { DiscordAttachment } from './file-upload.js'
 import type {
@@ -115,6 +118,7 @@ const EVENT_DEDUPE_TTL_MS = 5 * 60 * 1000
 
 const DISCORD_DEFAULT_DISCRIMINATOR = '0'
 const DISCORD_ZERO_PERMISSIONS = '0'
+const THREAD_TYPING_STATUS_TEXT = 'Typing...'
 
 /**
  * Look up a Slack user with caching.
@@ -193,6 +197,29 @@ export function createServer(config: ServerConfig): ServerComponents {
   const knownThreads = new Set<string>()
   const knownThreadChannels = new Map<string, APIChannel>()
   const applicationCommandRegistry = new Map<string, APIApplicationCommand[]>()
+  const typingCoordinator = createTypingCoordinator({
+    setStatus: ({ threadChannelId, statusText }) => {
+      return rest.setThreadTypingStatus({
+        slack,
+        threadChannelId,
+        statusText,
+      })
+    },
+    clearStatus: ({ threadChannelId }) => {
+      return rest.clearThreadTypingStatus({
+        slack,
+        threadChannelId,
+      })
+    },
+    resolveThreadTarget: ({ threadChannelId }) => {
+      const target = resolveSlackTarget(threadChannelId)
+      return {
+        channelId: target.channel,
+        threadTs: target.threadTs,
+      }
+    },
+    statusText: THREAD_TYPING_STATUS_TEXT,
+  })
 
   const app = new Spiceflow({ basePath: '' }).onError(({ error }) => {
     if (error instanceof Response) {
@@ -482,6 +509,12 @@ export function createServer(config: ServerConfig): ServerComponents {
         guildId: workspaceId,
 
       })
+      if (isThreadChannelId(channelId)) {
+        typingCoordinator.noteAssistantMessage({
+          threadChannelId: channelId,
+          messageId: message.id,
+        })
+      }
       return withRateLimitHeaders(Response.json(message))
     },
   )
@@ -505,6 +538,12 @@ export function createServer(config: ServerConfig): ServerComponents {
         guildId: workspaceId,
 
       })
+      if (isThreadChannelId(channelId)) {
+        typingCoordinator.noteAssistantMessage({
+          threadChannelId: channelId,
+          messageId: message.id,
+        })
+      }
       return withRateLimitHeaders(Response.json(message))
     },
   )
@@ -575,8 +614,20 @@ export function createServer(config: ServerConfig): ServerComponents {
     },
   )
 
-  // POST /api/v10/channels/:channel_id/typing (no-op)
-  app.post('/api/v10/channels/:channel_id/typing', () => {
+  // POST /api/v10/channels/:channel_id/typing
+  app.post('/api/v10/channels/:channel_id/typing', async ({ params }) => {
+    const channelId = readString(params, 'channel_id')
+    if (!channelId) {
+      return errorJsonResponse({ status: 400, error: 'missing_channel_id' })
+    }
+    if (!isThreadChannelId(channelId)) {
+      return withRateLimitHeaders(new Response(null, { status: 204 }))
+    }
+
+    typingCoordinator.requestStart({
+      threadChannelId: channelId,
+    })
+
     return withRateLimitHeaders(new Response(null, { status: 204 }))
   })
 
@@ -980,6 +1031,12 @@ export function createServer(config: ServerConfig): ServerComponents {
           guildId: workspaceId,
   
         })
+        if (isThreadChannelId(pending.channelId)) {
+          typingCoordinator.noteAssistantMessage({
+            threadChannelId: pending.channelId,
+            messageId: message.id,
+          })
+        }
         gateway.broadcastMessageCreate(message, workspaceId)
       }
 
@@ -999,6 +1056,12 @@ export function createServer(config: ServerConfig): ServerComponents {
           guildId: workspaceId,
   
         })
+        if (isThreadChannelId(pending.channelId)) {
+          typingCoordinator.noteAssistantMessage({
+            threadChannelId: pending.channelId,
+            messageId: message.id,
+          })
+        }
         gateway.broadcast(GatewayDispatchEvents.MessageUpdate, {
           ...message,
           guild_id: workspaceId,
@@ -1051,6 +1114,12 @@ export function createServer(config: ServerConfig): ServerComponents {
         guildId: workspaceId,
 
       })
+      if (isThreadChannelId(pending.channelId)) {
+        typingCoordinator.noteAssistantMessage({
+          threadChannelId: pending.channelId,
+          messageId: message.id,
+        })
+      }
       return withRateLimitHeaders(Response.json(message))
     },
   )
@@ -1096,6 +1165,12 @@ export function createServer(config: ServerConfig): ServerComponents {
         guildId: workspaceId,
 
       })
+      if (isThreadChannelId(pending.channelId)) {
+        typingCoordinator.noteAssistantMessage({
+          threadChannelId: pending.channelId,
+          messageId: message.id,
+        })
+      }
 
       return withRateLimitHeaders(Response.json(message))
     },

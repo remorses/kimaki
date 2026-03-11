@@ -165,4 +165,17 @@ describe('rest parity edge routes', () => {
       ),
     ).rejects.toThrowErrorMatchingInlineSnapshot(`[DiscordAPIError[unknown_webhook_token]: Unknown webhook token]`)
   })
+
+  test('typing route returns 204 for channels and thread channels', async () => {
+    const projectId = ctx.twin.resolveChannelId('project')
+    const projectChannel = (await ctx.client.channels.fetch(projectId)) as TextChannel
+
+    await expect(projectChannel.sendTyping()).resolves.toBeUndefined()
+
+    const thread = await projectChannel.threads.create({
+      name: 'typing-route-thread',
+    })
+
+    await expect(thread.sendTyping()).resolves.toBeUndefined()
+  })
 })
