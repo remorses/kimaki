@@ -1,37 +1,84 @@
-// Native bridge that maps typed TS calls to the Zig N-API command dispatcher.
+// Native bridge that maps typed TS calls to direct Zig N-API methods.
 
 import { native, type NativeModule } from './native-lib.js'
 import type {
   ClickInput,
+  DisplayInfo,
   DragInput,
+  NativeCommandResult,
+  NativeDataResult,
   Point,
   PressInput,
+  Region,
   ScreenshotInput,
   ScreenshotResult,
   ScrollInput,
   TypeInput,
   UseComputerBridge,
-  DisplayInfo,
 } from './types.js'
 
 const unavailableError =
   'Native backend is unavailable. Build it with `pnpm build:native` or `zig build` in usecomputer/.'
 
-function execute<T>({
-  nativeModule,
-  command,
-  payload,
-}: {
-  nativeModule: NativeModule
-  command: string
-  payload: unknown
-}): Error | T {
-  const response = nativeModule.execute(command, JSON.stringify(payload))
-  const parsed = JSON.parse(response) as { ok: boolean; data?: T; error?: string }
-  if (!parsed.ok) {
-    return new Error(parsed.error || `Native command failed: ${command}`)
+class NativeBridgeError extends Error {
+  readonly code?: string
+  readonly command?: string
+
+  constructor({
+    message,
+    code,
+    command,
+  }: {
+    message: string
+    code?: string
+    command?: string
+  }) {
+    super(message)
+    this.name = 'NativeBridgeError'
+    this.code = code
+    this.command = command
   }
-  return parsed.data as T
+}
+
+function unwrapCommand({
+  result,
+  fallbackCommand,
+}: {
+  result: NativeCommandResult
+  fallbackCommand: string
+}): Error | null {
+  if (result.ok) {
+    return null
+  }
+  const message = result.error?.message || `Native command failed: ${fallbackCommand}`
+  return new NativeBridgeError({
+    message,
+    code: result.error?.code,
+    command: result.error?.command || fallbackCommand,
+  })
+}
+
+function unwrapData<T>({
+  result,
+  fallbackCommand,
+}: {
+  result: NativeDataResult<T>
+  fallbackCommand: string
+}): Error | T {
+  if (result.ok) {
+    if (result.data === undefined) {
+      return new NativeBridgeError({
+        message: `Native command returned no data: ${fallbackCommand}`,
+        command: fallbackCommand,
+      })
+    }
+    return result.data
+  }
+  return new NativeBridgeError({
+    message: result.error?.message || `Native command failed: ${fallbackCommand}`,
+    code: result.error?.code,
+    command: result.error?.command || fallbackCommand,
+  })
 }
 
 function unavailableBridge(): UseComputerBridge {
@@ -64,91 +111,152 @@ export function createBridgeFromNative({ nativeModule }: { nativeModule: NativeM
 
   return {
     async screenshot(input: ScreenshotInput): Promise<ScreenshotResult> {
-      const result = execute<ScreenshotResult>({ nativeModule, command: 'screenshot', payload: input })
-      if (result instanceof Error) {
-        throw result
+      const nativeInput: { path: string | null; display: number | null; region: Region | null; annotate: boolean | null } = {
+        path: input.path ?? null,
+        display: input.display ?? null,
+        region: input.region ?? null,
+        annotate: input.annotate ?? null,
       }
-      return result
+
+      const result = nativeModule.screenshot(nativeInput)
+      const maybeError = unwrapCommand({ result, fallbackCommand: 'screenshot' })
+      if (maybeError instanceof Error) {
+        throw maybeError
+      }
+      const resolvedPath = input.path || `${process.cwd()}/screenshot.png`
+      return { path: resolvedPath }
     },
     async click(input: ClickInput): Promise<void> {
-      const result = execute<null>({ nativeModule, command: 'click', payload: input })
-      if (result instanceof Error) {
-        throw result
+      const nativeInput: { point: Point; button: 'left' | 'right' | 'middle' | null; count: number | null } = {
+        point: input.point,
+        button: input.button ?? null,
+        count: input.count ?? null,
+      }
+
+      const result = nativeModule.click(nativeInput)
+      const maybeError = unwrapCommand({ result, fallbackCommand: 'click' })
+      if (maybeError instanceof Error) {
+        throw maybeError
       }
     },
     async typeText(input: TypeInput): Promise<void> {
-      const result = execute<null>({ nativeModule, command: 'type-text', payload: input })
-      if (result instanceof Error) {
-        throw result
+      const nativeInput: { text: string; delayMs: number | null } = {
+        text: input.text,
+        delayMs: input.delayMs ?? null,
+      }
+
+      const result = nativeModule.typeText(nativeInput)
+      const maybeError = unwrapCommand({ result, fallbackCommand: 'typeText' })
+      if (maybeError instanceof Error) {
+        throw maybeError
       }
     },
     async press(input: PressInput): Promise<void> {
-      const result = execute<null>({ nativeModule, command: 'press', payload: input })
-      if (result instanceof Error) {
-        throw result
+      const nativeInput: { key: string; count: number | null; delayMs: number | null } = {
+        key: input.key,
+        count: input.count ?? null,
+        delayMs: input.delayMs ?? null,
+      }
+
+      const result = nativeModule.press(nativeInput)
+      const maybeError = unwrapCommand({ result, fallbackCommand: 'press' })
+      if (maybeError instanceof Error) {
+        throw maybeError
       }
     },
     async scroll(input: ScrollInput): Promise<void> {
-      const result = execute<null>({ nativeModule, command: 'scroll', payload: input })
-      if (result instanceof Error) {
-        throw result
+      const nativeInput: { direction: string; amount: number; at: Point | null } = {
+        direction: input.direction,
+        amount: input.amount,
+        at: input.at ?? null,
+      }
+
+      const result = nativeModule.scroll(nativeInput)
+      const maybeError = unwrapCommand({ result, fallbackCommand: 'scroll' })
+      if (maybeError instanceof Error) {
+        throw maybeError
       }
     },
     async drag(input: DragInput): Promise<void> {
-      const result = execute<null>({ nativeModule, command: 'drag', payload: input })
-      if (result instanceof Error) {
-        throw result
+      const nativeInput: {
+        from: Point
+        to: Point
+        durationMs: number | null
+        button: 'left' | 'right' | 'middle' | null
+      } = {
+        from: input.from,
+        to: input.to,
+        durationMs: input.durationMs ?? null,
+        button: input.button ?? null,
+      }
+
+      const result = nativeModule.drag(nativeInput)
+      const maybeError = unwrapCommand({ result, fallbackCommand: 'drag' })
+      if (maybeError instanceof Error) {
+        throw maybeError
       }
     },
     async hover(input: Point): Promise<void> {
-      const result = execute<null>({ nativeModule, command: 'hover', payload: input })
-      if (result instanceof Error) {
-        throw result
+      const result = nativeModule.hover(input)
+      const maybeError = unwrapCommand({ result, fallbackCommand: 'hover' })
+      if (maybeError instanceof Error) {
+        throw maybeError
       }
     },
     async mouseMove(input: Point): Promise<void> {
-      const result = execute<null>({ nativeModule, command: 'mouse-move', payload: input })
-      if (result instanceof Error) {
-        throw result
+      const result = nativeModule.mouseMove(input)
+      const maybeError = unwrapCommand({ result, fallbackCommand: 'mouseMove' })
+      if (maybeError instanceof Error) {
+        throw maybeError
       }
     },
     async mouseDown(input: { button: 'left' | 'right' | 'middle' }): Promise<void> {
-      const result = execute<null>({ nativeModule, command: 'mouse-down', payload: input })
-      if (result instanceof Error) {
-        throw result
+      const result = nativeModule.mouseDown({ button: input.button ?? null })
+      const maybeError = unwrapCommand({ result, fallbackCommand: 'mouseDown' })
+      if (maybeError instanceof Error) {
+        throw maybeError
       }
     },
     async mouseUp(input: { button: 'left' | 'right' | 'middle' }): Promise<void> {
-      const result = execute<null>({ nativeModule, command: 'mouse-up', payload: input })
-      if (result instanceof Error) {
-        throw result
+      const result = nativeModule.mouseUp({ button: input.button ?? null })
+      const maybeError = unwrapCommand({ result, fallbackCommand: 'mouseUp' })
+      if (maybeError instanceof Error) {
+        throw maybeError
       }
     },
     async mousePosition(): Promise<Point> {
-      const result = execute<Point>({ nativeModule, command: 'mouse-position', payload: {} })
+      const result = unwrapData({
+        result: nativeModule.mousePosition(),
+        fallbackCommand: 'mousePosition',
+      })
       if (result instanceof Error) {
         throw result
       }
       return result
     },
     async displayList(): Promise<DisplayInfo[]> {
-      const result = execute<DisplayInfo[]>({ nativeModule, command: 'display-list', payload: {} })
+      const result = nativeModule.displayList()
+      const maybeError = unwrapCommand({ result, fallbackCommand: 'displayList' })
+      if (maybeError instanceof Error) {
+        throw maybeError
+      }
+      return []
+    },
+    async clipboardGet(): Promise<string> {
+      const result = unwrapData({
+        result: nativeModule.clipboardGet(),
+        fallbackCommand: 'clipboardGet',
+      })
       if (result instanceof Error) {
         throw result
       }
       return result
     },
-    async clipboardGet(): Promise<string> {
-      const result = execute<{ text: string }>({ nativeModule, command: 'clipboard-get', payload: {} })
-      if (result instanceof Error) {
-        throw result
-      }
-      return result.text
-    },
     async clipboardSet(input: { text: string }): Promise<void> {
-      const result = execute<null>({ nativeModule, command: 'clipboard-set', payload: input })
-      if (result instanceof Error) {
-        throw result
+      const result = nativeModule.clipboardSet(input)
+      const maybeError = unwrapCommand({ result, fallbackCommand: 'clipboardSet' })
+      if (maybeError instanceof Error) {
+        throw maybeError
       }
     },
   }

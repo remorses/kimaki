@@ -1,4 +1,4 @@
-// Optional host smoke test for the real native click command.
+// Optional host smoke test for direct native mouse methods.
 
 import { describe, expect, test } from 'vitest'
 import { native } from './native-lib.js'
@@ -14,23 +14,19 @@ describe('native click smoke', () => {
       return
     }
 
-    const response = native.execute(
-      'click',
-      JSON.stringify({
-        point: { x: 10, y: 10 },
-        button: 'left',
-        count: 1,
-      }),
-    )
+    const response = native.click({
+      point: { x: 10, y: 10 },
+      button: 'left',
+      count: 1,
+    })
 
-    const parsed = JSON.parse(response) as { ok: boolean; data?: null; error?: string }
-    expect(parsed).toMatchInlineSnapshot(`
+    expect(response).toMatchInlineSnapshot(`
       {
-        "data": null,
+        "error": null,
         "ok": true,
       }
     `)
-    expect(typeof parsed.ok).toBe('boolean')
+    expect(response.ok).toBe(true)
   })
 
   smokeTest('executes mouse-move/down/up/position/hover/drag without crashing', () => {
@@ -39,49 +35,17 @@ describe('native click smoke', () => {
       return
     }
 
-    const moveResponse = JSON.parse(
-      native.execute(
-        'mouse-move',
-        JSON.stringify({
-          x: 20,
-          y: 20,
-        }),
-      ),
-    ) as { ok: boolean; data?: null; error?: string }
-
-    const downResponse = JSON.parse(
-      native.execute('mouse-down', JSON.stringify({ button: 'left' })),
-    ) as { ok: boolean; data?: null; error?: string }
-
-    const upResponse = JSON.parse(
-      native.execute('mouse-up', JSON.stringify({ button: 'left' })),
-    ) as { ok: boolean; data?: null; error?: string }
-
-    const positionResponse = JSON.parse(
-      native.execute('mouse-position', JSON.stringify({})),
-    ) as { ok: boolean; data?: { x: number; y: number }; error?: string }
-
-    const hoverResponse = JSON.parse(
-      native.execute(
-        'hover',
-        JSON.stringify({
-          x: 24,
-          y: 24,
-        }),
-      ),
-    ) as { ok: boolean; data?: null; error?: string }
-
-    const dragResponse = JSON.parse(
-      native.execute(
-        'drag',
-        JSON.stringify({
-          from: { x: 24, y: 24 },
-          to: { x: 30, y: 30 },
-          button: 'left',
-          durationMs: 10,
-        }),
-      ),
-    ) as { ok: boolean; data?: null; error?: string }
+    const moveResponse = native.mouseMove({ x: 0, y: 0 })
+    const downResponse = native.mouseDown({ button: 'left' })
+    const upResponse = native.mouseUp({ button: 'left' })
+    const positionResponse = native.mousePosition()
+    const hoverResponse = native.hover({ x: 0, y: 0 })
+    const dragResponse = native.drag({
+      from: { x: 0, y: 0 },
+      to: { x: 0, y: 0 },
+      button: 'left',
+      durationMs: 10,
+    })
 
     expect({
       moveResponse,
@@ -93,30 +57,31 @@ describe('native click smoke', () => {
     }).toMatchInlineSnapshot(`
       {
         "downResponse": {
-          "data": null,
+          "error": null,
           "ok": true,
         },
         "dragResponse": {
-          "data": null,
+          "error": null,
           "ok": true,
         },
         "hoverResponse": {
-          "data": null,
+          "error": null,
           "ok": true,
         },
         "moveResponse": {
-          "data": null,
+          "error": null,
           "ok": true,
         },
         "positionResponse": {
           "data": {
-            "x": 20,
-            "y": 20,
+            "x": 0,
+            "y": 0,
           },
+          "error": null,
           "ok": true,
         },
         "upResponse": {
-          "data": null,
+          "error": null,
           "ok": true,
         },
       }
@@ -127,5 +92,25 @@ describe('native click smoke', () => {
     expect(positionResponse.ok).toBe(true)
     expect(hoverResponse.ok).toBe(true)
     expect(dragResponse.ok).toBe(true)
+  })
+
+  smokeTest('returns structured TODO error objects for unimplemented commands', () => {
+    expect(native).toBeTruthy()
+    if (!native) {
+      return
+    }
+
+    const result = native.displayList()
+    expect(result).toMatchInlineSnapshot(`
+      {
+        "error": {
+          "code": "TODO_NOT_IMPLEMENTED",
+          "command": "display-list",
+          "message": "TODO not implemented",
+        },
+        "ok": false,
+      }
+    `)
+    expect(result.ok).toBe(false)
   })
 })

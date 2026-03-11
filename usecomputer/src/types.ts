@@ -69,6 +69,23 @@ export type DragInput = {
   button: MouseButton
 }
 
+export type NativeErrorObject = {
+  code: string
+  message: string
+  command: string
+}
+
+export type NativeCommandResult = {
+  ok: boolean
+  error?: NativeErrorObject
+}
+
+export type NativeDataResult<T> = {
+  ok: boolean
+  data?: T
+  error?: NativeErrorObject
+}
+
 export interface UseComputerBridge {
   screenshot(input: ScreenshotInput): Promise<ScreenshotResult>
   click(input: ClickInput): Promise<void>

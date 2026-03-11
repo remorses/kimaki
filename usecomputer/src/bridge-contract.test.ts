@@ -1,85 +1,58 @@
-// Contract tests for command names and payloads emitted to the native bridge.
+// Contract tests for direct native method calls emitted by the TS bridge.
+// These tests intentionally call the real Zig native module.
 
 import { describe, expect, test } from 'vitest'
 import { createBridgeFromNative } from './bridge.js'
-import type { NativeModule } from './native-lib.js'
-
-type Call = {
-  command: string
-  payload: unknown
-}
-
-function createFakeNative({ calls }: { calls: Call[] }): NativeModule {
-  return {
-    execute(command: string, payloadJson: string): string {
-      const payload = JSON.parse(payloadJson) as unknown
-      calls.push({ command, payload })
-      if (command === 'mouse-position') {
-        return JSON.stringify({ ok: true, data: { x: 10, y: 20 } })
-      }
-      if (command === 'display-list') {
-        return JSON.stringify({
-          ok: true,
-          data: [
-            { id: 1, name: 'Built-in', x: 0, y: 0, width: 1512, height: 982, scale: 2, isPrimary: true },
-          ],
-        })
-      }
-      if (command === 'clipboard-get') {
-        return JSON.stringify({ ok: true, data: { text: 'hello' } })
-      }
-      if (command === 'screenshot') {
-        return JSON.stringify({ ok: true, data: { path: '/tmp/test.png' } })
-      }
-      return JSON.stringify({ ok: true, data: null })
-    },
-  }
-}
+import { native } from './native-lib.js'
 
 describe('native bridge contract', () => {
-  test('maps high-level calls to native commands', async () => {
-    const calls: Call[] = []
-    const bridge = createBridgeFromNative({ nativeModule: createFakeNative({ calls }) })
+  test('bridge calls hit real Zig module', async () => {
+    expect(native).toBeTruthy()
+    if (!native) {
+      return
+    }
+
+    const bridge = createBridgeFromNative({ nativeModule: native })
+
+    const safeTarget = {
+      x: 0,
+      y: 0,
+    }
 
     await bridge.click({
-      point: { x: 100, y: 200 },
+      point: safeTarget,
       button: 'left',
-      count: 2,
-      modifiers: ['cmd'],
+      count: 1,
+      modifiers: [],
     })
-    await bridge.typeText({ text: 'hello', delayMs: 30 })
-    await bridge.press({ key: 'enter', count: 1 })
-    await bridge.scroll({ direction: 'down', amount: 300 })
-    await bridge.drag({ from: { x: 10, y: 10 }, to: { x: 200, y: 120 }, button: 'left' })
-    await bridge.hover({ x: 33, y: 44 })
-    await bridge.mouseMove({ x: 60, y: 70 })
+    await bridge.hover(safeTarget)
+    await bridge.mouseMove(safeTarget)
     await bridge.mouseDown({ button: 'left' })
     await bridge.mouseUp({ button: 'left' })
-    await bridge.mousePosition()
-    await bridge.displayList()
-    await bridge.clipboardGet()
-    await bridge.clipboardSet({ text: 'copied' })
-    await bridge.screenshot({ path: './out.png' })
+    await bridge.drag({
+      from: safeTarget,
+      to: { x: safeTarget.x + 6, y: safeTarget.y + 6 },
+      button: 'left',
+      durationMs: 10,
+    })
 
-    expect(calls.map((call) => {
-      return call.command
-    })).toMatchInlineSnapshot(`
-      [
-        "click",
-        "type-text",
-        "press",
-        "scroll",
-        "drag",
-        "hover",
-        "mouse-move",
-        "mouse-down",
-        "mouse-up",
-        "mouse-position",
-        "display-list",
-        "clipboard-get",
-        "clipboard-set",
-        "screenshot",
-      ]
+    const screenshot = await bridge.screenshot({ path: `${process.cwd()}/tmp/bridge-contract-shot.png` })
+
+    await expect(bridge.typeText({ text: 'hello', delayMs: 30 })).rejects.toThrowError('TODO not implemented')
+    await expect(bridge.press({ key: 'enter', count: 1 })).rejects.toThrowError('TODO not implemented')
+    await expect(bridge.scroll({ direction: 'down', amount: 300 })).rejects.toThrowError('TODO not implemented')
+    await expect(bridge.displayList()).rejects.toThrowError('TODO not implemented')
+    await expect(bridge.clipboardGet()).rejects.toThrowError('TODO not implemented')
+    await expect(bridge.clipboardSet({ text: 'copied' })).rejects.toThrowError('TODO not implemented')
+
+    expect({
+      screenshot,
+    }).toMatchInlineSnapshot(`
+      {
+        "screenshot": {
+          "path": "/Users/morse/Documents/GitHub/kimakivoice/usecomputer/tmp/bridge-contract-shot.png",
+        },
+      }
     `)
   })
 })
