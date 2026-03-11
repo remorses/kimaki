@@ -287,11 +287,18 @@ export class SlackBridgeGateway {
     authorizedTeamIds?: string[]
   }> {
     if (this.authorize) {
-      return this.authorize({
+      const result = await this.authorize({
         kind: 'gateway-identify',
         token,
         teamId: this.workspaceId,
       })
+      if (!result.allow) {
+        return { allow: false }
+      }
+      if (!result.authorizedTeamIds?.includes(this.workspaceId)) {
+        return { allow: false }
+      }
+      return result
     }
 
     if (token !== this.expectedToken) {
@@ -309,10 +316,7 @@ export class SlackBridgeGateway {
     client: ConnectedClient,
     teamId: string,
   ): boolean {
-    if (!client.authorizedTeamIds) {
-      return true
-    }
-    return client.authorizedTeamIds.has(teamId)
+    return client.authorizedTeamIds?.has(teamId) ?? false
   }
 }
 

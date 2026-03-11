@@ -1,6 +1,9 @@
 // E2E coverage for callback-based bridge authorization.
 
 import { afterAll, beforeAll, describe, expect, test } from 'vitest'
+import { WebSocket } from 'ws'
+import { SlackBridge } from '../src/index.js'
+import { SlackDigitalTwin } from 'slack-digital-twin/src'
 import { sendInteractivePayload, sendSlashCommand } from 'slack-digital-twin/src'
 import { setupE2E, teardownE2E, type E2EContext } from './e2e-setup.js'
 
@@ -14,7 +17,11 @@ describe('authorization callbacks', () => {
       bridgeConfig: {
         authorize: async ({ kind, token, teamId }) => {
           if (kind === 'gateway-identify') {
-            return { allow: true, clientId: 'gateway-client' }
+            return {
+              allow: true,
+              clientId: 'gateway-client',
+              authorizedTeamIds: teamId ? [teamId] : [],
+            }
           }
           if (kind === 'rest') {
             const isBridgeBotToken = Boolean(token?.startsWith('xoxb-'))
@@ -24,13 +31,17 @@ describe('authorization callbacks', () => {
             return {
               allow: true,
               clientId: 'client-1',
+              authorizedTeamIds: teamId ? [teamId] : [],
             }
           }
           if (kind === 'webhook-action' || kind === 'webhook-event') {
             if (teamId === 'T_UNAUTHORIZED') {
               return { allow: false }
             }
-            return { allow: true }
+            return {
+              allow: true,
+              authorizedTeamIds: teamId ? [teamId] : [],
+            }
           }
           return { allow: false }
         },
@@ -136,5 +147,132 @@ describe('authorization callbacks', () => {
     })
 
     expect(response.status).toBe(403)
+  })
+
+  test('interactive payload rejects missing team id', async () => {
+    const webhookConfig = ctx.twin.webhookSenderConfig
+    expect(webhookConfig).toBeDefined()
+    if (!webhookConfig) {
+      return
+    }
+
+    const response = await sendInteractivePayload({
+      config: webhookConfig,
+      payload: {
+        type: 'block_actions',
+        user: {
+          id: ctx.twin.resolveUserId('alice'),
+          username: 'alice',
+          name: 'alice',
+        },
+        channel: { id: ctx.twin.resolveChannelId('auth') },
+        trigger_id: 'trigger-interactive-auth-missing-team',
+        response_url: 'https://example.invalid/response',
+        actions: [
+          {
+            action_id: 'action-auth-missing-team',
+            type: 'button',
+            value: 'clicked',
+            block_id: 'b1',
+            action_ts: '1700000000.000021',
+          },
+        ],
+      },
+    })
+
+    expect(response.status).toBe(403)
+  })
+
+  test('REST rejects callback results without authorized team ids', async () => {
+    const twin = new SlackDigitalTwin({
+      workspaceName: 'REST Auth Workspace',
+      webhookConfig: { signingSecret: 'rest-auth-signing-secret' },
+    })
+    await twin.start()
+
+    const bridge = new SlackBridge({
+      slackBotToken: twin.botToken,
+      slackSigningSecret: 'rest-auth-signing-secret',
+      workspaceId: twin.workspaceId,
+      port: 0,
+      slackApiUrl: twin.apiUrl,
+      authorize: async ({ kind, token }) => {
+        if (kind !== 'rest' || token !== 'client-1:secret-1') {
+          return { allow: false }
+        }
+        return { allow: true, clientId: 'client-1' }
+      },
+    })
+
+    try {
+      await bridge.start()
+
+      const response = await fetch(`${bridge.restUrl}/v10/users/@me`, {
+        headers: { authorization: 'Bearer client-1:secret-1' },
+      })
+
+      expect(response.status).toBe(403)
+    } finally {
+      await bridge.stop()
+      await twin.stop()
+    }
+  })
+
+  test('gateway rejects callback results without authorized team ids', async () => {
+    const twin = new SlackDigitalTwin({
+      workspaceName: 'Gateway Auth Workspace',
+      webhookConfig: { signingSecret: 'gateway-auth-signing-secret' },
+    })
+    await twin.start()
+
+    const bridge = new SlackBridge({
+      slackBotToken: twin.botToken,
+      slackSigningSecret: 'gateway-auth-signing-secret',
+      workspaceId: twin.workspaceId,
+      port: 0,
+      slackApiUrl: twin.apiUrl,
+      discordToken: 'client-1:secret-1',
+      authorize: async ({ kind, token }) => {
+        if (kind !== 'gateway-identify' || token !== 'client-1:secret-1') {
+          return { allow: false }
+        }
+        return { allow: true, clientId: 'client-1' }
+      },
+    })
+
+    try {
+      await bridge.start()
+
+      const closeCode = await new Promise<number>((resolve, reject) => {
+        const ws = new WebSocket(bridge.gatewayUrl)
+        ws.on('open', () => {
+          ws.send(
+            JSON.stringify({
+              op: 2,
+              d: {
+                token: 'client-1:secret-1',
+                intents: 1,
+                properties: {
+                  os: 'linux',
+                  browser: 'test',
+                  device: 'test',
+                },
+              },
+            }),
+          )
+        })
+        ws.on('close', (code) => {
+          resolve(code)
+        })
+        ws.on('error', (error) => {
+          reject(error)
+        })
+      })
+
+      expect(closeCode).toBe(4004)
+    } finally {
+      await bridge.stop()
+      await twin.stop()
+    }
   })
 })

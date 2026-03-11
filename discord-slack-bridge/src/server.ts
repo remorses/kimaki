@@ -259,6 +259,7 @@ export function createServer(config: ServerConfig): ServerComponents {
           kind: 'webhook-action',
           teamId: params.get('team_id') ?? undefined,
           request,
+          workspaceId,
         })
         if (!allowSlashAction) {
           return errorJsonResponse({ status: 403, error: 'unauthorized_team' })
@@ -275,6 +276,7 @@ export function createServer(config: ServerConfig): ServerComponents {
           kind: 'webhook-action',
           teamId: readInteractiveTeamId(payloadStr),
           request,
+          workspaceId,
         })
         if (!allowInteractiveAction) {
           return errorJsonResponse({ status: 403, error: 'unauthorized_team' })
@@ -309,6 +311,7 @@ export function createServer(config: ServerConfig): ServerComponents {
       kind: 'webhook-event',
       teamId: readSlackEventTeamId(payload),
       request,
+      workspaceId,
     })
     if (!allowEvent) {
       return errorJsonResponse({ status: 403, error: 'unauthorized_team' })
@@ -1850,8 +1853,7 @@ async function authorizeIncomingRestRequest({
   }
 
   if (
-    result.authorizedTeamIds &&
-    !result.authorizedTeamIds.includes(workspaceId)
+    !result.authorizedTeamIds?.includes(workspaceId)
   ) {
     return {
       status: 403,
@@ -1950,14 +1952,19 @@ async function authorizeSlackInbound({
   kind,
   teamId,
   request,
+  workspaceId,
 }: {
   authorize?: BridgeAuthorizeCallback
   kind: 'webhook-event' | 'webhook-action'
   teamId?: string
   request: Request
+  workspaceId: string
 }): Promise<boolean> {
   if (!authorize) {
     return true
+  }
+  if (!teamId || teamId !== workspaceId) {
+    return false
   }
   const result = await authorize({
     kind,
@@ -1967,7 +1974,7 @@ async function authorizeSlackInbound({
   if (!result.allow) {
     return false
   }
-  if (teamId && result.authorizedTeamIds) {
+  if (result.authorizedTeamIds) {
     return result.authorizedTeamIds.includes(teamId)
   }
   return true
