@@ -51,3 +51,48 @@ Prefer safer coordinates, for example:
 
 - `mouse position --json` then click at `x+30,y+30`, or
 - explicit coordinates in a safe central area of the active screen.
+
+## Running CLI locally
+
+Use the local source CLI from this package directory:
+
+```bash
+pnpm tsx src/cli.ts --help
+```
+
+Common local flows:
+
+```bash
+# Build native module first when changing Zig code
+pnpm build:native:macos
+
+# Mouse position
+pnpm tsx src/cli.ts mouse position --json
+
+# Click at coordinates
+pnpm tsx src/cli.ts click -x 600 -y 500 --button left --count 1
+
+# Screenshot to a path
+pnpm tsx src/cli.ts screenshot "./tmp/local-shot.png" --json
+```
+
+## Keyboard command examples
+
+Keyboard APIs should follow CUA-compatible semantics. Example CLI usage:
+
+```bash
+# Type plain text
+pnpm tsx src/cli.ts type "hello from usecomputer"
+
+# Press one key
+pnpm tsx src/cli.ts press "enter"
+
+# Press a two-key shortcut (example: cmd+s)
+pnpm tsx src/cli.ts press "cmd+s"
+
+# Press another two-key shortcut (example: alt+tab)
+pnpm tsx src/cli.ts press "alt+tab"
+```
+
+Note: if keyboard commands are not implemented yet in native Zig, commands
+return `TODO not implemented` until that command is ported.
