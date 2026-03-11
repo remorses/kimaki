@@ -9,7 +9,7 @@ import pathModule from 'node:path'
 import url from 'node:url'
 import { createBridge } from './bridge.js'
 import { parseDirection, parseModifiers, parsePoint, parseRegion } from './command-parsers.js'
-import type { DisplayInfo, MouseButton, Point, UseComputerBridge } from './types.js'
+import type { DisplayInfo, MouseButton, Point, UseComputerBridge, WindowInfo } from './types.js'
 
 const SCREENSHOT_COORD_MAP_HINT =
   'use --coord-map coordmap to use command like click, move etc on the coordinate system of this screenshot'
@@ -94,7 +94,7 @@ function parsePointOrThrow(input: string): Point {
   return parsed
 }
 
-function parseCoordMapOrThrow(input?: string): CoordMap | undefined {
+export function parseCoordMapOrThrow(input?: string): CoordMap | undefined {
   if (!input) {
     return undefined
   }
@@ -123,7 +123,7 @@ function parseCoordMapOrThrow(input?: string): CoordMap | undefined {
   }
 }
 
-function mapPointFromCoordMap({
+export function mapPointFromCoordMap({
   point,
   coordMap,
 }: {
@@ -134,11 +134,18 @@ function mapPointFromCoordMap({
     return point
   }
 
-  const mappedX = coordMap.captureX + (point.x / coordMap.imageWidth) * coordMap.captureWidth
-  const mappedY = coordMap.captureY + (point.y / coordMap.imageHeight) * coordMap.captureHeight
+  const imageWidthSpan = Math.max(coordMap.imageWidth - 1, 1)
+  const imageHeightSpan = Math.max(coordMap.imageHeight - 1, 1)
+  const captureWidthSpan = Math.max(coordMap.captureWidth - 1, 0)
+  const captureHeightSpan = Math.max(coordMap.captureHeight - 1, 0)
+  const maxCaptureX = coordMap.captureX + captureWidthSpan
+  const maxCaptureY = coordMap.captureY + captureHeightSpan
 
-  const clampedX = Math.max(coordMap.captureX, Math.min(coordMap.captureX + coordMap.captureWidth, mappedX))
-  const clampedY = Math.max(coordMap.captureY, Math.min(coordMap.captureY + coordMap.captureHeight, mappedY))
+  const mappedX = coordMap.captureX + (point.x / imageWidthSpan) * captureWidthSpan
+  const mappedY = coordMap.captureY + (point.y / imageHeightSpan) * captureHeightSpan
+
+  const clampedX = Math.max(coordMap.captureX, Math.min(maxCaptureX, mappedX))
+  const clampedY = Math.max(coordMap.captureY, Math.min(maxCaptureY, mappedY))
   return {
     x: Math.round(clampedX),
     y: Math.round(clampedY),
@@ -184,6 +191,49 @@ function printDesktopList({ displays }: { displays: DisplayInfo[] }) {
   })
 }
 
+function mapWindowsByDesktopIndex({
+  windows,
+}: {
+  windows: WindowInfo[]
+}): Map<number, WindowInfo[]> {
+  return windows.reduce((acc, window) => {
+    const list = acc.get(window.desktopIndex) ?? []
+    list.push(window)
+    acc.set(window.desktopIndex, list)
+    return acc
+  }, new Map<number, WindowInfo[]>())
+}
+
+function printDesktopListWithWindows({
+  displays,
+  windows,
+}: {
+  displays: DisplayInfo[]
+  windows: WindowInfo[]
+}) {
+  const windowsByDesktop = mapWindowsByDesktopIndex({ windows })
+  displays.forEach((display) => {
+    const primary = display.isPrimary ? ' (primary)' : ''
+    printLine(
+      `#${display.index}${primary} ${display.width}x${display.height} @ (${display.x},${display.y}) id=${display.id} scale=${display.scale} ${display.name}`,
+    )
+
+    const desktopWindows = windowsByDesktop.get(display.index) ?? []
+    if (desktopWindows.length === 0) {
+      printLine('  windows: none')
+      return
+    }
+
+    printLine(`  windows: ${String(desktopWindows.length)}`)
+    desktopWindows.forEach((window) => {
+      const titleSuffix = window.title ? ` title=${window.title}` : ''
+      printLine(
+        `  - id=${window.id} app=${window.ownerName} pid=${window.ownerPid} ${window.width}x${window.height} @ (${window.x},${window.y})${titleSuffix}`,
+      )
+    })
+  })
+}
+
 function notImplemented({ command }: { command: string }): never {
   throw new Error(`TODO not implemented: ${command}`)
 }
@@ -205,6 +255,7 @@ export function createCli({ bridge = createBridge() }: { bridge?: UseComputerBri
       '--display [display]',
       z.number().describe('Display index for multi-monitor setups (0-based: first display is index 0)'),
     )
+    .option('--window [window]', z.number().describe('Capture a specific window by window id'))
     .option('--annotate', 'Annotate screenshot with labels')
     .option('--json', 'Output as JSON')
     .action(async (path, options) => {
@@ -222,10 +273,17 @@ export function createCli({ bridge = createBridge() }: { bridge?: UseComputerBri
       if (region instanceof Error) {
         throw region
       }
+      if (typeof options.window === 'number' && region) {
+        throw new Error('Cannot use --window and --region together')
+      }
+      if (typeof options.window === 'number' && typeof options.display === 'number') {
+        throw new Error('Cannot use --window and --display together')
+      }
       const result = await bridge.screenshot({
         path: outputPath,
         region,
         display: options.display,
+        window: options.window,
         annotate: options.annotate,
       })
       if (options.json) {
@@ -455,11 +513,21 @@ export function createCli({ bridge = createBridge() }: { bridge?: UseComputerBri
 
   cli
     .command('desktop list', 'List desktops as display indexes and sizes (#0 is the primary display)')
+    .option('--windows', 'Include available windows grouped by desktop index')
     .option('--json', 'Output as JSON')
     .action(async (options) => {
       const displays = await bridge.displayList()
+      const windows = options.windows ? await bridge.windowList() : []
       if (options.json) {
+        if (options.windows) {
+          printJson({ displays, windows })
+          return
+        }
         printJson(displays)
+        return
+      }
+      if (options.windows) {
+        printDesktopListWithWindows({ displays, windows })
         return
       }
       printDesktopList({ displays })
@@ -496,8 +564,18 @@ export function createCli({ bridge = createBridge() }: { bridge?: UseComputerBri
   cli.command('get focused').action(() => {
     notImplemented({ command: 'get focused' })
   })
-  cli.command('window list').action(() => {
-    notImplemented({ command: 'window list' })
+  cli.command('window list').option('--json', 'Output as JSON').action(async (options) => {
+    const windows = await bridge.windowList()
+    if (options.json) {
+      printJson(windows)
+      return
+    }
+    windows.forEach((window) => {
+      const titleSuffix = window.title ? ` title=${window.title}` : ''
+      printLine(
+        `id=${window.id} app=${window.ownerName} pid=${window.ownerPid} desktop=#${window.desktopIndex} ${window.width}x${window.height} @ (${window.x},${window.y})${titleSuffix}`,
+      )
+    })
   })
   cli.command('window focus <target>').action(() => {
     notImplemented({ command: 'window focus' })

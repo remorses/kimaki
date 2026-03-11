@@ -28,9 +28,22 @@ export type DisplayInfo = {
   isPrimary: boolean
 }
 
+export type WindowInfo = {
+  id: number
+  ownerPid: number
+  ownerName: string
+  title: string
+  x: number
+  y: number
+  width: number
+  height: number
+  desktopIndex: number
+}
+
 export type ScreenshotInput = {
   path?: string
   display?: number
+  window?: number
   region?: Region
   annotate?: boolean
 }
@@ -109,6 +122,7 @@ export interface UseComputerBridge {
   mouseUp(input: { button: MouseButton }): Promise<void>
   mousePosition(): Promise<Point>
   displayList(): Promise<DisplayInfo[]>
+  windowList(): Promise<WindowInfo[]>
   clipboardGet(): Promise<string>
   clipboardSet(input: { text: string }): Promise<void>
 }

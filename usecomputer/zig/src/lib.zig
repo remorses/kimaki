@@ -4,6 +4,8 @@
 
 const std = @import("std");
 const builtin = @import("builtin");
+const scroll_impl = @import("scroll.zig");
+const window = @import("window.zig");
 const napigen = if (builtin.is_test) undefined else @import("napigen");
 const c_macos = if (builtin.target.os.tag == .macos) @cImport({
     @cInclude("CoreGraphics/CoreGraphics.h");
@@ -121,6 +123,18 @@ const DisplayInfoOutput = struct {
     isPrimary: bool,
 };
 
+const WindowInfoOutput = struct {
+    id: u32,
+    ownerPid: i32,
+    ownerName: []const u8,
+    title: []const u8,
+    x: f64,
+    y: f64,
+    width: f64,
+    height: f64,
+    desktopIndex: u32,
+};
+
 const NativeErrorObject = struct {
     code: []const u8,
     message: []const u8,
@@ -217,6 +231,7 @@ const ScreenshotRegion = struct {
 const ScreenshotInput = struct {
     path: ?[]const u8 = null,
     display: ?f64 = null,
+    window: ?f64 = null,
     region: ?ScreenshotRegion = null,
     annotate: ?bool = null,
 };
@@ -284,6 +299,7 @@ pub fn screenshot(input: ScreenshotInput) DataResult(ScreenshotOutput) {
 
     const capture = createScreenshotImage(.{
         .display_index = input.display,
+        .window_id = input.window,
         .region = input.region,
     }) catch {
         return failData(ScreenshotOutput, "screenshot", "CAPTURE_FAILED", "failed to capture screenshot image");
@@ -529,6 +545,17 @@ pub fn displayList() DataResult([]const u8) {
     return okData([]const u8, payload);
 }
 
+pub fn windowList() DataResult([]const u8) {
+    if (builtin.target.os.tag != .macos) {
+        return failData([]const u8, "window-list", "UNSUPPORTED_PLATFORM", "window-list is only supported on macOS");
+    }
+
+    const payload = serializeWindowListJson() catch {
+        return failData([]const u8, "window-list", "WINDOW_QUERY_FAILED", "failed to query visible windows");
+    };
+    return okData([]const u8, payload);
+}
+
 pub fn clipboardGet() DataResult([]const u8) {
     return failData([]const u8, "clipboard-get", "TODO_NOT_IMPLEMENTED", "TODO not implemented: clipboard-get");
 }
@@ -591,8 +618,23 @@ pub fn press(input: PressInput) CommandResult {
 }
 
 pub fn scroll(input: ScrollInput) CommandResult {
-    _ = input;
-    return todoNotImplemented("scroll");
+    scroll_impl.scroll(.{
+        .direction = input.direction,
+        .amount = input.amount,
+        .at_x = if (input.at) |point| point.x else null,
+        .at_y = if (input.at) |point| point.y else null,
+    }) catch |err| {
+        const error_name = @errorName(err);
+        if (std.mem.eql(u8, error_name, "InvalidDirection") or
+            std.mem.eql(u8, error_name, "InvalidAmount") or
+            std.mem.eql(u8, error_name, "AmountTooLarge") or
+            std.mem.eql(u8, error_name, "InvalidPoint"))
+        {
+            return failCommand("scroll", "INVALID_INPUT", error_name);
+        }
+        return failCommand("scroll", "EVENT_POST_FAILED", error_name);
+    };
+    return okCommand();
 }
 
 const ParsedPress = struct {
@@ -1038,8 +1080,38 @@ fn pressX11(input: PressInput) !void {
 
 fn createScreenshotImage(input: struct {
     display_index: ?f64,
+    window_id: ?f64,
     region: ?ScreenshotRegion,
 }) !ScreenshotCapture {
+    if (input.window_id != null and input.region != null) {
+        return error.InvalidScreenshotInput;
+    }
+
+    if (input.window_id) |window_id| {
+        const normalized_window_id = normalizeWindowId(window_id) catch {
+            return error.InvalidWindowId;
+        };
+        const window_bounds = findWindowBoundsById(normalized_window_id) catch {
+            return error.WindowNotFound;
+        };
+        const selected_display = resolveDisplayForRect(window_bounds) catch {
+            return error.DisplayResolutionFailed;
+        };
+
+        const window_image = c.CGDisplayCreateImageForRect(selected_display.id, window_bounds);
+        if (window_image == null) {
+            return error.CaptureFailed;
+        }
+        return .{
+            .image = window_image,
+            .capture_x = window_bounds.origin.x,
+            .capture_y = window_bounds.origin.y,
+            .capture_width = window_bounds.size.width,
+            .capture_height = window_bounds.size.height,
+            .desktop_index = selected_display.index,
+        };
+    }
+
     const selected_display = resolveDisplayId(input.display_index) catch {
         return error.DisplayResolutionFailed;
     };
@@ -1078,6 +1150,128 @@ fn createScreenshotImage(input: struct {
         .capture_height = selected_display.bounds.size.height,
         .desktop_index = selected_display.index,
     };
+}
+
+fn normalizeWindowId(raw_id: f64) !u32 {
+    const normalized = @as(i64, @intFromFloat(std.math.round(raw_id)));
+    if (normalized <= 0) {
+        return error.InvalidWindowId;
+    }
+    return @intCast(normalized);
+}
+
+fn findWindowBoundsById(target_window_id: u32) !c.CGRect {
+    const Context = struct {
+        target_id: u32,
+        bounds: ?c.CGRect = null,
+    };
+
+    var context = Context{ .target_id = target_window_id };
+    window.forEachVisibleWindow(Context, &context, struct {
+        fn callback(ctx: *Context, info: window.WindowInfo) !void {
+            if (info.id != ctx.target_id) {
+                return;
+            }
+            ctx.bounds = .{
+                .origin = .{ .x = info.bounds.x, .y = info.bounds.y },
+                .size = .{ .width = info.bounds.width, .height = info.bounds.height },
+            };
+            return error.Found;
+        }
+    }.callback) catch |err| {
+        if (err != error.Found) {
+            return err;
+        }
+    };
+
+    if (context.bounds) |bounds| {
+        return bounds;
+    }
+    return error.WindowNotFound;
+}
+
+fn resolveDisplayForRect(rect: c.CGRect) !SelectedDisplay {
+    var display_ids: [16]c.CGDirectDisplayID = undefined;
+    var display_count: u32 = 0;
+    const list_result = c.CGGetActiveDisplayList(display_ids.len, &display_ids, &display_count);
+    if (list_result != c.kCGErrorSuccess or display_count == 0) {
+        return error.DisplayQueryFailed;
+    }
+
+    var best_index: usize = 0;
+    var best_overlap: f64 = -1;
+    var i: usize = 0;
+    while (i < display_count) : (i += 1) {
+        const bounds = c.CGDisplayBounds(display_ids[i]);
+        const overlap = intersectionArea(rect, bounds);
+        if (overlap > best_overlap) {
+            best_overlap = overlap;
+            best_index = i;
+        }
+    }
+
+    const id = display_ids[best_index];
+    return .{
+        .id = id,
+        .index = best_index,
+        .bounds = c.CGDisplayBounds(id),
+    };
+}
+
+fn intersectionArea(a: c.CGRect, b: c.CGRect) f64 {
+    const left = @max(a.origin.x, b.origin.x);
+    const top = @max(a.origin.y, b.origin.y);
+    const right = @min(a.origin.x + a.size.width, b.origin.x + b.size.width);
+    const bottom = @min(a.origin.y + a.size.height, b.origin.y + b.size.height);
+    if (right <= left or bottom <= top) {
+        return 0;
+    }
+    return (right - left) * (bottom - top);
+}
+
+fn serializeWindowListJson() ![]u8 {
+    const Context = struct {
+        stream: *std.io.FixedBufferStream([]u8),
+        first: bool,
+    };
+
+    var write_buffer: [64 * 1024]u8 = undefined;
+    var stream = std.io.fixedBufferStream(&write_buffer);
+
+    try stream.writer().writeByte('[');
+    var context = Context{ .stream = &stream, .first = true };
+
+    try window.forEachVisibleWindow(Context, &context, struct {
+        fn callback(ctx: *Context, info: window.WindowInfo) !void {
+            const rect: c.CGRect = .{
+                .origin = .{ .x = info.bounds.x, .y = info.bounds.y },
+                .size = .{ .width = info.bounds.width, .height = info.bounds.height },
+            };
+            const selected_display = resolveDisplayForRect(rect) catch {
+                return;
+            };
+            const item = WindowInfoOutput{
+                .id = info.id,
+                .ownerPid = info.owner_pid,
+                .ownerName = info.owner_name,
+                .title = info.title,
+                .x = info.bounds.x,
+                .y = info.bounds.y,
+                .width = info.bounds.width,
+                .height = info.bounds.height,
+                .desktopIndex = @intCast(selected_display.index),
+            };
+
+            if (!ctx.first) {
+                try ctx.stream.writer().writeByte(',');
+            }
+            ctx.first = false;
+            try ctx.stream.writer().print("{f}", .{std.json.fmt(item, .{})});
+        }
+    }.callback);
+
+    try stream.writer().writeByte(']');
+    return std.heap.c_allocator.dupe(u8, stream.getWritten());
 }
 
 fn scaleScreenshotImageIfNeeded(image: c.CGImageRef) !ScaledScreenshotImage {
@@ -1277,6 +1471,7 @@ fn initModule(js: *napigen.JsContext, exports: napigen.napi_value) !napigen.napi
     try js.setNamedProperty(exports, "mouseUp", try js.createFunction(mouseUp));
     try js.setNamedProperty(exports, "mousePosition", try js.createFunction(mousePosition));
     try js.setNamedProperty(exports, "displayList", try js.createFunction(displayList));
+    try js.setNamedProperty(exports, "windowList", try js.createFunction(windowList));
     try js.setNamedProperty(exports, "clipboardGet", try js.createFunction(clipboardGet));
     try js.setNamedProperty(exports, "clipboardSet", try js.createFunction(clipboardSet));
     return exports;

@@ -1,9 +1,24 @@
 // Optional host smoke test for direct native mouse methods.
 
 import { describe, expect, test } from 'vitest'
+import { z } from 'zod'
 import { native } from './native-lib.js'
 
 const runNativeSmoke = process.env.USECOMPUTER_NATIVE_SMOKE === '1'
+
+const displayListSchema = z.array(
+  z.object({
+    id: z.number(),
+    index: z.number(),
+    name: z.string(),
+    x: z.number(),
+    y: z.number(),
+    width: z.number(),
+    height: z.number(),
+    scale: z.number(),
+    isPrimary: z.boolean(),
+  }),
+)
 
 describe('native click smoke', () => {
   const smokeTest = runNativeSmoke ? test : test.skip
@@ -46,8 +61,8 @@ describe('native click smoke', () => {
       button: 'left',
       durationMs: 10,
     })
-    const typeResponse = native.typeText({ text: 'hello', delayMs: 1 })
-    const pressResponse = native.press({ key: 'enter', count: 1, delayMs: 1 })
+    const typeResponse = native.typeText({ text: 'h', delayMs: 1 })
+    const pressResponse = native.press({ key: 'backspace', count: 1, delayMs: 1 })
 
     expect({
       moveResponse,
@@ -108,23 +123,27 @@ describe('native click smoke', () => {
     expect(pressResponse.ok).toBe(true)
   })
 
-  smokeTest('returns structured TODO error objects for unimplemented commands', () => {
+  smokeTest('returns display payload for desktop list command', () => {
     expect(native).toBeTruthy()
     if (!native) {
       return
     }
 
     const result = native.displayList()
-    expect(result).toMatchInlineSnapshot(`
-      {
-        "error": {
-          "code": "TODO_NOT_IMPLEMENTED",
-          "command": "display-list",
-          "message": "TODO not implemented",
-        },
-        "ok": false,
-      }
-    `)
-    expect(result.ok).toBe(false)
+    expect(result.ok).toBe(true)
+    if (!result.ok || !result.data) {
+      return
+    }
+
+    const parsedJson: unknown = JSON.parse(result.data)
+    const parsed = displayListSchema.safeParse(parsedJson)
+    expect(parsed.success).toBe(true)
+    if (!parsed.success) {
+      return
+    }
+
+    expect(parsed.data.length).toBeGreaterThan(0)
+    expect(parsed.data[0]?.width).toBeGreaterThan(0)
+    expect(parsed.data[0]?.height).toBeGreaterThan(0)
   })
 })

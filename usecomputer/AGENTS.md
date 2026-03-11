@@ -30,6 +30,39 @@ command behavior using Zig + native macOS APIs.
 - napigen (N-API glue used by Zig module exports):
   https://github.com/cztomsik/napigen
 
+## Cross-platform input backend reference
+
+For mouse/keyboard parity across macOS, Windows, and Linux, use `pynput` as a
+behavior and backend reference (do not copy code directly; keep implementation
+native in Zig):
+
+- Repository: https://github.com/moses-palmer/pynput
+- Mouse base API (undefined unit semantics for scroll):
+  https://github.com/moses-palmer/pynput/blob/master/lib/pynput/mouse/_base.py
+- macOS backend (`CGEventCreateScrollWheelEvent`):
+  https://github.com/moses-palmer/pynput/blob/master/lib/pynput/mouse/_darwin.py
+- Windows backend (`SendInput` wheel/hwheel, `WHEEL_DELTA`):
+  https://github.com/moses-palmer/pynput/blob/master/lib/pynput/mouse/_win32.py
+- X11 backend (button-based scroll 4/5/6/7 with XTest):
+  https://github.com/moses-palmer/pynput/blob/master/lib/pynput/mouse/_xorg.py
+
+## Display, spaces, and app enumeration reference
+
+Use `stoffeastrom/yabai.zig` as a practical Zig reference for Objective-C runtime
+calls, display metadata, SkyLight spaces, and running app enumeration.
+
+- Repository: https://github.com/stoffeastrom/yabai.zig
+- `NSScreen` + `NSScreenNumber` mapping example:
+  https://github.com/stoffeastrom/yabai.zig/blob/main/src/platform/workspace.zig
+- Spaces traversal via `SLSCopyManagedDisplaySpaces`:
+  https://github.com/stoffeastrom/yabai.zig/blob/main/src/state/Spaces.zig
+- SkyLight symbol loading and function table:
+  https://github.com/stoffeastrom/yabai.zig/blob/main/src/platform/skylight.zig
+
+Use this reference when implementing `display list`, desktop/space indexing,
+and features that need running app queries from `NSWorkspace` /
+`NSRunningApplication`.
+
 ## Keyboard synthesis references (Zig)
 
 Use skhd.zig as implementation inspiration for keyboard handling and synthesis.

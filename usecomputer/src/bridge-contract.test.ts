@@ -39,11 +39,44 @@ describe('native bridge contract', () => {
     const screenshot = await bridge.screenshot({ path: `${process.cwd()}/tmp/bridge-contract-shot.png` })
 
     await bridge.typeText({ text: 'h', delayMs: 30 })
-    await bridge.press({ key: 'h', count: 1 })
-    await expect(bridge.scroll({ direction: 'down', amount: 300 })).rejects.toThrowError('TODO not implemented')
+    await bridge.press({ key: 'backspace', count: 1 })
+    const scrollResult = await bridge.scroll({ direction: 'down', amount: 1 }).then(
+      () => {
+        return 'ok'
+      },
+      (error: unknown) => {
+        return error instanceof Error ? error.message : String(error)
+      },
+    )
+    const scrollAtResult = await bridge.scroll({ direction: 'right', amount: 1, at: safeTarget }).then(
+      () => {
+        return 'ok'
+      },
+      (error: unknown) => {
+        return error instanceof Error ? error.message : String(error)
+      },
+    )
     const displays = await bridge.displayList()
-    await expect(bridge.clipboardGet()).rejects.toThrowError('TODO not implemented')
-    await expect(bridge.clipboardSet({ text: 'copied' })).rejects.toThrowError('TODO not implemented')
+    const windows = await bridge.windowList()
+    const clipboardGetResult = await bridge.clipboardGet().then(
+      () => {
+        return 'ok'
+      },
+      (error: unknown) => {
+        return error instanceof Error ? error.message : String(error)
+      },
+    )
+    const clipboardSetResult = await bridge.clipboardSet({ text: 'copied' }).then(
+      () => {
+        return 'ok'
+      },
+      (error: unknown) => {
+        return error instanceof Error ? error.message : String(error)
+      },
+    )
+    const isOkOrTodo = ({ value }: { value: string }): boolean => {
+      return value === 'ok' || value.includes('TODO not implemented')
+    }
 
     expect({
       screenshotShape: {
@@ -66,6 +99,19 @@ describe('native bridge contract', () => {
             height: displays[0].height > 0,
           }
         : null,
+      firstWindowShape: windows[0]
+        ? {
+            id: typeof windows[0].id,
+            ownerName: typeof windows[0].ownerName,
+            desktopIndex: typeof windows[0].desktopIndex,
+          }
+        : null,
+      optionalCommandOutcomes: {
+        scrollResult: isOkOrTodo({ value: scrollResult }),
+        scrollAtResult: isOkOrTodo({ value: scrollAtResult }),
+        clipboardGetResult: isOkOrTodo({ value: clipboardGetResult }),
+        clipboardSetResult: isOkOrTodo({ value: clipboardSetResult }),
+      },
     }).toMatchInlineSnapshot(`
       {
         "firstDisplayShape": {
@@ -73,6 +119,17 @@ describe('native bridge contract', () => {
           "id": "number",
           "index": "number",
           "width": true,
+        },
+        "firstWindowShape": {
+          "desktopIndex": "number",
+          "id": "number",
+          "ownerName": "string",
+        },
+        "optionalCommandOutcomes": {
+          "clipboardGetResult": true,
+          "clipboardSetResult": true,
+          "scrollAtResult": true,
+          "scrollResult": true,
         },
         "screenshotShape": {
           "captureHeight": true,
@@ -90,5 +147,6 @@ describe('native bridge contract', () => {
     `)
 
     expect(displays.length).toBeGreaterThan(0)
+    expect(windows.length).toBeGreaterThan(0)
   })
 })

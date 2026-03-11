@@ -16,6 +16,7 @@ import type {
   ScrollInput,
   TypeInput,
   UseComputerBridge,
+  WindowInfo,
 } from './types.js'
 
 const displayInfoSchema = z.object({
@@ -31,6 +32,20 @@ const displayInfoSchema = z.object({
 })
 
 const displayListSchema = z.array(displayInfoSchema)
+
+const windowInfoSchema = z.object({
+  id: z.number(),
+  ownerPid: z.number(),
+  ownerName: z.string(),
+  title: z.string(),
+  x: z.number(),
+  y: z.number(),
+  width: z.number(),
+  height: z.number(),
+  desktopIndex: z.number(),
+})
+
+const windowListSchema = z.array(windowInfoSchema)
 
 const unavailableError =
   'Native backend is unavailable. Build it with `pnpm build:native` or `zig build` in usecomputer/.'
@@ -114,6 +129,7 @@ function unavailableBridge(): UseComputerBridge {
     mouseUp: fail,
     mousePosition: fail,
     displayList: fail,
+    windowList: fail,
     clipboardGet: fail,
     clipboardSet: fail,
   }
@@ -126,9 +142,16 @@ export function createBridgeFromNative({ nativeModule }: { nativeModule: NativeM
 
   return {
     async screenshot(input: ScreenshotInput): Promise<ScreenshotResult> {
-      const nativeInput: { path: string | null; display: number | null; region: Region | null; annotate: boolean | null } = {
+      const nativeInput: {
+        path: string | null
+        display: number | null
+        window: number | null
+        region: Region | null
+        annotate: boolean | null
+      } = {
         path: input.path ?? null,
         display: input.display ?? null,
+        window: input.window ?? null,
         region: input.region ?? null,
         annotate: input.annotate ?? null,
       }
@@ -313,6 +336,37 @@ export function createBridgeFromNative({ nativeModule }: { nativeModule: NativeM
           isPrimary: display.isPrimary,
         }
       })
+    },
+    async windowList(): Promise<WindowInfo[]> {
+      const payload = unwrapData({
+        result: nativeModule.windowList(),
+        fallbackCommand: 'windowList',
+      })
+      if (payload instanceof Error) {
+        throw payload
+      }
+
+      let parsedJson: unknown
+      try {
+        parsedJson = JSON.parse(payload)
+      } catch {
+        throw new NativeBridgeError({
+          message: 'Native windowList returned invalid JSON',
+          command: 'windowList',
+          code: 'INVALID_NATIVE_JSON',
+        })
+      }
+
+      const parsed = windowListSchema.safeParse(parsedJson)
+      if (!parsed.success) {
+        throw new NativeBridgeError({
+          message: 'Native windowList returned invalid payload shape',
+          command: 'windowList',
+          code: 'INVALID_NATIVE_PAYLOAD',
+        })
+      }
+
+      return parsed.data
     },
     async clipboardGet(): Promise<string> {
       const result = unwrapData({
