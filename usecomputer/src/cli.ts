@@ -196,7 +196,7 @@ export function createCli({ bridge = createBridge() }: { bridge?: UseComputerBri
     })
 
   cli
-    .command('mouse move [x] [y]', 'Move mouse cursor to absolute coordinates')
+    .command('mouse move [x] [y]', 'Move mouse cursor to absolute coordinates (optional before click; click can target coordinates directly)')
     .option('-x [x]', z.number().describe('X coordinate'))
     .option('-y [y]', z.number().describe('Y coordinate'))
     .action(async (x, y, options) => {

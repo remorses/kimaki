@@ -38,8 +38,8 @@ describe('native bridge contract', () => {
 
     const screenshot = await bridge.screenshot({ path: `${process.cwd()}/tmp/bridge-contract-shot.png` })
 
-    await expect(bridge.typeText({ text: 'hello', delayMs: 30 })).rejects.toThrowError('TODO not implemented')
-    await expect(bridge.press({ key: 'enter', count: 1 })).rejects.toThrowError('TODO not implemented')
+    await bridge.typeText({ text: 'hello', delayMs: 30 })
+    await bridge.press({ key: 'enter', count: 1 })
     await expect(bridge.scroll({ direction: 'down', amount: 300 })).rejects.toThrowError('TODO not implemented')
     await expect(bridge.displayList()).rejects.toThrowError('TODO not implemented')
     await expect(bridge.clipboardGet()).rejects.toThrowError('TODO not implemented')

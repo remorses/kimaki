@@ -5,11 +5,104 @@
 const std = @import("std");
 const builtin = @import("builtin");
 const napigen = if (builtin.is_test) undefined else @import("napigen");
-const c = if (builtin.target.os.tag == .macos) @cImport({
+const c_macos = if (builtin.target.os.tag == .macos) @cImport({
     @cInclude("CoreGraphics/CoreGraphics.h");
     @cInclude("CoreFoundation/CoreFoundation.h");
     @cInclude("ImageIO/ImageIO.h");
 }) else struct {};
+
+const c_windows = if (builtin.target.os.tag == .windows) @cImport({
+    @cInclude("windows.h");
+}) else struct {};
+
+const c_x11 = if (builtin.target.os.tag == .linux) @cImport({
+    @cInclude("X11/Xlib.h");
+    @cInclude("X11/keysym.h");
+    @cInclude("X11/extensions/XTest.h");
+}) else struct {};
+
+const c = c_macos;
+
+const mac_keycode = struct {
+    const a = 0x00;
+    const s = 0x01;
+    const d = 0x02;
+    const f = 0x03;
+    const h = 0x04;
+    const g = 0x05;
+    const z = 0x06;
+    const x = 0x07;
+    const c = 0x08;
+    const v = 0x09;
+    const b = 0x0B;
+    const q = 0x0C;
+    const w = 0x0D;
+    const e = 0x0E;
+    const r = 0x0F;
+    const y = 0x10;
+    const t = 0x11;
+    const one = 0x12;
+    const two = 0x13;
+    const three = 0x14;
+    const four = 0x15;
+    const six = 0x16;
+    const five = 0x17;
+    const equal = 0x18;
+    const nine = 0x19;
+    const seven = 0x1A;
+    const minus = 0x1B;
+    const eight = 0x1C;
+    const zero = 0x1D;
+    const right_bracket = 0x1E;
+    const o = 0x1F;
+    const u = 0x20;
+    const left_bracket = 0x21;
+    const i = 0x22;
+    const p = 0x23;
+    const l = 0x25;
+    const j = 0x26;
+    const quote = 0x27;
+    const k = 0x28;
+    const semicolon = 0x29;
+    const backslash = 0x2A;
+    const comma = 0x2B;
+    const slash = 0x2C;
+    const n = 0x2D;
+    const m = 0x2E;
+    const period = 0x2F;
+    const tab = 0x30;
+    const space = 0x31;
+    const grave = 0x32;
+    const delete = 0x33;
+    const enter = 0x24;
+    const escape = 0x35;
+    const command = 0x37;
+    const shift = 0x38;
+    const option = 0x3A;
+    const control = 0x3B;
+    const fn_key = 0x3F;
+    const f1 = 0x7A;
+    const f2 = 0x78;
+    const f3 = 0x63;
+    const f4 = 0x76;
+    const f5 = 0x60;
+    const f6 = 0x61;
+    const f7 = 0x62;
+    const f8 = 0x64;
+    const f9 = 0x65;
+    const f10 = 0x6D;
+    const f11 = 0x67;
+    const f12 = 0x6F;
+    const home = 0x73;
+    const page_up = 0x74;
+    const forward_delete = 0x75;
+    const end = 0x77;
+    const page_down = 0x79;
+    const left_arrow = 0x7B;
+    const right_arrow = 0x7C;
+    const down_arrow = 0x7D;
+    const up_arrow = 0x7E;
+};
 
 pub const std_options: std.Options = .{
     .log_level = .err,
@@ -335,18 +428,501 @@ pub fn clipboardSet(input: ClipboardSetInput) CommandResult {
 }
 
 pub fn typeText(input: TypeTextInput) CommandResult {
-    _ = input;
-    return todoNotImplemented("type-text");
+    switch (builtin.target.os.tag) {
+        .macos => {
+            typeTextMacos(input) catch |err| {
+                return failCommand("type-text", "EVENT_POST_FAILED", @errorName(err));
+            };
+            return okCommand();
+        },
+        .windows => {
+            typeTextWindows(input) catch |err| {
+                return failCommand("type-text", "EVENT_POST_FAILED", @errorName(err));
+            };
+            return okCommand();
+        },
+        .linux => {
+            typeTextX11(input) catch |err| {
+                return failCommand("type-text", "EVENT_POST_FAILED", @errorName(err));
+            };
+            return okCommand();
+        },
+        else => {
+            return failCommand("type-text", "UNSUPPORTED_PLATFORM", "type-text is unsupported on this platform");
+        },
+    }
 }
 
 pub fn press(input: PressInput) CommandResult {
-    _ = input;
-    return todoNotImplemented("press");
+    switch (builtin.target.os.tag) {
+        .macos => {
+            pressMacos(input) catch |err| {
+                return failCommand("press", "EVENT_POST_FAILED", @errorName(err));
+            };
+            return okCommand();
+        },
+        .windows => {
+            pressWindows(input) catch |err| {
+                return failCommand("press", "EVENT_POST_FAILED", @errorName(err));
+            };
+            return okCommand();
+        },
+        .linux => {
+            pressX11(input) catch |err| {
+                return failCommand("press", "EVENT_POST_FAILED", @errorName(err));
+            };
+            return okCommand();
+        },
+        else => {
+            return failCommand("press", "UNSUPPORTED_PLATFORM", "press is unsupported on this platform");
+        },
+    }
 }
 
 pub fn scroll(input: ScrollInput) CommandResult {
     _ = input;
     return todoNotImplemented("scroll");
+}
+
+const ParsedPress = struct {
+    key: []const u8,
+    cmd: bool = false,
+    alt: bool = false,
+    ctrl: bool = false,
+    shift: bool = false,
+    fn_key: bool = false,
+};
+
+fn parsePressKey(key_input: []const u8) !ParsedPress {
+    var parsed: ParsedPress = .{ .key = "" };
+    var saw_key = false;
+    var parts = std.mem.splitScalar(u8, key_input, '+');
+    while (parts.next()) |part| {
+        const trimmed = std.mem.trim(u8, part, " \t\r\n");
+        if (trimmed.len == 0) {
+            continue;
+        }
+
+        if (std.ascii.eqlIgnoreCase(trimmed, "cmd") or std.ascii.eqlIgnoreCase(trimmed, "command") or std.ascii.eqlIgnoreCase(trimmed, "meta")) {
+            parsed.cmd = true;
+            continue;
+        }
+        if (std.ascii.eqlIgnoreCase(trimmed, "alt") or std.ascii.eqlIgnoreCase(trimmed, "option")) {
+            parsed.alt = true;
+            continue;
+        }
+        if (std.ascii.eqlIgnoreCase(trimmed, "ctrl") or std.ascii.eqlIgnoreCase(trimmed, "control")) {
+            parsed.ctrl = true;
+            continue;
+        }
+        if (std.ascii.eqlIgnoreCase(trimmed, "shift")) {
+            parsed.shift = true;
+            continue;
+        }
+        if (std.ascii.eqlIgnoreCase(trimmed, "fn")) {
+            parsed.fn_key = true;
+            continue;
+        }
+
+        if (saw_key) {
+            return error.MultipleMainKeys;
+        }
+        parsed.key = trimmed;
+        saw_key = true;
+    }
+
+    if (!saw_key) {
+        return error.MissingMainKey;
+    }
+    return parsed;
+}
+
+fn normalizedCount(value: ?f64) u32 {
+    if (value) |count| {
+        const rounded = @as(i64, @intFromFloat(std.math.round(count)));
+        if (rounded > 0) {
+            return @as(u32, @intCast(rounded));
+        }
+    }
+    return 1;
+}
+
+fn normalizedDelayNs(value: ?f64) u64 {
+    if (value) |delay_ms| {
+        const rounded = @as(i64, @intFromFloat(std.math.round(delay_ms)));
+        if (rounded > 0) {
+            return @as(u64, @intCast(rounded)) * std.time.ns_per_ms;
+        }
+    }
+    return 0;
+}
+
+fn codepointToUtf16(codepoint: u21) !struct { units: [2]u16, len: usize } {
+    if (codepoint <= 0xD7FF or (codepoint >= 0xE000 and codepoint <= 0xFFFF)) {
+        return .{ .units = .{ @as(u16, @intCast(codepoint)), 0 }, .len = 1 };
+    }
+    if (codepoint >= 0x10000 and codepoint <= 0x10FFFF) {
+        const value = codepoint - 0x10000;
+        const high = @as(u16, @intCast(0xD800 + (value >> 10)));
+        const low = @as(u16, @intCast(0xDC00 + (value & 0x3FF)));
+        return .{ .units = .{ high, low }, .len = 2 };
+    }
+    return error.InvalidCodepoint;
+}
+
+fn typeTextMacos(input: TypeTextInput) !void {
+    const delay_ns = normalizedDelayNs(input.delayMs);
+    var view = try std.unicode.Utf8View.init(input.text);
+    var iterator = view.iterator();
+    while (iterator.nextCodepoint()) |codepoint| {
+        const utf16 = try codepointToUtf16(codepoint);
+        const down = c_macos.CGEventCreateKeyboardEvent(null, 0, true) orelse return error.CGEventCreateFailed;
+        defer c_macos.CFRelease(down);
+        c_macos.CGEventSetFlags(down, 0);
+        c_macos.CGEventKeyboardSetUnicodeString(down, @as(c_macos.UniCharCount, @intCast(utf16.len)), @ptrCast(&utf16.units[0]));
+        c_macos.CGEventPost(c_macos.kCGHIDEventTap, down);
+
+        const up = c_macos.CGEventCreateKeyboardEvent(null, 0, false) orelse return error.CGEventCreateFailed;
+        defer c_macos.CFRelease(up);
+        c_macos.CGEventSetFlags(up, 0);
+        c_macos.CGEventKeyboardSetUnicodeString(up, @as(c_macos.UniCharCount, @intCast(utf16.len)), @ptrCast(&utf16.units[0]));
+        c_macos.CGEventPost(c_macos.kCGHIDEventTap, up);
+
+        if (delay_ns > 0) {
+            std.Thread.sleep(delay_ns);
+        }
+    }
+}
+
+fn keyCodeForMacosKey(key_name: []const u8) !c_macos.CGKeyCode {
+    if (key_name.len == 1) {
+        const ch = std.ascii.toLower(key_name[0]);
+        return switch (ch) {
+            'a' => mac_keycode.a,
+            'b' => mac_keycode.b,
+            'c' => mac_keycode.c,
+            'd' => mac_keycode.d,
+            'e' => mac_keycode.e,
+            'f' => mac_keycode.f,
+            'g' => mac_keycode.g,
+            'h' => mac_keycode.h,
+            'i' => mac_keycode.i,
+            'j' => mac_keycode.j,
+            'k' => mac_keycode.k,
+            'l' => mac_keycode.l,
+            'm' => mac_keycode.m,
+            'n' => mac_keycode.n,
+            'o' => mac_keycode.o,
+            'p' => mac_keycode.p,
+            'q' => mac_keycode.q,
+            'r' => mac_keycode.r,
+            's' => mac_keycode.s,
+            't' => mac_keycode.t,
+            'u' => mac_keycode.u,
+            'v' => mac_keycode.v,
+            'w' => mac_keycode.w,
+            'x' => mac_keycode.x,
+            'y' => mac_keycode.y,
+            'z' => mac_keycode.z,
+            '0' => mac_keycode.zero,
+            '1' => mac_keycode.one,
+            '2' => mac_keycode.two,
+            '3' => mac_keycode.three,
+            '4' => mac_keycode.four,
+            '5' => mac_keycode.five,
+            '6' => mac_keycode.six,
+            '7' => mac_keycode.seven,
+            '8' => mac_keycode.eight,
+            '9' => mac_keycode.nine,
+            '=' => mac_keycode.equal,
+            '-' => mac_keycode.minus,
+            '[' => mac_keycode.left_bracket,
+            ']' => mac_keycode.right_bracket,
+            ';' => mac_keycode.semicolon,
+            '\'' => mac_keycode.quote,
+            '\\' => mac_keycode.backslash,
+            ',' => mac_keycode.comma,
+            '.' => mac_keycode.period,
+            '/' => mac_keycode.slash,
+            '`' => mac_keycode.grave,
+            else => error.UnknownKey,
+        };
+    }
+
+    if (std.ascii.eqlIgnoreCase(key_name, "enter") or std.ascii.eqlIgnoreCase(key_name, "return")) return mac_keycode.enter;
+    if (std.ascii.eqlIgnoreCase(key_name, "tab")) return mac_keycode.tab;
+    if (std.ascii.eqlIgnoreCase(key_name, "space")) return mac_keycode.space;
+    if (std.ascii.eqlIgnoreCase(key_name, "escape") or std.ascii.eqlIgnoreCase(key_name, "esc")) return mac_keycode.escape;
+    if (std.ascii.eqlIgnoreCase(key_name, "backspace")) return mac_keycode.delete;
+    if (std.ascii.eqlIgnoreCase(key_name, "delete")) return mac_keycode.forward_delete;
+    if (std.ascii.eqlIgnoreCase(key_name, "left")) return mac_keycode.left_arrow;
+    if (std.ascii.eqlIgnoreCase(key_name, "right")) return mac_keycode.right_arrow;
+    if (std.ascii.eqlIgnoreCase(key_name, "up")) return mac_keycode.up_arrow;
+    if (std.ascii.eqlIgnoreCase(key_name, "down")) return mac_keycode.down_arrow;
+    if (std.ascii.eqlIgnoreCase(key_name, "home")) return mac_keycode.home;
+    if (std.ascii.eqlIgnoreCase(key_name, "end")) return mac_keycode.end;
+    if (std.ascii.eqlIgnoreCase(key_name, "pageup")) return mac_keycode.page_up;
+    if (std.ascii.eqlIgnoreCase(key_name, "pagedown")) return mac_keycode.page_down;
+    if (std.ascii.eqlIgnoreCase(key_name, "f1")) return mac_keycode.f1;
+    if (std.ascii.eqlIgnoreCase(key_name, "f2")) return mac_keycode.f2;
+    if (std.ascii.eqlIgnoreCase(key_name, "f3")) return mac_keycode.f3;
+    if (std.ascii.eqlIgnoreCase(key_name, "f4")) return mac_keycode.f4;
+    if (std.ascii.eqlIgnoreCase(key_name, "f5")) return mac_keycode.f5;
+    if (std.ascii.eqlIgnoreCase(key_name, "f6")) return mac_keycode.f6;
+    if (std.ascii.eqlIgnoreCase(key_name, "f7")) return mac_keycode.f7;
+    if (std.ascii.eqlIgnoreCase(key_name, "f8")) return mac_keycode.f8;
+    if (std.ascii.eqlIgnoreCase(key_name, "f9")) return mac_keycode.f9;
+    if (std.ascii.eqlIgnoreCase(key_name, "f10")) return mac_keycode.f10;
+    if (std.ascii.eqlIgnoreCase(key_name, "f11")) return mac_keycode.f11;
+    if (std.ascii.eqlIgnoreCase(key_name, "f12")) return mac_keycode.f12;
+
+    return error.UnknownKey;
+}
+
+fn postMacosKey(key_code: c_macos.CGKeyCode, is_down: bool, flags: c_macos.CGEventFlags) !void {
+    const event = c_macos.CGEventCreateKeyboardEvent(null, key_code, is_down) orelse return error.CGEventCreateFailed;
+    defer c_macos.CFRelease(event);
+    c_macos.CGEventSetFlags(event, flags);
+    c_macos.CGEventPost(c_macos.kCGHIDEventTap, event);
+}
+
+fn pressMacos(input: PressInput) !void {
+    const parsed = try parsePressKey(input.key);
+    const key_code = try keyCodeForMacosKey(parsed.key);
+    const repeat_count = normalizedCount(input.count);
+    const delay_ns = normalizedDelayNs(input.delayMs);
+
+    var flags: c_macos.CGEventFlags = 0;
+    if (parsed.cmd) flags |= c_macos.kCGEventFlagMaskCommand;
+    if (parsed.alt) flags |= c_macos.kCGEventFlagMaskAlternate;
+    if (parsed.ctrl) flags |= c_macos.kCGEventFlagMaskControl;
+    if (parsed.shift) flags |= c_macos.kCGEventFlagMaskShift;
+    if (parsed.fn_key) flags |= c_macos.kCGEventFlagMaskSecondaryFn;
+
+    var index: u32 = 0;
+    while (index < repeat_count) : (index += 1) {
+        if (parsed.cmd) try postMacosKey(mac_keycode.command, true, flags);
+        if (parsed.alt) try postMacosKey(mac_keycode.option, true, flags);
+        if (parsed.ctrl) try postMacosKey(mac_keycode.control, true, flags);
+        if (parsed.shift) try postMacosKey(mac_keycode.shift, true, flags);
+        if (parsed.fn_key) try postMacosKey(mac_keycode.fn_key, true, flags);
+
+        try postMacosKey(key_code, true, flags);
+        try postMacosKey(key_code, false, flags);
+
+        if (parsed.fn_key) try postMacosKey(mac_keycode.fn_key, false, flags);
+        if (parsed.shift) try postMacosKey(mac_keycode.shift, false, flags);
+        if (parsed.ctrl) try postMacosKey(mac_keycode.control, false, flags);
+        if (parsed.alt) try postMacosKey(mac_keycode.option, false, flags);
+        if (parsed.cmd) try postMacosKey(mac_keycode.command, false, flags);
+
+        if (delay_ns > 0 and index + 1 < repeat_count) {
+            std.Thread.sleep(delay_ns);
+        }
+    }
+}
+
+fn typeTextWindows(input: TypeTextInput) !void {
+    const delay_ns = normalizedDelayNs(input.delayMs);
+    var view = try std.unicode.Utf8View.init(input.text);
+    var iterator = view.iterator();
+    while (iterator.nextCodepoint()) |codepoint| {
+        const utf16 = try codepointToUtf16(codepoint);
+        var unit_index: usize = 0;
+        while (unit_index < utf16.len) : (unit_index += 1) {
+            const unit = utf16.units[unit_index];
+            var down = std.mem.zeroes(c_windows.INPUT);
+            down.type = c_windows.INPUT_KEYBOARD;
+            down.Anonymous.ki.wVk = 0;
+            down.Anonymous.ki.wScan = unit;
+            down.Anonymous.ki.dwFlags = c_windows.KEYEVENTF_UNICODE;
+            _ = c_windows.SendInput(1, &down, @sizeOf(c_windows.INPUT));
+
+            var up = down;
+            up.Anonymous.ki.dwFlags = c_windows.KEYEVENTF_UNICODE | c_windows.KEYEVENTF_KEYUP;
+            _ = c_windows.SendInput(1, &up, @sizeOf(c_windows.INPUT));
+        }
+
+        if (delay_ns > 0) {
+            std.Thread.sleep(delay_ns);
+        }
+    }
+}
+
+fn keyCodeForWindowsKey(key_name: []const u8) !u16 {
+    if (key_name.len == 1) {
+        const ch = std.ascii.toUpper(key_name[0]);
+        if ((ch >= 'A' and ch <= 'Z') or (ch >= '0' and ch <= '9')) {
+            return ch;
+        }
+        return switch (key_name[0]) {
+            '=' => c_windows.VK_OEM_PLUS,
+            '-' => c_windows.VK_OEM_MINUS,
+            '[' => c_windows.VK_OEM_4,
+            ']' => c_windows.VK_OEM_6,
+            ';' => c_windows.VK_OEM_1,
+            '\'' => c_windows.VK_OEM_7,
+            '\\' => c_windows.VK_OEM_5,
+            ',' => c_windows.VK_OEM_COMMA,
+            '.' => c_windows.VK_OEM_PERIOD,
+            '/' => c_windows.VK_OEM_2,
+            '`' => c_windows.VK_OEM_3,
+            else => error.UnknownKey,
+        };
+    }
+
+    if (std.ascii.eqlIgnoreCase(key_name, "enter") or std.ascii.eqlIgnoreCase(key_name, "return")) return c_windows.VK_RETURN;
+    if (std.ascii.eqlIgnoreCase(key_name, "tab")) return c_windows.VK_TAB;
+    if (std.ascii.eqlIgnoreCase(key_name, "space")) return c_windows.VK_SPACE;
+    if (std.ascii.eqlIgnoreCase(key_name, "escape") or std.ascii.eqlIgnoreCase(key_name, "esc")) return c_windows.VK_ESCAPE;
+    if (std.ascii.eqlIgnoreCase(key_name, "backspace")) return c_windows.VK_BACK;
+    if (std.ascii.eqlIgnoreCase(key_name, "delete")) return c_windows.VK_DELETE;
+    if (std.ascii.eqlIgnoreCase(key_name, "left")) return c_windows.VK_LEFT;
+    if (std.ascii.eqlIgnoreCase(key_name, "right")) return c_windows.VK_RIGHT;
+    if (std.ascii.eqlIgnoreCase(key_name, "up")) return c_windows.VK_UP;
+    if (std.ascii.eqlIgnoreCase(key_name, "down")) return c_windows.VK_DOWN;
+    if (std.ascii.eqlIgnoreCase(key_name, "home")) return c_windows.VK_HOME;
+    if (std.ascii.eqlIgnoreCase(key_name, "end")) return c_windows.VK_END;
+    if (std.ascii.eqlIgnoreCase(key_name, "pageup")) return c_windows.VK_PRIOR;
+    if (std.ascii.eqlIgnoreCase(key_name, "pagedown")) return c_windows.VK_NEXT;
+    if (std.ascii.eqlIgnoreCase(key_name, "f1")) return c_windows.VK_F1;
+    if (std.ascii.eqlIgnoreCase(key_name, "f2")) return c_windows.VK_F2;
+    if (std.ascii.eqlIgnoreCase(key_name, "f3")) return c_windows.VK_F3;
+    if (std.ascii.eqlIgnoreCase(key_name, "f4")) return c_windows.VK_F4;
+    if (std.ascii.eqlIgnoreCase(key_name, "f5")) return c_windows.VK_F5;
+    if (std.ascii.eqlIgnoreCase(key_name, "f6")) return c_windows.VK_F6;
+    if (std.ascii.eqlIgnoreCase(key_name, "f7")) return c_windows.VK_F7;
+    if (std.ascii.eqlIgnoreCase(key_name, "f8")) return c_windows.VK_F8;
+    if (std.ascii.eqlIgnoreCase(key_name, "f9")) return c_windows.VK_F9;
+    if (std.ascii.eqlIgnoreCase(key_name, "f10")) return c_windows.VK_F10;
+    if (std.ascii.eqlIgnoreCase(key_name, "f11")) return c_windows.VK_F11;
+    if (std.ascii.eqlIgnoreCase(key_name, "f12")) return c_windows.VK_F12;
+
+    return error.UnknownKey;
+}
+
+fn postWindowsVirtualKey(virtual_key: u16, is_down: bool) void {
+    var event = std.mem.zeroes(c_windows.INPUT);
+    event.type = c_windows.INPUT_KEYBOARD;
+    event.Anonymous.ki.wVk = virtual_key;
+    event.Anonymous.ki.wScan = 0;
+    event.Anonymous.ki.dwFlags = if (is_down) 0 else c_windows.KEYEVENTF_KEYUP;
+    _ = c_windows.SendInput(1, &event, @sizeOf(c_windows.INPUT));
+}
+
+fn pressWindows(input: PressInput) !void {
+    const parsed = try parsePressKey(input.key);
+    const key_code = try keyCodeForWindowsKey(parsed.key);
+    const repeat_count = normalizedCount(input.count);
+    const delay_ns = normalizedDelayNs(input.delayMs);
+
+    var index: u32 = 0;
+    while (index < repeat_count) : (index += 1) {
+        if (parsed.cmd) postWindowsVirtualKey(c_windows.VK_LWIN, true);
+        if (parsed.alt) postWindowsVirtualKey(c_windows.VK_MENU, true);
+        if (parsed.ctrl) postWindowsVirtualKey(c_windows.VK_CONTROL, true);
+        if (parsed.shift) postWindowsVirtualKey(c_windows.VK_SHIFT, true);
+
+        postWindowsVirtualKey(key_code, true);
+        postWindowsVirtualKey(key_code, false);
+
+        if (parsed.shift) postWindowsVirtualKey(c_windows.VK_SHIFT, false);
+        if (parsed.ctrl) postWindowsVirtualKey(c_windows.VK_CONTROL, false);
+        if (parsed.alt) postWindowsVirtualKey(c_windows.VK_MENU, false);
+        if (parsed.cmd) postWindowsVirtualKey(c_windows.VK_LWIN, false);
+
+        if (delay_ns > 0 and index + 1 < repeat_count) {
+            std.Thread.sleep(delay_ns);
+        }
+    }
+}
+
+fn typeTextX11(input: TypeTextInput) !void {
+    const delay_ns = normalizedDelayNs(input.delayMs);
+    const display = c_x11.XOpenDisplay(null) orelse return error.XOpenDisplayFailed;
+    defer _ = c_x11.XCloseDisplay(display);
+
+    for (input.text) |byte| {
+        if (byte >= 0x80) {
+            return error.NonAsciiUnsupported;
+        }
+        var key_name = [_:0]u8{ byte, 0 };
+        const key_sym = c_x11.XStringToKeysym(&key_name);
+        if (key_sym == 0) {
+            return error.UnknownKey;
+        }
+        const key_code = c_x11.XKeysymToKeycode(display, @intCast(key_sym));
+        _ = c_x11.XTestFakeKeyEvent(display, key_code, c_x11.True, c_x11.CurrentTime);
+        _ = c_x11.XTestFakeKeyEvent(display, key_code, c_x11.False, c_x11.CurrentTime);
+        _ = c_x11.XFlush(display);
+        if (delay_ns > 0) {
+            std.Thread.sleep(delay_ns);
+        }
+    }
+}
+
+fn keySymForX11Key(key_name: []const u8) !c_ulong {
+    if (key_name.len == 1) {
+        var key_buffer = [_:0]u8{ key_name[0], 0 };
+        const key_sym = c_x11.XStringToKeysym(&key_buffer);
+        if (key_sym == 0) return error.UnknownKey;
+        return @intCast(key_sym);
+    }
+
+    if (std.ascii.eqlIgnoreCase(key_name, "enter") or std.ascii.eqlIgnoreCase(key_name, "return")) return c_x11.XK_Return;
+    if (std.ascii.eqlIgnoreCase(key_name, "tab")) return c_x11.XK_Tab;
+    if (std.ascii.eqlIgnoreCase(key_name, "space")) return c_x11.XK_space;
+    if (std.ascii.eqlIgnoreCase(key_name, "escape") or std.ascii.eqlIgnoreCase(key_name, "esc")) return c_x11.XK_Escape;
+    if (std.ascii.eqlIgnoreCase(key_name, "backspace")) return c_x11.XK_BackSpace;
+    if (std.ascii.eqlIgnoreCase(key_name, "delete")) return c_x11.XK_Delete;
+    if (std.ascii.eqlIgnoreCase(key_name, "left")) return c_x11.XK_Left;
+    if (std.ascii.eqlIgnoreCase(key_name, "right")) return c_x11.XK_Right;
+    if (std.ascii.eqlIgnoreCase(key_name, "up")) return c_x11.XK_Up;
+    if (std.ascii.eqlIgnoreCase(key_name, "down")) return c_x11.XK_Down;
+    if (std.ascii.eqlIgnoreCase(key_name, "home")) return c_x11.XK_Home;
+    if (std.ascii.eqlIgnoreCase(key_name, "end")) return c_x11.XK_End;
+    if (std.ascii.eqlIgnoreCase(key_name, "pageup")) return c_x11.XK_Page_Up;
+    if (std.ascii.eqlIgnoreCase(key_name, "pagedown")) return c_x11.XK_Page_Down;
+    return error.UnknownKey;
+}
+
+fn postX11Key(display: *c_x11.Display, key_sym: c_ulong, is_down: bool) !void {
+    const key_code = c_x11.XKeysymToKeycode(display, @intCast(key_sym));
+    if (key_code == 0) {
+        return error.UnknownKey;
+    }
+    _ = c_x11.XTestFakeKeyEvent(display, key_code, if (is_down) c_x11.True else c_x11.False, c_x11.CurrentTime);
+    _ = c_x11.XFlush(display);
+}
+
+fn pressX11(input: PressInput) !void {
+    const parsed = try parsePressKey(input.key);
+    const key_sym = try keySymForX11Key(parsed.key);
+    const repeat_count = normalizedCount(input.count);
+    const delay_ns = normalizedDelayNs(input.delayMs);
+
+    const display = c_x11.XOpenDisplay(null) orelse return error.XOpenDisplayFailed;
+    defer _ = c_x11.XCloseDisplay(display);
+
+    var index: u32 = 0;
+    while (index < repeat_count) : (index += 1) {
+        if (parsed.cmd) try postX11Key(display, c_x11.XK_Super_L, true);
+        if (parsed.alt) try postX11Key(display, c_x11.XK_Alt_L, true);
+        if (parsed.ctrl) try postX11Key(display, c_x11.XK_Control_L, true);
+        if (parsed.shift) try postX11Key(display, c_x11.XK_Shift_L, true);
+
+        try postX11Key(display, key_sym, true);
+        try postX11Key(display, key_sym, false);
+
+        if (parsed.shift) try postX11Key(display, c_x11.XK_Shift_L, false);
+        if (parsed.ctrl) try postX11Key(display, c_x11.XK_Control_L, false);
+        if (parsed.alt) try postX11Key(display, c_x11.XK_Alt_L, false);
+        if (parsed.cmd) try postX11Key(display, c_x11.XK_Super_L, false);
+
+        if (delay_ns > 0 and index + 1 < repeat_count) {
+            std.Thread.sleep(delay_ns);
+        }
+    }
 }
 
 fn createScreenshotImage(input: struct {

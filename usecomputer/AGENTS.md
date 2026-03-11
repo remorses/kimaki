@@ -30,6 +30,29 @@ command behavior using Zig + native macOS APIs.
 - napigen (N-API glue used by Zig module exports):
   https://github.com/cztomsik/napigen
 
+## Keyboard synthesis references (Zig)
+
+Use skhd.zig as implementation inspiration for keyboard handling and synthesis.
+
+- Maintained fork with Zig 0.15 migration work:
+  https://github.com/cimandef/skhd.zig
+- Upstream fork reference:
+  https://github.com/jackielii/skhd.zig
+
+Focus files for keyboard implementation patterns:
+
+- `src/synthesize.zig` (key combo + text synthesis using CG events)
+- `src/Keycodes.zig` (modifier parsing and keyboard-layout-aware keycode mapping)
+- `src/c.zig` (Carbon / CoreServices / IOKit imports used by keyboard paths)
+
+Important APIs shown in these files:
+
+- `CGEventCreateKeyboardEvent`
+- `CGEventKeyboardSetUnicodeString`
+- `CGEventPost`
+- `TISCopyCurrentASCIICapableKeyboardLayoutInputSource`
+- `UCKeyTranslate`
+
 ## Build and distribution reference
 
 Use ghostty-opentui as a reference for native packaging patterns

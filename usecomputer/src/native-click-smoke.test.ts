@@ -46,6 +46,8 @@ describe('native click smoke', () => {
       button: 'left',
       durationMs: 10,
     })
+    const typeResponse = native.typeText({ text: 'hello', delayMs: 1 })
+    const pressResponse = native.press({ key: 'enter', count: 1, delayMs: 1 })
 
     expect({
       moveResponse,
@@ -54,6 +56,8 @@ describe('native click smoke', () => {
       positionResponse,
       hoverResponse,
       dragResponse,
+      typeResponse,
+      pressResponse,
     }).toMatchInlineSnapshot(`
       {
         "downResponse": {
@@ -80,6 +84,14 @@ describe('native click smoke', () => {
           "error": null,
           "ok": true,
         },
+        "pressResponse": {
+          "error": null,
+          "ok": true,
+        },
+        "typeResponse": {
+          "error": null,
+          "ok": true,
+        },
         "upResponse": {
           "error": null,
           "ok": true,
@@ -92,6 +104,8 @@ describe('native click smoke', () => {
     expect(positionResponse.ok).toBe(true)
     expect(hoverResponse.ok).toBe(true)
     expect(dragResponse.ok).toBe(true)
+    expect(typeResponse.ok).toBe(true)
+    expect(pressResponse.ok).toBe(true)
   })
 
   smokeTest('returns structured TODO error objects for unimplemented commands', () => {
