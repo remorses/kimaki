@@ -11,6 +11,12 @@ export interface SlackBridgeConfig {
   port?: number
   /** Override gateway URL returned by GET /gateway/bot (useful behind proxies) */
   gatewayUrlOverride?: string
+  /** Optional public base URL used to derive REST/Gateway/Webhook URLs. */
+  publicBaseUrl?: string
+  /** Optional explicit REST URL override (without /v10 suffix). */
+  restUrlOverride?: string
+  /** Optional explicit webhook URL override (/slack/events endpoint). */
+  webhookUrlOverride?: string
   /** Override Slack API base URL (for testing with slack-digital-twin) */
   slackApiUrl?: string
 }

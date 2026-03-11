@@ -5,9 +5,7 @@
 //
 // Also hosts the WebSocket gateway at /gateway for discord.js Gateway.
 
-import crypto from 'node:crypto'
 import http from 'node:http'
-import { createHmac, timingSafeEqual } from 'node:crypto'
 import type {
   ConversationsListArguments,
   ConversationsRepliesArguments,
@@ -86,6 +84,7 @@ export interface ServerConfig {
   workspaceId: string
   port: number
   gatewayUrlOverride?: string
+  publicBaseUrl?: string
 }
 
 export interface ServerComponents {
@@ -211,7 +210,7 @@ export function createServer(config: ServerConfig): ServerComponents {
     // Verify signature
     const timestamp = request.headers.get('x-slack-request-timestamp')
     const signature = request.headers.get('x-slack-signature')
-    if (!verifySignature(body, timestamp, signature, signingSecret)) {
+    if (!(await verifySignature(body, timestamp, signature, signingSecret))) {
       return errorJsonResponse({ status: 401, error: 'invalid_signature' })
     }
 
@@ -246,6 +245,9 @@ export function createServer(config: ServerConfig): ServerComponents {
 
     const normalizedEnvelope = normalizeSlackEventEnvelope(payload)
     if (!normalizedEnvelope) {
+      console.warn('Unsupported Slack webhook payload', {
+        payloadType: isRecord(payload) ? readString(payload, 'type') : undefined,
+      })
       return errorJsonResponse({ status: 400, error: 'unsupported_event_payload' })
     }
 
@@ -272,9 +274,12 @@ export function createServer(config: ServerConfig): ServerComponents {
 
   // GET /api/v10/gateway/bot
   app.get('/api/v10/gateway/bot', ({ request }) => {
-    const host = request.headers.get('host') ?? `127.0.0.1:${port}`
-    const gatewayUrl =
-      config.gatewayUrlOverride ?? `ws://${host}/gateway`
+    const gatewayUrl = resolveGatewayUrl({
+      request,
+      gatewayUrlOverride: config.gatewayUrlOverride,
+      publicBaseUrl: config.publicBaseUrl,
+      port,
+    })
     return Response.json({
       url: gatewayUrl,
       shards: 1,
@@ -1247,6 +1252,8 @@ export function createServer(config: ServerConfig): ServerComponents {
       })
       return
     }
+
+    console.warn('Unhandled Slack event', { eventType, subtype })
   }
 
   function handleSlashCommand(params: URLSearchParams): void {
@@ -1277,6 +1284,7 @@ export function createServer(config: ServerConfig): ServerComponents {
         type: InteractionType.ApplicationCommand,
         token: interactionToken,
         version: 1,
+        entitlements: [],
       channel_id: channelId,
       guild_id: workspaceId,
       member: {
@@ -1307,15 +1315,27 @@ export function createServer(config: ServerConfig): ServerComponents {
     try {
       payload = JSON.parse(payloadStr)
     } catch {
+      console.warn('Failed to parse Slack interactive payload', {
+        payloadPreview: payloadStr.slice(0, 200),
+      })
       return
     }
 
     const normalizedPayload = normalizeSlackInteractivePayload(payload)
     if (!normalizedPayload) {
+      console.warn('Unhandled Slack interactive payload', {
+        payloadType: isRecord(payload) ? readString(payload, 'type') : undefined,
+      })
       return
     }
 
     if (normalizedPayload.type === 'block_actions') {
+      console.log('Slack interactive block_actions received', {
+        actionCount: normalizedPayload.actions.length,
+        channelId: normalizedPayload.channelId,
+        messageTs: normalizedPayload.messageTs,
+        threadTs: normalizedPayload.threadTs,
+      })
       for (const action of normalizedPayload.actions) {
         const interactionId = crypto.randomUUID()
         const interactionToken = crypto.randomUUID()
@@ -1353,6 +1373,7 @@ export function createServer(config: ServerConfig): ServerComponents {
           type: InteractionType.MessageComponent,
           token: interactionToken,
           version: 1,
+          entitlements: [],
           channel_id: channelId,
           guild_id: workspaceId,
           member: {
@@ -1410,6 +1431,12 @@ export function createServer(config: ServerConfig): ServerComponents {
     const modalInteractionToken = crypto.randomUUID()
     const modalChannelId = normalizedPayload.channelId ?? ''
 
+    console.log('Slack interactive view_submission received', {
+      channelId: modalChannelId,
+      callbackId: normalizedPayload.callbackId,
+      stateValues: normalizedPayload.stateValues.length,
+    })
+
     pendingInteractions.set(modalInteractionId, {
       id: modalInteractionId,
       token: modalInteractionToken,
@@ -1426,6 +1453,7 @@ export function createServer(config: ServerConfig): ServerComponents {
       type: InteractionType.ModalSubmit,
       token: modalInteractionToken,
       version: 1,
+      entitlements: [],
       channel_id: modalChannelId,
       guild_id: workspaceId,
       member: {
@@ -1545,6 +1573,11 @@ export function createServer(config: ServerConfig): ServerComponents {
     port,
     loadState: loadGatewayState,
     expectedToken: botToken,
+    gatewayUrlOverride: resolveGatewayUrl({
+      gatewayUrlOverride: config.gatewayUrlOverride,
+      publicBaseUrl: config.publicBaseUrl,
+      port,
+    }),
   })
 
   return { httpServer, gateway, app }
@@ -1575,6 +1608,48 @@ export function stopServer(components: ServerComponents): Promise<void> {
 }
 
 // ---- Helpers ----
+
+function resolveGatewayUrl({
+  request,
+  gatewayUrlOverride,
+  publicBaseUrl,
+  port,
+}: {
+  request?: Request
+  gatewayUrlOverride?: string
+  publicBaseUrl?: string
+  port: number
+}): string {
+  if (gatewayUrlOverride) {
+    return gatewayUrlOverride
+  }
+  if (publicBaseUrl) {
+    return buildWebSocketUrlFromHttpBase({
+      httpBaseUrl: publicBaseUrl,
+      path: '/gateway',
+    })
+  }
+  if (request) {
+    return buildWebSocketUrlFromHttpBase({
+      httpBaseUrl: request.url,
+      path: '/gateway',
+    })
+  }
+  return `ws://127.0.0.1:${port}/gateway`
+}
+
+function buildWebSocketUrlFromHttpBase({
+  httpBaseUrl,
+  path,
+}: {
+  httpBaseUrl: string
+  path: string
+}): string {
+  const baseUrl = new URL(httpBaseUrl)
+  const protocol = baseUrl.protocol === 'https:' ? 'wss:' : 'ws:'
+  const wsBase = `${protocol}//${baseUrl.host}`
+  return new URL(path, wsBase).toString()
+}
 
 /** Evict oldest entries from a Set when it exceeds maxSize. */
 function evictIfFull(set: Set<string>, maxSize: number): void {
@@ -2657,7 +2732,7 @@ function mergeActiveThreadsWithKnown({
 }
 
 function createSnowflakeLikeId(): string {
-  return `${Date.now()}${crypto.randomInt(100_000, 999_999)}`
+  return `${Date.now()}${randomSixDigitSuffix()}`
 }
 
 function noFlags<T>(): T {
@@ -3039,12 +3114,12 @@ async function resolveThreadTsForReaction({
   }
 }
 
-function verifySignature(
+async function verifySignature(
   body: string,
   timestamp: string | null,
   signature: string | null,
   signingSecret: string,
-): boolean {
+): Promise<boolean> {
   if (!(timestamp && signature)) {
     return false
   }
@@ -3055,18 +3130,67 @@ function verifySignature(
   }
 
   const sigBasestring = `v0:${timestamp}:${body}`
-  const expectedSignature =
-    'v0=' +
-    createHmac('sha256', signingSecret).update(sigBasestring).digest('hex')
+  const expectedDigest = await hmacSha256Hex({
+    key: signingSecret,
+    message: sigBasestring,
+  })
+  const expectedSignature = `v0=${expectedDigest}`
 
-  try {
-    return timingSafeEqual(
-      Buffer.from(signature),
-      Buffer.from(expectedSignature),
-    )
-  } catch {
+  return timingSafeEqualString({ left: signature, right: expectedSignature })
+}
+
+function randomSixDigitSuffix(): string {
+  const bytes = crypto.getRandomValues(new Uint8Array(4))
+  const randomValue =
+    (bytes[0] ?? 0) * 16_777_216 +
+    (bytes[1] ?? 0) * 65_536 +
+    (bytes[2] ?? 0) * 256 +
+    (bytes[3] ?? 0)
+  const sixDigits = 100_000 + (randomValue % 900_000)
+  return String(sixDigits)
+}
+
+async function hmacSha256Hex({
+  key,
+  message,
+}: {
+  key: string
+  message: string
+}): Promise<string> {
+  const encoder = new TextEncoder()
+  const cryptoKey = await crypto.subtle.importKey(
+    'raw',
+    encoder.encode(key),
+    { name: 'HMAC', hash: 'SHA-256' },
+    false,
+    ['sign'],
+  )
+  const signature = await crypto.subtle.sign(
+    'HMAC',
+    cryptoKey,
+    encoder.encode(message),
+  )
+  return bufferToHex(signature)
+}
+
+function bufferToHex(value: ArrayBuffer): string {
+  const bytes = new Uint8Array(value)
+  return [...bytes]
+    .map((byte) => {
+      return byte.toString(16).padStart(2, '0')
+    })
+    .join('')
+}
+
+function timingSafeEqualString({ left, right }: { left: string; right: string }): boolean {
+  if (left.length !== right.length) {
     return false
   }
+  let diff = 0
+  for (let index = 0; index < left.length; index++) {
+    diff |= left.charCodeAt(index) ^ right.charCodeAt(index)
+  }
+  return diff === 0
 }
 
 function withRateLimitHeaders(response: Response): Response {

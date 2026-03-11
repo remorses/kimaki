@@ -56,21 +56,25 @@ export class SlackBridgeGateway {
   /** Mutable: updated via setPort() after OS-assigned bind (port:0). */
   private port: number
   private expectedToken: string
+  private gatewayUrlOverride?: string
 
   constructor({
     httpServer,
     port,
     loadState,
     expectedToken,
+    gatewayUrlOverride,
   }: {
     httpServer: http.Server
     port: number
     loadState: () => Promise<GatewayState>
     expectedToken: string
+    gatewayUrlOverride?: string
   }) {
     this.port = port
     this.loadState = loadState
     this.expectedToken = expectedToken
+    this.gatewayUrlOverride = gatewayUrlOverride
     this.wss = new WebSocketServer({ noServer: true })
     this.wss.on('connection', (ws) => {
       this.handleConnection(ws)
@@ -221,7 +225,8 @@ export class SlackBridgeGateway {
         unavailable: true,
       })),
       session_id: client.sessionId,
-      resume_gateway_url: `ws://127.0.0.1:${this.port}/gateway`,
+      resume_gateway_url:
+        this.gatewayUrlOverride ?? `ws://127.0.0.1:${this.port}/gateway`,
       application: {
         id: state.botUser.id,
         flags:
