@@ -4,8 +4,32 @@
 import { describe, test, expect } from 'vitest'
 import fs from 'node:fs'
 import path from 'node:path'
-import { transcribeAudio, convertOggToWav } from './voice.js'
-import { extractTranscription } from './voice.js'
+import {
+  transcribeAudio,
+  convertOggToWav,
+  extractTranscription,
+  normalizeAudioMediaType,
+  getOpenAIAudioConversionStrategy,
+} from './voice.js'
+
+describe('audio media type routing', () => {
+  test('normalizes m4a aliases to audio/mp4', () => {
+    expect(normalizeAudioMediaType('audio/x-m4a')).toMatchInlineSnapshot('"audio/mp4"')
+    expect(normalizeAudioMediaType('audio/m4a')).toMatchInlineSnapshot('"audio/mp4"')
+  })
+
+  test('keeps non-m4a media types unchanged', () => {
+    expect(normalizeAudioMediaType('audio/ogg')).toMatchInlineSnapshot('"audio/ogg"')
+    expect(normalizeAudioMediaType('audio/wav')).toMatchInlineSnapshot('"audio/wav"')
+  })
+
+  test('converts ogg only when mime is actual ogg/opus', () => {
+    expect(getOpenAIAudioConversionStrategy('audio/ogg')).toMatchInlineSnapshot('"convert-ogg-to-wav"')
+    expect(getOpenAIAudioConversionStrategy('audio/opus')).toMatchInlineSnapshot('"convert-ogg-to-wav"')
+    expect(getOpenAIAudioConversionStrategy('audio/mp4')).toMatchInlineSnapshot('"convert-m4a-to-wav"')
+    expect(getOpenAIAudioConversionStrategy('audio/mpeg')).toMatchInlineSnapshot('"none"')
+  })
+})
 
 describe('extractTranscription', () => {
   test('extracts transcription from tool call', () => {

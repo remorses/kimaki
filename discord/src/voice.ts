@@ -38,7 +38,48 @@ const OPENAI_SUPPORTED_AUDIO_TYPES = new Set([
   'audio/mpeg',
   'audio/mp3',
   'audio/wav',
+  'audio/x-wav',
 ])
+
+const OGG_AUDIO_TYPES = new Set([
+  'audio/ogg',
+  'audio/opus',
+])
+
+const M4A_AUDIO_TYPES = new Set([
+  'audio/mp4',
+  'audio/m4a',
+  'audio/x-m4a',
+])
+
+export function normalizeAudioMediaType(mediaType: string): string {
+  const normalized = mediaType.trim().toLowerCase()
+  if (normalized === 'audio/x-m4a' || normalized === 'audio/m4a') {
+    return 'audio/mp4'
+  }
+  return normalized
+}
+
+type OpenAIAudioConversionStrategy =
+  | 'none'
+  | 'convert-ogg-to-wav'
+  | 'convert-m4a-to-wav'
+  | 'unsupported'
+
+export function getOpenAIAudioConversionStrategy(
+  mediaType: string,
+): OpenAIAudioConversionStrategy {
+  if (OPENAI_SUPPORTED_AUDIO_TYPES.has(mediaType)) {
+    return 'none'
+  }
+  if (OGG_AUDIO_TYPES.has(mediaType)) {
+    return 'convert-ogg-to-wav'
+  }
+  if (M4A_AUDIO_TYPES.has(mediaType)) {
+    return 'convert-m4a-to-wav'
+  }
+  return 'unsupported'
+}
 
 /**
  * Convert OGG Opus audio to WAV using prism-media (already installed for Discord voice).
@@ -90,6 +131,89 @@ export function convertOggToWav(input: Buffer): Promise<TranscriptionError | Buf
     })
 
     Readable.from(input).pipe(demuxer).pipe(decoder)
+  })
+}
+
+/**
+ * Convert M4A/MP4 audio to WAV using prism-media FFmpeg wrapper.
+ * This depends on an ffmpeg binary available in PATH.
+ */
+export function convertM4aToWav(input: Buffer): Promise<TranscriptionError | Buffer> {
+  return new Promise((resolve) => {
+    const pcmChunks: Buffer[] = []
+    const transcoder = new prism.FFmpeg({
+      args: [
+        '-analyzeduration',
+        '0',
+        '-loglevel',
+        '0',
+        '-f',
+        'mp4',
+        '-i',
+        'pipe:0',
+        '-f',
+        's16le',
+        '-acodec',
+        'pcm_s16le',
+        '-ac',
+        '1',
+        '-ar',
+        '48000',
+        'pipe:1',
+      ],
+    })
+
+    transcoder.on('data', (chunk: Buffer) => {
+      pcmChunks.push(chunk)
+    })
+
+    transcoder.on('end', () => {
+      const pcmData = Buffer.concat(pcmChunks)
+      if (pcmData.length === 0) {
+        resolve(
+          new TranscriptionError({
+            reason: 'FFmpeg conversion produced empty audio output',
+          }),
+        )
+        return
+      }
+
+      const wavHeader = createWavHeader({
+        dataLength: pcmData.length,
+        sampleRate: 48000,
+        numChannels: 1,
+        bitsPerSample: 16,
+      })
+      resolve(Buffer.concat([wavHeader, pcmData]))
+    })
+
+    transcoder.on('error', (err: Error) => {
+      const lower = err.message.toLowerCase()
+      const isMissingFfmpeg =
+        lower.includes('ffmpeg') &&
+        (lower.includes('not found') ||
+          lower.includes('enoent') ||
+          lower.includes('spawn'))
+      if (isMissingFfmpeg) {
+        resolve(
+          new TranscriptionError({
+            reason:
+              'M4A transcription with OpenAI requires ffmpeg to be installed and available in PATH',
+            cause: err,
+          }),
+        )
+        return
+      }
+
+      resolve(
+        new TranscriptionError({
+          reason: `M4A decode failed: ${err.message}`,
+          cause: err,
+        }),
+      )
+    })
+
+    Readable.from(input).pipe(transcoder)
   })
 }
 
@@ -359,18 +483,32 @@ export async function transcribeAudio({
     return new InvalidAudioFormatError()
   }
 
-  let mediaType = mediaTypeParam || 'audio/mpeg'
+  let mediaType = normalizeAudioMediaType(mediaTypeParam || 'audio/mpeg')
   let finalAudioBase64 = audioBuffer.toString('base64')
 
-  // OpenAI input_audio only supports mp3/wav. Convert OGG Opus (Discord voice) to WAV.
-  if (resolvedProvider === 'openai' && !OPENAI_SUPPORTED_AUDIO_TYPES.has(mediaType)) {
-    voiceLogger.log(`Converting ${mediaType} to WAV for OpenAI compatibility`)
-    const converted = await convertOggToWav(audioBuffer)
-    if (converted instanceof Error) {
-      return converted
+  // OpenAI input_audio supports only a subset of audio formats.
+  // Convert based on MIME so OGG conversion runs only for real OGG/Opus inputs.
+  if (resolvedProvider === 'openai') {
+    const conversionStrategy = getOpenAIAudioConversionStrategy(mediaType)
+    if (conversionStrategy === 'convert-ogg-to-wav') {
+      voiceLogger.log(`Converting ${mediaType} to WAV for OpenAI compatibility`)
+      const converted = await convertOggToWav(audioBuffer)
+      if (converted instanceof Error) {
+        return converted
+      }
+      finalAudioBase64 = converted.toString('base64')
+      mediaType = 'audio/wav'
+    } else if (conversionStrategy === 'convert-m4a-to-wav') {
+      voiceLogger.log(`Converting ${mediaType} to WAV for OpenAI compatibility`)
+      const converted = await convertM4aToWav(audioBuffer)
+      if (converted instanceof Error) {
+        return converted
+      }
+      finalAudioBase64 = converted.toString('base64')
+      mediaType = 'audio/wav'
+    } else if (conversionStrategy === 'unsupported') {
+      return new InvalidAudioFormatError()
     }
-    finalAudioBase64 = converted.toString('base64')
-    mediaType = 'audio/wav'
   }
 
   const languageHint = language ? `The audio is in ${language}.\n\n` : ''
