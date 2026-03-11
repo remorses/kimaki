@@ -7,7 +7,7 @@
 
 import http from 'node:http'
 import { Spiceflow } from 'spiceflow'
-import type { PrismaClient } from './generated/client.js'
+import type { Prisma, PrismaClient } from './generated/client.js'
 import { generateMessageTs, generateChannelId } from './slack-ids.js'
 import { userToSlack, channelToSlack, messageToSlack } from './serializers.js'
 import type { SlackOpenedView } from './types.js'
@@ -275,18 +275,23 @@ export function createServer(config: ServerConfig): ServerComponents {
       return Response.json({ ok: false, error: 'channel_not_found' })
     }
 
-    const where: Record<string, unknown> = {
+    const where: Prisma.MessageWhereInput = {
       channelId,
       isDeleted: false,
       threadTs: null, // history returns only top-level messages
     }
 
+    const tsFilter: Prisma.StringFilter = {}
+
     // Slack's latest/oldest are ts-based cursors
     if (latest) {
-      where['ts'] = { ...(where['ts'] as object ?? {}), lte: latest }
+      tsFilter.lte = latest
     }
     if (oldest) {
-      where['ts'] = { ...(where['ts'] as object ?? {}), gte: oldest }
+      tsFilter.gte = oldest
+    }
+    if (latest || oldest) {
+      where.ts = tsFilter
     }
 
     const messages = await prisma.message.findMany({
@@ -365,13 +370,10 @@ export function createServer(config: ServerConfig): ServerComponents {
     const types = body['types'] ?? 'public_channel'
     const excludeArchived = body['exclude_archived'] !== 'false'
 
-    const where: Record<string, unknown> = { workspaceId }
-    if (excludeArchived) {
-      where['isArchived'] = false
-    }
-    // Filter by channel types
-    if (!types.includes('private_channel')) {
-      where['isPrivate'] = false
+    const where: Prisma.ChannelWhereInput = {
+      workspaceId,
+      ...(excludeArchived ? { isArchived: false } : {}),
+      ...(!types.includes('private_channel') ? { isPrivate: false } : {}),
     }
 
     const channels = await prisma.channel.findMany({ where })

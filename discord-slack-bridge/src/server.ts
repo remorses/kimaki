@@ -67,6 +67,7 @@ import type {
   CachedSlackUser,
   NormalizedSlackAction,
   NormalizedSlackBlockActionsPayload,
+  NormalizedSlackBlockSuggestionPayload,
   NormalizedSlackEvent,
   NormalizedSlackEventEnvelope,
   NormalizedSlackMessageEvent,
@@ -77,6 +78,7 @@ import type {
   NormalizedSlackViewSubmissionPayload,
   NormalizedSlackViewSubmissionStateValue,
   SlackBlockActionsPayload,
+  SlackBlockSuggestionPayload,
   SlackInteractivePayload,
   SlackViewSubmissionPayload,
   SupportedSlackEventType,
@@ -116,6 +118,14 @@ const USER_CACHE_MAX = 500
 const userCache = new Map<string, { user: CachedSlackUser; expiresAt: number }>()
 
 const EVENT_DEDUPE_TTL_MS = 5 * 60 * 1000
+const AUTOCOMPLETE_REQUEST_TIMEOUT_MS = 2500
+const AUTOCOMPLETE_PENDING_MAX = 1000
+
+type PendingAutocompleteRequest = {
+  token: string
+  resolveChoices: (choices: Array<{ name: string; value: string }>) => void
+  timeoutHandle: ReturnType<typeof setTimeout>
+}
 
 const DISCORD_DEFAULT_DISCRIMINATOR = '0'
 const DISCORD_ZERO_PERMISSIONS = '0'
@@ -186,6 +196,7 @@ export function createServer(config: ServerConfig): ServerComponents {
 
   // Pending interactions awaiting discord.js responses
   const pendingInteractions = new Map<string, PendingInteraction>()
+  const pendingAutocompleteRequests = new Map<string, PendingAutocompleteRequest>()
 
   // Slack event replay protection (event_id -> expiresAt)
   const seenEventIds = new Map<string, number>()
@@ -286,7 +297,10 @@ export function createServer(config: ServerConfig): ServerComponents {
         if (!allowInteractiveAction) {
           return errorJsonResponse({ status: 403, error: 'unauthorized_team' })
         }
-        handleInteractivePayload(payloadStr)
+        const interactiveResponse = await handleInteractivePayload(payloadStr)
+        if (interactiveResponse) {
+          return interactiveResponse
+        }
         return new Response('', { status: 200 })
       }
 
@@ -1021,6 +1035,22 @@ export function createServer(config: ServerConfig): ServerComponents {
       if (!(interactionId && interactionToken)) {
         return errorJsonResponse({ status: 400, error: 'missing_interaction_route_params' })
       }
+
+      const pendingAutocomplete = pendingAutocompleteRequests.get(interactionId)
+      if (pendingAutocomplete) {
+        if (pendingAutocomplete.token !== interactionToken) {
+          return errorJsonResponse({ status: 401, error: 'invalid_interaction_token' })
+        }
+        clearTimeout(pendingAutocomplete.timeoutHandle)
+        pendingAutocompleteRequests.delete(interactionId)
+        if (body.type === InteractionResponseType.ApplicationCommandAutocompleteResult) {
+          pendingAutocomplete.resolveChoices(body.data?.choices ?? [])
+        } else {
+          pendingAutocomplete.resolveChoices([])
+        }
+        return withRateLimitHeaders(new Response(null, { status: 204 }))
+      }
+
       const pending = pendingInteractions.get(interactionId)
       if (!pending) {
         return errorJsonResponse({ status: 404, error: 'unknown_interaction' })
@@ -1464,7 +1494,9 @@ export function createServer(config: ServerConfig): ServerComponents {
     })
   }
 
-  function handleInteractivePayload(payloadStr: string): void {
+  async function handleInteractivePayload(
+    payloadStr: string,
+  ): Promise<Response | undefined> {
     let payload: unknown
     try {
       payload = JSON.parse(payloadStr)
@@ -1472,17 +1504,39 @@ export function createServer(config: ServerConfig): ServerComponents {
       console.warn('Failed to parse Slack interactive payload', {
         payloadPreview: payloadStr.slice(0, 200),
       })
-      return
+      return undefined
     }
 
-  const normalizedPayload = normalizeSlackInteractivePayload(payload)
-  if (!normalizedPayload) {
-    console.warn('Unhandled Slack interactive payload', {
-      ...collectInteractivePayloadDebugInfo(payload),
-      payloadPreview: payloadStr.slice(0, 300),
-    })
-    return
-  }
+    const normalizedPayload = normalizeSlackInteractivePayload(payload)
+    if (!normalizedPayload) {
+      console.warn('Unhandled Slack interactive payload', {
+        ...collectInteractivePayloadDebugInfo(payload),
+        payloadPreview: payloadStr.slice(0, 300),
+      })
+      return undefined
+    }
+
+    if (normalizedPayload.type === 'block_suggestion') {
+      const options = await resolveAutocompleteSuggestions({
+        payload: normalizedPayload,
+        pendingAutocompleteRequests,
+        applicationCommandRegistry,
+        botUserId,
+        workspaceId,
+        gateway,
+      })
+      return Response.json({
+        options: options.map((option) => {
+          return {
+            text: {
+              type: 'plain_text',
+              text: normalizeModalLabelText(option.name, option.name),
+            },
+            value: option.value,
+          }
+        }),
+      })
+    }
 
     if (normalizedPayload.type === 'block_actions') {
       console.log('Slack interactive block_actions received', {
@@ -2599,6 +2653,30 @@ function normalizeSlackViewSubmissionPayload(
   }
 }
 
+function normalizeSlackBlockSuggestionPayload(
+  payload: SlackBlockSuggestionPayload,
+): NormalizedSlackBlockSuggestionPayload | undefined {
+  const userId = payload.user.id
+  const actionId = payload.action_id
+  if (!(userId && actionId)) {
+    return undefined
+  }
+
+  return {
+    type: 'block_suggestion',
+    user: {
+      id: userId,
+      username: payload.user.username,
+      name: payload.user.name,
+    },
+    channelId: payload.channel?.id,
+    actionId,
+    value: payload.value ?? '',
+    callbackId: payload.view?.callback_id,
+    privateMetadata: payload.view?.private_metadata,
+  }
+}
+
 function parseSlackInteractivePayload(payload: unknown): SlackInteractivePayload | undefined {
   if (!isRecord(payload)) {
     return undefined
@@ -2773,6 +2851,40 @@ function parseSlackInteractivePayload(payload: unknown): SlackInteractivePayload
     return typedPayload
   }
 
+  if (payloadType === 'block_suggestion') {
+    const user = readRecord(payload, 'user')
+    const userId = user ? readString(user, 'id') : undefined
+    if (!userId) {
+      return undefined
+    }
+
+    const view = readRecord(payload, 'view')
+    const channel = readRecord(payload, 'channel')
+    const typedPayload: SlackBlockSuggestionPayload = {
+      type: 'block_suggestion',
+      user: {
+        id: userId,
+        username: user ? readString(user, 'username') : undefined,
+        name: user ? readString(user, 'name') : undefined,
+      },
+      action_id: readString(payload, 'action_id'),
+      value: readString(payload, 'value'),
+      channel: channel
+        ? {
+            id: readString(channel, 'id'),
+          }
+        : undefined,
+      view: view
+        ? {
+            id: readString(view, 'id'),
+            callback_id: readString(view, 'callback_id'),
+            private_metadata: readString(view, 'private_metadata'),
+          }
+        : undefined,
+    }
+    return typedPayload
+  }
+
   return undefined
 }
 
@@ -2842,6 +2954,9 @@ export function normalizeSlackInteractivePayload(
   }
   if (typedPayload.type === 'block_actions') {
     return normalizeSlackBlockActionsPayload(typedPayload)
+  }
+  if (typedPayload.type === 'block_suggestion') {
+    return normalizeSlackBlockSuggestionPayload(typedPayload)
   }
   return normalizeSlackViewSubmissionPayload(typedPayload)
 }
@@ -3980,6 +4095,107 @@ function parseInteractionOptionValue({
   return rawValue
 }
 
+async function resolveAutocompleteSuggestions({
+  payload,
+  pendingAutocompleteRequests,
+  applicationCommandRegistry,
+  botUserId,
+  workspaceId,
+  gateway,
+}: {
+  payload: NormalizedSlackBlockSuggestionPayload
+  pendingAutocompleteRequests: Map<string, PendingAutocompleteRequest>
+  applicationCommandRegistry: Map<string, APIApplicationCommand[]>
+  botUserId: string
+  workspaceId: string
+  gateway: SlackBridgeGateway
+}): Promise<Array<{ name: string; value: string }>> {
+  const metadata = parseSlashCommandModalMetadata(payload.privateMetadata)
+  if (!metadata) {
+    return []
+  }
+
+  const focusedOption = metadata.options.find((option) => {
+    return option.name === payload.actionId
+  })
+  if (!focusedOption) {
+    return []
+  }
+
+  const focusedValue = parseInteractionOptionValue({
+    type: focusedOption.type,
+    rawValue: payload.value,
+  })
+  if (focusedValue === undefined) {
+    return []
+  }
+
+  const registeredCommand = findRegisteredCommandByName({
+    commandName: metadata.commandName,
+    applicationId: botUserId,
+    guildId: workspaceId,
+    applicationCommandRegistry,
+  })
+
+  const interactionId = crypto.randomUUID()
+  const interactionToken = crypto.randomUUID()
+  const commandChannelId = payload.channelId ?? metadata.channelId
+
+  const choicesPromise = new Promise<Array<{ name: string; value: string }>>(
+    (resolve) => {
+      const timeoutHandle = setTimeout(() => {
+        pendingAutocompleteRequests.delete(interactionId)
+        resolve([])
+      }, AUTOCOMPLETE_REQUEST_TIMEOUT_MS)
+
+      evictMapIfFull(pendingAutocompleteRequests, AUTOCOMPLETE_PENDING_MAX)
+      pendingAutocompleteRequests.set(interactionId, {
+        token: interactionToken,
+        resolveChoices: resolve,
+        timeoutHandle,
+      })
+    },
+  )
+
+  gateway.broadcast(GatewayDispatchEvents.InteractionCreate, {
+    id: interactionId,
+    application_id: botUserId,
+    type: InteractionType.ApplicationCommandAutocomplete,
+    token: interactionToken,
+    version: 1,
+    entitlements: [],
+    channel_id: commandChannelId,
+    guild_id: workspaceId,
+    member: {
+      user: {
+        id: payload.user.id,
+        username: payload.user.username ?? payload.user.name ?? 'unknown',
+        discriminator: DISCORD_DEFAULT_DISCRIMINATOR,
+        avatar: null,
+      },
+      roles: [],
+      joined_at: new Date().toISOString(),
+      deaf: false,
+      mute: false,
+    },
+    data: {
+      id: registeredCommand?.id ?? interactionId,
+      name: metadata.commandName,
+      type: ApplicationCommandType.ChatInput,
+      options: [
+        {
+          name: focusedOption.name,
+          type: focusedOption.type,
+          value: focusedValue,
+          focused: true,
+        },
+      ],
+    },
+  })
+
+  return await choicesPromise
+}
+
 function mergeActiveThreadsWithKnown({
   active,
   knownThreadChannels,
@@ -4042,6 +4258,7 @@ function normalizeInteractionCallbackBody(value: unknown): {
     submit?: string
     cancel?: string
     private_metadata?: string
+    choices?: Array<{ name: string; value: string }>
   }
 } {
   if (!isRecord(value)) {
@@ -4058,12 +4275,40 @@ function normalizeInteractionCallbackBody(value: unknown): {
         submit: readString(rawData, 'submit'),
         cancel: readString(rawData, 'cancel'),
         private_metadata: readString(rawData, 'private_metadata'),
+        choices: normalizeInteractionCallbackChoices(readArray(rawData, 'choices')),
       }
     : undefined
   return {
     type: readNumber(value, 'type') ?? InteractionResponseType.DeferredMessageUpdate,
     data,
   }
+}
+
+function normalizeInteractionCallbackChoices(
+  rawChoices: unknown[],
+): Array<{ name: string; value: string }> {
+  return rawChoices
+    .map((choice) => {
+      if (!isRecord(choice)) {
+        return undefined
+      }
+      const name = readString(choice, 'name')
+      const rawValue = choice['value']
+      const value =
+        typeof rawValue === 'string'
+          ? rawValue
+          : typeof rawValue === 'number' || typeof rawValue === 'boolean'
+            ? String(rawValue)
+            : undefined
+      if (!(name && value)) {
+        return undefined
+      }
+      return {
+        name,
+        value,
+      }
+    })
+    .filter(isDefined)
 }
 
 function normalizeWebhookBody(value: unknown): { content?: string } {

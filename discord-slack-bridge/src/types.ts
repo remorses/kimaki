@@ -199,8 +199,19 @@ export interface NormalizedSlackViewSubmissionPayload {
   stateValues: NormalizedSlackViewSubmissionStateValue[]
 }
 
+export interface NormalizedSlackBlockSuggestionPayload {
+  type: 'block_suggestion'
+  user: { id: string; username?: string; name?: string }
+  channelId?: string
+  actionId: string
+  value: string
+  callbackId?: string
+  privateMetadata?: string
+}
+
 export type NormalizedSlackInteractivePayload =
   | NormalizedSlackBlockActionsPayload
+  | NormalizedSlackBlockSuggestionPayload
   | NormalizedSlackViewSubmissionPayload
 
 export type SlackInteractiveUser = {
@@ -278,8 +289,22 @@ export type SlackViewSubmissionPayload = {
   } | undefined
 }
 
+export type SlackBlockSuggestionPayload = {
+  type: 'block_suggestion'
+  user: SlackInteractiveUser
+  action_id?: string | undefined
+  value?: string | undefined
+  channel?: SlackInteractiveChannel | undefined
+  view?: {
+    id?: string | undefined
+    callback_id?: string | undefined
+    private_metadata?: string | undefined
+  } | undefined
+}
+
 export type SlackInteractivePayload =
   | SlackBlockActionsPayload
+  | SlackBlockSuggestionPayload
   | SlackViewSubmissionPayload
 
 /** Cached Slack user info for serialization */

@@ -3,7 +3,11 @@
 // Signs payloads with HMAC-SHA256 matching Slack's signature verification.
 
 import crypto from 'node:crypto'
-import type { SlackEventEnvelope, SlackEventPayload } from './types.js'
+import type {
+  SlackEventEnvelope,
+  SlackEventPayload,
+  SlackInteractivePayload,
+} from './types.js'
 
 export interface WebhookSenderConfig {
   webhookUrl: string
@@ -79,7 +83,7 @@ export async function sendInteractivePayload({
   payload,
 }: {
   config: WebhookSenderConfig
-  payload: Record<string, unknown>
+  payload: SlackInteractivePayload
 }): Promise<Response> {
   const params = new URLSearchParams({
     payload: JSON.stringify(payload),

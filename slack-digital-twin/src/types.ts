@@ -61,5 +61,107 @@ export interface SlackEventPayload {
 
 export type SlackOpenedView = {
   trigger_id?: string
-  view?: Record<string, unknown>
+  view?: {
+    callback_id?: string
+    private_metadata?: string
+    title?: {
+      type?: string
+      text?: string
+    }
+    blocks?: unknown[]
+    [key: string]: unknown
+  }
 }
+
+export type SlackInteractiveUser = {
+  id: string
+  username?: string | undefined
+  name?: string | undefined
+}
+
+export type SlackInteractiveChannel = {
+  id?: string | undefined
+}
+
+export type SlackInteractiveMessage = {
+  ts?: string | undefined
+  thread_ts?: string | undefined
+}
+
+export type SlackInteractiveContainer = {
+  channel_id?: string | undefined
+  message_ts?: string | undefined
+  thread_ts?: string | undefined
+}
+
+export type SlackInteractiveOption = {
+  value?: string | undefined
+}
+
+export type SlackInteractiveActionPayload = {
+  action_id: string
+  type: string
+  text?: { text?: string | undefined } | undefined
+  value?: string | undefined
+  selected_option?: SlackInteractiveOption | undefined
+  selected_options?: SlackInteractiveOption[] | undefined
+  selected_user?: string | undefined
+  selected_users?: string[] | undefined
+  selected_channel?: string | undefined
+  selected_channels?: string[] | undefined
+  selected_conversation?: string | undefined
+  selected_conversations?: string[] | undefined
+}
+
+export type SlackBlockActionsPayload = {
+  type: 'block_actions'
+  trigger_id?: string | undefined
+  response_url?: string | undefined
+  user: SlackInteractiveUser
+  channel?: SlackInteractiveChannel | undefined
+  message?: SlackInteractiveMessage | undefined
+  container?: SlackInteractiveContainer | undefined
+  actions: SlackInteractiveActionPayload[]
+}
+
+export type SlackViewSubmissionStateValue = {
+  value?: string | undefined
+  selected_option?: { value?: string | undefined } | undefined
+  selected_user?: string | undefined
+  selected_channel?: string | undefined
+  selected_conversation?: string | undefined
+}
+
+export type SlackViewSubmissionPayload = {
+  type: 'view_submission'
+  trigger_id?: string | undefined
+  user: SlackInteractiveUser
+  response_url?: string | undefined
+  view?: {
+    id?: string | undefined
+    callback_id?: string | undefined
+    private_metadata?: string | undefined
+    response_urls?: Array<{ response_url?: string | undefined }> | undefined
+    state?: {
+      values?: Record<string, Record<string, SlackViewSubmissionStateValue>> | undefined
+    } | undefined
+  } | undefined
+}
+
+export type SlackBlockSuggestionPayload = {
+  type: 'block_suggestion'
+  user: SlackInteractiveUser
+  action_id?: string | undefined
+  value?: string | undefined
+  channel?: SlackInteractiveChannel | undefined
+  view?: {
+    id?: string | undefined
+    callback_id?: string | undefined
+    private_metadata?: string | undefined
+  } | undefined
+}
+
+export type SlackInteractivePayload =
+  | SlackBlockActionsPayload
+  | SlackBlockSuggestionPayload
+  | SlackViewSubmissionPayload

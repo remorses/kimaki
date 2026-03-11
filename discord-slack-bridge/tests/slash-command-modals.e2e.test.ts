@@ -5,6 +5,7 @@ import {
   ApplicationCommandType,
 } from 'discord-api-types/v10'
 import {
+  type AutocompleteInteraction,
   type ChatInputCommandInteraction,
   type Interaction,
 } from 'discord.js'
@@ -290,5 +291,151 @@ describe('slash command modal flow', () => {
       },
       label: 'command reply posted to slack',
     })
+  })
+
+  test('block_suggestion routes through discord autocomplete and returns slack options', async () => {
+    const putResponse = await fetch(
+      `${ctx.bridge.restUrl}/v10/applications/${applicationId}/guilds/${ctx.twin.workspaceId}/commands`,
+      {
+        method: 'PUT',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify([
+          {
+            name: 'new-worktree',
+            description: 'Create a worktree',
+            type: ApplicationCommandType.ChatInput,
+            options: [
+              {
+                type: ApplicationCommandOptionType.String,
+                name: 'name',
+                description: 'Worktree name',
+                required: false,
+              },
+              {
+                type: ApplicationCommandOptionType.String,
+                name: 'base-branch',
+                description: 'Base branch',
+                required: false,
+                autocomplete: true,
+              },
+            ],
+          },
+        ]),
+      },
+    )
+    expect(putResponse.status).toBe(200)
+
+    const webhookConfig = ctx.twin.webhookSenderConfig
+    expect(webhookConfig).toBeDefined()
+    if (!webhookConfig) {
+      return
+    }
+
+    ctx.twin.clearOpenedViews()
+
+    const slashResponse = await sendSlashCommand({
+      config: webhookConfig,
+      command: '/new-worktree',
+      text: '',
+      userId: ctx.twin.resolveUserId('alice'),
+      userName: 'alice',
+      channelId: ctx.twin.resolveChannelId('commands'),
+      channelName: 'commands',
+      triggerId: 'trigger-new-worktree',
+    })
+    expect(slashResponse.status).toBe(200)
+
+    const openedView = await ctx.twin.waitForOpenedView({
+      predicate: (view) => {
+        const callbackId = view.view?.['callback_id']
+        return callbackId === 'new-worktree'
+      },
+    })
+
+    const privateMetadata = openedView.view?.['private_metadata']
+
+    let autocompleteInteraction: AutocompleteInteraction | undefined
+    const onInteraction = (interaction: Interaction): void => {
+      if (!interaction.isAutocomplete()) {
+        return
+      }
+      if (interaction.commandName !== 'new-worktree') {
+        return
+      }
+      autocompleteInteraction = interaction
+      void interaction.respond([
+        { name: 'main', value: 'main' },
+        { name: 'develop', value: 'develop' },
+      ])
+    }
+    ctx.client.on('interactionCreate', onInteraction)
+
+    const suggestionResponse = await sendInteractivePayload({
+      config: webhookConfig,
+      payload: {
+        type: 'block_suggestion',
+        team: { id: ctx.twin.workspaceId },
+        user: {
+          id: ctx.twin.resolveUserId('alice'),
+          username: 'alice',
+          name: 'alice',
+        },
+        channel: { id: ctx.twin.resolveChannelId('commands') },
+        action_id: 'base-branch',
+        value: 'ma',
+        view: {
+          id: 'V_NEW_WORKTREE',
+          callback_id: 'new-worktree',
+          private_metadata:
+            typeof privateMetadata === 'string' ? privateMetadata : undefined,
+        },
+      },
+    })
+
+    const responseData = await suggestionResponse.json()
+    expect(suggestionResponse.status).toBe(200)
+
+    const interaction = await waitFor({
+      fn: async () => {
+        return autocompleteInteraction
+      },
+      label: 'autocomplete interaction',
+    })
+
+    ctx.client.off('interactionCreate', onInteraction)
+
+    expect({
+      commandName: interaction.commandName,
+      focused: interaction.options.getFocused(true),
+      responseData,
+    }).toMatchInlineSnapshot(`
+      {
+        "commandName": "new-worktree",
+        "focused": {
+          "focused": true,
+          "name": "base-branch",
+          "type": 3,
+          "value": "ma",
+        },
+        "responseData": {
+          "options": [
+            {
+              "text": {
+                "text": "main",
+                "type": "plain_text",
+              },
+              "value": "main",
+            },
+            {
+              "text": {
+                "text": "develop",
+                "type": "plain_text",
+              },
+              "value": "develop",
+            },
+          ],
+        },
+      }
+    `)
   })
 })
