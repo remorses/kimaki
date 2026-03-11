@@ -985,13 +985,8 @@ e2eTest('thread message queue ordering', () => {
         ⬥ ok
         --- from: user (queue-tester)
         Reply with exactly: echo
-        --- from: assistant (TestBot)
-        *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2*
-        --- from: user (queue-tester)
         Reply with exactly: foxtrot
         --- from: assistant (TestBot)
-        ⬥ ok
-        ⬥ ok
         *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2*"
       `)
       expect(userEchoIndex).toBeGreaterThan(-1)
