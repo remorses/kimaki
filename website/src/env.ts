@@ -13,5 +13,5 @@ export type HonoBindings = {
   SLACK_BOT_TOKEN: string
   SLACK_SIGNING_SECRET: string
   SLACK_WORKSPACE_ID: string
-  SLACK_BRIDGE: DurableObjectNamespace<SlackBridgeDO>
+  SLACK_GATEWAY: DurableObjectNamespace<SlackBridgeDO>
 }

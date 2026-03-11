@@ -14,7 +14,7 @@ async function main(): Promise<void> {
 
   const baseUrl = new URL(baseUrlArg)
   const checks: Array<Promise<CheckResult>> = [
-    checkConfigEndpoint({ baseUrl }),
+    checkGatewayBotEndpoint({ baseUrl }),
     checkGatewayProxyEndpoint({ baseUrl }),
     checkWebhookEndpoint({ baseUrl }),
   ]
@@ -34,13 +34,13 @@ async function main(): Promise<void> {
   }
 }
 
-async function checkConfigEndpoint({ baseUrl }: { baseUrl: URL }): Promise<CheckResult> {
-  const url = new URL('/api/slack-bridge/config', baseUrl)
+async function checkGatewayBotEndpoint({ baseUrl }: { baseUrl: URL }): Promise<CheckResult> {
+  const url = new URL('/api/v10/gateway/bot', baseUrl)
   const response = await fetch(url)
   if (!response.ok) {
     return {
       ok: false,
-      name: 'config endpoint',
+      name: 'gateway bot endpoint',
       details: `expected 200, got ${response.status}`,
     }
   }
@@ -49,30 +49,29 @@ async function checkConfigEndpoint({ baseUrl }: { baseUrl: URL }): Promise<Check
   if (!(body && typeof body === 'object')) {
     return {
       ok: false,
-      name: 'config endpoint',
+      name: 'gateway bot endpoint',
       details: 'response is not an object',
     }
   }
 
-  const gateway = readStringField({ body, key: 'gateway_ws_url' })
-  const restBase = readStringField({ body, key: 'rest_base_url' })
-  if (!(gateway && restBase)) {
+  const gatewayUrl = readStringField({ body, key: 'url' })
+  if (!gatewayUrl) {
     return {
       ok: false,
-      name: 'config endpoint',
-      details: 'missing expected gateway/rest fields',
+      name: 'gateway bot endpoint',
+      details: 'missing expected url field',
     }
   }
 
   return {
     ok: true,
-    name: 'config endpoint',
-    details: `gateway=${gateway}`,
+    name: 'gateway bot endpoint',
+    details: `url=${gatewayUrl}`,
   }
 }
 
 async function checkGatewayProxyEndpoint({ baseUrl }: { baseUrl: URL }): Promise<CheckResult> {
-  const url = new URL('/api/slack-bridge/gateway', baseUrl)
+  const url = new URL('/gateway', baseUrl)
   const response = await fetch(url)
   if (response.status !== 426) {
     return {
@@ -89,7 +88,7 @@ async function checkGatewayProxyEndpoint({ baseUrl }: { baseUrl: URL }): Promise
 }
 
 async function checkWebhookEndpoint({ baseUrl }: { baseUrl: URL }): Promise<CheckResult> {
-  const url = new URL('/api/webhooks/slack-bridge', baseUrl)
+  const url = new URL('/slack/events', baseUrl)
   const response = await fetch(url, {
     method: 'POST',
     headers: { 'content-type': 'application/json' },

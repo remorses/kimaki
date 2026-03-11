@@ -59,6 +59,7 @@ type RuntimeState = {
     handle: (request: Request) => Promise<Response>
   }
   gatewaySessionManager: GatewaySessionManager
+  setPublicGatewayUrl: (url: string) => void
 }
 
 export class SlackBridgeDO extends DurableObject<HonoBindings> {
@@ -89,6 +90,9 @@ export class SlackBridgeDO extends DurableObject<HonoBindings> {
   ): Promise<BridgeRpcResponse> {
     try {
       const runtime = await this.getRuntime()
+      runtime.setPublicGatewayUrl(
+        buildGatewayWebSocketUrlFromRequestUrl(request.url),
+      )
       const response = await runtime.app.handle(toRequest(request))
       return serializeResponse(response)
     } catch (cause) {
@@ -108,6 +112,9 @@ export class SlackBridgeDO extends DurableObject<HonoBindings> {
   ): Promise<BridgeRpcResponse> {
     try {
       const runtime = await this.getRuntime()
+      runtime.setPublicGatewayUrl(
+        buildGatewayWebSocketUrlFromRequestUrl(request.url),
+      )
       const response = await runtime.app.handle(toRequest(request))
       return serializeResponse(response)
     } catch (cause) {
@@ -128,6 +135,9 @@ export class SlackBridgeDO extends DurableObject<HonoBindings> {
     }
 
     const runtime = await this.getRuntime()
+    runtime.setPublicGatewayUrl(
+      buildGatewayWebSocketUrlFromRequestUrl(request.url),
+    )
     const pair = new WebSocketPair()
     const client = pair[0]
     const server = pair[1]
@@ -224,6 +234,8 @@ export class SlackBridgeDO extends DurableObject<HonoBindings> {
     }
     const botUsername = authResult.user ?? 'kimaki'
 
+    let publicGatewayUrl = 'wss://slack-gateway.kimaki.xyz/gateway'
+
     const gatewaySessionManager = new GatewaySessionManager({
       loadState: async () => {
         return loadGatewayState({
@@ -236,13 +248,15 @@ export class SlackBridgeDO extends DurableObject<HonoBindings> {
       expectedToken: this.env.SLACK_BOT_TOKEN,
       workspaceId: this.env.SLACK_WORKSPACE_ID,
       authorize: async () => {
+        // TODO(security): Temporary allow-all auth for Slack bridge rollout.
+        // Replace with strict token/team validation before production.
         return {
           allow: true,
           authorizedTeamIds: [this.env.SLACK_WORKSPACE_ID],
         }
       },
       gatewayUrlProvider: () => {
-        return 'wss://preview.kimaki.xyz/api/slack-bridge/gateway'
+        return publicGatewayUrl
       },
     })
 
@@ -254,7 +268,6 @@ export class SlackBridgeDO extends DurableObject<HonoBindings> {
       signingSecret: this.env.SLACK_SIGNING_SECRET,
       workspaceId: this.env.SLACK_WORKSPACE_ID,
       port: 0,
-      gatewayUrlOverride: 'wss://preview.kimaki.xyz/api/slack-bridge/gateway',
     })
 
     bridgeApp.setGateway({
@@ -274,6 +287,9 @@ export class SlackBridgeDO extends DurableObject<HonoBindings> {
     return {
       app: bridgeApp.app,
       gatewaySessionManager,
+      setPublicGatewayUrl: (url) => {
+        publicGatewayUrl = url
+      },
     }
   }
 
@@ -517,6 +533,12 @@ async function serializeResponse(response: Response): Promise<BridgeRpcResponse>
     headers,
     body: await response.text(),
   }
+}
+
+function buildGatewayWebSocketUrlFromRequestUrl(requestUrl: string): string {
+  const baseUrl = new URL(requestUrl)
+  const protocol = baseUrl.protocol === 'https:' ? 'wss:' : 'ws:'
+  return new URL('/gateway', `${protocol}//${baseUrl.host}`).toString()
 }
 
 function isBridgeRpcRequest(value: unknown): value is BridgeRpcRequest {

@@ -1702,7 +1702,7 @@ async function resolveCredentials({
     }
 
     // Poll until the user installs the bot in a Discord server.
-    // 600 attempts x 2s = 20 minutes timeout.
+    // 100 attempts x 3s = 5 minutes timeout.
     const s = isInteractive ? spinner() : undefined
     s?.start('Waiting for a Discord server with the bot installed...')
 
@@ -1712,9 +1712,9 @@ async function resolveCredentials({
 
     let guildId: string | undefined
     let installerDiscordUserId: string | undefined
-    for (let attempt = 0; attempt < 600; attempt++) {
+    for (let attempt = 0; attempt < 100; attempt++) {
       await new Promise((resolve) => {
-        setTimeout(resolve, 2000)
+        setTimeout(resolve, 3000)
       })
 
       // Progressive hints for interactive users who may be stuck
@@ -1756,10 +1756,10 @@ async function resolveCredentials({
       if (isInteractive) {
         s?.stop('Authorization timed out')
       } else {
-        emitJsonEvent({ type: 'error', message: 'Authorization timed out after 20 minutes' })
+        emitJsonEvent({ type: 'error', message: 'Authorization timed out after 5 minutes' })
       }
       cliLogger.error(
-        'Bot authorization timed out after 20 minutes. Please try again.',
+        'Bot authorization timed out after 5 minutes. Please try again.',
       )
       process.exit(EXIT_NO_RESTART)
     }

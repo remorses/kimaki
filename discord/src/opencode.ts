@@ -182,6 +182,7 @@ let singleServer: SingleServer | null = null
 let serverRetryCount = 0
 const serverLifecycleListeners = new Set<(event: ServerLifecycleEvent) => void>()
 let processCleanupHandlersRegistered = false
+let startingServerProcess: ChildProcess | null = null
 
 // Cached SDK clients per directory. Each client has a fixed
 // x-opencode-directory header pointing to its project directory.
@@ -240,6 +241,44 @@ function killSingleServerProcessNow({
   )
 }
 
+function killStartingServerProcessNow({
+  reason,
+}: {
+  reason: string
+}): void {
+  const serverProcess = startingServerProcess
+  if (!serverProcess) {
+    return
+  }
+
+  const pid = serverProcess.pid
+  if (!pid || serverProcess.killed) {
+    return
+  }
+
+  const killResult = errore.try({
+    try: () => {
+      serverProcess.kill('SIGTERM')
+    },
+    catch: (error) => {
+      return new Error('Failed to send SIGTERM to starting opencode server', {
+        cause: error,
+      })
+    },
+  })
+
+  if (killResult instanceof Error) {
+    opencodeLogger.warn(
+      `[cleanup:${reason}] ${killResult.message} (pid: ${pid})`,
+    )
+    return
+  }
+
+  opencodeLogger.log(
+    `[cleanup:${reason}] Sent SIGTERM to starting opencode server (pid: ${pid})`,
+  )
+}
+
 function ensureProcessCleanupHandlersRegistered(): void {
   if (processCleanupHandlersRegistered) {
     return
@@ -250,15 +289,18 @@ function ensureProcessCleanupHandlersRegistered(): void {
 
   process.on('exit', () => {
     killSingleServerProcessNow({ reason: 'process-exit' })
+    killStartingServerProcessNow({ reason: 'process-exit' })
   })
 
   // Fallback for short-lived CLI subcommands that call process.exit without
   // running discord-bot.ts shutdown handlers.
   process.on('SIGINT', () => {
     killSingleServerProcessNow({ reason: 'sigint' })
+    killStartingServerProcessNow({ reason: 'sigint' })
   })
   process.on('SIGTERM', () => {
     killSingleServerProcessNow({ reason: 'sigterm' })
+    killStartingServerProcessNow({ reason: 'sigterm' })
   })
 }
 
@@ -504,6 +546,8 @@ async function startSingleServer(): Promise<ServerStartError | SingleServer> {
     },
   )
 
+  startingServerProcess = serverProcess
+
   // Buffer logs until we know if server started successfully.
   // Once ready, switch to forwarding if --verbose-opencode-server is set.
   const logBuffer: string[] = []
@@ -556,6 +600,10 @@ async function startSingleServer(): Promise<ServerStartError | SingleServer> {
   })
 
   serverProcess.on('exit', (code, signal) => {
+    if (startingServerProcess === serverProcess) {
+      startingServerProcess = null
+    }
+
     opencodeLogger.log(
       `Opencode server exited with code: ${code}, signal: ${signal}`,
     )
@@ -601,6 +649,11 @@ async function startSingleServer(): Promise<ServerStartError | SingleServer> {
     startupStderrTail,
   })
   if (waitResult instanceof Error) {
+    killStartingServerProcessNow({ reason: 'startup-failed' })
+    if (startingServerProcess === serverProcess) {
+      startingServerProcess = null
+    }
+
     // Dump buffered logs on failure
     opencodeLogger.error(`Server failed to start:`)
     for (const line of logBuffer) {
@@ -623,6 +676,9 @@ async function startSingleServer(): Promise<ServerStartError | SingleServer> {
     process: serverProcess,
     port,
     baseUrl: `http://127.0.0.1:${port}`,
+  }
+  if (startingServerProcess === serverProcess) {
+    startingServerProcess = null
   }
   singleServer = server
   notifyServerLifecycle({ type: 'started', port })
@@ -800,25 +856,28 @@ export async function stopOpencodeServer(): Promise<boolean> {
     return false
   }
 
+  const server = singleServer
   opencodeLogger.log(
-    `Stopping opencode server (pid: ${singleServer.process.pid}, port: ${singleServer.port})`,
+    `Stopping opencode server (pid: ${server.process.pid}, port: ${server.port})`,
   )
-  if (!singleServer.process.killed) {
+  if (!server.process.killed) {
     const killResult = errore.try({
       try: () => {
-        singleServer!.process.kill('SIGTERM')
+        server.process.kill('SIGTERM')
       },
       catch: (error) => {
-        return new Error(
-          `Failed to send SIGTERM to opencode server`,
-          { cause: error },
-        )
+        return new Error('Failed to send SIGTERM to opencode server', {
+          cause: error,
+        })
       },
     })
     if (killResult instanceof Error) {
       opencodeLogger.warn(killResult.message)
     }
   }
+
+  killStartingServerProcessNow({ reason: 'stop-opencode-server' })
+  startingServerProcess = null
 
   singleServer = null
   clientCache.clear()

@@ -7,7 +7,7 @@
   "durable_objects": {
     "bindings": [
       {
-        "name": "SLACK_BRIDGE",
+        "name": "SLACK_GATEWAY",
         "class_name": "SlackBridgeDO"
       }
     ]
@@ -28,6 +28,10 @@
     {
       "pattern": "kimaki.xyz/*",
       "zone_name": "kimaki.xyz"
+    },
+    {
+      "pattern": "slack-gateway.kimaki.xyz/*",
+      "zone_name": "kimaki.xyz"
     }
   ],
   "env": {
@@ -36,7 +40,7 @@
       "durable_objects": {
         "bindings": [
           {
-            "name": "SLACK_BRIDGE",
+            "name": "SLACK_GATEWAY",
             "class_name": "SlackBridgeDO"
           }
         ]
@@ -50,6 +54,10 @@
       "routes": [
         {
           "pattern": "preview.kimaki.xyz/*",
+          "zone_name": "kimaki.xyz"
+        },
+        {
+          "pattern": "preview-slack-gateway.kimaki.xyz/*",
           "zone_name": "kimaki.xyz"
         }
       ]

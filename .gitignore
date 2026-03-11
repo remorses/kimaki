@@ -22,3 +22,5 @@ bin-local.sh
 kimaki.log
 app.log
 generated
+.zig-cache
+zig-out

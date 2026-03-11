@@ -43,7 +43,8 @@ import { SlackBridge } from '../src/index.js'
 
 const TUNNEL_ID = 'dsb-echo-bot'
 const BRIDGE_PORT = Number(process.env.ECHO_BOT_PORT ?? '3710')
-const PREVIEW_GATEWAY_BASE_URL = 'https://preview.kimaki.xyz'
+const PREVIEW_GATEWAY_BASE_URL = 'https://preview-slack-gateway.kimaki.xyz'
+const PREVIEW_WORKSPACE_ID = 'T08NQ7ULTUL'
 const OPEN_MODAL_BUTTON_ID = 'demo-open-modal'
 const STATUS_BUTTON_ID = 'demo-status-button'
 const TABLE_BUTTON_ID = 'demo-table-button'
@@ -95,6 +96,7 @@ async function main(): Promise<void> {
         gatewayUrl: localRuntime?.bridge.gatewayUrl ?? '',
         discordToken: localRuntime?.bridge.discordToken ?? '',
         slackWebhookUrl: localRuntime?.slackWebhookUrl ?? '',
+        workspaceId,
       }
 
   if (!gatewayMode && localRuntime) {
@@ -131,7 +133,8 @@ async function main(): Promise<void> {
   await client.login(gatewayRuntime.discordToken)
   await readyPromise
 
-  const guild = client.guilds.cache.first()
+  const guild = client.guilds.cache.get(gatewayRuntime.workspaceId)
+    ?? client.guilds.cache.first()
   console.log(`Bot ready! Guild: ${guild?.name} (${guild?.id})`)
   const channels = await guild?.channels.fetch()
   const channelNames = channels?.map((c) => {
@@ -224,15 +227,17 @@ function createDeployedRuntime({
   gatewayUrl: string
   discordToken: string
   slackWebhookUrl: string
+  workspaceId: string
 } {
   const baseUrl = new URL(gatewayMode.baseUrl)
-  const gatewayUrl = new URL('/api/slack-bridge/gateway', baseUrl)
+  const gatewayUrl = new URL('/gateway', baseUrl)
   gatewayUrl.protocol = gatewayUrl.protocol === 'https:' ? 'wss:' : 'ws:'
   return {
-    restUrl: new URL('/api/slack-bridge', baseUrl).toString(),
+    restUrl: new URL('/api', baseUrl).toString(),
     gatewayUrl: gatewayUrl.toString(),
     discordToken: process.env.ECHO_BOT_GATEWAY_TOKEN ?? slackBotToken,
-    slackWebhookUrl: new URL('/api/webhooks/slack-bridge', baseUrl).toString(),
+    slackWebhookUrl: new URL('/slack/events', baseUrl).toString(),
+    workspaceId: process.env.ECHO_BOT_WORKSPACE_ID ?? PREVIEW_WORKSPACE_ID,
   }
 }
 
@@ -266,26 +271,24 @@ async function handleMessageCreate({
   }
 
   const thread = await resolveReplyThread({ message })
-  if (!thread) {
-    return
-  }
+  const target = thread ?? message.channel
 
   console.log(`[echo] "${message.content}" from ${message.author.username}`)
 
   await pulseTyping({
-    thread,
+    target,
     context: 'message:start',
   })
 
   if (message.attachments.size > 0) {
     const sent = await trySend({
-      thread,
+      target,
       payload: formatAttachmentSummary({ message }),
       context: 'attachment summary response',
     })
     if (!sent) {
       await trySend({
-        thread,
+        target,
         payload: 'Could not send attachment summary (bridge returned an error).',
         context: 'attachment summary fallback',
       })
@@ -294,24 +297,26 @@ async function handleMessageCreate({
   }
 
   const normalized = message.content.trim().toLowerCase()
-  const handled = await handleDemoSwitch({
-    client,
-    command: normalized,
-    thread,
-    username: message.author.username,
-  })
+  const handled = thread
+    ? await handleDemoSwitch({
+        client,
+        command: normalized,
+        thread,
+        username: message.author.username,
+      })
+    : false
   if (handled) {
     return
   }
 
   const sent = await trySend({
-    thread,
+    target,
     payload: `echo: ${message.content}`,
     context: 'default echo',
   })
   if (!sent) {
     await trySend({
-      thread,
+      target,
       payload: 'Echo failed (bridge returned an error).',
       context: 'default echo fallback',
     })
@@ -330,7 +335,7 @@ async function handleDemoSwitch({
   username: string
 }): Promise<boolean> {
   await pulseTyping({
-    thread,
+    target: thread,
     context: `demo:${command || 'empty'}`,
   })
 
@@ -389,14 +394,14 @@ async function handleDemoSwitch({
     }
     case 'demo:typing': {
       await pulseTyping({
-        thread,
+        target: thread,
         context: 'demo:typing pre-delay',
       })
       await sleep({
         ms: 3000,
       })
       const sent = await trySend({
-        thread,
+        target: thread,
         payload: 'Typing demo done after 3 seconds.',
         context: 'demo:typing message',
       })
@@ -408,7 +413,7 @@ async function handleDemoSwitch({
     case 'demo:image': {
       const image = createDemoImageAttachment()
       const sent = await trySend({
-        thread,
+        target: thread,
         payload: {
           content: 'Image upload demo',
           files: [image],
@@ -430,7 +435,7 @@ async function handleDemoSwitch({
         },
       )
       const sent = await trySend({
-        thread,
+        target: thread,
         payload: {
           content: 'Text file upload demo',
           files: [file],
@@ -503,7 +508,7 @@ async function handleDemoSwitch({
 
       const image = createDemoImageAttachment()
       const imageSent = await trySend({
-        thread,
+        target: thread,
         payload: {
           content: 'Image upload demo',
           files: [image],
@@ -523,7 +528,7 @@ async function handleDemoSwitch({
         },
       )
       const fileSent = await trySend({
-        thread,
+        target: thread,
         payload: {
           content: 'Text file upload demo',
           files: [file],
@@ -863,14 +868,14 @@ async function sendV2TableMessage({
 }
 
 async function pulseTyping({
-  thread,
+  target,
   context,
 }: {
-  thread: ThreadChannel
+  target: EchoReplyTarget
   context: string
 }): Promise<void> {
   try {
-    await thread.sendTyping()
+    await target.sendTyping()
   } catch (error) {
     console.warn('sendTyping failed', {
       context,
@@ -880,25 +885,27 @@ async function pulseTyping({
 }
 
 async function trySend({
-  thread,
+  target,
   payload,
   context,
 }: {
-  thread: ThreadChannel
-  payload: Parameters<ThreadChannel['send']>[0]
+  target: EchoReplyTarget
+  payload: Parameters<EchoReplyTarget['send']>[0]
   context: string
 }): Promise<boolean> {
   try {
-    await thread.send(payload)
+    await target.send(payload)
     return true
   } catch (error) {
-    console.warn('thread.send failed', {
+    console.warn('send failed', {
       context,
       details: describeError(error),
     })
     return false
   }
 }
+
+type EchoReplyTarget = Pick<ThreadChannel, 'send' | 'sendTyping'>
 
 function describeError(error: unknown): {
   name: string
@@ -1001,7 +1008,15 @@ async function resolveReplyThread({
   }
 
   const threadName = `echo-${message.author.username}`.slice(0, 100)
-  return createThreadForChannelMessage({ message, threadName })
+  try {
+    return await createThreadForChannelMessage({ message, threadName })
+  } catch (error) {
+    console.warn('thread creation failed, falling back to channel reply', {
+      context: 'resolveReplyThread',
+      details: describeError(error),
+    })
+    return undefined
+  }
 }
 
 async function resolveReplyThreadFromInteraction({

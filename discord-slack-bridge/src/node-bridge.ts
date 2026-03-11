@@ -37,9 +37,6 @@ export class SlackBridge {
 
   /** REST API base URL for discord.js (without /v10 — discord.js appends the version) */
   get restUrl(): string {
-    if (this.config.restUrlOverride) {
-      return this.config.restUrlOverride
-    }
     return buildHttpUrl({
       baseUrl: this.resolvePublicBaseUrl(),
       path: '/api',
@@ -58,9 +55,6 @@ export class SlackBridge {
   }
 
   get webhookUrl(): string {
-    if (this.config.webhookUrlOverride) {
-      return this.config.webhookUrlOverride
-    }
     return buildHttpUrl({
       baseUrl: this.resolvePublicBaseUrl(),
       path: '/slack/events',

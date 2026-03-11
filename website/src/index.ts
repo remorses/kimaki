@@ -93,26 +93,15 @@ app.get('/install-success', (c) => {
   return c.html(renderSuccessPage())
 })
 
-app.get('/api/slack-bridge/config', (c) => {
-  const requestUrl = new URL(c.req.url)
-  const origin = requestUrl.origin
-  const restBaseUrl = new URL('/api/slack-bridge', origin).toString()
-  const gatewayBotEndpoint = new URL('/api/slack-bridge/v10/gateway/bot', origin).toString()
-  const gatewayWsUrl = new URL('/api/slack-bridge/gateway', origin)
-  gatewayWsUrl.protocol = gatewayWsUrl.protocol === 'https:' ? 'wss:' : 'ws:'
+app.all('/api/v10/*', async (c, next) => {
+  if (!isSlackGatewayHost(c.req.url)) {
+    return next()
+  }
 
-  return c.json({
-    rest_base_url: restBaseUrl,
-    gateway_bot_endpoint: gatewayBotEndpoint,
-    gateway_ws_url: gatewayWsUrl.toString(),
-  })
-})
-
-app.all('/api/slack-bridge/v10/*', async (c) => {
-  const stub = c.env.SLACK_BRIDGE.getByName('default')
+  const stub = c.env.SLACK_GATEWAY.getByName('default')
   const response = await stub.handleDiscordRest({
     url: c.req.url,
-    path: c.req.path.replace('/api/slack-bridge', '/api'),
+    path: c.req.path,
     method: c.req.method,
     headers: headersToPairs(c.req.raw.headers),
     body: await c.req.text(),
@@ -120,11 +109,15 @@ app.all('/api/slack-bridge/v10/*', async (c) => {
   return toResponse(response)
 })
 
-app.post('/api/webhooks/slack-bridge', async (c) => {
-  const stub = c.env.SLACK_BRIDGE.getByName('default')
+app.post('/slack/events', async (c, next) => {
+  if (!isSlackGatewayHost(c.req.url)) {
+    return next()
+  }
+
+  const stub = c.env.SLACK_GATEWAY.getByName('default')
   const response = await stub.handleSlackWebhook({
     url: c.req.url,
-    path: '/slack/events',
+    path: c.req.path,
     method: c.req.method,
     headers: headersToPairs(c.req.raw.headers),
     body: await c.req.text(),
@@ -132,17 +125,25 @@ app.post('/api/webhooks/slack-bridge', async (c) => {
   return toResponse(response)
 })
 
-app.all('/api/slack-bridge/gateway', async (c) => {
+app.all('/gateway', async (c, next) => {
+  if (!isSlackGatewayHost(c.req.url)) {
+    return next()
+  }
+
   return proxyGatewayToDurableObject({
     request: c.req.raw,
-    durableObjectNamespace: c.env.SLACK_BRIDGE,
+    durableObjectNamespace: c.env.SLACK_GATEWAY,
   })
 })
 
-app.all('/api/slack-bridge/gateway/*', async (c) => {
+app.all('/gateway/*', async (c, next) => {
+  if (!isSlackGatewayHost(c.req.url)) {
+    return next()
+  }
+
   return proxyGatewayToDurableObject({
     request: c.req.raw,
-    durableObjectNamespace: c.env.SLACK_BRIDGE,
+    durableObjectNamespace: c.env.SLACK_GATEWAY,
   })
 })
 
@@ -220,9 +221,23 @@ function proxyGatewayToDurableObject({
 }): Promise<Response> {
   const stub = durableObjectNamespace.getByName('default')
   const url = new URL(request.url)
-  const rewrittenPath = `${url.pathname.replace('/api/slack-bridge', '')}${url.search}`
+  const rewrittenPath = `${url.pathname}${url.search}`
   const durableObjectUrl = new URL(rewrittenPath, 'https://do.local')
   return stub.fetch(new Request(durableObjectUrl, request))
+}
+
+function isSlackGatewayHost(requestUrl: string): boolean {
+  const host = new URL(requestUrl).host.toLowerCase()
+  const isGatewayHost = (
+    host === 'slack-gateway.kimaki.xyz'
+    || host === 'preview-slack-gateway.kimaki.xyz'
+  )
+  console.log('[slack-gateway-host-check]', {
+    host,
+    requestUrl,
+    isGatewayHost,
+  })
+  return isGatewayHost
 }
 
 function headersToPairs(headers: Headers): Array<[string, string]> {
