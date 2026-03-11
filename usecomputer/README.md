@@ -152,91 +152,13 @@ provides the execution layer for those actions.
 ```ts
 import fs from 'node:fs'
 import Anthropic from '@anthropic-ai/sdk'
+import type {
+  BetaToolResultBlockParam,
+  BetaToolUseBlock,
+} from '@anthropic-ai/sdk/resources/beta/messages/messages'
 import * as usecomputer from 'usecomputer'
 
 const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY })
-
-async function captureToolResult(toolUseId: string) {
-  const screenshot = await usecomputer.screenshot({
-    path: './tmp/claude-computer-tool.png',
-    display: null,
-    window: null,
-    region: null,
-    annotate: null,
-  })
-  const imageBase64 = await fs.promises.readFile(screenshot.path, 'base64')
-
-  return {
-    type: 'tool_result',
-    tool_use_id: toolUseId,
-    content: [
-      {
-        type: 'image',
-        source: {
-          type: 'base64',
-          media_type: 'image/png',
-          data: imageBase64,
-        },
-      },
-      {
-        type: 'text',
-        text: screenshot.coordMap,
-      },
-    ],
-  }
-}
-
-async function runClaudeComputerAction(input: {
-  action: string
-  coordinate?: [number, number]
-  text?: string
-  scroll_direction?: 'up' | 'down' | 'left' | 'right'
-  scroll_amount?: number
-}) {
-  const screenshot = await usecomputer.screenshot({
-    path: './tmp/claude-current-screen.png',
-    display: null,
-    window: null,
-    region: null,
-    annotate: null,
-  })
-  const coordMap = usecomputer.parseCoordMapOrThrow(screenshot.coordMap)
-  const point = input.coordinate
-    ? usecomputer.mapPointFromCoordMap({
-        point: { x: input.coordinate[0], y: input.coordinate[1] },
-        coordMap,
-      })
-    : null
-
-  if (input.action === 'left_click' && point) {
-    await usecomputer.click({ point, button: 'left', count: 1 })
-    return
-  }
-  if (input.action === 'double_click' && point) {
-    await usecomputer.click({ point, button: 'left', count: 2 })
-    return
-  }
-  if (input.action === 'mouse_move' && point) {
-    await usecomputer.mouseMove(point)
-    return
-  }
-  if (input.action === 'type' && input.text) {
-    await usecomputer.typeText({ text: input.text, delayMs: null })
-    return
-  }
-  if (input.action === 'key' && input.text) {
-    await usecomputer.press({ key: input.text, count: 1, delayMs: null })
-    return
-  }
-  if (input.action === 'scroll') {
-    await usecomputer.scroll({
-      direction: input.scroll_direction ?? 'down',
-      amount: input.scroll_amount ?? 3,
-      at: point,
-    })
-    return
-  }
-}
 
 const message = await anthropic.beta.messages.create({
   model: 'claude-opus-4-6',
@@ -258,8 +180,101 @@ for (const block of message.content) {
   if (block.type !== 'tool_use' || block.name !== 'computer') {
     continue
   }
-  await runClaudeComputerAction(block.input)
-  const toolResult = await captureToolResult(block.id)
+
+  const toolUse = block as BetaToolUseBlock
+  const beforeActionScreenshot = await usecomputer.screenshot({
+    path: './tmp/claude-current-screen.png',
+    display: null,
+    window: null,
+    region: null,
+    annotate: null,
+  })
+  const coordMap = usecomputer.parseCoordMapOrThrow(beforeActionScreenshot.coordMap)
+  const coordinate = Array.isArray(toolUse.input.coordinate)
+    ? toolUse.input.coordinate
+    : null
+  const point = coordinate
+    ? usecomputer.mapPointFromCoordMap({
+        point: { x: coordinate[0] ?? 0, y: coordinate[1] ?? 0 },
+        coordMap,
+      })
+    : null
+
+  switch (toolUse.input.action) {
+    case 'screenshot': {
+      break
+    }
+    case 'left_click': {
+      if (point) {
+        await usecomputer.click({ point, button: 'left', count: 1 })
+      }
+      break
+    }
+    case 'double_click': {
+      if (point) {
+        await usecomputer.click({ point, button: 'left', count: 2 })
+      }
+      break
+    }
+    case 'mouse_move': {
+      if (point) {
+        await usecomputer.mouseMove(point)
+      }
+      break
+    }
+    case 'type': {
+      if (typeof toolUse.input.text === 'string') {
+        await usecomputer.typeText({ text: toolUse.input.text, delayMs: null })
+      }
+      break
+    }
+    case 'key': {
+      if (typeof toolUse.input.text === 'string') {
+        await usecomputer.press({ key: toolUse.input.text, count: 1, delayMs: null })
+      }
+      break
+    }
+    case 'scroll': {
+      await usecomputer.scroll({
+        direction: toolUse.input.scroll_direction === 'up' || toolUse.input.scroll_direction === 'down' || toolUse.input.scroll_direction === 'left' || toolUse.input.scroll_direction === 'right'
+          ? toolUse.input.scroll_direction
+          : 'down',
+        amount: typeof toolUse.input.scroll_amount === 'number' ? toolUse.input.scroll_amount : 3,
+        at: point,
+      })
+      break
+    }
+    default: {
+      throw new Error(`Unsupported Claude computer action: ${String(toolUse.input.action)}`)
+    }
+  }
+
+  const afterActionScreenshot = await usecomputer.screenshot({
+    path: './tmp/claude-computer-tool.png',
+    display: null,
+    window: null,
+    region: null,
+    annotate: null,
+  })
+  const imageBase64 = await fs.promises.readFile(afterActionScreenshot.path, 'base64')
+  const toolResult: BetaToolResultBlockParam = {
+    type: 'tool_result',
+    tool_use_id: toolUse.id,
+    content: [
+      {
+        type: 'image',
+        source: {
+          type: 'base64',
+          media_type: 'image/png',
+          data: imageBase64,
+        },
+      },
+      {
+        type: 'text',
+        text: afterActionScreenshot.coordMap,
+      },
+    ],
+  }
   // Append toolResult to the next user message in your agent loop.
 }
 ```
