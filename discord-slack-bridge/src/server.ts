@@ -33,12 +33,16 @@ import {
   InteractionType,
   Locale,
   MessageType,
+  ThreadMemberFlags,
   TextInputStyle,
 } from 'discord-api-types/v10'
 import type {
   APIActionRowComponent,
+  APIApplicationCommand,
   APIChannel,
   APIGuild,
+  APIThreadList,
+  APIThreadMember,
   APITextInputComponent,
 } from 'discord-api-types/v10'
 import {
@@ -51,10 +55,12 @@ import * as events from './event-translator.js'
 import {
   encodeThreadId,
   encodeMessageId,
+  isThreadChannelId,
   resolveDiscordChannelId,
   resolveSlackTarget,
 } from './id-converter.js'
 import { decodeComponentActionId } from './component-id-codec.js'
+import type { DiscordAttachment } from './file-upload.js'
 import type {
   CachedSlackUser,
   NormalizedSlackAction,
@@ -86,6 +92,13 @@ export interface ServerComponents {
   httpServer: http.Server
   gateway: SlackBridgeGateway
   app: Spiceflow
+}
+
+type NormalizedPostMessageBody = {
+  content?: string
+  embeds?: unknown[]
+  components?: unknown[]
+  attachments?: DiscordAttachment[]
 }
 
 // User cache: avoids hitting Slack users.info API on every inbound event.
@@ -173,6 +186,8 @@ export function createServer(config: ServerConfig): ServerComponents {
   // Bounded to prevent memory leaks on long-running bots.
   const KNOWN_THREADS_MAX = 10_000
   const knownThreads = new Set<string>()
+  const knownThreadChannels = new Map<string, APIChannel>()
+  const applicationCommandRegistry = new Map<string, APIApplicationCommand[]>()
 
   const app = new Spiceflow({ basePath: '' }).onError(({ error }) => {
     if (error instanceof Response) {
@@ -302,11 +317,118 @@ export function createServer(config: ServerConfig): ServerComponents {
     )
   })
 
+  // PUT /api/v10/applications/:application_id/commands
+  app.put('/api/v10/applications/:application_id/commands', async ({ params, request }) => {
+    const applicationId = readString(params, 'application_id')
+    if (!applicationId) {
+      return errorJsonResponse({ status: 400, error: 'missing_application_id' })
+    }
+    const commands = normalizeApplicationCommandsBody(await request.json())
+    const key = getGlobalCommandRegistryKey({ applicationId })
+    const stored = commands.map((command) => {
+      return createApplicationCommandRecord({
+        applicationId,
+        command,
+      })
+    })
+    applicationCommandRegistry.set(key, stored)
+    return withRateLimitHeaders(Response.json(stored))
+  })
+
+  // GET /api/v10/applications/:application_id/commands
+  app.get('/api/v10/applications/:application_id/commands', async ({ params }) => {
+    const applicationId = readString(params, 'application_id')
+    if (!applicationId) {
+      return errorJsonResponse({ status: 400, error: 'missing_application_id' })
+    }
+    const key = getGlobalCommandRegistryKey({ applicationId })
+    const commands = applicationCommandRegistry.get(key) ?? []
+    return withRateLimitHeaders(Response.json(commands))
+  })
+
+  // PUT /api/v10/applications/:application_id/guilds/:guild_id/commands
+  app.put('/api/v10/applications/:application_id/guilds/:guild_id/commands', async ({ params, request }) => {
+    const applicationId = readString(params, 'application_id')
+    const guildId = readString(params, 'guild_id')
+    if (!applicationId) {
+      return errorJsonResponse({ status: 400, error: 'missing_application_id' })
+    }
+    if (!guildId) {
+      return errorJsonResponse({ status: 400, error: 'missing_guild_id' })
+    }
+    if (guildId !== workspaceId) {
+      return unknownGuildResponse(guildId)
+    }
+    const commands = normalizeApplicationCommandsBody(await request.json())
+    const key = getGuildCommandRegistryKey({ applicationId, guildId })
+    const stored = commands.map((command) => {
+      return createApplicationCommandRecord({
+        applicationId,
+        guildId,
+        command,
+      })
+    })
+    applicationCommandRegistry.set(key, stored)
+    return withRateLimitHeaders(Response.json(stored))
+  })
+
+  // GET /api/v10/applications/:application_id/guilds/:guild_id/commands
+  app.get('/api/v10/applications/:application_id/guilds/:guild_id/commands', async ({ params }) => {
+    const applicationId = readString(params, 'application_id')
+    const guildId = readString(params, 'guild_id')
+    if (!applicationId) {
+      return errorJsonResponse({ status: 400, error: 'missing_application_id' })
+    }
+    if (!guildId) {
+      return errorJsonResponse({ status: 400, error: 'missing_guild_id' })
+    }
+    if (guildId !== workspaceId) {
+      return unknownGuildResponse(guildId)
+    }
+    const key = getGuildCommandRegistryKey({ applicationId, guildId })
+    const commands = applicationCommandRegistry.get(key) ?? []
+    return withRateLimitHeaders(Response.json(commands))
+  })
+
+  // GET /api/v10/applications/:application_id/guilds/:guild_id/commands/:command_id
+  app.get('/api/v10/applications/:application_id/guilds/:guild_id/commands/:command_id', async ({ params }) => {
+    const applicationId = readString(params, 'application_id')
+    const guildId = readString(params, 'guild_id')
+    const commandId = readString(params, 'command_id')
+    if (!applicationId) {
+      return errorJsonResponse({ status: 400, error: 'missing_application_id' })
+    }
+    if (!guildId) {
+      return errorJsonResponse({ status: 400, error: 'missing_guild_id' })
+    }
+    if (!commandId) {
+      return errorJsonResponse({ status: 400, error: 'missing_command_id' })
+    }
+    if (guildId !== workspaceId) {
+      return unknownGuildResponse(guildId)
+    }
+
+    const key = getGuildCommandRegistryKey({ applicationId, guildId })
+    const command = (applicationCommandRegistry.get(key) ?? []).find((entry) => {
+      return entry.id === commandId
+    })
+    if (!command) {
+      return errorJsonResponse({
+        status: 404,
+        error: 'unknown_application_command',
+        code: 10063,
+        message: 'Unknown application command',
+      })
+    }
+
+    return withRateLimitHeaders(Response.json(command))
+  })
+
   // POST /api/v10/channels/:channel_id/messages
   app.post(
     '/api/v10/channels/:channel_id/messages',
     async ({ params, request }) => {
-      const body = normalizePostMessageBody(await request.json())
+      const body = await normalizePostMessageRequestBody(request)
       const channelId = readString(params, 'channel_id')
       if (!channelId) {
         return errorJsonResponse({ status: 400, error: 'missing_channel_id' })
@@ -510,10 +632,12 @@ export function createServer(config: ServerConfig): ServerComponents {
       const threadKey = thread.id
       evictIfFull(knownThreads, KNOWN_THREADS_MAX)
       knownThreads.add(threadKey)
+      evictMapIfFull(knownThreadChannels, KNOWN_THREADS_MAX)
       gateway.broadcast(GatewayDispatchEvents.ThreadCreate, {
         ...thread,
         newly_created: true,
       })
+      knownThreadChannels.set(thread.id, thread)
       return withRateLimitHeaders(Response.json(thread))
     },
   )
@@ -541,14 +665,136 @@ export function createServer(config: ServerConfig): ServerComponents {
       const threadKey = thread.id
       evictIfFull(knownThreads, KNOWN_THREADS_MAX)
       knownThreads.add(threadKey)
+      evictMapIfFull(knownThreadChannels, KNOWN_THREADS_MAX)
       gateway.broadcast(GatewayDispatchEvents.ThreadCreate, {
         ...thread,
         newly_created: true,
       })
+      knownThreadChannels.set(thread.id, thread)
 
       return withRateLimitHeaders(Response.json(thread))
     },
   )
+
+  // GET /api/v10/channels/:channel_id/thread-members
+  app.get('/api/v10/channels/:channel_id/thread-members', async ({ params }) => {
+    const channelId = readString(params, 'channel_id')
+    if (!channelId) {
+      return errorJsonResponse({ status: 400, error: 'missing_channel_id' })
+    }
+    if (!isThreadChannelId(channelId)) {
+      return errorJsonResponse({
+        status: 404,
+        error: 'unknown_channel',
+        code: 10003,
+        message: `Unknown Channel: ${channelId}`,
+      })
+    }
+    const members = await rest.listThreadMembers({
+      slack,
+      threadChannelId: channelId,
+      botUserId,
+    })
+    return withRateLimitHeaders(Response.json(members))
+  })
+
+  // GET /api/v10/channels/:channel_id/thread-members/@me
+  app.get('/api/v10/channels/:channel_id/thread-members/@me', async ({ params }) => {
+    const channelId = readString(params, 'channel_id')
+    if (!channelId) {
+      return errorJsonResponse({ status: 400, error: 'missing_channel_id' })
+    }
+    if (!isThreadChannelId(channelId)) {
+      return errorJsonResponse({
+        status: 404,
+        error: 'unknown_channel',
+        code: 10003,
+        message: `Unknown Channel: ${channelId}`,
+      })
+    }
+    const member = await rest.getThreadMember({
+      slack,
+      threadChannelId: channelId,
+      userId: botUserId,
+      botUserId,
+    })
+    return withRateLimitHeaders(Response.json(member))
+  })
+
+  // PUT /api/v10/channels/:channel_id/thread-members/@me
+  app.put('/api/v10/channels/:channel_id/thread-members/@me', async ({ params }) => {
+    const channelId = readString(params, 'channel_id')
+    if (!channelId) {
+      return errorJsonResponse({ status: 400, error: 'missing_channel_id' })
+    }
+    if (!isThreadChannelId(channelId)) {
+      return errorJsonResponse({
+        status: 404,
+        error: 'unknown_channel',
+        code: 10003,
+        message: `Unknown Channel: ${channelId}`,
+      })
+    }
+    await rest.joinThreadMember({
+      slack,
+      threadChannelId: channelId,
+      userId: botUserId,
+    })
+    return withRateLimitHeaders(new Response(null, { status: 204 }))
+  })
+
+  // DELETE /api/v10/channels/:channel_id/thread-members/@me
+  app.delete('/api/v10/channels/:channel_id/thread-members/@me', async ({ params }) => {
+    const channelId = readString(params, 'channel_id')
+    if (!channelId) {
+      return errorJsonResponse({ status: 400, error: 'missing_channel_id' })
+    }
+    if (!isThreadChannelId(channelId)) {
+      return errorJsonResponse({
+        status: 404,
+        error: 'unknown_channel',
+        code: 10003,
+        message: `Unknown Channel: ${channelId}`,
+      })
+    }
+    await rest.leaveThreadMember({
+      slack,
+      threadChannelId: channelId,
+      userId: botUserId,
+    })
+    return withRateLimitHeaders(new Response(null, { status: 204 }))
+  })
+
+  // PUT /api/v10/channels/:channel_id/thread-members/:user_id
+  app.put('/api/v10/channels/:channel_id/thread-members/:user_id', async ({ params }) => {
+    const channelId = readString(params, 'channel_id')
+    const userId = readString(params, 'user_id')
+    if (!(channelId && userId)) {
+      return errorJsonResponse({ status: 400, error: 'missing_thread_member_route_params' })
+    }
+    if (!isThreadChannelId(channelId)) {
+      return errorJsonResponse({
+        status: 404,
+        error: 'unknown_channel',
+        code: 10003,
+        message: `Unknown Channel: ${channelId}`,
+      })
+    }
+    if (userId !== botUserId) {
+      return errorJsonResponse({
+        status: 403,
+        error: 'missing_permissions',
+        code: 50013,
+        message: 'Missing Permissions',
+      })
+    }
+    await rest.joinThreadMember({
+      slack,
+      threadChannelId: channelId,
+      userId,
+    })
+    return withRateLimitHeaders(new Response(null, { status: 204 }))
+  })
 
   // GET /api/v10/guilds/:guild_id
   app.get('/api/v10/guilds/:guild_id', ({ params }) => {
@@ -640,6 +886,29 @@ export function createServer(config: ServerConfig): ServerComponents {
     return withRateLimitHeaders(Response.json(roles))
   })
 
+  // GET /api/v10/guilds/:guild_id/threads/active
+  app.get('/api/v10/guilds/:guild_id/threads/active', async ({ params }) => {
+    const guildId = readString(params, 'guild_id')
+    if (!guildId) {
+      return errorJsonResponse({ status: 400, error: 'missing_guild_id' })
+    }
+    if (guildId !== workspaceId) {
+      return unknownGuildResponse(guildId)
+    }
+
+    const threadList = await rest.getActiveThreads({
+      slack,
+      guildId: workspaceId,
+      botUserId,
+    })
+    const merged = mergeActiveThreadsWithKnown({
+      active: threadList,
+      knownThreadChannels,
+      botUserId,
+    })
+    return withRateLimitHeaders(Response.json(merged))
+  })
+
   // POST /api/v10/interactions/:interaction_id/:interaction_token/callback
   app.post(
     '/api/v10/interactions/:interaction_id/:interaction_token/callback',
@@ -720,7 +989,7 @@ export function createServer(config: ServerConfig): ServerComponents {
   app.post(
     '/api/v10/webhooks/:webhook_id/:webhook_token',
     async ({ params, request }) => {
-      const body = normalizeWebhookBody(await request.json())
+      const body = await normalizePostMessageRequestBody(request)
       const webhookToken = readString(params, 'webhook_token')
       if (!webhookToken) {
         return errorJsonResponse({ status: 400, error: 'missing_webhook_token' })
@@ -736,7 +1005,7 @@ export function createServer(config: ServerConfig): ServerComponents {
       const message = await rest.postMessage({
         slack,
         channelId: pending.channelId,
-        body: { content: body.content },
+        body,
         botUserId,
         guildId: workspaceId,
 
@@ -900,6 +1169,8 @@ export function createServer(config: ServerConfig): ServerComponents {
             threadTs: event.threadTs,
             guildId: workspaceId,
           })
+          evictMapIfFull(knownThreadChannels, KNOWN_THREADS_MAX)
+          knownThreadChannels.set(threadKey, threadChannel)
           gateway.broadcast(GatewayDispatchEvents.ThreadCreate, {
             ...threadChannel,
             newly_created: true,
@@ -1322,6 +1593,17 @@ function evictIfFull(set: Set<string>, maxSize: number): void {
   }
 }
 
+function evictMapIfFull<K, V>(map: Map<K, V>, maxSize: number): void {
+  if (map.size < maxSize) {
+    return
+  }
+  const evictCount = Math.max(1, Math.floor(maxSize * 0.1))
+  const keys = [...map.keys()].slice(0, evictCount)
+  for (const key of keys) {
+    map.delete(key)
+  }
+}
+
 function pruneExpiredEventIds({
   seenEventIds,
   now,
@@ -1589,6 +1871,7 @@ function normalizeSlackMessageEvent({
     message: normalizeSlackMessage(readRecord(event, 'message')),
     previousMessage: normalizeSlackMessage(readRecord(event, 'previous_message')),
     deletedTs: readString(event, 'deleted_ts'),
+    files: normalizeSlackFiles(readArray(event, 'files')),
   }
 }
 
@@ -1611,7 +1894,33 @@ function normalizeSlackMessage(
     ts,
     threadTs: readString(message, 'thread_ts'),
     editedTs: edited ? readString(edited, 'ts') : undefined,
+    files: normalizeSlackFiles(readArray(message, 'files')),
   }
+}
+
+function normalizeSlackFiles(rawFiles: unknown[]): NormalizedSlackMessage['files'] {
+  const files = rawFiles
+    .map((rawFile) => {
+      if (!isRecord(rawFile)) {
+        return undefined
+      }
+      const id = readString(rawFile, 'id')
+      const name = readString(rawFile, 'name')
+      if (!(id && name)) {
+        return undefined
+      }
+      return {
+        id,
+        name,
+        mimetype: readString(rawFile, 'mimetype') ?? undefined,
+        urlPrivate: readString(rawFile, 'url_private') ?? undefined,
+        permalink: readString(rawFile, 'permalink') ?? undefined,
+        size: readNumber(rawFile, 'size') ?? undefined,
+      }
+    })
+    .filter(isDefined)
+
+  return files.length > 0 ? files : undefined
 }
 
 function normalizeSlackReactionEvent({
@@ -2005,21 +2314,157 @@ function normalizeSupportedSlackActionType(
   return undefined
 }
 
-function normalizePostMessageBody(value: unknown): {
-  content?: string
-  embeds?: unknown[]
-  components?: unknown[]
-} {
+async function normalizePostMessageRequestBody(
+  request: Request,
+): Promise<NormalizedPostMessageBody> {
+  const contentType = request.headers.get('content-type') ?? ''
+  const isMultipart = contentType.toLowerCase().includes('multipart/form-data')
+  if (!isMultipart) {
+    return normalizePostMessageBody(await request.json())
+  }
+
+  const formData = await request.formData()
+  const payloadJson = formData.get('payload_json')
+  const payloadValue = (() => {
+    if (typeof payloadJson !== 'string') {
+      return undefined
+    }
+    try {
+      return JSON.parse(payloadJson)
+    } catch {
+      return undefined
+    }
+  })()
+
+  const normalizedPayload = normalizePostMessageBody(payloadValue)
+  const attachments = await normalizeMultipartAttachments({
+    formData,
+    payloadValue,
+  })
+
+  return {
+    content: normalizedPayload.content,
+    embeds: normalizedPayload.embeds,
+    components: normalizedPayload.components,
+    attachments,
+  }
+}
+
+function normalizePostMessageBody(value: unknown): NormalizedPostMessageBody {
   if (!isRecord(value)) {
     return {}
   }
   const embeds = Array.isArray(value.embeds) ? value.embeds : undefined
   const components = Array.isArray(value.components) ? value.components : undefined
+  const attachments = normalizeAttachmentDescriptors(value)
   return {
     content: readString(value, 'content'),
     embeds,
     components,
+    attachments,
   }
+}
+
+function normalizeAttachmentDescriptors(value: Record<string, unknown>):
+  | DiscordAttachment[]
+  | undefined {
+  const rawAttachments = Array.isArray(value.attachments)
+    ? value.attachments
+    : []
+  if (rawAttachments.length === 0) {
+    return undefined
+  }
+
+  const descriptors = rawAttachments
+    .map((rawAttachment) => {
+      if (!isRecord(rawAttachment)) {
+        return undefined
+      }
+      const id = readString(rawAttachment, 'id')
+      const filename = readString(rawAttachment, 'filename')
+      const size = readNumber(rawAttachment, 'size')
+      const url = readString(rawAttachment, 'url')
+      if (!(id && filename && typeof size === 'number' && size > 0 && url)) {
+        return undefined
+      }
+      return {
+        id,
+        filename,
+        size,
+        url,
+        content_type: readString(rawAttachment, 'content_type') ?? undefined,
+      } satisfies DiscordAttachment
+    })
+    .filter(isDefined)
+
+  return descriptors.length > 0 ? descriptors : undefined
+}
+
+async function normalizeMultipartAttachments({
+  formData,
+  payloadValue,
+}: {
+  formData: FormData
+  payloadValue: unknown
+}): Promise<DiscordAttachment[] | undefined> {
+  const payloadRecord = isRecord(payloadValue) ? payloadValue : undefined
+  const payloadAttachments = Array.isArray(payloadRecord?.attachments)
+    ? payloadRecord.attachments
+    : []
+
+  const files = await Promise.all(
+    [...formData.entries()].map(async ([fieldName, fieldValue]) => {
+      if (!(fieldValue instanceof File)) {
+        return undefined
+      }
+      const index = parseFileFieldIndex(fieldName)
+      const payloadAttachment =
+        index === undefined
+          ? undefined
+          : payloadAttachments[index]
+      const payloadRecordValue = isRecord(payloadAttachment)
+        ? payloadAttachment
+        : undefined
+      const fileId =
+        (payloadRecordValue ? readString(payloadRecordValue, 'id') : undefined)
+        ?? (index !== undefined ? String(index) : fieldName)
+      const filename =
+        (payloadRecordValue
+          ? readString(payloadRecordValue, 'filename')
+          : undefined)
+        ?? fieldValue.name
+      const mimeType = fieldValue.type || 'application/octet-stream'
+      const dataBuffer = Buffer.from(await fieldValue.arrayBuffer())
+      return {
+        id: fileId,
+        filename,
+        size: fieldValue.size,
+        url: `buffer://${fileId}`,
+        content_type: mimeType,
+        data: dataBuffer,
+      } satisfies DiscordAttachment
+    }),
+  )
+
+  const normalizedFiles = files.filter(isDefined)
+
+  if (normalizedFiles.length === 0) {
+    return normalizeAttachmentDescriptors(payloadRecord ?? {})
+  }
+
+  return normalizedFiles
+}
+
+function parseFileFieldIndex(fieldName: string): number | undefined {
+  const match = /^files\[(\d+)\]$/.exec(fieldName)
+  if (!match) {
+    return undefined
+  }
+  const index = Number.parseInt(match[1] ?? '', 10)
+  if (!Number.isFinite(index)) {
+    return undefined
+  }
+  return index
 }
 
 function normalizeEditMessageBody(value: unknown): { content?: string } {
@@ -2079,6 +2524,144 @@ function normalizeCreateGuildChannelBody(value: unknown): {
     name: readString(value, 'name') ?? 'channel',
     type: normalizedType,
   }
+}
+
+type NormalizedApplicationCommandInput = {
+  name: string
+  description: string
+  type: ApplicationCommandType
+  defaultMemberPermissions?: string | null
+  dmPermission?: boolean
+  nsfw?: boolean
+}
+
+function normalizeApplicationCommandsBody(
+  value: unknown,
+): NormalizedApplicationCommandInput[] {
+  if (!Array.isArray(value)) {
+    return []
+  }
+  return value
+    .map((entry) => {
+      if (!isRecord(entry)) {
+        return undefined
+      }
+      const name = readString(entry, 'name')
+      if (!name) {
+        return undefined
+      }
+      const rawType = readNumber(entry, 'type')
+      const type =
+        rawType === ApplicationCommandType.User ||
+        rawType === ApplicationCommandType.Message ||
+        rawType === ApplicationCommandType.ChatInput
+          ? rawType
+          : ApplicationCommandType.ChatInput
+      const description = readString(entry, 'description') ?? ''
+      return {
+        name,
+        description,
+        type,
+        defaultMemberPermissions: readString(entry, 'default_member_permissions') ?? null,
+        dmPermission: readBoolean(entry, 'dm_permission'),
+        nsfw: readBoolean(entry, 'nsfw'),
+      } satisfies NormalizedApplicationCommandInput
+    })
+    .filter(isDefined)
+}
+
+function createApplicationCommandRecord({
+  applicationId,
+  guildId,
+  command,
+}: {
+  applicationId: string
+  guildId?: string
+  command: NormalizedApplicationCommandInput
+}): APIApplicationCommand {
+  const id = createSnowflakeLikeId()
+  const version = createSnowflakeLikeId()
+  return {
+    id,
+    application_id: applicationId,
+    ...(guildId ? { guild_id: guildId } : {}),
+    name: command.name,
+    description: command.description,
+    type: command.type,
+    default_member_permissions: command.defaultMemberPermissions ?? null,
+    dm_permission: command.dmPermission ?? true,
+    nsfw: command.nsfw ?? false,
+    version,
+  }
+}
+
+function getGlobalCommandRegistryKey({
+  applicationId,
+}: {
+  applicationId: string
+}): string {
+  return `global:${applicationId}`
+}
+
+function getGuildCommandRegistryKey({
+  applicationId,
+  guildId,
+}: {
+  applicationId: string
+  guildId: string
+}): string {
+  return `guild:${applicationId}:${guildId}`
+}
+
+function mergeActiveThreadsWithKnown({
+  active,
+  knownThreadChannels,
+  botUserId,
+}: {
+  active: APIThreadList
+  knownThreadChannels: Map<string, APIChannel>
+  botUserId: string
+}): APIThreadList {
+  const mergedThreads = new Map<string, APIChannel>(
+    active.threads.map((thread) => {
+      return [thread.id, thread]
+    }),
+  )
+  for (const [threadId, thread] of knownThreadChannels.entries()) {
+    if (!mergedThreads.has(threadId)) {
+      mergedThreads.set(threadId, thread)
+    }
+  }
+
+  const mergedMembers = new Map<string, APIThreadMember>(
+    active.members.map((member) => {
+      return [`${member.id}:${member.user_id}`, member]
+    }),
+  )
+  for (const threadId of knownThreadChannels.keys()) {
+    const key = `${threadId}:${botUserId}`
+    if (!mergedMembers.has(key)) {
+      mergedMembers.set(key, {
+        id: threadId,
+        user_id: botUserId,
+        join_timestamp: new Date().toISOString(),
+        flags: noFlags<ThreadMemberFlags>(),
+      })
+    }
+  }
+
+  return {
+    threads: [...mergedThreads.values()],
+    members: [...mergedMembers.values()],
+  }
+}
+
+function createSnowflakeLikeId(): string {
+  return `${Date.now()}${crypto.randomInt(100_000, 999_999)}`
+}
+
+function noFlags<T>(): T {
+  return 0 as T
 }
 
 function normalizeInteractionCallbackBody(value: unknown): {

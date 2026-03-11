@@ -565,12 +565,22 @@ export function createServer(config: ServerConfig): ServerComponents {
     const body = await parseBody(request)
     const filename = body['filename'] ?? 'file'
     const length = body['length'] ?? '0'
+    const origin = new URL(request.url).origin
 
     return Response.json({
       ok: true,
-      upload_url: `http://127.0.0.1/fake-upload/${filename}`,
+      upload_url: `${origin}/fake-upload/${filename}`,
       file_id: `F${Date.now()}`,
     })
+  })
+
+  // --- fake upload target for files.getUploadURLExternal ---
+  // Accepts both POST and PUT so bridge tests can exercise upload fallback logic.
+  app.post('/fake-upload/:filename', async () => {
+    return new Response(null, { status: 200 })
+  })
+  app.put('/fake-upload/:filename', async () => {
+    return new Response(null, { status: 200 })
   })
 
   // --- files.completeUploadExternal ---

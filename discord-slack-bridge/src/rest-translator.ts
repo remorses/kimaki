@@ -47,9 +47,13 @@ import {
   PermissionFlagsBits,
   MessageType,
   RoleFlags,
+  ThreadMemberFlags,
   TextInputStyle,
 } from 'discord-api-types/v10'
 import type {
+  APIAttachment,
+  APIThreadList,
+  APIThreadMember,
   APIMessage,
   APIUser,
   APIChannel,
@@ -918,6 +922,237 @@ export async function createThreadFromMessage({
   }
 }
 
+export async function listThreadMembers({
+  slack,
+  threadChannelId,
+  botUserId,
+}: {
+  slack: WebClient
+  threadChannelId: string
+  botUserId: string
+}): Promise<APIThreadMember[]> {
+  const threadTarget = resolveThreadTarget({ threadChannelId })
+  const parent = await fetchThreadParentMessage({
+    slack,
+    channel: threadTarget.channel,
+    threadTs: threadTarget.threadTs,
+    threadChannelId,
+  })
+
+  const repliesArgs = {
+    channel: threadTarget.channel,
+    ts: threadTarget.threadTs,
+    inclusive: true,
+    limit: 100,
+  } satisfies ConversationsRepliesArguments
+  const replies = await slack.conversations.replies(repliesArgs)
+  const participants = [parent.user, parent.bot_id]
+    .concat(
+      (replies.messages ?? []).flatMap((message) => {
+        return [message.user, message.bot_id]
+      }),
+    )
+    .filter(isNonEmptyString)
+    .map((participant) => {
+      if (participant.startsWith('B')) {
+        return botUserId
+      }
+      return participant
+    })
+
+  const uniqueParticipants = [...new Set(participants)]
+  return uniqueParticipants.map((userId) => {
+    return buildApiThreadMember({
+      threadChannelId,
+      userId,
+      joinedAtTs: threadTarget.threadTs,
+    })
+  })
+}
+
+export async function getThreadMember({
+  slack,
+  threadChannelId,
+  userId,
+  botUserId,
+}: {
+  slack: WebClient
+  threadChannelId: string
+  userId: string
+  botUserId: string
+}): Promise<APIThreadMember> {
+  const members = await listThreadMembers({
+    slack,
+    threadChannelId,
+    botUserId,
+  })
+  const existing = members.find((member) => {
+    return member.user_id === userId
+  })
+  if (existing) {
+    return existing
+  }
+
+  const { threadTs } = resolveThreadTarget({ threadChannelId })
+  return buildApiThreadMember({
+    threadChannelId,
+    userId,
+    joinedAtTs: threadTs,
+  })
+}
+
+export async function joinThreadMember({
+  slack,
+  threadChannelId,
+  userId,
+}: {
+  slack: WebClient
+  threadChannelId: string
+  userId: string
+}): Promise<void> {
+  const target = resolveThreadTarget({ threadChannelId })
+  await fetchThreadParentMessage({
+    slack,
+    channel: target.channel,
+    threadTs: target.threadTs,
+    threadChannelId,
+  })
+  void userId
+}
+
+export async function leaveThreadMember({
+  slack,
+  threadChannelId,
+  userId,
+}: {
+  slack: WebClient
+  threadChannelId: string
+  userId: string
+}): Promise<void> {
+  const target = resolveThreadTarget({ threadChannelId })
+  await fetchThreadParentMessage({
+    slack,
+    channel: target.channel,
+    threadTs: target.threadTs,
+    threadChannelId,
+  })
+  void userId
+}
+
+export async function getActiveThreads({
+  slack,
+  guildId,
+  botUserId,
+}: {
+  slack: WebClient
+  guildId: string
+  botUserId: string
+}): Promise<APIThreadList> {
+  const listArgs = {
+    types: 'public_channel,private_channel',
+    exclude_archived: true,
+    limit: 200,
+  } satisfies ConversationsListArguments
+  const listed = await slack.conversations.list(listArgs)
+  const channels = (listed.channels ?? []).filter((channel) => {
+    return Boolean(channel.id)
+  })
+
+  const threadMap = new Map<string, APIChannel>()
+  const memberMap = new Map<string, APIThreadMember>()
+
+  for (const channel of channels) {
+    const channelId = channel.id
+    if (!channelId) {
+      continue
+    }
+    const historyArgs = {
+      channel: channelId,
+      limit: 50,
+    } satisfies ConversationsHistoryArguments
+    const history = await slack.conversations.history(historyArgs)
+    const parentCandidates = (history.messages ?? []).filter((message) => {
+      return Boolean(message.ts)
+    })
+
+    for (const parent of parentCandidates) {
+      const parentTs = parent.ts
+      if (!parentTs) {
+        continue
+      }
+      const repliesArgs = {
+        channel: channelId,
+        ts: parentTs,
+        inclusive: true,
+        limit: 2,
+      } satisfies ConversationsRepliesArguments
+      const replies = await slack.conversations.replies(repliesArgs)
+      const replyMessages = replies.messages ?? []
+      if (replyMessages.length < 2) {
+        continue
+      }
+
+      const threadChannelId = encodeThreadId(channelId, parentTs)
+      if (!threadMap.has(threadChannelId)) {
+        const threadName = (() => {
+          const rawText = parent.text?.trim()
+          if (rawText) {
+            return rawText.slice(0, 80)
+          }
+          return `thread-${parentTs}`
+        })()
+        threadMap.set(threadChannelId, {
+          id: threadChannelId,
+          type: ChannelType.PublicThread,
+          name: threadName,
+          guild_id: guildId,
+          parent_id: channelId,
+          owner_id: parent.user ?? parent.bot_id ?? botUserId,
+          message_count: Math.max(0, replyMessages.length - 1),
+          member_count: new Set(
+            replyMessages
+              .flatMap((message) => {
+                return [message.user, message.bot_id]
+              })
+              .filter(isNonEmptyString),
+          ).size,
+          thread_metadata: {
+            archived: false,
+            auto_archive_duration: 1440,
+            archive_timestamp: slackTsToIso(parentTs),
+            locked: false,
+          },
+        })
+      }
+
+      const participants = replyMessages
+        .flatMap((message) => {
+          return [message.user, message.bot_id]
+        })
+        .filter(isNonEmptyString)
+      for (const participant of participants) {
+        const key = `${threadChannelId}:${participant}`
+        if (memberMap.has(key)) {
+          continue
+        }
+        memberMap.set(
+          key,
+          buildApiThreadMember({
+            threadChannelId,
+            userId: participant,
+            joinedAtTs: parentTs,
+          }),
+        )
+      }
+    }
+  }
+
+  return {
+    threads: [...threadMap.values()],
+    members: [...memberMap.values()],
+  }
+}
+
 // ---- Helpers ----
 
 function buildApiMessage({
@@ -961,6 +1196,108 @@ function buildApiMessage({
   }
 }
 
+function mapSlackFilesToDiscordAttachments(
+  files: SlackMessage['files'] | undefined,
+): APIAttachment[] {
+  const slackFiles = files ?? []
+  return slackFiles
+    .map((file) => {
+      if (!file?.id || !file.name) {
+        return undefined
+      }
+      const attachmentUrl = file.url_private ?? file.permalink ?? ''
+      return {
+        id: file.id,
+        filename: file.name,
+        size: file.size ?? 0,
+        url: attachmentUrl,
+        proxy_url: attachmentUrl,
+        content_type: file.mimetype,
+      } satisfies APIAttachment
+    })
+    .filter(isDefined)
+}
+
+function buildApiThreadMember({
+  threadChannelId,
+  userId,
+  joinedAtTs,
+}: {
+  threadChannelId: string
+  userId: string
+  joinedAtTs: string
+}): APIThreadMember {
+  return {
+    id: threadChannelId,
+    user_id: userId,
+    join_timestamp: slackTsToIso(joinedAtTs),
+    flags: noFlags<ThreadMemberFlags>(),
+  }
+}
+
+function noFlags<T>(): T {
+  return 0 as T
+}
+
+function resolveThreadTarget({
+  threadChannelId,
+}: {
+  threadChannelId: string
+}): { channel: string; threadTs: string } {
+  if (!isThreadChannelId(threadChannelId)) {
+    throw new UnknownChannelError(threadChannelId)
+  }
+  const resolved = (() => {
+    try {
+      return resolveSlackTarget(threadChannelId)
+    } catch {
+      throw new UnknownChannelError(threadChannelId)
+    }
+  })()
+  if (!resolved.threadTs) {
+    throw new UnknownChannelError(threadChannelId)
+  }
+  return {
+    channel: resolved.channel,
+    threadTs: resolved.threadTs,
+  }
+}
+
+async function fetchThreadParentMessage({
+  slack,
+  channel,
+  threadTs,
+  threadChannelId,
+}: {
+  slack: WebClient
+  channel: string
+  threadTs: string
+  threadChannelId: string
+}): Promise<SlackMessage> {
+  const repliesArgs = {
+    channel,
+    ts: threadTs,
+    inclusive: true,
+    limit: 1,
+  } satisfies ConversationsRepliesArguments
+  const replies = await slack.conversations.replies(repliesArgs)
+  const parent = (replies.messages ?? []).find((message) => {
+    return message.ts === threadTs
+  })
+  if (!parent) {
+    throw new UnknownChannelError(threadChannelId)
+  }
+  return parent
+}
+
+function isNonEmptyString(value: string | undefined): value is string {
+  return Boolean(value)
+}
+
+function isDefined<T>(value: T | undefined): value is T {
+  return value !== undefined
+}
+
 function buildApiMessageFromSlack({
   msg,
   channel,
@@ -995,7 +1332,7 @@ function buildApiMessageFromSlack({
     mention_everyone: false,
     mentions: [],
     mention_roles: [],
-    attachments: [],
+    attachments: mapSlackFilesToDiscordAttachments(msg.files),
     embeds: [],
     pinned: false,
     type: MessageType.Default,

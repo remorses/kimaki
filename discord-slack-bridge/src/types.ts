@@ -32,6 +32,16 @@ export interface NormalizedSlackMessage {
   ts: string
   threadTs?: string
   editedTs?: string
+  files?: NormalizedSlackFile[]
+}
+
+export interface NormalizedSlackFile {
+  id: string
+  name: string
+  mimetype?: string
+  urlPrivate?: string
+  permalink?: string
+  size?: number
 }
 
 export interface NormalizedSlackMessageEvent {
@@ -46,6 +56,7 @@ export interface NormalizedSlackMessageEvent {
   message?: NormalizedSlackMessage
   previousMessage?: NormalizedSlackMessage
   deletedTs?: string
+  files?: NormalizedSlackFile[]
 }
 
 export interface NormalizedSlackReactionEvent {

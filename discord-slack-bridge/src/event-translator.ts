@@ -9,6 +9,7 @@ import {
   MessageType,
 } from 'discord-api-types/v10'
 import type {
+  APIAttachment,
   APIMessage,
   APIUser,
   APIChannel,
@@ -23,6 +24,7 @@ import {
 import { mrkdwnToMarkdown } from './format-converter.js'
 import type {
   NormalizedSlackMessageEvent,
+  NormalizedSlackFile,
   NormalizedSlackReactionEvent,
   NormalizedSlackMemberJoinedChannelEvent,
   CachedSlackUser,
@@ -74,7 +76,7 @@ export function translateMessageCreate({
     mention_everyone: false,
     mentions: [],
     mention_roles: [],
-    attachments: [],
+    attachments: mapSlackFilesToDiscordAttachments(event.files),
     embeds: [],
     pinned: false,
     type: MessageType.Default,
@@ -133,7 +135,7 @@ export function translateMessageUpdate({
     mention_everyone: false,
     mentions: [],
     mention_roles: [],
-    attachments: [],
+    attachments: mapSlackFilesToDiscordAttachments(inner.files),
     embeds: [],
     pinned: false,
     type: MessageType.Default,
@@ -144,6 +146,23 @@ export function translateMessageUpdate({
     eventName: GatewayDispatchEvents.MessageUpdate,
     data: apiMessage,
   }
+}
+
+function mapSlackFilesToDiscordAttachments(
+  files: NormalizedSlackFile[] | undefined,
+): APIAttachment[] {
+  const slackFiles = files ?? []
+  return slackFiles.map((file) => {
+    const attachmentUrl = file.urlPrivate ?? file.permalink ?? ''
+    return {
+      id: file.id,
+      filename: file.name,
+      size: file.size ?? 0,
+      url: attachmentUrl,
+      proxy_url: attachmentUrl,
+      content_type: file.mimetype,
+    }
+  })
 }
 
 /**

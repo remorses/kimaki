@@ -4,11 +4,23 @@
 // Tunnel URL is stable — configure once in Slack Event Subscriptions.
 
 import {
+  ActionRowBuilder,
+  AttachmentBuilder,
+  ButtonBuilder,
+  ButtonStyle,
   Client,
   GatewayIntentBits,
+  ModalBuilder,
   Partials,
+  StringSelectMenuBuilder,
+  TextInputBuilder,
+  TextInputStyle,
   ThreadAutoArchiveDuration,
+  type ButtonInteraction,
+  type Interaction,
+  type ModalSubmitInteraction,
   type Message,
+  type StringSelectMenuInteraction,
   type ThreadChannel,
   type TextChannel,
 } from 'discord.js'
@@ -17,7 +29,13 @@ import { TunnelClient } from 'traforo/client'
 import { SlackBridge } from '../src/index.js'
 
 const TUNNEL_ID = 'dsb-echo-bot'
-const BRIDGE_PORT = 3710
+const BRIDGE_PORT = Number(process.env.ECHO_BOT_PORT ?? '3710')
+const OPEN_MODAL_BUTTON_ID = 'demo-open-modal'
+const STATUS_BUTTON_ID = 'demo-status-button'
+const TABLE_BUTTON_ID = 'demo-table-button'
+const DEMO_SELECT_ID = 'demo-select'
+const DEMO_MODAL_ID = 'demo-modal'
+const DEMO_MODAL_INPUT_ID = 'demo-modal-input'
 
 async function main(): Promise<void> {
   const slackBotToken = requireEnv('SLACK_BOT_TOKEN')
@@ -80,6 +98,9 @@ async function main(): Promise<void> {
   client.on('messageCreate', (message) => {
     void handleMessageCreate({ client, message })
   })
+  client.on('interactionCreate', (interaction) => {
+    void handleInteractionCreate({ interaction })
+  })
 
   console.log('\nEcho bot running. Press Ctrl+C to stop.\n')
 
@@ -114,8 +135,337 @@ async function handleMessageCreate({
   }
 
   console.log(`[echo] "${message.content}" from ${message.author.username}`)
+
+  if (message.attachments.size > 0) {
+    await thread.send(formatAttachmentSummary({ message }))
+    return
+  }
+
+  const normalized = message.content.trim().toLowerCase()
+  const handled = await handleDemoSwitch({
+    command: normalized,
+    thread,
+    username: message.author.username,
+  })
+  if (handled) {
+    return
+  }
+
   await thread.send(`echo: ${message.content}`)
 }
+
+async function handleDemoSwitch({
+  command,
+  thread,
+  username,
+}: {
+  command: string
+  thread: ThreadChannel
+  username: string
+}): Promise<boolean> {
+  switch (command) {
+    case 'demo:buttons': {
+      const row = new ActionRowBuilder<ButtonBuilder>().addComponents(
+        new ButtonBuilder()
+          .setCustomId(STATUS_BUTTON_ID)
+          .setLabel('Show status')
+          .setStyle(ButtonStyle.Primary),
+        new ButtonBuilder()
+          .setCustomId(TABLE_BUTTON_ID)
+          .setLabel('Show table')
+          .setStyle(ButtonStyle.Secondary),
+        new ButtonBuilder()
+          .setCustomId(OPEN_MODAL_BUTTON_ID)
+          .setLabel('Open modal')
+          .setStyle(ButtonStyle.Success),
+      )
+      await thread.send({
+        content: `Button demo for ${username}`,
+        components: [row],
+      })
+      return true
+    }
+    case 'demo:select': {
+      const select = new StringSelectMenuBuilder()
+        .setCustomId(DEMO_SELECT_ID)
+        .setPlaceholder('Pick an option')
+        .addOptions([
+          { label: 'Low', value: 'low', description: 'Minimal output' },
+          { label: 'Medium', value: 'medium', description: 'Balanced output' },
+          { label: 'High', value: 'high', description: 'Verbose output' },
+        ])
+      const row = new ActionRowBuilder<StringSelectMenuBuilder>().addComponents(
+        select,
+      )
+      await thread.send({
+        content: 'Select menu demo',
+        components: [row],
+      })
+      return true
+    }
+    case 'demo:modal': {
+      const row = new ActionRowBuilder<ButtonBuilder>().addComponents(
+        new ButtonBuilder()
+          .setCustomId(OPEN_MODAL_BUTTON_ID)
+          .setLabel('Open input modal')
+          .setStyle(ButtonStyle.Primary),
+      )
+      await thread.send({
+        content: 'Click to open a modal input',
+        components: [row],
+      })
+      return true
+    }
+    case 'demo:image': {
+      const image = new AttachmentBuilder(Buffer.from(SMALL_PNG_BASE64, 'base64'), {
+        name: 'demo-image.png',
+      })
+      await thread.send({
+        content: 'Image upload demo',
+        files: [image],
+      })
+      return true
+    }
+    case 'demo:text-file': {
+      const file = new AttachmentBuilder(
+        Buffer.from('demo text file\nbridge: discord-slack-bridge\n', 'utf8'),
+        {
+          name: 'demo-note.txt',
+        },
+      )
+      await thread.send({
+        content: 'Text file upload demo',
+        files: [file],
+      })
+      return true
+    }
+    case 'demo:table': {
+      await thread.send({
+        content: [
+          'Runtime table',
+          '| Field | Value |',
+          '| --- | --- |',
+          `| User | ${username} |`,
+          `| Channel | ${thread.parentId ?? 'unknown'} |`,
+          `| Thread | ${thread.id} |`,
+          `| Timestamp | ${new Date().toISOString()} |`,
+        ].join('\n'),
+      })
+      return true
+    }
+    case 'demo:all': {
+      const buttonRow = new ActionRowBuilder<ButtonBuilder>().addComponents(
+        new ButtonBuilder()
+          .setCustomId(STATUS_BUTTON_ID)
+          .setLabel('Show status')
+          .setStyle(ButtonStyle.Primary),
+        new ButtonBuilder()
+          .setCustomId(TABLE_BUTTON_ID)
+          .setLabel('Show table')
+          .setStyle(ButtonStyle.Secondary),
+        new ButtonBuilder()
+          .setCustomId(OPEN_MODAL_BUTTON_ID)
+          .setLabel('Open modal')
+          .setStyle(ButtonStyle.Success),
+      )
+      await thread.send({
+        content: `Button demo for ${username}`,
+        components: [buttonRow],
+      })
+
+      const select = new StringSelectMenuBuilder()
+        .setCustomId(DEMO_SELECT_ID)
+        .setPlaceholder('Pick an option')
+        .addOptions([
+          { label: 'Low', value: 'low', description: 'Minimal output' },
+          { label: 'Medium', value: 'medium', description: 'Balanced output' },
+          { label: 'High', value: 'high', description: 'Verbose output' },
+        ])
+      const selectRow =
+        new ActionRowBuilder<StringSelectMenuBuilder>().addComponents(select)
+      await thread.send({
+        content: 'Select menu demo',
+        components: [selectRow],
+      })
+
+      const image = new AttachmentBuilder(Buffer.from(SMALL_PNG_BASE64, 'base64'), {
+        name: 'demo-image.png',
+      })
+      await thread.send({
+        content: 'Image upload demo',
+        files: [image],
+      })
+
+      const file = new AttachmentBuilder(
+        Buffer.from('demo text file\nbridge: discord-slack-bridge\n', 'utf8'),
+        {
+          name: 'demo-note.txt',
+        },
+      )
+      await thread.send({
+        content: 'Text file upload demo',
+        files: [file],
+      })
+
+      await thread.send({
+        content: [
+          'Runtime table',
+          '| Field | Value |',
+          '| --- | --- |',
+          `| User | ${username} |`,
+          `| Channel | ${thread.parentId ?? 'unknown'} |`,
+          `| Thread | ${thread.id} |`,
+          `| Timestamp | ${new Date().toISOString()} |`,
+        ].join('\n'),
+      })
+
+      await thread.send({
+        content: 'Modal demo: click "Open modal" from the button message above.',
+      })
+      return true
+    }
+    case 'demo:help': {
+      await thread.send({
+        content: [
+          'Available demo commands:',
+          '- demo:buttons',
+          '- demo:select',
+          '- demo:modal',
+          '- demo:image',
+          '- demo:text-file',
+          '- demo:table',
+          '- demo:all',
+          '- demo:help',
+        ].join('\n'),
+      })
+      return true
+    }
+    default: {
+      return false
+    }
+  }
+}
+
+async function handleInteractionCreate({
+  interaction,
+}: {
+  interaction: Interaction
+}): Promise<void> {
+  if (interaction.isButton()) {
+    await handleButtonInteraction({ interaction })
+    return
+  }
+
+  if (interaction.isStringSelectMenu()) {
+    await handleSelectInteraction({ interaction })
+    return
+  }
+
+  if (interaction.isModalSubmit()) {
+    await handleModalSubmitInteraction({ interaction })
+  }
+}
+
+async function handleButtonInteraction({
+  interaction,
+}: {
+  interaction: ButtonInteraction
+}): Promise<void> {
+  if (interaction.customId === STATUS_BUTTON_ID) {
+    await interaction.reply({
+      content: 'Status button clicked',
+      ephemeral: true,
+    })
+    return
+  }
+
+  if (interaction.customId === TABLE_BUTTON_ID) {
+    await interaction.reply({
+      content: [
+        'Button-triggered table',
+        '| Metric | Value |',
+        '| --- | --- |',
+        `| User | ${interaction.user.username} |`,
+        `| Message ID | ${interaction.message.id} |`,
+        `| Custom ID | ${interaction.customId} |`,
+      ].join('\n'),
+      ephemeral: true,
+    })
+    return
+  }
+
+  if (interaction.customId === OPEN_MODAL_BUTTON_ID) {
+    const modal = new ModalBuilder()
+      .setCustomId(DEMO_MODAL_ID)
+      .setTitle('Demo input modal')
+    const input = new TextInputBuilder()
+      .setCustomId(DEMO_MODAL_INPUT_ID)
+      .setLabel('Enter demo text')
+      .setStyle(TextInputStyle.Paragraph)
+      .setRequired(true)
+    const row = new ActionRowBuilder<TextInputBuilder>().addComponents(input)
+    modal.addComponents(row)
+    await interaction.showModal(modal)
+  }
+}
+
+async function handleSelectInteraction({
+  interaction,
+}: {
+  interaction: StringSelectMenuInteraction
+}): Promise<void> {
+  const value = interaction.values[0] ?? 'unknown'
+  await interaction.reply({
+    content: `Selected: ${value}`,
+    ephemeral: true,
+  })
+}
+
+async function handleModalSubmitInteraction({
+  interaction,
+}: {
+  interaction: ModalSubmitInteraction
+}): Promise<void> {
+  if (interaction.customId !== DEMO_MODAL_ID) {
+    return
+  }
+  const value = interaction.fields.getTextInputValue(DEMO_MODAL_INPUT_ID)
+  await interaction.reply({
+    content: `Modal input: ${value}`,
+    ephemeral: true,
+  })
+}
+
+function formatAttachmentSummary({ message }: { message: Message }): string {
+  const lines = [
+    `Received ${message.attachments.size} attachment(s):`,
+    '| Name | Mime | Size | Image |',
+    '| --- | --- | --- | --- |',
+  ]
+  const rows = [...message.attachments.values()].map((attachment) => {
+    const mime = attachment.contentType ?? 'unknown'
+    const size = formatBytes(attachment.size)
+    const imageSize =
+      attachment.width && attachment.height
+        ? `${attachment.width}x${attachment.height}`
+        : 'n/a'
+    return `| ${attachment.name ?? 'unknown'} | ${mime} | ${size} | ${imageSize} |`
+  })
+  return [...lines, ...rows].join('\n')
+}
+
+function formatBytes(size: number): string {
+  if (size < 1024) {
+    return `${size} B`
+  }
+  if (size < 1024 * 1024) {
+    return `${(size / 1024).toFixed(1)} KB`
+  }
+  return `${(size / (1024 * 1024)).toFixed(1)} MB`
+}
+
+const SMALL_PNG_BASE64 =
+  'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAusB9Y9n0WcAAAAASUVORK5CYII='
 
 async function resolveReplyThread({
   message,

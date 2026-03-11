@@ -19,6 +19,7 @@ export interface DiscordAttachment {
   filename: string
   size: number
   url: string
+  data?: Buffer
   proxy_url?: string
   content_type?: string
 }
@@ -63,14 +64,10 @@ async function uploadSingleFile({
   channel: string
   threadTs?: string
 }): Promise<void> {
-  // Step 1: Download the file from Discord
-  const response = await fetch(attachment.url)
-  if (!response.ok) {
-    throw new Error(
-      `Failed to download attachment ${attachment.filename}: ${response.status}`,
-    )
-  }
-  const fileBuffer = Buffer.from(await response.arrayBuffer())
+  // Step 1: Resolve file bytes from multipart payload or Discord CDN URL.
+  // Multipart uploads (discord.js files[]) provide inline bytes as `data`.
+  // JSON attachment payloads provide a URL that we fetch.
+  const fileBuffer = await resolveAttachmentBuffer(attachment)
 
   // Step 2: Get upload URL from Slack
   const uploadUrlArgs = {
@@ -117,6 +114,22 @@ async function uploadSingleFile({
         channel_id: channel,
       }
   await slack.files.completeUploadExternal(completeArgs)
+}
+
+async function resolveAttachmentBuffer(
+  attachment: DiscordAttachment,
+): Promise<Buffer> {
+  if (attachment.data) {
+    return attachment.data
+  }
+
+  const response = await fetch(attachment.url)
+  if (!response.ok) {
+    throw new Error(
+      `Failed to download attachment ${attachment.filename}: ${response.status}`,
+    )
+  }
+  return Buffer.from(await response.arrayBuffer())
 }
 
 async function uploadToSlackUrl({
