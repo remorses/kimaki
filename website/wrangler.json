@@ -24,6 +24,12 @@
       "id": "fc242a96a2d5472bb5d6a84eabaab910"
     }
   ],
+  "kv_namespaces": [
+    {
+      "binding": "GATEWAY_CLIENT_KV",
+      "id": "f12aed8d9639442caef78c019a71ab27"
+    }
+  ],
   "routes": [
     {
       "pattern": "kimaki.xyz/*",
@@ -49,6 +55,12 @@
         {
           "binding": "HYPERDRIVE",
           "id": "fc242a96a2d5472bb5d6a84eabaab910"
+        }
+      ],
+      "kv_namespaces": [
+        {
+          "binding": "GATEWAY_CLIENT_KV",
+          "id": "104c7f676bad499a86cc0cf6acf34476"
         }
       ],
       "routes": [

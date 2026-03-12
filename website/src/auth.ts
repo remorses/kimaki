@@ -16,6 +16,7 @@ import { prismaAdapter } from 'better-auth/adapters/prisma'
 import { createAuthMiddleware, getOAuthState } from 'better-auth/api'
 import { createPrisma } from 'db/src'
 import type { HonoBindings } from './env.js'
+import { upsertGatewayClientAndRefreshKv } from './gateway-client-kv.js'
 
 // Same permissions list used in discord/src/utils.ts generateBotInstallUrl.
 // Hardcoded to avoid importing discord-api-types/v10 barrel which adds ~204 KiB
@@ -29,7 +30,7 @@ const DISCORD_BOT_PERMISSIONS = 17927465446480
 // Validates and parses a callback URL, allowing only https: and http://localhost.
 // Returns null for missing, malformed, or disallowed schemes (e.g. javascript:)
 // to prevent open redirect attacks through the OAuth flow.
-function parseAllowedCallbackUrl(raw: string | null | undefined): URL | null {
+export function parseAllowedCallbackUrl(raw: string | null | undefined): URL | null {
   if (!raw) {
     return null
   }
@@ -140,28 +141,18 @@ export function createAuth({ env, baseURL }: { env: HonoBindings; baseURL: strin
           return
         }
 
-        await prisma.gateway_clients
-          .upsert({
-            where: {
-              client_id_guild_id: {
-                client_id: kimakiClientId,
-                guild_id: guildId,
-              },
-            },
-            create: {
-              client_id: kimakiClientId,
-              secret: kimakiClientSecret,
-              guild_id: guildId,
-              user_id: userId,
-            },
-            update: {
-              secret: kimakiClientSecret,
-              user_id: userId,
-            },
-          })
-          .catch((cause) => {
-            console.error('Failed to upsert gateway_clients:', cause)
-          })
+        const upsertResult = await upsertGatewayClientAndRefreshKv({
+          env,
+          clientId: kimakiClientId,
+          secret: kimakiClientSecret,
+          guildId,
+          platform: 'discord',
+          userId,
+        })
+        if (upsertResult instanceof Error) {
+          console.error(upsertResult)
+          return
+        }
 
         // If the CLI passed a custom callback URL (--gateway-callback-url),
         // redirect there with ?guild_id instead of showing /install-success.
