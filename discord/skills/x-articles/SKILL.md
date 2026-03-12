@@ -59,6 +59,88 @@ Important entity type:
 - `MARKDOWN` — used for code blocks, with the markdown fence stored in
   `entity_map[*].value.data.markdown`
 
+Longer example `content_state`:
+
+````json
+{
+  "blocks": [
+    {
+      "key": "k0",
+      "text": "event sourcing for application state",
+      "type": "header-two",
+      "data": {},
+      "entity_ranges": [],
+      "inline_style_ranges": []
+    },
+    {
+      "key": "k1",
+      "text": "your clanker loves state",
+      "type": "unstyled",
+      "data": {},
+      "entity_ranges": [],
+      "inline_style_ranges": [
+        { "offset": 19, "length": 5, "style": "Bold" }
+      ]
+    },
+    {
+      "key": "k2",
+      "text": "doubles your final app state",
+      "type": "ordered-list-item",
+      "data": {},
+      "entity_ranges": [],
+      "inline_style_ranges": []
+    },
+    {
+      "key": "k3",
+      "text": "doubles your bugs",
+      "type": "ordered-list-item",
+      "data": {},
+      "entity_ranges": [],
+      "inline_style_ranges": []
+    },
+    {
+      "key": "k4",
+      "text": " ",
+      "type": "atomic",
+      "data": {},
+      "entity_ranges": [
+        { "key": 0, "offset": 0, "length": 1 }
+      ],
+      "inline_style_ranges": []
+    },
+    {
+      "key": "k5",
+      "text": "if you can derive it, don't store it.",
+      "type": "unstyled",
+      "data": {},
+      "entity_ranges": [],
+      "inline_style_ranges": [
+        { "offset": 7, "length": 6, "style": "Bold" }
+      ]
+    }
+  ],
+  "entity_map": [
+    {
+      "key": "0",
+      "value": {
+        "type": "MARKDOWN",
+        "mutability": "Mutable",
+        "data": {
+          "markdown": "```typescript\nfunction shouldShowFooter() {\n  return true\n}\n```"
+        }
+      }
+    }
+  ]
+}
+````
+
+This is the minimum mental model:
+
+- `blocks` is the article in order
+- each paragraph, heading, and list item is a separate block
+- code blocks are `atomic` blocks that point into `entity_map`
+- inline bold lives in `inline_style_ranges`
+
 ## Recommended workflow
 
 ### 1. Open or locate the draft
