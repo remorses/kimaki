@@ -16,42 +16,42 @@ IMPORTANT: When the user asks to see a diff, show a diff, or review changes, ALW
 Typical usage examples:
 
 # Share working tree changes
-critique --web "Describe pending changes"
+bunx critique --web "Describe pending changes"
 
 # Share staged changes
-critique --staged --web "Describe staged changes"
+bunx critique --staged --web "Describe staged changes"
 
 # Share changes since base branch (use when you're on a feature branch)
-critique main --web "Describe branch changes"
+bunx critique main --web "Describe branch changes"
 
 # Share new-branch changes compared to main
-critique main...new-branch --web "Describe branch changes"
+bunx critique main...new-branch --web "Describe branch changes"
 
 # Share a single commit
-critique --commit HEAD --web "Describe latest commit"
+bunx critique --commit HEAD --web "Describe latest commit"
 
 If there are other unrelated changes in the working directory, filter to only show the files you edited:
 
 # Share only specific files
-critique --web "Fix database connection retry" --filter "path/to/file1.ts" --filter "path/to/file2.ts"
+bunx critique --web "Fix database connection retry" --filter "path/to/file1.ts" --filter "path/to/file2.ts"
 
 Do this in case you committed the changes yourself (only if the user asks so, never commit otherwise).
 
 To compare two branches:
 
-critique main feature-branch --web "Compare branches"
+bunx critique main feature-branch --web "Compare branches"
 
 The command outputs a URL - share that URL with the user so they can see the diff.
 
 ### always show diff at end of session
 
-If you edited any files during the current session, you MUST run \`critique --web\` at the end of your final message to generate a diff URL and share it with the user. This applies even if the user did not ask to see a diff — always show what changed. Pass the file paths you edited as \`--filter\` arguments so the diff only includes your changes. Skip this only if the session was purely read-only (no file edits, no writes).
+If you edited any files during the current session, you MUST run \`bunx critique --web\` at the end of your final message to generate a diff URL and share it with the user. This applies even if the user did not ask to see a diff — always show what changed. Pass the file paths you edited as \`--filter\` arguments so the diff only includes your changes. Skip this only if the session was purely read-only (no file edits, no writes).
 The final user-facing message must include the actual critique URL as plain text or markdown link, because the user cannot see the Bash tool output.
 
 Example — if you edited \`src/config.ts\` and \`src/utils.ts\`:
 
 \`\`\`bash
-critique --web "Short title describing the changes" --filter "src/config.ts" --filter "src/utils.ts"
+bunx critique --web "Short title describing the changes" --filter "src/config.ts" --filter "src/utils.ts"
 \`\`\`
 
 The string after \`--web\` becomes the diff page title — make it reflect what the changes do (e.g. "Add retry logic to API client", "Fix auth timeout bug").
@@ -67,7 +67,7 @@ this feature by restarting kimaki with the \`--no-critique\` flag.
 
 ### reviewing diffs with AI
 
-\`critique review --web\` generates an AI-powered review of a diff and uploads it as a shareable URL.
+\`bunx critique review --web\` generates an AI-powered review of a diff and uploads it as a shareable URL.
 It spawns a separate opencode session that analyzes the diff, groups related changes, and produces
 a structured review with explanations, diagrams, and suggestions. This is useful when the user
 asks you to explain or review a diff — the output is much richer than a plain diff URL.
@@ -84,22 +84,22 @@ Examples:
 
 \`\`\`bash
 # Review working tree changes
-critique review --web --agent opencode --session ${sessionId}
+bunx critique review --web --agent opencode --session ${sessionId}
 
 # Review staged changes
-critique review --staged --web --agent opencode --session ${sessionId}
+bunx critique review --staged --web --agent opencode --session ${sessionId}
 
 # Review a specific commit
-critique review --commit HEAD --web --agent opencode --session ${sessionId}
+bunx critique review --commit HEAD --web --agent opencode --session ${sessionId}
 
 # Review branch changes compared to main
-critique review main...HEAD --web --agent opencode --session ${sessionId}
+bunx critique review main...HEAD --web --agent opencode --session ${sessionId}
 
 # Review with multiple session contexts (current + the session that made the changes)
-critique review --commit abc1234 --web --agent opencode --session ${sessionId} --session ses_other_session_id
+bunx critique review --commit abc1234 --web --agent opencode --session ${sessionId} --session ses_other_session_id
 
 # Review only specific files
-critique review --web --agent opencode --session ${sessionId} --filter "src/**/*.ts"
+bunx critique review --web --agent opencode --session ${sessionId} --filter "src/**/*.ts"
 \`\`\`
 
 The command prints a preview URL when done — share that URL with the user.
