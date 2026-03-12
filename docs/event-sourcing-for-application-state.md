@@ -13,6 +13,10 @@ your clanker loves state
 
 every time you ask codex to add a feature it will happily add a new field to your class. a new global variable. a new `useState`
 
+LLM coding agents are very good at local fixes and very bad at respecting the total state surface of your app. every bug looks like it wants one more flag. one more cached answer. one more special case.
+
+that is how you end up with a perfectly reasonable-looking codebase that behaves like a boolean landfill.
+
 this is bad. why? your application state is the multiplication of all possible state variable combinations
 
 every boolean global variable you add doubles your final app state. it doubles your bugs. it doubles the coverage of your app. it doubles the tests you need to get to 100% coverage (at least in the worst case scenario)
@@ -69,6 +73,8 @@ function shouldShowFooter(state: ThreadState): boolean {
 
 this is the whole vibe of the bad solution. even after simplifying it, you still end up caching facts that are already present in the assistant message itself. there is an interruption flag. a finished flag. an error flag. a tool-call-only flag. and then there is another function that tries to recombine all of that back into a simple answer like "should I show the footer?"
 
+none of these fields looks insane on its own. that is the trap. every field feels locally justified. globally, though, you are building a machine nobody can hold in their head.
+
 this kind of state machinery is exactly what agents love to build. every fix adds one more field. then another helper. then another branch. then another impossible combination appears.
 
 ## event sourcing
@@ -76,6 +82,8 @@ this kind of state machinery is exactly what agents love to build. every fix add
 event sourcing is what will save you from agent state explosion
 
 I removed all the state added by clankers. converted everything to use event sourcing
+
+the important shift is this: stop storing conclusions and store evidence instead. if the footer depends on what the assistant actually did, keep the assistant events and derive the answer from them.
 
 here is the example from before using the event sourcing approach:
 
@@ -120,7 +128,11 @@ function shouldShowFooter(events: SessionEvent[]): boolean {
 }
 ```
 
+notice what disappeared. no interruption flag. no finished flag. no special footer state. no extra state machine just to explain another state machine. you keep the raw thing that happened, then compute the answer when needed.
+
 this increased stability, testability, and correctness by 10x.
+
+also, this style is much easier for models to work with. the fix surface becomes obvious: either the events are wrong, or the pure function is wrong. there are far fewer haunted in-between states.
 
 I also added a command `kimaki session export-events-jsonl <id>` that lets you export the opencode events for a session
 
@@ -153,6 +165,8 @@ test('footer is hidden for aborted runs', () => {
 ```
 
 the bug is obvious. the test is simple. the transformation code is pure. it has referential transparency
+
+the reproduction artifact is just data. no mocking Discord. no mocking timers. no begging the runtime to reproduce the exact bad interleaving again. just events in, answer out.
 
 any model is able to one-shot these problems because the feedback loop is obvious.
 
@@ -206,6 +220,8 @@ now this state is accessible by the full class methods. next time codex could se
 
 you also now need to care about destroying the `setTimeout`
 
+again, none of this is catastrophic. it is just a bad trade. you took a tiny implementation detail and promoted it into application state.
+
 a better approach is to encapsulate this state in a closure. a generic debounce function
 
 only this function has access to this state. there is no other consumer that can write to this state
@@ -239,6 +255,8 @@ function createDebouncedAction(callback: () => void, delayMs = 300) {
 
 this prevents an explosion of states in your app.
 
+the timer still exists, but now it is trapped in a tiny box. that is the next best thing after deleting state entirely.
+
 so if a global variable has the potential of doubling your app state, this function has none. it can only double the states of this encapsulated function. given it's so small we don't care about it. spotting a bug inside it is easy for you and agents
 
 ## easy persistency
@@ -252,3 +270,5 @@ if a user has a bug, you just get that event stream, run your pure transformatio
 if a user manages to create a broken state of your app and you persist that, the user would be screwed. the project would be gone. if the user tries to open the project it would crash the app. this happens a lot with things like video editors and complex apps. some projects are simply gone. broken forever. to fix the user project you would need to create migration code that fixes the state. which is tedious.
 
 if instead you store the event stream directly you can fix the state transformation functions, release a new version, the user opens the project, and it will just start working again. what matters is making events immutable and versioned. type-safe. so your transformation functions are guaranteed to process those events, even from older app versions, and return a valid working state.
+
+that is the real payoff. state is cached conclusions. events are stored evidence. evidence ages much better.
