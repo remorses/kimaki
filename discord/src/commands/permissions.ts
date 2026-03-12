@@ -70,6 +70,7 @@ type PendingPermissionContext = {
   permissionDirectory: string
   thread: ThreadChannel
   contextHash: string
+  messageId?: string
 }
 
 // Store pending permission contexts by hash.
@@ -189,9 +190,105 @@ export async function showPermissionButtons({
     flags: NOTIFY_MESSAGE_FLAGS | MessageFlags.SuppressEmbeds,
   })
 
+  context.messageId = permissionMessage.id
+
   logger.log(`Showed permission buttons for ${permission.id}`)
 
   return { messageId: permissionMessage.id, contextHash }
+}
+
+function updatePermissionMessage({
+  context,
+  status,
+}: {
+  context: PendingPermissionContext
+  status: string
+}): void {
+  if (!context.messageId) {
+    return
+  }
+  context.thread.messages
+    .fetch(context.messageId)
+    .then((message) => {
+      const patternStr = compactPermissionPatterns(context.permission.patterns).join(', ')
+      const externalDirLine =
+        context.permission.permission === 'external_directory'
+          ? 'Agent is accessing files outside the project. [Learn more](https://opencode.ai/docs/permissions/#external-directories)\n'
+          : ''
+      return message.edit({
+        content:
+          `⚠️ **Permission Required**\n` +
+          `**Type:** \`${context.permission.permission}\`\n` +
+          externalDirLine +
+          (patternStr ? `**Pattern:** \`${patternStr}\`\n` : '') +
+          status,
+        components: [],
+      })
+    })
+    .catch((error) => {
+      logger.error('Failed to update permission message:', error)
+    })
+}
+
+export async function cancelPendingPermission(threadId: string): Promise<boolean> {
+  const contexts = Array.from(pendingPermissionContexts.values()).filter((context) => {
+    return context.thread.id === threadId
+  })
+
+  if (contexts.length === 0) {
+    return false
+  }
+
+  let cancelledCount = 0
+  for (const context of contexts) {
+    const pendingContext = takePendingPermissionContext(context.contextHash)
+    if (!pendingContext) {
+      continue
+    }
+
+    const client = getOpencodeClient(pendingContext.directory)
+    if (!client) {
+      pendingPermissionContexts.set(pendingContext.contextHash, pendingContext)
+      logger.error('Failed to dismiss pending permission: OpenCode server not found')
+      continue
+    }
+
+    const requestIds = pendingContext.requestIds.length > 0
+      ? pendingContext.requestIds
+      : [pendingContext.permission.id]
+
+    const result = await Promise.all(
+      requestIds.map((requestId) => {
+        return client.permission.reply({
+          requestID: requestId,
+          directory: pendingContext.permissionDirectory,
+          reply: 'reject',
+        })
+      }),
+    ).then(() => {
+      return 'ok' as const
+    }).catch((error) => {
+      pendingPermissionContexts.set(pendingContext.contextHash, pendingContext)
+      logger.error('Failed to dismiss pending permission:', error)
+      return 'error' as const
+    })
+
+    if (result === 'error') {
+      continue
+    }
+
+    updatePermissionMessage({
+      context: pendingContext,
+      status: '_Permission dismissed - user sent a new message._',
+    })
+    cancelledCount++
+  }
+
+  if (cancelledCount > 0) {
+    logger.log(`Dismissed ${cancelledCount} pending permission request(s) for thread ${threadId}`)
+  }
+
+  return cancelledCount > 0
 }
 
 /**
@@ -256,21 +353,9 @@ export async function handlePermissionButton(
       }
     })()
 
-    const patternStr = compactPermissionPatterns(
-      context.permission.patterns,
-    ).join(', ')
-    const externalDirLine =
-      context.permission.permission === 'external_directory'
-        ? `Agent is accessing files outside the project. [Learn more](https://opencode.ai/docs/permissions/#external-directories)\n`
-        : ''
-    await interaction.editReply({
-      content:
-        `⚠️ **Permission Required**\n` +
-        `**Type:** \`${context.permission.permission}\`\n` +
-        externalDirLine +
-        (patternStr ? `**Pattern:** \`${patternStr}\`\n` : '') +
-        resultText,
-      components: [], // Remove the buttons
+    updatePermissionMessage({
+      context,
+      status: resultText,
     })
 
     logger.log(

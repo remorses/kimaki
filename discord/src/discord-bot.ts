@@ -47,6 +47,7 @@ import {
 import { cancelPendingActionButtons } from './commands/action-buttons.js'
 import { cancelPendingQuestion, type CancelQuestionResult } from './commands/ask-question.js'
 import { cancelPendingFileUpload } from './commands/file-upload.js'
+import { cancelPendingPermission } from './commands/permissions.js'
 import { cancelHtmlActionsForThread } from './html-actions.js'
 import {
   ensureKimakiCategory,
@@ -495,20 +496,6 @@ export async function startDiscordBot({
         const thread = channel as ThreadChannel
         discordLogger.log(`Message in thread ${thread.name} (${thread.id})`)
 
-        // Cancel interactive UI when a real user sends a message.
-        // If a question was pending and answered with the user's text,
-        // early-return: the message was consumed as the question answer
-        // and must NOT also be sent as a new prompt (causes abort loops).
-        if (!message.author.bot && !isCliInjectedPrompt) {
-          cancelPendingActionButtons(thread.id)
-          cancelHtmlActionsForThread(thread.id)
-          const questionResult = await cancelPendingQuestion(thread.id, message.content)
-          void cancelPendingFileUpload(thread.id)
-          if (questionResult === 'replied') {
-            return
-          }
-        }
-
         const parent = thread.parent as TextChannel | null
         let projectDirectory: string | undefined
         if (parent) {
@@ -602,6 +589,24 @@ export async function startDiscordBot({
           channelId: parent?.id || undefined,
           appId: currentAppId,
         })
+
+        // Cancel interactive UI when a real user sends a message.
+        // If a question was pending and answered with the user's text,
+        // early-return: the message was consumed as the question answer
+        // and must NOT also be sent as a new prompt (causes abort loops).
+        if (!message.author.bot && !isCliInjectedPrompt) {
+          cancelPendingActionButtons(thread.id)
+          cancelHtmlActionsForThread(thread.id)
+          const dismissedPermission = await cancelPendingPermission(thread.id)
+          if (dismissedPermission) {
+            runtime.abortActiveRun('user sent a new message while permission was pending')
+          }
+          const questionResult = await cancelPendingQuestion(thread.id, message.content)
+          void cancelPendingFileUpload(thread.id)
+          if (questionResult === 'replied') {
+            return
+          }
+        }
 
         // Expensive pre-processing (voice transcription, context fetch,
         // attachment download) runs inside the runtime's serialized

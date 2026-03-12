@@ -7,6 +7,7 @@ import {
 } from './queue-advanced-e2e-setup.js'
 import {
   waitForBotMessageContaining,
+  waitForBotReplyAfterUserMessage,
   waitForFooterMessage,
 } from './test-utils.js'
 import { pendingPermissions } from './session-handler/thread-session-runtime.js'
@@ -132,10 +133,100 @@ describe('queue advanced: typing around permissions', () => {
         ⬥ requesting external read permission
         [user clicks button]
         [bot typing]
-        [bot typing]
         ⬥ permission-flow-done
         [bot typing]
         [bot typing]
+        *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2*"
+      `)
+    },
+    20_000,
+  )
+
+  test(
+    'manual thread message dismisses pending permission and sends the new prompt',
+    async () => {
+      const initialPrompt = 'PERMISSION_TYPING_MARKER dismiss-flow'
+
+      await ctx.discord.channel(TEXT_CHANNEL_ID).user(TEST_USER_ID).sendMessage({
+        content: initialPrompt,
+      })
+
+      const thread = await ctx.discord.channel(TEXT_CHANNEL_ID).waitForThread({
+        timeout: 4_000,
+        predicate: (t) => {
+          return t.name === initialPrompt
+        },
+      })
+
+      const th = ctx.discord.thread(thread.id)
+
+      await waitForPendingPermission({
+        threadId: thread.id,
+        timeoutMs: 4_000,
+      })
+
+      await waitForBotMessageContaining({
+        discord: ctx.discord,
+        threadId: thread.id,
+        userId: TEST_USER_ID,
+        text: 'Permission Required',
+        timeout: 4_000,
+      })
+
+      await th.user(TEST_USER_ID).sendMessage({
+        content: 'Reply with exactly: post-permission-user-message',
+      })
+
+      await waitForBotMessageContaining({
+        discord: ctx.discord,
+        threadId: thread.id,
+        text: 'Permission dismissed - user sent a new message.',
+        timeout: 4_000,
+      })
+
+      await waitForBotReplyAfterUserMessage({
+        discord: ctx.discord,
+        threadId: thread.id,
+        userId: TEST_USER_ID,
+        userMessageIncludes: 'post-permission-user-message',
+        timeout: 4_000,
+      })
+
+      await waitForBotMessageContaining({
+        discord: ctx.discord,
+        threadId: thread.id,
+        userId: TEST_USER_ID,
+        text: 'ok',
+        afterUserMessageIncludes: 'post-permission-user-message',
+        timeout: 4_000,
+      })
+
+      await waitForFooterMessage({
+        discord: ctx.discord,
+        threadId: thread.id,
+        timeout: 4_000,
+        afterMessageIncludes: 'ok',
+        afterAuthorId: ctx.discord.botUserId,
+      })
+
+      const timeline = await th.text({ showInteractions: true })
+      const normalizedTimeline = timeline.replace(
+        '⬥ requesting external read permission\n',
+        '',
+      )
+      expect(normalizedTimeline).toMatchInlineSnapshot(`
+        "--- from: user (queue-permission-tester)
+        PERMISSION_TYPING_MARKER dismiss-flow
+        --- from: assistant (TestBot)
+        ⚠️ **Permission Required**
+        **Type:** \`external_directory\`
+        Agent is accessing files outside the project. [Learn more](https://opencode.ai/docs/permissions/#external-directories)
+        **Pattern:** \`/Users/morse/*\`
+        _Permission dismissed - user sent a new message._
+        --- from: user (queue-permission-tester)
+        Reply with exactly: post-permission-user-message
+        --- from: assistant (TestBot)
+        ⬥ ok
         *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2*"
       `)
     },
