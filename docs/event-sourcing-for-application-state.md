@@ -13,15 +13,19 @@ your clanker loves state
 
 every time you ask codex to add a feature it will happily add a new field to your class. a new global variable. a new `useState`
 
+this post has one simple thesis: coding agents overproduce state, and event sourcing is one of the best ways to stop them.
+
 LLM coding agents are very good at local fixes and very bad at respecting the total state surface of your app. every bug looks like it wants one more flag. one more cached answer. one more special case.
 
 that is how you end up with a perfectly reasonable-looking codebase that behaves like a boolean landfill.
 
-this is bad. why? your application state is the multiplication of all possible state variable combinations
+this is bad. why? because every new field expands the state space of the app.
 
 every boolean global variable you add doubles your final app state. it doubles your bugs. it doubles the coverage of your app. it doubles the tests you need to get to 100% coverage (at least in the worst case scenario)
 
 here is a real-world example: I asked codex to make kimaki (a discord bot) show the footer only when the bot was not interrupted. here is his idea
+
+to answer one yes/no UI question, the agent starts mirroring facts into state.
 
 ```ts
 type ThreadState = {
@@ -83,6 +87,8 @@ event sourcing is what will save you from agent state explosion
 
 I removed all the state added by clankers. converted everything to use event sourcing
 
+the fix was not a better set of flags. the fix was deleting the flags.
+
 the important shift is this: stop storing conclusions and store evidence instead. if the footer depends on what the assistant actually did, keep the assistant events and derive the answer from them.
 
 here is the example from before using the event sourcing approach:
@@ -134,6 +140,8 @@ this increased stability, testability, and correctness by 10x.
 
 also, this style is much easier for models to work with. the fix surface becomes obvious: either the events are wrong, or the pure function is wrong. there are far fewer haunted in-between states.
 
+## debugging with event streams
+
 I also added a command `kimaki session export-events-jsonl <id>` that lets you export the opencode events for a session
 
 now every time I find a bug in kimaki in Discord I tell kimaki "export opencode events from session xxx, create a failing test, then fix it".
@@ -173,6 +181,8 @@ any model is able to one-shot these problems because the feedback loop is obviou
 ## state encapsulation
 
 the next best thing after no state is state you don't care about: encapsulated state
+
+not everything needs event sourcing. the second-best option is state you successfully hide.
 
 a good example of this is React `useState`. `useState` cannot escape the component it is declared in.
 
@@ -272,3 +282,5 @@ if a user manages to create a broken state of your app and you persist that, the
 if instead you store the event stream directly you can fix the state transformation functions, release a new version, the user opens the project, and it will just start working again. what matters is making events immutable and versioned. type-safe. so your transformation functions are guaranteed to process those events, even from older app versions, and return a valid working state.
 
 that is the real payoff. state is cached conclusions. events are stored evidence. evidence ages much better.
+
+if you can derive it, don't store it.
