@@ -846,6 +846,24 @@ export function buildSessionPermissions({
     { permission: 'external_directory', pattern: `${kimakiDataDir}/*`, action: 'allow' },
   )
 
+  // Allow opencode tool output artifacts under XDG data so agents can inspect
+  // prior tool outputs without interactive permission prompts.
+  const opencodeToolOutputDir = path
+    .join(os.homedir(), '.local', 'share', 'opencode', 'tool-output')
+    .replaceAll('\\', '/')
+  rules.push(
+    {
+      permission: 'external_directory',
+      pattern: opencodeToolOutputDir,
+      action: 'allow',
+    },
+    {
+      permission: 'external_directory',
+      pattern: `${opencodeToolOutputDir}/*`,
+      action: 'allow',
+    },
+  )
+
   // For worktrees: allow access to the original repository directory
   if (originalRepo) {
     rules.push(
