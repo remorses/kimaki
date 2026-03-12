@@ -1,4 +1,4 @@
-// Native N-API module for usecomputer commands on macOS using Zig.
+// Native N-API module for usecomputer desktop automation commands.
 // Exports direct typed methods (no string command dispatcher) so TS can call
 // high-level native functions and receive structured error objects.
 
@@ -20,7 +20,9 @@ const c_windows = if (builtin.target.os.tag == .windows) @cImport({
 const c_x11 = if (builtin.target.os.tag == .linux) @cImport({
     @cInclude("X11/Xlib.h");
     @cInclude("X11/keysym.h");
+    @cInclude("X11/extensions/XShm.h");
     @cInclude("X11/extensions/XTest.h");
+    @cInclude("png.h");
 }) else struct {};
 
 const c = c_macos;
@@ -247,14 +249,30 @@ const ScreenshotOutput = struct {
     imageHeight: f64,
 };
 
-const SelectedDisplay = struct {
+const SelectedDisplay = if (builtin.target.os.tag == .macos) struct {
     id: c.CGDirectDisplayID,
     index: usize,
     bounds: c.CGRect,
+} else struct {
+    id: u32,
+    index: usize,
+    bounds: struct {
+        x: f64,
+        y: f64,
+        width: f64,
+        height: f64,
+    },
 };
 
-const ScreenshotCapture = struct {
+const ScreenshotCapture = if (builtin.target.os.tag == .macos) struct {
     image: c.CGImageRef,
+    capture_x: f64,
+    capture_y: f64,
+    capture_width: f64,
+    capture_height: f64,
+    desktop_index: usize,
+} else struct {
+    image: RawRgbaImage,
     capture_x: f64,
     capture_y: f64,
     capture_width: f64,
@@ -262,10 +280,20 @@ const ScreenshotCapture = struct {
     desktop_index: usize,
 };
 
-const ScaledScreenshotImage = struct {
+const ScaledScreenshotImage = if (builtin.target.os.tag == .macos) struct {
     image: c.CGImageRef,
     width: f64,
     height: f64,
+} else struct {
+    image: RawRgbaImage,
+    width: f64,
+    height: f64,
+};
+
+const RawRgbaImage = struct {
+    pixels: []u8,
+    width: usize,
+    height: usize,
 };
 
 const TypeTextInput = struct {
@@ -290,12 +318,49 @@ const ClipboardSetInput = struct {
 };
 
 pub fn screenshot(input: ScreenshotInput) DataResult(ScreenshotOutput) {
-    if (builtin.target.os.tag != .macos) {
-        return failData(ScreenshotOutput, "screenshot", "UNSUPPORTED_PLATFORM", "screenshot is only supported on macOS");
-    }
-
     _ = input.annotate;
     const output_path = input.path orelse "./screenshot.png";
+
+    if (builtin.target.os.tag == .linux) {
+        if (input.window != null) {
+            return failData(ScreenshotOutput, "screenshot", "UNSUPPORTED_INPUT", "window screenshots are not supported on Linux yet");
+        }
+
+        const capture = createLinuxScreenshotImage(.{
+            .display_index = input.display,
+            .region = input.region,
+        }) catch |err| {
+            return failData(ScreenshotOutput, "screenshot", linuxScreenshotErrorCode(err), linuxScreenshotErrorMessage(err));
+        };
+        defer std.heap.c_allocator.free(capture.image.pixels);
+
+        const scaled_image = scaleLinuxScreenshotImageIfNeeded(capture.image) catch {
+            return failData(ScreenshotOutput, "screenshot", "SCALE_FAILED", "failed to scale screenshot image");
+        };
+        defer std.heap.c_allocator.free(scaled_image.image.pixels);
+
+        writeLinuxScreenshotPng(.{
+            .image = scaled_image.image,
+            .output_path = output_path,
+        }) catch {
+            return failData(ScreenshotOutput, "screenshot", "WRITE_FAILED", "failed to write screenshot file");
+        };
+
+        return okData(ScreenshotOutput, .{
+            .path = output_path,
+            .desktopIndex = @as(f64, @floatFromInt(capture.desktop_index)),
+            .captureX = capture.capture_x,
+            .captureY = capture.capture_y,
+            .captureWidth = capture.capture_width,
+            .captureHeight = capture.capture_height,
+            .imageWidth = scaled_image.width,
+            .imageHeight = scaled_image.height,
+        });
+    }
+
+    if (builtin.target.os.tag != .macos) {
+        return failData(ScreenshotOutput, "screenshot", "UNSUPPORTED_PLATFORM", "screenshot is only supported on macOS and Linux X11");
+    }
 
     const capture = createScreenshotImage(.{
         .display_index = input.display,
@@ -328,6 +393,281 @@ pub fn screenshot(input: ScreenshotInput) DataResult(ScreenshotOutput) {
         .imageWidth = scaled_image.width,
         .imageHeight = scaled_image.height,
     });
+}
+
+fn linuxScreenshotErrorCode(err: anyerror) []const u8 {
+    return switch (err) {
+        error.InvalidDisplayIndex, error.InvalidRegion, error.RegionOutOfBounds => "INVALID_INPUT",
+        error.DisplayOpenFailed, error.MissingDisplayEnv, error.NoScreens, error.XShmUnavailable => "X11_UNAVAILABLE",
+        error.CaptureFailed, error.ImageCreateFailed, error.ShmGetFailed, error.ShmAttachFailed, error.ShmAllocFailed => "CAPTURE_FAILED",
+        else => "CAPTURE_FAILED",
+    };
+}
+
+fn linuxScreenshotErrorMessage(err: anyerror) []const u8 {
+    return switch (err) {
+        error.InvalidDisplayIndex => "Linux screenshots currently support only display 0",
+        error.InvalidRegion => "invalid screenshot region",
+        error.RegionOutOfBounds => "screenshot region is outside the X11 root window bounds",
+        error.MissingDisplayEnv => "DISPLAY is not set; Linux screenshots require an X11 session",
+        error.DisplayOpenFailed => "failed to open X11 display",
+        error.NoScreens => "X11 display has no screens",
+        error.XShmUnavailable => "X11 shared memory extension is unavailable",
+        error.ImageCreateFailed, error.ShmAllocFailed, error.ShmAttachFailed, error.ShmGetFailed, error.CaptureFailed => "failed to capture screenshot image",
+        else => "failed to capture screenshot image",
+    };
+}
+
+fn createLinuxScreenshotImage(input: struct {
+    display_index: ?f64,
+    region: ?ScreenshotRegion,
+}) !ScreenshotCapture {
+    if (builtin.target.os.tag != .linux) {
+        return error.UnsupportedPlatform;
+    }
+    if (input.display_index) |value| {
+        const normalized = @as(i64, @intFromFloat(std.math.round(value)));
+        if (normalized != 0) {
+            return error.InvalidDisplayIndex;
+        }
+    }
+    if (std.posix.getenv("DISPLAY") == null) {
+        return error.MissingDisplayEnv;
+    }
+
+    const display = c_x11.XOpenDisplay(null) orelse return error.DisplayOpenFailed;
+    defer _ = c_x11.XCloseDisplay(display);
+
+    const screen_index = c_x11.XDefaultScreen(display);
+    if (screen_index < 0) {
+        return error.NoScreens;
+    }
+    if (c_x11.XShmQueryExtension(display) == 0) {
+        return error.XShmUnavailable;
+    }
+
+    const root = c_x11.XRootWindow(display, screen_index);
+    const screen_width_i = c_x11.XDisplayWidth(display, screen_index);
+    const screen_height_i = c_x11.XDisplayHeight(display, screen_index);
+    if (screen_width_i <= 0 or screen_height_i <= 0) {
+        return error.CaptureFailed;
+    }
+
+    const screen_width = @as(usize, @intCast(screen_width_i));
+    const screen_height = @as(usize, @intCast(screen_height_i));
+    const capture_rect = try resolveLinuxCaptureRect(.{
+        .screen_width = screen_width,
+        .screen_height = screen_height,
+        .region = input.region,
+    });
+
+    const visual = c_x11.XDefaultVisual(display, screen_index);
+    const depth = @as(c_uint, @intCast(c_x11.XDefaultDepth(display, screen_index)));
+    var shm_info: c_x11.XShmSegmentInfo = undefined;
+    shm_info.shmid = -1;
+    shm_info.shmaddr = null;
+    shm_info.readOnly = 0;
+
+    const image = c_x11.XShmCreateImage(
+        display,
+        visual,
+        depth,
+        c_x11.ZPixmap,
+        null,
+        &shm_info,
+        @as(c_uint, @intCast(capture_rect.width)),
+        @as(c_uint, @intCast(capture_rect.height)),
+    ) orelse return error.ImageCreateFailed;
+    defer _ = c_x11.XDestroyImage(image);
+
+    const bytes_per_image = @as(usize, @intCast(image.*.bytes_per_line)) * capture_rect.height;
+    const shmget_result = c_x11.shmget(c_x11.IPC_PRIVATE, bytes_per_image, c_x11.IPC_CREAT | 0o600);
+    if (shmget_result < 0) {
+        return error.ShmAllocFailed;
+    }
+    shm_info.shmid = shmget_result;
+    defer _ = c_x11.shmctl(shm_info.shmid, c_x11.IPC_RMID, null);
+
+    const shmaddr = c_x11.shmat(shm_info.shmid, null, 0);
+    if (@intFromPtr(shmaddr) == std.math.maxInt(usize)) {
+        return error.ShmAllocFailed;
+    }
+    shm_info.shmaddr = @ptrCast(shmaddr);
+    image.*.data = shm_info.shmaddr;
+    defer _ = c_x11.shmdt(shmaddr);
+
+    if (c_x11.XShmAttach(display, &shm_info) == 0) {
+        return error.ShmAttachFailed;
+    }
+    defer _ = c_x11.XShmDetach(display, &shm_info);
+
+    _ = c_x11.XSync(display, 0);
+
+    if (c_x11.XShmGetImage(
+        display,
+        root,
+        image,
+        @as(c_int, @intCast(capture_rect.x)),
+        @as(c_int, @intCast(capture_rect.y)),
+        c_x11.AllPlanes,
+    ) == 0) {
+        return error.ShmGetFailed;
+    }
+
+    const rgba = try convertX11ImageToRgba(image, capture_rect.width, capture_rect.height);
+    return .{
+        .image = rgba,
+        .capture_x = @floatFromInt(capture_rect.x),
+        .capture_y = @floatFromInt(capture_rect.y),
+        .capture_width = @floatFromInt(capture_rect.width),
+        .capture_height = @floatFromInt(capture_rect.height),
+        .desktop_index = 0,
+    };
+}
+
+fn resolveLinuxCaptureRect(input: struct {
+    screen_width: usize,
+    screen_height: usize,
+    region: ?ScreenshotRegion,
+}) !struct {
+    x: usize,
+    y: usize,
+    width: usize,
+    height: usize,
+} {
+    if (input.region) |region| {
+        const x = @as(i64, @intFromFloat(std.math.round(region.x)));
+        const y = @as(i64, @intFromFloat(std.math.round(region.y)));
+        const width = @as(i64, @intFromFloat(std.math.round(region.width)));
+        const height = @as(i64, @intFromFloat(std.math.round(region.height)));
+        if (x < 0 or y < 0 or width <= 0 or height <= 0) {
+            return error.InvalidRegion;
+        }
+        const max_x = x + width;
+        const max_y = y + height;
+        if (max_x > input.screen_width or max_y > input.screen_height) {
+            return error.RegionOutOfBounds;
+        }
+        return .{
+            .x = @as(usize, @intCast(x)),
+            .y = @as(usize, @intCast(y)),
+            .width = @as(usize, @intCast(width)),
+            .height = @as(usize, @intCast(height)),
+        };
+    }
+
+    return .{
+        .x = 0,
+        .y = 0,
+        .width = input.screen_width,
+        .height = input.screen_height,
+    };
+}
+
+fn convertX11ImageToRgba(image: *c_x11.XImage, width: usize, height: usize) !RawRgbaImage {
+    const pixels = try std.heap.c_allocator.alloc(u8, width * height * 4);
+    errdefer std.heap.c_allocator.free(pixels);
+
+    var y: usize = 0;
+    while (y < height) : (y += 1) {
+        var x: usize = 0;
+        while (x < width) : (x += 1) {
+            const pixel = c_x11.XGetPixel(image, @as(c_int, @intCast(x)), @as(c_int, @intCast(y)));
+            const red = normalizeX11Channel(.{ .pixel = pixel, .mask = image.*.red_mask });
+            const green = normalizeX11Channel(.{ .pixel = pixel, .mask = image.*.green_mask });
+            const blue = normalizeX11Channel(.{ .pixel = pixel, .mask = image.*.blue_mask });
+            const offset = (y * width + x) * 4;
+            pixels[offset] = red;
+            pixels[offset + 1] = green;
+            pixels[offset + 2] = blue;
+            pixels[offset + 3] = 255;
+        }
+    }
+
+    return .{ .pixels = pixels, .width = width, .height = height };
+}
+
+fn normalizeX11Channel(input: struct {
+    pixel: c_ulong,
+    mask: c_ulong,
+}) u8 {
+    if (input.mask == 0) {
+        return 0;
+    }
+    const shift = @ctz(input.mask);
+    const bits = @popCount(input.mask);
+    const raw = (input.pixel & input.mask) >> shift;
+    const max_value = (@as(u64, 1) << @intCast(bits)) - 1;
+    if (max_value == 0) {
+        return 0;
+    }
+    return @as(u8, @intCast((raw * 255) / max_value));
+}
+
+fn scaleLinuxScreenshotImageIfNeeded(image: RawRgbaImage) !ScaledScreenshotImage {
+    const image_width = @as(f64, @floatFromInt(image.width));
+    const image_height = @as(f64, @floatFromInt(image.height));
+    const long_edge = @max(image_width, image_height);
+    if (long_edge <= screenshot_max_long_edge_px) {
+        const copy = try std.heap.c_allocator.dupe(u8, image.pixels);
+        return .{
+            .image = .{ .pixels = copy, .width = image.width, .height = image.height },
+            .width = image_width,
+            .height = image_height,
+        };
+    }
+
+    const scale = screenshot_max_long_edge_px / long_edge;
+    const target_width = @max(1, @as(usize, @intFromFloat(std.math.round(image_width * scale))));
+    const target_height = @max(1, @as(usize, @intFromFloat(std.math.round(image_height * scale))));
+    const scaled_pixels = try std.heap.c_allocator.alloc(u8, target_width * target_height * 4);
+    errdefer std.heap.c_allocator.free(scaled_pixels);
+
+    var y: usize = 0;
+    while (y < target_height) : (y += 1) {
+        const source_y = @min(image.height - 1, @as(usize, @intFromFloat((@as(f64, @floatFromInt(y)) * image_height) / @as(f64, @floatFromInt(target_height)))));
+        var x: usize = 0;
+        while (x < target_width) : (x += 1) {
+            const source_x = @min(image.width - 1, @as(usize, @intFromFloat((@as(f64, @floatFromInt(x)) * image_width) / @as(f64, @floatFromInt(target_width)))));
+            const source_offset = (source_y * image.width + source_x) * 4;
+            const target_offset = (y * target_width + x) * 4;
+            @memcpy(scaled_pixels[target_offset .. target_offset + 4], image.pixels[source_offset .. source_offset + 4]);
+        }
+    }
+
+    return .{
+        .image = .{ .pixels = scaled_pixels, .width = target_width, .height = target_height },
+        .width = @floatFromInt(target_width),
+        .height = @floatFromInt(target_height),
+    };
+}
+
+fn writeLinuxScreenshotPng(input: struct {
+    image: RawRgbaImage,
+    output_path: []const u8,
+}) !void {
+    var png: c_x11.png_image = std.mem.zeroes(c_x11.png_image);
+    png.version = c_x11.PNG_IMAGE_VERSION;
+    png.width = @as(c_x11.png_uint_32, @intCast(input.image.width));
+    png.height = @as(c_x11.png_uint_32, @intCast(input.image.height));
+    png.format = c_x11.PNG_FORMAT_RGBA;
+
+    const output_path_z = try std.heap.c_allocator.dupeZ(u8, input.output_path);
+    defer std.heap.c_allocator.free(output_path_z);
+
+    const write_result = c_x11.png_image_write_to_file(
+        &png,
+        output_path_z.ptr,
+        0,
+        input.image.pixels.ptr,
+        @as(c_int, @intCast(input.image.width * 4)),
+        null,
+    );
+    if (write_result == 0) {
+        c_x11.png_image_free(&png);
+        return error.PngWriteFailed;
+    }
+    c_x11.png_image_free(&png);
 }
 
 pub fn click(input: ClickInput) CommandResult {

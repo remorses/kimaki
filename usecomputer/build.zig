@@ -8,6 +8,7 @@ const LIB_NAME = "usecomputer";
 pub fn build(b: *std.Build) void {
     const target = b.standardTargetOptions(.{});
     const optimize = b.standardOptimizeOption(.{});
+    const target_os = target.result.os.tag;
 
     const lib_mod = b.createModule(.{
         .root_source_file = b.path("zig/src/lib.zig"),
@@ -15,10 +16,12 @@ pub fn build(b: *std.Build) void {
         .optimize = optimize,
     });
     lib_mod.addImport("napigen", b.dependency("napigen", .{}).module("napigen"));
-    lib_mod.addImport("objc", b.dependency("zig_objc", .{
-        .target = target,
-        .optimize = optimize,
-    }).module("objc"));
+    if (target_os == .macos) {
+        lib_mod.addImport("objc", b.dependency("zig_objc", .{
+            .target = target,
+            .optimize = optimize,
+        }).module("objc"));
+    }
 
     const lib = b.addLibrary(.{
         .name = LIB_NAME,
@@ -26,10 +29,19 @@ pub fn build(b: *std.Build) void {
         .linkage = .dynamic,
     });
 
-    if (target.result.os.tag == .macos) {
+    if (target_os == .macos) {
         lib.root_module.linkFramework("CoreGraphics", .{});
         lib.root_module.linkFramework("CoreFoundation", .{});
         lib.root_module.linkFramework("ImageIO", .{});
+    }
+    if (target_os == .linux) {
+        lib.root_module.linkSystemLibrary("X11", .{});
+        lib.root_module.linkSystemLibrary("Xext", .{});
+        lib.root_module.linkSystemLibrary("Xtst", .{});
+        lib.root_module.linkSystemLibrary("png", .{});
+    }
+    if (target_os == .windows) {
+        lib.root_module.linkSystemLibrary("user32", .{});
     }
 
     napigen.setup(lib);
@@ -48,6 +60,12 @@ pub fn build(b: *std.Build) void {
     const test_exe = b.addTest(.{
         .root_module = test_mod,
     });
+    if (target_os == .linux) {
+        test_exe.root_module.linkSystemLibrary("X11", .{});
+        test_exe.root_module.linkSystemLibrary("Xext", .{});
+        test_exe.root_module.linkSystemLibrary("Xtst", .{});
+        test_exe.root_module.linkSystemLibrary("png", .{});
+    }
     const run_test = b.addRunArtifact(test_exe);
     test_step.dependOn(&run_test.step);
 }

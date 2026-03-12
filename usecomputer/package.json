@@ -1,6 +1,6 @@
 {
   "name": "usecomputer",
-  "version": "0.0.3",
+  "version": "0.0.4",
   "type": "module",
   "description": "Fast computer automation CLI for AI agents. Control any desktop with accessibility snapshots, clicks, typing, scrolling, and more.",
   "bin": "./bin.js",
@@ -72,7 +72,8 @@
     "url": "https://github.com/remorses/kimaki/issues"
   },
   "os": [
-    "darwin"
+    "darwin",
+    "linux"
   ],
   "dependencies": {
     "goke": "^6.3.0",
