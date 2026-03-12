@@ -122,6 +122,23 @@ critique review --web --agent opencode --session <session_id> --filter "src/**/*
 
 The command prints a preview URL when done — share that URL with the user.
 
+## Raw patch access
+
+Every `--web` upload also stores the raw unified diff. Append `.patch` to any critique URL to get it:
+
+```bash
+# View the raw patch
+curl https://critique.work/v/<id>.patch
+
+# Apply the patch to current repo
+curl -s https://critique.work/v/<id>.patch | git apply
+
+# Reverse the patch (undo the changes)
+curl -s https://critique.work/v/<id>.patch | git apply --reverse
+```
+
+Useful when an agent shares a critique URL and you want to programmatically apply or revert those changes.
+
 ## Notes
 
 - Requires **Bun** — use `bunx critique` or global `critique`

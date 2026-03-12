@@ -28,6 +28,7 @@ const SKILL_SOURCES: string[] = [
   'https://github.com/remorses/zele',
   'https://github.com/remorses/critique',
   'https://github.com/remorses/errore',
+  'https://github.com/remorses/egaki',
   'https://github.com/remorses/termcast',
   'https://github.com/remorses/goke',
 ]

@@ -430,6 +430,7 @@ cli
       return
     }
     // Interactive path (humans)
+    // NEVER use hint in clack select options. looks ugly
     const provider = await select({ message: 'Select provider', options: [...] })
     if (isCancel(provider)) { cancel(); process.exit(0) }
     const key = await password({ message: 'Paste API key' })
