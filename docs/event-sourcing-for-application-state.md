@@ -21,13 +21,17 @@ that is how you end up with a perfectly reasonable-looking codebase that behaves
 
 this is bad. why? because every new field expands the state space of the app.
 
-every boolean global variable you add doubles your final app state. it doubles your bugs. it doubles the coverage of your app. it doubles the tests you need to get to 100% coverage (at least in the worst case scenario)
+every boolean global variable you add:
+
+1. doubles your final app state
+2. doubles your bugs
+3. doubles the coverage you need to get to 100% in the worst case
 
 here is a real-world example: I asked codex to make kimaki (a discord bot) show the footer only when the bot was not interrupted. here is his idea
 
 to answer one yes/no UI question, the agent starts mirroring facts into state.
 
-```ts
+```typescript
 type ThreadState = {
   wasInterrupted: boolean
   didAssistantFinish: boolean
@@ -75,7 +79,13 @@ function shouldShowFooter(state: ThreadState): boolean {
 }
 ```
 
-this is the whole vibe of the bad solution. even after simplifying it, you still end up caching facts that are already present in the assistant message itself. there is an interruption flag. a finished flag. an error flag. a tool-call-only flag. and then there is another function that tries to recombine all of that back into a simple answer like "should I show the footer?"
+this is the whole vibe of the bad solution. even after simplifying it, you still end up caching facts that are already present in the assistant message itself.
+
+1. there is an interruption flag
+2. there is a finished flag
+3. there is an error flag
+4. there is a tool-call-only flag
+5. then there is another function that tries to recombine all of that back into a simple answer like "should I show the footer?"
 
 none of these fields looks insane on its own. that is the trap. every field feels locally justified. globally, though, you are building a machine nobody can hold in their head.
 
@@ -93,7 +103,7 @@ the important shift is this: stop storing conclusions and store evidence instead
 
 here is the example from before using the event sourcing approach:
 
-```ts
+```typescript
 type SessionEvent =
   | { type: 'message.updated'; role: 'assistant'; completed: boolean; error: boolean; finish: 'stop' | 'tool-calls' }
 
@@ -124,7 +134,7 @@ function isAssistantMessageNaturalCompletion(message: {
 
 every possible piece of state is now computed as a pure function that takes as input the last 1000 opencode session events
 
-```ts
+```typescript
 function shouldShowFooter(events: SessionEvent[]): boolean {
   const latestAssistantMessage = getLatestAssistantMessage(events)
   if (!latestAssistantMessage) {
@@ -134,7 +144,14 @@ function shouldShowFooter(events: SessionEvent[]): boolean {
 }
 ```
 
-notice what disappeared. no interruption flag. no finished flag. no special footer state. no extra state machine just to explain another state machine. you keep the raw thing that happened, then compute the answer when needed.
+notice what disappeared:
+
+1. no interruption flag
+2. no finished flag
+3. no special footer state
+4. no extra state machine just to explain another state machine
+
+you keep the raw thing that happened, then compute the answer when needed.
 
 this increased stability, testability, and correctness by 10x.
 
@@ -154,7 +171,7 @@ I had to do this, for example, when I discovered there was a new way a session c
 kimaki session export-events-jsonl --session ses_123 --out ./tmp/session.jsonl
 ```
 
-```ts
+```typescript
 import fs from 'node:fs'
 
 function loadEvents(file: string): SessionEvent[] {
@@ -174,7 +191,12 @@ test('footer is hidden for aborted runs', () => {
 
 the bug is obvious. the test is simple. the transformation code is pure. it has referential transparency
 
-the reproduction artifact is just data. no mocking Discord. no mocking timers. no begging the runtime to reproduce the exact bad interleaving again. just events in, answer out.
+the reproduction artifact is just data:
+
+1. no mocking Discord
+2. no mocking timers
+3. no begging the runtime to reproduce the exact bad interleaving again
+4. just events in, answer out
 
 any model is able to one-shot these problems because the feedback loop is obvious.
 
@@ -186,11 +208,9 @@ not everything needs event sourcing. the second-best option is state you success
 
 a good example of this is React `useState`. `useState` cannot escape the component it is declared in.
 
-state can only be written to in event handlers in the component subtree (which is usually small)
-
-state can only be read in the current component
-
-state is local. easy to reason about.
+1. state can only be written to in event handlers in the component subtree (which is usually small)
+2. state can only be read in the current component
+3. state is local. easy to reason about.
 
 this same thing can be done in backend code.
 
@@ -198,7 +218,7 @@ imagine adding a feature to debounce the messages you write in kimaki.
 
 one approach could be to add a timer and `setTimeout` in the class field.
 
-```ts
+```typescript
 class MessageWriter {
   private debounceTimeout: ReturnType<typeof setTimeout> | null = null
 
@@ -236,7 +256,7 @@ a better approach is to encapsulate this state in a closure. a generic debounce 
 
 only this function has access to this state. there is no other consumer that can write to this state
 
-```ts
+```typescript
 function createDebouncedAction(callback: () => void, delayMs = 300) {
   let timeout: ReturnType<typeof setTimeout> | null = null
 
@@ -277,9 +297,10 @@ instead of storing the end state of your app you store the full event stream tha
 
 if a user has a bug, you just get that event stream, run your pure transformation on it, reproduce the bug. fix it
 
-if a user manages to create a broken state of your app and you persist that, the user would be screwed. the project would be gone. if the user tries to open the project it would crash the app. this happens a lot with things like video editors and complex apps. some projects are simply gone. broken forever. to fix the user project you would need to create migration code that fixes the state. which is tedious.
+the persistence trade is basically this:
 
-if instead you store the event stream directly you can fix the state transformation functions, release a new version, the user opens the project, and it will just start working again. what matters is making events immutable and versioned. type-safe. so your transformation functions are guaranteed to process those events, even from older app versions, and return a valid working state.
+1. if a user manages to create a broken state of your app and you persist that, the user would be screwed. the project would be gone. if the user tries to open the project it would crash the app. this happens a lot with things like video editors and complex apps. some projects are simply gone. broken forever. to fix the user project you would need to create migration code that fixes the state. which is tedious.
+2. if instead you store the event stream directly you can fix the state transformation functions, release a new version, the user opens the project, and it will just start working again. what matters is making events immutable and versioned. type-safe. so your transformation functions are guaranteed to process those events, even from older app versions, and return a valid working state.
 
 that is the real payoff. state is cached conclusions. events are stored evidence. evidence ages much better.
 
