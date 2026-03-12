@@ -94,15 +94,26 @@ model Verification {
 // Matches the gateway-proxy's raw SQL schema in db_config.rs.
 // The Rust proxy uses raw SQL (CREATE TABLE IF NOT EXISTS),
 // Prisma manages the same table via db push for the website.
+// Slack bridge also reuses this table: `guild_id` stores Discord guild IDs in
+// Discord mode and Slack team IDs in Slack mode. Website KV cache mirrors
+// selected row fields for short-TTL auth/routing acceleration, but this table
+// remains the canonical source of truth.
 model gateway_clients {
   client_id  String // the kimaki client id. identifies the kimaki user that is connecting to the gateway
   secret     String // the secret, needed to authorize clients that connect to the gateway.
   guild_id   String // the guild the client installed. it is known thanks to the Discord install url state parameter and callback url
+  platform   gateway_client_platform @default(discord)
+  bot_token  String? // Slack installs store the workspace bot token here; Discord rows leave it null.
   created_at DateTime  @default(now()) @db.Timestamptz
   updated_at DateTime? @default(now()) @db.Timestamptz
 
-  user_id String
-  user    User @relation(fields: [user_id], references: [id], onDelete: Cascade)
+  user_id String?
+  user    User? @relation(fields: [user_id], references: [id], onDelete: Cascade)
 
   @@id([client_id, guild_id])
+}
+
+enum gateway_client_platform {
+  discord
+  slack
 }
