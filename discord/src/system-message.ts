@@ -16,42 +16,42 @@ IMPORTANT: When the user asks to see a diff, show a diff, or review changes, ALW
 Typical usage examples:
 
 # Share working tree changes
-bunx critique --web "Describe pending changes"
+critique --web "Describe pending changes"
 
 # Share staged changes
-bunx critique --staged --web "Describe staged changes"
+critique --staged --web "Describe staged changes"
 
 # Share changes since base branch (use when you're on a feature branch)
-bunx critique main --web "Describe branch changes"
+critique main --web "Describe branch changes"
 
 # Share new-branch changes compared to main
-bunx critique main...new-branch --web "Describe branch changes"
+critique main...new-branch --web "Describe branch changes"
 
 # Share a single commit
-bunx critique --commit HEAD --web "Describe latest commit"
+critique --commit HEAD --web "Describe latest commit"
 
 If there are other unrelated changes in the working directory, filter to only show the files you edited:
 
 # Share only specific files
-bunx critique --web "Fix database connection retry" --filter "path/to/file1.ts" --filter "path/to/file2.ts"
+critique --web "Fix database connection retry" --filter "path/to/file1.ts" --filter "path/to/file2.ts"
 
 Do this in case you committed the changes yourself (only if the user asks so, never commit otherwise).
 
 To compare two branches:
 
-bunx critique main feature-branch --web "Compare branches"
+critique main feature-branch --web "Compare branches"
 
 The command outputs a URL - share that URL with the user so they can see the diff.
 
 ### always show diff at end of session
 
-If you edited any files during the current session, you MUST run \`bunx critique --web\` at the end of your final message to generate a diff URL and share it with the user. This applies even if the user did not ask to see a diff — always show what changed. Pass the file paths you edited as \`--filter\` arguments so the diff only includes your changes. Skip this only if the session was purely read-only (no file edits, no writes).
+If you edited any files during the current session, you MUST run \`critique --web\` at the end of your final message to generate a diff URL and share it with the user. This applies even if the user did not ask to see a diff — always show what changed. Pass the file paths you edited as \`--filter\` arguments so the diff only includes your changes. Skip this only if the session was purely read-only (no file edits, no writes).
 The final user-facing message must include the actual critique URL as plain text or markdown link, because the user cannot see the Bash tool output.
 
 Example — if you edited \`src/config.ts\` and \`src/utils.ts\`:
 
 \`\`\`bash
-bunx critique --web "Short title describing the changes" --filter "src/config.ts" --filter "src/utils.ts"
+critique --web "Short title describing the changes" --filter "src/config.ts" --filter "src/utils.ts"
 \`\`\`
 
 The string after \`--web\` becomes the diff page title — make it reflect what the changes do (e.g. "Add retry logic to API client", "Fix auth timeout bug").
@@ -84,22 +84,22 @@ Examples:
 
 \`\`\`bash
 # Review working tree changes
-bunx critique review --web --agent opencode --session ${sessionId}
+critique review --web --agent opencode --session ${sessionId}
 
 # Review staged changes
-bunx critique review --staged --web --agent opencode --session ${sessionId}
+critique review --staged --web --agent opencode --session ${sessionId}
 
 # Review a specific commit
-bunx critique review --commit HEAD --web --agent opencode --session ${sessionId}
+critique review --commit HEAD --web --agent opencode --session ${sessionId}
 
 # Review branch changes compared to main
-bunx critique review main...HEAD --web --agent opencode --session ${sessionId}
+critique review main...HEAD --web --agent opencode --session ${sessionId}
 
 # Review with multiple session contexts (current + the session that made the changes)
-bunx critique review --commit abc1234 --web --agent opencode --session ${sessionId} --session ses_other_session_id
+critique review --commit abc1234 --web --agent opencode --session ${sessionId} --session ses_other_session_id
 
 # Review only specific files
-bunx critique review --web --agent opencode --session ${sessionId} --filter "src/**/*.ts"
+critique review --web --agent opencode --session ${sessionId} --filter "src/**/*.ts"
 \`\`\`
 
 The command prints a preview URL when done — share that URL with the user.
@@ -109,7 +109,7 @@ The command prints a preview URL when done — share that URL with the user.
 const KIMAKI_TUNNEL_INSTRUCTIONS = `
 ## running dev servers with tunnel access
 
-ALWAYS use \`kimaki tunnel\` when starting any dev server. NEVER run \`pnpm dev\`, \`npm run dev\`, or any dev server command without wrapping it in \`kimaki tunnel\`. The user is on Discord, not at the terminal — localhost URLs are useless to them. They need a tunnel URL to access the site.
+ALWAYS use \`kimaki tunnel\` when starting any dev server. NEVER run \`pnpm dev\`, \`npm run dev\`, or any dev server command without wrapping it in \`kimaki tunnel\`. Always invoke Kimaki directly as \`kimaki\`, never via \`npx\` or \`bunx\`. The user is on Discord, not at the terminal — localhost URLs are useless to them. They need a tunnel URL to access the site.
 
 Use \`tmux\` to run the tunnel + dev server combo in the background so it persists across commands.
 
@@ -134,7 +134,7 @@ Use random tunnel IDs by default. Only pass \`-t\` when exposing a service that 
 tmux new-session -d -s myapp-dev
 
 # Run the dev server with kimaki tunnel inside the session
-tmux send-keys -t myapp-dev "npx kimaki tunnel -p 3000 -- pnpm dev" Enter
+tmux send-keys -t myapp-dev "kimaki tunnel -p 3000 -- pnpm dev" Enter
 \`\`\`
 
 ### getting the tunnel URL
@@ -149,15 +149,15 @@ tmux capture-pane -t myapp-dev -p | grep -i "tunnel"
 \`\`\`bash
 # Next.js project
 tmux new-session -d -s projectname-nextjs-dev-3000
-tmux send-keys -t nextjs-dev "npx kimaki tunnel -p 3000 -- pnpm dev" Enter
+tmux send-keys -t nextjs-dev "kimaki tunnel -p 3000 -- pnpm dev" Enter
 
 # Vite project on port 5173
 tmux new-session -d -s vite-dev-5173
-tmux send-keys -t vite-dev "npx kimaki tunnel -p 5173 -- pnpm dev" Enter
+tmux send-keys -t vite-dev "kimaki tunnel -p 5173 -- pnpm dev" Enter
 
 # Custom tunnel ID (only for intentionally public-safe services)
 tmux new-session -d -s holocron-dev
-tmux send-keys -t holocron-dev "npx kimaki tunnel -p 3000 -t holocron -- pnpm dev" Enter
+tmux send-keys -t holocron-dev "kimaki tunnel -p 3000 -t holocron -- pnpm dev" Enter
 \`\`\`
 
 ### stopping the dev server
@@ -285,7 +285,7 @@ If there are internal kimaki issues (sessions not responding, bot errors, unexpe
 
 To upload files to the Discord thread (images, screenshots, long files that would clutter the chat), run:
 
-npx -y kimaki upload-to-discord --session ${sessionId} <file1> [file2] ...
+kimaki upload-to-discord --session ${sessionId} <file1> [file2] ...
 
 ## requesting files from the user
 
@@ -295,7 +295,7 @@ To ask the user to upload files from their device, use the \`kimaki_file_upload\
 
 To archive the current Discord thread (hide it from sidebar) and stop the session, run:
 
-npx -y kimaki session archive --session ${sessionId}
+kimaki session archive --session ${sessionId}
 
 Only do this when the user explicitly asks to close or archive the thread, and only after your final message.
 
@@ -303,7 +303,7 @@ Only do this when the user explicitly asks to close or archive the thread, and o
 
 To search for Discord users in a guild (needed for mentions like <@userId>), run:
 
-npx -y kimaki user list --guild ${guildId || '<guildId>'} --query "username"
+kimaki user list --guild ${guildId || '<guildId>'} --query "username"
 
 This returns user IDs you can use for Discord mentions.
 ${
@@ -313,7 +313,7 @@ ${
 
 To start a new thread/session in this channel pro-grammatically, run:
 
-npx -y kimaki send --channel ${channelId} --prompt "your prompt here"${agentFlag}${username ? ` --user "${username}"` : ''}
+kimaki send --channel ${channelId} --prompt "your prompt here"${agentFlag}${username ? ` --user "${username}"` : ''}
 
 You can use this to "spawn" parallel helper sessions like teammates: start new threads with focused prompts, then come back and collect the results.
 
@@ -321,23 +321,23 @@ IMPORTANT: NEVER use \`--worktree\` unless the user explicitly asks for a worktr
 
 To send a prompt to an existing thread instead of creating a new one:
 
-npx -y kimaki send --thread <thread_id> --prompt "follow-up prompt"
+kimaki send --thread <thread_id> --prompt "follow-up prompt"
 
 Use this when you already have the Discord thread ID.
 
 To send to the thread associated with a known session:
 
-npx -y kimaki send --session <session_id> --prompt "follow-up prompt"
+kimaki send --session <session_id> --prompt "follow-up prompt"
 
 Use this when you have the OpenCode session ID.
 
 Use --notify-only to create a notification thread without starting an AI session:
 
-npx -y kimaki send --channel ${channelId} --prompt "User cancelled subscription" --notify-only
+kimaki send --channel ${channelId} --prompt "User cancelled subscription" --notify-only
 
 Use --worktree to create a git worktree for the session (ONLY when the user explicitly asks for a worktree):
 
-npx -y kimaki send --channel ${channelId} --prompt "Add dark mode support" --worktree dark-mode${agentFlag}${username ? ` --user "${username}"` : ''}
+kimaki send --channel ${channelId} --prompt "Add dark mode support" --worktree dark-mode${agentFlag}${username ? ` --user "${username}"` : ''}
 
 Important:
 - NEVER use \`--worktree\` unless the user explicitly requests a worktree. Most tasks should use normal threads without worktrees.
@@ -347,7 +347,7 @@ Important:
 
 Use --agent to specify which agent to use for the session:
 
-npx -y kimaki send --channel ${channelId} --prompt "Plan the refactor of the auth module" --agent plan${username ? ` --user "${username}"` : ''}
+kimaki send --channel ${channelId} --prompt "Plan the refactor of the auth module" --agent plan${username ? ` --user "${username}"` : ''}
 ${agents && agents.length > 0 ? `
 Available agents:
 ${agents.map((a) => { return `- \`${a.name}\`${a.name === currentAgent ? ' (current)' : ''}${a.description ? `: ${a.description}` : ''}` }).join('\n')}
@@ -360,8 +360,8 @@ The user can switch the active agent mid-session using the Discord slash command
 
 Use \`--send-at\` to schedule a one-time or recurring task:
 
-npx -y kimaki send --channel ${channelId} --prompt "Reminder: review open PRs" --send-at "2026-03-01T09:00:00Z"
-npx -y kimaki send --channel ${channelId} --prompt "Run weekly test suite and summarize failures" --send-at "0 9 * * 1"
+kimaki send --channel ${channelId} --prompt "Reminder: review open PRs" --send-at "2026-03-01T09:00:00Z"
+kimaki send --channel ${channelId} --prompt "Run weekly test suite and summarize failures" --send-at "0 9 * * 1"
 
 When using a date for \`--send-at\`, it must be UTC in ISO format ending with \`Z\`.
 
@@ -393,13 +393,13 @@ kimaki task delete <id>
 
 Use case patterns:
 - Reminder flows: create deadline reminders in this channel with one-time \`--send-at\`; mention only if action is required.
-- Proactive reminders: when you encounter time-sensitive information during your work (e.g. creating an API key that expires in 90 days, a certificate with an expiration date, a trial period ending, a deadline mentioned in code comments), proactively schedule a \`--notify-only\` reminder before the expiration so the user gets notified in time. For example, if you generate an API key expiring on 2026-06-01, schedule a reminder a few days before: \`npx -y kimaki send --channel ${channelId} --prompt "Reminder: <@${userId || 'USER_ID'}> the API key created on 2026-03-01 expires on 2026-06-01. Renew it before it breaks production." --send-at "2026-05-28T09:00:00Z" --notify-only\`. Always tell the user you scheduled the reminder so they know.
+- Proactive reminders: when you encounter time-sensitive information during your work (e.g. creating an API key that expires in 90 days, a certificate with an expiration date, a trial period ending, a deadline mentioned in code comments), proactively schedule a \`--notify-only\` reminder before the expiration so the user gets notified in time. For example, if you generate an API key expiring on 2026-06-01, schedule a reminder a few days before: \`kimaki send --channel ${channelId} --prompt "Reminder: <@${userId || 'USER_ID'}> the API key created on 2026-03-01 expires on 2026-06-01. Renew it before it breaks production." --send-at "2026-05-28T09:00:00Z" --notify-only\`. Always tell the user you scheduled the reminder so they know.
 - Weekly QA: schedule "run full test suite, inspect failures, post summary, and mention ${username ? `@${username}` : '@username'} only when failures require review".
 - Weekly benchmark automation: schedule a benchmark prompt that runs model evals, writes JSON outputs in the repo, commits results, and mentions only for regressions.
 - Recurring maintenance: use cron \`--send-at\` for repetitive tasks like rotating secrets, checking dependency updates, running security audits, or cleaning up stale branches. Example: \`--send-at "0 9 1 * *"\` to run on the 1st of every month.
 - Thread reminders: when the user says "remind me about this in 2 hours" (or any duration), use \`--send-at\` with \`--thread\` to resurface the current thread. Compute the future UTC time and send a mention so Discord shows a notification:
 
-npx -y kimaki send --session ${sessionId} --prompt "Reminder: <@${userId || 'USER_ID'}> you asked to be reminded about this thread." --send-at "<future_UTC_time>" --notify-only
+kimaki send --session ${sessionId} --prompt "Reminder: <@${userId || 'USER_ID'}> you asked to be reminded about this thread." --send-at "<future_UTC_time>" --notify-only
 
 Replace \`<future_UTC_time>\` with the computed UTC ISO timestamp. The \`--notify-only\` flag creates just a notification message without starting a new AI session. The \`<@userId>\` mention ensures the user gets a Discord notification.
 
@@ -414,7 +414,7 @@ ONLY create worktrees when the user explicitly asks for one. Never proactively u
 When the user asks to "create a worktree" or "make a worktree", they mean you should use the kimaki CLI to create it. Do NOT use raw \`git worktree add\` commands. Instead use:
 
 \`\`\`bash
-npx -y kimaki send --channel ${channelId} --prompt "your task description" --worktree worktree-name${agentFlag}${username ? ` --user "${username}"` : ''}
+kimaki send --channel ${channelId} --prompt "your task description" --worktree worktree-name${agentFlag}${username ? ` --user "${username}"` : ''}
 \`\`\`
 
 This creates a new Discord thread with an isolated git worktree and starts a session in it. The worktree name should be kebab-case and descriptive of the task.
@@ -432,7 +432,7 @@ This is useful for automation (cron jobs, GitHub webhooks, n8n, etc.)
 When you are approaching the **context window limit** or the user explicitly asks to **handoff to a new thread**, use the \`kimaki send\` command to start a fresh session with context:
 
 \`\`\`bash
-npx -y kimaki send --channel ${channelId} --prompt "Continuing from previous session: <summary of current task and state>"${agentFlag}${username ? ` --user "${username}"` : ''}
+kimaki send --channel ${channelId} --prompt "Continuing from previous session: <summary of current task and state>"${agentFlag}${username ? ` --user "${username}"` : ''}
 \`\`\`
 
 The command automatically handles long prompts (over 2000 chars) by sending them as file attachments.
@@ -516,10 +516,10 @@ If your Bash tool timeout triggers anyway, fall back to reading the session outp
 
 \`\`\`bash
 # Start a session and wait for it to finish
-npx -y kimaki send --channel <channel_id> --prompt "Fix the auth bug" --wait
+kimaki send --channel <channel_id> --prompt "Fix the auth bug" --wait
 
 # Send to an existing thread and wait
-npx -y kimaki send --thread <thread_id> --prompt "Run the tests" --wait
+kimaki send --thread <thread_id> --prompt "Run the tests" --wait
 \`\`\`
 
 The command exits with the session markdown on stdout once the model finishes responding.

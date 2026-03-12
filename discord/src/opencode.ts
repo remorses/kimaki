@@ -58,7 +58,10 @@ import {
   type OpenCodeErrors,
 } from './errors.js'
 import {
+  ensureKimakiCommandShim,
+  getPathEnvKey,
   getSpawnCommandAndArgs,
+  prependPathEntry,
   selectResolvedCommand,
 } from './opencode-command.js'
 
@@ -491,6 +494,22 @@ async function startSingleServer(): Promise<ServerStartError | SingleServer> {
     [kimakiDataDir]: 'allow',
     [`${kimakiDataDir}/*`]: 'allow',
   }
+  const kimakiShimDirectory = ensureKimakiCommandShim({
+    dataDir: getDataDir(),
+    execPath: process.execPath,
+    execArgv: process.execArgv,
+    entryScript: process.argv[1] || fileURLToPath(new URL('../bin.js', import.meta.url)),
+  })
+  const pathEnvKey = getPathEnvKey(process.env)
+  const pathEnv = kimakiShimDirectory instanceof Error
+    ? process.env[pathEnvKey]
+    : prependPathEntry({
+        entry: kimakiShimDirectory,
+        existingPath: process.env[pathEnvKey],
+      })
+  if (kimakiShimDirectory instanceof Error) {
+    opencodeLogger.warn(kimakiShimDirectory.message)
+  }
 
   const serverProcess = spawn(
     spawnCommand,
@@ -549,6 +568,7 @@ async function startSingleServer(): Promise<ServerStartError | SingleServer> {
         ...(process.env.KIMAKI_SENTRY_DSN && {
           KIMAKI_SENTRY_DSN: process.env.KIMAKI_SENTRY_DSN,
         }),
+        ...(pathEnv && { [pathEnvKey]: pathEnv }),
       },
     },
   )
