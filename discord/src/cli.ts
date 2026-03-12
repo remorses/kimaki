@@ -64,6 +64,7 @@ import { WORKTREE_PREFIX } from './commands/merge-worktree.js'
 import type { ThreadStartMarker } from './system-message.js'
 import { sendWelcomeMessage } from './onboarding-welcome.js'
 import { buildOpencodeEventLogLine } from './session-handler/opencode-session-event-log.js'
+import { selectResolvedCommand } from './opencode-command.js'
 import yaml from 'js-yaml'
 import type {
   OpencodeClient,
@@ -552,7 +553,11 @@ async function ensureCommandAvailable({
     env: process.env,
   }).then(
     (result) => {
-      return result.stdout.trim()
+      const resolved = selectResolvedCommand({
+        output: result.stdout,
+        isWindows,
+      })
+      return resolved || ''
     },
     () => {
       return ''

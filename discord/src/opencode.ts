@@ -57,6 +57,10 @@ import {
   FetchError,
   type OpenCodeErrors,
 } from './errors.js'
+import {
+  getSpawnCommandAndArgs,
+  selectResolvedCommand,
+} from './opencode-command.js'
 
 const opencodeLogger = createLogger(LogPrefix.OPENCODE)
 
@@ -319,18 +323,32 @@ export function resolveOpencodeCommand(): string {
 
   const envPath = process.env.OPENCODE_PATH
   if (envPath) {
-    resolvedOpencodeCommand = envPath
-    return envPath
+    const resolvedFromEnv = selectResolvedCommand({
+      output: envPath,
+      isWindows: process.platform === 'win32',
+    })
+    if (resolvedFromEnv) {
+      resolvedOpencodeCommand = resolvedFromEnv
+      return resolvedFromEnv
+    }
   }
 
   const isWindows = process.platform === 'win32'
   const whichCmd = isWindows ? 'where' : 'which'
-  const result = errore.tryFn({
+  const result = errore.try({
     try: () => {
-      return execFileSync(whichCmd, ['opencode'], {
+      const commandOutput = execFileSync(whichCmd, ['opencode'], {
         encoding: 'utf8',
         timeout: 5000,
-      }).trim().split('\n')[0]!.trim()
+      })
+      const resolved = selectResolvedCommand({
+        output: commandOutput,
+        isWindows,
+      })
+      if (resolved) {
+        return resolved
+      }
+      throw new Error('opencode not found in PATH')
     },
     catch: () => new Error('opencode not found in PATH'),
   })
@@ -346,25 +364,6 @@ export function resolveOpencodeCommand(): string {
   opencodeLogger.log(`Resolved opencode binary: ${result}`)
   return result
 }
-
-/**
- * Build the spawn command and args, handling Windows .cmd shims.
- * On Windows, .cmd/.bat files can't be spawned directly without a shell —
- * we wrap them with cmd.exe /d /s /c instead of using shell: true
- * (which creates an intermediate sh process that eats SIGTERM).
- */
-function getSpawnCommandAndArgs(baseArgs: string[]): { command: string; args: string[] } {
-  const resolved = resolveOpencodeCommand()
-  if (process.platform !== 'win32') {
-    return { command: resolved, args: baseArgs }
-  }
-  const lower = resolved.toLowerCase()
-  if (lower.endsWith('.cmd') || lower.endsWith('.bat')) {
-    return { command: 'cmd.exe', args: ['/d', '/s', '/c', `"${resolved}"`, ...baseArgs] }
-  }
-  return { command: resolved, args: baseArgs }
-}
-
 async function getOpenPort(): Promise<number> {
   return new Promise((resolve, reject) => {
     const server = net.createServer()
@@ -458,7 +457,14 @@ async function startSingleServer(): Promise<ServerStartError | SingleServer> {
     serveArgs.push('--print-logs', '--log-level', 'DEBUG')
   }
 
-  const { command: spawnCommand, args: spawnArgs } = getSpawnCommandAndArgs(serveArgs)
+  const {
+    command: spawnCommand,
+    args: spawnArgs,
+    windowsVerbatimArguments,
+  } = getSpawnCommandAndArgs({
+    resolvedCommand: resolveOpencodeCommand(),
+    baseArgs: serveArgs,
+  })
 
   // Server config uses permissive defaults. Per-directory external_directory
   // permissions are set at session creation time via session.create({ permission }).
@@ -492,6 +498,7 @@ async function startSingleServer(): Promise<ServerStartError | SingleServer> {
     {
       stdio: 'pipe',
       detached: false,
+      windowsVerbatimArguments,
       // No project-specific cwd — the server handles all directories via
       // x-opencode-directory header. Use home dir as a neutral working dir.
       cwd: os.homedir(),

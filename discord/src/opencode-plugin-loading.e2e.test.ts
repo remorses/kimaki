@@ -9,6 +9,7 @@ import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { test, expect } from 'vitest'
 import { resolveOpencodeCommand } from './opencode.js'
+import { getSpawnCommandAndArgs } from './opencode-command.js'
 import { chooseLockPort } from './test-utils.js'
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
@@ -46,23 +47,29 @@ test(
     const pluginPath = new URL('../src/opencode-plugin.ts', import.meta.url).href
     const stderrLines: string[] = []
 
-    const serverProcess: ChildProcess = spawn(
-      resolveOpencodeCommand(),
-      ['serve', '--port', port.toString(), '--print-logs', '--log-level', 'DEBUG'],
-      {
-        stdio: 'pipe',
-        cwd: projectDir,
-        env: {
-          ...process.env,
-          OPENCODE_CONFIG_CONTENT: JSON.stringify({
-            $schema: 'https://opencode.ai/config.json',
-            lsp: false,
-            formatter: false,
-            plugin: [pluginPath],
-          }),
-        },
+    const {
+      command,
+      args,
+      windowsVerbatimArguments,
+    } = getSpawnCommandAndArgs({
+      resolvedCommand: resolveOpencodeCommand(),
+      baseArgs: ['serve', '--port', port.toString(), '--print-logs', '--log-level', 'DEBUG'],
+    })
+
+    const serverProcess: ChildProcess = spawn(command, args, {
+      stdio: 'pipe',
+      cwd: projectDir,
+      windowsVerbatimArguments,
+      env: {
+        ...process.env,
+        OPENCODE_CONFIG_CONTENT: JSON.stringify({
+          $schema: 'https://opencode.ai/config.json',
+          lsp: false,
+          formatter: false,
+          plugin: [pluginPath],
+        }),
       },
-    )
+    })
 
     serverProcess.stderr?.on('data', (data) => {
       stderrLines.push(...data.toString().split('\n').filter(Boolean))
