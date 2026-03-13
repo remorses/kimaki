@@ -813,7 +813,7 @@ export async function startDiscordBot({
           },
         })
       } else {
-        discordLogger.log(`Channel type ${channel.type} is not supported`)
+        // discordLogger.log(`Channel type ${channel.type} is not supported`)
       }
     } catch (error) {
       voiceLogger.error('Discord handler error:', error)
