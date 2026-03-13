@@ -1,5 +1,19 @@
 # Changelog
 
+## 0.4.77
+
+1. **Fixed session hang after dismissing permission prompts** — when a user sent a new message while a permission prompt was blocking a previous run, the blocked run would hang indefinitely. Now pending permission requests are rejected immediately when a new message arrives, so the follow-up can proceed without waiting.
+
+2. **`kimaki` available as a direct command inside OpenCode sessions** — agents can now call `kimaki` directly (without `npx` or `bunx`) inside OpenCode sessions. A small cross-platform shim is injected into the server PATH so `kimaki session archive`, `kimaki user list`, etc. work the same way regardless of whether kimaki was launched via a global install, npm, pnpm, or a transient npx/bunx invocation.
+
+3. **Fixed selected model lost after interrupt/resume** — when a session was interrupted mid-run (e.g. via `/model` switch) and then resumed, the resumed run fell back to the default model instead of the user's selection. The interrupt plugin now captures and carries the chosen agent/model into the resume call.
+
+4. **Fixed Windows opencode startup** — `where opencode` output is now normalized before picking a binary so Windows installs prefer npm shim paths over raw non-executable entries or multiline `OPENCODE_PATH` values. `.cmd` launches are routed through `cmd.exe` with `windowsVerbatimArguments` for correct argument quoting on Windows.
+
+5. **Fixed voice message transcription for m4a/mp4 audio** — audio MIME values including m4a aliases are now normalized before provider handling. m4a files are transcoded to WAV via ffmpeg for OpenAI `input_audio` compatibility, while OGG/Opus conversion continues on its own path.
+
+6. **Fixed opencode `tool-output` directory access** — the `tool-output` directory (used by opencode for file outputs) is now allowed by default so agents can write outputs without hitting permission errors.
+
 ## 0.4.76
 
 1. **SSE wire format for programmatic gateway events** — `kimaki --gateway` in headless/non-TTY mode now emits events using the SSE wire format (`data: {...}\n\n`) instead of bare JSON lines. This lets consumers use the `eventsource-parser` npm package to reliably extract events even when log noise, warnings, or spinner output is interleaved on stdout:
