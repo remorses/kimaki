@@ -19,9 +19,12 @@ const c_windows = if (builtin.target.os.tag == .windows) @cImport({
 
 const c_x11 = if (builtin.target.os.tag == .linux) @cImport({
     @cInclude("X11/Xlib.h");
+    @cInclude("X11/Xutil.h");
     @cInclude("X11/keysym.h");
     @cInclude("X11/extensions/XShm.h");
     @cInclude("X11/extensions/XTest.h");
+    @cInclude("sys/ipc.h");
+    @cInclude("sys/shm.h");
     @cInclude("png.h");
 }) else struct {};
 
@@ -442,10 +445,6 @@ fn createLinuxScreenshotImage(input: struct {
     if (screen_index < 0) {
         return error.NoScreens;
     }
-    if (c_x11.XShmQueryExtension(display) == 0) {
-        return error.XShmUnavailable;
-    }
-
     const root = c_x11.XRootWindow(display, screen_index);
     const screen_width_i = c_x11.XDisplayWidth(display, screen_index);
     const screen_height_i = c_x11.XDisplayHeight(display, screen_index);
@@ -460,6 +459,54 @@ fn createLinuxScreenshotImage(input: struct {
         .screen_height = screen_height,
         .region = input.region,
     });
+
+    // Try XShm first (fast), fall back to XGetImage (slow but always works).
+    // XShm fails on XWayland when processes don't share SHM namespaces.
+    const image = captureWithXShm(display, screen_index, root, capture_rect) orelse
+        captureWithXGetImage(display, root, capture_rect) orelse
+        return error.CaptureFailed;
+    // XDestroyImage is a C macro: ((*((ximage)->f.destroy_image))((ximage)))
+    // Zig's @cImport can't translate it, so call the function pointer directly.
+    defer _ = image.*.f.destroy_image.?(image);
+
+    const rgba = try convertX11ImageToRgba(image, capture_rect.width, capture_rect.height);
+    return .{
+        .image = rgba,
+        .capture_x = @floatFromInt(capture_rect.x),
+        .capture_y = @floatFromInt(capture_rect.y),
+        .capture_width = @floatFromInt(capture_rect.width),
+        .capture_height = @floatFromInt(capture_rect.height),
+        .desktop_index = 0,
+    };
+}
+
+const LinuxCaptureRect = struct {
+    x: usize,
+    y: usize,
+    width: usize,
+    height: usize,
+};
+
+// X error handler state for detecting X errors during screenshot capture.
+// XSetErrorHandler is process-global, so this is necessarily a global.
+var x_capture_error_occurred: bool = false;
+
+fn captureErrorHandler(_: ?*c_x11.Display, _: ?*c_x11.XErrorEvent) callconv(.c) c_int {
+    x_capture_error_occurred = true;
+    return 0;
+}
+
+/// Fast screenshot path using XShm (shared memory). Returns null if XShm is
+/// unavailable or fails (common on XWayland with different SHM namespaces).
+fn captureWithXShm(
+    display: *c_x11.Display,
+    screen_index: c_int,
+    root: c_x11.Window,
+    capture_rect: LinuxCaptureRect,
+) ?*c_x11.XImage {
+    if (c_x11.XShmQueryExtension(display) == 0) {
+        return null;
+    }
 
     const visual = c_x11.XDefaultVisual(display, screen_index);
     const depth = @as(c_uint, @intCast(c_x11.XDefaultDepth(display, screen_index)));
@@ -477,31 +524,44 @@ fn createLinuxScreenshotImage(input: struct {
         &shm_info,
         @as(c_uint, @intCast(capture_rect.width)),
         @as(c_uint, @intCast(capture_rect.height)),
-    ) orelse return error.ImageCreateFailed;
-    defer _ = c_x11.XDestroyImage(image);
+    ) orelse return null;
 
     const bytes_per_image = @as(usize, @intCast(image.*.bytes_per_line)) * capture_rect.height;
     const shmget_result = c_x11.shmget(c_x11.IPC_PRIVATE, bytes_per_image, c_x11.IPC_CREAT | 0o600);
     if (shmget_result < 0) {
-        return error.ShmAllocFailed;
+        image.*.data = null;
+        _ = image.*.f.destroy_image.?(image);
+        return null;
     }
     shm_info.shmid = shmget_result;
-    defer _ = c_x11.shmctl(shm_info.shmid, c_x11.IPC_RMID, null);
 
     const shmaddr = c_x11.shmat(shm_info.shmid, null, 0);
     if (@intFromPtr(shmaddr) == std.math.maxInt(usize)) {
-        return error.ShmAllocFailed;
+        _ = c_x11.shmctl(shm_info.shmid, c_x11.IPC_RMID, null);
+        image.*.data = null;
+        _ = image.*.f.destroy_image.?(image);
+        return null;
     }
     shm_info.shmaddr = @ptrCast(shmaddr);
     image.*.data = shm_info.shmaddr;
-    defer _ = c_x11.shmdt(shmaddr);
 
-    if (c_x11.XShmAttach(display, &shm_info) == 0) {
-        return error.ShmAttachFailed;
-    }
-    defer _ = c_x11.XShmDetach(display, &shm_info);
+    // Install custom error handler to catch BadAccess from XShmAttach
+    // (happens on XWayland when SHM namespaces don't match).
+    x_capture_error_occurred = false;
+    const old_handler = c_x11.XSetErrorHandler(captureErrorHandler);
 
+    _ = c_x11.XShmAttach(display, &shm_info);
     _ = c_x11.XSync(display, 0);
+
+    if (x_capture_error_occurred) {
+        // Restore original handler and clean up
+        _ = c_x11.XSetErrorHandler(old_handler);
+        _ = c_x11.shmdt(shmaddr);
+        _ = c_x11.shmctl(shm_info.shmid, c_x11.IPC_RMID, null);
+        image.*.data = null;
+        _ = image.*.f.destroy_image.?(image);
+        return null;
+    }
 
     if (c_x11.XShmGetImage(
         display,
@@ -511,30 +571,76 @@ fn createLinuxScreenshotImage(input: struct {
         @as(c_int, @intCast(capture_rect.y)),
         c_x11.AllPlanes,
     ) == 0) {
-        return error.ShmGetFailed;
+        _ = c_x11.XSetErrorHandler(old_handler);
+        _ = c_x11.XShmDetach(display, &shm_info);
+        _ = c_x11.shmdt(shmaddr);
+        _ = c_x11.shmctl(shm_info.shmid, c_x11.IPC_RMID, null);
+        image.*.data = null;
+        _ = image.*.f.destroy_image.?(image);
+        return null;
     }
 
-    const rgba = try convertX11ImageToRgba(image, capture_rect.width, capture_rect.height);
-    return .{
-        .image = rgba,
-        .capture_x = @floatFromInt(capture_rect.x),
-        .capture_y = @floatFromInt(capture_rect.y),
-        .capture_width = @floatFromInt(capture_rect.width),
-        .capture_height = @floatFromInt(capture_rect.height),
-        .desktop_index = 0,
+    // Copy image data to a separate allocation so we can detach SHM.
+    // The caller owns the XImage and will free it via destroy_image.
+    const data_copy = std.heap.c_allocator.alloc(u8, bytes_per_image) catch {
+        _ = c_x11.XSetErrorHandler(old_handler);
+        _ = c_x11.XShmDetach(display, &shm_info);
+        _ = c_x11.shmdt(shmaddr);
+        _ = c_x11.shmctl(shm_info.shmid, c_x11.IPC_RMID, null);
+        image.*.data = null;
+        _ = image.*.f.destroy_image.?(image);
+        return null;
     };
+    @memcpy(data_copy, @as([*]const u8, @ptrCast(shmaddr))[0..bytes_per_image]);
+    image.*.data = @ptrCast(data_copy.ptr);
+
+    _ = c_x11.XSetErrorHandler(old_handler);
+    _ = c_x11.XShmDetach(display, &shm_info);
+    _ = c_x11.shmdt(shmaddr);
+    _ = c_x11.shmctl(shm_info.shmid, c_x11.IPC_RMID, null);
+
+    return image;
+}
+
+/// Slow but reliable fallback: XGetImage copies pixels over the X connection.
+/// Works everywhere including XWayland regardless of SHM namespace.
+/// Installs a temporary X error handler to catch BadMatch errors (common
+/// on XWayland when the capture region doesn't match the root drawable).
+fn captureWithXGetImage(
+    display: *c_x11.Display,
+    root: c_x11.Window,
+    capture_rect: LinuxCaptureRect,
+) ?*c_x11.XImage {
+    x_capture_error_occurred = false;
+    const old_handler = c_x11.XSetErrorHandler(captureErrorHandler);
+    defer _ = c_x11.XSetErrorHandler(old_handler);
+
+    const image = c_x11.XGetImage(
+        display,
+        root,
+        @as(c_int, @intCast(capture_rect.x)),
+        @as(c_int, @intCast(capture_rect.y)),
+        @as(c_uint, @intCast(capture_rect.width)),
+        @as(c_uint, @intCast(capture_rect.height)),
+        c_x11.AllPlanes,
+        c_x11.ZPixmap,
+    );
+    _ = c_x11.XSync(display, 0);
+
+    if (x_capture_error_occurred) {
+        if (image) |img| {
+            _ = img.*.f.destroy_image.?(img);
+        }
+        return null;
+    }
+    return image;
 }
 
 fn resolveLinuxCaptureRect(input: struct {
     screen_width: usize,
     screen_height: usize,
     region: ?ScreenshotRegion,
-}) !struct {
-    x: usize,
-    y: usize,
-    width: usize,
-    height: usize,
-} {
+}) !LinuxCaptureRect {
     if (input.region) |region| {
         const x = @as(i64, @intFromFloat(std.math.round(region.x)));
         const y = @as(i64, @intFromFloat(std.math.round(region.y)));
@@ -572,7 +678,8 @@ fn convertX11ImageToRgba(image: *c_x11.XImage, width: usize, height: usize) !Raw
     while (y < height) : (y += 1) {
         var x: usize = 0;
         while (x < width) : (x += 1) {
-            const pixel = c_x11.XGetPixel(image, @as(c_int, @intCast(x)), @as(c_int, @intCast(y)));
+            // XGetPixel is a C macro: ((*((ximage)->f.get_pixel))((ximage), (x), (y)))
+            const pixel = image.*.f.get_pixel.?(image, @as(c_int, @intCast(x)), @as(c_int, @intCast(y)));
             const red = normalizeX11Channel(.{ .pixel = pixel, .mask = image.*.red_mask });
             const green = normalizeX11Channel(.{ .pixel = pixel, .mask = image.*.green_mask });
             const blue = normalizeX11Channel(.{ .pixel = pixel, .mask = image.*.blue_mask });
@@ -594,8 +701,10 @@ fn normalizeX11Channel(input: struct {
     if (input.mask == 0) {
         return 0;
     }
-    const shift = @ctz(input.mask);
-    const bits = @popCount(input.mask);
+    // @ctz returns u7 on 64-bit c_ulong (aarch64-linux), but >> needs u6.
+    // The shift can't exceed 63 since mask != 0 and is at most 64 bits.
+    const shift: std.math.Log2Int(c_ulong) = @intCast(@ctz(input.mask));
+    const bits: std.math.Log2Int(c_ulong) = @intCast(@min(@popCount(input.mask), @bitSizeOf(c_ulong) - 1));
     const raw = (input.pixel & input.mask) >> shift;
     const max_value = (@as(u64, 1) << @intCast(bits)) - 1;
     if (max_value == 0) {

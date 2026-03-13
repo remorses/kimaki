@@ -44,8 +44,7 @@
     "build:zig": "zig build",
     "build:native": "tsx scripts/build.ts",
     "build:native:macos": "tsx scripts/build.ts darwin-arm64 darwin-x64",
-    "vm:exec": "tsx scripts/vm-exec.ts",
-    "vm:test:utm": "tsx scripts/run-utm-tests.ts",
+    "vm": "tsx scripts/vm.ts",
     "test": "vitest --run",
     "typecheck": "tsc --noEmit",
     "prepublishOnly": "pnpm build && pnpm build:native:macos"

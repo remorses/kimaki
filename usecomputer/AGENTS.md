@@ -86,6 +86,66 @@ Important APIs shown in these files:
 - `TISCopyCurrentASCIICapableKeyboardLayoutInputSource`
 - `UCKeyTranslate`
 
+## Linux VM testing
+
+usecomputer is tested on a real Linux VM (UTM on macOS, Ubuntu aarch64 guest).
+The VM uses `qemu-guest-agent` for command execution — there is no SSH or shared
+folders. All file transfer goes through base64-encoded tar archives.
+
+Everything is in one unified script: `pnpm vm <subcommand>`. Run
+`pnpm vm --help` to see all subcommands and options. `HOME` is set
+automatically on every command — no need to export it manually.
+
+### VM subcommands
+
+| Command | Description |
+|---------|-------------|
+| `pnpm vm exec -- '<command>'` | Run a shell command inside the VM |
+| `pnpm vm exec -- --x11 '<command>'` | Same but also set DISPLAY/XAUTHORITY |
+| `pnpm vm sync` | Sync git-tracked files to the VM |
+| `pnpm vm test` | Sync, build, typecheck, run tests |
+| `pnpm vm test --setup` | Same but install system deps first |
+
+### Running commands manually
+
+```bash
+# Build zig module
+pnpm vm exec -- 'cd /root/usecomputer && zig build'
+
+# Run tests with X11 access
+pnpm vm exec -- --x11 'cd /root/usecomputer && npx vitest --run'
+
+# Install npm deps (needed after first sync)
+pnpm vm exec -- 'cd /root/usecomputer && pnpm install --filter usecomputer'
+```
+
+### Full test run (first time)
+
+```bash
+pnpm vm test --setup
+```
+
+This installs all system dependencies, syncs files, builds, typechecks, and
+runs the test suite. Subsequent runs can skip `--setup`:
+
+```bash
+pnpm vm test
+```
+
+### Linux build caveats
+
+- **zig_objc** is marked as a lazy dependency — only fetched on macOS, skipped
+  on Linux. If zig fails with `AppDataDirUnavailable`, ensure `HOME` is set.
+- **XDestroyImage** and **XGetPixel** are C macros that zig can't translate.
+  The code calls the function pointers directly instead
+  (`image.*.f.destroy_image.?()`, `image.*.f.get_pixel.?()`).
+- **XShm** fails on XWayland with BadAccess. The screenshot code installs a
+  custom X error handler and falls back to XGetImage. If that also fails
+  (BadMatch on XWayland root window), screenshot returns an error gracefully
+  instead of crashing.
+- **c_ulong** is 64-bit on aarch64-linux, so bit shift counts from `@ctz`
+  need explicit `@intCast` to `Log2Int(c_ulong)`.
+
 ## Build and distribution reference
 
 Use ghostty-opentui as a reference for native packaging patterns

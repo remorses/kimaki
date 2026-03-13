@@ -17,10 +17,13 @@ pub fn build(b: *std.Build) void {
     });
     lib_mod.addImport("napigen", b.dependency("napigen", .{}).module("napigen"));
     if (target_os == .macos) {
-        lib_mod.addImport("objc", b.dependency("zig_objc", .{
+        // zig_objc is a lazy dependency — only fetched when building for macOS
+        if (b.lazyDependency("zig_objc", .{
             .target = target,
             .optimize = optimize,
-        }).module("objc"));
+        })) |dep| {
+            lib_mod.addImport("objc", dep.module("objc"));
+        }
     }
 
     const lib = b.addLibrary(.{
