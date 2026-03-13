@@ -9,6 +9,9 @@ import {
   type ThreadChannel,
   type TextChannel,
   MessageFlags,
+  ButtonBuilder,
+  ButtonStyle,
+  type ButtonInteraction,
 } from 'discord.js'
 import crypto from 'node:crypto'
 import {
@@ -51,6 +54,8 @@ type PendingModelContext = {
   selectedModelId?: string
   selectedVariant?: string | null
   availableVariants?: string[]
+  availableModels?: { id: string; name: string }[]
+  modelPage?: number
 }
 
 const pendingModelContexts = new Map<string, PendingModelContext>()
@@ -524,7 +529,7 @@ export async function handleProviderSelectMenu(
     return
   }
 
-  // Defer update immediately to avoid timeout
+  // Defer update immediately to allow time for async operations
   await interaction.deferUpdate()
 
   const contextHash = customId.replace('model_provider:', '')
@@ -586,8 +591,16 @@ export async function handleProviderSelectMenu(
         id: modelId,
         name: model.name,
         releaseDate: model.release_date,
+        contextLength: (model as { context_length?: number }).context_length,
+        pricing: (model as { pricing?: { input?: number; output?: number } }).pricing,
       }))
-      .sort((a, b) => a.name.localeCompare(b.name))
+      .sort((a, b) => {
+        const aFree = a.pricing?.input === 0 && a.pricing?.output === 0
+        const bFree = b.pricing?.input === 0 && b.pricing?.output === 0
+        if (aFree && !bFree) return -1
+        if (!aFree && bFree) return 1
+        return a.name.localeCompare(b.name)
+      })
 
     if (models.length === 0) {
       await interaction.editReply({
@@ -597,42 +610,84 @@ export async function handleProviderSelectMenu(
       return
     }
 
-    // Take first 25 models (most recent since sorted descending)
-    const recentModels = models.slice(0, 25)
-
     // Update context with provider info and reuse the same hash
     context.providerId = selectedProviderId
     context.providerName = provider.name
+    // Store all models for pagination
+    context.availableModels = models.map(m => ({ id: m.id, name: m.name }))
+    context.modelPage = 0
     setModelContext(contextHash, context)
 
-    const options = recentModels.map((model) => {
-      const dateStr = model.releaseDate
-        ? new Date(model.releaseDate).toLocaleDateString()
-        : 'Unknown date'
-      return {
-        label: model.name.slice(0, 100),
-        value: model.id,
-        description: dateStr.slice(0, 100),
-      }
-    })
-
-    const selectMenu = new StringSelectMenuBuilder()
-      .setCustomId(`model_select:${contextHash}`)
-      .setPlaceholder('Select a model')
-      .addOptions(options)
-
-    const actionRow =
-      new ActionRowBuilder<StringSelectMenuBuilder>().addComponents(selectMenu)
-
-    await interaction.editReply({
-      content: `**Set Model Preference**\nProvider: **${provider.name}**\nSelect a model:`,
-      components: [actionRow],
-    })
+    await sendModelPage(interaction, context, contextHash, provider.name, models)
   } catch (error) {
     modelLogger.error('Error loading models:', error)
     await interaction.editReply({
       content: `Failed to load models: ${error instanceof Error ? error.message : 'Unknown error'}`,
       components: [],
+    })
+  }
+}
+
+async function sendModelPage(
+  interaction: StringSelectMenuInteraction | import('discord.js').ButtonInteraction,
+  context: PendingModelContext,
+  contextHash: string,
+  providerName: string,
+  models: { id: string; name: string; releaseDate?: string; pricing?: { input?: number; output?: number } }[]
+) {
+  const pageSize = 25
+  const page = context.modelPage || 0
+  const totalPages = Math.ceil(models.length / pageSize)
+  const startIdx = page * pageSize
+  const endIdx = Math.min(startIdx + pageSize, models.length)
+  const pageModels = models.slice(startIdx, endIdx)
+
+  const options = pageModels.map((model) => ({
+    label: model.name.slice(0, 100),
+    value: model.id,
+    description: 'Click to select',
+  }))
+
+  const selectMenu = new StringSelectMenuBuilder()
+    .setCustomId(`model_select:${contextHash}`)
+    .setPlaceholder('Select a model')
+    .addOptions(options)
+
+  const selectRow = new ActionRowBuilder<StringSelectMenuBuilder>().addComponents(selectMenu)
+
+  // Add pagination buttons
+  const prevButton = new ButtonBuilder()
+    .setCustomId(`model_page:${contextHash}:prev`)
+    .setLabel('Previous')
+    .setStyle(ButtonStyle.Secondary)
+    .setDisabled(page === 0)
+
+  const nextButton = new ButtonBuilder()
+    .setCustomId(`model_page:${contextHash}:next`)
+    .setLabel('Next')
+    .setStyle(ButtonStyle.Secondary)
+    .setDisabled(page >= totalPages - 1)
+
+  const pageInfo = new ButtonBuilder()
+    .setCustomId(`model_page:${contextHash}:info`)
+    .setLabel(`${page + 1}/${totalPages}`)
+    .setStyle(ButtonStyle.Primary)
+    .setDisabled(true)
+
+  const buttonRow = new ActionRowBuilder<ButtonBuilder>()
+    .addComponents(prevButton, pageInfo, nextButton)
+
+  const content = `**Set Model Preference**\nProvider: **${providerName}**\n${models.length} models available. Page ${page + 1} of ${totalPages}:`
+
+  if (interaction.isStringSelectMenu()) {
+    await interaction.editReply({
+      content,
+      components: [selectRow, buttonRow],
+    })
+  } else {
+    await interaction.update({
+      content,
+      components: [selectRow, buttonRow],
     })
   }
 }
@@ -650,7 +705,7 @@ export async function handleModelSelectMenu(
     return
   }
 
-  // Defer update immediately
+  // For regular model selection, defer for async operations
   await interaction.deferUpdate()
 
   const contextHash = customId.replace('model_select:', '')
@@ -955,4 +1010,56 @@ export async function handleModelScopeSelectMenu(
       components: [],
     })
   }
+}
+
+/**
+ * Handle pagination button clicks for model selection.
+ */
+export async function handleModelPageButton(
+  interaction: ButtonInteraction,
+): Promise<void> {
+  const customId = interaction.customId
+
+  if (!customId.startsWith('model_page:')) {
+    return
+  }
+
+  // Ignore info button (disabled)
+  if (customId.endsWith(':info')) {
+    return
+  }
+
+  const [, , direction] = customId.split(':')
+  const contextHash = customId.replace('model_page:', '').replace(':prev', '').replace(':next', '')
+  const context = pendingModelContexts.get(contextHash)
+
+  if (!context || !context.providerId || !context.providerName || !context.availableModels) {
+    await interaction.reply({
+      content: 'Session expired. Please run /model again.',
+      ephemeral: true,
+    })
+    return
+  }
+
+  const pageSize = 25
+  const totalPages = Math.ceil(context.availableModels.length / pageSize)
+  const currentPage = context.modelPage || 0
+
+  if (direction === 'prev' && currentPage > 0) {
+    context.modelPage = currentPage - 1
+  } else if (direction === 'next' && currentPage < totalPages - 1) {
+    context.modelPage = currentPage + 1
+  }
+
+  setModelContext(contextHash, context)
+
+  // Recreate the full models array for display
+  const models = context.availableModels.map((m, idx) => ({
+    id: m.id,
+    name: m.name,
+    releaseDate: undefined,
+    pricing: undefined,
+  }))
+
+  await sendModelPage(interaction, context, contextHash, context.providerName, models)
 }
