@@ -47,6 +47,7 @@ import {
   handleProviderSelectMenu,
   handleModelSelectMenu,
   handleModelScopeSelectMenu,
+  handleModelPageButton,
 } from './commands/model.js'
 import { handleUnsetModelCommand } from './commands/unset-model.js'
 import {
@@ -383,6 +384,11 @@ export function registerInteractionHandler({
 
           if (customId.startsWith('action_button:')) {
             await handleActionButton(interaction)
+            return
+          }
+
+          if (customId.startsWith('model_page:')) {
+            await handleModelPageButton(interaction)
             return
           }
 
