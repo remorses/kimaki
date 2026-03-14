@@ -351,7 +351,7 @@ pub fn screenshot(input: ScreenshotInput) DataResult(ScreenshotOutput) {
 
         return okData(ScreenshotOutput, .{
             .path = output_path,
-            .desktopIndex = @as(f64, @floatFromInt(capture.desktop_index)),
+            .desktopIndex = @floatFromInt(capture.desktop_index),
             .captureX = capture.capture_x,
             .captureY = capture.capture_y,
             .captureWidth = capture.capture_width,
