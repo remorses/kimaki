@@ -49,6 +49,10 @@ export type {
   GetMetadataPropertyRequest,
   SetMetadataPropertyRequest,
   DeleteMetadataPropertyRequest,
+  MachineMemoryResponse,
+  UpdateMemoryRequest,
+  ListOrgMachinesRequest,
+  OrgMachinesResponse,
 } from './machine.ts'
 
 export { Network, AddressType } from './network.ts'

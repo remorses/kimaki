@@ -308,6 +308,29 @@ export interface DeleteMetadataPropertyRequest extends GetMachineRequest {
   key: string
 }
 
+// --- Memory types ---
+
+export interface MachineMemoryResponse {
+  total_bytes: number
+  used_bytes: number
+  free_bytes: number
+  available_bytes: number
+}
+
+export interface UpdateMemoryRequest extends GetMachineRequest {
+  memory_mb: number
+}
+
+// --- Org-level types ---
+
+export interface ListOrgMachinesRequest {
+  org_slug: string
+}
+
+export interface OrgMachinesResponse {
+  machines: MachineResponse[]
+}
+
 export class Machine {
   private client: Client
 
@@ -376,6 +399,28 @@ export class Machine {
   async signalMachine(payload: SignalMachineRequest): Promise<OkResponse> {
     const { app_name, machine_id, ...body } = payload
     return await this.client.restOrThrow(`apps/${app_name}/machines/${machine_id}/signal`, 'POST', body)
+  }
+
+  async suspendMachine(payload: GetMachineRequest): Promise<OkResponse> {
+    const { app_name, machine_id } = payload
+    return await this.client.restOrThrow(`apps/${app_name}/machines/${machine_id}/suspend`, 'POST')
+  }
+
+  // --- Memory ---
+
+  async getMemory(payload: GetMachineRequest): Promise<MachineMemoryResponse> {
+    const { app_name, machine_id } = payload
+    return await this.client.restOrThrow(`apps/${app_name}/machines/${machine_id}/memory`)
+  }
+
+  async updateMemory(payload: UpdateMemoryRequest): Promise<MachineMemoryResponse> {
+    const { app_name, machine_id, ...body } = payload
+    return await this.client.restOrThrow(`apps/${app_name}/machines/${machine_id}/memory`, 'PUT', body)
+  }
+
+  async reclaimMemory(payload: GetMachineRequest): Promise<OkResponse> {
+    const { app_name, machine_id } = payload
+    return await this.client.restOrThrow(`apps/${app_name}/machines/${machine_id}/memory/reclaim`, 'POST')
   }
 
   // --- Monitoring ---
@@ -480,5 +525,12 @@ export class Machine {
   async deleteMetadataProperty(payload: DeleteMetadataPropertyRequest): Promise<void> {
     const { app_name, machine_id, key } = payload
     await this.client.restOrThrow(`apps/${app_name}/machines/${machine_id}/metadata/${key}`, 'DELETE')
+  }
+
+  // --- Org-level ---
+
+  async listOrgMachines(payload: ListOrgMachinesRequest): Promise<OrgMachinesResponse> {
+    const { org_slug } = payload
+    return await this.client.restOrThrow(`orgs/${org_slug}/machines`)
   }
 }
