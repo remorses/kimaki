@@ -1,6 +1,7 @@
 // Secrets management via Fly GraphQL API.
 
 import { Client } from './client.ts'
+import type { FlyResult } from './errors.ts'
 
 export interface SetSecretsInput {
   appId: string
@@ -84,14 +85,14 @@ export class Secret {
     this.client = client
   }
 
-  async setSecrets(input: SetSecretsInput): Promise<SetSecretsOutput> {
+  async setSecrets(input: SetSecretsInput): Promise<FlyResult<SetSecretsOutput>> {
     return await this.client.gqlPostOrThrow({
       query: setSecretsQuery,
       variables: { input },
     })
   }
 
-  async unsetSecrets(input: UnsetSecretsInput): Promise<UnsetSecretsOutput> {
+  async unsetSecrets(input: UnsetSecretsInput): Promise<FlyResult<UnsetSecretsOutput>> {
     return await this.client.gqlPostOrThrow({
       query: unsetSecretsQuery,
       variables: { input },

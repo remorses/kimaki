@@ -1,6 +1,7 @@
 // Organization queries via Fly GraphQL API.
 
 import { Client } from './client.ts'
+import type { FlyResult } from './errors.ts'
 
 export type GetOrganizationInput = string
 
@@ -33,7 +34,7 @@ export class Organization {
     this.client = client
   }
 
-  async getOrganization(slug: GetOrganizationInput): Promise<GetOrganizationOutput> {
+  async getOrganization(slug: GetOrganizationInput): Promise<FlyResult<GetOrganizationOutput>> {
     return this.client.gqlPostOrThrow({
       query: getOrganizationQuery,
       variables: { slug },

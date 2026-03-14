@@ -4,6 +4,18 @@
 export { Client, FLY_API_GRAPHQL, FLY_API_HOSTNAME } from './client.ts'
 export type { ClientConfig } from './client.ts'
 
+export {
+  FlyApiError,
+  FlyBadRequestError,
+  FlyUnauthorizedError,
+  FlyNotFoundError,
+  FlyPreconditionFailedError,
+  FlyUnprocessableEntityError,
+  FlyInternalServerError,
+  FlyGraphQLError,
+} from './errors.ts'
+export type { FlyClientError, FlyResult } from './errors.ts'
+
 export { App, AppStatus } from './app.ts'
 export type {
   ListAppRequest,

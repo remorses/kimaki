@@ -1,6 +1,7 @@
 // Network (IP address) management via Fly GraphQL API.
 
 import { Client } from './client.ts'
+import type { FlyResult } from './errors.ts'
 
 export enum AddressType {
   v4 = 'v4',
@@ -70,14 +71,14 @@ export class Network {
     this.client = client
   }
 
-  async allocateIpAddress(input: AllocateIPAddressInput): Promise<AllocateIPAddressOutput> {
+  async allocateIpAddress(input: AllocateIPAddressInput): Promise<FlyResult<AllocateIPAddressOutput>> {
     return this.client.gqlPostOrThrow({
       query: allocateIpAddressQuery,
       variables: { input },
     })
   }
 
-  async releaseIpAddress(input: ReleaseIPAddressInput): Promise<ReleaseIPAddressOutput> {
+  async releaseIpAddress(input: ReleaseIPAddressInput): Promise<FlyResult<ReleaseIPAddressOutput>> {
     return this.client.gqlPostOrThrow({
       query: releaseIpAddressQuery,
       variables: { input },

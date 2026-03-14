@@ -2,6 +2,7 @@
 
 import { Client } from './client.ts'
 import { CreateVolumeRequest as ApiCreateVolumeRequest, UpdateVolumeRequest as ApiUpdateVolumeRequest } from './types.ts'
+import type { FlyResult } from './errors.ts'
 
 export interface ListVolumesRequest {
   app_name: string
@@ -75,7 +76,7 @@ export class Volume {
     this.client = client
   }
 
-  async listVolumes(payload: ListVolumesRequest): Promise<VolumeResponse[]> {
+  async listVolumes(payload: ListVolumesRequest): Promise<FlyResult<VolumeResponse[]>> {
     const { app_name, summary } = payload
     const params = new URLSearchParams()
     if (summary !== undefined) {
@@ -86,37 +87,37 @@ export class Volume {
     return await this.client.restOrThrow(path)
   }
 
-  async getVolume(payload: GetVolumeRequest): Promise<VolumeResponse> {
+  async getVolume(payload: GetVolumeRequest): Promise<FlyResult<VolumeResponse>> {
     const { app_name, volume_id } = payload
     return await this.client.restOrThrow(`apps/${app_name}/volumes/${volume_id}`)
   }
 
-  async createVolume(payload: CreateVolumeRequest): Promise<VolumeResponse> {
+  async createVolume(payload: CreateVolumeRequest): Promise<FlyResult<VolumeResponse>> {
     const { app_name, ...body } = payload
     return await this.client.restOrThrow(`apps/${app_name}/volumes`, 'POST', body)
   }
 
-  async updateVolume(payload: UpdateVolumeRequest): Promise<VolumeResponse> {
+  async updateVolume(payload: UpdateVolumeRequest): Promise<FlyResult<VolumeResponse>> {
     const { app_name, volume_id, ...body } = payload
     return await this.client.restOrThrow(`apps/${app_name}/volumes/${volume_id}`, 'PUT', body)
   }
 
-  async deleteVolume(payload: DeleteVolumeRequest): Promise<VolumeResponse> {
+  async deleteVolume(payload: DeleteVolumeRequest): Promise<FlyResult<VolumeResponse>> {
     const { app_name, volume_id } = payload
     return await this.client.restOrThrow(`apps/${app_name}/volumes/${volume_id}`, 'DELETE')
   }
 
-  async extendVolume(payload: ExtendVolumeRequest): Promise<ExtendVolumeResponse> {
+  async extendVolume(payload: ExtendVolumeRequest): Promise<FlyResult<ExtendVolumeResponse>> {
     const { app_name, volume_id, ...body } = payload
     return await this.client.restOrThrow(`apps/${app_name}/volumes/${volume_id}/extend`, 'PUT', body)
   }
 
-  async listSnapshots(payload: ListSnapshotsRequest): Promise<SnapshotResponse[]> {
+  async listSnapshots(payload: ListSnapshotsRequest): Promise<FlyResult<SnapshotResponse[]>> {
     const { app_name, volume_id } = payload
     return await this.client.restOrThrow(`apps/${app_name}/volumes/${volume_id}/snapshots`)
   }
 
-  async createSnapshot(payload: GetVolumeRequest): Promise<SnapshotResponse> {
+  async createSnapshot(payload: GetVolumeRequest): Promise<FlyResult<SnapshotResponse>> {
     const { app_name, volume_id } = payload
     return await this.client.restOrThrow(`apps/${app_name}/volumes/${volume_id}/snapshots`, 'POST')
   }

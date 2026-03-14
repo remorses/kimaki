@@ -2,6 +2,7 @@
 // Types aligned with OpenAPI spec at https://docs.machines.dev/spec/openapi3.json
 
 import { Client } from './client.ts'
+import type { FlyResult } from './errors.ts'
 import type {
   App as ApiApp,
   AppOrganizationInfo as ApiAppOrganizationInfo,
@@ -231,12 +232,12 @@ export class App {
     this.client = client
   }
 
-  async listApps(org_slug: ListAppRequest): Promise<ListAppResponse> {
+  async listApps(org_slug: ListAppRequest): Promise<FlyResult<ListAppResponse>> {
     return await this.client.restOrThrow(`apps?org_slug=${org_slug}`)
   }
 
   /** List apps with full query params (org_slug + optional app_role filter). */
-  async listAppsWithParams(params: ListAppsParams): Promise<ListAppResponse> {
+  async listAppsWithParams(params: ListAppsParams): Promise<FlyResult<ListAppResponse>> {
     const query = new URLSearchParams({ org_slug: params.org_slug })
     if (params.app_role) {
       query.set('app_role', params.app_role)
@@ -244,15 +245,21 @@ export class App {
     return await this.client.restOrThrow(`apps?${query.toString()}`)
   }
 
-  async getApp(app_name: GetAppRequest): Promise<AppInfo> {
+  async getApp(app_name: GetAppRequest): Promise<FlyResult<AppInfo>> {
     return await this.client.restOrThrow(`apps/${app_name}`)
   }
 
-  async getAppDetailed(app_name: GetAppRequest): Promise<AppResponse> {
-    const { app } = await this.client.gqlPostOrThrow<string, { app: AppResponse & { ipAddresses: { nodes: IPAddress[] } } }>({
+  async getAppDetailed(app_name: GetAppRequest): Promise<FlyResult<AppResponse>> {
+    const result = await this.client.gqlPostOrThrow<string, { app: AppResponse & { ipAddresses: { nodes: IPAddress[] } } }>({
       query: getAppQuery,
       variables: { name: app_name },
     })
+
+    if (result instanceof Error) {
+      return result
+    }
+
+    const { app } = result
 
     return {
       ...app,
@@ -260,15 +267,15 @@ export class App {
     }
   }
 
-  async createApp(payload: CreateAppRequest): Promise<void> {
-    await this.client.restOrThrow('apps', 'POST', payload)
+  async createApp(payload: CreateAppRequest): Promise<FlyResult<void>> {
+    return await this.client.restOrThrow('apps', 'POST', payload)
   }
 
-  async deleteApp(app_name: DeleteAppRequest): Promise<void> {
-    await this.client.restOrThrow(`apps/${app_name}`, 'DELETE')
+  async deleteApp(app_name: DeleteAppRequest): Promise<FlyResult<void>> {
+    return await this.client.restOrThrow(`apps/${app_name}`, 'DELETE')
   }
 
-  async listCertificates(payload: ListCertificatesRequest): Promise<ListCertificatesResponse> {
+  async listCertificates(payload: ListCertificatesRequest): Promise<FlyResult<ListCertificatesResponse>> {
     const { app_name, filter, cursor, limit } = payload
     const params = new URLSearchParams()
     if (filter) {
@@ -285,61 +292,61 @@ export class App {
     return await this.client.restOrThrow(path)
   }
 
-  async requestAcmeCertificate(payload: RequestAcmeCertificateRequest): Promise<CertificateDetail> {
+  async requestAcmeCertificate(payload: RequestAcmeCertificateRequest): Promise<FlyResult<CertificateDetail>> {
     const { app_name, request } = payload
     return await this.client.restOrThrow(`apps/${app_name}/certificates/acme`, 'POST', request)
   }
 
-  async requestCustomCertificate(payload: RequestCustomCertificateRequest): Promise<CertificateDetail> {
+  async requestCustomCertificate(payload: RequestCustomCertificateRequest): Promise<FlyResult<CertificateDetail>> {
     const { app_name, request } = payload
     return await this.client.restOrThrow(`apps/${app_name}/certificates/custom`, 'POST', request)
   }
 
-  async getCertificate(payload: CertificateRequest): Promise<CertificateDetail> {
+  async getCertificate(payload: CertificateRequest): Promise<FlyResult<CertificateDetail>> {
     const { app_name, hostname } = payload
     return await this.client.restOrThrow(`apps/${app_name}/certificates/${hostname}`)
   }
 
-  async deleteCertificate(payload: CertificateRequest): Promise<void> {
+  async deleteCertificate(payload: CertificateRequest): Promise<FlyResult<void>> {
     const { app_name, hostname } = payload
-    await this.client.restOrThrow(`apps/${app_name}/certificates/${hostname}`, 'DELETE')
+    return await this.client.restOrThrow(`apps/${app_name}/certificates/${hostname}`, 'DELETE')
   }
 
-  async deleteAcmeCertificates(payload: CertificateRequest): Promise<CertificateDetail> {
+  async deleteAcmeCertificates(payload: CertificateRequest): Promise<FlyResult<CertificateDetail>> {
     const { app_name, hostname } = payload
     return await this.client.restOrThrow(`apps/${app_name}/certificates/${hostname}/acme`, 'DELETE')
   }
 
-  async checkCertificate(payload: CertificateRequest): Promise<CertificateCheckResponse> {
+  async checkCertificate(payload: CertificateRequest): Promise<FlyResult<CertificateCheckResponse>> {
     const { app_name, hostname } = payload
     return await this.client.restOrThrow(`apps/${app_name}/certificates/${hostname}/check`, 'POST')
   }
 
-  async deleteCustomCertificate(payload: CertificateRequest): Promise<DestroyCustomCertificateResponse> {
+  async deleteCustomCertificate(payload: CertificateRequest): Promise<FlyResult<DestroyCustomCertificateResponse>> {
     const { app_name, hostname } = payload
     return await this.client.restOrThrow(`apps/${app_name}/certificates/${hostname}/custom`, 'DELETE')
   }
 
-  async createDeployToken(payload: CreateDeployTokenRequest): Promise<CreateAppResponse> {
+  async createDeployToken(payload: CreateDeployTokenRequest): Promise<FlyResult<CreateAppResponse>> {
     const { app_name, request } = payload
     return await this.client.restOrThrow(`apps/${app_name}/deploy_token`, 'POST', request)
   }
 
-  async listIpAssignments(app_name: string): Promise<ListIPAssignmentsResponse> {
+  async listIpAssignments(app_name: string): Promise<FlyResult<ListIPAssignmentsResponse>> {
     return await this.client.restOrThrow(`apps/${app_name}/ip_assignments`)
   }
 
-  async assignIpAddress(payload: AssignIPAddressRequest): Promise<IPAssignment> {
+  async assignIpAddress(payload: AssignIPAddressRequest): Promise<FlyResult<IPAssignment>> {
     const { app_name, request } = payload
     return await this.client.restOrThrow(`apps/${app_name}/ip_assignments`, 'POST', request)
   }
 
-  async deleteIpAssignment(payload: DeleteIPAddressRequest): Promise<void> {
+  async deleteIpAssignment(payload: DeleteIPAddressRequest): Promise<FlyResult<void>> {
     const { app_name, ip } = payload
-    await this.client.restOrThrow(`apps/${app_name}/ip_assignments/${ip}`, 'DELETE')
+    return await this.client.restOrThrow(`apps/${app_name}/ip_assignments/${ip}`, 'DELETE')
   }
 
-  async listSecretKeys(payload: ListSecretKeysRequest): Promise<SecretKeys> {
+  async listSecretKeys(payload: ListSecretKeysRequest): Promise<FlyResult<SecretKeys>> {
     const { app_name, min_version, types } = payload
     const params = new URLSearchParams()
     if (min_version) {
@@ -353,23 +360,23 @@ export class App {
     return await this.client.restOrThrow(path)
   }
 
-  async getSecretKey(payload: SecretKeyRequest): Promise<SecretKey> {
+  async getSecretKey(payload: SecretKeyRequest): Promise<FlyResult<SecretKey>> {
     const { app_name, secret_name, min_version } = payload
     const query = min_version ? `?min_version=${encodeURIComponent(min_version)}` : ''
     return await this.client.restOrThrow(`apps/${app_name}/secretkeys/${secret_name}${query}`)
   }
 
-  async setSecretKey(payload: SetSecretKeyRequest): Promise<SetSecretkeyResponse> {
+  async setSecretKey(payload: SetSecretKeyRequest): Promise<FlyResult<SetSecretkeyResponse>> {
     const { app_name, secret_name, request } = payload
     return await this.client.restOrThrow(`apps/${app_name}/secretkeys/${secret_name}`, 'POST', request)
   }
 
-  async deleteSecretKey(payload: SecretKeyRequest): Promise<DeleteSecretkeyResponse> {
+  async deleteSecretKey(payload: SecretKeyRequest): Promise<FlyResult<DeleteSecretkeyResponse>> {
     const { app_name, secret_name } = payload
     return await this.client.restOrThrow(`apps/${app_name}/secretkeys/${secret_name}`, 'DELETE')
   }
 
-  async decryptSecretKey(payload: SecretKeyDecryptRequest): Promise<DecryptSecretkeyResponse> {
+  async decryptSecretKey(payload: SecretKeyDecryptRequest): Promise<FlyResult<DecryptSecretkeyResponse>> {
     const { app_name, secret_name, request, min_version } = payload
     const query = min_version ? `?min_version=${encodeURIComponent(min_version)}` : ''
     return await this.client.restOrThrow(
@@ -379,7 +386,7 @@ export class App {
     )
   }
 
-  async encryptSecretKey(payload: SecretKeyEncryptRequest): Promise<EncryptSecretkeyResponse> {
+  async encryptSecretKey(payload: SecretKeyEncryptRequest): Promise<FlyResult<EncryptSecretkeyResponse>> {
     const { app_name, secret_name, request, min_version } = payload
     const query = min_version ? `?min_version=${encodeURIComponent(min_version)}` : ''
     return await this.client.restOrThrow(
@@ -389,7 +396,7 @@ export class App {
     )
   }
 
-  async generateSecretKey(payload: SetSecretKeyRequest): Promise<SetSecretkeyResponse> {
+  async generateSecretKey(payload: SetSecretKeyRequest): Promise<FlyResult<SetSecretkeyResponse>> {
     const { app_name, secret_name, request } = payload
     return await this.client.restOrThrow(
       `apps/${app_name}/secretkeys/${secret_name}/generate`,
@@ -398,19 +405,19 @@ export class App {
     )
   }
 
-  async signSecretKey(payload: SecretKeySignRequest): Promise<SignSecretkeyResponse> {
+  async signSecretKey(payload: SecretKeySignRequest): Promise<FlyResult<SignSecretkeyResponse>> {
     const { app_name, secret_name, request, min_version } = payload
     const query = min_version ? `?min_version=${encodeURIComponent(min_version)}` : ''
     return await this.client.restOrThrow(`apps/${app_name}/secretkeys/${secret_name}/sign${query}`, 'POST', request)
   }
 
-  async verifySecretKey(payload: SecretKeyVerifyRequest): Promise<void> {
+  async verifySecretKey(payload: SecretKeyVerifyRequest): Promise<FlyResult<void>> {
     const { app_name, secret_name, request, min_version } = payload
     const query = min_version ? `?min_version=${encodeURIComponent(min_version)}` : ''
-    await this.client.restOrThrow(`apps/${app_name}/secretkeys/${secret_name}/verify${query}`, 'POST', request)
+    return await this.client.restOrThrow(`apps/${app_name}/secretkeys/${secret_name}/verify${query}`, 'POST', request)
   }
 
-  async listSecrets(payload: ListSecretsRequest): Promise<AppSecrets> {
+  async listSecrets(payload: ListSecretsRequest): Promise<FlyResult<AppSecrets>> {
     const { app_name, min_version, show_secrets } = payload
     const params = new URLSearchParams()
     if (min_version) {
@@ -424,12 +431,12 @@ export class App {
     return await this.client.restOrThrow(path)
   }
 
-  async updateSecrets(payload: UpdateSecretsRequest): Promise<AppSecretsUpdateResp> {
+  async updateSecrets(payload: UpdateSecretsRequest): Promise<FlyResult<AppSecretsUpdateResp>> {
     const { app_name, request } = payload
     return await this.client.restOrThrow(`apps/${app_name}/secrets`, 'POST', request)
   }
 
-  async getSecret(payload: SecretRequest): Promise<AppSecret> {
+  async getSecret(payload: SecretRequest): Promise<FlyResult<AppSecret>> {
     const { app_name, secret_name, min_version, show_secrets } = payload
     const params = new URLSearchParams()
     if (min_version) {
@@ -443,12 +450,12 @@ export class App {
     return await this.client.restOrThrow(path)
   }
 
-  async setSecret(payload: SetSecretRequest): Promise<SetAppSecretResponse> {
+  async setSecret(payload: SetSecretRequest): Promise<FlyResult<SetAppSecretResponse>> {
     const { app_name, secret_name, request } = payload
     return await this.client.restOrThrow(`apps/${app_name}/secrets/${secret_name}`, 'POST', request)
   }
 
-  async deleteSecret(payload: SecretRequest): Promise<DeleteAppSecretResponse> {
+  async deleteSecret(payload: SecretRequest): Promise<FlyResult<DeleteAppSecretResponse>> {
     const { app_name, secret_name } = payload
     return await this.client.restOrThrow(`apps/${app_name}/secrets/${secret_name}`, 'DELETE')
   }

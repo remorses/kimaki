@@ -1,5 +1,5 @@
 {
-  "name": "fly-admin",
+  "name": "@fly.io/sdk",
   "version": "0.1.0",
   "description": "TypeScript client for the Fly Machines REST and GraphQL APIs. Vendored fork of supabase/fly-admin with native fetch, exec, releaseLease, and metadata support.",
   "type": "module",
@@ -25,6 +25,9 @@
     "dist",
     "README.md"
   ],
+  "publishConfig": {
+    "access": "public"
+  },
   "scripts": {
     "build": "tsc",
     "prepublishOnly": "pnpm build"
@@ -45,5 +48,8 @@
   "devDependencies": {
     "@types/node": "^22.0.0",
     "typescript": "^5.9.2"
+  },
+  "dependencies": {
+    "errore": "workspace:^"
   }
 }

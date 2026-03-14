@@ -2,7 +2,16 @@
 // Uses native fetch (no cross-fetch dependency).
 // Vendored from supabase/fly-admin with modifications.
 
+import * as errore from 'errore'
+
 import { App } from './app.ts'
+import {
+  createFlyGraphQLError,
+  createFlyHttpError,
+  FlyApiError,
+  type FlyClientError,
+  type FlyResult,
+} from './errors.ts'
 import { Machine } from './machine.ts'
 import { Network } from './network.ts'
 import { Organization } from './organization.ts'
@@ -74,33 +83,94 @@ export class Client {
     return this.graphqlUrl
   }
 
-  async gqlPostOrThrow<U, V>(payload: GraphQLRequest<U>): Promise<V> {
-    const resp = await fetch(`${this.graphqlUrl}/graphql`, {
+  async gqlPost<U, V>(payload: GraphQLRequest<U>): Promise<FlyClientError | V> {
+    const path = 'graphql'
+    const response = await fetch(`${this.graphqlUrl}/${path}`, {
       method: 'POST',
       headers: {
         Authorization: `Bearer ${this.apiKey}`,
         'Content-Type': 'application/json',
       },
       body: JSON.stringify(payload),
+    }).catch((cause: unknown) => {
+      return new FlyApiError({
+        method: 'POST',
+        path,
+        httpStatus: 0,
+        cause,
+      })
     })
-    const text = await resp.text()
-    if (!resp.ok) {
-      throw new Error(`${resp.status}: ${text}`)
+
+    if (response instanceof Error) {
+      return response
     }
-    const { data, errors }: GraphQLResponse<V> = JSON.parse(text)
+
+    const responseText = await response.text().catch((cause: unknown) => {
+      return new FlyApiError({
+        method: 'POST',
+        path,
+        httpStatus: response.status,
+        cause,
+      })
+    })
+
+    if (responseText instanceof Error) {
+      return responseText
+    }
+
+    if (!response.ok) {
+      const payloadOrError = parseJson({ text: responseText })
+      if (payloadOrError instanceof Error) {
+        return new FlyApiError({
+          method: 'POST',
+          path,
+          httpStatus: response.status,
+          cause: payloadOrError,
+        })
+      }
+      return createFlyHttpError({
+        method: 'POST',
+        path,
+        httpStatus: response.status,
+        payload: payloadOrError,
+      })
+    }
+
+    const payloadOrError = parseJson({ text: responseText })
+    if (payloadOrError instanceof Error) {
+      return new FlyApiError({
+        method: 'POST',
+        path,
+        httpStatus: response.status,
+        cause: payloadOrError,
+      })
+    }
+
+    const parsed = payloadOrError as GraphQLResponse<V>
+    const { data, errors } = parsed
     if (errors) {
-      throw new Error(JSON.stringify(errors))
+      return createFlyGraphQLError({
+        path,
+        messages: errors.map((error) => {
+          return error.message
+        }),
+      })
     }
+
     return data
   }
 
-  async restOrThrow<V>(
+  async gqlPostOrThrow<U, V>(payload: GraphQLRequest<U>): Promise<FlyResult<V>> {
+    return await this.gqlPost<U, V>(payload)
+  }
+
+  async rest<V>(
     path: string,
     method: 'GET' | 'POST' | 'PUT' | 'DELETE' = 'GET',
     body?: unknown,
     headers?: Record<string, string>,
-  ): Promise<V> {
-    const resp = await fetch(`${this.apiUrl}/v1/${path}`, {
+  ): Promise<FlyClientError | V> {
+    const response = await fetch(`${this.apiUrl}/v1/${path}`, {
       method,
       headers: {
         Authorization: `Bearer ${this.apiKey}`,
@@ -108,11 +178,85 @@ export class Client {
         ...headers,
       },
       body: body !== undefined ? JSON.stringify(body) : undefined,
+    }).catch((cause: unknown) => {
+      return new FlyApiError({
+        method,
+        path,
+        httpStatus: 0,
+        cause,
+      })
     })
-    const text = await resp.text()
-    if (!resp.ok) {
-      throw new Error(`${resp.status}: ${text}`)
+
+    if (response instanceof Error) {
+      return response
     }
-    return text ? JSON.parse(text) : (undefined as V)
+
+    const responseText = await response.text().catch((cause: unknown) => {
+      return new FlyApiError({
+        method,
+        path,
+        httpStatus: response.status,
+        cause,
+      })
+    })
+
+    if (responseText instanceof Error) {
+      return responseText
+    }
+
+    if (!response.ok) {
+      const payloadOrError = parseJson({ text: responseText })
+      if (payloadOrError instanceof Error) {
+        return new FlyApiError({
+          method,
+          path,
+          httpStatus: response.status,
+          cause: payloadOrError,
+        })
+      }
+
+      return createFlyHttpError({
+        method,
+        path,
+        httpStatus: response.status,
+        payload: payloadOrError,
+      })
+    }
+
+    if (!responseText) {
+      return undefined as V
+    }
+
+    const payloadOrError = parseJson({ text: responseText })
+    if (payloadOrError instanceof Error) {
+      return new FlyApiError({
+        method,
+        path,
+        httpStatus: response.status,
+        cause: payloadOrError,
+      })
+    }
+
+    return payloadOrError as V
   }
+
+  async restOrThrow<V>(
+    path: string,
+    method: 'GET' | 'POST' | 'PUT' | 'DELETE' = 'GET',
+    body?: unknown,
+    headers?: Record<string, string>,
+  ): Promise<FlyResult<V>> {
+    return await this.rest(path, method, body, headers)
+  }
+}
+
+function parseJson({ text }: { text: string }): Error | unknown {
+  return errore.try({
+    try: () => {
+      return JSON.parse(text) as unknown
+    },
+    catch: (cause) => {
+      return new Error('Failed to parse JSON response', { cause })
+    },
+  })
 }

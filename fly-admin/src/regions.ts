@@ -1,6 +1,7 @@
 // Region listing via Fly GraphQL API.
 
 import { Client } from './client.ts'
+import type { FlyResult } from './errors.ts'
 import type {
   MainGetPlacementsRequest,
   MainGetPlacementsResponse,
@@ -55,14 +56,14 @@ export class Regions {
     this.client = client
   }
 
-  async getRegions(): Promise<GetRegionsOutput> {
+  async getRegions(): Promise<FlyResult<GetRegionsOutput>> {
     return this.client.gqlPostOrThrow({
       query: getRegionsQuery,
       variables: {},
     })
   }
 
-  async getPlatformRegions(payload: GetPlatformRegionsRequest = {}): Promise<MainRegionResponse> {
+  async getPlatformRegions(payload: GetPlatformRegionsRequest = {}): Promise<FlyResult<MainRegionResponse>> {
     const params = new URLSearchParams()
     if (payload.size) {
       params.set('size', payload.size)
@@ -87,7 +88,7 @@ export class Regions {
     return await this.client.restOrThrow(path)
   }
 
-  async getPlacements(request: MainGetPlacementsRequest): Promise<MainGetPlacementsResponse> {
+  async getPlacements(request: MainGetPlacementsRequest): Promise<FlyResult<MainGetPlacementsResponse>> {
     return await this.client.restOrThrow('platform/placements', 'POST', request)
   }
 }

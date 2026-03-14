@@ -2,6 +2,7 @@
 // Vendored from supabase/fly-admin with added exec, releaseLease, and metadata methods.
 
 import { Client } from './client.ts'
+import type { FlyResult } from './errors.ts'
 import {
   ApiMachineConfig,
   ApiMachineInit,
@@ -380,7 +381,7 @@ export class Machine {
 
   // --- Core CRUD ---
 
-  async listMachines(app_name: ListMachineRequest): Promise<MachineResponse[]> {
+  async listMachines(app_name: ListMachineRequest): Promise<FlyResult<MachineResponse[]>> {
     let path: string
     if (typeof app_name === 'string') {
       path = `apps/${app_name}/machines`
@@ -408,22 +409,22 @@ export class Machine {
     return await this.client.restOrThrow(path)
   }
 
-  async getMachine(payload: GetMachineRequest): Promise<MachineResponse> {
+  async getMachine(payload: GetMachineRequest): Promise<FlyResult<MachineResponse>> {
     const { app_name, machine_id } = payload
     return await this.client.restOrThrow(`apps/${app_name}/machines/${machine_id}`)
   }
 
-  async createMachine(payload: CreateMachineRequest): Promise<MachineResponse> {
+  async createMachine(payload: CreateMachineRequest): Promise<FlyResult<MachineResponse>> {
     const { app_name, ...body } = payload
     return await this.client.restOrThrow(`apps/${app_name}/machines`, 'POST', body)
   }
 
-  async updateMachine(payload: UpdateMachineRequest): Promise<MachineResponse> {
+  async updateMachine(payload: UpdateMachineRequest): Promise<FlyResult<MachineResponse>> {
     const { app_name, machine_id, ...body } = payload
     return await this.client.restOrThrow(`apps/${app_name}/machines/${machine_id}`, 'POST', body)
   }
 
-  async deleteMachine(payload: DeleteMachineRequest): Promise<OkResponse> {
+  async deleteMachine(payload: DeleteMachineRequest): Promise<FlyResult<OkResponse>> {
     const { app_name, machine_id, force } = payload
     const query = force ? '?force=true' : ''
     return await this.client.restOrThrow(`apps/${app_name}/machines/${machine_id}${query}`, 'DELETE')
@@ -431,12 +432,12 @@ export class Machine {
 
   // --- Lifecycle control ---
 
-  async startMachine(payload: StartMachineRequest): Promise<OkResponse> {
+  async startMachine(payload: StartMachineRequest): Promise<FlyResult<OkResponse>> {
     const { app_name, machine_id } = payload
     return await this.client.restOrThrow(`apps/${app_name}/machines/${machine_id}/start`, 'POST')
   }
 
-  async stopMachine(payload: StopMachineRequest): Promise<OkResponse> {
+  async stopMachine(payload: StopMachineRequest): Promise<FlyResult<OkResponse>> {
     const { app_name, machine_id, ...body } = payload
     return await this.client.restOrThrow(`apps/${app_name}/machines/${machine_id}/stop`, 'POST', {
       signal: ApiMachineSignal.SIGTERM,
@@ -444,7 +445,7 @@ export class Machine {
     })
   }
 
-  async restartMachine(payload: RestartMachineRequest): Promise<OkResponse> {
+  async restartMachine(payload: RestartMachineRequest): Promise<FlyResult<OkResponse>> {
     const { app_name, machine_id, ...params } = payload
     let path = `apps/${app_name}/machines/${machine_id}/restart`
     const queryParams: Record<string, string> = {}
@@ -461,52 +462,52 @@ export class Machine {
     return await this.client.restOrThrow(path, 'POST')
   }
 
-  async signalMachine(payload: SignalMachineRequest): Promise<OkResponse> {
+  async signalMachine(payload: SignalMachineRequest): Promise<FlyResult<OkResponse>> {
     const { app_name, machine_id, ...body } = payload
     return await this.client.restOrThrow(`apps/${app_name}/machines/${machine_id}/signal`, 'POST', body)
   }
 
-  async suspendMachine(payload: GetMachineRequest): Promise<OkResponse> {
+  async suspendMachine(payload: GetMachineRequest): Promise<FlyResult<OkResponse>> {
     const { app_name, machine_id } = payload
     return await this.client.restOrThrow(`apps/${app_name}/machines/${machine_id}/suspend`, 'POST')
   }
 
   // --- Memory ---
 
-  async getMemory(payload: GetMachineRequest): Promise<MachineMemoryResponse> {
+  async getMemory(payload: GetMachineRequest): Promise<FlyResult<MachineMemoryResponse>> {
     const { app_name, machine_id } = payload
     return await this.client.restOrThrow(`apps/${app_name}/machines/${machine_id}/memory`)
   }
 
-  async setMemoryLimit(payload: UpdateMemoryRequest): Promise<MachineMemoryResponse> {
+  async setMemoryLimit(payload: UpdateMemoryRequest): Promise<FlyResult<MachineMemoryResponse>> {
     const { app_name, machine_id, ...body } = payload
     return await this.client.restOrThrow(`apps/${app_name}/machines/${machine_id}/memory`, 'PUT', body)
   }
 
   /** @deprecated use setMemoryLimit instead */
-  async updateMemory(payload: UpdateMemoryRequest): Promise<MachineMemoryResponse> {
+  async updateMemory(payload: UpdateMemoryRequest): Promise<FlyResult<MachineMemoryResponse>> {
     return this.setMemoryLimit(payload)
   }
 
-  async reclaimMemory(payload: ReclaimMemoryMachineRequest): Promise<ReclaimMemoryResponse> {
+  async reclaimMemory(payload: ReclaimMemoryMachineRequest): Promise<FlyResult<ReclaimMemoryResponse>> {
     const { app_name, machine_id, ...body } = payload
     return await this.client.restOrThrow(`apps/${app_name}/machines/${machine_id}/memory/reclaim`, 'POST', body)
   }
 
   // --- Monitoring ---
 
-  async listEvents(payload: ListEventsOptions): Promise<MachineResponse['events']> {
+  async listEvents(payload: ListEventsOptions): Promise<FlyResult<MachineResponse['events']>> {
     const { app_name, machine_id, limit } = payload
     const query = limit !== undefined ? `?limit=${String(limit)}` : ''
     return await this.client.restOrThrow(`apps/${app_name}/machines/${machine_id}/events${query}`)
   }
 
-  async listVersions(payload: ListVersionsRequest): Promise<MachineVersionResponse[]> {
+  async listVersions(payload: ListVersionsRequest): Promise<FlyResult<MachineVersionResponse[]>> {
     const { app_name, machine_id } = payload
     return await this.client.restOrThrow(`apps/${app_name}/machines/${machine_id}/versions`)
   }
 
-  async listProcesses(payload: ListProcessesRequest): Promise<ProcessResponse[]> {
+  async listProcesses(payload: ListProcessesRequest): Promise<FlyResult<ProcessResponse[]>> {
     const { app_name, machine_id, ...params } = payload
     let path = `apps/${app_name}/machines/${machine_id}/ps`
     const query = new URLSearchParams(params).toString()
@@ -516,7 +517,7 @@ export class Machine {
     return await this.client.restOrThrow(path)
   }
 
-  async waitMachine(payload: WaitMachineRequest): Promise<ApiWaitMachineResponse> {
+  async waitMachine(payload: WaitMachineRequest): Promise<FlyResult<ApiWaitMachineResponse>> {
     const { app_name, machine_id, ...params } = payload
     let path = `apps/${app_name}/machines/${machine_id}/wait`
     const queryParams: Record<string, string> = {}
@@ -544,31 +545,31 @@ export class Machine {
 
   // --- Cordoning ---
 
-  async cordonMachine(payload: CordonMachineRequest): Promise<OkResponse> {
+  async cordonMachine(payload: CordonMachineRequest): Promise<FlyResult<OkResponse>> {
     const { app_name, machine_id } = payload
     return await this.client.restOrThrow(`apps/${app_name}/machines/${machine_id}/cordon`, 'POST')
   }
 
-  async uncordonMachine(payload: UncordonMachineRequest): Promise<OkResponse> {
+  async uncordonMachine(payload: UncordonMachineRequest): Promise<FlyResult<OkResponse>> {
     const { app_name, machine_id } = payload
     return await this.client.restOrThrow(`apps/${app_name}/machines/${machine_id}/uncordon`, 'POST')
   }
 
   // --- Leases ---
 
-  async getLease(payload: GetLeaseRequest): Promise<LeaseResponse> {
+  async getLease(payload: GetLeaseRequest): Promise<FlyResult<LeaseResponse>> {
     const { app_name, machine_id } = payload
     return await this.client.restOrThrow(`apps/${app_name}/machines/${machine_id}/lease`)
   }
 
-  async acquireLease(payload: AcquireLeaseRequest): Promise<LeaseResponse> {
+  async acquireLease(payload: AcquireLeaseRequest): Promise<FlyResult<LeaseResponse>> {
     const { app_name, machine_id, ...body } = payload
     return await this.client.restOrThrow(`apps/${app_name}/machines/${machine_id}/lease`, 'POST', body)
   }
 
-  async releaseLease(payload: ReleaseLeaseRequest): Promise<void> {
+  async releaseLease(payload: ReleaseLeaseRequest): Promise<FlyResult<void>> {
     const { app_name, machine_id, nonce } = payload
-    await this.client.restOrThrow(
+    return await this.client.restOrThrow(
       `apps/${app_name}/machines/${machine_id}/lease`,
       'DELETE',
       undefined,
@@ -578,41 +579,41 @@ export class Machine {
 
   // --- Exec ---
 
-  async execMachine(payload: ExecMachineRequest): Promise<ExecMachineResponse> {
+  async execMachine(payload: ExecMachineRequest): Promise<FlyResult<ExecMachineResponse>> {
     const { app_name, machine_id, ...body } = payload
     return await this.client.restOrThrow(`apps/${app_name}/machines/${machine_id}/exec`, 'POST', body)
   }
 
   // --- Metadata ---
 
-  async getMetadata(payload: GetMetadataRequest): Promise<Record<string, string>> {
+  async getMetadata(payload: GetMetadataRequest): Promise<FlyResult<Record<string, string>>> {
     const { app_name, machine_id } = payload
     return await this.client.restOrThrow(`apps/${app_name}/machines/${machine_id}/metadata`)
   }
 
-  async updateMetadata(payload: UpdateMetadataRequest): Promise<void> {
+  async updateMetadata(payload: UpdateMetadataRequest): Promise<FlyResult<void>> {
     const { app_name, machine_id, request } = payload
-    await this.client.restOrThrow(`apps/${app_name}/machines/${machine_id}/metadata`, 'PUT', request)
+    return await this.client.restOrThrow(`apps/${app_name}/machines/${machine_id}/metadata`, 'PUT', request)
   }
 
-  async getMetadataProperty(payload: GetMetadataPropertyRequest): Promise<MetadataValueResponse> {
+  async getMetadataProperty(payload: GetMetadataPropertyRequest): Promise<FlyResult<MetadataValueResponse>> {
     const { app_name, machine_id, key } = payload
     return await this.client.restOrThrow(`apps/${app_name}/machines/${machine_id}/metadata/${key}`)
   }
 
-  async setMetadataProperty(payload: SetMetadataPropertyRequest): Promise<void> {
+  async setMetadataProperty(payload: SetMetadataPropertyRequest): Promise<FlyResult<void>> {
     const { app_name, machine_id, key, request } = payload
-    await this.client.restOrThrow(`apps/${app_name}/machines/${machine_id}/metadata/${key}`, 'POST', request)
+    return await this.client.restOrThrow(`apps/${app_name}/machines/${machine_id}/metadata/${key}`, 'POST', request)
   }
 
-  async deleteMetadataProperty(payload: DeleteMetadataPropertyRequest): Promise<void> {
+  async deleteMetadataProperty(payload: DeleteMetadataPropertyRequest): Promise<FlyResult<void>> {
     const { app_name, machine_id, key } = payload
-    await this.client.restOrThrow(`apps/${app_name}/machines/${machine_id}/metadata/${key}`, 'DELETE')
+    return await this.client.restOrThrow(`apps/${app_name}/machines/${machine_id}/metadata/${key}`, 'DELETE')
   }
 
   // --- Org-level ---
 
-  async listOrgMachines(payload: ListOrgMachinesRequest): Promise<OrgMachinesResponse> {
+  async listOrgMachines(payload: ListOrgMachinesRequest): Promise<FlyResult<OrgMachinesResponse>> {
     const { org_slug, ...params } = payload
     let path = `orgs/${org_slug}/machines`
     const queryParams: Record<string, string> = {}
