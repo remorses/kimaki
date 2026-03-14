@@ -16,6 +16,24 @@ export type {
   IPAddress,
   CreateAppRequest,
   DeleteAppRequest,
+  ListCertificatesRequest,
+  RequestAcmeCertificateRequest,
+  RequestCustomCertificateRequest,
+  CertificateRequest,
+  CreateDeployTokenRequest,
+  ListSecretKeysRequest,
+  SecretKeyRequest,
+  SetSecretKeyRequest,
+  SecretKeyDecryptRequest,
+  SecretKeyEncryptRequest,
+  SecretKeySignRequest,
+  SecretKeyVerifyRequest,
+  ListSecretsRequest,
+  UpdateSecretsRequest,
+  SecretRequest,
+  SetSecretRequest,
+  AssignIPAddressRequest,
+  DeleteIPAddressRequest,
 } from './app.ts'
 
 export { Machine, MachineState, ConnectionHandler } from './machine.ts'
@@ -73,7 +91,10 @@ export { Organization } from './organization.ts'
 export type { GetOrganizationInput, GetOrganizationOutput } from './organization.ts'
 
 export { Regions } from './regions.ts'
-export type { GetRegionsOutput } from './regions.ts'
+export type { GetRegionsOutput, GetPlatformRegionsRequest } from './regions.ts'
+
+export { Token } from './token.ts'
+export type { RequestOIDCTokenRequest } from './token.ts'
 
 export { Secret } from './secret.ts'
 export type {

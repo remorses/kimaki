@@ -529,6 +529,491 @@ export interface OrgMachinesResponse {
   next_cursor?: string
 }
 
+export interface AcmeChallenge {
+  name?: string
+  target?: string
+}
+
+export interface App {
+  id?: string
+  internal_numeric_id?: number
+  machine_count?: number
+  name?: string
+  network?: string
+  organization?: AppOrganizationInfo
+  status?: string
+  volume_count?: number
+}
+
+export interface AppOrganizationInfo {
+  internal_numeric_id?: number
+  name?: string
+  slug?: string
+}
+
+export interface AppSecret {
+  created_at?: string
+  digest?: string
+  name?: string
+  updated_at?: string
+  value?: string
+}
+
+export interface AppSecrets {
+  secrets?: AppSecret[]
+}
+
+export interface AppSecretsUpdateRequest {
+  values?: Record<string, string>
+}
+
+export interface AppSecretsUpdateResp {
+  /** DEPRECATED */
+  Version?: number
+  secrets?: AppSecret[]
+  version?: number
+}
+
+export interface CertificateCheckResponse {
+  acme_requested?: boolean
+  certificates?: CertificateEntry[]
+  configured?: boolean
+  dns_provider?: string
+  dns_records?: DNSRecords
+  dns_requirements?: DNSRequirements
+  hostname?: string
+  rate_limited_until?: string
+  status?: string
+  validation?: CertificateValidation
+  validation_errors?: CertificateValidationError[]
+}
+
+export interface CertificateDetail {
+  acme_requested?: boolean
+  certificates?: CertificateEntry[]
+  configured?: boolean
+  dns_provider?: string
+  dns_requirements?: DNSRequirements
+  hostname?: string
+  rate_limited_until?: string
+  status?: string
+  validation?: CertificateValidation
+  validation_errors?: CertificateValidationError[]
+}
+
+export interface CertificateEntry {
+  created_at?: string
+  expires_at?: string
+  issued?: IssuedCertificate[]
+  issuer?: string
+  source?: 'custom' | 'fly'
+  status?: 'active' | 'pending_ownership' | 'pending_validation'
+}
+
+export interface CertificateSummary {
+  acme_alpn_configured?: boolean
+  acme_dns_configured?: boolean
+  acme_http_configured?: boolean
+  acme_requested?: boolean
+  configured?: boolean
+  created_at?: string
+  dns_provider?: string
+  has_custom_certificate?: boolean
+  has_fly_certificate?: boolean
+  hostname?: string
+  ownership_txt_configured?: boolean
+  status?: string
+  updated_at?: string
+}
+
+export interface CertificateValidation {
+  alpn_configured?: boolean
+  dns_configured?: boolean
+  http_configured?: boolean
+  ownership_txt_configured?: boolean
+}
+
+export interface CertificateValidationError {
+  code?: string
+  message?: string
+  remediation?: string
+  timestamp?: string
+}
+
+export interface CreateAcmeCertificateRequest {
+  hostname?: string
+}
+
+export interface CreateCustomCertificateRequest {
+  cert?: string
+  hostname?: string
+  key?: string
+}
+
+export interface CreateAppDeployTokenRequest {
+  expiry?: string
+}
+
+export interface CreateAppRequest {
+  enable_subdomains?: boolean
+  name?: string
+  network?: string
+  org_slug?: string
+}
+
+export interface CreateAppResponse {
+  token?: string
+}
+
+export interface CreateLeaseRequest {
+  description?: string
+  /** seconds lease will be valid */
+  ttl?: number
+}
+
+export interface CreateOIDCTokenRequest {
+  aud?: string
+  aws_principal_tags?: boolean
+}
+
+export interface CurrentTokenResponse {
+  tokens?: MainTokenInfo[]
+}
+
+export interface DNSRecords {
+  a?: string[]
+  aaaa?: string[]
+  acme_challenge_cname?: string
+  cname?: string[]
+  ownership_txt?: string
+  resolved_addresses?: string[]
+  soa?: string
+}
+
+export interface DNSRequirements {
+  a?: string[]
+  aaaa?: string[]
+  acme_challenge?: AcmeChallenge
+  cname?: string
+  ownership?: OwnershipVerification
+}
+
+export interface DecryptSecretkeyRequest {
+  associated_data?: number[]
+  ciphertext?: number[]
+}
+
+export interface DecryptSecretkeyResponse {
+  plaintext?: number[]
+}
+
+export interface DeleteAppSecretResponse {
+  /** DEPRECATED */
+  Version?: number
+  version?: number
+}
+
+export interface DeleteSecretkeyResponse {
+  /** DEPRECATED */
+  Version?: number
+  version?: number
+}
+
+export interface DestroyCustomCertificateResponse {
+  acme_requested?: boolean
+  certificates?: CertificateEntry[]
+  configured?: boolean
+  dns_provider?: string
+  dns_requirements?: DNSRequirements
+  hostname?: string
+  rate_limited_until?: string
+  status?: string
+  validation?: CertificateValidation
+  validation_errors?: CertificateValidationError[]
+}
+
+export interface EncryptSecretkeyRequest {
+  associated_data?: number[]
+  plaintext?: number[]
+}
+
+export interface EncryptSecretkeyResponse {
+  ciphertext?: number[]
+}
+
+export interface IPAssignment {
+  created_at?: string
+  ip?: string
+  region?: string
+  service_name?: string
+  shared?: boolean
+}
+
+export interface IssuedCertificate {
+  certificate_authority?: string
+  expires_at?: string
+  type?: 'rsa' | 'ecdsa'
+}
+
+export interface ListAppsResponse {
+  apps?: App[]
+  total_apps?: number
+}
+
+export interface ListCertificatesResponse {
+  certificates?: CertificateSummary[]
+  next_cursor?: string
+  total_count?: number
+}
+
+export interface ListIPAssignmentsResponse {
+  ips?: IPAssignment[]
+}
+
+export interface MainGetPlacementsRequest {
+  compute?: ApiMachineGuest
+  count?: number
+  org_slug: string
+  region?: string
+  volume_name?: string
+  volume_size_bytes?: number
+  weights?: PlacementWeights
+}
+
+export interface MainGetPlacementsResponse {
+  regions?: PlacementRegionPlacement[]
+}
+
+export interface MainRegionResponse {
+  nearest?: string
+  regions?: ReadsGetCapacityPerRegionRow[]
+}
+
+export interface MainTokenInfo {
+  apps?: string[]
+  org_slug?: string
+  organization?: string
+  /** Machine the token is restricted to (FromMachine caveat) */
+  restricted_to_machine?: string
+  /** Machine making the request */
+  source_machine_id?: string
+  token_id?: string
+  /** User identifier if token is for a user */
+  user?: string
+}
+
+export interface MetadataValueResponse {
+  value?: string
+}
+
+export interface OwnershipVerification {
+  app_value?: string
+  name?: string
+  org_value?: string
+}
+
+export interface PlacementRegionPlacement {
+  concurrency?: number
+  count?: number
+  region?: string
+}
+
+export type PlacementWeights = Record<string, number>
+
+export interface ReadsGetCapacityPerRegionRow {
+  capacity?: number
+  code?: string
+  deprecated?: boolean
+  gateway_available?: boolean
+  geo_region?: string
+  latitude?: number
+  longitude?: number
+  name?: string
+  requires_paid_plan?: boolean
+}
+
+export interface SecretKey {
+  created_at?: string
+  name?: string
+  public_key?: number[]
+  type?: string
+  updated_at?: string
+}
+
+export interface SecretKeys {
+  secret_keys?: SecretKey[]
+}
+
+export interface SetAppSecretRequest {
+  value?: string
+}
+
+export interface SetAppSecretResponse {
+  /** DEPRECATED */
+  Version?: number
+  created_at?: string
+  digest?: string
+  name?: string
+  updated_at?: string
+  value?: string
+  version?: number
+}
+
+export interface SetSecretkeyRequest {
+  type?: string
+  value?: number[]
+}
+
+export interface SetSecretkeyResponse {
+  /** DEPRECATED */
+  Version?: number
+  created_at?: string
+  name?: string
+  public_key?: number[]
+  type?: string
+  updated_at?: string
+  version?: number
+}
+
+export interface SignSecretkeyRequest {
+  plaintext?: number[]
+}
+
+export interface SignSecretkeyResponse {
+  signature?: number[]
+}
+
+export interface UpdateMetadataRequestBody {
+  machine_version?: string
+  metadata?: Record<string, string>
+  updated_at?: string
+}
+
+export interface UpsertMetadataKeyRequest {
+  updated_at?: string
+  value?: string
+}
+
+export interface VerifySecretkeyRequest {
+  plaintext?: number[]
+  signature?: number[]
+}
+
+// OpenAPI lowercase schema-name aliases.
+export type createAcmeCertificateRequest = CreateAcmeCertificateRequest
+export type createCustomCertificateRequest = CreateCustomCertificateRequest
+export type destroyCustomCertificateResponse = DestroyCustomCertificateResponse
+export type listCertificatesResponse = ListCertificatesResponse
+export type listIPAssignmentsResponse = ListIPAssignmentsResponse
+export type metadataValueResponse = MetadataValueResponse
+export type updateMetadataRequest = UpdateMetadataRequestBody
+export type upsertMetadataKeyRequest = UpsertMetadataKeyRequest
+export interface assignIPRequest {
+  region?: string
+  service_name?: string
+  type?: string
+}
+
+// OpenAPI schema aliases where schema names include dots.
+export type FlyContainerConfig = ApiContainerConfig
+export type FlyContainerDependency = ApiContainerDependency
+export type FlyContainerDependencyCondition = ApiContainerDependencyCondition
+export type FlyContainerHealthcheck = ApiContainerHealthcheck
+export type FlyContainerHealthcheckKind = ApiContainerHealthcheckKind
+export type FlyContainerHealthcheckScheme = ApiContainerHealthcheckScheme
+export type FlyDNSConfig = ApiDNSConfig
+export type FlyDuration = ApiDuration
+export type FlyEnvFrom = ApiEnvFrom
+export type FlyExecHealthcheck = ApiExecHealthcheck
+export type FlyFile = ApiFile
+export type FlyHTTPHealthcheck = ApiHTTPHealthcheck
+export type FlyHTTPOptions = ApiHTTPOptions
+export type FlyHTTPResponseOptions = ApiHTTPResponseOptions
+export type FlyMachineCheck = ApiMachineCheck
+export type FlyMachineConfig = ApiMachineConfig
+export type FlyMachineGuest = ApiMachineGuest
+export type FlyMachineHTTPHeader = ApiMachineHTTPHeader
+export type FlyMachineInit = ApiMachineInit
+export type FlyMachineMetrics = ApiMachineMetrics
+export type FlyMachineMount = ApiMachineMount
+export type FlyMachinePort = ApiMachinePort
+export type FlyMachineProcess = ApiMachineProcess
+export type FlyMachineRestart = ApiMachineRestart
+export type FlyMachineRootfs = ApiMachineRootfs
+export type FlyMachineSecret = ApiMachineSecret
+export type FlyMachineService = ApiMachineService
+export type FlyMachineServiceCheck = ApiMachineServiceCheck
+export type FlyMachineServiceConcurrency = ApiMachineServiceConcurrency
+export type FlyProxyProtoOptions = ApiProxyProtoOptions
+export type FlyReplayCache = ApiReplayCache
+export type FlyStatic = ApiStatic
+export type FlyStopConfig = ApiStopConfig
+export type FlyTCPHealthcheck = ApiTCPHealthcheck
+export type FlyTLSOptions = ApiTLSOptions
+export type FlyUnhealthyPolicy = ApiUnhealthyPolicy
+export type FlyDNSForwardRule = ApiDNSForwardRule
+export type FlyDNSOption = ApiDNSOption
+export type Flydv1ExecResponse = MachineExecResponse
+export type MainMemoryResponse = MemoryResponse
+export type MainReclaimMemoryRequest = ReclaimMemoryRequest
+export type MainReclaimMemoryResponse = ReclaimMemoryResponse
+export type MainSetMemoryLimitRequest = SetMemoryLimitRequest
+
+// OpenAPI component schema name map for schemas with non-identifier names.
+export interface OpenApiComponentSchemaMap {
+  'fly.ContainerConfig': FlyContainerConfig
+  'fly.ContainerDependency': FlyContainerDependency
+  'fly.ContainerDependencyCondition': FlyContainerDependencyCondition
+  'fly.ContainerHealthcheck': FlyContainerHealthcheck
+  'fly.ContainerHealthcheckKind': FlyContainerHealthcheckKind
+  'fly.ContainerHealthcheckScheme': FlyContainerHealthcheckScheme
+  'fly.DNSConfig': FlyDNSConfig
+  'fly.Duration': FlyDuration
+  'fly.EnvFrom': FlyEnvFrom
+  'fly.ExecHealthcheck': FlyExecHealthcheck
+  'fly.File': FlyFile
+  'fly.HTTPHealthcheck': FlyHTTPHealthcheck
+  'fly.HTTPOptions': FlyHTTPOptions
+  'fly.HTTPResponseOptions': FlyHTTPResponseOptions
+  'fly.MachineCheck': FlyMachineCheck
+  'fly.MachineConfig': FlyMachineConfig
+  'fly.MachineGuest': FlyMachineGuest
+  'fly.MachineHTTPHeader': FlyMachineHTTPHeader
+  'fly.MachineInit': FlyMachineInit
+  'fly.MachineMetrics': FlyMachineMetrics
+  'fly.MachineMount': FlyMachineMount
+  'fly.MachinePort': FlyMachinePort
+  'fly.MachineProcess': FlyMachineProcess
+  'fly.MachineRestart': FlyMachineRestart
+  'fly.MachineRootfs': FlyMachineRootfs
+  'fly.MachineSecret': FlyMachineSecret
+  'fly.MachineService': FlyMachineService
+  'fly.MachineServiceCheck': FlyMachineServiceCheck
+  'fly.MachineServiceConcurrency': FlyMachineServiceConcurrency
+  'fly.ProxyProtoOptions': FlyProxyProtoOptions
+  'fly.ReplayCache': FlyReplayCache
+  'fly.Static': FlyStatic
+  'fly.StopConfig': FlyStopConfig
+  'fly.TCPHealthcheck': FlyTCPHealthcheck
+  'fly.TLSOptions': FlyTLSOptions
+  'fly.UnhealthyPolicy': FlyUnhealthyPolicy
+  'fly.dnsForwardRule': FlyDNSForwardRule
+  'fly.dnsOption': FlyDNSOption
+  'flydv1.ExecResponse': Flydv1ExecResponse
+  'main.getPlacementsRequest': MainGetPlacementsRequest
+  'main.getPlacementsResponse': MainGetPlacementsResponse
+  'main.memoryResponse': MainMemoryResponse
+  'main.reclaimMemoryRequest': MainReclaimMemoryRequest
+  'main.reclaimMemoryResponse': MainReclaimMemoryResponse
+  'main.regionResponse': MainRegionResponse
+  'main.setMemoryLimitRequest': MainSetMemoryLimitRequest
+  'main.statusCode': MainStatusCode
+  'main.tokenInfo': MainTokenInfo
+  'placement.RegionPlacement': PlacementRegionPlacement
+  'placement.Weights': PlacementWeights
+  'reads.GetCapacityPerRegionRow': ReadsGetCapacityPerRegionRow
+}
+
 export enum MainStatusCode {
   Unknown = 'unknown',
   CapacityErr = 'insufficient_capacity',

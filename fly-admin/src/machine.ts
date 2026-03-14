@@ -27,6 +27,10 @@ import {
   ReclaimMemoryRequest as ApiReclaimMemoryRequest,
   ReclaimMemoryResponse as ApiReclaimMemoryResponse,
   Lease as ApiLease,
+  ApiDuration,
+  MetadataValueResponse,
+  UpdateMetadataRequestBody,
+  UpsertMetadataKeyRequest,
 } from './types.ts'
 
 export interface MachineConfig extends ApiMachineConfig {
@@ -218,8 +222,9 @@ export interface SignalMachineRequest extends GetMachineRequest {
   signal: ApiMachineSignal
 }
 
-export interface StopMachineRequest extends RestartMachineRequest {
+export interface StopMachineRequest extends GetMachineRequest {
   signal?: ApiMachineSignal
+  timeout?: ApiDuration
 }
 
 export type StartMachineRequest = GetMachineRequest
@@ -277,7 +282,7 @@ export interface LeaseResponse extends ApiLease {
 
 export interface AcquireLeaseRequest extends GetLeaseRequest {
   description?: string
-  ttl: number
+  ttl?: number
 }
 
 export interface ReleaseLeaseRequest extends GetLeaseRequest {
@@ -308,7 +313,7 @@ export interface ExecMachineResponse {
 export type GetMetadataRequest = GetMachineRequest
 
 export interface UpdateMetadataRequest extends GetMachineRequest {
-  metadata: Record<string, string>
+  request: UpdateMetadataRequestBody
 }
 
 export interface GetMetadataPropertyRequest extends GetMachineRequest {
@@ -317,7 +322,7 @@ export interface GetMetadataPropertyRequest extends GetMachineRequest {
 
 export interface SetMetadataPropertyRequest extends GetMachineRequest {
   key: string
-  value: string
+  request: UpsertMetadataKeyRequest
 }
 
 export interface DeleteMetadataPropertyRequest extends GetMachineRequest {
@@ -420,7 +425,7 @@ export class Machine {
 
   async deleteMachine(payload: DeleteMachineRequest): Promise<OkResponse> {
     const { app_name, machine_id, force } = payload
-    const query = force ? '?kill=true' : ''
+    const query = force ? '?force=true' : ''
     return await this.client.restOrThrow(`apps/${app_name}/machines/${machine_id}${query}`, 'DELETE')
   }
 
@@ -490,9 +495,10 @@ export class Machine {
 
   // --- Monitoring ---
 
-  async listEvents(payload: ListEventsRequest): Promise<MachineResponse['events']> {
-    const { app_name, machine_id } = payload
-    return await this.client.restOrThrow(`apps/${app_name}/machines/${machine_id}/events`)
+  async listEvents(payload: ListEventsOptions): Promise<MachineResponse['events']> {
+    const { app_name, machine_id, limit } = payload
+    const query = limit !== undefined ? `?limit=${String(limit)}` : ''
+    return await this.client.restOrThrow(`apps/${app_name}/machines/${machine_id}/events${query}`)
   }
 
   async listVersions(payload: ListVersionsRequest): Promise<MachineVersionResponse[]> {
@@ -584,19 +590,19 @@ export class Machine {
     return await this.client.restOrThrow(`apps/${app_name}/machines/${machine_id}/metadata`)
   }
 
-  async updateMetadata(payload: UpdateMetadataRequest): Promise<Record<string, string>> {
-    const { app_name, machine_id, metadata } = payload
-    return await this.client.restOrThrow(`apps/${app_name}/machines/${machine_id}/metadata`, 'PUT', metadata)
+  async updateMetadata(payload: UpdateMetadataRequest): Promise<void> {
+    const { app_name, machine_id, request } = payload
+    await this.client.restOrThrow(`apps/${app_name}/machines/${machine_id}/metadata`, 'PUT', request)
   }
 
-  async getMetadataProperty(payload: GetMetadataPropertyRequest): Promise<string> {
+  async getMetadataProperty(payload: GetMetadataPropertyRequest): Promise<MetadataValueResponse> {
     const { app_name, machine_id, key } = payload
     return await this.client.restOrThrow(`apps/${app_name}/machines/${machine_id}/metadata/${key}`)
   }
 
   async setMetadataProperty(payload: SetMetadataPropertyRequest): Promise<void> {
-    const { app_name, machine_id, key, value } = payload
-    await this.client.restOrThrow(`apps/${app_name}/machines/${machine_id}/metadata/${key}`, 'POST', value)
+    const { app_name, machine_id, key, request } = payload
+    await this.client.restOrThrow(`apps/${app_name}/machines/${machine_id}/metadata/${key}`, 'POST', request)
   }
 
   async deleteMetadataProperty(payload: DeleteMetadataPropertyRequest): Promise<void> {

@@ -8,6 +8,7 @@ import { Network } from './network.ts'
 import { Organization } from './organization.ts'
 import { Regions } from './regions.ts'
 import { Secret } from './secret.ts'
+import { Token } from './token.ts'
 import { Volume } from './volume.ts'
 
 export const FLY_API_GRAPHQL = 'https://api.fly.io'
@@ -42,6 +43,7 @@ export class Client {
   Organization: Organization
   Secret: Secret
   Volume: Volume
+  Token: Token
 
   constructor(apiKey: string, { graphqlUrl, apiUrl }: ClientConfig = {}) {
     if (!apiKey) {
@@ -57,6 +59,7 @@ export class Client {
     this.Organization = new Organization(this)
     this.Secret = new Secret(this)
     this.Volume = new Volume(this)
+    this.Token = new Token(this)
   }
 
   getApiKey(): string {
