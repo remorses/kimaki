@@ -41,6 +41,10 @@ export interface ClientConfig {
   apiUrl?: string
 }
 
+export interface ClientInput extends ClientConfig {
+  apiKey: string
+}
+
 export class Client {
   private graphqlUrl: string
   private apiUrl: string
@@ -54,7 +58,7 @@ export class Client {
   Volume: Volume
   Token: Token
 
-  constructor(apiKey: string, { graphqlUrl, apiUrl }: ClientConfig = {}) {
+  constructor({ apiKey, graphqlUrl, apiUrl }: ClientInput) {
     if (!apiKey) {
       throw new Error('Fly API Key is required')
     }

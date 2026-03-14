@@ -2,7 +2,7 @@
 // Vendored fork of supabase/fly-admin. Uses native fetch, adds exec/releaseLease/metadata.
 
 export { Client, FLY_API_GRAPHQL, FLY_API_HOSTNAME } from './client.ts'
-export type { ClientConfig } from './client.ts'
+export type { ClientConfig, ClientInput } from './client.ts'
 
 export {
   FlyApiError,
@@ -132,10 +132,11 @@ export type {
 
 export type * from './types.ts'
 
-export function createClient(apiKey: string, config?: { graphqlUrl?: string; apiUrl?: string }) {
-  return new Client(apiKey, config)
+export function createClient(input: ClientInput) {
+  return new Client(input)
 }
 
 // Re-export Client as default for backwards compat with supabase/fly-admin
 import { Client } from './client.ts'
+import type { ClientInput } from './client.ts'
 export default Client

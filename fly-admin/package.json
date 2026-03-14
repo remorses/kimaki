@@ -1,6 +1,6 @@
 {
   "name": "@fly.io/sdk",
-  "version": "0.1.0",
+  "version": "0.1.2",
   "description": "TypeScript client for the Fly Machines REST and GraphQL APIs. Vendored fork of supabase/fly-admin with native fetch, exec, releaseLease, and metadata support.",
   "type": "module",
   "main": "./dist/index.js",
@@ -34,8 +34,12 @@
   },
   "repository": {
     "type": "git",
-    "url": "https://github.com/remorses/kimakivoice",
+    "url": "https://github.com/remorses/kimaki",
     "directory": "fly-admin"
+  },
+  "homepage": "https://github.com/remorses/kimaki/tree/main/fly-admin",
+  "bugs": {
+    "url": "https://github.com/remorses/kimaki/issues"
   },
   "keywords": [
     "fly",
