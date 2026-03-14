@@ -1,16 +1,20 @@
 // App management for Fly Machines REST + GraphQL API.
+// Types aligned with OpenAPI spec at https://docs.machines.dev/spec/openapi3.json
 
 import { Client } from './client.ts'
 
 export type ListAppRequest = string
 
+/** Matches OpenAPI ListAppsResponse schema. */
 export interface ListAppResponse {
   total_apps: number
-  apps: {
-    name: string
-    machine_count: number
-    network: string
-  }[]
+  apps: AppInfo[]
+}
+
+/** Query params for GET /apps. org_slug is required, app_role is optional. */
+export interface ListAppsParams {
+  org_slug: string
+  app_role?: string
 }
 
 export type GetAppRequest = string
@@ -39,6 +43,29 @@ export enum AppStatus {
   suspended = 'suspended',
 }
 
+/** Matches OpenAPI AppOrganizationInfo schema. */
+export interface AppOrganizationInfo {
+  internal_numeric_id?: number
+  name?: string
+  slug?: string
+}
+
+/** Matches OpenAPI App schema — used in both GET /apps/{app_name} and ListAppsResponse. */
+export interface AppInfo {
+  id?: string
+  internal_numeric_id?: number
+  machine_count?: number
+  name?: string
+  network?: string
+  organization?: AppOrganizationInfo
+  status?: string
+  volume_count?: number
+}
+
+/**
+ * Full app response from GraphQL getAppDetailed.
+ * Extends REST AppInfo with ipAddresses from the GraphQL query.
+ */
 export interface AppResponse {
   name: string
   status: AppStatus
@@ -54,10 +81,15 @@ export interface IPAddress {
   address: string
 }
 
+/**
+ * Matches OpenAPI CreateAppRequest schema.
+ * Note: the spec uses `name` (not `app_name`) for the app name field.
+ */
 export interface CreateAppRequest {
   org_slug: string
-  app_name: string
+  name: string
   network?: string
+  enable_subdomains?: boolean
 }
 
 export type DeleteAppRequest = string
@@ -73,7 +105,16 @@ export class App {
     return await this.client.restOrThrow(`apps?org_slug=${org_slug}`)
   }
 
-  async getApp(app_name: GetAppRequest): Promise<AppResponse> {
+  /** List apps with full query params (org_slug + optional app_role filter). */
+  async listAppsWithParams(params: ListAppsParams): Promise<ListAppResponse> {
+    const query = new URLSearchParams({ org_slug: params.org_slug })
+    if (params.app_role) {
+      query.set('app_role', params.app_role)
+    }
+    return await this.client.restOrThrow(`apps?${query.toString()}`)
+  }
+
+  async getApp(app_name: GetAppRequest): Promise<AppInfo> {
     return await this.client.restOrThrow(`apps/${app_name}`)
   }
 

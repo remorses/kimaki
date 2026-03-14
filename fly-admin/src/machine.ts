@@ -19,6 +19,14 @@ import {
   MachineExecResponse as ApiMachineExecResponse,
   StateEnum as ApiMachineState,
   SignalRequestSignalEnum as ApiMachineSignal,
+  OrgMachine,
+  OrgMachinesResponse as ApiOrgMachinesResponse,
+  WaitMachineResponse as ApiWaitMachineResponse,
+  MemoryResponse as ApiMemoryResponse,
+  SetMemoryLimitRequest as ApiSetMemoryLimitRequest,
+  ReclaimMemoryRequest as ApiReclaimMemoryRequest,
+  ReclaimMemoryResponse as ApiReclaimMemoryResponse,
+  Lease as ApiLease,
 } from './types.ts'
 
 export interface MachineConfig extends ApiMachineConfig {
@@ -30,8 +38,10 @@ export type ListMachineRequest =
   | string
   | {
       app_name: string
-      include_deleted?: ''
+      include_deleted?: boolean
       region?: string
+      state?: string
+      summary?: boolean
     }
 
 export interface CreateMachineRequest extends ApiCreateMachineRequest {
@@ -93,9 +103,11 @@ export enum MachineState {
   Started = 'started',
   Stopping = 'stopping',
   Stopped = 'stopped',
+  Suspended = 'suspended',
   Replacing = 'replacing',
   Destroying = 'destroying',
   Destroyed = 'destroyed',
+  Failed = 'failed',
 }
 
 interface MachineMount extends ApiMachineMount {
@@ -164,6 +176,9 @@ export interface MachineResponse extends Omit<ApiMachine, 'image_ref'> {
   region: string
   instance_id: string
   private_ip: string
+  host_status?: 'ok' | 'unknown' | 'unreachable'
+  incomplete_config?: ApiMachineConfig
+  nonce?: string
   config: {
     env: Record<string, string>
     init: ApiMachineInit
@@ -196,6 +211,7 @@ export interface DeleteMachineRequest extends GetMachineRequest {
 
 export interface RestartMachineRequest extends GetMachineRequest {
   timeout?: string
+  signal?: string
 }
 
 export interface SignalMachineRequest extends GetMachineRequest {
@@ -233,13 +249,15 @@ export interface ProcessResponse {
 
 export interface WaitMachineRequest extends GetMachineRequest {
   instance_id?: string
-  timeout?: string
+  timeout?: number
   state?: ApiMachineState
+  version?: string
+  from_event_id?: string
 }
 
 export interface WaitMachineStopRequest extends WaitMachineRequest {
   instance_id: string
-  state?: typeof ApiMachineState.Stopped
+  state?: typeof ApiMachineState.Stopped | typeof ApiMachineState.Suspended
 }
 
 export interface MachineVersionResponse {
@@ -249,14 +267,12 @@ export interface MachineVersionResponse {
 
 export type GetLeaseRequest = GetMachineRequest
 
-export interface LeaseResponse {
-  status: 'success'
-  data: {
-    description: string
-    expires_at: number
-    nonce: string
-    owner: string
-  }
+export interface LeaseResponse extends ApiLease {
+  description: string
+  expires_at: number
+  nonce: string
+  owner: string
+  version?: string
 }
 
 export interface AcquireLeaseRequest extends GetLeaseRequest {
@@ -310,25 +326,44 @@ export interface DeleteMetadataPropertyRequest extends GetMachineRequest {
 
 // --- Memory types ---
 
-export interface MachineMemoryResponse {
-  total_bytes: number
-  used_bytes: number
-  free_bytes: number
-  available_bytes: number
+export interface MachineMemoryResponse extends ApiMemoryResponse {
+  available_mb: number
+  limit_mb: number
 }
 
 export interface UpdateMemoryRequest extends GetMachineRequest {
-  memory_mb: number
+  limit_mb: number
+}
+
+export interface ReclaimMemoryMachineRequest extends GetMachineRequest {
+  amount_mb?: number
+}
+
+export interface ReclaimMemoryResponse extends ApiReclaimMemoryResponse {
+  actual_mb: number
 }
 
 // --- Org-level types ---
 
 export interface ListOrgMachinesRequest {
   org_slug: string
+  include_deleted?: boolean
+  region?: string
+  state?: string
+  updated_after?: string
+  cursor?: string
+  limit?: number
 }
 
-export interface OrgMachinesResponse {
-  machines: MachineResponse[]
+export interface OrgMachinesResponse extends ApiOrgMachinesResponse {
+  machines: OrgMachine[]
+  last_machine_id?: string
+  last_updated_at?: string
+  next_cursor?: string
+}
+
+export interface ListEventsOptions extends GetMachineRequest {
+  limit?: number
 }
 
 export class Machine {
@@ -347,7 +382,20 @@ export class Machine {
     } else {
       const { app_name: appId, ...params } = app_name
       path = `apps/${appId}/machines`
-      const query = new URLSearchParams(params).toString()
+      const queryParams: Record<string, string> = {}
+      if (params.include_deleted !== undefined) {
+        queryParams.include_deleted = String(params.include_deleted)
+      }
+      if (params.region) {
+        queryParams.region = params.region
+      }
+      if (params.state) {
+        queryParams.state = params.state
+      }
+      if (params.summary !== undefined) {
+        queryParams.summary = String(params.summary)
+      }
+      const query = new URLSearchParams(queryParams).toString()
       if (query) {
         path += `?${query}`
       }
@@ -392,8 +440,20 @@ export class Machine {
   }
 
   async restartMachine(payload: RestartMachineRequest): Promise<OkResponse> {
-    const { app_name, machine_id, ...body } = payload
-    return await this.client.restOrThrow(`apps/${app_name}/machines/${machine_id}/restart`, 'POST', body)
+    const { app_name, machine_id, ...params } = payload
+    let path = `apps/${app_name}/machines/${machine_id}/restart`
+    const queryParams: Record<string, string> = {}
+    if (params.timeout) {
+      queryParams.timeout = params.timeout
+    }
+    if (params.signal) {
+      queryParams.signal = params.signal
+    }
+    const query = new URLSearchParams(queryParams).toString()
+    if (query) {
+      path += `?${query}`
+    }
+    return await this.client.restOrThrow(path, 'POST')
   }
 
   async signalMachine(payload: SignalMachineRequest): Promise<OkResponse> {
@@ -413,14 +473,19 @@ export class Machine {
     return await this.client.restOrThrow(`apps/${app_name}/machines/${machine_id}/memory`)
   }
 
-  async updateMemory(payload: UpdateMemoryRequest): Promise<MachineMemoryResponse> {
+  async setMemoryLimit(payload: UpdateMemoryRequest): Promise<MachineMemoryResponse> {
     const { app_name, machine_id, ...body } = payload
     return await this.client.restOrThrow(`apps/${app_name}/machines/${machine_id}/memory`, 'PUT', body)
   }
 
-  async reclaimMemory(payload: GetMachineRequest): Promise<OkResponse> {
-    const { app_name, machine_id } = payload
-    return await this.client.restOrThrow(`apps/${app_name}/machines/${machine_id}/memory/reclaim`, 'POST')
+  /** @deprecated use setMemoryLimit instead */
+  async updateMemory(payload: UpdateMemoryRequest): Promise<MachineMemoryResponse> {
+    return this.setMemoryLimit(payload)
+  }
+
+  async reclaimMemory(payload: ReclaimMemoryMachineRequest): Promise<ReclaimMemoryResponse> {
+    const { app_name, machine_id, ...body } = payload
+    return await this.client.restOrThrow(`apps/${app_name}/machines/${machine_id}/memory/reclaim`, 'POST', body)
   }
 
   // --- Monitoring ---
@@ -435,7 +500,7 @@ export class Machine {
     return await this.client.restOrThrow(`apps/${app_name}/machines/${machine_id}/versions`)
   }
 
-  async listProcesses(payload: ListProcessesRequest): Promise<ProcessResponse> {
+  async listProcesses(payload: ListProcessesRequest): Promise<ProcessResponse[]> {
     const { app_name, machine_id, ...params } = payload
     let path = `apps/${app_name}/machines/${machine_id}/ps`
     const query = new URLSearchParams(params).toString()
@@ -445,14 +510,26 @@ export class Machine {
     return await this.client.restOrThrow(path)
   }
 
-  async waitMachine(payload: WaitMachineRequest): Promise<OkResponse> {
+  async waitMachine(payload: WaitMachineRequest): Promise<ApiWaitMachineResponse> {
     const { app_name, machine_id, ...params } = payload
     let path = `apps/${app_name}/machines/${machine_id}/wait`
-    const resolvedParams = { ...params } as Record<string, string>
-    if (resolvedParams.timeout?.endsWith('s')) {
-      resolvedParams.timeout = resolvedParams.timeout.slice(0, -1)
+    const queryParams: Record<string, string> = {}
+    if (params.instance_id) {
+      queryParams.instance_id = params.instance_id
     }
-    const query = new URLSearchParams(resolvedParams).toString()
+    if (params.timeout !== undefined) {
+      queryParams.timeout = String(params.timeout)
+    }
+    if (params.state) {
+      queryParams.state = params.state
+    }
+    if (params.version) {
+      queryParams.version = params.version
+    }
+    if (params.from_event_id) {
+      queryParams.from_event_id = params.from_event_id
+    }
+    const query = new URLSearchParams(queryParams).toString()
     if (query) {
       path += `?${query}`
     }
@@ -530,7 +607,31 @@ export class Machine {
   // --- Org-level ---
 
   async listOrgMachines(payload: ListOrgMachinesRequest): Promise<OrgMachinesResponse> {
-    const { org_slug } = payload
-    return await this.client.restOrThrow(`orgs/${org_slug}/machines`)
+    const { org_slug, ...params } = payload
+    let path = `orgs/${org_slug}/machines`
+    const queryParams: Record<string, string> = {}
+    if (params.include_deleted !== undefined) {
+      queryParams.include_deleted = String(params.include_deleted)
+    }
+    if (params.region) {
+      queryParams.region = params.region
+    }
+    if (params.state) {
+      queryParams.state = params.state
+    }
+    if (params.updated_after) {
+      queryParams.updated_after = params.updated_after
+    }
+    if (params.cursor) {
+      queryParams.cursor = params.cursor
+    }
+    if (params.limit !== undefined) {
+      queryParams.limit = String(params.limit)
+    }
+    const query = new URLSearchParams(queryParams).toString()
+    if (query) {
+      path += `?${query}`
+    }
+    return await this.client.restOrThrow(path)
   }
 }

@@ -1,9 +1,13 @@
 // Volume management for Fly Machines REST API.
 
 import { Client } from './client.ts'
-import { CreateVolumeRequest as ApiCreateVolumeRequest } from './types.ts'
+import { CreateVolumeRequest as ApiCreateVolumeRequest, UpdateVolumeRequest as ApiUpdateVolumeRequest } from './types.ts'
 
-export type ListVolumesRequest = string
+export interface ListVolumesRequest {
+  app_name: string
+  /** Only return summary info about volumes (omit blocks, block size, etc) */
+  summary?: boolean
+}
 
 export interface CreateVolumeRequest extends ApiCreateVolumeRequest {
   app_name: string
@@ -21,13 +25,17 @@ export interface VolumeResponse {
   encrypted: boolean
   attached_machine_id: string | null
   attached_alloc_id: string | null
+  auto_backup_enabled: boolean
   created_at: string
   blocks: number
   block_size: number
   blocks_free: number
   blocks_avail: number
+  bytes_total: number
+  bytes_used: number
   fstype: string
-  host_dedication_key: string
+  host_status: 'ok' | 'unknown' | 'unreachable'
+  snapshot_retention: number
 }
 
 export interface GetVolumeRequest {
@@ -36,6 +44,8 @@ export interface GetVolumeRequest {
 }
 
 export type DeleteVolumeRequest = GetVolumeRequest
+
+export interface UpdateVolumeRequest extends GetVolumeRequest, ApiUpdateVolumeRequest {}
 
 export interface ExtendVolumeRequest extends GetVolumeRequest {
   size_gb: number
@@ -52,7 +62,10 @@ export interface SnapshotResponse {
   id: string
   created_at: string
   digest: string
+  retention_days: number
   size: number
+  status: string
+  volume_size: number
 }
 
 export class Volume {
@@ -62,8 +75,15 @@ export class Volume {
     this.client = client
   }
 
-  async listVolumes(app_name: ListVolumesRequest): Promise<VolumeResponse[]> {
-    return await this.client.restOrThrow(`apps/${app_name}/volumes`)
+  async listVolumes(payload: ListVolumesRequest): Promise<VolumeResponse[]> {
+    const { app_name, summary } = payload
+    const params = new URLSearchParams()
+    if (summary !== undefined) {
+      params.set('summary', String(summary))
+    }
+    const query = params.toString()
+    const path = `apps/${app_name}/volumes${query ? `?${query}` : ''}`
+    return await this.client.restOrThrow(path)
   }
 
   async getVolume(payload: GetVolumeRequest): Promise<VolumeResponse> {
@@ -74,6 +94,11 @@ export class Volume {
   async createVolume(payload: CreateVolumeRequest): Promise<VolumeResponse> {
     const { app_name, ...body } = payload
     return await this.client.restOrThrow(`apps/${app_name}/volumes`, 'POST', body)
+  }
+
+  async updateVolume(payload: UpdateVolumeRequest): Promise<VolumeResponse> {
+    const { app_name, volume_id, ...body } = payload
+    return await this.client.restOrThrow(`apps/${app_name}/volumes/${volume_id}`, 'PUT', body)
   }
 
   async deleteVolume(payload: DeleteVolumeRequest): Promise<VolumeResponse> {

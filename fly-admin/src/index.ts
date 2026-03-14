@@ -8,7 +8,10 @@ export { App, AppStatus } from './app.ts'
 export type {
   ListAppRequest,
   ListAppResponse,
+  ListAppsParams,
   GetAppRequest,
+  AppOrganizationInfo,
+  AppInfo,
   AppResponse,
   IPAddress,
   CreateAppRequest,
@@ -51,8 +54,11 @@ export type {
   DeleteMetadataPropertyRequest,
   MachineMemoryResponse,
   UpdateMemoryRequest,
+  ReclaimMemoryMachineRequest,
+  ReclaimMemoryResponse,
   ListOrgMachinesRequest,
   OrgMachinesResponse,
+  ListEventsOptions,
 } from './machine.ts'
 
 export { Network, AddressType } from './network.ts'
@@ -83,6 +89,7 @@ export type {
   CreateVolumeRequest,
   VolumeResponse,
   GetVolumeRequest,
+  UpdateVolumeRequest,
   DeleteVolumeRequest,
   ExtendVolumeRequest,
   ExtendVolumeResponse,
