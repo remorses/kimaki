@@ -780,10 +780,6 @@ fn writeLinuxScreenshotPng(input: struct {
 }
 
 pub fn click(input: ClickInput) CommandResult {
-    if (builtin.target.os.tag != .macos) {
-        return failCommand("click", "UNSUPPORTED_PLATFORM", "click is only supported on macOS");
-    }
-
     const click_count: u32 = if (input.count) |count| blk: {
         const normalized = @as(i64, @intFromFloat(std.math.round(count)));
         if (normalized <= 0) {
@@ -796,40 +792,86 @@ pub fn click(input: ClickInput) CommandResult {
         return failCommand("click", "INVALID_INPUT", "invalid click button");
     };
 
-    const point: c.CGPoint = .{
-        .x = input.point.x,
-        .y = input.point.y,
-    };
+    switch (builtin.target.os.tag) {
+        .macos => {
+            const point: c.CGPoint = .{
+                .x = input.point.x,
+                .y = input.point.y,
+            };
 
-    var index: u32 = 0;
-    while (index < click_count) : (index += 1) {
-        const click_state = @as(i64, @intCast(index + 1));
-        postClickPair(point, button_kind, click_state) catch {
-            return failCommand("click", "EVENT_POST_FAILED", "failed to post click event");
-        };
+            var index: u32 = 0;
+            while (index < click_count) : (index += 1) {
+                const click_state = @as(i64, @intCast(index + 1));
+                postClickPair(point, button_kind, click_state) catch {
+                    return failCommand("click", "EVENT_POST_FAILED", "failed to post click event");
+                };
 
-        if (index + 1 < click_count) {
-            std.Thread.sleep(80 * std.time.ns_per_ms);
-        }
+                if (index + 1 < click_count) {
+                    std.Thread.sleep(80 * std.time.ns_per_ms);
+                }
+            }
+
+            return okCommand();
+        },
+        .linux => {
+            const display = openX11Display() catch {
+                return failCommand("click", "EVENT_POST_FAILED", "failed to open X11 display");
+            };
+            defer _ = c_x11.XCloseDisplay(display);
+
+            moveCursorToPointX11(.{ .x = input.point.x, .y = input.point.y }, display) catch {
+                return failCommand("click", "EVENT_POST_FAILED", "failed to move mouse cursor");
+            };
+
+            var index: u32 = 0;
+            while (index < click_count) : (index += 1) {
+                postClickPairX11(.{ .x = input.point.x, .y = input.point.y }, button_kind, display) catch {
+                    return failCommand("click", "EVENT_POST_FAILED", "failed to post click event");
+                };
+
+                if (index + 1 < click_count) {
+                    std.Thread.sleep(80 * std.time.ns_per_ms);
+                }
+            }
+
+            _ = c_x11.XFlush(display);
+            return okCommand();
+        },
+        else => {
+            return failCommand("click", "UNSUPPORTED_PLATFORM", "click is unsupported on this platform");
+        },
     }
-
-    return okCommand();
 }
 
 pub fn mouseMove(input: MouseMoveInput) CommandResult {
-    if (builtin.target.os.tag != .macos) {
-        return failCommand("mouse-move", "UNSUPPORTED_PLATFORM", "mouse-move is only supported on macOS");
+    switch (builtin.target.os.tag) {
+        .macos => {
+            const point: c.CGPoint = .{
+                .x = input.x,
+                .y = input.y,
+            };
+            moveCursorToPoint(point) catch {
+                return failCommand("mouse-move", "EVENT_POST_FAILED", "failed to move mouse cursor");
+            };
+
+            return okCommand();
+        },
+        .linux => {
+            const display = openX11Display() catch {
+                return failCommand("mouse-move", "EVENT_POST_FAILED", "failed to open X11 display");
+            };
+            defer _ = c_x11.XCloseDisplay(display);
+
+            moveCursorToPointX11(.{ .x = input.x, .y = input.y }, display) catch {
+                return failCommand("mouse-move", "EVENT_POST_FAILED", "failed to move mouse cursor");
+            };
+            _ = c_x11.XFlush(display);
+            return okCommand();
+        },
+        else => {
+            return failCommand("mouse-move", "UNSUPPORTED_PLATFORM", "mouse-move is unsupported on this platform");
+        },
     }
-
-    const point: c.CGPoint = .{
-        .x = input.x,
-        .y = input.y,
-    };
-    moveCursorToPoint(point) catch {
-        return failCommand("mouse-move", "EVENT_POST_FAILED", "failed to move mouse cursor");
-    };
-
-    return okCommand();
 }
 
 pub fn mouseDown(input: MouseButtonInput) CommandResult {
@@ -844,35 +886,66 @@ fn handleMouseButtonInput(args: struct {
     input: MouseButtonInput,
     is_down: bool,
 }) CommandResult {
-    if (builtin.target.os.tag != .macos) {
-        return failCommand("mouse-button", "UNSUPPORTED_PLATFORM", "mouse button events are only supported on macOS");
-    }
-
     const button_kind = resolveMouseButton(args.input.button orelse "left") catch {
         return failCommand("mouse-button", "INVALID_INPUT", "invalid mouse button");
     };
 
-    const point = currentCursorPoint() catch {
-        return failCommand("mouse-button", "CURSOR_READ_FAILED", "failed to read cursor position");
-    };
+    switch (builtin.target.os.tag) {
+        .macos => {
+            const point = currentCursorPoint() catch {
+                return failCommand("mouse-button", "CURSOR_READ_FAILED", "failed to read cursor position");
+            };
 
-    postMouseButtonEvent(point, button_kind, args.is_down, 1) catch {
-        return failCommand("mouse-button", "EVENT_POST_FAILED", "failed to post mouse button event");
-    };
+            postMouseButtonEvent(point, button_kind, args.is_down, 1) catch {
+                return failCommand("mouse-button", "EVENT_POST_FAILED", "failed to post mouse button event");
+            };
 
-    return okCommand();
+            return okCommand();
+        },
+        .linux => {
+            const display = openX11Display() catch {
+                return failCommand("mouse-button", "EVENT_POST_FAILED", "failed to open X11 display");
+            };
+            defer _ = c_x11.XCloseDisplay(display);
+
+            postMouseButtonEventX11(button_kind, args.is_down, display) catch {
+                return failCommand("mouse-button", "EVENT_POST_FAILED", "failed to post mouse button event");
+            };
+            _ = c_x11.XFlush(display);
+
+            return okCommand();
+        },
+        else => {
+            return failCommand("mouse-button", "UNSUPPORTED_PLATFORM", "mouse button events are unsupported on this platform");
+        },
+    }
 }
 
 pub fn mousePosition() DataResult(Point) {
-    if (builtin.target.os.tag != .macos) {
-        return failData(Point, "mouse-position", "UNSUPPORTED_PLATFORM", "mouse-position is only supported on macOS");
+    switch (builtin.target.os.tag) {
+        .macos => {
+            const point = currentCursorPoint() catch {
+                return failData(Point, "mouse-position", "CURSOR_READ_FAILED", "failed to read cursor position");
+            };
+
+            return okData(Point, .{ .x = std.math.round(point.x), .y = std.math.round(point.y) });
+        },
+        .linux => {
+            const display = openX11Display() catch {
+                return failData(Point, "mouse-position", "EVENT_POST_FAILED", "failed to open X11 display");
+            };
+            defer _ = c_x11.XCloseDisplay(display);
+
+            const point = currentCursorPointX11(display) catch {
+                return failData(Point, "mouse-position", "CURSOR_READ_FAILED", "failed to read cursor position");
+            };
+
+            return okData(Point, .{ .x = @floatFromInt(point.x), .y = @floatFromInt(point.y) });
+        },
+        else => {
+            return failData(Point, "mouse-position", "UNSUPPORTED_PLATFORM", "mouse-position is unsupported on this platform");
+        },
     }
-
-    const point = currentCursorPoint() catch {
-        return failData(Point, "mouse-position", "CURSOR_READ_FAILED", "failed to read cursor position");
-    };
-
-    return okData(Point, .{ .x = std.math.round(point.x), .y = std.math.round(point.y) });
 }
 
 pub fn hover(input: Point) CommandResult {
@@ -880,25 +953,9 @@ pub fn hover(input: Point) CommandResult {
 }
 
 pub fn drag(input: DragInput) CommandResult {
-    if (builtin.target.os.tag != .macos) {
-        return failCommand("drag", "UNSUPPORTED_PLATFORM", "drag is only supported on macOS");
-    }
-
     const button_kind = resolveMouseButton(input.button orelse "left") catch {
         return failCommand("drag", "INVALID_INPUT", "invalid drag button");
     };
-
-    const from: c.CGPoint = .{ .x = input.from.x, .y = input.from.y };
-    const to: c.CGPoint = .{ .x = input.to.x, .y = input.to.y };
-
-    moveCursorToPoint(from) catch {
-        return failCommand("drag", "EVENT_POST_FAILED", "failed to move cursor to drag origin");
-    };
-
-    postMouseButtonEvent(from, button_kind, true, 1) catch {
-        return failCommand("drag", "EVENT_POST_FAILED", "failed to post drag mouse-down");
-    };
-
     const duration_ms = if (input.durationMs) |value| blk: {
         const normalized = @as(i64, @intFromFloat(std.math.round(value)));
         if (normalized <= 0) {
@@ -910,33 +967,152 @@ pub fn drag(input: DragInput) CommandResult {
     const step_count: u64 = 16;
     const step_duration_ns = if (step_count == 0) 0 else total_duration_ns / step_count;
 
-    var index: u64 = 1;
-    while (index <= step_count) : (index += 1) {
-        const fraction = @as(f64, @floatFromInt(index)) / @as(f64, @floatFromInt(step_count));
-        const next_point: c.CGPoint = .{
-            .x = from.x + (to.x - from.x) * fraction,
-            .y = from.y + (to.y - from.y) * fraction,
-        };
+    switch (builtin.target.os.tag) {
+        .macos => {
+            const from: c.CGPoint = .{ .x = input.from.x, .y = input.from.y };
+            const to: c.CGPoint = .{ .x = input.to.x, .y = input.to.y };
 
-        moveCursorToPoint(next_point) catch {
-            return failCommand("drag", "EVENT_POST_FAILED", "failed during drag cursor movement");
-        };
+            moveCursorToPoint(from) catch {
+                return failCommand("drag", "EVENT_POST_FAILED", "failed to move cursor to drag origin");
+            };
 
-        if (step_duration_ns > 0 and index < step_count) {
-            std.Thread.sleep(step_duration_ns);
-        }
+            postMouseButtonEvent(from, button_kind, true, 1) catch {
+                return failCommand("drag", "EVENT_POST_FAILED", "failed to post drag mouse-down");
+            };
+
+            var index: u64 = 1;
+            while (index <= step_count) : (index += 1) {
+                const fraction = @as(f64, @floatFromInt(index)) / @as(f64, @floatFromInt(step_count));
+                const next_point: c.CGPoint = .{
+                    .x = from.x + (to.x - from.x) * fraction,
+                    .y = from.y + (to.y - from.y) * fraction,
+                };
+
+                moveCursorToPoint(next_point) catch {
+                    return failCommand("drag", "EVENT_POST_FAILED", "failed during drag cursor movement");
+                };
+
+                if (step_duration_ns > 0 and index < step_count) {
+                    std.Thread.sleep(step_duration_ns);
+                }
+            }
+
+            postMouseButtonEvent(to, button_kind, false, 1) catch {
+                return failCommand("drag", "EVENT_POST_FAILED", "failed to post drag mouse-up");
+            };
+
+            return okCommand();
+        },
+        .linux => {
+            const display = openX11Display() catch {
+                return failCommand("drag", "EVENT_POST_FAILED", "failed to open X11 display");
+            };
+            defer _ = c_x11.XCloseDisplay(display);
+
+            moveCursorToPointX11(.{ .x = input.from.x, .y = input.from.y }, display) catch {
+                return failCommand("drag", "EVENT_POST_FAILED", "failed to move cursor to drag origin");
+            };
+
+            postMouseButtonEventX11(button_kind, true, display) catch {
+                return failCommand("drag", "EVENT_POST_FAILED", "failed to post drag mouse-down");
+            };
+
+            var index: u64 = 1;
+            while (index <= step_count) : (index += 1) {
+                const fraction = @as(f64, @floatFromInt(index)) / @as(f64, @floatFromInt(step_count));
+                const next_point = Point{
+                    .x = input.from.x + (input.to.x - input.from.x) * fraction,
+                    .y = input.from.y + (input.to.y - input.from.y) * fraction,
+                };
+
+                moveCursorToPointX11(next_point, display) catch {
+                    return failCommand("drag", "EVENT_POST_FAILED", "failed during drag cursor movement");
+                };
+
+                if (step_duration_ns > 0 and index < step_count) {
+                    std.Thread.sleep(step_duration_ns);
+                }
+            }
+
+            postMouseButtonEventX11(button_kind, false, display) catch {
+                return failCommand("drag", "EVENT_POST_FAILED", "failed to post drag mouse-up");
+            };
+            _ = c_x11.XFlush(display);
+
+            return okCommand();
+        },
+        else => {
+            return failCommand("drag", "UNSUPPORTED_PLATFORM", "drag is unsupported on this platform");
+        },
     }
-
-    postMouseButtonEvent(to, button_kind, false, 1) catch {
-        return failCommand("drag", "EVENT_POST_FAILED", "failed to post drag mouse-up");
-    };
-
-    return okCommand();
 }
 
 pub fn displayList() DataResult([]const u8) {
+    if (builtin.target.os.tag == .linux) {
+        const display = openX11Display() catch {
+            return failData([]const u8, "display-list", "DISPLAY_QUERY_FAILED", "failed to open X11 display");
+        };
+        defer _ = c_x11.XCloseDisplay(display);
+
+        const screen_count: usize = @intCast(c_x11.XScreenCount(display));
+        if (screen_count == 0) {
+            return failData([]const u8, "display-list", "DISPLAY_QUERY_FAILED", "failed to query active displays");
+        }
+
+        const primary_screen = c_x11.XDefaultScreen(display);
+
+        var write_buffer: [32 * 1024]u8 = undefined;
+        var stream = std.io.fixedBufferStream(&write_buffer);
+        const writer = stream.writer();
+
+        writer.writeByte('[') catch {
+            return failData([]const u8, "display-list", "SERIALIZE_FAILED", "failed to serialize display list");
+        };
+
+        var i: usize = 0;
+        while (i < screen_count) : (i += 1) {
+            if (i > 0) {
+                writer.writeByte(',') catch {
+                    return failData([]const u8, "display-list", "SERIALIZE_FAILED", "failed to serialize display list");
+                };
+            }
+
+            var name_buffer: [64]u8 = undefined;
+            const display_name = std.fmt.bufPrint(&name_buffer, "Display {d}", .{i}) catch "Display";
+            const screen_index: c_int = @intCast(i);
+            const root = c_x11.XRootWindow(display, screen_index);
+            const width = c_x11.XDisplayWidth(display, screen_index);
+            const height = c_x11.XDisplayHeight(display, screen_index);
+
+            const item = DisplayInfoOutput{
+                .id = @as(u32, @truncate(@as(u64, @intCast(root)))),
+                .index = @intCast(i),
+                .name = display_name,
+                .x = 0,
+                .y = 0,
+                .width = @floatFromInt(width),
+                .height = @floatFromInt(height),
+                .scale = 1,
+                .isPrimary = screen_index == primary_screen,
+            };
+
+            writer.print("{f}", .{std.json.fmt(item, .{})}) catch {
+                return failData([]const u8, "display-list", "SERIALIZE_FAILED", "failed to serialize display list");
+            };
+        }
+
+        writer.writeByte(']') catch {
+            return failData([]const u8, "display-list", "SERIALIZE_FAILED", "failed to serialize display list");
+        };
+
+        const payload = std.heap.c_allocator.dupe(u8, stream.getWritten()) catch {
+            return failData([]const u8, "display-list", "ALLOC_FAILED", "failed to allocate display list response");
+        };
+        return okData([]const u8, payload);
+    }
+
     if (builtin.target.os.tag != .macos) {
-        return failData([]const u8, "display-list", "UNSUPPORTED_PLATFORM", "display-list is only supported on macOS");
+        return failData([]const u8, "display-list", "UNSUPPORTED_PLATFORM", "display-list is unsupported on this platform");
     }
 
     var display_ids: [16]c.CGDirectDisplayID = undefined;
@@ -1905,6 +2081,81 @@ fn moveCursorToPoint(point: c.CGPoint) !void {
     }
     defer c.CFRelease(move_event);
     c.CGEventPost(c.kCGHIDEventTap, move_event);
+}
+
+fn openX11Display() !*c_x11.Display {
+    if (builtin.target.os.tag != .linux) {
+        return error.UnsupportedPlatform;
+    }
+    return c_x11.XOpenDisplay(null) orelse error.XOpenDisplayFailed;
+}
+
+fn resolveX11ButtonCode(button: MouseButtonKind) c_uint {
+    return switch (button) {
+        .left => 1,
+        .middle => 2,
+        .right => 3,
+    };
+}
+
+fn normalizedCoordinate(value: f64) !c_int {
+    if (!std.math.isFinite(value)) {
+        return error.InvalidPoint;
+    }
+    const rounded = @as(i64, @intFromFloat(std.math.round(value)));
+    if (rounded < std.math.minInt(c_int) or rounded > std.math.maxInt(c_int)) {
+        return error.InvalidPoint;
+    }
+    return @as(c_int, @intCast(rounded));
+}
+
+fn moveCursorToPointX11(point: Point, display: *c_x11.Display) !void {
+    const x = try normalizedCoordinate(point.x);
+    const y = try normalizedCoordinate(point.y);
+    _ = c_x11.XWarpPointer(display, 0, c_x11.XDefaultRootWindow(display), 0, 0, 0, 0, x, y);
+}
+
+fn postMouseButtonEventX11(button: MouseButtonKind, is_down: bool, display: *c_x11.Display) !void {
+    const button_code = resolveX11ButtonCode(button);
+    const press_state: c_int = if (is_down) c_x11.True else c_x11.False;
+    const posted = c_x11.XTestFakeButtonEvent(display, button_code, press_state, c_x11.CurrentTime);
+    if (posted == 0) {
+        return error.EventPostFailed;
+    }
+}
+
+fn postClickPairX11(point: Point, button: MouseButtonKind, display: *c_x11.Display) !void {
+    try moveCursorToPointX11(point, display);
+    try postMouseButtonEventX11(button, true, display);
+    try postMouseButtonEventX11(button, false, display);
+}
+
+fn currentCursorPointX11(display: *c_x11.Display) !struct { x: c_int, y: c_int } {
+    const root_window = c_x11.XDefaultRootWindow(display);
+    var root_return: c_x11.Window = 0;
+    var child_return: c_x11.Window = 0;
+    var root_x: c_int = 0;
+    var root_y: c_int = 0;
+    var win_x: c_int = 0;
+    var win_y: c_int = 0;
+    var mask_return: c_uint = 0;
+
+    const ok = c_x11.XQueryPointer(
+        display,
+        root_window,
+        &root_return,
+        &child_return,
+        &root_x,
+        &root_y,
+        &win_x,
+        &win_y,
+        &mask_return,
+    );
+    if (ok == 0) {
+        return error.CursorReadFailed;
+    }
+
+    return .{ .x = root_x, .y = root_y };
 }
 
 fn initModule(js: *napigen.JsContext, exports: napigen.napi_value) !napigen.napi_value {

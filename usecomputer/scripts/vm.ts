@@ -17,6 +17,9 @@ import { z } from 'zod'
 const repoRoot = path.resolve(import.meta.dirname, '..', '..')
 const defaultVmName = 'Linux'
 const defaultGuestDir = '/root/usecomputer'
+const vmDesktopUser = 'morse'
+const vmDesktopHome = '/home/morse'
+const vmDesktopGuestDir = '/home/morse/usecomputer'
 
 // qemu-guest-agent runs as root but doesn't set HOME, DISPLAY, or XAUTHORITY.
 const baseEnv = 'export HOME=/root'
@@ -53,6 +56,26 @@ function buildAppleScript({ vmName, shellCommand }: { vmName: string; shellComma
     '  end tell',
     'end tell',
   ].join('\n')
+}
+
+function singleQuoteForBash({ value }: { value: string }): string {
+  return `'${value.replaceAll("'", `'"'"'`)}'`
+}
+
+function desktopSessionEnvPrefix(): string {
+  return [
+    `export HOME=${vmDesktopHome}`,
+    'export DISPLAY=:0',
+    'export WAYLAND_DISPLAY=wayland-0',
+    'export XDG_RUNTIME_DIR=/run/user/1000',
+    'export DBUS_SESSION_BUS_ADDRESS=unix:path=/run/user/1000/bus',
+    'export XAUTHORITY=$(ls /run/user/1000/.mutter-Xwaylandauth.* 2>/dev/null | head -1)',
+  ].join(' && ')
+}
+
+function asDesktopUserCommand({ command }: { command: string }): string {
+  const wrapped = `${desktopSessionEnvPrefix()} && ${command}`
+  return `sudo -u ${vmDesktopUser} bash -lc ${singleQuoteForBash({ value: wrapped })}`
 }
 
 function parseOutput({ raw }: { raw: string }): { exitCode: number; stdout: string; stderr: string } {
@@ -259,6 +282,8 @@ cli
   .example('pnpm vm test --test-file src/bridge-contract.test.ts')
   .action(async (options) => {
     const { vm, guestDir } = options
+    const guestDirQuoted = singleQuoteForBash({ value: guestDir })
+    const desktopGuestDirQuoted = singleQuoteForBash({ value: vmDesktopGuestDir })
 
     if (options.setup) {
       process.stdout.write('\n==> Installing system dependencies\n')
@@ -287,14 +312,31 @@ cli
     process.stdout.write('\n==> Syncing files to VM\n')
     await syncFiles({ vmName: vm, guestDir })
 
+    process.stdout.write('\n==> Preparing desktop-user workspace\n')
+    await vmRun({
+      vmName: vm,
+      command: `mkdir -p ${desktopGuestDirQuoted} && cp -a ${guestDirQuoted}/. ${desktopGuestDirQuoted}/ && chown -R ${vmDesktopUser}:${vmDesktopUser} ${desktopGuestDirQuoted}`,
+    })
+
     process.stdout.write('\n==> Installing npm dependencies\n')
-    await vmRun({ vmName: vm, command: `cd '${guestDir}' && pnpm install --filter usecomputer 2>&1 | tail -5` })
+    await vmRun({
+      vmName: vm,
+      command: asDesktopUserCommand({
+        command: `cd ${desktopGuestDirQuoted} && CI=true pnpm install --filter usecomputer`,
+      }),
+    })
 
     process.stdout.write('\n==> Building zig native module\n')
-    await vmRun({ vmName: vm, command: `cd '${guestDir}' && zig build` })
+    await vmRun({
+      vmName: vm,
+      command: asDesktopUserCommand({ command: `cd ${desktopGuestDirQuoted} && zig build` }),
+    })
 
     process.stdout.write('\n==> Typechecking\n')
-    await vmRun({ vmName: vm, command: `cd '${guestDir}' && npx tsc --noEmit` })
+    await vmRun({
+      vmName: vm,
+      command: asDesktopUserCommand({ command: `cd ${desktopGuestDirQuoted} && npx tsc --noEmit` }),
+    })
 
     process.stdout.write('\n==> Running tests\n')
     const testParts = ['npx', 'vitest', '--run']
@@ -304,7 +346,10 @@ cli
     if (options.testName) {
       testParts.push('-t', `'${options.testName}'`)
     }
-    await vmRun({ vmName: vm, command: `cd '${guestDir}' && ${testParts.join(' ')}`, x11: true })
+    await vmRun({
+      vmName: vm,
+      command: asDesktopUserCommand({ command: `cd ${desktopGuestDirQuoted} && ${testParts.join(' ')}` }),
+    })
 
     process.stdout.write('\nAll checks passed.\n')
   })

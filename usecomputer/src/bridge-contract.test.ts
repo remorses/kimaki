@@ -1,9 +1,13 @@
 // Contract tests for direct native method calls emitted by the TS bridge.
 // These tests intentionally call the real Zig native module.
 
+import fs from 'node:fs'
+import os from 'node:os'
 import { describe, expect, test } from 'vitest'
 import { createBridgeFromNative } from './bridge.js'
 import { native } from './native-lib.js'
+
+const isMacOS = os.platform() === 'darwin'
 
 describe('native bridge contract', () => {
   test('bridge calls hit real Zig module', async () => {
@@ -14,129 +18,63 @@ describe('native bridge contract', () => {
 
     const bridge = createBridgeFromNative({ nativeModule: native })
 
-    const safeTarget = {
-      x: 0,
-      y: 0,
-    }
+    const safeTarget = { x: 0, y: 0 }
 
-    // Mouse commands are macOS-only; on Linux they throw "only supported on macOS".
-    // Wrap in try/catch to let the test validate all platforms.
-    const tryCommand = async (fn: () => Promise<unknown>): Promise<string> => {
-      try {
-        await fn()
-        return 'ok'
-      } catch (error: unknown) {
-        return error instanceof Error ? error.message : String(error)
-      }
-    }
-
-    const clickResult = await tryCommand(() => {
-      return bridge.click({
-        point: safeTarget,
-        button: 'left',
-        count: 1,
-        modifiers: [],
-      })
-    })
-    const hoverResult = await tryCommand(() => {
-      return bridge.hover(safeTarget)
-    })
-    const mouseMoveResult = await tryCommand(() => {
-      return bridge.mouseMove(safeTarget)
-    })
-    const mouseDownResult = await tryCommand(() => {
-      return bridge.mouseDown({ button: 'left' })
-    })
-    const mouseUpResult = await tryCommand(() => {
-      return bridge.mouseUp({ button: 'left' })
-    })
-    const dragResult = await tryCommand(() => {
-      return bridge.drag({
-        from: safeTarget,
-        to: { x: safeTarget.x + 6, y: safeTarget.y + 6 },
-        button: 'left',
-        durationMs: 10,
-      })
+    // -- Mouse commands --
+    await bridge.click({ point: safeTarget, button: 'left', count: 1, modifiers: [] })
+    await bridge.hover(safeTarget)
+    await bridge.mouseMove(safeTarget)
+    await bridge.mouseDown({ button: 'left' })
+    await bridge.mouseUp({ button: 'left' })
+    await bridge.drag({
+      from: safeTarget,
+      to: { x: safeTarget.x + 6, y: safeTarget.y + 6 },
+      button: 'left',
+      durationMs: 10,
     })
 
-    const screenshotResult = await tryCommand(() => {
-      return bridge.screenshot({ path: `${process.cwd()}/tmp/bridge-contract-shot.png` })
-    })
+    // -- Screenshot --
+    const screenshotPath = `${process.cwd()}/tmp/bridge-contract-shot.png`
+    const shot = await bridge.screenshot({ path: screenshotPath })
+    expect(shot.captureWidth).toBeGreaterThan(0)
+    expect(shot.captureHeight).toBeGreaterThan(0)
+    expect(shot.imageWidth).toBeGreaterThan(0)
+    expect(shot.imageHeight).toBeGreaterThan(0)
+    expect(shot.coordMap.split(',').length).toBe(6)
+    expect(shot.hint).toContain('--coord-map')
+    expect(fs.existsSync(screenshotPath)).toBe(true)
+    const stat = fs.statSync(screenshotPath)
+    expect(stat.size).toBeGreaterThan(100)
 
+    // -- Keyboard (works on both platforms) --
     await bridge.typeText({ text: 'h', delayMs: 30 })
     await bridge.press({ key: 'backspace', count: 1 })
-    const scrollResult = await tryCommand(() => {
-      return bridge.scroll({ direction: 'down', amount: 1 })
-    })
-    const scrollAtResult = await tryCommand(() => {
-      return bridge.scroll({ direction: 'right', amount: 1, at: safeTarget })
-    })
-    const displayListResult = await tryCommand(() => {
-      return bridge.displayList()
-    })
-    const windowListResult = await tryCommand(() => {
-      return bridge.windowList()
-    })
-    const clipboardGetResult = await tryCommand(() => {
-      return bridge.clipboardGet()
-    })
-    const clipboardSetResult = await tryCommand(() => {
-      return bridge.clipboardSet({ text: 'copied' })
-    })
 
-    // On macOS all commands should return 'ok'.
-    // On Linux: mouse commands return "only supported on macOS",
-    // screenshot/displayList/windowList may fail on XWayland (no root window capture),
-    // scroll/keyboard/clipboard may return TODO.
-    const isAcceptable = ({ value }: { value: string }): boolean => {
-      return (
-        value === 'ok' ||
-        value.includes('TODO not implemented') ||
-        value.includes('only supported on macOS') ||
-        value.includes('failed to capture') ||
-        value.includes('failed to open X11') ||
-        value.includes('display list is only supported')
-      )
+    // -- Scroll --
+    await bridge.scroll({ direction: 'down', amount: 1 })
+    await bridge.scroll({ direction: 'right', amount: 1, at: safeTarget })
+
+    // -- Display list --
+    const displayList = await bridge.displayList()
+    expect(displayList.length).toBeGreaterThan(0)
+    const firstDisplay = displayList[0]!
+    expect(firstDisplay.width).toBeGreaterThan(0)
+    expect(firstDisplay.height).toBeGreaterThan(0)
+    expect(typeof firstDisplay.id).toBe('number')
+    expect(typeof firstDisplay.index).toBe('number')
+
+    // -- Window list --
+    if (isMacOS) {
+      const windowList = await bridge.windowList()
+      expect(windowList.length).toBeGreaterThan(0)
+      const firstWindow = windowList[0]!
+      expect(typeof firstWindow.id).toBe('number')
+      expect(typeof firstWindow.ownerName).toBe('string')
+      expect(typeof firstWindow.desktopIndex).toBe('number')
     }
 
-    expect({
-      mouseCommandOutcomes: {
-        clickResult: isAcceptable({ value: clickResult }),
-        hoverResult: isAcceptable({ value: hoverResult }),
-        mouseMoveResult: isAcceptable({ value: mouseMoveResult }),
-        mouseDownResult: isAcceptable({ value: mouseDownResult }),
-        mouseUpResult: isAcceptable({ value: mouseUpResult }),
-        dragResult: isAcceptable({ value: dragResult }),
-      },
-      otherCommandOutcomes: {
-        screenshotResult: isAcceptable({ value: screenshotResult }),
-        scrollResult: isAcceptable({ value: scrollResult }),
-        scrollAtResult: isAcceptable({ value: scrollAtResult }),
-        displayListResult: isAcceptable({ value: displayListResult }),
-        windowListResult: isAcceptable({ value: windowListResult }),
-        clipboardGetResult: isAcceptable({ value: clipboardGetResult }),
-        clipboardSetResult: isAcceptable({ value: clipboardSetResult }),
-      },
-    }).toMatchInlineSnapshot(`
-      {
-        "mouseCommandOutcomes": {
-          "clickResult": true,
-          "dragResult": true,
-          "hoverResult": true,
-          "mouseDownResult": true,
-          "mouseMoveResult": true,
-          "mouseUpResult": true,
-        },
-        "otherCommandOutcomes": {
-          "clipboardGetResult": true,
-          "clipboardSetResult": true,
-          "displayListResult": true,
-          "screenshotResult": true,
-          "scrollAtResult": true,
-          "scrollResult": true,
-          "windowListResult": true,
-        },
-      }
-    `)
+    // -- Clipboard (TODO on all platforms — Zig returns "TODO not implemented") --
+    await expect(bridge.clipboardSet({ text: 'bridge-contract-test' })).rejects.toThrow('TODO not implemented')
+    await expect(bridge.clipboardGet()).rejects.toThrow('TODO not implemented')
   })
 })
