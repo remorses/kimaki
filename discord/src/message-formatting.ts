@@ -13,6 +13,7 @@ import * as errore from 'errore'
 import { createLogger, LogPrefix } from './logger.js'
 import { FetchError } from './errors.js'
 import { processImage } from './image-utils.js'
+import { parsePatchFileCounts } from './patch-text-parser.js'
 
 // Generic message type compatible with both v1 and v2 SDK
 type GenericSessionMessage = {
@@ -61,73 +62,7 @@ function escapeInlineMarkdown(text: string): string {
   return text.replace(/([*_~|`\\])/g, '\\$1')
 }
 
-/**
- * Parses a patchText string (apply_patch format) and counts additions/deletions per file.
- * Patch format uses `*** Add File:`, `*** Update File:`, `*** Delete File:` headers,
- * with diff lines prefixed by `+` (addition) or `-` (deletion) inside `@@` hunks.
- */
-function parsePatchCounts(
-  patchText: string,
-): Map<string, { additions: number; deletions: number }> {
-  const counts = new Map<string, { additions: number; deletions: number }>()
-  const lines = patchText.split('\n')
-  let currentFile = ''
-  let currentType = ''
-  let inHunk = false
-
-  for (const line of lines) {
-    const addMatch = line.match(/^\*\*\* Add File:\s*(.+)/)
-    const updateMatch = line.match(/^\*\*\* Update File:\s*(.+)/)
-    const deleteMatch = line.match(/^\*\*\* Delete File:\s*(.+)/)
-
-    if (addMatch || updateMatch || deleteMatch) {
-      const match = addMatch || updateMatch || deleteMatch
-      currentFile = (match?.[1] ?? '').trim()
-      currentType = addMatch ? 'add' : updateMatch ? 'update' : 'delete'
-      counts.set(currentFile, { additions: 0, deletions: 0 })
-      inHunk = false
-      continue
-    }
-
-    if (line.startsWith('@@')) {
-      inHunk = true
-      continue
-    }
-
-    if (line.startsWith('*** ')) {
-      inHunk = false
-      continue
-    }
-
-    if (!currentFile) {
-      continue
-    }
-
-    const entry = counts.get(currentFile)
-    if (!entry) {
-      continue
-    }
-
-    if (currentType === 'add') {
-      // all content lines in Add File are additions
-      if (line.length > 0 && !line.startsWith('*** ')) {
-        entry.additions++
-      }
-    } else if (currentType === 'delete') {
-      // all content lines in Delete File are deletions
-      if (line.length > 0 && !line.startsWith('*** ')) {
-        entry.deletions++
-      }
-    } else if (inHunk) {
-      if (line.startsWith('+')) {
-        entry.additions++
-      } else if (line.startsWith('-')) {
-        entry.deletions++
-      }
-    }
-  }
-  return counts
-}
+// parsePatchCounts → imported from patch-text-parser.ts as parsePatchFileCounts
 
 /**
  * Normalize whitespace: convert newlines to spaces and collapse consecutive spaces.
@@ -299,7 +234,7 @@ export function getToolSummaryText(part: Part): string {
     if (!patchText) {
       return ''
     }
-    const patchCounts = parsePatchCounts(patchText)
+    const patchCounts = parsePatchFileCounts(patchText)
     return [...patchCounts.entries()]
       .map(([filePath, { additions, deletions }]) => {
         const fileName = filePath.split('/').pop() || ''

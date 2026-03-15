@@ -481,3 +481,4 @@ const kimakiPlugin: Plugin = async ({ directory }) => {
 export { kimakiPlugin }
 export { interruptOpencodeSessionOnUserMessage } from './opencode-interrupt-plugin.js'
 export { onboardingTutorialPlugin } from './onboarding-tutorial-plugin.js'
+

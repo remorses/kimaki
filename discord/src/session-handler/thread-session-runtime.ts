@@ -123,6 +123,7 @@ import {
   matchThinkingValue,
 } from '../thinking-utils.js'
 import { execAsync } from '../worktrees.js'
+
 import { notifyError } from '../sentry.js'
 import { createDebouncedProcessFlush } from '../debounced-process-flush.js'
 import { cancelHtmlActionsForThread } from '../html-actions.js'
@@ -3534,7 +3535,7 @@ export class ThreadSessionRuntime {
 
     const client = getOpencodeClient(this.projectDirectory)
 
-    // Run git branch, token fetch, and provider list in parallel
+    // Run git branch and token fetch in parallel (fast, no external CLI)
     const [branchResult, contextResult] = await Promise.all([
       errore.tryAsync(() => {
         return execAsync('git symbolic-ref --short HEAD', {
