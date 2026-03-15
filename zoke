@@ -1,0 +1,175 @@
+# Purpose: implementation plan for reimplementing goke in Zig as "zoke".
+
+Zoke plan (reimplement goke in Zig, simplified)
+
+Goal
+- Build a small, no-dependency Zig CLI framework inspired by goke.
+- Keep only core CLI features; skip schema-based coercion (Zod/Standard Schema).
+- Favor a Zig-native API (structs + function pointers + optional context pointers) instead of TypeScript-style closures.
+
+Source baseline reviewed
+- opensrc/repos/github.com/remorses/goke/goke/src/goke.ts
+- opensrc/repos/github.com/remorses/goke/goke/src/mri.ts
+- opensrc/repos/github.com/remorses/goke/goke/src/coerce.ts (used only to decide what to omit)
+- opensrc/repos/github.com/remorses/goke/goke/src/__test__/index.test.ts
+- opensrc/repos/github.com/remorses/goke/goke/src/__test__/coerce.test.ts
+
+Approach options
+
+1) Minimal parser first (recommended)
+- Implement parser + command matching + help output only.
+- No middleware in v1.
+- Fastest path to usable `zoke` with stable behavior.
+
+2) Near-feature parity core (still no schemas)
+- Include middleware, aliases, default command behavior, and prefix help for unknown subcommands.
+- Slightly more code, closer to goke runtime semantics.
+
+3) Runtime-extensible callbacks
+- Add opaque context pointer (`?*anyopaque`) to all callbacks.
+- More ergonomic for apps that need state without globals.
+- Best long-term Zig ergonomics.
+
+Chosen direction
+- Start from option 2 + context-pointer pattern from option 3.
+- Skip schema coercion completely; all value options stay strings.
+
+Public API design (Zig-native)
+
+```zig
+const std = @import("std");
+
+pub const ActionFn = fn (
+    ctx: ?*anyopaque,
+    args: []const []const u8,
+    opts: *const ParsedOptions,
+) anyerror!void;
+
+pub const MiddlewareFn = fn (
+    ctx: ?*anyopaque,
+    opts: *const ParsedOptions,
+) anyerror!void;
+
+pub const Cli = struct {
+    // methods: init, deinit, option, command, help, version, parseAndRun
+};
+
+pub const Command = struct {
+    // methods: option, alias, action, usage, example, allowUnknownOptions
+};
+```
+
+Rationale
+- Zig has no closures: function pointer + `ctx` is explicit and composable.
+- Keeps call sites simple and avoids allocator-heavy capture emulation.
+
+Feature scope for v1
+- Commands: single-word and space-separated subcommands (e.g. `mcp login`).
+- Greedy match: longest command path first.
+- Default command: empty command name (`""`) when no explicit subcommand matches.
+- Options:
+  - Boolean flags (`--verbose`, `--no-verbose`).
+  - Required values (`--port <port>` style metadata parsed from declaration string).
+  - Optional values (`--format [fmt]`): missing value => `true` sentinel.
+  - Aliases (`-p, --port <port>`).
+  - Repeated values allowed (stored as list of strings).
+  - Dot-nested option keys (`--env.API_KEY x`) represented as flat keys in v1.
+- Help/version:
+  - `-h/--help`, `-v/--version`.
+  - Root help, command help, and prefix help for unknown grouped subcommands.
+- Middleware: global pre-action chain.
+
+Explicitly out of scope (for now)
+- Schema support (Zod, Valibot, Standard Schema, JSON schema coercion).
+- Type-level inference (TypeScript-only concern).
+- ANSI color/wrapping sophistication beyond basic readable help.
+
+Internal architecture
+
+```text
+zoke/
+  src/
+    main.zig                # optional demo binary
+    zoke.zig                # public API exports
+    cli.zig                 # Cli, Command, registration APIs
+    parser.zig              # argv token parser (flags, values, -- passthrough)
+    matcher.zig             # greedy command path matching
+    options.zig             # option declaration parsing + validation helpers
+    help.zig                # help text rendering
+    errors.zig              # usage/runtime errors
+    types.zig               # shared structs/enums
+  build.zig
+```
+
+Key data structures
+- `OptionDef`: raw declaration, canonical name, aliases, arity (`flag|required|optional`), description.
+- `CommandDef`: path segments, aliases, options list, action fn + context, config.
+- `ParsedOptions`: map `name -> OptionValue` where `OptionValue` is
+  - bool
+  - string
+  - list of strings/bools for repeated options
+  - passthrough list for `--` under reserved key.
+- `ParseResult`: matched command index + positional args + parsed options.
+
+Execution flow
+1. Register global options and commands.
+2. Parse argv into positional tokens + option tokens + passthrough.
+3. Match command greedily by segment count.
+4. Merge global + command options and validate unknown/missing required values.
+5. Run middleware chain.
+6. Run command action.
+7. Handle usage errors with friendly output and non-zero exit.
+
+Compatibility notes vs goke
+- Keep behavior-compatible for core routing and option parsing.
+- Simplify nested options: keep flat keys initially to reduce complexity.
+- Keep repeated option behavior permissive since schemas are omitted.
+
+Test plan (Zig `std.testing`)
+- Command matching
+  - greedy match (`mcp login` over `mcp`)
+  - default command fallback
+  - unknown command prefix listing
+- Option parsing
+  - boolean flags and `--no-` negation
+  - required/optional values
+  - short aliases
+  - repeated flags
+  - double-dash passthrough
+- Help/version
+  - root help layout
+  - subcommand help includes command options
+  - version output
+- Runtime
+  - middleware order
+  - action receives expected args/options
+
+Implementation phases
+1. Parser core (`parser.zig`, `options.zig`) + unit tests.
+2. Command matcher (`matcher.zig`) + greedy/default tests.
+3. Cli runtime (`cli.zig`) with middleware/action dispatch.
+4. Help rendering (`help.zig`) + snapshot-like string assertions.
+5. `main.zig` demo and README usage examples.
+
+Migration examples (goke -> zoke)
+- goke `.action((options) => { ... })`
+  -> zoke `action(myActionFn, ctxPtr)`.
+- goke `.use((options) => { ... })`
+  -> zoke `use(myMiddlewareFn, ctxPtr)`.
+
+Risk and mitigations
+- Risk: manual memory lifecycle complexity in command/option storage.
+  - Mitigation: central allocator ownership in `Cli` + deterministic `deinit`.
+- Risk: behavior drift from goke around edge cases.
+  - Mitigation: port a subset of high-value tests from `index.test.ts`.
+- Risk: API ergonomics without closures.
+  - Mitigation: standardize context-pointer callback signature from day 1.
+
+Definition of done (v1)
+- `zoke` compiles with `zig build test`.
+- Test suite covers the listed core flows.
+- Demo binary supports at least:
+  - root command
+  - one nested command
+  - help/version
+  - basic flags/value options.

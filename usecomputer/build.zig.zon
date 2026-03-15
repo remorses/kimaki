@@ -13,6 +13,10 @@
             .hash = "zig_objc-0.0.0-Ir_Sp7oUAQC3JpeR9EGUFGcHRSx_33IehitnjBCy-CwD",
             .lazy = true,
         },
+        .zeke = .{
+            .url = "https://github.com/remorses/zeke/archive/refs/heads/main.tar.gz",
+            .hash = "zeke-0.1.0-fnPIzP2mAADBDhCqMNuyU5TV7PEG9rEb2GDDjwMXCZYN",
+        },
     },
     .paths = .{
         "build.zig",

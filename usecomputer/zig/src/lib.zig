@@ -6,7 +6,12 @@ const std = @import("std");
 const builtin = @import("builtin");
 const scroll_impl = @import("scroll.zig");
 const window = @import("window.zig");
-const napigen = if (builtin.is_test) undefined else @import("napigen");
+// napigen is only available when building as N-API library.
+// The build system provides a "napigen" module for the library target but not
+// for the standalone exe or test targets. We detect availability at comptime
+// via the build options module.
+const build_options = @import("build_options");
+const napigen = if (build_options.enable_napigen) @import("napigen") else undefined;
 const c_macos = if (builtin.target.os.tag == .macos) @cImport({
     @cInclude("CoreGraphics/CoreGraphics.h");
     @cInclude("CoreFoundation/CoreFoundation.h");
@@ -196,7 +201,7 @@ fn todoNotImplemented(command: []const u8) CommandResult {
     return failCommand(command, "TODO_NOT_IMPLEMENTED", "TODO not implemented");
 }
 
-const Point = struct {
+pub const Point = struct {
     x: f64,
     y: f64,
 };
@@ -226,7 +231,7 @@ const DragInput = struct {
     button: ?[]const u8 = null,
 };
 
-const ScreenshotRegion = struct {
+pub const ScreenshotRegion = struct {
     x: f64,
     y: f64,
     width: f64,
@@ -241,7 +246,7 @@ const ScreenshotInput = struct {
     annotate: ?bool = null,
 };
 
-const ScreenshotOutput = struct {
+pub const ScreenshotOutput = struct {
     path: []const u8,
     desktopIndex: f64,
     captureX: f64,
@@ -2178,7 +2183,7 @@ fn initModule(js: *napigen.JsContext, exports: napigen.napi_value) !napigen.napi
 }
 
 comptime {
-    if (!builtin.is_test) {
+    if (build_options.enable_napigen) {
         napigen.defineModule(initModule);
     }
 }
