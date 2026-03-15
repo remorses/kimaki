@@ -194,6 +194,8 @@ Just send a message in any channel linked to a project. Kimaki handles the rest.
 | `/clear-queue`               | Clear all queued messages in this thread                |
 | `/undo`                      | Undo the last assistant message (revert file changes)   |
 | `/redo`                      | Redo the last undone message                            |
+| `/screenshare`               | Share your screen via VNC tunnel (auto-stops after 1h)  |
+| `/screenshare-stop`          | Stop screen sharing                                     |
 | `/upgrade-and-restart`       | Upgrade kimaki to latest and restart the bot            |
 
 ### Dynamic OpenCode Slash Commands
@@ -234,6 +236,9 @@ npx -y kimaki send --channel <channel-id> --prompt "User cancelled subscription"
 
 # Create Discord channels for a project directory (without starting a session)
 npx -y kimaki project add [directory]
+
+# Share your screen (runs until Ctrl+C, auto-stops after 1 hour)
+kimaki screenshare
 ```
 
 ## Add Project Channels
@@ -372,6 +377,49 @@ User prefers kebab-case filenames and errore-style error handling.
 ```
 
 The AI can update this file to store learnings, decisions, preferences, and context worth preserving. After long idle gaps (10+ min), the AI is reminded to save important context before starting new work.
+
+## Screen Sharing
+
+Share your machine's screen to anyone with a browser link. Uses VNC under the hood, bridged through a WebSocket proxy and exposed via a kimaki tunnel.
+
+```bash
+# Start sharing (runs in foreground, Ctrl+C to stop)
+kimaki screenshare
+
+# Run in background with tmux
+tmux new-session -d -s screenshare "kimaki screenshare"
+```
+
+Or use the `/screenshare` slash command in Discord — it posts the URL directly in the channel.
+
+Sessions auto-stop after **1 hour**. Use `/screenshare-stop` or Ctrl+C to stop earlier.
+
+### macOS Setup
+
+macOS requires **Remote Management** enabled (not just Screen Sharing) for full mouse and keyboard control:
+
+1. Go to **System Settings > General > Sharing > Remote Management**
+2. Enable **"VNC viewers may control screen with password"**
+3. Set a VNC password
+
+Or via terminal:
+
+```bash
+sudo /System/Library/CoreServices/RemoteManagement/ARDAgent.app/Contents/Resources/kickstart \
+  -activate -configure -allowAccessFor -allUsers -privs -all \
+  -clientopts -setvnclegacy -vnclegacy yes \
+  -restart -agent -console
+```
+
+### Linux Setup
+
+Requires `x11vnc` and a running X11 display (`$DISPLAY`):
+
+```bash
+sudo apt install x11vnc
+```
+
+Kimaki spawns `x11vnc` automatically when you start screen sharing.
 
 ## How It Works
 
