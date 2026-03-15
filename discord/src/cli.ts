@@ -1089,6 +1089,16 @@ async function registerCommands({
       .setDescription('List and manage MCP servers for this project')
       .setDMPermission(false)
       .toJSON(),
+    new SlashCommandBuilder()
+      .setName('screenshare')
+      .setDescription('Start screen sharing via VNC tunnel (auto-stops after 1 hour)')
+      .setDMPermission(false)
+      .toJSON(),
+    new SlashCommandBuilder()
+      .setName('screenshare-stop')
+      .setDescription('Stop screen sharing')
+      .setDMPermission(false)
+      .toJSON(),
   ]
 
   // Add user-defined commands with source-based suffixes (-cmd / -skill)
@@ -4137,6 +4147,31 @@ cli
       })
     },
   )
+
+cli
+  .command(
+    'screenshare',
+    'Share your screen via VNC tunnel. Auto-stops after 1 hour. Runs until Ctrl+C. Use tmux to run in background.',
+  )
+  .action(async () => {
+    const { startScreenshare } = await import(
+      './commands/screenshare.js'
+    )
+    try {
+      const session = await startScreenshare({
+        sessionKey: 'cli',
+        startedBy: 'cli',
+      })
+      cliLogger.log(`Screen sharing started: ${session.noVncUrl}`)
+      cliLogger.log('Press Ctrl+C to stop')
+    } catch (err) {
+      cliLogger.error(
+        'Failed to start screen share:',
+        err instanceof Error ? err.message : String(err),
+      )
+      process.exit(EXIT_NO_RESTART)
+    }
+  })
 
 cli
   .command('sqlitedb', 'Show the location of the SQLite database file')

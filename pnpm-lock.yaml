@@ -103,12 +103,12 @@ importers:
       '@sentry/node':
         specifier: ^10.40.0
         version: 10.40.0
+      '@types/ws':
+        specifier: ^8.18.1
+        version: 8.18.1
       cron-parser:
         specifier: ^5.5.0
         version: 5.5.0
-      diff:
-        specifier: ^8.0.3
-        version: 8.0.3
       discord.js:
         specifier: ^14.25.1
         version: 14.25.1
@@ -151,6 +151,9 @@ importers:
       undici:
         specifier: ^7.16.0
         version: 7.16.0
+      ws:
+        specifier: ^8.19.0
+        version: 8.19.0
       xdg-basedir:
         specifier: ^5.1.0
         version: 5.1.0
@@ -2752,10 +2755,6 @@ packages:
     resolution: {integrity: sha512-Btj2BOOO83o3WyH59e8MgXsxEQVcarkUOpEYrubB0urwnN10yQ364rsiByU11nZlqWYZm05i/of7io4mzihBtQ==}
     engines: {node: '>=8'}
 
-  diff@8.0.3:
-    resolution: {integrity: sha512-qejHi7bcSD4hQAZE0tNAawRK1ZtafHDmMTMkrrIGgSLl7hTnQHmKCeB45xAcbfTqK2zowkM3j3bHt/4b/ARbYQ==}
-    engines: {node: '>=0.3.1'}
-
   discord-api-types@0.38.40:
     resolution: {integrity: sha512-P/His8cotqZgQqrt+hzrocp9L8RhQQz1GkrCnC9TMJ8Uw2q0tg8YyqJyGULxhXn/8kxHETN4IppmOv+P2m82lQ==}
 
@@ -4522,18 +4521,6 @@ packages:
       utf-8-validate:
         optional: true
 
-  ws@8.18.3:
-    resolution: {integrity: sha512-PEIGCY5tSlUt50cqyMXfCzX+oOPqN0vuGqWzbcJ2xvnkzkq46oOpz7dQaTDBdfICb4N14+GARUDw2XV2N4tvzg==}
-    engines: {node: '>=10.0.0'}
-    peerDependencies:
-      bufferutil: ^4.0.1
-      utf-8-validate: '>=5.0.2'
-    peerDependenciesMeta:
-      bufferutil:
-        optional: true
-      utf-8-validate:
-        optional: true
-
   ws@8.19.0:
     resolution: {integrity: sha512-blAT2mjOEIi0ZzruJfIhb3nps74PRWTCz1IjglWEEpQl5XS/UNama6u2/rjFkDDouqr4L67ry+1aGIALViWjDg==}
     engines: {node: '>=10.0.0'}
@@ -5211,7 +5198,7 @@ snapshots:
   '@google/genai@1.34.0':
     dependencies:
       google-auth-library: 10.5.0
-      ws: 8.18.3
+      ws: 8.19.0
     transitivePeerDependencies:
       - bufferutil
       - supports-color
@@ -6299,7 +6286,7 @@ snapshots:
 
   '@types/ws@8.18.1':
     dependencies:
-      '@types/node': 24.11.0
+      '@types/node': 22.19.7
 
   '@typespec/ts-http-runtime@0.3.3':
     dependencies:
@@ -6832,8 +6819,6 @@ snapshots:
     optional: true
 
   detect-libc@2.1.2: {}
-
-  diff@8.0.3: {}
 
   discord-api-types@0.38.40: {}
 
@@ -8963,8 +8948,6 @@ snapshots:
     optional: true
 
   ws@8.18.0: {}
-
-  ws@8.18.3: {}
 
   ws@8.19.0: {}
 

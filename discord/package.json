@@ -57,6 +57,7 @@
     "@prisma/client": "7.4.2",
     "@purinton/resampler": "^1.0.4",
     "@sentry/node": "^10.40.0",
+    "@types/ws": "^8.18.1",
     "cron-parser": "^5.5.0",
     "discord.js": "^14.25.1",
     "domhandler": "^5.0.3",
@@ -72,6 +73,7 @@
     "string-dedent": "^3.0.2",
     "traforo": "workspace:^",
     "undici": "^7.16.0",
+    "ws": "^8.19.0",
     "xdg-basedir": "^5.1.0",
     "zod": "^4.3.6",
     "zustand": "^5.0.11"

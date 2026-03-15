@@ -90,6 +90,10 @@ import { handleContextUsageCommand } from './commands/context-usage.js'
 import { handleSessionIdCommand } from './commands/session-id.js'
 import { handleUpgradeAndRestartCommand } from './commands/upgrade.js'
 import { handleMcpCommand, handleMcpSelectMenu } from './commands/mcp.js'
+import {
+  handleScreenshareCommand,
+  handleScreenshareStopCommand,
+} from './commands/screenshare.js'
 import { handleModelVariantSelectMenu } from './commands/model.js'
 import {
   handleModelVariantCommand,
@@ -327,6 +331,17 @@ export function registerInteractionHandler({
 
             case 'mcp':
               await handleMcpCommand({ command: interaction, appId })
+              return
+
+            case 'screenshare':
+              await handleScreenshareCommand({ command: interaction, appId })
+              return
+
+            case 'screenshare-stop':
+              await handleScreenshareStopCommand({
+                command: interaction,
+                appId,
+              })
               return
           }
 
