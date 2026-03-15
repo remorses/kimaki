@@ -9,6 +9,7 @@
 import { MessageFlags } from 'discord.js'
 import crypto from 'node:crypto'
 import { spawn, type ChildProcess } from 'node:child_process'
+import net from 'node:net'
 import { TunnelClient } from 'traforo/client'
 import type { CommandContext } from './types.js'
 import { SILENT_MESSAGE_FLAGS } from '../discord-utils.js'
@@ -106,6 +107,41 @@ export function spawnX11Vnc(): ChildProcess {
   return child
 }
 
+function waitForPort({
+  port,
+  process: proc,
+  timeoutMs,
+}: {
+  port: number
+  process: ChildProcess
+  timeoutMs: number
+}): Promise<void> {
+  return new Promise((resolve, reject) => {
+    const maxAttempts = Math.ceil(timeoutMs / 100)
+    let attempts = 0
+    const check = () => {
+      if (proc.exitCode !== null) {
+        reject(new Error(`x11vnc exited with code ${proc.exitCode} before becoming ready`))
+        return
+      }
+      const sock = net.createConnection(port, 'localhost')
+      sock.on('connect', () => {
+        sock.destroy()
+        resolve()
+      })
+      sock.on('error', () => {
+        sock.destroy()
+        if (++attempts >= maxAttempts) {
+          reject(new Error(`Port ${port} not reachable after ${timeoutMs}ms`))
+        } else {
+          setTimeout(check, 100)
+        }
+      })
+    }
+    check()
+  })
+}
+
 export function cleanupSession(session: ScreenshareSession): void {
   clearTimeout(session.timeoutTimer)
   try {
@@ -153,9 +189,9 @@ export async function startScreenshare({
       throw new Error('x11vnc is not installed. Install it with: sudo apt install x11vnc')
     }
     vncProcess = spawnX11Vnc()
-    await new Promise((resolve) => {
-      setTimeout(resolve, 1000)
-    })
+    // Wait for x11vnc to actually be ready (port 5900 accepting connections)
+    // instead of a blind 1s sleep. Polls every 100ms, fails if process exits first.
+    await waitForPort({ port: VNC_PORT, process: vncProcess, timeoutMs: 3000 })
   } else {
     throw new Error(`Screen sharing is not supported on ${platform}. Only macOS and Linux are supported.`)
   }
@@ -193,6 +229,7 @@ export async function startScreenshare({
       }),
     ])
   } catch (err) {
+    tunnelClient.close()
     wsInstance.close()
     if (vncProcess) {
       vncProcess.kill()
