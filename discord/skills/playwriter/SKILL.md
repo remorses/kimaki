@@ -8,7 +8,7 @@ description: Control the user own Chrome browser via Playwriter extension with P
 **Before using playwriter, you MUST run this command:**
 
 ```bash
-playwriter skill
+playwriter skill # IMPORTANT! do not use | head here. read in full!
 ```
 
 This outputs the complete documentation including:
