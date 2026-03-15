@@ -4,7 +4,7 @@
   "type": "module",
   "version": "0.4.77",
   "scripts": {
-    "dev": "tsx --env-file .env src/cli.ts",
+    "dev": "tsx src/cli.ts",
     "prepublishOnly": "pnpm generate && pnpm tsc",
     "dev:bun": "DEBUG=1 bun --env-file .env src/cli.ts",
     "watch": "tsx scripts/watch-session.ts",
