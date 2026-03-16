@@ -1,12 +1,14 @@
 // Audio transcription service using AI SDK providers.
-// Both providers use LanguageModelV3 (chat model) with audio file parts + tool calling,
-// so we can pass full context (file tree, session info) for better word recognition.
-//   - OpenAI: gpt-4o-audio-preview via .chat() (Chat Completions API). MUST use .chat()
-//     because the default Responses API doesn't support audio file parts. The Chat
-//     Completions handler converts audio/mpeg file parts to input_audio format.
-//   - Gemini: gemini-2.5-flash natively accepts audio file parts in chat.
-// Calls model.doGenerate() directly without the `ai` npm package.
-// Uses errore for type-safe error handling.
+// Supports three providers:
+//   - openai: GPT-4o audio (requires OpenAI API key)
+//   - gemini: Gemini 2.5 Flash (requires Google API key)  
+//   - parakeet: Local NVIDIA Parakeet via MLX (no API key needed!)
+//
+// For OpenAI/Gemini: Uses LanguageModelV3 (chat model) with audio file parts + tool calling.
+// For Parakeet: Uses local HTTP service (asr-service/asr_server.py)
+//   - Install: cd asr-service && pip install -r requirements.txt
+//   - Run: python asr_server.py
+//   - Set: ASR_PROVIDER=parakeet or provider: 'parakeet'
 
 import type {
   LanguageModelV3,
@@ -29,6 +31,17 @@ import {
   NoResponseContentError,
   NoToolResponseError,
 } from './errors.js'
+
+const ASR_SERVICE_URL = process.env.ASR_SERVICE_URL || 'http://127.0.0.1:8765'
+
+// Environment variable for default ASR provider
+const DEFAULT_ASR_PROVIDER = (() => {
+  const env = process.env.ASR_PROVIDER?.toLowerCase()
+  if (env === 'parakeet' || env === 'openai' || env === 'gemini') {
+    return env as TranscriptionProvider
+  }
+  return 'gemini' as TranscriptionProvider
+})()
 
 const voiceLogger = createLogger(LogPrefix.VOICE)
 
@@ -391,7 +404,7 @@ export type TranscribeAudioErrors =
   | InvalidAudioFormatError
   | TranscriptionLoopError
 
-export type TranscriptionProvider = 'openai' | 'gemini'
+export type TranscriptionProvider = 'openai' | 'gemini' | 'parakeet'
 
 /**
  * Create a LanguageModelV3 for transcription.
@@ -421,6 +434,83 @@ export function createTranscriptionModel({
   return google('gemini-2.5-flash')
 }
 
+/**
+ * Transcribe audio using local parakeet-mlx service.
+ * Requires the ASR service to be running (python asr_server.py)
+ */
+export async function transcribeWithParakeet({
+  audioBuffer,
+  mediaType,
+}: {
+  audioBuffer: Buffer
+  mediaType: string
+}): Promise<TranscriptionError | TranscriptionResult> {
+  const audioBase64 = audioBuffer.toString('base64')
+
+  voiceLogger.log(`Transcribing with parakeet-mlx service at ${ASR_SERVICE_URL}`)
+
+  try {
+    const response = await fetch(`${ASR_SERVICE_URL}/transcribe/base64`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        audio_data: audioBase64,
+        media_type: mediaType,
+        language: 'en',
+      }),
+    })
+
+    if (!response.ok) {
+      const errorText = await response.text()
+      return new TranscriptionError({
+        reason: `Parakeet service error: ${response.status} - ${errorText}`,
+      })
+    }
+
+    const result = await response.json() as { text: string }
+
+    if (!result.text || result.text.trim() === '') {
+      return new EmptyTranscriptionError()
+    }
+
+    voiceLogger.log(`Parakeet transcription: "${result.text.slice(0, 50)}..."`)
+
+    return {
+      transcription: result.text.trim(),
+      queueMessage: false,
+    }
+  } catch (error) {
+    const err = error as Error
+    // Check if service is running
+    if (err.message.includes('ECONNREFUSED')) {
+      return new TranscriptionError({
+        reason: 'Parakeet ASR service is not running. Start it with: cd asr-service && pip install -r requirements.txt && python asr_server.py',
+        cause: err,
+      })
+    }
+    return new TranscriptionError({
+      reason: `Parakeet transcription failed: ${err.message}`,
+      cause: err,
+    })
+  }
+}
+
+/**
+ * Check if the parakeet service is available.
+ */
+export async function checkParakeetService(): Promise<boolean> {
+  try {
+    const response = await fetch(`${ASR_SERVICE_URL}/health`, {
+      method: 'GET',
+    })
+    return response.ok
+  } catch {
+    return false
+  }
+}
+
 export async function transcribeAudio({
   audio,
   prompt,
@@ -448,7 +538,10 @@ export async function transcribeAudio({
   const apiKey =
     apiKeyParam || process.env.OPENAI_API_KEY || process.env.GEMINI_API_KEY
 
-  if (!model && !apiKey) {
+  // Parakeet doesn't require an API key (local transcription)
+  const requiresApiKey = provider !== 'parakeet' && !model
+
+  if (requiresApiKey && !apiKey) {
     return Promise.resolve(new ApiKeyMissingError({ service: 'OpenAI or Gemini' }))
   }
 
@@ -456,11 +549,43 @@ export async function transcribeAudio({
     if (provider) {
       return provider
     }
+    // Use environment variable as default (ASR_PROVIDER=parakeet|openai|gemini)
+    if (DEFAULT_ASR_PROVIDER) {
+      return DEFAULT_ASR_PROVIDER
+    }
     if (apiKey) {
       return apiKey.startsWith('sk-') ? 'openai' : 'gemini'
     }
-    return 'gemini'
+    // Default to parakeet if no API key is provided (local fallback)
+    return 'parakeet'
   })()
+
+  // Handle parakeet (local) transcription - no API key needed
+  if (resolvedProvider === 'parakeet') {
+    // Convert audio to Buffer
+    const audioBuffer: Buffer = (() => {
+      if (typeof audio === 'string') {
+        return Buffer.from(audio, 'base64')
+      }
+      if (audio instanceof Buffer) {
+        return audio
+      }
+      if (audio instanceof ArrayBuffer) {
+        return Buffer.from(new Uint8Array(audio))
+      }
+      return Buffer.from(audio)
+    })()
+
+    if (audioBuffer.length === 0) {
+      return new InvalidAudioFormatError()
+    }
+
+    const mediaType = normalizeAudioMediaType(mediaTypeParam || 'audio/mpeg')
+    return transcribeWithParakeet({
+      audioBuffer,
+      mediaType,
+    })
+  }
 
   const languageModel: LanguageModelV3 =
     model || createTranscriptionModel({ apiKey: apiKey!, provider: resolvedProvider })
