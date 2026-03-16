@@ -1,5 +1,20 @@
 # Changelog
 
+## 0.4.78
+
+1. **New `/screenshare` command** — share your screen via noVNC directly in the browser. Works on macOS (uses built-in Remote Management) and Linux (spawns x11vnc):
+   ```
+   /screenshare        — start screen sharing, bot replies with a noVNC URL
+   /screenshare-stop   — stop the active session
+   ```
+   Also available as `kimaki screenshare` from the CLI (runs until Ctrl+C). Sessions auto-stop after 1 hour. One active session allowed per guild. The in-process websockify bridge replaces the Python websockify dependency — no extra installs needed.
+
+2. **Fixed plugin part IDs failing OpenCode validation** — OpenCode requires all part IDs to start with `prt_`. The plugin hooks (MEMORY.md injection, time-gap notice, memory save reminder, git branch injection, onboarding tutorial) were generating bare UUIDs, causing a ZodError at runtime. All five are now correctly prefixed.
+
+3. **Fixed screenshare tunnel not cleaning up on connect failure** — if the tunnel failed to connect or timed out, the `TunnelClient` kept trying to reconnect in the background. It is now explicitly closed on error so no orphaned reconnect loops are left running.
+
+4. **Fixed screenshare startup on Linux** — replaced a blind 1-second sleep after spawning x11vnc with a port-readiness poll (100ms interval, 3s max). The startup now fails immediately if x11vnc exits early instead of hanging.
+
 ## 0.4.77
 
 1. **Fixed session hang after dismissing permission prompts** — when a user sent a new message while a permission prompt was blocking a previous run, the blocked run would hang indefinitely. Now pending permission requests are rejected immediately when a new message arrives, so the follow-up can proceed without waiting.
