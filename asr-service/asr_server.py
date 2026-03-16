@@ -10,7 +10,7 @@ import uuid
 from pathlib import Path
 from typing import Optional
 
-from fastapi import FastAPI, File, HTTPException, UploadFile
+from fastapi import FastAPI, File, HTTPException, UploadFile, Body
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 
@@ -132,9 +132,9 @@ async def transcribe_audio(
 
 @app.post("/transcribe/base64", response_model=TranscriptionResponse)
 async def transcribe_audio_base64(
-    audio_data: str,  # Base64 encoded audio
-    media_type: str = "audio/wav",
-    language: Optional[str] = None,
+    audio_data: str = Body(..., description="Base64 encoded audio"),
+    media_type: str = Body("audio/wav", description="MIME type of audio"),
+    language: Optional[str] = Body(None, description="Language hint"),
 ):
     """
     Transcribe base64-encoded audio to text.

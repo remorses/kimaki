@@ -555,7 +555,78 @@ export async function processVoiceAttachment({
     }
   }
 
-  // Resolve transcription API key: prefer OpenAI, fall back to Gemini, then env vars
+  // Determine ASR provider: parakeet is the default (local), use OpenAI/Gemini only when explicitly configured
+  const asrProvider = process.env.ASR_PROVIDER?.toLowerCase()
+  const useCloudProvider = asrProvider === 'openai' || asrProvider === 'gemini'
+
+  if (!useCloudProvider) {
+    // Use parakeet (local ASR) - default when ASR_PROVIDER is not set, or explicitly set to 'parakeet'
+    if (asrProvider === 'parakeet') {
+      voiceLogger.log('Using parakeet local ASR service (ASR_PROVIDER=parakeet)')
+    } else {
+      voiceLogger.log('Using parakeet local ASR service (default)')
+    }
+    const transcription = await transcribeAudio({
+      audio: audioBuffer,
+      prompt: transcriptionPrompt,
+      provider: 'parakeet',
+      mediaType: audioAttachment.contentType || undefined,
+      currentSessionContext,
+      lastSessionContext,
+    })
+
+    if (transcription instanceof Error) {
+      const errMsg = errore.matchError(transcription, {
+        TranscriptionError: (e) => e.message,
+        InvalidAudioFormatError: (e) => e.message,
+        ApiKeyMissingError: (e) => e.message,
+        EmptyTranscriptionError: (e) => e.message,
+        NoResponseContentError: (e) => e.message,
+        NoToolResponseError: (e) => e.message,
+        Error: (e) => e.message,
+      })
+      voiceLogger.error(`Parakeet transcription failed:`, transcription)
+      await sendThreadMessage(thread, `⚠️ Transcription failed: ${errMsg}`)
+      return null
+    }
+
+    const { transcription: text, queueMessage } = transcription
+    voiceLogger.log(
+      `Transcription successful: "${text.slice(0, 50)}${text.length > 50 ? '...' : ''}"${queueMessage ? ' [QUEUE]' : ''}`,
+    )
+
+    if (isNewThread) {
+      const threadName = text.replace(/\s+/g, ' ').trim().slice(0, 80)
+      if (threadName) {
+        const renamed = await Promise.race([
+          errore.tryAsync({
+            try: () => thread.setName(threadName),
+            catch: (e) => e as Error,
+          }),
+          new Promise<null>((resolve) => {
+            setTimeout(() => {
+              resolve(null)
+            }, 2000)
+          }),
+        ])
+        if (renamed === null) {
+          voiceLogger.log(`Thread name update timed out`)
+        } else if (renamed instanceof Error) {
+          voiceLogger.log(`Could not update thread name:`, renamed.message)
+        } else {
+          voiceLogger.log(`Updated thread name to: "${threadName}"`)
+        }
+      }
+    }
+
+    await sendThreadMessage(
+      thread,
+      `📝 **Transcribed message:** ${escapeDiscordFormatting(text)}`,
+    )
+    return transcription
+  }
+
+  // Use cloud provider (OpenAI or Gemini) - only when ASR_PROVIDER is explicitly set to 'openai' or 'gemini'
   let transcriptionApiKey: string | undefined
   let transcriptionProvider: 'openai' | 'gemini' | undefined
   if (appId) {

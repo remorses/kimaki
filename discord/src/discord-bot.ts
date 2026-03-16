@@ -282,6 +282,18 @@ export async function startDiscordBot({
 
     voiceLogger.log('[READY] Bot is ready')
 
+    // Log voice transcription provider
+    const asrProvider = process.env.ASR_PROVIDER?.toLowerCase()
+    if (asrProvider === 'parakeet') {
+      voiceLogger.log('[ASR] Voice transcription: parakeet (local)')
+    } else if (asrProvider === 'openai') {
+      voiceLogger.log('[ASR] Voice transcription: OpenAI')
+    } else if (asrProvider === 'gemini') {
+      voiceLogger.log('[ASR] Voice transcription: Gemini')
+    } else {
+      voiceLogger.log('[ASR] Voice transcription: parakeet (local, default)')
+    }
+
     // Auto-start parakeet ASR service if configured
     if (shouldAutoStartAsr()) {
       voiceLogger.log('[ASR] Starting parakeet-mlx service...')

@@ -40,7 +40,8 @@ const DEFAULT_ASR_PROVIDER = (() => {
   if (env === 'parakeet' || env === 'openai' || env === 'gemini') {
     return env as TranscriptionProvider
   }
-  return 'gemini' as TranscriptionProvider
+  // Default to parakeet (local ASR) - no API key needed
+  return 'parakeet' as TranscriptionProvider
 })()
 
 const voiceLogger = createLogger(LogPrefix.VOICE)
@@ -444,23 +445,22 @@ export async function transcribeWithParakeet({
   audioBuffer: Buffer
   mediaType: string
 }): Promise<TranscriptionError | TranscriptionResult> {
-  const audioBase64 = audioBuffer.toString('base64')
-
   voiceLogger.log(
     `Transcribing with parakeet-mlx service at ${ASR_SERVICE_URL}`,
   )
 
   try {
-    const response = await fetch(`${ASR_SERVICE_URL}/transcribe/base64`, {
+    // Use FormData for file upload instead of base64
+    const formData = new FormData()
+    // Create a Blob from the buffer and append it as a file
+    const blob = new Blob([audioBuffer], { type: mediaType })
+    const fileExtension = mediaTypeToExtension(mediaType)
+    formData.append('file', blob, `audio${fileExtension}`)
+    formData.append('language', 'en')
+
+    const response = await fetch(`${ASR_SERVICE_URL}/transcribe`, {
       method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify({
-        audio_data: audioBase64,
-        media_type: mediaType,
-        language: 'en',
-      }),
+      body: formData,
     })
 
     if (!response.ok) {
@@ -499,6 +499,23 @@ export async function transcribeWithParakeet({
       cause: err,
     })
   }
+}
+
+function mediaTypeToExtension(mediaType: string): string {
+  const extMap: Record<string, string> = {
+    'audio/wav': '.wav',
+    'audio/x-wav': '.wav',
+    'audio/mp3': '.mp3',
+    'audio/mpeg': '.mp3',
+    'audio/ogg': '.ogg',
+    'audio/opus': '.ogg',
+    'audio/mp4': '.m4a',
+    'audio/m4a': '.m4a',
+    'audio/x-m4a': '.m4a',
+    'audio/flac': '.flac',
+    'audio/aac': '.aac',
+  }
+  return extMap[mediaType.toLowerCase()] || '.wav'
 }
 
 /**
