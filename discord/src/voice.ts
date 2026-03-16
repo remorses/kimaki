@@ -1,7 +1,7 @@
 // Audio transcription service using AI SDK providers.
 // Supports three providers:
 //   - openai: GPT-4o audio (requires OpenAI API key)
-//   - gemini: Gemini 2.5 Flash (requires Google API key)  
+//   - gemini: Gemini 2.5 Flash (requires Google API key)
 //   - parakeet: Local NVIDIA Parakeet via MLX (no API key needed!)
 //
 // For OpenAI/Gemini: Uses LanguageModelV3 (chat model) with audio file parts + tool calling.
@@ -54,16 +54,9 @@ const OPENAI_SUPPORTED_AUDIO_TYPES = new Set([
   'audio/x-wav',
 ])
 
-const OGG_AUDIO_TYPES = new Set([
-  'audio/ogg',
-  'audio/opus',
-])
+const OGG_AUDIO_TYPES = new Set(['audio/ogg', 'audio/opus'])
 
-const M4A_AUDIO_TYPES = new Set([
-  'audio/mp4',
-  'audio/m4a',
-  'audio/x-m4a',
-])
+const M4A_AUDIO_TYPES = new Set(['audio/mp4', 'audio/m4a', 'audio/x-m4a'])
 
 export function normalizeAudioMediaType(mediaType: string): string {
   const normalized = mediaType.trim().toLowerCase()
@@ -99,7 +92,9 @@ export function getOpenAIAudioConversionStrategy(
  * Pipeline: OGG buffer → OggDemuxer → Opus Decoder → PCM → WAV (with header).
  * No ffmpeg needed — uses @discordjs/opus native bindings.
  */
-export function convertOggToWav(input: Buffer): Promise<TranscriptionError | Buffer> {
+export function convertOggToWav(
+  input: Buffer,
+): Promise<TranscriptionError | Buffer> {
   return new Promise((resolve) => {
     const pcmChunks: Buffer[] = []
 
@@ -151,7 +146,9 @@ export function convertOggToWav(input: Buffer): Promise<TranscriptionError | Buf
  * Convert M4A/MP4 audio to WAV using prism-media FFmpeg wrapper.
  * This depends on an ffmpeg binary available in PATH.
  */
-export function convertM4aToWav(input: Buffer): Promise<TranscriptionError | Buffer> {
+export function convertM4aToWav(
+  input: Buffer,
+): Promise<TranscriptionError | Buffer> {
   return new Promise((resolve) => {
     const pcmChunks: Buffer[] = []
     const transcoder = new prism.FFmpeg({
@@ -315,7 +312,9 @@ export function extractTranscription(
       }
       return {}
     })()
-    const transcription = (typeof args.transcription === 'string' ? args.transcription : '').trim()
+    const transcription = (
+      typeof args.transcription === 'string' ? args.transcription : ''
+    ).trim()
     const queueMessage = args.queueMessage === true
     voiceLogger.log(
       `Transcription result received: "${transcription.slice(0, 100)}..."${queueMessage ? ' [QUEUE]' : ''}`,
@@ -447,7 +446,9 @@ export async function transcribeWithParakeet({
 }): Promise<TranscriptionError | TranscriptionResult> {
   const audioBase64 = audioBuffer.toString('base64')
 
-  voiceLogger.log(`Transcribing with parakeet-mlx service at ${ASR_SERVICE_URL}`)
+  voiceLogger.log(
+    `Transcribing with parakeet-mlx service at ${ASR_SERVICE_URL}`,
+  )
 
   try {
     const response = await fetch(`${ASR_SERVICE_URL}/transcribe/base64`, {
@@ -469,10 +470,12 @@ export async function transcribeWithParakeet({
       })
     }
 
-    const result = await response.json() as { text: string }
+    const result = (await response.json()) as { text: string }
 
     if (!result.text || result.text.trim() === '') {
-      return new EmptyTranscriptionError()
+      return new TranscriptionError({
+        reason: 'Parakeet service returned empty transcription',
+      })
     }
 
     voiceLogger.log(`Parakeet transcription: "${result.text.slice(0, 50)}..."`)
@@ -486,7 +489,8 @@ export async function transcribeWithParakeet({
     // Check if service is running
     if (err.message.includes('ECONNREFUSED')) {
       return new TranscriptionError({
-        reason: 'Parakeet ASR service is not running. Start it with: cd asr-service && pip install -r requirements.txt && python asr_server.py',
+        reason:
+          'Parakeet ASR service is not running. Start it with: cd asr-service && pip install -r requirements.txt && python asr_server.py',
         cause: err,
       })
     }
@@ -542,7 +546,9 @@ export async function transcribeAudio({
   const requiresApiKey = provider !== 'parakeet' && !model
 
   if (requiresApiKey && !apiKey) {
-    return Promise.resolve(new ApiKeyMissingError({ service: 'OpenAI or Gemini' }))
+    return Promise.resolve(
+      new ApiKeyMissingError({ service: 'OpenAI or Gemini' }),
+    )
   }
 
   const resolvedProvider: TranscriptionProvider = (() => {
@@ -588,7 +594,8 @@ export async function transcribeAudio({
   }
 
   const languageModel: LanguageModelV3 =
-    model || createTranscriptionModel({ apiKey: apiKey!, provider: resolvedProvider })
+    model ||
+    createTranscriptionModel({ apiKey: apiKey!, provider: resolvedProvider })
 
   // Convert audio to Buffer for potential format conversion
   const audioBuffer: Buffer = (() => {
