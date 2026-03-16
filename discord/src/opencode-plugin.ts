@@ -344,7 +344,7 @@ const kimakiPlugin: Plugin = async ({ directory }) => {
             if (memoryContent) {
               const condensed = condenseMemoryMd(memoryContent)
               output.parts.push({
-                id: crypto.randomUUID(),
+                id: `prt_${crypto.randomUUID()}`,
                 sessionID,
                 messageID,
                 type: 'text' as const,
@@ -386,7 +386,7 @@ const kimakiPlugin: Plugin = async ({ directory }) => {
               })
 
               output.parts.push({
-                id: crypto.randomUUID(),
+                id: `prt_${crypto.randomUUID()}`,
                 sessionID,
                 messageID,
                 type: 'text' as const,
@@ -398,7 +398,7 @@ const kimakiPlugin: Plugin = async ({ directory }) => {
               // When the user comes back after a long break, remind the model
               // to save any important context from the previous conversation.
               output.parts.push({
-                id: crypto.randomUUID(),
+                id: `prt_${crypto.randomUUID()}`,
                 sessionID,
                 messageID,
                 type: 'text' as const,
@@ -425,7 +425,7 @@ const kimakiPlugin: Plugin = async ({ directory }) => {
 
               sessionGitStates.set(sessionID, gitState)
               output.parts.push({
-                id: crypto.randomUUID(),
+                id: `prt_${crypto.randomUUID()}`,
                 sessionID,
                 messageID,
                 type: 'text' as const,

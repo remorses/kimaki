@@ -58,7 +58,7 @@ const onboardingTutorialPlugin: Plugin = async () => {
           }
 
           output.parts.push({
-            id: crypto.randomUUID(),
+            id: `prt_${crypto.randomUUID()}`,
             sessionID,
             messageID: firstText.messageID,
             type: 'text' as const,
