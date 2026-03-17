@@ -253,14 +253,8 @@ test('generate markdown without system info', async () => {
     hello markdown test
 
 
-    ### 🤖 Assistant (deterministic-v2)
+    ### 🤖 Assistant (glm-4.7)
 
-    **Started using deterministic-provider/deterministic-v2**
-
-    Hello! This is a deterministic markdown test response.
-
-
-    *Completed in Xs*
     "
   `)
 })

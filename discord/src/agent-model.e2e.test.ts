@@ -507,7 +507,7 @@ describe('agent model resolution', () => {
         Reply with exactly: channel-model-check
         --- from: assistant (TestBot)
         ⬥ ok
-        *project ⋅ main ⋅ Ns ⋅ N% ⋅ channel-model-v2*"
+        *project ⋅ main ⋅ Ns ⋅ N% ⋅ channel-model-v2 ⋅ **z_orchestrator***"
       `)
       expect(footerMessage).toBeDefined()
       if (!footerMessage) {
@@ -578,7 +578,7 @@ describe('agent model resolution', () => {
         Reply with exactly: variant-check
         --- from: assistant (TestBot)
         ⬥ ok
-        *project ⋅ main ⋅ Ns ⋅ N% ⋅ channel-model-v2*"
+        *project ⋅ main ⋅ Ns ⋅ N% ⋅ channel-model-v2 ⋅ **z_orchestrator***"
       `)
       expect(footerMessage).toBeDefined()
       if (!footerMessage) {
@@ -766,12 +766,12 @@ describe('agent model resolution', () => {
         Reply with exactly: default-thread-msg
         --- from: assistant (TestBot)
         ⬥ ok
-        *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2*
+        *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2 ⋅ **z_orchestrator***
         --- from: user (agent-model-tester)
         Reply with exactly: default-second-msg
         --- from: assistant (TestBot)
         ⬥ ok
-        *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2*"
+        *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2 ⋅ **z_orchestrator***"
       `)
 
       const secondMessages = await discord.thread(thread.id).getMessages()

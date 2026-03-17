@@ -112,7 +112,7 @@ e2eTest('queue advanced: abort and retry', () => {
         Reply with exactly: oscar
         --- from: assistant (TestBot)
         ⬥ ok
-        *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2*
+        *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2 ⋅ **z_orchestrator***
         --- from: user (queue-advanced-tester)
         PLUGIN_TIMEOUT_SLEEP_MARKER
         --- from: assistant (TestBot)
@@ -121,7 +121,7 @@ e2eTest('queue advanced: abort and retry', () => {
         Reply with exactly: papa
         --- from: assistant (TestBot)
         ⬥ ok
-        *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2*"
+        *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2 ⋅ **z_orchestrator***"
       `)
       expect(afterBotMessages.length).toBeGreaterThanOrEqual(beforeBotCount + 1)
 
@@ -205,7 +205,7 @@ e2eTest('queue advanced: abort and retry', () => {
         Reply with exactly: abort-no-footer-setup
         --- from: assistant (TestBot)
         ⬥ ok
-        *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2*
+        *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2 ⋅ **z_orchestrator***
         --- from: user (queue-advanced-tester)
         SLOW_ABORT_MARKER run long response"
       `)
