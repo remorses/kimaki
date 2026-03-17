@@ -40,6 +40,7 @@ import {
   sendThreadMessage,
   escapeDiscordFormatting,
   SILENT_MESSAGE_FLAGS,
+  NOTIFY_MESSAGE_FLAGS,
   hasKimakiBotPermission,
 } from './discord-utils.js'
 import { transcribeAudio, type TranscriptionResult } from './voice.js'
@@ -285,7 +286,7 @@ export async function setupVoiceHandling({
           if (textChannel?.isTextBased() && 'send' in textChannel) {
             await textChannel.send({
               content: `⚠️ Voice session error: ${String(error).slice(0, 1900)}`,
-              flags: SILENT_MESSAGE_FLAGS,
+              flags: NOTIFY_MESSAGE_FLAGS,
             })
           }
         } catch (e) {
@@ -529,6 +530,7 @@ export async function processVoiceAttachment({
     await sendThreadMessage(
       thread,
       `⚠️ Failed to download audio: ${audioResponse.message}`,
+      { flags: NOTIFY_MESSAGE_FLAGS },
     )
     return null
   }
@@ -620,7 +622,9 @@ export async function processVoiceAttachment({
       Error: (e) => e.message,
     })
     voiceLogger.error(`Transcription failed:`, transcription)
-    await sendThreadMessage(thread, `⚠️ Transcription failed: ${errMsg}`)
+    await sendThreadMessage(thread, `⚠️ Transcription failed: ${errMsg}`, {
+      flags: NOTIFY_MESSAGE_FLAGS,
+    })
     return null
   }
 

@@ -27,6 +27,7 @@ import {
   splitMarkdownForDiscord,
   sendThreadMessage,
   SILENT_MESSAGE_FLAGS,
+  NOTIFY_MESSAGE_FLAGS,
   reactToThread,
   stripMentions,
   hasKimakiBotPermission,
@@ -532,7 +533,7 @@ export async function startDiscordBot({
           if (worktreeInfo.status === 'error') {
             await message.reply({
               content: `❌ Worktree creation failed: ${(worktreeInfo.error_message || '').slice(0, 1900)}`,
-              flags: SILENT_MESSAGE_FLAGS,
+              flags: NOTIFY_MESSAGE_FLAGS,
             })
             return
           }
@@ -550,7 +551,7 @@ export async function startDiscordBot({
           discordLogger.error(`Directory does not exist: ${projectDirectory}`)
           await message.reply({
             content: `✗ Directory does not exist: ${JSON.stringify(projectDirectory).slice(0, 1900)}`,
-            flags: SILENT_MESSAGE_FLAGS,
+            flags: NOTIFY_MESSAGE_FLAGS,
           })
           return
         }
@@ -701,7 +702,7 @@ export async function startDiscordBot({
           discordLogger.error(`Directory does not exist: ${projectDirectory}`)
           await message.reply({
             content: `✗ Directory does not exist: ${JSON.stringify(projectDirectory).slice(0, 1900)}`,
-            flags: SILENT_MESSAGE_FLAGS,
+            flags: NOTIFY_MESSAGE_FLAGS,
           })
           return
         }
@@ -781,7 +782,7 @@ export async function startDiscordBot({
             })
             await thread.send({
               content: `⚠️ Failed to create worktree: ${errMsg}\nUsing main project directory instead.`,
-              flags: SILENT_MESSAGE_FLAGS,
+              flags: NOTIFY_MESSAGE_FLAGS,
             })
           } else {
             await setWorktreeReady({
@@ -838,7 +839,7 @@ export async function startDiscordBot({
         ).slice(0, 1900)
         await message.reply({
           content: `Error: ${errMsg}`,
-          flags: SILENT_MESSAGE_FLAGS,
+          flags: NOTIFY_MESSAGE_FLAGS,
         })
       } catch (sendError) {
         voiceLogger.error(
@@ -929,7 +930,7 @@ export async function startDiscordBot({
         )
         await thread.send({
           content: `✗ Directory does not exist: ${JSON.stringify(projectDirectory).slice(0, 1900)}`,
-          flags: SILENT_MESSAGE_FLAGS,
+          flags: NOTIFY_MESSAGE_FLAGS,
         })
         return
       }
@@ -972,11 +973,11 @@ export async function startDiscordBot({
           })
           await (worktreeStatusMessage?.edit({
             content: `⚠️ Failed to create worktree: ${worktreeResult.message}\nUsing main project directory instead.`,
-            flags: SILENT_MESSAGE_FLAGS,
+            flags: NOTIFY_MESSAGE_FLAGS,
           }) ||
             thread.send({
               content: `⚠️ Failed to create worktree: ${worktreeResult.message}\nUsing main project directory instead.`,
-              flags: SILENT_MESSAGE_FLAGS,
+              flags: NOTIFY_MESSAGE_FLAGS,
             }))
           return projectDirectory
         }
@@ -1047,7 +1048,7 @@ export async function startDiscordBot({
         ).slice(0, 1900)
         await thread.send({
           content: `Error: ${errMsg}`,
-          flags: SILENT_MESSAGE_FLAGS,
+          flags: NOTIFY_MESSAGE_FLAGS,
         })
       } catch (sendError) {
         voiceLogger.error(

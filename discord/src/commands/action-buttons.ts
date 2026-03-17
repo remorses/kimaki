@@ -336,6 +336,7 @@ export async function handleActionButton(
     await sendThreadMessage(
       thread,
       `Failed to send action click: ${error instanceof Error ? error.message : String(error)}`,
+      { flags: NOTIFY_MESSAGE_FLAGS },
     )
   }
 }

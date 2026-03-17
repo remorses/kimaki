@@ -1903,6 +1903,7 @@ export class ThreadSessionRuntime {
             await sendThreadMessage(
               this.thread,
               `Failed to show action buttons: ${showResult.message}`,
+              { flags: NOTIFY_MESSAGE_FLAGS },
             )
           }
         },
@@ -2164,6 +2165,7 @@ export class ThreadSessionRuntime {
     await sendThreadMessage(
       this.thread,
       `✗ opencode session error: ${errorMessage}`,
+      { flags: NOTIFY_MESSAGE_FLAGS },
     )
     await this.persistEventBufferDebounced.flush()
 
@@ -2457,7 +2459,9 @@ export class ThreadSessionRuntime {
       // Helper: stop typing and drain queued local messages on error.
       const cleanupOnError = async (errorMessage: string) => {
         this.stopTyping()
-        await sendThreadMessage(this.thread, errorMessage)
+        await sendThreadMessage(this.thread, errorMessage, {
+          flags: NOTIFY_MESSAGE_FLAGS,
+        })
         await this.tryDrainQueue({ showIndicator: true })
       }
 
@@ -3038,6 +3042,7 @@ export class ThreadSessionRuntime {
       await sendThreadMessage(
         this.thread,
         `✗ ${sessionResult.message}`,
+        { flags: NOTIFY_MESSAGE_FLAGS },
       )
       // Show indicator: this dispatch failed, so the next queued message
       // has been waiting — the user needs to see which one is starting.
@@ -3084,6 +3089,7 @@ export class ThreadSessionRuntime {
       await sendThreadMessage(
         this.thread,
         `Failed to resolve agent: ${earlyAgentResult.message}`,
+        { flags: NOTIFY_MESSAGE_FLAGS },
       )
       // Show indicator: dispatch failed mid-setup, next queued message was waiting.
       await this.tryDrainQueue({ showIndicator: true })
@@ -3124,6 +3130,7 @@ export class ThreadSessionRuntime {
       await sendThreadMessage(
         this.thread,
         `Failed to resolve model: ${earlyModelResult.message}`,
+        { flags: NOTIFY_MESSAGE_FLAGS },
       )
       // Show indicator: dispatch failed mid-setup, next queued message was waiting.
       await this.tryDrainQueue({ showIndicator: true })
@@ -3284,6 +3291,7 @@ export class ThreadSessionRuntime {
           await sendThreadMessage(
             this.thread,
             '✗ Command timed out after 30 seconds. Try a shorter command or run it with /run-shell-command.',
+            { flags: NOTIFY_MESSAGE_FLAGS },
           )
           await this.dispatchAction(() => {
             return this.tryDrainQueue({ showIndicator: true })
@@ -3308,6 +3316,7 @@ export class ThreadSessionRuntime {
         await sendThreadMessage(
           this.thread,
           `✗ Unexpected bot Error: ${commandResponse.message}`,
+          { flags: NOTIFY_MESSAGE_FLAGS },
         )
         await this.dispatchAction(() => {
           return this.tryDrainQueue({ showIndicator: true })
@@ -3328,7 +3337,9 @@ export class ThreadSessionRuntime {
         logger.error(`[DISPATCH] ${apiError.message}`)
         void notifyError(apiError, 'OpenCode API error during command')
         this.stopTyping()
-        await sendThreadMessage(this.thread, `✗ ${apiError.message}`)
+        await sendThreadMessage(this.thread, `✗ ${apiError.message}`, {
+          flags: NOTIFY_MESSAGE_FLAGS,
+        })
         await this.dispatchAction(() => {
           return this.tryDrainQueue({ showIndicator: true })
         })
@@ -3375,7 +3386,9 @@ export class ThreadSessionRuntime {
       logger.error(`[DISPATCH] Prompt API call failed: ${errorMessage}`)
       void notifyError(errorObject, 'OpenCode API error during local queue prompt')
       this.stopTyping()
-      await sendThreadMessage(this.thread, `✗ OpenCode API error: ${errorMessage}`)
+      await sendThreadMessage(this.thread, `✗ OpenCode API error: ${errorMessage}`, {
+        flags: NOTIFY_MESSAGE_FLAGS,
+      })
       await this.dispatchAction(() => {
         return this.tryDrainQueue({ showIndicator: true })
       })
