@@ -48,6 +48,7 @@ import { store } from './store.js'
 
 import { createLogger, LogPrefix } from './logger.js'
 import { notifyError } from './sentry.js'
+import { isAppleSilicon } from './asr-service-manager.js'
 
 const voiceLogger = createLogger(LogPrefix.VOICE)
 
@@ -555,16 +556,17 @@ export async function processVoiceAttachment({
     }
   }
 
-  // Determine ASR provider: parakeet is the default (local), use OpenAI/Gemini only when explicitly configured
+  // Determine ASR provider: parakeet is the default only on Apple Silicon (MLX requirement)
   const asrProvider = process.env.ASR_PROVIDER?.toLowerCase()
   const useCloudProvider = asrProvider === 'openai' || asrProvider === 'gemini'
+  const useParakeetDefault = !useCloudProvider && isAppleSilicon()
 
-  if (!useCloudProvider) {
-    // Use parakeet (local ASR) - default when ASR_PROVIDER is not set, or explicitly set to 'parakeet'
+  if (useParakeetDefault) {
+    // Use parakeet (local ASR) - default on Apple Silicon when ASR_PROVIDER is not set
     if (asrProvider === 'parakeet') {
       voiceLogger.log('Using parakeet local ASR service (ASR_PROVIDER=parakeet)')
     } else {
-      voiceLogger.log('Using parakeet local ASR service (default)')
+      voiceLogger.log('Using parakeet local ASR service (default on Apple Silicon)')
     }
     const transcription = await transcribeAudio({
       audio: audioBuffer,
@@ -624,6 +626,16 @@ export async function processVoiceAttachment({
       `📝 **Transcribed message:** ${escapeDiscordFormatting(text)}`,
     )
     return transcription
+  }
+
+  // Not Apple Silicon: require cloud provider (OpenAI or Gemini)
+  if (!useCloudProvider) {
+    voiceLogger.warn('Parakeet MLX requires Apple Silicon. Please set ASR_PROVIDER to openai or gemini.')
+    await sendThreadMessage(
+      thread,
+      '⚠️ Voice transcription requires a cloud provider on non-Apple Silicon devices. Set ASR_PROVIDER=openai or ASR_PROVIDER=gemini environment variable.',
+    )
+    return null
   }
 
   // Use cloud provider (OpenAI or Gemini) - only when ASR_PROVIDER is explicitly set to 'openai' or 'gemini'

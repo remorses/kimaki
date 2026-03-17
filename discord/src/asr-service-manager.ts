@@ -9,6 +9,14 @@ const asrLogger = createLogger(LogPrefix.ASR)
 let asrProcess: ChildProcess | null = null
 
 /**
+ * Check if running on Apple Silicon (required for MLX).
+ * MLX only works on macOS with arm64 architecture.
+ */
+export function isAppleSilicon(): boolean {
+  return process.platform === 'darwin' && process.arch === 'arm64'
+}
+
+/**
  * Get the path to the ASR service directory.
  * Looks for asr-service/ relative to the project root.
  */
@@ -143,9 +151,17 @@ export function stopAsrService(): void {
 
 /**
  * Check if we should auto-start the ASR service.
- * Only starts if ASR_PROVIDER=parakeet
+ * Auto-starts only if:
+ * 1. ASR_PROVIDER is not set (parakeet is default on Apple Silicon)
+ * 2. ASR_PROVIDER is explicitly set to 'parakeet'
+ * 3. Running on Apple Silicon (MLX requirement)
  */
 export function shouldAutoStartAsr(): boolean {
+  // Don't auto-start on non-Apple Silicon platforms
+  if (!isAppleSilicon()) {
+    return false
+  }
+
   const provider = process.env.ASR_PROVIDER?.toLowerCase()
-  return provider === 'parakeet'
+  return !provider || provider === 'parakeet'
 }
