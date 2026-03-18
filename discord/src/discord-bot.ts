@@ -73,7 +73,7 @@ import {
 import { runShellCommand } from './commands/run-command.js'
 import { registerInteractionHandler } from './interaction-handler.js'
 import { getDiscordRestApiUrl } from './discord-urls.js'
-import { stopHranaServer } from './hrana-server.js'
+import { markDiscordGatewayReady, stopHranaServer } from './hrana-server.js'
 import { notifyError } from './sentry.js'
 import { flushDebouncedProcessCallbacks } from './debounced-process-flush.js'
 import { startRuntimeIdleSweeper } from './runtime-idle-sweeper.js'
@@ -278,6 +278,7 @@ export async function startDiscordBot({
     }
 
     voiceLogger.log('[READY] Bot is ready')
+    markDiscordGatewayReady()
 
     registerInteractionHandler({ discordClient: c, appId: currentAppId })
     registerVoiceStateHandler({ discordClient: c, appId: currentAppId })

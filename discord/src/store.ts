@@ -70,6 +70,13 @@ export type KimakiState = {
   // Read by: discord-urls.ts (getDiscordRestApiUrl), REST client construction.
   discordBaseUrl: string
 
+  // Service auth token (client_id:client_secret) used to authenticate
+  // control-plane requests like /kimaki/wake. Always set at startup in all
+  // modes so localhost and internet paths share one auth model.
+  // Changes: set in cli.ts after credential resolution and persisted in sqlite.
+  // Read by: hrana-server.ts to validate Authorization bearer token.
+  gatewayToken: string | null
+
   // User-defined slash commands registered with Discord, populated after
   // registerCommands() completes during startup. Maps sanitized Discord
   // command names back to original OpenCode command names.
@@ -105,6 +112,7 @@ export const store = createStore<KimakiState>(() => ({
   critiqueEnabled: true,
   verboseOpencodeServer: false,
   discordBaseUrl: 'https://discord.com',
+  gatewayToken: null,
   registeredUserCommands: [],
   threads: new Map(),
   test: { deterministicTranscription: null },

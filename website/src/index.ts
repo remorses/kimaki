@@ -60,9 +60,24 @@ app.get('/discord-install', async (c) => {
   const clientId = c.req.query('clientId')
   const clientSecret = c.req.query('clientSecret')
   const kimakiCallbackUrl = c.req.query('kimakiCallbackUrl')
+  const reachableUrl = c.req.query('reachableUrl')
 
   if (!clientId || !clientSecret) {
     return c.text('Missing clientId or clientSecret', 400)
+  }
+
+  // Validate reachableUrl: must be https to prevent SSRF / token exfiltration.
+  // The gateway-proxy connects outbound to this URL with Authorization header,
+  // so an attacker-controlled URL would receive the client secret.
+  if (reachableUrl) {
+    try {
+      const parsed = new URL(reachableUrl)
+      if (parsed.protocol !== 'https:') {
+        return c.text('reachableUrl must use https', 400)
+      }
+    } catch {
+      return c.text('reachableUrl is not a valid URL', 400)
+    }
   }
 
   // Early validation: reject non-https callback URLs (http://localhost allowed for dev).
@@ -93,7 +108,7 @@ app.get('/discord-install', async (c) => {
   const { response: result, headers } = await auth.api.signInSocial({
     body: {
       provider: 'discord',
-      additionalData: { clientId, clientSecret, kimakiCallbackUrl },
+      additionalData: { clientId, clientSecret, kimakiCallbackUrl, reachableUrl },
       callbackURL: '/install-success',
     },
     headers: c.req.raw.headers,

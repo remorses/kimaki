@@ -155,6 +155,7 @@ export async function upsertGatewayClientAndRefreshKv({
   platform,
   botToken,
   userId,
+  reachableUrl,
 }: {
   env: HonoBindings
   clientId: string
@@ -163,6 +164,9 @@ export async function upsertGatewayClientAndRefreshKv({
   platform: GatewayClientPlatform
   botToken?: string | null
   userId?: string | null
+  /** When set, the gateway-proxy connects outbound to this URL's /gateway WS
+   *  endpoint instead of waiting for the client to connect inbound. */
+  reachableUrl?: string | null
 }): Promise<GatewayClientCacheRecord | Error> {
   const prisma = createPrisma(env.HYPERDRIVE.connectionString)
   const upsertedGatewayClient = await prisma.gateway_clients
@@ -180,22 +184,14 @@ export async function upsertGatewayClientAndRefreshKv({
         platform,
         bot_token: botToken ?? null,
         user_id: userId ?? undefined,
+        reachable_url: reachableUrl ?? null,
       },
       update: {
         secret,
         platform,
         bot_token: botToken ?? null,
         user_id: userId ?? undefined,
-      },
-      select: {
-        client_id: true,
-        secret: true,
-        guild_id: true,
-        platform: true,
-    bot_token: true,
-    user_id: true,
-        created_at: true,
-        updated_at: true,
+        reachable_url: reachableUrl ?? null,
       },
     })
     .catch((cause) => {

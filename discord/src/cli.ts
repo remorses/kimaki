@@ -39,6 +39,7 @@ import {
 } from './discord-bot.js'
 import {
   getBotTokenWithMode,
+  ensureServiceAuthToken,
   setBotToken,
   setBotMode,
   setChannelDirectory,
@@ -83,7 +84,7 @@ import {
   SlashCommandBuilder,
   AttachmentBuilder,
 } from 'discord.js'
-import { createDiscordRest, discordApiUrl, getDiscordRestApiUrl, getGatewayProxyRestBaseUrl } from './discord-urls.js'
+import { createDiscordRest, discordApiUrl, getDiscordRestApiUrl, getGatewayProxyRestBaseUrl, getInternetReachableBaseUrl } from './discord-urls.js'
 import crypto from 'node:crypto'
 import path from 'node:path'
 import fs from 'node:fs'
@@ -1689,6 +1690,7 @@ async function resolveCredentials({
       clientId,
       clientSecret,
       gatewayCallbackUrl,
+      reachableUrl: getInternetReachableBaseUrl() || undefined,
     })
     if (oauthUrlResult instanceof Error) {
       throw oauthUrlResult
@@ -1931,6 +1933,7 @@ async function run({
   // don't work. CLI subcommands skip the server and use file: directly.
   const hranaResult = await startHranaServer({
     dbPath: path.join(getDataDir(), 'discord-sessions.db'),
+    bindAll: getInternetReachableBaseUrl() !== null,
   })
   if (hranaResult instanceof Error) {
     cliLogger.error('Failed to start hrana server:', hranaResult.message)
@@ -1946,6 +1949,14 @@ async function run({
     gatewayCallbackUrl,
   })
 
+  const gatewayToken = await ensureServiceAuthToken({
+    appId,
+    preferredGatewayToken: isGatewayMode ? token : undefined,
+  })
+  // Always set service auth token so local and internet control-plane paths
+  // share one auth model (/kimaki/wake and future service endpoints).
+  store.setState({ gatewayToken })
+
   // In gateway mode, ensure REST calls route through the gateway proxy.
   // getBotTokenWithMode() sets this for saved-credential paths, but the fresh
   // onboarding path returns directly without going through getBotTokenWithMode(),
@@ -1954,6 +1965,14 @@ async function run({
   // directly, which rejects it with "An invalid token was provided".
   if (isGatewayMode) {
     store.setState({ discordBaseUrl: KIMAKI_GATEWAY_PROXY_REST_BASE_URL })
+  }
+
+  // When KIMAKI_INTERNET_REACHABLE_URL is set, the hrana server exposes
+  // a /kimaki/wake endpoint for the gateway-proxy to wake this instance and
+  // wait until discord.js is connected. Keep Discord traffic on the normal
+  // configured base URL (gateway-proxy in gateway mode).
+  if (getInternetReachableBaseUrl()) {
+    cliLogger.log('Internet-reachable mode: enabling /kimaki/wake endpoint on hrana server')
   }
 
   // Mark this bot as the most recently used so subcommands in separate

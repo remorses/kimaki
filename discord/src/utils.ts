@@ -86,6 +86,7 @@ export function generateDiscordInstallUrlForBot({
   clientId,
   clientSecret,
   gatewayCallbackUrl,
+  reachableUrl,
 }: {
   appId: string
   mode: BotMode
@@ -94,6 +95,9 @@ export function generateDiscordInstallUrlForBot({
   /** Optional external URL to redirect to after OAuth completes instead of the
    *  default success page. The website appends ?guild_id=<id> before redirecting. */
   gatewayCallbackUrl?: string
+  /** When set (KIMAKI_INTERNET_REACHABLE_URL), the website stores this URL in
+   *  gateway_clients.reachable_url so the gateway-proxy connects outbound. */
+  reachableUrl?: string
 }): Error | string {
   if (mode !== 'gateway') {
     return generateBotInstallUrl({ clientId: appId })
@@ -114,6 +118,9 @@ export function generateDiscordInstallUrlForBot({
   url.searchParams.set('clientSecret', clientSecret)
   if (gatewayCallbackUrl) {
     url.searchParams.set('kimakiCallbackUrl', gatewayCallbackUrl)
+  }
+  if (reachableUrl) {
+    url.searchParams.set('reachableUrl', reachableUrl)
   }
   return url.toString()
 }

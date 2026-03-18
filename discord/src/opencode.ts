@@ -510,6 +510,7 @@ async function startSingleServer(): Promise<ServerStartError | SingleServer> {
   if (kimakiShimDirectory instanceof Error) {
     opencodeLogger.warn(kimakiShimDirectory.message)
   }
+  const gatewayToken = store.getState().gatewayToken
 
   const serverProcess = spawn(
     spawnCommand,
@@ -561,6 +562,7 @@ async function startSingleServer(): Promise<ServerStartError | SingleServer> {
         OPENCODE_PORT: port.toString(),
         KIMAKI_DATA_DIR: getDataDir(),
         KIMAKI_LOCK_PORT: getLockPort().toString(),
+        ...(gatewayToken && { KIMAKI_DB_AUTH_TOKEN: gatewayToken }),
         // Guard: prevents agents from running `kimaki` root command inside
         // an OpenCode session, which would steal the lock port and break the bot.
         KIMAKI_OPENCODE_PROCESS: '1',

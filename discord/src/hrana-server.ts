@@ -32,17 +32,77 @@
 import fs from 'node:fs'
 import http from 'node:http'
 import path from 'node:path'
+import crypto from 'node:crypto'
 import Database from 'libsql'
 import * as errore from 'errore'
 import { createLogger, LogPrefix } from './logger.js'
 import { ServerStartError, FetchError } from './errors.js'
 import { getLockPort } from './config.js'
+import { store } from './store.js'
 
 const hranaLogger = createLogger(LogPrefix.DB)
 
 let db: Database.Database | null = null
 let server: http.Server | null = null
 let hranaUrl: string | null = null
+let discordGatewayReady = false
+let readyWaiters: Array<() => void> = []
+
+export function markDiscordGatewayReady(): void {
+  if (discordGatewayReady) {
+    return
+  }
+  discordGatewayReady = true
+  for (const resolve of readyWaiters) {
+    resolve()
+  }
+  readyWaiters = []
+}
+
+async function waitForDiscordGatewayReady({ timeoutMs }: { timeoutMs: number }): Promise<boolean> {
+  if (discordGatewayReady) {
+    return true
+  }
+  const readyPromise = new Promise<boolean>((resolve) => {
+    readyWaiters.push(() => {
+      resolve(true)
+    })
+  })
+  const timeoutPromise = new Promise<boolean>((resolve) => {
+    setTimeout(() => {
+      resolve(false)
+    }, timeoutMs)
+  })
+  return Promise.race([readyPromise, timeoutPromise])
+}
+
+function getRequestAuthToken(req: http.IncomingMessage): string | null {
+  const authorizationHeader = req.headers.authorization
+  if (typeof authorizationHeader === 'string' && authorizationHeader.startsWith('Bearer ')) {
+    return authorizationHeader.slice('Bearer '.length)
+  }
+
+  return null
+}
+
+function isAuthorizedRequest(req: http.IncomingMessage): boolean {
+  const expectedToken = store.getState().gatewayToken
+  if (!expectedToken) {
+    return false
+  }
+  const providedToken = getRequestAuthToken(req)
+  return providedToken === expectedToken
+}
+
+function ensureServiceAuthTokenInStore(): string {
+  const existingToken = store.getState().gatewayToken
+  if (existingToken) {
+    return existingToken
+  }
+  const generatedToken = `${crypto.randomUUID()}:${crypto.randomBytes(32).toString('hex')}`
+  store.setState({ gatewayToken: generatedToken })
+  return generatedToken
+}
 
 /**
  * Get the Hrana HTTP URL for injecting into plugin child processes.
@@ -61,18 +121,24 @@ export function getHranaUrl(): string | null {
  */
 export async function startHranaServer({
   dbPath,
+  bindAll = false,
 }: {
   dbPath: string
+  /** Bind to 0.0.0.0 instead of 127.0.0.1. Set when KIMAKI_INTERNET_REACHABLE_URL is defined. */
+  bindAll?: boolean
 }) {
   if (server && db && hranaUrl) return hranaUrl
 
   const port = getLockPort()
+  const bindHost = bindAll ? '0.0.0.0' : '127.0.0.1'
+  const serviceAuthToken = ensureServiceAuthTokenInStore()
+  process.env.KIMAKI_DB_AUTH_TOKEN = serviceAuthToken
 
   fs.mkdirSync(path.dirname(dbPath), { recursive: true })
   await evictExistingInstance({ port })
 
   hranaLogger.log(
-    `Starting hrana server on 127.0.0.1:${port} with db: ${dbPath}`,
+    `Starting hrana server on ${bindHost}:${port} with db: ${dbPath}`,
   )
 
   const database = new Database(dbPath)
@@ -80,10 +146,53 @@ export async function startHranaServer({
   database.exec('PRAGMA busy_timeout = 5000')
   db = database
 
-  const handler = createHranaHandler(database)
+  const hranaHandler = createHranaHandler(database)
+
+  // Combined handler: all control/data routes require the same service auth token.
+  const handler: http.RequestListener = async (req, res) => {
+    const pathname = new URL(req.url || '/', 'http://localhost').pathname
+    if (pathname === '/kimaki/wake') {
+      if (req.method !== 'POST') {
+        res.writeHead(405, { 'content-type': 'application/json' })
+        res.end(JSON.stringify({ error: 'method_not_allowed' }))
+        return
+      }
+      if (!isAuthorizedRequest(req)) {
+        res.writeHead(401, { 'content-type': 'application/json' })
+        res.end(JSON.stringify({ error: 'unauthorized' }))
+        return
+      }
+      const isReady = await waitForDiscordGatewayReady({ timeoutMs: 30_000 })
+      if (!isReady) {
+        res.writeHead(504, { 'content-type': 'application/json' })
+        res.end(JSON.stringify({ ready: false, error: 'timeout_waiting_for_discord_ready' }))
+        return
+      }
+      res.writeHead(200, { 'content-type': 'application/json' })
+      res.end(JSON.stringify({ ready: true }))
+      return
+    }
+    // Hrana routes: /health, /v2, /v2/pipeline
+    if (pathname === '/health') {
+      hranaHandler(req, res)
+      return
+    }
+    if (pathname === '/v2' || pathname === '/v2/pipeline') {
+      if (!isAuthorizedRequest(req)) {
+        res.writeHead(401, { 'content-type': 'application/json' })
+        res.end(JSON.stringify({ error: 'unauthorized' }))
+        return
+      }
+      hranaHandler(req, res)
+      return
+    }
+    res.writeHead(404)
+    res.end()
+  }
 
   const started = await new Promise<ServerStartError | true>((resolve) => {
     const srv = http.createServer(handler)
+
     srv.on('error', (err: NodeJS.ErrnoException) => {
       resolve(
         new ServerStartError({
@@ -95,7 +204,7 @@ export async function startHranaServer({
         }),
       )
     })
-    srv.listen(port, '127.0.0.1', () => {
+    srv.listen(port, bindHost, () => {
       server = srv
       resolve(true)
     })
@@ -129,6 +238,8 @@ export async function stopHranaServer() {
     db = null
   }
   hranaUrl = null
+  discordGatewayReady = false
+  readyWaiters = []
   hranaLogger.log('Hrana server stopped')
 }
 

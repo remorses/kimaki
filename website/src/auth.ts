@@ -134,6 +134,7 @@ export function createAuth({ env, baseURL }: { env: HonoBindings; baseURL: strin
           console.warn('better-auth callback: no clientId/clientSecret in OAuth state')
           return
         }
+        const reachableUrl = state?.reachableUrl as string | undefined
 
         const userId = ctx.context.newSession?.user?.id
         if (!userId) {
@@ -148,6 +149,7 @@ export function createAuth({ env, baseURL }: { env: HonoBindings; baseURL: strin
           guildId,
           platform: 'discord',
           userId,
+          reachableUrl,
         })
         if (upsertResult instanceof Error) {
           console.error(upsertResult)

@@ -4,6 +4,7 @@
 
 import { getPrisma, closePrisma } from './db.js'
 import type { Prisma, session_events, BotMode, VerbosityLevel, WorktreeStatus, ChannelType as PrismaChannelType } from './generated/client.js'
+import crypto from 'node:crypto'
 
 import { store } from './store.js'
 import { createLogger, LogPrefix } from './logger.js'
@@ -1173,6 +1174,7 @@ export async function getBotTokenWithMode(): Promise<
   | {
       appId: string
       token: string
+      gatewayToken: string
       mode: BotMode
       clientId: string | null
       clientSecret: string | null
@@ -1191,9 +1193,11 @@ export async function getBotTokenWithMode(): Promise<
   if (!row) {
     return undefined
   }
+  const gatewayToken = await ensureServiceAuthToken({ appId: row.app_id })
+  const serviceParts = splitServiceAuthToken({ token: gatewayToken })
   const mode: BotMode = row.bot_mode === 'gateway' ? 'gateway' : 'self_hosted'
-  const token = (mode === 'gateway' && row.client_id && row.client_secret)
-    ? `${row.client_id}:${row.client_secret}`
+  const token = (mode === 'gateway' && serviceParts)
+    ? gatewayToken
     : row.token
   // Always reset discordBaseUrl on every read so a mode switch within
   // the same process (e.g. DB has gateway row but user proceeds self-hosted)
@@ -1201,15 +1205,71 @@ export async function getBotTokenWithMode(): Promise<
   const discordBaseUrl = (mode === 'gateway' && row.proxy_url)
     ? row.proxy_url
     : 'https://discord.com'
-  store.setState({ discordBaseUrl })
+  store.setState({ discordBaseUrl, gatewayToken })
   return {
     appId: row.app_id,
     token,
+    gatewayToken,
     mode,
-    clientId: row.client_id,
-    clientSecret: row.client_secret,
+    clientId: serviceParts?.clientId || row.client_id,
+    clientSecret: serviceParts?.clientSecret || row.client_secret,
     proxyUrl: row.proxy_url,
   }
+}
+
+function splitServiceAuthToken({ token }: { token: string }): { clientId: string; clientSecret: string } | null {
+  const separatorIndex = token.indexOf(':')
+  if (separatorIndex <= 0 || separatorIndex >= token.length - 1) {
+    return null
+  }
+  return {
+    clientId: token.slice(0, separatorIndex),
+    clientSecret: token.slice(separatorIndex + 1),
+  }
+}
+
+function createServiceCredentials(): { clientId: string; clientSecret: string } {
+  return {
+    clientId: crypto.randomUUID(),
+    clientSecret: crypto.randomBytes(32).toString('hex'),
+  }
+}
+
+export async function ensureServiceAuthToken({
+  appId,
+  preferredGatewayToken,
+}: {
+  appId: string
+  preferredGatewayToken?: string
+}): Promise<string> {
+  const prisma = await getPrisma()
+  const row = await prisma.bot_tokens.findUnique({
+    where: { app_id: appId },
+  })
+  if (!row) {
+    throw new Error(`Bot token row not found for app_id ${appId}`)
+  }
+
+  const preferred = preferredGatewayToken
+    ? splitServiceAuthToken({ token: preferredGatewayToken })
+    : null
+  const existing = (row.client_id && row.client_secret)
+    ? { clientId: row.client_id, clientSecret: row.client_secret }
+    : null
+  const fromStoredToken = splitServiceAuthToken({ token: row.token })
+  const resolved = preferred || existing || fromStoredToken || createServiceCredentials()
+
+  if (row.client_id !== resolved.clientId || row.client_secret !== resolved.clientSecret) {
+    await prisma.bot_tokens.update({
+      where: { app_id: appId },
+      data: {
+        client_id: resolved.clientId,
+        client_secret: resolved.clientSecret,
+      },
+    })
+  }
+
+  return `${resolved.clientId}:${resolved.clientSecret}`
 }
 
 /**
@@ -1217,11 +1277,18 @@ export async function getBotTokenWithMode(): Promise<
  */
 export async function setBotToken(appId: string, token: string): Promise<void> {
   const prisma = await getPrisma()
+  const generated = createServiceCredentials()
   await prisma.bot_tokens.upsert({
     where: { app_id: appId },
-    create: { app_id: appId, token },
+    create: {
+      app_id: appId,
+      token,
+      client_id: generated.clientId,
+      client_secret: generated.clientSecret,
+    },
     update: { token },
   })
+  await ensureServiceAuthToken({ appId })
 }
 
 export type { BotMode }
@@ -1250,10 +1317,15 @@ export async function setBotMode({
     client_secret: clientSecret ?? null,
     proxy_url: proxyUrl ?? null,
   }
+  const createToken = (clientId && clientSecret) ? `${clientId}:${clientSecret}` : ''
   await prisma.bot_tokens.upsert({
     where: { app_id: appId },
-    create: { app_id: appId, token: `${clientId}:${clientSecret}`, ...data },
+    create: { app_id: appId, token: createToken, ...data },
     update: data,
+  })
+  await ensureServiceAuthToken({
+    appId,
+    preferredGatewayToken: (clientId && clientSecret) ? `${clientId}:${clientSecret}` : undefined,
   })
 }
 

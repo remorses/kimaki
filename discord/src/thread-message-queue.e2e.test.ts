@@ -588,10 +588,13 @@ e2eTest('thread message queue ordering', () => {
         Reply with exactly: one
         --- from: assistant (TestBot)
         ⬥ ok
+        *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2*
         --- from: user (queue-tester)
         Reply with exactly: two
         Reply with exactly: three
         --- from: assistant (TestBot)
+        ⬥ ok
+        ⬥ ok
         *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2*"
       `)
       const userThreeIndex = after.findIndex((message) => {
