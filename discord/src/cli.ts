@@ -1896,33 +1896,35 @@ async function run({
   const forceRestartOnboarding = Boolean(restartOnboarding)
   const forceGateway = Boolean(gateway)
 
-  // Step 0: Ensure required CLI tools are installed (OpenCode + Bun)
-  await ensureCommandAvailable({
-    name: 'opencode',
-    envPathKey: 'OPENCODE_PATH',
-    installUnix: 'curl -fsSL https://opencode.ai/install | bash',
-    installWindows: 'irm https://opencode.ai/install.ps1 | iex',
-    possiblePathsUnix: [
-      '~/.local/bin/opencode',
-      '~/.opencode/bin/opencode',
-      '/usr/local/bin/opencode',
-      '/opt/opencode/bin/opencode',
-    ],
-    possiblePathsWindows: [
-      '~\\.local\\bin\\opencode.exe',
-      '~\\AppData\\Local\\opencode\\opencode.exe',
-      '~\\.opencode\\bin\\opencode.exe',
-    ],
-  })
-
-  await ensureCommandAvailable({
-    name: 'bun',
-    envPathKey: 'BUN_PATH',
-    installUnix: 'curl -fsSL https://bun.sh/install | bash',
-    installWindows: 'irm bun.sh/install.ps1 | iex',
-    possiblePathsUnix: ['~/.bun/bin/bun', '/usr/local/bin/bun'],
-    possiblePathsWindows: ['~\\.bun\\bin\\bun.exe'],
-  })
+  // Step 0: Ensure required CLI tools are installed (OpenCode + Bun).
+  // Run checks in parallel since they're independent `which` calls.
+  await Promise.all([
+    ensureCommandAvailable({
+      name: 'opencode',
+      envPathKey: 'OPENCODE_PATH',
+      installUnix: 'curl -fsSL https://opencode.ai/install | bash',
+      installWindows: 'irm https://opencode.ai/install.ps1 | iex',
+      possiblePathsUnix: [
+        '~/.local/bin/opencode',
+        '~/.opencode/bin/opencode',
+        '/usr/local/bin/opencode',
+        '/opt/opencode/bin/opencode',
+      ],
+      possiblePathsWindows: [
+        '~\\.local\\bin\\opencode.exe',
+        '~\\AppData\\Local\\opencode\\opencode.exe',
+        '~\\.opencode\\bin\\opencode.exe',
+      ],
+    }),
+    ensureCommandAvailable({
+      name: 'bun',
+      envPathKey: 'BUN_PATH',
+      installUnix: 'curl -fsSL https://bun.sh/install | bash',
+      installWindows: 'irm bun.sh/install.ps1 | iex',
+      possiblePathsUnix: ['~/.bun/bin/bun', '/usr/local/bin/bun'],
+      possiblePathsWindows: ['~\\.bun\\bin\\bun.exe'],
+    }),
+  ])
 
 
   backgroundUpgradeKimaki()
@@ -1975,6 +1977,26 @@ async function run({
     cliLogger.log('Internet-reachable mode: enabling /kimaki/wake endpoint on hrana server')
   }
 
+  // Start OpenCode server as early as possible — non-blocking.
+  // All dependencies are met (dataDir, lockPort, gatewayToken, hranaUrl set).
+  // Runs in parallel with last_used_at update, skipChannelSetup check, and
+  // Discord Gateway login so cold start is not blocked by OpenCode spawn.
+  const currentDir = process.cwd()
+  cliLogger.log('Starting OpenCode server...')
+  const opencodePromise = initializeOpencodeForDirectory(currentDir).then(
+    (result) => {
+      if (result instanceof Error) {
+        throw new Error(result.message)
+      }
+      cliLogger.log('OpenCode server ready!')
+      return result
+    },
+  )
+  // Prevent unhandled rejection if OpenCode fails before backgroundInit
+  // or the channel setup path awaits it. Errors are handled by the
+  // respective consumers (backgroundInit catches, channel setup re-throws).
+  opencodePromise.catch(() => {})
+
   // Mark this bot as the most recently used so subcommands in separate
   // processes (send, upload-to-discord, project list) pick the correct bot.
   // getBotTokenWithMode() orders by last_used_at DESC as cross-process
@@ -2013,19 +2035,6 @@ async function run({
     }
     return true
   })()
-
-  // Start OpenCode server EARLY - let it initialize in parallel with Discord login.
-  // This is the biggest startup bottleneck (can take 1-30 seconds to spawn and wait for ready)
-  const currentDir = process.cwd()
-  cliLogger.log('Starting OpenCode server...')
-  const opencodePromise = initializeOpencodeForDirectory(currentDir).then(
-    (result) => {
-      if (result instanceof Error) {
-        throw new Error(result.message)
-      }
-      return result
-    },
-  )
 
   cliLogger.log(`Connecting to ${getDiscordRestApiUrl()}...`)
   const discordClient = await createDiscordClient()
@@ -2203,7 +2212,6 @@ async function run({
     // Wait for OpenCode, fetch projects, show prompts, create channels if needed
     cliLogger.log('Waiting for OpenCode server...')
     const getClient = await opencodePromise
-    cliLogger.log('OpenCode server ready!')
 
     cliLogger.log('Fetching OpenCode data...')
 

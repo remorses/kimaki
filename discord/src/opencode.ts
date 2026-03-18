@@ -132,7 +132,8 @@ function buildStartupTimeoutReason({
   maxAttempts: number
   stderrTail: string[]
 }): string {
-  const baseReason = `Server did not start after ${maxAttempts} seconds`
+  const timeoutSeconds = Math.round((maxAttempts * 100) / 1000)
+  const baseReason = `Server did not start after ${timeoutSeconds} seconds`
   if (stderrTail.length === 0) {
     return baseReason
   }
@@ -387,7 +388,7 @@ async function getOpenPort(): Promise<number> {
 
 async function waitForServer({
   port,
-  maxAttempts = 30,
+  maxAttempts = 300,
   startupStderrTail,
 }: {
   port: number
@@ -401,8 +402,10 @@ async function waitForServer({
       catch: (e) => new FetchError({ url: endpoint, cause: e }),
     })
     if (response instanceof Error) {
-      // Connection refused or other transient errors - continue polling
-      await new Promise((resolve) => setTimeout(resolve, 1000))
+      // Connection refused or other transient errors - continue polling.
+      // Use 100ms interval instead of 1s so we detect readiness faster.
+      // Critical for scale-to-zero cold starts where every ms matters.
+      await new Promise((resolve) => setTimeout(resolve, 100))
       continue
     }
     if (response.status < 500) {
@@ -413,7 +416,7 @@ async function waitForServer({
     if (body.includes('BunInstallFailedError')) {
       return new ServerStartError({ port, reason: body.slice(0, 200) })
     }
-    await new Promise((resolve) => setTimeout(resolve, 1000))
+    await new Promise((resolve) => setTimeout(resolve, 100))
   }
   return new ServerStartError({
     port,
