@@ -17,6 +17,7 @@ import { createLogger, formatErrorWithStack, LogPrefix } from './logger.js'
 import { notifyError } from './sentry.js'
 import type { ThreadStartMarker } from './system-message.js'
 import {
+  type ScheduledTaskPayload,
   getLocalTimeZone,
   getNextCronRun,
   getPromptPreview,
@@ -53,15 +54,7 @@ async function executeThreadScheduledTask({
 }: {
   rest: REST
   task: ScheduledTask
-  payload: {
-    threadId: string
-    prompt: string
-    agent: string | null
-    model: string | null
-    username: string | null
-    userId: string | null
-    permissions: string[] | null
-  }
+  payload: Extract<ScheduledTaskPayload, { kind: 'thread' }>
 }): Promise<void | Error> {
   const marker: ThreadStartMarker = {
     cliThreadPrompt: true,
@@ -101,18 +94,7 @@ async function executeChannelScheduledTask({
 }: {
   rest: REST
   task: ScheduledTask
-  payload: {
-    channelId: string
-    prompt: string
-    name: string | null
-    notifyOnly: boolean
-    worktreeName: string | null
-    agent: string | null
-    model: string | null
-    username: string | null
-    userId: string | null
-    permissions: string[] | null
-  }
+  payload: Extract<ScheduledTaskPayload, { kind: 'channel' }>
 }): Promise<void | Error> {
   const marker: ThreadStartMarker | undefined = payload.notifyOnly
     ? undefined
