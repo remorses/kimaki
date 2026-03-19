@@ -887,16 +887,27 @@ export function buildSessionPermissions({
  *   "tool:action"           → { permission: tool, pattern: "*", action }
  *   "tool:pattern:action"   → { permission: tool, pattern,      action }
  *
- * The action must be one of "allow", "deny", "ask".
+ * The action must be one of "allow", "deny", "ask" (case-insensitive).
+ * Parts are trimmed to tolerate whitespace from YAML deserialization.
  * Invalid entries are silently skipped (bad user input shouldn't crash the bot).
+ * If `raw` is not an array, returns empty (defensive against malformed YAML markers).
  */
-export function parsePermissionRules(raw: string[]): PermissionRuleset {
+export function parsePermissionRules(raw: unknown): PermissionRuleset {
+  if (!Array.isArray(raw)) {
+    return []
+  }
   const validActions = new Set(['allow', 'deny', 'ask'])
   return raw.flatMap((entry) => {
-    const parts = entry.split(':')
+    if (typeof entry !== 'string') {
+      return []
+    }
+    const parts = entry.split(':').map((s) => {
+      return s.trim()
+    })
     if (parts.length === 2) {
-      const [permission, action] = parts
-      if (!permission || !validActions.has(action!)) {
+      const [permission, rawAction] = parts
+      const action = rawAction!.toLowerCase()
+      if (!permission || !validActions.has(action)) {
         return []
       }
       return [{ permission, pattern: '*', action: action as 'allow' | 'deny' | 'ask' }]
@@ -906,7 +917,8 @@ export function parsePermissionRules(raw: string[]): PermissionRuleset {
       // everything in between is the pattern (may contain colons in theory,
       // but unlikely for tool patterns).
       const permission = parts[0]!
-      const action = parts[parts.length - 1]!
+      const rawAction = parts[parts.length - 1]!
+      const action = rawAction.toLowerCase()
       const pattern = parts.slice(1, -1).join(':')
       if (!permission || !pattern || !validActions.has(action)) {
         return []

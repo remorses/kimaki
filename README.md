@@ -287,14 +287,15 @@ You can start Kimaki sessions from CI pipelines, cron jobs, or any automation. T
 
 ```bash
 npx -y kimaki send \
-  --channel <channel-id>  # Required: Discord channel ID
-  --prompt <prompt>       # Required: Message content
-  --name <name>           # Optional: Thread name (defaults to prompt preview)
-  --app-id <app-id>       # Optional: Bot application ID for validation
-  --notify-only           # Optional: Create notification thread without starting AI session
-  --worktree <name>       # Optional: Create git worktree for isolated session
-  --thread <thread-id>    # Optional: Send prompt to existing thread (no new thread)
-  --session <session-id>  # Optional: Resolve thread from session and send prompt
+  --channel <channel-id>    # Required: Discord channel ID
+  --prompt <prompt>         # Required: Message content
+  --name <name>             # Optional: Thread name (defaults to prompt preview)
+  --app-id <app-id>         # Optional: Bot application ID for validation
+  --notify-only             # Optional: Create notification thread without starting AI session
+  --worktree <name>         # Optional: Create git worktree for isolated session
+  --thread <thread-id>      # Optional: Send prompt to existing thread (no new thread)
+  --session <session-id>    # Optional: Resolve thread from session and send prompt
+  --permission <rule>       # Optional: Repeatable. Per-session permission rule (see below)
 ```
 
 Use either `--channel/--project` (create new thread) or `--thread/--session`
@@ -473,6 +474,33 @@ You can customize permissions in your project's `opencode.json`:
 Each permission resolves to `"allow"` (run automatically), `"ask"` (show buttons in Discord), or `"deny"` (block).
 
 **Note:** If you change `opencode.json` while the bot is running, you need to restart the OpenCode server for the new permissions to take effect. Use the `/restart-opencode-server` command in Discord or restart Kimaki.
+
+### Per-Session Permissions via CLI
+
+When starting sessions with `kimaki send`, you can restrict tools for that specific session using `--permission`. This is useful for CI pipelines, scheduled tasks, or spawning sandboxed sessions.
+
+Format: `tool:action` or `tool:pattern:action`. Actions: `allow`, `deny`, `ask`.
+
+```bash
+# Read-only session (no edits, no bash)
+kimaki send -c 123 -p "Review this code" \
+  --permission "bash:deny" \
+  --permission "edit:deny"
+
+# Only allow git commands
+kimaki send -c 123 -p "Check git history" \
+  --permission "bash:git *:allow" \
+  --permission "bash:*:deny"
+
+# Deny everything except reading
+kimaki send -c 123 -p "Analyze the codebase" \
+  --permission "*:deny" \
+  --permission "read:allow" \
+  --permission "glob:allow" \
+  --permission "grep:allow"
+```
+
+Rules are evaluated with `findLast()` — later rules override earlier ones. The `--permission` flag works with `--send-at` (scheduled tasks) and `--thread`/`--session` (existing threads) too.
 
 See the full [OpenCode Permissions documentation](https://opencode.ai/docs/permissions/) for all available permissions, granular pattern matching, and per-agent overrides.
 

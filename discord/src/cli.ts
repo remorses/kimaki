@@ -3318,6 +3318,7 @@ cli
               model: options.model || null,
               username: null,
               userId: null,
+              permissions: options.permission?.length ? options.permission : null,
             }
             const taskId = await createScheduledTask({
               scheduleKind: parsedSchedule.scheduleKind,
@@ -3344,6 +3345,7 @@ cli
 
           const threadPromptMarker: ThreadStartMarker = {
             cliThreadPrompt: true,
+            ...(options.permission?.length ? { permissions: options.permission } : {}),
           }
           const promptEmbed = [
             {
@@ -3475,6 +3477,7 @@ cli
             model: options.model || null,
             username: resolvedUser?.username || null,
             userId: resolvedUser?.id || null,
+            permissions: options.permission?.length ? options.permission : null,
           }
           const taskId = await createScheduledTask({
             scheduleKind: parsedSchedule.scheduleKind,

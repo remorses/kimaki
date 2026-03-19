@@ -60,6 +60,7 @@ async function executeThreadScheduledTask({
     model: string | null
     username: string | null
     userId: string | null
+    permissions: string[] | null
   }
 }): Promise<void | Error> {
   const marker: ThreadStartMarker = {
@@ -70,6 +71,7 @@ async function executeThreadScheduledTask({
     ...(payload.model ? { model: payload.model } : {}),
     ...(payload.username ? { username: payload.username } : {}),
     ...(payload.userId ? { userId: payload.userId } : {}),
+    ...(payload.permissions?.length ? { permissions: payload.permissions } : {}),
   }
   const embed = [{ color: 0x2b2d31, footer: { text: yaml.dump(marker) } }]
   const prefixedPrompt = `» **kimaki-cli:** ${payload.prompt}`
@@ -109,6 +111,7 @@ async function executeChannelScheduledTask({
     model: string | null
     username: string | null
     userId: string | null
+    permissions: string[] | null
   }
 }): Promise<void | Error> {
   const marker: ThreadStartMarker | undefined = payload.notifyOnly
@@ -122,6 +125,7 @@ async function executeChannelScheduledTask({
         ...(payload.model ? { model: payload.model } : {}),
         ...(payload.username ? { username: payload.username } : {}),
         ...(payload.userId ? { userId: payload.userId } : {}),
+        ...(payload.permissions?.length ? { permissions: payload.permissions } : {}),
       }
   const embeds = marker
     ? [{ color: 0x2b2d31, footer: { text: yaml.dump(marker) } }]

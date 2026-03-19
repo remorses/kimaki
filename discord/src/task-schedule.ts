@@ -12,6 +12,7 @@ export type ScheduledTaskPayload =
       model: string | null
       username: string | null
       userId: string | null
+      permissions: string[] | null
     }
   | {
       kind: 'channel'
@@ -24,6 +25,7 @@ export type ScheduledTaskPayload =
       model: string | null
       username: string | null
       userId: string | null
+      permissions: string[] | null
     }
 
 export type ParsedSendAt =
@@ -215,6 +217,15 @@ function asString(value: unknown): string | null {
   return value
 }
 
+function asStringArray(value: unknown): string[] | null {
+  if (!Array.isArray(value)) {
+    return null
+  }
+  return value.filter((v): v is string => {
+    return typeof v === 'string'
+  })
+}
+
 export function parseScheduledTaskPayload(
   payloadJson: string,
 ): ScheduledTaskPayload | Error {
@@ -241,6 +252,7 @@ export function parseScheduledTaskPayload(
     const model = asString(parsed.model)
     const username = asString(parsed.username)
     const userId = asString(parsed.userId)
+    const permissions = asStringArray(parsed.permissions)
     if (!threadId || !prompt) {
       return new Error('Thread task payload requires threadId and prompt')
     }
@@ -252,6 +264,7 @@ export function parseScheduledTaskPayload(
       model,
       username,
       userId,
+      permissions,
     }
   }
 
@@ -266,6 +279,7 @@ export function parseScheduledTaskPayload(
     const model = asString(parsed.model)
     const username = asString(parsed.username)
     const userId = asString(parsed.userId)
+    const permissions = asStringArray(parsed.permissions)
     if (!channelId || !prompt) {
       return new Error('Channel task payload requires channelId and prompt')
     }
@@ -280,6 +294,7 @@ export function parseScheduledTaskPayload(
       model,
       username,
       userId,
+      permissions,
     }
   }
 

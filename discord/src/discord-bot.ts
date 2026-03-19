@@ -412,6 +412,9 @@ export async function startDiscordBot({
       const cliInjectedModel = isCliInjectedPrompt
         ? promptMarker?.model
         : undefined
+      const cliInjectedPermissions = isCliInjectedPrompt
+        ? promptMarker?.permissions
+        : undefined
 
       // Always ignore our own messages (unless CLI-injected prompt above).
       // Without this, assigning the Kimaki role to the bot itself would loop.
@@ -638,6 +641,7 @@ export async function startDiscordBot({
           appId: currentAppId,
           agent: cliInjectedAgent,
           model: cliInjectedModel,
+          permissions: cliInjectedPermissions,
           sessionStartSource: sessionStartSource
             ? {
                 scheduleKind: sessionStartSource.scheduleKind,
