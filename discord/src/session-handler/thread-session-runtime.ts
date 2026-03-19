@@ -3661,7 +3661,13 @@ export class ThreadSessionRuntime {
     const footerText = `*${projectInfo}${sessionDuration}${contextInfo}${modelInfo}${agentInfo}*`
     this.stopTyping()
 
-    await sendThreadMessage(this.thread, footerText, { flags: NOTIFY_MESSAGE_FLAGS })
+    // Skip notification if there's a queued message next — the user only
+    // needs to be notified when the entire queue finishes.
+    const queuedNext =
+      (threadState.getThreadState(this.threadId)?.queueItems.length ?? 0) > 0
+    await sendThreadMessage(this.thread, footerText, {
+      flags: queuedNext ? SILENT_MESSAGE_FLAGS : NOTIFY_MESSAGE_FLAGS,
+    })
     logger.log(
       `DURATION: Session completed in ${sessionDuration}, model ${runInfo.model}, tokens ${runInfo.tokensUsed}`,
     )
