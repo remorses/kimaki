@@ -156,15 +156,19 @@ export async function preprocessExistingThreadMessage({
     return { prompt: '', mode: 'opencode', skip: true }
   }
 
+  // Extract queue suffix from raw message content BEFORE appending text
+  // attachments. Otherwise a text file attachment pushes "? queue" away from
+  // the end of the string and the regex fails to match.
+  const qs = extractQueueSuffix(messageContent)
+
   const fileAttachments = await getFileAttachments(message)
   const textAttachmentsContent = await getTextAttachments(message)
-  const promptWithAttachments = textAttachmentsContent
-    ? `${messageContent}\n\n${textAttachmentsContent}`
-    : messageContent
+  const prompt = textAttachmentsContent
+    ? `${qs.prompt}\n\n${textAttachmentsContent}`
+    : qs.prompt
 
-  const qs = extractQueueSuffix(promptWithAttachments)
   return {
-    prompt: qs.prompt,
+    prompt,
     images: fileAttachments.length > 0 ? fileAttachments : undefined,
     mode: qs.forceQueue || voiceResult?.queueMessage ? 'local-queue' : 'opencode',
   }
@@ -268,15 +272,18 @@ export async function preprocessNewThreadMessage({
     return { prompt: '', mode: 'opencode', skip: true }
   }
 
+  // Extract queue suffix from raw message content BEFORE appending text
+  // attachments (same fix as preprocessExistingThreadMessage).
+  const qs = extractQueueSuffix(messageContent)
+
   const fileAttachments = await getFileAttachments(message)
   const textAttachmentsContent = await getTextAttachments(message)
-  const promptWithAttachments = textAttachmentsContent
-    ? `${messageContent}\n\n${textAttachmentsContent}`
-    : messageContent
+  const prompt = textAttachmentsContent
+    ? `${qs.prompt}\n\n${textAttachmentsContent}`
+    : qs.prompt
 
-  const qs = extractQueueSuffix(promptWithAttachments)
   return {
-    prompt: qs.prompt,
+    prompt,
     images: fileAttachments.length > 0 ? fileAttachments : undefined,
     mode: qs.forceQueue || voiceResult?.queueMessage ? 'local-queue' : 'opencode',
   }
