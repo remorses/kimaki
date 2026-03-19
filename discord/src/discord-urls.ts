@@ -59,8 +59,9 @@ export function createDiscordRest(token: string): REST {
 /**
  * Returns the internet-reachable base URL for this kimaki instance.
  * When KIMAKI_INTERNET_REACHABLE_URL is set (e.g. "https://my-kimaki.fly.dev"),
- * kimaki should bind to 0.0.0.0 and route Discord traffic through the local
- * WS+REST proxy on the hrana server.
+ * kimaki binds the hrana server to 0.0.0.0 and exposes a /kimaki/wake endpoint
+ * so the gateway-proxy can wake this instance. Discord traffic still flows
+ * through the normal path (gateway-proxy in gateway mode, direct in self-hosted).
  * Returns null when not set (kimaki only reachable on localhost).
  */
 export function getInternetReachableBaseUrl(): string | null {
