@@ -3,16 +3,15 @@
 // - Working directory (pwd) changes (e.g. after /new-worktree mid-session)
 // - MEMORY.md table of contents on first message
 // - Idle time gap detection with timestamps
+// - Onboarding tutorial instructions (when TUTORIAL_WELCOME_TEXT detected)
 //
 // Synthetic parts are hidden from the TUI but sent to the model, keeping it
 // aware of context changes without cluttering the UI.
 //
-// When a worktree is created mid-session the bot clears the old opencode
-// session and creates a new one under the worktree directory. The agent's
-// conversation history in the new session won't have the old paths, but the
-// user's follow-up message may reference the old plan. This plugin detects
-// that the session's working directory differs from the project base directory
-// and injects a notice so the agent uses the correct paths.
+// State design: all per-session mutable state is encapsulated in a single
+// SessionState object per session ID. One Map, one delete() on cleanup.
+// Decision logic is extracted into pure functions that take state + input
+// and return whether to inject — making them testable without mocking.
 //
 // Exported from opencode-plugin.ts — each export is treated as a separate
 // plugin by OpenCode's plugin loader.
@@ -32,8 +31,14 @@ import { setDataDir } from './config.js'
 import { initSentry, notifyError } from './sentry.js'
 import { execAsync } from './worktrees.js'
 import { condenseMemoryMd } from './condense-memory.js'
+import {
+  ONBOARDING_TUTORIAL_INSTRUCTIONS,
+  TUTORIAL_WELCOME_TEXT,
+} from './onboarding-tutorial.js'
 
 const logger = createLogger(LogPrefix.OPENCODE)
+
+// ── Types ────────────────────────────────────────────────────────
 
 type GitState = {
   key: string
@@ -41,6 +46,139 @@ type GitState = {
   label: string
   warning: string | null
 }
+
+// All per-session mutable state in one place. One Map entry, one delete.
+type SessionState = {
+  gitState: GitState | undefined
+  lastMessageTime: number | undefined
+  memoryInjected: boolean
+  tutorialInjected: boolean
+  // Cached session directory from session.get() (avoids repeated HTTP calls).
+  resolvedDirectory: string | undefined
+  // Last directory we announced via pwd injection. Separate from
+  // resolvedDirectory because the cache is populated before comparison —
+  // using the same field for both would skip injection on first message.
+  announcedDirectory: string | undefined
+}
+
+function createSessionState(): SessionState {
+  return {
+    gitState: undefined,
+    lastMessageTime: undefined,
+    memoryInjected: false,
+    tutorialInjected: false,
+    resolvedDirectory: undefined,
+    announcedDirectory: undefined,
+  }
+}
+
+// Minimal type for the opencode plugin client (v1 SDK style with path objects).
+type PluginClient = {
+  session: {
+    get: (params: { path: { id: string } }) => Promise<{ data?: { directory?: string } }>
+  }
+}
+
+// ── Pure derivation functions ────────────────────────────────────
+// These take state + fresh input and return whether to inject.
+// No side effects, no mutations — easy to test with fixtures.
+
+export function shouldInjectBranch({
+  previousGitState,
+  currentGitState,
+}: {
+  previousGitState: GitState | undefined
+  currentGitState: GitState | null
+}): { inject: false } | { inject: true; text: string } {
+  if (!currentGitState) {
+    return { inject: false }
+  }
+  if (previousGitState && previousGitState.key === currentGitState.key) {
+    return { inject: false }
+  }
+  const text = currentGitState.warning || `\n[current git branch is ${currentGitState.label}]`
+  return { inject: true, text }
+}
+
+export function shouldInjectPwd({
+  sessionDir,
+  projectDir,
+  announcedDir,
+}: {
+  sessionDir: string | null
+  projectDir: string
+  announcedDir: string | undefined
+}): { inject: false } | { inject: true; text: string } {
+  if (!sessionDir || sessionDir === projectDir) {
+    return { inject: false }
+  }
+  if (announcedDir === sessionDir) {
+    return { inject: false }
+  }
+  return {
+    inject: true,
+    text:
+      `\n[working directory is ${sessionDir} (git worktree of ${projectDir}). ` +
+      `All file reads, writes, and edits must use paths under ${sessionDir}, ` +
+      `not ${projectDir}.]`,
+  }
+}
+
+const TEN_MINUTES = 10 * 60 * 1000
+
+export function shouldInjectTimeGap({
+  lastMessageTime,
+  now,
+}: {
+  lastMessageTime: number | undefined
+  now: number
+}): { inject: false } | { inject: true; elapsedStr: string; utcStr: string; localStr: string; localTz: string } {
+  if (!lastMessageTime) {
+    return { inject: false }
+  }
+  const elapsed = now - lastMessageTime
+  if (elapsed < TEN_MINUTES) {
+    return { inject: false }
+  }
+  const totalMinutes = Math.floor(elapsed / 60_000)
+  const hours = Math.floor(totalMinutes / 60)
+  const minutes = totalMinutes % 60
+  const elapsedStr = hours > 0 ? `${hours}h ${minutes}m` : `${totalMinutes}m`
+
+  const utcStr = new Date(now)
+    .toISOString()
+    .replace('T', ' ')
+    .replace(/\.\d+Z$/, ' UTC')
+  const localTz = Intl.DateTimeFormat().resolvedOptions().timeZone
+  const localStr = new Date(now).toLocaleString('en-US', {
+    timeZone: localTz,
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+    hour: '2-digit',
+    minute: '2-digit',
+    hour12: false,
+  })
+
+  return { inject: true, elapsedStr, utcStr, localStr, localTz }
+}
+
+export function shouldInjectTutorial({
+  alreadyInjected,
+  parts,
+}: {
+  alreadyInjected: boolean
+  parts: Array<{ type: string; text?: string }>
+}): boolean {
+  if (alreadyInjected) {
+    return false
+  }
+  return parts.some((part) => {
+    return part.type === 'text' && part.text?.includes(TUTORIAL_WELCOME_TEXT)
+  })
+}
+
+// ── Impure helpers (I/O) ─────────────────────────────────────────
 
 async function resolveGitState({
   directory,
@@ -103,20 +241,18 @@ async function resolveGitState({
 }
 
 // Resolve the session's actual working directory via the SDK.
-// Cached per session to avoid repeated HTTP calls.
-// The plugin client uses the v1 SDK style (path/query/body objects).
+// Cached in SessionState.resolvedDirectory to avoid repeated HTTP calls.
 async function resolveSessionDirectory({
   client,
   sessionID,
-  cache,
+  state,
 }: {
   client: PluginClient
   sessionID: string
-  cache: Map<string, string>
+  state: SessionState
 }): Promise<string | null> {
-  const cached = cache.get(sessionID)
-  if (cached) {
-    return cached
+  if (state.resolvedDirectory) {
+    return state.resolvedDirectory
   }
   const result = await errore.tryAsync(() => {
     return client.session.get({ path: { id: sessionID } })
@@ -124,17 +260,11 @@ async function resolveSessionDirectory({
   if (result instanceof Error || !result.data?.directory) {
     return null
   }
-  cache.set(sessionID, result.data.directory)
+  state.resolvedDirectory = result.data.directory
   return result.data.directory
 }
 
-// Minimal type for the opencode plugin client (v1 SDK style with path objects).
-// Only the methods we actually use are typed here.
-type PluginClient = {
-  session: {
-    get: (params: { path: { id: string } }) => Promise<{ data?: { directory?: string } }>
-  }
-}
+// ── Plugin ───────────────────────────────────────────────────────
 
 const contextAwarenessPlugin: Plugin = async ({ directory, client }) => {
   initSentry()
@@ -145,17 +275,19 @@ const contextAwarenessPlugin: Plugin = async ({ directory, client }) => {
     setLogFilePath(dataDir)
   }
 
-  // Per-session state for synthetic part injection
-  const sessionGitStates = new Map<string, GitState>()
-  const sessionLastMessageTime = new Map<string, number>()
-  const sessionMemoryInjected = new Set<string>()
-  // Cache for resolved session directories (avoids repeated session.get() calls).
-  const sessionDirCache = new Map<string, string>()
-  // Track which sessions have had the pwd notice injected. Separate from
-  // the cache because resolveSessionDirectory populates the cache before
-  // we compare, so using the same map for both would always see the value
-  // as "already known" and skip injection.
-  const sessionPwdAnnounced = new Map<string, string>()
+  // Single Map for all per-session state. One entry per session, one
+  // delete on cleanup — no parallel Maps that can drift out of sync.
+  const sessions = new Map<string, SessionState>()
+
+  function getOrCreateSession(sessionID: string): SessionState {
+    const existing = sessions.get(sessionID)
+    if (existing) {
+      return existing
+    }
+    const state = createSessionState()
+    sessions.set(sessionID, state)
+    return state
+  }
 
   return {
     'chat.message': async (input, output) => {
@@ -174,17 +306,14 @@ const contextAwarenessPlugin: Plugin = async ({ directory, client }) => {
 
           const { sessionID } = input
           const messageID = first.messageID
+          const state = getOrCreateSession(sessionID)
 
           // -- Resolve session working directory --
-          // The session may have been created under a worktree path that
-          // differs from the plugin-level `directory` (the project root).
           const sessionDir = await resolveSessionDirectory({
             client,
             sessionID,
-            cache: sessionDirCache,
+            state,
           })
-          // Use session directory for git state resolution so branch detection
-          // is accurate for worktree sessions (they have their own HEAD).
           const effectiveDirectory = sessionDir || directory
 
           // -- Branch / detached HEAD detection --
@@ -192,33 +321,26 @@ const contextAwarenessPlugin: Plugin = async ({ directory, client }) => {
           const gitState = await resolveGitState({ directory: effectiveDirectory })
 
           // -- Working directory change detection --
-          // When the session's working directory differs from the project base
-          // directory, inject a notice so the agent uses the correct file paths.
-          // This covers the /new-worktree mid-session case: old session is
-          // cleared, new session is created under the worktree path, and the
-          // first user message needs to tell the agent about the new paths.
-          if (sessionDir && sessionDir !== directory && sessionPwdAnnounced.get(sessionID) !== sessionDir) {
-            // Session is in a worktree (or different directory than project root).
-            // Inject once per distinct directory so the agent knows to use new paths.
-            sessionPwdAnnounced.set(sessionID, sessionDir)
+          const pwdResult = shouldInjectPwd({
+            sessionDir,
+            projectDir: directory,
+            announcedDir: state.announcedDirectory,
+          })
+          if (pwdResult.inject) {
+            state.announcedDirectory = sessionDir!
             output.parts.push({
               id: `prt_${crypto.randomUUID()}`,
               sessionID,
               messageID,
               type: 'text' as const,
-              text:
-                `\n[working directory is ${sessionDir} (git worktree of ${directory}). ` +
-                `All file reads, writes, and edits must use paths under ${sessionDir}, ` +
-                `not ${directory}.]`,
+              text: pwdResult.text,
               synthetic: true,
             })
           }
 
           // -- MEMORY.md injection --
-          // On the first user message in a session, read MEMORY.md from the
-          // working directory and inject a condensed table of contents.
-          if (!sessionMemoryInjected.has(sessionID)) {
-            sessionMemoryInjected.add(sessionID)
+          if (!state.memoryInjected) {
+            state.memoryInjected = true
             const memoryPath = path.join(effectiveDirectory, 'MEMORY.md')
             const memoryContent = await fs.promises
               .readFile(memoryPath, 'utf-8')
@@ -236,79 +358,61 @@ const contextAwarenessPlugin: Plugin = async ({ directory, client }) => {
             }
           }
 
+          // -- Onboarding tutorial injection --
+          if (shouldInjectTutorial({ alreadyInjected: state.tutorialInjected, parts: output.parts })) {
+            state.tutorialInjected = true
+            output.parts.push({
+              id: `prt_${crypto.randomUUID()}`,
+              sessionID,
+              messageID,
+              type: 'text' as const,
+              text: `<system-reminder>\n${ONBOARDING_TUTORIAL_INSTRUCTIONS}\n</system-reminder>`,
+              synthetic: true,
+            })
+          }
+
           // -- Time since last message --
-          // If more than 10 minutes passed since the last user message in this
-          // session, inject current time context so the model is aware of the gap.
-          const lastTime = sessionLastMessageTime.get(sessionID)
-          sessionLastMessageTime.set(sessionID, now)
+          const timeGapResult = shouldInjectTimeGap({
+            lastMessageTime: state.lastMessageTime,
+            now,
+          })
+          state.lastMessageTime = now
 
-          if (lastTime) {
-            const elapsed = now - lastTime
-            const TEN_MINUTES = 10 * 60 * 1000
-            if (elapsed >= TEN_MINUTES) {
-              const totalMinutes = Math.floor(elapsed / 60_000)
-              const hours = Math.floor(totalMinutes / 60)
-              const minutes = totalMinutes % 60
-              const elapsedStr =
-                hours > 0 ? `${hours}h ${minutes}m` : `${totalMinutes}m`
+          if (timeGapResult.inject) {
+            output.parts.push({
+              id: `prt_${crypto.randomUUID()}`,
+              sessionID,
+              messageID,
+              type: 'text' as const,
+              text: `[${timeGapResult.elapsedStr} since last message | UTC: ${timeGapResult.utcStr} | Local (${timeGapResult.localTz}): ${timeGapResult.localStr}]`,
+              synthetic: true,
+            })
 
-              const utcStr = new Date(now)
-                .toISOString()
-                .replace('T', ' ')
-                .replace(/\.\d+Z$/, ' UTC')
-              const localTz = Intl.DateTimeFormat().resolvedOptions().timeZone
-              const localStr = new Date(now).toLocaleString('en-US', {
-                timeZone: localTz,
-                year: 'numeric',
-                month: '2-digit',
-                day: '2-digit',
-                hour: '2-digit',
-                minute: '2-digit',
-                hour12: false,
-              })
-
-              output.parts.push({
-                id: `prt_${crypto.randomUUID()}`,
-                sessionID,
-                messageID,
-                type: 'text' as const,
-                text: `[${elapsedStr} since last message | UTC: ${utcStr} | Local (${localTz}): ${localStr}]`,
-                synthetic: true,
-              })
-
-              output.parts.push({
-                id: `prt_${crypto.randomUUID()}`,
-                sessionID,
-                messageID,
-                type: 'text' as const,
-                text: '<system-reminder>Long gap since last message. If the previous conversation had important learnings, tips, insights that will help prevent same mistakes, or context worth preserving, update MEMORY.md before starting the new task.</system-reminder>',
-                synthetic: true,
-              })
-            }
+            output.parts.push({
+              id: `prt_${crypto.randomUUID()}`,
+              sessionID,
+              messageID,
+              type: 'text' as const,
+              text: '<system-reminder>Long gap since last message. If the previous conversation had important learnings, tips, insights that will help prevent same mistakes, or context worth preserving, update MEMORY.md before starting the new task.</system-reminder>',
+              synthetic: true,
+            })
           }
 
           // -- Branch injection (last synthetic part) --
-          // Placed last so branch context appears at the end of all injected parts.
-          if (gitState) {
-            const previousState = sessionGitStates.get(sessionID)
-            if (!previousState || previousState.key !== gitState.key) {
-              const info = (() => {
-                if (gitState.warning) {
-                  return gitState.warning
-                }
-                return `\n[current git branch is ${gitState.label}]`
-              })()
-
-              sessionGitStates.set(sessionID, gitState)
-              output.parts.push({
-                id: `prt_${crypto.randomUUID()}`,
-                sessionID,
-                messageID,
-                type: 'text' as const,
-                text: info,
-                synthetic: true,
-              })
-            }
+          const branchResult = shouldInjectBranch({
+            previousGitState: state.gitState,
+            currentGitState: gitState,
+          })
+          if (branchResult.inject) {
+            state.gitState = gitState!
+            output.parts.push({
+              id: `prt_${crypto.randomUUID()}`,
+              sessionID,
+              messageID,
+              type: 'text' as const,
+              text: branchResult.text,
+              synthetic: true,
+            })
           }
         },
         catch: (error) => {
@@ -323,24 +427,19 @@ const contextAwarenessPlugin: Plugin = async ({ directory, client }) => {
       }
     },
 
-    // Clean up per-session tracking state when sessions are deleted
+    // Clean up per-session state when sessions are deleted.
+    // Single delete instead of 5 parallel Map/Set deletes.
     event: async ({ event }) => {
       const cleanupResult = await errore.tryAsync({
         try: async () => {
           if (event.type !== 'session.deleted') {
             return
           }
-
           const id = event.properties?.info?.id
           if (!id) {
             return
           }
-
-          sessionGitStates.delete(id)
-          sessionLastMessageTime.delete(id)
-          sessionMemoryInjected.delete(id)
-          sessionDirCache.delete(id)
-          sessionPwdAnnounced.delete(id)
+          sessions.delete(id)
         },
         catch: (error) => {
           return new Error('context-awareness event hook failed', { cause: error })

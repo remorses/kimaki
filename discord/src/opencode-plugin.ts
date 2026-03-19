@@ -5,11 +5,9 @@
 //
 // Plugins are split into focused modules:
 // - ipc-tools-plugin: file upload + action buttons (IPC-based Discord tools)
-// - context-awareness-plugin: branch, pwd, memory, time gap injection
+// - context-awareness-plugin: branch, pwd, memory, time gap, onboarding tutorial
 // - opencode-interrupt-plugin: interrupt queued messages at step boundaries
-// - onboarding-tutorial-plugin: inject tutorial instructions for new users
 
 export { ipcToolsPlugin } from './ipc-tools-plugin.js'
 export { contextAwarenessPlugin } from './context-awareness-plugin.js'
 export { interruptOpencodeSessionOnUserMessage } from './opencode-interrupt-plugin.js'
-export { onboardingTutorialPlugin } from './onboarding-tutorial-plugin.js'
