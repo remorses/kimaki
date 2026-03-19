@@ -2046,26 +2046,26 @@ async function run({
   try {
     await new Promise((resolve, reject) => {
       discordClient.once(Events.ClientReady, async (c) => {
-        // Guild discovery comes from the Gateway WebSocket READY payload, not
-        // from a separate REST fetch. discord.js consumes READY and hydrates
-        // client.guilds.cache from d.guilds. In gateway mode, gateway-proxy
-        // already filters this list to authorized guilds for client_id:secret.
-        // Example payload fragment received over WS:
-        // {
-        //   "op": 0,
-        //   "t": "READY",
-        //   "d": {
-        //     "guilds": [
-        //       { "id": "123456789012345678", "unavailable": false }
-        //     ]
-        //   }
-        // }
+        // With waitGuildTimeout: 0, cache may only have unavailable guild
+        // stubs here. Enough for ID checks and guild count. Code that needs
+        // full guild data (channels, roles) fetches via REST below.
         guilds.push(...Array.from(c.guilds.cache.values()))
 
         if (skipChannelSetup) {
           resolve(null)
           return
         }
+
+        // Fetch full guild data via REST so we don't depend on GUILD_CREATE
+        // cache hydration timing. guilds.fetch() without ID returns OAuth2Guild
+        // (lightweight), so fetch each guild by ID to get full Guild objects
+        // with channels and roles. Only runs in first-time setup path.
+        const oauthGuilds = await c.guilds.fetch()
+        const fullGuilds = await Promise.all(
+          oauthGuilds.map((g) => { return c.guilds.fetch(g.id) }),
+        )
+        guilds.length = 0
+        guilds.push(...fullGuilds)
 
         // Process guild metadata when setup flow needs channel prompts.
         const guildResults = await collectKimakiChannels({

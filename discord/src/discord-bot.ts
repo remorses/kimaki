@@ -244,6 +244,11 @@ export async function createDiscordClient() {
       Partials.ThreadMember,
     ],
     rest: { api: restApiUrl },
+    // Fire 'ready' immediately after READY without waiting for GUILD_CREATE
+    // events. Guilds still arrive and populate cache in the background.
+    // Code that needs guild data should use guild.fetch() or
+    // client.guilds.fetch() instead of relying on cache at ready time.
+    waitGuildTimeout: 0,
   })
 }
 
