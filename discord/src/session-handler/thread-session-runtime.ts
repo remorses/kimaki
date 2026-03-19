@@ -2759,7 +2759,6 @@ export class ThreadSessionRuntime {
       const willDrainNow = stateAfterEnqueue
         ? (
           stateAfterEnqueue.queueItems.length > 0
-          && !this.hasPendingInteractiveUi()
           && !this.isMainSessionBusy()
         )
         : false
@@ -2984,9 +2983,11 @@ export class ThreadSessionRuntime {
     if (thread.queueItems.length === 0) {
       return
     }
-    if (this.hasPendingInteractiveUi()) {
-      return
-    }
+    // Interactive UI (action buttons, questions, permissions) does NOT block
+    // queue drain. The isSessionBusy check is sufficient: questions and
+    // permissions keep the OpenCode session busy, so drain is naturally
+    // blocked. Action buttons are fire-and-forget (session already idle),
+    // so queued messages should dispatch immediately.
 
     const sessionBusy = thread.sessionId
       ? isSessionBusy({ events: this.eventBuffer, sessionId: thread.sessionId })
