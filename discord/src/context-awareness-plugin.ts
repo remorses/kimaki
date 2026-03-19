@@ -293,6 +293,32 @@ const contextAwarenessPlugin: Plugin = async ({ directory, client }) => {
     'chat.message': async (input, output) => {
       const hookResult = await errore.tryAsync({
         try: async () => {
+          const { sessionID } = input
+          const state = getOrCreateSession(sessionID)
+
+          // -- Onboarding tutorial injection --
+          // Runs before the non-synthetic text guard because the tutorial
+          // marker (TUTORIAL_WELCOME_TEXT) can appear in synthetic/system
+          // parts prepended by message-preprocessing.ts. The old separate
+          // plugin had no such guard, so this preserves that behavior.
+          const firstTextPart = output.parts.find((part) => {
+            return part.type === 'text'
+          })
+          if (firstTextPart && shouldInjectTutorial({ alreadyInjected: state.tutorialInjected, parts: output.parts })) {
+            state.tutorialInjected = true
+            output.parts.push({
+              id: `prt_${crypto.randomUUID()}`,
+              sessionID,
+              messageID: firstTextPart.messageID,
+              type: 'text' as const,
+              text: `<system-reminder>\n${ONBOARDING_TUTORIAL_INSTRUCTIONS}\n</system-reminder>`,
+              synthetic: true,
+            })
+          }
+
+          // -- Find first non-synthetic user text part --
+          // All remaining injections (branch, pwd, memory, time gap) only
+          // apply to real user messages, not empty or synthetic-only messages.
           const now = Date.now()
           const first = output.parts.find((part) => {
             if (part.type !== 'text') {
@@ -304,9 +330,7 @@ const contextAwarenessPlugin: Plugin = async ({ directory, client }) => {
             return
           }
 
-          const { sessionID } = input
           const messageID = first.messageID
-          const state = getOrCreateSession(sessionID)
 
           // -- Resolve session working directory --
           const sessionDir = await resolveSessionDirectory({
@@ -356,19 +380,6 @@ const contextAwarenessPlugin: Plugin = async ({ directory, client }) => {
                 synthetic: true,
               })
             }
-          }
-
-          // -- Onboarding tutorial injection --
-          if (shouldInjectTutorial({ alreadyInjected: state.tutorialInjected, parts: output.parts })) {
-            state.tutorialInjected = true
-            output.parts.push({
-              id: `prt_${crypto.randomUUID()}`,
-              sessionID,
-              messageID,
-              type: 'text' as const,
-              text: `<system-reminder>\n${ONBOARDING_TUTORIAL_INSTRUCTIONS}\n</system-reminder>`,
-              synthetic: true,
-            })
           }
 
           // -- Time since last message --
