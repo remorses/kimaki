@@ -85,13 +85,23 @@ function getRequestAuthToken(req: http.IncomingMessage): string | null {
   return null
 }
 
+// Timing-safe comparison to prevent timing attacks when the hrana server
+// is internet-facing (bindAll=true / KIMAKI_INTERNET_REACHABLE_URL set).
 function isAuthorizedRequest(req: http.IncomingMessage): boolean {
   const expectedToken = store.getState().gatewayToken
   if (!expectedToken) {
     return false
   }
   const providedToken = getRequestAuthToken(req)
-  return providedToken === expectedToken
+  if (!providedToken) {
+    return false
+  }
+  const expectedBuf = Buffer.from(expectedToken, 'utf8')
+  const providedBuf = Buffer.from(providedToken, 'utf8')
+  if (expectedBuf.length !== providedBuf.length) {
+    return false
+  }
+  return crypto.timingSafeEqual(expectedBuf, providedBuf)
 }
 
 function ensureServiceAuthTokenInStore(): string {
