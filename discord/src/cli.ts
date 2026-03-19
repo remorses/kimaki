@@ -3,6 +3,7 @@
 // Handles interactive setup, Discord OAuth, slash command registration,
 // project channel creation, and launching the bot with opencode integration.
 import { goke } from 'goke'
+import { z } from 'zod'
 import {
   intro,
   outro,
@@ -2989,6 +2990,13 @@ cli
   .option('--agent <agent>', 'Agent to use for the session')
   .option('--model <model>', 'Model to use (format: provider/model)')
   .option(
+    '--permission <rule>',
+    z.array(z.string()).describe(
+      'Session permission rule (repeatable). Format: "tool:action" or "tool:pattern:action". ' +
+      'Actions: allow, deny, ask. Examples: --permission "bash:deny" --permission "edit:deny"',
+    ),
+  )
+  .option(
     '--send-at <schedule>',
     'Schedule send for future (UTC ISO date/time ending in Z, or cron expression)',
   )
@@ -3013,6 +3021,7 @@ cli
       user?: string
       agent?: string
       model?: string
+      permission?: string[]
       sendAt?: string
       thread?: string
       session?: string
@@ -3501,6 +3510,7 @@ cli
               }),
               ...(options.agent && { agent: options.agent }),
               ...(options.model && { model: options.model }),
+              ...(options.permission?.length && { permissions: options.permission }),
             }
         const autoStartEmbed = embedMarker
           ? [{ color: 0x2b2d31, footer: { text: yaml.dump(embedMarker) } }]

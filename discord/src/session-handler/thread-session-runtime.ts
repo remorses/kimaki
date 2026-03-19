@@ -24,6 +24,7 @@ import {
   getOpencodeClient,
   initializeOpencodeForDirectory,
   buildSessionPermissions,
+  parsePermissionRules,
   subscribeOpencodeServerLifecycle,
 } from '../opencode.js'
 import { isAbortError } from '../utils.js'
@@ -426,6 +427,14 @@ export type IngressInput = {
   // First-dispatch-only overrides (used when creating a new session)
   agent?: string
   model?: string
+  /**
+   * Raw permission rule strings from --permission flag ("tool:action" or
+   * "tool:pattern:action"). Parsed into PermissionRuleset entries by
+   * parsePermissionRules() and appended after buildSessionPermissions()
+   * so they win via opencode's findLast() evaluation. Only used on
+   * session creation (first dispatch).
+   */
+  permissions?: string[]
   sessionStartSource?: { scheduleKind: 'at' | 'cron'; scheduledTaskId?: number }
   /** Optional guard for retries: skip enqueue when session has changed. */
   expectedSessionId?: string
@@ -2477,6 +2486,7 @@ export class ThreadSessionRuntime {
       const sessionResult = await this.ensureSession({
         prompt: input.prompt,
         agent: input.agent,
+        permissions: input.permissions,
         sessionStartScheduleKind: input.sessionStartSource?.scheduleKind,
         sessionStartScheduledTaskId: input.sessionStartSource?.scheduledTaskId,
       })
@@ -2732,6 +2742,7 @@ export class ThreadSessionRuntime {
       command: input.command,
       agent: input.agent,
       model: input.model,
+      permissions: input.permissions,
       sessionStartScheduleKind: input.sessionStartSource?.scheduleKind,
       sessionStartScheduledTaskId: input.sessionStartSource?.scheduledTaskId,
     }
@@ -3042,6 +3053,7 @@ export class ThreadSessionRuntime {
     const sessionResult = await this.ensureSession({
       prompt: input.prompt,
       agent: input.agent,
+      permissions: input.permissions,
       sessionStartScheduleKind: input.sessionStartScheduleKind,
       sessionStartScheduledTaskId: input.sessionStartScheduledTaskId,
     })
@@ -3414,11 +3426,14 @@ export class ThreadSessionRuntime {
   private async ensureSession({
     prompt,
     agent,
+    permissions,
     sessionStartScheduleKind,
     sessionStartScheduledTaskId,
   }: {
     prompt: string
     agent?: string
+    /** Raw "tool:action" strings from --permission flag */
+    permissions?: string[]
     sessionStartScheduleKind?: 'at' | 'cron'
     sessionStartScheduledTaskId?: number
   }): Promise<
@@ -3479,10 +3494,15 @@ export class ThreadSessionRuntime {
       // access its own project directory (and worktree origin if applicable)
       // without prompts. These override the server-level 'ask' default via
       // opencode's findLast() rule evaluation.
-      const sessionPermissions = buildSessionPermissions({
-        directory: this.sdkDirectory,
-        originalRepoDirectory,
-      })
+      // CLI --permission rules are appended after base rules so they win
+      // via opencode's findLast() evaluation.
+      const sessionPermissions = [
+        ...buildSessionPermissions({
+          directory: this.sdkDirectory,
+          originalRepoDirectory,
+        }),
+        ...parsePermissionRules(permissions ?? []),
+      ]
       const sessionResponse = await getClient().session.create({
         title: sessionTitle,
         directory: this.sdkDirectory,

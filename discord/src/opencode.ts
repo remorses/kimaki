@@ -880,6 +880,43 @@ export function buildSessionPermissions({
   return rules
 }
 
+/**
+ * Parse raw permission strings into PermissionRuleset entries.
+ *
+ * Accepted formats:
+ *   "tool:action"           → { permission: tool, pattern: "*", action }
+ *   "tool:pattern:action"   → { permission: tool, pattern,      action }
+ *
+ * The action must be one of "allow", "deny", "ask".
+ * Invalid entries are silently skipped (bad user input shouldn't crash the bot).
+ */
+export function parsePermissionRules(raw: string[]): PermissionRuleset {
+  const validActions = new Set(['allow', 'deny', 'ask'])
+  return raw.flatMap((entry) => {
+    const parts = entry.split(':')
+    if (parts.length === 2) {
+      const [permission, action] = parts
+      if (!permission || !validActions.has(action!)) {
+        return []
+      }
+      return [{ permission, pattern: '*', action: action as 'allow' | 'deny' | 'ask' }]
+    }
+    if (parts.length >= 3) {
+      // Last segment is the action, first segment is the permission,
+      // everything in between is the pattern (may contain colons in theory,
+      // but unlikely for tool patterns).
+      const permission = parts[0]!
+      const action = parts[parts.length - 1]!
+      const pattern = parts.slice(1, -1).join(':')
+      if (!permission || !pattern || !validActions.has(action)) {
+        return []
+      }
+      return [{ permission, pattern, action: action as 'allow' | 'deny' | 'ask' }]
+    }
+    return []
+  })
+}
+
 // ── Public helpers ───────────────────────────────────────────────
 // These helpers expose the single shared server and directory-scoped clients.
 

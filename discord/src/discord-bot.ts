@@ -1029,6 +1029,7 @@ export async function startDiscordBot({
         appId: currentAppId,
         agent: marker.agent,
         model: marker.model,
+        permissions: marker.permissions,
         mode: 'opencode',
         sessionStartSource: botThreadStartSource
           ? {

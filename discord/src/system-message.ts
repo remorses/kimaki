@@ -206,6 +206,13 @@ export type ThreadStartMarker = {
   scheduledKind?: 'at' | 'cron'
   /** Scheduled task ID that triggered this message */
   scheduledTaskId?: number
+  /**
+   * Per-session permission overrides as raw "tool:action" or "tool:pattern:action"
+   * strings. Parsed into PermissionRuleset entries by parsePermissionRules() in
+   * opencode.ts and appended after buildSessionPermissions() so they win via
+   * opencode's findLast() evaluation.
+   */
+  permissions?: string[]
 }
 
 export type AgentInfo = {
