@@ -78,8 +78,14 @@ export async function handleUndoCommand({
   }
 
   try {
-    // Fetch messages to find the last assistant message
-    const messagesResponse = await getClient().session.messages({
+    const client = getClient()
+
+    // Fetch session to check existing revert state
+    const sessionResponse = await client.session.get({
+      sessionID: sessionId,
+    })
+
+    const messagesResponse = await client.session.messages({
       sessionID: sessionId,
     })
 
@@ -88,19 +94,31 @@ export async function handleUndoCommand({
       return
     }
 
-    // Find the last assistant message
-    const lastAssistantMessage = [...messagesResponse.data]
-      .reverse()
-      .find((m) => m.info.role === 'assistant')
+    // Follow the same approach as the OpenCode TUI (use-session-commands.tsx):
+    // find the last user message that is before the current revert point
+    // (or the last user message if no revert is active). This matches the
+    // TUI's `findLast(userMessages(), (x) => !revert || x.id < revert)`.
+    const currentRevert = sessionResponse.data?.revert?.messageID
+    const userMessages = messagesResponse.data.filter((m) => {
+      return m.info.role === 'user'
+    })
+    const targetUserMessage = [...userMessages].reverse().find((m) => {
+      return !currentRevert || m.info.id < currentRevert
+    })
 
-    if (!lastAssistantMessage) {
-      await command.editReply('No assistant message to undo')
+    if (!targetUserMessage) {
+      await command.editReply('No messages to undo')
       return
     }
 
-    const response = await getClient().session.revert({
+    // session.revert() reverts filesystem patches (file edits, writes) and
+    // marks the session with revert.messageID. Messages are NOT deleted — they
+    // get cleaned up automatically on the next promptAsync() call via
+    // SessionRevert.cleanup(). The model only sees messages before the revert
+    // point when processing the next prompt.
+    const response = await client.session.revert({
       sessionID: sessionId,
-      messageID: lastAssistantMessage.info.id,
+      messageID: targetUserMessage.info.id,
     })
 
     if (response.error) {
@@ -114,11 +132,9 @@ export async function handleUndoCommand({
       ? `\n\`\`\`diff\n${response.data.revert.diff.slice(0, 1500)}\n\`\`\``
       : ''
 
-    await command.editReply(
-      `⏪ **Undone** - reverted last assistant message${diffInfo}`,
-    )
+    await command.editReply(`Undone - reverted last assistant message${diffInfo}`)
     logger.log(
-      `Session ${sessionId} reverted message ${lastAssistantMessage.info.id}`,
+      `Session ${sessionId} reverted to before user message ${targetUserMessage.info.id}`,
     )
   } catch (error) {
     logger.error('[UNDO] Error:', error)
