@@ -42,12 +42,10 @@ const SLACK_INSTALL_SCOPES = [
 const app = new Spiceflow()
   .state('env', {} as Env)
 
-  // Match Hono's default error behavior: plain text 500 for uncaught errors.
-  // Without this, Spiceflow returns JSON with error.message which changes
-  // the response format clients see on unexpected failures.
   .onError(({ error }) => {
     console.error(error)
-    return new Response('Internal Server Error', { status: 500 })
+    const message = error instanceof Error ? error.message : String(error)
+    return new Response(message, { status: 500 })
   })
 
   .route({
@@ -612,18 +610,12 @@ const app = new Spiceflow()
       const slackUserId = row.user?.accounts.find((account) => {
         return account.providerId === 'slack'
       })?.accountId
-      // Use explicit JSON.stringify to match prior Hono c.json() behavior:
-      // JSON.stringify drops undefined keys, whereas Spiceflow auto-serialization
-      // may include superjson metadata for undefined values.
-      return new Response(
-        JSON.stringify({
-          guild_id: row.guild_id,
-          team_id: row.platform === 'slack' ? row.guild_id : undefined,
-          discord_user_id: discordUserId,
-          slack_user_id: slackUserId,
-        }),
-        { headers: { 'Content-Type': 'application/json' } },
-      )
+      return {
+        guild_id: row.guild_id,
+        team_id: row.platform === 'slack' ? row.guild_id : undefined,
+        discord_user_id: discordUserId,
+        slack_user_id: slackUserId,
+      }
     },
   })
 
