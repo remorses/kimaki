@@ -1171,8 +1171,16 @@ export class ThreadSessionRuntime {
   // Subtask sessions also bypass — they're tracked in subtaskSessions.
 
   private async handleEvent(event: OpenCodeEvent): Promise<void> {
-    // Push into bounded event buffer for waitForEvent() consumers.
-    this.appendEventToBuffer(event)
+    // Skip message.part.delta from the event buffer — no derivation function
+    // (isSessionBusy, doesLatestUserTurnHaveNaturalCompletion, waitForEvent,
+    // etc.) uses them. During long streaming responses they flood the 1000-slot
+    // buffer, evicting session.status busy events that isSessionBusy needs,
+    // causing tryDrainQueue to drain the local queue while the session is
+    // actually still busy. This was the root cause of "? queue" messages
+    // interrupting instead of queuing.
+    if (event.type !== 'message.part.delta') {
+      this.appendEventToBuffer(event)
+    }
 
     const sessionId = this.state?.sessionId
 
