@@ -246,16 +246,6 @@ export async function resolveGatewayClientFromCacheOrDb({
   const row = await prisma.gateway_clients.findFirst({
     where: { client_id: clientId },
     orderBy: [{ updated_at: 'desc' }, { created_at: 'desc' }],
-    select: {
-      client_id: true,
-      secret: true,
-      guild_id: true,
-      platform: true,
-      bot_token: true,
-      user_id: true,
-      created_at: true,
-      updated_at: true,
-    },
   }).catch((cause) => {
     return new Error('DB lookup failed for gateway client', { cause })
   })

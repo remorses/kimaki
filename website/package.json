@@ -16,7 +16,7 @@
     "db": "workspace:^",
     "discord-api-types": "^0.38.40",
     "discord-slack-bridge": "workspace:^",
-    "hono": "^4.7.10"
+    "spiceflow": "1.18.0-rsc.9"
   },
   "devDependencies": {
     "@cloudflare/workers-types": "^4.20260130.0",

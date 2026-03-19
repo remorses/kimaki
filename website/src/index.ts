@@ -5,7 +5,7 @@
 // Each request gets a fresh PrismaClient and betterAuth instance
 // because CF Workers cannot reuse connections across requests.
 
-import { Hono } from 'hono'
+import { Spiceflow } from 'spiceflow'
 import { createPrisma } from 'db/src'
 import { getTeamIdForWebhookEvent } from 'discord-slack-bridge/src/webhook-team-id'
 import {
@@ -19,12 +19,10 @@ import {
 import { createAuth, parseAllowedCallbackUrl } from './auth.js'
 import { renderSuccessPage } from './components/success-page.js'
 import { SlackBridgeDO } from './slack-bridge-do.js'
-import type { HonoBindings } from './env.js'
+import type { Env, HonoBindings } from './env.js'
 
 export type { HonoBindings }
 export { SlackBridgeDO }
-
-const app = new Hono<{ Bindings: HonoBindings }>()
 
 const SLACK_OAUTH_CALLBACK_PATH = '/slack/oauth/callback'
 const SLACK_INSTALL_SCOPES = [
@@ -41,463 +39,585 @@ const SLACK_INSTALL_SCOPES = [
   'files:write',
 ]
 
-app.get('/', (c) => {
-  return c.redirect('https://github.com/remorses/kimaki', 302)
-})
+const app = new Spiceflow()
+  .state('env', {} as Env)
 
-app.get('/health', async (c) => {
-  const prisma = createPrisma(c.env.HYPERDRIVE.connectionString)
-  const result = await prisma.$queryRaw<[{ result: number }]>`SELECT 1 as result`
-  return c.json({ status: 'ok', db: result[0].result })
-})
-
-// Initiates the Discord bot install flow via better-auth.
-// The CLI opens the browser to this URL with clientId and clientSecret
-// as query params. We call better-auth's signInSocial server-side with
-// these as additionalData, which stores them in the verification table
-// and generates a Discord OAuth URL. The browser is redirected to Discord.
-app.get('/discord-install', async (c) => {
-  const clientId = c.req.query('clientId')
-  const clientSecret = c.req.query('clientSecret')
-  const kimakiCallbackUrl = c.req.query('kimakiCallbackUrl')
-  const reachableUrl = c.req.query('reachableUrl')
-
-  if (!clientId || !clientSecret) {
-    return c.text('Missing clientId or clientSecret', 400)
-  }
-
-  // Validate reachableUrl: must be https to prevent SSRF / token exfiltration.
-  // The gateway-proxy connects outbound to this URL with Authorization header,
-  // so an attacker-controlled URL would receive the client secret.
-  if (reachableUrl) {
-    try {
-      const parsed = new URL(reachableUrl)
-      if (parsed.protocol !== 'https:') {
-        return c.text('reachableUrl must use https', 400)
-      }
-    } catch {
-      return c.text('reachableUrl is not a valid URL', 400)
-    }
-  }
-
-  // Early validation: reject non-https callback URLs (http://localhost allowed for dev).
-  // Defense in depth — hooks.after also validates before redirecting.
-  if (kimakiCallbackUrl) {
-    try {
-      const parsed = new URL(kimakiCallbackUrl)
-      const isHttps = parsed.protocol === 'https:'
-      const isLocalHttp =
-        parsed.protocol === 'http:' &&
-        (parsed.hostname === 'localhost' || parsed.hostname === '127.0.0.1')
-      if (!isHttps && !isLocalHttp) {
-        return c.text('kimakiCallbackUrl must use https (or http for localhost)', 400)
-      }
-    } catch {
-      return c.text('kimakiCallbackUrl is not a valid URL', 400)
-    }
-  }
-
-  const baseURL = new URL(c.req.url).origin
-  const auth = createAuth({ env: c.env, baseURL })
-
-  // signInSocial returns JSON data on server calls; use returnHeaders so we can
-  // forward Set-Cookie and still issue a real browser redirect.
-  // kimakiCallbackUrl is an optional external URL passed by the CLI
-  // (--gateway-callback-url). It's stored in additionalData so the hooks.after callback can redirect there
-  // (with ?guild_id=<id>) instead of showing the default /install-success page.
-  const { response: result, headers } = await auth.api.signInSocial({
-    body: {
-      provider: 'discord',
-      additionalData: { clientId, clientSecret, kimakiCallbackUrl, reachableUrl },
-      callbackURL: '/install-success',
+  .route({
+    method: 'GET',
+    path: '/',
+    handler() {
+      return new Response(null, {
+        status: 302,
+        headers: { Location: 'https://github.com/remorses/kimaki' },
+      })
     },
-    headers: c.req.raw.headers,
-    returnHeaders: true,
   })
 
-  if (!result?.url) {
-    return c.text('Failed to generate Discord OAuth URL', 500)
-  }
-
-  const redirect = c.redirect(result.url, 302)
-  for (const cookie of headers.getSetCookie()) {
-    redirect.headers.append('Set-Cookie', cookie)
-  }
-  return redirect
-})
-
-app.get('/slack-install', async (c) => {
-  const clientId = c.req.query('clientId')
-  const clientSecret = c.req.query('clientSecret')
-  const kimakiCallbackUrl = c.req.query('kimakiCallbackUrl')
-
-  if (!clientId || !clientSecret) {
-    return c.text('Missing clientId or clientSecret', 400)
-  }
-
-  if (kimakiCallbackUrl && !parseAllowedCallbackUrl(kimakiCallbackUrl)) {
-    return c.text('kimakiCallbackUrl must use https (or http for localhost)', 400)
-  }
-
-  const oauthState = crypto.randomUUID()
-  const persistStateResult = await setSlackInstallStateInKv({
-    kv: c.env.GATEWAY_CLIENT_KV,
-    state: oauthState,
-    record: {
-      kimaki_client_id: clientId,
-      kimaki_client_secret: clientSecret,
-      kimaki_callback_url: kimakiCallbackUrl ?? null,
+  .route({
+    method: 'GET',
+    path: '/health',
+    async handler({ state }) {
+      const prisma = createPrisma(state.env.HYPERDRIVE.connectionString)
+      const result = await prisma.$queryRaw<[{ result: number }]>`SELECT 1 as result`
+      return { status: 'ok', db: result[0].result }
     },
-  }).catch((cause) => {
-    return new Error('Failed to persist Slack install state', { cause })
-  })
-  if (persistStateResult instanceof Error) {
-    return c.text(persistStateResult.message, 500)
-  }
-
-  const baseUrl = new URL(c.req.url).origin
-  const authorizeUrl = new URL('https://slack.com/oauth/v2/authorize')
-  authorizeUrl.searchParams.set('client_id', c.env.SLACK_CLIENT_ID)
-  authorizeUrl.searchParams.set('scope', SLACK_INSTALL_SCOPES.join(','))
-  authorizeUrl.searchParams.set('redirect_uri', new URL(SLACK_OAUTH_CALLBACK_PATH, baseUrl).toString())
-  authorizeUrl.searchParams.set('state', oauthState)
-  return c.redirect(authorizeUrl.toString(), 302)
-})
-
-app.get(SLACK_OAUTH_CALLBACK_PATH, async (c) => {
-  const error = c.req.query('error')
-  if (error) {
-    return c.text(`Slack install failed: ${error}`, 400)
-  }
-
-  const code = c.req.query('code')
-  const state = c.req.query('state')
-  if (!code || !state) {
-    return c.text('Missing Slack OAuth code or state', 400)
-  }
-
-  const installState = await getSlackInstallStateFromKv({
-    kv: c.env.GATEWAY_CLIENT_KV,
-    state,
-  }).catch((cause) => {
-    return new Error('Failed to read Slack install state', { cause })
-  })
-  if (installState instanceof Error) {
-    return c.text(installState.message, 500)
-  }
-  if (!installState) {
-    return c.text('Slack install state expired or was not found', 400)
-  }
-
-  await deleteSlackInstallStateInKv({
-    kv: c.env.GATEWAY_CLIENT_KV,
-    state,
-  }).catch(() => {
-    return undefined
   })
 
-  const redirectUri = new URL(SLACK_OAUTH_CALLBACK_PATH, new URL(c.req.url).origin).toString()
-  const slackAccessResponse = await fetch('https://slack.com/api/oauth.v2.access', {
+  // Initiates the Discord bot install flow via better-auth.
+  // The CLI opens the browser to this URL with clientId and clientSecret
+  // as query params. We call better-auth's signInSocial server-side with
+  // these as additionalData, which stores them in the verification table
+  // and generates a Discord OAuth URL. The browser is redirected to Discord.
+  .route({
+    method: 'GET',
+    path: '/discord-install',
+    async handler({ request, state }) {
+      const url = new URL(request.url)
+
+      const clientId = url.searchParams.get('clientId')
+      const clientSecret = url.searchParams.get('clientSecret')
+      const kimakiCallbackUrl = url.searchParams.get('kimakiCallbackUrl')
+      const reachableUrl = url.searchParams.get('reachableUrl')
+
+      if (!clientId || !clientSecret) {
+        throw new Response('Missing clientId or clientSecret', { status: 400 })
+      }
+
+      // Validate reachableUrl: must be https to prevent SSRF / token exfiltration.
+      // The gateway-proxy connects outbound to this URL with Authorization header,
+      // so an attacker-controlled URL would receive the client secret.
+      if (reachableUrl) {
+        try {
+          const parsed = new URL(reachableUrl)
+          if (parsed.protocol !== 'https:') {
+            throw new Response('reachableUrl must use https', { status: 400 })
+          }
+        } catch (e) {
+          if (e instanceof Response) {
+            throw e
+          }
+          throw new Response('reachableUrl is not a valid URL', { status: 400 })
+        }
+      }
+
+      // Early validation: reject non-https callback URLs (http://localhost allowed for dev).
+      // Defense in depth — hooks.after also validates before redirecting.
+      if (kimakiCallbackUrl) {
+        try {
+          const parsed = new URL(kimakiCallbackUrl)
+          const isHttps = parsed.protocol === 'https:'
+          const isLocalHttp =
+            parsed.protocol === 'http:' &&
+            (parsed.hostname === 'localhost' || parsed.hostname === '127.0.0.1')
+          if (!isHttps && !isLocalHttp) {
+            throw new Response('kimakiCallbackUrl must use https (or http for localhost)', { status: 400 })
+          }
+        } catch (e) {
+          if (e instanceof Response) {
+            throw e
+          }
+          throw new Response('kimakiCallbackUrl is not a valid URL', { status: 400 })
+        }
+      }
+
+      const baseURL = new URL(request.url).origin
+      const auth = createAuth({ env: state.env, baseURL })
+
+      // signInSocial returns JSON data on server calls; use returnHeaders so we can
+      // forward Set-Cookie and still issue a real browser redirect.
+      // kimakiCallbackUrl is an optional external URL passed by the CLI
+      // (--gateway-callback-url). It's stored in additionalData so the hooks.after callback can redirect there
+      // (with ?guild_id=<id>) instead of showing the default /install-success page.
+      const { response: result, headers } = await auth.api.signInSocial({
+        body: {
+          provider: 'discord',
+          additionalData: { clientId, clientSecret, kimakiCallbackUrl, reachableUrl },
+          callbackURL: '/install-success',
+        },
+        headers: request.headers,
+        returnHeaders: true,
+      })
+
+      if (!result?.url) {
+        throw new Response('Failed to generate Discord OAuth URL', { status: 500 })
+      }
+
+      const redirect = new Response(null, {
+        status: 302,
+        headers: { Location: result.url },
+      })
+      for (const cookie of headers.getSetCookie()) {
+        redirect.headers.append('Set-Cookie', cookie)
+      }
+      return redirect
+    },
+  })
+
+  .route({
+    method: 'GET',
+    path: '/slack-install',
+    async handler({ request, state }) {
+      const url = new URL(request.url)
+      const clientId = url.searchParams.get('clientId')
+      const clientSecret = url.searchParams.get('clientSecret')
+      const kimakiCallbackUrl = url.searchParams.get('kimakiCallbackUrl')
+
+      if (!clientId || !clientSecret) {
+        throw new Response('Missing clientId or clientSecret', { status: 400 })
+      }
+
+      if (kimakiCallbackUrl && !parseAllowedCallbackUrl(kimakiCallbackUrl)) {
+        throw new Response('kimakiCallbackUrl must use https (or http for localhost)', { status: 400 })
+      }
+
+      const oauthState = crypto.randomUUID()
+      const persistStateResult = await setSlackInstallStateInKv({
+        kv: state.env.GATEWAY_CLIENT_KV,
+        state: oauthState,
+        record: {
+          kimaki_client_id: clientId,
+          kimaki_client_secret: clientSecret,
+          kimaki_callback_url: kimakiCallbackUrl ?? null,
+        },
+      }).catch((cause) => {
+        return new Error('Failed to persist Slack install state', { cause })
+      })
+      if (persistStateResult instanceof Error) {
+        throw new Response(persistStateResult.message, { status: 500 })
+      }
+
+      const baseUrl = new URL(request.url).origin
+      const authorizeUrl = new URL('https://slack.com/oauth/v2/authorize')
+      authorizeUrl.searchParams.set('client_id', state.env.SLACK_CLIENT_ID)
+      authorizeUrl.searchParams.set('scope', SLACK_INSTALL_SCOPES.join(','))
+      authorizeUrl.searchParams.set('redirect_uri', new URL(SLACK_OAUTH_CALLBACK_PATH, baseUrl).toString())
+      authorizeUrl.searchParams.set('state', oauthState)
+      return new Response(null, {
+        status: 302,
+        headers: { Location: authorizeUrl.toString() },
+      })
+    },
+  })
+
+  .route({
+    method: 'GET',
+    path: SLACK_OAUTH_CALLBACK_PATH,
+    async handler({ request, state }) {
+      const url = new URL(request.url)
+      const error = url.searchParams.get('error')
+      if (error) {
+        throw new Response(`Slack install failed: ${error}`, { status: 400 })
+      }
+
+      const code = url.searchParams.get('code')
+      const oauthState = url.searchParams.get('state')
+      if (!code || !oauthState) {
+        throw new Response('Missing Slack OAuth code or state', { status: 400 })
+      }
+
+      const installState = await getSlackInstallStateFromKv({
+        kv: state.env.GATEWAY_CLIENT_KV,
+        state: oauthState,
+      }).catch((cause) => {
+        return new Error('Failed to read Slack install state', { cause })
+      })
+      if (installState instanceof Error) {
+        throw new Response(installState.message, { status: 500 })
+      }
+      if (!installState) {
+        throw new Response('Slack install state expired or was not found', { status: 400 })
+      }
+
+      await deleteSlackInstallStateInKv({
+        kv: state.env.GATEWAY_CLIENT_KV,
+        state: oauthState,
+      }).catch(() => {
+        return undefined
+      })
+
+      const redirectUri = new URL(SLACK_OAUTH_CALLBACK_PATH, new URL(request.url).origin).toString()
+      const slackAccessResponse = await fetch('https://slack.com/api/oauth.v2.access', {
+        method: 'POST',
+        headers: {
+          Authorization: `Basic ${btoa(`${state.env.SLACK_CLIENT_ID}:${state.env.SLACK_CLIENT_SECRET}`)}`,
+          'content-type': 'application/x-www-form-urlencoded',
+        },
+        body: new URLSearchParams({
+          code,
+          redirect_uri: redirectUri,
+        }),
+      }).catch((cause) => {
+        return new Error('Failed to exchange Slack OAuth code', { cause })
+      })
+      if (slackAccessResponse instanceof Error) {
+        throw new Response(slackAccessResponse.message, { status: 500 })
+      }
+
+      const slackAccessPayload = await slackAccessResponse.json().catch((cause) => {
+        return new Error('Failed to parse Slack OAuth response', { cause })
+      })
+      if (slackAccessPayload instanceof Error) {
+        throw new Response(slackAccessPayload.message, { status: 500 })
+      }
+      if (!isSlackOAuthAccessResponse(slackAccessPayload)) {
+        throw new Response('Slack OAuth response had an unexpected shape', { status: 500 })
+      }
+      if (!slackAccessPayload.ok) {
+        throw new Response(`Slack OAuth exchange failed: ${slackAccessPayload.error ?? 'unknown_error'}`, { status: 400 })
+      }
+
+      const teamId = slackAccessPayload.team?.id
+      const botToken = slackAccessPayload.access_token
+      if (!(teamId && botToken)) {
+        throw new Response('Slack OAuth response missing team.id or access_token', { status: 500 })
+      }
+
+      const prisma = createPrisma(state.env.HYPERDRIVE.connectionString)
+
+      const upsertResult = await upsertGatewayClientAndRefreshKv({
+        env: state.env,
+        clientId: installState.kimaki_client_id,
+        secret: installState.kimaki_client_secret,
+        guildId: teamId,
+        platform: 'slack',
+        botToken,
+      })
+      if (upsertResult instanceof Error) {
+        throw new Response(upsertResult.message, { status: 500 })
+      }
+
+      const updateRowsResult = await prisma.gateway_clients.updateMany({
+        where: {
+          guild_id: teamId,
+          platform: 'slack',
+        },
+        data: {
+          bot_token: botToken,
+        },
+      }).catch((cause) => {
+        return new Error('Failed to refresh Slack bot tokens for team', { cause })
+      })
+      if (updateRowsResult instanceof Error) {
+        throw new Response(updateRowsResult.message, { status: 500 })
+      }
+
+      const callbackUrl = parseAllowedCallbackUrl(installState.kimaki_callback_url)
+      if (callbackUrl) {
+        callbackUrl.searchParams.set('guild_id', teamId)
+        callbackUrl.searchParams.set('team_id', teamId)
+        callbackUrl.searchParams.set('client_id', installState.kimaki_client_id)
+        return new Response(null, {
+          status: 302,
+          headers: { Location: callbackUrl.toString() },
+        })
+      }
+
+      const successUrl = new URL('/install-success', new URL(request.url).origin)
+      successUrl.searchParams.set('guild_id', teamId)
+      successUrl.searchParams.set('team_id', teamId)
+      return new Response(null, {
+        status: 302,
+        headers: { Location: successUrl.toString() },
+      })
+    },
+  })
+
+  // Success page after the OAuth callback completes.
+  // better-auth redirects here after processing the callback.
+  .route({
+    method: 'GET',
+    path: '/install-success',
+    handler({ request }) {
+      const url = new URL(request.url)
+      const guildId = url.searchParams.get('guild_id') ?? url.searchParams.get('team_id') ?? undefined
+      return new Response(renderSuccessPage({ guildId }), {
+        headers: { 'Content-Type': 'text/html; charset=utf-8' },
+      })
+    },
+  })
+
+  // Slack gateway: Discord REST proxy → Durable Object
+  // Only active on slack-gateway.kimaki.xyz host.
+  .route({
+    method: '*',
+    path: '/api/v10/*',
+    async handler({ request, state }) {
+      if (!isSlackGatewayHost(request.url)) {
+        return new Response('Not Found', { status: 404 })
+      }
+
+      const clientIdResult = getClientIdFromAuthorizationHeader(request.headers)
+      if (clientIdResult instanceof Error) {
+        return new Response(JSON.stringify({ error: clientIdResult.message }), {
+          status: 401,
+          headers: { 'Content-Type': 'application/json' },
+        })
+      }
+
+      const clientId = clientIdResult
+      const stub = state.env.SLACK_GATEWAY.getByName(clientId)
+      const url = new URL(request.url)
+      const response = await stub.handleDiscordRest({
+        clientId,
+        url: request.url,
+        path: url.pathname,
+        method: request.method,
+        headers: headersToPairs(request.headers),
+        body: await request.text(),
+      })
+
+      return toResponse(response)
+    },
+  })
+
+  .route({
     method: 'POST',
-    headers: {
-      Authorization: `Basic ${btoa(`${c.env.SLACK_CLIENT_ID}:${c.env.SLACK_CLIENT_SECRET}`)}`,
-      'content-type': 'application/x-www-form-urlencoded',
-    },
-    body: new URLSearchParams({
-      code,
-      redirect_uri: redirectUri,
-    }),
-  }).catch((cause) => {
-    return new Error('Failed to exchange Slack OAuth code', { cause })
-  })
-  if (slackAccessResponse instanceof Error) {
-    return c.text(slackAccessResponse.message, 500)
-  }
-
-  const slackAccessPayload = await slackAccessResponse.json().catch((cause) => {
-    return new Error('Failed to parse Slack OAuth response', { cause })
-  })
-  if (slackAccessPayload instanceof Error) {
-    return c.text(slackAccessPayload.message, 500)
-  }
-  if (!isSlackOAuthAccessResponse(slackAccessPayload)) {
-    return c.text('Slack OAuth response had an unexpected shape', 500)
-  }
-  if (!slackAccessPayload.ok) {
-    return c.text(`Slack OAuth exchange failed: ${slackAccessPayload.error ?? 'unknown_error'}`, 400)
-  }
-
-  const teamId = slackAccessPayload.team?.id
-  const botToken = slackAccessPayload.access_token
-  if (!(teamId && botToken)) {
-    return c.text('Slack OAuth response missing team.id or access_token', 500)
-  }
-
-  const prisma = createPrisma(c.env.HYPERDRIVE.connectionString)
-
-  const upsertResult = await upsertGatewayClientAndRefreshKv({
-    env: c.env,
-    clientId: installState.kimaki_client_id,
-    secret: installState.kimaki_client_secret,
-    guildId: teamId,
-    platform: 'slack',
-    botToken,
-  })
-  if (upsertResult instanceof Error) {
-    return c.text(upsertResult.message, 500)
-  }
-
-  const updateRowsResult = await prisma.gateway_clients.updateMany({
-    where: {
-      guild_id: teamId,
-      platform: 'slack',
-    },
-    data: {
-      bot_token: botToken,
-    },
-  }).catch((cause) => {
-    return new Error('Failed to refresh Slack bot tokens for team', { cause })
-  })
-  if (updateRowsResult instanceof Error) {
-    return c.text(updateRowsResult.message, 500)
-  }
-
-  const callbackUrl = parseAllowedCallbackUrl(installState.kimaki_callback_url)
-  if (callbackUrl) {
-    callbackUrl.searchParams.set('guild_id', teamId)
-    callbackUrl.searchParams.set('team_id', teamId)
-    callbackUrl.searchParams.set('client_id', installState.kimaki_client_id)
-    return new Response(null, {
-      status: 302,
-      headers: { Location: callbackUrl.toString() },
-    })
-  }
-
-  const successUrl = new URL('/install-success', new URL(c.req.url).origin)
-  successUrl.searchParams.set('guild_id', teamId)
-  successUrl.searchParams.set('team_id', teamId)
-  return c.redirect(successUrl.toString(), 302)
-})
-
-// Success page after the OAuth callback completes.
-// better-auth redirects here after processing the callback.
-app.get('/install-success', (c) => {
-  const guildId = c.req.query('guild_id') ?? c.req.query('team_id') ?? undefined
-  return c.html(renderSuccessPage({ guildId }))
-})
-
-app.all('/api/v10/*', async (c, next) => {
-  if (!isSlackGatewayHost(c.req.url)) {
-    return next()
-  }
-
-  const clientIdResult = getClientIdFromAuthorizationHeader(c.req.raw.headers)
-  if (clientIdResult instanceof Error) {
-    return c.json({ error: clientIdResult.message }, 401)
-  }
-
-  const clientId = clientIdResult
-  const stub = c.env.SLACK_GATEWAY.getByName(clientId)
-  const response = await stub.handleDiscordRest({
-    clientId,
-    url: c.req.url,
-    path: c.req.path,
-    method: c.req.method,
-    headers: headersToPairs(c.req.raw.headers),
-    body: await c.req.text(),
-  })
-
-  return toResponse(response)
-})
-
-app.post('/slack/events', async (c, next) => {
-  if (!isSlackGatewayHost(c.req.url)) {
-    return next()
-  }
-  const body = await c.req.text()
-  const teamId = getTeamIdForWebhookEvent({
-    body,
-    contentType: c.req.header('content-type') || undefined,
-  })
-  if (!teamId) {
-    console.error('[slack-webhook-team-id-missing]', {
-      path: c.req.path,
-      contentType: c.req.header('content-type') || '',
-      bodySummary: summarizeSlackWebhookBodyForLogs({
+    path: '/slack/events',
+    async handler({ request, state }) {
+      if (!isSlackGatewayHost(request.url)) {
+        return new Response('Not Found', { status: 404 })
+      }
+      const body = await request.text()
+      const contentType = request.headers.get('content-type') || undefined
+      const teamId = getTeamIdForWebhookEvent({
         body,
-        contentType: c.req.header('content-type') || undefined,
-      }),
-    })
-    return c.json({ error: 'Could not resolve Slack team_id from webhook payload' }, 400)
-  }
+        contentType,
+      })
+      if (!teamId) {
+        console.error('[slack-webhook-team-id-missing]', {
+          path: new URL(request.url).pathname,
+          contentType: contentType || '',
+          bodySummary: summarizeSlackWebhookBodyForLogs({
+            body,
+            contentType,
+          }),
+        })
+        return new Response(
+          JSON.stringify({ error: 'Could not resolve Slack team_id from webhook payload' }),
+          { status: 400, headers: { 'Content-Type': 'application/json' } },
+        )
+      }
 
-  const clientIdsResult = await resolveClientIdsForTeamId({
-    teamId,
-    env: c.env,
+      const clientIdsResult = await resolveClientIdsForTeamId({
+        teamId,
+        env: state.env,
+      })
+      if (clientIdsResult instanceof Error) {
+        return new Response(
+          JSON.stringify({ error: clientIdsResult.message }),
+          { status: 500, headers: { 'Content-Type': 'application/json' } },
+        )
+      }
+      if (clientIdsResult.length === 0) {
+        return new Response(
+          JSON.stringify({ error: 'No clients found for Slack team_id' }),
+          { status: 404, headers: { 'Content-Type': 'application/json' } },
+        )
+      }
+
+      const fanoutResults = await Promise.allSettled(clientIdsResult.map(async (clientId) => {
+        const stub = state.env.SLACK_GATEWAY.getByName(clientId)
+        const response = await stub.handleSlackWebhook({
+          clientId,
+          url: request.url,
+          path: new URL(request.url).pathname,
+          method: request.method,
+          headers: headersToPairs(request.headers),
+          body,
+        })
+        return {
+          clientId,
+          response,
+        }
+      }))
+
+      const rejectedResults = fanoutResults.filter((result) => {
+        return result.status === 'rejected'
+      })
+      if (rejectedResults.length > 0) {
+        console.error('[slack-webhook-fanout-rejected]', {
+          teamId,
+          rejectedCount: rejectedResults.length,
+          totalClients: clientIdsResult.length,
+          reasons: rejectedResults.map((result) => {
+            return summarizeErrorReason(result.reason)
+          }),
+        })
+      }
+
+      const fulfilledResults = fanoutResults.flatMap((result) => {
+        if (result.status !== 'fulfilled') {
+          return []
+        }
+        return [result.value]
+      })
+
+      const successfulResult = fulfilledResults.find((result) => {
+        return result.response.status < 400
+      })
+      if (successfulResult) {
+        return toResponse(successfulResult.response)
+      }
+
+      const failedResponse = fulfilledResults.find((result) => {
+        return result.response.status >= 400
+      })
+      if (failedResponse) {
+        return toResponse(failedResponse.response)
+      }
+
+      return new Response(
+        JSON.stringify({ error: 'Failed to fan out Slack webhook to client durable objects' }),
+        { status: 502, headers: { 'Content-Type': 'application/json' } },
+      )
+    },
   })
-  if (clientIdsResult instanceof Error) {
-    return c.json({ error: clientIdsResult.message }, 500)
-  }
-  if (clientIdsResult.length === 0) {
-    return c.json({ error: 'No clients found for Slack team_id' }, 404)
-  }
 
-  const fanoutResults = await Promise.allSettled(clientIdsResult.map(async (clientId) => {
-    const stub = c.env.SLACK_GATEWAY.getByName(clientId)
-    const response = await stub.handleSlackWebhook({
-      clientId,
-      url: c.req.url,
-      path: c.req.path,
-      method: c.req.method,
-      headers: headersToPairs(c.req.raw.headers),
-      body,
-    })
-    return {
-      clientId,
-      response,
-    }
-  }))
+  .route({
+    method: '*',
+    path: '/gateway',
+    async handler({ request, state }) {
+      if (!isSlackGatewayHost(request.url)) {
+        return new Response('Not Found', { status: 404 })
+      }
 
-  const rejectedResults = fanoutResults.filter((result) => {
-    return result.status === 'rejected'
-  })
-  if (rejectedResults.length > 0) {
-    console.error('[slack-webhook-fanout-rejected]', {
-      teamId,
-      rejectedCount: rejectedResults.length,
-      totalClients: clientIdsResult.length,
-      reasons: rejectedResults.map((result) => {
-        return summarizeErrorReason(result.reason)
-      }),
-    })
-  }
+      const url = new URL(request.url)
+      const clientId = url.searchParams.get('clientId')
+      if (!clientId) {
+        return new Response(
+          JSON.stringify({ error: 'Missing clientId query parameter' }),
+          { status: 400, headers: { 'Content-Type': 'application/json' } },
+        )
+      }
 
-  const fulfilledResults = fanoutResults.flatMap((result) => {
-    if (result.status !== 'fulfilled') {
-      return []
-    }
-    return [result.value]
+      return proxyGatewayToDurableObject({
+        request,
+        clientId,
+        stub: state.env.SLACK_GATEWAY.getByName(clientId),
+      })
+    },
   })
 
-  const successfulResult = fulfilledResults.find((result) => {
-    return result.response.status < 400
+  .route({
+    method: '*',
+    path: '/gateway/*',
+    async handler({ request, state }) {
+      if (!isSlackGatewayHost(request.url)) {
+        return new Response('Not Found', { status: 404 })
+      }
+
+      const url = new URL(request.url)
+      const clientId = url.searchParams.get('clientId')
+      if (!clientId) {
+        return new Response(
+          JSON.stringify({ error: 'Missing clientId query parameter' }),
+          { status: 400, headers: { 'Content-Type': 'application/json' } },
+        )
+      }
+
+      return proxyGatewayToDurableObject({
+        request,
+        clientId,
+        stub: state.env.SLACK_GATEWAY.getByName(clientId),
+      })
+    },
   })
-  if (successfulResult) {
-    return toResponse(successfulResult.response)
-  }
 
-  const failedResponse = fulfilledResults.find((result) => {
-    return result.response.status >= 400
+  // Mount better-auth handler for auth routes (GET and POST only).
+  // Handles /api/auth/callback/discord (OAuth callback) and other
+  // better-auth endpoints (session management, etc.).
+  .route({
+    method: 'GET',
+    path: '/api/auth/*',
+    async handler({ request, state }) {
+      const baseURL = new URL(request.url).origin
+      const auth = createAuth({ env: state.env, baseURL })
+      return auth.handler(request)
+    },
   })
-  if (failedResponse) {
-    return toResponse(failedResponse.response)
-  }
-
-  return c.json({ error: 'Failed to fan out Slack webhook to client durable objects' }, 502)
-})
-
-app.all('/gateway', async (c, next) => {
-  if (!isSlackGatewayHost(c.req.url)) {
-    return next()
-  }
-
-  const clientId = c.req.query('clientId')
-  if (!clientId) {
-    return c.json({ error: 'Missing clientId query parameter' }, 400)
-  }
-
-  return proxyGatewayToDurableObject({
-    request: c.req.raw,
-    clientId,
-    stub: c.env.SLACK_GATEWAY.getByName(clientId),
+  .route({
+    method: 'POST',
+    path: '/api/auth/*',
+    async handler({ request, state }) {
+      const baseURL = new URL(request.url).origin
+      const auth = createAuth({ env: state.env, baseURL })
+      return auth.handler(request)
+    },
   })
-})
 
-app.all('/gateway/*', async (c, next) => {
-  if (!isSlackGatewayHost(c.req.url)) {
-    return next()
-  }
+  // CLI polling endpoint. The kimaki CLI polls this every 2s during onboarding
+  // to check if the user has completed the bot authorization flow.
+  // Returns 404 if not ready, 200 with guild_id if the client has been registered.
+  .route({
+    method: 'GET',
+    path: '/api/onboarding/status',
+    async handler({ request, state }) {
+      const url = new URL(request.url)
+      const clientId = url.searchParams.get('client_id')
+      const secret = url.searchParams.get('secret')
 
-  const clientId = c.req.query('clientId')
-  if (!clientId) {
-    return c.json({ error: 'Missing clientId query parameter' }, 400)
-  }
+      if (!clientId || !secret) {
+        return new Response(
+          JSON.stringify({ error: 'Missing client_id or secret' }),
+          { status: 400, headers: { 'Content-Type': 'application/json' } },
+        )
+      }
 
-  return proxyGatewayToDurableObject({
-    request: c.req.raw,
-    clientId,
-    stub: c.env.SLACK_GATEWAY.getByName(clientId),
-  })
-})
-
-// Mount better-auth handler for all auth routes.
-// Handles /api/auth/callback/discord (OAuth callback) and other
-// better-auth endpoints (session management, etc.).
-app.on(['POST', 'GET'], '/api/auth/*', async (c) => {
-  const baseURL = new URL(c.req.url).origin
-  const auth = createAuth({ env: c.env, baseURL })
-  return auth.handler(c.req.raw)
-})
-
-// CLI polling endpoint. The kimaki CLI polls this every 2s during onboarding
-// to check if the user has completed the bot authorization flow.
-// Returns 404 if not ready, 200 with guild_id if the client has been registered.
-app.get('/api/onboarding/status', async (c) => {
-  const clientId = c.req.query('client_id')
-  const secret = c.req.query('secret')
-
-  if (!clientId || !secret) {
-    return c.json({ error: 'Missing client_id or secret' }, 400)
-  }
-
-  const prisma = createPrisma(c.env.HYPERDRIVE.connectionString)
-  const row = await prisma.gateway_clients
-    .findFirst({
-      where: { client_id: clientId, secret },
-      include: {
-        user: {
+      const prisma = createPrisma(state.env.HYPERDRIVE.connectionString)
+      const row = await prisma.gateway_clients
+        .findFirst({
+          where: { client_id: clientId, secret },
           include: {
-            accounts: {
-              where: {
-                providerId: {
-                  in: ['discord', 'slack'],
+            user: {
+              include: {
+                accounts: {
+                  where: {
+                    providerId: {
+                      in: ['discord', 'slack'],
+                    },
+                  },
                 },
-              },
-              select: {
-                accountId: true,
-                providerId: true,
               },
             },
           },
-        },
-      },
-    })
-    .catch((cause) => {
-      return new Error('Failed to lookup gateway client', { cause })
-    })
-  if (row instanceof Error) {
-    return c.json({ error: row.message }, 500)
-  }
+        })
+        .catch((cause) => {
+          return new Error('Failed to lookup gateway client', { cause })
+        })
+      if (row instanceof Error) {
+        return new Response(
+          JSON.stringify({ error: row.message }),
+          { status: 500, headers: { 'Content-Type': 'application/json' } },
+        )
+      }
 
-  if (!row) {
-    return c.json({ error: 'Not found' }, 404)
-  }
+      if (!row) {
+        return new Response(
+          JSON.stringify({ error: 'Not found' }),
+          { status: 404, headers: { 'Content-Type': 'application/json' } },
+        )
+      }
 
-  const discordUserId = row.user?.accounts.find((account) => {
-    return account.providerId === 'discord'
-  })?.accountId
-  const slackUserId = row.user?.accounts.find((account) => {
-    return account.providerId === 'slack'
-  })?.accountId
-  return c.json({
-    guild_id: row.guild_id,
-    team_id: row.platform === 'slack' ? row.guild_id : undefined,
-    discord_user_id: discordUserId,
-    slack_user_id: slackUserId,
+      const discordUserId = row.user?.accounts.find((account) => {
+        return account.providerId === 'discord'
+      })?.accountId
+      const slackUserId = row.user?.accounts.find((account) => {
+        return account.providerId === 'slack'
+      })?.accountId
+      return {
+        guild_id: row.guild_id,
+        team_id: row.platform === 'slack' ? row.guild_id : undefined,
+        discord_user_id: discordUserId,
+        slack_user_id: slackUserId,
+      }
+    },
   })
-})
 
-export default app
+export default {
+  fetch(request: Request, env: Env) {
+    return app.handle(request, { state: { env } })
+  },
+}
 
 function toResponse(response: {
   status: number
@@ -582,7 +702,6 @@ async function resolveClientIdsForTeamId({
     // In Slack bridge mode, gateway_clients.guild_id stores Slack team_id.
     // We intentionally reuse the same column to avoid a separate mapping table.
     where: { guild_id: teamId },
-    select: { client_id: true },
     orderBy: [
       { updated_at: 'desc' },
       { created_at: 'desc' },
