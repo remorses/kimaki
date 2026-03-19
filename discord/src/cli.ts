@@ -837,7 +837,7 @@ async function registerCommands({
     new SlashCommandBuilder()
       .setName('merge-worktree')
       .setDescription(
-        'Squash-merge worktree into the default branch. Optionally pick a target branch.',
+        'Squash-merge worktree into default branch. Safe if main has uncommitted changes (aborts before pushing).',
       )
       .addStringOption((option) => {
         option

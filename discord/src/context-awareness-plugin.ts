@@ -149,10 +149,13 @@ const contextAwarenessPlugin: Plugin = async ({ directory, client }) => {
   const sessionGitStates = new Map<string, GitState>()
   const sessionLastMessageTime = new Map<string, number>()
   const sessionMemoryInjected = new Set<string>()
-  // Track the resolved working directory per session so we can detect
-  // when it differs from the plugin-level project directory (worktree case)
-  // or changes between messages.
-  const sessionDirectories = new Map<string, string>()
+  // Cache for resolved session directories (avoids repeated session.get() calls).
+  const sessionDirCache = new Map<string, string>()
+  // Track which sessions have had the pwd notice injected. Separate from
+  // the cache because resolveSessionDirectory populates the cache before
+  // we compare, so using the same map for both would always see the value
+  // as "already known" and skip injection.
+  const sessionPwdAnnounced = new Map<string, string>()
 
   return {
     'chat.message': async (input, output) => {
@@ -178,7 +181,7 @@ const contextAwarenessPlugin: Plugin = async ({ directory, client }) => {
           const sessionDir = await resolveSessionDirectory({
             client,
             sessionID,
-            cache: sessionDirectories,
+            cache: sessionDirCache,
           })
           // Use session directory for git state resolution so branch detection
           // is accurate for worktree sessions (they have their own HEAD).
@@ -194,24 +197,21 @@ const contextAwarenessPlugin: Plugin = async ({ directory, client }) => {
           // This covers the /new-worktree mid-session case: old session is
           // cleared, new session is created under the worktree path, and the
           // first user message needs to tell the agent about the new paths.
-          const previousDir = sessionDirectories.get(sessionID)
-          if (sessionDir && sessionDir !== directory) {
+          if (sessionDir && sessionDir !== directory && sessionPwdAnnounced.get(sessionID) !== sessionDir) {
             // Session is in a worktree (or different directory than project root).
-            // Inject on first message of this session only.
-            if (!previousDir || previousDir !== sessionDir) {
-              sessionDirectories.set(sessionID, sessionDir)
-              output.parts.push({
-                id: `prt_${crypto.randomUUID()}`,
-                sessionID,
-                messageID,
-                type: 'text' as const,
-                text:
-                  `\n[working directory is ${sessionDir} (git worktree of ${directory}). ` +
-                  `All file reads, writes, and edits must use paths under ${sessionDir}, ` +
-                  `not ${directory}.]`,
-                synthetic: true,
-              })
-            }
+            // Inject once per distinct directory so the agent knows to use new paths.
+            sessionPwdAnnounced.set(sessionID, sessionDir)
+            output.parts.push({
+              id: `prt_${crypto.randomUUID()}`,
+              sessionID,
+              messageID,
+              type: 'text' as const,
+              text:
+                `\n[working directory is ${sessionDir} (git worktree of ${directory}). ` +
+                `All file reads, writes, and edits must use paths under ${sessionDir}, ` +
+                `not ${directory}.]`,
+              synthetic: true,
+            })
           }
 
           // -- MEMORY.md injection --
@@ -339,7 +339,8 @@ const contextAwarenessPlugin: Plugin = async ({ directory, client }) => {
           sessionGitStates.delete(id)
           sessionLastMessageTime.delete(id)
           sessionMemoryInjected.delete(id)
-          sessionDirectories.delete(id)
+          sessionDirCache.delete(id)
+          sessionPwdAnnounced.delete(id)
         },
         catch: (error) => {
           return new Error('context-awareness event hook failed', { cause: error })
