@@ -82,7 +82,7 @@ export class SlackBridgeDO extends DurableObject<HonoBindings> {
   async fetch(request: Request): Promise<Response> {
     const url = new URL(request.url)
 
-    if (url.pathname === '/gateway' || url.pathname.startsWith('/gateway/')) {
+    if (url.pathname === '/slack/gateway' || url.pathname.startsWith('/slack/gateway/')) {
       return this.handleGatewayUpgrade(request)
     }
 
@@ -271,7 +271,7 @@ export class SlackBridgeDO extends DurableObject<HonoBindings> {
     }
     const botUsername = authResult.user ?? 'kimaki'
 
-    let publicGatewayUrl = 'wss://slack-gateway.kimaki.xyz/gateway'
+    let publicGatewayUrl = 'wss://slack-gateway.kimaki.xyz/slack/gateway'
 
     const gatewaySessionManager = new GatewaySessionManager({
       loadState: async () => {
@@ -612,7 +612,7 @@ async function serializeResponse(response: Response): Promise<BridgeRpcResponse>
 function buildGatewayWebSocketUrlFromRequestUrl(requestUrl: string): string {
   const baseUrl = new URL(requestUrl)
   const protocol = baseUrl.protocol === 'https:' ? 'wss:' : 'ws:'
-  return new URL('/gateway', `${protocol}//${baseUrl.host}`).toString()
+  return new URL('/slack/gateway', `${protocol}//${baseUrl.host}`).toString()
 }
 
 function parseGatewayToken(

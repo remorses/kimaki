@@ -31,7 +31,7 @@ describe('discord.js query propagation', () => {
         res.writeHead(200, { 'content-type': 'application/json' })
         res.end(
           JSON.stringify({
-            url: 'ws://127.0.0.1:65535/gateway?clientId=test-client&via=bot-response',
+            url: 'ws://127.0.0.1:65535/slack/gateway?clientId=test-client&via=bot-response',
             shards: 1,
             session_start_limit: {
               total: 1000,

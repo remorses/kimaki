@@ -1989,16 +1989,16 @@ function resolveGatewayUrl({
   if (publicBaseUrl) {
     return buildWebSocketUrlFromHttpBase({
       httpBaseUrl: publicBaseUrl,
-      path: '/gateway',
+      path: '/slack/gateway',
     })
   }
   if (request) {
     return buildWebSocketUrlFromHttpBase({
       httpBaseUrl: request.url,
-      path: '/gateway',
+      path: '/slack/gateway',
     })
   }
-  return `ws://127.0.0.1:${port}/gateway`
+  return `ws://127.0.0.1:${port}/slack/gateway`
 }
 
 function buildWebSocketUrlFromHttpBase({

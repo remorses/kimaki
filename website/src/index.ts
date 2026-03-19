@@ -481,7 +481,7 @@ const app = new Spiceflow()
 
   .route({
     method: '*',
-    path: '/gateway',
+    path: '/slack/gateway',
     async handler({ request, state }) {
       if (!isSlackGatewayHost(request.url)) {
         return new Response('Not Found', { status: 404 })
@@ -506,7 +506,7 @@ const app = new Spiceflow()
 
   .route({
     method: '*',
-    path: '/gateway/*',
+    path: '/slack/gateway/*',
     async handler({ request, state }) {
       if (!isSlackGatewayHost(request.url)) {
         return new Response('Not Found', { status: 404 })

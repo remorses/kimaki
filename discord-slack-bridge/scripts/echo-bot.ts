@@ -237,7 +237,7 @@ function createDeployedRuntime({
   workspaceId: string
 } {
   const baseUrl = new URL(gatewayMode.baseUrl)
-  const gatewayUrl = new URL('/gateway', baseUrl)
+  const gatewayUrl = new URL('/slack/gateway', baseUrl)
   gatewayUrl.protocol = gatewayUrl.protocol === 'https:' ? 'wss:' : 'ws:'
   gatewayUrl.searchParams.set(
     'clientId',
