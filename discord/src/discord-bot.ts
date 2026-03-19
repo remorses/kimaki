@@ -1066,7 +1066,12 @@ export async function startDiscordBot({
     disposeRuntime(thread.id)
   })
 
-  await discordClient.login(token)
+  // Skip login if the caller already connected the client (e.g. cli.ts logs in
+  // before calling startDiscordBot). Calling login() again destroys the existing
+  // WebSocket (close code 1000) and triggers a spurious ShardReconnecting event.
+  if (!discordClient.isReady()) {
+    await discordClient.login(token)
+  }
 
   startHeapMonitor()
   const stopTaskRunner = startTaskRunner({ token })
