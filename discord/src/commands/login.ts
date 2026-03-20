@@ -149,6 +149,20 @@ const PROVIDER_POPULARITY_ORDER: string[] = [
 
 // ── Helpers ─────────────────────────────────────────────────────
 
+function extractErrorMessage({
+  error,
+  fallback,
+}: {
+  error: unknown
+  fallback: string
+}): string {
+  if (!error || typeof error !== 'object') {
+    return fallback
+  }
+  const parsed = error as { message?: string; data?: { message?: string } }
+  return parsed.data?.message || parsed.message || fallback
+}
+
 function shouldShowPrompt(
   prompt: AuthPrompt,
   inputs: Record<string, string>,
@@ -852,26 +866,24 @@ export async function handleOAuthCodeModalSubmit(
     })
 
     if (callbackResponse.error) {
-      const errorData = callbackResponse.error as
-        | { data?: { message?: string } }
-        | undefined
+      pendingLoginContexts.delete(hash)
       await interaction.editReply({
-        content: `**Authentication Failed**\n${errorData?.data?.message || 'Authorization code was invalid or expired'}`,
+        content: `**Authentication Failed**\n${extractErrorMessage({ error: callbackResponse.error, fallback: 'Authorization code was invalid or expired' })}`,
         components: [],
       })
       return
     }
 
     await getClient().instance.dispose({ directory: ctx.dir })
+    pendingLoginContexts.delete(hash)
 
     await interaction.editReply({
       content: `✅ **Successfully authenticated with ${ctx.providerName}!**\n\nYou can now use models from this provider.`,
       components: [],
     })
-
-    pendingLoginContexts.delete(hash)
   } catch (error) {
     loginLogger.error('OAuth code submission error:', error)
+    pendingLoginContexts.delete(hash)
     await interaction.editReply({
       content: `**Authentication Failed**\n${error instanceof Error ? error.message : 'Unknown error'}`,
       components: [],
@@ -1073,26 +1085,24 @@ async function startOAuthFlow(
     })
 
     if (callbackResponse.error) {
-      const errorData = callbackResponse.error as
-        | { data?: { message?: string } }
-        | undefined
+      pendingLoginContexts.delete(hash)
       await interaction.editReply({
-        content: `**Authentication Failed**\n${errorData?.data?.message || 'Authorization was not completed'}`,
+        content: `**Authentication Failed**\n${extractErrorMessage({ error: callbackResponse.error, fallback: 'Authorization was not completed' })}`,
         components: [],
       })
       return
     }
 
     await getClient().instance.dispose({ directory: ctx.dir })
+    pendingLoginContexts.delete(hash)
 
     await interaction.editReply({
       content: `✅ **Successfully authenticated with ${ctx.providerName}!**\n\nYou can now use models from this provider.`,
       components: [],
     })
-
-    pendingLoginContexts.delete(hash)
   } catch (error) {
     loginLogger.error('OAuth flow error:', error)
+    pendingLoginContexts.delete(hash)
     await interaction.editReply({
       content: `**Authentication Failed**\n${error instanceof Error ? error.message : 'Unknown error'}`,
       components: [],
