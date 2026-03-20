@@ -563,6 +563,7 @@ async function startSingleServer(): Promise<ServerStartError | SingleServer> {
           },
         } satisfies Config),
         OPENCODE_PORT: port.toString(),
+        KIMAKI: '1',
         KIMAKI_DATA_DIR: getDataDir(),
         KIMAKI_LOCK_PORT: getLockPort().toString(),
         ...(gatewayToken && { KIMAKI_DB_AUTH_TOKEN: gatewayToken }),
