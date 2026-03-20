@@ -210,6 +210,65 @@ export async function listScheduledTasks({
   return rows.map((row) => toScheduledTask(row))
 }
 
+export async function getScheduledTask(
+  taskId: number,
+): Promise<ScheduledTask | null> {
+  const prisma = await getPrisma()
+  const row = await prisma.scheduled_tasks.findUnique({
+    where: { id: taskId },
+  })
+  return row ? toScheduledTask(row) : null
+}
+
+export async function updateScheduledTask({
+  taskId,
+  payloadJson,
+  promptPreview,
+  scheduleKind,
+  runAt,
+  cronExpr,
+  timezone,
+  nextRunAt,
+}: {
+  taskId: number
+  payloadJson: string
+  promptPreview: string
+  scheduleKind?: ScheduledTaskScheduleKind
+  runAt?: Date | null
+  cronExpr?: string | null
+  timezone?: string | null
+  nextRunAt?: Date
+}): Promise<boolean> {
+  const prisma = await getPrisma()
+  const data: Record<string, unknown> = {
+    payload_json: payloadJson,
+    prompt_preview: promptPreview,
+  }
+  if (scheduleKind !== undefined) {
+    data.schedule_kind = scheduleKind
+  }
+  if (runAt !== undefined) {
+    data.run_at = runAt
+  }
+  if (cronExpr !== undefined) {
+    data.cron_expr = cronExpr
+  }
+  if (timezone !== undefined) {
+    data.timezone = timezone
+  }
+  if (nextRunAt !== undefined) {
+    data.next_run_at = nextRunAt
+  }
+  const result = await prisma.scheduled_tasks.updateMany({
+    where: {
+      id: taskId,
+      status: 'planned',
+    },
+    data,
+  })
+  return result.count > 0
+}
+
 export async function cancelScheduledTask(taskId: number): Promise<boolean> {
   const prisma = await getPrisma()
   const result = await prisma.scheduled_tasks.updateMany({

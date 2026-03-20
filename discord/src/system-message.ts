@@ -395,6 +395,7 @@ Notification strategy for scheduled tasks:
 Manage scheduled tasks with:
 
 kimaki task list
+kimaki task edit <id> --prompt "new prompt" [--send-at "new schedule"]
 kimaki task delete <id>
 
 \`kimaki session list\` also shows if a session was started by a scheduled \`delay\` or \`cron\` task, including task ID when available.

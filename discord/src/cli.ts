@@ -52,6 +52,8 @@ import {
   createScheduledTask,
   listScheduledTasks,
   cancelScheduledTask,
+  getScheduledTask,
+  updateScheduledTask,
   getSessionStartSourcesBySessionIds,
 } from './database.js'
 import { ShareMarkdown } from './markdown.js'
@@ -121,6 +123,7 @@ import { startIpcPolling, stopIpcPolling } from './ipc-polling.js'
 import {
   getPromptPreview,
   parseSendAtValue,
+  parseScheduledTaskPayload,
   serializeScheduledTaskPayload,
   type ParsedSendAt,
   type ScheduledTaskPayload,
@@ -3666,6 +3669,99 @@ cli
       }
 
       cliLogger.log(`Cancelled task ${taskId}`)
+      process.exit(0)
+    } catch (error) {
+      cliLogger.error(
+        'Error:',
+        error instanceof Error ? error.stack : String(error),
+      )
+      process.exit(EXIT_NO_RESTART)
+    }
+  })
+
+cli
+  .command('task edit <id>', 'Edit prompt or schedule of a planned task')
+  .option('--prompt <prompt>', 'New prompt text')
+  .option('--send-at <sendAt>', 'New schedule (UTC ISO date or cron expression)')
+  .action(async (id: string, options: { prompt?: string; sendAt?: string }) => {
+    try {
+      const trimmedPrompt =
+        options.prompt === undefined ? undefined : options.prompt.trim()
+
+      if (!trimmedPrompt && !options.sendAt) {
+        cliLogger.error('Provide at least --prompt or --send-at')
+        process.exit(EXIT_NO_RESTART)
+      }
+      if (trimmedPrompt !== undefined && trimmedPrompt.length === 0) {
+        cliLogger.error('--prompt cannot be empty')
+        process.exit(EXIT_NO_RESTART)
+      }
+      if (trimmedPrompt !== undefined && trimmedPrompt.length > 1900) {
+        cliLogger.error('--prompt currently supports up to 1900 characters')
+        process.exit(EXIT_NO_RESTART)
+      }
+
+      const taskId = Number.parseInt(id, 10)
+      if (Number.isNaN(taskId) || taskId < 1) {
+        cliLogger.error(`Invalid task ID: ${id}`)
+        process.exit(EXIT_NO_RESTART)
+      }
+
+      await initDatabase()
+      const task = await getScheduledTask(taskId)
+      if (!task) {
+        cliLogger.error(`Task ${taskId} not found`)
+        process.exit(EXIT_NO_RESTART)
+      }
+      if (task.status !== 'planned') {
+        cliLogger.error(
+          `Task ${taskId} is ${task.status}, only planned tasks can be edited`,
+        )
+        process.exit(EXIT_NO_RESTART)
+      }
+
+      const existingPayload = parseScheduledTaskPayload(task.payload_json)
+      if (existingPayload instanceof Error) {
+        cliLogger.error(`Failed to parse task payload: ${existingPayload.message}`)
+        process.exit(EXIT_NO_RESTART)
+      }
+
+      const newPrompt = trimmedPrompt ?? existingPayload.prompt
+      const updatedPayload: ScheduledTaskPayload = {
+        ...existingPayload,
+        prompt: newPrompt,
+      }
+
+      const updateData: Parameters<typeof updateScheduledTask>[0] = {
+        taskId,
+        payloadJson: serializeScheduledTaskPayload(updatedPayload),
+        promptPreview: getPromptPreview(newPrompt),
+      }
+
+      if (options.sendAt) {
+        const parsed = parseSendAtValue({
+          value: options.sendAt,
+          now: new Date(),
+          timezone: 'UTC',
+        })
+        if (parsed instanceof Error) {
+          cliLogger.error(`Invalid --send-at: ${parsed.message}`)
+          process.exit(EXIT_NO_RESTART)
+        }
+        updateData.scheduleKind = parsed.scheduleKind
+        updateData.runAt = parsed.runAt
+        updateData.cronExpr = parsed.cronExpr
+        updateData.timezone = parsed.timezone
+        updateData.nextRunAt = parsed.nextRunAt
+      }
+
+      const updated = await updateScheduledTask(updateData)
+      if (!updated) {
+        cliLogger.error(`Task ${taskId} could not be updated (status may have changed)`)
+        process.exit(EXIT_NO_RESTART)
+      }
+
+      cliLogger.log(`Updated task ${taskId}`)
       process.exit(0)
     } catch (error) {
       cliLogger.error(
