@@ -52,8 +52,10 @@ import {
 import { handleUnsetModelCommand } from './commands/unset-model.js'
 import {
   handleLoginCommand,
-  handleLoginProviderSelectMenu,
-  handleLoginMethodSelectMenu,
+  handleLoginSelect,
+  handleLoginTextButton,
+  handleLoginTextModalSubmit,
+  handleLoginApiKeyButton,
   handleApiKeyModalSubmit,
 } from './commands/login.js'
 import {
@@ -404,6 +406,16 @@ export function registerInteractionHandler({
             return
           }
 
+          if (customId.startsWith('login_text_btn:')) {
+            await handleLoginTextButton(interaction)
+            return
+          }
+
+          if (customId.startsWith('login_apikey_btn:')) {
+            await handleLoginApiKeyButton(interaction)
+            return
+          }
+
           if (customId.startsWith('action_button:')) {
             await handleActionButton(interaction)
             return
@@ -483,13 +495,8 @@ export function registerInteractionHandler({
             return
           }
 
-          if (customId.startsWith('login_provider:')) {
-            await handleLoginProviderSelectMenu(interaction)
-            return
-          }
-
-          if (customId.startsWith('login_method:')) {
-            await handleLoginMethodSelectMenu(interaction)
+          if (customId.startsWith('login_select:')) {
+            await handleLoginSelect(interaction)
             return
           }
           return
@@ -508,6 +515,11 @@ export function registerInteractionHandler({
 
           if (customId.startsWith('login_apikey:')) {
             await handleApiKeyModalSubmit(interaction)
+            return
+          }
+
+          if (customId.startsWith('login_text:')) {
+            await handleLoginTextModalSubmit(interaction)
             return
           }
 
