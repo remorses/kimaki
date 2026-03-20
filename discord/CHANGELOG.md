@@ -1,5 +1,38 @@
 # Changelog
 
+## 0.4.79
+
+1. **New `/tasks` command** — list and cancel scheduled tasks created with `kimaki send --send-at`:
+   ```
+   /tasks        — show active scheduled tasks with Cancel buttons
+   /tasks --all  — include completed and failed tasks
+   ```
+   Each row shows the task's schedule, next run time, status, and a Cancel button for active tasks.
+
+2. **New `--permission` flag for `kimaki send`** — restrict which tools an OpenCode session can use on a per-send basis:
+   ```bash
+   kimaki send "Fix the bug" --permission "bash:deny"
+   kimaki send "Review only" --permission "edit:deny" --permission "write:deny"
+   kimaki send "Run tests"   --permission "bash:git *:allow"
+   ```
+   Format is `tool:action` or `tool:pattern:action`. Rules are appended after base permissions so they take priority.
+
+3. **Fixed `/undo`** — now correctly aligns with OpenCode's TUI behavior. Passes the last user message ID (not the assistant message ID) to `session.revert()`, and removes manual message deletion — cleanup happens automatically on the next prompt.
+
+4. **Fixed error replies now trigger Discord notifications** — error messages from failed sessions, permission denials, and voice errors were using silent flags and easy to miss. They now send proper Discord notifications.
+
+5. **Fixed bot responding to non-kimaki threads** — the bot was processing all threads in configured project channels, including user-created threads with nothing to do with kimaki. It now ignores threads that don't have an existing session unless explicitly @mentioned.
+
+6. **Fixed `/login` code-mode OAuth** — when a provider returns `method="code"` (e.g. SSH-based flows), a "Paste authorization code" button now appears so users can complete the flow. Previously the context was deleted immediately, making code mode a dead end.
+
+7. **Fixed queue messages not dispatching when action buttons are shown** — queued messages now dispatch immediately when the session becomes idle, even if action buttons are still visible. Previously the queue was blocked unnecessarily while buttons were on screen.
+
+8. **Fixed cron task timezone** — cron schedules (e.g. `0 10 * * *`) are now always evaluated in UTC, matching what the system message tells the model. Previously they fired at the machine's local time, which was wrong when the server is in a different timezone.
+
+9. **Startup time ~40% faster** — three optimizations reduce time-to-ready: OpenCode health poll interval dropped from 1000ms to 100ms, the OpenCode server now starts earlier (overlapping with Discord login), and `which opencode` / `which bun` checks run in parallel.
+
+10. **Fixed `/login` error messages and stale context cleanup** — consistent error parsing across all login steps, and pending login contexts are now cleaned up on failure instead of lingering until TTL.
+
 ## 0.4.78
 
 1. **New `/screenshare` command** — share your screen via noVNC directly in the browser. Works on macOS (uses built-in Remote Management) and Linux (spawns x11vnc):
