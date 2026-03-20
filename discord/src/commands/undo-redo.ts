@@ -205,18 +205,53 @@ export async function handleRedoCommand({
   }
 
   try {
-    // Check if session has reverted state
-    const sessionResponse = await getClient().session.get({
+    const client = getClient()
+
+    // Fetch session to check existing revert state
+    const sessionResponse = await client.session.get({
       sessionID: sessionId,
     })
 
-    if (!sessionResponse.data?.revert) {
+    const revertMessageID = sessionResponse.data?.revert?.messageID
+    if (!revertMessageID) {
       await command.editReply('Nothing to redo - no previous undo found')
       return
     }
 
-    const response = await getClient().session.unrevert({
+    // Follow the same approach as the OpenCode TUI (use-session-commands.tsx):
+    // find the next user message after the current revert point. If one exists,
+    // move the revert cursor forward to it (one step redo). If none exists,
+    // fully unrevert — we're at the end of the message history.
+    const messagesResponse = await client.session.messages({
       sessionID: sessionId,
+    })
+    const userMessages = (messagesResponse.data ?? []).filter((m) => {
+      return m.info.role === 'user'
+    })
+    const nextMessage = userMessages.find((m) => {
+      return m.info.id > revertMessageID
+    })
+
+    if (!nextMessage) {
+      // No more messages after revert point — fully unrevert
+      const response = await client.session.unrevert({
+        sessionID: sessionId,
+      })
+      if (response.error) {
+        await command.editReply(
+          `Failed to redo: ${JSON.stringify(response.error)}`,
+        )
+        return
+      }
+      await command.editReply('Restored - session fully back to previous state')
+      logger.log(`Session ${sessionId} unrevert completed`)
+      return
+    }
+
+    // Move revert cursor forward one step to the next user message
+    const response = await client.session.revert({
+      sessionID: sessionId,
+      messageID: nextMessage.info.id,
     })
 
     if (response.error) {
@@ -226,8 +261,8 @@ export async function handleRedoCommand({
       return
     }
 
-    await command.editReply(`⏩ **Restored** - session back to previous state`)
-    logger.log(`Session ${sessionId} unrevert completed`)
+    await command.editReply('Restored one step forward')
+    logger.log(`Session ${sessionId} redo: moved revert to ${nextMessage.info.id}`)
   } catch (error) {
     logger.error('[REDO] Error:', error)
     await command.editReply(
