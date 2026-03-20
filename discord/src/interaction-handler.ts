@@ -56,6 +56,8 @@ import {
   handleLoginTextButton,
   handleLoginTextModalSubmit,
   handleLoginApiKeyButton,
+  handleOAuthCodeButton,
+  handleOAuthCodeModalSubmit,
   handleApiKeyModalSubmit,
 } from './commands/login.js'
 import {
@@ -416,6 +418,11 @@ export function registerInteractionHandler({
             return
           }
 
+          if (customId.startsWith('login_oauth_code_btn:')) {
+            await handleOAuthCodeButton(interaction)
+            return
+          }
+
           if (customId.startsWith('action_button:')) {
             await handleActionButton(interaction)
             return
@@ -520,6 +527,11 @@ export function registerInteractionHandler({
 
           if (customId.startsWith('login_text:')) {
             await handleLoginTextModalSubmit(interaction)
+            return
+          }
+
+          if (customId.startsWith('login_oauth_code:')) {
+            await handleOAuthCodeModalSubmit(interaction)
             return
           }
 

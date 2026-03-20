@@ -760,6 +760,125 @@ async function showApiKeyModal(
   await interaction.showModal(modal)
 }
 
+// ── OAuth code submission (code mode) ───────────────────────────
+// When the OAuth flow returns method="code", the user completes login
+// in a browser (possibly on a different machine) and pastes the final
+// callback URL or authorization code here.
+
+export async function handleOAuthCodeButton(
+  interaction: ButtonInteraction,
+): Promise<void> {
+  if (!interaction.customId.startsWith('login_oauth_code_btn:')) {
+    return
+  }
+
+  const hash = interaction.customId.replace('login_oauth_code_btn:', '')
+  const ctx = pendingLoginContexts.get(hash)
+
+  if (!ctx || !ctx.providerId || !ctx.providerName) {
+    await interaction.reply({
+      content: 'Selection expired. Please run /login again.',
+      flags: MessageFlags.Ephemeral,
+    })
+    return
+  }
+
+  const modal = new ModalBuilder()
+    .setCustomId(`login_oauth_code:${hash}`)
+    .setTitle(`${ctx.providerName} Authorization`.slice(0, 45))
+
+  const codeInput = new TextInputBuilder()
+    .setCustomId('oauth_code')
+    .setLabel('Authorization code or callback URL')
+    .setPlaceholder('Paste the code or full callback URL')
+    .setStyle(TextInputStyle.Paragraph)
+    .setRequired(true)
+
+  modal.addComponents(
+    new ActionRowBuilder<TextInputBuilder>().addComponents(codeInput),
+  )
+  await interaction.showModal(modal)
+}
+
+export async function handleOAuthCodeModalSubmit(
+  interaction: ModalSubmitInteraction,
+): Promise<void> {
+  if (!interaction.customId.startsWith('login_oauth_code:')) {
+    return
+  }
+
+  await interaction.deferUpdate()
+
+  const hash = interaction.customId.replace('login_oauth_code:', '')
+  const ctx = pendingLoginContexts.get(hash)
+
+  if (!ctx || !ctx.providerId || !ctx.providerName || ctx.methodIndex === undefined) {
+    await interaction.editReply({
+      content: 'Session expired. Please run /login again.',
+      components: [],
+    })
+    return
+  }
+
+  const code = interaction.fields.getTextInputValue('oauth_code')?.trim()
+  if (!code) {
+    await interaction.editReply({
+      content: 'Authorization code is required.',
+      components: [],
+    })
+    return
+  }
+
+  try {
+    const getClient = await initializeOpencodeForDirectory(ctx.dir)
+    if (getClient instanceof Error) {
+      await interaction.editReply({
+        content: getClient.message,
+        components: [],
+      })
+      return
+    }
+
+    await interaction.editReply({
+      content: `**Authenticating with ${ctx.providerName}**\nVerifying authorization...`,
+      components: [],
+    })
+
+    const callbackResponse = await getClient().provider.oauth.callback({
+      providerID: ctx.providerId,
+      method: ctx.methodIndex,
+      code,
+      directory: ctx.dir,
+    })
+
+    if (callbackResponse.error) {
+      const errorData = callbackResponse.error as
+        | { data?: { message?: string } }
+        | undefined
+      await interaction.editReply({
+        content: `**Authentication Failed**\n${errorData?.data?.message || 'Authorization code was invalid or expired'}`,
+        components: [],
+      })
+      return
+    }
+
+    await getClient().instance.dispose({ directory: ctx.dir })
+
+    await interaction.editReply({
+      content: `✅ **Successfully authenticated with ${ctx.providerName}!**\n\nYou can now use models from this provider.`,
+      components: [],
+    })
+
+    pendingLoginContexts.delete(hash)
+  } catch (error) {
+    loginLogger.error('OAuth code submission error:', error)
+    await interaction.editReply({
+      content: `**Authentication Failed**\n${error instanceof Error ? error.message : 'Unknown error'}`,
+      components: [],
+    })
+  }
+}
+
 export async function handleApiKeyModalSubmit(
   interaction: ModalSubmitInteraction,
 ): Promise<void> {
@@ -863,12 +982,22 @@ async function startOAuthFlow(
     )
     authorizeUrl.searchParams.set('directory', ctx.dir)
 
+    // Include basic auth if OPENCODE_SERVER_PASSWORD is set,
+    // matching the opencode server's optional basicAuth middleware.
+    const fetchHeaders: Record<string, string> = {
+      'Content-Type': 'application/json',
+      'x-opencode-directory': ctx.dir,
+    }
+    const serverPassword = process.env.OPENCODE_SERVER_PASSWORD
+    if (serverPassword) {
+      const username = process.env.OPENCODE_SERVER_USERNAME || 'opencode'
+      fetchHeaders['Authorization'] =
+        `Basic ${Buffer.from(`${username}:${serverPassword}`).toString('base64')}`
+    }
+
     const authorizeRes = await fetch(authorizeUrl, {
       method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'x-opencode-directory': ctx.dir,
-      },
+      headers: fetchHeaders,
       body: JSON.stringify({
         method: ctx.methodIndex,
         ...(hasInputs ? { inputs: ctx.inputs } : {}),
@@ -880,9 +1009,10 @@ async function startOAuthFlow(
       let errorMessage = 'Unknown error'
       try {
         const parsed = JSON.parse(errorText) as {
+          message?: string
           data?: { message?: string }
         }
-        errorMessage = parsed?.data?.message || errorMessage
+        errorMessage = parsed?.data?.message || parsed?.message || errorMessage
       } catch {
         errorMessage = errorText || errorMessage
       }
@@ -915,33 +1045,50 @@ async function startOAuthFlow(
       message += '_Waiting for authorization to complete..._'
     }
 
-    await interaction.editReply({ content: message, components: [] })
-
-    if (method === 'auto') {
-      const callbackResponse = await getClient().provider.oauth.callback({
-        providerID: ctx.providerId,
-        method: ctx.methodIndex,
-        directory: ctx.dir,
-      })
-
-      if (callbackResponse.error) {
-        const errorData = callbackResponse.error as
-          | { data?: { message?: string } }
-          | undefined
-        await interaction.editReply({
-          content: `**Authentication Failed**\n${errorData?.data?.message || 'Authorization was not completed'}`,
-          components: [],
-        })
-        return
-      }
-
-      await getClient().instance.dispose({ directory: ctx.dir })
+    if (method === 'code') {
+      // Code mode: show a button to paste the auth code/URL after
+      // completing login in a browser (possibly on a different machine).
+      const button = new ButtonBuilder()
+        .setCustomId(`login_oauth_code_btn:${hash}`)
+        .setLabel('Paste authorization code')
+        .setStyle(ButtonStyle.Primary)
 
       await interaction.editReply({
-        content: `✅ **Successfully authenticated with ${ctx.providerName}!**\n\nYou can now use models from this provider.`,
+        content: message,
+        components: [
+          new ActionRowBuilder<ButtonBuilder>().addComponents(button),
+        ],
+      })
+      // Don't delete context — we need it for the code submission
+      return
+    }
+
+    await interaction.editReply({ content: message, components: [] })
+
+    // Auto mode: poll for completion (device flow / localhost callback)
+    const callbackResponse = await getClient().provider.oauth.callback({
+      providerID: ctx.providerId,
+      method: ctx.methodIndex,
+      directory: ctx.dir,
+    })
+
+    if (callbackResponse.error) {
+      const errorData = callbackResponse.error as
+        | { data?: { message?: string } }
+        | undefined
+      await interaction.editReply({
+        content: `**Authentication Failed**\n${errorData?.data?.message || 'Authorization was not completed'}`,
         components: [],
       })
+      return
     }
+
+    await getClient().instance.dispose({ directory: ctx.dir })
+
+    await interaction.editReply({
+      content: `✅ **Successfully authenticated with ${ctx.providerName}!**\n\nYou can now use models from this provider.`,
+      components: [],
+    })
 
     pendingLoginContexts.delete(hash)
   } catch (error) {
