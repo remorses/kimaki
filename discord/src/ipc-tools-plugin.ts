@@ -22,6 +22,12 @@ import { initSentry } from './sentry.js'
 // file in its own process and resolves modules from kimaki's install dir,
 // but the '/tool' subpath export isn't found by opencode's module resolver.
 // The type-only imports above are fine (erased at compile time).
+//
+// NOTE: @opencode-ai/plugin bundles its own zod 4.1.x as a hard dependency
+// while goke (used by cli.ts) requires zod 4.3.x. This version skew makes
+// the Plugin return type structurally incompatible with our local tool()
+// even though runtime behavior is identical. ipcToolsPlugin is cast to
+// Plugin via unknown to bypass this purely type-level incompatibility.
 function tool<Args extends z.ZodRawShape>(input: {
   description: string
   args: Args
@@ -39,7 +45,13 @@ const FILE_UPLOAD_TIMEOUT_MS = 6 * 60 * 1000
 const DEFAULT_FILE_UPLOAD_MAX_FILES = 5
 const ACTION_BUTTON_TIMEOUT_MS = 30 * 1000
 
-const ipcToolsPlugin: Plugin = async () => {
+// @opencode-ai/plugin bundles zod 4.1.x as a hard dep; our code uses 4.3.x
+// (required by goke for ~standard.jsonSchema). The Plugin return type is
+// structurally incompatible due to _zod.version.minor skew even though
+// runtime behavior is identical. `any` bypasses the type-level mismatch —
+// opencode's plugin loader doesn't care about the zod version at runtime.
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+const ipcToolsPlugin: any = async () => {
   initSentry()
 
   const dataDir = process.env.KIMAKI_DATA_DIR
