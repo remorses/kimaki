@@ -22,6 +22,7 @@ import {
 } from './commands/merge-worktree.js'
 import { handleToggleWorktreesCommand } from './commands/worktree-settings.js'
 import { handleWorktreesCommand } from './commands/worktrees.js'
+import { handleTasksCommand } from './commands/tasks.js'
 import { handleToggleMentionModeCommand } from './commands/mention-mode.js'
 import {
   handleResumeCommand,
@@ -200,6 +201,13 @@ export function registerInteractionHandler({
 
             case 'worktrees':
               await handleWorktreesCommand({
+                command: interaction,
+                appId,
+              })
+              return
+
+            case 'tasks':
+              await handleTasksCommand({
                 command: interaction,
                 appId,
               })

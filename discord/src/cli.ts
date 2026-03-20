@@ -866,6 +866,18 @@ async function registerCommands({
       .setDMPermission(false)
       .toJSON(),
     new SlashCommandBuilder()
+      .setName('tasks')
+      .setDescription('List scheduled tasks created via send --send-at')
+      .addBooleanOption((option) => {
+        return option
+          .setName('all')
+          .setDescription(
+            'Include completed, cancelled, and failed tasks',
+          )
+      })
+      .setDMPermission(false)
+      .toJSON(),
+    new SlashCommandBuilder()
       .setName('toggle-mention-mode')
       .setDescription(
         'Toggle mention-only mode (bot only responds when @mentioned)',
