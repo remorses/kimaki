@@ -59,6 +59,12 @@ function canCancelTask(task: ScheduledTask): boolean {
   return task.status === 'planned' || task.status === 'running'
 }
 
+// Escape pipe chars and collapse whitespace so free-text fields don't break
+// GFM table column alignment.
+function sanitizeTableCell(value: string): string {
+  return value.replaceAll('|', '\\|').replace(/\s+/g, ' ').trim()
+}
+
 function buildCancelButtonHtml({ buttonId }: { buttonId: string }): string {
   return `<button id="${buttonId}" variant="secondary">Cancel</button>`
 }
@@ -70,24 +76,27 @@ function buildActionCell(task: ScheduledTask): string {
   return buildCancelButtonHtml({ buttonId: `cancel-task-${task.id}` })
 }
 
+// Cap rows to avoid exceeding Discord's 40-component CV2 limit.
+// Each cancellable row renders as text + action row + button (~4 components),
+// so 10 rows is a safe ceiling.
+const MAX_TASK_ROWS = 10
+
 function buildTaskTable({
   tasks,
-  guildId,
 }: {
   tasks: ScheduledTask[]
-  guildId: string
 }): string {
   const header = '| ID | Status | Prompt | Schedule | Next Run | Action |'
   const separator = '|---|---|---|---|---|---|'
   const rows = tasks.map((task) => {
     const id = String(task.id)
     const status = task.status
-    // Truncate prompt for table display
-    const prompt =
+    const prompt = sanitizeTableCell(
       task.prompt_preview.length > 40
         ? task.prompt_preview.slice(0, 37) + '...'
-        : task.prompt_preview
-    const schedule = scheduleLabel(task)
+        : task.prompt_preview,
+    )
+    const schedule = sanitizeTableCell(scheduleLabel(task))
     const nextRun = (() => {
       if (
         task.status === 'completed' ||
@@ -139,8 +148,8 @@ async function renderTasksReply({
   const statuses: ScheduledTaskStatus[] | undefined = showAll
     ? undefined
     : ['planned', 'running']
-  const tasks = await listScheduledTasks({ statuses })
-  if (tasks.length === 0) {
+  const allTasks = await listScheduledTasks({ statuses })
+  if (allTasks.length === 0) {
     const message = notice
       ? `${notice}\n\nNo scheduled tasks found.`
       : 'No scheduled tasks found.'
@@ -155,6 +164,13 @@ async function renderTasksReply({
     return
   }
 
+  const tasks = allTasks.slice(0, MAX_TASK_ROWS)
+  const truncatedNotice =
+    allTasks.length > MAX_TASK_ROWS
+      ? `Showing ${MAX_TASK_ROWS}/${allTasks.length} tasks. Use \`kimaki task list\` for full list.`
+      : undefined
+  const combinedNotice = [notice, truncatedNotice].filter(Boolean).join('\n')
+
   const cancellableTasksByButtonId = new Map<string, ScheduledTask>()
   tasks.forEach((task) => {
     if (!canCancelTask(task)) {
@@ -163,8 +179,10 @@ async function renderTasksReply({
     cancellableTasksByButtonId.set(`cancel-task-${task.id}`, task)
   })
 
-  const tableMarkdown = buildTaskTable({ tasks, guildId })
-  const markdown = notice ? `${notice}\n\n${tableMarkdown}` : tableMarkdown
+  const tableMarkdown = buildTaskTable({ tasks })
+  const markdown = combinedNotice
+    ? `${combinedNotice}\n\n${tableMarkdown}`
+    : tableMarkdown
   const segments = splitTablesFromMarkdown(markdown, {
     resolveButtonCustomId: ({ button }) => {
       const task = cancellableTasksByButtonId.get(button.id)
