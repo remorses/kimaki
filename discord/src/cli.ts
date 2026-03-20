@@ -741,9 +741,15 @@ async function deleteLegacyGlobalCommands({
     }
   } catch (error) {
     cliLogger.warn(
-      `COMMANDS: Could not clean legacy global commands: ${error instanceof Error ? error.message : String(error)}`,
+      `COMMANDS: Could not clean legacy global commands: ${error instanceof Error ? error.stack : String(error)}`,
     )
   }
+}
+
+// Discord slash command descriptions must be 1-100 chars.
+// Truncate to 100 so @sapphire/shapeshift validation never throws.
+function truncateCommandDescription(description: string): string {
+  return description.slice(0, 100)
 }
 
 async function registerCommands({
@@ -762,11 +768,11 @@ async function registerCommands({
   const commands = [
     new SlashCommandBuilder()
       .setName('resume')
-      .setDescription('Resume an existing OpenCode session')
+      .setDescription(truncateCommandDescription('Resume an existing OpenCode session'))
       .addStringOption((option) => {
         option
           .setName('session')
-          .setDescription('The session to resume')
+          .setDescription(truncateCommandDescription('The session to resume'))
           .setRequired(true)
           .setAutocomplete(true)
 
@@ -776,11 +782,11 @@ async function registerCommands({
       .toJSON(),
     new SlashCommandBuilder()
       .setName('new-session')
-      .setDescription('Start a new OpenCode session')
+      .setDescription(truncateCommandDescription('Start a new OpenCode session'))
       .addStringOption((option) => {
         option
           .setName('prompt')
-          .setDescription('Prompt content for the session')
+          .setDescription(truncateCommandDescription('Prompt content for the session'))
           .setRequired(true)
 
         return option
@@ -789,7 +795,7 @@ async function registerCommands({
         option
           .setName('files')
           .setDescription(
-            'Files to mention (comma or space separated; autocomplete)',
+            truncateCommandDescription('Files to mention (comma or space separated; autocomplete)'),
           )
           .setAutocomplete(true)
           .setMaxLength(6000)
@@ -799,7 +805,7 @@ async function registerCommands({
       .addStringOption((option) => {
         option
           .setName('agent')
-          .setDescription('Agent to use for this session')
+          .setDescription(truncateCommandDescription('Agent to use for this session'))
           .setAutocomplete(true)
 
         return option
@@ -809,13 +815,13 @@ async function registerCommands({
     new SlashCommandBuilder()
       .setName('new-worktree')
       .setDescription(
-        'Create a git worktree branch from origin/HEAD (or main). Optionally pick a base branch.',
+        truncateCommandDescription('Create a git worktree branch from origin/HEAD (or main). Optionally pick a base branch.'),
       )
       .addStringOption((option) => {
         option
           .setName('name')
           .setDescription(
-            'Name for worktree (optional in threads - uses thread name)',
+            truncateCommandDescription('Name for worktree (optional in threads - uses thread name)'),
           )
           .setRequired(false)
 
@@ -825,7 +831,7 @@ async function registerCommands({
         option
           .setName('base-branch')
           .setDescription(
-            'Branch to create the worktree from (default: origin/HEAD or main)',
+            truncateCommandDescription('Branch to create the worktree from (default: origin/HEAD or main)'),
           )
           .setRequired(false)
           .setAutocomplete(true)
@@ -837,13 +843,13 @@ async function registerCommands({
     new SlashCommandBuilder()
       .setName('merge-worktree')
       .setDescription(
-        'Squash-merge worktree into default branch. Aborts if main has uncommitted changes.',
+        truncateCommandDescription('Squash-merge worktree into default branch. Aborts if main has uncommitted changes.'),
       )
       .addStringOption((option) => {
         option
           .setName('target-branch')
           .setDescription(
-            'Branch to merge into (default: origin/HEAD or main)',
+            truncateCommandDescription('Branch to merge into (default: origin/HEAD or main)'),
           )
           .setRequired(false)
           .setAutocomplete(true)
@@ -855,23 +861,23 @@ async function registerCommands({
     new SlashCommandBuilder()
       .setName('toggle-worktrees')
       .setDescription(
-        'Toggle automatic git worktree creation for new sessions in this channel',
+        truncateCommandDescription('Toggle automatic git worktree creation for new sessions in this channel'),
       )
       .setDMPermission(false)
       .toJSON(),
     new SlashCommandBuilder()
       .setName('worktrees')
-      .setDescription('List all active worktree sessions')
+      .setDescription(truncateCommandDescription('List all active worktree sessions'))
       .setDMPermission(false)
       .toJSON(),
     new SlashCommandBuilder()
       .setName('tasks')
-      .setDescription('List scheduled tasks created via send --send-at')
+      .setDescription(truncateCommandDescription('List scheduled tasks created via send --send-at'))
       .addBooleanOption((option) => {
         return option
           .setName('all')
           .setDescription(
-            'Include completed, cancelled, and failed tasks',
+            truncateCommandDescription('Include completed, cancelled, and failed tasks'),
           )
       })
       .setDMPermission(false)
@@ -879,20 +885,20 @@ async function registerCommands({
     new SlashCommandBuilder()
       .setName('toggle-mention-mode')
       .setDescription(
-        'Toggle mention-only mode (bot only responds when @mentioned)',
+        truncateCommandDescription('Toggle mention-only mode (bot only responds when @mentioned)'),
       )
       .setDMPermission(false)
       .toJSON(),
     new SlashCommandBuilder()
       .setName('add-project')
       .setDescription(
-        'Create Discord channels for a project. Use `npx kimaki project add` for unlisted projects',
+        truncateCommandDescription('Create Discord channels for a project. Use `npx kimaki project add` for unlisted projects'),
       )
       .addStringOption((option) => {
         option
           .setName('project')
           .setDescription(
-            'Recent OpenCode projects. Use `npx kimaki project add` if not listed',
+            truncateCommandDescription('Recent OpenCode projects. Use `npx kimaki project add` if not listed'),
           )
           .setRequired(true)
           .setAutocomplete(true)
@@ -903,11 +909,11 @@ async function registerCommands({
       .toJSON(),
     new SlashCommandBuilder()
       .setName('remove-project')
-      .setDescription('Remove Discord channels for a project')
+      .setDescription(truncateCommandDescription('Remove Discord channels for a project'))
       .addStringOption((option) => {
         option
           .setName('project')
-          .setDescription('Select a project to remove')
+          .setDescription(truncateCommandDescription('Select a project to remove'))
           .setRequired(true)
           .setAutocomplete(true)
 
@@ -918,12 +924,12 @@ async function registerCommands({
     new SlashCommandBuilder()
       .setName('create-new-project')
       .setDescription(
-        'Create a new project folder, initialize git, and start a session',
+        truncateCommandDescription('Create a new project folder, initialize git, and start a session'),
       )
       .addStringOption((option) => {
         option
           .setName('name')
-          .setDescription('Name for the new project folder')
+          .setDescription(truncateCommandDescription('Name for the new project folder'))
           .setRequired(true)
 
         return option
@@ -932,74 +938,74 @@ async function registerCommands({
       .toJSON(),
     new SlashCommandBuilder()
       .setName('abort')
-      .setDescription('Abort the current OpenCode request in this thread')
+      .setDescription(truncateCommandDescription('Abort the current OpenCode request in this thread'))
       .setDMPermission(false)
       .toJSON(),
     new SlashCommandBuilder()
       .setName('compact')
       .setDescription(
-        'Compact the session context by summarizing conversation history',
+        truncateCommandDescription('Compact the session context by summarizing conversation history'),
       )
       .setDMPermission(false)
       .toJSON(),
     new SlashCommandBuilder()
       .setName('stop')
-      .setDescription('Abort the current OpenCode request in this thread')
+      .setDescription(truncateCommandDescription('Abort the current OpenCode request in this thread'))
       .setDMPermission(false)
       .toJSON(),
     new SlashCommandBuilder()
       .setName('share')
-      .setDescription('Share the current session as a public URL')
+      .setDescription(truncateCommandDescription('Share the current session as a public URL'))
       .setDMPermission(false)
       .toJSON(),
     new SlashCommandBuilder()
       .setName('diff')
-      .setDescription('Show git diff as a shareable URL')
+      .setDescription(truncateCommandDescription('Show git diff as a shareable URL'))
       .setDMPermission(false)
       .toJSON(),
     new SlashCommandBuilder()
       .setName('fork')
-      .setDescription('Fork the session from a past user message')
+      .setDescription(truncateCommandDescription('Fork the session from a past user message'))
       .setDMPermission(false)
       .toJSON(),
     new SlashCommandBuilder()
       .setName('model')
-      .setDescription('Set the preferred model for this channel or session')
+      .setDescription(truncateCommandDescription('Set the preferred model for this channel or session'))
       .setDMPermission(false)
       .toJSON(),
     new SlashCommandBuilder()
       .setName('model-variant')
       .setDescription(
-        'Quickly change the thinking level variant for the current model',
+        truncateCommandDescription('Quickly change the thinking level variant for the current model'),
       )
       .setDMPermission(false)
       .toJSON(),
     new SlashCommandBuilder()
       .setName('unset-model-override')
-      .setDescription('Remove model override and use default instead')
+      .setDescription(truncateCommandDescription('Remove model override and use default instead'))
       .setDMPermission(false)
       .toJSON(),
     new SlashCommandBuilder()
       .setName('login')
       .setDescription(
-        'Authenticate with an AI provider (OAuth or API key). Use this instead of /connect',
+        truncateCommandDescription('Authenticate with an AI provider (OAuth or API key). Use this instead of /connect'),
       )
       .setDMPermission(false)
       .toJSON(),
     new SlashCommandBuilder()
       .setName('agent')
-      .setDescription('Set the preferred agent for this channel or session')
+      .setDescription(truncateCommandDescription('Set the preferred agent for this channel or session'))
       .setDMPermission(false)
       .toJSON(),
     new SlashCommandBuilder()
       .setName('queue')
       .setDescription(
-        'Queue a message to be sent after the current response finishes',
+        truncateCommandDescription('Queue a message to be sent after the current response finishes'),
       )
       .addStringOption((option) => {
         option
           .setName('message')
-          .setDescription('The message to queue')
+          .setDescription(truncateCommandDescription('The message to queue'))
           .setRequired(true)
 
         return option
@@ -1008,18 +1014,18 @@ async function registerCommands({
       .toJSON(),
     new SlashCommandBuilder()
       .setName('clear-queue')
-      .setDescription('Clear all queued messages in this thread')
+      .setDescription(truncateCommandDescription('Clear all queued messages in this thread'))
       .setDMPermission(false)
       .toJSON(),
     new SlashCommandBuilder()
       .setName('queue-command')
       .setDescription(
-        'Queue a user command to run after the current response finishes',
+        truncateCommandDescription('Queue a user command to run after the current response finishes'),
       )
       .addStringOption((option) => {
         option
           .setName('command')
-          .setDescription('The command to run')
+          .setDescription(truncateCommandDescription('The command to run'))
           .setRequired(true)
           .setAutocomplete(true)
         return option
@@ -1027,7 +1033,7 @@ async function registerCommands({
       .addStringOption((option) => {
         option
           .setName('arguments')
-          .setDescription('Arguments to pass to the command')
+          .setDescription(truncateCommandDescription('Arguments to pass to the command'))
           .setRequired(false)
         return option
       })
@@ -1035,35 +1041,35 @@ async function registerCommands({
       .toJSON(),
     new SlashCommandBuilder()
       .setName('undo')
-      .setDescription('Undo the last assistant message (revert file changes)')
+      .setDescription(truncateCommandDescription('Undo the last assistant message (revert file changes)'))
       .setDMPermission(false)
       .toJSON(),
     new SlashCommandBuilder()
       .setName('redo')
-      .setDescription('Redo previously undone changes')
+      .setDescription(truncateCommandDescription('Redo previously undone changes'))
       .setDMPermission(false)
       .toJSON(),
     new SlashCommandBuilder()
       .setName('verbosity')
-      .setDescription('Set output verbosity for this channel')
+      .setDescription(truncateCommandDescription('Set output verbosity for this channel'))
       .setDMPermission(false)
       .toJSON(),
     new SlashCommandBuilder()
       .setName('restart-opencode-server')
       .setDescription(
-        'Restart the shared opencode server (fixes state/auth/plugins)',
+        truncateCommandDescription('Restart the shared opencode server (fixes state/auth/plugins)'),
       )
       .setDMPermission(false)
       .toJSON(),
     new SlashCommandBuilder()
       .setName('run-shell-command')
       .setDescription(
-        'Run a shell command in the project directory. Tip: prefix messages with ! as shortcut',
+        truncateCommandDescription('Run a shell command in the project directory. Tip: prefix messages with ! as shortcut'),
       )
       .addStringOption((option) => {
         option
           .setName('command')
-          .setDescription('Command to run')
+          .setDescription(truncateCommandDescription('Command to run'))
           .setRequired(true)
         return option
       })
@@ -1072,44 +1078,44 @@ async function registerCommands({
     new SlashCommandBuilder()
       .setName('context-usage')
       .setDescription(
-        'Show token usage and context window percentage for this session',
+        truncateCommandDescription('Show token usage and context window percentage for this session'),
       )
       .setDMPermission(false)
       .toJSON(),
     new SlashCommandBuilder()
       .setName('session-id')
       .setDescription(
-        'Show current session ID and opencode attach command for this thread',
+        truncateCommandDescription('Show current session ID and opencode attach command for this thread'),
       )
       .setDMPermission(false)
       .toJSON(),
     new SlashCommandBuilder()
       .setName('upgrade-and-restart')
       .setDescription(
-        'Upgrade kimaki to the latest version and restart the bot',
+        truncateCommandDescription('Upgrade kimaki to the latest version and restart the bot'),
       )
       .setDMPermission(false)
       .toJSON(),
     new SlashCommandBuilder()
       .setName('transcription-key')
       .setDescription(
-        'Set API key for voice message transcription (OpenAI or Gemini)',
+        truncateCommandDescription('Set API key for voice message transcription (OpenAI or Gemini)'),
       )
       .setDMPermission(false)
       .toJSON(),
     new SlashCommandBuilder()
       .setName('mcp')
-      .setDescription('List and manage MCP servers for this project')
+      .setDescription(truncateCommandDescription('List and manage MCP servers for this project'))
       .setDMPermission(false)
       .toJSON(),
     new SlashCommandBuilder()
       .setName('screenshare')
-      .setDescription('Start screen sharing via VNC tunnel (auto-stops after 1 hour)')
+      .setDescription(truncateCommandDescription('Start screen sharing via VNC tunnel (auto-stops after 1 hour)'))
       .setDMPermission(false)
       .toJSON(),
     new SlashCommandBuilder()
       .setName('screenshare-stop')
-      .setDescription('Stop screen sharing')
+      .setDescription(truncateCommandDescription('Stop screen sharing'))
       .setDMPermission(false)
       .toJSON(),
   ]
@@ -1155,11 +1161,11 @@ async function registerCommands({
     commands.push(
       new SlashCommandBuilder()
         .setName(commandName)
-        .setDescription(description.slice(0, 100)) // Discord limits to 100 chars
+        .setDescription(truncateCommandDescription(description))
         .addStringOption((option) => {
           option
             .setName('arguments')
-            .setDescription('Arguments to pass to the command')
+            .setDescription(truncateCommandDescription('Arguments to pass to the command'))
             .setRequired(false)
           return option
         })
@@ -1194,7 +1200,7 @@ async function registerCommands({
     commands.push(
       new SlashCommandBuilder()
         .setName(commandName)
-        .setDescription(description)
+        .setDescription(truncateCommandDescription(description))
         .setDMPermission(false)
         .toJSON(),
     )
