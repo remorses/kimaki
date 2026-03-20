@@ -216,7 +216,7 @@ export async function preprocessNewSessionMessage({
     .catch((error) => {
       logger.warn(
         `[SESSION] Failed to fetch starter message for thread ${thread.id}:`,
-        error instanceof Error ? error.message : String(error),
+        error instanceof Error ? error.stack : String(error),
       )
       return null
     })

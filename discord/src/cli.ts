@@ -544,7 +544,7 @@ async function ensureCommandAvailable({
     cliLogger.log(`Failed to install ${name}`)
     cliLogger.error(
       'Installation error:',
-      error instanceof Error ? error.message : String(error),
+      error instanceof Error ? error.stack : String(error),
     )
     process.exit(EXIT_NO_RESTART)
   }
@@ -1321,7 +1321,7 @@ async function reconcileKimakiRole({ guild }: { guild: Guild }): Promise<void> {
     cliLogger.info(`Created "Kimaki" role in ${guild.name}`)
   } catch (error) {
     cliLogger.warn(
-      `Could not reconcile Kimaki role in ${guild.name}: ${error instanceof Error ? error.message : String(error)}`,
+      `Could not reconcile Kimaki role in ${guild.name}: ${error instanceof Error ? error.stack : String(error)}`,
     )
   }
 }
@@ -1483,7 +1483,7 @@ async function ensureDefaultChannelsWithWelcome({
       }
     } catch (error) {
       cliLogger.warn(
-        `Failed to create default kimaki channel in ${guild.name}: ${error instanceof Error ? error.message : String(error)}`,
+        `Failed to create default kimaki channel in ${guild.name}: ${error instanceof Error ? error.stack : String(error)}`,
       )
     }
   }
@@ -1529,7 +1529,7 @@ async function backgroundInit({
         .catch((error) => {
           cliLogger.warn(
             'Failed to load user commands during background init:',
-            error instanceof Error ? error.message : String(error),
+            error instanceof Error ? error.stack : String(error),
           )
           return []
         }),
@@ -1539,7 +1539,7 @@ async function backgroundInit({
         .catch((error) => {
           cliLogger.warn(
             'Failed to load agents during background init:',
-            error instanceof Error ? error.message : String(error),
+            error instanceof Error ? error.stack : String(error),
           )
           return []
         }),
@@ -2106,7 +2106,7 @@ async function run({
   } catch (error) {
     cliLogger.log('Failed to connect to Discord', discordClient.ws.gateway)
     cliLogger.error(
-      'Error: ' + (error instanceof Error ? error.message : String(error)),
+      'Error: ' + (error instanceof Error ? error.stack : String(error)),
     )
     process.exit(EXIT_NO_RESTART)
   }
@@ -2166,7 +2166,7 @@ async function run({
       } catch (error) {
         cliLogger.warn(
           'Background channel sync failed:',
-          error instanceof Error ? error.message : String(error),
+          error instanceof Error ? error.stack : String(error),
         )
       }
 
@@ -2183,7 +2183,7 @@ async function run({
       } catch (error) {
         cliLogger.warn(
           'Background default channel creation failed:',
-          error instanceof Error ? error.message : String(error),
+          error instanceof Error ? error.stack : String(error),
         )
       }
     })()
@@ -2236,7 +2236,7 @@ async function run({
           cliLogger.log('Failed to fetch projects')
           cliLogger.error(
             'Error:',
-            error instanceof Error ? error.message : String(error),
+            error instanceof Error ? error.stack : String(error),
           )
           discordClient.destroy()
           process.exit(EXIT_NO_RESTART)
@@ -2247,7 +2247,7 @@ async function run({
         .catch((error) => {
           cliLogger.warn(
             'Failed to load user commands during setup:',
-            error instanceof Error ? error.message : String(error),
+            error instanceof Error ? error.stack : String(error),
           )
           return []
         }),
@@ -2257,7 +2257,7 @@ async function run({
         .catch((error) => {
           cliLogger.warn(
             'Failed to load agents during setup:',
-            error instanceof Error ? error.message : String(error),
+            error instanceof Error ? error.stack : String(error),
           )
           return []
         }),
@@ -2414,7 +2414,7 @@ async function run({
       .catch((error) => {
         cliLogger.error(
           'Failed to register slash commands:',
-          error instanceof Error ? error.message : String(error),
+          error instanceof Error ? error.stack : String(error),
         )
       })
 
@@ -2633,7 +2633,7 @@ cli
     } catch (error) {
       cliLogger.error(
         'Error:',
-        error instanceof Error ? error.message : String(error),
+        error instanceof Error ? error.stack : String(error),
       )
       process.exit(EXIT_NO_RESTART)
     }
@@ -2688,7 +2688,7 @@ cli
     } catch (error) {
       cliLogger.error(
         'Error:',
-        error instanceof Error ? error.message : String(error),
+        error instanceof Error ? error.stack : String(error),
       )
       process.exit(EXIT_NO_RESTART)
     }
@@ -2838,7 +2838,7 @@ cli
       } catch (error) {
         cliLogger.error(
           'Error:',
-          error instanceof Error ? error.message : String(error),
+          error instanceof Error ? error.stack : String(error),
         )
         process.exit(EXIT_NO_RESTART)
       }
@@ -2892,7 +2892,7 @@ cli
     } catch (error) {
       cliLogger.error(
         'Error:',
-        error instanceof Error ? error.message : String(error),
+        error instanceof Error ? error.stack : String(error),
       )
       process.exit(EXIT_NO_RESTART)
     }
@@ -2963,7 +2963,7 @@ cli
     } catch (error) {
       cliLogger.error(
         'Error:',
-        error instanceof Error ? error.message : String(error),
+        error instanceof Error ? error.stack : String(error),
       )
       process.exit(EXIT_NO_RESTART)
     }
@@ -3239,7 +3239,7 @@ cli
                   } catch (error) {
                     cliLogger.debug(
                       'Failed to fetch existing channel while selecting guild:',
-                      error instanceof Error ? error.message : String(error),
+                      error instanceof Error ? error.stack : String(error),
                     )
                   }
                 }
@@ -3585,7 +3585,7 @@ cli
       } catch (error) {
         cliLogger.error(
           'Error:',
-          error instanceof Error ? error.message : String(error),
+          error instanceof Error ? error.stack : String(error),
         )
         process.exit(EXIT_NO_RESTART)
       }
@@ -3636,7 +3636,7 @@ cli
     } catch (error) {
       cliLogger.error(
         'Error:',
-        error instanceof Error ? error.message : String(error),
+        error instanceof Error ? error.stack : String(error),
       )
       process.exit(EXIT_NO_RESTART)
     }
@@ -3664,7 +3664,7 @@ cli
     } catch (error) {
       cliLogger.error(
         'Error:',
-        error instanceof Error ? error.message : String(error),
+        error instanceof Error ? error.stack : String(error),
       )
       process.exit(EXIT_NO_RESTART)
     }
@@ -3756,7 +3756,7 @@ cli
           } catch (error) {
             cliLogger.debug(
               'Failed to fetch existing channel while selecting guild:',
-              error instanceof Error ? error.message : String(error),
+              error instanceof Error ? error.stack : String(error),
             )
             let firstGuild = client.guilds.cache.first()
             if (!firstGuild) {
@@ -3816,14 +3816,14 @@ cli
           } catch (error) {
             cliLogger.debug(
               `Failed to fetch channel ${existingChannel.channel_id} while checking existing channels:`,
-              error instanceof Error ? error.message : String(error),
+              error instanceof Error ? error.stack : String(error),
             )
           }
         }
       } catch (error) {
         cliLogger.debug(
           'Database lookup failed while checking existing channels:',
-          error instanceof Error ? error.message : String(error),
+          error instanceof Error ? error.stack : String(error),
         )
       }
 
@@ -4149,7 +4149,7 @@ cli
     } catch (error) {
       cliLogger.error(
         'Error:',
-        error instanceof Error ? error.message : String(error),
+        error instanceof Error ? error.stack : String(error),
       )
       process.exit(EXIT_NO_RESTART)
     }
@@ -4329,7 +4329,7 @@ cli
     } catch (error) {
       cliLogger.error(
         'Error:',
-        error instanceof Error ? error.message : String(error),
+        error instanceof Error ? error.stack : String(error),
       )
       process.exit(EXIT_NO_RESTART)
     }
@@ -4403,7 +4403,7 @@ cli
     } catch (error) {
       cliLogger.error(
         'Error:',
-        error instanceof Error ? error.message : String(error),
+        error instanceof Error ? error.stack : String(error),
       )
       process.exit(EXIT_NO_RESTART)
     }
@@ -4612,7 +4612,7 @@ cli
     } catch (error) {
       cliLogger.error(
         'Error:',
-        error instanceof Error ? error.message : String(error),
+        error instanceof Error ? error.stack : String(error),
       )
       process.exit(EXIT_NO_RESTART)
     }
@@ -4805,7 +4805,7 @@ cli
     } catch (error) {
       cliLogger.error(
         'Error:',
-        error instanceof Error ? error.message : String(error),
+        error instanceof Error ? error.stack : String(error),
       )
       process.exit(EXIT_NO_RESTART)
     }
@@ -4848,7 +4848,7 @@ cli
     } catch (error) {
       cliLogger.error(
         'Upgrade failed:',
-        error instanceof Error ? error.message : String(error),
+        error instanceof Error ? error.stack : String(error),
       )
       process.exit(EXIT_NO_RESTART)
     }
@@ -4950,7 +4950,7 @@ cli
       } catch (error) {
         cliLogger.error(
           'Merge failed:',
-          error instanceof Error ? error.message : String(error),
+          error instanceof Error ? error.stack : String(error),
         )
         process.exit(EXIT_NO_RESTART)
       }

@@ -302,7 +302,7 @@ export async function startDiscordBot({
       }
     })().catch((error) => {
       discordLogger.warn(
-        `Background guild channel scan failed: ${error instanceof Error ? error.message : String(error)}`,
+        `Background guild channel scan failed: ${error instanceof Error ? error.stack : String(error)}`,
       )
     })
   }
@@ -875,7 +875,7 @@ export async function startDiscordBot({
         .catch((error) => {
           discordLogger.warn(
             `[THREAD_CREATE] Failed to fetch starter message for thread ${thread.id}:`,
-            error instanceof Error ? error.message : String(error),
+            error instanceof Error ? error.stack : String(error),
           )
           return null
         })
@@ -1098,7 +1098,7 @@ export async function startDiscordBot({
       await flushDebouncedProcessCallbacks().catch((error) => {
         discordLogger.warn(
           'Failed to flush debounced process callbacks:',
-          error instanceof Error ? error.message : String(error),
+          error instanceof Error ? error.stack : String(error),
         )
       })
 

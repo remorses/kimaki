@@ -43,7 +43,7 @@ export async function sendWelcomeMessage({
     logger.log(`Sent welcome message with thread to #${channel.name}`)
   } catch (error) {
     logger.warn(
-      `Failed to send welcome message to #${channel.name}: ${error instanceof Error ? error.message : String(error)}`,
+      `Failed to send welcome message to #${channel.name}: ${error instanceof Error ? error.stack : String(error)}`,
     )
   }
 }
