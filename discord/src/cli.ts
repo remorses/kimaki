@@ -119,7 +119,6 @@ import {
 import { startHranaServer } from './hrana-server.js'
 import { startIpcPolling, stopIpcPolling } from './ipc-polling.js'
 import {
-  getLocalTimeZone,
   getPromptPreview,
   parseSendAtValue,
   serializeScheduledTaskPayload,
@@ -3093,10 +3092,12 @@ cli
           if (!sendAt) {
             return null
           }
+          // Cron expressions use UTC so the schedule is consistent regardless of
+          // which machine runs the bot. The system message tells the model to use UTC.
           return parseSendAtValue({
             value: sendAt,
             now: new Date(),
-            timezone: getLocalTimeZone(),
+            timezone: 'UTC',
           })
         })()
         if (parsedSchedule instanceof Error) {

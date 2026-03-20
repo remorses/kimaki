@@ -370,7 +370,8 @@ Use \`--send-at\` to schedule a one-time or recurring task:
 kimaki send --channel ${channelId} --prompt "Reminder: review open PRs" --send-at "2026-03-01T09:00:00Z"
 kimaki send --channel ${channelId} --prompt "Run weekly test suite and summarize failures" --send-at "0 9 * * 1"
 
-When using a date for \`--send-at\`, it must be UTC in ISO format ending with \`Z\`.
+ALL scheduling is in UTC. Dates must be UTC ISO format ending with \`Z\`. Cron expressions also fire in UTC (e.g. \`0 9 * * 1\` means 9:00 UTC every Monday).
+When the user specifies a time without a timezone, ask them to confirm their timezone or the UTC equivalent. Never guess the user's timezone.
 
 \`--send-at\` supports the same useful options for new threads:
 - \`--notify-only\` to create a reminder thread without auto-starting a session

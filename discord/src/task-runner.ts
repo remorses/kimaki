@@ -18,7 +18,6 @@ import { notifyError } from './sentry.js'
 import type { ThreadStartMarker } from './system-message.js'
 import {
   type ScheduledTaskPayload,
-  getLocalTimeZone,
   getNextCronRun,
   getPromptPreview,
   parseScheduledTaskPayload,
@@ -232,7 +231,8 @@ async function finalizeSuccessfulTask({
     return
   }
 
-  const timezone = task.timezone || getLocalTimeZone()
+  // Use stored timezone, falling back to UTC (not machine local) for consistency
+  const timezone = task.timezone || 'UTC'
   const nextRunResult = getNextCronRun({
     cronExpr: task.cron_expr,
     timezone,
@@ -264,7 +264,8 @@ async function finalizeFailedTask({
   error: Error
 }): Promise<void> {
   if (task.schedule_kind === 'cron' && task.cron_expr) {
-    const timezone = task.timezone || getLocalTimeZone()
+    // Use stored timezone, falling back to UTC (not machine local) for consistency
+    const timezone = task.timezone || 'UTC'
     const nextRunResult = getNextCronRun({
       cronExpr: task.cron_expr,
       timezone,
