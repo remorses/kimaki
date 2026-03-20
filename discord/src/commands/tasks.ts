@@ -66,7 +66,7 @@ function sanitizeTableCell(value: string): string {
 }
 
 function buildCancelButtonHtml({ buttonId }: { buttonId: string }): string {
-  return `<button id="${buttonId}" variant="secondary">Cancel</button>`
+  return `<button id="${buttonId}" variant="secondary">Delete</button>`
 }
 
 function buildActionCell(task: ScheduledTask): string {
@@ -92,8 +92,8 @@ function buildTaskTable({
     const id = String(task.id)
     const status = task.status
     const prompt = sanitizeTableCell(
-      task.prompt_preview.length > 40
-        ? task.prompt_preview.slice(0, 37) + '...'
+      task.prompt_preview.length > 240
+        ? task.prompt_preview.slice(0, 237) + '...'
         : task.prompt_preview,
     )
     const schedule = sanitizeTableCell(scheduleLabel(task))
