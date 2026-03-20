@@ -837,7 +837,7 @@ async function registerCommands({
     new SlashCommandBuilder()
       .setName('merge-worktree')
       .setDescription(
-        'Squash-merge worktree into default branch. Safe if main has uncommitted changes (aborts before pushing).',
+        'Squash-merge worktree into default branch. Aborts if main has uncommitted changes.',
       )
       .addStringOption((option) => {
         option
@@ -1550,7 +1550,7 @@ async function backgroundInit({
   } catch (error) {
     cliLogger.error(
       'Background init failed:',
-      error instanceof Error ? error.message : String(error),
+      error instanceof Error ? error.stack : String(error),
     )
     void notifyError(error, 'Background init failed')
   }
