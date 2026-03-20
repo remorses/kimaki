@@ -420,12 +420,11 @@ async function handleProviderStep(
     return
   }
 
-  const rawMethods = authResponse.data[providerId]
-  loginLogger.log(
-    `[LOGIN] Provider ${providerId} auth methods:`,
-    JSON.stringify(rawMethods, null, 2),
-  )
-  const methods: ProviderAuthMethod[] = rawMethods || [
+  // The server returns prompts in the auth response when the opencode
+  // version supports it (dev branch, not yet released as of v1.2.27).
+  // Once released, plugin-defined prompts will be collected and passed
+  // as inputs to the authorize call automatically.
+  const methods: ProviderAuthMethod[] = authResponse.data[providerId] || [
     { type: 'api', label: 'API Key' },
   ]
 
@@ -1050,7 +1049,9 @@ async function startOAuthFlow(
     message += `Open this URL to authorize:\n${url}\n\n`
 
     if (instructions) {
-      const codeMatch = instructions.match(/code[:\s]+([A-Z0-9-]+)/i)
+      // Match "code: ABC-123" or "code: WXYZ1234" but not natural language
+      // like "code will". Require a colon separator and uppercase alphanum code.
+      const codeMatch = instructions.match(/code:\s*([A-Z0-9][A-Z0-9-]+)/)
       if (codeMatch) {
         message += `**Code:** \`${codeMatch[1]}\`\n\n`
       } else {
