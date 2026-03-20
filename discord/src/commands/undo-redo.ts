@@ -84,10 +84,18 @@ export async function handleUndoCommand({
     const sessionResponse = await client.session.get({
       sessionID: sessionId,
     })
+    if (sessionResponse.error) {
+      await command.editReply(`Failed to undo: ${JSON.stringify(sessionResponse.error)}`)
+      return
+    }
 
     const messagesResponse = await client.session.messages({
       sessionID: sessionId,
     })
+    if (messagesResponse.error) {
+      await command.editReply(`Failed to undo: ${JSON.stringify(messagesResponse.error)}`)
+      return
+    }
 
     if (!messagesResponse.data || messagesResponse.data.length === 0) {
       await command.editReply('No messages to undo')
@@ -211,6 +219,10 @@ export async function handleRedoCommand({
     const sessionResponse = await client.session.get({
       sessionID: sessionId,
     })
+    if (sessionResponse.error) {
+      await command.editReply(`Failed to redo: ${JSON.stringify(sessionResponse.error)}`)
+      return
+    }
 
     const revertMessageID = sessionResponse.data?.revert?.messageID
     if (!revertMessageID) {
@@ -225,6 +237,10 @@ export async function handleRedoCommand({
     const messagesResponse = await client.session.messages({
       sessionID: sessionId,
     })
+    if (messagesResponse.error) {
+      await command.editReply(`Failed to redo: ${JSON.stringify(messagesResponse.error)}`)
+      return
+    }
     const userMessages = (messagesResponse.data ?? []).filter((m) => {
       return m.info.role === 'user'
     })
