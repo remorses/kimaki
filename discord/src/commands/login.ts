@@ -420,7 +420,12 @@ async function handleProviderStep(
     return
   }
 
-  const methods: ProviderAuthMethod[] = authResponse.data[providerId] || [
+  const rawMethods = authResponse.data[providerId]
+  loginLogger.log(
+    `[LOGIN] Provider ${providerId} auth methods:`,
+    JSON.stringify(rawMethods, null, 2),
+  )
+  const methods: ProviderAuthMethod[] = rawMethods || [
     { type: 'api', label: 'API Key' },
   ]
 

@@ -30,7 +30,7 @@ import {
 import {
   resolveGatewayClientFromCacheOrDb,
 } from './gateway-client-kv.js'
-import type { HonoBindings } from './env.js'
+import type { Env } from './env.js'
 
 type BridgeRpcRequest = {
   clientId: string
@@ -66,10 +66,10 @@ type RuntimeState = {
   setPublicGatewayUrl: (url: string) => void
 }
 
-export class SlackBridgeDO extends DurableObject<HonoBindings> {
+export class SlackBridgeDO extends DurableObject<Env> {
   private runtimePromise?: Promise<RuntimeState>
 
-  constructor(ctx: DurableObjectState, env: HonoBindings) {
+  constructor(ctx: DurableObjectState, env: Env) {
     super(ctx, env)
     this.ctx.setWebSocketAutoResponse(
       new WebSocketRequestResponsePair('ping', 'pong'),

@@ -1,7 +1,7 @@
 // KV helpers for gateway client auth, Slack install state, and team routing cache.
 
 import { createPrisma } from 'db/src'
-import type { HonoBindings } from './env.js'
+import type { Env } from './env.js'
 
 export type GatewayClientCacheRecord = {
   client_id: string
@@ -157,7 +157,7 @@ export async function upsertGatewayClientAndRefreshKv({
   userId,
   reachableUrl,
 }: {
-  env: HonoBindings
+  env: Env
   clientId: string
   secret: string
   guildId: string
@@ -227,7 +227,7 @@ export async function resolveGatewayClientFromCacheOrDb({
   env,
 }: {
   clientId: string
-  env: HonoBindings
+  env: Env
 }): Promise<GatewayClientCacheRecord | Error | undefined> {
   const cached = await getGatewayClientFromKv({
     clientId,

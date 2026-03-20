@@ -19,9 +19,8 @@ import {
 import { createAuth, parseAllowedCallbackUrl } from './auth.js'
 import { renderSuccessPage } from './components/success-page.js'
 import { SlackBridgeDO } from './slack-bridge-do.js'
-import type { Env, HonoBindings } from './env.js'
+import type { Env } from './env.js'
 
-export type { HonoBindings }
 export { SlackBridgeDO }
 
 const SLACK_OAUTH_CALLBACK_PATH = '/slack/oauth/callback'
@@ -64,7 +63,9 @@ const app = new Spiceflow()
     path: '/health',
     async handler({ state }) {
       const prisma = createPrisma(state.env.HYPERDRIVE.connectionString)
-      const result = await prisma.$queryRaw<[{ result: number }]>`SELECT 1 as result`
+      const result = await prisma.$queryRaw<
+        [{ result: number }]
+      >`SELECT 1 as result`
       return { status: 'ok', db: result[0].result }
     },
   })
@@ -116,13 +117,18 @@ const app = new Spiceflow()
             parsed.protocol === 'http:' &&
             (parsed.hostname === 'localhost' || parsed.hostname === '127.0.0.1')
           if (!isHttps && !isLocalHttp) {
-            throw new Response('kimakiCallbackUrl must use https (or http for localhost)', { status: 400 })
+            throw new Response(
+              'kimakiCallbackUrl must use https (or http for localhost)',
+              { status: 400 },
+            )
           }
         } catch (e) {
           if (e instanceof Response) {
             throw e
           }
-          throw new Response('kimakiCallbackUrl is not a valid URL', { status: 400 })
+          throw new Response('kimakiCallbackUrl is not a valid URL', {
+            status: 400,
+          })
         }
       }
 
@@ -137,7 +143,12 @@ const app = new Spiceflow()
       const { response: result, headers } = await auth.api.signInSocial({
         body: {
           provider: 'discord',
-          additionalData: { clientId, clientSecret, kimakiCallbackUrl, reachableUrl },
+          additionalData: {
+            clientId,
+            clientSecret,
+            kimakiCallbackUrl,
+            reachableUrl,
+          },
           callbackURL: '/install-success',
         },
         headers: request.headers,
@@ -145,7 +156,9 @@ const app = new Spiceflow()
       })
 
       if (!result?.url) {
-        throw new Response('Failed to generate Discord OAuth URL', { status: 500 })
+        throw new Response('Failed to generate Discord OAuth URL', {
+          status: 500,
+        })
       }
 
       const redirect = new Response(null, {
@@ -173,7 +186,10 @@ const app = new Spiceflow()
       }
 
       if (kimakiCallbackUrl && !parseAllowedCallbackUrl(kimakiCallbackUrl)) {
-        throw new Response('kimakiCallbackUrl must use https (or http for localhost)', { status: 400 })
+        throw new Response(
+          'kimakiCallbackUrl must use https (or http for localhost)',
+          { status: 400 },
+        )
       }
 
       const oauthState = crypto.randomUUID()
@@ -196,7 +212,10 @@ const app = new Spiceflow()
       const authorizeUrl = new URL('https://slack.com/oauth/v2/authorize')
       authorizeUrl.searchParams.set('client_id', state.env.SLACK_CLIENT_ID)
       authorizeUrl.searchParams.set('scope', SLACK_INSTALL_SCOPES.join(','))
-      authorizeUrl.searchParams.set('redirect_uri', new URL(SLACK_OAUTH_CALLBACK_PATH, baseUrl).toString())
+      authorizeUrl.searchParams.set(
+        'redirect_uri',
+        new URL(SLACK_OAUTH_CALLBACK_PATH, baseUrl).toString(),
+      )
       authorizeUrl.searchParams.set('state', oauthState)
       return new Response(null, {
         status: 302,
@@ -231,7 +250,9 @@ const app = new Spiceflow()
         throw new Response(installState.message, { status: 500 })
       }
       if (!installState) {
-        throw new Response('Slack install state expired or was not found', { status: 400 })
+        throw new Response('Slack install state expired or was not found', {
+          status: 400,
+        })
       }
 
       await deleteSlackInstallStateInKv({
@@ -241,41 +262,57 @@ const app = new Spiceflow()
         return undefined
       })
 
-      const redirectUri = new URL(SLACK_OAUTH_CALLBACK_PATH, new URL(request.url).origin).toString()
-      const slackAccessResponse = await fetch('https://slack.com/api/oauth.v2.access', {
-        method: 'POST',
-        headers: {
-          Authorization: `Basic ${btoa(`${state.env.SLACK_CLIENT_ID}:${state.env.SLACK_CLIENT_SECRET}`)}`,
-          'content-type': 'application/x-www-form-urlencoded',
+      const redirectUri = new URL(
+        SLACK_OAUTH_CALLBACK_PATH,
+        new URL(request.url).origin,
+      ).toString()
+      const slackAccessResponse = await fetch(
+        'https://slack.com/api/oauth.v2.access',
+        {
+          method: 'POST',
+          headers: {
+            Authorization: `Basic ${btoa(`${state.env.SLACK_CLIENT_ID}:${state.env.SLACK_CLIENT_SECRET}`)}`,
+            'content-type': 'application/x-www-form-urlencoded',
+          },
+          body: new URLSearchParams({
+            code,
+            redirect_uri: redirectUri,
+          }),
         },
-        body: new URLSearchParams({
-          code,
-          redirect_uri: redirectUri,
-        }),
-      }).catch((cause) => {
+      ).catch((cause) => {
         return new Error('Failed to exchange Slack OAuth code', { cause })
       })
       if (slackAccessResponse instanceof Error) {
         throw new Response(slackAccessResponse.message, { status: 500 })
       }
 
-      const slackAccessPayload = await slackAccessResponse.json().catch((cause) => {
-        return new Error('Failed to parse Slack OAuth response', { cause })
-      })
+      const slackAccessPayload = await slackAccessResponse
+        .json()
+        .catch((cause) => {
+          return new Error('Failed to parse Slack OAuth response', { cause })
+        })
       if (slackAccessPayload instanceof Error) {
         throw new Response(slackAccessPayload.message, { status: 500 })
       }
       if (!isSlackOAuthAccessResponse(slackAccessPayload)) {
-        throw new Response('Slack OAuth response had an unexpected shape', { status: 500 })
+        throw new Response('Slack OAuth response had an unexpected shape', {
+          status: 500,
+        })
       }
       if (!slackAccessPayload.ok) {
-        throw new Response(`Slack OAuth exchange failed: ${slackAccessPayload.error ?? 'unknown_error'}`, { status: 400 })
+        throw new Response(
+          `Slack OAuth exchange failed: ${slackAccessPayload.error ?? 'unknown_error'}`,
+          { status: 400 },
+        )
       }
 
       const teamId = slackAccessPayload.team?.id
       const botToken = slackAccessPayload.access_token
       if (!(teamId && botToken)) {
-        throw new Response('Slack OAuth response missing team.id or access_token', { status: 500 })
+        throw new Response(
+          'Slack OAuth response missing team.id or access_token',
+          { status: 500 },
+        )
       }
 
       const prisma = createPrisma(state.env.HYPERDRIVE.connectionString)
@@ -292,22 +329,28 @@ const app = new Spiceflow()
         throw new Response(upsertResult.message, { status: 500 })
       }
 
-      const updateRowsResult = await prisma.gateway_clients.updateMany({
-        where: {
-          guild_id: teamId,
-          platform: 'slack',
-        },
-        data: {
-          bot_token: botToken,
-        },
-      }).catch((cause) => {
-        return new Error('Failed to refresh Slack bot tokens for team', { cause })
-      })
+      const updateRowsResult = await prisma.gateway_clients
+        .updateMany({
+          where: {
+            guild_id: teamId,
+            platform: 'slack',
+          },
+          data: {
+            bot_token: botToken,
+          },
+        })
+        .catch((cause) => {
+          return new Error('Failed to refresh Slack bot tokens for team', {
+            cause,
+          })
+        })
       if (updateRowsResult instanceof Error) {
         throw new Response(updateRowsResult.message, { status: 500 })
       }
 
-      const callbackUrl = parseAllowedCallbackUrl(installState.kimaki_callback_url)
+      const callbackUrl = parseAllowedCallbackUrl(
+        installState.kimaki_callback_url,
+      )
       if (callbackUrl) {
         callbackUrl.searchParams.set('guild_id', teamId)
         callbackUrl.searchParams.set('team_id', teamId)
@@ -318,7 +361,10 @@ const app = new Spiceflow()
         })
       }
 
-      const successUrl = new URL('/install-success', new URL(request.url).origin)
+      const successUrl = new URL(
+        '/install-success',
+        new URL(request.url).origin,
+      )
       successUrl.searchParams.set('guild_id', teamId)
       successUrl.searchParams.set('team_id', teamId)
       return new Response(null, {
@@ -335,7 +381,10 @@ const app = new Spiceflow()
     path: '/install-success',
     handler({ request }) {
       const url = new URL(request.url)
-      const guildId = url.searchParams.get('guild_id') ?? url.searchParams.get('team_id') ?? undefined
+      const guildId =
+        url.searchParams.get('guild_id') ??
+        url.searchParams.get('team_id') ??
+        undefined
       return new Response(renderSuccessPage({ guildId }), {
         headers: { 'Content-Type': 'text/html; charset=utf-8' },
       })
@@ -399,7 +448,9 @@ const app = new Spiceflow()
           }),
         })
         return new Response(
-          JSON.stringify({ error: 'Could not resolve Slack team_id from webhook payload' }),
+          JSON.stringify({
+            error: 'Could not resolve Slack team_id from webhook payload',
+          }),
           { status: 400, headers: { 'Content-Type': 'application/json' } },
         )
       }
@@ -421,21 +472,23 @@ const app = new Spiceflow()
         )
       }
 
-      const fanoutResults = await Promise.allSettled(clientIdsResult.map(async (clientId) => {
-        const stub = state.env.SLACK_GATEWAY.getByName(clientId)
-        const response = await stub.handleSlackWebhook({
-          clientId,
-          url: request.url,
-          path: new URL(request.url).pathname,
-          method: request.method,
-          headers: headersToPairs(request.headers),
-          body,
-        })
-        return {
-          clientId,
-          response,
-        }
-      }))
+      const fanoutResults = await Promise.allSettled(
+        clientIdsResult.map(async (clientId) => {
+          const stub = state.env.SLACK_GATEWAY.getByName(clientId)
+          const response = await stub.handleSlackWebhook({
+            clientId,
+            url: request.url,
+            path: new URL(request.url).pathname,
+            method: request.method,
+            headers: headersToPairs(request.headers),
+            body,
+          })
+          return {
+            clientId,
+            response,
+          }
+        }),
+      )
 
       const rejectedResults = fanoutResults.filter((result) => {
         return result.status === 'rejected'
@@ -473,7 +526,9 @@ const app = new Spiceflow()
       }
 
       return new Response(
-        JSON.stringify({ error: 'Failed to fan out Slack webhook to client durable objects' }),
+        JSON.stringify({
+          error: 'Failed to fan out Slack webhook to client durable objects',
+        }),
         { status: 502, headers: { 'Content-Type': 'application/json' } },
       )
     },
@@ -591,17 +646,17 @@ const app = new Spiceflow()
           return new Error('Failed to lookup gateway client', { cause })
         })
       if (row instanceof Error) {
-        return new Response(
-          JSON.stringify({ error: row.message }),
-          { status: 500, headers: { 'Content-Type': 'application/json' } },
-        )
+        return new Response(JSON.stringify({ error: row.message }), {
+          status: 500,
+          headers: { 'Content-Type': 'application/json' },
+        })
       }
 
       if (!row) {
-        return new Response(
-          JSON.stringify({ error: 'Not found' }),
-          { status: 404, headers: { 'Content-Type': 'application/json' } },
-        )
+        return new Response(JSON.stringify({ error: 'Not found' }), {
+          status: 404,
+          headers: { 'Content-Type': 'application/json' },
+        })
       }
 
       const discordUserId = row.user?.accounts.find((account) => {
@@ -648,13 +703,15 @@ function proxyGatewayToDurableObject({
   const url = new URL(request.url)
   const rewrittenPath = `${url.pathname}${url.search}`
   const durableObjectUrl = new URL(rewrittenPath, 'https://do.local')
-  return stub.fetch(new Request(durableObjectUrl, {
-    method: request.method,
-    headers: request.headers,
-    body: request.body,
-    redirect: request.redirect,
-    signal: request.signal,
-  }))
+  return stub.fetch(
+    new Request(durableObjectUrl, {
+      method: request.method,
+      headers: request.headers,
+      body: request.body,
+      redirect: request.redirect,
+      signal: request.signal,
+    }),
+  )
 }
 
 function getClientIdFromAuthorizationHeader(headers: Headers): string | Error {
@@ -686,7 +743,7 @@ async function resolveClientIdsForTeamId({
   env,
 }: {
   teamId: string
-  env: HonoBindings
+  env: Env
 }): Promise<string[] | Error> {
   try {
     const cachedClientIds = await getTeamClientIdsFromKv({
@@ -704,17 +761,18 @@ async function resolveClientIdsForTeamId({
   }
 
   const prisma = createPrisma(env.HYPERDRIVE.connectionString)
-  const rows = await prisma.gateway_clients.findMany({
-    // In Slack bridge mode, gateway_clients.guild_id stores Slack team_id.
-    // We intentionally reuse the same column to avoid a separate mapping table.
-    where: { guild_id: teamId },
-    orderBy: [
-      { updated_at: 'desc' },
-      { created_at: 'desc' },
-    ],
-  }).catch((cause) => {
-    return new Error('Failed to resolve client IDs for Slack team_id', { cause })
-  })
+  const rows = await prisma.gateway_clients
+    .findMany({
+      // In Slack bridge mode, gateway_clients.guild_id stores Slack team_id.
+      // We intentionally reuse the same column to avoid a separate mapping table.
+      where: { guild_id: teamId },
+      orderBy: [{ updated_at: 'desc' }, { created_at: 'desc' }],
+    })
+    .catch((cause) => {
+      return new Error('Failed to resolve client IDs for Slack team_id', {
+        cause,
+      })
+    })
   if (rows instanceof Error) {
     return rows
   }
@@ -811,10 +869,9 @@ function summarizeErrorReason(reason: unknown): string {
 
 function isSlackGatewayHost(requestUrl: string): boolean {
   const host = new URL(requestUrl).host.toLowerCase()
-  const isGatewayHost = (
-    host === 'slack-gateway.kimaki.xyz'
-    || host === 'preview-slack-gateway.kimaki.xyz'
-  )
+  const isGatewayHost =
+    host === 'slack-gateway.kimaki.xyz' ||
+    host === 'preview-slack-gateway.kimaki.xyz'
   console.log('[slack-gateway-host-check]', {
     host,
     requestUrl,
@@ -858,9 +915,13 @@ type SlackOAuthSuccessResponse = {
   }
 }
 
-type SlackOAuthAccessResponse = SlackOAuthErrorResponse | SlackOAuthSuccessResponse
+type SlackOAuthAccessResponse =
+  | SlackOAuthErrorResponse
+  | SlackOAuthSuccessResponse
 
-function isSlackOAuthAccessResponse(value: unknown): value is SlackOAuthAccessResponse {
+function isSlackOAuthAccessResponse(
+  value: unknown,
+): value is SlackOAuthAccessResponse {
   if (!isRecord(value)) {
     return false
   }
@@ -889,13 +950,15 @@ function isSlackOAuthAccessResponse(value: unknown): value is SlackOAuthAccessRe
   return true
 }
 
-function isOptionalIdRecord(value: unknown): value is { id?: string; access_token?: string } {
+function isOptionalIdRecord(
+  value: unknown,
+): value is { id?: string; access_token?: string } {
   if (!isRecord(value)) {
     return false
   }
   return (
-    (value.id === undefined || typeof value.id === 'string')
-    && (value.access_token === undefined || typeof value.access_token === 'string')
+    (value.id === undefined || typeof value.id === 'string') &&
+    (value.access_token === undefined || typeof value.access_token === 'string')
   )
 }
 

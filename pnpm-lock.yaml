@@ -533,8 +533,8 @@ importers:
         specifier: workspace:^
         version: link:../discord-slack-bridge
       spiceflow:
-        specifier: 1.18.0-rsc.9
-        version: 1.18.0-rsc.9(react-dom@19.2.4(react@19.2.4))(react@19.2.4)(vite@7.1.4(@types/node@24.11.0)(jiti@2.6.1)(terser@5.46.0)(tsx@4.21.0)(yaml@2.8.2))(zod@4.3.6)
+        specifier: 1.18.0-rsc.11
+        version: 1.18.0-rsc.11(react-dom@19.2.4(react@19.2.4))(react@19.2.4)(vite@7.1.4(@types/node@24.11.0)(jiti@2.6.1)(terser@5.46.0)(tsx@4.21.0)(yaml@2.8.2))(zod@4.3.6)
     devDependencies:
       '@cloudflare/workers-types':
         specifier: ^4.20260130.0
@@ -4128,8 +4128,8 @@ packages:
       '@modelcontextprotocol/sdk':
         optional: true
 
-  spiceflow@1.18.0-rsc.9:
-    resolution: {integrity: sha512-P3gpTLz52G2xzXk+xAUIvn14pG0fPvvCAA7UNXh1T9Q1/9YP1YhaA60PxU4WBj04AQN3LFq5AFZlUgH40g6KDg==}
+  spiceflow@1.18.0-rsc.11:
+    resolution: {integrity: sha512-RL/3KTIL+t/j3sFlToKg5JexuWzNT0qbREvjIpNHaKJbA2WN6AUthxv9gbKLxldqaCq76DuCQtrhhkceyaRuAQ==}
     peerDependencies:
       '@modelcontextprotocol/sdk': '*'
       react: '*'
@@ -8349,7 +8349,7 @@ snapshots:
       zod: 4.3.6
       zod-to-json-schema: 3.25.1(zod@4.3.6)
 
-  spiceflow@1.18.0-rsc.9(react-dom@19.2.4(react@19.2.4))(react@19.2.4)(vite@7.1.4(@types/node@24.11.0)(jiti@2.6.1)(terser@5.46.0)(tsx@4.21.0)(yaml@2.8.2))(zod@4.3.6):
+  spiceflow@1.18.0-rsc.11(react-dom@19.2.4(react@19.2.4))(react@19.2.4)(vite@7.1.4(@types/node@24.11.0)(jiti@2.6.1)(terser@5.46.0)(tsx@4.21.0)(yaml@2.8.2))(zod@4.3.6):
     dependencies:
       '@vitejs/plugin-rsc': 0.5.21(react-dom@19.2.4(react@19.2.4))(react@19.2.4)(vite@7.1.4(@types/node@24.11.0)(jiti@2.6.1)(terser@5.46.0)(tsx@4.21.0)(yaml@2.8.2))
       errore: 0.14.0

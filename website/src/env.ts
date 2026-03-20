@@ -5,8 +5,6 @@
 
 import type { SlackBridgeDO } from './slack-bridge-do.js'
 
-/** @deprecated Use `Env` instead */
-export type HonoBindings = Env
 
 export type Env = {
   HYPERDRIVE: { connectionString: string }
