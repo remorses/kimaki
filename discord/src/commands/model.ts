@@ -54,6 +54,8 @@ type PendingModelContext = {
   availableVariants?: string[]
   providerPage?: number
   modelPage?: number
+  /** Header text shown above the provider select (current model info). */
+  providerSelectHeader?: string
 }
 
 const pendingModelContexts = new Map<string, PendingModelContext>()
@@ -467,6 +469,7 @@ export async function handleModelCommand({
     })()
 
     // Store context with a short hash key to avoid customId length limits.
+    const providerSelectHeader = `**Set Model Preference**\n${currentModelText}${variantText}\nSelect a provider:`
     const context = {
       dir: projectDirectory,
       channelId: targetChannelId,
@@ -474,6 +477,7 @@ export async function handleModelCommand({
       isThread: isThread,
       thread: isThread ? (channel as ThreadChannel) : undefined,
       appId,
+      providerSelectHeader,
     }
     const contextHash = crypto.randomBytes(8).toString('hex')
     setModelContext(contextHash, context)
@@ -507,7 +511,7 @@ export async function handleModelCommand({
       new ActionRowBuilder<StringSelectMenuBuilder>().addComponents(selectMenu)
 
     await interaction.editReply({
-      content: `**Set Model Preference**\n${currentModelText}${variantText}\nSelect a provider:`,
+      content: providerSelectHeader,
       components: [actionRow],
     })
   } catch (error) {
@@ -570,7 +574,9 @@ export async function handleProviderSelectMenu(
       await interaction.editReply({ content: 'Failed to fetch providers', components: [] })
       return
     }
-    const allProviderOptions = [...providersResponse.data.all]
+    const { all: allProviders, connected } = providersResponse.data
+    const availableProviders = allProviders.filter((p) => connected.includes(p.id))
+    const allProviderOptions = [...availableProviders]
       .sort((a, b) => a.name.localeCompare(b.name))
       .map((p) => {
         const modelCount = Object.keys(p.models || {}).length
@@ -587,7 +593,7 @@ export async function handleProviderSelectMenu(
       .addOptions(options)
     const actionRow = new ActionRowBuilder<StringSelectMenuBuilder>().addComponents(selectMenu)
     await interaction.editReply({
-      content: `**Set Model Preference**\nSelect a provider:`,
+      content: context.providerSelectHeader || `**Set Model Preference**\nSelect a provider:`,
       components: [actionRow],
     })
     return
