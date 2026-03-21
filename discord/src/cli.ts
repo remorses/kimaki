@@ -4915,6 +4915,41 @@ cli
 
 cli
   .command(
+    'session discord-url <sessionId>',
+    'Print the Discord thread URL for a session',
+  )
+  .option('--json', 'Output as JSON')
+  .action(async (sessionId, options) => {
+    await initDatabase()
+    const threadId = await getThreadIdBySessionId(sessionId)
+    if (!threadId) {
+      cliLogger.error(`No Discord thread found for session: ${sessionId}`)
+      process.exit(EXIT_NO_RESTART)
+    }
+    const { token: botToken } = await resolveBotCredentials()
+    const rest = createDiscordRest(botToken)
+    const threadData = (await rest.get(Routes.channel(threadId))) as {
+      id: string
+      guild_id: string
+      name?: string
+    }
+    const url = `https://discord.com/channels/${threadData.guild_id}/${threadData.id}`
+    if (options.json) {
+      console.log(JSON.stringify({
+        url,
+        threadId: threadData.id,
+        guildId: threadData.guild_id,
+        sessionId,
+        threadName: threadData.name,
+      }))
+    } else {
+      console.log(url)
+    }
+    process.exit(0)
+  })
+
+cli
+  .command(
     'upgrade',
     'Upgrade kimaki to the latest version and restart the running bot',
   )
