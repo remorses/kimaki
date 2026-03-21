@@ -252,7 +252,37 @@ async function sendDiscordMessageWithOptionalAttachment({
     fs.mkdirSync(tmpDir, { recursive: true })
   }
   const tmpFile = path.join(tmpDir, `prompt-${Date.now()}.md`)
-  fs.writeFileSync(tmpFile, prompt)
+  // Wrap long lines so the file is readable in Discord's preview
+  // (Discord doesn't wrap text in file attachments)
+  const wrappedPrompt = prompt
+    .split('\n')
+    .flatMap((line) => {
+      if (line.length <= 120) {
+        return [line]
+      }
+      const wrapped: string[] = []
+      let remaining = line
+      const maxCol = 120
+      // Only soft-break at a space if it's reasonably close to maxCol,
+      // otherwise hard-break to avoid tiny fragments from early spaces
+      const minSoftBreak = 90
+      while (remaining.length > maxCol) {
+        const lastSpace = remaining.lastIndexOf(' ', maxCol)
+        const useSoftBreak = lastSpace >= minSoftBreak
+        const breakAt = useSoftBreak ? lastSpace : maxCol
+        wrapped.push(remaining.slice(0, breakAt))
+        // Only consume the separator space on soft breaks
+        remaining = useSoftBreak
+          ? remaining.slice(breakAt + 1)
+          : remaining.slice(breakAt)
+      }
+      if (remaining.length > 0) {
+        wrapped.push(remaining)
+      }
+      return wrapped
+    })
+    .join('\n')
+  fs.writeFileSync(tmpFile, wrappedPrompt)
 
   try {
     const formData = new FormData()
@@ -607,16 +637,18 @@ async function ensureCommandAvailable({
 // Run opencode upgrade in the background so the user always has the latest version.
 
 // Spawn caffeinate on macOS to prevent system sleep while bot is running.
-// Not detached, so it dies automatically with the parent process.
+// Uses -w to watch the parent PID so caffeinate self-terminates if kimaki
+// exits for any reason (SIGTERM, crash, process.exit, supervisor stop).
 function startCaffeinate() {
   if (process.platform !== 'darwin') {
     return
   }
   try {
-    const proc = spawn('caffeinate', ['-i'], {
+    const proc = spawn('caffeinate', ['-i', '-w', String(process.pid)], {
       stdio: 'ignore',
       detached: false,
     })
+    proc.unref()
     proc.on('error', (err) => {
       cliLogger.warn('Failed to start caffeinate:', err.message)
     })
