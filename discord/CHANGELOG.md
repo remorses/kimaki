@@ -1,5 +1,36 @@
 # Changelog
 
+## 0.4.80
+
+1. **Built-in Anthropic OAuth authentication** — the Anthropic OAuth plugin now ships with kimaki and loads automatically. No need to manage a separate plugin file in `~/.config/opencode/plugins/`. Log in with `/login` → Anthropic → OAuth and kimaki handles the PKCE flow, token refresh, and Claude Code request rewriting.
+
+2. **New `kimaki task edit` CLI command** — edit the prompt and/or schedule of a planned task without deleting and recreating it:
+   ```bash
+   kimaki task edit <id> --prompt "Updated task description"
+   kimaki task edit <id> --send-at "tomorrow at 9am"
+   kimaki task edit <id> --prompt "New prompt" --send-at "every day at 8am"
+   ```
+   Only works on tasks in `planned` state.
+
+3. **New `kimaki session discord-url` CLI command** — print the Discord thread URL for a given OpenCode session ID:
+   ```bash
+   kimaki session discord-url <session-id>
+   kimaki session discord-url <session-id> --json
+   ```
+   `--json` returns `{ url, threadId, guildId, sessionId, threadName }` for scripting.
+
+4. **Paginated select menus for `/model` and `/login`** — Discord caps select menus at 25 options, silently dropping anything beyond that. Providers like OpenRouter expose 162+ models, making many unreachable. Select menus now paginate with "← Previous page" / "Next page →" navigation so all providers and models are accessible.
+
+5. **Fixed `/redo` to step forward one message at a time** — previously `/redo` jumped all the way back to the latest state in one shot. It now matches OpenCode TUI behavior: each `/redo` moves one user message forward (symmetric with `/undo`), so 3 undos require 3 redos to fully restore.
+
+6. **Fixed OOM crash during long sessions** — assistant `message.updated` events were passing through the event buffer uncompacted, each carrying the full cumulative parts array (all tool outputs and text). With 1000 buffer entries, memory could exceed 4GB and trigger a V8 OOM kill. The buffer now strips `parts`, `system`, `summary`, and `tools` from all message events, keeping only the lightweight metadata needed for derivation.
+
+7. **Fixed voice attachment detection and empty prompt guard** — improved detection handles cases where Discord omits `contentType` on uploaded audio files (checks duration, waveform, and file extension as fallbacks). Added a guard to skip sending empty prompts when voice transcription fails or produces no text.
+
+8. **Fixed prompt.md wrapping in Discord file preview** — long-line prompts sent as file attachments are now word-wrapped at 120 chars before upload, so Discord's file viewer renders them readably instead of requiring horizontal scrolling.
+
+9. **Fixed `/undo` and `/redo` error handling** — SDK errors on `session.get` and `session.messages` calls now bail early with the error message instead of silently proceeding with wrong behavior.
+
 ## 0.4.79
 
 1. **New `/tasks` command** — list and cancel scheduled tasks created with `kimaki send --send-at`:
