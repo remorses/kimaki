@@ -912,9 +912,65 @@ export class ThreadSessionRuntime {
     return `${text.slice(0, ThreadSessionRuntime.EVENT_BUFFER_TEXT_MAX_CHARS)}…`
   }
 
-  private compactEventForEventBuffer(event: OpenCodeEvent): OpenCodeEvent {
-    if (event.type !== 'message.updated' && event.type !== 'message.part.updated') {
-      return event
+  private isDefinedEventBufferValue<T>(value: T | undefined): value is T {
+    return value !== undefined
+  }
+
+  private pruneLargeStringsForEventBuffer(
+    value: unknown,
+    seen: WeakSet<object>,
+  ): void {
+    if (typeof value !== 'object' || value === null) {
+      return
+    }
+    if (seen.has(value)) {
+      return
+    }
+    seen.add(value)
+
+    if (Array.isArray(value)) {
+      const compactedItems = value
+        .map((item) => {
+          if (typeof item === 'string') {
+            if (item.length > ThreadSessionRuntime.EVENT_BUFFER_TEXT_MAX_CHARS) {
+              return undefined
+            }
+            return item
+          }
+          this.pruneLargeStringsForEventBuffer(item, seen)
+          return item
+        })
+        .filter((item) => {
+          return this.isDefinedEventBufferValue(item)
+        })
+      value.splice(0, value.length, ...compactedItems)
+      return
+    }
+
+    const objectValue = value as Record<string, unknown>
+    for (const [key, nestedValue] of Object.entries(objectValue)) {
+      if (typeof nestedValue === 'string') {
+        if (nestedValue.length > ThreadSessionRuntime.EVENT_BUFFER_TEXT_MAX_CHARS) {
+          delete objectValue[key]
+        }
+        continue
+      }
+      this.pruneLargeStringsForEventBuffer(nestedValue, seen)
+    }
+  }
+
+  private finalizeCompactedEventForEventBuffer(
+    event: OpenCodeEvent,
+  ): OpenCodeEvent {
+    this.pruneLargeStringsForEventBuffer(event, new WeakSet<object>())
+    return event
+  }
+
+  private compactEventForEventBuffer(
+    event: OpenCodeEvent,
+  ): OpenCodeEvent | undefined {
+    if (event.type === 'session.diff') {
+      return undefined
     }
 
     const compacted = structuredClone(event)
@@ -930,33 +986,37 @@ export class ThreadSessionRuntime {
       delete info.summary
       delete info.tools
       delete info.parts
-      return compacted
+      return this.finalizeCompactedEventForEventBuffer(compacted)
+    }
+
+    if (compacted.type !== 'message.part.updated') {
+      return this.finalizeCompactedEventForEventBuffer(compacted)
     }
 
     const part = compacted.properties.part
 
     if (part.type === 'text') {
       part.text = this.compactTextForEventBuffer(part.text)
-      return compacted
+      return this.finalizeCompactedEventForEventBuffer(compacted)
     }
 
     if (part.type === 'reasoning') {
       part.text = this.compactTextForEventBuffer(part.text)
-      return compacted
+      return this.finalizeCompactedEventForEventBuffer(compacted)
     }
 
     if (part.type === 'snapshot') {
       part.snapshot = this.compactTextForEventBuffer(part.snapshot)
-      return compacted
+      return this.finalizeCompactedEventForEventBuffer(compacted)
     }
 
     if (part.type === 'step-start' && part.snapshot) {
       part.snapshot = this.compactTextForEventBuffer(part.snapshot)
-      return compacted
+      return this.finalizeCompactedEventForEventBuffer(compacted)
     }
 
     if (part.type !== 'tool') {
-      return compacted
+      return this.finalizeCompactedEventForEventBuffer(compacted)
     }
 
     const state = part.state
@@ -971,33 +1031,38 @@ export class ThreadSessionRuntime {
 
     if (state.status === 'pending') {
       state.raw = this.compactTextForEventBuffer(state.raw)
-      return compacted
+      return this.finalizeCompactedEventForEventBuffer(compacted)
     }
 
     if (state.status === 'running') {
-      return compacted
+      return this.finalizeCompactedEventForEventBuffer(compacted)
     }
 
     if (state.status === 'completed') {
       state.output = this.compactTextForEventBuffer(state.output)
       delete state.attachments
-      return compacted
+      return this.finalizeCompactedEventForEventBuffer(compacted)
     }
 
     if (state.status === 'error') {
       state.error = this.compactTextForEventBuffer(state.error)
-      return compacted
+      return this.finalizeCompactedEventForEventBuffer(compacted)
     }
 
-    return compacted
+    return this.finalizeCompactedEventForEventBuffer(compacted)
   }
 
   private appendEventToBuffer(event: OpenCodeEvent): void {
+    const compactedEvent = this.compactEventForEventBuffer(event)
+    if (!compactedEvent) {
+      return
+    }
+
     const timestamp = Date.now()
     const eventIndex = this.nextEventIndex
     this.nextEventIndex += 1
     this.eventBuffer.push({
-      event: this.compactEventForEventBuffer(event),
+      event: compactedEvent,
       timestamp,
       eventIndex,
     })
@@ -1184,6 +1249,13 @@ export class ThreadSessionRuntime {
   // Subtask sessions also bypass — they're tracked in subtaskSessions.
 
   private async handleEvent(event: OpenCodeEvent): Promise<void> {
+    // session.diff can carry repeated full-file before/after snapshots and is
+    // not used by event-derived runtime state, queueing, typing, or UI routing.
+    // Drop it at ingress so large diff payloads never hit memory buffers.
+    if (event.type === 'session.diff') {
+      return
+    }
+
     // Skip message.part.delta from the event buffer — no derivation function
     // (isSessionBusy, doesLatestUserTurnHaveNaturalCompletion, waitForEvent,
     // etc.) uses them. During long streaming responses they flood the 1000-slot
