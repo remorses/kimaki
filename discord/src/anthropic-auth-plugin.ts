@@ -102,6 +102,7 @@ async function postJson(url: string, body: Record<string, string | number>): Pro
     method: "POST",
     headers: { "Content-Type": "application/json", Accept: "application/json" },
     body: JSON.stringify(body),
+    signal: AbortSignal.timeout(30_000),
   });
   if (!response.ok) {
     const text = await response.text().catch(() => "");
@@ -201,6 +202,7 @@ async function createApiKey(accessToken: string): Promise<ApiKeySuccess> {
       authorization: `Bearer ${accessToken}`,
       "Content-Type": "application/json",
     },
+    signal: AbortSignal.timeout(30_000),
   });
   if (!response.ok) {
     const text = await response.text().catch(() => "");
@@ -231,20 +233,24 @@ async function startCallbackServer(expectedState: string) {
     });
 
     const server = createServer((req, res) => {
-      const url = new URL(req.url || "", "http://localhost");
-      if (url.pathname !== CALLBACK_PATH) {
-        res.writeHead(404).end("Not found");
-        return;
+      try {
+        const url = new URL(req.url || "", "http://localhost");
+        if (url.pathname !== CALLBACK_PATH) {
+          res.writeHead(404).end("Not found");
+          return;
+        }
+        const code = url.searchParams.get("code");
+        const state = url.searchParams.get("state");
+        const error = url.searchParams.get("error");
+        if (error || !code || !state || state !== expectedState) {
+          res.writeHead(400).end("Authentication failed: " + (error || "missing code/state"));
+          return;
+        }
+        res.writeHead(200, { "Content-Type": "text/plain" }).end("Authentication successful. You can close this window.");
+        settle?.({ code, state });
+      } catch {
+        res.writeHead(500).end("Internal error");
       }
-      const code = url.searchParams.get("code");
-      const state = url.searchParams.get("state");
-      const error = url.searchParams.get("error");
-      if (error || !code || !state || state !== expectedState) {
-        res.writeHead(400).end("Authentication failed: " + (error || "missing code/state"));
-        return;
-      }
-      res.writeHead(200, { "Content-Type": "text/plain" }).end("Authentication successful. You can close this window.");
-      settle?.({ code, state });
     });
 
     server.once("error", reject);
@@ -333,6 +339,11 @@ function parseManualInput(input: string): CallbackResult {
   if (input.includes("#")) {
     const [code = "", state = ""] = input.split("#", 2);
     return { code, state };
+  }
+  if (input.includes("code=")) {
+    const params = new URLSearchParams(input);
+    const code = params.get("code");
+    if (code) return { code, state: params.get("state") || "" };
   }
   return { code: input, state: "" };
 }
