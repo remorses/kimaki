@@ -1,8 +1,9 @@
 ---
 name: lintcn
 description: >
-  Write custom type-aware TypeScript lint rules for tsgolint in Go.
-  Covers the rule API, AST visitors, type checker, reporting, fixes,
+  Write, add, and update type-aware TypeScript lint rules in .lintcn/ Go files.
+  ALWAYS use this skill when creating, editing, or debugging .lintcn/*.go rule files.
+  Covers the tsgolint rule API, AST visitors, type checker, reporting, fixes,
   testing, and all patterns from the 50+ built-in rules.
 ---
 
