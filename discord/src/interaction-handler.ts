@@ -93,6 +93,7 @@ import { handleRestartOpencodeServerCommand } from './commands/restart-opencode-
 import { handleRunCommand } from './commands/run-command.js'
 import { handleContextUsageCommand } from './commands/context-usage.js'
 import { handleSessionIdCommand } from './commands/session-id.js'
+import { handleMemorySnapshotCommand } from './commands/memory-snapshot.js'
 import { handleUpgradeAndRestartCommand } from './commands/upgrade.js'
 import { handleMcpCommand, handleMcpSelectMenu } from './commands/mcp.js'
 import {
@@ -325,6 +326,13 @@ export function registerInteractionHandler({
 
             case 'session-id':
               await handleSessionIdCommand({ command: interaction, appId })
+              return
+
+            case 'memory-snapshot':
+              await handleMemorySnapshotCommand({
+                command: interaction,
+                appId,
+              })
               return
 
             case 'upgrade-and-restart':

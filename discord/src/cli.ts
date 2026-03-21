@@ -1125,6 +1125,13 @@ async function registerCommands({
       .setDMPermission(false)
       .toJSON(),
     new SlashCommandBuilder()
+      .setName('memory-snapshot')
+      .setDescription(
+        truncateCommandDescription('Write a V8 heap snapshot to disk for memory debugging'),
+      )
+      .setDMPermission(false)
+      .toJSON(),
+    new SlashCommandBuilder()
       .setName('upgrade-and-restart')
       .setDescription(
         truncateCommandDescription('Upgrade kimaki to the latest version and restart the bot'),
