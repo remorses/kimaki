@@ -2841,6 +2841,16 @@ export class ThreadSessionRuntime {
           preprocess: undefined,
         }
 
+        const hasPromptText = resolvedInput.prompt.trim().length > 0
+        const hasImages = (resolvedInput.images?.length || 0) > 0
+        if (!hasPromptText && !hasImages && !resolvedInput.command) {
+          logger.warn(
+            `[INGRESS] Skipping empty preprocessed input threadId=${this.threadId}`,
+          )
+          resolveOuter({ queued: false })
+          return
+        }
+
         // Route with the resolved mode through normal paths.
         // Await the enqueue so session state (ensureSession, setThreadSession)
         // is persisted before the next message's preprocessing reads it.

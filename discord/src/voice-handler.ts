@@ -10,11 +10,9 @@ import {
   entersState,
   type VoiceConnection,
 } from '@discordjs/voice'
-import { exec } from 'node:child_process'
 import fs, { createWriteStream } from 'node:fs'
 import { mkdir } from 'node:fs/promises'
 import path from 'node:path'
-import { promisify } from 'node:util'
 import { Transform, type TransformCallback } from 'node:stream'
 import * as prism from 'prism-media'
 import dedent from 'string-dedent'
@@ -46,6 +44,11 @@ import {
 import { transcribeAudio, type TranscriptionResult } from './voice.js'
 import { FetchError } from './errors.js'
 import { store } from './store.js'
+import {
+  getVoiceAttachmentMatchReason,
+  isVoiceAttachment,
+} from './voice-attachment.js'
+import { execAsync } from './worktrees.js'
 
 import { createLogger, LogPrefix } from './logger.js'
 import { notifyError } from './sentry.js'
@@ -470,13 +473,15 @@ export async function processVoiceAttachment({
   lastSessionContext,
 }: ProcessVoiceAttachmentArgs): Promise<TranscriptionResult | null> {
   const audioAttachment = Array.from(message.attachments.values()).find(
-    (attachment) => attachment.contentType?.startsWith('audio/'),
+    (attachment) => isVoiceAttachment(attachment),
   )
 
   if (!audioAttachment) return null
 
+  const attachmentMatchReason = getVoiceAttachmentMatchReason(audioAttachment)
+
   voiceLogger.log(
-    `Detected audio attachment: ${audioAttachment.name} (${audioAttachment.contentType})`,
+    `Detected audio attachment: ${audioAttachment.name} (${audioAttachment.contentType || 'no contentType'}, ${attachmentMatchReason || 'unknown reason'})`,
   )
 
   await sendThreadMessage(thread, '🎤 Transcribing voice message...')
@@ -543,7 +548,6 @@ export async function processVoiceAttachment({
   if (projectDirectory) {
     try {
       voiceLogger.log(`Getting project file tree from ${projectDirectory}`)
-      const execAsync = promisify(exec)
       const { stdout } = await execAsync('git ls-files | tree --fromfile -a', {
         cwd: projectDirectory,
       })

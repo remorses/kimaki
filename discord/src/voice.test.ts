@@ -11,6 +11,10 @@ import {
   normalizeAudioMediaType,
   getOpenAIAudioConversionStrategy,
 } from './voice.js'
+import {
+  getVoiceAttachmentMatchReason,
+  isVoiceAttachment,
+} from './voice-attachment.js'
 
 describe('audio media type routing', () => {
   test('normalizes m4a aliases to audio/mp4', () => {
@@ -28,6 +32,38 @@ describe('audio media type routing', () => {
     expect(getOpenAIAudioConversionStrategy('audio/opus')).toMatchInlineSnapshot('"convert-ogg-to-wav"')
     expect(getOpenAIAudioConversionStrategy('audio/mp4')).toMatchInlineSnapshot('"convert-m4a-to-wav"')
     expect(getOpenAIAudioConversionStrategy('audio/mpeg')).toMatchInlineSnapshot('"none"')
+  })
+})
+
+describe('voice attachment detection', () => {
+  test('detects voice attachments by content type, extension, and waveform metadata', () => {
+    expect(
+      [
+        getVoiceAttachmentMatchReason({
+          name: 'voice-message.ogg',
+          contentType: 'audio/ogg',
+        }),
+        getVoiceAttachmentMatchReason({
+          name: 'voice-message.ogg',
+          contentType: null,
+        }),
+        getVoiceAttachmentMatchReason({
+          name: 'upload.bin',
+          contentType: null,
+          waveform: 'abc123',
+        }),
+        isVoiceAttachment({
+          name: 'notes.txt',
+          contentType: null,
+        }),
+      ]).toMatchInlineSnapshot(`
+      [
+        "contentType:audio/ogg",
+        "extension:.ogg",
+        "waveform",
+        false,
+      ]
+    `)
   })
 })
 

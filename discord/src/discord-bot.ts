@@ -42,6 +42,7 @@ import {
   getTextAttachments,
   resolveMentions,
 } from './message-formatting.js'
+import { isVoiceAttachment } from './voice-attachment.js'
 import {
   preprocessExistingThreadMessage,
   preprocessNewThreadMessage,
@@ -582,8 +583,8 @@ export async function startDiscordBot({
           }
         }
 
-        const hasVoiceAttachment = message.attachments.some((a) => {
-          return a.contentType?.startsWith('audio/')
+        const hasVoiceAttachment = message.attachments.some((attachment) => {
+          return isVoiceAttachment(attachment)
         })
 
         if (!projectDirectory) {
@@ -728,9 +729,9 @@ export async function startDiscordBot({
           }
         }
 
-        const hasVoice = message.attachments.some((a) =>
-          a.contentType?.startsWith('audio/'),
-        )
+        const hasVoice = message.attachments.some((attachment) => {
+          return isVoiceAttachment(attachment)
+        })
 
         const baseThreadName = hasVoice
           ? 'Voice Message'
