@@ -34,6 +34,7 @@ import {
 } from '../opencode.js'
 import { resolveTextChannel, getKimakiMetadata } from '../discord-utils.js'
 import { createLogger, LogPrefix } from '../logger.js'
+import { buildPaginatedOptions, parsePaginationValue } from './paginated-select.js'
 
 const loginLogger = createLogger(LogPrefix.LOGIN)
 
@@ -98,6 +99,7 @@ type LoginContext = {
   steps: LoginStep[]
   stepIndex: number
   inputs: Record<string, string>
+  providerPage?: number
 }
 
 // ── Context store ───────────────────────────────────────────────
@@ -273,7 +275,7 @@ export async function handleLoginCommand({
       return
     }
 
-    const options = [...allProviders]
+    const allProviderOptions = [...allProviders]
       .sort((a, b) => {
         const rankA = PROVIDER_POPULARITY_ORDER.indexOf(a.id)
         const rankB = PROVIDER_POPULARITY_ORDER.indexOf(b.id)
@@ -284,7 +286,6 @@ export async function handleLoginCommand({
         }
         return a.name.localeCompare(b.name)
       })
-      .slice(0, 25)
       .map((provider) => {
         const isConnected = connected.includes(provider.id)
         return {
@@ -295,6 +296,11 @@ export async function handleLoginCommand({
             : 'Not connected',
         }
       })
+
+    const { options } = buildPaginatedOptions({
+      allOptions: allProviderOptions,
+      page: 0,
+    })
 
     const context: LoginContext = {
       dir: projectDirectory,
@@ -395,6 +401,56 @@ async function handleProviderStep(
   hash: string,
   providerId: string,
 ): Promise<void> {
+  // Handle pagination nav — re-render the same provider select with new page
+  const navPage = parsePaginationValue(providerId)
+  if (navPage !== undefined) {
+    await interaction.deferUpdate()
+    ctx.providerPage = navPage
+
+    const getClient = await initializeOpencodeForDirectory(ctx.dir)
+    if (getClient instanceof Error) {
+      await interaction.editReply({ content: getClient.message, components: [] })
+      return
+    }
+    const providersResponse = await getClient().provider.list({ directory: ctx.dir })
+    if (!providersResponse.data) {
+      await interaction.editReply({ content: 'Failed to fetch providers', components: [] })
+      return
+    }
+    const { all: allProviders, connected } = providersResponse.data
+    const allProviderOptions = [...allProviders]
+      .sort((a, b) => {
+        const rankA = PROVIDER_POPULARITY_ORDER.indexOf(a.id)
+        const rankB = PROVIDER_POPULARITY_ORDER.indexOf(b.id)
+        const posA = rankA === -1 ? Infinity : rankA
+        const posB = rankB === -1 ? Infinity : rankB
+        if (posA !== posB) {
+          return posA - posB
+        }
+        return a.name.localeCompare(b.name)
+      })
+      .map((p) => {
+        const isConnected = connected.includes(p.id)
+        return {
+          label: `${p.name}${isConnected ? ' ✓' : ''}`.slice(0, 100),
+          value: p.id,
+          description: isConnected ? 'Connected - select to re-authenticate' : 'Not connected',
+        }
+      })
+    const { options } = buildPaginatedOptions({ allOptions: allProviderOptions, page: navPage })
+    await interaction.editReply({
+      content: '**Authenticate with Provider**\nSelect a provider:',
+      components: [
+        buildSelectMenu({
+          customId: `login_select:${hash}`,
+          placeholder: 'Select a provider to authenticate',
+          options,
+        }),
+      ],
+    })
+    return
+  }
+
   const getClient = await initializeOpencodeForDirectory(ctx.dir)
   if (getClient instanceof Error) {
     await interaction.deferUpdate()
