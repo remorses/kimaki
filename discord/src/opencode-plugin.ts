@@ -11,3 +11,4 @@
 export { ipcToolsPlugin } from './ipc-tools-plugin.js'
 export { contextAwarenessPlugin } from './context-awareness-plugin.js'
 export { interruptOpencodeSessionOnUserMessage } from './opencode-interrupt-plugin.js'
+export { anthropicAuthPlugin } from './anthropic-auth-plugin.js'
