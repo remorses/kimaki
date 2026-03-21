@@ -15,6 +15,7 @@
     "validate-typing-indicator": "doppler run -- tsx scripts/validate-typing-indicator.ts",
     "test:send": "tsx send-test-message.ts",
     "register-commands": "tsx scripts/register-commands.ts",
+    "lint": "lintcn lint",
     "format": "oxfmt src",
     "sync-skills": "tsx scripts/sync-skills.ts"
   },
@@ -37,6 +38,7 @@
     "db": "workspace:^",
     "discord-digital-twin": "workspace:^",
     "eventsource-parser": "^3.0.6",
+    "lintcn": "^0.3.0",
     "opencode-cached-provider": "workspace:^",
     "opencode-deterministic-provider": "workspace:^",
     "prisma": "7.4.2",
