@@ -1362,7 +1362,7 @@ async function reconcileKimakiRole({ guild }: { guild: Guild }): Promise<void> {
     cliLogger.info(`Created "Kimaki" role in ${guild.name}`)
   } catch (error) {
     cliLogger.warn(
-      `Could not reconcile Kimaki role in ${guild.name}: ${error instanceof Error ? error.stack : String(error)}`,
+      `Could not reconcile Kimaki role in ${guild.name}: ${error instanceof Error ? error.message : String(error)}`,
     )
   }
 }
