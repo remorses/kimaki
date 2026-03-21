@@ -920,12 +920,16 @@ export class ThreadSessionRuntime {
     const compacted = structuredClone(event)
 
     if (compacted.type === 'message.updated') {
-      if (compacted.properties.info.role !== 'user') {
-        return compacted
-      }
-      delete compacted.properties.info.system
-      delete compacted.properties.info.summary
-      delete compacted.properties.info.tools
+      // Strip heavy fields from ALL roles. Derivation only needs lightweight
+      // metadata (id, role, sessionID, parentID, time, finish, error, modelID,
+      // providerID, mode, tokens). The parts array on assistant messages grows
+      // with every tool call and was the primary OOM vector — 1000 buffer entries
+      // each carrying the full cumulative parts array reached 4GB+.
+      const info = compacted.properties.info as Record<string, unknown>
+      delete info.system
+      delete info.summary
+      delete info.tools
+      delete info.parts
       return compacted
     }
 
