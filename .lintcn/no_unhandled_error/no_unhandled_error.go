@@ -1,7 +1,7 @@
 // lintcn:name no-unhandled-error
 // lintcn:description Disallow discarding expressions that are subtypes of Error. Enforces the errore pattern where errors are values that must be checked.
 
-package lintcn
+package no_unhandled_error
 
 import (
 	"github.com/microsoft/typescript-go/shim/ast"

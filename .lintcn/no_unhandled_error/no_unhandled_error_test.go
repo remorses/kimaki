@@ -1,4 +1,4 @@
-package lintcn
+package no_unhandled_error
 
 import (
 	"testing"
