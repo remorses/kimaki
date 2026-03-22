@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.4.82
+
+1. **`/restart-opencode-server` now re-registers slash commands** — after restarting the OpenCode server, kimaki immediately re-registers all Discord slash commands (built-in + user commands + agents). New or changed commands, agents, and plugins are picked up without a full bot restart.
+2. **Buttons and dropdowns stay alive for 24 hours** — permission prompts, question dropdowns, and file upload dialogs previously expired after 5 minutes (IPC stale TTL) and thread runtimes were disposed after 1 hour. Both are now 24 hours, so users who return the next day can still click pending buttons and selects.
+
 ## 0.4.81
 
 1. **Fixed bot ignoring worktree and bot-created threads** — threads created by `/new-worktree`, `/fork`, or `kimaki send` were silently ignored because the thread guard (GitHub #84) checked for a non-empty session ID in the DB, but `createPendingWorktree` writes an empty `session_id`. The bot now also checks `thread.ownerId` — if the bot created the thread, it always responds.
