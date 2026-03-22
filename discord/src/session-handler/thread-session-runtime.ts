@@ -3575,8 +3575,6 @@ export class ThreadSessionRuntime {
     }
 
     if (!session) {
-      const sessionTitle =
-        prompt.length > 80 ? prompt.slice(0, 77) + '...' : prompt.slice(0, 80)
       // Pass per-session external_directory permissions so this session can
       // access its own project directory (and worktree origin if applicable)
       // without prompts. These override the server-level 'ask' default via
@@ -3590,8 +3588,8 @@ export class ThreadSessionRuntime {
         }),
         ...parsePermissionRules(permissions ?? []),
       ]
+      // Omit title so OpenCode auto-generates a summary from the conversation
       const sessionResponse = await getClient().session.create({
-        title: sessionTitle,
         directory: this.sdkDirectory,
         permission: sessionPermissions,
       })

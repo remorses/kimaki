@@ -141,7 +141,7 @@ export async function getTools({
 
         try {
           const session = await getClient().session.create({
-            title: title || message.slice(0, 50),
+            ...(title ? { title } : {}),
           })
 
           if (!session.data) {
