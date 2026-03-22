@@ -8,7 +8,9 @@ import {
 
 const logger = createLogger(LogPrefix.SESSION)
 
-export const DEFAULT_RUNTIME_IDLE_MS = 60 * 60 * 1000
+// 24 hours — users often return the next day to click buttons/selects,
+// so runtimes (and their in-memory context maps) must stay alive that long.
+export const DEFAULT_RUNTIME_IDLE_MS = 24 * 60 * 60 * 1000
 export const DEFAULT_SWEEP_INTERVAL_MS = 60 * 1000
 
 export function startRuntimeIdleSweeper({

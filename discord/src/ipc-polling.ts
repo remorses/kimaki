@@ -245,9 +245,10 @@ async function dispatchRequest({
 
 let pollingInterval: ReturnType<typeof setInterval> | null = null
 
-// Cancel requests stuck in 'processing' longer than 5 minutes (e.g. hung
-// file upload where the user never clicks). Checked every 30 seconds.
-const STALE_TTL_MS = 5 * 60 * 1000
+// Cancel requests stuck in 'processing' longer than 24 hours. Users often
+// come back the next day to click permission/question/file-upload buttons,
+// so we keep IPC rows alive for a full day. Checked every 30 seconds.
+const STALE_TTL_MS = 24 * 60 * 60 * 1000
 const STALE_CHECK_INTERVAL_MS = 30 * 1000
 let lastStaleCheck = 0
 
