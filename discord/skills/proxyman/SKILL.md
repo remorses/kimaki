@@ -4,7 +4,7 @@ description: >
   Reverse-engineer HTTP APIs using Proxyman for macOS. Intercept, record, and export
   network traffic from CLI tools and apps (Node.js, Python, Ruby, Go, curl).
   Export as HAR (JSON) and analyze with jq. Use this skill when the user wants
-  to capture, inspect, or reverse-engineer HTTP traffic from any application.
+  to capture, inspect, or reverse-engineer HTTP traffic from macOS applications.
 ---
 
 # proxyman — HTTP traffic capture and reverse-engineering
