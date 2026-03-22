@@ -32,6 +32,7 @@ const SKILL_SOURCES: string[] = [
   'https://github.com/remorses/termcast',
   'https://github.com/remorses/goke',
   'https://github.com/remorses/spiceflow',
+  'https://github.com/remorses/lintcn',
 ]
 
 // Directories to skip during recursive SKILL.md search

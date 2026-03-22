@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.4.81
+
+1. **Fixed bot ignoring worktree and bot-created threads** — threads created by `/new-worktree`, `/fork`, or `kimaki send` were silently ignored because the thread guard (GitHub #84) checked for a non-empty session ID in the DB, but `createPendingWorktree` writes an empty `session_id`. The bot now also checks `thread.ownerId` — if the bot created the thread, it always responds.
+2. **New `/memory-snapshot` command** — write a V8 heap snapshot to disk on demand for debugging memory issues. The snapshot is saved to `~/.kimaki/heap-snapshots/`.
+3. **Fixed Anthropic OAuth token exchange race** — moved OAuth token exchange and refresh to an isolated Node helper to avoid 429 rate-limit responses and duplicate token exchanges when the browser callback lands.
+4. **Fixed OOM from unbounded `session.diff` event strings** — `session.diff` events carrying large patch payloads are now dropped from the event buffer, and all buffered event strings are recursively pruned to a safe max length.
+
 ## 0.4.80
 
 1. **Built-in Anthropic OAuth authentication** — the Anthropic OAuth plugin now ships with kimaki and loads automatically. No need to manage a separate plugin file in `~/.config/opencode/plugins/`. Log in with `/login` → Anthropic → OAuth and kimaki handles the PKCE flow, token refresh, and Claude Code request rewriting.

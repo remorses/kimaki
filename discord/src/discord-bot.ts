@@ -503,13 +503,23 @@ export async function startDiscordBot({
         const thread = channel as ThreadChannel
         discordLogger.log(`Message in thread ${thread.name} (${thread.id})`)
 
-        // Only respond in threads kimaki knows about (has a session row in DB)
-        // or where the bot is explicitly @mentioned. This prevents the bot from
-        // hijacking user-created threads in project channels. (GitHub #84)
+        // Only respond in threads kimaki knows about (has a session row in DB),
+        // where the bot is explicitly @mentioned, or where the bot created the
+        // thread itself (e.g. /new-worktree, /fork, kimaki send). This prevents
+        // the bot from hijacking user-created threads in project channels while
+        // still responding to bot-created threads that may not yet have a session
+        // row with a non-empty session_id (createPendingWorktree sets ''). (GitHub #84)
         const hasExistingSession = await getThreadSession(thread.id)
         const botMentioned =
           discordClient.user && message.mentions.has(discordClient.user.id)
-        if (!hasExistingSession && !botMentioned && !isCliInjectedPrompt) {
+        const botCreatedThread =
+          discordClient.user && thread.ownerId === discordClient.user.id
+        if (
+          !hasExistingSession &&
+          !botMentioned &&
+          !isCliInjectedPrompt &&
+          !botCreatedThread
+        ) {
           discordLogger.log(
             `Ignoring thread ${thread.id}: no existing session and bot not mentioned`,
           )
