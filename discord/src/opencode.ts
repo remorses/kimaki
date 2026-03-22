@@ -644,10 +644,12 @@ async function startSingleServer(): Promise<ServerStartError | SingleServer> {
     clientCache.clear()
     notifyServerLifecycle({ type: 'stopped' })
 
-    // Intentional kills (SIGTERM from cleanup/restart) should not trigger
-    // auto-restart. Only unexpected crashes (non-zero exit without signal)
-    // get retried.
-    if (signal === 'SIGTERM') {
+    // Intentional kills should not trigger auto-restart:
+    // - SIGTERM from our cleanup/restart code
+    // - SIGINT propagated from Ctrl+C (parent process group signal)
+    // - any exit during bot shutdown (shuttingDown flag)
+    // Only unexpected crashes (non-zero exit without signal) get retried.
+    if (signal === 'SIGTERM' || signal === 'SIGINT' || (global as any).shuttingDown) {
       serverRetryCount = 0
       return
     }
