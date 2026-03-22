@@ -5,7 +5,7 @@
 // Tools communicate with the bot process via IPC rows in SQLite (the plugin
 // runs inside the OpenCode server process, not the bot process).
 //
-// Exported from opencode-plugin.ts — each export is treated as a separate
+// Exported from kimaki-opencode-plugin.ts — each export is treated as a separate
 // plugin by OpenCode's plugin loader.
 
 import type { Plugin } from '@opencode-ai/plugin'

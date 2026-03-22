@@ -44,7 +44,7 @@ test(
     fs.mkdirSync(projectDir, { recursive: true })
 
     const port = chooseLockPort({ key: 'opencode-plugin-loading-e2e' })
-    const pluginPath = new URL('../src/opencode-plugin.ts', import.meta.url).href
+    const pluginPath = new URL('../src/kimaki-opencode-plugin.ts', import.meta.url).href
     const stderrLines: string[] = []
 
     const {

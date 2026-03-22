@@ -531,7 +531,7 @@ async function startSingleServer(): Promise<ServerStartError | SingleServer> {
           $schema: 'https://opencode.ai/config.json',
           lsp: false,
           formatter: false,
-          plugin: [new URL('../src/opencode-plugin.ts', import.meta.url).href],
+          plugin: [new URL('../src/kimaki-opencode-plugin.ts', import.meta.url).href],
           permission: {
             edit: 'allow',
             bash: 'allow',

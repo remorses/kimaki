@@ -13,7 +13,7 @@
 // Decision logic is extracted into pure functions that take state + input
 // and return whether to inject — making them testable without mocking.
 //
-// Exported from opencode-plugin.ts — each export is treated as a separate
+// Exported from kimaki-opencode-plugin.ts — each export is treated as a separate
 // plugin by OpenCode's plugin loader.
 
 import type { Plugin } from '@opencode-ai/plugin'
