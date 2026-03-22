@@ -7,7 +7,11 @@ import { describe, test, expect, afterAll } from 'vitest'
 import Database from 'libsql'
 import { PrismaLibSql } from '@prisma/adapter-libsql'
 import { PrismaClient } from './generated/client.js'
-import { createHranaHandler } from './hrana-server.js'
+import {
+  createLibsqlHandler,
+  createLibsqlNodeHandler,
+  libsqlExecutor,
+} from 'libsqlproxy'
 
 const __filename = fileURLToPath(import.meta.url)
 const __dirname = path.dirname(__filename)
@@ -87,7 +91,9 @@ describe('hrana-server', () => {
 
     const port = 10000 + Math.floor(Math.random() * 50000)
     await new Promise<void>((resolve, reject) => {
-      const srv = http.createServer(createHranaHandler(database))
+      const hranaFetchHandler = createLibsqlHandler(libsqlExecutor(database))
+      const hranaNodeHandler = createLibsqlNodeHandler(hranaFetchHandler)
+      const srv = http.createServer(hranaNodeHandler)
       srv.on('error', reject)
       srv.listen(port, '127.0.0.1', () => {
         testServer = srv
