@@ -81,22 +81,28 @@ export function evaluateHranaCondition(
     return !inner
   }
   if (cond.type === 'and') {
-    return (cond.conds ?? []).every((c) => {
+    for (const c of cond.conds ?? []) {
       const result = evaluateHranaCondition(c, stepResults, stepErrors)
       if (isHranaError(result)) {
+        return result
+      }
+      if (!result) {
         return false
       }
-      return result
-    })
+    }
+    return true
   }
   if (cond.type === 'or') {
-    return (cond.conds ?? []).some((c) => {
+    for (const c of cond.conds ?? []) {
       const result = evaluateHranaCondition(c, stepResults, stepErrors)
       if (isHranaError(result)) {
-        return false
+        return result
       }
-      return result
-    })
+      if (result) {
+        return true
+      }
+    }
+    return false
   }
   if (cond.type === 'is_autocommit') {
     // is_autocommit requires runtime autocommit state from the database connection,

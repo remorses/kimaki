@@ -135,4 +135,28 @@ describe('evaluateHranaCondition', () => {
       code: 'HRANA_PROTO_ERROR',
     })
   })
+
+  test('and propagates nested protocol error', () => {
+    const result = evaluateHranaCondition(
+      { type: 'and', conds: [{ type: 'ok', step: 0 }, { type: 'is_autocommit' }] },
+      [okResult],
+      [null],
+    )
+    expect(result).toEqual({
+      message: 'is_autocommit condition is not supported',
+      code: 'HRANA_PROTO_ERROR',
+    })
+  })
+
+  test('or propagates nested protocol error', () => {
+    const result = evaluateHranaCondition(
+      { type: 'or', conds: [{ type: 'ok', step: 0 }, { type: 'is_autocommit' }] },
+      [null],
+      [err],
+    )
+    expect(result).toEqual({
+      message: 'is_autocommit condition is not supported',
+      code: 'HRANA_PROTO_ERROR',
+    })
+  })
 })

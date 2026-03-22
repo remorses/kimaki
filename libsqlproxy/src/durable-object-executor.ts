@@ -32,13 +32,21 @@ export interface DurableObjectStorage {
 
 // Detect readonly queries by checking the SQL verb.
 // rowsWritten === 0 is unreliable for DDL/PRAGMA/no-op writes.
-const READONLY_PREFIXES = ['SELECT', 'EXPLAIN', 'PRAGMA', 'WITH']
+// WITH (CTE) can be writable: "WITH ... INSERT/UPDATE/DELETE ..."
+// so we check if the CTE body contains a write verb after the final closing paren.
+const READONLY_PREFIXES = ['SELECT', 'EXPLAIN', 'PRAGMA']
+const WRITE_VERBS = ['INSERT', 'UPDATE', 'DELETE', 'REPLACE', 'CREATE', 'DROP', 'ALTER']
 
 function isReadonlyQuery(sql: string): boolean {
   const upper = sql.trimStart().toUpperCase()
-  return READONLY_PREFIXES.some((prefix) => {
-    return upper.startsWith(prefix)
-  })
+  if (READONLY_PREFIXES.some((p) => upper.startsWith(p))) {
+    return true
+  }
+  // WITH CTEs: readonly only if the final statement is SELECT
+  if (upper.startsWith('WITH')) {
+    return !WRITE_VERBS.some((v) => upper.includes(v))
+  }
+  return false
 }
 
 export function durableObjectExecutor(storage: DurableObjectStorage): LibsqlExecutor {

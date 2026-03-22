@@ -332,6 +332,44 @@ describe('createLibsqlHandler', () => {
 
   // ── sql resolution ─────────────────────────────────────────────────
 
+  // ── Malformed body edge cases ──────────────────────────────────────
+
+  test('null JSON body returns 400', async () => {
+    const res = await handler(new Request('http://localhost/v2/pipeline', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: 'null',
+    }))
+    expect(res.status).toBe(400)
+    const body = await res.json() as { error: { message: string } }
+    expect(body.error.message).toContain('JSON object')
+  })
+
+  test('null entry in requests returns per-item error', async () => {
+    const res = await pipeline(handler, {
+      baton: null,
+      requests: [null, { type: 'execute', stmt: { sql: 'SELECT 1' } }, { type: 'close' }],
+    })
+    expect(res.status).toBe(200)
+    const body = await res.json() as { results: Array<{ type: string; error?: { message: string } }> }
+    expect(body.results[0]!.type).toBe('error')
+    expect(body.results[0]!.error!.message).toContain('object with a "type" field')
+    expect(body.results[1]!.type).toBe('ok')
+  })
+
+  test('number entry in requests returns per-item error', async () => {
+    const res = await pipeline(handler, {
+      baton: null,
+      requests: [42, { type: 'close' }],
+    })
+    expect(res.status).toBe(200)
+    const body = await res.json() as { results: Array<{ type: string }> }
+    expect(body.results[0]!.type).toBe('error')
+    expect(body.results[1]!.type).toBe('ok')
+  })
+
+  // ── sql resolution ─────────────────────────────────────────────────
+
   test('execute with both sql and sql_id prefers sql', async () => {
     const res = await pipeline(handler, {
       baton: null,
