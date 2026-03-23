@@ -152,6 +152,7 @@ Use Node ESM-compatible compiler settings:
     "declarationMap": true,
     "noEmit": false,
     "strict": true,
+    "noUncheckedIndexedAccess": true,
     "skipLibCheck": true,
     "useUnknownInCatchVariables": false
   },
