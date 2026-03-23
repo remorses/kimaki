@@ -4,6 +4,11 @@
 
 All notable changes to `usecomputer` will be documented in this file.
 
+## 0.1.1
+
+1. **Fixed Linux native builds** — standalone executable now links libc correctly on Linux, fixing "C allocator is only available when linking against libc" errors.
+2. **Fixed native host builds** — build script now omits `-Dtarget` when building for the host platform so Zig finds system libraries (X11, libpng, etc).
+
 ## 0.1.0
 
 1. **Standalone executable** — `usecomputer` now ships as a self-contained binary.
