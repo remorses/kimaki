@@ -3708,7 +3708,7 @@ export class ThreadSessionRuntime {
               if (m.info.role !== 'assistant') {
                 return false
               }
-              if (!('tokens' in m.info) || !m.info.tokens) {
+              if (!m.info.tokens) {
                 return false
               }
               return getTokenTotal(m.info.tokens) > 0

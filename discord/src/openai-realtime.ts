@@ -250,15 +250,13 @@ export async function startGenAiSession({
     'conversation.item.created',
     ({ item }: { item: ConversationItem }) => {
       if (
-        'role' in item &&
         item.role === 'assistant' &&
         item.type === 'message'
       ) {
         // Check if this is the first audio content
         const hasAudio =
-          'content' in item &&
           Array.isArray(item.content) &&
-          item.content.some((c) => 'type' in c && c.type === 'audio')
+          item.content.some((c) => c.type === 'audio')
         if (hasAudio && !isAssistantSpeaking && onAssistantStartSpeaking) {
           isAssistantSpeaking = true
           onAssistantStartSpeaking()
@@ -277,7 +275,7 @@ export async function startGenAiSession({
       delta: ConversationEventDelta | null
     }) => {
       // Handle audio chunks
-      if (delta?.audio && 'role' in item && item.role === 'assistant') {
+      if (delta?.audio && item.role === 'assistant') {
         if (!isAssistantSpeaking && onAssistantStartSpeaking) {
           isAssistantSpeaking = true
           onAssistantStartSpeaking()
@@ -301,12 +299,10 @@ export async function startGenAiSession({
 
       // Handle transcriptions
       if (delta?.transcript) {
-        if ('role' in item) {
-          if (item.role === 'user') {
-            openaiLogger.log('User transcription:', delta.transcript)
-          } else if (item.role === 'assistant') {
-            openaiLogger.log('Assistant transcription:', delta.transcript)
-          }
+        if (item.role === 'user') {
+          openaiLogger.log('User transcription:', delta.transcript)
+        } else if (item.role === 'assistant') {
+          openaiLogger.log('Assistant transcription:', delta.transcript)
         }
       }
     },

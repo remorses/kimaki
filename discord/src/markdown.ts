@@ -315,8 +315,8 @@ export function getCompactSessionContext({
       for (const msg of recentMessages) {
         if (msg.info.role === 'user') {
           const textParts = (msg.parts || [])
-            .filter((p) => p.type === 'text' && 'text' in p)
-            .map((p) => ('text' in p ? extractNonXmlContent(p.text || '') : ''))
+            .filter((p) => p.type === 'text')
+            .map((p) => (p.type === 'text' ? extractNonXmlContent(p.text || '') : ''))
             .filter(Boolean)
           if (textParts.length > 0) {
             lines.push(`[User]: ${textParts.join(' ').slice(0, 1000)}`)
@@ -326,9 +326,9 @@ export function getCompactSessionContext({
           // Get assistant text parts (non-synthetic, non-empty)
           const textParts = (msg.parts || [])
             .filter(
-              (p) => p.type === 'text' && 'text' in p && !p.synthetic && p.text,
+              (p) => p.type === 'text' && !p.synthetic && p.text,
             )
-            .map((p) => ('text' in p ? p.text : ''))
+            .map((p) => (p.type === 'text' ? p.text : ''))
             .filter(Boolean)
           if (textParts.length > 0) {
             lines.push(`[Assistant]: ${textParts.join(' ').slice(0, 1000)}`)
