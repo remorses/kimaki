@@ -106,6 +106,11 @@ pub fn build(b: *std.Build) void {
         .root_module = exe_mod,
     });
     linkPlatformDeps(exe.root_module, target_os);
+    // The standalone exe uses c_allocator and system libs that require libc.
+    // The N-API .node lib gets this automatically through napigen, but the
+    // exe needs it explicitly — otherwise native builds fail with
+    // "C allocator is only available when linking against libc".
+    exe.root_module.link_libc = true;
     b.installArtifact(exe);
 
     const run_exe = b.addRunArtifact(exe);
