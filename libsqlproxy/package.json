@@ -1,6 +1,6 @@
 {
   "name": "libsqlproxy",
-  "version": "0.0.1",
+  "version": "0.1.0",
   "description": "Runtime-agnostic Hrana v2 HTTP server for SQLite. Expose any SQLite database (Cloudflare Durable Objects, libsql, better-sqlite3) via the libSQL remote protocol.",
   "type": "module",
   "main": "./dist/index.js",
