@@ -19,10 +19,19 @@ Initial release.
 
    ```ts
    import { DurableObject } from 'cloudflare:workers'
-   import { createLibsqlHandler, durableObjectExecutor } from 'libsqlproxy'
+   import { createLibsqlHandler, durableObjectExecutor, type LibsqlHandler } from 'libsqlproxy'
 
    export class MyDO extends DurableObject {
-     hranaHandler = createLibsqlHandler(durableObjectExecutor(this.ctx.storage))
+     #hrana: LibsqlHandler
+
+     constructor(ctx: DurableObjectState, env: Env) {
+       super(ctx, env)
+       this.#hrana = createLibsqlHandler(durableObjectExecutor(ctx.storage))
+     }
+
+     async hranaHandler(request: Request): Promise<Response> {
+       return this.#hrana(request)
+     }
    }
    ```
 
