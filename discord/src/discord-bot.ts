@@ -15,6 +15,7 @@ import {
   getChannelDirectory,
   getPrisma,
   cancelAllPendingIpcRequests,
+  deleteChannelDirectoryById,
 } from './database.js'
 import {
   stopOpencodeServer,
@@ -1080,6 +1081,25 @@ export async function startDiscordBot({
   // instead of waiting for the idle sweeper (1 hour default).
   discordClient.on(Events.ThreadDelete, (thread) => {
     disposeRuntime(thread.id)
+  })
+
+  // Clean up SQLite when a Discord channel is deleted so project list
+  // doesn't show stale ghost entries. Thread runtimes inside the deleted
+  // channel are disposed by their own ThreadDelete events from Discord.
+  discordClient.on(Events.ChannelDelete, async (channel) => {
+    try {
+      const deleted = await deleteChannelDirectoryById(channel.id)
+      if (deleted) {
+        discordLogger.log(
+          `Cleaned up channel_directories for deleted channel ${channel.id}`,
+        )
+      }
+    } catch (error) {
+      notifyError(
+        error instanceof Error ? error : new Error(String(error)),
+        `Failed to clean up channel_directories for deleted channel ${channel.id}`,
+      )
+    }
   })
 
   // Skip login if the caller already connected the client (e.g. cli.ts logs in

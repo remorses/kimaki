@@ -55,6 +55,7 @@ import {
   getScheduledTask,
   updateScheduledTask,
   getSessionStartSourcesBySessionIds,
+  deleteChannelDirectoryById,
 } from './database.js'
 import { ShareMarkdown } from './markdown.js'
 import {
@@ -3336,7 +3337,8 @@ cli
     'List all registered projects with their Discord channels',
   )
   .option('--json', 'Output as JSON')
-  .action(async (options: { json?: boolean }) => {
+  .option('--prune', 'Remove stale entries whose Discord channel no longer exists')
+  .action(async (options: { json?: boolean; prune?: boolean }) => {
     await initDatabase()
 
     const prisma = await getPrisma()
@@ -3357,19 +3359,54 @@ cli
     const enriched = await Promise.all(
       channels.map(async (ch) => {
         let channelName = ''
+        let deleted = false
         if (rest) {
           try {
             const data = (await rest.get(Routes.channel(ch.channel_id))) as {
               name?: string
             }
             channelName = data.name || ''
-          } catch {
-            // Channel may have been deleted from Discord
+          } catch (error) {
+            // Only mark as deleted for Unknown Channel (10003) or 404,
+            // not transient errors like rate limits or 5xx
+            const isUnknownChannel =
+              error instanceof Error &&
+              'code' in error &&
+              'status' in error &&
+              ((error as { code: number | string }).code === 10003 ||
+                (error as { status: number }).status === 404)
+            deleted = isUnknownChannel
           }
         }
-        return { ...ch, channelName }
+        return { ...ch, channelName, deleted }
       }),
     )
+
+    // Prune stale entries if requested
+    if (options.prune) {
+      const stale = enriched.filter((ch) => {
+        return ch.deleted
+      })
+      if (stale.length === 0) {
+        cliLogger.log('No stale channels to prune')
+      } else {
+        for (const ch of stale) {
+          await deleteChannelDirectoryById(ch.channel_id)
+          cliLogger.log(`Pruned stale channel ${ch.channel_id} (${path.basename(ch.directory)})`)
+        }
+        cliLogger.log(`Pruned ${stale.length} stale channel(s)`)
+      }
+      // Re-filter to only show live entries after pruning
+      const live = enriched.filter((ch) => {
+        return !ch.deleted
+      })
+      if (live.length === 0) {
+        cliLogger.log('No projects registered')
+        process.exit(0)
+      }
+      enriched.length = 0
+      enriched.push(...live)
+    }
 
     if (options.json) {
       const output = enriched.map((ch) => ({
@@ -3377,6 +3414,7 @@ cli
         channel_name: ch.channelName,
         directory: ch.directory,
         folder_name: path.basename(ch.directory),
+        deleted: ch.deleted,
       }))
       console.log(JSON.stringify(output, null, 2))
       process.exit(0)
@@ -3384,8 +3422,9 @@ cli
 
     for (const ch of enriched) {
       const folderName = path.basename(ch.directory)
+      const deletedTag = ch.deleted ? ' (deleted from Discord)' : ''
       const channelLabel = ch.channelName ? `#${ch.channelName}` : ch.channel_id
-      console.log(`\n${channelLabel}`)
+      console.log(`\n${channelLabel}${deletedTag}`)
       console.log(`   Folder: ${folderName}`)
       console.log(`   Directory: ${ch.directory}`)
       console.log(`   Channel ID: ${ch.channel_id}`)

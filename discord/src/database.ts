@@ -1577,6 +1577,30 @@ export async function deleteChannelDirectoriesByDirectory(
 }
 
 /**
+ * Delete a single channel_directories row and all its child rows
+ * (channel_models, channel_agents, channel_worktrees, channel_verbosity,
+ * channel_mention_mode) in a single transaction. scheduled_tasks has
+ * onDelete:SetNull so Prisma handles it automatically.
+ */
+export async function deleteChannelDirectoryById(
+  channelId: string,
+): Promise<boolean> {
+  const prisma = await getPrisma()
+  const deletedCount = await prisma.$transaction(async (tx) => {
+    await tx.channel_models.deleteMany({ where: { channel_id: channelId } })
+    await tx.channel_agents.deleteMany({ where: { channel_id: channelId } })
+    await tx.channel_worktrees.deleteMany({ where: { channel_id: channelId } })
+    await tx.channel_verbosity.deleteMany({ where: { channel_id: channelId } })
+    await tx.channel_mention_mode.deleteMany({ where: { channel_id: channelId } })
+    const result = await tx.channel_directories.deleteMany({
+      where: { channel_id: channelId },
+    })
+    return result.count
+  })
+  return deletedCount > 0
+}
+
+/**
  * Get the directory for a voice channel.
  */
 export async function getVoiceChannelDirectory(
