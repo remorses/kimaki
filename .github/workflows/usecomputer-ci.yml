@@ -1,9 +1,12 @@
-# CI for usecomputer: build native Zig binaries on each platform's
-# own runner, then publish to npm on push to main.
+# CI for usecomputer: build native Zig binaries per platform,
+# then publish to npm on push to main.
 #
-# - darwin-arm64: macos-latest (Apple Silicon)
-# - darwin-x64:  macos-13 (Intel)
-# - linux-x64:   ubuntu-latest (needs X11/Xext/Xtst/png headers)
+# macOS arm64 + x64 are built on macos-latest (Apple Silicon).
+# Zig cross-compiles x86_64-macos from ARM fine since both
+# use the same macOS SDK. macos-13 (Intel) runners are retired.
+#
+# linux-x64 is built on ubuntu-latest because linkSystemLibrary
+# needs X11/Xext/Xtst/png headers from the system.
 
 name: usecomputer CI
 
@@ -20,19 +23,8 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  build:
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - target: darwin-arm64
-            os: macos-latest
-          - target: darwin-x64
-            os: macos-13
-          - target: linux-x64
-            os: ubuntu-latest
-
-    runs-on: ${{ matrix.os }}
+  build-macos:
+    runs-on: macos-latest
 
     steps:
       - uses: actions/checkout@v4
@@ -42,8 +34,50 @@ jobs:
         with:
           version: 0.15.2
 
-      - name: Install Linux dev headers
-        if: runner.os == 'Linux'
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      - name: Install pnpm
+        run: npm install -g pnpm
+
+      - name: Install dependencies
+        working-directory: usecomputer
+        run: pnpm install
+
+      - name: Build native darwin-arm64
+        working-directory: usecomputer
+        run: pnpm tsx scripts/build.ts darwin-arm64
+
+      - name: Build native darwin-x64
+        working-directory: usecomputer
+        run: pnpm tsx scripts/build.ts darwin-x64
+
+      - name: Upload darwin-arm64
+        uses: actions/upload-artifact@v4
+        with:
+          name: native-darwin-arm64
+          path: usecomputer/dist/darwin-arm64/usecomputer.node
+
+      - name: Upload darwin-x64
+        uses: actions/upload-artifact@v4
+        with:
+          name: native-darwin-x64
+          path: usecomputer/dist/darwin-x64/usecomputer.node
+
+  build-linux:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Zig
+        uses: goto-bus-stop/setup-zig@v2
+        with:
+          version: 0.15.2
+
+      - name: Install X11 and PNG dev headers
         run: |
           sudo apt-get update
           sudo apt-get install -y libx11-dev libxext-dev libxtst-dev libpng-dev
@@ -60,22 +94,18 @@ jobs:
         working-directory: usecomputer
         run: pnpm install
 
-      - name: Build native (${{ matrix.target }})
-        uses: nick-fields/retry@v3
-        with:
-          timeout_minutes: 15
-          max_attempts: 3
-          retry_on: error
-          command: cd usecomputer && pnpm tsx scripts/build.ts ${{ matrix.target }}
+      - name: Build native linux-x64
+        working-directory: usecomputer
+        run: pnpm tsx scripts/build.ts linux-x64
 
-      - name: Upload artifact
+      - name: Upload linux-x64
         uses: actions/upload-artifact@v4
         with:
-          name: dist-${{ matrix.target }}
-          path: usecomputer/dist/${{ matrix.target }}/
+          name: native-linux-x64
+          path: usecomputer/dist/linux-x64/usecomputer.node
 
   publish:
-    needs: [build]
+    needs: [build-macos, build-linux]
     runs-on: ubuntu-latest
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
 
@@ -99,24 +129,27 @@ jobs:
         working-directory: usecomputer
         run: pnpm build
 
-      - name: Download all native artifacts
+      - name: Download darwin-arm64
         uses: actions/download-artifact@v4
         with:
-          pattern: dist-*
-          path: usecomputer/dist/
-          merge-multiple: false
+          name: native-darwin-arm64
+          path: usecomputer/dist/darwin-arm64/
 
-      # download-artifact with pattern creates dist-<target>/<files> dirs,
-      # flatten them into dist/<target>/<files> for the package layout
-      - name: Arrange native binaries
+      - name: Download darwin-x64
+        uses: actions/download-artifact@v4
+        with:
+          name: native-darwin-x64
+          path: usecomputer/dist/darwin-x64/
+
+      - name: Download linux-x64
+        uses: actions/download-artifact@v4
+        with:
+          name: native-linux-x64
+          path: usecomputer/dist/linux-x64/
+
+      - name: List dist contents
         working-directory: usecomputer
-        run: |
-          for dir in dist/dist-*/; do
-            target=$(basename "$dir" | sed 's/^dist-//')
-            mkdir -p "dist/$target"
-            cp -r "$dir"* "dist/$target/"
-            rm -rf "$dir"
-          done
+        run: ls -laR dist/
 
       - name: Check if version is already published
         id: version-check
@@ -133,10 +166,6 @@ jobs:
             echo "skip=false" >> "$GITHUB_OUTPUT"
             echo "Will publish $PACKAGE_VERSION (current: $PUBLISHED_VERSION)"
           fi
-
-      - name: List dist contents
-        working-directory: usecomputer
-        run: ls -laR dist/
 
       - name: Publish to npm
         if: steps.version-check.outputs.skip == 'false'

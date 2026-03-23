@@ -14,8 +14,8 @@
             .lazy = true,
         },
         .zeke = .{
-            .url = "https://github.com/remorses/zeke/archive/refs/heads/main.tar.gz",
-            .hash = "zeke-0.1.0-fnPIzP2mAADBDhCqMNuyU5TV7PEG9rEb2GDDjwMXCZYN",
+            .url = "https://github.com/remorses/zeke/archive/87f8844f4a8d4427671cdb79bce5f501739eb54b.tar.gz",
+            .hash = "zeke-0.1.0-fnPIzGwUAQA4utTXwlr6mZo7vVhxTt1_h1MTpsBixLC0",
         },
     },
     .paths = .{
