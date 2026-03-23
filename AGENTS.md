@@ -537,7 +537,7 @@ discord.js has a startTyping method. this method will show a typing indicator in
 `discord-slack-bridge/` is a package that lets discord.js bots (like kimaki)
 control a Slack workspace without code changes. it translates Discord REST
 calls to Slack Web API calls and Slack webhook events to Discord Gateway
-dispatches. see `docs/discord-slack-bridge-spec.md` for the full spec.
+dispatches. see `slop/discord-slack-bridge-spec.md` for the full spec.
 
 key design: stateless ID mapping (no database). thread IDs encoded as
 `THR_{channel}_{ts}`, message IDs as `MSG_{channel}_{ts}`.
@@ -1097,26 +1097,3 @@ const jsonSchema = toJSONSchema(mySchema, {
 });
 ```
 
-
-<!-- opensrc:start -->
-
-## Source Code Reference
-
-Source code for dependencies is available in `opensrc/` for deeper understanding of implementation details.
-
-See `opensrc/sources.json` for the list of available packages and their versions.
-
-Use this source code when you need to understand how a package works internally, not just its types/interface.
-
-### Fetching Additional Source Code
-
-To fetch source code for a package or repository you need to understand, run:
-
-```bash
-npx opensrc <package>           # npm package (e.g., npx opensrc zod)
-npx opensrc pypi:<package>      # Python package (e.g., npx opensrc pypi:requests)
-npx opensrc crates:<package>    # Rust crate (e.g., npx opensrc crates:serde)
-npx opensrc <owner>/<repo>      # GitHub repo (e.g., npx opensrc vercel/ai)
-```
-
-<!-- opensrc:end -->

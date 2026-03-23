@@ -18,7 +18,7 @@ to how it behaves in Discord, with this bridge handling protocol translation.
 
 ## Canonical references
 
-- Bridge behavior spec: `docs/discord-slack-bridge-spec.md`
+- Bridge behavior spec: `slop/discord-slack-bridge-spec.md`
 - Bridge implementation:
   - `discord-slack-bridge/src/server.ts`
   - `discord-slack-bridge/src/event-translator.ts`

@@ -535,7 +535,7 @@ discord.js has a startTyping method. this method will show a typing indicator in
 `discord-slack-bridge/` is a package that lets discord.js bots (like kimaki)
 control a Slack workspace without code changes. it translates Discord REST
 calls to Slack Web API calls and Slack webhook events to Discord Gateway
-dispatches. see `docs/discord-slack-bridge-spec.md` for the full spec.
+dispatches. see `slop/discord-slack-bridge-spec.md` for the full spec.
 
 key design: stateless ID mapping (no database). thread IDs encoded as
 `THR_{channel}_{ts}`, message IDs as `MSG_{channel}_{ts}`.
