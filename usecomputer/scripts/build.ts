@@ -2,6 +2,7 @@
 
 import childProcess from 'node:child_process'
 import fs from 'node:fs'
+import os from 'node:os'
 import path from 'node:path'
 
 type Target = {
@@ -12,6 +13,9 @@ type Target = {
 const rootDirectory = path.resolve(import.meta.dirname, '..')
 const distDirectory = path.join(rootDirectory, 'dist')
 const zigOutputDirectory = path.join(rootDirectory, 'zig-out', 'lib')
+
+// host platform in the same format as target names (e.g. "linux-x64", "darwin-arm64")
+const hostTarget = `${os.platform()}-${os.arch()}`
 
 const targets: Target[] = [
   { name: 'darwin-arm64', zigTarget: 'aarch64-macos' },
@@ -55,9 +59,16 @@ function resolveNativeBinaryPath(): Error | string {
 
 async function buildTarget({ target }: { target: Target }): Promise<void> {
   fs.rmSync(path.join(rootDirectory, 'zig-out'), { recursive: true, force: true })
+  // When building for the host platform, omit -Dtarget so Zig uses the
+  // native system include/lib paths. Cross-compiling with an explicit
+  // target makes Zig ignore host system libraries (X11, png, etc).
+  const isNativeBuild = target.name === hostTarget
+  const zigArgs = isNativeBuild
+    ? ['build', '-Doptimize=ReleaseFast']
+    : ['build', '-Doptimize=ReleaseFast', `-Dtarget=${target.zigTarget}`]
   await runCommand({
     command: 'zig',
-    args: ['build', '-Doptimize=ReleaseFast', `-Dtarget=${target.zigTarget}`],
+    args: zigArgs,
     cwd: rootDirectory,
   })
   const source = resolveNativeBinaryPath()
