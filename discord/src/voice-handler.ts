@@ -52,6 +52,7 @@ import { execAsync } from './worktrees.js'
 
 import { createLogger, LogPrefix } from './logger.js'
 import { notifyError } from './sentry.js'
+import { getVoiceCustomization } from './voice-config.js'
 
 const voiceLogger = createLogger(LogPrefix.VOICE)
 
@@ -196,13 +197,9 @@ export async function setupVoiceHandling({
 
   const geminiApiKey = await getGeminiApiKey(appId)
 
-  const genAiWorker = await createGenAIWorker({
-    directory,
-    guildId,
-    channelId,
-    appId,
-    geminiApiKey,
-    systemMessage: dedent`
+  const { extraSystemPrompt } = getVoiceCustomization()
+
+  const defaultSystemMessage = dedent`
     You are Kimaki, an AI similar to Jarvis: you help your user (an engineer) controlling his coding agent, just like Jarvis controls Ironman armor and machines. Speak fast.
 
     You should talk like Jarvis, British accent, satirical, joking and calm. Be short and concise. Speak fast.
@@ -235,7 +232,19 @@ export async function setupVoiceHandling({
 
     Your voice is calm and monotone, NEVER excited and goofy. But you speak without jargon or bs and do veiled short jokes.
     You speak like you knew something other don't. You are cool and cold.
-    `,
+    `
+
+  const systemMessage = extraSystemPrompt
+    ? `${defaultSystemMessage}\n\n${extraSystemPrompt}`
+    : defaultSystemMessage
+
+  const genAiWorker = await createGenAIWorker({
+    directory,
+    guildId,
+    channelId,
+    appId,
+    geminiApiKey,
+    systemMessage,
     onAssistantOpusPacket(packet) {
       if (connection.state.status !== VoiceConnectionStatus.Ready) {
         voiceLogger.log('Skipping packet: connection not ready')

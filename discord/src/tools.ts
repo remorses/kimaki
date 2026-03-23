@@ -6,6 +6,7 @@ import { tool } from './ai-tool.js'
 import { z } from 'zod'
 import { spawn, type ChildProcess } from 'node:child_process'
 import net from 'node:net'
+import { getVoiceCustomization } from './voice-config.js'
 import {
   type OpencodeClient,
   type AssistantMessage,
@@ -421,10 +422,15 @@ export async function getTools({
         }
       },
     }),
+
   }
 
+  // Merge in custom tools from ~/.kimaki/voice-config.json
+  const { customTools } = getVoiceCustomization()
+  const allTools = { ...tools, ...customTools }
+
   return {
-    tools,
+    tools: allTools,
     providers,
   }
 }
