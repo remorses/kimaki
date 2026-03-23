@@ -1,9 +1,9 @@
-# CI for usecomputer: build native binaries for macOS (arm64 + x64)
-# and Linux x64, then publish to npm on push to main.
+# CI for usecomputer: build native Zig binaries on each platform's
+# own runner, then publish to npm on push to main.
 #
-# macOS targets are cross-compiled on a single macOS runner.
-# Linux x64 is built natively on ubuntu because linkSystemLibrary
-# needs X11/Xext/Xtst/png headers.
+# - darwin-arm64: macos-latest (Apple Silicon)
+# - darwin-x64:  macos-13 (Intel)
+# - linux-x64:   ubuntu-latest (needs X11/Xext/Xtst/png headers)
 
 name: usecomputer CI
 
@@ -20,11 +20,19 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  build-macos:
-    runs-on: macos-latest
-    defaults:
-      run:
-        working-directory: usecomputer
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - target: darwin-arm64
+            os: macos-latest
+          - target: darwin-x64
+            os: macos-13
+          - target: linux-x64
+            os: ubuntu-latest
+
+    runs-on: ${{ matrix.os }}
 
     steps:
       - uses: actions/checkout@v4
@@ -34,51 +42,8 @@ jobs:
         with:
           version: 0.15.2
 
-      - name: Setup Node.js
-        uses: actions/setup-node@v4
-        with:
-          node-version: "22"
-
-      - name: Install pnpm
-        run: npm install -g pnpm
-
-      - name: Install dependencies
-        run: pnpm install
-
-      - name: Build TypeScript
-        run: pnpm build
-
-      - name: Build macOS native (arm64 + x64)
-        uses: nick-fields/retry@v3
-        with:
-          timeout_minutes: 15
-          max_attempts: 3
-          retry_on: error
-          command: cd usecomputer && pnpm tsx scripts/build.ts darwin-arm64 darwin-x64
-
-      - name: Upload macOS artifacts
-        uses: actions/upload-artifact@v4
-        with:
-          name: dist-macos
-          path: |
-            usecomputer/dist/darwin-arm64/
-            usecomputer/dist/darwin-x64/
-
-  build-linux:
-    runs-on: ubuntu-latest
-    defaults:
-      run:
-        working-directory: usecomputer
-
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Setup Zig
-        uses: goto-bus-stop/setup-zig@v2
-        with:
-          version: 0.15.2
-
-      - name: Install X11 and PNG dev headers
+      - name: Install Linux dev headers
+        if: runner.os == 'Linux'
         run: |
           sudo apt-get update
           sudo apt-get install -y libx11-dev libxext-dev libxtst-dev libpng-dev
@@ -92,24 +57,25 @@ jobs:
         run: npm install -g pnpm
 
       - name: Install dependencies
+        working-directory: usecomputer
         run: pnpm install
 
-      - name: Build Linux native (x64)
+      - name: Build native (${{ matrix.target }})
         uses: nick-fields/retry@v3
         with:
           timeout_minutes: 15
           max_attempts: 3
           retry_on: error
-          command: cd usecomputer && pnpm tsx scripts/build.ts linux-x64
+          command: cd usecomputer && pnpm tsx scripts/build.ts ${{ matrix.target }}
 
-      - name: Upload Linux artifacts
+      - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
-          name: dist-linux
-          path: usecomputer/dist/linux-x64/
+          name: dist-${{ matrix.target }}
+          path: usecomputer/dist/${{ matrix.target }}/
 
   publish:
-    needs: [build-macos, build-linux]
+    needs: [build]
     runs-on: ubuntu-latest
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
 
@@ -133,17 +99,24 @@ jobs:
         working-directory: usecomputer
         run: pnpm build
 
-      - name: Download macOS artifacts
+      - name: Download all native artifacts
         uses: actions/download-artifact@v4
         with:
-          name: dist-macos
+          pattern: dist-*
           path: usecomputer/dist/
+          merge-multiple: false
 
-      - name: Download Linux artifacts
-        uses: actions/download-artifact@v4
-        with:
-          name: dist-linux
-          path: usecomputer/dist/
+      # download-artifact with pattern creates dist-<target>/<files> dirs,
+      # flatten them into dist/<target>/<files> for the package layout
+      - name: Arrange native binaries
+        working-directory: usecomputer
+        run: |
+          for dir in dist/dist-*/; do
+            target=$(basename "$dir" | sed 's/^dist-//')
+            mkdir -p "dist/$target"
+            cp -r "$dir"* "dist/$target/"
+            rm -rf "$dir"
+          done
 
       - name: Check if version is already published
         id: version-check
