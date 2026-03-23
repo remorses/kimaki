@@ -7,7 +7,7 @@
     <br/>
 </div>
 
-Kimaki is a Discord bot that lets you control [OpenCode](https://opencode.ai) coding sessions from Discord. Send a message in a Discord channel → an AI agent edits code on your machine.
+Kimaki is a Discord bot that lets you control [OpenCode](https://opencode.ai) coding sessions from Discord. Send a message in a Discord channel, an AI agent edits code on your machine.
 
 ## Quick Start
 
@@ -15,11 +15,11 @@ Kimaki is a Discord bot that lets you control [OpenCode](https://opencode.ai) co
 npx -y kimaki@latest
 ```
 
-That's it. The CLI guides you through everything.
+The CLI walks you through everything. Setup takes about 1 minute — you install the Kimaki bot to your Discord server with one click, pick your projects, and you're done.
 
 ## What is Kimaki?
 
-Kimaki connects Discord to OpenCode, a coding agent similar to Claude Code. Each Discord channel is linked to a project directory on your machine. When you send a message in that channel, Kimaki starts an OpenCode session that can:
+Kimaki connects Discord to [OpenCode](https://opencode.ai), a coding agent similar to Claude Code. Each Discord channel is linked to a project directory on your machine. When you send a message in that channel, Kimaki creates a thread and starts an OpenCode session that can:
 
 - Read and edit files
 - Run terminal commands
@@ -28,7 +28,20 @@ Kimaki connects Discord to OpenCode, a coding agent similar to Claude Code. Each
 
 Think of it as texting your codebase. You describe what you want, the AI does it.
 
-## Installation & Setup
+```
+┌─────────────┐         ┌─────────────────────────────────────────┐
+│   Discord   │         │  Your Machine                           │
+│             │         │                                         │
+│  You send a │─────────▶  Kimaki CLI ──▶ OpenCode Server ──▶ AI  │
+│  message in │         │                    │                    │
+│  a channel  │◀────────│     responses      ▼                    │
+│             │         │              Reads, edits, and          │
+└─────────────┘         │              runs commands in           │
+                        │              your project directory     │
+                        └─────────────────────────────────────────┘
+```
+
+## Setup
 
 Run the CLI and follow the interactive prompts:
 
@@ -36,473 +49,88 @@ Run the CLI and follow the interactive prompts:
 npx -y kimaki@latest
 ```
 
-The setup wizard will:
+The setup wizard gives you two options:
 
-1. **Create a Discord Bot** - Walk you through creating a bot at [discord.com/developers](https://discord.com/developers/applications)
-2. **Configure Bot Settings** - Enable required intents (Message Content, Server Members)
-3. **Install to Your Server** - Generate an invite link with proper permissions
-4. **Select Projects** - Choose which OpenCode projects to add as Discord channels
+- **Gateway mode (default)** — Uses Kimaki's pre-built Discord bot. No Discord Developer Portal setup needed. You click one install link, authorize the bot in your server, and you're running. This is the recommended path.
+- **Self-hosted mode** — You create your own Discord bot at [discord.com/developers](https://discord.com/developers/applications). Takes 5-10 minutes. Useful if you want full control over the bot identity.
 
-Keep the CLI running. It's the bridge between Discord and your machine.
-
-## Architecture: One Bot Per Machine
-
-**Each Discord bot you create is tied to one machine.** This is by design.
-
-When you run `kimaki` on a computer, it spawns OpenCode servers for projects on that machine. The bot can only access directories on the machine where it's running.
-
-To control multiple machines:
-
-1. Create a separate Discord bot for each machine
-2. Run `kimaki` on each machine with its own bot token
-3. Add all bots to the same Discord server
-
-Each channel shows which bot (machine) it's connected to. You can have channels from different machines in the same server, controlled by different bots.
-
-## Running Multiple Instances
-
-By default, Kimaki stores its data in `~/.kimaki`. To run multiple bot instances on the same machine (e.g., for different teams or projects), use a separate `--data-dir` and optionally set `KIMAKI_LOCK_PORT` explicitly:
-
-```bash
-# Instance 1 - uses default ~/.kimaki
-npx -y kimaki@latest
-
-# Instance 2 - separate data directory + explicit lock port
-KIMAKI_LOCK_PORT=31001 npx -y kimaki@latest --data-dir ~/work-bot
-
-# Instance 3 - another separate instance
-KIMAKI_LOCK_PORT=31002 npx -y kimaki@latest --data-dir ~/personal-bot
-```
-
-Each instance has its own:
-
-- **Database** - Bot credentials, channel mappings, session history
-- **Projects directory** - Where `/create-new-project` creates new folders
-- **Lock port** - Derived from the data directory path by default; override with `KIMAKI_LOCK_PORT` when you need a specific port
-
-This lets you run completely isolated bots on the same machine, each with their own Discord app and configuration.
-
-## Multiple Discord Servers
-
-A single Kimaki instance can serve multiple Discord servers. Install the bot in each server using the install URL shown during setup, then add project channels to each server.
-
-### Method 1: Use `/add-project` command
-
-1. Run `npx kimaki` once to set up the bot
-2. Install the bot in both servers using the install URL
-3. In **Server A**: run `/add-project` and select your project
-4. In **Server B**: run `/add-project` and select your project
-
-The `/add-project` command creates channels in whichever server you run it from.
-
-### Method 2: Re-run CLI with `--add-channels`
-
-1. Run `npx kimaki` - set up bot, install in both servers, create channels in first server
-2. Run `npx kimaki --add-channels` - select projects for the second server
-
-The setup wizard lets you pick one server at a time.
-
-You can even link the same project to channels in multiple servers - both will point to the same directory on your machine.
-
-## Best Practices
-
-**Create a dedicated Discord server for your agents.** This keeps your coding sessions separate from other servers and gives you full control over permissions.
-
-**Add all your bots to that server.** One server, multiple machines. Each channel is clearly labeled with its project directory.
-
-**Use the "Kimaki" role for team access.** Create a role named "Kimaki" (case-insensitive) and assign it to users who should be able to trigger sessions.
-
-**Send long prompts as file attachments.** Discord has character limits for messages. Tap the plus icon and use "Send message as file" for longer prompts. Kimaki reads file attachments as your message.
-
-## Required Permissions
-
-Only users with these Discord permissions can interact with the bot:
-
-- **Server Owner** - Full access
-- **Administrator** - Full access
-- **Manage Server** - Full access
-- **"Kimaki" role** - Create a role with this name and assign to trusted users
-
-Messages from users without these permissions are ignored.
-
-### Blocking Access with "no-kimaki" Role
-
-Create a role named **"no-kimaki"** (case-insensitive) to block specific users from using the bot, even if they have other permissions like Server Owner or Administrator.
-
-This implements the "four-eyes principle" - it adds friction to prevent accidental usage. Even if you're a server owner, you must remove this role to interact with the bot.
-
-**Use cases:**
-
-- Prevent accidental bot triggers by owners who share servers
-- Temporarily disable access for specific users
-- Break-glass scenario: removing the role is a deliberate action
-
-### Allowing Other Bots (Multi-Agent Orchestration)
-
-By default, messages from other bots are ignored. To allow another bot to trigger Kimaki sessions, assign it the **"Kimaki"** role. Kimaki creates this role automatically on startup, or you can create it manually. Bots without the role are silently ignored to prevent loops.
+Both modes work identically after setup. Keep the CLI running — it's the bridge between Discord and your machine.
 
 ## Features
 
-### Text Messages
+**Text messages** — Send any message in a channel linked to a project. Kimaki creates a thread and starts an OpenCode session.
 
-Send any message in a channel linked to a project. Kimaki creates a thread and starts an OpenCode session.
+**File attachments** — Attach images, code files, or any other files to your message. Kimaki includes them in the session context.
 
-### File Attachments
+**Voice messages** — Record a voice message in Discord. Kimaki transcribes it using Google's Gemini API and processes it as text. The transcription uses your project's file tree for accuracy, recognizing function names and file paths you mention. Requires a Gemini API key (prompted during setup).
 
-Attach images, code files, or any other files to your message. Kimaki includes them in the session context.
+**Session management** — Resume sessions where you left off, fork from any message, or generate public URLs to share your session.
 
-### Voice Messages
+**Message queue** — Use `/queue <message>` to queue a follow-up while the AI is still responding. It sends automatically when the current response finishes. You can also end any message with `. queue` for the same behavior.
 
-Record a voice message in Discord. Kimaki transcribes it using Google's Gemini API and processes it as text. The transcription uses your project's file tree for accuracy, recognizing function names and file paths you mention.
+**Memory** — Kimaki reads a `MEMORY.md` file from your project root at session start. The AI can update this file to store learnings, decisions, and context worth preserving across sessions.
 
-Requires a Gemini API key (prompted during setup).
+**Tool permissions** — When the AI tries to run something that needs approval (like shell commands or accessing files outside the project), Kimaki shows Accept / Accept Always / Deny buttons in the thread. Customize defaults in your project's `opencode.json`. See [OpenCode Permissions docs](https://opencode.ai/docs/permissions/).
 
-### Session Management
-
-- **Resume sessions** - Continue where you left off
-- **Fork sessions** - Branch from any message in the conversation
-- **Share sessions** - Generate public URLs to share your session
-
-### Message Queue
-
-Use `/queue <message>` to queue a follow-up message while the AI is still responding. The queued message sends automatically when the current response finishes. If no response is in progress, it sends immediately. Useful for chaining tasks without waiting.
-
-You can also end any regular message with `. queue` to get the same behavior without using a slash command. The suffix is stripped before sending. For example, typing `fix the tests. queue` queues "fix the tests" for the next idle window.
-
-## Commands Reference
-
-### Text Interaction
-
-Just send a message in any channel linked to a project. Kimaki handles the rest.
+## Commands
 
 ### Slash Commands
 
-| Command                      | Description                                             |
-| ---------------------------- | ------------------------------------------------------- |
-| `/session <prompt>`          | Start a new session with an initial prompt              |
-| `/resume <session>`          | Resume a previous session (with autocomplete)           |
-| `/abort`                     | Stop the current running session                        |
-| `/add-project <project>`     | Create channels for an existing OpenCode project        |
-| `/create-new-project <name>` | Create a new project folder and start a session         |
-| `/new-worktree <name>`       | Create a git worktree and start a session (⬦ prefix)    |
-| `/merge-worktree`            | Merge worktree branch into default branch               |
-| `/model`                     | Change the AI model for this channel or session         |
-| `/agent`                     | Change the agent for this channel or session            |
-| `/share`                     | Generate a public URL to share the current session      |
-| `/fork`                      | Fork the session from a previous message                |
-| `/queue <message>`           | Queue a message to send after current response finishes |
-| `/clear-queue`               | Clear all queued messages in this thread                |
-| `/undo`                      | Undo the last assistant message (revert file changes)   |
-| `/redo`                      | Redo the last undone message                            |
-| `/screenshare`               | Share your screen via VNC tunnel (auto-stops after 1h)  |
-| `/screenshare-stop`          | Stop screen sharing                                     |
-| `/upgrade-and-restart`       | Upgrade kimaki to latest and restart the bot            |
+| Command | Description |
+|---|---|
+| `/session <prompt>` | Start a new session with an initial prompt |
+| `/resume <session>` | Resume a previous session (with autocomplete) |
+| `/abort` | Stop the current running session |
+| `/add-project <project>` | Create channels for an existing OpenCode project |
+| `/create-new-project <name>` | Create a new project folder and start a session |
+| `/new-worktree <name>` | Create a git worktree and start a session |
+| `/merge-worktree` | Merge worktree branch into default branch |
+| `/model` | Change the AI model for this channel or session |
+| `/agent` | Change the agent for this channel or session |
+| `/share` | Generate a public URL to share the current session |
+| `/fork` | Fork the session from a previous message |
+| `/queue <message>` | Queue a message to send after current response finishes |
+| `/clear-queue` | Clear all queued messages in this thread |
+| `/undo` | Undo the last assistant message (revert file changes) |
+| `/redo` | Redo the last undone message |
+| `/screenshare` | Share your screen via VNC tunnel (auto-stops after 1h) |
+| `/screenshare-stop` | Stop screen sharing |
+| `/upgrade-and-restart` | Upgrade kimaki to latest and restart the bot |
 
-### Dynamic OpenCode Slash Commands
+Kimaki also registers project-specific slash commands from OpenCode: commands become `/name-cmd`, skills become `/name-skill`, and MCP prompts become `/name-cmd`.
 
-Kimaki also registers project-specific slash commands from OpenCode's
-`/command` list:
-
-- **OpenCode commands** (`source: "command"`) become `/name-cmd`
-- **OpenCode skills** (`source: "skill"`) become `/name-skill`
-- **MCP prompts** (`source: "mcp"`) become `/name-cmd`
-
-MCP note: only MCP prompts become slash commands. MCP tools and MCP
-resources do not register as slash commands.
-
-### CLI Commands
+### CLI
 
 ```bash
 # Start the bot (interactive setup on first run)
 npx -y kimaki@latest
 
-# Upload files to a Discord thread
-npx -y kimaki upload-to-discord --session <session-id> <file1> [file2...]
-
-# Start a session programmatically (useful for CI/automation)
-npx -y kimaki send --channel <channel-id> --prompt "your prompt"
-
-# Continue an existing thread by ID
-npx -y kimaki send --thread <thread-id> --prompt "follow-up prompt"
-
-# Continue a thread by mapped session ID
-npx -y kimaki send --session <session-id> --prompt "follow-up prompt"
-
-# Start a session in an isolated git worktree
-npx -y kimaki send --channel <channel-id> --prompt "your prompt" --worktree feature-name
-
-# Send notification without starting AI session (reply to start session later)
-npx -y kimaki send --channel <channel-id> --prompt "User cancelled subscription" --notify-only
-
-# Create Discord channels for a project directory (without starting a session)
+# Add a project directory as a Discord channel
 npx -y kimaki project add [directory]
 
-# Share your screen (runs until Ctrl+C, auto-stops after 1 hour)
-kimaki screenshare
-```
+# Start a session programmatically
+npx -y kimaki send --channel <channel-id> --prompt "your prompt"
 
-## Add Project Channels
-
-Create Discord channels for a project directory without starting a session. Useful for automation and scripting.
-
-```bash
-# Add current directory as a project
-npx -y kimaki project add
-
-# Upgrade kimaki and restart the running bot process
+# Upgrade kimaki and restart
 npx -y kimaki upgrade
-
-# Upgrade only (skip bot restart)
-npx -y kimaki upgrade --skip-restart
-
-# Add a specific directory
-npx -y kimaki project add /path/to/project
-
-# Specify guild when bot is in multiple servers
-npx -y kimaki project add ./myproject --guild 123456789
-
-# In CI with env var for bot token
-KIMAKI_BOT_TOKEN=xxx npx -y kimaki project add --app-id 987654321
 ```
 
-### Options
+See [CI & Automation docs](docs/ci-automation.md) for the full `send` command reference, GitHub Actions examples, and scheduled tasks.
 
-| Option                  | Description                                                         |
-| ----------------------- | ------------------------------------------------------------------- |
-| `[directory]`           | Project directory path (defaults to current directory)              |
-| `-g, --guild <guildId>` | Discord guild/server ID (auto-detects if bot is in only one server) |
-| `-a, --app-id <appId>`  | Bot application ID (reads from database if available)               |
+## Access Control
 
-## Programmatically Start Sessions
+Kimaki checks Discord permissions before processing any message. Users need **one** of:
 
-You can start Kimaki sessions from CI pipelines, cron jobs, or any automation. The `send` command creates a Discord thread, and the running bot on your machine picks it up.
+- **Server Owner**
+- **Manage Server** permission
+- **Administrator** permission
+- **"Kimaki" role** — create a role with this name (case-insensitive) and assign it to trusted users
 
-### Environment Variables
+The "Kimaki" role is the recommended approach for team access. Messages from users without any of these are ignored.
 
-| Variable           | Required    | Description       |
-| ------------------ | ----------- | ----------------- |
-| `KIMAKI_BOT_TOKEN` | Yes (in CI) | Discord bot token |
+**Blocking access** — Create a role named **"no-kimaki"** (case-insensitive) to block specific users, even server owners. Useful for preventing accidental bot triggers in shared servers.
 
-### CLI Options
-
-```bash
-npx -y kimaki send \
-  --channel <channel-id>    # Required: Discord channel ID
-  --prompt <prompt>         # Required: Message content
-  --name <name>             # Optional: Thread name (defaults to prompt preview)
-  --app-id <app-id>         # Optional: Bot application ID for validation
-  --notify-only             # Optional: Create notification thread without starting AI session
-  --worktree <name>         # Optional: Create git worktree for isolated session
-  --thread <thread-id>      # Optional: Send prompt to existing thread (no new thread)
-  --session <session-id>    # Optional: Resolve thread from session and send prompt
-  --permission <rule>       # Optional: Repeatable. Per-session permission rule (see below)
-```
-
-Use either `--channel/--project` (create new thread) or `--thread/--session`
-(send to existing thread), not both.
-
-### Example: GitHub Actions on New Issues
-
-This workflow starts a Kimaki session whenever a new issue is opened:
-
-```yaml
-# .github/workflows/investigate-issues.yml
-name: Investigate New Issues
-
-on:
-  issues:
-    types: [opened]
-
-jobs:
-  investigate:
-    runs-on: ubuntu-latest
-    steps:
-      - name: Start Kimaki Session
-        env:
-          KIMAKI_BOT_TOKEN: ${{ secrets.KIMAKI_BOT_TOKEN }}
-        run: |
-          npx -y kimaki send \
-            --channel "1234567890123456789" \
-            --prompt "Investigate issue ${{ github.event.issue.html_url }} using gh cli. Try fixing it in a new worktree ./${{ github.event.issue.number }}" \
-            --name "Issue #${{ github.event.issue.number }}"
-```
-
-**Setup:**
-
-1. Add `KIMAKI_BOT_TOKEN` to your repository secrets (Settings → Secrets → Actions)
-2. Replace `1234567890123456789` with your Discord channel ID (right-click channel → Copy Channel ID)
-3. Make sure the Kimaki bot is running on your machine
-
-### How It Works
-
-1. **CI runs `send`** → Creates a Discord thread with your prompt
-2. **Running bot detects thread** → Automatically starts a session
-3. **Bot starts OpenCode session** → Uses the prompt from the thread
-4. **AI investigates** → Runs on your machine with full codebase access
-
-Use `--notify-only` for notifications that don't need immediate AI response (e.g., subscription events). Reply to the thread later to start a session with the notification as context.
-
-## Scheduled Tasks
-
-Add `--send-at` to any `kimaki send` command to schedule it for later. Supports one-time ISO dates (must be UTC ending with `Z`) and recurring cron expressions (runs in your local timezone):
-
-```bash
-# One-time: run at a specific UTC time
-kimaki send --channel <channel-id> --prompt "Review open PRs" \
-  --send-at "2026-03-01T09:00:00Z"
-
-# Recurring: every Monday at 9am local time
-kimaki send --channel <channel-id> \
-  --prompt "Run weekly test suite and summarize failures" \
-  --send-at "0 9 * * 1"
-
-# Schedule a reminder into an existing thread
-kimaki send --session <session-id> \
-  --prompt "Reminder: <@user-id> check back on this thread" \
-  --send-at "2026-03-01T15:00:00Z" --notify-only
-```
-
-All other `send` flags (`--notify-only`, `--worktree`, `--agent`, `--model`, `--user`) work with `--send-at`. The only exception is `--wait`, which is incompatible since the task runs in the future.
-
-Manage scheduled tasks with `kimaki task list` and `kimaki task delete <id>`.
-
-## Memory
-
-Kimaki supports persistent memory across sessions via a `MEMORY.md` file in your project root. No flags needed — if the file exists, the AI reads it at session start.
-
-```markdown
-# MEMORY.md
-
-Using JWT tokens with 15min expiry. Refresh tokens in httpOnly cookies.
-User prefers kebab-case filenames and errore-style error handling.
-```
-
-The AI can update this file to store learnings, decisions, preferences, and context worth preserving. After long idle gaps (10+ min), the AI is reminded to save important context before starting new work.
-
-## Screen Sharing
-
-Share your machine's screen to anyone with a browser link. Uses VNC under the hood, bridged through a WebSocket proxy and exposed via a kimaki tunnel.
-
-```bash
-# Start sharing (runs in foreground, Ctrl+C to stop)
-kimaki screenshare
-
-# Run in background with tmux
-tmux new-session -d -s screenshare "kimaki screenshare"
-```
-
-Or use the `/screenshare` slash command in Discord — it posts the URL directly in the channel.
-
-Sessions auto-stop after **1 hour**. Use `/screenshare-stop` or Ctrl+C to stop earlier.
-
-### macOS Setup
-
-macOS requires **Remote Management** enabled (not just Screen Sharing) for full mouse and keyboard control:
-
-1. Go to **System Settings > General > Sharing > Remote Management**
-2. Enable **"VNC viewers may control screen with password"**
-3. Set a VNC password
-
-Or via terminal:
-
-```bash
-sudo /System/Library/CoreServices/RemoteManagement/ARDAgent.app/Contents/Resources/kickstart \
-  -activate -configure -allowAccessFor -allUsers -privs -all \
-  -clientopts -setvnclegacy -vnclegacy yes \
-  -restart -agent -console
-```
-
-### Linux Setup
-
-Requires `x11vnc` and a running X11 display (`$DISPLAY`):
-
-```bash
-sudo apt install x11vnc
-```
-
-Kimaki spawns `x11vnc` automatically when you start screen sharing.
-
-## How It Works
-
-**SQLite Database** - Kimaki stores state in `<data-dir>/discord-sessions.db` (default: `~/.kimaki/discord-sessions.db`). This maps Discord threads to OpenCode sessions, channels to directories, and stores your bot credentials. Use `--data-dir` to change the location.
-
-**Lock Port** - Kimaki enforces single-instance behavior by binding a lock port. By default, the port is derived from `--data-dir`; set `KIMAKI_LOCK_PORT=<port>` to override it when running an additional Kimaki process on the same machine.
-
-**OpenCode Servers** - When you message a channel, Kimaki spawns (or reuses) an OpenCode server for that project directory. The server handles the actual AI coding session.
-
-**Channel Metadata** - Each channel's topic contains XML metadata linking it to a directory and bot:
-
-```xml
-<kimaki><directory>/path/to/project</directory><app>bot_id</app></kimaki>
-```
-
-**Voice Processing** - Voice features run in a worker thread. Audio flows: Discord Opus → Decoder → Downsample (48kHz→16kHz) → Gemini API → Response → Upsample → Opus → Discord.
-
-**Log File** - Kimaki writes logs to `<data-dir>/kimaki.log` (default: `~/.kimaki/kimaki.log`). The log file is reset on every bot startup, so it only contains logs from the current run. Read this file to debug internal issues, session failures, or unexpected behavior.
-
-**Graceful Restart** - Send `SIGUSR2` to restart the bot with new code without losing connections.
-
-## Tool Permissions
-
-When the AI agent tries to run a tool that requires approval (like executing shell commands or accessing files outside the project), Kimaki shows a permission prompt directly in the Discord thread with three buttons:
-
-- **Accept** - approve this one request
-- **Accept Always** - auto-approve similar requests for the rest of the session
-- **Deny** - block the request
-
-By default, most tools run without asking. The main exception is `external_directory` - any tool that touches paths outside the project directory will prompt for approval.
-
-You can customize permissions in your project's `opencode.json`:
-
-```json
-{
-  "$schema": "https://opencode.ai/config.json",
-  "permission": {
-    "bash": {
-      "*": "ask",
-      "git *": "allow",
-      "npm *": "allow",
-      "rm *": "deny"
-    },
-    "external_directory": {
-      "~/other-project/**": "allow"
-    }
-  }
-}
-```
-
-Each permission resolves to `"allow"` (run automatically), `"ask"` (show buttons in Discord), or `"deny"` (block).
-
-**Note:** If you change `opencode.json` while the bot is running, you need to restart the OpenCode server for the new permissions to take effect. Use the `/restart-opencode-server` command in Discord or restart Kimaki.
-
-### Per-Session Permissions via CLI
-
-When starting sessions with `kimaki send`, you can restrict tools for that specific session using `--permission`. This is useful for CI pipelines, scheduled tasks, or spawning sandboxed sessions.
-
-Format: `tool:action` or `tool:pattern:action`. Actions: `allow`, `deny`, `ask`.
-
-```bash
-# Read-only session (no edits, no bash)
-kimaki send -c 123 -p "Review this code" \
-  --permission "bash:deny" \
-  --permission "edit:deny"
-
-# Only allow git commands
-kimaki send -c 123 -p "Check git history" \
-  --permission "bash:git *:allow" \
-  --permission "bash:*:deny"
-
-# Deny everything except reading
-kimaki send -c 123 -p "Analyze the codebase" \
-  --permission "*:deny" \
-  --permission "read:allow" \
-  --permission "glob:allow" \
-  --permission "grep:allow"
-```
-
-Rules are evaluated with `findLast()` — later rules override earlier ones. The `--permission` flag works with `--send-at` (scheduled tasks) and `--thread`/`--session` (existing threads) too.
-
-See the full [OpenCode Permissions documentation](https://opencode.ai/docs/permissions/) for all available permissions, granular pattern matching, and per-agent overrides.
+**Multi-agent orchestration** — Other Discord bots are ignored by default. Assign the "Kimaki" role to another bot to let it trigger Kimaki sessions.
 
 ## Model & Agent Configuration
 
@@ -514,16 +142,21 @@ Set the AI model in your project's `opencode.json`:
 }
 ```
 
-Format: `provider/model-name`
+Format: `provider/model-name`. Examples: `anthropic/claude-opus-4-20250514`, `openai/gpt-4o`, `google/gemini-2.5-pro`.
 
-**Examples:**
+Or use `/model` and `/agent` slash commands to change settings per channel or session.
 
-- `anthropic/claude-sonnet-4-20250514` - Claude Sonnet 4
-- `anthropic/claude-opus-4-20250514` - Claude Opus 4
-- `openai/gpt-4o` - GPT-4o
-- `google/gemini-2.5-pro` - Gemini 2.5 Pro
+## Best Practices
 
-Or use these Discord commands to change settings per channel/session:
+**Create a dedicated Discord server for your agents.** This keeps coding sessions separate from other servers and gives you full control over permissions.
 
-- `/model` - Select a different AI model
-- `/agent` - Select a different agent (if you have multiple agents configured in your project)
+**Use the "Kimaki" role for team access.** Assign it to users who should be able to trigger sessions.
+
+**Send long prompts as file attachments.** Discord has character limits. Tap the plus icon and use "Send message as file" for longer prompts. Kimaki reads file attachments as your message.
+
+## Advanced Topics
+
+- [**Advanced Setup**](docs/advanced-setup.md) — Running multiple instances, multiple Discord servers, architecture details
+- [**CI & Automation**](docs/ci-automation.md) — Programmatic sessions, GitHub Actions, scheduled tasks, per-session permissions
+- [**Screen Sharing**](docs/screen-sharing.md) — Share your screen via browser link (macOS & Linux setup)
+- [**Internals**](docs/internals.md) — How Kimaki works under the hood (SQLite, lock port, channel metadata, voice processing)
