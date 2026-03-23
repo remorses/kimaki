@@ -210,5 +210,13 @@ pnpm tsx src/cli.ts press "cmd+s"
 pnpm tsx src/cli.ts press "alt+tab"
 ```
 
-Note: if keyboard commands are not implemented yet in native Zig, commands
-return `TODO not implemented` until that command is ported.
+## Publishing
+
+Never publish this package locally with `npm publish` or `pnpm publish`.
+The package includes native Zig binaries for multiple platforms (macOS, Linux)
+that must be cross-compiled by CI. To release:
+
+1. Bump the version in `package.json`
+2. Update `CHANGELOG.md` with the new version and changes
+3. Commit and push to `main`
+4. GitHub Actions CI builds all platform binaries and publishes to npm

@@ -239,10 +239,6 @@ function printWindowList({ windows }: { windows: WindowInfo[] }) {
   })
 }
 
-function notImplemented({ command }: { command: string }): never {
-  throw new Error(`TODO not implemented: ${command}`)
-}
-
 export function createCli({ bridge = createBridge() }: { bridge?: UseComputerBridge } = {}) {
   const cli = goke('usecomputer')
 
@@ -621,24 +617,6 @@ export function createCli({ bridge = createBridge() }: { bridge?: UseComputerBri
       await bridge.clipboardSet({ text })
     })
 
-  cli.command('snapshot').action(() => {
-    notImplemented({ command: 'snapshot' })
-  })
-  cli.command('get text <target>').action(() => {
-    notImplemented({ command: 'get text' })
-  })
-  cli.command('get title <target>').action(() => {
-    notImplemented({ command: 'get title' })
-  })
-  cli.command('get value <target>').action(() => {
-    notImplemented({ command: 'get value' })
-  })
-  cli.command('get bounds <target>').action(() => {
-    notImplemented({ command: 'get bounds' })
-  })
-  cli.command('get focused').action(() => {
-    notImplemented({ command: 'get focused' })
-  })
   cli.command('window list').option('--json', 'Output as JSON').action(async (options) => {
     const windows = await bridge.windowList()
     if (options.json) {
@@ -647,46 +625,6 @@ export function createCli({ bridge = createBridge() }: { bridge?: UseComputerBri
     }
     printWindowList({ windows })
   })
-  cli.command('window focus <target>').action(() => {
-    notImplemented({ command: 'window focus' })
-  })
-  cli.command('window resize <target> <width> <height>').action(() => {
-    notImplemented({ command: 'window resize' })
-  })
-  cli.command('window move <target> <x> <y>').action(() => {
-    notImplemented({ command: 'window move' })
-  })
-  cli.command('window minimize <target>').action(() => {
-    notImplemented({ command: 'window minimize' })
-  })
-  cli.command('window maximize <target>').action(() => {
-    notImplemented({ command: 'window maximize' })
-  })
-  cli.command('window close <target>').action(() => {
-    notImplemented({ command: 'window close' })
-  })
-  cli.command('app list').action(() => {
-    notImplemented({ command: 'app list' })
-  })
-  cli.command('app launch <name>').action(() => {
-    notImplemented({ command: 'app launch' })
-  })
-  cli.command('app quit <name>').action(() => {
-    notImplemented({ command: 'app quit' })
-  })
-  cli.command('wait <target>').action(() => {
-    notImplemented({ command: 'wait' })
-  })
-  cli.command('find <query>').action(() => {
-    notImplemented({ command: 'find' })
-  })
-  cli.command('diff snapshot').action(() => {
-    notImplemented({ command: 'diff snapshot' })
-  })
-  cli.command('diff screenshot').action(() => {
-    notImplemented({ command: 'diff screenshot' })
-  })
-
   cli.help()
   cli.version(packageJson.version)
   return cli

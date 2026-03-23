@@ -197,10 +197,6 @@ fn failData(comptime T: type, command: []const u8, code: []const u8, message: []
     };
 }
 
-fn todoNotImplemented(command: []const u8) CommandResult {
-    return failCommand(command, "TODO_NOT_IMPLEMENTED", "TODO not implemented");
-}
-
 pub const Point = struct {
     x: f64,
     y: f64,
@@ -1187,12 +1183,12 @@ pub fn windowList() DataResult([]const u8) {
 }
 
 pub fn clipboardGet() DataResult([]const u8) {
-    return failData([]const u8, "clipboard-get", "TODO_NOT_IMPLEMENTED", "TODO not implemented: clipboard-get");
+    return failData([]const u8, "clipboard-get", "NOT_SUPPORTED", "clipboard-get is not supported on this platform");
 }
 
 pub fn clipboardSet(input: ClipboardSetInput) CommandResult {
     _ = input;
-    return todoNotImplemented("clipboard-set");
+    return failCommand("clipboard-set", "NOT_SUPPORTED", "clipboard-set is not supported on this platform");
 }
 
 pub fn typeText(input: TypeTextInput) CommandResult {

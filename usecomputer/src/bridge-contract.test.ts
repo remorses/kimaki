@@ -73,8 +73,8 @@ describe('native bridge contract', () => {
       expect(typeof firstWindow.desktopIndex).toBe('number')
     }
 
-    // -- Clipboard (TODO on all platforms — Zig returns "TODO not implemented") --
-    await expect(bridge.clipboardSet({ text: 'bridge-contract-test' })).rejects.toThrow('TODO not implemented')
-    await expect(bridge.clipboardGet()).rejects.toThrow('TODO not implemented')
+    // -- Clipboard (not supported on this platform yet) --
+    await expect(bridge.clipboardSet({ text: 'bridge-contract-test' })).rejects.toThrow(/not (supported|implemented)/)
+    await expect(bridge.clipboardGet()).rejects.toThrow(/not (supported|implemented)/)
   })
 })

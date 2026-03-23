@@ -4,6 +4,11 @@
 
 All notable changes to `usecomputer` will be documented in this file.
 
+## 0.1.2
+
+1. **Removed all unimplemented command stubs** — 18 placeholder commands (`snapshot`, `get text/title/value/bounds/focused`, `window focus/resize/move/minimize/maximize/close`, `app list/launch/quit`, `wait`, `find`, `diff snapshot/screenshot`) that only threw "TODO not implemented" have been removed. The CLI now only exposes commands that actually work.
+2. **Clipboard errors clarified** — clipboard commands now return "not supported on this platform" instead of "TODO not implemented".
+
 ## 0.1.1
 
 1. **Fixed Linux native builds** — standalone executable now links libc correctly on Linux, fixing "C allocator is only available when linking against libc" errors.
