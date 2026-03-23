@@ -1,6 +1,6 @@
 {
   "name": "usecomputer",
-  "version": "0.0.4",
+  "version": "0.1.0",
   "type": "module",
   "description": "Fast computer automation CLI for AI agents. Control any desktop with accessibility snapshots, clicks, typing, scrolling, and more.",
   "bin": "./bin.js",
