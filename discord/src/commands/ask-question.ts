@@ -10,7 +10,7 @@ import {
   MessageFlags,
 } from 'discord.js'
 import crypto from 'node:crypto'
-import { sendThreadMessage, NOTIFY_MESSAGE_FLAGS } from '../discord-utils.js'
+import { sendThreadMessage, NOTIFY_MESSAGE_FLAGS, SILENT_MESSAGE_FLAGS } from '../discord-utils.js'
 import { getOpencodeClient } from '../opencode.js'
 import { createLogger, LogPrefix } from '../logger.js'
 
@@ -59,12 +59,15 @@ export async function showAskUserQuestionDropdowns({
   directory,
   requestId,
   input,
+  silent,
 }: {
   thread: ThreadChannel
   sessionId: string
   directory: string
   requestId: string // OpenCode question request ID
   input: AskUserQuestionInput
+  /** Suppress notification when queue has pending items */
+  silent?: boolean
 }): Promise<void> {
   const contextHash = crypto.randomBytes(8).toString('hex')
 
@@ -144,7 +147,7 @@ export async function showAskUserQuestionDropdowns({
     await thread.send({
       content: `**${(q.header || '').slice(0, 200)}**\n${q.question.slice(0, 1700)}`,
       components: [actionRow],
-      flags: NOTIFY_MESSAGE_FLAGS,
+      flags: silent ? SILENT_MESSAGE_FLAGS : NOTIFY_MESSAGE_FLAGS,
     })
   }
 

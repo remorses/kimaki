@@ -1986,6 +1986,7 @@ export class ThreadSessionRuntime {
               sessionId: request.sessionId,
               directory: request.directory,
               buttons: request.buttons,
+              silent: this.getQueueLength() > 0,
             })
           })
           if (showResult instanceof Error) {
@@ -2425,6 +2426,7 @@ export class ThreadSessionRuntime {
           directory: this.projectDirectory,
           requestId: questionRequest.id,
           input: { questions: questionRequest.questions },
+          silent: this.getQueueLength() > 0,
         })
       },
     })
@@ -3043,6 +3045,14 @@ export class ThreadSessionRuntime {
   /** Number of messages waiting in the queue. */
   getQueueLength(): number {
     return this.state?.queueItems.length ?? 0
+  }
+
+  /** NOTIFY_MESSAGE_FLAGS unless queue has a next item, then SILENT.
+   * Permissions should NOT use this — they always notify. */
+  private getNotifyFlags(): number {
+    return this.getQueueLength() > 0
+      ? SILENT_MESSAGE_FLAGS
+      : NOTIFY_MESSAGE_FLAGS
   }
 
   /** Clear all queued messages. */
@@ -3748,10 +3758,8 @@ export class ThreadSessionRuntime {
 
     // Skip notification if there's a queued message next — the user only
     // needs to be notified when the entire queue finishes.
-    const queuedNext =
-      (threadState.getThreadState(this.threadId)?.queueItems.length ?? 0) > 0
     await sendThreadMessage(this.thread, footerText, {
-      flags: queuedNext ? SILENT_MESSAGE_FLAGS : NOTIFY_MESSAGE_FLAGS,
+      flags: this.getNotifyFlags(),
     })
     logger.log(
       `DURATION: Session completed in ${sessionDuration}, model ${runInfo.model}, tokens ${runInfo.tokensUsed}`,
