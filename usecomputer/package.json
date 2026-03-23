@@ -47,7 +47,7 @@
     "vm": "tsx scripts/vm.ts",
     "test": "vitest --run",
     "typecheck": "tsc --noEmit",
-    "prepublishOnly": "pnpm build && pnpm build:native:macos"
+    "prepublishOnly": "[ -n \"$CI\" ] || (pnpm build && pnpm build:native:macos)"
   },
   "keywords": [
     "computer-use",
