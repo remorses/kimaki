@@ -84,7 +84,7 @@ importers:
         version: 0.15.15
       '@openauthjs/openauth':
         specifier: ^0.4.3
-        version: 0.4.3(arctic@2.3.4)(hono@4.11.5)
+        version: 0.4.3(arctic@2.3.4)(hono@4.12.9)
       '@opencode-ai/plugin':
         specifier: ^1.2.27
         version: 1.2.27
@@ -131,8 +131,8 @@ importers:
         specifier: ^4.1.0
         version: 4.1.0
       kitty-graphics-agent:
-        specifier: ^0.0.4
-        version: 0.0.4(@opencode-ai/plugin@1.2.27)
+        specifier: ^0.0.5
+        version: 0.0.5(@opencode-ai/plugin@1.2.27)
       libsql:
         specifier: ^0.5.22
         version: 0.5.22
@@ -3806,8 +3806,8 @@ packages:
   jws@4.0.1:
     resolution: {integrity: sha512-EKI/M/yqPncGUUh44xz0PxSidXFr/+r0pA70+gIYhjv+et7yxM+s29Y+VGDkovRofQem0fs7Uvf4+YmAdyRduA==}
 
-  kitty-graphics-agent@0.0.4:
-    resolution: {integrity: sha512-BspNwhJ6xz/6oop6qIOMiT1snbgdzx2pgDQp2oz8DFSju7E6w6Nmdrryn2I81OfKvGJLu2OL39li1iZtmE6pWw==}
+  kitty-graphics-agent@0.0.5:
+    resolution: {integrity: sha512-4l2mqgILQCn9jOl/gcI/8H+GhwCla52FSLXHhibNhJab+f7ARNyycoF6YChY2aZtIHJiXx7KbHeERipN6eC5DQ==}
     peerDependencies:
       '@opencode-ai/plugin': '>=1.0.0'
     peerDependenciesMeta:
@@ -6213,12 +6213,12 @@ snapshots:
 
   '@noble/hashes@2.0.1': {}
 
-  '@openauthjs/openauth@0.4.3(arctic@2.3.4)(hono@4.11.5)':
+  '@openauthjs/openauth@0.4.3(arctic@2.3.4)(hono@4.12.9)':
     dependencies:
       '@standard-schema/spec': 1.0.0-beta.3
       arctic: 2.3.4
       aws4fetch: 1.0.20
-      hono: 4.11.5
+      hono: 4.12.9
       jose: 5.9.6
 
   '@opencode-ai/plugin@1.2.27':
@@ -8365,8 +8365,7 @@ snapshots:
 
   hono@4.11.5: {}
 
-  hono@4.12.9:
-    optional: true
+  hono@4.12.9: {}
 
   htmlparser2@10.0.0:
     dependencies:
@@ -8529,7 +8528,7 @@ snapshots:
       jwa: 2.0.1
       safe-buffer: 5.2.1
 
-  kitty-graphics-agent@0.0.4(@opencode-ai/plugin@1.2.27):
+  kitty-graphics-agent@0.0.5(@opencode-ai/plugin@1.2.27):
     optionalDependencies:
       '@opencode-ai/plugin': 1.2.27
 
