@@ -89,6 +89,18 @@ export async function handleUndoCommand({
       return
     }
 
+    // Abort if session is busy before reverting, matching TUI behavior
+    // (use-session-commands.tsx always aborts non-idle sessions before revert).
+    // session.status() returns a sparse map — only non-idle sessions have entries,
+    // so a missing key means idle.
+    const statusResponse = await client.session.status({})
+    const sessionStatus = statusResponse.data?.[sessionId]
+    if (sessionStatus && sessionStatus.type !== 'idle') {
+      await client.session.abort({ sessionID: sessionId }).catch((error) => {
+        logger.warn(`[UNDO] abort failed for ${sessionId}`, error)
+      })
+    }
+
     const messagesResponse = await client.session.messages({
       sessionID: sessionId,
     })
@@ -228,6 +240,16 @@ export async function handleRedoCommand({
     if (!revertMessageID) {
       await command.editReply('Nothing to redo - no previous undo found')
       return
+    }
+
+    // Abort if session is busy before reverting/unreverting — both enforce
+    // assertNotBusy in OpenCode and would fail with "Session is busy"
+    const redoStatusResponse = await client.session.status({})
+    const redoSessionStatus = redoStatusResponse.data?.[sessionId]
+    if (redoSessionStatus && redoSessionStatus.type !== 'idle') {
+      await client.session.abort({ sessionID: sessionId }).catch((error) => {
+        logger.warn(`[REDO] abort failed for ${sessionId}`, error)
+      })
     }
 
     // Follow the same approach as the OpenCode TUI (use-session-commands.tsx):
