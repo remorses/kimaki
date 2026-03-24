@@ -1,6 +1,13 @@
 /**
  * Anthropic OAuth authentication plugin for OpenCode.
  *
+ * If you're copy-pasting this plugin into your OpenCode config folder,
+ * you need to install the runtime dependencies first:
+ *
+ *   cd ~/.config/opencode
+ *   bun init -y
+ *   bun add @openauthjs/openauth proper-lockfile
+ *
  * Handles two concerns:
  * 1. OAuth login + token refresh (PKCE flow against claude.ai)
  * 2. Request/response rewriting (tool names, system prompt, beta headers)
