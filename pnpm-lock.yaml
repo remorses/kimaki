@@ -446,6 +446,15 @@ importers:
         specifier: ^5.8.3
         version: 5.9.2
 
+  sigillo:
+    devDependencies:
+      '@types/node':
+        specifier: ^22.0.0
+        version: 22.19.7
+      typescript:
+        specifier: ^5.7.0
+        version: 5.9.2
+
   slack-digital-twin:
     dependencies:
       '@libsql/client':
