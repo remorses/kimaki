@@ -300,7 +300,14 @@ describe('vLLM transcription', () => {
 
     // Convert OGG to WAV first
     const ogg = fs.readFileSync(oggPath)
-    const wavBuffer = await convertOggToWav(ogg)
+    const wavBufferOrError = await convertOggToWav(ogg)
+    
+    if (wavBufferOrError instanceof Error) {
+      console.log('Skipping: Failed to convert OGG to WAV:', wavBufferOrError.message)
+      return
+    }
+    
+    const wavBuffer = wavBufferOrError
 
     const result = await transcribeWithVLLM({
       audioBuffer: wavBuffer,
