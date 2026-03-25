@@ -29,6 +29,7 @@
   ],
   "devDependencies": {
     "@types/bun": "latest",
+    "@types/figlet": "1.7.0",
     "@types/heic-convert": "^2.1.0",
     "@types/js-yaml": "^4.0.9",
     "@types/json-schema": "^7.0.15",
@@ -62,6 +63,7 @@
     "discord.js": "^14.25.1",
     "domhandler": "^5.0.3",
     "errore": "workspace:^",
+    "figlet": "1.11.0",
     "goke": "^6.3.0",
     "htmlparser2": "^10.0.0",
     "js-yaml": "^4.1.0",
