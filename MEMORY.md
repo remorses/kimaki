@@ -1,5 +1,13 @@
 # Kimaki Project Memory
 
+## When to Reinstall
+
+**Always rebuild and verify after:**
+1. Completing a new feature
+2. Merging upstream changes
+3. Modifying TypeScript source files in `discord/src/`
+4. Updating dependencies (`pnpm install`)
+
 ## Reinstalling Kimaki from Local Source
 
 After making changes to the kimaki source code and needing to test them with the global `kimaki` command, follow these steps:
@@ -52,3 +60,33 @@ kimaki
 - You must rebuild with `npx tsc` after TypeScript changes
 - For quick development iteration, use `pnpm dev` which runs `tsx src/cli.ts` directly (no build needed)
 - If you see `/opt/homebrew/bin/kimaki`, you still have a homebrew installation overriding your local link
+
+## Quick Rebuild Command
+
+Run this after completing features or merging upstream:
+
+```bash
+# One-liner to rebuild and verify
+npm uninstall -g kimaki 2>/dev/null; pnpm install && cd discord && npx tsc && cd .. && which kimaki && echo "✅ Rebuild complete - test with: kimaki"
+```
+
+## Common Issues
+
+### "I don't see my changes when running kimaki"
+
+This means you're running an old compiled version. Run the quick rebuild command above.
+
+### "Module not found errors after merge"
+
+Upstream may have added new dependencies. Fix with:
+```bash
+pnpm install
+cd discord && npx tsc
+```
+
+### "npm global kimaki keeps overriding my dev version"
+
+npm's `/opt/homebrew/bin` comes before pnpm's `~/Library/pnpm` in PATH. Uninstall the npm version:
+```bash
+npm uninstall -g kimaki
+```
