@@ -42,13 +42,23 @@ import {
   SILENT_MESSAGE_FLAGS,
   hasKimakiBotPermission,
 } from './discord-utils.js'
-import { transcribeAudio, type TranscriptionResult } from './voice.js'
+import {
+  transcribeAudio,
+  type TranscriptionResult,
+  transcribeWithVLLM,
+  checkVLLMService,
+} from './voice.js'
+import { startVLLMService, shouldAutoStartVLLM } from './vllm-service-manager.js'
+import {
+  startAsrService,
+  shouldAutoStartAsr,
+  isAppleSilicon,
+} from './asr-service-manager.js'
 import { FetchError } from './errors.js'
 import { store } from './store.js'
 
 import { createLogger, LogPrefix } from './logger.js'
 import { notifyError } from './sentry.js'
-import { isAppleSilicon } from './asr-service-manager.js'
 
 const voiceLogger = createLogger(LogPrefix.VOICE)
 
@@ -559,7 +569,141 @@ export async function processVoiceAttachment({
   // Determine ASR provider: parakeet is the default only on Apple Silicon (MLX requirement)
   const asrProvider = process.env.ASR_PROVIDER?.toLowerCase()
   const useCloudProvider = asrProvider === 'openai' || asrProvider === 'gemini'
-  const useParakeetDefault = !useCloudProvider && isAppleSilicon()
+  const useVLLMProvider = asrProvider === 'vllm'
+  const useParakeetDefault = !useCloudProvider && !useVLLMProvider && isAppleSilicon()
+
+  // Helper to get fallback providers for parakeet failure
+  // Returns vLLM first (if available), then OpenAI/Gemini
+  // Auto-starts vLLM if configured to do so
+  async function getFallbackProviders(): Promise<
+    Array<
+      | { type: 'vllm' }
+      | { type: 'cloud'; apiKey: string; provider: 'openai' | 'gemini' }
+    >
+  > {
+    const providers: Array<
+      | { type: 'vllm' }
+      | { type: 'cloud'; apiKey: string; provider: 'openai' | 'gemini' }
+    > = []
+
+    // Check vLLM service first (local, no API key needed)
+    let vllmAvailable = await checkVLLMService()
+    
+    // Auto-start vLLM if configured and not running
+    if (!vllmAvailable && shouldAutoStartVLLM()) {
+      voiceLogger.log('Auto-starting vLLM service (VLLM_AUTO_START=true or ASR_PROVIDER=vllm)')
+      vllmAvailable = await startVLLMService()
+    }
+    
+    if (vllmAvailable) {
+      providers.push({ type: 'vllm' })
+    }
+
+    // Check app-level stored API key
+    if (appId) {
+      const stored = await getTranscriptionApiKey(appId)
+      if (stored) {
+        providers.push({ type: 'cloud', apiKey: stored.apiKey, provider: stored.provider as 'openai' | 'gemini' })
+      }
+    }
+
+    // Check environment variables
+    if (process.env.OPENAI_API_KEY) {
+      providers.push({ type: 'cloud', apiKey: process.env.OPENAI_API_KEY, provider: 'openai' })
+    }
+    if (process.env.GEMINI_API_KEY) {
+      providers.push({ type: 'cloud', apiKey: process.env.GEMINI_API_KEY, provider: 'gemini' })
+    }
+
+    return providers
+  }
+
+  // Handle vLLM direct transcription (ASR_PROVIDER=vllm)
+  if (useVLLMProvider) {
+    voiceLogger.log('Using vLLM transcription (ASR_PROVIDER=vllm)')
+    
+    // Auto-start vLLM if configured
+    let vllmAvailable = await checkVLLMService()
+    if (!vllmAvailable && shouldAutoStartVLLM()) {
+      voiceLogger.log('Auto-starting vLLM service...')
+      vllmAvailable = await startVLLMService()
+    }
+    
+    if (!vllmAvailable) {
+      await sendThreadMessage(
+        thread,
+        '⚠️ vLLM service is not running. Install vLLM: `pip install vllm[audio]` then run: `vllm serve openai/whisper-large-v3-turbo --port 8766`. Or set `VLLM_AUTO_START=true`.',
+      )
+      return null
+    }
+    
+    const transcription = await transcribeWithVLLM({
+      audioBuffer,
+      mediaType: audioAttachment.contentType || 'audio/wav',
+    })
+    
+    if (transcription instanceof Error) {
+      const errMsg = transcription.message
+      voiceLogger.error(`vLLM transcription failed:`, transcription)
+      
+      // Try fallback to other providers
+      const fallbackProviders = await getFallbackProviders()
+      // Filter out vLLM from fallback since it already failed
+      const cloudProviders = fallbackProviders.filter((p): p is { type: 'cloud'; apiKey: string; provider: 'openai' | 'gemini' } => p.type === 'cloud')
+      
+      if (cloudProviders.length === 0) {
+        await sendThreadMessage(
+          thread,
+          `⚠️ vLLM transcription failed (${errMsg}). No fallback API keys available. Set OPENAI_API_KEY or GEMINI_API_KEY.`,
+        )
+        return null
+      }
+      
+      voiceLogger.log(`Trying fallback providers (${cloudProviders.length} available)`)
+      await sendThreadMessage(
+        thread,
+        `⚠️ vLLM transcription failed (${errMsg}). Trying fallback provider...`,
+      )
+      
+      for (const { apiKey, provider } of cloudProviders) {
+        voiceLogger.log(`Trying fallback provider: ${provider}`)
+        const fallbackTranscription = await transcribeAudio({
+          audio: audioBuffer,
+          prompt: transcriptionPrompt,
+          apiKey,
+          provider,
+          mediaType: audioAttachment.contentType || undefined,
+          currentSessionContext,
+          lastSessionContext,
+        })
+        
+        if (!(fallbackTranscription instanceof Error)) {
+          voiceLogger.log(`Fallback to ${provider} succeeded`)
+          await sendThreadMessage(
+            thread,
+            `📝 **Transcribed message:** ${escapeDiscordFormatting(fallbackTranscription.transcription)}`,
+          )
+          return fallbackTranscription
+        }
+        
+        voiceLogger.warn(`Fallback to ${provider} failed:`, fallbackTranscription.message)
+      }
+      
+      await sendThreadMessage(
+        thread,
+        `⚠️ All transcription providers failed. vLLM: ${errMsg}`,
+      )
+      return null
+    }
+    
+    const { transcription: text, queueMessage } = transcription
+    voiceLogger.log(
+      `Transcription successful: "${text.slice(0, 50)}${text.length > 50 ? '...' : ''}"${queueMessage ? ' [QUEUE]' : ''}`,
+    )
+    
+    // ...rest of successful transcription handling
+    return transcription
+  }
 
   if (useParakeetDefault) {
     // Use parakeet (local ASR) - default on Apple Silicon when ASR_PROVIDER is not set
@@ -588,7 +732,74 @@ export async function processVoiceAttachment({
         Error: (e) => e.message,
       })
       voiceLogger.error(`Parakeet transcription failed:`, transcription)
-      await sendThreadMessage(thread, `⚠️ Transcription failed: ${errMsg}`)
+
+      // Try fallback to other providers
+      const fallbackProviders = await getFallbackProviders()
+      if (fallbackProviders.length === 0) {
+        await sendThreadMessage(
+          thread,
+          `⚠️ Parakeet transcription failed (${errMsg}). No fallback providers available. Start vLLM service or set OPENAI_API_KEY or GEMINI_API_KEY.`,
+        )
+        return null
+      }
+
+      voiceLogger.log(`Trying fallback providers (${fallbackProviders.length} available)`)
+      await sendThreadMessage(
+        thread,
+        `⚠️ Parakeet transcription failed (${errMsg}). Trying fallback provider...`,
+      )
+
+      for (const fallbackProvider of fallbackProviders) {
+        // Handle vLLM (local) provider
+        if (fallbackProvider.type === 'vllm') {
+          voiceLogger.log('Trying fallback provider: vLLM (local)')
+          const fallbackTranscription = await transcribeWithVLLM({
+            audioBuffer,
+            mediaType: audioAttachment.contentType || 'audio/wav',
+          })
+
+          if (!(fallbackTranscription instanceof Error)) {
+            voiceLogger.log('Fallback to vLLM succeeded')
+            await sendThreadMessage(
+              thread,
+              `📝 **Transcribed message:** ${escapeDiscordFormatting(fallbackTranscription.transcription)}`,
+            )
+            return fallbackTranscription
+          }
+
+          voiceLogger.warn('Fallback to vLLM failed:', fallbackTranscription.message)
+          continue
+        }
+
+        // Handle cloud providers (OpenAI/Gemini)
+        const { apiKey, provider } = fallbackProvider
+        voiceLogger.log(`Trying fallback provider: ${provider}`)
+        const fallbackTranscription = await transcribeAudio({
+          audio: audioBuffer,
+          prompt: transcriptionPrompt,
+          apiKey,
+          provider,
+          mediaType: audioAttachment.contentType || undefined,
+          currentSessionContext,
+          lastSessionContext,
+        })
+
+        if (!(fallbackTranscription instanceof Error)) {
+          voiceLogger.log(`Fallback to ${provider} succeeded`)
+          await sendThreadMessage(
+            thread,
+            `📝 **Transcribed message:** ${escapeDiscordFormatting(fallbackTranscription.transcription)}`,
+          )
+          return fallbackTranscription
+        }
+
+        voiceLogger.warn(`Fallback to ${provider} failed:`, fallbackTranscription.message)
+      }
+
+      await sendThreadMessage(
+        thread,
+        `⚠️ All transcription providers failed. Parakeet: ${errMsg}`,
+      )
       return null
     }
 

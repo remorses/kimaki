@@ -10,6 +10,8 @@ import {
   extractTranscription,
   normalizeAudioMediaType,
   getOpenAIAudioConversionStrategy,
+  transcribeWithVLLM,
+  checkVLLMService,
 } from './voice.js'
 
 describe('audio media type routing', () => {
@@ -239,5 +241,76 @@ describe('convertOggToWav', () => {
     // Must be larger than just the header (44 bytes)
     expect(wav.length).toBeGreaterThan(44)
     console.log(`Converted OGG (${ogg.length} bytes) to WAV (${wav.length} bytes)`)
+  })
+})
+
+describe('vLLM transcription', () => {
+  const audioPath = path.join(
+    import.meta.dirname,
+    '..',
+    'scripts',
+    'example-audio.mp3',
+  )
+
+  test('checks vLLM service status', async () => {
+    const running = await checkVLLMService()
+    console.log('vLLM service running:', running)
+    // Just check it doesn't throw
+    expect(typeof running).toBe('boolean')
+  })
+
+  test('transcribes with vLLM', { timeout: 60_000 }, async () => {
+    // Check if vLLM service is running first
+    const running = await checkVLLMService()
+    if (!running) {
+      console.log('Skipping: vLLM service not running. Start with: vllm serve openai/whisper-large-v3-turbo --port 8766')
+      return
+    }
+
+    if (!fs.existsSync(audioPath)) {
+      console.log('Skipping: example-audio.mp3 not found')
+      return
+    }
+
+    const audio = fs.readFileSync(audioPath)
+    const result = await transcribeWithVLLM({
+      audioBuffer: audio,
+      mediaType: 'audio/mpeg',
+    })
+
+    expect(result).not.toBeInstanceOf(Error)
+    if ('transcription' in result) {
+      expect(result.transcription.length).toBeGreaterThan(0)
+      console.log('vLLM transcription:', result.transcription)
+    }
+  })
+
+  test('transcribes OGG with vLLM (converts to WAV first)', { timeout: 60_000 }, async () => {
+    const running = await checkVLLMService()
+    if (!running) {
+      console.log('Skipping: vLLM service not running')
+      return
+    }
+
+    const oggPath = path.join(import.meta.dirname, '..', 'scripts', 'example-audio.ogg')
+    if (!fs.existsSync(oggPath)) {
+      console.log('Skipping: example-audio.ogg not found')
+      return
+    }
+
+    // Convert OGG to WAV first
+    const ogg = fs.readFileSync(oggPath)
+    const wavBuffer = await convertOggToWav(ogg)
+
+    const result = await transcribeWithVLLM({
+      audioBuffer: wavBuffer,
+      mediaType: 'audio/wav',
+    })
+
+    expect(result).not.toBeInstanceOf(Error)
+    if ('transcription' in result) {
+      expect(result.transcription.length).toBeGreaterThan(0)
+      console.log('vLLM OGG transcription:', result.transcription)
+    }
   })
 })

@@ -49,6 +49,7 @@ export const LogPrefix = {
   USER_CMD: 'USER_CMD',
   VERBOSITY: 'VERBOSE',
   VOICE: 'VOICE',
+  VLLM: 'VLLM',
   WORKER: 'WORKER',
   THINKING: 'THINK',
   WORKTREE: 'WORKTREE',
