@@ -132,7 +132,8 @@ function buildStartupTimeoutReason({
   maxAttempts: number
   stderrTail: string[]
 }): string {
-  const baseReason = `Server did not start after ${maxAttempts} seconds`
+  const timeoutSeconds = Math.round((maxAttempts * 100) / 1000)
+  const baseReason = `Server did not start after ${timeoutSeconds} seconds`
   if (stderrTail.length === 0) {
     return baseReason
   }
@@ -387,7 +388,7 @@ async function getOpenPort(): Promise<number> {
 
 async function waitForServer({
   port,
-  maxAttempts = 30,
+  maxAttempts = 300,
   startupStderrTail,
 }: {
   port: number
@@ -401,8 +402,10 @@ async function waitForServer({
       catch: (e) => new FetchError({ url: endpoint, cause: e }),
     })
     if (response instanceof Error) {
-      // Connection refused or other transient errors - continue polling
-      await new Promise((resolve) => setTimeout(resolve, 1000))
+      // Connection refused or other transient errors - continue polling.
+      // Use 100ms interval instead of 1s so we detect readiness faster.
+      // Critical for scale-to-zero cold starts where every ms matters.
+      await new Promise((resolve) => setTimeout(resolve, 100))
       continue
     }
     if (response.status < 500) {
@@ -413,7 +416,7 @@ async function waitForServer({
     if (body.includes('BunInstallFailedError')) {
       return new ServerStartError({ port, reason: body.slice(0, 200) })
     }
-    await new Promise((resolve) => setTimeout(resolve, 1000))
+    await new Promise((resolve) => setTimeout(resolve, 100))
   }
   return new ServerStartError({
     port,
@@ -510,6 +513,7 @@ async function startSingleServer(): Promise<ServerStartError | SingleServer> {
   if (kimakiShimDirectory instanceof Error) {
     opencodeLogger.warn(kimakiShimDirectory.message)
   }
+  const gatewayToken = store.getState().gatewayToken
 
   const serverProcess = spawn(
     spawnCommand,
@@ -527,7 +531,7 @@ async function startSingleServer(): Promise<ServerStartError | SingleServer> {
           $schema: 'https://opencode.ai/config.json',
           lsp: false,
           formatter: false,
-          plugin: [new URL('../src/opencode-plugin.ts', import.meta.url).href],
+          plugin: [new URL('../src/kimaki-opencode-plugin.ts', import.meta.url).href],
           permission: {
             edit: 'allow',
             bash: 'allow',
@@ -559,8 +563,10 @@ async function startSingleServer(): Promise<ServerStartError | SingleServer> {
           },
         } satisfies Config),
         OPENCODE_PORT: port.toString(),
+        KIMAKI: '1',
         KIMAKI_DATA_DIR: getDataDir(),
         KIMAKI_LOCK_PORT: getLockPort().toString(),
+        ...(gatewayToken && { KIMAKI_DB_AUTH_TOKEN: gatewayToken }),
         // Guard: prevents agents from running `kimaki` root command inside
         // an OpenCode session, which would steal the lock port and break the bot.
         KIMAKI_OPENCODE_PROCESS: '1',
@@ -638,10 +644,12 @@ async function startSingleServer(): Promise<ServerStartError | SingleServer> {
     clientCache.clear()
     notifyServerLifecycle({ type: 'stopped' })
 
-    // Intentional kills (SIGTERM from cleanup/restart) should not trigger
-    // auto-restart. Only unexpected crashes (non-zero exit without signal)
-    // get retried.
-    if (signal === 'SIGTERM') {
+    // Intentional kills should not trigger auto-restart:
+    // - SIGTERM from our cleanup/restart code
+    // - SIGINT propagated from Ctrl+C (parent process group signal)
+    // - any exit during bot shutdown (shuttingDown flag)
+    // Only unexpected crashes (non-zero exit without signal) get retried.
+    if (signal === 'SIGTERM' || signal === 'SIGINT' || (global as any).shuttingDown) {
       serverRetryCount = 0
       return
     }
@@ -873,6 +881,55 @@ export function buildSessionPermissions({
   }
 
   return rules
+}
+
+/**
+ * Parse raw permission strings into PermissionRuleset entries.
+ *
+ * Accepted formats:
+ *   "tool:action"           → { permission: tool, pattern: "*", action }
+ *   "tool:pattern:action"   → { permission: tool, pattern,      action }
+ *
+ * The action must be one of "allow", "deny", "ask" (case-insensitive).
+ * Parts are trimmed to tolerate whitespace from YAML deserialization.
+ * Invalid entries are silently skipped (bad user input shouldn't crash the bot).
+ * If `raw` is not an array, returns empty (defensive against malformed YAML markers).
+ */
+export function parsePermissionRules(raw: unknown): PermissionRuleset {
+  if (!Array.isArray(raw)) {
+    return []
+  }
+  const validActions = new Set(['allow', 'deny', 'ask'])
+  return raw.flatMap((entry) => {
+    if (typeof entry !== 'string') {
+      return []
+    }
+    const parts = entry.split(':').map((s) => {
+      return s.trim()
+    })
+    if (parts.length === 2) {
+      const [permission, rawAction] = parts
+      const action = rawAction!.toLowerCase()
+      if (!permission || !validActions.has(action)) {
+        return []
+      }
+      return [{ permission, pattern: '*', action: action as 'allow' | 'deny' | 'ask' }]
+    }
+    if (parts.length >= 3) {
+      // Last segment is the action, first segment is the permission,
+      // everything in between is the pattern (may contain colons in theory,
+      // but unlikely for tool patterns).
+      const permission = parts[0]!
+      const rawAction = parts[parts.length - 1]!
+      const action = rawAction.toLowerCase()
+      const pattern = parts.slice(1, -1).join(':')
+      if (!permission || !pattern || !validActions.has(action)) {
+        return []
+      }
+      return [{ permission, pattern, action: action as 'allow' | 'deny' | 'ask' }]
+    }
+    return []
+  })
 }
 
 // ── Public helpers ───────────────────────────────────────────────

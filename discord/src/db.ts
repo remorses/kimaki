@@ -4,6 +4,7 @@
 
 import fs from 'node:fs'
 import path from 'node:path'
+import crypto from 'node:crypto'
 import { PrismaLibSql } from '@prisma/adapter-libsql'
 import { PrismaClient, Prisma } from './generated/client.js'
 import { getDataDir } from './config.js'
@@ -60,6 +61,14 @@ function getDbUrl(): string {
   return `file:${dbPath}`
 }
 
+function getDbAuthToken(): string | undefined {
+  const token = process.env.KIMAKI_DB_AUTH_TOKEN
+  if (!token) {
+    return undefined
+  }
+  return token
+}
+
 async function initializePrisma(): Promise<PrismaClient> {
   const dbUrl = getDbUrl()
   const isFileMode = dbUrl.startsWith('file:')
@@ -78,7 +87,11 @@ async function initializePrisma(): Promise<PrismaClient> {
 
   dbLogger.log(`Opening database via: ${dbUrl}`)
 
-  const adapter = new PrismaLibSql({ url: dbUrl })
+  const dbAuthToken = getDbAuthToken()
+  const adapter = new PrismaLibSql({
+    url: dbUrl,
+    ...(dbAuthToken && { authToken: dbAuthToken }),
+  })
   const prisma = new PrismaClient({ adapter })
 
   try {
@@ -222,6 +235,32 @@ async function migrateSchema(prisma: PrismaClient): Promise<void> {
     } catch {
       // Table may not exist on first run
     }
+  }
+
+  // Migration: ensure every bot row has service auth credentials.
+  // These credentials are used for local/internet control-plane auth.
+  try {
+    const botRows = await prisma.bot_tokens.findMany({
+      select: {
+        app_id: true,
+        client_id: true,
+        client_secret: true,
+      },
+    })
+    for (const botRow of botRows) {
+      if (botRow.client_id && botRow.client_secret) {
+        continue
+      }
+      await prisma.bot_tokens.update({
+        where: { app_id: botRow.app_id },
+        data: {
+          client_id: crypto.randomUUID(),
+          client_secret: crypto.randomBytes(32).toString('hex'),
+        },
+      })
+    }
+  } catch {
+    // Defensive migration only; ignore if table shape is not ready yet.
   }
 
 }

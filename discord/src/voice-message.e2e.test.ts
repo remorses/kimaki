@@ -526,6 +526,101 @@ e2eTest('voice message handling', () => {
     8_000,
   )
 
+  test(
+    'voice attachment without content type still transcribes and avoids empty prompt dispatch',
+    async () => {
+      setDeterministicTranscription({
+        transcription: 'Investigate the missing content type path',
+        queueMessage: false,
+      })
+
+      await discord.channel(TEXT_CHANNEL_ID).user(TEST_USER_ID).sendMessage({
+        content: '',
+        attachments: [
+          {
+            id: 'voice-no-content-type',
+            filename: 'voice-message.ogg',
+            size: 1024,
+            url: 'https://fake-cdn.discord.test/voice-no-content-type.ogg',
+            proxy_url: 'https://fake-cdn.discord.test/voice-no-content-type.ogg',
+          },
+        ],
+      })
+
+      const thread = await discord.channel(TEXT_CHANNEL_ID).waitForThread({
+        timeout: 4_000,
+        predicate: (t) => {
+          return t.name?.includes('Investigate the missing content type path') ?? false
+        },
+      })
+
+      const th = discord.thread(thread.id)
+
+      await waitForBotMessageContaining({
+        discord,
+        threadId: thread.id,
+        userId: TEST_USER_ID,
+        text: 'Transcribing voice message',
+        timeout: 4_000,
+      })
+
+      await waitForBotMessageContaining({
+        discord,
+        threadId: thread.id,
+        userId: TEST_USER_ID,
+        text: 'Investigate the missing content type path',
+        timeout: 4_000,
+      })
+
+      await waitForFooterMessage({
+        discord,
+        threadId: thread.id,
+        timeout: 4_000,
+      })
+
+      const finalState = await waitForThreadState({
+        threadId: thread.id,
+        predicate: (state) => {
+          return Boolean(state.sessionId) && state.queueItems.length === 0
+        },
+        timeout: 4_000,
+        description: 'voice attachment without content type settled',
+      })
+
+      expect(await th.text()).toMatchInlineSnapshot(`
+        "--- from: user (voice-tester)
+        [attachment: voice-message.ogg]
+        --- from: assistant (TestBot)
+        🎤 Transcribing voice message...
+        📝 **Transcribed message:** Investigate the missing content type path
+        ⬥ session-reply
+        *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2*"
+      `)
+
+      const messages = await waitForSessionMessages({
+        projectDirectory: directories.projectDirectory,
+        sessionID: finalState.sessionId!,
+        timeout: 4_000,
+        description: 'voice attachment without content type dispatched once',
+        predicate: (all) => {
+          const userTexts = getUserTexts(all)
+          return userTexts.some((text) => {
+            return text.includes('Investigate the missing content type path')
+          })
+        },
+      })
+
+      const userTexts = getUserTexts(messages)
+      expect(userTexts).not.toContain('')
+      expect(
+        userTexts.some((text) => {
+          return text.includes('Investigate the missing content type path')
+        }),
+      ).toBe(true)
+    },
+    8_000,
+  )
+
   // ── Test 2: Voice message in thread with idle session ──
 
   test(

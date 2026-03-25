@@ -2,6 +2,12 @@
 // step boundary, with a hard timeout as fallback.
 // Tracks only whether each user message has started processing by
 // correlating assistant message parentID events.
+//
+// State design: all mutable state (pending messages, recovery locks, event
+// waiters, latest assistant IDs) is encapsulated in a closure-based factory
+// (createInterruptState). The plugin hooks only interact with the returned
+// API — they cannot directly touch Maps/Sets or break invariants like
+// forgetting to clear a timer.
 
 import type { Plugin } from '@opencode-ai/plugin'
 
@@ -42,23 +48,34 @@ function getInterruptStepTimeoutMsFromEnv(): number {
   return parsed
 }
 
-// Interrupt a session when a queued user message has not started yet.
-// "Started" is detected when an assistant message.updated has parentID equal to
-// the queued user message ID.
-const interruptOpencodeSessionOnUserMessage: Plugin = async (ctx) => {
-  const interruptStepTimeoutMs = getInterruptStepTimeoutMsFromEnv()
+// ── Encapsulated interrupt state ─────────────────────────────────
+// All 4 mutable variables (pendingByMessageId, latestAssistantMessageID,
+// recoveringSessions, waiters) are trapped inside this closure. The plugin
+// hooks only see the returned API methods — they cannot break invariants
+// like forgetting to clear a timer or leaving a stale recovery lock.
+
+function createInterruptState() {
   const pendingByMessageId = new Map<string, PendingMessage>()
   const latestAssistantMessageIDBySession = new Map<string, string>()
   const recoveringSessions = new Set<string>()
   const waiters = new Set<EventWaiter>()
 
-  function clearPendingByMessageId({ messageID }: { messageID: string }): void {
+  function clearPending(messageID: string): void {
     const pending = pendingByMessageId.get(messageID)
     if (!pending) {
       return
     }
     clearTimeout(pending.timer)
     pendingByMessageId.delete(messageID)
+  }
+
+  function dispatchEvent(event: InterruptEvent): void {
+    Array.from(waiters).forEach((waiter) => {
+      if (!waiter.match(event)) {
+        return
+      }
+      waiter.finish()
+    })
   }
 
   function waitForEvent(input: {
@@ -84,44 +101,7 @@ const interruptOpencodeSessionOnUserMessage: Plugin = async (ctx) => {
     })
   }
 
-  function scheduleTimeout({
-    messageID,
-    sessionID,
-    delayMs,
-  }: {
-    messageID: string
-    sessionID: string
-    delayMs: number
-  }): void {
-    const existing = pendingByMessageId.get(messageID)
-    if (existing) {
-      clearTimeout(existing.timer)
-    }
-
-    const timer = setTimeout(() => {
-      void interruptPendingMessage({ messageID })
-    }, delayMs)
-
-    pendingByMessageId.set(messageID, {
-      sessionID,
-      started: false,
-      timer,
-      abortAfterStepMessageID: latestAssistantMessageIDBySession.get(sessionID),
-      agent: undefined,
-      model: undefined,
-    })
-  }
-
-  function markStarted({ messageID }: { messageID: string }): void {
-    const pending = pendingByMessageId.get(messageID)
-    if (!pending) {
-      return
-    }
-    pending.started = true
-    clearPendingByMessageId({ messageID })
-  }
-
-  function getNextPendingMessage({ sessionID }: { sessionID: string }):
+  function getNextPendingForSession(sessionID: string):
     | { messageID: string; pending: PendingMessage }
     | undefined {
     for (const [messageID, pending] of pendingByMessageId.entries()) {
@@ -136,26 +116,124 @@ const interruptOpencodeSessionOnUserMessage: Plugin = async (ctx) => {
     return undefined
   }
 
-  async function interruptPendingMessage({ messageID }: { messageID: string }): Promise<void> {
-    const pending = pendingByMessageId.get(messageID)
+  return {
+    dispatchEvent,
+    waitForEvent,
+    getNextPendingForSession,
+
+    hasPending(messageID: string): boolean {
+      return pendingByMessageId.has(messageID)
+    },
+
+    getPending(messageID: string): PendingMessage | undefined {
+      return pendingByMessageId.get(messageID)
+    },
+
+    // Schedule a timeout to interrupt a pending message. Cleans up any
+    // existing timer for the same messageID before setting a new one.
+    schedulePending({
+      messageID,
+      sessionID,
+      delayMs,
+      onTimeout,
+    }: {
+      messageID: string
+      sessionID: string
+      delayMs: number
+      onTimeout: () => void
+    }): void {
+      const existing = pendingByMessageId.get(messageID)
+      if (existing) {
+        clearTimeout(existing.timer)
+      }
+      const timer = setTimeout(onTimeout, delayMs)
+      pendingByMessageId.set(messageID, {
+        sessionID,
+        started: false,
+        timer,
+        abortAfterStepMessageID: latestAssistantMessageIDBySession.get(sessionID),
+        agent: undefined,
+        model: undefined,
+      })
+    },
+
+    markStarted(messageID: string): void {
+      const pending = pendingByMessageId.get(messageID)
+      if (!pending) {
+        return
+      }
+      pending.started = true
+      clearPending(messageID)
+    },
+
+    clearPending,
+
+    isRecovering(sessionID: string): boolean {
+      return recoveringSessions.has(sessionID)
+    },
+
+    setRecovering(sessionID: string): void {
+      recoveringSessions.add(sessionID)
+    },
+
+    clearRecovering(sessionID: string): void {
+      recoveringSessions.delete(sessionID)
+    },
+
+    setLatestAssistantMessage(sessionID: string, messageID: string): void {
+      latestAssistantMessageIDBySession.set(sessionID, messageID)
+    },
+
+    clearLatestAssistantMessage(sessionID: string): void {
+      latestAssistantMessageIDBySession.delete(sessionID)
+    },
+
+    // Clean up all state for a deleted session — timers, recovery locks, etc.
+    cleanupSession(sessionID: string): void {
+      latestAssistantMessageIDBySession.delete(sessionID)
+      Array.from(pendingByMessageId.entries()).forEach(([messageID, pending]) => {
+        if (pending.sessionID !== sessionID) {
+          return
+        }
+        clearPending(messageID)
+      })
+    },
+  }
+}
+
+// ── Plugin ───────────────────────────────────────────────────────
+
+const interruptOpencodeSessionOnUserMessage: Plugin = async (ctx) => {
+  const interruptStepTimeoutMs = getInterruptStepTimeoutMsFromEnv()
+  const state = createInterruptState()
+
+  async function interruptPendingMessage(messageID: string): Promise<void> {
+    const pending = state.getPending(messageID)
     if (!pending) {
-      clearPendingByMessageId({ messageID })
+      state.clearPending(messageID)
       return
     }
     if (pending.started) {
-      clearPendingByMessageId({ messageID })
+      state.clearPending(messageID)
       return
     }
 
     const sessionID = pending.sessionID
-    if (recoveringSessions.has(sessionID)) {
-      scheduleTimeout({ messageID, sessionID, delayMs: 200 })
+    if (state.isRecovering(sessionID)) {
+      state.schedulePending({
+        messageID,
+        sessionID,
+        delayMs: 200,
+        onTimeout: () => {
+          void interruptPendingMessage(messageID)
+        },
+      })
       return
     }
 
-    recoveringSessions.add(sessionID)
+    state.setRecovering(sessionID)
     try {
-      const abortedAssistantWait = waitForEvent({
+      const abortedAssistantWait = state.waitForEvent({
         match: (event) => {
           return (
             event.type === 'message.updated'
@@ -166,7 +244,7 @@ const interruptOpencodeSessionOnUserMessage: Plugin = async (ctx) => {
         },
         timeoutMs: 5_000,
       })
-      const idleWait = waitForEvent({
+      const idleWait = state.waitForEvent({
         match: (event) => {
           return event.type === 'session.idle' && event.properties.sessionID === sessionID
         },
@@ -179,9 +257,9 @@ const interruptOpencodeSessionOnUserMessage: Plugin = async (ctx) => {
       await abortedAssistantWait
       await idleWait
 
-      const currentPending = pendingByMessageId.get(messageID)
+      const currentPending = state.getPending(messageID)
       if (!currentPending || currentPending.started) {
-        clearPendingByMessageId({ messageID })
+        state.clearPending(messageID)
         return
       }
 
@@ -191,10 +269,7 @@ const interruptOpencodeSessionOnUserMessage: Plugin = async (ctx) => {
       const resumeBody: {
         parts: []
         agent?: string
-        model?: {
-          providerID: string
-          modelID: string
-        }
+        model?: { providerID: string; modelID: string }
       } = { parts: [] }
       if (currentPending.agent) {
         resumeBody.agent = currentPending.agent
@@ -207,35 +282,37 @@ const interruptOpencodeSessionOnUserMessage: Plugin = async (ctx) => {
         path: { id: sessionID },
         body: resumeBody,
       })
-      clearPendingByMessageId({ messageID })
+      state.clearPending(messageID)
 
-      const nextPending = getNextPendingMessage({ sessionID })
+      const nextPending = state.getNextPendingForSession(sessionID)
       if (!nextPending) {
         return
       }
-      scheduleTimeout({ messageID: nextPending.messageID, sessionID, delayMs: 50 })
+      state.schedulePending({
+        messageID: nextPending.messageID,
+        sessionID,
+        delayMs: 50,
+        onTimeout: () => {
+          void interruptPendingMessage(nextPending.messageID)
+        },
+      })
     } finally {
-      recoveringSessions.delete(sessionID)
+      state.clearRecovering(sessionID)
     }
   }
 
   return {
     async event({ event }) {
-      Array.from(waiters).forEach((waiter) => {
-        if (!waiter.match(event)) {
-          return
-        }
-        waiter.finish()
-      })
+      state.dispatchEvent(event)
 
       if (event.type === 'message.part.updated' && event.properties.part.type === 'step-finish') {
-        const nextPending = getNextPendingMessage({
-          sessionID: event.properties.part.sessionID,
-        })
+        const nextPending = state.getNextPendingForSession(
+          event.properties.part.sessionID,
+        )
         if (!nextPending) {
           return
         }
-        if (recoveringSessions.has(nextPending.pending.sessionID)) {
+        if (state.isRecovering(nextPending.pending.sessionID)) {
           return
         }
         if (!nextPending.pending.abortAfterStepMessageID) {
@@ -244,21 +321,21 @@ const interruptOpencodeSessionOnUserMessage: Plugin = async (ctx) => {
         if (event.properties.part.messageID !== nextPending.pending.abortAfterStepMessageID) {
           return
         }
-        void interruptPendingMessage({ messageID: nextPending.messageID })
+        void interruptPendingMessage(nextPending.messageID)
         return
       }
 
       if (event.type === 'message.updated' && event.properties.info.role === 'assistant') {
         if (!event.properties.info.error) {
-          latestAssistantMessageIDBySession.set(
+          state.setLatestAssistantMessage(
             event.properties.info.sessionID,
             event.properties.info.id,
           )
         }
 
-        const nextPending = getNextPendingMessage({
-          sessionID: event.properties.info.sessionID,
-        })
+        const nextPending = state.getNextPendingForSession(
+          event.properties.info.sessionID,
+        )
         if (
           nextPending
           && !nextPending.pending.started
@@ -269,24 +346,17 @@ const interruptOpencodeSessionOnUserMessage: Plugin = async (ctx) => {
         }
 
         const parentID = event.properties.info.parentID
-        markStarted({ messageID: parentID })
+        state.markStarted(parentID)
         return
       }
 
       if (event.type === 'session.idle') {
-        latestAssistantMessageIDBySession.delete(event.properties.sessionID)
+        state.clearLatestAssistantMessage(event.properties.sessionID)
         return
       }
 
       if (event.type === 'session.deleted') {
-        const sessionID = event.properties.info.id
-        latestAssistantMessageIDBySession.delete(sessionID)
-        Array.from(pendingByMessageId.entries()).forEach(([messageID, pending]) => {
-          if (pending.sessionID !== sessionID) {
-            return
-          }
-          clearPendingByMessageId({ messageID })
-        })
+        state.cleanupSession(event.properties.info.id)
       }
     },
 
@@ -306,15 +376,18 @@ const interruptOpencodeSessionOnUserMessage: Plugin = async (ctx) => {
       if (!messageID) {
         return
       }
-      if (pendingByMessageId.has(messageID)) {
+      if (state.hasPending(messageID)) {
         return
       }
-      scheduleTimeout({
+      state.schedulePending({
         messageID,
         sessionID,
         delayMs: interruptStepTimeoutMs,
+        onTimeout: () => {
+          void interruptPendingMessage(messageID)
+        },
       })
-      const pending = pendingByMessageId.get(messageID)
+      const pending = state.getPending(messageID)
       if (!pending) {
         return
       }

@@ -1,7 +1,7 @@
 // Sentry error tracking initialization and notifyError helper.
 // Uses @sentry/node for the Node.js runtime (bot process, plugin process, worker threads).
 // Must be initialized early in both the bot process (cli.ts) and plugin process
-// (opencode-plugin.ts). The plugin process receives the DSN via KIMAKI_SENTRY_DSN env var.
+// (kimaki-opencode-plugin.ts). The plugin process receives the DSN via KIMAKI_SENTRY_DSN env var.
 
 import * as Sentry from '@sentry/node'
 import * as errore from 'errore'

@@ -14,6 +14,7 @@ import crypto from 'node:crypto'
 import { getThreadSession } from '../database.js'
 import {
   NOTIFY_MESSAGE_FLAGS,
+  SILENT_MESSAGE_FLAGS,
   resolveWorkingDirectory,
   sendThreadMessage,
 } from '../discord-utils.js'
@@ -185,11 +186,14 @@ export async function showActionButtons({
   sessionId,
   directory,
   buttons,
+  silent,
 }: {
   thread: ThreadChannel
   sessionId: string
   directory: string
   buttons: ActionButtonOption[]
+  /** Suppress notification when queue has pending items */
+  silent?: boolean
 }): Promise<void> {
   const safeButtons = buttons
     .slice(0, 3)
@@ -242,7 +246,7 @@ export async function showActionButtons({
     const message = await thread.send({
       content: '**Action Required**',
       components: [row],
-      flags: NOTIFY_MESSAGE_FLAGS,
+      flags: silent ? SILENT_MESSAGE_FLAGS : NOTIFY_MESSAGE_FLAGS,
     })
 
     context.messageId = message.id
@@ -336,6 +340,7 @@ export async function handleActionButton(
     await sendThreadMessage(
       thread,
       `Failed to send action click: ${error instanceof Error ? error.message : String(error)}`,
+      { flags: NOTIFY_MESSAGE_FLAGS },
     )
   }
 }

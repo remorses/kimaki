@@ -22,6 +22,7 @@ import {
 } from './commands/merge-worktree.js'
 import { handleToggleWorktreesCommand } from './commands/worktree-settings.js'
 import { handleWorktreesCommand } from './commands/worktrees.js'
+import { handleTasksCommand } from './commands/tasks.js'
 import { handleToggleMentionModeCommand } from './commands/mention-mode.js'
 import {
   handleResumeCommand,
@@ -51,8 +52,12 @@ import {
 import { handleUnsetModelCommand } from './commands/unset-model.js'
 import {
   handleLoginCommand,
-  handleLoginProviderSelectMenu,
-  handleLoginMethodSelectMenu,
+  handleLoginSelect,
+  handleLoginTextButton,
+  handleLoginTextModalSubmit,
+  handleLoginApiKeyButton,
+  handleOAuthCodeButton,
+  handleOAuthCodeModalSubmit,
   handleApiKeyModalSubmit,
 } from './commands/login.js'
 import {
@@ -88,6 +93,7 @@ import { handleRestartOpencodeServerCommand } from './commands/restart-opencode-
 import { handleRunCommand } from './commands/run-command.js'
 import { handleContextUsageCommand } from './commands/context-usage.js'
 import { handleSessionIdCommand } from './commands/session-id.js'
+import { handleMemorySnapshotCommand } from './commands/memory-snapshot.js'
 import { handleUpgradeAndRestartCommand } from './commands/upgrade.js'
 import { handleMcpCommand, handleMcpSelectMenu } from './commands/mcp.js'
 import {
@@ -205,6 +211,13 @@ export function registerInteractionHandler({
               })
               return
 
+            case 'tasks':
+              await handleTasksCommand({
+                command: interaction,
+                appId,
+              })
+              return
+
             case 'toggle-mention-mode':
               await handleToggleMentionModeCommand({
                 command: interaction,
@@ -315,6 +328,13 @@ export function registerInteractionHandler({
               await handleSessionIdCommand({ command: interaction, appId })
               return
 
+            case 'memory-snapshot':
+              await handleMemorySnapshotCommand({
+                command: interaction,
+                appId,
+              })
+              return
+
             case 'upgrade-and-restart':
               await handleUpgradeAndRestartCommand({
                 command: interaction,
@@ -393,6 +413,21 @@ export function registerInteractionHandler({
 
           if (customId.startsWith('file_upload_btn:')) {
             await handleFileUploadButton(interaction)
+            return
+          }
+
+          if (customId.startsWith('login_text_btn:')) {
+            await handleLoginTextButton(interaction)
+            return
+          }
+
+          if (customId.startsWith('login_apikey_btn:')) {
+            await handleLoginApiKeyButton(interaction)
+            return
+          }
+
+          if (customId.startsWith('login_oauth_code_btn:')) {
+            await handleOAuthCodeButton(interaction)
             return
           }
 
@@ -475,13 +510,8 @@ export function registerInteractionHandler({
             return
           }
 
-          if (customId.startsWith('login_provider:')) {
-            await handleLoginProviderSelectMenu(interaction)
-            return
-          }
-
-          if (customId.startsWith('login_method:')) {
-            await handleLoginMethodSelectMenu(interaction)
+          if (customId.startsWith('login_select:')) {
+            await handleLoginSelect(interaction)
             return
           }
           return
@@ -500,6 +530,16 @@ export function registerInteractionHandler({
 
           if (customId.startsWith('login_apikey:')) {
             await handleApiKeyModalSubmit(interaction)
+            return
+          }
+
+          if (customId.startsWith('login_text:')) {
+            await handleLoginTextModalSubmit(interaction)
+            return
+          }
+
+          if (customId.startsWith('login_oauth_code:')) {
+            await handleOAuthCodeModalSubmit(interaction)
             return
           }
 

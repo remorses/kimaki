@@ -131,7 +131,7 @@ beforeAll(async () => {
     const msgs = await client.session.messages({ sessionID })
     const assistantMsg = msgs.data?.find((m) => m.info.role === 'assistant')
     const hasTextParts = assistantMsg?.parts?.some((p) => {
-      return p.type === 'text' && 'text' in p && p.text && !('synthetic' in p && p.synthetic)
+      return p.type === 'text' && p.text && !p.synthetic
     })
     if (hasTextParts) {
       // Extra wait for step-start and other parts to be flushed

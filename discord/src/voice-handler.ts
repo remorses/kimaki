@@ -10,11 +10,9 @@ import {
   entersState,
   type VoiceConnection,
 } from '@discordjs/voice'
-import { exec } from 'node:child_process'
 import fs, { createWriteStream } from 'node:fs'
 import { mkdir } from 'node:fs/promises'
 import path from 'node:path'
-import { promisify } from 'node:util'
 import { Transform, type TransformCallback } from 'node:stream'
 import * as prism from 'prism-media'
 import dedent from 'string-dedent'
@@ -40,6 +38,7 @@ import {
   sendThreadMessage,
   escapeDiscordFormatting,
   SILENT_MESSAGE_FLAGS,
+  NOTIFY_MESSAGE_FLAGS,
   hasKimakiBotPermission,
 } from './discord-utils.js'
 import {
@@ -56,6 +55,11 @@ import {
 } from './asr-service-manager.js'
 import { FetchError } from './errors.js'
 import { store } from './store.js'
+import {
+  getVoiceAttachmentMatchReason,
+  isVoiceAttachment,
+} from './voice-attachment.js'
+import { execAsync } from './worktrees.js'
 
 import { createLogger, LogPrefix } from './logger.js'
 import { notifyError } from './sentry.js'
@@ -296,7 +300,7 @@ export async function setupVoiceHandling({
           if (textChannel?.isTextBased() && 'send' in textChannel) {
             await textChannel.send({
               content: `⚠️ Voice session error: ${String(error).slice(0, 1900)}`,
-              flags: SILENT_MESSAGE_FLAGS,
+              flags: NOTIFY_MESSAGE_FLAGS,
             })
           }
         } catch (e) {
@@ -480,13 +484,15 @@ export async function processVoiceAttachment({
   lastSessionContext,
 }: ProcessVoiceAttachmentArgs): Promise<TranscriptionResult | null> {
   const audioAttachment = Array.from(message.attachments.values()).find(
-    (attachment) => attachment.contentType?.startsWith('audio/'),
+    (attachment) => isVoiceAttachment(attachment),
   )
 
   if (!audioAttachment) return null
 
+  const attachmentMatchReason = getVoiceAttachmentMatchReason(audioAttachment)
+
   voiceLogger.log(
-    `Detected audio attachment: ${audioAttachment.name} (${audioAttachment.contentType})`,
+    `Detected audio attachment: ${audioAttachment.name} (${audioAttachment.contentType || 'no contentType'}, ${attachmentMatchReason || 'unknown reason'})`,
   )
 
   await sendThreadMessage(thread, '🎤 Transcribing voice message...')
@@ -540,6 +546,7 @@ export async function processVoiceAttachment({
     await sendThreadMessage(
       thread,
       `⚠️ Failed to download audio: ${audioResponse.message}`,
+      { flags: NOTIFY_MESSAGE_FLAGS },
     )
     return null
   }
@@ -552,7 +559,6 @@ export async function processVoiceAttachment({
   if (projectDirectory) {
     try {
       voiceLogger.log(`Getting project file tree from ${projectDirectory}`)
-      const execAsync = promisify(exec)
       const { stdout } = await execAsync('git ls-files | tree --fromfile -a', {
         cwd: projectDirectory,
       })
@@ -914,7 +920,9 @@ export async function processVoiceAttachment({
       Error: (e) => e.message,
     })
     voiceLogger.error(`Transcription failed:`, transcription)
-    await sendThreadMessage(thread, `⚠️ Transcription failed: ${errMsg}`)
+    await sendThreadMessage(thread, `⚠️ Transcription failed: ${errMsg}`, {
+      flags: NOTIFY_MESSAGE_FLAGS,
+    })
     return null
   }
 

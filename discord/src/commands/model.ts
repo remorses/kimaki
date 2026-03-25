@@ -31,6 +31,7 @@ import { getRuntime } from '../session-handler/thread-session-runtime.js'
 import { getThinkingValuesForModel } from '../thinking-utils.js'
 import { createLogger, LogPrefix } from '../logger.js'
 import * as errore from 'errore'
+import { buildPaginatedOptions, parsePaginationValue } from './paginated-select.js'
 
 const modelLogger = createLogger(LogPrefix.MODEL)
 
@@ -51,6 +52,10 @@ type PendingModelContext = {
   selectedModelId?: string
   selectedVariant?: string | null
   availableVariants?: string[]
+  providerPage?: number
+  modelPage?: number
+  /** Header text shown above the provider select (current model info). */
+  providerSelectHeader?: string
 }
 
 const pendingModelContexts = new Map<string, PendingModelContext>()
@@ -464,6 +469,7 @@ export async function handleModelCommand({
     })()
 
     // Store context with a short hash key to avoid customId length limits.
+    const providerSelectHeader = `**Set Model Preference**\n${currentModelText}${variantText}\nSelect a provider:`
     const context = {
       dir: projectDirectory,
       channelId: targetChannelId,
@@ -471,13 +477,13 @@ export async function handleModelCommand({
       isThread: isThread,
       thread: isThread ? (channel as ThreadChannel) : undefined,
       appId,
+      providerSelectHeader,
     }
     const contextHash = crypto.randomBytes(8).toString('hex')
     setModelContext(contextHash, context)
 
-    const options = [...availableProviders]
+    const allProviderOptions = [...availableProviders]
       .sort((a, b) => a.name.localeCompare(b.name))
-      .slice(0, 25)
       .map((provider) => {
         const modelCount = Object.keys(provider.models || {}).length
         return {
@@ -491,6 +497,11 @@ export async function handleModelCommand({
         }
       })
 
+    const { options } = buildPaginatedOptions({
+      allOptions: allProviderOptions,
+      page: 0,
+    })
+
     const selectMenu = new StringSelectMenuBuilder()
       .setCustomId(`model_provider:${contextHash}`)
       .setPlaceholder('Select a provider')
@@ -500,7 +511,7 @@ export async function handleModelCommand({
       new ActionRowBuilder<StringSelectMenuBuilder>().addComponents(selectMenu)
 
     await interaction.editReply({
-      content: `**Set Model Preference**\n${currentModelText}${variantText}\nSelect a provider:`,
+      content: providerSelectHeader,
       components: [actionRow],
     })
   } catch (error) {
@@ -543,6 +554,47 @@ export async function handleProviderSelectMenu(
     await interaction.editReply({
       content: 'No provider selected',
       components: [],
+    })
+    return
+  }
+
+  // Handle pagination nav — re-render the same provider select with new page
+  const providerNavPage = parsePaginationValue(selectedProviderId)
+  if (providerNavPage !== undefined) {
+    context.providerPage = providerNavPage
+    setModelContext(contextHash, context)
+
+    const getClient = await initializeOpencodeForDirectory(context.dir)
+    if (getClient instanceof Error) {
+      await interaction.editReply({ content: getClient.message, components: [] })
+      return
+    }
+    const providersResponse = await getClient().provider.list({ directory: context.dir })
+    if (!providersResponse.data) {
+      await interaction.editReply({ content: 'Failed to fetch providers', components: [] })
+      return
+    }
+    const { all: allProviders, connected } = providersResponse.data
+    const availableProviders = allProviders.filter((p) => connected.includes(p.id))
+    const allProviderOptions = [...availableProviders]
+      .sort((a, b) => a.name.localeCompare(b.name))
+      .map((p) => {
+        const modelCount = Object.keys(p.models || {}).length
+        return {
+          label: p.name.slice(0, 100),
+          value: p.id,
+          description: `${modelCount} model${modelCount !== 1 ? 's' : ''} available`.slice(0, 100),
+        }
+      })
+    const { options } = buildPaginatedOptions({ allOptions: allProviderOptions, page: providerNavPage })
+    const selectMenu = new StringSelectMenuBuilder()
+      .setCustomId(`model_provider:${contextHash}`)
+      .setPlaceholder('Select a provider')
+      .addOptions(options)
+    const actionRow = new ActionRowBuilder<StringSelectMenuBuilder>().addComponents(selectMenu)
+    await interaction.editReply({
+      content: context.providerSelectHeader || `**Set Model Preference**\nSelect a provider:`,
+      components: [actionRow],
     })
     return
   }
@@ -597,15 +649,13 @@ export async function handleProviderSelectMenu(
       return
     }
 
-    // Take first 25 models (most recent since sorted descending)
-    const recentModels = models.slice(0, 25)
-
     // Update context with provider info and reuse the same hash
     context.providerId = selectedProviderId
     context.providerName = provider.name
+    context.modelPage = 0
     setModelContext(contextHash, context)
 
-    const options = recentModels.map((model) => {
+    const allModelOptions = models.map((model) => {
       const dateStr = model.releaseDate
         ? new Date(model.releaseDate).toLocaleDateString()
         : 'Unknown date'
@@ -614,6 +664,11 @@ export async function handleProviderSelectMenu(
         value: model.id,
         description: dateStr.slice(0, 100),
       }
+    })
+
+    const { options } = buildPaginatedOptions({
+      allOptions: allModelOptions,
+      page: 0,
     })
 
     const selectMenu = new StringSelectMenuBuilder()
@@ -669,6 +724,46 @@ export async function handleModelSelectMenu(
     await interaction.editReply({
       content: 'No model selected',
       components: [],
+    })
+    return
+  }
+
+  // Handle pagination nav — re-render the same model select with new page
+  const modelNavPage = parsePaginationValue(selectedModelId)
+  if (modelNavPage !== undefined) {
+    context.modelPage = modelNavPage
+    setModelContext(contextHash, context)
+
+    const getClient = await initializeOpencodeForDirectory(context.dir)
+    if (getClient instanceof Error) {
+      await interaction.editReply({ content: getClient.message, components: [] })
+      return
+    }
+    const providersResponse = await getClient().provider.list({ directory: context.dir })
+    const provider = providersResponse.data?.all.find((p) => p.id === context.providerId)
+    if (!provider) {
+      await interaction.editReply({ content: 'Provider not found', components: [] })
+      return
+    }
+    const allModelOptions = Object.entries(provider.models || {})
+      .map(([modelId, model]) => ({
+        label: model.name.slice(0, 100),
+        value: modelId,
+        description: (model.release_date
+          ? new Date(model.release_date).toLocaleDateString()
+          : 'Unknown date'
+        ).slice(0, 100),
+      }))
+      .sort((a, b) => a.label.localeCompare(b.label))
+    const { options } = buildPaginatedOptions({ allOptions: allModelOptions, page: modelNavPage })
+    const selectMenu = new StringSelectMenuBuilder()
+      .setCustomId(`model_select:${contextHash}`)
+      .setPlaceholder('Select a model')
+      .addOptions(options)
+    const actionRow = new ActionRowBuilder<StringSelectMenuBuilder>().addComponents(selectMenu)
+    await interaction.editReply({
+      content: `**Set Model Preference**\nProvider: **${context.providerName}**\nSelect a model:`,
+      components: [actionRow],
     })
     return
   }

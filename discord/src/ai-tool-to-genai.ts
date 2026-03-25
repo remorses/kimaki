@@ -111,6 +111,7 @@ function jsonSchemaToGenAISchema(jsonSchema: JSONSchema7Definition): Schema {
   if (Array.isArray(jsonSchema.enum)) {
     schema.enum = jsonSchema.enum.map((x) => String(x))
   }
+
   if ('default' in jsonSchema) {
     schema.default = jsonSchema.default as unknown
   }

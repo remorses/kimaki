@@ -39,8 +39,8 @@ Use this skill when scaffolding or fixing npm packages.
    - any runtime-required extra files (for example `schema.prisma`)
    - docs like `README.md` and `CHANGELOG.md`
    - if tests are inside src and gets included in dist, it's fine. don't try to exclude them
-10. `scripts.build` should be `tsc && chmod +x dist/cli.js` (skip the chmod
-     if the package has no bin). No bundling.
+10. `scripts.build` should be `rm -rf dist *.tsbuildinfo && tsc && chmod +x dist/cli.js` (skip the chmod
+     if the package has no bin). No bundling. We remove dist to cleanup old transpiled files. Also pass tsbuildinfo to remove also the tsc incremental compilation state. Without that tsc would not generate again files to dist.
      Optionally include running scripts with tsx if needed to generate build artifacts.
 11. `prepublishOnly` must always run `build` (optionally run generation before
      build when required). Always add this script:
@@ -152,6 +152,7 @@ Use Node ESM-compatible compiler settings:
     "declarationMap": true,
     "noEmit": false,
     "strict": true,
+    "noUncheckedIndexedAccess": true,
     "skipLibCheck": true,
     "useUnknownInCatchVariables": false
   },
@@ -179,7 +180,7 @@ Use Node ESM-compatible compiler settings:
 - Only relative imports are rewritten. Path aliases (`paths` in tsconfig) are
   not supported by `rewriteRelativeImportExtensions` — this is fine since npm
   packages should use relative imports anyway.
-- Requires TypeScript 5.7+. Pin the typescript devDependency to at least `5.7.0`.
+- Requires TypeScript 5.7+.
 - Install `@types/node` as a dev dependency whenever Node APIs are used.
 - If generation is required, keep generators in `scripts/*.ts` and invoke them
   from package scripts before build/publish.
@@ -215,6 +216,20 @@ Use Node ESM-compatible compiler settings:
 ## tests location
 
 test files should be close with the associated source files. for example if you have an utils.ts file you will create utils.test.ts file next to it. with tests, importing from utils. preferred testing framework is vitest (or bun if project already using `bun test` or depends on bun APIs, rare)
+
+
+## .gitignore
+
+For non-workspace (standalone) packages, always create a `.gitignore` with:
+
+```
+node_modules
+dist
+*.tsbuildinfo
+.DS_Store
+```
+
+Workspace packages inside a monorepo inherit the root `.gitignore`, so this only applies to standalone packages.
 
 
 ## common mistakes

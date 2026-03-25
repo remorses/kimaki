@@ -1,7 +1,7 @@
 // KV helpers for gateway client auth, Slack install state, and team routing cache.
 
 import { createPrisma } from 'db/src'
-import type { HonoBindings } from './env.js'
+import type { Env } from './env.js'
 
 export type GatewayClientCacheRecord = {
   client_id: string
@@ -155,14 +155,18 @@ export async function upsertGatewayClientAndRefreshKv({
   platform,
   botToken,
   userId,
+  reachableUrl,
 }: {
-  env: HonoBindings
+  env: Env
   clientId: string
   secret: string
   guildId: string
   platform: GatewayClientPlatform
   botToken?: string | null
   userId?: string | null
+  /** When set, the gateway-proxy connects outbound to this URL's /gateway WS
+   *  endpoint instead of waiting for the client to connect inbound. */
+  reachableUrl?: string | null
 }): Promise<GatewayClientCacheRecord | Error> {
   const prisma = createPrisma(env.HYPERDRIVE.connectionString)
   const upsertedGatewayClient = await prisma.gateway_clients
@@ -180,22 +184,14 @@ export async function upsertGatewayClientAndRefreshKv({
         platform,
         bot_token: botToken ?? null,
         user_id: userId ?? undefined,
+        reachable_url: reachableUrl ?? null,
       },
       update: {
         secret,
         platform,
         bot_token: botToken ?? null,
         user_id: userId ?? undefined,
-      },
-      select: {
-        client_id: true,
-        secret: true,
-        guild_id: true,
-        platform: true,
-    bot_token: true,
-    user_id: true,
-        created_at: true,
-        updated_at: true,
+        reachable_url: reachableUrl ?? null,
       },
     })
     .catch((cause) => {
@@ -231,7 +227,7 @@ export async function resolveGatewayClientFromCacheOrDb({
   env,
 }: {
   clientId: string
-  env: HonoBindings
+  env: Env
 }): Promise<GatewayClientCacheRecord | Error | undefined> {
   const cached = await getGatewayClientFromKv({
     clientId,
@@ -250,16 +246,6 @@ export async function resolveGatewayClientFromCacheOrDb({
   const row = await prisma.gateway_clients.findFirst({
     where: { client_id: clientId },
     orderBy: [{ updated_at: 'desc' }, { created_at: 'desc' }],
-    select: {
-      client_id: true,
-      secret: true,
-      guild_id: true,
-      platform: true,
-      bot_token: true,
-      user_id: true,
-      created_at: true,
-      updated_at: true,
-    },
   }).catch((cause) => {
     return new Error('DB lookup failed for gateway client', { cause })
   })

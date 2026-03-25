@@ -3,6 +3,7 @@
 // Handles interactive setup, Discord OAuth, slash command registration,
 // project channel creation, and launching the bot with opencode integration.
 import { goke } from 'goke'
+import { z } from 'zod'
 import {
   intro,
   outro,
@@ -40,6 +41,7 @@ import {
 } from './discord-bot.js'
 import {
   getBotTokenWithMode,
+  ensureServiceAuthToken,
   setBotToken,
   setBotMode,
   setChannelDirectory,
@@ -51,7 +53,10 @@ import {
   createScheduledTask,
   listScheduledTasks,
   cancelScheduledTask,
+  getScheduledTask,
+  updateScheduledTask,
   getSessionStartSourcesBySessionIds,
+  deleteChannelDirectoryById,
 } from './database.js'
 import { ShareMarkdown } from './markdown.js'
 import {
@@ -69,7 +74,6 @@ import { selectResolvedCommand } from './opencode-command.js'
 import yaml from 'js-yaml'
 import type {
   OpencodeClient,
-  Command as OpencodeCommand,
   Event as OpenCodeEvent,
 } from '@opencode-ai/sdk/v2'
 import {
@@ -81,10 +85,9 @@ import {
   type Guild,
   type REST,
   Routes,
-  SlashCommandBuilder,
   AttachmentBuilder,
 } from 'discord.js'
-import { createDiscordRest, discordApiUrl, getDiscordRestApiUrl, getGatewayProxyRestBaseUrl } from './discord-urls.js'
+import { createDiscordRest, discordApiUrl, getDiscordRestApiUrl, getGatewayProxyRestBaseUrl, getInternetReachableBaseUrl } from './discord-urls.js'
 import crypto from 'node:crypto'
 import path from 'node:path'
 import fs from 'node:fs'
@@ -104,10 +107,6 @@ import {
   getDataDir,
   getProjectsDir,
 } from './config.js'
-import {
-  sanitizeAgentName,
-  buildQuickAgentCommandDescription,
-} from './commands/agent.js'
 import { execAsync } from './worktrees.js'
 import {
   backgroundUpgradeKimaki,
@@ -118,9 +117,9 @@ import {
 import { startHranaServer } from './hrana-server.js'
 import { startIpcPolling, stopIpcPolling } from './ipc-polling.js'
 import {
-  getLocalTimeZone,
   getPromptPreview,
   parseSendAtValue,
+  parseScheduledTaskPayload,
   serializeScheduledTaskPayload,
   type ParsedSendAt,
   type ScheduledTaskPayload,
@@ -249,7 +248,37 @@ async function sendDiscordMessageWithOptionalAttachment({
     fs.mkdirSync(tmpDir, { recursive: true })
   }
   const tmpFile = path.join(tmpDir, `prompt-${Date.now()}.md`)
-  fs.writeFileSync(tmpFile, prompt)
+  // Wrap long lines so the file is readable in Discord's preview
+  // (Discord doesn't wrap text in file attachments)
+  const wrappedPrompt = prompt
+    .split('\n')
+    .flatMap((line) => {
+      if (line.length <= 120) {
+        return [line]
+      }
+      const wrapped: string[] = []
+      let remaining = line
+      const maxCol = 120
+      // Only soft-break at a space if it's reasonably close to maxCol,
+      // otherwise hard-break to avoid tiny fragments from early spaces
+      const minSoftBreak = 90
+      while (remaining.length > maxCol) {
+        const lastSpace = remaining.lastIndexOf(' ', maxCol)
+        const useSoftBreak = lastSpace >= minSoftBreak
+        const breakAt = useSoftBreak ? lastSpace : maxCol
+        wrapped.push(remaining.slice(0, breakAt))
+        // Only consume the separator space on soft breaks
+        remaining = useSoftBreak
+          ? remaining.slice(breakAt + 1)
+          : remaining.slice(breakAt)
+      }
+      if (remaining.length > 0) {
+        wrapped.push(remaining)
+      }
+      return wrapped
+    })
+    .join('\n')
+  fs.writeFileSync(tmpFile, wrappedPrompt)
 
   try {
     const formData = new FormData()
@@ -544,7 +573,7 @@ async function ensureCommandAvailable({
     cliLogger.log(`Failed to install ${name}`)
     cliLogger.error(
       'Installation error:',
-      error instanceof Error ? error.message : String(error),
+      error instanceof Error ? error.stack : String(error),
     )
     process.exit(EXIT_NO_RESTART)
   }
@@ -604,16 +633,18 @@ async function ensureCommandAvailable({
 // Run opencode upgrade in the background so the user always has the latest version.
 
 // Spawn caffeinate on macOS to prevent system sleep while bot is running.
-// Not detached, so it dies automatically with the parent process.
+// Uses -w to watch the parent PID so caffeinate self-terminates if kimaki
+// exits for any reason (SIGTERM, crash, process.exit, supervisor stop).
 function startCaffeinate() {
   if (process.platform !== 'darwin') {
     return
   }
   try {
-    const proc = spawn('caffeinate', ['-i'], {
+    const proc = spawn('caffeinate', ['-i', '-w', String(process.pid)], {
       stdio: 'ignore',
       detached: false,
     })
+    proc.unref()
     proc.on('error', (err) => {
       cliLogger.warn('Failed to start caffeinate:', err.message)
     })
@@ -650,640 +681,8 @@ type CliOptions = {
   gatewayCallbackUrl?: string
 }
 
-// Commands to skip when registering user commands (reserved names)
-const SKIP_USER_COMMANDS = ['init']
-
-function getDiscordCommandSuffix(
-  command: OpencodeCommand,
-): '-cmd' | '-skill' | '-mcp-prompt' {
-  if (command.source === 'skill') {
-    return '-skill'
-  }
-  if (command.source === 'mcp') {
-    return '-mcp-prompt'
-  }
-  return '-cmd'
-}
-
-import { store, type RegisteredUserCommand } from './store.js'
-
-type AgentInfo = {
-  name: string
-  description?: string
-  mode: string
-  hidden?: boolean
-}
-
-type DiscordCommandSummary = {
-  id: string
-  name: string
-}
-
-function isDiscordCommandSummary(value: unknown): value is DiscordCommandSummary {
-  if (typeof value !== 'object' || value === null) {
-    return false
-  }
-
-  const id = Reflect.get(value, 'id')
-  const name = Reflect.get(value, 'name')
-  return typeof id === 'string' && typeof name === 'string'
-}
-
-async function deleteLegacyGlobalCommands({
-  rest,
-  appId,
-  commandNames,
-}: {
-  rest: REST
-  appId: string
-  commandNames: Set<string>
-}) {
-  try {
-    const response = await rest.get(Routes.applicationCommands(appId))
-    if (!Array.isArray(response)) {
-      cliLogger.warn(
-        'COMMANDS: Unexpected global command payload while cleaning legacy global commands',
-      )
-      return
-    }
-
-    const legacyGlobalCommands = response
-      .filter(isDiscordCommandSummary)
-      .filter((command) => {
-        return commandNames.has(command.name)
-      })
-
-    if (legacyGlobalCommands.length === 0) {
-      return
-    }
-
-    const deletionResults = await Promise.allSettled(
-      legacyGlobalCommands.map(async (command) => {
-        await rest.delete(Routes.applicationCommand(appId, command.id))
-        return command
-      }),
-    )
-
-    const failedDeletions = deletionResults.filter((result) => {
-      return result.status === 'rejected'
-    })
-    if (failedDeletions.length > 0) {
-      cliLogger.warn(
-        `COMMANDS: Failed to delete ${failedDeletions.length} legacy global command(s)`,
-      )
-    }
-
-    const deletedCount = deletionResults.length - failedDeletions.length
-    if (deletedCount > 0) {
-      cliLogger.info(
-        `COMMANDS: Deleted ${deletedCount} legacy global command(s) to avoid guild/global duplicates`,
-      )
-    }
-  } catch (error) {
-    cliLogger.warn(
-      `COMMANDS: Could not clean legacy global commands: ${error instanceof Error ? error.message : String(error)}`,
-    )
-  }
-}
-
-async function registerCommands({
-  token,
-  appId,
-  guildIds,
-  userCommands = [],
-  agents = [],
-}: {
-  token: string
-  appId: string
-  guildIds: string[]
-  userCommands?: OpencodeCommand[]
-  agents?: AgentInfo[]
-}) {
-  const commands = [
-    new SlashCommandBuilder()
-      .setName('resume')
-      .setDescription('Resume an existing OpenCode session')
-      .addStringOption((option) => {
-        option
-          .setName('session')
-          .setDescription('The session to resume')
-          .setRequired(true)
-          .setAutocomplete(true)
-
-        return option
-      })
-      .setDMPermission(false)
-      .toJSON(),
-    new SlashCommandBuilder()
-      .setName('new-session')
-      .setDescription('Start a new OpenCode session')
-      .addStringOption((option) => {
-        option
-          .setName('prompt')
-          .setDescription('Prompt content for the session')
-          .setRequired(true)
-
-        return option
-      })
-      .addStringOption((option) => {
-        option
-          .setName('files')
-          .setDescription(
-            'Files to mention (comma or space separated; autocomplete)',
-          )
-          .setAutocomplete(true)
-          .setMaxLength(6000)
-
-        return option
-      })
-      .addStringOption((option) => {
-        option
-          .setName('agent')
-          .setDescription('Agent to use for this session')
-          .setAutocomplete(true)
-
-        return option
-      })
-      .setDMPermission(false)
-      .toJSON(),
-    new SlashCommandBuilder()
-      .setName('new-worktree')
-      .setDescription(
-        'Create a git worktree branch from origin/HEAD (or main). Optionally pick a base branch.',
-      )
-      .addStringOption((option) => {
-        option
-          .setName('name')
-          .setDescription(
-            'Name for worktree (optional in threads - uses thread name)',
-          )
-          .setRequired(false)
-
-        return option
-      })
-      .addStringOption((option) => {
-        option
-          .setName('base-branch')
-          .setDescription(
-            'Branch to create the worktree from (default: origin/HEAD or main)',
-          )
-          .setRequired(false)
-          .setAutocomplete(true)
-
-        return option
-      })
-      .setDMPermission(false)
-      .toJSON(),
-    new SlashCommandBuilder()
-      .setName('merge-worktree')
-      .setDescription(
-        'Squash-merge worktree into the default branch. Optionally pick a target branch.',
-      )
-      .addStringOption((option) => {
-        option
-          .setName('target-branch')
-          .setDescription(
-            'Branch to merge into (default: origin/HEAD or main)',
-          )
-          .setRequired(false)
-          .setAutocomplete(true)
-
-        return option
-      })
-      .setDMPermission(false)
-      .toJSON(),
-    new SlashCommandBuilder()
-      .setName('toggle-worktrees')
-      .setDescription(
-        'Toggle automatic git worktree creation for new sessions in this channel',
-      )
-      .setDMPermission(false)
-      .toJSON(),
-    new SlashCommandBuilder()
-      .setName('worktrees')
-      .setDescription('List all active worktree sessions')
-      .setDMPermission(false)
-      .toJSON(),
-    new SlashCommandBuilder()
-      .setName('toggle-mention-mode')
-      .setDescription(
-        'Toggle mention-only mode (bot only responds when @mentioned)',
-      )
-      .setDMPermission(false)
-      .toJSON(),
-    new SlashCommandBuilder()
-      .setName('add-project')
-      .setDescription(
-        'Create Discord channels for a project. Use `npx kimaki project add` for unlisted projects',
-      )
-      .addStringOption((option) => {
-        option
-          .setName('project')
-          .setDescription(
-            'Recent OpenCode projects. Use `npx kimaki project add` if not listed',
-          )
-          .setRequired(true)
-          .setAutocomplete(true)
-
-        return option
-      })
-      .setDMPermission(false)
-      .toJSON(),
-    new SlashCommandBuilder()
-      .setName('remove-project')
-      .setDescription('Remove Discord channels for a project')
-      .addStringOption((option) => {
-        option
-          .setName('project')
-          .setDescription('Select a project to remove')
-          .setRequired(true)
-          .setAutocomplete(true)
-
-        return option
-      })
-      .setDMPermission(false)
-      .toJSON(),
-    new SlashCommandBuilder()
-      .setName('create-new-project')
-      .setDescription(
-        'Create a new project folder, initialize git, and start a session',
-      )
-      .addStringOption((option) => {
-        option
-          .setName('name')
-          .setDescription('Name for the new project folder')
-          .setRequired(true)
-
-        return option
-      })
-      .setDMPermission(false)
-      .toJSON(),
-    new SlashCommandBuilder()
-      .setName('abort')
-      .setDescription('Abort the current OpenCode request in this thread')
-      .setDMPermission(false)
-      .toJSON(),
-    new SlashCommandBuilder()
-      .setName('compact')
-      .setDescription(
-        'Compact the session context by summarizing conversation history',
-      )
-      .setDMPermission(false)
-      .toJSON(),
-    new SlashCommandBuilder()
-      .setName('stop')
-      .setDescription('Abort the current OpenCode request in this thread')
-      .setDMPermission(false)
-      .toJSON(),
-    new SlashCommandBuilder()
-      .setName('share')
-      .setDescription('Share the current session as a public URL')
-      .setDMPermission(false)
-      .toJSON(),
-    new SlashCommandBuilder()
-      .setName('diff')
-      .setDescription('Show git diff as a shareable URL')
-      .setDMPermission(false)
-      .toJSON(),
-    new SlashCommandBuilder()
-      .setName('fork')
-      .setDescription('Fork the session from a past user message')
-      .setDMPermission(false)
-      .toJSON(),
-    new SlashCommandBuilder()
-      .setName('model')
-      .setDescription('Set the preferred model for this channel or session')
-      .setDMPermission(false)
-      .toJSON(),
-    new SlashCommandBuilder()
-      .setName('model-variant')
-      .setDescription(
-        'Quickly change the thinking level variant for the current model',
-      )
-      .setDMPermission(false)
-      .toJSON(),
-    new SlashCommandBuilder()
-      .setName('unset-model-override')
-      .setDescription('Remove model override and use default instead')
-      .setDMPermission(false)
-      .toJSON(),
-    new SlashCommandBuilder()
-      .setName('login')
-      .setDescription(
-        'Authenticate with an AI provider (OAuth or API key). Use this instead of /connect',
-      )
-      .setDMPermission(false)
-      .toJSON(),
-    new SlashCommandBuilder()
-      .setName('agent')
-      .setDescription('Set the preferred agent for this channel or session')
-      .setDMPermission(false)
-      .toJSON(),
-    new SlashCommandBuilder()
-      .setName('queue')
-      .setDescription(
-        'Queue a message to be sent after the current response finishes',
-      )
-      .addStringOption((option) => {
-        option
-          .setName('message')
-          .setDescription('The message to queue')
-          .setRequired(true)
-
-        return option
-      })
-      .setDMPermission(false)
-      .toJSON(),
-    new SlashCommandBuilder()
-      .setName('clear-queue')
-      .setDescription('Clear all queued messages in this thread')
-      .setDMPermission(false)
-      .toJSON(),
-    new SlashCommandBuilder()
-      .setName('queue-command')
-      .setDescription(
-        'Queue a user command to run after the current response finishes',
-      )
-      .addStringOption((option) => {
-        option
-          .setName('command')
-          .setDescription('The command to run')
-          .setRequired(true)
-          .setAutocomplete(true)
-        return option
-      })
-      .addStringOption((option) => {
-        option
-          .setName('arguments')
-          .setDescription('Arguments to pass to the command')
-          .setRequired(false)
-        return option
-      })
-      .setDMPermission(false)
-      .toJSON(),
-    new SlashCommandBuilder()
-      .setName('undo')
-      .setDescription('Undo the last assistant message (revert file changes)')
-      .setDMPermission(false)
-      .toJSON(),
-    new SlashCommandBuilder()
-      .setName('redo')
-      .setDescription('Redo previously undone changes')
-      .setDMPermission(false)
-      .toJSON(),
-    new SlashCommandBuilder()
-      .setName('verbosity')
-      .setDescription('Set output verbosity for this channel')
-      .setDMPermission(false)
-      .toJSON(),
-    new SlashCommandBuilder()
-      .setName('restart-opencode-server')
-      .setDescription(
-        'Restart the shared opencode server (fixes state/auth/plugins)',
-      )
-      .setDMPermission(false)
-      .toJSON(),
-    new SlashCommandBuilder()
-      .setName('run-shell-command')
-      .setDescription(
-        'Run a shell command in the project directory. Tip: prefix messages with ! as shortcut',
-      )
-      .addStringOption((option) => {
-        option
-          .setName('command')
-          .setDescription('Command to run')
-          .setRequired(true)
-        return option
-      })
-      .setDMPermission(false)
-      .toJSON(),
-    new SlashCommandBuilder()
-      .setName('context-usage')
-      .setDescription(
-        'Show token usage and context window percentage for this session',
-      )
-      .setDMPermission(false)
-      .toJSON(),
-    new SlashCommandBuilder()
-      .setName('session-id')
-      .setDescription(
-        'Show current session ID and opencode attach command for this thread',
-      )
-      .setDMPermission(false)
-      .toJSON(),
-    new SlashCommandBuilder()
-      .setName('upgrade-and-restart')
-      .setDescription(
-        'Upgrade kimaki to the latest version and restart the bot',
-      )
-      .setDMPermission(false)
-      .toJSON(),
-    new SlashCommandBuilder()
-      .setName('transcription-key')
-      .setDescription(
-        'Set API key for voice message transcription (OpenAI or Gemini)',
-      )
-      .setDMPermission(false)
-      .toJSON(),
-    new SlashCommandBuilder()
-      .setName('mcp')
-      .setDescription('List and manage MCP servers for this project')
-      .setDMPermission(false)
-      .toJSON(),
-    new SlashCommandBuilder()
-      .setName('screenshare')
-      .setDescription('Start screen sharing via VNC tunnel (auto-stops after 1 hour)')
-      .setDMPermission(false)
-      .toJSON(),
-    new SlashCommandBuilder()
-      .setName('screenshare-stop')
-      .setDescription('Stop screen sharing')
-      .setDMPermission(false)
-      .toJSON(),
-  ]
-
-  // Add user-defined commands with source-based suffixes (-cmd / -skill)
-  // Also populate registeredUserCommands in the store for /queue-command autocomplete
-  const newRegisteredCommands: RegisteredUserCommand[] = []
-  for (const cmd of userCommands) {
-    if (SKIP_USER_COMMANDS.includes(cmd.name)) {
-      continue
-    }
-
-    // Sanitize command name: oh-my-opencode uses MCP commands with colons and slashes,
-    // which Discord doesn't allow in command names.
-    // Discord command names: lowercase, alphanumeric and hyphens only, must start with letter/number.
-    const sanitizedName = cmd.name
-      .toLowerCase()
-      .replace(/[:/]/g, '-') // Replace : and / with hyphens first
-      .replace(/[^a-z0-9-]/g, '-') // Replace any other non-alphanumeric chars
-      .replace(/-+/g, '-') // Collapse multiple hyphens
-      .replace(/^-|-$/g, '') // Remove leading/trailing hyphens
-
-    // Skip if sanitized name is empty - would create invalid command name like "-cmd"
-    if (!sanitizedName) {
-      continue
-    }
-
-    const commandSuffix = getDiscordCommandSuffix(cmd)
-
-    // Truncate base name before appending suffix so the suffix is never
-    // lost to Discord's 32-char command name limit.
-    const baseName = sanitizedName.slice(0, 32 - commandSuffix.length)
-    const commandName = `${baseName}${commandSuffix}`
-    const description = cmd.description || `Run /${cmd.name} command`
-
-    newRegisteredCommands.push({
-      name: cmd.name,
-      discordCommandName: commandName,
-      description,
-      source: cmd.source,
-    })
-
-    commands.push(
-      new SlashCommandBuilder()
-        .setName(commandName)
-        .setDescription(description.slice(0, 100)) // Discord limits to 100 chars
-        .addStringOption((option) => {
-          option
-            .setName('arguments')
-            .setDescription('Arguments to pass to the command')
-            .setRequired(false)
-          return option
-        })
-        .setDMPermission(false)
-        .toJSON(),
-    )
-  }
-  store.setState({ registeredUserCommands: newRegisteredCommands })
-
-  // Add agent-specific quick commands like /plan-agent, /build-agent
-  // Filter to primary/all mode agents (same as /agent command shows), excluding hidden agents
-  const primaryAgents = agents.filter(
-    (a) => (a.mode === 'primary' || a.mode === 'all') && !a.hidden,
-  )
-  for (const agent of primaryAgents) {
-    const sanitizedName = sanitizeAgentName(agent.name)
-    // Skip if sanitized name is empty or would create invalid command name
-    // Discord command names must start with a lowercase letter or number
-    if (!sanitizedName || !/^[a-z0-9]/.test(sanitizedName)) {
-      continue
-    }
-    // Truncate base name before appending suffix so the -agent suffix is never
-    // lost to Discord's 32-char command name limit.
-    const agentSuffix = '-agent'
-    const agentBaseName = sanitizedName.slice(0, 32 - agentSuffix.length)
-    const commandName = `${agentBaseName}${agentSuffix}`
-    const description = buildQuickAgentCommandDescription({
-      agentName: agent.name,
-      description: agent.description,
-    })
-
-    commands.push(
-      new SlashCommandBuilder()
-        .setName(commandName)
-        .setDescription(description)
-        .setDMPermission(false)
-        .toJSON(),
-    )
-  }
-
-  const rest = createDiscordRest(token)
-  const uniqueGuildIds = Array.from(new Set(guildIds.filter((guildId) => guildId)))
-  const guildCommandNames = new Set(
-    commands
-      .map((command) => {
-        return command.name
-      })
-      .filter((name): name is string => {
-        return typeof name === 'string'
-      }),
-  )
-
-  if (uniqueGuildIds.length === 0) {
-    cliLogger.warn('COMMANDS: No guilds available, skipping slash command registration')
-    return
-  }
-
-  try {
-    // PUT is a bulk overwrite: Discord matches by name, updates changed fields
-    // (description, options, etc.) in place, creates new commands, and deletes
-    // any not present in the body. No local diffing needed.
-    const results = await Promise.allSettled(
-      uniqueGuildIds.map(async (guildId) => {
-        const response = await rest.put(
-          Routes.applicationGuildCommands(appId, guildId),
-          {
-            body: commands,
-          },
-        )
-
-        const registeredCount = Array.isArray(response)
-          ? response.length
-          : commands.length
-
-        return { guildId, registeredCount }
-      }),
-    )
-
-    const failedGuilds = results
-      .map((result, index) => {
-        if (result.status === 'fulfilled') {
-          return null
-        }
-
-        return {
-          guildId: uniqueGuildIds[index],
-          error:
-            result.reason instanceof Error
-              ? result.reason.message
-              : String(result.reason),
-        }
-      })
-      .filter((value): value is { guildId: string; error: string } => {
-        return value !== null
-      })
-
-    if (failedGuilds.length > 0) {
-      failedGuilds.forEach((failure) => {
-        cliLogger.warn(
-          `COMMANDS: Failed to register slash commands for guild ${failure.guildId}: ${failure.error}`,
-        )
-      })
-      throw new Error(
-        `Failed to register slash commands for ${failedGuilds.length} guild(s)`,
-      )
-    }
-
-    const successfulGuilds = results.length
-    const firstRegisteredCount = results[0]
-    const registeredCommandCount =
-      firstRegisteredCount && firstRegisteredCount.status === 'fulfilled'
-        ? firstRegisteredCount.value.registeredCount
-        : commands.length
-
-    // In gateway mode, global application routes (/applications/{app_id}/commands)
-    // are denied by the proxy (DeniedWithoutGuild). Legacy global commands only
-    // exist for self-hosted bots that previously registered commands globally.
-    const isGateway = store.getState().discordBaseUrl !== 'https://discord.com'
-    if (!isGateway) {
-      await deleteLegacyGlobalCommands({
-        rest,
-        appId,
-        commandNames: guildCommandNames,
-      })
-    }
-
-    cliLogger.info(
-      `COMMANDS: Successfully registered ${registeredCommandCount} slash commands for ${successfulGuilds} guild(s)`,
-    )
-  } catch (error) {
-    cliLogger.error(
-      'COMMANDS: Failed to register slash commands: ' + String(error),
-    )
-    throw error
-  }
-}
+import { store } from './store.js'
+import { registerCommands, SKIP_USER_COMMANDS } from './discord-command-registration.js'
 
 async function reconcileKimakiRole({ guild }: { guild: Guild }): Promise<void> {
   try {
@@ -1471,7 +870,7 @@ async function ensureDefaultChannelsWithWelcome({
       }
     } catch (error) {
       cliLogger.warn(
-        `Failed to create default kimaki channel in ${guild.name}: ${error instanceof Error ? error.message : String(error)}`,
+        `Failed to create default kimaki channel in ${guild.name}: ${error instanceof Error ? error.stack : String(error)}`,
       )
     }
   }
@@ -1517,7 +916,7 @@ async function backgroundInit({
         .catch((error) => {
           cliLogger.warn(
             'Failed to load user commands during background init:',
-            error instanceof Error ? error.message : String(error),
+            error instanceof Error ? error.stack : String(error),
           )
           return []
         }),
@@ -1527,7 +926,7 @@ async function backgroundInit({
         .catch((error) => {
           cliLogger.warn(
             'Failed to load agents during background init:',
-            error instanceof Error ? error.message : String(error),
+            error instanceof Error ? error.stack : String(error),
           )
           return []
         }),
@@ -1538,7 +937,7 @@ async function backgroundInit({
   } catch (error) {
     cliLogger.error(
       'Background init failed:',
-      error instanceof Error ? error.message : String(error),
+      error instanceof Error ? error.stack : String(error),
     )
     void notifyError(error, 'Background init failed')
   }
@@ -1690,6 +1089,7 @@ async function resolveCredentials({
       clientId,
       clientSecret,
       gatewayCallbackUrl,
+      reachableUrl: getInternetReachableBaseUrl() || undefined,
     })
     if (oauthUrlResult instanceof Error) {
       throw oauthUrlResult
@@ -1895,33 +1295,35 @@ async function run({
   const forceRestartOnboarding = Boolean(restartOnboarding)
   const forceGateway = Boolean(gateway)
 
-  // Step 0: Ensure required CLI tools are installed (OpenCode + Bun)
-  await ensureCommandAvailable({
-    name: 'opencode',
-    envPathKey: 'OPENCODE_PATH',
-    installUnix: 'curl -fsSL https://opencode.ai/install | bash',
-    installWindows: 'irm https://opencode.ai/install.ps1 | iex',
-    possiblePathsUnix: [
-      '~/.local/bin/opencode',
-      '~/.opencode/bin/opencode',
-      '/usr/local/bin/opencode',
-      '/opt/opencode/bin/opencode',
-    ],
-    possiblePathsWindows: [
-      '~\\.local\\bin\\opencode.exe',
-      '~\\AppData\\Local\\opencode\\opencode.exe',
-      '~\\.opencode\\bin\\opencode.exe',
-    ],
-  })
-
-  await ensureCommandAvailable({
-    name: 'bun',
-    envPathKey: 'BUN_PATH',
-    installUnix: 'curl -fsSL https://bun.sh/install | bash',
-    installWindows: 'irm bun.sh/install.ps1 | iex',
-    possiblePathsUnix: ['~/.bun/bin/bun', '/usr/local/bin/bun'],
-    possiblePathsWindows: ['~\\.bun\\bin\\bun.exe'],
-  })
+  // Step 0: Ensure required CLI tools are installed (OpenCode + Bun).
+  // Run checks in parallel since they're independent `which` calls.
+  await Promise.all([
+    ensureCommandAvailable({
+      name: 'opencode',
+      envPathKey: 'OPENCODE_PATH',
+      installUnix: 'curl -fsSL https://opencode.ai/install | bash',
+      installWindows: 'irm https://opencode.ai/install.ps1 | iex',
+      possiblePathsUnix: [
+        '~/.local/bin/opencode',
+        '~/.opencode/bin/opencode',
+        '/usr/local/bin/opencode',
+        '/opt/opencode/bin/opencode',
+      ],
+      possiblePathsWindows: [
+        '~\\.local\\bin\\opencode.exe',
+        '~\\AppData\\Local\\opencode\\opencode.exe',
+        '~\\.opencode\\bin\\opencode.exe',
+      ],
+    }),
+    ensureCommandAvailable({
+      name: 'bun',
+      envPathKey: 'BUN_PATH',
+      installUnix: 'curl -fsSL https://bun.sh/install | bash',
+      installWindows: 'irm bun.sh/install.ps1 | iex',
+      possiblePathsUnix: ['~/.bun/bin/bun', '/usr/local/bin/bun'],
+      possiblePathsWindows: ['~\\.bun\\bin\\bun.exe'],
+    }),
+  ])
 
 
   backgroundUpgradeKimaki()
@@ -1932,6 +1334,7 @@ async function run({
   // don't work. CLI subcommands skip the server and use file: directly.
   const hranaResult = await startHranaServer({
     dbPath: path.join(getDataDir(), 'discord-sessions.db'),
+    bindAll: getInternetReachableBaseUrl() !== null,
   })
   if (hranaResult instanceof Error) {
     cliLogger.error('Failed to start hrana server:', hranaResult.message)
@@ -1947,6 +1350,14 @@ async function run({
     gatewayCallbackUrl,
   })
 
+  const gatewayToken = await ensureServiceAuthToken({
+    appId,
+    preferredGatewayToken: isGatewayMode ? token : undefined,
+  })
+  // Always set service auth token so local and internet control-plane paths
+  // share one auth model (/kimaki/wake and future service endpoints).
+  store.setState({ gatewayToken })
+
   // In gateway mode, ensure REST calls route through the gateway proxy.
   // getBotTokenWithMode() sets this for saved-credential paths, but the fresh
   // onboarding path returns directly without going through getBotTokenWithMode(),
@@ -1956,6 +1367,34 @@ async function run({
   if (isGatewayMode) {
     store.setState({ discordBaseUrl: KIMAKI_GATEWAY_PROXY_REST_BASE_URL })
   }
+
+  // When KIMAKI_INTERNET_REACHABLE_URL is set, the hrana server exposes
+  // a /kimaki/wake endpoint for the gateway-proxy to wake this instance and
+  // wait until discord.js is connected. Keep Discord traffic on the normal
+  // configured base URL (gateway-proxy in gateway mode).
+  if (getInternetReachableBaseUrl()) {
+    cliLogger.log('Internet-reachable mode: enabling /kimaki/wake endpoint on hrana server')
+  }
+
+  // Start OpenCode server as early as possible — non-blocking.
+  // All dependencies are met (dataDir, lockPort, gatewayToken, hranaUrl set).
+  // Runs in parallel with last_used_at update, skipChannelSetup check, and
+  // Discord Gateway login so cold start is not blocked by OpenCode spawn.
+  const currentDir = process.cwd()
+  cliLogger.log('Starting OpenCode server...')
+  const opencodePromise = initializeOpencodeForDirectory(currentDir).then(
+    (result) => {
+      if (result instanceof Error) {
+        throw new Error(result.message)
+      }
+      cliLogger.log('OpenCode server ready!')
+      return result
+    },
+  )
+  // Prevent unhandled rejection if OpenCode fails before backgroundInit
+  // or the channel setup path awaits it. Errors are handled by the
+  // respective consumers (backgroundInit catches, channel setup re-throws).
+  opencodePromise.catch(() => {})
 
   // Mark this bot as the most recently used so subcommands in separate
   // processes (send, upload-to-discord, project list) pick the correct bot.
@@ -2028,19 +1467,6 @@ ${borderedLines.join('\n')}
 
   showLocalTranscriptionBanner()
 
-  // Start OpenCode server EARLY - let it initialize in parallel with Discord login.
-  // This is the biggest startup bottleneck (can take 1-30 seconds to spawn and wait for ready)
-  const currentDir = process.cwd()
-  cliLogger.log('Starting OpenCode server...')
-  const opencodePromise = initializeOpencodeForDirectory(currentDir).then(
-    (result) => {
-      if (result instanceof Error) {
-        throw new Error(result.message)
-      }
-      return result
-    },
-  )
-
   cliLogger.log(`Connecting to ${getDiscordRestApiUrl()}...`)
   const discordClient = await createDiscordClient()
 
@@ -2099,7 +1525,7 @@ ${borderedLines.join('\n')}
   } catch (error) {
     cliLogger.log('Failed to connect to Discord', discordClient.ws.gateway)
     cliLogger.error(
-      'Error: ' + (error instanceof Error ? error.message : String(error)),
+      'Error: ' + (error instanceof Error ? error.stack : String(error)),
     )
     process.exit(EXIT_NO_RESTART)
   }
@@ -2159,7 +1585,7 @@ ${borderedLines.join('\n')}
       } catch (error) {
         cliLogger.warn(
           'Background channel sync failed:',
-          error instanceof Error ? error.message : String(error),
+          error instanceof Error ? error.stack : String(error),
         )
       }
 
@@ -2176,7 +1602,7 @@ ${borderedLines.join('\n')}
       } catch (error) {
         cliLogger.warn(
           'Background default channel creation failed:',
-          error instanceof Error ? error.message : String(error),
+          error instanceof Error ? error.stack : String(error),
         )
       }
     })()
@@ -2217,7 +1643,6 @@ ${borderedLines.join('\n')}
     // Wait for OpenCode, fetch projects, show prompts, create channels if needed
     cliLogger.log('Waiting for OpenCode server...')
     const getClient = await opencodePromise
-    cliLogger.log('OpenCode server ready!')
 
     cliLogger.log('Fetching OpenCode data...')
 
@@ -2230,7 +1655,7 @@ ${borderedLines.join('\n')}
           cliLogger.log('Failed to fetch projects')
           cliLogger.error(
             'Error:',
-            error instanceof Error ? error.message : String(error),
+            error instanceof Error ? error.stack : String(error),
           )
           discordClient.destroy()
           process.exit(EXIT_NO_RESTART)
@@ -2241,7 +1666,7 @@ ${borderedLines.join('\n')}
         .catch((error) => {
           cliLogger.warn(
             'Failed to load user commands during setup:',
-            error instanceof Error ? error.message : String(error),
+            error instanceof Error ? error.stack : String(error),
           )
           return []
         }),
@@ -2251,7 +1676,7 @@ ${borderedLines.join('\n')}
         .catch((error) => {
           cliLogger.warn(
             'Failed to load agents during setup:',
-            error instanceof Error ? error.message : String(error),
+            error instanceof Error ? error.stack : String(error),
           )
           return []
         }),
@@ -2408,7 +1833,7 @@ ${borderedLines.join('\n')}
       .catch((error) => {
         cliLogger.error(
           'Failed to register slash commands:',
-          error instanceof Error ? error.message : String(error),
+          error instanceof Error ? error.stack : String(error),
         )
       })
 
@@ -2627,7 +2052,7 @@ cli
     } catch (error) {
       cliLogger.error(
         'Error:',
-        error instanceof Error ? error.message : String(error),
+        error instanceof Error ? error.stack : String(error),
       )
       process.exit(EXIT_NO_RESTART)
     }
@@ -2682,7 +2107,7 @@ cli
     } catch (error) {
       cliLogger.error(
         'Error:',
-        error instanceof Error ? error.message : String(error),
+        error instanceof Error ? error.stack : String(error),
       )
       process.exit(EXIT_NO_RESTART)
     }
@@ -2832,7 +2257,7 @@ cli
       } catch (error) {
         cliLogger.error(
           'Error:',
-          error instanceof Error ? error.message : String(error),
+          error instanceof Error ? error.stack : String(error),
         )
         process.exit(EXIT_NO_RESTART)
       }
@@ -2886,7 +2311,7 @@ cli
     } catch (error) {
       cliLogger.error(
         'Error:',
-        error instanceof Error ? error.message : String(error),
+        error instanceof Error ? error.stack : String(error),
       )
       process.exit(EXIT_NO_RESTART)
     }
@@ -2957,7 +2382,7 @@ cli
     } catch (error) {
       cliLogger.error(
         'Error:',
-        error instanceof Error ? error.message : String(error),
+        error instanceof Error ? error.stack : String(error),
       )
       process.exit(EXIT_NO_RESTART)
     }
@@ -2995,6 +2420,13 @@ cli
   .option('--agent <agent>', 'Agent to use for the session')
   .option('--model <model>', 'Model to use (format: provider/model)')
   .option(
+    '--permission <rule>',
+    z.array(z.string()).describe(
+      'Session permission rule (repeatable). Format: "tool:action" or "tool:pattern:action". ' +
+      'Actions: allow, deny, ask. Examples: --permission "bash:deny" --permission "edit:deny"',
+    ),
+  )
+  .option(
     '--send-at <schedule>',
     'Schedule send for future (UTC ISO date/time ending in Z, or cron expression)',
   )
@@ -3019,6 +2451,7 @@ cli
       user?: string
       agent?: string
       model?: string
+      permission?: string[]
       sendAt?: string
       thread?: string
       session?: string
@@ -3078,10 +2511,12 @@ cli
           if (!sendAt) {
             return null
           }
+          // Cron expressions use UTC so the schedule is consistent regardless of
+          // which machine runs the bot. The system message tells the model to use UTC.
           return parseSendAtValue({
             value: sendAt,
             now: new Date(),
-            timezone: getLocalTimeZone(),
+            timezone: 'UTC',
           })
         })()
         if (parsedSchedule instanceof Error) {
@@ -3223,7 +2658,7 @@ cli
                   } catch (error) {
                     cliLogger.debug(
                       'Failed to fetch existing channel while selecting guild:',
-                      error instanceof Error ? error.message : String(error),
+                      error instanceof Error ? error.stack : String(error),
                     )
                   }
                 }
@@ -3315,6 +2750,7 @@ cli
               model: options.model || null,
               username: null,
               userId: null,
+              permissions: options.permission?.length ? options.permission : null,
             }
             const taskId = await createScheduledTask({
               scheduleKind: parsedSchedule.scheduleKind,
@@ -3341,6 +2777,7 @@ cli
 
           const threadPromptMarker: ThreadStartMarker = {
             cliThreadPrompt: true,
+            ...(options.permission?.length ? { permissions: options.permission } : {}),
           }
           const promptEmbed = [
             {
@@ -3472,6 +2909,7 @@ cli
             model: options.model || null,
             username: resolvedUser?.username || null,
             userId: resolvedUser?.id || null,
+            permissions: options.permission?.length ? options.permission : null,
           }
           const taskId = await createScheduledTask({
             scheduleKind: parsedSchedule.scheduleKind,
@@ -3507,6 +2945,7 @@ cli
               }),
               ...(options.agent && { agent: options.agent }),
               ...(options.model && { model: options.model }),
+              ...(options.permission?.length && { permissions: options.permission }),
             }
         const autoStartEmbed = embedMarker
           ? [{ color: 0x2b2d31, footer: { text: yaml.dump(embedMarker) } }]
@@ -3565,7 +3004,7 @@ cli
       } catch (error) {
         cliLogger.error(
           'Error:',
-          error instanceof Error ? error.message : String(error),
+          error instanceof Error ? error.stack : String(error),
         )
         process.exit(EXIT_NO_RESTART)
       }
@@ -3616,7 +3055,7 @@ cli
     } catch (error) {
       cliLogger.error(
         'Error:',
-        error instanceof Error ? error.message : String(error),
+        error instanceof Error ? error.stack : String(error),
       )
       process.exit(EXIT_NO_RESTART)
     }
@@ -3644,7 +3083,100 @@ cli
     } catch (error) {
       cliLogger.error(
         'Error:',
-        error instanceof Error ? error.message : String(error),
+        error instanceof Error ? error.stack : String(error),
+      )
+      process.exit(EXIT_NO_RESTART)
+    }
+  })
+
+cli
+  .command('task edit <id>', 'Edit prompt or schedule of a planned task')
+  .option('--prompt <prompt>', 'New prompt text')
+  .option('--send-at <sendAt>', 'New schedule (UTC ISO date or cron expression)')
+  .action(async (id: string, options: { prompt?: string; sendAt?: string }) => {
+    try {
+      const trimmedPrompt =
+        options.prompt === undefined ? undefined : options.prompt.trim()
+
+      if (!trimmedPrompt && !options.sendAt) {
+        cliLogger.error('Provide at least --prompt or --send-at')
+        process.exit(EXIT_NO_RESTART)
+      }
+      if (trimmedPrompt !== undefined && trimmedPrompt.length === 0) {
+        cliLogger.error('--prompt cannot be empty')
+        process.exit(EXIT_NO_RESTART)
+      }
+      if (trimmedPrompt !== undefined && trimmedPrompt.length > 1900) {
+        cliLogger.error('--prompt currently supports up to 1900 characters')
+        process.exit(EXIT_NO_RESTART)
+      }
+
+      const taskId = Number.parseInt(id, 10)
+      if (Number.isNaN(taskId) || taskId < 1) {
+        cliLogger.error(`Invalid task ID: ${id}`)
+        process.exit(EXIT_NO_RESTART)
+      }
+
+      await initDatabase()
+      const task = await getScheduledTask(taskId)
+      if (!task) {
+        cliLogger.error(`Task ${taskId} not found`)
+        process.exit(EXIT_NO_RESTART)
+      }
+      if (task.status !== 'planned') {
+        cliLogger.error(
+          `Task ${taskId} is ${task.status}, only planned tasks can be edited`,
+        )
+        process.exit(EXIT_NO_RESTART)
+      }
+
+      const existingPayload = parseScheduledTaskPayload(task.payload_json)
+      if (existingPayload instanceof Error) {
+        cliLogger.error(`Failed to parse task payload: ${existingPayload.message}`)
+        process.exit(EXIT_NO_RESTART)
+      }
+
+      const newPrompt = trimmedPrompt ?? existingPayload.prompt
+      const updatedPayload: ScheduledTaskPayload = {
+        ...existingPayload,
+        prompt: newPrompt,
+      }
+
+      const updateData: Parameters<typeof updateScheduledTask>[0] = {
+        taskId,
+        payloadJson: serializeScheduledTaskPayload(updatedPayload),
+        promptPreview: getPromptPreview(newPrompt),
+      }
+
+      if (options.sendAt) {
+        const parsed = parseSendAtValue({
+          value: options.sendAt,
+          now: new Date(),
+          timezone: 'UTC',
+        })
+        if (parsed instanceof Error) {
+          cliLogger.error(`Invalid --send-at: ${parsed.message}`)
+          process.exit(EXIT_NO_RESTART)
+        }
+        updateData.scheduleKind = parsed.scheduleKind
+        updateData.runAt = parsed.runAt
+        updateData.cronExpr = parsed.cronExpr
+        updateData.timezone = parsed.timezone
+        updateData.nextRunAt = parsed.nextRunAt
+      }
+
+      const updated = await updateScheduledTask(updateData)
+      if (!updated) {
+        cliLogger.error(`Task ${taskId} could not be updated (status may have changed)`)
+        process.exit(EXIT_NO_RESTART)
+      }
+
+      cliLogger.log(`Updated task ${taskId}`)
+      process.exit(0)
+    } catch (error) {
+      cliLogger.error(
+        'Error:',
+        error instanceof Error ? error.stack : String(error),
       )
       process.exit(EXIT_NO_RESTART)
     }
@@ -3736,7 +3268,7 @@ cli
           } catch (error) {
             cliLogger.debug(
               'Failed to fetch existing channel while selecting guild:',
-              error instanceof Error ? error.message : String(error),
+              error instanceof Error ? error.stack : String(error),
             )
             let firstGuild = client.guilds.cache.first()
             if (!firstGuild) {
@@ -3796,14 +3328,14 @@ cli
           } catch (error) {
             cliLogger.debug(
               `Failed to fetch channel ${existingChannel.channel_id} while checking existing channels:`,
-              error instanceof Error ? error.message : String(error),
+              error instanceof Error ? error.stack : String(error),
             )
           }
         }
       } catch (error) {
         cliLogger.debug(
           'Database lookup failed while checking existing channels:',
-          error instanceof Error ? error.message : String(error),
+          error instanceof Error ? error.stack : String(error),
         )
       }
 
@@ -3838,7 +3370,8 @@ cli
     'List all registered projects with their Discord channels',
   )
   .option('--json', 'Output as JSON')
-  .action(async (options: { json?: boolean }) => {
+  .option('--prune', 'Remove stale entries whose Discord channel no longer exists')
+  .action(async (options: { json?: boolean; prune?: boolean }) => {
     await initDatabase()
 
     const prisma = await getPrisma()
@@ -3859,19 +3392,54 @@ cli
     const enriched = await Promise.all(
       channels.map(async (ch) => {
         let channelName = ''
+        let deleted = false
         if (rest) {
           try {
             const data = (await rest.get(Routes.channel(ch.channel_id))) as {
               name?: string
             }
             channelName = data.name || ''
-          } catch {
-            // Channel may have been deleted from Discord
+          } catch (error) {
+            // Only mark as deleted for Unknown Channel (10003) or 404,
+            // not transient errors like rate limits or 5xx
+            const isUnknownChannel =
+              error instanceof Error &&
+              'code' in error &&
+              'status' in error &&
+              ((error as { code: number | string }).code === 10003 ||
+                (error as { status: number }).status === 404)
+            deleted = isUnknownChannel
           }
         }
-        return { ...ch, channelName }
+        return { ...ch, channelName, deleted }
       }),
     )
+
+    // Prune stale entries if requested
+    if (options.prune) {
+      const stale = enriched.filter((ch) => {
+        return ch.deleted
+      })
+      if (stale.length === 0) {
+        cliLogger.log('No stale channels to prune')
+      } else {
+        for (const ch of stale) {
+          await deleteChannelDirectoryById(ch.channel_id)
+          cliLogger.log(`Pruned stale channel ${ch.channel_id} (${path.basename(ch.directory)})`)
+        }
+        cliLogger.log(`Pruned ${stale.length} stale channel(s)`)
+      }
+      // Re-filter to only show live entries after pruning
+      const live = enriched.filter((ch) => {
+        return !ch.deleted
+      })
+      if (live.length === 0) {
+        cliLogger.log('No projects registered')
+        process.exit(0)
+      }
+      enriched.length = 0
+      enriched.push(...live)
+    }
 
     if (options.json) {
       const output = enriched.map((ch) => ({
@@ -3879,6 +3447,7 @@ cli
         channel_name: ch.channelName,
         directory: ch.directory,
         folder_name: path.basename(ch.directory),
+        deleted: ch.deleted,
       }))
       console.log(JSON.stringify(output, null, 2))
       process.exit(0)
@@ -3886,8 +3455,9 @@ cli
 
     for (const ch of enriched) {
       const folderName = path.basename(ch.directory)
+      const deletedTag = ch.deleted ? ' (deleted from Discord)' : ''
       const channelLabel = ch.channelName ? `#${ch.channelName}` : ch.channel_id
-      console.log(`\n${channelLabel}`)
+      console.log(`\n${channelLabel}${deletedTag}`)
       console.log(`   Folder: ${folderName}`)
       console.log(`   Directory: ${ch.directory}`)
       console.log(`   Channel ID: ${ch.channel_id}`)
@@ -4129,7 +3699,7 @@ cli
     } catch (error) {
       cliLogger.error(
         'Error:',
-        error instanceof Error ? error.message : String(error),
+        error instanceof Error ? error.stack : String(error),
       )
       process.exit(EXIT_NO_RESTART)
     }
@@ -4309,7 +3879,7 @@ cli
     } catch (error) {
       cliLogger.error(
         'Error:',
-        error instanceof Error ? error.message : String(error),
+        error instanceof Error ? error.stack : String(error),
       )
       process.exit(EXIT_NO_RESTART)
     }
@@ -4383,7 +3953,7 @@ cli
     } catch (error) {
       cliLogger.error(
         'Error:',
-        error instanceof Error ? error.message : String(error),
+        error instanceof Error ? error.stack : String(error),
       )
       process.exit(EXIT_NO_RESTART)
     }
@@ -4592,7 +4162,7 @@ cli
     } catch (error) {
       cliLogger.error(
         'Error:',
-        error instanceof Error ? error.message : String(error),
+        error instanceof Error ? error.stack : String(error),
       )
       process.exit(EXIT_NO_RESTART)
     }
@@ -4785,10 +4355,45 @@ cli
     } catch (error) {
       cliLogger.error(
         'Error:',
-        error instanceof Error ? error.message : String(error),
+        error instanceof Error ? error.stack : String(error),
       )
       process.exit(EXIT_NO_RESTART)
     }
+  })
+
+cli
+  .command(
+    'session discord-url <sessionId>',
+    'Print the Discord thread URL for a session',
+  )
+  .option('--json', 'Output as JSON')
+  .action(async (sessionId, options) => {
+    await initDatabase()
+    const threadId = await getThreadIdBySessionId(sessionId)
+    if (!threadId) {
+      cliLogger.error(`No Discord thread found for session: ${sessionId}`)
+      process.exit(EXIT_NO_RESTART)
+    }
+    const { token: botToken } = await resolveBotCredentials()
+    const rest = createDiscordRest(botToken)
+    const threadData = (await rest.get(Routes.channel(threadId))) as {
+      id: string
+      guild_id: string
+      name?: string
+    }
+    const url = `https://discord.com/channels/${threadData.guild_id}/${threadData.id}`
+    if (options.json) {
+      console.log(JSON.stringify({
+        url,
+        threadId: threadData.id,
+        guildId: threadData.guild_id,
+        sessionId,
+        threadName: threadData.name,
+      }))
+    } else {
+      console.log(url)
+    }
+    process.exit(0)
   })
 
 cli
@@ -4828,7 +4433,7 @@ cli
     } catch (error) {
       cliLogger.error(
         'Upgrade failed:',
-        error instanceof Error ? error.message : String(error),
+        error instanceof Error ? error.stack : String(error),
       )
       process.exit(EXIT_NO_RESTART)
     }
@@ -4930,7 +4535,7 @@ cli
       } catch (error) {
         cliLogger.error(
           'Merge failed:',
-          error instanceof Error ? error.message : String(error),
+          error instanceof Error ? error.stack : String(error),
         )
         process.exit(EXIT_NO_RESTART)
       }

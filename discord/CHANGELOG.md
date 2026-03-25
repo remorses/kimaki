@@ -1,5 +1,81 @@
 # Changelog
 
+## 0.4.82
+
+1. **`/restart-opencode-server` now re-registers slash commands** — after restarting the OpenCode server, kimaki immediately re-registers all Discord slash commands (built-in + user commands + agents). New or changed commands, agents, and plugins are picked up without a full bot restart.
+2. **Buttons and dropdowns stay alive for 24 hours** — permission prompts, question dropdowns, and file upload dialogs previously expired after 5 minutes (IPC stale TTL) and thread runtimes were disposed after 1 hour. Both are now 24 hours, so users who return the next day can still click pending buttons and selects.
+
+## 0.4.81
+
+1. **Fixed bot ignoring worktree and bot-created threads** — threads created by `/new-worktree`, `/fork`, or `kimaki send` were silently ignored because the thread guard (GitHub #84) checked for a non-empty session ID in the DB, but `createPendingWorktree` writes an empty `session_id`. The bot now also checks `thread.ownerId` — if the bot created the thread, it always responds.
+2. **New `/memory-snapshot` command** — write a V8 heap snapshot to disk on demand for debugging memory issues. The snapshot is saved to `~/.kimaki/heap-snapshots/`.
+3. **Fixed Anthropic OAuth token exchange race** — moved OAuth token exchange and refresh to an isolated Node helper to avoid 429 rate-limit responses and duplicate token exchanges when the browser callback lands.
+4. **Fixed OOM from unbounded `session.diff` event strings** — `session.diff` events carrying large patch payloads are now dropped from the event buffer, and all buffered event strings are recursively pruned to a safe max length.
+
+## 0.4.80
+
+1. **Built-in Anthropic OAuth authentication** — the Anthropic OAuth plugin now ships with kimaki and loads automatically. No need to manage a separate plugin file in `~/.config/opencode/plugins/`. Log in with `/login` → Anthropic → OAuth and kimaki handles the PKCE flow, token refresh, and Claude Code request rewriting.
+
+2. **New `kimaki task edit` CLI command** — edit the prompt and/or schedule of a planned task without deleting and recreating it:
+   ```bash
+   kimaki task edit <id> --prompt "Updated task description"
+   kimaki task edit <id> --send-at "tomorrow at 9am"
+   kimaki task edit <id> --prompt "New prompt" --send-at "every day at 8am"
+   ```
+   Only works on tasks in `planned` state.
+
+3. **New `kimaki session discord-url` CLI command** — print the Discord thread URL for a given OpenCode session ID:
+   ```bash
+   kimaki session discord-url <session-id>
+   kimaki session discord-url <session-id> --json
+   ```
+   `--json` returns `{ url, threadId, guildId, sessionId, threadName }` for scripting.
+
+4. **Paginated select menus for `/model` and `/login`** — Discord caps select menus at 25 options, silently dropping anything beyond that. Providers like OpenRouter expose 162+ models, making many unreachable. Select menus now paginate with "← Previous page" / "Next page →" navigation so all providers and models are accessible.
+
+5. **Fixed `/redo` to step forward one message at a time** — previously `/redo` jumped all the way back to the latest state in one shot. It now matches OpenCode TUI behavior: each `/redo` moves one user message forward (symmetric with `/undo`), so 3 undos require 3 redos to fully restore.
+
+6. **Fixed OOM crash during long sessions** — assistant `message.updated` events were passing through the event buffer uncompacted, each carrying the full cumulative parts array (all tool outputs and text). With 1000 buffer entries, memory could exceed 4GB and trigger a V8 OOM kill. The buffer now strips `parts`, `system`, `summary`, and `tools` from all message events, keeping only the lightweight metadata needed for derivation.
+
+7. **Fixed voice attachment detection and empty prompt guard** — improved detection handles cases where Discord omits `contentType` on uploaded audio files (checks duration, waveform, and file extension as fallbacks). Added a guard to skip sending empty prompts when voice transcription fails or produces no text.
+
+8. **Fixed prompt.md wrapping in Discord file preview** — long-line prompts sent as file attachments are now word-wrapped at 120 chars before upload, so Discord's file viewer renders them readably instead of requiring horizontal scrolling.
+
+9. **Fixed `/undo` and `/redo` error handling** — SDK errors on `session.get` and `session.messages` calls now bail early with the error message instead of silently proceeding with wrong behavior.
+
+## 0.4.79
+
+1. **New `/tasks` command** — list and cancel scheduled tasks created with `kimaki send --send-at`:
+   ```
+   /tasks        — show active scheduled tasks with Cancel buttons
+   /tasks --all  — include completed and failed tasks
+   ```
+   Each row shows the task's schedule, next run time, status, and a Cancel button for active tasks.
+
+2. **New `--permission` flag for `kimaki send`** — restrict which tools an OpenCode session can use on a per-send basis:
+   ```bash
+   kimaki send "Fix the bug" --permission "bash:deny"
+   kimaki send "Review only" --permission "edit:deny" --permission "write:deny"
+   kimaki send "Run tests"   --permission "bash:git *:allow"
+   ```
+   Format is `tool:action` or `tool:pattern:action`. Rules are appended after base permissions so they take priority.
+
+3. **Fixed `/undo`** — now correctly aligns with OpenCode's TUI behavior. Passes the last user message ID (not the assistant message ID) to `session.revert()`, and removes manual message deletion — cleanup happens automatically on the next prompt.
+
+4. **Fixed error replies now trigger Discord notifications** — error messages from failed sessions, permission denials, and voice errors were using silent flags and easy to miss. They now send proper Discord notifications.
+
+5. **Fixed bot responding to non-kimaki threads** — the bot was processing all threads in configured project channels, including user-created threads with nothing to do with kimaki. It now ignores threads that don't have an existing session unless explicitly @mentioned.
+
+6. **Fixed `/login` code-mode OAuth** — when a provider returns `method="code"` (e.g. SSH-based flows), a "Paste authorization code" button now appears so users can complete the flow. Previously the context was deleted immediately, making code mode a dead end.
+
+7. **Fixed queue messages not dispatching when action buttons are shown** — queued messages now dispatch immediately when the session becomes idle, even if action buttons are still visible. Previously the queue was blocked unnecessarily while buttons were on screen.
+
+8. **Fixed cron task timezone** — cron schedules (e.g. `0 10 * * *`) are now always evaluated in UTC, matching what the system message tells the model. Previously they fired at the machine's local time, which was wrong when the server is in a different timezone.
+
+9. **Startup time ~40% faster** — three optimizations reduce time-to-ready: OpenCode health poll interval dropped from 1000ms to 100ms, the OpenCode server now starts earlier (overlapping with Discord login), and `which opencode` / `which bun` checks run in parallel.
+
+10. **Fixed `/login` error messages and stale context cleanup** — consistent error parsing across all login steps, and pending login contexts are now cleaned up on failure instead of lingering until TTL.
+
 ## 0.4.78
 
 1. **New `/screenshare` command** — share your screen via noVNC directly in the browser. Works on macOS (uses built-in Remote Management) and Linux (spawns x11vnc):

@@ -50,7 +50,7 @@ export class SlackBridge {
     }
     return buildWebSocketUrl({
       baseUrl: this.resolvePublicBaseUrl(),
-      path: '/gateway',
+      path: '/slack/gateway',
     })
   }
 

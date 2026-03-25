@@ -16,6 +16,7 @@ import {
   getTextAttachments,
 } from './message-formatting.js'
 import { processVoiceAttachment } from './voice-handler.js'
+import { isVoiceAttachment } from './voice-attachment.js'
 import { initializeOpencodeForDirectory } from './opencode.js'
 import { getCompactSessionContext, getLastSessionId } from './markdown.js'
 import { getThreadSession } from './database.js'
@@ -40,6 +41,37 @@ function extractQueueSuffix(prompt: string): { prompt: string; forceQueue: boole
     return { prompt, forceQueue: false }
   }
   return { prompt: prompt.replace(QUEUE_SUFFIX_RE, '').trimEnd(), forceQueue: true }
+}
+
+function shouldSkipEmptyPrompt({
+  message,
+  prompt,
+  images,
+  hasVoiceAttachment,
+}: {
+  message: Message
+  prompt: string
+  images?: DiscordFileAttachment[]
+  hasVoiceAttachment: boolean
+}): boolean {
+  if (prompt.trim()) {
+    return false
+  }
+  if ((images?.length || 0) > 0) {
+    return false
+  }
+
+  const inferredVoiceAttachment = message.attachments.some((attachment) => {
+    return isVoiceAttachment(attachment)
+  })
+  if (!hasVoiceAttachment && !inferredVoiceAttachment && message.attachments.size === 0) {
+    return false
+  }
+
+  voiceLogger.warn(
+    `[INGRESS] Skipping empty prompt after preprocessing attachments=${message.attachments.size} hasVoiceAttachment=${hasVoiceAttachment} inferredVoiceAttachment=${inferredVoiceAttachment}`,
+  )
+  return true
 }
 
 /**
@@ -156,15 +188,30 @@ export async function preprocessExistingThreadMessage({
     return { prompt: '', mode: 'opencode', skip: true }
   }
 
+  // Extract queue suffix from raw message content BEFORE appending text
+  // attachments. Otherwise a text file attachment pushes "? queue" away from
+  // the end of the string and the regex fails to match.
+  const qs = extractQueueSuffix(messageContent)
+
   const fileAttachments = await getFileAttachments(message)
   const textAttachmentsContent = await getTextAttachments(message)
-  const promptWithAttachments = textAttachmentsContent
-    ? `${messageContent}\n\n${textAttachmentsContent}`
-    : messageContent
+  const prompt = textAttachmentsContent
+    ? `${qs.prompt}\n\n${textAttachmentsContent}`
+    : qs.prompt
 
-  const qs = extractQueueSuffix(promptWithAttachments)
+  if (
+    shouldSkipEmptyPrompt({
+      message,
+      prompt,
+      images: fileAttachments,
+      hasVoiceAttachment,
+    })
+  ) {
+    return { prompt: '', mode: 'opencode', skip: true }
+  }
+
   return {
-    prompt: qs.prompt,
+    prompt,
     images: fileAttachments.length > 0 ? fileAttachments : undefined,
     mode: qs.forceQueue || voiceResult?.queueMessage ? 'local-queue' : 'opencode',
   }
@@ -212,7 +259,7 @@ export async function preprocessNewSessionMessage({
     .catch((error) => {
       logger.warn(
         `[SESSION] Failed to fetch starter message for thread ${thread.id}:`,
-        error instanceof Error ? error.message : String(error),
+        error instanceof Error ? error.stack : String(error),
       )
       return null
     })
@@ -228,6 +275,16 @@ export async function preprocessNewSessionMessage({
   }
 
   const qs = extractQueueSuffix(prompt)
+  if (
+    shouldSkipEmptyPrompt({
+      message,
+      prompt: qs.prompt,
+      hasVoiceAttachment,
+    })
+  ) {
+    return { prompt: '', mode: 'opencode', skip: true }
+  }
+
   return {
     prompt: qs.prompt,
     mode: qs.forceQueue || voiceResult?.queueMessage ? 'local-queue' : 'opencode',
@@ -268,15 +325,29 @@ export async function preprocessNewThreadMessage({
     return { prompt: '', mode: 'opencode', skip: true }
   }
 
+  // Extract queue suffix from raw message content BEFORE appending text
+  // attachments (same fix as preprocessExistingThreadMessage).
+  const qs = extractQueueSuffix(messageContent)
+
   const fileAttachments = await getFileAttachments(message)
   const textAttachmentsContent = await getTextAttachments(message)
-  const promptWithAttachments = textAttachmentsContent
-    ? `${messageContent}\n\n${textAttachmentsContent}`
-    : messageContent
+  const prompt = textAttachmentsContent
+    ? `${qs.prompt}\n\n${textAttachmentsContent}`
+    : qs.prompt
 
-  const qs = extractQueueSuffix(promptWithAttachments)
+  if (
+    shouldSkipEmptyPrompt({
+      message,
+      prompt,
+      images: fileAttachments,
+      hasVoiceAttachment,
+    })
+  ) {
+    return { prompt: '', mode: 'opencode', skip: true }
+  }
+
   return {
-    prompt: qs.prompt,
+    prompt,
     images: fileAttachments.length > 0 ? fileAttachments : undefined,
     mode: qs.forceQueue || voiceResult?.queueMessage ? 'local-queue' : 'opencode',
   }

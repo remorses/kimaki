@@ -17,7 +17,7 @@ import { createLogger, formatErrorWithStack, LogPrefix } from './logger.js'
 import { notifyError } from './sentry.js'
 import type { ThreadStartMarker } from './system-message.js'
 import {
-  getLocalTimeZone,
+  type ScheduledTaskPayload,
   getNextCronRun,
   getPromptPreview,
   parseScheduledTaskPayload,
@@ -53,14 +53,7 @@ async function executeThreadScheduledTask({
 }: {
   rest: REST
   task: ScheduledTask
-  payload: {
-    threadId: string
-    prompt: string
-    agent: string | null
-    model: string | null
-    username: string | null
-    userId: string | null
-  }
+  payload: Extract<ScheduledTaskPayload, { kind: 'thread' }>
 }): Promise<void | Error> {
   const marker: ThreadStartMarker = {
     cliThreadPrompt: true,
@@ -70,6 +63,7 @@ async function executeThreadScheduledTask({
     ...(payload.model ? { model: payload.model } : {}),
     ...(payload.username ? { username: payload.username } : {}),
     ...(payload.userId ? { userId: payload.userId } : {}),
+    ...(payload.permissions?.length ? { permissions: payload.permissions } : {}),
   }
   const embed = [{ color: 0x2b2d31, footer: { text: yaml.dump(marker) } }]
   const prefixedPrompt = `» **kimaki-cli:** ${payload.prompt}`
@@ -99,17 +93,7 @@ async function executeChannelScheduledTask({
 }: {
   rest: REST
   task: ScheduledTask
-  payload: {
-    channelId: string
-    prompt: string
-    name: string | null
-    notifyOnly: boolean
-    worktreeName: string | null
-    agent: string | null
-    model: string | null
-    username: string | null
-    userId: string | null
-  }
+  payload: Extract<ScheduledTaskPayload, { kind: 'channel' }>
 }): Promise<void | Error> {
   const marker: ThreadStartMarker | undefined = payload.notifyOnly
     ? undefined
@@ -122,6 +106,7 @@ async function executeChannelScheduledTask({
         ...(payload.model ? { model: payload.model } : {}),
         ...(payload.username ? { username: payload.username } : {}),
         ...(payload.userId ? { userId: payload.userId } : {}),
+        ...(payload.permissions?.length ? { permissions: payload.permissions } : {}),
       }
   const embeds = marker
     ? [{ color: 0x2b2d31, footer: { text: yaml.dump(marker) } }]
@@ -246,7 +231,8 @@ async function finalizeSuccessfulTask({
     return
   }
 
-  const timezone = task.timezone || getLocalTimeZone()
+  // Use stored timezone, falling back to UTC (not machine local) for consistency
+  const timezone = task.timezone || 'UTC'
   const nextRunResult = getNextCronRun({
     cronExpr: task.cron_expr,
     timezone,
@@ -278,7 +264,8 @@ async function finalizeFailedTask({
   error: Error
 }): Promise<void> {
   if (task.schedule_kind === 'cron' && task.cron_expr) {
-    const timezone = task.timezone || getLocalTimeZone()
+    // Use stored timezone, falling back to UTC (not machine local) for consistency
+    const timezone = task.timezone || 'UTC'
     const nextRunResult = getNextCronRun({
       cronExpr: task.cron_expr,
       timezone,

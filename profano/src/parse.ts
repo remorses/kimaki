@@ -35,8 +35,12 @@ export interface FunctionStat {
   lineNumber: number
   selfSamples: number
   selfPercent: number
-  /** Percent of non-idle active samples */
+  /** Percent of non-idle active samples (self) */
   activePercent: number
+  totalSamples: number
+  totalPercent: number
+  /** Percent of non-idle active samples (total/inclusive) */
+  totalActivePercent: number
 }
 
 const IDLE_NAMES = new Set(['(idle)', '(garbage collector)', '(program)', '(root)'])
@@ -57,13 +61,38 @@ export function analyze(profile: CpuProfile): {
     nodes.set(node.id, node)
   }
 
+  // Build parent map for walking up the call stack
+  const parentMap = new Map<number, number>()
+  for (const node of profile.nodes) {
+    if (node.children) {
+      for (const childId of node.children) {
+        parentMap.set(childId, node.id)
+      }
+    }
+  }
+
   // Count self-time samples per node
   const selfCounts = new Map<number, number>()
   for (const id of profile.samples) {
     selfCounts.set(id, (selfCounts.get(id) || 0) + 1)
   }
 
-  const totalSamples = profile.samples.length
+  // Count total-time (inclusive) samples per node.
+  // For each sample, walk from the sampled node up to root,
+  // counting each ancestor once per sample.
+  const totalCounts = new Map<number, number>()
+  for (const id of profile.samples) {
+    const visited = new Set<number>()
+    let current: number | undefined = id
+    while (current !== undefined) {
+      if (visited.has(current)) break
+      visited.add(current)
+      totalCounts.set(current, (totalCounts.get(current) || 0) + 1)
+      current = parentMap.get(current)
+    }
+  }
+
+  const sampleCount = profile.samples.length
   const nonIdleSamples = [...selfCounts.entries()]
     .filter(([id]) => {
       const node = nodes.get(id)
@@ -71,45 +100,48 @@ export function analyze(profile: CpuProfile): {
     })
     .reduce((sum, [, count]) => sum + count, 0)
 
-  // Aggregate by function identity (name + url + line)
+  // Aggregate by function identity (name + url + line).
+  // Collect both self and total counts from all nodes with the same identity.
   const fnMap = new Map<string, FunctionStat>()
-  for (const [id, count] of selfCounts) {
-    const node = nodes.get(id)
-    if (!node) {
-      continue
-    }
+  for (const node of profile.nodes) {
     const { functionName, url, lineNumber } = node.callFrame
-    if (IDLE_NAMES.has(functionName)) {
-      continue
-    }
+    if (IDLE_NAMES.has(functionName)) continue
+    const self = selfCounts.get(node.id) || 0
+    const total = totalCounts.get(node.id) || 0
+    if (self === 0 && total === 0) continue
+
     const key = `${functionName}|${url}|${lineNumber}`
     const existing = fnMap.get(key)
     if (existing) {
-      existing.selfSamples += count
+      existing.selfSamples += self
+      existing.totalSamples += total
     } else {
       fnMap.set(key, {
         functionName: functionName || '(anonymous)',
         url,
         lineNumber,
-        selfSamples: count,
+        selfSamples: self,
         selfPercent: 0,
         activePercent: 0,
+        totalSamples: total,
+        totalPercent: 0,
+        totalActivePercent: 0,
       })
     }
   }
 
-  // Compute percentages
+  // Compute percentages, sort by self-time by default
   const functions: FunctionStat[] = [...fnMap.values()]
-    .map((fn) => {
-      return {
-        ...fn,
-        selfPercent: totalSamples > 0 ? (fn.selfSamples / totalSamples) * 100 : 0,
-        activePercent: nonIdleSamples > 0 ? (fn.selfSamples / nonIdleSamples) * 100 : 0,
-      }
-    })
+    .map((fn) => ({
+      ...fn,
+      selfPercent: sampleCount > 0 ? (fn.selfSamples / sampleCount) * 100 : 0,
+      activePercent: nonIdleSamples > 0 ? (fn.selfSamples / nonIdleSamples) * 100 : 0,
+      totalPercent: sampleCount > 0 ? (fn.totalSamples / sampleCount) * 100 : 0,
+      totalActivePercent: nonIdleSamples > 0 ? (fn.totalSamples / nonIdleSamples) * 100 : 0,
+    }))
     .sort((a, b) => b.selfSamples - a.selfSamples)
 
   const durationSeconds = (profile.endTime - profile.startTime) / 1e6
 
-  return { durationSeconds, totalSamples, nonIdleSamples, functions }
+  return { durationSeconds, totalSamples: sampleCount, nonIdleSamples, functions }
 }

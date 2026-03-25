@@ -539,11 +539,21 @@ e2eTest('thread message queue ordering', () => {
 
       const th = discord.thread(thread.id)
 
-      // Wait for the first bot reply so session is established
+      // Wait for the first bot reply AND its footer so the first response
+      // cycle is fully complete before sending follow-ups. Without this,
+      // the footer for "one" can still be in-flight when the snapshot runs.
       const firstReply = await th.waitForBotReply({
         timeout: 4_000,
       })
       expect(firstReply.content.trim().length).toBeGreaterThan(0)
+
+      await waitForFooterMessage({
+        discord,
+        threadId: thread.id,
+        timeout: 4_000,
+        afterMessageIncludes: 'one',
+        afterAuthorId: TEST_USER_ID,
+      })
 
       // Snapshot bot message count before sending follow-ups
       const before = await th.getMessages()
@@ -588,10 +598,13 @@ e2eTest('thread message queue ordering', () => {
         Reply with exactly: one
         --- from: assistant (TestBot)
         ⬥ ok
+        *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2*
         --- from: user (queue-tester)
         Reply with exactly: two
         Reply with exactly: three
         --- from: assistant (TestBot)
+        ⬥ ok
+        ⬥ ok
         *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2*"
       `)
       const userThreeIndex = after.findIndex((message) => {

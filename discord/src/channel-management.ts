@@ -232,7 +232,7 @@ export async function createDefaultKimakiChannel({
     await guild.channels.fetch()
   } catch (error) {
     logger.warn(
-      `Could not fetch guild channels for ${guild.name}: ${error instanceof Error ? error.message : String(error)}`,
+      `Could not fetch guild channels for ${guild.name}: ${error instanceof Error ? error.stack : String(error)}`,
     )
   }
 
@@ -283,7 +283,7 @@ export async function createDefaultKimakiChannel({
       logger.log(`Initialized git in: ${projectDirectory}`)
     } catch (error) {
       logger.warn(
-        `Could not initialize git in ${projectDirectory}: ${error instanceof Error ? error.message : String(error)}`,
+        `Could not initialize git in ${projectDirectory}: ${error instanceof Error ? error.stack : String(error)}`,
       )
     }
   }

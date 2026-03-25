@@ -533,6 +533,19 @@ async function legacyHandler(id: string) {
 
 > At boundaries where legacy code expects exceptions, check `instanceof Error` and throw with `cause`. This preserves the error chain and keeps the pattern consistent.
 
+### Converting `{ data, error }` Returns
+
+Some SDKs (Supabase, Stripe, etc.) return `{ data, error }` instead of throwing. Destructure inline, check `error` first (truthy, not `instanceof` — most SDKs return plain objects), wrap in a tagged error, then continue with `data`:
+
+```ts
+const { data, error } = await supabase.from('users').select('*').eq('id', id)
+if (error) return new SupabaseError({ cause: error })
+if (data === null) return new NotFoundError({ id })
+// data is narrowed here
+```
+
+> If the SDK's `error` is already an `Error` instance you can return it directly, but wrapping in a domain error is better — gives you `_tag`, typed properties, and `cause` chain. Check `error` with truthy check, not `instanceof Error`, since most SDK error objects are plain objects.
+
 ### Partition: Splitting Successes and Failures
 
 ```ts

@@ -75,7 +75,7 @@ export class SlackBridgeGateway {
       workspaceId,
       authorize,
       gatewayUrlProvider: () => {
-        return this.gatewayUrlOverride ?? `ws://127.0.0.1:${this.port}/gateway`
+        return this.gatewayUrlOverride ?? `ws://127.0.0.1:${this.port}/slack/gateway`
       },
     })
     this.wss = new WebSocketServer({ noServer: true })
@@ -87,7 +87,7 @@ export class SlackBridgeGateway {
         request.url ?? '/',
         `http://${request.headers.host}`,
       ).pathname
-      if (pathname === '/gateway' || pathname === '/gateway/') {
+      if (pathname === '/slack/gateway' || pathname === '/slack/gateway/') {
         this.wss.handleUpgrade(request, socket, head, (ws) => {
           this.wss.emit('connection', ws, request)
         })

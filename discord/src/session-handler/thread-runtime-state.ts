@@ -36,9 +36,12 @@ export type QueuedMessage = {
   command?: { name: string; arguments: string }
   // First-dispatch-only overrides — used when creating a new session.
   // Subsequent queue drains ignore these since the session already exists.
-  // Set by --agent/--model flags on kimaki send or slash commands.
+  // Set by --agent/--model/--permission flags on kimaki send or slash commands.
   agent?: string
   model?: string
+  // Raw permission rule strings ("tool:action" or "tool:pattern:action").
+  // Parsed and merged into session permissions on creation.
+  permissions?: string[]
   // Tracking fields for scheduled tasks. Stored in the DB via
   // setSessionStartSource() after the session is created, so the session
   // list can show which sessions were started by scheduled tasks.

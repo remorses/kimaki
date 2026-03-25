@@ -74,6 +74,15 @@ zele mail list --account user@work.com
 # list inbox
 zele mail list
 
+# list only unread emails
+zele mail list --filter "is:unread"
+
+# list unread emails with attachments in inbox
+zele mail list --filter "is:unread has:attachment"
+
+# combine filter with folder
+zele mail list --filter "from:github" --folder sent
+
 # search mail
 zele mail search "from:github subject:review"
 

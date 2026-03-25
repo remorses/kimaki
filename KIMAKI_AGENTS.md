@@ -411,9 +411,9 @@ for checkout validation requests, prefer non-recursive checks unless the user as
 
 ## opencode plugin and env vars
 
-the opencode plugin (`discord/src/opencode-plugin.ts`) runs inside the **opencode server process**, not the kimaki bot process. this means `config.ts` state (like `getDataDir()`, etc.) is not available there.
+the opencode plugin (`discord/src/kimaki-opencode-plugin.ts`) runs inside the **opencode server process**, not the kimaki bot process. this means `config.ts` state (like `getDataDir()`, etc.) is not available there.
 
-**CRITICAL: never export utility functions from `opencode-plugin.ts`.** opencode's plugin loader calls every exported function in the module as a plugin initializer. if you export a helper like `condenseMemoryMd(content: string)`, it will be called with a PluginInput object instead of a string and crash. only the plugin entrypoint function should be exported. move any utilities to separate files (e.g. `condense-memory.ts`) and import them.
+**CRITICAL: never export utility functions from `kimaki-opencode-plugin.ts`.** opencode's plugin loader calls every exported function in the module as a plugin initializer. if you export a helper like `condenseMemoryMd(content: string)`, it will be called with a PluginInput object instead of a string and crash. only the plugin entrypoint function should be exported. move any utilities to separate files (e.g. `condense-memory.ts`) and import them.
 
 we should architecture our opencode plugins as many separate plugins to make them readable and easy to understand. every export will be interpreted as a different plugin.
 
@@ -559,7 +559,7 @@ discord.js has a startTyping method. this method will show a typing indicator in
 `discord-slack-bridge/` is a package that lets discord.js bots (like kimaki)
 control a Slack workspace without code changes. it translates Discord REST
 calls to Slack Web API calls and Slack webhook events to Discord Gateway
-dispatches. see `docs/discord-slack-bridge-spec.md` for the full spec.
+dispatches. see `slop/discord-slack-bridge-spec.md` for the full spec.
 
 key design: stateless ID mapping (no database). thread IDs encoded as
 `THR_{channel}_{ts}`, message IDs as `MSG_{channel}_{ts}`.

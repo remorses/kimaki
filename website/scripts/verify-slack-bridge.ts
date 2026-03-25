@@ -71,7 +71,7 @@ async function checkGatewayBotEndpoint({ baseUrl }: { baseUrl: URL }): Promise<C
 }
 
 async function checkGatewayProxyEndpoint({ baseUrl }: { baseUrl: URL }): Promise<CheckResult> {
-  const url = new URL('/gateway', baseUrl)
+  const url = new URL('/slack/gateway', baseUrl)
   const response = await fetch(url)
   if (response.status !== 426) {
     return {

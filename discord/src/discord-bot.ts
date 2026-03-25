@@ -6,6 +6,7 @@ import {
   initDatabase,
   closeDatabase,
   getThreadWorktree,
+  getThreadSession,
   createPendingWorktree,
   setWorktreeReady,
   setWorktreeError,
@@ -14,6 +15,7 @@ import {
   getChannelDirectory,
   getPrisma,
   cancelAllPendingIpcRequests,
+  deleteChannelDirectoryById,
 } from './database.js'
 import {
   stopOpencodeServer,
@@ -26,6 +28,7 @@ import {
   splitMarkdownForDiscord,
   sendThreadMessage,
   SILENT_MESSAGE_FLAGS,
+  NOTIFY_MESSAGE_FLAGS,
   reactToThread,
   stripMentions,
   hasKimakiBotPermission,
@@ -40,6 +43,7 @@ import {
   getTextAttachments,
   resolveMentions,
 } from './message-formatting.js'
+import { isVoiceAttachment } from './voice-attachment.js'
 import {
   preprocessExistingThreadMessage,
   preprocessNewThreadMessage,
@@ -71,7 +75,7 @@ import {
 import { runShellCommand } from './commands/run-command.js'
 import { registerInteractionHandler } from './interaction-handler.js'
 import { getDiscordRestApiUrl } from './discord-urls.js'
-import { stopHranaServer } from './hrana-server.js'
+import { markDiscordGatewayReady, stopHranaServer } from './hrana-server.js'
 import { notifyError } from './sentry.js'
 import { flushDebouncedProcessCallbacks } from './debounced-process-flush.js'
 import { startRuntimeIdleSweeper } from './runtime-idle-sweeper.js'
@@ -281,6 +285,7 @@ export async function startDiscordBot({
     }
 
     voiceLogger.log('[READY] Bot is ready')
+    markDiscordGatewayReady()
 
     // Log voice transcription provider
     const asrProvider = process.env.ASR_PROVIDER?.toLowerCase()
@@ -325,7 +330,7 @@ export async function startDiscordBot({
       }
     })().catch((error) => {
       discordLogger.warn(
-        `Background guild channel scan failed: ${error instanceof Error ? error.message : String(error)}`,
+        `Background guild channel scan failed: ${error instanceof Error ? error.stack : String(error)}`,
       )
     })
   }
@@ -435,6 +440,9 @@ export async function startDiscordBot({
       const cliInjectedModel = isCliInjectedPrompt
         ? promptMarker?.model
         : undefined
+      const cliInjectedPermissions = isCliInjectedPrompt
+        ? promptMarker?.permissions
+        : undefined
 
       // Always ignore our own messages (unless CLI-injected prompt above).
       // Without this, assigning the Kimaki role to the bot itself would loop.
@@ -522,6 +530,29 @@ export async function startDiscordBot({
         const thread = channel as ThreadChannel
         discordLogger.log(`Message in thread ${thread.name} (${thread.id})`)
 
+        // Only respond in threads kimaki knows about (has a session row in DB),
+        // where the bot is explicitly @mentioned, or where the bot created the
+        // thread itself (e.g. /new-worktree, /fork, kimaki send). This prevents
+        // the bot from hijacking user-created threads in project channels while
+        // still responding to bot-created threads that may not yet have a session
+        // row with a non-empty session_id (createPendingWorktree sets ''). (GitHub #84)
+        const hasExistingSession = await getThreadSession(thread.id)
+        const botMentioned =
+          discordClient.user && message.mentions.has(discordClient.user.id)
+        const botCreatedThread =
+          discordClient.user && thread.ownerId === discordClient.user.id
+        if (
+          !hasExistingSession &&
+          !botMentioned &&
+          !isCliInjectedPrompt &&
+          !botCreatedThread
+        ) {
+          discordLogger.log(
+            `Ignoring thread ${thread.id}: no existing session and bot not mentioned`,
+          )
+          return
+        }
+
         const parent = thread.parent as TextChannel | null
         let projectDirectory: string | undefined
         if (parent) {
@@ -544,7 +575,7 @@ export async function startDiscordBot({
           if (worktreeInfo.status === 'error') {
             await message.reply({
               content: `❌ Worktree creation failed: ${(worktreeInfo.error_message || '').slice(0, 1900)}`,
-              flags: SILENT_MESSAGE_FLAGS,
+              flags: NOTIFY_MESSAGE_FLAGS,
             })
             return
           }
@@ -562,7 +593,7 @@ export async function startDiscordBot({
           discordLogger.error(`Directory does not exist: ${projectDirectory}`)
           await message.reply({
             content: `✗ Directory does not exist: ${JSON.stringify(projectDirectory).slice(0, 1900)}`,
-            flags: SILENT_MESSAGE_FLAGS,
+            flags: NOTIFY_MESSAGE_FLAGS,
           })
           return
         }
@@ -589,8 +620,8 @@ export async function startDiscordBot({
           }
         }
 
-        const hasVoiceAttachment = message.attachments.some((a) => {
-          return a.contentType?.startsWith('audio/')
+        const hasVoiceAttachment = message.attachments.some((attachment) => {
+          return isVoiceAttachment(attachment)
         })
 
         if (!projectDirectory) {
@@ -648,6 +679,7 @@ export async function startDiscordBot({
           appId: currentAppId,
           agent: cliInjectedAgent,
           model: cliInjectedModel,
+          permissions: cliInjectedPermissions,
           sessionStartSource: sessionStartSource
             ? {
                 scheduleKind: sessionStartSource.scheduleKind,
@@ -713,7 +745,7 @@ export async function startDiscordBot({
           discordLogger.error(`Directory does not exist: ${projectDirectory}`)
           await message.reply({
             content: `✗ Directory does not exist: ${JSON.stringify(projectDirectory).slice(0, 1900)}`,
-            flags: SILENT_MESSAGE_FLAGS,
+            flags: NOTIFY_MESSAGE_FLAGS,
           })
           return
         }
@@ -734,9 +766,9 @@ export async function startDiscordBot({
           }
         }
 
-        const hasVoice = message.attachments.some((a) =>
-          a.contentType?.startsWith('audio/'),
-        )
+        const hasVoice = message.attachments.some((attachment) => {
+          return isVoiceAttachment(attachment)
+        })
 
         const baseThreadName = hasVoice
           ? 'Voice Message'
@@ -793,7 +825,7 @@ export async function startDiscordBot({
             })
             await thread.send({
               content: `⚠️ Failed to create worktree: ${errMsg}\nUsing main project directory instead.`,
-              flags: SILENT_MESSAGE_FLAGS,
+              flags: NOTIFY_MESSAGE_FLAGS,
             })
           } else {
             await setWorktreeReady({
@@ -850,7 +882,7 @@ export async function startDiscordBot({
         ).slice(0, 1900)
         await message.reply({
           content: `Error: ${errMsg}`,
-          flags: SILENT_MESSAGE_FLAGS,
+          flags: NOTIFY_MESSAGE_FLAGS,
         })
       } catch (sendError) {
         voiceLogger.error(
@@ -881,7 +913,7 @@ export async function startDiscordBot({
         .catch((error) => {
           discordLogger.warn(
             `[THREAD_CREATE] Failed to fetch starter message for thread ${thread.id}:`,
-            error instanceof Error ? error.message : String(error),
+            error instanceof Error ? error.stack : String(error),
           )
           return null
         })
@@ -941,7 +973,7 @@ export async function startDiscordBot({
         )
         await thread.send({
           content: `✗ Directory does not exist: ${JSON.stringify(projectDirectory).slice(0, 1900)}`,
-          flags: SILENT_MESSAGE_FLAGS,
+          flags: NOTIFY_MESSAGE_FLAGS,
         })
         return
       }
@@ -984,11 +1016,11 @@ export async function startDiscordBot({
           })
           await (worktreeStatusMessage?.edit({
             content: `⚠️ Failed to create worktree: ${worktreeResult.message}\nUsing main project directory instead.`,
-            flags: SILENT_MESSAGE_FLAGS,
+            flags: NOTIFY_MESSAGE_FLAGS,
           }) ||
             thread.send({
               content: `⚠️ Failed to create worktree: ${worktreeResult.message}\nUsing main project directory instead.`,
-              flags: SILENT_MESSAGE_FLAGS,
+              flags: NOTIFY_MESSAGE_FLAGS,
             }))
           return projectDirectory
         }
@@ -1039,6 +1071,7 @@ export async function startDiscordBot({
         appId: currentAppId,
         agent: marker.agent,
         model: marker.model,
+        permissions: marker.permissions,
         mode: 'opencode',
         sessionStartSource: botThreadStartSource
           ? {
@@ -1059,7 +1092,7 @@ export async function startDiscordBot({
         ).slice(0, 1900)
         await thread.send({
           content: `Error: ${errMsg}`,
-          flags: SILENT_MESSAGE_FLAGS,
+          flags: NOTIFY_MESSAGE_FLAGS,
         })
       } catch (sendError) {
         voiceLogger.error(
@@ -1076,7 +1109,31 @@ export async function startDiscordBot({
     disposeRuntime(thread.id)
   })
 
-  await discordClient.login(token)
+  // Clean up SQLite when a Discord channel is deleted so project list
+  // doesn't show stale ghost entries. Thread runtimes inside the deleted
+  // channel are disposed by their own ThreadDelete events from Discord.
+  discordClient.on(Events.ChannelDelete, async (channel) => {
+    try {
+      const deleted = await deleteChannelDirectoryById(channel.id)
+      if (deleted) {
+        discordLogger.log(
+          `Cleaned up channel_directories for deleted channel ${channel.id}`,
+        )
+      }
+    } catch (error) {
+      notifyError(
+        error instanceof Error ? error : new Error(String(error)),
+        `Failed to clean up channel_directories for deleted channel ${channel.id}`,
+      )
+    }
+  })
+
+  // Skip login if the caller already connected the client (e.g. cli.ts logs in
+  // before calling startDiscordBot). Calling login() again destroys the existing
+  // WebSocket (close code 1000) and triggers a spurious ShardReconnecting event.
+  if (!discordClient.isReady()) {
+    await discordClient.login(token)
+  }
 
   startHeapMonitor()
   const stopTaskRunner = startTaskRunner({ token })
@@ -1101,7 +1158,7 @@ export async function startDiscordBot({
       await flushDebouncedProcessCallbacks().catch((error) => {
         discordLogger.warn(
           'Failed to flush debounced process callbacks:',
-          error instanceof Error ? error.message : String(error),
+          error instanceof Error ? error.stack : String(error),
         )
       })
 

@@ -15,7 +15,7 @@ import { betterAuth } from 'better-auth/minimal'
 import { prismaAdapter } from 'better-auth/adapters/prisma'
 import { createAuthMiddleware, getOAuthState } from 'better-auth/api'
 import { createPrisma } from 'db/src'
-import type { HonoBindings } from './env.js'
+import type { Env } from './env.js'
 import { upsertGatewayClientAndRefreshKv } from './gateway-client-kv.js'
 
 // Same permissions list used in discord/src/utils.ts generateBotInstallUrl.
@@ -66,7 +66,7 @@ function getGuildIdFromRequestUrl({
   return guildId
 }
 
-export function createAuth({ env, baseURL }: { env: HonoBindings; baseURL: string }) {
+export function createAuth({ env, baseURL }: { env: Env; baseURL: string }) {
   const prisma = createPrisma(env.HYPERDRIVE.connectionString)
 
   const auth = betterAuth({
@@ -134,6 +134,7 @@ export function createAuth({ env, baseURL }: { env: HonoBindings; baseURL: strin
           console.warn('better-auth callback: no clientId/clientSecret in OAuth state')
           return
         }
+        const reachableUrl = state?.reachableUrl as string | undefined
 
         const userId = ctx.context.newSession?.user?.id
         if (!userId) {
@@ -148,6 +149,7 @@ export function createAuth({ env, baseURL }: { env: HonoBindings; baseURL: strin
           guildId,
           platform: 'discord',
           userId,
+          reachableUrl,
         })
         if (upsertResult instanceof Error) {
           console.error(upsertResult)

@@ -15,7 +15,11 @@ import {
   getAllThreadSessionIds,
 } from '../database.js'
 import { initializeOpencodeForDirectory } from '../opencode.js'
-import { sendThreadMessage, resolveProjectDirectoryFromAutocomplete } from '../discord-utils.js'
+import {
+  sendThreadMessage,
+  resolveProjectDirectoryFromAutocomplete,
+  NOTIFY_MESSAGE_FLAGS,
+} from '../discord-utils.js'
 import { collectLastAssistantParts } from '../message-formatting.js'
 import { createLogger, LogPrefix } from '../logger.js'
 import * as errore from 'errore'
@@ -153,6 +157,7 @@ export async function handleResumeCommand({
       await sendThreadMessage(
         thread,
         `Failed to load message history, but session is connected. You can still send new messages.`,
+        { flags: NOTIFY_MESSAGE_FLAGS },
       )
     }
   } catch (error) {

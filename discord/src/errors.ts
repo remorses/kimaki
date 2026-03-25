@@ -160,7 +160,7 @@ export class NotFastForwardError extends createTaggedError({
 export class ConflictingFilesError extends createTaggedError({
   name: 'ConflictingFilesError',
   message:
-    'Cannot merge: $target worktree has uncommitted changes in overlapping files',
+    'Cannot merge: $target worktree has uncommitted changes in overlapping files. Commit changes in main worktree first, then run `/merge-worktree` again.',
 }) {}
 
 export class PushError extends createTaggedError({
