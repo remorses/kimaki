@@ -7,9 +7,6 @@ import {
   closeDatabase,
   getThreadWorktree,
   getThreadSession,
-  createPendingWorktree,
-  setWorktreeReady,
-  setWorktreeError,
   getChannelWorktreesEnabled,
   getChannelMentionMode,
   getChannelDirectory,
@@ -20,9 +17,8 @@ import {
 import {
   stopOpencodeServer,
 } from './opencode.js'
-import { formatWorktreeName } from './commands/new-worktree.js'
+import { formatWorktreeName, createWorktreeInBackground, worktreeCreatingMessage } from './commands/new-worktree.js'
 import { WORKTREE_PREFIX } from './commands/merge-worktree.js'
-import { createWorktreeWithSubmodules } from './worktrees.js'
 import {
   escapeBackticksInCodeBlocks,
   splitMarkdownForDiscord,
@@ -778,45 +774,23 @@ export async function startDiscordBot({
           )
           discordLogger.log(`[WORKTREE] Creating worktree: ${worktreeName}`)
 
-          // Store pending worktree immediately so bot knows about it
-          await createPendingWorktree({
-            threadId: thread.id,
+          const worktreeStatusMessage = await thread
+            .send({
+              content: worktreeCreatingMessage(worktreeName),
+              flags: SILENT_MESSAGE_FLAGS,
+            })
+            .catch(() => undefined)
+
+          const result = await createWorktreeInBackground({
+            thread,
+            starterMessage: worktreeStatusMessage,
             worktreeName,
             projectDirectory,
+            rest: discordClient.rest,
           })
 
-          const worktreeResult = await createWorktreeWithSubmodules({
-            directory: projectDirectory,
-            name: worktreeName,
-          })
-
-          if (worktreeResult instanceof Error) {
-            const errMsg = worktreeResult.message
-            discordLogger.error(`[WORKTREE] Creation failed: ${errMsg}`)
-            await setWorktreeError({
-              threadId: thread.id,
-              errorMessage: errMsg,
-            })
-            await thread.send({
-              content: `⚠️ Failed to create worktree: ${errMsg}\nUsing main project directory instead.`,
-              flags: NOTIFY_MESSAGE_FLAGS,
-            })
-          } else {
-            await setWorktreeReady({
-              threadId: thread.id,
-              worktreeDirectory: worktreeResult.directory,
-            })
-            sessionDirectory = worktreeResult.directory
-            discordLogger.log(
-              `[WORKTREE] Created: ${worktreeResult.directory} (branch: ${worktreeResult.branch})`,
-            )
-            // React with tree emoji to mark as worktree thread
-            await reactToThread({
-              rest: discordClient.rest,
-              threadId: thread.id,
-              channelId: thread.parentId || undefined,
-              emoji: '🌳',
-            })
+          if (!(result instanceof Error)) {
+            sessionDirectory = result
           }
         }
 
@@ -962,66 +936,24 @@ export async function startDiscordBot({
 
         const worktreeStatusMessage = await thread
           .send({
-            content: `🌳 Creating worktree: ${marker.worktree}\n⏳ Setting up (this can take a bit)...`,
+            content: worktreeCreatingMessage(marker.worktree),
             flags: SILENT_MESSAGE_FLAGS,
           })
-          .catch(() => {
-            return null
-          })
+          .catch(() => undefined)
 
-        await createPendingWorktree({
-          threadId: thread.id,
+        const result = await createWorktreeInBackground({
+          thread,
+          starterMessage: worktreeStatusMessage,
           worktreeName: marker.worktree,
           projectDirectory,
+          rest: discordClient.rest,
         })
 
-        const worktreeResult = await createWorktreeWithSubmodules({
-          directory: projectDirectory,
-          name: marker.worktree,
-        })
-
-        if (errore.isError(worktreeResult)) {
-          discordLogger.error(
-            `[BOT_SESSION] Worktree creation failed: ${worktreeResult.message}`,
-          )
-          await setWorktreeError({
-            threadId: thread.id,
-            errorMessage: worktreeResult.message,
-          })
-          await (worktreeStatusMessage?.edit({
-            content: `⚠️ Failed to create worktree: ${worktreeResult.message}\nUsing main project directory instead.`,
-            flags: NOTIFY_MESSAGE_FLAGS,
-          }) ||
-            thread.send({
-              content: `⚠️ Failed to create worktree: ${worktreeResult.message}\nUsing main project directory instead.`,
-              flags: NOTIFY_MESSAGE_FLAGS,
-            }))
+        if (result instanceof Error) {
           return projectDirectory
         }
 
-        await setWorktreeReady({
-          threadId: thread.id,
-          worktreeDirectory: worktreeResult.directory,
-        })
-        discordLogger.log(
-          `[BOT_SESSION] Worktree created: ${worktreeResult.directory}`,
-        )
-        // React with tree emoji to mark as worktree thread
-        await reactToThread({
-          rest: discordClient.rest,
-          threadId: thread.id,
-          channelId: thread.parentId || undefined,
-          emoji: '🌳',
-        })
-        await (worktreeStatusMessage?.edit({
-          content: `🌳 **Worktree ready: ${marker.worktree}**\n📁 \`${worktreeResult.directory}\`\n🌿 Branch: \`${worktreeResult.branch}\``,
-          flags: SILENT_MESSAGE_FLAGS,
-        }) ||
-          thread.send({
-            content: `🌳 **Worktree ready: ${marker.worktree}**\n📁 \`${worktreeResult.directory}\`\n🌿 Branch: \`${worktreeResult.branch}\``,
-            flags: SILENT_MESSAGE_FLAGS,
-          }))
-        return worktreeResult.directory
+        return result
       })()
 
       discordLogger.log(

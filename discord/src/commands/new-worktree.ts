@@ -37,6 +37,11 @@ import * as errore from 'errore'
 
 const logger = createLogger(LogPrefix.WORKTREE)
 
+/** Status message shown while a worktree is being created. */
+export function worktreeCreatingMessage(worktreeName: string): string {
+  return `🌳 **Creating worktree: ${worktreeName}**\n⏳ Setting up...`
+}
+
 class WorktreeError extends Error {
   constructor(message: string, options?: { cause?: unknown }) {
     super(message, options)
@@ -105,9 +110,18 @@ async function getProjectDirectoryFromChannel(
 }
 
 /**
- * Create worktree in background and update starter message when done.
+ * Create worktree and update the status message when done.
+ * Handles the full lifecycle: pending DB entry, git creation, DB ready/error,
+ * tree emoji reaction, and editing the status message.
+ *
+ * starterMessage is optional — if omitted, status edits are skipped (creation
+ * still proceeds). This keeps worktree creation independent of Discord message
+ * delivery, so a transient send failure never silently skips the worktree.
+ *
+ * Returns the worktree directory on success, or an Error on failure.
+ * Never throws — all internal errors are caught and returned as Error values.
  */
-async function createWorktreeInBackground({
+export async function createWorktreeInBackground({
   thread,
   starterMessage,
   worktreeName,
@@ -116,50 +130,69 @@ async function createWorktreeInBackground({
   rest,
 }: {
   thread: ThreadChannel
-  starterMessage: Message
+  starterMessage?: Message
   worktreeName: string
   projectDirectory: string
   baseBranch?: string
   rest: REST
-}): Promise<void> {
-  logger.log(
-    `Creating worktree "${worktreeName}" for project ${projectDirectory}${baseBranch ? ` from ${baseBranch}` : ''}`,
-  )
-  const worktreeResult = await createWorktreeWithSubmodules({
-    directory: projectDirectory,
-    name: worktreeName,
-    baseBranch,
+}): Promise<string | Error> {
+  return errore.tryAsync({
+    try: async () => {
+      logger.log(
+        `Creating worktree "${worktreeName}" for project ${projectDirectory}${baseBranch ? ` from ${baseBranch}` : ''}`,
+      )
+
+      await createPendingWorktree({
+        threadId: thread.id,
+        worktreeName,
+        projectDirectory,
+      })
+
+      const worktreeResult = await createWorktreeWithSubmodules({
+        directory: projectDirectory,
+        name: worktreeName,
+        baseBranch,
+      })
+
+      if (worktreeResult instanceof Error) {
+        const errorMsg = worktreeResult.message
+        logger.error('[WORKTREE] Creation failed:', worktreeResult)
+        await setWorktreeError({ threadId: thread.id, errorMessage: errorMsg })
+        await starterMessage
+          ?.edit(`🌳 **Worktree: ${worktreeName}**\n❌ ${errorMsg}`)
+          .catch(() => {})
+        return worktreeResult
+      }
+
+      // Success - update database and edit starter message
+      await setWorktreeReady({
+        threadId: thread.id,
+        worktreeDirectory: worktreeResult.directory,
+      })
+
+      // React with tree emoji to mark as worktree thread
+      await reactToThread({
+        rest,
+        threadId: thread.id,
+        channelId: thread.parentId || undefined,
+        emoji: '🌳',
+      })
+
+      await starterMessage
+        ?.edit(
+          `🌳 **Worktree: ${worktreeName}**\n` +
+            `📁 \`${worktreeResult.directory}\`\n` +
+            `🌿 Branch: \`${worktreeResult.branch}\``,
+        )
+        .catch(() => {})
+
+      return worktreeResult.directory
+    },
+    catch: (e) => {
+      logger.error('[WORKTREE] Unexpected error in createWorktreeInBackground:', e)
+      return new Error(`Worktree creation failed: ${e instanceof Error ? e.message : String(e)}`, { cause: e })
+    },
   })
-
-  if (worktreeResult instanceof Error) {
-    const errorMsg = worktreeResult.message
-    logger.error('[NEW-WORKTREE] Error:', worktreeResult)
-    await setWorktreeError({ threadId: thread.id, errorMessage: errorMsg })
-    await starterMessage.edit(
-      `🌳 **Worktree: ${worktreeName}**\n❌ ${errorMsg}`,
-    )
-    return
-  }
-
-  // Success - update database and edit starter message
-  await setWorktreeReady({
-    threadId: thread.id,
-    worktreeDirectory: worktreeResult.directory,
-  })
-
-  // React with tree emoji to mark as worktree thread
-  await reactToThread({
-    rest,
-    threadId: thread.id,
-    channelId: thread.parentId || undefined,
-    emoji: '🌳',
-  })
-
-  await starterMessage.edit(
-    `🌳 **Worktree: ${worktreeName}**\n` +
-      `📁 \`${worktreeResult.directory}\`\n` +
-      `🌿 Branch: \`${worktreeResult.branch}\``,
-  )
 }
 
 async function findExistingWorktreePath({
@@ -289,7 +322,7 @@ export async function handleNewWorktreeCommand({
   const result = await errore.tryAsync({
     try: async () => {
       const starterMessage = await textChannel.send({
-        content: `🌳 **Creating worktree: ${worktreeName}**\n⏳ Setting up...`,
+        content: worktreeCreatingMessage(worktreeName),
         flags: SILENT_MESSAGE_FLAGS,
       })
 
@@ -314,13 +347,6 @@ export async function handleNewWorktreeCommand({
   }
 
   const { thread, starterMessage } = result
-
-  // Store pending worktree in database
-  await createPendingWorktree({
-    threadId: thread.id,
-    worktreeName,
-    projectDirectory,
-  })
 
   await command.editReply(`Creating worktree in ${thread.toString()}`)
 
@@ -412,16 +438,9 @@ async function handleWorktreeInThread({
     return
   }
 
-  // Store pending worktree in database for this existing thread
-  await createPendingWorktree({
-    threadId: thread.id,
-    worktreeName,
-    projectDirectory,
-  })
-
   // Send status message in thread
   const statusMessage = await thread.send({
-    content: `🌳 **Creating worktree: ${worktreeName}**\n⏳ Setting up...`,
+    content: worktreeCreatingMessage(worktreeName),
     flags: SILENT_MESSAGE_FLAGS,
   })
 
