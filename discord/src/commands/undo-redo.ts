@@ -6,6 +6,7 @@ import {
   type TextChannel,
   type ThreadChannel,
 } from 'discord.js'
+import type { OpencodeClient } from '@opencode-ai/sdk/v2'
 import type { CommandContext } from './types.js'
 import { getThreadSession } from '../database.js'
 import { initializeOpencodeForDirectory } from '../opencode.js'
@@ -16,6 +17,30 @@ import {
 import { createLogger, LogPrefix } from '../logger.js'
 
 const logger = createLogger(LogPrefix.UNDO_REDO)
+
+async function waitForSessionIdle({
+  client,
+  sessionId,
+  directory,
+  timeoutMs = 2_000,
+}: {
+  client: OpencodeClient
+  sessionId: string
+  directory: string
+  timeoutMs?: number
+}): Promise<void> {
+  const deadline = Date.now() + timeoutMs
+  while (Date.now() < deadline) {
+    const statusResponse = await client.session.status({ directory })
+    const sessionStatus = statusResponse.data?.[sessionId]
+    if (!sessionStatus || sessionStatus.type === 'idle') {
+      return
+    }
+    await new Promise((resolve) => {
+      setTimeout(resolve, 50)
+    })
+  }
+}
 
 export async function handleUndoCommand({
   command,
@@ -57,7 +82,7 @@ export async function handleUndoCommand({
     return
   }
 
-  const { projectDirectory } = resolved
+  const { projectDirectory, workingDirectory } = resolved
 
   const sessionId = await getThreadSession(channel.id)
 
@@ -79,10 +104,10 @@ export async function handleUndoCommand({
 
   try {
     const client = getClient()
-
     // Fetch session to check existing revert state
     const sessionResponse = await client.session.get({
       sessionID: sessionId,
+      directory: workingDirectory,
     })
     if (sessionResponse.error) {
       await command.editReply(`Failed to undo: ${JSON.stringify(sessionResponse.error)}`)
@@ -93,16 +118,27 @@ export async function handleUndoCommand({
     // (use-session-commands.tsx always aborts non-idle sessions before revert).
     // session.status() returns a sparse map — only non-idle sessions have entries,
     // so a missing key means idle.
-    const statusResponse = await client.session.status({})
+    const statusResponse = await client.session.status({
+      directory: workingDirectory,
+    })
     const sessionStatus = statusResponse.data?.[sessionId]
     if (sessionStatus && sessionStatus.type !== 'idle') {
-      await client.session.abort({ sessionID: sessionId }).catch((error) => {
+      await client.session.abort({
+        sessionID: sessionId,
+        directory: workingDirectory,
+      }).catch((error) => {
         logger.warn(`[UNDO] abort failed for ${sessionId}`, error)
+      })
+      await waitForSessionIdle({
+        client,
+        sessionId,
+        directory: workingDirectory,
       })
     }
 
     const messagesResponse = await client.session.messages({
       sessionID: sessionId,
+      directory: workingDirectory,
     })
     if (messagesResponse.error) {
       await command.editReply(`Failed to undo: ${JSON.stringify(messagesResponse.error)}`)
@@ -131,21 +167,44 @@ export async function handleUndoCommand({
       return
     }
 
+    const targetAssistantMessage = [...messagesResponse.data].reverse().find((m) => {
+      return m.info.role === 'assistant' && m.info.parentID === targetUserMessage.info.id
+    })
+    const revertMessageId = targetAssistantMessage?.info.id || targetUserMessage.info.id
+
     // session.revert() reverts filesystem patches (file edits, writes) and
     // marks the session with revert.messageID. Messages are NOT deleted — they
     // get cleaned up automatically on the next promptAsync() call via
     // SessionRevert.cleanup(). The model only sees messages before the revert
     // point when processing the next prompt.
-    const response = await client.session.revert({
+    logger.log(`[UNDO] session.revert start messageId=${revertMessageId}`)
+    let response = await client.session.revert({
       sessionID: sessionId,
-      messageID: targetUserMessage.info.id,
+      directory: workingDirectory,
+      messageID: revertMessageId,
     })
+    logger.log(`[UNDO] session.revert done error=${Boolean(response.error)}`)
 
     if (response.error) {
-      await command.editReply(
-        `Failed to undo: ${JSON.stringify(response.error)}`,
-      )
-      return
+      logger.log('[UNDO] retry wait idle before revert retry')
+      await waitForSessionIdle({
+        client,
+        sessionId,
+        directory: workingDirectory,
+      })
+      logger.log('[UNDO] retry revert start')
+      response = await client.session.revert({
+        sessionID: sessionId,
+        directory: workingDirectory,
+        messageID: revertMessageId,
+      })
+      logger.log(`[UNDO] retry revert done error=${Boolean(response.error)}`)
+      if (response.error) {
+        await command.editReply(
+          `Failed to undo: ${JSON.stringify(response.error)}`,
+        )
+        return
+      }
     }
 
     const diffInfo = response.data?.revert?.diff
@@ -154,7 +213,7 @@ export async function handleUndoCommand({
 
     await command.editReply(`Undone - reverted last assistant message${diffInfo}`)
     logger.log(
-      `Session ${sessionId} reverted to before user message ${targetUserMessage.info.id}`,
+      `Session ${sessionId} reverted at message ${revertMessageId}`,
     )
   } catch (error) {
     logger.error('[UNDO] Error:', error)
@@ -204,7 +263,7 @@ export async function handleRedoCommand({
     return
   }
 
-  const { projectDirectory } = resolved
+  const { projectDirectory, workingDirectory } = resolved
 
   const sessionId = await getThreadSession(channel.id)
 
@@ -230,6 +289,7 @@ export async function handleRedoCommand({
     // Fetch session to check existing revert state
     const sessionResponse = await client.session.get({
       sessionID: sessionId,
+      directory: workingDirectory,
     })
     if (sessionResponse.error) {
       await command.editReply(`Failed to redo: ${JSON.stringify(sessionResponse.error)}`)
@@ -244,13 +304,26 @@ export async function handleRedoCommand({
 
     // Abort if session is busy before reverting/unreverting — both enforce
     // assertNotBusy in OpenCode and would fail with "Session is busy"
-    const redoStatusResponse = await client.session.status({})
+    const redoStatusResponse = await client.session.status({
+      directory: workingDirectory,
+    })
     const redoSessionStatus = redoStatusResponse.data?.[sessionId]
     if (redoSessionStatus && redoSessionStatus.type !== 'idle') {
-      await client.session.abort({ sessionID: sessionId }).catch((error) => {
+      await client.session.abort({
+        sessionID: sessionId,
+        directory: workingDirectory,
+      }).catch((error) => {
         logger.warn(`[REDO] abort failed for ${sessionId}`, error)
       })
+      await waitForSessionIdle({
+        client,
+        sessionId,
+        directory: workingDirectory,
+      })
     }
+    await new Promise((resolve) => {
+      setTimeout(resolve, 500)
+    })
 
     // Follow the same approach as the OpenCode TUI (use-session-commands.tsx):
     // find the next user message after the current revert point. If one exists,
@@ -258,6 +331,7 @@ export async function handleRedoCommand({
     // fully unrevert — we're at the end of the message history.
     const messagesResponse = await client.session.messages({
       sessionID: sessionId,
+      directory: workingDirectory,
     })
     if (messagesResponse.error) {
       await command.editReply(`Failed to redo: ${JSON.stringify(messagesResponse.error)}`)
@@ -274,6 +348,7 @@ export async function handleRedoCommand({
       // No more messages after revert point — fully unrevert
       const response = await client.session.unrevert({
         sessionID: sessionId,
+        directory: workingDirectory,
       })
       if (response.error) {
         await command.editReply(
@@ -289,6 +364,7 @@ export async function handleRedoCommand({
     // Move revert cursor forward one step to the next user message
     const response = await client.session.revert({
       sessionID: sessionId,
+      directory: workingDirectory,
       messageID: nextMessage.info.id,
     })
 

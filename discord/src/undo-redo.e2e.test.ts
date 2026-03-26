@@ -14,11 +14,16 @@
 // Poll timeouts: 4s max, 100ms interval.
 
 import { describe, test, expect } from 'vitest'
+import fs from 'node:fs'
+import path from 'node:path'
 import {
   setupQueueAdvancedSuite,
   TEST_USER_ID,
 } from './queue-advanced-e2e-setup.js'
-import { waitForFooterMessage } from './test-utils.js'
+import {
+  waitForBotMessageContaining,
+  waitForFooterMessage,
+} from './test-utils.js'
 import { getThreadSession } from './database.js'
 import { initializeOpencodeForDirectory } from './opencode.js'
 
@@ -37,30 +42,36 @@ e2eTest('/undo sets revert state and cleans up on next prompt', () => {
   test(
     'undo sets revert state, next message cleans up reverted messages',
     async () => {
+      const markerPath = path.join(
+        ctx.directories.projectDirectory,
+        'tmp',
+        'undo-marker.txt',
+      )
+
       // 1. Send a message and wait for complete session (footer)
       await ctx.discord
         .channel(TEXT_CHANNEL_ID)
         .user(TEST_USER_ID)
         .sendMessage({
-          content: 'Reply with exactly: undo-test-message',
+          content: 'UNDO_FILE_MARKER',
         })
 
       const thread = await ctx.discord
         .channel(TEXT_CHANNEL_ID)
         .waitForThread({
-          timeout: 4_000,
+          timeout: 8_000,
           predicate: (t) => {
-            return t.name === 'Reply with exactly: undo-test-message'
+            return t.name === 'UNDO_FILE_MARKER'
           },
         })
 
       const th = ctx.discord.thread(thread.id)
-      await th.waitForBotReply({ timeout: 4_000 })
+      await th.waitForBotReply({ timeout: 8_000 })
 
       await waitForFooterMessage({
         discord: ctx.discord,
         threadId: thread.id,
-        timeout: 4_000,
+        timeout: 8_000,
       })
 
       // 2. Get session ID and verify it has messages
@@ -91,6 +102,7 @@ e2eTest('/undo sets revert state and cleans up on next prompt', () => {
       )
       expect(beforeUserMessages.length).toBeGreaterThan(0)
       expect(beforeAssistantMessages.length).toBeGreaterThan(0)
+      expect(fs.existsSync(markerPath)).toBe(true)
 
       // Verify no revert state yet
       const beforeSession = await getClient().session.get({
@@ -109,23 +121,12 @@ e2eTest('/undo sets revert state and cleans up on next prompt', () => {
       })
       expect(undoAck).toBeDefined()
 
-      // Wait for the undo reply to appear (deferred reply gets edited)
-      if (undoAck.messageId) {
-        const start = Date.now()
-        while (Date.now() - start < 4_000) {
-          const messages = await th.getMessages()
-          const undoMessage = messages.find((m) => {
-            return m.id === undoAck.messageId
-          })
-          if (undoMessage && undoMessage.content.length > 0) {
-            break
-          }
-          await new Promise((r) => {
-            setTimeout(r, 100)
-          })
-        }
-      }
-
+      await waitForBotMessageContaining({
+        discord: ctx.discord,
+        threadId: thread.id,
+        text: 'Undone - reverted last assistant message',
+        timeout: 8_000,
+      })
       // 4. Verify session now has revert state set
       const afterSession = await getClient().session.get({
         sessionID: sessionId!,
@@ -149,7 +150,7 @@ e2eTest('/undo sets revert state and cleans up on next prompt', () => {
       await waitForFooterMessage({
         discord: ctx.discord,
         threadId: thread.id,
-        timeout: 4_000,
+        timeout: 8_000,
         afterMessageIncludes: 'after-undo-message',
       })
 
@@ -190,9 +191,10 @@ e2eTest('/undo sets revert state and cleans up on next prompt', () => {
       // 7. Snapshot the Discord thread
       expect(await th.text()).toMatchInlineSnapshot(`
         "--- from: user (undo-tester)
-        Reply with exactly: undo-test-message
+        UNDO_FILE_MARKER
         --- from: assistant (TestBot)
-        ⬥ ok
+        ⬥ creating undo file
+        ⬥ undo file created
         *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2*
         Undone - reverted last assistant message
         --- from: user (undo-tester)
