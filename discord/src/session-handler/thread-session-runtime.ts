@@ -411,6 +411,11 @@ export type IngressInput = {
   prompt: string
   userId: string
   username: string
+  // Discord message ID and thread ID for the source message, embedded in
+  // <discord-user> synthetic context so the external sync loop can detect
+  // messages that originated from Discord and skip re-mirroring them.
+  sourceMessageId?: string
+  sourceThreadId?: string
   images?: DiscordFileAttachment[]
   appId?: string
   command?: { name: string; arguments: string }
@@ -2718,7 +2723,9 @@ export class ThreadSessionRuntime {
 
       let syntheticContext = ''
       if (input.username) {
-        syntheticContext += `<discord-user name="${input.username}" />`
+        const msgAttr = input.sourceMessageId ? ` message-id="${input.sourceMessageId}"` : ''
+        const thrAttr = input.sourceThreadId ? ` thread-id="${input.sourceThreadId}"` : ''
+        syntheticContext += `<discord-user name="${input.username}"${msgAttr}${thrAttr} />`
       }
       const parts = [
         { type: 'text' as const, text: promptWithImagePaths },
@@ -2839,6 +2846,8 @@ export class ThreadSessionRuntime {
       agent: input.agent,
       model: input.model,
       permissions: input.permissions,
+      sourceMessageId: input.sourceMessageId,
+      sourceThreadId: input.sourceThreadId,
       sessionStartScheduleKind: input.sessionStartSource?.scheduleKind,
       sessionStartScheduledTaskId: input.sessionStartSource?.scheduledTaskId,
     }
@@ -3370,7 +3379,9 @@ export class ThreadSessionRuntime {
 
     let syntheticContext = ''
     if (input.username) {
-      syntheticContext += `<discord-user name="${input.username}" />`
+      const msgAttr = input.sourceMessageId ? ` message-id="${input.sourceMessageId}"` : ''
+      const thrAttr = input.sourceThreadId ? ` thread-id="${input.sourceThreadId}"` : ''
+      syntheticContext += `<discord-user name="${input.username}"${msgAttr}${thrAttr} />`
     }
     const parts = [
       { type: 'text' as const, text: promptWithImagePaths },

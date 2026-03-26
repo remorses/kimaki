@@ -298,8 +298,9 @@ async function ensureExternalSessionThread({
     return new Error(`Channel ${channelId} is not a text channel`)
   }
 
+  const threadName = 'Sync: ' + getSessionThreadName({ sessionTitle, messages })
   const thread = await (parentChannel as TextChannel).threads.create({
-    name: getSessionThreadName({ sessionTitle, messages }),
+    name: threadName.slice(0, 100),
     autoArchiveDuration: ThreadAutoArchiveDuration.OneDay,
     reason: `Sync external OpenCode session ${sessionId}`,
   }).catch((error) => {
@@ -469,6 +470,45 @@ async function syncSessionToThread({
   }
 }
 
+// Pulse typing indicator in threads whose opencode session is currently busy.
+// Called once per directory per poll tick. Uses session.status() which returns
+// all session statuses in a single API call.
+async function pulseTypingForBusySessions({
+  client,
+  discordClient,
+  directory,
+}: {
+  client: OpencodeClient
+  discordClient: Client
+  directory: string
+}): Promise<void> {
+  const statusResponse = await client.session.status({ directory })
+  const statuses = statusResponse.data
+  if (!statuses) {
+    return
+  }
+  for (const [sessionId, status] of Object.entries(statuses)) {
+    if (status.type !== 'busy') {
+      continue
+    }
+    const threadId = await getThreadIdBySessionId(sessionId)
+    if (!threadId) {
+      continue
+    }
+    // Skip sessions already managed by the runtime (source='kimaki')
+    const source = await getThreadSessionSource(threadId)
+    if (source && source !== 'external_poll') {
+      continue
+    }
+    const thread = await discordClient.channels.fetch(threadId).catch(() => {
+      return null
+    })
+    if (thread?.isThread()) {
+      await thread.sendTyping().catch(() => {})
+    }
+  }
+}
+
 async function pollExternalSessions({
   discordClient,
 }: {
@@ -546,6 +586,12 @@ async function pollExternalSessions({
         )
       })
     }
+
+    // Pulse typing indicator for sessions that are currently busy.
+    // Single API call per directory returns all session statuses.
+    // Sessions already taken over by ThreadSessionRuntime (source='kimaki')
+    // are skipped by ensureExternalSessionThread, so no interference.
+    await pulseTypingForBusySessions({ client, discordClient, directory }).catch(() => {})
   }
 }
 

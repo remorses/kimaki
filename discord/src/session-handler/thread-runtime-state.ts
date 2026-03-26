@@ -42,6 +42,11 @@ export type QueuedMessage = {
   // Raw permission rule strings ("tool:action" or "tool:pattern:action").
   // Parsed and merged into session permissions on creation.
   permissions?: string[]
+  // Discord message ID and thread ID of the source message. Embedded in
+  // <discord-user> synthetic context so the external sync loop can detect
+  // messages that originated from Discord and skip re-mirroring them.
+  sourceMessageId?: string
+  sourceThreadId?: string
   // Tracking fields for scheduled tasks. Stored in the DB via
   // setSessionStartSource() after the session is created, so the session
   // list can show which sessions were started by scheduled tasks.

@@ -718,6 +718,8 @@ export async function startDiscordBot({
             cliInjectedUsername ||
             message.member?.displayName ||
             message.author.displayName,
+          sourceMessageId: message.id,
+          sourceThreadId: thread.id,
           appId: currentAppId,
           agent: cliInjectedAgent,
           model: cliInjectedModel,
