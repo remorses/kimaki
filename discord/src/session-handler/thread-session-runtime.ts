@@ -3663,6 +3663,12 @@ export class ThreadSessionRuntime {
         permission: sessionPermissions,
       })
       session = sessionResponse.data
+      // Insert DB row immediately so the external-sync poller sees
+      // source='kimaki' before the next poll tick and skips this session.
+      // The upsert at the end of ensureSession is kept for the reuse path.
+      if (session) {
+        await setThreadSession(this.thread.id, session.id)
+      }
       createdNewSession = true
     }
 

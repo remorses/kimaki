@@ -269,6 +269,7 @@ async function ensureExternalSessionThread({
   if (existingThreadId) {
     const existingSource = await getThreadSessionSource(existingThreadId)
     if (existingSource && existingSource !== 'external_poll') {
+      logger.log(`[EXTERNAL_SYNC] skipping session ${sessionId}: already managed by ${existingSource} in thread ${existingThreadId}`)
       return null
     }
     const existingThread = await discordClient.channels.fetch(existingThreadId).catch((error) => {
@@ -482,9 +483,14 @@ async function pollExternalSessions({
 }): Promise<void> {
   const trackedChannels = await listTrackedTextChannels()
   const directoryTargets = groupTrackedChannelsByDirectory(trackedChannels)
+  if (directoryTargets.length === 0) {
+    logger.log('[EXTERNAL_SYNC] no tracked text channels, skipping poll')
+    return
+  }
 
   for (const { directory, channelId, startMs } of directoryTargets) {
     if (!fs.existsSync(directory)) {
+      logger.log(`[EXTERNAL_SYNC] directory does not exist, skipping: ${directory}`)
       continue
     }
     const getClientResult = await initializeOpencodeForDirectory(directory, {
@@ -512,6 +518,7 @@ async function pollExternalSessions({
     }
 
     const sessions = sortSessionsByRecency(sessionsResponse.data || [])
+    logger.log(`[EXTERNAL_SYNC] ${directory}: ${sessions.length} sessions found (channel ${channelId})`)
 
     for (const session of sessions) {
       await syncSessionToThread({
@@ -616,16 +623,20 @@ export function startExternalOpencodeSessionSync({
     return
   }
 
+  logger.log(`[EXTERNAL_SYNC] started, polling every ${EXTERNAL_SYNC_INTERVAL_MS}ms`)
   let polling = false
   const runPoll = async (): Promise<void> => {
     if (polling) {
       return
     }
     polling = true
-    try {
-      await pollExternalSessions({ discordClient })
-    } finally {
-      polling = false
+    const result = await pollExternalSessions({ discordClient }).catch(
+      (e) => new Error('External session poll failed', { cause: e }),
+    )
+    polling = false
+    if (result instanceof Error) {
+      logger.warn(`[EXTERNAL_SYNC] ${result.message}`)
+      void notifyError(result, 'External session poll top-level failure')
     }
   }
 
