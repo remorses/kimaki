@@ -166,6 +166,11 @@ interface ShardReconnectInfo {
   attempts: number
 }
 const shardReconnectState = new Map<number, ShardReconnectInfo>()
+const shardReconnectRecoveryTimeouts = new Map<
+  number,
+  ReturnType<typeof setTimeout>
+>()
+const GATEWAY_RELOGIN_GRACE_MS = 10_000
 
 function getOrCreateShardState(shardId: number): ShardReconnectInfo {
   let state = shardReconnectState.get(shardId)
@@ -256,6 +261,51 @@ export async function startDiscordBot({
   }
 
   let currentAppId: string | undefined = appId
+  let runtimeHandlersRegistered = false
+  let gatewayReloginInFlight = false
+
+  const clearShardRecoveryTimeout = ({ shardId }: { shardId: number }) => {
+    const timeout = shardReconnectRecoveryTimeouts.get(shardId)
+    if (!timeout) {
+      return
+    }
+    clearTimeout(timeout)
+    shardReconnectRecoveryTimeouts.delete(shardId)
+  }
+
+  const forceGatewayRelogin = ({ shardId }: { shardId: number }) => {
+    if (gatewayReloginInFlight) {
+      return
+    }
+    gatewayReloginInFlight = true
+    void (async () => {
+      discordLogger.warn(
+        `[GATEWAY] Shard ${shardId} stayed reconnecting for ${GATEWAY_RELOGIN_GRACE_MS}ms, forcing client relogin`,
+      )
+      try {
+        discordClient.destroy()
+        await discordClient.login(token)
+      } catch (error) {
+        discordLogger.error(
+          `[GATEWAY] Forced relogin failed: ${formatErrorWithStack(error)}`,
+        )
+      } finally {
+        gatewayReloginInFlight = false
+      }
+    })()
+  }
+
+  const scheduleShardRecoveryTimeout = ({ shardId }: { shardId: number }) => {
+    clearShardRecoveryTimeout({ shardId })
+    const timeout = setTimeout(() => {
+      const state = shardReconnectState.get(shardId)
+      if (!state?.attempts) {
+        return
+      }
+      forceGatewayRelogin({ shardId })
+    }, GATEWAY_RELOGIN_GRACE_MS)
+    shardReconnectRecoveryTimeouts.set(shardId, timeout)
+  }
 
   const setupHandlers = async (c: Client<true>) => {
     discordLogger.log(`Discord bot logged in as ${c.user.tag}`)
@@ -278,8 +328,11 @@ export async function startDiscordBot({
     voiceLogger.log('[READY] Bot is ready')
     markDiscordGatewayReady()
 
-    registerInteractionHandler({ discordClient: c, appId: currentAppId })
-    registerVoiceStateHandler({ discordClient: c, appId: currentAppId })
+    if (!runtimeHandlersRegistered) {
+      registerInteractionHandler({ discordClient: c, appId: currentAppId })
+      registerVoiceStateHandler({ discordClient: c, appId: currentAppId })
+      runtimeHandlersRegistered = true
+    }
 
     // Channel logging is informational only; do it in background so startup stays responsive.
     void (async () => {
@@ -307,10 +360,16 @@ export async function startDiscordBot({
 
   // If client is already ready (was logged in before being passed to us),
   // run setup immediately. Otherwise wait for the ClientReady event.
+  discordClient.on(Events.ClientReady, (readyClient) => {
+    void setupHandlers(readyClient).catch((error) => {
+      discordLogger.error(
+        `[GATEWAY] ClientReady handler failed: ${formatErrorWithStack(error)}`,
+      )
+    })
+  })
+
   if (discordClient.isReady()) {
     await setupHandlers(discordClient)
-  } else {
-    discordClient.once(Events.ClientReady, setupHandlers)
   }
 
   discordClient.on(Events.Error, (error) => {
@@ -351,9 +410,11 @@ export async function startDiscordBot({
     discordLogger.warn(
       `[GATEWAY] Shard ${shardId} reconnecting: ${parts.join(', ')}`,
     )
+    scheduleShardRecoveryTimeout({ shardId })
   })
 
   discordClient.on(Events.ShardResume, (shardId, replayedEvents) => {
+    clearShardRecoveryTimeout({ shardId })
     const state = shardReconnectState.get(shardId)
     if (state?.attempts) {
       discordLogger.log(
@@ -371,6 +432,7 @@ export async function startDiscordBot({
   // After a gateway proxy redeploy, sessions are lost (in-memory), so RESUME
   // fails with INVALID_SESSION and discord.js falls back to fresh IDENTIFY.
   discordClient.on(Events.ShardReady, (shardId) => {
+    clearShardRecoveryTimeout({ shardId })
     const state = shardReconnectState.get(shardId)
     if (state?.attempts) {
       discordLogger.log(
@@ -381,6 +443,9 @@ export async function startDiscordBot({
   })
 
   discordClient.on(Events.Invalidated, () => {
+    for (const shardId of shardReconnectRecoveryTimeouts.keys()) {
+      clearShardRecoveryTimeout({ shardId })
+    }
     discordLogger.error('[GATEWAY] Session invalidated by Discord')
   })
 
