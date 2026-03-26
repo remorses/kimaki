@@ -59,7 +59,7 @@
     "@libsql/client": "^0.15.15",
     "@prisma/adapter-libsql": "7.4.2",
     "@prisma/client": "7.4.2",
-    "spiceflow": "^1.17.12"
+    "spiceflow": "^1.18.0"
   },
   "devDependencies": {
     "@slack/types": "^2.20.0",

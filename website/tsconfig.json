@@ -4,7 +4,9 @@
     "outDir": "dist",
     "rootDir": "src",
     "noEmit": true,
-    "types": ["@cloudflare/workers-types"]
+    "jsx": "react-jsx",
+    "types": ["@cloudflare/workers-types", "node"]
   },
+  "include": ["src/**/*"],
   "exclude": ["dist", "scripts"]
 }

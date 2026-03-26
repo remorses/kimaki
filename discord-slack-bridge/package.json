@@ -42,7 +42,7 @@
     "@slack/web-api": "^7.14.1",
     "db": "workspace:^",
     "discord-api-types": "^0.38.40",
-    "spiceflow": "^1.17.12",
+    "spiceflow": "^1.18.0",
     "ws": "^8.18.0"
   },
   "devDependencies": {

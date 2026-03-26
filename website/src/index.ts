@@ -38,7 +38,7 @@ const SLACK_INSTALL_SCOPES = [
   'files:write',
 ]
 
-const app = new Spiceflow()
+export const app = new Spiceflow()
   .state('env', {} as Env)
 
   .onError(({ error }) => {

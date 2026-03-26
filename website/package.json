@@ -4,23 +4,35 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "dev": "doppler run --mount .dev.vars --mount-format env -- wrangler dev",
-    "deployment": "tsc --noEmit && wrangler deploy --env preview",
-    "deployment:production": "tsc --noEmit && wrangler deploy",
+    "dev": "doppler run --mount .dev.vars --mount-format env -- vite dev",
+    "build": "vite build",
+    "preview": "vite preview",
+    "deployment": "tsc --noEmit && vite build && wrangler deploy --env preview",
+    "deployment:production": "tsc --noEmit && vite build && wrangler deploy",
     "secrets:prod": "doppler run -c production --mount .env.prod --mount-format env -- wrangler secret bulk .env.prod",
     "verify:slack-bridge": "tsx scripts/verify-slack-bridge.ts"
   },
   "dependencies": {
     "@slack/web-api": "^7.14.1",
+    "@tailwindcss/vite": "^4.2.2",
     "better-auth": "^1.5.4",
     "db": "workspace:^",
     "discord-api-types": "^0.38.40",
     "discord-slack-bridge": "workspace:^",
-    "spiceflow": "1.18.0-rsc.11"
+    "react": "^19.2.4",
+    "react-dom": "^19.2.4",
+    "spiceflow": "1.18.0-rsc.15",
+    "tailwindcss": "^4.2.2"
   },
   "devDependencies": {
-    "@cloudflare/workers-types": "^4.20260130.0",
+    "@cloudflare/vite-plugin": "^1.30.1",
+    "@cloudflare/workers-types": "^4.20260317.1",
+    "@types/node": "^25.5.0",
+    "@types/react": "^19.2.14",
+    "@types/react-dom": "^19.2.3",
+    "@vitejs/plugin-react": "^5.2.0",
     "tsx": "^4.21.0",
-    "wrangler": "^4.61.1"
+    "vite": "^7.3.1",
+    "wrangler": "^4.77.0"
   }
 }

@@ -145,9 +145,6 @@ The `/v10` entry re-exports gateway, payloads, rest, rpc, and utils modules
 (~204 KiB unminified) even if you only need one constant. Hardcode constants
 or import from specific subpaths like `discord-api-types/payloads/v10/permissions`.
 
-**react / react-dom** — never use React SSR in this worker. The success page
-uses plain HTML template strings. react-dom server adds ~531 KiB unminified.
-
 **Prisma compilerBuild** — `db/schema.prisma` sets `compilerBuild = "small"`.
 This is the single biggest size win: WASM drops from 3.6 MiB to 1.8 MiB.
 Never change this to `"fast"` unless query compilation latency becomes a
