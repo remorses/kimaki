@@ -56,7 +56,7 @@ async function executeThreadScheduledTask({
   payload: Extract<ScheduledTaskPayload, { kind: 'thread' }>
 }): Promise<void | Error> {
   const marker: ThreadStartMarker = {
-    cliThreadPrompt: true,
+    start: true,
     scheduledKind: task.schedule_kind,
     scheduledTaskId: task.id,
     ...(payload.agent ? { agent: payload.agent } : {}),

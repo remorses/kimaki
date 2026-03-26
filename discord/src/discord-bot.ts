@@ -32,6 +32,7 @@ import {
 } from './discord-utils.js'
 import {
   getOpencodeSystemMessage,
+  isInjectedPromptMarker,
   type ThreadStartMarker,
 } from './system-message.js'
 import yaml from 'js-yaml'
@@ -463,7 +464,7 @@ export async function startDiscordBot({
         footer: message.embeds[0]?.footer?.text,
       })
       const isCliInjectedPrompt = Boolean(
-        isSelfBotMessage && promptMarker?.cliThreadPrompt,
+        isSelfBotMessage && isInjectedPromptMarker({ marker: promptMarker }),
       )
       const sessionStartSource = isCliInjectedPrompt
         ? parseSessionStartSourceFromMarker(promptMarker)

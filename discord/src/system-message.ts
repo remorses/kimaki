@@ -215,6 +215,17 @@ export type ThreadStartMarker = {
   permissions?: string[]
 }
 
+export function isInjectedPromptMarker({
+  marker,
+}: {
+  marker: ThreadStartMarker | undefined
+}): boolean {
+  if (!marker) {
+    return false
+  }
+  return Boolean(marker.cliThreadPrompt || marker.start)
+}
+
 export type AgentInfo = {
   name: string
   description?: string
