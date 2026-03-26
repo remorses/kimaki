@@ -38,7 +38,6 @@ import { extractNonXmlContent } from './xml.js'
 const logger = createLogger(LogPrefix.OPENCODE)
 
 const EXTERNAL_SYNC_INTERVAL_MS = 5_000
-const EXTERNAL_SYNC_MAX_SESSIONS = 25
 // Don't sync sessions from before the CLI started. 5 min grace window
 // covers sessions that were just created before the bot connected.
 const CLI_START_MS = Date.now() - 5 * 60 * 1000
@@ -73,8 +72,8 @@ type DirectorySyncTarget = {
   startMs: number
 }
 
-type ListedSession = NonNullable<
-  Awaited<ReturnType<OpencodeClient['session']['list']>>['data']
+type GlobalListedSession = NonNullable<
+  Awaited<ReturnType<OpencodeClient['experimental']['session']['list']>>['data']
 >[number]
 
 let externalSyncInterval: ReturnType<typeof setInterval> | null = null
@@ -220,11 +219,13 @@ function getSessionThreadName({
   return 'opencode session'
 }
 
-function getSessionRecencyTimestamp(session: ListedSession): number {
+type SessionWithTime = { time: { created: number; updated: number } }
+
+function getSessionRecencyTimestamp(session: SessionWithTime): number {
   return session.time.updated || session.time.created || 0
 }
 
-function sortSessionsByRecency(sessions: ListedSession[]): ListedSession[] {
+function sortSessionsByRecency<T extends SessionWithTime>(sessions: T[]): T[] {
   return [...sessions].sort((left, right) => {
     return getSessionRecencyTimestamp(right) - getSessionRecencyTimestamp(left)
   })
@@ -470,23 +471,16 @@ async function syncSessionToThread({
   }
 }
 
-// Pulse typing indicator in threads whose opencode session is currently busy.
-// Called once per directory per poll tick. Uses session.status() which returns
-// all session statuses in a single API call.
+// Pulse typing indicator for sessions that are currently busy.
+// Takes the global session statuses map (already fetched) and sends
+// typing to threads whose session is busy and still managed by external_poll.
 async function pulseTypingForBusySessions({
-  client,
   discordClient,
-  directory,
+  statuses,
 }: {
-  client: OpencodeClient
   discordClient: Client
-  directory: string
+  statuses: Record<string, { type: string }>
 }): Promise<void> {
-  const statusResponse = await client.session.status({ directory })
-  const statuses = statusResponse.data
-  if (!statuses) {
-    return
-  }
   for (const [sessionId, status] of Object.entries(statuses)) {
     if (status.type !== 'busy') {
       continue
@@ -509,6 +503,8 @@ async function pulseTypingForBusySessions({
   }
 }
 
+// Use experimental.session.list (global, all directories) to reduce from
+// N*2 HTTP calls to 1 global list + per-active-directory status calls.
 async function pollExternalSessions({
   discordClient,
 }: {
@@ -516,64 +512,107 @@ async function pollExternalSessions({
 }): Promise<void> {
   const trackedChannels = await listTrackedTextChannels()
   const directoryTargets = groupTrackedChannelsByDirectory(trackedChannels)
+    .filter((t) => {
+      return fs.existsSync(t.directory)
+    })
   if (directoryTargets.length === 0) {
     return
   }
 
-  for (const { directory, channelId, startMs } of directoryTargets) {
-    if (!fs.existsSync(directory)) {
-      continue
-    }
-    const getClientResult = await initializeOpencodeForDirectory(directory, {
-      channelId,
+  // Build a lookup: directory → { channelId, startMs }
+  const directoryMap = new Map<string, { channelId: string; startMs: number }>()
+  for (const target of directoryTargets) {
+    directoryMap.set(target.directory, {
+      channelId: target.channelId,
+      startMs: target.startMs,
     })
-    if (getClientResult instanceof Error) {
-      logger.warn(
-        `[EXTERNAL_SYNC] Failed to initialize OpenCode for ${directory}: ${getClientResult.message}`,
-      )
+  }
+
+  // Use earliest startMs across all directories for the global query
+  const globalStartMs = Math.min(...directoryTargets.map((t) => {
+    return t.startMs
+  }))
+
+  // Get one opencode client — try each existing directory until one succeeds
+  let client: OpencodeClient | undefined
+  for (const target of directoryTargets) {
+    const result = await initializeOpencodeForDirectory(target.directory, {
+      channelId: target.channelId,
+    })
+    if (!(result instanceof Error)) {
+      client = result()
+      break
+    }
+  }
+  if (!client) {
+    return
+  }
+
+  // One global API call for all sessions across all directories.
+  // Results are sorted by most recently updated, so a fixed limit of 50
+  // is enough — we always get the most active sessions first.
+  const sessionsResponse = await client.experimental.session.list({
+    roots: true,
+    start: globalStartMs,
+    limit: 50,
+  }).catch((error) => {
+    return new Error('Failed to list global sessions', { cause: error })
+  })
+  if (sessionsResponse instanceof Error) {
+    logger.warn(`[EXTERNAL_SYNC] ${sessionsResponse.message}`)
+    return
+  }
+
+  const allSessions = sessionsResponse.data || []
+
+  // Group sessions by directory, filtering to tracked directories only
+  const sessionsByDirectory = new Map<string, GlobalListedSession[]>()
+  for (const session of allSessions) {
+    const target = directoryMap.get(session.directory)
+    if (!target) {
       continue
     }
-    const client = getClientResult()
-    const sessionsResponse = await client.session.list({
-      directory,
-      start: startMs,
-      roots: true,
-      limit: EXTERNAL_SYNC_MAX_SESSIONS,
-    }).catch((error) => {
-      return new Error(`Failed to list sessions for ${directory}`, {
-        cause: error,
+    // Filter by per-directory startMs (time.updated or time.created)
+    if ((session.time.updated || session.time.created || 0) < target.startMs) {
+      continue
+    }
+    // Skip sessions whose title hasn't been generated yet
+    if (/^new session\s*-/i.test(session.title || '')) {
+      continue
+    }
+    const existing = sessionsByDirectory.get(session.directory) || []
+    existing.push(session)
+    sessionsByDirectory.set(session.directory, existing)
+  }
+
+  // Fetch session.status() only for directories that have sessions to sync.
+  // session.status() is instance-scoped (uses x-opencode-directory header),
+  // so we must call it per directory — but only for active ones, not all 30+.
+  const activeDirectories = [...sessionsByDirectory.keys()]
+  const statusResults = await Promise.all(
+    activeDirectories.map(async (directory) => {
+      const res = await client.session.status({ directory }).catch(() => {
+        return null
       })
-    })
-    if (sessionsResponse instanceof Error) {
-      logger.warn(`[EXTERNAL_SYNC] ${sessionsResponse.message}`)
-      continue
-    }
+      return res?.data ? Object.entries(res.data) : []
+    }),
+  )
+  const mergedStatuses = Object.fromEntries(statusResults.flat()) as Record<string, { type: string }>
 
-    // Filter by last activity time (time.updated) so old sessions with
-    // recent messages are synced, while truly stale sessions are skipped.
-    // Also skip sessions whose title hasn't been generated yet (still
-    // placeholder "New session - ...") — let the next poll pick them up.
-    const sessions = sortSessionsByRecency(
-      (sessionsResponse.data || []).filter((s) => {
-        if ((s.time.updated || s.time.created || 0) < startMs) {
-          return false
-        }
-        if (/^new session\s*-/i.test(s.title || '')) {
-          return false
-        }
-        return true
-      }),
-    )
-    if (sessions.length > 0) {
-      logger.log(`[EXTERNAL_SYNC] ${directory}: ${sessions.length} sessions to sync`)
-    }
+  // Pulse typing for busy sessions
+  await pulseTypingForBusySessions({ discordClient, statuses: mergedStatuses }).catch(() => {})
 
-    for (const session of sessions) {
+  for (const [directory, sessions] of sessionsByDirectory) {
+    const target = directoryMap.get(directory)!
+    const sorted = sortSessionsByRecency(sessions)
+    logger.log(`[EXTERNAL_SYNC] ${directory}: ${sorted.length} sessions to sync`)
+
+    for (const session of sorted) {
       await syncSessionToThread({
         client,
         discordClient,
         directory,
-        channelId,
+        channelId: target.channelId,
         sessionId: session.id,
         sessionTitle: session.title,
       }).catch((error) => {
@@ -586,12 +625,6 @@ async function pollExternalSessions({
         )
       })
     }
-
-    // Pulse typing indicator for sessions that are currently busy.
-    // Single API call per directory returns all session statuses.
-    // Sessions already taken over by ThreadSessionRuntime (source='kimaki')
-    // are skipped by ensureExternalSessionThread, so no interference.
-    await pulseTypingForBusySessions({ client, discordClient, directory }).catch(() => {})
   }
 }
 
