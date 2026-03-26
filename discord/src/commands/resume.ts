@@ -29,7 +29,7 @@ const logger = createLogger(LogPrefix.RESUME)
 export async function handleResumeCommand({
   command,
 }: CommandContext): Promise<void> {
-  await command.deferReply({ ephemeral: false })
+  await command.deferReply()
 
   const sessionId = command.options.getString('session', true)
   const channel = command.channel

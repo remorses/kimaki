@@ -90,7 +90,7 @@ export async function handleCreateNewProjectCommand({
   command,
   appId,
 }: CommandContext): Promise<void> {
-  await command.deferReply({ ephemeral: false })
+  await command.deferReply()
 
   const projectName = command.options.getString('name', true)
   const guild = command.guild

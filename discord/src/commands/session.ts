@@ -17,7 +17,7 @@ export async function handleSessionCommand({
   command,
   appId,
 }: CommandContext): Promise<void> {
-  await command.deferReply({ ephemeral: false })
+  await command.deferReply()
 
   const prompt = command.options.getString('prompt', true)
   const filesString = command.options.getString('files') || ''

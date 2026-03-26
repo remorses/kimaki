@@ -200,7 +200,7 @@ export async function handleForkSelectMenu(
     return
   }
 
-  await interaction.deferReply({ ephemeral: false })
+  await interaction.deferReply()
 
   const threadChannel = interaction.channel
   if (!threadChannel) {

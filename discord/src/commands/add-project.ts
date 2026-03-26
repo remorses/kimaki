@@ -18,7 +18,7 @@ const logger = createLogger(LogPrefix.ADD_PROJECT)
 export async function handleAddProjectCommand({
   command,
 }: CommandContext): Promise<void> {
-  await command.deferReply({ ephemeral: false })
+  await command.deferReply()
 
   const projectId = command.options.getString('project', true)
   const guild = command.guild

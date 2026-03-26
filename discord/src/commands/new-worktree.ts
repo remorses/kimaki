@@ -234,7 +234,7 @@ async function findExistingWorktreePath({
 export async function handleNewWorktreeCommand({
   command,
 }: CommandContext): Promise<void> {
-  await command.deferReply({ ephemeral: false })
+  await command.deferReply()
 
   const channel = command.channel
   if (!channel) {

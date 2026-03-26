@@ -17,7 +17,7 @@ export async function handleRemoveProjectCommand({
   command,
   appId,
 }: CommandContext): Promise<void> {
-  await command.deferReply({ ephemeral: false })
+  await command.deferReply()
 
   const directory = command.options.getString('project', true)
   const guild = command.guild

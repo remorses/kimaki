@@ -92,7 +92,7 @@ export async function handleMergeWorktreeCommand({
   command,
   appId,
 }: CommandContext): Promise<void> {
-  await command.deferReply({ ephemeral: false })
+  await command.deferReply()
 
   const channel = command.channel
   if (!channel || !channel.isThread()) {

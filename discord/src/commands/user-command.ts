@@ -109,7 +109,7 @@ export const handleUserCommand: CommandHandler = async ({
     return
   }
 
-  await command.deferReply({ ephemeral: false })
+  await command.deferReply()
 
   try {
     // Use the dedicated session.command API instead of formatting as text prompt
