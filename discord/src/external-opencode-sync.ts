@@ -5,7 +5,6 @@ import {
   type Client,
   type TextChannel,
   type ThreadChannel,
-  type Message as DiscordMessage,
 } from 'discord.js'
 import type {
   OpencodeClient,
@@ -15,7 +14,6 @@ import {
   getChannelVerbosity,
   getPartMessageIds,
   getThreadIdBySessionId,
-  getThreadSession,
   getThreadSessionSource,
   listTrackedTextChannels,
   setPartMessagesBatch,
@@ -23,7 +21,6 @@ import {
 } from './database.js'
 import { sendThreadMessage } from './discord-utils.js'
 import { createLogger, LogPrefix } from './logger.js'
-import { preprocessExistingThreadMessage } from './message-preprocessing.js'
 import {
   formatPart,
   collectSessionChunks,
@@ -36,7 +33,7 @@ import {
 import { isEssentialToolPart } from './session-handler/thread-session-runtime.js'
 import { notifyError } from './sentry.js'
 import { extractNonXmlContent } from './xml.js'
-import { isVoiceAttachment } from './voice-attachment.js'
+
 
 const logger = createLogger(LogPrefix.OPENCODE)
 
@@ -550,73 +547,6 @@ async function pollExternalSessions({
       })
     }
   }
-}
-
-export async function forwardDiscordMessageToExternalSession({
-  message,
-  thread,
-  projectDirectory,
-  channelId,
-  appId,
-}: {
-  message: DiscordMessage
-  thread: ThreadChannel
-  projectDirectory: string
-  channelId: string | undefined
-  appId: string | undefined
-}): Promise<void> {
-  const sessionId = await getThreadSession(thread.id)
-  if (!sessionId) {
-    throw new Error(`Thread ${thread.id} does not have a session`)
-  }
-
-  const hasVoiceAttachment = message.attachments.some((attachment) => {
-    return isVoiceAttachment(attachment)
-  })
-  const preprocessed = await preprocessExistingThreadMessage({
-    message,
-    thread,
-    projectDirectory,
-    channelId,
-    isCliInjected: false,
-    hasVoiceAttachment,
-    appId,
-  })
-  if (preprocessed.skip) {
-    return
-  }
-
-  const getClientResult = await initializeOpencodeForDirectory(projectDirectory, {
-    channelId,
-  })
-  if (getClientResult instanceof Error) {
-    throw getClientResult
-  }
-  const client = getClientResult()
-
-  const syntheticContext = `<discord-user name="${message.member?.displayName || message.author.displayName}" message-id="${message.id}" thread-id="${thread.id}" />`
-  const parts = [
-    ...(preprocessed.prompt.trim()
-      ? [{ type: 'text' as const, text: preprocessed.prompt }]
-      : []),
-    { type: 'text' as const, text: syntheticContext, synthetic: true },
-    ...(preprocessed.images || []),
-  ]
-
-  await client.session.promptAsync({
-    sessionID: sessionId,
-    directory: projectDirectory,
-    parts,
-  })
-}
-
-export async function isExternalSyncedThread({
-  threadId,
-}: {
-  threadId: string
-}): Promise<boolean> {
-  const source = await getThreadSessionSource(threadId)
-  return source === 'external_poll'
 }
 
 export function startExternalOpencodeSessionSync({

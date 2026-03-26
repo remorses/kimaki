@@ -76,8 +76,6 @@ import { notifyError } from './sentry.js'
 import { flushDebouncedProcessCallbacks } from './debounced-process-flush.js'
 import { startRuntimeIdleSweeper } from './runtime-idle-sweeper.js'
 import {
-  forwardDiscordMessageToExternalSession,
-  isExternalSyncedThread,
   startExternalOpencodeSessionSync,
   stopExternalOpencodeSessionSync,
 } from './external-opencode-sync.js'
@@ -579,9 +577,6 @@ export async function startDiscordBot({
         // still responding to bot-created threads that may not yet have a session
         // row with a non-empty session_id (createPendingWorktree sets ''). (GitHub #84)
         const hasExistingSession = await getThreadSession(thread.id)
-        const isExternalThread = hasExistingSession
-          ? await isExternalSyncedThread({ threadId: thread.id })
-          : false
         const botMentioned =
           discordClient.user && message.mentions.has(discordClient.user.id)
         const botCreatedThread =
@@ -677,17 +672,6 @@ export async function startDiscordBot({
         }
 
         const resolvedProjectDir = projectDirectory
-
-        if (isExternalThread) {
-          await forwardDiscordMessageToExternalSession({
-            message,
-            thread,
-            projectDirectory: resolvedProjectDir,
-            channelId: parent?.id || undefined,
-            appId: currentAppId,
-          })
-          return
-        }
 
         const sdkDir =
           worktreeInfo?.status === 'ready' &&
