@@ -46,15 +46,14 @@ export async function handleAbortCommand({
     return
   }
 
+  await command.deferReply({ flags: SILENT_MESSAGE_FLAGS })
+
   const resolved = await resolveWorkingDirectory({
     channel: channel as TextChannel | ThreadChannel,
   })
 
   if (!resolved) {
-    await command.reply({
-      content: 'Could not determine project directory for this channel',
-      flags: MessageFlags.Ephemeral | SILENT_MESSAGE_FLAGS,
-    })
+    await command.editReply('Could not determine project directory for this channel')
     return
   }
 
@@ -63,10 +62,7 @@ export async function handleAbortCommand({
   const sessionId = await getThreadSession(channel.id)
 
   if (!sessionId) {
-    await command.reply({
-      content: 'No active session in this thread',
-      flags: MessageFlags.Ephemeral | SILENT_MESSAGE_FLAGS,
-    })
+    await command.editReply('No active session in this thread')
     return
   }
 
@@ -78,10 +74,7 @@ export async function handleAbortCommand({
     // No runtime but session exists — fall back to direct API abort
     const getClient = await initializeOpencodeForDirectory(projectDirectory)
     if (getClient instanceof Error) {
-      await command.reply({
-        content: `Failed to abort: ${getClient.message}`,
-        flags: MessageFlags.Ephemeral | SILENT_MESSAGE_FLAGS,
-      })
+      await command.editReply(`Failed to abort: ${getClient.message}`)
       return
     }
     try {
@@ -91,9 +84,6 @@ export async function handleAbortCommand({
     }
   }
 
-  await command.reply({
-    content: `Request **aborted**`,
-    flags: SILENT_MESSAGE_FLAGS,
-  })
+  await command.editReply('Request **aborted**')
   logger.log(`Session ${sessionId} aborted by user`)
 }
