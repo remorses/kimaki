@@ -265,10 +265,12 @@ export async function handleForkSelectMenu(
       reason: `Forked from session ${sessionId}`,
     })
 
+    // Claim the forked session immediately so external polling does not race
+    // and create a duplicate Sync thread before the rest of this setup runs.
+    await setThreadSession(thread.id, forkedSession.id)
+
     // Add user to thread so it appears in their sidebar
     await thread.members.add(interaction.user.id)
-
-    await setThreadSession(thread.id, forkedSession.id)
 
     sessionLogger.log(
       `Created forked session ${forkedSession.id} in thread ${thread.id}`,

@@ -95,10 +95,12 @@ export async function handleResumeCommand({
       reason: `Resuming session ${sessionId}`,
     })
 
+    // Claim the resumed session immediately so external polling does not race
+    // and create a duplicate Sync thread before the rest of this setup runs.
+    await setThreadSession(thread.id, sessionId)
+
     // Add user to thread so it appears in their sidebar
     await thread.members.add(command.user.id)
-
-    await setThreadSession(thread.id, sessionId)
 
     logger.log(`[RESUME] Created thread ${thread.id} for session ${sessionId}`)
 

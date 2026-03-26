@@ -5,6 +5,7 @@
 // Each request gets a fresh PrismaClient and betterAuth instance
 // because CF Workers cannot reuse connections across requests.
 
+import './globals.css'
 import { Spiceflow } from 'spiceflow'
 import { createPrisma } from 'db/src'
 import { getTeamIdForWebhookEvent } from 'discord-slack-bridge/src/webhook-team-id'
@@ -19,6 +20,7 @@ import {
 import { createAuth, parseAllowedCallbackUrl } from './auth.js'
 import { renderSuccessPage } from './components/success-page.js'
 import { SlackBridgeDO } from './slack-bridge-do.js'
+import { SlackInstallPage } from './slack-install-page.js'
 import type { Env } from './env.js'
 
 export { SlackBridgeDO }
@@ -172,14 +174,88 @@ export const app = new Spiceflow()
     },
   })
 
+  .layout('/slack-install', ({ children }) => {
+    return (
+      <html lang="en">
+        <head>
+          <meta charSet="utf-8" />
+          <meta name="viewport" content="width=device-width, initial-scale=1" />
+          <title>Kimaki - Connect to Slack</title>
+        </head>
+        <body className="bg-white min-h-screen flex items-center justify-center font-sans antialiased">
+          {children}
+        </body>
+      </html>
+    )
+  })
+
+  .page('/slack-install', async ({ request }) => {
+    const url = new URL(request.url)
+    const clientId = url.searchParams.get('clientId')
+    const clientSecret = url.searchParams.get('clientSecret')
+    const kimakiCallbackUrl = url.searchParams.get('kimakiCallbackUrl')
+
+    if (!clientId || !clientSecret) {
+      return <p className="text-red-600 text-sm">Missing clientId or clientSecret</p>
+    }
+
+    return (
+      <SlackInstallPage
+        clientId={clientId}
+        clientSecret={clientSecret}
+        kimakiCallbackUrl={kimakiCallbackUrl}
+      />
+    )
+  })
+
+  // Resolves a Slack workspace domain to a team ID using the undocumented
+  // auth.findTeam API (no auth required). Used by the /slack-install page
+  // to add &team= to the OAuth URL so Slack pre-selects the workspace.
   .route({
     method: 'GET',
-    path: '/slack-install',
+    path: '/slack-install/resolve',
+    async handler({ request }) {
+      const url = new URL(request.url)
+      const domain = url.searchParams.get('domain')?.trim().toLowerCase()
+      if (!domain) {
+        return { ok: false, error: 'Missing domain parameter' }
+      }
+
+      const findTeamResult = await fetch(
+        `https://slack.com/api/auth.findTeam?domain=${encodeURIComponent(domain)}`,
+      ).catch((cause) => {
+        return new Error('Failed to contact Slack API', { cause })
+      })
+      if (findTeamResult instanceof Error) {
+        return { ok: false, error: 'Failed to contact Slack' }
+      }
+
+      const data = (await findTeamResult.json()) as {
+        ok: boolean
+        team_id?: string
+        team_name?: string
+        error?: string
+      }
+      if (!data.ok || !data.team_id) {
+        return { ok: false, error: 'Workspace not found' }
+      }
+
+      return { ok: true, teamId: data.team_id, teamName: data.team_name }
+    },
+  })
+
+  // Persists the KV install state and redirects to Slack OAuth with &team=
+  // to pre-select the workspace. This is the redirect endpoint called by
+  // the client form after resolving the workspace domain.
+  .route({
+    method: 'GET',
+    path: '/slack-install/start',
     async handler({ request, state }) {
       const url = new URL(request.url)
       const clientId = url.searchParams.get('clientId')
       const clientSecret = url.searchParams.get('clientSecret')
       const kimakiCallbackUrl = url.searchParams.get('kimakiCallbackUrl')
+      const team = url.searchParams.get('team')
 
       if (!clientId || !clientSecret) {
         throw new Response('Missing clientId or clientSecret', { status: 400 })
@@ -217,6 +293,9 @@ export const app = new Spiceflow()
         new URL(SLACK_OAUTH_CALLBACK_PATH, baseUrl).toString(),
       )
       authorizeUrl.searchParams.set('state', oauthState)
+      if (team) {
+        authorizeUrl.searchParams.set('team', team)
+      }
       return new Response(null, {
         status: 302,
         headers: { Location: authorizeUrl.toString() },
