@@ -201,6 +201,23 @@ export async function upsertGatewayClientAndRefreshKv({
     return upsertedGatewayClient
   }
 
+  // `gateway_clients` stores one row per client_id+guild_id, but gateway auth
+  // is keyed only by client_id. Keep secret and reachable_url consistent across
+  // all rows for the same client so a proxy restart cannot pick a stale secret
+  // from another guild row and wedge reconnects until the CLI is restarted.
+  const updatedSiblingRows = await prisma.gateway_clients.updateMany({
+    where: { client_id: clientId },
+    data: {
+      secret,
+      reachable_url: reachableUrl ?? null,
+    },
+  }).catch((cause) => {
+    return new Error('Failed to normalize gateway_clients secrets', { cause })
+  })
+  if (updatedSiblingRows instanceof Error) {
+    return updatedSiblingRows
+  }
+
   const normalizedGatewayClient = normalizeGatewayClientRow({
     row: upsertedGatewayClient,
   })
