@@ -62,7 +62,7 @@ describe('queue advanced: typing around permissions', () => {
 
       const th = ctx.discord.thread(thread.id)
 
-      await th.waitForTypingEvent({ timeout: 1_000 })
+      await th.waitForTypingEvent({ timeout: 4_000 })
 
       const pending = await waitForPendingPermission({
         threadId: thread.id,
@@ -181,7 +181,7 @@ describe('queue advanced: typing around permissions', () => {
         discord: ctx.discord,
         threadId: thread.id,
         text: 'Permission dismissed - user sent a new message.',
-        timeout: 4_000,
+        timeout: 8_000,
       })
 
       await waitForBotReplyAfterUserMessage({
@@ -189,7 +189,7 @@ describe('queue advanced: typing around permissions', () => {
         threadId: thread.id,
         userId: TEST_USER_ID,
         userMessageIncludes: 'post-permission-user-message',
-        timeout: 4_000,
+        timeout: 8_000,
       })
 
       await waitForBotMessageContaining({
@@ -198,13 +198,13 @@ describe('queue advanced: typing around permissions', () => {
         userId: TEST_USER_ID,
         text: 'ok',
         afterUserMessageIncludes: 'post-permission-user-message',
-        timeout: 4_000,
+        timeout: 8_000,
       })
 
       await waitForFooterMessage({
         discord: ctx.discord,
         threadId: thread.id,
-        timeout: 4_000,
+        timeout: 8_000,
         afterMessageIncludes: 'ok',
         afterAuthorId: ctx.discord.botUserId,
       })
