@@ -8,6 +8,30 @@ the important package in this repo is discord. it contains the discord bot code.
 
 after making important changes to queueing or message handling always run the full test suite inside discord to make sure our changes did not break anything. also run with -u and see snapshots updates in git diff if needed. `pnpm test -u --run`
 
+## development workflow
+
+when developing kimaki locally, the npm package is symlinked to your working directory. this means you need to compile TypeScript changes before they take effect in the running bot.
+
+see `DEVELOP.md` for the full development guide. quick reference:
+
+```bash
+# 1. compile TypeScript changes
+cd discord && npx -y tsc
+
+# 2. restart the bot
+ps aux | grep "kimaki" | grep -v grep  # find PID
+kill -SIGUSR2 <PID>                    # graceful restart
+
+# 3. verify changes
+tail -f ~/.kimaki/kimaki.log
+```
+
+critical notes:
+- always run `npx -y tsc` from the `discord/` directory, not root
+- the `dist/` folder contains compiled JavaScript that the bot actually executes
+- `SIGUSR2` triggers a graceful restart (waits 1s then restarts with same args)
+- never run commands with `&` in background; use `tmux` instead if needed
+
 # repo architecture
 
 kimaki is a monorepo with three main packages that communicate via a shared Postgres database hosted on PlanetScale.
@@ -607,8 +631,6 @@ please ask questions and confirm assumptions before generating complex architect
 
 NEVER run commands with & at the end to run them in the background. this is leaky and harmful! instead ask me to run commands in the background using tmux if needed.
 
-NEVER commit yourself unless asked to do so. I will commit the code myself.
-
 NEVER use git to revert files to previous state if you did not create those files yourself! there can be user changes in files you touched, if you revert those changes the user will be very upset!
 
 ## files
@@ -625,7 +647,7 @@ use `git ls-files | tree --fromfile` to see files in the repo. this command will
 
 if you find code that was not there since the last time you read the file it means the user or another agent edited the file. do not revert the changes that were added. instead keep them and integrate them with your new changes
 
-IMPORTANT: NEVER commit your changes unless clearly and specifically asked to!
+IMPORTANT: Only commit your changes if clearly and specifically asked to!
 
 ## opening me files in zed to show me a specific portion of code
 

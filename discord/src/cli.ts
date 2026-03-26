@@ -18,6 +18,7 @@ import {
   select,
   spinner,
 } from '@clack/prompts'
+import figlet from 'figlet'
 import {
   deduplicateByKey,
   generateBotInstallUrl,
@@ -1433,6 +1434,38 @@ async function run({
     }
     return true
   })()
+
+  // ═══════════════════════════════════════════════════════════════════════════
+  // LOCAL VOICE BANNER
+  // ═══════════════════════════════════════════════════════════════════════════
+  const showLocalTranscriptionBanner = () => {
+    const bigText = figlet.textSync('LOCAL\nVOICE', { font: 'ANSI Shadow' })
+    const totalWidth = 75
+    const lines = bigText.split('\n')
+    const borderedLines = lines.map(line => {
+      const paddedLine = line.padEnd(totalWidth - 2)
+      return `║ ${paddedLine}║`
+    })
+    
+    const banner = `
+╔═══════════════════════════════════════════════════════════════════════════╗
+║                                                                           ║
+${borderedLines.join('\n')}
+║                                                                           ║
+║                    ★ L O C A L   T R A N S C R I P T I O N ★              ║
+║                         V A R I A N T   O F   K I M A K I                 ║
+║                                                                           ║
+║   Features:                                                               ║
+║   • Parakeet MLX (Apple Silicon) - Local NVIDIA Parakeet via MLX         ║
+║   • vLLM Whisper (GPU/CPU)   - OpenAI-compatible Whisper transcription   ║
+║   • Fallback chain: Parakeet → vLLM → OpenAI → Gemini                    ║
+║                                                                           ║
+╚═══════════════════════════════════════════════════════════════════════════╝
+`
+    console.log(banner)
+  }
+
+  showLocalTranscriptionBanner()
 
   cliLogger.log(`Connecting to ${getDiscordRestApiUrl()}...`)
   const discordClient = await createDiscordClient()

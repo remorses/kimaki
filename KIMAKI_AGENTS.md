@@ -6,6 +6,30 @@ the important package in this repo is discord. it contains the discord bot code.
 
 after making important changes to queueing or message handling always run the full test suite inside discord to make sure our changes did not break anything. also run with -u and see snapshots updates in git diff if needed. `pnpm test -u --run`
 
+## development workflow
+
+when developing kimaki locally, the npm package is symlinked to your working directory. this means you need to compile TypeScript changes before they take effect in the running bot.
+
+see `DEVELOP.md` for the full development guide. quick reference:
+
+```bash
+# 1. compile TypeScript changes
+cd discord && npx -y tsc
+
+# 2. restart the bot
+ps aux | grep "kimaki" | grep -v grep  # find PID
+kill -SIGUSR2 <PID>                    # graceful restart
+
+# 3. verify changes
+tail -f ~/.kimaki/kimaki.log
+```
+
+critical notes:
+- always run `npx -y tsc` from the `discord/` directory, not root
+- the `dist/` folder contains compiled JavaScript that the bot actually executes
+- `SIGUSR2` triggers a graceful restart (waits 1s then restarts with same args)
+- never run commands with `&` in background; use `tmux` instead if needed
+
 # repo architecture
 
 kimaki is a monorepo with three main packages that communicate via a shared Postgres database hosted on PlanetScale.

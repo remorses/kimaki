@@ -78,7 +78,7 @@ e2eTest('queue advanced: typing lifecycle', () => {
         [bot typing]
         --- from: assistant (TestBot)
         ⬥ ok
-        *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2*"
+        *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2 ⋅ **z_orchestrator***"
       `)
       expect(replyIndex).toBeGreaterThanOrEqual(0)
       expect(footerIndex).toBeGreaterThan(replyIndex)

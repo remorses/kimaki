@@ -426,7 +426,7 @@ e2eTest('thread message queue ordering', () => {
         Reply with exactly: cold-start-stream
         --- from: assistant (TestBot)
         ⬥ ok
-        *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2*"
+        *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2 ⋅ **z_orchestrator***"
       `)
     },
     12_000,
@@ -695,12 +695,12 @@ e2eTest('thread message queue ordering', () => {
         Reply with exactly: opencode-queue-setup
         --- from: assistant (TestBot)
         ⬥ ok
-        *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2*
+        *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2 ⋅ **z_orchestrator***
         --- from: user (queue-tester)
         Prompt from test: respond with short text for opencode queue mode.
         --- from: assistant (TestBot)
         ⬥ ok
-        *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2*"
+        *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2 ⋅ **z_orchestrator***"
       `)
       const followupUserIndex = messagesWithFollowupFooter.findIndex((message) => {
         return message.id === followupUserMessage.id
@@ -783,7 +783,7 @@ e2eTest('thread message queue ordering', () => {
         --- from: assistant (TestBot)
         ⬥ running create file
         ⬥ ok
-        *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2*"
+        *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2 ⋅ **z_orchestrator***"
       `)
       expect(fs.existsSync(markerPath)).toBe(true)
       const markerContents = fs.readFileSync(markerPath, 'utf8')
@@ -909,14 +909,14 @@ e2eTest('thread message queue ordering', () => {
         Reply with exactly: queue-slash-setup
         --- from: assistant (TestBot)
         ⬥ ok
-        *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2*
+        *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2 ⋅ **z_orchestrator***
         » **queue-tester:** Reply with exactly: race-final
         Queued message (position 1)
         ⬥ race-final
-        *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2*
+        *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2 ⋅ **z_orchestrator***
         » **queue-tester:** Reply with exactly: queued-from-slash
         ⬥ ok
-        *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2*"
+        *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2 ⋅ **z_orchestrator***"
       `)
     },
     12_000,
@@ -998,14 +998,11 @@ e2eTest('thread message queue ordering', () => {
         ⬥ ok
         --- from: user (queue-tester)
         Reply with exactly: echo
-        --- from: assistant (TestBot)
-        *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2*
-        --- from: user (queue-tester)
         Reply with exactly: foxtrot
         --- from: assistant (TestBot)
         ⬥ ok
         ⬥ ok
-        *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2*"
+        *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2 ⋅ **z_orchestrator***"
       `)
       expect(userEchoIndex).toBeGreaterThan(-1)
       expect(userFoxtrotIndex).toBeGreaterThan(-1)
@@ -1096,14 +1093,14 @@ e2eTest('thread message queue ordering', () => {
         Reply with exactly: golf
         --- from: assistant (TestBot)
         ⬥ ok
-        *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2*
+        *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2 ⋅ **z_orchestrator***
         --- from: user (queue-tester)
         Reply with exactly: hotel
         Reply with exactly: india
         --- from: assistant (TestBot)
         ⬥ ok
         ⬥ ok
-        *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2*"
+        *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2 ⋅ **z_orchestrator***"
       `)
       const userIndiaIndex = after.findIndex((m) => {
         return m.author.id === TEST_USER_ID && m.content.includes('india')

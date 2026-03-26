@@ -124,7 +124,7 @@ e2eTest('queue + interrupt drain ordering', () => {
         Reply with exactly: setup-interrupt-drain
         --- from: assistant (TestBot)
         ⬥ ok
-        *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2*
+        *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2 ⋅ **z_orchestrator***
         --- from: user (interrupt-tester)
         PLUGIN_TIMEOUT_SLEEP_MARKER
         --- from: assistant (TestBot)
@@ -134,10 +134,10 @@ e2eTest('queue + interrupt drain ordering', () => {
         Reply with exactly: interrupt-now
         --- from: assistant (TestBot)
         ⬥ ok
-        *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2*
+        *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2 ⋅ **z_orchestrator***
         » **interrupt-tester:** Reply with exactly: queued-behind-slow
         ⬥ ok
-        *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2*"
+        *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2 ⋅ **z_orchestrator***"
       `)
 
       // 7. Assert the interrupt message got its own ⬥ ok reply between the

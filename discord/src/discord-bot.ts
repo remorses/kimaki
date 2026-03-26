@@ -75,6 +75,11 @@ import { markDiscordGatewayReady, stopHranaServer } from './hrana-server.js'
 import { notifyError } from './sentry.js'
 import { flushDebouncedProcessCallbacks } from './debounced-process-flush.js'
 import { startRuntimeIdleSweeper } from './runtime-idle-sweeper.js'
+import {
+  startAsrService,
+  stopAsrService,
+  shouldAutoStartAsr,
+} from './asr-service-manager.js'
 
 export {
   initDatabase,
@@ -277,6 +282,27 @@ export async function startDiscordBot({
 
     voiceLogger.log('[READY] Bot is ready')
     markDiscordGatewayReady()
+
+    // Log voice transcription provider
+    const asrProvider = process.env.ASR_PROVIDER?.toLowerCase()
+    if (asrProvider === 'parakeet') {
+      voiceLogger.log('[ASR] Voice transcription: parakeet (local)')
+    } else if (asrProvider === 'openai') {
+      voiceLogger.log('[ASR] Voice transcription: OpenAI')
+    } else if (asrProvider === 'gemini') {
+      voiceLogger.log('[ASR] Voice transcription: Gemini')
+    } else {
+      voiceLogger.log('[ASR] Voice transcription: parakeet (local, default)')
+    }
+
+    // Auto-start parakeet ASR service if configured
+    if (shouldAutoStartAsr()) {
+      voiceLogger.log('[ASR] Starting parakeet-mlx service...')
+      const started = await startAsrService()
+      if (!started) {
+        voiceLogger.warn('[ASR] Failed to start parakeet service. Voice transcription will use API providers.')
+      }
+    }
 
     registerInteractionHandler({ discordClient: c, appId: currentAppId })
     registerVoiceStateHandler({ discordClient: c, appId: currentAppId })
@@ -1057,6 +1083,9 @@ export async function startDiscordBot({
     try {
       await stopRuntimeIdleSweeper()
       await stopTaskRunner()
+
+      // Stop ASR service if we started it
+      stopAsrService()
 
       await flushDebouncedProcessCallbacks().catch((error) => {
         discordLogger.warn(
