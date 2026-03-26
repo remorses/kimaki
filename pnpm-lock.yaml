@@ -75,7 +75,7 @@ importers:
         version: 1.0.0
       '@discordjs/voice':
         specifier: ^0.19.0
-        version: 0.19.0(@discordjs/opus@0.10.0)(node-opus@0.3.3)
+        version: 0.19.0(@discordjs/opus@0.10.0)(node-opus@0.3.3)(opusscript@0.1.1)
       '@google/genai':
         specifier: ^1.34.0
         version: 1.34.0(@modelcontextprotocol/sdk@1.26.0(zod@4.3.6))
@@ -145,6 +145,9 @@ importers:
       mime:
         specifier: ^4.1.0
         version: 4.1.0
+      opusscript:
+        specifier: ^0.1.1
+        version: 0.1.1
       picocolors:
         specifier: ^1.1.1
         version: 1.1.1
@@ -233,7 +236,7 @@ importers:
         version: 2.1.0
       prism-media:
         specifier: ^1.3.5
-        version: 1.3.5(@discordjs/opus@0.10.0)(node-opus@0.3.3)
+        version: 1.3.5(@discordjs/opus@0.10.0)(node-opus@0.3.3)(opusscript@0.1.1)
       sharp:
         specifier: ^0.34.5
         version: 0.34.5
@@ -4179,6 +4182,9 @@ packages:
   openapi-types@12.1.3:
     resolution: {integrity: sha512-N4YtSYJqghVu4iek2ZUvcN/0aqH1kRDuNqzcycDxhOUpg7GdvLa2F3DgS6yBNhInhv2r/6I0Flkn7CqL8+nIcw==}
 
+  opusscript@0.1.1:
+    resolution: {integrity: sha512-mL0fZZOUnXdZ78woRXp18lApwpp0lF5tozJOD1Wut0dgrA9WuQTgSels/CSmFleaAZrJi/nci5KOVtbuxeWoQA==}
+
   oxfmt@0.24.0:
     resolution: {integrity: sha512-UjeM3Peez8Tl7IJ9s5UwAoZSiDRMww7BEc21gDYxLq3S3/KqJnM3mjNxsoSHgmBvSeX6RBhoVc2MfC/+96RdSw==}
     engines: {node: ^20.19.0 || >=22.12.0}
@@ -5611,11 +5617,11 @@ snapshots:
     dependencies:
       discord-api-types: 0.38.40
 
-  '@discordjs/voice@0.19.0(@discordjs/opus@0.10.0)(node-opus@0.3.3)':
+  '@discordjs/voice@0.19.0(@discordjs/opus@0.10.0)(node-opus@0.3.3)(opusscript@0.1.1)':
     dependencies:
       '@types/ws': 8.18.1
       discord-api-types: 0.38.40
-      prism-media: 1.3.5(@discordjs/opus@0.10.0)(node-opus@0.3.3)
+      prism-media: 1.3.5(@discordjs/opus@0.10.0)(node-opus@0.3.3)(opusscript@0.1.1)
       tslib: 2.8.1
       ws: 8.19.0
     transitivePeerDependencies:
@@ -8859,6 +8865,8 @@ snapshots:
 
   openapi-types@12.1.3: {}
 
+  opusscript@0.1.1: {}
+
   oxfmt@0.24.0:
     dependencies:
       tinypool: 2.0.0
@@ -9034,10 +9042,11 @@ snapshots:
     dependencies:
       parse-ms: 4.0.0
 
-  prism-media@1.3.5(@discordjs/opus@0.10.0)(node-opus@0.3.3):
+  prism-media@1.3.5(@discordjs/opus@0.10.0)(node-opus@0.3.3)(opusscript@0.1.1):
     optionalDependencies:
       '@discordjs/opus': 0.10.0
       node-opus: 0.3.3
+      opusscript: 0.1.1
 
   prisma@7.4.2(@types/react@19.2.14)(better-sqlite3@12.3.0)(react-dom@19.2.4(react@19.2.4))(react@19.2.4)(typescript@5.9.2):
     dependencies:
@@ -9145,7 +9154,7 @@ snapshots:
 
   ref@1.3.5:
     dependencies:
-      bindings: 1.2.1
+      bindings: 1.5.0
       debug: 2.6.9
       nan: 2.26.2
     transitivePeerDependencies:
