@@ -350,7 +350,7 @@ function getTokenTotal(tokens: TokenUsage): number {
 }
 
 /** Check if a tool part is "essential" (shown in text-and-essential-tools mode). */
-function isEssentialToolName(toolName: string): boolean {
+export function isEssentialToolName(toolName: string): boolean {
   const essentialTools = [
     'edit',
     'write',
@@ -370,7 +370,7 @@ function isEssentialToolName(toolName: string): boolean {
   })
 }
 
-function isEssentialToolPart(part: Part): boolean {
+export function isEssentialToolPart(part: Part): boolean {
   if (part.type !== 'tool') {
     return false
   }

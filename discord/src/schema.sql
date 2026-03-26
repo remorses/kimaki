@@ -2,6 +2,7 @@
 CREATE TABLE IF NOT EXISTS "thread_sessions" (
     "thread_id" TEXT NOT NULL PRIMARY KEY,
     "session_id" TEXT NOT NULL,
+    "source" TEXT NOT NULL DEFAULT 'kimaki',
     "created_at" DATETIME DEFAULT CURRENT_TIMESTAMP
 );
 CREATE TABLE IF NOT EXISTS "session_events" (

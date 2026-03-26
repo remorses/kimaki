@@ -14,6 +14,7 @@ datasource db {
 model thread_sessions {
   thread_id  String    @id
   session_id String
+  source     ThreadSessionSource @default(kimaki)
   created_at DateTime? @default(now())
 
   part_messages   part_messages[]
@@ -21,6 +22,11 @@ model thread_sessions {
   scheduled_tasks scheduled_tasks[]
   thread_worktree thread_worktrees?
   ipc_requests    ipc_requests[]
+}
+
+enum ThreadSessionSource {
+  kimaki
+  external_poll
 }
 
 model session_events {

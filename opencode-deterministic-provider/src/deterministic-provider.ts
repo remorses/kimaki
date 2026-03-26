@@ -1,5 +1,8 @@
 // Deterministic AI SDK provider for e2e tests with matcher-driven outputs.
 
+import path from 'node:path'
+import { fileURLToPath } from 'node:url'
+
 import type {
   LanguageModelV2,
   LanguageModelV2CallOptions,
@@ -158,7 +161,11 @@ export function buildDeterministicOpencodeConfig({
   settings,
 }: BuildDeterministicOpencodeConfigOptions) {
   const chosenProviderName = providerName || 'deterministic-provider'
-  const chosenProviderNpm = providerNpm || 'opencode-deterministic-provider'
+  const packageRoot = path.resolve(
+    path.dirname(fileURLToPath(import.meta.url)),
+    '..',
+  )
+  const chosenProviderNpm = providerNpm || packageRoot
   return {
     $schema: 'https://opencode.ai/config.json',
     provider: {

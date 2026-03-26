@@ -3,7 +3,7 @@
 // API keys, and model preferences in <dataDir>/discord-sessions.db.
 
 import { getPrisma, closePrisma } from './db.js'
-import type { Prisma, session_events, BotMode, VerbosityLevel, WorktreeStatus, ChannelType as PrismaChannelType } from './generated/client.js'
+import type { Prisma, session_events, BotMode, VerbosityLevel, WorktreeStatus, ChannelType as PrismaChannelType, ThreadSessionSource } from './generated/client.js'
 import crypto from 'node:crypto'
 
 import { store } from './store.js'
@@ -1015,12 +1015,46 @@ export async function setThreadSession(
   threadId: string,
   sessionId: string,
 ): Promise<void> {
+  await upsertThreadSession({
+    threadId,
+    sessionId,
+    source: 'kimaki',
+  })
+}
+
+export async function upsertThreadSession({
+  threadId,
+  sessionId,
+  source,
+}: {
+  threadId: string
+  sessionId: string
+  source: ThreadSessionSource
+}): Promise<void> {
   const prisma = await getPrisma()
   await prisma.thread_sessions.upsert({
     where: { thread_id: threadId },
-    create: { thread_id: threadId, session_id: sessionId },
-    update: { session_id: sessionId },
+    create: {
+      thread_id: threadId,
+      session_id: sessionId,
+      source,
+    },
+    update: {
+      session_id: sessionId,
+      source,
+    },
   })
+}
+
+export async function getThreadSessionSource(
+  threadId: string,
+): Promise<ThreadSessionSource | undefined> {
+  const prisma = await getPrisma()
+  const row = await prisma.thread_sessions.findUnique({
+    where: { thread_id: threadId },
+    select: { source: true },
+  })
+  return row?.source
 }
 
 /**
@@ -1562,6 +1596,17 @@ export async function getAllTextChannelDirectories(): Promise<string[]> {
     distinct: ['directory'],
   })
   return rows.map((row) => row.directory)
+}
+
+export async function listTrackedTextChannels(): Promise<
+  Array<{ channel_id: string; directory: string; created_at: Date | null }>
+> {
+  const prisma = await getPrisma()
+  return prisma.channel_directories.findMany({
+    where: { channel_type: 'text' },
+    orderBy: [{ created_at: 'asc' }, { channel_id: 'asc' }],
+    select: { channel_id: true, directory: true, created_at: true },
+  })
 }
 
 /**

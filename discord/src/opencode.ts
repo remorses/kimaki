@@ -514,6 +514,20 @@ async function startSingleServer(): Promise<ServerStartError | SingleServer> {
     opencodeLogger.warn(kimakiShimDirectory.message)
   }
   const gatewayToken = store.getState().gatewayToken
+  const vitestOpencodeEnv = (() => {
+    if (process.env.KIMAKI_VITEST !== '1') {
+      return {}
+    }
+    const root = path.join(getDataDir(), 'opencode-vitest-home')
+    return {
+      OPENCODE_TEST_HOME: root,
+      OPENCODE_CONFIG_DIR: path.join(root, '.opencode-kimaki'),
+      XDG_CONFIG_HOME: path.join(root, '.config'),
+      XDG_DATA_HOME: path.join(root, '.local', 'share'),
+      XDG_CACHE_HOME: path.join(root, '.cache'),
+      XDG_STATE_HOME: path.join(root, '.local', 'state'),
+    }
+  })()
 
   const serverProcess = spawn(
     spawnCommand,
@@ -574,6 +588,7 @@ async function startSingleServer(): Promise<ServerStartError | SingleServer> {
         ...(process.env.KIMAKI_SENTRY_DSN && {
           KIMAKI_SENTRY_DSN: process.env.KIMAKI_SENTRY_DSN,
         }),
+        ...vitestOpencodeEnv,
         ...(pathEnv && { [pathEnvKey]: pathEnv }),
       },
     },
