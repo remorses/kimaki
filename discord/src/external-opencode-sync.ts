@@ -38,6 +38,9 @@ const logger = createLogger(LogPrefix.OPENCODE)
 
 const EXTERNAL_SYNC_INTERVAL_MS = 5_000
 const EXTERNAL_SYNC_MAX_SESSIONS = 25
+// Don't sync sessions from before the CLI started. 10 min grace window
+// covers sessions that were just created before the bot connected.
+const CLI_START_MS = Date.now() - 10 * 60 * 1000
 
 type RenderableUserTextPart = {
   id: string
@@ -231,7 +234,7 @@ function groupTrackedChannelsByDirectory(
 ): DirectorySyncTarget[] {
   const grouped = trackedChannels.reduce((acc, channel) => {
     const existing = acc.get(channel.directory)
-    const createdAtMs = channel.created_at?.getTime() || 0
+    const createdAtMs = Math.max(channel.created_at?.getTime() || 0, CLI_START_MS)
     if (!existing) {
       acc.set(channel.directory, {
         directory: channel.directory,
