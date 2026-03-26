@@ -274,7 +274,6 @@ async function ensureExternalSessionThread({
   if (existingThreadId) {
     const existingSource = await getThreadSessionSource(existingThreadId)
     if (existingSource && existingSource !== 'external_poll') {
-      logger.log(`[EXTERNAL_SYNC] skipping session ${sessionId}: already managed by ${existingSource} in thread ${existingThreadId}`)
       return null
     }
     const existingThread = await discordClient.channels.fetch(existingThreadId).catch((error) => {
