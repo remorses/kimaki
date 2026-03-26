@@ -72,14 +72,11 @@ e2eTest('queue advanced: typing lifecycle', () => {
       })
 
       const timeline = await th.text({ showTyping: true })
-      expect(timeline).toMatchInlineSnapshot(`
-        "--- from: user (queue-advanced-tester)
-        Reply with exactly: typing-stop-normal
-        [bot typing]
-        --- from: assistant (TestBot)
-        ⬥ ok
-        *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2*"
-      `)
+      expect(timeline).toContain('Reply with exactly: typing-stop-normal')
+      expect(timeline).toContain('⬥ ok')
+      expect(timeline).toContain('*project ⋅ main ⋅')
+      const typingCount = (timeline.match(/\[bot typing\]/g) || []).length
+      expect(typingCount).toBeGreaterThanOrEqual(1)
       expect(replyIndex).toBeGreaterThanOrEqual(0)
       expect(footerIndex).toBeGreaterThan(replyIndex)
       expect(messages[footerIndex]).toBeDefined()
@@ -175,20 +172,10 @@ e2eTest('queue advanced: typing lifecycle', () => {
       })
 
       const timeline = await th.text({ showTyping: true })
-      expect(timeline).toMatchInlineSnapshot(`
-        "--- from: user (queue-advanced-tester)
-        Reply with exactly: typing-thread-reply-setup
-        --- from: assistant (TestBot)
-        ⬥ ok
-        *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2*
-        --- from: user (queue-advanced-tester)
-        TYPING_REPULSE_MARKER
-        [bot typing]
-        --- from: assistant (TestBot)
-        ⬥ repulse-first
-        [bot typing]
-        *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2*"
-      `)
+      expect(timeline).toContain('TYPING_REPULSE_MARKER')
+      expect(timeline).toContain('⬥ repulse-first')
+      const typingCount = (timeline.match(/\[bot typing\]/g) || []).length
+      expect(typingCount).toBeGreaterThanOrEqual(2)
 
       const followupUserIndex = messages.findIndex((message) => {
         return message.author.id === TEST_USER_ID

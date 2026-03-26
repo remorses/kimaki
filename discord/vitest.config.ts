@@ -24,7 +24,11 @@ export default defineConfig({
     poolOptions: {
       forks: {
         // Single fork when profiling to keep output manageable and not hang CPU
-        maxForks: cpuProf ? 1 : 6,
+        // External OpenCode servers now run in isolated per-worker config/data
+        // homes under vitest. The e2e suite still mutates process env, SQLite,
+        // and shared OpenCode startup paths enough that parallel forks create
+        // flaky timing-only failures. Keep a single fork for deterministic CI.
+        maxForks: 1,
         execArgv: cpuProf
           ? ['--cpu-prof', '--cpu-prof-dir=tmp/cpu-profiles']
           : [],

@@ -46,6 +46,7 @@ test(
     const port = chooseLockPort({ key: 'opencode-plugin-loading-e2e' })
     const pluginPath = new URL('../src/kimaki-opencode-plugin.ts', import.meta.url).href
     const stderrLines: string[] = []
+    const isolatedOpencodeRoot = path.join(projectDir, 'opencode-test-home')
 
     const {
       command,
@@ -68,6 +69,12 @@ test(
           formatter: false,
           plugin: [pluginPath],
         }),
+        OPENCODE_TEST_HOME: isolatedOpencodeRoot,
+        OPENCODE_CONFIG_DIR: path.join(isolatedOpencodeRoot, '.opencode-kimaki'),
+        XDG_CONFIG_HOME: path.join(isolatedOpencodeRoot, '.config'),
+        XDG_DATA_HOME: path.join(isolatedOpencodeRoot, '.local', 'share'),
+        XDG_CACHE_HOME: path.join(isolatedOpencodeRoot, '.cache'),
+        XDG_STATE_HOME: path.join(isolatedOpencodeRoot, '.local', 'state'),
       },
     })
 

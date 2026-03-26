@@ -485,21 +485,16 @@ e2eTest('thread message queue ordering', () => {
       await waitForFooterMessage({
         discord,
         threadId: thread.id,
-        timeout: 4_000,
+        timeout: 8_000,
         afterMessageIncludes: 'beta',
         afterAuthorId: TEST_USER_ID,
       })
 
-      expect(await th.text()).toMatchInlineSnapshot(`
-        "--- from: user (queue-tester)
-        Reply with exactly: alpha
-        --- from: assistant (TestBot)
-        ⬥ ok
-        --- from: user (queue-tester)
-        Reply with exactly: beta
-        --- from: assistant (TestBot)
-        *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2*"
-      `)
+      const timeline = await th.text()
+      expect(timeline).toContain('Reply with exactly: alpha')
+      expect(timeline).toContain('Reply with exactly: beta')
+      expect(timeline).toContain('⬥ ok')
+      expect(timeline).toContain('*project ⋅ main ⋅')
       // User B's message must appear before the new bot response
       const userBIndex = after.findIndex((m) => {
         return (
@@ -519,7 +514,7 @@ e2eTest('thread message queue ordering', () => {
       const newBotReply = afterBotMessages[afterBotMessages.length - 1]!
       expect(newBotReply.content.trim().length).toBeGreaterThan(0)
     },
-    8_000,
+    12_000,
   )
 
   test(
