@@ -164,6 +164,7 @@ export function getLatestUserMessage({
   upToIndex?: number
 }): UserMessage | undefined {
   const end = upToIndex ?? events.length - 1
+  let latestUserMessage: UserMessage | undefined
   for (let i = end; i >= 0; i--) {
     const entry = events[i]
     if (!entry) {
@@ -177,9 +178,15 @@ export function getLatestUserMessage({
     if (info.sessionID !== sessionId || info.role !== 'user') {
       continue
     }
-    return info
+    if (!latestUserMessage) {
+      latestUserMessage = info
+      continue
+    }
+    if (info.time.created > latestUserMessage.time.created) {
+      latestUserMessage = info
+    }
   }
-  return undefined
+  return latestUserMessage
 }
 
 export function getCurrentTurnStartTime({
@@ -314,6 +321,9 @@ export function getLatestAssistantMessageIdForLatestUserTurn({
     return undefined
   }
   const end = upToIndex ?? events.length - 1
+  let latestAssistantMessage:
+    | Extract<OpenCodeMessage, { role: 'assistant' }>
+    | undefined
   for (let i = end; i >= 0; i--) {
     const entry = events[i]
     if (!entry) {
@@ -327,11 +337,99 @@ export function getLatestAssistantMessageIdForLatestUserTurn({
     if (info.sessionID !== sessionId || info.role !== 'assistant') {
       continue
     }
-    if (info.parentID === latestUserMessage.id) {
-      return info.id
+    if (info.parentID !== latestUserMessage.id) {
+      continue
+    }
+    if (!latestAssistantMessage) {
+      latestAssistantMessage = info
+      continue
+    }
+    if (info.time.created > latestAssistantMessage.time.created) {
+      latestAssistantMessage = info
     }
   }
-  return undefined
+  return latestAssistantMessage?.id
+}
+
+type EventBufferedAssistantMessage = AssistantMessage & {
+  partsSummary?: Array<{ id: string; type: string }>
+}
+
+function hasRenderablePartSummary(message: EventBufferedAssistantMessage): boolean {
+  if (!('partsSummary' in message) || !Array.isArray(message.partsSummary)) {
+    return false
+  }
+  return message.partsSummary.some((part) => {
+    return part.type === 'text' || part.type === 'tool'
+  })
+}
+
+function hasAssistantPartEvidence({
+  events,
+  sessionId,
+  messageId,
+  upToIndex,
+}: {
+  events: EventBufferEntry[]
+  sessionId: string
+  messageId: string
+  upToIndex?: number
+}): boolean {
+  const end = upToIndex ?? events.length - 1
+  for (let i = end; i >= 0; i--) {
+    const entry = events[i]
+    if (!entry) {
+      continue
+    }
+    const event = entry.event
+    if (event.type === 'message.updated') {
+      const info = event.properties.info as EventBufferedAssistantMessage
+      if (info.sessionID !== sessionId || info.role !== 'assistant' || info.id !== messageId) {
+        continue
+      }
+      if (hasRenderablePartSummary(info)) {
+        return true
+      }
+      continue
+    }
+    if (event.type !== 'message.part.updated') {
+      continue
+    }
+    const { part } = event.properties
+    if (part.messageID !== messageId) {
+      continue
+    }
+    if (part.type === 'text' || part.type === 'tool') {
+      return true
+    }
+  }
+  return false
+}
+
+function hasAssistantStepFinished({
+  events,
+  messageId,
+  upToIndex,
+}: {
+  events: EventBufferEntry[]
+  messageId: string
+  upToIndex?: number
+}): boolean {
+  const end = upToIndex ?? events.length - 1
+  for (let i = end; i >= 0; i--) {
+    const entry = events[i]
+    if (!entry || entry.event.type !== 'message.part.updated') {
+      continue
+    }
+    const { part } = entry.event.properties
+    if (part.messageID !== messageId) {
+      continue
+    }
+    if (part.type === 'step-finish') {
+      return true
+    }
+  }
+  return false
 }
 
 export function doesLatestUserTurnHaveNaturalCompletion({
@@ -353,6 +451,7 @@ export function doesLatestUserTurnHaveNaturalCompletion({
   }
 
   const end = upToIndex ?? events.length - 1
+  let latestAssistantMessage: EventBufferedAssistantMessage | undefined
   for (let i = end; i >= 0; i--) {
     const entry = events[i]
     if (!entry) {
@@ -369,10 +468,32 @@ export function doesLatestUserTurnHaveNaturalCompletion({
     if (info.id !== latestAssistantMessageId) {
       continue
     }
-    return isAssistantMessageNaturalCompletion({ message: info })
+    latestAssistantMessage = info as EventBufferedAssistantMessage
+    if (isAssistantMessageNaturalCompletion({ message: info })) {
+      return true
+    }
+    break
   }
 
-  return false
+  if (!latestAssistantMessage) {
+    return false
+  }
+  if (latestAssistantMessage.error) {
+    return false
+  }
+  if (latestAssistantMessage.finish === 'tool-calls') {
+    return false
+  }
+  return hasAssistantStepFinished({
+    events,
+    messageId: latestAssistantMessageId,
+    upToIndex,
+  }) && hasAssistantPartEvidence({
+    events,
+    sessionId,
+    messageId: latestAssistantMessageId,
+    upToIndex,
+  })
 }
 
 export function isAssistantMessageInLatestUserTurn({

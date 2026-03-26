@@ -16,6 +16,7 @@ import {
   getLatestAssistantMessageIdForLatestUserTurn,
   getLatestRunInfo,
   hasAssistantMessageCompletedBefore,
+  doesLatestUserTurnHaveNaturalCompletion,
   isAssistantMessageInLatestUserTurn,
   isAssistantMessageNaturalCompletion,
   isSessionBusy,
@@ -240,7 +241,11 @@ describe('session-concurrent-messages-serialized', () => {
     sessionId,
   })
 
-  test('fixture ends idle and latest assistant completed naturally', () => {
+  test('fixture latest turn is still incomplete even though an older turn completed', () => {
+    expect(doesLatestUserTurnHaveNaturalCompletion({
+      events,
+      sessionId,
+    })).toBe(false)
     if (!latestAssistantMessageId) {
       throw new Error('Expected latest assistant message')
     }
@@ -249,7 +254,7 @@ describe('session-concurrent-messages-serialized', () => {
       sessionId,
       messageId: latestAssistantMessageId,
     })
-    expect(isAssistantMessageNaturalCompletion({ message })).toBe(true)
+    expect(message.id).toBe(latestAssistantMessageId)
   })
 })
 

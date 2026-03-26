@@ -982,10 +982,28 @@ export class ThreadSessionRuntime {
       // with every tool call and was the primary OOM vector — 1000 buffer entries
       // each carrying the full cumulative parts array reached 4GB+.
       const info = compacted.properties.info as Record<string, unknown>
+      const partsSummary = Array.isArray(info.parts)
+        ? info.parts.flatMap((part) => {
+            if (!part || typeof part !== 'object') {
+              return [] as Array<{ id: string; type: string }>
+            }
+            const candidate = part as { id?: unknown; type?: unknown }
+            if (
+              typeof candidate.id !== 'string'
+              || typeof candidate.type !== 'string'
+            ) {
+              return [] as Array<{ id: string; type: string }>
+            }
+            return [{ id: candidate.id, type: candidate.type }]
+          })
+        : []
       delete info.system
       delete info.summary
       delete info.tools
       delete info.parts
+      if (partsSummary.length > 0) {
+        info.partsSummary = partsSummary
+      }
       return this.finalizeCompactedEventForEventBuffer(compacted)
     }
 
