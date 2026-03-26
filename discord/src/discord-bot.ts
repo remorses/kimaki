@@ -712,7 +712,9 @@ export async function startDiscordBot({
           cancelHtmlActionsForThread(thread.id)
           const dismissedPermission = await cancelPendingPermission(thread.id)
           if (dismissedPermission) {
-            runtime.abortActiveRun('user sent a new message while permission was pending')
+            await runtime.abortActiveRunAndWait({
+              reason: 'user sent a new message while permission was pending',
+            })
           }
           const questionResult = await cancelPendingQuestion(thread.id, message.content)
           void cancelPendingFileUpload(thread.id)

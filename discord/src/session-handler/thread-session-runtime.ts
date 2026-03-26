@@ -3042,6 +3042,47 @@ export class ThreadSessionRuntime {
     })
   }
 
+  async abortActiveRunAndWait({
+    reason,
+    timeoutMs = 2_000,
+  }: {
+    reason: string
+    timeoutMs?: number
+  }): Promise<void> {
+    const state = this.state
+    const sessionId = state?.sessionId
+    if (!sessionId) {
+      return
+    }
+
+    let needsIdleWait = false
+    const waitSinceTimestamp = Date.now()
+    const abortResult = await errore.tryAsync(() => {
+      return this.dispatchAction(async () => {
+        needsIdleWait = this.isMainSessionBusy()
+        const outcome = this.abortActiveRunInternal({ reason })
+        if (outcome.apiAbortPromise) {
+          void outcome.apiAbortPromise
+        }
+      })
+    })
+    if (abortResult instanceof Error) {
+      logger.error(`[ABORT WAIT] Failed to abort active run: ${abortResult.message}`)
+      return
+    }
+    if (!needsIdleWait) {
+      return
+    }
+    await this.waitForEvent({
+      predicate: (event) => {
+        return event.type === 'session.idle'
+          && (event.properties as { sessionID?: string }).sessionID === sessionId
+      },
+      sinceTimestamp: waitSinceTimestamp,
+      timeoutMs,
+    })
+  }
+
   /** Number of messages waiting in the queue. */
   getQueueLength(): number {
     return this.state?.queueItems.length ?? 0
