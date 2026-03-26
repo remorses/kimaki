@@ -71,36 +71,85 @@ function normalizeWhitespace(text: string): string {
   return text.replace(/[\r\n]+/g, ' ').replace(/\s+/g, ' ')
 }
 
+// A chunk of formatted content with associated part IDs, ready to be
+// batched into as few Discord messages as possible.
+export type SessionChunk = {
+  partIds: string[]
+  content: string
+}
+
 /**
- * Collects and formats the last N assistant parts from session messages.
- * Used by both /resume and /fork to show recent assistant context.
+ * Collect renderable assistant parts from session messages as SessionChunks.
+ * Each non-empty formatted part becomes one chunk. Caller can batch them
+ * with batchChunksForDiscord() before sending.
+ *
+ * - skipPartIds: parts already synced (external sync). Skipped parts are
+ *   not included in the result.
+ * - limit: max parts to include (from the end). Older parts are counted
+ *   in skippedCount.
  */
-export function collectLastAssistantParts({
+export function collectSessionChunks({
   messages,
-  limit = 30,
+  skipPartIds,
+  limit,
 }: {
   messages: GenericSessionMessage[]
+  skipPartIds?: Set<string>
   limit?: number
-}): { partIds: string[]; content: string; skippedCount: number } {
-  const allAssistantParts: { id: string; content: string }[] = []
+}): { chunks: SessionChunk[]; skippedCount: number } {
+  const allChunks: SessionChunk[] = []
 
   for (const message of messages) {
-    if (message.info.role === 'assistant') {
-      for (const part of message.parts) {
-        const content = formatPart(part)
-        if (content.trim()) {
-          allAssistantParts.push({ id: part.id, content: content.trimEnd() })
-        }
+    if (message.info.role !== 'assistant') {
+      continue
+    }
+    for (const part of message.parts) {
+      if (skipPartIds?.has(part.id)) {
+        continue
       }
+      const content = formatPart(part)
+      if (!content.trim()) {
+        continue
+      }
+      allChunks.push({ partIds: [part.id], content: content.trimEnd() })
     }
   }
 
-  const partsToRender = allAssistantParts.slice(-limit)
-  const partIds = partsToRender.map((p) => p.id)
-  const content = partsToRender.map((p) => p.content).join('\n')
-  const skippedCount = allAssistantParts.length - partsToRender.length
+  if (limit !== undefined && allChunks.length > limit) {
+    return {
+      chunks: allChunks.slice(-limit),
+      skippedCount: allChunks.length - limit,
+    }
+  }
+  return { chunks: allChunks, skippedCount: 0 }
+}
 
-  return { partIds, content, skippedCount }
+// Merge consecutive SessionChunks into as few Discord messages as possible,
+// respecting the 2000 char limit.
+const DISCORD_BATCH_MAX_LENGTH = 2000
+
+export function batchChunksForDiscord(chunks: SessionChunk[]): SessionChunk[] {
+  if (chunks.length === 0) {
+    return []
+  }
+  const batched: SessionChunk[] = []
+  let current: SessionChunk = { partIds: [...chunks[0]!.partIds], content: chunks[0]!.content }
+
+  for (let i = 1; i < chunks.length; i++) {
+    const next = chunks[i]!
+    const merged = current.content + '\n' + next.content
+    if (merged.length <= DISCORD_BATCH_MAX_LENGTH) {
+      current = {
+        partIds: [...current.partIds, ...next.partIds],
+        content: merged,
+      }
+    } else {
+      batched.push(current)
+      current = { partIds: [...next.partIds], content: next.content }
+    }
+  }
+  batched.push(current)
+  return batched
 }
 
 export const TEXT_MIME_TYPES = [

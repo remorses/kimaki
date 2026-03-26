@@ -18,14 +18,18 @@ import {
   getThreadSession,
   getThreadSessionSource,
   listTrackedTextChannels,
-  setPartMessage,
   setPartMessagesBatch,
   upsertThreadSession,
 } from './database.js'
 import { sendThreadMessage } from './discord-utils.js'
 import { createLogger, LogPrefix } from './logger.js'
 import { preprocessExistingThreadMessage } from './message-preprocessing.js'
-import { formatPart } from './message-formatting.js'
+import {
+  formatPart,
+  collectSessionChunks,
+  batchChunksForDiscord,
+  type SessionChunk,
+} from './message-formatting.js'
 import {
   initializeOpencodeForDirectory,
 } from './opencode.js'
@@ -38,9 +42,9 @@ const logger = createLogger(LogPrefix.OPENCODE)
 
 const EXTERNAL_SYNC_INTERVAL_MS = 5_000
 const EXTERNAL_SYNC_MAX_SESSIONS = 25
-// Don't sync sessions from before the CLI started. 10 min grace window
+// Don't sync sessions from before the CLI started. 5 min grace window
 // covers sessions that were just created before the bot connected.
-const CLI_START_MS = Date.now() - 10 * 60 * 1000
+const CLI_START_MS = Date.now() - 5 * 60 * 1000
 
 type RenderableUserTextPart = {
   id: string
@@ -319,98 +323,85 @@ async function ensureExternalSessionThread({
   return thread
 }
 
-async function syncUserMessage({
-  message,
-  thread,
-  syncedPartIds,
-}: {
-  message: SessionMessage
-  thread: ThreadChannel
-  syncedPartIds: Set<string>
-}): Promise<void> {
-  const renderableParts = getRenderableUserTextParts({ message })
-  if (renderableParts.length === 0) {
-    return
-  }
+type DirectPartMapping = { partId: string; messageId: string; threadId: string }
 
-  const unsyncedParts = renderableParts.filter((part) => {
-    return !syncedPartIds.has(part.id)
-  })
-  if (unsyncedParts.length === 0) {
-    return
-  }
-
-  const promptText = unsyncedParts.map((part) => {
-    return part.text
-  }).join('\n\n')
-
-  const discordOrigin = getDiscordOriginMetadataFromMessage({ message })
-  if (discordOrigin && (!discordOrigin.threadId || discordOrigin.threadId === thread.id)) {
-    await setPartMessagesBatch(
-      unsyncedParts.map((part) => {
-        return {
-          partId: part.id,
-          messageId: discordOrigin.messageId,
-          threadId: thread.id,
-        }
-      }),
-    )
-    unsyncedParts.forEach((part) => {
-      syncedPartIds.add(part.id)
-    })
-    return
-  }
-
-  const sentMessage = await sendThreadMessage(
-    thread,
-    getExternalUserMirrorText({ username: 'OpenCode', prompt: promptText }),
-  )
-  await setPartMessagesBatch(
-    unsyncedParts.map((part) => {
-      return {
-        partId: part.id,
-        messageId: sentMessage.id,
-        threadId: thread.id,
-      }
-    }),
-  )
-  unsyncedParts.forEach((part) => {
-    syncedPartIds.add(part.id)
-  })
-}
-
-async function syncAssistantParts({
-  message,
-  thread,
+// Collect all unsynced parts from all messages into SessionChunks.
+// User messages that originated from this Discord thread are returned as
+// directMappings (persisted without sending a Discord message). All other
+// user and assistant parts are returned as chunks to send.
+function collectUnsyncedChunks({
+  messages,
   syncedPartIds,
   verbosity,
+  thread,
 }: {
-  message: SessionMessage
-  thread: ThreadChannel
+  messages: SessionMessage[]
   syncedPartIds: Set<string>
   verbosity: 'tools_and_text' | 'text_and_essential_tools' | 'text_only'
-}): Promise<void> {
-  if (message.info.role !== 'assistant') {
-    return
-  }
+  thread: ThreadChannel
+}): { chunks: SessionChunk[]; directMappings: DirectPartMapping[] } {
+  const chunks: SessionChunk[] = []
+  const directMappings: DirectPartMapping[] = []
 
-  const renderableParts = message.parts.filter((part) => {
-    return shouldMirrorAssistantPart({ part, verbosity })
-  })
-
-  for (const part of renderableParts) {
-    if (syncedPartIds.has(part.id)) {
+  for (const message of messages) {
+    if (message.info.role === 'user') {
+      const renderableParts = getRenderableUserTextParts({ message })
+      const unsyncedParts = renderableParts.filter((p) => {
+        return !syncedPartIds.has(p.id)
+      })
+      if (unsyncedParts.length === 0) {
+        continue
+      }
+      // If the user message came from this Discord thread, record the
+      // mapping to the original Discord message without sending a new one.
+      const discordOrigin = getDiscordOriginMetadataFromMessage({ message })
+      if (discordOrigin && (!discordOrigin.threadId || discordOrigin.threadId === thread.id)) {
+        unsyncedParts.forEach((part) => {
+          directMappings.push({
+            partId: part.id,
+            messageId: discordOrigin.messageId,
+            threadId: thread.id,
+          })
+          syncedPartIds.add(part.id)
+        })
+        continue
+      }
+      const promptText = unsyncedParts.map((p) => {
+        return p.text
+      }).join('\n\n')
+      chunks.push({
+        partIds: unsyncedParts.map((p) => {
+          return p.id
+        }),
+        content: getExternalUserMirrorText({ username: 'user', prompt: promptText }),
+      })
       continue
     }
-    const content = formatPart(part)
-    if (!content.trim()) {
-      syncedPartIds.add(part.id)
+
+    if (message.info.role !== 'assistant') {
       continue
     }
-    const sentMessage = await sendThreadMessage(thread, content)
-    await setPartMessage(part.id, sentMessage.id, thread.id)
-    syncedPartIds.add(part.id)
+    // Filter assistant parts by verbosity before passing to shared collector
+    const filteredParts = message.parts.filter((part) => {
+      return shouldMirrorAssistantPart({ part, verbosity })
+    })
+    const { chunks: assistantChunks } = collectSessionChunks({
+      messages: [{ info: message.info, parts: filteredParts }],
+      skipPartIds: syncedPartIds,
+    })
+    // Mark empty-content parts as synced (collectSessionChunks skips them)
+    for (const part of filteredParts) {
+      if (!syncedPartIds.has(part.id)) {
+        const content = formatPart(part)
+        if (!content.trim()) {
+          syncedPartIds.add(part.id)
+        }
+      }
+    }
+    chunks.push(...assistantChunks)
   }
+
+  return { chunks, directMappings }
 }
 
 async function syncSessionToThread({
@@ -461,21 +452,23 @@ async function syncSessionToThread({
   ])
   const syncedPartIds = new Set(existingPartIds)
 
-  for (const message of messages) {
-    if (message.info.role === 'user') {
-      await syncUserMessage({
-        message,
-        thread,
-        syncedPartIds,
-      })
-      continue
-    }
-    await syncAssistantParts({
-      message,
-      thread,
-      syncedPartIds,
-      verbosity,
-    })
+  const { chunks, directMappings } = collectUnsyncedChunks({ messages, syncedPartIds, verbosity, thread })
+
+  // Persist mappings for user parts that originated from this Discord thread
+  if (directMappings.length > 0) {
+    await setPartMessagesBatch(directMappings)
+  }
+
+  const batched = batchChunksForDiscord(chunks)
+  for (const batch of batched) {
+    const sentMessage = await sendThreadMessage(thread, batch.content)
+    await setPartMessagesBatch(
+      batch.partIds.map((partId) => ({
+        partId,
+        messageId: sentMessage.id,
+        threadId: thread.id,
+      })),
+    )
   }
 }
 
@@ -487,13 +480,11 @@ async function pollExternalSessions({
   const trackedChannels = await listTrackedTextChannels()
   const directoryTargets = groupTrackedChannelsByDirectory(trackedChannels)
   if (directoryTargets.length === 0) {
-    logger.log('[EXTERNAL_SYNC] no tracked text channels, skipping poll')
     return
   }
 
   for (const { directory, channelId, startMs } of directoryTargets) {
     if (!fs.existsSync(directory)) {
-      logger.log(`[EXTERNAL_SYNC] directory does not exist, skipping: ${directory}`)
       continue
     }
     const getClientResult = await initializeOpencodeForDirectory(directory, {
@@ -509,6 +500,7 @@ async function pollExternalSessions({
     const sessionsResponse = await client.session.list({
       directory,
       start: startMs,
+      roots: true,
       limit: EXTERNAL_SYNC_MAX_SESSIONS,
     }).catch((error) => {
       return new Error(`Failed to list sessions for ${directory}`, {
@@ -520,8 +512,24 @@ async function pollExternalSessions({
       continue
     }
 
-    const sessions = sortSessionsByRecency(sessionsResponse.data || [])
-    logger.log(`[EXTERNAL_SYNC] ${directory}: ${sessions.length} sessions found (channel ${channelId})`)
+    // Filter by last activity time (time.updated) so old sessions with
+    // recent messages are synced, while truly stale sessions are skipped.
+    // Also skip sessions whose title hasn't been generated yet (still
+    // placeholder "New session - ...") — let the next poll pick them up.
+    const sessions = sortSessionsByRecency(
+      (sessionsResponse.data || []).filter((s) => {
+        if ((s.time.updated || s.time.created || 0) < startMs) {
+          return false
+        }
+        if (/^new session\s*-/i.test(s.title || '')) {
+          return false
+        }
+        return true
+      }),
+    )
+    if (sessions.length > 0) {
+      logger.log(`[EXTERNAL_SYNC] ${directory}: ${sessions.length} sessions to sync`)
+    }
 
     for (const session of sessions) {
       await syncSessionToThread({

@@ -67,6 +67,10 @@ import {
 
 const opencodeLogger = createLogger(LogPrefix.OPENCODE)
 
+// Tracks directories that have been initialized, to avoid repeated log spam
+// from the external sync polling loop.
+const initializedDirectories = new Set<string>()
+
 const STARTUP_STDERR_TAIL_LIMIT = 30
 const STARTUP_STDERR_LINE_MAX_LENGTH = 120
 const STARTUP_ERROR_REASON_MAX_LENGTH = 1500
@@ -798,9 +802,12 @@ export async function initializeOpencodeForDirectory(
     return server
   }
 
-  opencodeLogger.log(
-    `Using shared server on port ${server.port} for directory: ${directory}`,
-  )
+  if (!initializedDirectories.has(directory)) {
+    initializedDirectories.add(directory)
+    opencodeLogger.log(
+      `Using shared server on port ${server.port} for directory: ${directory}`,
+    )
+  }
 
   return () => {
     if (!singleServer) {
