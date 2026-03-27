@@ -1,0 +1,120 @@
+@import 'tailwindcss';
+
+:root {
+  --app-bg: #eef2f8;
+  --surface: #ffffff;
+  --surface-2: #f7f9fc;
+  --surface-3: #edf2fb;
+  --surface-4: #e2e8f3;
+  --surface-5: #ced7e6;
+  --text-primary: #0f172a;
+  --text-secondary: #475569;
+  --text-tertiary: #64748b;
+  --brand-primary-200: #4f6dff;
+  --border-elevation-4: rgba(148, 163, 184, 0.22);
+  --border-elevation-5: rgba(148, 163, 184, 0.35);
+  --shadow-elevation-3: 0 24px 55px rgba(15, 23, 42, 0.08);
+  --neutral-40: #f3f6fb;
+  --neutral-60: #d7e0ed;
+  --neutral-600: #324154;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  min-height: 100%;
+}
+
+body {
+  margin: 0;
+  color: var(--text-primary);
+  background:
+    radial-gradient(circle at top left, rgba(79, 109, 255, 0.12), transparent 28%),
+    linear-gradient(180deg, #f8fbff 0%, var(--app-bg) 48%, #e9eef7 100%);
+  font-family: Inter, ui-sans-serif, system-ui, sans-serif;
+}
+
+a {
+  color: inherit;
+  text-decoration: none;
+}
+
+button {
+  font: inherit;
+}
+
+pre {
+  margin: 0;
+}
+
+.text-primary {
+  color: var(--text-primary);
+}
+
+.text-secondary {
+  color: var(--text-secondary);
+}
+
+.text-tertiary {
+  color: var(--text-tertiary);
+}
+
+.bg-elevation-2 {
+  background: var(--surface-2);
+}
+
+.bg-elevation-3 {
+  background: var(--surface-3);
+}
+
+.bg-elevation-4 {
+  background: var(--surface-4);
+}
+
+.bg-elevation-5 {
+  background: var(--surface-5);
+}
+
+.border-elevation-4 {
+  border-color: var(--border-elevation-4);
+}
+
+.border-elevation-5 {
+  border-color: var(--border-elevation-5);
+}
+
+.shadow-elevation-3 {
+  box-shadow: var(--shadow-elevation-3);
+}
+
+.bg-brand-primary-200 {
+  background-color: var(--brand-primary-200);
+}
+
+.pretty-scrollbars {
+  scrollbar-width: thin;
+  scrollbar-color: rgba(100, 116, 139, 0.35) transparent;
+}
+
+.pretty-scrollbars::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+
+.pretty-scrollbars::-webkit-scrollbar-thumb {
+  border-radius: 999px;
+  background: rgba(100, 116, 139, 0.3);
+  border: 2px solid transparent;
+  background-clip: padding-box;
+}
+
+.hidden-scrollbar {
+  scrollbar-width: none;
+}
+
+.hidden-scrollbar::-webkit-scrollbar {
+  display: none;
+}

@@ -1,0 +1,25 @@
+{
+  "name": "betterstack-traces-app",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "vite dev",
+    "build": "vite build --app",
+    "start": "node dist/rsc/index.js",
+    "tsc": "tsc"
+  },
+  "dependencies": {
+    "@tailwindcss/vite": "^4.2.2",
+    "@types/react": "^19.2.14",
+    "@types/react-dom": "^19.2.3",
+    "react": "^19.2.4",
+    "react-dom": "^19.2.4",
+    "spiceflow": "1.18.0-rsc.16",
+    "tailwindcss": "^4.2.2",
+    "typescript": "^6.0.2",
+    "vite": "^8.0.3"
+  },
+  "devDependencies": {
+    "@vitejs/plugin-react": "^5.2.0"
+  }
+}
