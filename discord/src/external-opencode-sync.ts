@@ -172,6 +172,47 @@ function getExternalUserMirrorText({
   return `» **${username}:** ${prompt.slice(0, 1000)}${prompt.length > 1000 ? '...' : ''}`
 }
 
+// Pure derivation: does the latest user turn come from outside this
+// Discord thread and contain parts we haven't mirrored yet?
+// Used to reclaim sync for kimaki-owned threads when the user resumes
+// from the OpenCode CLI/TUI side. No new state — derives from existing
+// part_messages dedupe set and <discord-user /> origin tags.
+function hasExternalResume({
+  messages,
+  threadId,
+  syncedPartIds,
+}: {
+  messages: SessionMessageLike[]
+  threadId: string
+  syncedPartIds: Set<string>
+}): boolean {
+  // Walk messages newest-first to find the latest user message
+  // with renderable text content.
+  for (let i = messages.length - 1; i >= 0; i--) {
+    const message = messages[i]!
+    if (message.info.role !== 'user') {
+      continue
+    }
+    const renderableParts = getRenderableUserTextParts({ message })
+    if (renderableParts.length === 0) {
+      continue
+    }
+    // Found the latest user message with actual text content.
+    // Check if it originated from this Discord thread.
+    const origin = getDiscordOriginMetadataFromMessage({ message })
+    if (origin && (!origin.threadId || origin.threadId === threadId)) {
+      // Latest user turn came from Discord — no external resume.
+      return false
+    }
+    // Latest user turn is external (CLI/TUI). Check if we already
+    // mirrored all its parts. If any part is unseen, reclaim.
+    return renderableParts.some((p) => {
+      return !syncedPartIds.has(p.id)
+    })
+  }
+  return false
+}
+
 function shouldMirrorAssistantPart({
   part,
   verbosity,
@@ -263,18 +304,32 @@ async function ensureExternalSessionThread({
   sessionId,
   sessionTitle,
   messages,
+  reclaimable,
 }: {
   discordClient: Client
   channelId: string
   sessionId: string
   sessionTitle?: string | null
   messages: SessionMessage[]
+  // When true, a kimaki-owned thread is reclaimed back to external_poll
+  // because the user resumed from the OpenCode CLI/TUI side.
+  reclaimable?: boolean
 }): Promise<ThreadChannel | Error | null> {
   const existingThreadId = await getThreadIdBySessionId(sessionId)
   if (existingThreadId) {
     const existingSource = await getThreadSessionSource(existingThreadId)
-    if (existingSource && existingSource !== 'external_poll') {
+    if (existingSource && existingSource !== 'external_poll' && !reclaimable) {
       return null
+    }
+    // Reclaim: flip kimaki-owned thread back to external_poll so typing
+    // and future polls work naturally without any new stored state.
+    if (existingSource === 'kimaki' && reclaimable) {
+      await upsertThreadSession({
+        threadId: existingThreadId,
+        sessionId,
+        source: 'external_poll',
+      })
+      logger.log(`[EXTERNAL_SYNC] Reclaimed thread ${existingThreadId} for session ${sessionId} (user resumed from OpenCode)`)
     }
     const existingThread = await discordClient.channels.fetch(existingThreadId).catch((error) => {
       return new Error(`Failed to fetch thread ${existingThreadId}`, {
@@ -430,12 +485,33 @@ async function syncSessionToThread({
   }
   const messages = messagesResponse.data || []
 
+  // Pre-check: for kimaki-owned threads, derive whether the user resumed
+  // from the OpenCode CLI/TUI by inspecting the latest user turn and
+  // existing part_messages. No new state — pure derivation from evidence.
+  const existingThreadId = await getThreadIdBySessionId(sessionId)
+  let reclaimable = false
+  if (existingThreadId) {
+    const existingSource = await getThreadSessionSource(existingThreadId)
+    if (existingSource === 'kimaki') {
+      const existingPartIds = await getPartMessageIds(existingThreadId)
+      reclaimable = hasExternalResume({
+        messages,
+        threadId: existingThreadId,
+        syncedPartIds: new Set(existingPartIds),
+      })
+      if (!reclaimable) {
+        return
+      }
+    }
+  }
+
   const thread = await ensureExternalSessionThread({
     discordClient,
     channelId,
     sessionId,
     sessionTitle,
     messages,
+    reclaimable,
   })
   if (thread === null) {
     return
@@ -680,4 +756,5 @@ export const externalOpencodeSyncInternals = {
   sortSessionsByRecency,
   parseDiscordOriginMetadata,
   getDiscordOriginMetadataFromMessage,
+  hasExternalResume,
 }
