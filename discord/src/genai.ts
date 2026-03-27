@@ -259,7 +259,7 @@ export async function startGenAiSession({
     apiKey,
   })
 
-  const model = 'gemini-2.5-flash-native-audio-preview-12-2025'
+  const model = 'gemini-3.1-flash-live-preview'
 
   session = await ai.live.connect({
     model,
