@@ -49,10 +49,10 @@ export function setDataDir(dir: string): void {
 
 /**
  * Get the projects directory path (for /create-new-project command).
- * Returns <dataDir>/projects
+ * Returns ~/Local-Projects-2026/ for new projects.
  */
 export function getProjectsDir(): string {
-  return path.join(getDataDir(), 'projects')
+  return path.join(os.homedir(), 'Local-Projects-2026')
 }
 
 export type { RegisteredUserCommand } from './store.js'
