@@ -7,6 +7,7 @@
 
 import './globals.css'
 import { z } from 'zod'
+import { marked } from 'marked'
 import { Spiceflow } from 'spiceflow'
 import { Head } from 'spiceflow/react'
 import { createPrisma } from 'db/src'
@@ -20,12 +21,55 @@ import {
   upsertGatewayClientAndRefreshKv,
 } from './gateway-client-kv.js'
 import { createAuth, parseAllowedCallbackUrl } from './auth.js'
-import { renderSuccessPage } from './components/success-page.js'
 import { SlackBridgeDO } from './slack-bridge-do.js'
 import { SlackInstallPage } from './slack-install-page.js'
 import type { Env } from './env.js'
+import privacyPolicyMarkdown from './privacy-policy.md?raw'
+import termsOfServiceMarkdown from './terms-of-service.md?raw'
 
 export { SlackBridgeDO }
+
+function PolicyPage({
+  title,
+  description,
+  html,
+}: {
+  title: string
+  description: string
+  html: string
+}) {
+  return (
+    <>
+      <Head>
+        <Head.Title>{`Kimaki ${title}`}</Head.Title>
+        <Head.Meta name="description" content={description} />
+      </Head>
+
+      <main className="mx-auto flex min-h-screen w-full max-w-4xl flex-col gap-8 px-6 py-12 md:px-8 md:py-16">
+        <article className="flex flex-col gap-8 rounded-3xl border border-stone-200 bg-white p-6 shadow-sm md:p-10">
+          <header className="flex flex-col gap-3 border-b border-stone-200 pb-6">
+            <p className="text-sm font-medium uppercase tracking-[0.18em] text-stone-500">
+              Kimaki
+            </p>
+            <h1 className="text-4xl font-semibold tracking-tight text-balance md:text-5xl">
+              {title}
+            </h1>
+            <p className="max-w-2xl text-sm leading-6 text-stone-600 md:text-base">
+              {description}
+            </p>
+          </header>
+
+          <div
+            className="flex flex-col gap-4 text-sm leading-7 text-stone-700 md:text-base [&_a]:text-stone-900 [&_a]:underline [&_a]:underline-offset-4 [&_code]:rounded-md [&_code]:bg-stone-100 [&_code]:px-1.5 [&_code]:py-0.5 [&_code]:text-[0.95em] [&_h1]:hidden [&_h2]:mt-6 [&_h2]:text-2xl [&_h2]:font-semibold [&_h2]:tracking-tight [&_h3]:mt-4 [&_h3]:text-lg [&_h3]:font-semibold [&_li]:ml-6 [&_li]:list-disc [&_p]:text-pretty [&_ul]:flex [&_ul]:flex-col [&_ul]:gap-2"
+            dangerouslySetInnerHTML={{
+              __html: html,
+            }}
+          />
+        </article>
+      </main>
+    </>
+  )
+}
 
 const SLACK_OAUTH_CALLBACK_PATH = '/slack/oauth/callback'
 const SLACK_INSTALL_SCOPES = [
@@ -44,6 +88,19 @@ const SLACK_INSTALL_SCOPES = [
 
 export const app = new Spiceflow()
   .state('env', {} as Env)
+
+  .layout('/*', ({ children }) => {
+    return (
+      <html lang="en">
+        <Head>
+          <Head.Meta name="viewport" content="width=device-width, initial-scale=1" />
+        </Head>
+        <body className="min-h-screen bg-stone-50 text-stone-900 antialiased">
+          {children}
+        </body>
+      </html>
+    )
+  })
 
   .onError(({ error }) => {
     console.error(error)
@@ -72,6 +129,59 @@ export const app = new Spiceflow()
       >`SELECT 1 as result`
       return { status: 'ok', db: result[0].result }
     },
+  })
+
+  .page('/install-success', async ({ request }) => {
+    const url = new URL(request.url)
+    const guildId =
+      url.searchParams.get('guild_id') ??
+      url.searchParams.get('team_id') ??
+      undefined
+
+    return (
+      <>
+        <Head>
+          <Head.Title>Kimaki Bot Installed</Head.Title>
+          <Head.Meta
+            name="description"
+            content="Kimaki was installed successfully. Return to the terminal to continue onboarding."
+          />
+        </Head>
+
+        <main className="flex min-h-screen items-center justify-center px-6 py-12">
+          <section className="flex w-full max-w-xl flex-col gap-8 rounded-[32px] border border-stone-200 bg-white p-8 shadow-sm md:p-12">
+            <div className="flex flex-col gap-4 text-center">
+              <div className="mx-auto flex size-20 items-center justify-center rounded-full bg-emerald-100 text-4xl text-emerald-700">
+                <span aria-hidden="true">✓</span>
+              </div>
+              <div className="flex flex-col gap-3">
+                <p className="text-sm font-medium uppercase tracking-[0.18em] text-stone-500">
+                  Kimaki
+                </p>
+                <h1 className="text-balance text-4xl font-semibold tracking-tight text-stone-950 md:text-5xl">
+                  Bot installed successfully
+                </h1>
+                <p className="text-pretty text-base leading-7 text-stone-600 md:text-lg">
+                  You can close this tab and return to the terminal to finish the
+                  setup.
+                </p>
+              </div>
+            </div>
+
+            {guildId ? (
+              <div className="flex flex-col gap-3 rounded-2xl border border-stone-200 bg-stone-50 p-4 text-center">
+                <p className="text-sm uppercase tracking-[0.16em] text-stone-500">
+                  Connected workspace
+                </p>
+                <p className="mx-auto rounded-xl border border-stone-200 bg-white px-4 py-2 font-mono text-sm text-stone-700">
+                  {guildId}
+                </p>
+              </div>
+            ) : null}
+          </section>
+        </main>
+      </>
+    )
   })
 
   // Initiates the Discord bot install flow via better-auth.
@@ -178,15 +288,14 @@ export const app = new Spiceflow()
 
   .layout('/slack-install', ({ children }) => {
     return (
-      <html lang="en">
+      <>
         <Head>
           <Head.Title>Kimaki - Connect to Slack</Head.Title>
-          <Head.Meta name="viewport" content="width=device-width, initial-scale=1" />
         </Head>
-        <body className="bg-white min-h-screen flex items-center justify-center font-sans antialiased">
+        <div className="flex min-h-screen items-center justify-center bg-white font-sans antialiased">
           {children}
-        </body>
-      </html>
+        </div>
+      </>
     )
   })
 
@@ -452,19 +561,39 @@ export const app = new Spiceflow()
     },
   })
 
-  // Success page after the OAuth callback completes.
-  // better-auth redirects here after processing the callback.
+  .page('/privacy', async () => {
+    const privacyPolicyHtml = await marked.parse(privacyPolicyMarkdown)
+
+    return (
+      <PolicyPage
+        title="Privacy Policy"
+        description="This page explains what Kimaki processes when you use the shared bot, onboarding website, and related integrations."
+        html={privacyPolicyHtml}
+      />
+    )
+  })
+
+  .page('/terms', async () => {
+    const termsOfServiceHtml = await marked.parse(termsOfServiceMarkdown)
+
+    return (
+      <PolicyPage
+        title="Terms of Service"
+        description="These terms govern use of Kimaki, the shared bot, onboarding pages, and related integrations."
+        html={termsOfServiceHtml}
+      />
+    )
+  })
+
   .route({
     method: 'GET',
-    path: '/install-success',
+    path: '/terms-of-service',
     handler({ request }) {
-      const url = new URL(request.url)
-      const guildId =
-        url.searchParams.get('guild_id') ??
-        url.searchParams.get('team_id') ??
-        undefined
-      return new Response(renderSuccessPage({ guildId }), {
-        headers: { 'Content-Type': 'text/html; charset=utf-8' },
+      return new Response(null, {
+        status: 302,
+        headers: {
+          Location: new URL('/terms', request.url).toString(),
+        },
       })
     },
   })

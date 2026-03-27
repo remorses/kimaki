@@ -579,6 +579,9 @@ importers:
       discord-slack-bridge:
         specifier: workspace:^
         version: link:../discord-slack-bridge
+      marked:
+        specifier: ^17.0.5
+        version: 17.0.5
       react:
         specifier: ^19.2.4
         version: 19.2.4
@@ -4587,6 +4590,11 @@ packages:
 
   marked@17.0.3:
     resolution: {integrity: sha512-jt1v2ObpyOKR8p4XaUJVk3YWRJ5n+i4+rjQopxvV32rSndTJXvIzuUdWWIy/1pFQMkQmvTXawzDNqOH/CUmx6A==}
+    engines: {node: '>= 20'}
+    hasBin: true
+
+  marked@17.0.5:
+    resolution: {integrity: sha512-6hLvc0/JEbRjRgzI6wnT2P1XuM1/RrrDEX0kPt0N7jGm1133g6X7DlxFasUIx+72aKAr904GTxhSLDrd5DIlZg==}
     engines: {node: '>= 20'}
     hasBin: true
 
@@ -9962,6 +9970,8 @@ snapshots:
 
   marked@17.0.3: {}
 
+  marked@17.0.5: {}
+
   math-intrinsics@1.1.0: {}
 
   media-typer@0.3.0: {}
@@ -10530,7 +10540,7 @@ snapshots:
 
   ref@1.3.5:
     dependencies:
-      bindings: 1.2.1
+      bindings: 1.5.0
       debug: 2.6.9
       nan: 2.26.2
     transitivePeerDependencies:

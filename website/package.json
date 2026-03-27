@@ -19,6 +19,7 @@
     "db": "workspace:^",
     "discord-api-types": "^0.38.40",
     "discord-slack-bridge": "workspace:^",
+    "marked": "^17.0.5",
     "react": "^19.2.4",
     "react-dom": "^19.2.4",
     "spiceflow": "1.18.0-rsc.16",
