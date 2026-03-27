@@ -18,6 +18,9 @@
     {
       "tag": "v2",
       "new_sqlite_classes": ["SlackBridgeDO"]
+    },
+    {
+      "tag": "v3"
     }
   ],
   "hyperdrive": [
