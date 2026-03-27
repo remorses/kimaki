@@ -4,7 +4,7 @@ import { spiceflowPlugin } from 'spiceflow/vite'
 import tailwindcss from '@tailwindcss/vite'
 import { defineConfig } from 'vite'
 
-export default defineConfig(() => ({
+export default defineConfig({
   clearScreen: false,
   plugins: [
     react(),
@@ -19,4 +19,4 @@ export default defineConfig(() => ({
       },
     }),
   ],
-}))
+})
