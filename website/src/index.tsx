@@ -6,7 +6,9 @@
 // because CF Workers cannot reuse connections across requests.
 
 import './globals.css'
+import { z } from 'zod'
 import { Spiceflow } from 'spiceflow'
+import { Head } from 'spiceflow/react'
 import { createPrisma } from 'db/src'
 import { getTeamIdForWebhookEvent } from 'discord-slack-bridge/src/webhook-team-id'
 import {
@@ -177,11 +179,10 @@ export const app = new Spiceflow()
   .layout('/slack-install', ({ children }) => {
     return (
       <html lang="en">
-        <head>
-          <meta charSet="utf-8" />
-          <meta name="viewport" content="width=device-width, initial-scale=1" />
-          <title>Kimaki - Connect to Slack</title>
-        </head>
+        <Head>
+          <Head.Title>Kimaki - Connect to Slack</Head.Title>
+          <Head.Meta name="viewport" content="width=device-width, initial-scale=1" />
+        </Head>
         <body className="bg-white min-h-screen flex items-center justify-center font-sans antialiased">
           {children}
         </body>
@@ -190,20 +191,23 @@ export const app = new Spiceflow()
   })
 
   .page('/slack-install', async ({ request }) => {
-    const url = new URL(request.url)
-    const clientId = url.searchParams.get('clientId')
-    const clientSecret = url.searchParams.get('clientSecret')
-    const kimakiCallbackUrl = url.searchParams.get('kimakiCallbackUrl')
+    const params = z
+      .object({
+        clientId: z.string(),
+        clientSecret: z.string(),
+        kimakiCallbackUrl: z.string().nullish(),
+      })
+      .safeParse(Object.fromEntries(new URL(request.url).searchParams))
 
-    if (!clientId || !clientSecret) {
+    if (!params.success) {
       return <p className="text-red-600 text-sm">Missing clientId or clientSecret</p>
     }
 
     return (
       <SlackInstallPage
-        clientId={clientId}
-        clientSecret={clientSecret}
-        kimakiCallbackUrl={kimakiCallbackUrl}
+        clientId={params.data.clientId}
+        clientSecret={params.data.clientSecret}
+        kimakiCallbackUrl={params.data.kimakiCallbackUrl ?? null}
       />
     )
   })
@@ -214,12 +218,11 @@ export const app = new Spiceflow()
   .route({
     method: 'GET',
     path: '/slack-install/resolve',
-    async handler({ request }) {
-      const url = new URL(request.url)
-      const domain = url.searchParams.get('domain')?.trim().toLowerCase()
-      if (!domain) {
-        return { ok: false, error: 'Missing domain parameter' }
-      }
+    query: z.object({
+      domain: z.string(),
+    }),
+    async handler({ query }) {
+      const domain = query.domain.trim().toLowerCase()
 
       const findTeamResult = await fetch(
         `https://slack.com/api/auth.findTeam?domain=${encodeURIComponent(domain)}`,
@@ -250,18 +253,14 @@ export const app = new Spiceflow()
   .route({
     method: 'GET',
     path: '/slack-install/start',
-    async handler({ request, state }) {
-      const url = new URL(request.url)
-      const clientId = url.searchParams.get('clientId')
-      const clientSecret = url.searchParams.get('clientSecret')
-      const kimakiCallbackUrl = url.searchParams.get('kimakiCallbackUrl')
-      const team = url.searchParams.get('team')
-
-      if (!clientId || !clientSecret) {
-        throw new Response('Missing clientId or clientSecret', { status: 400 })
-      }
-
-      if (kimakiCallbackUrl && !parseAllowedCallbackUrl(kimakiCallbackUrl)) {
+    query: z.object({
+      clientId: z.string(),
+      clientSecret: z.string(),
+      kimakiCallbackUrl: z.string().optional(),
+      team: z.string().optional(),
+    }),
+    async handler({ query, request, state }) {
+      if (query.kimakiCallbackUrl && !parseAllowedCallbackUrl(query.kimakiCallbackUrl)) {
         throw new Response(
           'kimakiCallbackUrl must use https (or http for localhost)',
           { status: 400 },
@@ -273,9 +272,9 @@ export const app = new Spiceflow()
         kv: state.env.GATEWAY_CLIENT_KV,
         state: oauthState,
         record: {
-          kimaki_client_id: clientId,
-          kimaki_client_secret: clientSecret,
-          kimaki_callback_url: kimakiCallbackUrl ?? null,
+          kimaki_client_id: query.clientId,
+          kimaki_client_secret: query.clientSecret,
+          kimaki_callback_url: query.kimakiCallbackUrl ?? null,
         },
       }).catch((cause) => {
         return new Error('Failed to persist Slack install state', { cause })
@@ -293,8 +292,8 @@ export const app = new Spiceflow()
         new URL(SLACK_OAUTH_CALLBACK_PATH, baseUrl).toString(),
       )
       authorizeUrl.searchParams.set('state', oauthState)
-      if (team) {
-        authorizeUrl.searchParams.set('team', team)
+      if (query.team) {
+        authorizeUrl.searchParams.set('team', query.team)
       }
       return new Response(null, {
         status: 302,
@@ -757,6 +756,9 @@ export default {
   fetch(request: Request, env: Env) {
     return app.handle(request, { state: { env } })
   },
+  // Re-exported here so Vite's tree-shaker keeps the class in the bundle.
+  // Cloudflare Workers requires DO classes to be exported from the entry.
+  SlackBridgeDO,
 }
 
 function toResponse(response: {

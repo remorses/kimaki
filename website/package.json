@@ -4,10 +4,10 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "dev": "doppler run --mount .dev.vars --mount-format env -- vite dev",
+    "dev": "CLOUDFLARE_HYPERDRIVE_LOCAL_CONNECTION_STRING_HYPERDRIVE=$(doppler secrets get DATABASE_URL --plain -c dev) doppler run --mount .dev.vars --mount-format env -- vite dev",
     "build": "vite build",
     "preview": "vite preview",
-    "deployment": "tsc --noEmit && vite build && wrangler deploy --env preview",
+    "deployment": "tsc --noEmit && CLOUDFLARE_ENV=preview vite build && wrangler deploy --env preview",
     "deployment:production": "tsc --noEmit && vite build && wrangler deploy",
     "secrets:prod": "doppler run -c production --mount .env.prod --mount-format env -- wrangler secret bulk .env.prod",
     "verify:slack-bridge": "tsx scripts/verify-slack-bridge.ts"
@@ -21,8 +21,9 @@
     "discord-slack-bridge": "workspace:^",
     "react": "^19.2.4",
     "react-dom": "^19.2.4",
-    "spiceflow": "1.18.0-rsc.15",
-    "tailwindcss": "^4.2.2"
+    "spiceflow": "1.18.0-rsc.16",
+    "tailwindcss": "^4.2.2",
+    "zod": "^4.3.6"
   },
   "devDependencies": {
     "@cloudflare/vite-plugin": "^1.30.1",
