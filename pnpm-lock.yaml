@@ -549,6 +549,9 @@ importers:
       typescript:
         specifier: ^5.7.0
         version: 5.9.2
+      undici-types:
+        specifier: ~6.21.0
+        version: 6.21.0
       vite:
         specifier: ^7.1.4
         version: 7.1.4(@types/node@22.19.7)(jiti@2.6.1)(lightningcss@1.32.0)(terser@5.46.0)(tsx@4.20.5)(yaml@2.8.2)

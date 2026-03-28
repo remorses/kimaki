@@ -3681,12 +3681,14 @@ cli
   )
   .option('-h, --host [host]', 'Local host (default: localhost)')
   .option('-s, --server [url]', 'Tunnel server URL')
+  .option('-k, --kill', 'Kill any existing process on the port before starting')
   .action(
     async (options: {
       port?: string
       tunnelId?: string
       host?: string
       server?: string
+      kill?: boolean
     }) => {
       const { runTunnel, parseCommandFromArgv, CLI_NAME } = await import(
         'traforo/run-tunnel'
@@ -3714,6 +3716,7 @@ cli
         baseDomain: 'kimaki.xyz',
         serverUrl: options.server,
         command: command.length > 0 ? command : undefined,
+        kill: options.kill,
       })
     },
   )

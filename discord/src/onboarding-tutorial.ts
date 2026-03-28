@@ -146,7 +146,7 @@ ${backticks}bash
 PORT=$((RANDOM % 6000 + 3000))
 tmux kill-session -t game-dev 2>/dev/null
 tmux new-session -d -s game-dev -c "$PWD"
-tmux send-keys -t game-dev "PORT=$PORT kimaki tunnel -p $PORT -- bun run server.ts" Enter
+tmux send-keys -t game-dev "PORT=$PORT kimaki tunnel --kill -p $PORT -- bun run server.ts" Enter
 ${backticks}
 
 Wait a moment, then get the tunnel URL:
