@@ -300,7 +300,7 @@ export async function handleScreenshareCommand({
       startedBy: command.user.tag,
     })
     await command.editReply({
-      content: `Screen sharing started\n${session.noVncUrl}`,
+      content: `Screen sharing started, don't share this url with anyone. use /screenshare-stop to stop.\n${session.noVncUrl}`,
     })
   } catch (err) {
     logger.error('Failed to start screen share:', err)
