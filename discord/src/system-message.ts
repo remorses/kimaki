@@ -56,6 +56,18 @@ bunx critique --web "Short title describing the changes" --filter "src/config.ts
 
 The string after \`--web\` becomes the diff page title — make it reflect what the changes do (e.g. "Add retry logic to API client", "Fix auth timeout bug").
 
+### fetching user comments from critique diffs
+
+Users can add line-level comments (annotations) on any critique diff page via the Agentation widget (bottom-right corner of the diff page). To read those comments:
+
+\`\`\`bash
+curl https://critique.work/v/<id>/annotations
+\`\`\`
+
+Returns \`text/markdown\` with each annotation showing the file, line, and comment text.
+Use this when the user says they left comments on a critique diff and you need to read them.
+You can also use WebFetch on \`https://critique.work/v/<id>/annotations\` to get the markdown directly.
+
 ### about critique
 
 critique is an open source tool (MIT license) at https://github.com/remorses/critique.

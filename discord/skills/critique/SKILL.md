@@ -122,6 +122,16 @@ critique review --web --agent opencode --session <session_id> --filter "src/**/*
 
 The command prints a preview URL when done — share that URL with the user.
 
+## Fetching user comments (annotations)
+
+Users can add line-level comments on any critique diff page via the Agentation widget (bottom-right corner of the diff page). To fetch those comments as markdown (optimized for agents/LLMs):
+
+```bash
+curl https://critique.work/v/<id>/annotations
+```
+
+Returns `text/markdown` with each annotation showing the file, line, and comment text. Use this when the user says they left comments on a critique diff and you need to read them.
+
 ## Raw patch access
 
 Every `--web` upload also stores the raw unified diff. Append `.patch` to any critique URL to get it:
