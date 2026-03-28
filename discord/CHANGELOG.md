@@ -1,5 +1,23 @@
 # Changelog
 
+## 0.4.83
+
+1. **External OpenCode session sync** — kimaki now mirrors OpenCode sessions started outside Discord (e.g. from the CLI or another editor) into tracked Discord project threads automatically. Sessions are polled every 5 seconds, a new thread is created prefixed with `Sync:`, and messages stream in just like a normal kimaki session. Typing indicators show while the external session is busy.
+
+2. **Two-way external sync** — replies sent in the synced Discord thread are forwarded back into the external OpenCode session. If you switch back to the CLI to continue a conversation, kimaki detects the new CLI-originated messages and re-claims the thread so sync keeps flowing.
+
+3. **Live voice sessions switched to Gemini 2.0 Flash Live** — Discord voice sessions now use Google's latest lower-latency live audio model for faster, more natural conversations.
+
+4. **Fixed scheduled thread prompts not triggering** — tasks scheduled against an existing thread were posted as bot messages that the bot's own-message guard was silently ignoring. Scheduled tasks now use the canonical start-marker path so they fire correctly.
+
+5. **Fixed abort race before next message** — when a user sent a new message while a permission prompt was pending, the abort was fire-and-forget and the new message could race with the dying run. The abort now waits for `session.idle` (up to 2s) before the next message is enqueued.
+
+6. **Suppressed notifications for intermediate queue steps** — permission prompts, question dropdowns, and footer messages now send silently when the thread queue has pending items. Only the final message in a queue notifies the user.
+
+7. **SQLite cleanup on channel deletion** — deleting a Discord channel now removes all orphan rows (`channel_directories` and children) from the local SQLite database. `kimaki project list` no longer shows ghost entries, and a new `--prune` flag removes any remaining stale entries.
+
+8. **Fixed OpenCode server restart on bot shutdown** — SIGINT was not suppressing the auto-restart loop, causing orphan OpenCode server processes to spawn after the bot exited. Both SIGINT and the `shuttingDown` flag now correctly suppress restarts.
+
 ## 0.4.82
 
 1. **`/restart-opencode-server` now re-registers slash commands** — after restarting the OpenCode server, kimaki immediately re-registers all Discord slash commands (built-in + user commands + agents). New or changed commands, agents, and plugins are picked up without a full bot restart.
