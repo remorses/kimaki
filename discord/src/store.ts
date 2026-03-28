@@ -38,6 +38,13 @@ export type KimakiState = {
   // Read by: database paths, heap snapshot dir, log file path, hrana server.
   dataDir: string | null
 
+  // Custom projects directory override (default: <dataDir>/projects).
+  // When set via --projects-dir CLI flag, project create commands will
+  // create new project folders here instead of ~/.kimaki/projects/.
+  // Changes: set once at startup from --projects-dir CLI flag.
+  // Read by: config.ts getProjectsDir().
+  projectsDir: string | null
+
   // Default output verbosity for sessions when no channel-level override
   // exists in the DB. Controls which tool outputs are shown in Discord.
   // Changes: set once at startup from --verbosity CLI flag.
@@ -107,6 +114,7 @@ export type KimakiState = {
 
 export const store = createStore<KimakiState>(() => ({
   dataDir: null,
+  projectsDir: null,
   defaultVerbosity: 'text_and_essential_tools',
   defaultMentionMode: false,
   critiqueEnabled: true,

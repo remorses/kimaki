@@ -49,10 +49,28 @@ export function setDataDir(dir: string): void {
 
 /**
  * Get the projects directory path (for /create-new-project command).
- * Returns <dataDir>/projects
+ * Returns the custom --projects-dir if set, otherwise <dataDir>/projects.
  */
 export function getProjectsDir(): string {
+  const custom = store.getState().projectsDir
+  if (custom) {
+    return custom
+  }
   return path.join(getDataDir(), 'projects')
+}
+
+/**
+ * Set a custom projects directory path (from --projects-dir CLI flag).
+ * Creates the directory if it doesn't exist.
+ */
+export function setProjectsDir(dir: string): void {
+  const resolvedDir = path.resolve(dir)
+
+  if (!fs.existsSync(resolvedDir)) {
+    fs.mkdirSync(resolvedDir, { recursive: true })
+  }
+
+  store.setState({ projectsDir: resolvedDir })
 }
 
 export type { RegisteredUserCommand } from './store.js'
