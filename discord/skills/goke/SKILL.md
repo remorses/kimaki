@@ -602,6 +602,18 @@ cli.version('1.0.0')
 cli.parse()
 ```
 
+## `openInBrowser(url)`
+
+Opens a URL in the default browser. In non-TTY environments (CI, piped output, agents), prints the URL to stdout instead of opening a browser.
+
+```ts
+import { openInBrowser } from 'goke'
+
+openInBrowser('https://example.com/dashboard')
+```
+
+Use this after generating URLs (OAuth callbacks, dashboards, docs links) so interactive users get a browser tab and non-interactive environments get a printable URL.
+
 ## Exposing your CLI as a skill
 
 When you build a CLI with goke, the optimal way to create a skill for it is a minimal SKILL.md that tells agents to run `--help` before using the CLI. This way descriptions, examples, and usage patterns live in the CLI code (collocated with the implementation) instead of a separate markdown file that can go stale.

@@ -432,11 +432,11 @@ return res.status(response.status).json(response.body)
 
 > `matchError` routes by `_tag` and requires an `Error` fallback for plain Error instances. Use `matchErrorPartial` when you only need to handle some cases.
 
-### Resource Cleanup (defer)
+### Resource Cleanup (defer) — Replacing try/finally with `using`
 
-errore ships `DisposableStack` and `AsyncDisposableStack` polyfills that work in every runtime. Use them with TypeScript's `using` / `await using` for Go-like `defer` cleanup.
+`try/finally` has a structural problem: **every resource adds a nesting level**. Two resources = two levels of indentation. The business logic gets buried deeper with each resource, and cleanup is split across `finally` blocks far from where the resource was acquired. `await using` + `DisposableStack` keeps the function flat — one `cleanup.defer()` per resource, same indentation whether you have one resource or ten. Cleanup runs automatically in reverse order on every exit path.
 
-**tsconfig requirement:** add `"ESNext.Disposable"` to `lib` so TypeScript knows about `Disposable`, `AsyncDisposable`, `using`, and `await using`:
+**tsconfig requirement:** add `"ESNext.Disposable"` to `lib`:
 
 ```jsonc
 {
@@ -446,28 +446,51 @@ errore ships `DisposableStack` and `AsyncDisposableStack` polyfills that work in
 }
 ```
 
-Without this, `using`/`await using` declarations and `Symbol.dispose`/`Symbol.asyncDispose` will produce type errors. The errore polyfill handles the runtime side — this setting handles the type side.
+**Before — nested try/finally:**
 
 ```ts
-import * as errore from 'errore'
-
-async function processRequest(id: string): Promise<DbError | Result> {
-  await using cleanup = new errore.AsyncDisposableStack()
-
-  const db = await connectDb().catch((e) => new DbError({ cause: e }))
-  if (db instanceof Error) return db
-  cleanup.defer(() => db.close())
-
-  const cache = await openCache().catch((e) => new CacheError({ cause: e }))
-  if (cache instanceof Error) return cache
-  cleanup.defer(() => cache.flush())
-
-  return result
-  // cleanup runs in LIFO order: cache.flush(), then db.close()
+async function importData(url: string, dbUrl: string) {
+  const db = await connectDb(dbUrl)
+  try {
+    const tmpFile = await createTempFile()
+    try {
+      const data = await (await fetch(url)).text()
+      await tmpFile.write(data)
+      await db.import(tmpFile.path)
+      return { rows: await db.count() }
+    } finally {
+      await tmpFile.delete()
+    }
+  } finally {
+    await db.close()
+  }
 }
 ```
 
-> `await using` guarantees cleanup runs when the scope exits — whether by return, early error return, or thrown exception. Resources are released in reverse order (LIFO), just like Go's `defer`. No `try/finally` nesting.
+**After — flat with `await using`:**
+
+```ts
+async function importData(url: string, dbUrl: string): Promise<ImportError | { rows: number }> {
+  await using cleanup = new errore.AsyncDisposableStack()
+
+  const db = await connectDb(dbUrl).catch((e) => new ImportError({ reason: 'db connect', cause: e }))
+  if (db instanceof Error) return db
+  cleanup.defer(() => db.close())
+
+  const tmpFile = await createTempFile()
+  cleanup.defer(() => tmpFile.delete())
+
+  const response = await fetch(url).catch((e) => new ImportError({ reason: 'fetch', cause: e }))
+  if (response instanceof Error) return response
+
+  await tmpFile.write(await response.text())
+  await db.import(tmpFile.path)
+  return { rows: await db.count() }
+  // cleanup: tmpFile.delete() → db.close()
+}
+```
+
+> `await using` guarantees cleanup on every exit path — normal return, early error return, or exception. Resources release in LIFO order. Adding a resource is one line (`cleanup.defer()`), not another nesting level. The errore polyfill handles the runtime; the tsconfig `lib` entry handles the types.
 
 ### Fallback Values
 
@@ -607,6 +630,10 @@ for (const item of items) {
 ```
 
 > Place `signal.aborted` checks **before** expensive operations (network, db writes, file I/O). Check `isAbortError` **after** async calls that received the signal. Both keep the function responsive to cancellation.
+
+## Linting
+
+If the project uses [lintcn](https://github.com/remorses/lintcn), read `docs/lintcn.md` for the `no-unhandled-error` rule that catches discarded `Error | T` return values.
 
 ## Pitfalls
 
