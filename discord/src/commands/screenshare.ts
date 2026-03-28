@@ -19,6 +19,7 @@ import { execAsync } from '../worktrees.js'
 import type { WebSocketServer } from 'ws'
 
 const logger = createLogger('SCREEN')
+const SECURE_REPLY_FLAGS = MessageFlags.Ephemeral | SILENT_MESSAGE_FLAGS
 
 export type ScreenshareSession = {
   tunnelClient: TunnelClient
@@ -37,8 +38,10 @@ export type ScreenshareSession = {
 const activeSessions = new Map<string, ScreenshareSession>()
 
 const VNC_PORT = 5900
-const MAX_SESSION_MS = 60 * 60 * 1000 // 1 hour
+const MAX_SESSION_MINUTES = 30
+const MAX_SESSION_MS = MAX_SESSION_MINUTES * 60 * 1000
 const TUNNEL_BASE_DOMAIN = 'kimaki.xyz'
+const SCREENSHARE_TUNNEL_ID_BYTES = 16
 
 // Public noVNC client — we point it at our tunnel URL
 export function buildNoVncUrl({ tunnelHost }: { tunnelHost: string }): string {
@@ -51,6 +54,10 @@ export function buildNoVncUrl({ tunnelHost }: { tunnelHost: string }): string {
     view_only: 'false',
   })
   return `https://novnc.com/noVNC/vnc.html?${params.toString()}`
+}
+
+export function createScreenshareTunnelId(): string {
+  return crypto.randomBytes(SCREENSHARE_TUNNEL_ID_BYTES).toString('hex')
 }
 
 // macOS has two separate services:
@@ -212,7 +219,7 @@ export async function startScreenshare({
   }
 
   // Step 3: create tunnel
-  const tunnelId = crypto.randomBytes(8).toString('hex')
+  const tunnelId = createScreenshareTunnelId()
   const tunnelClient = new TunnelClient({
     localPort: wsInstance.port,
     tunnelId,
@@ -241,9 +248,11 @@ export async function startScreenshare({
   const tunnelUrl = `https://${tunnelHost}`
   const noVncUrl = buildNoVncUrl({ tunnelHost })
 
-  // Auto-kill after 1 hour
+  // Auto-kill after a short session so a leaked URL does not stay usable all day.
   const timeoutTimer = setTimeout(() => {
-    logger.log(`Screen share auto-stopped after 1 hour (key: ${sessionKey})`)
+    logger.log(
+      `Screen share auto-stopped after ${MAX_SESSION_MINUTES} minutes (key: ${sessionKey})`,
+    )
     stopScreenshare({ sessionKey })
   }, MAX_SESSION_MS)
   // Don't keep the process alive just for this timer
@@ -292,7 +301,7 @@ export async function handleScreenshareCommand({
     return
   }
 
-  await command.deferReply({ flags: SILENT_MESSAGE_FLAGS })
+  await command.deferReply({ flags: SECURE_REPLY_FLAGS })
 
   try {
     const session = await startScreenshare({
@@ -300,7 +309,10 @@ export async function handleScreenshareCommand({
       startedBy: command.user.tag,
     })
     await command.editReply({
-      content: `Screen sharing started, don't share this url with anyone. use /screenshare-stop to stop.\n${session.noVncUrl}`,
+      content:
+        `Screen sharing started. This reply is private and the URL uses a high-entropy tunnel id. ` +
+        `It will auto-stop after ${MAX_SESSION_MINUTES} minutes. Use /screenshare-stop to stop sooner.\n` +
+        `${session.noVncUrl}`,
     })
   } catch (err) {
     logger.error('Failed to start screen share:', err)

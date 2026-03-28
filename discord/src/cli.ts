@@ -3724,7 +3724,7 @@ cli
 cli
   .command(
     'screenshare',
-    'Share your screen via VNC tunnel. Auto-stops after 1 hour. Runs until Ctrl+C. Use tmux to run in background.',
+    'Share your screen via VNC tunnel. Auto-stops after 30 minutes. Runs until Ctrl+C. Use tmux to run in background.',
   )
   .action(async () => {
     const { startScreenshare } = await import(

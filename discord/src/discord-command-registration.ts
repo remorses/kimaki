@@ -484,7 +484,7 @@ export async function registerCommands({
       .toJSON(),
     new SlashCommandBuilder()
       .setName('screenshare')
-      .setDescription(truncateCommandDescription('Start screen sharing via VNC tunnel (auto-stops after 1 hour)'))
+      .setDescription(truncateCommandDescription('Start screen sharing via VNC tunnel (auto-stops after 30 minutes)'))
       .setDMPermission(false)
       .toJSON(),
     new SlashCommandBuilder()
