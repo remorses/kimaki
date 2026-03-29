@@ -316,7 +316,13 @@ export async function startDiscordBot({
   if (discordClient.isReady()) {
     await setupHandlers(discordClient)
   } else {
-    discordClient.once(Events.ClientReady, setupHandlers)
+    discordClient.once(Events.ClientReady, (readyClient) => {
+      void setupHandlers(readyClient).catch((error) => {
+        discordLogger.error(
+          `[GATEWAY] ClientReady handler failed: ${formatErrorWithStack(error)}`,
+        )
+      })
+    })
   }
 
   discordClient.on(Events.Error, (error) => {
