@@ -330,6 +330,42 @@ export function createDeterministicMatchers(): DeterministicMatcher[] {
     },
   }
 
+  // Question tool for select+queue drain test: model asks a question via dropdown,
+  // user answers via select menu while a message is queued.
+  const questionSelectQueueMatcher: DeterministicMatcher = {
+    id: 'question-select-queue-marker',
+    priority: 107,
+    when: {
+      lastMessageRole: 'user',
+      latestUserTextIncludes: 'QUESTION_SELECT_QUEUE_MARKER',
+    },
+    then: {
+      parts: [
+        { type: 'stream-start', warnings: [] },
+        {
+          type: 'tool-call',
+          toolCallId: 'question-select-queue-call',
+          toolName: 'question',
+          input: JSON.stringify({
+            questions: [{
+              question: 'How to proceed?',
+              header: 'Select action',
+              options: [
+                { label: 'Alpha', description: 'Alpha option' },
+                { label: 'Beta', description: 'Beta option' },
+              ],
+            }],
+          }),
+        },
+        {
+          type: 'finish',
+          finishReason: 'tool-calls',
+          usage: { inputTokens: 1, outputTokens: 1, totalTokens: 2 },
+        },
+      ],
+    },
+  }
+
   // Model responds with text + tool call, then after tool result the
   // follow-up matcher responds with text. This creates two assistant messages:
   // first with finish="tool-calls" + completed, second with finish="stop".
@@ -654,6 +690,7 @@ export function createDeterministicMatchers(): DeterministicMatcher[] {
     pluginTimeoutSleepMatcher,
     actionButtonClickFollowupMatcher,
     questionToolMatcher,
+    questionSelectQueueMatcher,
     permissionTypingMatcher,
     permissionTypingFollowupMatcher,
     multiToolMatcher,
