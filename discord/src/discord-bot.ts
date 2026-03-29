@@ -817,6 +817,8 @@ export async function startDiscordBot({
           userId: message.author.id,
           username:
             message.member?.displayName || message.author.displayName,
+          sourceMessageId: message.id,
+          sourceThreadId: thread.id,
           appId: currentAppId,
           preprocess: () => {
             return preprocessNewThreadMessage({

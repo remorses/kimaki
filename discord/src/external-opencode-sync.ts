@@ -59,7 +59,7 @@ type SessionMessageLike = {
 }
 
 type DiscordOriginMetadata = {
-  messageId: string
+  messageId?: string
   username: string
   threadId?: string
 }
@@ -101,13 +101,12 @@ function parseDiscordOriginMetadata(text: string): DiscordOriginMetadata | null 
     },
     {} as Record<string, string>,
   )
-  const messageId = attrs['message-id']
   const username = attrs['name']
-  if (!messageId || !username) {
+  if (!username) {
     return null
   }
   return {
-    messageId,
+    messageId: attrs['message-id'] || undefined,
     username,
     threadId: attrs['thread-id'] || undefined,
   }
@@ -386,16 +385,20 @@ function collectUnsyncedChunks({
       if (unsyncedParts.length === 0) {
         continue
       }
-      // If the user message came from this Discord thread, record the
-      // mapping to the original Discord message without sending a new one.
+      // If the user message came from this Discord thread, skip mirroring
+      // — it's already visible. When message-id is available, record a
+      // direct mapping for part dedup. When it's missing (sourceMessageId
+      // is optional in IngressInput), just mark parts as synced.
       const discordOrigin = getDiscordOriginMetadataFromMessage({ message })
       if (discordOrigin && (!discordOrigin.threadId || discordOrigin.threadId === thread.id)) {
         unsyncedParts.forEach((part) => {
-          directMappings.push({
-            partId: part.id,
-            messageId: discordOrigin.messageId,
-            threadId: thread.id,
-          })
+          if (discordOrigin.messageId) {
+            directMappings.push({
+              partId: part.id,
+              messageId: discordOrigin.messageId,
+              threadId: thread.id,
+            })
+          }
           syncedPartIds.add(part.id)
         })
         continue
