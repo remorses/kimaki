@@ -3510,13 +3510,20 @@ export class ThreadSessionRuntime {
     if (input.command) {
       const queuedCommand = input.command
       const commandSignal = AbortSignal.timeout(30_000)
+      // session.command() only accepts FilePart in parts, not text parts.
+      // Append <discord-user /> tag to arguments so external sync can
+      // detect this message came from Discord (same tag as promptAsync).
+      const discordTag = input.username
+        ? `\n<discord-user name="${input.username}" />`
+        : ''
       const commandResponse = await errore.tryAsync(() => {
         return getClient().session.command(
           {
             sessionID: session.id,
+
             directory: this.sdkDirectory,
             command: queuedCommand.name,
-            arguments: queuedCommand.arguments,
+            arguments: queuedCommand.arguments + discordTag,
             agent: earlyAgentPreference,
             ...variantField,
           },

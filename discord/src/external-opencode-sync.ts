@@ -86,7 +86,7 @@ function isSyntheticTextPart(part: Extract<Part, { type: 'text' }>): boolean {
 }
 
 function parseDiscordOriginMetadata(text: string): DiscordOriginMetadata | null {
-  const match = text.match(/^<discord-user\s+([^>]+)\s*\/>$/)
+  const match = text.match(/<discord-user\s+([^>]+)\s*\/>/)
   if (!match?.[1]) {
     return null
   }
@@ -117,23 +117,21 @@ function getDiscordOriginMetadataFromMessage({
 }: {
   message: SessionMessageLike
 }): DiscordOriginMetadata | null {
-  const syntheticTexts = message.parts.flatMap((part) => {
-    if (part.type !== 'text') {
-      return [] as string[]
-    }
-    if (!isSyntheticTextPart(part)) {
-      return [] as string[]
-    }
-    return [part.text || '']
+  const textParts = message.parts.filter((p): p is Extract<typeof p, { type: 'text' }> => {
+    return p.type === 'text'
   })
-
-  for (const text of syntheticTexts) {
-    const metadata = parseDiscordOriginMetadata(text)
+  // Synthetic parts first (normal promptAsync path), then non-synthetic
+  // (session.command() path where the tag is embedded in arguments text).
+  const sorted = [
+    ...textParts.filter((p) => { return isSyntheticTextPart(p) }),
+    ...textParts.filter((p) => { return !isSyntheticTextPart(p) }),
+  ]
+  for (const part of sorted) {
+    const metadata = parseDiscordOriginMetadata(part.text || '')
     if (metadata) {
       return metadata
     }
   }
-
   return null
 }
 
