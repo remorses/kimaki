@@ -1,10 +1,9 @@
 ---
 name: critique
 description: >
-  Git diff viewer and AI reviewer. Renders diffs as web pages, images, and PDFs
-  with syntax highlighting. Also provides AI-powered diff reviews via
-  `critique review --web`. Use this skill when working with critique for showing
-  diffs, generating diff URLs, selective hunk staging, or AI code reviews.
+  Git diff viewer. Renders diffs as web pages, images, and PDFs
+  with syntax highlighting. Use this skill when working with critique for showing
+  diffs, generating diff URLs, or selective hunk staging.
 ---
 
 # critique
@@ -88,39 +87,6 @@ critique hunks list                          # see all unstaged hunks
 critique hunks add 'file:@-10,6+10,7'       # stage only your hunks
 git commit -m "your changes"                 # commit separately
 ```
-
-## AI-powered diff review
-
-`critique review --web` spawns a separate opencode session that analyzes a diff, groups related
-changes, and produces a structured review with explanations, diagrams, and suggestions. Uploads
-the result as a shareable URL — much richer than a plain diff link.
-
-**This command is very slow (up to 20 minutes for large diffs).** Only run when the user
-explicitly asks for a code review or diff explanation. Warn the user it will take a while.
-Set Bash tool timeout to at least 25 minutes (`timeout: 1_500_000`).
-
-Always pass `--agent opencode` and `--session <current_session_id>` so the reviewer has context
-about why the changes were made. If you know other session IDs that produced the diff, pass them
-too with additional `--session` flags.
-
-```bash
-# Review working tree changes
-critique review --web --agent opencode --session <session_id>
-
-# Review a specific commit
-critique review --commit HEAD --web --agent opencode --session <session_id>
-
-# Review branch changes compared to main
-critique review main...HEAD --web --agent opencode --session <session_id>
-
-# Review with multiple session contexts
-critique review --commit abc1234 --web --agent opencode --session <session_id> --session <other_session_id>
-
-# Review only specific files
-critique review --web --agent opencode --session <session_id> --filter "src/**/*.ts"
-```
-
-The command prints a preview URL when done — share that URL with the user.
 
 ## Raw patch access
 
