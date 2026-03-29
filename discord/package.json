@@ -17,7 +17,9 @@
     "register-commands": "tsx scripts/register-commands.ts",
     "lint": "lintcn lint",
     "format": "oxfmt src",
-    "sync-skills": "tsx scripts/sync-skills.ts"
+    "sync-skills": "tsx scripts/sync-skills.ts",
+    "build": "tsc",
+    "link": "pnpm build && npm link"
   },
   "repository": "https://github.com/remorses/kimaki",
   "bin": "bin.js",

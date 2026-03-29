@@ -78,4 +78,72 @@ describe('formatTodoList', () => {
 
     expect(formatTodoList(part)).toMatchInlineSnapshot(`"⒈ **fix the bug**"`)
   })
+
+  test('handles non-array todos gracefully', () => {
+    const part: Part = {
+      id: 'test',
+      type: 'tool',
+      tool: 'todowrite',
+      sessionID: 'ses_test',
+      messageID: 'msg_test',
+      callID: 'call_test',
+      state: {
+        status: 'completed',
+        input: {
+          // TypeScript correctly flags this as invalid; testing runtime behavior
+          todos: { invalid: 'object' } as unknown as Array<{ content: string; status: string }>,
+        },
+        output: '',
+        title: 'todowrite',
+        metadata: {},
+        time: { start: 0, end: 0 },
+      },
+    }
+
+    expect(formatTodoList(part)).toBe('')
+  })
+
+  test('handles null todos gracefully', () => {
+    const part: Part = {
+      id: 'test',
+      type: 'tool',
+      tool: 'todowrite',
+      sessionID: 'ses_test',
+      messageID: 'msg_test',
+      callID: 'call_test',
+      state: {
+        status: 'completed',
+        input: {
+          todos: null,
+        },
+        output: '',
+        title: 'todowrite',
+        metadata: {},
+        time: { start: 0, end: 0 },
+      },
+    }
+
+    expect(formatTodoList(part)).toBe('')
+  })
+
+  test('handles undefined todos gracefully', () => {
+    const part: Part = {
+      id: 'test',
+      type: 'tool',
+      tool: 'todowrite',
+      sessionID: 'ses_test',
+      messageID: 'msg_test',
+      callID: 'call_test',
+      state: {
+        status: 'completed',
+        input: {},
+        output: '',
+        title: 'todowrite',
+        metadata: {},
+        time: { start: 0, end: 0 },
+      },
+    }
+
+    expect(formatTodoList(part)).toBe('')
+  })
 })
