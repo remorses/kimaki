@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.4.86
+
+1. **Fixed voice messages getting lost when a question dropdown is pending** — sending a voice message while the AI's question dropdown is showing no longer discards the voice content. Previously, `message.content` (empty for voice) was passed as the question answer, sending `""` to the model, and the early-return prevented transcription from ever running. Now the empty-content message properly unblocks OpenCode's question waiter and flows through normal transcription, arriving as the next user message after the model responds.
+
 ## 0.4.85
 
 1. **Fixed infinite reconnect loop after gateway proxy restart** — after a failed RESUME, the proxy now sends an `INVALID_SESSION` payload and properly drains the WebSocket sink before teardown, so the client reconnects cleanly instead of looping indefinitely.

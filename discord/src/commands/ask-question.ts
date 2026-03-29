@@ -49,6 +49,12 @@ type PendingQuestionContext = {
 const QUESTION_CONTEXT_TTL_MS = 10 * 60 * 1000
 export const pendingQuestionContexts = new Map<string, PendingQuestionContext>()
 
+export function hasPendingQuestionForThread(threadId: string): boolean {
+  return [...pendingQuestionContexts.values()].some((ctx) => {
+    return ctx.thread.id === threadId
+  })
+}
+
 /**
  * Show dropdown menus for question tool input.
  * Sends one message per question with the dropdown directly under the question text.
@@ -311,13 +317,21 @@ export function parseAskUserQuestionTool(part: {
 }
 
 /**
- * Cancel a pending question for a thread (e.g., when user sends a new message).
- * Sends the user's message as the answer to OpenCode so the model sees their actual response.
+ * Cancel a pending question for a thread.
  *
- * Returns 'replied' if the question was answered successfully (caller should NOT
- * enqueue the user message as a new prompt — it was consumed as the answer).
- * Returns 'reply-failed' if reply failed (context kept pending so TTL can retry).
- * Returns 'no-pending' if no question was pending for this thread.
+ * Two modes depending on whether `userMessage` is provided:
+ *
+ * - `cancelPendingQuestion(threadId)` — cleanup only. Removes the context
+ *   without replying to OpenCode. Use when aborting the blocked session
+ *   separately (e.g. voice/attachment messages whose content needs
+ *   transcription first). Returns 'no-pending' in both "found+cleaned" and
+ *   "nothing found" cases.
+ *
+ * - `cancelPendingQuestion(threadId, text)` — reply path. Sends the text as
+ *   the tool answer so the model sees the user's response. The caller should
+ *   NOT also enqueue the message as a new prompt.
+ *   Returns 'replied' on success, 'reply-failed' if the reply call fails
+ *   (context kept pending so TTL can retry).
  */
 export async function cancelPendingQuestion(
   threadId: string,
@@ -339,8 +353,9 @@ export async function cancelPendingQuestion(
   }
 
   // undefined means teardown/cleanup — just remove context, don't reply.
-  // The session is already being torn down. Empty string '' is a valid
-  // user message (attachment-only, voice, etc.) and must still go through.
+  // The session is already being torn down or the caller wants to dismiss
+  // the question without providing an answer (e.g. voice/attachment-only
+  // messages where content needs transcription before it can be an answer).
   if (userMessage === undefined) {
     pendingQuestionContexts.delete(contextHash)
     return 'no-pending'

@@ -1,8 +1,9 @@
 // E2e test for question tool: user text message during pending question should
-// be consumed as the answer and NOT also sent as a duplicate promptAsync.
-// Reproduces the bug from commit a4dfb01 where the same message was sent twice.
+// dismiss the question (abort), then enqueue as a normal user prompt.
+// The user's message must appear as a real user message in the thread, not
+// get consumed as a tool result answer (which lost voice/image content).
 
-import { describe, test, expect } from 'vitest'
+import { describe, test, expect, afterEach } from 'vitest'
 import {
   setupQueueAdvancedSuite,
   TEST_USER_ID,
@@ -12,8 +13,10 @@ import {
   waitForFooterMessage,
 } from './test-utils.js'
 import { pendingQuestionContexts } from './commands/ask-question.js'
+import { store, type DeterministicTranscriptionConfig } from './store.js'
 
 const TEXT_CHANNEL_ID = '200000000000001007'
+const VOICE_CHANNEL_ID = '200000000000001017'
 
 async function waitForPendingQuestion({
   threadId,
@@ -59,7 +62,13 @@ async function waitForNoPendingQuestion({
   throw new Error('Timed out waiting for question context cleanup')
 }
 
-describe('queue advanced: question tool text answer', () => {
+function setDeterministicTranscription(config: DeterministicTranscriptionConfig | null) {
+  store.setState({
+    test: { deterministicTranscription: config },
+  })
+}
+
+describe('queue advanced: question tool answer', () => {
   const ctx = setupQueueAdvancedSuite({
     channelId: TEXT_CHANNEL_ID,
     channelName: 'qa-question-e2e',
@@ -67,8 +76,12 @@ describe('queue advanced: question tool text answer', () => {
     username: 'queue-question-tester',
   })
 
+  afterEach(() => {
+    setDeterministicTranscription(null)
+  })
+
   test(
-    'user text message answers pending question without sending duplicate prompt',
+    'user text message dismisses pending question and enqueues as normal prompt',
     async () => {
       await ctx.discord.channel(TEXT_CHANNEL_ID).user(TEST_USER_ID).sendMessage({
         content: 'QUESTION_TEXT_ANSWER_MARKER',
@@ -100,34 +113,18 @@ describe('queue advanced: question tool text answer', () => {
 
       // User sends a text message while question is pending.
       // This should:
-      // 1. Answer the question via cancelPendingQuestion (consumed as answer)
-      // 2. NOT also send as a new promptAsync (the fix)
-      // 3. Clean up the pending question context
+      // 1. Dismiss the pending question (cleanup context)
+      // 2. Abort the blocked session so OpenCode unblocks
+      // 3. Enqueue the message as a normal user prompt (not consumed as answer)
       await th.user(TEST_USER_ID).sendMessage({
         content: 'my text answer',
       })
 
-      // Pending question context should be cleaned up after answer
+      // Pending question context should be cleaned up
       await waitForNoPendingQuestion({
         threadId: thread.id,
         timeoutMs: 4_000,
       })
-
-      // Wait for second question dropdown (from question-answer followup —
-      // OpenCode calls LLM again with same prompt after question tool completes,
-      // deterministic matcher fires question tool again). This is expected.
-      // Poll for it instead of sleeping.
-      const start = Date.now()
-      while (Date.now() - start < 4_000) {
-        const msgs = await th.getMessages()
-        const questionMsgs = msgs.filter((m) => {
-          return m.content.includes('Which option do you prefer?')
-        })
-        if (questionMsgs.length >= 2) {
-          break
-        }
-        await new Promise<void>((r) => { setTimeout(r, 50) })
-      }
 
       const timeline = await th.text({ showInteractions: true })
       expect(timeline).toMatchInlineSnapshot(`
@@ -137,21 +134,118 @@ describe('queue advanced: question tool text answer', () => {
         **Pick one**
         Which option do you prefer?
         --- from: user (queue-question-tester)
-        my text answer
-        --- from: assistant (TestBot)
-        **Pick one**
-        Which option do you prefer?"
+        my text answer"
       `)
 
-      // The user's "my text answer" message must appear in the thread
+      // The user's message must appear in Discord
       expect(timeline).toContain('my text answer')
 
-      // Key regression assertion: without the fix, the user's text message
-      // is ALSO sent as a duplicate promptAsync which triggers a THIRD question
-      // dropdown. With the fix, only 2 dropdowns appear (initial + followup
-      // from question answer). Count occurrences of "Which option do you prefer?"
+      // Only 1 question dropdown — text message was consumed as the answer,
+      // no duplicate prompt was sent (which would trigger a second dropdown).
       const questionCount = (timeline.match(/Which option do you prefer\?/g) || []).length
-      expect(questionCount).toBe(2)
+      expect(questionCount).toBe(1)
+    },
+    20_000,
+  )
+
+})
+
+describe('queue advanced: voice message during pending question', () => {
+  const ctx = setupQueueAdvancedSuite({
+    channelId: VOICE_CHANNEL_ID,
+    channelName: 'qa-question-voice-e2e',
+    dirName: 'qa-question-voice-e2e',
+    username: 'queue-question-tester',
+  })
+
+  afterEach(() => {
+    setDeterministicTranscription(null)
+  })
+
+  test(
+    'voice message during pending question dismisses question and transcribes normally',
+    async () => {
+      // This is the exact bug scenario: user sends a voice message while a
+      // question dropdown is pending. Voice messages have empty message.content
+      // (audio is in attachments, transcription happens later). The old code
+      // passed "" as the question answer and consumed the message — the voice
+      // content was completely lost.
+      await ctx.discord.channel(VOICE_CHANNEL_ID).user(TEST_USER_ID).sendMessage({
+        content: 'QUESTION_TEXT_ANSWER_MARKER',
+      })
+
+      const thread = await ctx.discord.channel(VOICE_CHANNEL_ID).waitForThread({
+        timeout: 4_000,
+        predicate: (t) => {
+          return t.name === 'QUESTION_TEXT_ANSWER_MARKER'
+        },
+      })
+
+      const th = ctx.discord.thread(thread.id)
+
+      // Wait for the question dropdown to appear
+      await waitForPendingQuestion({
+        threadId: thread.id,
+        timeoutMs: 4_000,
+      })
+
+      await waitForBotMessageContaining({
+        discord: ctx.discord,
+        threadId: thread.id,
+        text: 'Which option do you prefer?',
+        timeout: 4_000,
+      })
+
+      // Send a voice message while the question is pending.
+      // message.content is "" for voice messages — only the attachment exists.
+      setDeterministicTranscription({
+        transcription: 'I want option Alpha please',
+        queueMessage: false,
+      })
+
+      await th.user(TEST_USER_ID).sendVoiceMessage()
+
+      // Question context should be cleaned up (empty reply sent to unblock OpenCode)
+      await waitForNoPendingQuestion({
+        threadId: thread.id,
+        timeoutMs: 4_000,
+      })
+
+      // Voice content should be transcribed and appear as the next user message,
+      // processed after the model responds to the empty question answer.
+      await waitForBotMessageContaining({
+        discord: ctx.discord,
+        threadId: thread.id,
+        text: 'I want option Alpha please',
+        timeout: 4_000,
+      })
+
+      await waitForFooterMessage({
+        discord: ctx.discord,
+        threadId: thread.id,
+        timeout: 4_000,
+        afterMessageIncludes: 'I want option Alpha please',
+        afterAuthorId: ctx.discord.botUserId,
+      })
+
+      const timeline = await th.text({ showInteractions: true })
+      expect(timeline).toMatchInlineSnapshot(`
+        "--- from: user (queue-question-tester)
+        QUESTION_TEXT_ANSWER_MARKER
+        --- from: assistant (TestBot)
+        **Pick one**
+        Which option do you prefer?
+        --- from: user (queue-question-tester)
+        [attachment: voice-message.ogg]
+        --- from: assistant (TestBot)
+        🎤 Transcribing voice message...
+        📝 **Transcribed message:** I want option Alpha please
+        ⬥ ok
+        *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2*"
+      `)
+
+      // Voice content must be present as a real transcribed message, not lost
+      expect(timeline).toContain('I want option Alpha please')
     },
     20_000,
   )
