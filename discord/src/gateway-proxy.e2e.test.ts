@@ -136,14 +136,6 @@ function createMatchers(): DeterministicMatcher[] {
   return [defaultReply]
 }
 
-function waitForChildExit(child: ChildProcess): Promise<void> {
-  return new Promise((resolve) => {
-    child.once('exit', () => {
-      resolve()
-    })
-  })
-}
-
 async function waitForProxyReady({
   port,
   timeoutMs = 30_000,
@@ -431,7 +423,7 @@ describeIf('gateway-proxy e2e', () => {
       expect(reply).toBeDefined()
       expect(reply.content.trim().length).toBeGreaterThan(0)
     },
-    30_000,
+    15_000,
   )
 
   test(
@@ -451,7 +443,7 @@ describeIf('gateway-proxy e2e', () => {
       await waitForFooterMessage({
         discord,
         threadId: firstThreadId,
-        timeout: 15_000,
+        timeout: 4_000,
         afterMessageIncludes: 'follow up through proxy',
         afterAuthorId: TEST_USER_ID,
       })
@@ -471,63 +463,12 @@ describeIf('gateway-proxy e2e', () => {
       expect(reply).toBeDefined()
       expect(reply.content.trim().length).toBeGreaterThan(0)
     },
-    30_000,
+    15_000,
   )
 
-  test(
-    'bot recovers after gateway proxy restart',
-    async () => {
-      const exitPromise = waitForChildExit(proxyProcess)
-      proxyProcess.kill('SIGTERM')
-      await exitPromise
-
-      const restartedProxy = startGatewayProxy({
-        configDir: path.join(directories.dataDir, 'proxy'),
-        port: proxyPort,
-        twinPort: discord.port,
-        botToken: discord.botToken,
-        gatewayUrl: discord.gatewayUrl,
-      })
-      proxyProcess = restartedProxy.process
-      await waitForProxyReady({ port: proxyPort, timeoutMs: 30_000 })
-      await new Promise((resolve) => {
-        setTimeout(resolve, 6_000)
-      })
-
-      await discord.channel(CHANNEL_1_ID).user(TEST_USER_ID).sendMessage({
-        content: 'recovered after proxy restart',
-      })
-
-      const recoveryThread = await discord.channel(CHANNEL_1_ID).waitForThread({
-        timeout: 30_000,
-        predicate: (t) => {
-          return t.name?.includes('recovered after proxy restart') ?? false
-        },
-      })
-
-      const reply = await discord.thread(recoveryThread.id).waitForBotReply({
-        timeout: 30_000,
-      })
-
-      await waitForFooterMessage({
-        discord,
-        threadId: recoveryThread.id,
-        timeout: 30_000,
-        afterMessageIncludes: 'recovered after proxy restart',
-        afterAuthorId: TEST_USER_ID,
-      })
-
-      expect(await discord.thread(recoveryThread.id).text()).toMatchInlineSnapshot(`
-        "--- from: user (proxy-tester)
-        recovered after proxy restart
-        --- from: assistant (TestBot)
-        ⬥ gateway-proxy-reply
-        *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2*"
-      `)
-      expect(reply.content.trim().length).toBeGreaterThan(0)
-    },
-    60_000,
-  )
+  // Reconnect test lives in gateway-proxy-reconnect.e2e.test.ts.
+  // It was here before but kills the proxy mid-suite, breaking shared
+  // state (bot/proxy connection) for all subsequent tests.
 
   test(
     'shell command via ! prefix in thread',
@@ -596,7 +537,7 @@ describeIf('gateway-proxy e2e', () => {
       expect(reply).toBeDefined()
       expect(reply.content.trim().length).toBeGreaterThan(0)
     },
-    30_000,
+    15_000,
   )
 
   test(
@@ -692,6 +633,6 @@ describeIf('gateway-proxy e2e', () => {
         store.setState({ discordBaseUrl: previousBaseUrl })
       }
     },
-    30_000,
+    15_000,
   )
 })
