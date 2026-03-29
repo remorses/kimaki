@@ -1,0 +1,11 @@
+{
+  "stateVersion": 8,
+  "lastSuggestion": {
+    "text": "continue",
+    "shownAt": "2026-03-17T09:13:13.938Z",
+    "turnId": "1d245cf8",
+    "sourceLeafId": "1d245cf8"
+  },
+  "steeringHistory": [],
+  "turnsSinceLastStalenessCheck": 1
+}

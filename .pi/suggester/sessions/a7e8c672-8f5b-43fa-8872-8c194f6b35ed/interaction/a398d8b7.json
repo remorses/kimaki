@@ -1,0 +1,11 @@
+{
+  "stateVersion": 8,
+  "lastSuggestion": {
+    "text": "Yes, implement Groq as the fallback.",
+    "shownAt": "2026-03-23T11:47:29.978Z",
+    "turnId": "a398d8b7",
+    "sourceLeafId": "a398d8b7"
+  },
+  "steeringHistory": [],
+  "turnsSinceLastStalenessCheck": 1
+}

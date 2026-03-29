@@ -1,0 +1,68 @@
+{
+  "stateVersion": 8,
+  "lastSuggestion": {
+    "text": "Perfect, thanks",
+    "shownAt": "2026-03-17T16:45:29.233Z",
+    "turnId": "839ffb36",
+    "sourceLeafId": "839ffb36"
+  },
+  "steeringHistory": [
+    {
+      "turnId": "1d245cf8",
+      "suggestedPrompt": "continue",
+      "actualUserPrompt": "continue",
+      "classification": "accepted_exact",
+      "similarity": 1,
+      "timestamp": "2026-03-17T09:13:39.102Z"
+    },
+    {
+      "turnId": "6a3d9ff9",
+      "suggestedPrompt": "continue",
+      "actualUserPrompt": "continue",
+      "classification": "accepted_exact",
+      "similarity": 1,
+      "timestamp": "2026-03-17T09:14:32.955Z"
+    },
+    {
+      "turnId": "52570d4f",
+      "suggestedPrompt": "Thanks",
+      "actualUserPrompt": "Can you install kimaki?",
+      "classification": "changed_course",
+      "similarity": 0.10344827586206896,
+      "timestamp": "2026-03-17T09:19:04.765Z"
+    },
+    {
+      "turnId": "95d337ef",
+      "suggestedPrompt": "Thanks",
+      "actualUserPrompt": "Doesn't my parakeet asr start with kimaki?",
+      "classification": "changed_course",
+      "similarity": 0.08333333333333333,
+      "timestamp": "2026-03-17T09:32:12.254Z"
+    },
+    {
+      "turnId": "09ed0c7a",
+      "suggestedPrompt": "continue",
+      "actualUserPrompt": "continue",
+      "classification": "accepted_exact",
+      "similarity": 1,
+      "timestamp": "2026-03-17T09:35:48.033Z"
+    },
+    {
+      "turnId": "d8f3eff4",
+      "suggestedPrompt": "Great, thanks!",
+      "actualUserPrompt": "Can you make sure that ASR_PROVIDER is not set, only defaults to parakeet, if the device we are on is a mac with apple silicon (since MLX needs apple silicon)",
+      "classification": "changed_course",
+      "similarity": 0.06395348837209303,
+      "timestamp": "2026-03-17T09:38:00.391Z"
+    },
+    {
+      "turnId": "5a2087b2",
+      "suggestedPrompt": "Okay, let's rebase.</think>Okay, let's rebase.",
+      "actualUserPrompt": "Do a git commit with explanatory message.",
+      "classification": "changed_course",
+      "similarity": 0.1839080459770115,
+      "timestamp": "2026-03-17T16:44:54.120Z"
+    }
+  ],
+  "turnsSinceLastStalenessCheck": 0
+}

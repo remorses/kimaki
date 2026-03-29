@@ -1,0 +1,28 @@
+{
+  "stateVersion": 8,
+  "lastSuggestion": {
+    "text": "continue",
+    "shownAt": "2026-03-25T02:22:53.587Z",
+    "turnId": "be428849",
+    "sourceLeafId": "be428849"
+  },
+  "steeringHistory": [
+    {
+      "turnId": "a398d8b7",
+      "suggestedPrompt": "Yes, implement Groq as the fallback.",
+      "actualUserPrompt": "I want to use local AI for the fallback (but just different models, from different providers (one is ollama, the other is LM Studio etc) and so different code scripts)",
+      "classification": "changed_course",
+      "similarity": 0.14663382594417076,
+      "timestamp": "2026-03-23T16:04:15.069Z"
+    },
+    {
+      "turnId": "b4da6a48",
+      "suggestedPrompt": "Yes, implement vLLM as the fallback.",
+      "actualUserPrompt": "Okay. Use vllm. Do test driven development with red green testing and continue until you have fully implemented.",
+      "classification": "changed_course",
+      "similarity": 0.17038777908343128,
+      "timestamp": "2026-03-23T16:07:29.017Z"
+    }
+  ],
+  "turnsSinceLastStalenessCheck": 5
+}

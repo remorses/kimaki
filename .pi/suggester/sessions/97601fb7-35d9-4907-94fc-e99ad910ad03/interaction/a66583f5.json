@@ -1,0 +1,28 @@
+{
+  "stateVersion": 8,
+  "lastSuggestion": {
+    "text": "Run\n\n it and show me the banner",
+    "shownAt": "2026-03-25T03:07:47.815Z",
+    "turnId": "a66583f5",
+    "sourceLeafId": "a66583f5"
+  },
+  "steeringHistory": [
+    {
+      "turnId": "a164119d",
+      "suggestedPrompt": "Run the tests to verify",
+      "actualUserPrompt": "Can you set the vLLM to automatically start when it is needed.",
+      "classification": "changed_course",
+      "similarity": 0.2196078431372549,
+      "timestamp": "2026-03-25T02:57:46.479Z"
+    },
+    {
+      "turnId": "0e79035a",
+      "suggestedPrompt": "Run\n\n it and test with sample audio",
+      "actualUserPrompt": "Test it with sample audio, also write a commit",
+      "classification": "changed_course",
+      "similarity": 0.5057537399309551,
+      "timestamp": "2026-03-25T03:03:47.863Z"
+    }
+  ],
+  "turnsSinceLastStalenessCheck": 3
+}

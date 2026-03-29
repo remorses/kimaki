@@ -1,0 +1,22 @@
+{
+  "stateVersion": 8,
+  "steeringHistory": [
+    {
+      "turnId": "1c98a5ac",
+      "suggestedPrompt": "add the\n\n config and test files to tracking",
+      "actualUserPrompt": "This is what I mean by the updates (https://github.com/remorses/kimaki/commits/main/) The project I forked from.",
+      "classification": "changed_course",
+      "similarity": 0.15725490196078432,
+      "timestamp": "2026-03-25T03:33:51.845Z"
+    },
+    {
+      "turnId": "41e84e9f",
+      "suggestedPrompt": "Yes, proceed with Option A.",
+      "actualUserPrompt": "Option A",
+      "classification": "changed_course",
+      "similarity": 0.4285714285714286,
+      "timestamp": "2026-03-25T03:35:27.612Z"
+    }
+  ],
+  "turnsSinceLastStalenessCheck": 2
+}

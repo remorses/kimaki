@@ -1,0 +1,10 @@
+{
+  "runId": "9cdc696f",
+  "agent": "crew-planner",
+  "index": 0,
+  "exitCode": 1,
+  "durationMs": 1587,
+  "tokens": 0,
+  "truncated": false,
+  "error": "file:///opt/homebrew/lib/node_modules/@mariozechner/pi-coding-agent/dist/core/agent-session.js:692\n            throw new Error(`No API key found for ${this.model.provider}.\\n\\n` +\n                  ^\n\nError: No API key found for anthropic.\n\nUse /login or set an API key environment variable. See /opt/homebrew/lib/node_modules/@mariozechner/pi-coding-agent/docs/providers.md\n    at AgentSession.prompt (file:///opt/homebrew/lib/node_modules/@mariozechner/pi-coding-agent/dist/core/agent-session.js:692:19)\n    at async runPrintMode (file:///opt/homebrew/lib/node_modules/@mariozechner/pi-coding-agent/dist/modes/print-mode.js:69:9)\n    at async main (file:///opt/homebrew/lib/node_modules/@mariozechner/pi-coding-agent/dist/main.js:687:9)\n\nNode.js v25.6.1\n"
+}

@@ -1,0 +1,14 @@
+{
+  "stateVersion": 8,
+  "steeringHistory": [
+    {
+      "turnId": "a398d8b7",
+      "suggestedPrompt": "Yes, implement Groq as the fallback.",
+      "actualUserPrompt": "I want to use local AI for the fallback (but just different models, from different providers (one is ollama, the other is LM Studio etc) and so different code scripts)",
+      "classification": "changed_course",
+      "similarity": 0.14663382594417076,
+      "timestamp": "2026-03-23T16:04:15.069Z"
+    }
+  ],
+  "turnsSinceLastStalenessCheck": 1
+}

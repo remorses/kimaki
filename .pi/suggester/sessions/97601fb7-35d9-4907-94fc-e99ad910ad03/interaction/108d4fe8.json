@@ -1,0 +1,14 @@
+{
+  "stateVersion": 8,
+  "steeringHistory": [
+    {
+      "turnId": "a164119d",
+      "suggestedPrompt": "Run the tests to verify",
+      "actualUserPrompt": "Can you set the vLLM to automatically start when it is needed.",
+      "classification": "changed_course",
+      "similarity": 0.2196078431372549,
+      "timestamp": "2026-03-25T02:57:46.479Z"
+    }
+  ],
+  "turnsSinceLastStalenessCheck": 1
+}

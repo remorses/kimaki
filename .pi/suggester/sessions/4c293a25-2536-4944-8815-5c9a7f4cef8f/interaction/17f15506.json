@@ -1,0 +1,31 @@
+{
+  "stateVersion": 9,
+  "lastSuggestion": {
+    "text": "Test\n creating a new project to verify it uses the new directory",
+    "shownAt": "2026-03-27T06:22:25.850Z",
+    "turnId": "17f15506",
+    "sourceLeafId": "17f15506",
+    "variantName": "default",
+    "strategy": "compact",
+    "requestedStrategy": "compact"
+  },
+  "steeringHistory": [
+    {
+      "turnId": "f524a4b6",
+      "suggestedPrompt": "test\n creating a new project with the bot",
+      "actualUserPrompt": "Do the reinstallation (see instructions)",
+      "classification": "changed_course",
+      "similarity": 0.25416666666666665,
+      "timestamp": "2026-03-27T06:15:01.131Z"
+    },
+    {
+      "turnId": "612a2c60",
+      "suggestedPrompt": "Yes, that's intentional. Proceed.",
+      "actualUserPrompt": "Yes this is intentional. Do a git commit explaining (this is a personal customization for me, so not for pull requests).",
+      "classification": "changed_course",
+      "similarity": 0.23300653594771242,
+      "timestamp": "2026-03-27T06:20:59.578Z"
+    }
+  ],
+  "turnsSinceLastStalenessCheck": 5
+}

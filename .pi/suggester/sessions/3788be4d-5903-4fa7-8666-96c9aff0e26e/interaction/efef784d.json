@@ -1,0 +1,47 @@
+{
+  "stateVersion": 9,
+  "lastSuggestion": {
+    "text": "run kimaki and test it",
+    "shownAt": "2026-03-29T09:26:40.364Z",
+    "turnId": "efef784d",
+    "sourceLeafId": "efef784d",
+    "variantName": "default",
+    "strategy": "compact",
+    "requestedStrategy": "compact"
+  },
+  "steeringHistory": [
+    {
+      "turnId": "a8ee16c9",
+      "suggestedPrompt": "run it again to test the fix",
+      "actualUserPrompt": "Help me reinstall kimaki",
+      "classification": "changed_course",
+      "similarity": 0.15384615384615385,
+      "timestamp": "2026-03-29T09:18:37.257Z"
+    },
+    {
+      "turnId": "eaa61576",
+      "suggestedPrompt": "run it and see if the error is gone",
+      "actualUserPrompt": "You reinstalled the wrong version, I want my variant (which is in this folder). I should see my banner, but when I tried to run kimaki, it did not appear.",
+      "classification": "changed_course",
+      "similarity": 0.2235023041474654,
+      "timestamp": "2026-03-29T09:22:07.482Z"
+    },
+    {
+      "turnId": "b6d4687f",
+      "suggestedPrompt": "run kimaki and check if it works now",
+      "actualUserPrompt": "Add a note in this directory or change the build instructions, so that instead of the global kimaki, we always link the local variant.",
+      "classification": "changed_course",
+      "similarity": 0.15253549695740365,
+      "timestamp": "2026-03-29T09:24:31.283Z"
+    },
+    {
+      "turnId": "79edee50",
+      "suggestedPrompt": "run kimaki and verify my banner appears",
+      "actualUserPrompt": "do a git commit",
+      "classification": "changed_course",
+      "similarity": 0.1111111111111111,
+      "timestamp": "2026-03-29T09:26:02.091Z"
+    }
+  ],
+  "turnsSinceLastStalenessCheck": 6
+}

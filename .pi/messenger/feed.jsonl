@@ -1,0 +1,7 @@
+{"ts":"2026-03-16T04:11:55.803Z","type":"join","agent":"DarkEagle"}
+{"ts":"2026-03-16T04:11:55.941Z","type":"plan.start","agent":"DarkEagle","target":"(prompt)","preview":"max passes 1"}
+{"ts":"2026-03-16T04:11:55.942Z","type":"plan.pass.start","agent":"DarkEagle","target":"(prompt)","preview":"pass 1/1"}
+{"ts":"2026-03-16T04:11:57.536Z","type":"plan.failed","agent":"DarkEagle","target":"(prompt)","preview":"pass 1 failed"}
+{"ts":"2026-03-16T04:13:09.159Z","type":"edit","agent":"DarkEagle","target":"discord/src/voice-handler.ts"}
+{"ts":"2026-03-16T04:13:16.277Z","type":"edit","agent":"DarkEagle","target":"discord/src/voice-handler.ts"}
+{"ts":"2026-03-16T04:22:01.815Z","type":"leave","agent":"DarkEagle"}

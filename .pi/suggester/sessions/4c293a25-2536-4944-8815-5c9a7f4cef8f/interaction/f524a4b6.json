@@ -1,0 +1,14 @@
+{
+  "stateVersion": 9,
+  "lastSuggestion": {
+    "text": "test\n creating a new project with the bot",
+    "shownAt": "2026-03-27T06:08:24.918Z",
+    "turnId": "f524a4b6",
+    "sourceLeafId": "f524a4b6",
+    "variantName": "default",
+    "strategy": "compact",
+    "requestedStrategy": "compact"
+  },
+  "steeringHistory": [],
+  "turnsSinceLastStalenessCheck": 1
+}

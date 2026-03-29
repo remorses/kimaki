@@ -1,0 +1,22 @@
+{
+  "stateVersion": 8,
+  "steeringHistory": [
+    {
+      "turnId": "f92223c5",
+      "suggestedPrompt": "Run it and show me the output",
+      "actualUserPrompt": "I tried to run it and it is not showing me the big text banner. Try and test it before you come back to me.",
+      "classification": "changed_course",
+      "similarity": 0.3048128342245989,
+      "timestamp": "2026-03-25T03:20:58.145Z"
+    },
+    {
+      "turnId": "1b10ada9",
+      "suggestedPrompt": "Good\n\n, thanks. Commit the changes.",
+      "actualUserPrompt": "Can you make sure that the kimaki I use, is correctly installed? Technically I shouldn't need to reinstall, but just reinstall anyways.",
+      "classification": "changed_course",
+      "similarity": 0.156094674556213,
+      "timestamp": "2026-03-25T03:25:48.773Z"
+    }
+  ],
+  "turnsSinceLastStalenessCheck": 2
+}

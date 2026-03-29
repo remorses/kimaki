@@ -1,0 +1,30 @@
+{
+  "stateVersion": 9,
+  "pendingNextTurnObservation": {
+    "suggestionTurnId": "eaa61576",
+    "suggestionShownAt": "2026-03-29T09:19:31.068Z",
+    "userPromptSubmittedAt": "2026-03-29T09:22:07.482Z",
+    "variantName": "default",
+    "strategy": "compact",
+    "requestedStrategy": "compact"
+  },
+  "steeringHistory": [
+    {
+      "turnId": "a8ee16c9",
+      "suggestedPrompt": "run it again to test the fix",
+      "actualUserPrompt": "Help me reinstall kimaki",
+      "classification": "changed_course",
+      "similarity": 0.15384615384615385,
+      "timestamp": "2026-03-29T09:18:37.257Z"
+    },
+    {
+      "turnId": "eaa61576",
+      "suggestedPrompt": "run it and see if the error is gone",
+      "actualUserPrompt": "You reinstalled the wrong version, I want my variant (which is in this folder). I should see my banner, but when I tried to run kimaki, it did not appear.",
+      "classification": "changed_course",
+      "similarity": 0.2235023041474654,
+      "timestamp": "2026-03-29T09:22:07.482Z"
+    }
+  ],
+  "turnsSinceLastStalenessCheck": 2
+}

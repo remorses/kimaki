@@ -1,0 +1,14 @@
+{
+  "stateVersion": 9,
+  "steeringHistory": [
+    {
+      "turnId": "f524a4b6",
+      "suggestedPrompt": "test\n creating a new project with the bot",
+      "actualUserPrompt": "Do the reinstallation (see instructions)",
+      "classification": "changed_course",
+      "similarity": 0.25416666666666665,
+      "timestamp": "2026-03-27T06:15:01.131Z"
+    }
+  ],
+  "turnsSinceLastStalenessCheck": 2
+}

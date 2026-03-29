@@ -1,0 +1,30 @@
+{
+  "stateVersion": 9,
+  "pendingNextTurnObservation": {
+    "suggestionTurnId": "612a2c60",
+    "suggestionShownAt": "2026-03-27T06:17:32.645Z",
+    "userPromptSubmittedAt": "2026-03-27T06:20:59.578Z",
+    "variantName": "default",
+    "strategy": "compact",
+    "requestedStrategy": "compact"
+  },
+  "steeringHistory": [
+    {
+      "turnId": "f524a4b6",
+      "suggestedPrompt": "test\n creating a new project with the bot",
+      "actualUserPrompt": "Do the reinstallation (see instructions)",
+      "classification": "changed_course",
+      "similarity": 0.25416666666666665,
+      "timestamp": "2026-03-27T06:15:01.131Z"
+    },
+    {
+      "turnId": "612a2c60",
+      "suggestedPrompt": "Yes, that's intentional. Proceed.",
+      "actualUserPrompt": "Yes this is intentional. Do a git commit explaining (this is a personal customization for me, so not for pull requests).",
+      "classification": "changed_course",
+      "similarity": 0.23300653594771242,
+      "timestamp": "2026-03-27T06:20:59.578Z"
+    }
+  ],
+  "turnsSinceLastStalenessCheck": 3
+}
