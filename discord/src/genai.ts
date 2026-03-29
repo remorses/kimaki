@@ -275,10 +275,10 @@ export async function startGenAiSession({
           genaiLogger.error('Error handling turn:', error)
         }
       },
-      onerror: function (e: ErrorEvent) {
+      onerror: function (e: { message?: string }) {
         genaiLogger.debug('Error:', e.message)
       },
-      onclose: function (e: CloseEvent) {
+      onclose: function (e: { reason?: string }) {
         genaiLogger.debug('Close:', e.reason)
       },
     },

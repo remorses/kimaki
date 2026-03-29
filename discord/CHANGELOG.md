@@ -1,5 +1,30 @@
 # Changelog
 
+## 0.4.84
+
+1. **New `--projects-dir` flag** — set a custom directory where new projects are created:
+   ```bash
+   kimaki --projects-dir ~/my-projects
+   ```
+   Defaults to `<data-dir>/projects` if not set. The directory is created automatically if it doesn't exist.
+
+2. **`kimaki tunnel --kill` flag** — kill any existing process on the port before starting the tunnel:
+   ```bash
+   kimaki tunnel --kill
+   kimaki tunnel -k
+   ```
+   All tunnel usage examples in the system message and onboarding tutorial now include `--kill` so agents always free stale ports automatically.
+
+3. **Screenshare links are now private by default** — `/screenshare` replies ephemerally, the default lifetime is 30 minutes, and tunnel IDs use 128-bit random values so leaked hosts are much harder to guess.
+
+4. **Fixed queued messages getting stuck after question dropdown answered** — when a user answered a pending question via the Discord select menu, queued messages could stay stranded indefinitely. Queued items are now handed off to OpenCode immediately after the question reply instead of waiting for a separate idle event.
+
+5. **Fixed external sync treating kimaki-initiated sessions as external** — the external sync poller was mirroring sessions owned by kimaki itself, creating duplicate `Sync:` threads. Detection now uses a pure event-based check (presence of `<discord-user />` in the latest user message) instead of a DB lookup, so it's accurate even when the DB entry hasn't been written yet.
+
+6. **Fixed external sync missing Discord origin when message-id is absent** — bot-initiated threads weren't passing `sourceMessageId` to the ingress path, causing the origin parser to return null and mistakenly mirror those turns as `» user: hi`. Both the parser and the ingress call are now fixed.
+
+7. **Fixed gateway reconnection crashes** — the forced gateway relogin mechanism was interfering with discord.js's own exponential-backoff reconnect logic, causing uncaught exceptions on handshake timeouts that killed the process. discord.js reconnection now handles recovery on its own.
+
 ## 0.4.83
 
 1. **External OpenCode session sync** — kimaki now mirrors OpenCode sessions started outside Discord (e.g. from the CLI or another editor) into tracked Discord project threads automatically. Sessions are polled every 5 seconds, a new thread is created prefixed with `Sync:`, and messages stream in just like a normal kimaki session. Typing indicators show while the external session is busy.
