@@ -392,13 +392,11 @@ function collectUnsyncedChunks({
       const discordOrigin = getDiscordOriginMetadataFromMessage({ message })
       if (discordOrigin && (!discordOrigin.threadId || discordOrigin.threadId === thread.id)) {
         unsyncedParts.forEach((part) => {
-          if (discordOrigin.messageId) {
-            directMappings.push({
-              partId: part.id,
-              messageId: discordOrigin.messageId,
-              threadId: thread.id,
-            })
-          }
+          directMappings.push({
+            partId: part.id,
+            messageId: discordOrigin.messageId || '',
+            threadId: thread.id,
+          })
           syncedPartIds.add(part.id)
         })
         continue
