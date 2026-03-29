@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.4.85
+
+1. **Fixed infinite reconnect loop after gateway proxy restart** — after a failed RESUME, the proxy now sends an `INVALID_SESSION` payload and properly drains the WebSocket sink before teardown, so the client reconnects cleanly instead of looping indefinitely.
+
+2. **Fixed `ClientReady` errors crashing the bot silently** — unhandled rejections thrown inside the `ClientReady` handler are now caught and logged instead of taking down the process.
+
+3. **Fixed slash commands being mirrored by external sync** — slash commands like `/errore-skill` dispatched from Discord were missing the `<discord-user />` origin tag (because `session.command()` doesn't accept synthetic text parts), causing external sync to treat them as external messages and mirror them as `» user: …`. The tag is now appended to command arguments so origin detection works correctly.
+
+4. **Fixed Discord origin detection in command-argument text** — the origin metadata parser previously only matched the tag when it was the entire string (anchored `^…$`) and only looked in synthetic text parts. It now matches the tag anywhere in text and checks all text parts (synthetic first, non-synthetic as fallback).
+
 ## 0.4.84
 
 1. **New `--projects-dir` flag** — set a custom directory where new projects are created:
