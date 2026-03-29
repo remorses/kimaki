@@ -6,6 +6,7 @@
   "scripts": {
     "dev": "tsx src/cli.ts",
     "prepublishOnly": "pnpm generate && pnpm tsc",
+    "build": "pnpm generate && pnpm tsc",
     "dev:bun": "DEBUG=1 bun --env-file .env src/cli.ts",
     "watch": "tsx scripts/watch-session.ts",
     "generate": "prisma generate && pnpm generate:sql",
