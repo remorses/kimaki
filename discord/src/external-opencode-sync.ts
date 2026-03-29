@@ -172,22 +172,17 @@ function getExternalUserMirrorText({
   return `» **${username}:** ${prompt.slice(0, 1000)}${prompt.length > 1000 ? '...' : ''}`
 }
 
-// Pure derivation: does the latest user turn come from outside this
-// Discord thread and contain parts we haven't mirrored yet?
-// Used to reclaim sync for kimaki-owned threads when the user resumes
-// from the OpenCode CLI/TUI side. No new state — derives from existing
-// part_messages dedupe set and <discord-user /> origin tags.
-function hasExternalResume({
+// Pure derivation: is the latest user turn from Discord?
+// Checks the newest user message with renderable text for a <discord-user />
+// synthetic part. If present, the session is currently driven from Discord
+// (kimaki manages it) and external sync should skip it. If absent (CLI/TUI),
+// external sync should mirror it — this naturally handles the "reclaim" case
+// (external → discord → external) without any DB source toggling.
+function isLatestUserTurnFromDiscord({
   messages,
-  threadId,
-  syncedPartIds,
 }: {
   messages: SessionMessageLike[]
-  threadId: string
-  syncedPartIds: Set<string>
 }): boolean {
-  // Walk messages newest-first to find the latest user message
-  // with renderable text content.
   for (let i = messages.length - 1; i >= 0; i--) {
     const message = messages[i]!
     if (message.info.role !== 'user') {
@@ -198,18 +193,10 @@ function hasExternalResume({
       continue
     }
     // Found the latest user message with actual text content.
-    // Check if it originated from this Discord thread.
-    const origin = getDiscordOriginMetadataFromMessage({ message })
-    if (origin && (!origin.threadId || origin.threadId === threadId)) {
-      // Latest user turn came from Discord — no external resume.
-      return false
-    }
-    // Latest user turn is external (CLI/TUI). Check if we already
-    // mirrored all its parts. If any part is unseen, reclaim.
-    return renderableParts.some((p) => {
-      return !syncedPartIds.has(p.id)
-    })
+    // If it has <discord-user /> origin metadata, it came from Discord.
+    return getDiscordOriginMetadataFromMessage({ message }) !== null
   }
+  // No user messages with text — treat as external (allow sync).
   return false
 }
 
@@ -304,26 +291,20 @@ async function ensureExternalSessionThread({
   sessionId,
   sessionTitle,
   messages,
-  reclaimable,
 }: {
   discordClient: Client
   channelId: string
   sessionId: string
   sessionTitle?: string | null
   messages: SessionMessage[]
-  // When true, a kimaki-owned thread is reclaimed back to external_poll
-  // because the user resumed from the OpenCode CLI/TUI side.
-  reclaimable?: boolean
 }): Promise<ThreadChannel | Error | null> {
   const existingThreadId = await getThreadIdBySessionId(sessionId)
   if (existingThreadId) {
+    // Caller already verified via isLatestUserTurnFromDiscord that this
+    // session should be synced. If the thread was kimaki-owned, flip it
+    // to external_poll so typing and future polls work naturally.
     const existingSource = await getThreadSessionSource(existingThreadId)
-    if (existingSource && existingSource !== 'external_poll' && !reclaimable) {
-      return null
-    }
-    // Reclaim: flip kimaki-owned thread back to external_poll so typing
-    // and future polls work naturally without any new stored state.
-    if (existingSource === 'kimaki' && reclaimable) {
+    if (existingSource === 'kimaki') {
       await upsertThreadSession({
         threadId: existingThreadId,
         sessionId,
@@ -485,24 +466,12 @@ async function syncSessionToThread({
   }
   const messages = messagesResponse.data || []
 
-  // Pre-check: for kimaki-owned threads, derive whether the user resumed
-  // from the OpenCode CLI/TUI by inspecting the latest user turn and
-  // existing part_messages. No new state — pure derivation from evidence.
-  const existingThreadId = await getThreadIdBySessionId(sessionId)
-  let reclaimable = false
-  if (existingThreadId) {
-    const existingSource = await getThreadSessionSource(existingThreadId)
-    if (existingSource === 'kimaki') {
-      const existingPartIds = await getPartMessageIds(existingThreadId)
-      reclaimable = hasExternalResume({
-        messages,
-        threadId: existingThreadId,
-        syncedPartIds: new Set(existingPartIds),
-      })
-      if (!reclaimable) {
-        return
-      }
-    }
+  // Pure derivation from opencode events: if the latest user turn has
+  // <discord-user /> metadata, kimaki's thread runtime owns this session.
+  // Skip external sync entirely. When the user resumes from CLI/TUI the
+  // latest user turn will lack the tag, so sync picks it up naturally.
+  if (isLatestUserTurnFromDiscord({ messages })) {
+    return
   }
 
   const thread = await ensureExternalSessionThread({
@@ -511,7 +480,6 @@ async function syncSessionToThread({
     sessionId,
     sessionTitle,
     messages,
-    reclaimable,
   })
   if (thread === null) {
     return
@@ -756,5 +724,5 @@ export const externalOpencodeSyncInternals = {
   sortSessionsByRecency,
   parseDiscordOriginMetadata,
   getDiscordOriginMetadataFromMessage,
-  hasExternalResume,
+  isLatestUserTurnFromDiscord,
 }
