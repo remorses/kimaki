@@ -19,6 +19,11 @@ import {
 
 const cliLogger = createLogger(LogPrefix.CLI)
 
+// Max slash commands per guild/application in Discord is 100.
+// We leave some buffer just in case.
+const MAX_DISCORD_COMMANDS = 100
+const COMMAND_BUDGET_BUFFER = 2
+
 // Commands to skip when registering user commands (reserved names)
 export const SKIP_USER_COMMANDS = ['init']
 
@@ -316,11 +321,6 @@ export async function registerCommands({
       .setDMPermission(false)
       .toJSON(),
     new SlashCommandBuilder()
-      .setName('stop')
-      .setDescription(truncateCommandDescription('Abort the current OpenCode request in this thread'))
-      .setDMPermission(false)
-      .toJSON(),
-    new SlashCommandBuilder()
       .setName('share')
       .setDescription(truncateCommandDescription('Share the current session as a public URL'))
       .setDMPermission(false)
@@ -494,11 +494,23 @@ export async function registerCommands({
       .toJSON(),
   ]
 
+  // Max slash commands per guild/application in Discord is 100.
+  // We leave some buffer (5) just in case.
+  const MAX_DISCORD_COMMANDS = 100
+  const COMMAND_BUDGET_BUFFER = 2
+
   // Add user-defined commands with source-based suffixes (-cmd / -skill)
   // Also populate registeredUserCommands in the store for /queue-command autocomplete
   const newRegisteredCommands: RegisteredUserCommand[] = []
   for (const cmd of userCommands) {
     if (SKIP_USER_COMMANDS.includes(cmd.name)) {
+      continue
+    }
+
+    if (commands.length >= MAX_DISCORD_COMMANDS - COMMAND_BUDGET_BUFFER) {
+      cliLogger.warn(
+        `COMMANDS: Reached slash command limit (${MAX_DISCORD_COMMANDS}). Skipping remaining user command: ${cmd.name}`,
+      )
       continue
     }
 
@@ -555,6 +567,13 @@ export async function registerCommands({
     (a) => (a.mode === 'primary' || a.mode === 'all') && !a.hidden,
   )
   for (const agent of primaryAgents) {
+    if (commands.length >= MAX_DISCORD_COMMANDS - COMMAND_BUDGET_BUFFER) {
+      cliLogger.warn(
+        `COMMANDS: Reached slash command limit (${MAX_DISCORD_COMMANDS}). Skipping remaining agent command: ${agent.name}`,
+      )
+      continue
+    }
+
     const sanitizedName = sanitizeAgentName(agent.name)
     // Skip if sanitized name is empty or would create invalid command name
     // Discord command names must start with a lowercase letter or number
@@ -638,8 +657,12 @@ export async function registerCommands({
 
     if (failedGuilds.length > 0) {
       failedGuilds.forEach((failure) => {
+        let helpText = ''
+        if (failure.error.includes('Maximum number of application commands reached')) {
+          helpText = ' (Tip: try removing some agents or custom skills to stay under the 100-command limit)'
+        }
         cliLogger.warn(
-          `COMMANDS: Failed to register slash commands for guild ${failure.guildId}: ${failure.error}`,
+          `COMMANDS: Failed to register slash commands for guild ${failure.guildId}: ${failure.error}${helpText}`,
         )
       })
       throw new Error(
