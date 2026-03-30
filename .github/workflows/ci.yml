@@ -39,12 +39,13 @@ jobs:
         run: pnpm install --frozen-lockfile
 
       # Submodules have dist/ gitignored so they need to be built after checkout.
-      # errore, traforo, and opencode-injection-guard are workspace deps of discord.
-      - name: Build submodules (errore, traforo, opencode-injection-guard)
+      # libsqlproxy is a workspace package that also needs building (exports from dist/).
+      - name: Build workspace packages with dist/ exports
         run: |
           pnpm --filter errore run build
           pnpm --filter traforo run build
           pnpm --filter opencode-injection-guard run build
+          pnpm --filter libsqlproxy run build
 
       - name: Generate Prisma + SQL (discord-digital-twin)
         run: pnpm generate
