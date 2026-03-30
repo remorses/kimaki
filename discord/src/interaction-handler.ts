@@ -43,6 +43,7 @@ import { handleCompactCommand } from './commands/compact.js'
 import { handleShareCommand } from './commands/share.js'
 import { handleDiffCommand } from './commands/diff.js'
 import { handleForkCommand, handleForkSelectMenu } from './commands/fork.js'
+import { handleBtwCommand } from './commands/btw.js'
 import {
   handleModelCommand,
   handleProviderSelectMenu,
@@ -263,6 +264,10 @@ export function registerInteractionHandler({
 
             case 'fork':
               await handleForkCommand(interaction)
+              return
+
+            case 'btw':
+              await handleBtwCommand({ command: interaction, appId })
               return
 
             case 'model':

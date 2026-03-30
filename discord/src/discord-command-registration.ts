@@ -336,6 +336,18 @@ export async function registerCommands({
       .setDMPermission(false)
       .toJSON(),
     new SlashCommandBuilder()
+      .setName('btw')
+      .setDescription(truncateCommandDescription('Ask something without polluting or blocking the current session'))
+      .addStringOption((option) => {
+        option
+          .setName('prompt')
+          .setDescription(truncateCommandDescription('The message to send in the forked session'))
+          .setRequired(true)
+        return option
+      })
+      .setDMPermission(false)
+      .toJSON(),
+    new SlashCommandBuilder()
       .setName('model')
       .setDescription(truncateCommandDescription('Set the preferred model for this channel or session'))
       .setDMPermission(false)
