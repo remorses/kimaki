@@ -38,6 +38,7 @@ import { startDiscordBot } from './discord-bot.js'
 import {
   chooseLockPort,
   cleanupTestSessions,
+  initTestGitRepo,
   waitForFooterMessage,
 } from './test-utils.js'
 import { stopOpencodeServer } from './opencode.js'
@@ -89,6 +90,7 @@ function createRunDirectories() {
   const dataDir = fs.mkdtempSync(path.join(root, 'data-'))
   const projectDirectory = path.join(root, 'project')
   fs.mkdirSync(projectDirectory, { recursive: true })
+  initTestGitRepo(projectDirectory)
   return { root, dataDir, projectDirectory }
 }
 

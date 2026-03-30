@@ -35,6 +35,7 @@ import type { Part, Message } from '@opencode-ai/sdk/v2'
 import {
   chooseLockPort,
   cleanupTestSessions,
+  initTestGitRepo,
   waitForFooterMessage,
   waitForBotMessageContaining,
   waitForThreadState,
@@ -53,6 +54,7 @@ function createRunDirectories() {
   const dataDir = fs.mkdtempSync(path.join(root, 'data-'))
   const projectDirectory = path.join(root, 'project')
   fs.mkdirSync(projectDirectory, { recursive: true })
+  initTestGitRepo(projectDirectory)
 
   return { root, dataDir, projectDirectory }
 }

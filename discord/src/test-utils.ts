@@ -7,6 +7,7 @@
 // spawning a new server process during teardown. Falls back to initializing
 // a new server only if no existing client is available.
 
+import { execSync } from 'node:child_process'
 import type { APIMessage } from 'discord.js'
 
 /**
@@ -25,6 +26,20 @@ export function chooseLockPort({ key }: { key: string }): number {
   }
   return 53_000 + (Math.abs(hash) % 2_000)
 }
+/**
+ * Initialize a git repo with a `main` branch and empty initial commit.
+ * E2e tests create project directories under tmp/ which inherit the parent
+ * repo's git state. On CI (detached HEAD), `git symbolic-ref --short HEAD`
+ * returns empty, breaking footer snapshots that expect a branch name.
+ * Calling this in each test project directory gives it its own repo on `main`.
+ */
+export function initTestGitRepo(directory: string): void {
+  execSync('git init -b main', { cwd: directory, stdio: 'pipe' })
+  execSync('git config user.email "test@test.com"', { cwd: directory, stdio: 'pipe' })
+  execSync('git config user.name "Test"', { cwd: directory, stdio: 'pipe' })
+  execSync('git commit --allow-empty -m "init"', { cwd: directory, stdio: 'pipe' })
+}
+
 import type { DigitalDiscord } from 'discord-digital-twin/src'
 import {
   getOpencodeClient,

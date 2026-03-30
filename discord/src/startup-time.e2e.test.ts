@@ -33,7 +33,7 @@ import {
 } from './database.js'
 import { startHranaServer, stopHranaServer } from './hrana-server.js'
 import { initializeOpencodeForDirectory, stopOpencodeServer } from './opencode.js'
-import { chooseLockPort, cleanupTestSessions } from './test-utils.js'
+import { chooseLockPort, cleanupTestSessions, initTestGitRepo } from './test-utils.js'
 
 interface PhaseTimings {
   hranaServerMs: number
@@ -51,6 +51,7 @@ function createRunDirectories() {
   const dataDir = fs.mkdtempSync(path.join(root, 'data-'))
   const projectDirectory = path.join(root, 'project')
   fs.mkdirSync(projectDirectory, { recursive: true })
+  initTestGitRepo(projectDirectory)
 
   return { root, dataDir, projectDirectory }
 }

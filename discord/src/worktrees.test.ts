@@ -109,7 +109,7 @@ describe('worktrees', () => {
     try {
       fs.mkdirSync(parentRepo, { recursive: true })
 
-      await git({ cwd: sandbox, args: ['init', '--bare', submoduleRemote] })
+      await git({ cwd: sandbox, args: ['init', '--bare', '-b', 'main', submoduleRemote] })
       await git({ cwd: sandbox, args: ['clone', submoduleRemote, submoduleLocal] })
 
       await git({
@@ -126,7 +126,7 @@ describe('worktrees', () => {
       await git({ cwd: submoduleLocal, args: ['commit', '-m', 'v1'] })
       await git({ cwd: submoduleLocal, args: ['push', 'origin', 'HEAD:main'] })
 
-      await git({ cwd: parentRepo, args: ['init'] })
+      await git({ cwd: parentRepo, args: ['init', '-b', 'main'] })
       await git({
         cwd: parentRepo,
         args: ['config', 'user.email', 'kimaki-tests@example.com'],

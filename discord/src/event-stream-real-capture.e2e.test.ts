@@ -22,7 +22,7 @@ import {
   type VerbosityLevel,
 } from './database.js'
 import { startHranaServer, stopHranaServer } from './hrana-server.js'
-import { chooseLockPort, cleanupTestSessions } from './test-utils.js'
+import { chooseLockPort, cleanupTestSessions, initTestGitRepo } from './test-utils.js'
 import { waitForBotMessageContaining, waitForBotReplyAfterUserMessage } from './test-utils.js'
 import { stopOpencodeServer } from './opencode.js'
 import { disposeRuntime, pendingPermissions } from './session-handler/thread-session-runtime.js'
@@ -57,6 +57,7 @@ function createRunDirectories() {
     'event-stream-fixtures',
   )
   fs.mkdirSync(projectDirectory, { recursive: true })
+  initTestGitRepo(projectDirectory)
   fs.mkdirSync(sessionEventsDir, { recursive: true })
 
   return {

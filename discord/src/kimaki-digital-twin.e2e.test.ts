@@ -16,7 +16,7 @@ import {
   setChannelDirectory,
 } from './database.js'
 import { startHranaServer, stopHranaServer } from './hrana-server.js'
-import { cleanupTestSessions, chooseLockPort } from './test-utils.js'
+import { cleanupTestSessions, chooseLockPort, initTestGitRepo } from './test-utils.js'
 import { stopOpencodeServer } from './opencode.js'
 
 const geminiApiKey =
@@ -34,6 +34,7 @@ function createRunDirectories() {
   const projectDirectory = path.join(root, 'project')
   const providerCacheDbPath = path.join(root, 'provider-cache.db')
   fs.mkdirSync(projectDirectory, { recursive: true })
+  initTestGitRepo(projectDirectory)
 
   return {
     root,

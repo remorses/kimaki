@@ -38,6 +38,7 @@ import { initializeOpencodeForDirectory, stopOpencodeServer } from './opencode.j
 import {
   chooseLockPort,
   cleanupTestSessions,
+  initTestGitRepo,
   waitForFooterMessage,
   waitForBotMessageContaining,
   waitForMessageById,
@@ -56,6 +57,7 @@ function createRunDirectories() {
   const dataDir = fs.mkdtempSync(path.join(root, 'data-'))
   const projectDirectory = path.join(root, 'project')
   fs.mkdirSync(projectDirectory, { recursive: true })
+  initTestGitRepo(projectDirectory)
 
   return { root, dataDir, projectDirectory }
 }

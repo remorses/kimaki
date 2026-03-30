@@ -46,6 +46,7 @@ import {
 import {
   chooseLockPort,
   cleanupTestSessions,
+  initTestGitRepo,
   waitForBotMessageContaining,
   waitForFooterMessage,
 } from './test-utils.js'
@@ -62,6 +63,7 @@ function createRunDirectories() {
   const dataDir = fs.mkdtempSync(path.join(root, 'data-'))
   const projectDirectory = path.join(root, 'project')
   fs.mkdirSync(projectDirectory, { recursive: true })
+  initTestGitRepo(projectDirectory)
   return { root, dataDir, projectDirectory }
 }
 

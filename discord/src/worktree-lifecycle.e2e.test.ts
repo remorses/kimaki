@@ -90,7 +90,7 @@ async function initGitRepo(directory: string): Promise<void> {
     }).catch(() => { return })
     return
   }
-  await execAsync('git init', { cwd: directory })
+  await execAsync('git init -b main', { cwd: directory })
   await execAsync('git config user.email "test@test.com"', { cwd: directory })
   await execAsync('git config user.name "Test"', { cwd: directory })
   await execAsync('git add -A && git commit -m "initial"', { cwd: directory })

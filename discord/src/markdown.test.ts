@@ -16,7 +16,7 @@ import {
 import { ShareMarkdown, getCompactSessionContext } from './markdown.js'
 import { setDataDir } from './config.js'
 import { initializeOpencodeForDirectory, getOpencodeClient, stopOpencodeServer } from './opencode.js'
-import { cleanupTestSessions } from './test-utils.js'
+import { cleanupTestSessions, initTestGitRepo } from './test-utils.js'
 
 const ROOT = path.resolve(process.cwd(), 'tmp', 'markdown-test')
 
@@ -25,6 +25,7 @@ function createRunDirectories() {
   const dataDir = fs.mkdtempSync(path.join(ROOT, 'data-'))
   const projectDirectory = path.join(ROOT, 'project')
   fs.mkdirSync(projectDirectory, { recursive: true })
+  initTestGitRepo(projectDirectory)
   return { dataDir, projectDirectory }
 }
 

@@ -11,6 +11,7 @@ import {
   buildDeterministicOpencodeConfig,
   type DeterministicMatcher,
 } from 'opencode-deterministic-provider'
+import { initTestGitRepo } from './test-utils.js'
 import { setDataDir } from './config.js'
 import { store } from './store.js'
 import { startDiscordBot } from './discord-bot.js'
@@ -38,6 +39,7 @@ export function createRunDirectories({ name }: { name: string }) {
   const dataDir = fs.mkdtempSync(path.join(root, 'data-'))
   const projectDirectory = path.join(root, 'project')
   fs.mkdirSync(projectDirectory, { recursive: true })
+  initTestGitRepo(projectDirectory)
 
   return { root, dataDir, projectDirectory }
 }
