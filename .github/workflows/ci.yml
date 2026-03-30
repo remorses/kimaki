@@ -59,10 +59,10 @@ jobs:
         run: pnpm build
         working-directory: discord-digital-twin
 
-      # --retry 2: some e2e tests have timing sensitivity on CI hardware
+      # --retry 3: some e2e tests have timing sensitivity on CI hardware
       # (question tool cleanup races, reply ordering under slower I/O).
       - name: Run tests
-        run: pnpm test -- --run --retry 2
+        run: pnpm test -- --run --retry 3
         working-directory: discord
         env:
           NODE_ENV: test

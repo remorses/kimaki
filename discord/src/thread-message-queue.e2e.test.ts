@@ -946,18 +946,12 @@ e2eTest('thread message queue ordering', () => {
         return m.author.id === discord.botUserId
       }).length
 
-      // 2. Send B, wait for its reply, then send C to enqueue behind B.
-      //    The original 200ms gap was too short on CI — the echo reply raced
-      //    with the footer, causing it to appear after the footer.
+      // 2. Send B, then quickly send C to enqueue behind B.
       await th.user(TEST_USER_ID).sendMessage({
         content: 'Reply with exactly: echo',
       })
-      await waitForBotReplyAfterUserMessage({
-        discord,
-        threadId: thread.id,
-        userId: TEST_USER_ID,
-        userMessageIncludes: 'echo',
-        timeout: 4_000,
+      await new Promise((r) => {
+        setTimeout(r, 500)
       })
       await th.user(TEST_USER_ID).sendMessage({
         content: 'Reply with exactly: foxtrot',
