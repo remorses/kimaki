@@ -435,10 +435,13 @@ export async function startDiscordBot({
         return
       }
 
-      // Allow bot messages through if the bot has the "Kimaki" role assigned.
-      // This enables multi-agent orchestration where other bots (e.g. an
-      // orchestrator) can @mention Kimaki and trigger sessions like a human.
-      if (message.author?.bot) {
+      // Allow CLI-injected prompts from this Kimaki bot through even when role
+      // reconciliation did not give the bot the "Kimaki" role yet. Other bots
+      // still need Kimaki permission so multi-agent orchestration stays opt-in.
+      const isInjectedSelfBotMessage =
+        isCliInjectedPrompt && message.author?.id === discordClient.user?.id
+
+      if (message.author?.bot && !isInjectedSelfBotMessage) {
         if (!hasKimakiBotPermission(message.member)) {
           return
         }
