@@ -141,8 +141,7 @@ describe('queue drain after question select answer', () => {
         [user selects dropdown: 0]
         » **question-select-tester:** Reply with exactly: post-question-drain
         ⬥ ok
-        *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2*
-        ⬥ ok"
+        *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2*"
       `)
     },
     20_000,

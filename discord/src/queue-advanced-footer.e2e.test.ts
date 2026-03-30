@@ -124,9 +124,7 @@ e2eTest('queue advanced: footer emission', () => {
         Reply with exactly: footer-multi-second
         --- from: assistant (TestBot)
         ⬥ ok
-        ⬥ ok
-        *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2*
-        ⬥ ok"
+        *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2*"
       `)
       if (footerCount >= 2) {
         expect(footerCount).toBeGreaterThanOrEqual(2)
@@ -238,14 +236,12 @@ e2eTest('queue advanced: footer emission', () => {
         --- from: user (queue-advanced-tester)
         PLUGIN_TIMEOUT_SLEEP_MARKER
         --- from: assistant (TestBot)
-        ⬥ ok
         ⬥ starting sleep 100
         --- from: user (queue-advanced-tester)
         Reply with exactly: interrupt-footer-followup
         --- from: assistant (TestBot)
         ⬥ ok
-        *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2*
-        ⬥ ok"
+        *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2*"
       `)
       expect(followupUserIdx).toBeGreaterThanOrEqual(0)
       expect(okReplyIdx).toBeGreaterThan(followupUserIdx)
@@ -333,19 +329,15 @@ e2eTest('queue advanced: footer emission', () => {
         --- from: assistant (TestBot)
         ⬥ ok
         *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2*
-        ⬥ ok
         --- from: user (queue-advanced-tester)
         PLUGIN_TIMEOUT_SLEEP_MARKER
         --- from: assistant (TestBot)
-        *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2*
-        ⬥ ok
         ⬥ starting sleep 100
         --- from: user (queue-advanced-tester)
         Reply with exactly: plugin-timeout-after
         --- from: assistant (TestBot)
         ⬥ ok
-        *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2*
-        ⬥ ok"
+        *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2*"
       `)
       expect(afterIndex).toBeGreaterThanOrEqual(0)
 
@@ -438,7 +430,6 @@ e2eTest('queue advanced: footer emission', () => {
         TOOL_CALL_FOOTER_MARKER
         --- from: assistant (TestBot)
         ⬥ running tool
-        *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2*
         ⬥ ok
         *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2*"
       `)
@@ -503,22 +494,8 @@ e2eTest('queue advanced: footer emission', () => {
         MULTI_TOOL_FOOTER_MARKER
         --- from: assistant (TestBot)
         ⬥ investigating the issue
-        *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2*
         ⬥ all done, fixed 3 files
-        *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2*
-        ⬥ all done, fixed 3 files
-        *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2*
-        ⬥ all done, fixed 3 files
-        *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2*
-        ⬥ all done, fixed 3 files
-        *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2*
-        ⬥ all done, fixed 3 files
-        *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2*
-        ⬥ all done, fixed 3 files
-        *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2*
-        ⬥ all done, fixed 3 files
-        *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2*
-        ⬥ all done, fixed 3 files"
+        *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2*"
       `)
 
       // Only ONE footer should appear — after the final text response.
@@ -583,24 +560,10 @@ e2eTest('queue advanced: footer emission', () => {
         MULTI_STEP_CHAIN_MARKER
         --- from: assistant (TestBot)
         ⬥ chain step 1: reading config
-        *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2*
         ⬥ chain step 2: analyzing results
-        *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2*
         ⬥ chain step 3: applying fix
-        *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2*
         ⬥ chain complete: all 3 steps done
-        *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2*
-        ⬥ chain complete: all 3 steps done
-        *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2*
-        ⬥ chain complete: all 3 steps done
-        *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2*
-        ⬥ chain complete: all 3 steps done
-        *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2*
-        ⬥ chain complete: all 3 steps done
-        *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2*
-        ⬥ chain complete: all 3 steps done
-        *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2*
-        ⬥ chain complete: all 3 steps done"
+        *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2*"
       `)
 
       // The critical assertion: only 1 footer at the very end.

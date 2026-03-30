@@ -167,12 +167,9 @@ describe('queue advanced: action buttons', () => {
         --- from: assistant (TestBot)
         ⬥ ok
         *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2*
-        ⬥ ok
-        *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2*
         **Action Required**
         _Selected: Continue action-buttons flow_
         [user clicks button]
-        ⬥ ok
         ⬥ action-buttons-click-continued
         *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2*"
       `)
@@ -258,18 +255,10 @@ describe('queue advanced: action buttons', () => {
         --- from: assistant (TestBot)
         ⬥ ok
         *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2*
-        ⬥ ok
-        *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2*
-        ⬥ ok
-        *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2*
-        ⬥ ok
-        *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2*
         **Action Required**
         _Buttons dismissed._
         --- from: user (queue-action-tester)
-        Reply with exactly: post-dismiss-user-message
-        --- from: assistant (TestBot)
-        ⬥ ok"
+        Reply with exactly: post-dismiss-user-message"
       `)
       expect(timeline).toContain('_Buttons dismissed._')
       expect(timeline).toContain('post-dismiss-user-message')

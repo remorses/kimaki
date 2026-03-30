@@ -111,8 +111,8 @@ e2eTest('queue advanced: typing interrupt', () => {
         *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2*
         --- from: user (queue-advanced-tester)
         PLUGIN_TIMEOUT_SLEEP_MARKER
+        [bot typing]
         --- from: assistant (TestBot)
-        ⬥ ok
         ⬥ starting sleep 100
         --- from: user (queue-advanced-tester)
         Reply with exactly: typing-stop-interrupt-final
@@ -120,8 +120,7 @@ e2eTest('queue advanced: typing interrupt', () => {
         [bot typing]
         --- from: assistant (TestBot)
         ⬥ ok
-        *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2*
-        [bot typing]"
+        *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2*"
       `)
       expect(finalUserIndex).toBeGreaterThanOrEqual(0)
       expect(finalReplyIndex).toBeGreaterThan(finalUserIndex)

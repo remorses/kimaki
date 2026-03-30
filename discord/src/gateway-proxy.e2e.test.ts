@@ -457,9 +457,8 @@ describeIf('gateway-proxy e2e', () => {
         --- from: user (proxy-tester)
         follow up through proxy
         --- from: assistant (TestBot)
-        ⬥ ok
-        *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2*
-        ⬥ ok"
+        ⬥ gateway-proxy-reply
+        *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2*"
       `)
       expect(reply).toBeDefined()
       expect(reply.content.trim().length).toBeGreaterThan(0)
@@ -498,9 +497,8 @@ describeIf('gateway-proxy e2e', () => {
         --- from: user (proxy-tester)
         follow up through proxy
         --- from: assistant (TestBot)
-        ⬥ ok
+        ⬥ gateway-proxy-reply
         *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2*
-        ⬥ ok
         --- from: user (proxy-tester)
         !echo proxy-shell-test
         --- from: assistant (TestBot)

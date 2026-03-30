@@ -454,8 +454,7 @@ describe('agent model resolution', () => {
         Reply with exactly: system-context-check
         --- from: assistant (TestBot)
         ⬥ system-context-ok
-        *project ⋅ main ⋅ Ns ⋅ N% ⋅ agent-model-v2 ⋅ **test-agent***
-        ⬥ ok"
+        *project ⋅ main ⋅ Ns ⋅ N% ⋅ agent-model-v2 ⋅ **test-agent***"
       `)
     },
     15_000,
@@ -670,7 +669,6 @@ describe('agent model resolution', () => {
         Reply with exactly: second-thread-msg
         --- from: assistant (TestBot)
         ⬥ ok
-        ⬥ ok
         *project ⋅ main ⋅ Ns ⋅ N% ⋅ agent-model-v2 ⋅ **test-agent***"
       `)
 
@@ -773,7 +771,6 @@ describe('agent model resolution', () => {
         Reply with exactly: default-second-msg
         --- from: assistant (TestBot)
         ⬥ ok
-        ⬥ ok
         *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2*"
       `)
 
@@ -862,7 +859,6 @@ describe('agent model resolution', () => {
         --- from: user (agent-model-tester)
         Reply with exactly: after-switch-msg
         --- from: assistant (TestBot)
-        ⬥ ok
         ⬥ ok
         *project ⋅ main ⋅ Ns ⋅ N% ⋅ plan-model-v2 ⋅ **plan***"
       `)
