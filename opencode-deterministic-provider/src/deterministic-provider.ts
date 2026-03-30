@@ -4,23 +4,56 @@ import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 
 import type {
-  LanguageModelV2,
-  LanguageModelV2CallOptions,
-  LanguageModelV2CallWarning,
-  LanguageModelV2Content,
-  LanguageModelV2FinishReason,
-  LanguageModelV2Prompt,
-  LanguageModelV2StreamPart,
-  LanguageModelV2Usage,
+  LanguageModelV3,
+  LanguageModelV3CallOptions,
+  LanguageModelV3Content,
+  LanguageModelV3FinishReason,
+  LanguageModelV3GenerateResult,
+  LanguageModelV3Prompt,
+  LanguageModelV3StreamPart,
+  LanguageModelV3Usage,
 } from '@ai-sdk/provider'
 
-const DEFAULT_USAGE: LanguageModelV2Usage = {
-  inputTokens: 0,
-  outputTokens: 0,
-  totalTokens: 0,
+type LegacyUsage = {
+  inputTokens: number
+  outputTokens: number
+  totalTokens: number
+  reasoningTokens?: number
+  cachedInputTokens?: number
 }
 
-const DEFAULT_TEXT_STREAM_PARTS: LanguageModelV2StreamPart[] = [
+type DeterministicUsage = LegacyUsage | LanguageModelV3Usage
+
+type DeterministicFinishReason =
+  | LanguageModelV3FinishReason
+  | LanguageModelV3FinishReason['unified']
+
+type DeterministicFinishPart = {
+  type: 'finish'
+  finishReason: DeterministicFinishReason
+  usage: DeterministicUsage
+  providerMetadata?: Extract<LanguageModelV3StreamPart, { type: 'finish' }>['providerMetadata']
+}
+
+type DeterministicStreamPart =
+  | Exclude<LanguageModelV3StreamPart, { type: 'finish' }>
+  | DeterministicFinishPart
+
+const DEFAULT_USAGE: LanguageModelV3Usage = {
+  inputTokens: {
+    total: 0,
+    noCache: 0,
+    cacheRead: undefined,
+    cacheWrite: undefined,
+  },
+  outputTokens: {
+    total: 0,
+    text: 0,
+    reasoning: 0,
+  },
+}
+
+const DEFAULT_TEXT_STREAM_PARTS: DeterministicStreamPart[] = [
   { type: 'stream-start', warnings: [] },
   { type: 'text-start', id: 'default-text' },
   { type: 'text-delta', id: 'default-text', delta: 'ok' },
@@ -32,7 +65,7 @@ const DEFAULT_TEXT_STREAM_PARTS: LanguageModelV2StreamPart[] = [
   },
 ]
 
-type MessageRole = LanguageModelV2Prompt[number]['role']
+type MessageRole = LanguageModelV3Prompt[number]['role']
 
 export type DeterministicMatcher = {
   id: string
@@ -51,7 +84,7 @@ export type DeterministicMatcher = {
     latestUserTextRegex?: string
   }
   then: {
-    parts: LanguageModelV2StreamPart[]
+    parts: DeterministicStreamPart[]
     partDelaysMs?: number[]
     defaultPartDelayMs?: number
   }
@@ -62,7 +95,7 @@ export type DeterministicProviderSettings = {
   matchers?: DeterministicMatcher[]
   defaultPartDelayMs?: number
   strict?: boolean
-  defaultParts?: LanguageModelV2StreamPart[]
+  defaultParts?: DeterministicStreamPart[]
 }
 
 export type BuildDeterministicOpencodeConfigOptions = {
@@ -81,14 +114,14 @@ type NormalizedMatcher = DeterministicMatcher & {
 }
 
 type ResolvedMatch = {
-  parts: LanguageModelV2StreamPart[]
+  parts: DeterministicStreamPart[]
   partDelaysMs?: number[]
   defaultPartDelayMs?: number
 }
 
 export interface DeterministicProvider {
-  (modelId: string): LanguageModelV2
-  languageModel(modelId: string): LanguageModelV2
+  (modelId: string): LanguageModelV3
+  languageModel(modelId: string): LanguageModelV3
 }
 
 export function createDeterministicProvider(
@@ -100,9 +133,9 @@ export function createDeterministicProvider(
     matchers: normalizedSettings.matchers || [],
   })
 
-  const buildLanguageModel = ({ modelId }: { modelId: string }): LanguageModelV2 => {
+  const buildLanguageModel = ({ modelId }: { modelId: string }): LanguageModelV3 => {
     return {
-      specificationVersion: 'v2',
+      specificationVersion: 'v3',
       provider: providerName,
       modelId,
       supportedUrls: {},
@@ -128,7 +161,7 @@ export function createDeterministicProvider(
           parts: resolved.parts,
           partDelaysMs: resolved.partDelaysMs,
         })
-        const stream = new ReadableStream<LanguageModelV2StreamPart>({
+        const stream = new ReadableStream<LanguageModelV3StreamPart>({
           start(controller) {
             void streamPartsWithDelay({
               controller,
@@ -256,10 +289,10 @@ function normalizeSettingsInput({
     return []
   }
 
-  const parseDefaultParts = (): LanguageModelV2StreamPart[] | undefined => {
+  const parseDefaultParts = (): DeterministicStreamPart[] | undefined => {
     const raw = candidate['defaultParts']
     if (Array.isArray(raw)) {
-      return raw as LanguageModelV2StreamPart[]
+      return raw as DeterministicStreamPart[]
     }
     return undefined
   }
@@ -281,7 +314,7 @@ function resolveMatch({
   normalizedMatchers,
   settings,
 }: {
-  options: LanguageModelV2CallOptions
+  options: LanguageModelV3CallOptions
   normalizedMatchers: NormalizedMatcher[]
   settings: DeterministicProviderSettings
 }): ResolvedMatch {
@@ -316,7 +349,7 @@ function matcherMatches({
   options,
 }: {
   matcher: NormalizedMatcher
-  options: LanguageModelV2CallOptions
+  options: LanguageModelV3CallOptions
 }) {
   if (matcher.enabled === false) {
     return false
@@ -390,7 +423,7 @@ function matcherMatches({
   return true
 }
 
-function getLastMessageRole({ prompt }: { prompt: LanguageModelV2Prompt }) {
+function getLastMessageRole({ prompt }: { prompt: LanguageModelV3Prompt }) {
   const last = prompt[prompt.length - 1]
   if (!last) {
     return undefined
@@ -398,57 +431,54 @@ function getLastMessageRole({ prompt }: { prompt: LanguageModelV2Prompt }) {
   return last.role
 }
 
-function getLastMessageText({ prompt }: { prompt: LanguageModelV2Prompt }) {
+function getLastMessageText({ prompt }: { prompt: LanguageModelV3Prompt }) {
   const last = prompt[prompt.length - 1]
   if (!last) {
     return ''
   }
-  if (typeof last.content === 'string') {
+  if (last.role === 'system') {
     return last.content
   }
   if (!Array.isArray(last.content)) {
     return ''
   }
   return last.content.reduce((acc, part) => {
-    if (part.type !== 'text' || !('text' in part) || typeof part.text !== 'string') {
+    if (part.type !== 'text' || typeof part.text !== 'string') {
       return acc
     }
     return acc ? `${acc}\n${part.text}` : part.text
   }, '')
 }
 
-function getLatestUserText({ prompt }: { prompt: LanguageModelV2Prompt }) {
+function getLatestUserText({ prompt }: { prompt: LanguageModelV3Prompt }) {
   const latestUserMessage = [...prompt].reverse().find((message) => {
     return message.role === 'user'
   })
   if (!latestUserMessage) {
     return ''
   }
-  if (typeof latestUserMessage.content === 'string') {
-    return latestUserMessage.content
-  }
   if (!Array.isArray(latestUserMessage.content)) {
     return ''
   }
   return latestUserMessage.content.reduce((acc, part) => {
-    if (part.type !== 'text' || !('text' in part) || typeof part.text !== 'string') {
+    if (part.type !== 'text' || typeof part.text !== 'string') {
       return acc
     }
     return acc ? `${acc}\n${part.text}` : part.text
   }, '')
 }
 
-function getPromptText({ prompt }: { prompt: LanguageModelV2Prompt }) {
+function getPromptText({ prompt }: { prompt: LanguageModelV3Prompt }) {
   return prompt
     .map((message) => {
-      if (typeof message.content === 'string') {
+      if (message.role === 'system') {
         return message.content
       }
       if (!Array.isArray(message.content)) {
         return ''
       }
       return message.content.reduce((acc, part) => {
-        if (part.type !== 'text' || !('text' in part) || typeof part.text !== 'string') {
+        if (part.type !== 'text' || typeof part.text !== 'string') {
           return acc
         }
         return acc ? `${acc}\n${part.text}` : part.text
@@ -461,23 +491,25 @@ function ensureTerminalStreamPartsAndDelays({
   parts,
   partDelaysMs,
 }: {
-  parts: LanguageModelV2StreamPart[]
+  parts: DeterministicStreamPart[]
   partDelaysMs?: number[]
 }) {
-  const streamStartPart: LanguageModelV2StreamPart = {
+  const normalized = parts.map(normalizeStreamPart)
+
+  const streamStartPart: LanguageModelV3StreamPart = {
     type: 'stream-start',
     warnings: [],
   }
-  const finishPart: LanguageModelV2StreamPart = {
+  const finishPart: LanguageModelV3StreamPart = {
     type: 'finish',
-    finishReason: 'stop',
+    finishReason: normalizeFinishReason('stop'),
     usage: DEFAULT_USAGE,
   }
 
-  const hasStreamStart = parts.some((part) => {
+  const hasStreamStart = normalized.some((part) => {
     return part.type === 'stream-start'
   })
-  const withStreamStart = hasStreamStart ? parts : [streamStartPart, ...parts]
+  const withStreamStart = hasStreamStart ? normalized : [streamStartPart, ...normalized]
   const delaysWithStreamStart =
     partDelaysMs && !hasStreamStart ? [0, ...partDelaysMs] : partDelaysMs
 
@@ -515,8 +547,8 @@ async function streamPartsWithDelay({
   matcherDefaultPartDelayMs,
   providerDefaultPartDelayMs,
 }: {
-  controller: ReadableStreamDefaultController<LanguageModelV2StreamPart>
-  parts: LanguageModelV2StreamPart[]
+  controller: ReadableStreamDefaultController<LanguageModelV3StreamPart>
+  parts: LanguageModelV3StreamPart[]
   partDelaysMs?: number[]
   matcherDefaultPartDelayMs?: number
   providerDefaultPartDelayMs?: number
@@ -539,8 +571,12 @@ async function streamPartsWithDelay({
   }
 }
 
-function buildGenerateResult({ parts }: { parts: LanguageModelV2StreamPart[] }) {
-  const content: LanguageModelV2Content[] = []
+function buildGenerateResult({
+  parts,
+}: {
+  parts: LanguageModelV3StreamPart[]
+}): LanguageModelV3GenerateResult {
+  const content: LanguageModelV3Content[] = []
   const textById = new Map<string, string>()
   for (const part of parts) {
     if (part.type === 'text-start') {
@@ -572,13 +608,10 @@ function buildGenerateResult({ parts }: { parts: LanguageModelV2StreamPart[] }) 
   const finish = [...parts].reverse().find(isFinishPart)
   const streamStart = parts.find(isStreamStartPart)
 
-  const finishReason: LanguageModelV2FinishReason = finish
-    ? finish.finishReason
-    : 'stop'
-  const usage: LanguageModelV2Usage = finish ? finish.usage : DEFAULT_USAGE
-  const warnings: LanguageModelV2CallWarning[] = streamStart
-    ? streamStart.warnings
-    : []
+  const finishReason = finish ? finish.finishReason : normalizeFinishReason('stop')
+  const usage = finish ? finish.usage : DEFAULT_USAGE
+  const warnings: Extract<LanguageModelV3StreamPart, { type: 'stream-start' }>['warnings'] =
+    streamStart ? streamStart.warnings : []
 
   return {
     content,
@@ -589,37 +622,93 @@ function buildGenerateResult({ parts }: { parts: LanguageModelV2StreamPart[] }) 
 }
 
 function isToolCallPart(
-  part: LanguageModelV2StreamPart,
-): part is Extract<LanguageModelV2StreamPart, { type: 'tool-call' }> {
+  part: LanguageModelV3StreamPart,
+): part is Extract<LanguageModelV3StreamPart, { type: 'tool-call' }> {
   return part.type === 'tool-call'
 }
 
 function isToolResultPart(
-  part: LanguageModelV2StreamPart,
-): part is Extract<LanguageModelV2StreamPart, { type: 'tool-result' }> {
+  part: LanguageModelV3StreamPart,
+): part is Extract<LanguageModelV3StreamPart, { type: 'tool-result' }> {
   return part.type === 'tool-result'
 }
 
 function isFilePart(
-  part: LanguageModelV2StreamPart,
-): part is Extract<LanguageModelV2StreamPart, { type: 'file' }> {
+  part: LanguageModelV3StreamPart,
+): part is Extract<LanguageModelV3StreamPart, { type: 'file' }> {
   return part.type === 'file'
 }
 
 function isSourcePart(
-  part: LanguageModelV2StreamPart,
-): part is Extract<LanguageModelV2StreamPart, { type: 'source' }> {
+  part: LanguageModelV3StreamPart,
+): part is Extract<LanguageModelV3StreamPart, { type: 'source' }> {
   return part.type === 'source'
 }
 
 function isStreamStartPart(
-  part: LanguageModelV2StreamPart,
-): part is Extract<LanguageModelV2StreamPart, { type: 'stream-start' }> {
+  part: LanguageModelV3StreamPart,
+): part is Extract<LanguageModelV3StreamPart, { type: 'stream-start' }> {
   return part.type === 'stream-start'
 }
 
 function isFinishPart(
-  part: LanguageModelV2StreamPart,
-): part is Extract<LanguageModelV2StreamPart, { type: 'finish' }> {
+  part: LanguageModelV3StreamPart,
+): part is Extract<LanguageModelV3StreamPart, { type: 'finish' }> {
   return part.type === 'finish'
+}
+
+function normalizeStreamPart(part: DeterministicStreamPart): LanguageModelV3StreamPart {
+  if (part.type !== 'finish') {
+    return part
+  }
+
+  return {
+    type: 'finish',
+    finishReason: normalizeFinishReason(part.finishReason),
+    usage: normalizeUsage(part.usage),
+    providerMetadata: part.providerMetadata,
+  }
+}
+
+function normalizeFinishReason(
+  reason: DeterministicFinishReason,
+): LanguageModelV3FinishReason {
+  if (typeof reason === 'string') {
+    return {
+      unified: reason,
+      raw: reason,
+    }
+  }
+
+  return {
+    unified: reason.unified,
+    raw: reason.raw,
+  }
+}
+
+function normalizeUsage(usage: DeterministicUsage): LanguageModelV3Usage {
+  if (isV3Usage(usage)) {
+    return usage
+  }
+
+  return {
+    inputTokens: {
+      total: usage.inputTokens,
+      noCache: usage.inputTokens,
+      cacheRead: usage.cachedInputTokens,
+      cacheWrite: undefined,
+    },
+    outputTokens: {
+      total: usage.outputTokens,
+      text: usage.outputTokens,
+      reasoning: usage.reasoningTokens,
+    },
+    raw: {
+      totalTokens: usage.totalTokens,
+    },
+  }
+}
+
+function isV3Usage(usage: DeterministicUsage): usage is LanguageModelV3Usage {
+  return typeof usage.inputTokens === 'object'
 }

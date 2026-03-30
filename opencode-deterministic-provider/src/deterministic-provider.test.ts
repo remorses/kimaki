@@ -1,11 +1,11 @@
 // Tests for deterministic provider matcher selection and tool-call output.
 
 import { describe, expect, test } from 'vitest'
-import type { LanguageModelV2StreamPart } from '@ai-sdk/provider'
+import type { LanguageModelV3StreamPart } from '@ai-sdk/provider'
 import { createDeterministicProvider } from './deterministic-provider.js'
 
 describe('createDeterministicProvider', () => {
-  test('emits tool call for matched sleep prompt', async () => {
+  test('emits v3 tool call for matched sleep prompt', async () => {
     const provider = createDeterministicProvider({
       strict: true,
       matchers: [
@@ -40,6 +40,7 @@ describe('createDeterministicProvider', () => {
     })
 
     const model = provider.languageModel('deterministic-v2')
+    expect(model.specificationVersion).toBe('v3')
     const result = await model.doStream({
       prompt: [
         {
@@ -84,10 +85,10 @@ describe('createDeterministicProvider', () => {
 async function collectParts({
   stream,
 }: {
-  stream: ReadableStream<LanguageModelV2StreamPart>
+  stream: ReadableStream<LanguageModelV3StreamPart>
 }) {
   const reader = stream.getReader()
-  const parts: LanguageModelV2StreamPart[] = []
+  const parts: LanguageModelV3StreamPart[] = []
   while (true) {
     const next = await reader.read()
     if (next.done) {

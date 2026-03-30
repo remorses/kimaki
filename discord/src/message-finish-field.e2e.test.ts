@@ -168,7 +168,7 @@ test('tool-call step has finish="tool-calls", follow-up has finish="stop"', asyn
   expect(completedAssistants).toMatchInlineSnapshot(`
     [
       {
-        "finish": null,
+        "finish": "tool-calls",
         "partTypes": [
           "step-start",
           "text",
@@ -176,7 +176,7 @@ test('tool-call step has finish="tool-calls", follow-up has finish="stop"', asyn
         ],
       },
       {
-        "finish": null,
+        "finish": "stop",
         "partTypes": [
           "step-start",
           "text",
