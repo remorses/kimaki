@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.4.87
+
+1. **New `/btw` command** — fork the current session into a new thread and immediately send a prompt, without replaying past messages:
+   ```
+   /btw prompt: why is the auth module structured this way?
+   ```
+   Useful for side questions or tangents without polluting or blocking the original thread. The forked thread inherits the full session context and starts working right away.
+
+2. **Fixed slash command registration exceeding Discord's 100-command limit** — with many agents, skills, and MCP prompts, the total could exceed Discord's hard cap and cause registration errors. Dynamic commands are now registered in priority order (agents → user commands → skills → MCP prompts) and trimmed at 100. Three rarely-used static commands were removed to free slots: `stop` (duplicate of `/abort`), `memory-snapshot` (use `kill -SIGUSR1` instead), and `toggle-mention-mode`.
+
 ## 0.4.86
 
 1. **Fixed voice messages getting lost when a question dropdown is pending** — sending a voice message while the AI's question dropdown is showing no longer discards the voice content. Previously, `message.content` (empty for voice) was passed as the question answer, sending `""` to the model, and the early-return prevented transcription from ever running. Now the empty-content message properly unblocks OpenCode's question waiter and flows through normal transcription, arriving as the next user message after the model responds.
