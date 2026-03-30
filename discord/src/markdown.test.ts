@@ -174,6 +174,8 @@ function normalizeMarkdown(md: string): string {
     .replace(/\*\*OpenCode Version\*\*: v[\d.]+.*/g, '**OpenCode Version**: v<version>')
     // Strip git branch context injected by opencode into user messages
     .replace(/\[Current branch: [^\]]+\]\n?\n?/g, '')
+    .replace(/\[current git branch is [^\]]+\]\n?\n?/g, '')
+    .replace(/\[warning: repository is in detached HEAD[^\]]*\]\n?\n?/g, '')
 }
 
 test('generate markdown with system info', async () => {
@@ -209,8 +211,6 @@ test('generate markdown with system info', async () => {
     ## Conversation
 
     ### 👤 User
-
-    [current git branch is main]
 
     hello markdown test
 
@@ -248,8 +248,6 @@ test('generate markdown without system info', async () => {
     ## Conversation
 
     ### 👤 User
-
-    [current git branch is main]
 
     hello markdown test
 
