@@ -707,6 +707,16 @@ export async function startDiscordBot({
       }
 
       if (channel.type === ChannelType.GuildText) {
+        // `kimaki send` posts a starter message with a `start` embed marker,
+        // then creates the thread via REST. The ThreadCreate handler picks up
+        // that thread and starts the session. If we don't skip here, this
+        // handler races the CLI to call startThread() on the same message,
+        // causing DiscordAPIError[160004] "A thread has already been created
+        // for this message".
+        if (promptMarker?.start) {
+          return
+        }
+
         const textChannel = channel as TextChannel
         voiceLogger.log(
           `[GUILD_TEXT] Message in text channel #${textChannel.name} (${textChannel.id})`,
