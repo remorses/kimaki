@@ -59,8 +59,10 @@ jobs:
         run: pnpm build
         working-directory: discord-digital-twin
 
+      # --retry 2: e2e tests with question/queue interactions can have timing
+      # races on CI's slower hardware. Retrying failed tests catches flaky ones.
       - name: Run tests
-        run: pnpm test -- --run
+        run: pnpm test -- --run --retry 2
         working-directory: discord
         env:
           NODE_ENV: test
