@@ -2763,7 +2763,7 @@ cli
           }
 
           const threadPromptMarker: ThreadStartMarker = {
-            cliThreadPrompt: true,
+            start: true,
             ...(options.permission?.length ? { permissions: options.permission } : {}),
             ...(options.injectionGuard?.length ? { injectionGuardPatterns: options.injectionGuard } : {}),
           }

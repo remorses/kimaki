@@ -202,7 +202,10 @@ export type WorktreeInfo = {
 export type ThreadStartMarker = {
   /** Whether to auto-start an AI session */
   start?: boolean
-  /** Marker for CLI-injected prompt into an existing thread */
+  /**
+   * Legacy marker for CLI-injected prompts into existing threads.
+   * @deprecated New injected prompts should use `start: true` instead.
+   */
   cliThreadPrompt?: boolean
   /** Worktree name to create */
   worktree?: string
