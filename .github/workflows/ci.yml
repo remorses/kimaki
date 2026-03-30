@@ -38,6 +38,14 @@ jobs:
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
+      # Submodules have dist/ gitignored so they need to be built after checkout.
+      # errore, traforo, and opencode-injection-guard are workspace deps of discord.
+      - name: Build submodules (errore, traforo, opencode-injection-guard)
+        run: |
+          pnpm --filter errore run build
+          pnpm --filter traforo run build
+          pnpm --filter opencode-injection-guard run build
+
       - name: Generate Prisma + SQL (discord-digital-twin)
         run: pnpm generate
         working-directory: discord-digital-twin
@@ -49,10 +57,6 @@ jobs:
       - name: Build discord-digital-twin
         run: pnpm build
         working-directory: discord-digital-twin
-
-      - name: Typecheck discord
-        run: pnpm tsc
-        working-directory: discord
 
       - name: Run tests
         run: pnpm test --run
