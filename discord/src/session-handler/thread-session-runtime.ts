@@ -49,7 +49,6 @@ import {
   appendSessionEventsSinceLastTimestamp,
   getSessionEventSnapshot,
 } from '../database.js'
-import { buildAllowedDirectoryPatterns } from '../directory-permissions.js'
 import {
   showPermissionButtons,
   cleanupPermissionContext,
@@ -534,8 +533,6 @@ export class ThreadSessionRuntime {
   // resolved input is then routed through the normal enqueue paths which
   // use dispatchAction internally.
   private preprocessChain: Promise<void> = Promise.resolve()
-  private primedExternalDirectoryPatterns: string[] | null = null
-  private activeExternalDirectoryPatterns: string[] | null = null
 
   constructor(opts: RuntimeOptions) {
     this.threadId = opts.threadId
@@ -578,35 +575,6 @@ export class ThreadSessionRuntime {
 
   getDerivedPhase(): 'idle' | 'running' {
     return this.isMainSessionBusy() ? 'running' : 'idle'
-  }
-
-  primeNextExternalDirectoryAccess({ directory }: { directory: string }): void {
-    this.primedExternalDirectoryPatterns = buildAllowedDirectoryPatterns({
-      directory,
-    })
-  }
-
-  private consumePrimedExternalDirectoryPatterns({
-    prompt,
-    images,
-    command,
-  }: {
-    prompt: string
-    images?: DiscordFileAttachment[]
-    command?: { name: string; arguments: string }
-  }): string[] | undefined {
-    const hasPromptText = prompt.trim().length > 0
-    const hasImages = (images?.length || 0) > 0
-    if (!hasPromptText && !hasImages && !command) {
-      return undefined
-    }
-    const primedPatterns = this.primedExternalDirectoryPatterns
-    this.primedExternalDirectoryPatterns = null
-    return primedPatterns || undefined
-  }
-
-  private activateExternalDirectoryPatterns(patterns?: string[]): void {
-    this.activeExternalDirectoryPatterns = patterns?.length ? [...patterns] : null
   }
 
   /** Whether the listener has been disposed. */
@@ -2216,7 +2184,6 @@ export class ThreadSessionRuntime {
     // The event is also pushed into the event buffer by handleEvent(),
     // so waitForEvent() consumers (abort settlement) will see it too.
     if (idleSessionId === sessionId) {
-      this.activeExternalDirectoryPatterns = null
       const shouldDrainQueuedMessages = doesLatestUserTurnHaveNaturalCompletion({
         events: this.eventBuffer,
         sessionId: idleSessionId,
@@ -2311,7 +2278,6 @@ export class ThreadSessionRuntime {
     }
 
     const errorMessage = formatSessionErrorFromProps(properties.error)
-    this.activeExternalDirectoryPatterns = null
     logger.error(`Sending error to thread: ${errorMessage}`)
     await sendThreadMessage(
       this.thread,
@@ -2344,39 +2310,6 @@ export class ThreadSessionRuntime {
     }
 
     const subtaskLabel = subtaskInfo?.label
-
-    if (permission.permission === 'external_directory') {
-      const allowedPatterns = this.activeExternalDirectoryPatterns || []
-      const isCovered = arePatternsCoveredBy({
-        patterns: permission.patterns,
-        coveringPatterns: allowedPatterns,
-      })
-      if (isCovered) {
-        const client = getOpencodeClient(this.projectDirectory)
-        if (!client) {
-          logger.warn(
-            `[PERMISSION] Could not auto-accept preapproved directory request ${permission.id}: no client`,
-          )
-        } else {
-          const autoReplyResult = await errore.tryAsync(() => {
-            return client.permission.reply({
-              requestID: permission.id,
-              directory: this.sdkDirectory,
-              reply: 'once',
-            })
-          })
-          if (!(autoReplyResult instanceof Error)) {
-            logger.log(
-              `[PERMISSION] Auto-accepted preapproved external directory request ${permission.id} patterns=${permission.patterns.join(', ')}`,
-            )
-            return
-          }
-          logger.warn(
-            `[PERMISSION] Failed to auto-accept preapproved directory request ${permission.id}: ${autoReplyResult.message}`,
-          )
-        }
-      }
-    }
 
     const dedupeKey = buildPermissionDedupeKey({
       permission,
@@ -2750,14 +2683,6 @@ export class ThreadSessionRuntime {
         modelOverride: input.model,
         force: createdNewSession,
       })
-
-      this.activateExternalDirectoryPatterns(
-        this.consumePrimedExternalDirectoryPatterns({
-          prompt: input.prompt,
-          images: input.images,
-          command: input.command,
-        }),
-      )
 
       const agentResult = await errore.tryAsync(() => {
         return resolveValidatedAgentPreference({
@@ -3990,7 +3915,6 @@ export class ThreadSessionRuntime {
     this.modelContextLimitKey = undefined
     this.lastDisplayedContextPercentage = 0
     this.lastRateLimitDisplayTime = 0
-    this.activeExternalDirectoryPatterns = null
   }
 
   // ── Retry Last User Prompt (for model-change flow) ──────────
