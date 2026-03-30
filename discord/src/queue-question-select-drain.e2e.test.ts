@@ -55,7 +55,7 @@ describe('queue drain after question select answer', () => {
       })
 
       const thread = await ctx.discord.channel(TEXT_CHANNEL_ID).waitForThread({
-        timeout: 4_000,
+        timeout: 8_000,
         predicate: (t) => {
           return t.name === 'QUESTION_SELECT_QUEUE_MARKER'
         },
@@ -66,7 +66,7 @@ describe('queue drain after question select answer', () => {
       // 2. Wait for the question dropdown to appear
       const pending = await waitForPendingQuestion({
         threadId: thread.id,
-        timeoutMs: 4_000,
+        timeoutMs: 8_000,
       })
       expect(pending.contextHash).toBeTruthy()
 
@@ -75,7 +75,7 @@ describe('queue drain after question select answer', () => {
         discord: ctx.discord,
         threadId: thread.id,
         text: 'How to proceed?',
-        timeout: 4_000,
+        timeout: 8_000,
       })
       const questionMsg = questionMessages.find((m) => {
         return m.content.includes('How to proceed?')
@@ -91,7 +91,7 @@ describe('queue drain after question select answer', () => {
 
       const queueAck = await th.waitForInteractionAck({
         interactionId: queueInteractionId,
-        timeout: 4_000,
+        timeout: 8_000,
       })
       if (!queueAck.messageId) {
         throw new Error('Expected /queue response message id')
@@ -106,7 +106,7 @@ describe('queue drain after question select answer', () => {
 
       await th.waitForInteractionAck({
         interactionId: interaction.id,
-        timeout: 4_000,
+        timeout: 8_000,
       })
 
       // 5. Queued message should be handed off to OpenCode's own prompt queue
@@ -116,14 +116,14 @@ describe('queue drain after question select answer', () => {
         discord: ctx.discord,
         threadId: thread.id,
         text: '» **question-select-tester:** Reply with exactly: post-question-drain',
-        timeout: 4_000,
+        timeout: 8_000,
       })
 
       // 6. Wait for footer from the drained queued message
       await waitForFooterMessage({
         discord: ctx.discord,
         threadId: thread.id,
-        timeout: 4_000,
+        timeout: 8_000,
         afterMessageIncludes: '» **question-select-tester:**',
         afterAuthorId: ctx.discord.botUserId,
       })

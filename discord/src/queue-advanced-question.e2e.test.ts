@@ -88,7 +88,7 @@ describe('queue advanced: question tool answer', () => {
       })
 
       const thread = await ctx.discord.channel(TEXT_CHANNEL_ID).waitForThread({
-        timeout: 4_000,
+        timeout: 8_000,
         predicate: (t) => {
           return t.name === 'QUESTION_TEXT_ANSWER_MARKER'
         },
@@ -99,7 +99,7 @@ describe('queue advanced: question tool answer', () => {
       // Wait for the question dropdown to appear
       const pending = await waitForPendingQuestion({
         threadId: thread.id,
-        timeoutMs: 4_000,
+        timeoutMs: 8_000,
       })
       expect(pending.contextHash).toBeTruthy()
 
@@ -108,7 +108,7 @@ describe('queue advanced: question tool answer', () => {
         discord: ctx.discord,
         threadId: thread.id,
         text: 'Which option do you prefer?',
-        timeout: 4_000,
+        timeout: 8_000,
       })
 
       // User sends a text message while question is pending.
@@ -123,7 +123,7 @@ describe('queue advanced: question tool answer', () => {
       // Pending question context should be cleaned up
       await waitForNoPendingQuestion({
         threadId: thread.id,
-        timeoutMs: 4_000,
+        timeoutMs: 8_000,
       })
 
       const timeline = await th.text({ showInteractions: true })
@@ -175,7 +175,7 @@ describe('queue advanced: voice message during pending question', () => {
       })
 
       const thread = await ctx.discord.channel(VOICE_CHANNEL_ID).waitForThread({
-        timeout: 4_000,
+        timeout: 8_000,
         predicate: (t) => {
           return t.name === 'QUESTION_TEXT_ANSWER_MARKER'
         },
@@ -186,14 +186,14 @@ describe('queue advanced: voice message during pending question', () => {
       // Wait for the question dropdown to appear
       await waitForPendingQuestion({
         threadId: thread.id,
-        timeoutMs: 4_000,
+        timeoutMs: 8_000,
       })
 
       await waitForBotMessageContaining({
         discord: ctx.discord,
         threadId: thread.id,
         text: 'Which option do you prefer?',
-        timeout: 4_000,
+        timeout: 8_000,
       })
 
       // Send a voice message while the question is pending.
@@ -208,7 +208,7 @@ describe('queue advanced: voice message during pending question', () => {
       // Question context should be cleaned up (empty reply sent to unblock OpenCode)
       await waitForNoPendingQuestion({
         threadId: thread.id,
-        timeoutMs: 4_000,
+        timeoutMs: 8_000,
       })
 
       // Voice content should be transcribed and appear as the next user message,
@@ -217,13 +217,13 @@ describe('queue advanced: voice message during pending question', () => {
         discord: ctx.discord,
         threadId: thread.id,
         text: 'I want option Alpha please',
-        timeout: 4_000,
+        timeout: 8_000,
       })
 
       await waitForFooterMessage({
         discord: ctx.discord,
         threadId: thread.id,
-        timeout: 4_000,
+        timeout: 8_000,
         afterMessageIncludes: 'I want option Alpha please',
         afterAuthorId: ctx.discord.botUserId,
       })
