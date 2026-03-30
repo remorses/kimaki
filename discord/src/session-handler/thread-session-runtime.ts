@@ -25,6 +25,7 @@ import {
   initializeOpencodeForDirectory,
   buildSessionPermissions,
   parsePermissionRules,
+  shouldIncludeExternalDirectoryAsk,
   subscribeOpencodeServerLifecycle,
   writeInjectionGuardConfig,
 } from '../opencode.js'
@@ -3731,14 +3732,18 @@ export class ThreadSessionRuntime {
     if (!session) {
       // Pass per-session external_directory permissions so this session can
       // access its own project directory (and worktree origin if applicable)
-      // without prompts. These override the server-level 'ask' default via
-      // opencode's findLast() rule evaluation.
+      // without prompts. Keep Kimaki's secure-by-default catch-all ask rule
+      // unless the project or global OpenCode config explicitly defines
+      // `permission`.
       // CLI --permission rules are appended after base rules so they win
       // via opencode's findLast() evaluation.
       const sessionPermissions = [
         ...buildSessionPermissions({
           directory: this.sdkDirectory,
           originalRepoDirectory,
+          includeExternalDirectoryAsk: shouldIncludeExternalDirectoryAsk({
+            projectDirectory: this.sdkDirectory,
+          }),
         }),
         ...parsePermissionRules(permissions ?? []),
       ]

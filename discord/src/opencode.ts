@@ -7,9 +7,9 @@
 //
 // Per-directory permissions (external_directory rules for worktrees, tmpdir,
 // etc.) are passed via session.create({ permission }) at session creation time,
-// NOT via the server config. The server config has permissive defaults
-// (edit: allow, bash: allow, external_directory: ask) and session-level rules
-// override them via opencode's findLast() evaluation (last matching rule wins).
+// NOT via the server config. The server config only installs Kimaki's base
+// non-directory defaults (edit/bash/webfetch allow). The session-level
+// external_directory rules decide whether unknown external paths ask or allow.
 //
 // Uses errore for type-safe error handling.
 
@@ -27,6 +27,7 @@ import {
   type Config as SdkConfig,
   type PermissionRuleset,
 } from '@opencode-ai/sdk/v2'
+import JSONC from 'tiny-jsonc'
 
 import {
   getDataDir,
@@ -38,14 +39,22 @@ import { getHranaUrl } from './hrana-server.js'
 // SDK Config type is simplified; opencode accepts nested permission objects with path patterns
 type PermissionAction = 'ask' | 'allow' | 'deny'
 type PermissionRule = PermissionAction | Record<string, PermissionAction>
+type JsonConfig = Record<string, unknown>
+const KIMAKI_BASE_PERMISSION = {
+  edit: 'allow',
+  bash: 'allow',
+  webfetch: 'allow',
+} as const
+
 type Config = Omit<SdkConfig, 'permission'> & {
-  permission?: {
-    edit?: PermissionRule
-    bash?: PermissionRule
-    external_directory?: PermissionRule
-    webfetch?: PermissionRule
-    [key: string]: PermissionRule | undefined
-  }
+  permission?:
+    | PermissionAction
+    | {
+        edit?: PermissionRule
+        bash?: PermissionRule
+        webfetch?: PermissionRule
+        [key: string]: PermissionRule | undefined
+      }
 }
 import * as errore from 'errore'
 import { createLogger, LogPrefix } from './logger.js'
@@ -476,31 +485,9 @@ async function startSingleServer(): Promise<ServerStartError | SingleServer> {
     baseArgs: serveArgs,
   })
 
-  // Server config uses permissive defaults. Per-directory external_directory
-  // permissions are set at session creation time via session.create({ permission }).
-  // Common directories (tmpdir, ~/.config/opencode, ~/.kimaki) are pre-allowed
-  // at the server level so they never trigger permission prompts regardless of
-  // whether session-level rules compose correctly.
-  const tmpdir = os.tmpdir().replaceAll('\\', '/')
-  const opencodeConfigDir = path
-    .join(os.homedir(), '.config', 'opencode')
-    .replaceAll('\\', '/')
-  const kimakiDataDir = path
-    .join(os.homedir(), '.kimaki')
-    .replaceAll('\\', '/')
-  const externalDirectoryPermissions: Record<string, 'ask' | 'allow' | 'deny'> = {
-    '*': 'ask',
-    '/tmp': 'allow',
-    '/tmp/*': 'allow',
-    '/private/tmp': 'allow',
-    '/private/tmp/*': 'allow',
-    [tmpdir]: 'allow',
-    [`${tmpdir}/*`]: 'allow',
-    [opencodeConfigDir]: 'allow',
-    [`${opencodeConfigDir}/*`]: 'allow',
-    [kimakiDataDir]: 'allow',
-    [`${kimakiDataDir}/*`]: 'allow',
-  }
+  // Server config keeps Kimaki's non-external-directory defaults. Directory
+  // access is handled per session so explicit user/project permission config can
+  // still disable Kimaki's secure-by-default external_directory ask rule.
   const kimakiShimDirectory = ensureKimakiCommandShim({
     dataDir: getDataDir(),
     execPath: process.execPath,
@@ -544,10 +531,7 @@ async function startSingleServer(): Promise<ServerStartError | SingleServer> {
     formatter: false,
     plugin: [new URL('../src/kimaki-opencode-plugin.ts', import.meta.url).href],
     permission: {
-      edit: 'allow',
-      bash: 'allow',
-      external_directory: externalDirectoryPermissions,
-      webfetch: 'allow',
+      ...KIMAKI_BASE_PERMISSION,
     },
     agent: {
       explore: {
@@ -565,7 +549,6 @@ async function startSingleServer(): Promise<ServerStartError | SingleServer> {
           webfetch: 'allow',
           websearch: 'allow',
           codesearch: 'allow',
-          external_directory: externalDirectoryPermissions,
         },
       },
     },
@@ -850,9 +833,11 @@ export async function initializeOpencodeForDirectory(
 export function buildSessionPermissions({
   directory,
   originalRepoDirectory,
+  includeExternalDirectoryAsk = true,
 }: {
   directory: string
   originalRepoDirectory?: string
+  includeExternalDirectoryAsk?: boolean
 }): PermissionRuleset {
   // Normalize path separators for cross-platform compatibility (Windows uses backslashes)
   const tmpdir = os.tmpdir().replaceAll('\\', '/')
@@ -860,8 +845,9 @@ export function buildSessionPermissions({
   const originalRepo = originalRepoDirectory?.replaceAll('\\', '/')
 
   const rules: PermissionRuleset = [
-    // Base rule: ask for unknown external directories
-    { permission: 'external_directory', pattern: '*', action: 'ask' },
+    ...(includeExternalDirectoryAsk
+      ? [{ permission: 'external_directory', pattern: '*', action: 'ask' as const }]
+      : []),
     // Allow tmpdir access
     { permission: 'external_directory', pattern: '/tmp', action: 'allow' },
     { permission: 'external_directory', pattern: '/tmp/*', action: 'allow' },
@@ -885,11 +871,10 @@ export function buildSessionPermissions({
     { permission: 'external_directory', pattern: `${opencodeConfigDir}/*`, action: 'allow' },
   )
 
-  // Allow ~/.kimaki so the agent can access kimaki data dir (logs, db, etc.)
-  // without permission prompts.
-  const kimakiDataDir = path
-    .join(os.homedir(), '.kimaki')
-    .replaceAll('\\', '/')
+  // Allow the active Kimaki data dir so the agent can access logs, sqlite, and
+  // related bot state without permission prompts even when the data dir is not
+  // the legacy ~/.kimaki path.
+  const kimakiDataDir = getDataDir().replaceAll('\\', '/')
   rules.push(
     { permission: 'external_directory', pattern: kimakiDataDir, action: 'allow' },
     { permission: 'external_directory', pattern: `${kimakiDataDir}/*`, action: 'allow' },
@@ -922,6 +907,62 @@ export function buildSessionPermissions({
   }
 
   return rules
+}
+
+export function shouldIncludeExternalDirectoryAsk({
+  projectDirectory,
+}: {
+  projectDirectory: string
+}): boolean {
+  return !hasExplicitPermissionConfig({ projectDirectory })
+}
+
+function hasExplicitPermissionConfig({
+  projectDirectory,
+}: {
+  projectDirectory: string
+}): boolean {
+  const globalConfigDirectory = getOpencodeGlobalConfigDirectory()
+  const candidatePaths = [
+    path.join(projectDirectory, 'opencode.json'),
+    path.join(projectDirectory, 'opencode.jsonc'),
+    path.join(globalConfigDirectory, 'opencode.json'),
+    path.join(globalConfigDirectory, 'opencode.jsonc'),
+  ]
+
+  return candidatePaths.some((filePath) => {
+    const config = readConfigFileIfExists({ filePath })
+    return config ? Object.hasOwn(config, 'permission') : false
+  })
+}
+
+function getOpencodeGlobalConfigDirectory(): string {
+  const xdgConfigHome = process.env.XDG_CONFIG_HOME || path.join(os.homedir(), '.config')
+  return path.join(xdgConfigHome, 'opencode')
+}
+
+function readConfigFileIfExists({
+  filePath,
+}: {
+  filePath: string
+}): JsonConfig | null {
+  if (!fs.existsSync(filePath)) {
+    return null
+  }
+
+  const parsed = errore.try({
+    try: () => {
+      return JSONC.parse(fs.readFileSync(filePath, 'utf-8')) as unknown
+    },
+    catch: () => {
+      return null
+    },
+  })
+  if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
+    return null
+  }
+
+  return parsed as JsonConfig
 }
 
 /**

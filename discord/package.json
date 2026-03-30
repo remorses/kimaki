@@ -81,6 +81,7 @@
     "pretty-ms": "^9.3.0",
     "proper-lockfile": "^4.1.2",
     "string-dedent": "^3.0.2",
+    "tiny-jsonc": "^1.0.2",
     "traforo": "workspace:^",
     "undici": "^7.16.0",
     "ws": "^8.19.0",
