@@ -1,5 +1,20 @@
 # Changelog
 
+## 0.4.89
+
+1. **New `--injection-guard` flag for `kimaki send`** — enable prompt-injection scanning only for the session you are starting, without turning it on globally for the whole project:
+   ```bash
+   kimaki send --prompt "Review this repo safely" --injection-guard "bash:*"
+   kimaki send --thread <thread-id> --prompt "Continue with web checks" --injection-guard "webfetch:*"
+   ```
+   Patterns use the form `tool:argsGlob`, and you can repeat the flag multiple times to scan several tool families in one session.
+
+2. **Fixed scheduled sends to existing sessions** — `kimaki send --session ... --send-at ...` now reliably wakes the target thread instead of posting a message that leaves the session idle.
+
+3. **Fixed dynamic command threads losing their arguments** — when a slash command like `/<name>-cmd`, `/<name>-skill`, or `/<name>-mcp-prompt` starts a new thread, the starter message and thread title now include the full command invocation instead of dropping the arguments.
+
+4. **Fixed worktree folder-switch reminders** — when a session moves into a new worktree, kimaki now reminds the model about the exact previous folder it must stop editing, reducing accidental reads or writes in the old directory.
+
 ## 0.4.88
 
 1. **Built-in prompt injection guard** — kimaki now ships with `opencode-injection-guard`. Opt-in: create `.opencode/injection-guard.json` (even an empty `{}`) in your project to activate it. A fast LLM judge inspects tool call outputs before they reach the main agent, blocking injected instructions from hijacking your coding sessions.
