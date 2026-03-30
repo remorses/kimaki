@@ -306,6 +306,7 @@ describe('synthetic-question-followup', () => {
       event: {
         type: 'message.updated',
         properties: {
+          sessionID: sessionId,
           info: {
             id: 'msg_user_1',
             sessionID: sessionId,
@@ -325,6 +326,7 @@ describe('synthetic-question-followup', () => {
       event: {
         type: 'message.updated',
         properties: {
+          sessionID: sessionId,
           info: {
             id: 'msg_asst_1',
             sessionID: sessionId,
@@ -353,6 +355,7 @@ describe('synthetic-question-followup', () => {
       event: {
         type: 'message.updated',
         properties: {
+          sessionID: sessionId,
           info: {
             id: 'msg_user_2',
             sessionID: sessionId,
