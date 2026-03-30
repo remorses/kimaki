@@ -330,21 +330,24 @@ describe('queue advanced: /model with interrupt recovery', () => {
         --- from: assistant (TestBot)
         ⬥ ok
         *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2*
+        ⬥ ok
         Model set for this session:
         **Deterministic Provider** / **deterministic-v3**
         \`deterministic-provider/deterministic-v3\`
         _Restarting current request with new model..._
         _Tip: create [agent .md files](https://github.com/remorses/kimaki/blob/main/docs/model-switching.md) in .opencode/agent/ for one-command model switching_
+        *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2*
         --- from: user (queue-model-switch-tester)
         PLUGIN_TIMEOUT_SLEEP_MARKER
         --- from: assistant (TestBot)
-        ⬥ ok
+        *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2*
         ⬥ starting sleep 100
         --- from: user (queue-model-switch-tester)
         Reply with exactly: model-switcher-followup
         --- from: assistant (TestBot)
         ⬥ ok
-        *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v3*"
+        *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v3*
+        ⬥ ok"
       `)
 
       expect(footer).toBeDefined()

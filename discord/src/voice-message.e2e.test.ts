@@ -502,7 +502,8 @@ e2eTest('voice message handling', () => {
         🎤 Transcribing voice message...
         📝 **Transcribed message:** Fix the login bug in auth.ts
         ⬥ session-reply
-        *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2*"
+        *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2*
+        ⬥ ok"
       `)
       expect(finalState.sessionId).toBeDefined()
 
@@ -708,6 +709,7 @@ e2eTest('voice message handling', () => {
         --- from: assistant (TestBot)
         🎤 Transcribing voice message...
         📝 **Transcribed message:** Add error handling to the parser
+        ⬥ fast-response-done
         ⬥ session-reply
         *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2*"
       `)
@@ -1082,7 +1084,10 @@ e2eTest('voice message handling', () => {
         [attachment: voice-message.ogg]
         --- from: assistant (TestBot)
         🎤 Transcribing voice message...
+        ⬥ fast-response-done
+        *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2*
         📝 **Transcribed message:** Delayed transcription result
+        ⬥ fast-response-done
         ⬥ session-reply
         *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2*"
       `)

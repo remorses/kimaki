@@ -194,6 +194,7 @@ e2eTest('/undo sets revert state and cleans up on next prompt', () => {
         UNDO_FILE_MARKER
         --- from: assistant (TestBot)
         ⬥ creating undo file
+        *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2*
         ⬥ undo file created
         *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2*
         Undone - reverted last assistant message

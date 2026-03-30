@@ -594,12 +594,11 @@ e2eTest('thread message queue ordering', () => {
         --- from: assistant (TestBot)
         ⬥ ok
         *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2*
+        ⬥ ok
         --- from: user (queue-tester)
         Reply with exactly: two
         Reply with exactly: three
         --- from: assistant (TestBot)
-        ⬥ ok
-        ⬥ ok
         *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2*"
       `)
       const userThreeIndex = after.findIndex((message) => {
@@ -695,6 +694,7 @@ e2eTest('thread message queue ordering', () => {
         Prompt from test: respond with short text for opencode queue mode.
         --- from: assistant (TestBot)
         ⬥ ok
+        ⬥ ok
         *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2*"
       `)
       const followupUserIndex = messagesWithFollowupFooter.findIndex((message) => {
@@ -777,7 +777,6 @@ e2eTest('thread message queue ordering', () => {
         Reply with exactly: BASH_TOOL_FILE_MARKER
         --- from: assistant (TestBot)
         ⬥ running create file
-        ⬥ ok
         *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2*"
       `)
       expect(fs.existsSync(markerPath)).toBe(true)
@@ -995,10 +994,10 @@ e2eTest('thread message queue ordering', () => {
         Reply with exactly: echo
         --- from: assistant (TestBot)
         *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2*
-        ⬥ ok
         --- from: user (queue-tester)
         Reply with exactly: foxtrot
         --- from: assistant (TestBot)
+        ⬥ ok
         *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2*"
       `)
       expect(userEchoIndex).toBeGreaterThan(-1)
@@ -1091,11 +1090,12 @@ e2eTest('thread message queue ordering', () => {
         --- from: assistant (TestBot)
         ⬥ ok
         *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2*
+        ⬥ ok
+        *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2*
         --- from: user (queue-tester)
         Reply with exactly: hotel
         Reply with exactly: india
         --- from: assistant (TestBot)
-        ⬥ ok
         ⬥ ok
         *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2*"
       `)
@@ -1205,7 +1205,6 @@ e2eTest('thread message queue ordering', () => {
         --- from: user (queue-tester)
         Reply with exactly: november
         --- from: assistant (TestBot)
-        ⬥ ok
         ⬥ ok
         *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2*"
       `)

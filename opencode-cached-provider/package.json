@@ -20,7 +20,7 @@
     "spiceflow": "^1.18.0"
   },
   "devDependencies": {
-    "@opencode-ai/sdk": "^1.2.27",
+    "@opencode-ai/sdk": "^1.3.7",
     "@types/node": "^24.3.0",
     "typescript": "^5.9.2",
     "vitest": "^3.2.4"

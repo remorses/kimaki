@@ -222,6 +222,22 @@ test('generate markdown with system info', async () => {
 
 
     *Completed in Xs*
+
+    ### 🤖 Assistant (deterministic-v2)
+
+    **Started using deterministic-provider/deterministic-v2**
+
+    Hello! This is a deterministic markdown test response.
+
+
+    *Completed in Xs*
+
+    ### 🤖 Assistant (deterministic-v2)
+
+    **Started using deterministic-provider/deterministic-v2**
+
+    Hello! This is a deterministic markdown test response.
+
     "
   `)
 })
@@ -261,6 +277,22 @@ test('generate markdown without system info', async () => {
 
 
     *Completed in Xs*
+
+    ### 🤖 Assistant (deterministic-v2)
+
+    **Started using deterministic-provider/deterministic-v2**
+
+    Hello! This is a deterministic markdown test response.
+
+
+    *Completed in Xs*
+
+    ### 🤖 Assistant (deterministic-v2)
+
+    **Started using deterministic-provider/deterministic-v2**
+
+    Hello! This is a deterministic markdown test response.
+
     "
   `)
 })

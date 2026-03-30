@@ -133,10 +133,13 @@ describe('queue advanced: typing around permissions', () => {
         ⬥ requesting external read permission
         [user clicks button]
         [bot typing]
+        *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2*
+        [bot typing]
         ⬥ permission-flow-done
         [bot typing]
         [bot typing]
-        *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2*"
+        *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2*
+        [bot typing]"
       `)
     },
     20_000,
@@ -226,6 +229,15 @@ describe('queue advanced: typing around permissions', () => {
         --- from: user (queue-permission-tester)
         Reply with exactly: post-permission-user-message
         --- from: assistant (TestBot)
+        *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2*
+        ⬥ ok
+        *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2*
+        ⬥ ok
+        *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2*
+        ⬥ ok
+        *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2*
+        ⬥ ok
+        *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2*
         ⬥ ok
         *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2*"
       `)
