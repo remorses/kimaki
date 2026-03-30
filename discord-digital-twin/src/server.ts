@@ -473,9 +473,24 @@ export function createServer({
             { status: 404, headers: { 'Content-Type': 'application/json' } },
           )
         }
-        const dbMessage = await prisma.message.findUnique({
+        let dbMessage = await prisma.message.findUnique({
           where: { id: params.message_id },
         })
+        // discord.js fetchStarterMessage() fetches message with id = thread.id
+        // from the parent channel. On real Discord, thread ID = starter message
+        // ID for message-based threads. The digital twin uses separate IDs, so
+        // fall back to the thread's starterMessageId when the message_id is
+        // actually a thread that belongs to this channel.
+        if (!dbMessage) {
+          const thread = await prisma.channel.findUnique({
+            where: { id: params.message_id },
+          })
+          if (thread?.starterMessageId && thread.parentId === params.channel_id) {
+            dbMessage = await prisma.message.findUnique({
+              where: { id: thread.starterMessageId },
+            })
+          }
+        }
         if (!dbMessage) {
           throw new Response(
             JSON.stringify({
@@ -965,6 +980,23 @@ export function createServer({
               errors: {},
             }),
             { status: 404, headers: { 'Content-Type': 'application/json' } },
+          )
+        }
+        // Real Discord returns 400 with code 160004 if a thread already
+        // exists for this message. Reproduce this so tests catch race
+        // conditions where multiple code paths try to create threads on
+        // the same starter message.
+        const existingThread = await prisma.channel.findFirst({
+          where: { starterMessageId: params.message_id },
+        })
+        if (existingThread) {
+          throw new Response(
+            JSON.stringify({
+              code: 160004,
+              message: 'A thread has already been created for this message',
+              errors: {},
+            }),
+            { status: 400, headers: { 'Content-Type': 'application/json' } },
           )
         }
         const threadId = generateSnowflake()
