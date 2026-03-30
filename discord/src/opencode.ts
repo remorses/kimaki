@@ -533,6 +533,59 @@ async function startSingleServer(): Promise<ServerStartError | SingleServer> {
     }
   })()
 
+  // Write config to a file instead of passing via OPENCODE_CONFIG_CONTENT env var.
+  // OPENCODE_CONFIG (file path) is loaded before project config in opencode's
+  // priority chain, so project-level opencode.json can override kimaki defaults.
+  // OPENCODE_CONFIG_CONTENT was loaded last and overrode user project configs,
+  // causing issue #90 (project permissions not being respected).
+  const opencodeConfig = {
+    $schema: 'https://opencode.ai/config.json',
+    lsp: false,
+    formatter: false,
+    plugin: [new URL('../src/kimaki-opencode-plugin.ts', import.meta.url).href],
+    permission: {
+      edit: 'allow',
+      bash: 'allow',
+      external_directory: externalDirectoryPermissions,
+      webfetch: 'allow',
+    },
+    agent: {
+      explore: {
+        permission: {
+          '*': 'deny',
+          grep: 'allow',
+          glob: 'allow',
+          list: 'allow',
+          read: {
+            '*': 'allow',
+            '*.env': 'deny',
+            '*.env.*': 'deny',
+            '*.env.example': 'allow',
+          },
+          webfetch: 'allow',
+          websearch: 'allow',
+          codesearch: 'allow',
+          external_directory: externalDirectoryPermissions,
+        },
+      },
+    },
+    skills: {
+      paths: [path.resolve(__dirname, '..', 'skills')],
+    },
+  } satisfies Config
+  const opencodeConfigPath = path.join(getDataDir(), 'opencode-config.json')
+  const opencodeConfigJson = JSON.stringify(opencodeConfig, null, 2)
+  const existingContent = (() => {
+    try {
+      return fs.readFileSync(opencodeConfigPath, 'utf-8')
+    } catch {
+      return ''
+    }
+  })()
+  if (existingContent !== opencodeConfigJson) {
+    fs.writeFileSync(opencodeConfigPath, opencodeConfigJson)
+  }
+
   const serverProcess = spawn(
     spawnCommand,
     spawnArgs,
@@ -545,41 +598,7 @@ async function startSingleServer(): Promise<ServerStartError | SingleServer> {
       cwd: os.homedir(),
       env: {
         ...process.env,
-        OPENCODE_CONFIG_CONTENT: JSON.stringify({
-          $schema: 'https://opencode.ai/config.json',
-          lsp: false,
-          formatter: false,
-          plugin: [new URL('../src/kimaki-opencode-plugin.ts', import.meta.url).href],
-          permission: {
-            edit: 'allow',
-            bash: 'allow',
-            external_directory: externalDirectoryPermissions,
-            webfetch: 'allow',
-          },
-          agent: {
-            explore: {
-              permission: {
-                '*': 'deny',
-                grep: 'allow',
-                glob: 'allow',
-                list: 'allow',
-                read: {
-                  '*': 'allow',
-                  '*.env': 'deny',
-                  '*.env.*': 'deny',
-                  '*.env.example': 'allow',
-                },
-                webfetch: 'allow',
-                websearch: 'allow',
-                codesearch: 'allow',
-                external_directory: externalDirectoryPermissions,
-              },
-            },
-          },
-          skills: {
-            paths: [path.resolve(__dirname, '..', 'skills')],
-          },
-        } satisfies Config),
+        OPENCODE_CONFIG: opencodeConfigPath,
         OPENCODE_PORT: port.toString(),
         KIMAKI: '1',
         KIMAKI_DATA_DIR: getDataDir(),
