@@ -63,20 +63,25 @@ describe('queue drain after question select answer', () => {
 
       const th = ctx.discord.thread(thread.id)
 
-      // 2. Wait for the question dropdown to appear
-      const pending = await waitForPendingQuestion({
-        threadId: thread.id,
-        timeoutMs: 8_000,
-      })
-      expect(pending.contextHash).toBeTruthy()
-
-      // Verify dropdown message appeared
+      // 2. Wait for the question dropdown message to appear in Discord.
+      // Uses visible message wait instead of internal Map polling which
+      // is too timing-sensitive on CI.
       const questionMessages = await waitForBotMessageContaining({
         discord: ctx.discord,
         threadId: thread.id,
         text: 'How to proceed?',
-        timeout: 8_000,
+        timeout: 12_000,
       })
+
+      // Get the pending question context hash from the internal map.
+      // By this point the question message is visible so the context must exist.
+      const pending = (() => {
+        const entry = [...pendingQuestionContexts.entries()].find(([, context]) => {
+          return context.thread.id === thread.id
+        })
+        return entry ? { contextHash: entry[0] } : null
+      })()
+      expect(pending).toBeTruthy()
       const questionMsg = questionMessages.find((m) => {
         return m.content.includes('How to proceed?')
       })!
