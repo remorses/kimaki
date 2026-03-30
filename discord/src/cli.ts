@@ -2405,6 +2405,13 @@ cli
     ),
   )
   .option(
+    '--injection-guard <pattern>',
+    z.array(z.string()).describe(
+      'Injection guard scan pattern (repeatable). Enables prompt injection detection for this session. ' +
+      'Format: "tool:argsGlob". Examples: --injection-guard "bash:*" --injection-guard "webfetch:*"',
+    ),
+  )
+  .option(
     '--send-at <schedule>',
     'Schedule send for future (UTC ISO date/time ending in Z, or cron expression)',
   )
@@ -2430,6 +2437,7 @@ cli
       agent?: string
       model?: string
       permission?: string[]
+      injectionGuard?: string[]
       sendAt?: string
       thread?: string
       session?: string
@@ -2729,6 +2737,7 @@ cli
               username: null,
               userId: null,
               permissions: options.permission?.length ? options.permission : null,
+              injectionGuardPatterns: options.injectionGuard?.length ? options.injectionGuard : null,
             }
             const taskId = await createScheduledTask({
               scheduleKind: parsedSchedule.scheduleKind,
@@ -2756,6 +2765,7 @@ cli
           const threadPromptMarker: ThreadStartMarker = {
             cliThreadPrompt: true,
             ...(options.permission?.length ? { permissions: options.permission } : {}),
+            ...(options.injectionGuard?.length ? { injectionGuardPatterns: options.injectionGuard } : {}),
           }
           const promptEmbed = [
             {
@@ -2888,6 +2898,7 @@ cli
             username: resolvedUser?.username || null,
             userId: resolvedUser?.id || null,
             permissions: options.permission?.length ? options.permission : null,
+            injectionGuardPatterns: options.injectionGuard?.length ? options.injectionGuard : null,
           }
           const taskId = await createScheduledTask({
             scheduleKind: parsedSchedule.scheduleKind,
@@ -2924,6 +2935,7 @@ cli
               ...(options.agent && { agent: options.agent }),
               ...(options.model && { model: options.model }),
               ...(options.permission?.length && { permissions: options.permission }),
+              ...(options.injectionGuard?.length && { injectionGuardPatterns: options.injectionGuard }),
             }
         const autoStartEmbed = embedMarker
           ? [{ color: 0x2b2d31, footer: { text: yaml.dump(embedMarker) } }]

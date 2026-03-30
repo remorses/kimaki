@@ -42,6 +42,10 @@ export type QueuedMessage = {
   // Raw permission rule strings ("tool:action" or "tool:pattern:action").
   // Parsed and merged into session permissions on creation.
   permissions?: string[]
+  // Injection guard scan patterns (e.g. "bash:*", "webfetch:*").
+  // Written to a temp config file after session creation so the plugin
+  // can check per-session whether to scan tool outputs.
+  injectionGuardPatterns?: string[]
   // Discord message ID and thread ID of the source message. Embedded in
   // <discord-user> synthetic context so the external sync loop can detect
   // messages that originated from Discord and skip re-mirroring them.

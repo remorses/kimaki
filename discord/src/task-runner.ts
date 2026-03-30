@@ -64,6 +64,9 @@ async function executeThreadScheduledTask({
     ...(payload.username ? { username: payload.username } : {}),
     ...(payload.userId ? { userId: payload.userId } : {}),
     ...(payload.permissions?.length ? { permissions: payload.permissions } : {}),
+    ...(payload.injectionGuardPatterns?.length
+      ? { injectionGuardPatterns: payload.injectionGuardPatterns }
+      : {}),
   }
   const embed = [{ color: 0x2b2d31, footer: { text: yaml.dump(marker) } }]
   const prefixedPrompt = `» **kimaki-cli:** ${payload.prompt}`
@@ -107,6 +110,9 @@ async function executeChannelScheduledTask({
         ...(payload.username ? { username: payload.username } : {}),
         ...(payload.userId ? { userId: payload.userId } : {}),
         ...(payload.permissions?.length ? { permissions: payload.permissions } : {}),
+        ...(payload.injectionGuardPatterns?.length
+          ? { injectionGuardPatterns: payload.injectionGuardPatterns }
+          : {}),
       }
   const embeds = marker
     ? [{ color: 0x2b2d31, footer: { text: yaml.dump(marker) } }]

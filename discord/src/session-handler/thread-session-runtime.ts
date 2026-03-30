@@ -26,6 +26,7 @@ import {
   buildSessionPermissions,
   parsePermissionRules,
   subscribeOpencodeServerLifecycle,
+  writeInjectionGuardConfig,
 } from '../opencode.js'
 import { isAbortError } from '../utils.js'
 import { createLogger, LogPrefix } from '../logger.js'
@@ -440,6 +441,7 @@ export type IngressInput = {
    * session creation (first dispatch).
    */
   permissions?: string[]
+  injectionGuardPatterns?: string[]
   sessionStartSource?: { scheduleKind: 'at' | 'cron'; scheduledTaskId?: number }
   /** Optional guard for retries: skip enqueue when session has changed. */
   expectedSessionId?: string
@@ -2648,6 +2650,7 @@ export class ThreadSessionRuntime {
         prompt: input.prompt,
         agent: input.agent,
         permissions: input.permissions,
+        injectionGuardPatterns: input.injectionGuardPatterns,
         sessionStartScheduleKind: input.sessionStartSource?.scheduleKind,
         sessionStartScheduledTaskId: input.sessionStartSource?.scheduledTaskId,
       })
@@ -2906,6 +2909,7 @@ export class ThreadSessionRuntime {
       agent: input.agent,
       model: input.model,
       permissions: input.permissions,
+      injectionGuardPatterns: input.injectionGuardPatterns,
       sourceMessageId: input.sourceMessageId,
       sourceThreadId: input.sourceThreadId,
       sessionStartScheduleKind: input.sessionStartSource?.scheduleKind,
@@ -3279,6 +3283,7 @@ export class ThreadSessionRuntime {
       prompt: input.prompt,
       agent: input.agent,
       permissions: input.permissions,
+      injectionGuardPatterns: input.injectionGuardPatterns,
       sessionStartScheduleKind: input.sessionStartScheduleKind,
       sessionStartScheduledTaskId: input.sessionStartScheduledTaskId,
     })
@@ -3661,6 +3666,7 @@ export class ThreadSessionRuntime {
     prompt,
     agent,
     permissions,
+    injectionGuardPatterns,
     sessionStartScheduleKind,
     sessionStartScheduledTaskId,
   }: {
@@ -3668,6 +3674,7 @@ export class ThreadSessionRuntime {
     agent?: string
     /** Raw "tool:action" strings from --permission flag */
     permissions?: string[]
+    injectionGuardPatterns?: string[]
     sessionStartScheduleKind?: 'at' | 'cron'
     sessionStartScheduledTaskId?: number
   }): Promise<
@@ -3746,6 +3753,12 @@ export class ThreadSessionRuntime {
       // The upsert at the end of ensureSession is kept for the reuse path.
       if (session) {
         await setThreadSession(this.thread.id, session.id)
+        if (injectionGuardPatterns?.length) {
+          writeInjectionGuardConfig({
+            sessionId: session.id,
+            scanPatterns: injectionGuardPatterns,
+          })
+        }
       }
       createdNewSession = true
     }

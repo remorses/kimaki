@@ -973,6 +973,63 @@ export function parsePermissionRules(raw: unknown): PermissionRuleset {
   })
 }
 
+// ── Injection guard per-session config ───────────────────────────
+// Per-session injection guard patterns are written as JSON files to a temp
+// directory keyed by session ID. The injection guard plugin (running inside
+// the opencode server process) checks for these files in tool.execute.after.
+// This avoids needing env vars (which are per-process, not per-session).
+
+const INJECTION_GUARD_DIR = path.join(os.tmpdir(), 'kimaki-injection-guard')
+
+/**
+ * Write per-session injection guard config so the plugin picks it up.
+ * Only call this if injectionGuardPatterns is non-empty.
+ */
+export function writeInjectionGuardConfig({
+  sessionId,
+  scanPatterns,
+}: {
+  sessionId: string
+  scanPatterns: string[]
+}): void {
+  try {
+    fs.mkdirSync(INJECTION_GUARD_DIR, { recursive: true })
+    fs.writeFileSync(
+      path.join(INJECTION_GUARD_DIR, `${sessionId}.json`),
+      JSON.stringify({ scanPatterns }),
+    )
+  } catch {
+    // Best effort -- don't crash the bot if temp dir write fails
+  }
+}
+
+/**
+ * Remove per-session injection guard config file.
+ */
+export function removeInjectionGuardConfig({ sessionId }: { sessionId: string }): void {
+  try {
+    fs.unlinkSync(path.join(INJECTION_GUARD_DIR, `${sessionId}.json`))
+  } catch {
+    // File may already be gone
+  }
+}
+
+/**
+ * Read per-session injection guard config. Used by the kimaki plugin
+ * inside the opencode server process.
+ */
+export function readInjectionGuardConfig({ sessionId }: { sessionId: string }): { scanPatterns: string[] } | null {
+  try {
+    const raw = fs.readFileSync(
+      path.join(INJECTION_GUARD_DIR, `${sessionId}.json`),
+      'utf-8',
+    )
+    return JSON.parse(raw) as { scanPatterns: string[] }
+  } catch {
+    return null
+  }
+}
+
 // ── Public helpers ───────────────────────────────────────────────
 // These helpers expose the single shared server and directory-scoped clients.
 

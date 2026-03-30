@@ -13,6 +13,7 @@ export type ScheduledTaskPayload =
       username: string | null
       userId: string | null
       permissions: string[] | null
+      injectionGuardPatterns: string[] | null
     }
   | {
       kind: 'channel'
@@ -26,6 +27,7 @@ export type ScheduledTaskPayload =
       username: string | null
       userId: string | null
       permissions: string[] | null
+      injectionGuardPatterns: string[] | null
     }
 
 export type ParsedSendAt =
@@ -253,6 +255,7 @@ export function parseScheduledTaskPayload(
     const username = asString(parsed.username)
     const userId = asString(parsed.userId)
     const permissions = asStringArray(parsed.permissions)
+    const injectionGuardPatterns = asStringArray(parsed.injectionGuardPatterns)
     if (!threadId || !prompt) {
       return new Error('Thread task payload requires threadId and prompt')
     }
@@ -265,6 +268,7 @@ export function parseScheduledTaskPayload(
       username,
       userId,
       permissions,
+      injectionGuardPatterns,
     }
   }
 
@@ -280,6 +284,7 @@ export function parseScheduledTaskPayload(
     const username = asString(parsed.username)
     const userId = asString(parsed.userId)
     const permissions = asStringArray(parsed.permissions)
+    const injectionGuardPatterns = asStringArray(parsed.injectionGuardPatterns)
     if (!channelId || !prompt) {
       return new Error('Channel task payload requires channelId and prompt')
     }
@@ -295,6 +300,7 @@ export function parseScheduledTaskPayload(
       username,
       userId,
       permissions,
+      injectionGuardPatterns,
     }
   }
 

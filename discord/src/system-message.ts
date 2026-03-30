@@ -225,6 +225,12 @@ export type ThreadStartMarker = {
    * opencode's findLast() evaluation.
    */
   permissions?: string[]
+  /**
+   * Per-session injection guard scan patterns (e.g. "bash:*", "webfetch:*").
+   * Written to a temp file after session creation so the injection guard plugin
+   * can check per-session whether scanning is enabled.
+   */
+  injectionGuardPatterns?: string[]
 }
 
 export function isInjectedPromptMarker({
