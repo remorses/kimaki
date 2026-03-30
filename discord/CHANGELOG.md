@@ -2,7 +2,7 @@
 
 ## 0.4.88
 
-1. **Built-in prompt injection guard** — all kimaki users now get automatic prompt injection detection via `opencode-injection-guard`. A fast LLM judge inspects tool call outputs before they reach the main agent, blocking injected instructions from hijacking your coding sessions.
+1. **Built-in prompt injection guard** — kimaki now ships with `opencode-injection-guard`. Opt-in: create `.opencode/injection-guard.json` (even an empty `{}`) in your project to activate it. A fast LLM judge inspects tool call outputs before they reach the main agent, blocking injected instructions from hijacking your coding sessions.
 
 2. **Fixed project-level `opencode.json` permissions being ignored** — kimaki's default permissions (like `external_directory: ask`) were overriding your project's `opencode.json` settings because they were injected via `OPENCODE_CONFIG_CONTENT` which loads last in opencode's config chain. Kimaki now writes its config to `~/.kimaki/opencode-config.json` and uses `OPENCODE_CONFIG` (file path), which loads before project config — so your project-level permission settings are correctly respected. Fixes [#90](https://github.com/remorses/kimaki/issues/90).
 
