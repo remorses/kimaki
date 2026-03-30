@@ -8,3 +8,6 @@
 	path = gateway-proxy
 	url = https://github.com/remorses/gateway-proxy.git
 	branch = multi-client-support
+[submodule "opencode-injection-guard"]
+	path = opencode-injection-guard
+	url = https://github.com/remorses/opencode-injection-guard.git
