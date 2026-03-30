@@ -23,7 +23,7 @@ import {
 import { handleToggleWorktreesCommand } from './commands/worktree-settings.js'
 import { handleWorktreesCommand } from './commands/worktrees.js'
 import { handleTasksCommand } from './commands/tasks.js'
-import { handleToggleMentionModeCommand } from './commands/mention-mode.js'
+
 import {
   handleResumeCommand,
   handleResumeAutocomplete,
@@ -94,7 +94,7 @@ import { handleRestartOpencodeServerCommand } from './commands/restart-opencode-
 import { handleRunCommand } from './commands/run-command.js'
 import { handleContextUsageCommand } from './commands/context-usage.js'
 import { handleSessionIdCommand } from './commands/session-id.js'
-import { handleMemorySnapshotCommand } from './commands/memory-snapshot.js'
+
 import { handleUpgradeAndRestartCommand } from './commands/upgrade.js'
 import { handleMcpCommand, handleMcpSelectMenu } from './commands/mcp.js'
 import {
@@ -219,12 +219,6 @@ export function registerInteractionHandler({
               })
               return
 
-            case 'toggle-mention-mode':
-              await handleToggleMentionModeCommand({
-                command: interaction,
-                appId,
-              })
-              return
 
             case 'resume':
               await handleResumeCommand({ command: interaction, appId })
@@ -246,7 +240,6 @@ export function registerInteractionHandler({
               return
 
             case 'abort':
-            case 'stop':
               await handleAbortCommand({ command: interaction, appId })
               return
 
@@ -333,12 +326,7 @@ export function registerInteractionHandler({
               await handleSessionIdCommand({ command: interaction, appId })
               return
 
-            case 'memory-snapshot':
-              await handleMemorySnapshotCommand({
-                command: interaction,
-                appId,
-              })
-              return
+
 
             case 'upgrade-and-restart':
               await handleUpgradeAndRestartCommand({
