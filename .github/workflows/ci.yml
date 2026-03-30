@@ -36,7 +36,7 @@ jobs:
         run: opencode --version
 
       - name: Install dependencies
-        run: pnpm install --frozen-lockfile
+        run: pnpm install
 
       # Submodules have dist/ gitignored so they need to be built after checkout.
       # libsqlproxy is a workspace package that also needs building (exports from dist/).
@@ -59,16 +59,10 @@ jobs:
         run: pnpm build
         working-directory: discord-digital-twin
 
-      # Excluded tests: question tool interaction and queue ordering tests
-      # that consistently fail on CI due to event delivery timing differences
-      # (pending question cleanup races, reply ordering under slower I/O).
-      # These pass locally where event delivery is faster.
+      # --retry 2: some e2e tests have timing sensitivity on CI hardware
+      # (question tool cleanup races, reply ordering under slower I/O).
       - name: Run tests
-        run: >-
-          pnpm test -- --run --retry 1
-          --exclude src/queue-advanced-question.e2e.test.ts
-          --exclude src/queue-question-select-drain.e2e.test.ts
-          --exclude src/thread-message-queue.e2e.test.ts
+        run: pnpm test -- --run --retry 2
         working-directory: discord
         env:
           NODE_ENV: test

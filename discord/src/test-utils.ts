@@ -8,6 +8,8 @@
 // a new server only if no existing client is available.
 
 import { execSync } from 'node:child_process'
+import fs from 'node:fs'
+import path from 'node:path'
 import type { APIMessage } from 'discord.js'
 
 /**
@@ -34,6 +36,10 @@ export function chooseLockPort({ key }: { key: string }): number {
  * Calling this in each test project directory gives it its own repo on `main`.
  */
 export function initTestGitRepo(directory: string): void {
+  const isRepo = fs.existsSync(path.join(directory, '.git'))
+  if (isRepo) {
+    return
+  }
   execSync('git init -b main', { cwd: directory, stdio: 'pipe' })
   execSync('git config user.email "test@test.com"', { cwd: directory, stdio: 'pipe' })
   execSync('git config user.name "Test"', { cwd: directory, stdio: 'pipe' })
