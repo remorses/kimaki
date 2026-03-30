@@ -53,11 +53,11 @@ type SessionState = {
   lastMessageTime: number | undefined
   memoryInjected: boolean
   tutorialInjected: boolean
-  // Cached session directory from session.get() (avoids repeated HTTP calls).
+  // Last directory observed via session.get(). Refreshed on each real user
+  // message so directory-change reminders compare the latest observed session
+  // directory against the current request directory.
   resolvedDirectory: string | undefined
-  // Last directory we announced via pwd injection. Separate from
-  // resolvedDirectory because the cache is populated before comparison —
-  // using the same field for both would skip injection on first message.
+  // Last directory we announced via pwd injection.
   announcedDirectory: string | undefined
 }
 
@@ -101,26 +101,30 @@ export function shouldInjectBranch({
 }
 
 export function shouldInjectPwd({
-  sessionDir,
-  projectDir,
+  currentDir,
+  previousDir,
   announcedDir,
 }: {
-  sessionDir: string | null
-  projectDir: string
+  currentDir: string
+  previousDir: string | undefined
   announcedDir: string | undefined
 }): { inject: false } | { inject: true; text: string } {
-  if (!sessionDir || sessionDir === projectDir) {
+  if (announcedDir === currentDir) {
     return { inject: false }
   }
-  if (announcedDir === sessionDir) {
+
+  const priorDirectory = announcedDir || previousDir
+  if (!priorDirectory || priorDirectory === currentDir) {
     return { inject: false }
   }
+
   return {
     inject: true,
     text:
-      `\n[working directory is ${sessionDir} (git worktree of ${projectDir}). ` +
-      `All file reads, writes, and edits must use paths under ${sessionDir}, ` +
-      `not ${projectDir}.]`,
+      `\n[working directory changed. Previous working directory: ${priorDirectory}. ` +
+      `Current working directory: ${currentDir}. ` +
+      `You MUST read, write, and edit files only under ${currentDir}. ` +
+      `Do NOT read, write, or edit files under ${priorDirectory}.]`,
   }
 }
 
@@ -240,8 +244,9 @@ async function resolveGitState({
   }
 }
 
-// Resolve the session's actual working directory via the SDK.
-// Cached in SessionState.resolvedDirectory to avoid repeated HTTP calls.
+// Resolve the last observed session directory via the SDK.
+// Refreshed on every real user message because sessions can switch directories
+// mid-thread and the pwd reminder must compare old vs new accurately.
 async function resolveSessionDirectory({
   client,
   sessionID,
@@ -250,18 +255,25 @@ async function resolveSessionDirectory({
   client: PluginClient
   sessionID: string
   state: SessionState
-}): Promise<string | null> {
-  if (state.resolvedDirectory) {
-    return state.resolvedDirectory
-  }
+}): Promise<{
+  currentDirectory: string | null
+  previousDirectory: string | undefined
+}> {
+  const previousDirectory = state.resolvedDirectory
   const result = await errore.tryAsync(() => {
     return client.session.get({ path: { id: sessionID } })
   })
   if (result instanceof Error || !result.data?.directory) {
-    return null
+    return {
+      currentDirectory: previousDirectory || null,
+      previousDirectory,
+    }
   }
   state.resolvedDirectory = result.data.directory
-  return result.data.directory
+  return {
+    currentDirectory: result.data.directory,
+    previousDirectory,
+  }
 }
 
 // ── Plugin ───────────────────────────────────────────────────────
@@ -333,12 +345,16 @@ const contextAwarenessPlugin: Plugin = async ({ directory, client }) => {
           const messageID = first.messageID
 
           // -- Resolve session working directory --
-          const sessionDir = await resolveSessionDirectory({
+          const sessionDirectory = await resolveSessionDirectory({
             client,
             sessionID,
             state,
           })
-          const effectiveDirectory = sessionDir || directory
+          // The plugin request directory is the current directory Kimaki asked
+          // OpenCode to operate on for this message. Prefer it over session.get()
+          // when they disagree so reminders and MEMORY/branch context follow the
+          // new worktree immediately after a folder switch.
+          const effectiveDirectory = directory
 
           // -- Branch / detached HEAD detection --
           // Resolved early but injected last so it appears at the end of parts.
@@ -346,12 +362,16 @@ const contextAwarenessPlugin: Plugin = async ({ directory, client }) => {
 
           // -- Working directory change detection --
           const pwdResult = shouldInjectPwd({
-            sessionDir,
-            projectDir: directory,
+            currentDir: effectiveDirectory,
+            previousDir:
+              sessionDirectory.previousDirectory ||
+              (sessionDirectory.currentDirectory !== effectiveDirectory
+                ? sessionDirectory.currentDirectory || undefined
+                : undefined),
             announcedDir: state.announcedDirectory,
           })
           if (pwdResult.inject) {
-            state.announcedDirectory = sessionDir!
+            state.announcedDirectory = effectiveDirectory
             output.parts.push({
               id: `prt_${crypto.randomUUID()}`,
               sessionID,
