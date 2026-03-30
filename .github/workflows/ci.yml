@@ -59,7 +59,7 @@ jobs:
         working-directory: discord-digital-twin
 
       - name: Run tests
-        run: pnpm test --run
+        run: pnpm test -- --run
         working-directory: discord
         env:
           NODE_ENV: test
