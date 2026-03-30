@@ -9,13 +9,15 @@ import {
   type ThreadChannel,
 } from 'discord.js'
 import { getOrCreateRuntime } from '../session-handler/thread-session-runtime.js'
-import { sendThreadMessage, SILENT_MESSAGE_FLAGS } from '../discord-utils.js'
+import { SILENT_MESSAGE_FLAGS } from '../discord-utils.js'
 import { createLogger, LogPrefix } from '../logger.js'
 import { getChannelDirectory, getThreadSession } from '../database.js'
 import { store } from '../store.js'
 import fs from 'node:fs'
 
 const userCommandLogger = createLogger(LogPrefix.USER_CMD)
+const DISCORD_MESSAGE_LIMIT = 2000
+const DISCORD_THREAD_NAME_LIMIT = 100
 
 export const handleUserCommand: CommandHandler = async ({
   command,
@@ -31,6 +33,11 @@ export const handleUserCommand: CommandHandler = async ({
   const fallbackBase = discordCommandName.replace(/-(cmd|skill|mcp-prompt)$/, '')
   const commandName = registered?.name || fallbackBase
   const args = command.options.getString('arguments') || ''
+  const commandInvocation = args ? `/${commandName} ${args}` : `/${commandName}`
+  const threadOpeningMessage =
+    commandInvocation.length <= DISCORD_MESSAGE_LIMIT
+      ? commandInvocation
+      : `${commandInvocation.slice(0, DISCORD_MESSAGE_LIMIT - 14)}... truncated`
 
   userCommandLogger.log(
     `Executing /${commandName} (from /${discordCommandName}) argsLength=${args.length}`,
@@ -117,7 +124,7 @@ export const handleUserCommand: CommandHandler = async ({
 
     if (isThread && thread) {
       // Running in existing thread - just send the command
-      await command.editReply(`Running /${commandName}...`)
+      await command.editReply(`Running ${commandInvocation}...`)
 
       const runtime = getOrCreateRuntime({
         threadId: thread.id,
@@ -138,25 +145,18 @@ export const handleUserCommand: CommandHandler = async ({
     } else if (textChannel) {
       // Running in text channel - create a new thread
       const starterMessage = await textChannel.send({
-        content: `**/${commandName}**`,
+        content: threadOpeningMessage,
         flags: SILENT_MESSAGE_FLAGS,
       })
 
-      const threadName = `/${commandName}`
       const newThread = await starterMessage.startThread({
-        name: threadName.slice(0, 100),
+        name: commandInvocation.slice(0, DISCORD_THREAD_NAME_LIMIT),
         autoArchiveDuration: 1440,
         reason: `OpenCode command: ${commandName}`,
       })
 
       // Add user to thread so it appears in their sidebar
       await newThread.members.add(command.user.id)
-
-      if (args) {
-        const argsPreview =
-          args.length > 1800 ? `${args.slice(0, 1800)}\n... truncated` : args
-        await sendThreadMessage(newThread, `Args: ${argsPreview}`)
-      }
 
       await command.editReply(
         `Started /${commandName} in ${newThread.toString()}`,
