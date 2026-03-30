@@ -1,0 +1,61 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  test:
+    name: Integration Tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 9
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - name: Install opencode CLI
+        run: curl -fsSL https://opencode.ai/install | bash
+
+      - name: Add opencode to PATH
+        run: echo "$HOME/.opencode/bin" >> $GITHUB_PATH
+
+      - name: Verify opencode
+        run: opencode --version
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Generate Prisma + SQL (discord-digital-twin)
+        run: pnpm generate
+        working-directory: discord-digital-twin
+
+      - name: Generate Prisma + SQL (discord)
+        run: pnpm generate
+        working-directory: discord
+
+      - name: Build discord-digital-twin
+        run: pnpm build
+        working-directory: discord-digital-twin
+
+      - name: Typecheck discord
+        run: pnpm tsc
+        working-directory: discord
+
+      - name: Run tests
+        run: pnpm test --run
+        working-directory: discord
+        env:
+          NODE_ENV: test
