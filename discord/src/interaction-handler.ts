@@ -39,6 +39,7 @@ import {
 import { handleCreateNewProjectCommand } from './commands/create-new-project.js'
 import { handlePermissionButton } from './commands/permissions.js'
 import { handleAbortCommand } from './commands/abort.js'
+import { handleAddDirectoryCommand } from './commands/add-directory.js'
 import { handleCompactCommand } from './commands/compact.js'
 import { handleShareCommand } from './commands/share.js'
 import { handleDiffCommand } from './commands/diff.js'
@@ -241,6 +242,10 @@ export function registerInteractionHandler({
 
             case 'abort':
               await handleAbortCommand({ command: interaction, appId })
+              return
+
+            case 'add-directory':
+              await handleAddDirectoryCommand({ command: interaction, appId })
               return
 
             case 'compact':
