@@ -22,6 +22,14 @@ CREATE TABLE IF NOT EXISTS "part_messages" (
     "created_at" DATETIME DEFAULT CURRENT_TIMESTAMP,
     CONSTRAINT "part_messages_thread_id_fkey" FOREIGN KEY ("thread_id") REFERENCES "thread_sessions" ("thread_id") ON DELETE RESTRICT ON UPDATE CASCADE
 );
+CREATE TABLE IF NOT EXISTS "thread_allowed_directories" (
+    "thread_id" TEXT NOT NULL,
+    "directory" TEXT NOT NULL,
+    "created_at" DATETIME DEFAULT CURRENT_TIMESTAMP,
+
+    PRIMARY KEY ("thread_id", "directory"),
+    CONSTRAINT "thread_allowed_directories_thread_id_fkey" FOREIGN KEY ("thread_id") REFERENCES "thread_sessions" ("thread_id") ON DELETE CASCADE ON UPDATE CASCADE
+);
 CREATE TABLE IF NOT EXISTS "bot_tokens" (
     "app_id" TEXT NOT NULL PRIMARY KEY,
     "token" TEXT NOT NULL,

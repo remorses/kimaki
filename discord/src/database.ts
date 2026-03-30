@@ -754,6 +754,59 @@ export async function setSessionAgent(
 }
 
 // ============================================================================
+// Thread Allowed Directory Functions
+// ============================================================================
+
+/**
+ * List thread-scoped preapproved external directories.
+ */
+export async function listThreadAllowedDirectories(
+  threadId: string,
+): Promise<string[]> {
+  const prisma = await getPrisma()
+  const rows = await prisma.thread_allowed_directories.findMany({
+    where: { thread_id: threadId },
+    orderBy: { directory: 'asc' },
+  })
+  return rows.map((row) => {
+    return row.directory
+  })
+}
+
+/**
+ * Add a thread-scoped preapproved external directory.
+ * Returns true when a new row was created, false when it already existed.
+ */
+export async function addThreadAllowedDirectory({
+  threadId,
+  directory,
+}: {
+  threadId: string
+  directory: string
+}): Promise<boolean> {
+  const prisma = await getPrisma()
+  const existing = await prisma.thread_allowed_directories.findUnique({
+    where: {
+      thread_id_directory: {
+        thread_id: threadId,
+        directory,
+      },
+    },
+  })
+  if (existing) {
+    return false
+  }
+
+  await prisma.thread_allowed_directories.create({
+    data: {
+      thread_id: threadId,
+      directory,
+    },
+  })
+  return true
+}
+
+// ============================================================================
 // Thread Worktree Functions
 // ============================================================================
 

@@ -40,6 +40,7 @@ import {
   getChannelVerbosity,
   getPartMessageIds,
   setPartMessage,
+  listThreadAllowedDirectories,
   getThreadSession,
   setThreadSession,
   getThreadWorktree,
@@ -49,6 +50,10 @@ import {
   appendSessionEventsSinceLastTimestamp,
   getSessionEventSnapshot,
 } from '../database.js'
+import {
+  buildAllowedDirectoryPatterns,
+  buildExternalDirectoryPermissionRules,
+} from '../directory-permissions.js'
 import {
   showPermissionButtons,
   cleanupPermissionContext,
@@ -2311,6 +2316,42 @@ export class ThreadSessionRuntime {
 
     const subtaskLabel = subtaskInfo?.label
 
+    if (permission.permission === 'external_directory') {
+      const allowedDirectories = await listThreadAllowedDirectories(this.thread.id)
+      const allowedPatterns = allowedDirectories.flatMap((directory) => {
+        return buildAllowedDirectoryPatterns({ directory })
+      })
+      const isCovered = arePatternsCoveredBy({
+        patterns: permission.patterns,
+        coveringPatterns: allowedPatterns,
+      })
+      if (isCovered) {
+        const client = getOpencodeClient(this.projectDirectory)
+        if (!client) {
+          logger.warn(
+            `[PERMISSION] Could not auto-accept preapproved directory request ${permission.id}: no client`,
+          )
+        } else {
+          const autoReplyResult = await errore.tryAsync(() => {
+            return client.permission.reply({
+              requestID: permission.id,
+              directory: this.sdkDirectory,
+              reply: 'always',
+            })
+          })
+          if (!(autoReplyResult instanceof Error)) {
+            logger.log(
+              `[PERMISSION] Auto-accepted preapproved external directory request ${permission.id} patterns=${permission.patterns.join(', ')}`,
+            )
+            return
+          }
+          logger.warn(
+            `[PERMISSION] Failed to auto-accept preapproved directory request ${permission.id}: ${autoReplyResult.message}`,
+          )
+        }
+      }
+    }
+
     const dedupeKey = buildPermissionDedupeKey({
       permission,
       directory: this.projectDirectory,
@@ -3722,6 +3763,9 @@ export class ThreadSessionRuntime {
     }
 
     if (!session) {
+      const threadAllowedDirectories = await listThreadAllowedDirectories(
+        this.thread.id,
+      )
       // Pass per-session external_directory permissions so this session can
       // access its own project directory (and worktree origin if applicable)
       // without prompts. These override the server-level 'ask' default via
@@ -3732,6 +3776,9 @@ export class ThreadSessionRuntime {
         ...buildSessionPermissions({
           directory: this.sdkDirectory,
           originalRepoDirectory,
+        }),
+        ...buildExternalDirectoryPermissionRules({
+          directories: threadAllowedDirectories,
         }),
         ...parsePermissionRules(permissions ?? []),
       ]

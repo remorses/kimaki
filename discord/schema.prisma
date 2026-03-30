@@ -17,11 +17,12 @@ model thread_sessions {
   source     ThreadSessionSource @default(kimaki)
   created_at DateTime? @default(now())
 
-  part_messages   part_messages[]
-  session_events  session_events[]
-  scheduled_tasks scheduled_tasks[]
-  thread_worktree thread_worktrees?
-  ipc_requests    ipc_requests[]
+  part_messages      part_messages[]
+  session_events     session_events[]
+  scheduled_tasks    scheduled_tasks[]
+  allowed_directories thread_allowed_directories[]
+  thread_worktree    thread_worktrees?
+  ipc_requests       ipc_requests[]
 }
 
 enum ThreadSessionSource {
@@ -50,6 +51,16 @@ model part_messages {
   created_at DateTime? @default(now())
 
   thread thread_sessions @relation(fields: [thread_id], references: [thread_id])
+}
+
+model thread_allowed_directories {
+  thread_id  String
+  directory  String
+  created_at DateTime? @default(now())
+
+  thread thread_sessions @relation(fields: [thread_id], references: [thread_id], onDelete: Cascade, onUpdate: Cascade)
+
+  @@id([thread_id, directory])
 }
 
 model bot_tokens {
