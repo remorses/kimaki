@@ -488,8 +488,9 @@ async function startSingleServer(): Promise<ServerStartError | SingleServer> {
   const kimakiDataDir = path
     .join(os.homedir(), '.kimaki')
     .replaceAll('\\', '/')
+  // No catch-all '*': 'ask' here — the user's opencode.json default is respected.
+  // Only allowlist specific known-safe directories at the server level.
   const externalDirectoryPermissions: Record<string, 'ask' | 'allow' | 'deny'> = {
-    '*': 'ask',
     '/tmp': 'allow',
     '/tmp/*': 'allow',
     '/private/tmp': 'allow',
@@ -860,8 +861,6 @@ export function buildSessionPermissions({
   const originalRepo = originalRepoDirectory?.replaceAll('\\', '/')
 
   const rules: PermissionRuleset = [
-    // Base rule: ask for unknown external directories
-    { permission: 'external_directory', pattern: '*', action: 'ask' },
     // Allow tmpdir access
     { permission: 'external_directory', pattern: '/tmp', action: 'allow' },
     { permission: 'external_directory', pattern: '/tmp/*', action: 'allow' },
