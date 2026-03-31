@@ -3540,7 +3540,14 @@ cli
     'Create a new project folder with git and Discord channels',
   )
   .option('-g, --guild <guildId>', 'Discord guild ID')
-  .action(async (name: string, options: { guild?: string }) => {
+  .option(
+    '--projects-dir <path>',
+    'Directory where new projects are created (default: <data-dir>/projects)',
+  )
+  .action(async (name: string, options: { guild?: string; projectsDir?: string }) => {
+    if (options.projectsDir) {
+      setProjectsDir(options.projectsDir)
+    }
     const sanitizedName = name
       .toLowerCase()
       .replace(/[^a-z0-9-]/g, '-')
