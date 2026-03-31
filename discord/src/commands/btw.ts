@@ -129,7 +129,13 @@ export async function handleBtwCommand({
       `Reusing context from ${sourceThreadLink} to answer prompt...\n${prompt}`,
     )
 
-    // Create runtime and dispatch the prompt immediately
+    const wrappedPrompt = [
+      `The user asked a side question while you were working on another task.`,
+      `This is a forked session whose ONLY goal is to answer this question.`,
+      `Do NOT continue, resume, or reference the previous task. Only answer the question below.\n`,
+      prompt,
+    ].join('\n')
+
     const runtime = getOrCreateRuntime({
       threadId: thread.id,
       thread,
@@ -139,7 +145,7 @@ export async function handleBtwCommand({
       appId,
     })
     await runtime.enqueueIncoming({
-      prompt,
+      prompt: wrappedPrompt,
       userId: command.user.id,
       username: command.user.displayName,
       appId,
