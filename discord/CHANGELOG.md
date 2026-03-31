@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.4.90
+
+1. **Fixed `/btw` forked sessions continuing the parent task** — the forked thread now only answers the side question and does not resume or reference whatever the original session was working on. The prompt is wrapped with explicit framing so the model stays focused on the question.
+
+2. **Fixed `external_directory` permission defaults being overridden** — kimaki was injecting a catch-all `'*': 'ask'` rule that silently overrode whatever you set in your project's `opencode.json`. The wildcard is now removed; only the specific directory allowlists (tmpdir, `~/.config/opencode`, `~/.kimaki`, project dir, worktree origin) are kept. Fixes [#90](https://github.com/remorses/kimaki/issues/90) and [#92](https://github.com/remorses/kimaki/issues/92).
+
+3. **`kimaki project create` now respects `--projects-dir`** — the root command already accepted `--projects-dir` but the `project create` subcommand didn't, so running it standalone always used the default path. Now `kimaki project create my-app --projects-dir /custom/path` works as expected.
+
+4. **Added CI workflow for integration tests** — automated test runs on every push to catch regressions early.
+
 ## 0.4.89
 
 1. **New `--injection-guard` flag for `kimaki send`** — enable prompt-injection scanning only for the session you are starting, without turning it on globally for the whole project:
