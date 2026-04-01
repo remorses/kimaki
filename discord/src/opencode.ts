@@ -973,12 +973,15 @@ export function parsePermissionRules(raw: unknown): PermissionRuleset {
 }
 
 // ── Injection guard per-session config ───────────────────────────
-// Per-session injection guard patterns are written as JSON files to a temp
-// directory keyed by session ID. The injection guard plugin (running inside
-// the opencode server process) checks for these files in tool.execute.after.
+// Per-session injection guard patterns are written as JSON files to
+// <dataDir>/injection-guard/<sessionId>.json. The injection guard plugin
+// (running inside the opencode server process) reads KIMAKI_DATA_DIR env
+// var to find these files in tool.execute.after.
 // This avoids needing env vars (which are per-process, not per-session).
 
-const INJECTION_GUARD_DIR = path.join(os.tmpdir(), 'kimaki-injection-guard')
+function getInjectionGuardDir(): string {
+  return path.join(getDataDir(), 'injection-guard')
+}
 
 /**
  * Write per-session injection guard config so the plugin picks it up.
@@ -991,14 +994,18 @@ export function writeInjectionGuardConfig({
   sessionId: string
   scanPatterns: string[]
 }): void {
+  if (scanPatterns.length === 0) {
+    return
+  }
   try {
-    fs.mkdirSync(INJECTION_GUARD_DIR, { recursive: true })
+    const dir = getInjectionGuardDir()
+    fs.mkdirSync(dir, { recursive: true })
     fs.writeFileSync(
-      path.join(INJECTION_GUARD_DIR, `${sessionId}.json`),
+      path.join(dir, `${sessionId}.json`),
       JSON.stringify({ scanPatterns }),
     )
   } catch {
-    // Best effort -- don't crash the bot if temp dir write fails
+    // Best effort -- don't crash the bot if data dir write fails
   }
 }
 
@@ -1007,7 +1014,7 @@ export function writeInjectionGuardConfig({
  */
 export function removeInjectionGuardConfig({ sessionId }: { sessionId: string }): void {
   try {
-    fs.unlinkSync(path.join(INJECTION_GUARD_DIR, `${sessionId}.json`))
+    fs.unlinkSync(path.join(getInjectionGuardDir(), `${sessionId}.json`))
   } catch {
     // File may already be gone
   }
@@ -1020,7 +1027,7 @@ export function removeInjectionGuardConfig({ sessionId }: { sessionId: string })
 export function readInjectionGuardConfig({ sessionId }: { sessionId: string }): { scanPatterns: string[] } | null {
   try {
     const raw = fs.readFileSync(
-      path.join(INJECTION_GUARD_DIR, `${sessionId}.json`),
+      path.join(getInjectionGuardDir(), `${sessionId}.json`),
       'utf-8',
     )
     return JSON.parse(raw) as { scanPatterns: string[] }
