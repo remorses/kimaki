@@ -303,6 +303,19 @@ export async function registerCommands({
       .setDMPermission(false)
       .toJSON(),
     new SlashCommandBuilder()
+      .setName('add-directory')
+      .setDescription(truncateCommandDescription('Preapprove an external directory for the next message in this thread'))
+      .addStringOption((option) => {
+        option
+          .setName('path')
+          .setDescription(truncateCommandDescription('Directory path to allow for the next message'))
+          .setRequired(true)
+
+        return option
+      })
+      .setDMPermission(false)
+      .toJSON(),
+    new SlashCommandBuilder()
       .setName('compact')
       .setDescription(
         truncateCommandDescription('Compact the session context by summarizing conversation history'),
