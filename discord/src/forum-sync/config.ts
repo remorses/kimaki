@@ -4,7 +4,7 @@
 
 import fs from 'node:fs'
 import path from 'node:path'
-import yaml from 'js-yaml'
+import YAML from 'yaml'
 import { getDataDir } from '../config.js'
 import { getForumSyncConfigs, upsertForumSyncConfig } from '../database.js'
 import { createLogger } from '../logger.js'
@@ -36,7 +36,7 @@ async function migrateLegacyConfig({ appId }: { appId: string }) {
   const raw = fs.readFileSync(configPath, 'utf8')
   let parsed: unknown
   try {
-    parsed = yaml.load(raw)
+    parsed = YAML.parse(raw)
   } catch {
     forumLogger.warn(
       `Failed to parse legacy ${LEGACY_CONFIG_FILE}, skipping migration`,

@@ -35,7 +35,7 @@ import {
   isInjectedPromptMarker,
   type ThreadStartMarker,
 } from './system-message.js'
-import yaml from 'js-yaml'
+import YAML from 'yaml'
 import {
   getTextAttachments,
   resolveMentions,
@@ -190,7 +190,7 @@ function parseEmbedFooterMarker<T extends Record<string, unknown>>({
     return undefined
   }
   try {
-    const parsed = yaml.load(footer)
+    const parsed = YAML.parse(footer)
     if (!parsed || typeof parsed !== 'object') {
       return undefined
     }

@@ -56,7 +56,7 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
-    "@libsql/client": "^0.15.15",
+    "@libsql/client": "^0.17.2",
     "@prisma/adapter-libsql": "7.4.2",
     "@prisma/client": "7.4.2",
     "spiceflow": "^1.18.0"

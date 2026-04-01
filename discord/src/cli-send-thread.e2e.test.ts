@@ -50,7 +50,7 @@ import {
   waitForBotMessageContaining,
   waitForFooterMessage,
 } from './test-utils.js'
-import yaml from 'js-yaml'
+import YAML from 'yaml'
 import type { ThreadStartMarker } from './system-message.js'
 
 const TEST_USER_ID = '200000000000000830'
@@ -280,7 +280,7 @@ describe('kimaki send --channel thread creation', () => {
           body: {
             content: prompt,
             embeds: [
-              { color: 0x2b2d31, footer: { text: yaml.dump(embedMarker) } },
+              { color: 0x2b2d31, footer: { text: YAML.stringify(embedMarker) } },
             ],
           },
         },

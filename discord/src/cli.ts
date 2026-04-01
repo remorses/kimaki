@@ -70,7 +70,7 @@ import type { ThreadStartMarker } from './system-message.js'
 import { sendWelcomeMessage } from './onboarding-welcome.js'
 import { buildOpencodeEventLogLine } from './session-handler/opencode-session-event-log.js'
 import { selectResolvedCommand } from './opencode-command.js'
-import yaml from 'js-yaml'
+import YAML from 'yaml'
 import type {
   OpencodeClient,
   Event as OpenCodeEvent,
@@ -2770,7 +2770,7 @@ cli
           const promptEmbed = [
             {
               color: 0x2b2d31,
-              footer: { text: yaml.dump(threadPromptMarker) },
+              footer: { text: YAML.stringify(threadPromptMarker) },
             },
           ]
 
@@ -2938,7 +2938,7 @@ cli
               ...(options.injectionGuard?.length && { injectionGuardPatterns: options.injectionGuard }),
             }
         const autoStartEmbed = embedMarker
-          ? [{ color: 0x2b2d31, footer: { text: yaml.dump(embedMarker) } }]
+          ? [{ color: 0x2b2d31, footer: { text: YAML.stringify(embedMarker) } }]
           : undefined
 
         const starterMessage = await sendDiscordMessageWithOptionalAttachment({

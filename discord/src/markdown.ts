@@ -6,7 +6,7 @@
 import type { OpencodeClient } from '@opencode-ai/sdk/v2'
 import * as errore from 'errore'
 import { createTaggedError } from 'errore'
-import * as yaml from 'js-yaml'
+import YAML from 'yaml'
 import { formatDateTime } from './utils.js'
 import { extractNonXmlContent } from './xml.js'
 import { createLogger, LogPrefix } from './logger.js'
@@ -206,7 +206,7 @@ export class ShareMarkdown {
           if (part.state.input && Object.keys(part.state.input).length > 0) {
             lines.push('**Input:**')
             lines.push('```yaml')
-            lines.push(yaml.dump(part.state.input, { lineWidth: -1 }))
+            lines.push(YAML.stringify(part.state.input, null, { lineWidth: 0 }))
             lines.push('```')
             lines.push('')
           }

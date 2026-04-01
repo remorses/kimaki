@@ -14,7 +14,7 @@
     "test": "vitest --run"
   },
   "dependencies": {
-    "@libsql/client": "^0.15.15",
+    "@libsql/client": "^0.17.2",
     "errore": "workspace:^",
     "eventsource-parser": "^3.0.6",
     "spiceflow": "^1.18.0"

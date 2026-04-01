@@ -2,7 +2,7 @@
 
 import { type REST, Routes } from 'discord.js'
 import { createDiscordRest } from './discord-urls.js'
-import yaml from 'js-yaml'
+import YAML from 'yaml'
 import {
   claimScheduledTaskRunning,
   getDuePlannedScheduledTasks,
@@ -68,7 +68,7 @@ async function executeThreadScheduledTask({
       ? { injectionGuardPatterns: payload.injectionGuardPatterns }
       : {}),
   }
-  const embed = [{ color: 0x2b2d31, footer: { text: yaml.dump(marker) } }]
+  const embed = [{ color: 0x2b2d31, footer: { text: YAML.stringify(marker) } }]
   const prefixedPrompt = `» **kimaki-cli:** ${payload.prompt}`
 
   const postResult = await rest
@@ -115,7 +115,7 @@ async function executeChannelScheduledTask({
           : {}),
       }
   const embeds = marker
-    ? [{ color: 0x2b2d31, footer: { text: yaml.dump(marker) } }]
+    ? [{ color: 0x2b2d31, footer: { text: YAML.stringify(marker) } }]
     : undefined
 
   const starterResult = await rest

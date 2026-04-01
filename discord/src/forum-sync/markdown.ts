@@ -2,7 +2,7 @@
 // Handles frontmatter extraction, message section building, and
 // conversion between Discord messages and markdown format.
 
-import yaml from 'js-yaml'
+import YAML from 'yaml'
 import * as errore from 'errore'
 import type { Message } from 'discord.js'
 import {
@@ -40,7 +40,7 @@ export function parseFrontmatter({
   const body = markdown.slice(end + 5).trim()
 
   const parsed = errore.try({
-    try: () => yaml.load(rawFrontmatter),
+    try: () => YAML.parse(rawFrontmatter),
     catch: (cause) =>
       new ForumFrontmatterParseError({ reason: 'yaml parse failed', cause }),
   })
@@ -59,13 +59,9 @@ export function stringifyFrontmatter({
   frontmatter: ForumMarkdownFrontmatter
   body: string
 }) {
-  const yamlText = yaml
-    .dump(frontmatter, {
-      lineWidth: 120,
-      noRefs: true,
-      sortKeys: false,
-    })
-    .trim()
+  const yamlText = YAML.stringify(frontmatter, null, {
+    lineWidth: 120,
+  }).trim()
   return `---\n${yamlText}\n---\n\n${body.trim()}\n`
 }
 
