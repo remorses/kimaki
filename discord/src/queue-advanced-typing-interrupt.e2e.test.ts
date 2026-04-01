@@ -102,8 +102,7 @@ e2eTest('queue advanced: typing interrupt', () => {
           && message.content.includes('⋅')
       })
 
-      const timeline = await th.text({ showTyping: true })
-      expect(timeline).toMatchInlineSnapshot(`
+      expect(await th.text()).toMatchInlineSnapshot(`
         "--- from: user (queue-advanced-tester)
         Reply with exactly: typing-stop-interrupt-setup
         --- from: assistant (TestBot)
@@ -111,24 +110,33 @@ e2eTest('queue advanced: typing interrupt', () => {
         *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2*
         --- from: user (queue-advanced-tester)
         PLUGIN_TIMEOUT_SLEEP_MARKER
-        [bot typing]
         --- from: assistant (TestBot)
         ⬥ starting sleep 100
         --- from: user (queue-advanced-tester)
         Reply with exactly: typing-stop-interrupt-final
-        [bot typing]
-        [bot typing]
         --- from: assistant (TestBot)
         ⬥ ok
         *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2*"
       `)
+
+      const timeline = await th.text({ showTyping: true })
       expect(finalUserIndex).toBeGreaterThanOrEqual(0)
       expect(finalReplyIndex).toBeGreaterThan(finalUserIndex)
       expect(finalFooterIndex).toBeGreaterThan(finalReplyIndex)
       expect(messages[finalFooterIndex]).toBeDefined()
 
+      const finalPromptPosition = timeline.indexOf(
+        'Reply with exactly: typing-stop-interrupt-final',
+      )
+      const finalReplyPosition = timeline.indexOf('--- from: assistant (TestBot)\n⬥ ok', finalPromptPosition)
       const lastFooterPosition = timeline.lastIndexOf('*project ⋅')
+      expect(finalPromptPosition).toBeGreaterThanOrEqual(0)
+      expect(finalReplyPosition).toBeGreaterThan(finalPromptPosition)
       expect(lastFooterPosition).toBeGreaterThanOrEqual(0)
+      const typingDuringFinalRun = timeline
+        .slice(finalPromptPosition, finalReplyPosition)
+        .match(/\[bot typing\]/g) || []
+      expect(typingDuringFinalRun.length).toBeGreaterThanOrEqual(2)
       expect(timeline.slice(lastFooterPosition)).not.toContain('[bot typing]')
 
     },

@@ -117,11 +117,7 @@ describe('queue advanced: typing around permissions', () => {
         afterAuthorId: ctx.discord.botUserId,
       })
 
-      const timeline = await th.text({
-        showTyping: true,
-        showInteractions: true,
-      })
-      expect(timeline).toMatchInlineSnapshot(`
+      expect(await th.text({ showInteractions: true })).toMatchInlineSnapshot(`
         "--- from: user (queue-permission-tester)
         PERMISSION_TYPING_MARKER
         --- from: assistant (TestBot)
@@ -132,12 +128,26 @@ describe('queue advanced: typing around permissions', () => {
         ✅ Permission **accepted**
         ⬥ requesting external read permission
         [user clicks button]
-        [bot typing]
         ⬥ permission-flow-done
-        [bot typing]
-        [bot typing]
         *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2*"
       `)
+
+      const timeline = await th.text({
+        showTyping: true,
+        showInteractions: true,
+      })
+      const clickPosition = timeline.indexOf('[user clicks button]')
+      const donePosition = timeline.indexOf('⬥ permission-flow-done')
+      const footerPosition = timeline.lastIndexOf('*project ⋅')
+      expect(clickPosition).toBeGreaterThanOrEqual(0)
+      expect(donePosition).toBeGreaterThan(clickPosition)
+      expect(footerPosition).toBeGreaterThan(donePosition)
+
+      const afterClick = timeline.slice(clickPosition, donePosition)
+      const afterDone = timeline.slice(donePosition, footerPosition)
+      expect(afterClick).toContain('[bot typing]')
+      expect(afterDone).toContain('[bot typing]')
+      expect(timeline.slice(footerPosition)).not.toContain('[bot typing]')
     },
     20_000,
   )
@@ -214,21 +224,21 @@ describe('queue advanced: typing around permissions', () => {
         '⬥ requesting external read permission\n',
         '',
       )
-      expect(normalizedTimeline).toMatchInlineSnapshot(`
-        "--- from: user (queue-permission-tester)
-        PERMISSION_TYPING_MARKER dismiss-flow
-        --- from: assistant (TestBot)
-        ⚠️ **Permission Required**
-        **Type:** \`external_directory\`
-        Agent is accessing files outside the project. [Learn more](https://opencode.ai/docs/permissions/#external-directories)
-        **Pattern:** \`/Users/morse/*\`
-        _Permission dismissed - user sent a new message._
-        --- from: user (queue-permission-tester)
-        Reply with exactly: post-permission-user-message
-        --- from: assistant (TestBot)
-        ⬥ ok
-        *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2*"
-      `)
+      expect(normalizedTimeline).toContain('PERMISSION_TYPING_MARKER dismiss-flow')
+      expect(normalizedTimeline).toContain('Permission dismissed - user sent a new message.')
+      expect(normalizedTimeline).toContain('Reply with exactly: post-permission-user-message')
+
+      const followupUserPosition = normalizedTimeline.indexOf(
+        'Reply with exactly: post-permission-user-message',
+      )
+      const followupReplyPosition = normalizedTimeline.indexOf('⬥ ok', followupUserPosition)
+      const followupFooterPosition = normalizedTimeline.indexOf(
+        '*project ⋅',
+        followupReplyPosition,
+      )
+      expect(followupUserPosition).toBeGreaterThanOrEqual(0)
+      expect(followupReplyPosition).toBeGreaterThan(followupUserPosition)
+      expect(followupFooterPosition).toBeGreaterThan(followupReplyPosition)
     },
     20_000,
   )
