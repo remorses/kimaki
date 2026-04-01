@@ -82,6 +82,9 @@ describe('queue drain after question select answer', () => {
         return entry ? { contextHash: entry[0] } : null
       })()
       expect(pending).toBeTruthy()
+      if (!pending) {
+        throw new Error('Expected pending question context')
+      }
       const questionMsg = questionMessages.find((m) => {
         return m.content.includes('How to proceed?')
       })!

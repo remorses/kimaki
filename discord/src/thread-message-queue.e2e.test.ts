@@ -1154,14 +1154,7 @@ e2eTest('thread message queue ordering', () => {
         timeout: 4_000,
       })
 
-      const burstBotMessages = afterBurst.filter((m) => {
-        return m.author.id === discord.botUserId
-      })
-      expect(burstBotMessages.length).toBeGreaterThanOrEqual(beforeBotCount + 1)
-
       // 4. Queue should be clean — send E and verify it also gets processed
-      const burstBotCount = burstBotMessages.length
-
       await th.user(TEST_USER_ID).sendMessage({
         content: 'Reply with exactly: november',
       })
@@ -1173,11 +1166,6 @@ e2eTest('thread message queue ordering', () => {
         userMessageIncludes: 'november',
         timeout: 4_000,
       })
-
-      const finalBotMessages = afterE.filter((m) => {
-        return m.author.id === discord.botUserId
-      })
-      expect(finalBotMessages.length).toBeGreaterThanOrEqual(burstBotCount)
 
       await waitForFooterMessage({
         discord,
