@@ -1632,7 +1632,13 @@ export class ThreadSessionRuntime {
     return true
   }
 
-  private async sendPartMessage(part: Part): Promise<void> {
+  private async sendPartMessage({
+    part,
+    repulseTyping = true,
+  }: {
+    part: Part
+    repulseTyping?: boolean
+  }): Promise<void> {
     const verbosity = await this.getVerbosity()
     if (verbosity === 'text_only' && part.type !== 'text') {
       return
@@ -1674,17 +1680,21 @@ export class ThreadSessionRuntime {
       return
     }
     await setPartMessage(part.id, sendResult.id, this.thread.id)
-    this.requestTypingRepulse()
+    if (repulseTyping) {
+      this.requestTypingRepulse()
+    }
   }
 
   private async flushBufferedParts({
     messageID,
     force,
     skipPartId,
+    repulseTyping = true,
   }: {
     messageID: string | undefined
     force: boolean
     skipPartId?: string
+    repulseTyping?: boolean
   }): Promise<void> {
     if (!messageID) {
       return
@@ -1697,7 +1707,7 @@ export class ThreadSessionRuntime {
       if (!this.shouldSendPart({ part, force })) {
         continue
       }
-      await this.sendPartMessage(part)
+      await this.sendPartMessage({ part, repulseTyping })
     }
   }
 
@@ -1705,10 +1715,12 @@ export class ThreadSessionRuntime {
     messageIDs,
     force,
     skipPartId,
+    repulseTyping = true,
   }: {
     messageIDs: ReadonlyArray<string>
     force: boolean
     skipPartId?: string
+    repulseTyping?: boolean
   }): Promise<void> {
     const uniqueMessageIDs = [...new Set(messageIDs)]
     for (const messageID of uniqueMessageIDs) {
@@ -1716,6 +1728,7 @@ export class ThreadSessionRuntime {
         messageID,
         force,
         skipPartId,
+        repulseTyping,
       })
     }
   }
@@ -1958,7 +1971,7 @@ export class ThreadSessionRuntime {
         force: true,
         skipPartId: part.id,
       })
-      await this.sendPartMessage(part)
+      await this.sendPartMessage({ part })
 
       // Track task tool spawning subtask sessions
       if (part.tool === 'task' && !this.state?.sentPartIds.has(part.id)) {
@@ -2100,12 +2113,12 @@ export class ThreadSessionRuntime {
     }
 
     if (part.type === 'reasoning') {
-      await this.sendPartMessage(part)
+      await this.sendPartMessage({ part })
       return
     }
 
     if (part.type === 'text' && part.time?.end) {
-      await this.sendPartMessage(part)
+      await this.sendPartMessage({ part })
       return
     }
 
@@ -2229,7 +2242,10 @@ export class ThreadSessionRuntime {
     await this.flushBufferedPartsForMessages({
       messageIDs: assistantMessageIds,
       force: true,
+      repulseTyping: false,
     })
+
+    this.stopTyping()
 
     const turnStartTime = getCurrentTurnStartTime({
       events: this.eventBuffer,
