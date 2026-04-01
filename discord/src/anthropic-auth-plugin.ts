@@ -6,7 +6,7 @@
  *
  *   cd ~/.config/opencode
  *   bun init -y
- *   bun add @openauthjs/openauth proper-lockfile
+ *   bun add proper-lockfile
  *
  * Handles two concerns:
  * 1. OAuth login + token refresh (PKCE flow against claude.ai)
@@ -23,7 +23,25 @@
  */
 
 import type { Plugin } from "@opencode-ai/plugin";
-import { generatePKCE } from "@openauthjs/openauth/pkce";
+// PKCE (Proof Key for Code Exchange) using Web Crypto API.
+// Reference: https://github.com/badlogic/pi-mono/blob/main/packages/ai/src/utils/oauth/pkce.ts
+function base64urlEncode(bytes: Uint8Array): string {
+  let binary = ''
+  for (const byte of bytes) {
+    binary += String.fromCharCode(byte)
+  }
+  return btoa(binary).replace(/\+/g, '-').replace(/\//g, '_').replace(/=/g, '')
+}
+
+async function generatePKCE(): Promise<{ verifier: string; challenge: string }> {
+  const verifierBytes = new Uint8Array(32)
+  crypto.getRandomValues(verifierBytes)
+  const verifier = base64urlEncode(verifierBytes)
+  const data = new TextEncoder().encode(verifier)
+  const hashBuffer = await crypto.subtle.digest('SHA-256', data)
+  const challenge = base64urlEncode(new Uint8Array(hashBuffer))
+  return { verifier, challenge }
+}
 import { spawn } from "node:child_process";
 import * as fs from "node:fs/promises";
 import { createServer, type Server } from "node:http";
