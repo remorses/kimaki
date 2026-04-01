@@ -123,10 +123,7 @@ import { startTaskRunner } from './task-runner.js'
 // regular HTTP requests (question.reply, session.prompt) get blocked → deadlock.
 // undici is a transitive dep from discord.js — not listed in our package.json.
 // Types are declared in src/undici.d.ts.
-import { setGlobalDispatcher, Agent } from 'undici'
-setGlobalDispatcher(
-  new Agent({ headersTimeout: 0, bodyTimeout: 0, connections: 500 }),
-)
+
 
 const discordLogger = createLogger(LogPrefix.DISCORD)
 const voiceLogger = createLogger(LogPrefix.VOICE)
