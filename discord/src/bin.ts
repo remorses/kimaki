@@ -31,7 +31,7 @@ const isSubcommand = firstArg && !firstArg.startsWith('-')
 if (process.env.__KIMAKI_CHILD || isSubcommand) {
   await import('./cli.js')
 } else {
-  console.error('enabled auto restart. kimaki will automatically restart on crash')
+  console.error('no subcommand detected. kimaki will automatically restart on crash')
   console.error()
   const EXIT_NO_RESTART = 64
   const MAX_RAPID_RESTARTS = 5
