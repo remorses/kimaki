@@ -27,11 +27,12 @@ const HEAP_SNAPSHOT_DIR = path.join(os.homedir(), '.kimaki', 'heap-snapshots')
 // If it doesn't start with '-', it's a subcommand (e.g. "send", "tunnel", "project").
 const firstArg = process.argv[2]
 const isSubcommand = firstArg && !firstArg.startsWith('-')
-const hasAutoRestart = process.argv.includes('--auto-restart')
 
-if (process.env.__KIMAKI_CHILD || isSubcommand || !hasAutoRestart) {
+if (process.env.__KIMAKI_CHILD || isSubcommand) {
   await import('./cli.js')
 } else {
+  console.error('enabled auto restart. kimaki will automatically restart on crash')
+  console.error()
   const EXIT_NO_RESTART = 64
   const MAX_RAPID_RESTARTS = 5
   const RAPID_RESTART_WINDOW_MS = 60_000
@@ -50,9 +51,10 @@ if (process.env.__KIMAKI_CHILD || isSubcommand || !hasAutoRestart) {
       `--heapsnapshot-near-heap-limit=3`,
       `--diagnostic-dir=${HEAP_SNAPSHOT_DIR}`,
     ]
+    const args = [...heapArgs, ...process.execArgv, ...process.argv.slice(1)]
     child = spawn(
       process.argv[0]!,
-      [...heapArgs, ...process.execArgv, ...process.argv.slice(1)],
+      args,
       {
         stdio: 'inherit',
         env: { ...process.env, __KIMAKI_CHILD: '1' },
