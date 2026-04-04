@@ -253,32 +253,53 @@ type TranscriptionLoopError =
   | EmptyTranscriptionError
   | NoToolResponseError
 
-const transcriptionTool: LanguageModelV3FunctionTool = {
-  type: 'function',
-  name: 'transcriptionResult',
-  description:
-    'MANDATORY: You MUST call this tool to complete the task. This is the ONLY way to return results - text responses are ignored. Call this with your transcription, even if imperfect. An imperfect transcription is better than none.',
-  inputSchema: {
-    type: 'object',
-    properties: {
-      transcription: {
-        type: 'string',
-        description:
-          'The final transcription of the audio. MUST be non-empty. If audio is unclear, transcribe your best interpretation. If silent, too short to understand, or completely incomprehensible, use "[inaudible audio]".',
-      },
-      queueMessage: {
-        type: 'boolean',
-        description:
-          'Set to true ONLY if the user explicitly says "queue this message", "queue this", or similar phrasing indicating they want this message queued instead of sent immediately. If not mentioned, omit or set to false.',
-      },
+// Build the transcription tool schema dynamically so the agent field can
+// use an enum constrained to the actual available agent names.
+function buildTranscriptionTool({
+  agentNames,
+}: {
+  agentNames?: string[]
+}): LanguageModelV3FunctionTool {
+  const properties: Record<string, Record<string, unknown>> = {
+    transcription: {
+      type: 'string',
+      description:
+        'The final transcription of the audio. MUST be non-empty. If audio is unclear, transcribe your best interpretation. If silent, too short to understand, or completely incomprehensible, use "[inaudible audio]".',
     },
-    required: ['transcription'],
-  },
+    queueMessage: {
+      type: 'boolean',
+      description:
+        'Set to true ONLY if the user explicitly says "queue this message", "queue this", or similar phrasing indicating they want this message queued instead of sent immediately. If not mentioned, omit or set to false.',
+    },
+  }
+
+  if (agentNames && agentNames.length > 0) {
+    properties['agent'] = {
+      type: 'string',
+      enum: agentNames,
+      description:
+        'The agent name ONLY if the user explicitly says "use the X agent", "switch to X agent", "with the X agent", or similar phrasing. Remove the agent instruction from the transcription text. Omit if no agent is mentioned.',
+    }
+  }
+
+  return {
+    type: 'function',
+    name: 'transcriptionResult',
+    description:
+      'MANDATORY: You MUST call this tool to complete the task. This is the ONLY way to return results - text responses are ignored. Call this with your transcription, even if imperfect. An imperfect transcription is better than none.',
+    inputSchema: {
+      type: 'object',
+      properties,
+      required: ['transcription'],
+    },
+  }
 }
 
 export type TranscriptionResult = {
   transcription: string
   queueMessage: boolean
+  /** Agent name extracted from voice message, only set if user explicitly requested an agent. */
+  agent?: string
 }
 
 /**
@@ -304,13 +325,14 @@ export function extractTranscription(
     })()
     const transcription = (typeof args.transcription === 'string' ? args.transcription : '').trim()
     const queueMessage = args.queueMessage === true
+    const agent = typeof args.agent === 'string' ? args.agent : undefined
     voiceLogger.log(
-      `Transcription result received: "${transcription.slice(0, 100)}..."${queueMessage ? ' [QUEUE]' : ''}`,
+      `Transcription result received: "${transcription.slice(0, 100)}..."${queueMessage ? ' [QUEUE]' : ''}${agent ? ` [AGENT:${agent}]` : ''}`,
     )
     if (!transcription) {
       return new EmptyTranscriptionError()
     }
-    return { transcription, queueMessage }
+    return { transcription, queueMessage, agent }
   }
 
   // Fall back to text content if no tool call
@@ -337,13 +359,16 @@ async function runTranscriptionOnce({
   audioBase64,
   mediaType,
   temperature,
+  agentNames,
 }: {
   model: LanguageModelV3
   prompt: string
   audioBase64: string
   mediaType: string
   temperature: number
+  agentNames?: string[]
 }): Promise<TranscriptionLoopError | TranscriptionResult> {
+  const tool = buildTranscriptionTool({ agentNames })
   const options: LanguageModelV3CallOptions = {
     prompt: [
       {
@@ -360,7 +385,7 @@ async function runTranscriptionOnce({
     ],
     temperature,
     maxOutputTokens: 2048,
-    tools: [transcriptionTool],
+    tools: [tool],
     toolChoice: { type: 'tool', toolName: 'transcriptionResult' },
     providerOptions: {
       google: {
@@ -432,6 +457,7 @@ export async function transcribeAudio({
   mediaType: mediaTypeParam,
   currentSessionContext,
   lastSessionContext,
+  agents,
 }: {
   audio: Buffer | Uint8Array | ArrayBuffer | string
   prompt?: string
@@ -444,6 +470,8 @@ export async function transcribeAudio({
   mediaType?: string
   currentSessionContext?: string
   lastSessionContext?: string
+  /** Available agents for agent selection via voice. Names used as enum values in the tool schema. */
+  agents?: Array<{ name: string; description?: string }>
 }): Promise<TranscribeAudioErrors | TranscriptionResult> {
   const apiKey =
     apiKeyParam || process.env.OPENAI_API_KEY || process.env.GEMINI_API_KEY
@@ -558,6 +586,18 @@ This is a software development environment. The speaker is giving instructions t
  - Example: "Queue this message. Fix the login bug in auth.ts" → transcription: "Fix the login bug in auth.ts", queueMessage: true
  - If removing the queue phrase would leave empty content (user only said "queue this" with nothing else), keep the full spoken text as the transcription — never return an empty transcription.
  - If no queue intent is detected, omit queueMessage or set it to false.
+${agents && agents.length > 0 ? `
+ AGENT SELECTION:
+ - If the user explicitly says "use the X agent", "switch to X agent", "with the X agent", or similar phrasing naming a specific agent, set the agent field to that agent name.
+ - Remove the agent instruction from the transcription text itself — only include the actual message content.
+ - Example: "Use the plan agent. Refactor the auth module" → transcription: "Refactor the auth module", agent: "plan"
+ - If removing the agent phrase would leave empty content, keep the full spoken text as the transcription.
+ - Only set agent if the user explicitly names one. Do not infer an agent from the task content.
+ - If no agent is mentioned, omit the agent field entirely.
+
+Available agents:
+${agents.map((a) => { return `- ${a.name}${a.description ? `: ${a.description}` : ''}` }).join('\n')}
+` : ''}
 
 Common corrections (apply without tool calls):
 - "reacked" → "React", "jason" → "JSON", "get hub" → "GitHub", "no JS" → "Node.js", "dacker" → "Docker"
@@ -572,11 +612,16 @@ REMEMBER: Call "transcriptionResult" tool with your transcription. This is manda
 
 Note: "critique" is a CLI tool for showing diffs in the browser.`
 
+  const agentNames = agents
+    ?.map((a) => { return a.name })
+    .filter((name) => { return name.length > 0 })
+
   return runTranscriptionOnce({
     model: languageModel,
     prompt: transcriptionPrompt,
     audioBase64: finalAudioBase64,
     mediaType,
     temperature: temperature ?? 0.3,
+    agentNames: agentNames && agentNames.length > 0 ? agentNames : undefined,
   })
 }

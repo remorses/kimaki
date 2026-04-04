@@ -459,6 +459,8 @@ type ProcessVoiceAttachmentArgs = {
   appId?: string
   currentSessionContext?: string
   lastSessionContext?: string
+  /** Available agents for voice-based agent selection. Passed to the transcription prompt as enum values. */
+  agents?: Array<{ name: string; description?: string }>
 }
 
 // Per-thread serialization is handled by ThreadSessionRuntime.enqueueIncoming()
@@ -471,6 +473,7 @@ export async function processVoiceAttachment({
   appId,
   currentSessionContext,
   lastSessionContext,
+  agents,
 }: ProcessVoiceAttachmentArgs): Promise<TranscriptionResult | null> {
   const audioAttachment = Array.from(message.attachments.values()).find(
     (attachment) => isVoiceAttachment(attachment),
@@ -503,6 +506,7 @@ export async function processVoiceAttachment({
     const result: TranscriptionResult = {
       transcription: deterministicConfig.transcription,
       queueMessage: deterministicConfig.queueMessage,
+      agent: deterministicConfig.agent,
     }
     voiceLogger.log(
       `[DETERMINISTIC] Returning canned transcription: "${result.transcription}"${result.queueMessage ? ' [QUEUE]' : ''}`,
@@ -619,6 +623,7 @@ export async function processVoiceAttachment({
     mediaType: audioAttachment.contentType || undefined,
     currentSessionContext,
     lastSessionContext,
+    agents,
   })
 
   if (transcription instanceof Error) {
@@ -638,10 +643,10 @@ export async function processVoiceAttachment({
     return null
   }
 
-  const { transcription: text, queueMessage } = transcription
+  const { transcription: text, queueMessage, agent } = transcription
 
   voiceLogger.log(
-    `Transcription successful: "${text.slice(0, 50)}${text.length > 50 ? '...' : ''}"${queueMessage ? ' [QUEUE]' : ''}`,
+    `Transcription successful: "${text.slice(0, 50)}${text.length > 50 ? '...' : ''}"${queueMessage ? ' [QUEUE]' : ''}${agent ? ` [AGENT:${agent}]` : ''}`,
   )
 
   if (isNewThread) {

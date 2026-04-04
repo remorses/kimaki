@@ -406,6 +406,8 @@ export type PreprocessResult = {
   mode: 'opencode' | 'local-queue'
   /** When true, preprocessing determined the message should be silently dropped. */
   skip?: boolean
+  /** Agent name extracted from voice transcription. Applied to the session if set. */
+  agent?: string
 }
 
 export type IngressInput = {
@@ -3023,6 +3025,9 @@ export class ThreadSessionRuntime {
           prompt: result.prompt,
           images: result.images,
           mode: result.mode,
+          // Voice transcription can extract an agent name — apply it only if
+          // no explicit agent was already set (CLI --agent flag wins).
+          agent: input.agent || result.agent,
           preprocess: undefined,
         }
 

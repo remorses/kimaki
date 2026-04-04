@@ -79,6 +79,7 @@ describe('extractTranscription', () => {
     ])
     expect(result).toMatchInlineSnapshot(`
       {
+        "agent": undefined,
         "queueMessage": false,
         "transcription": "hello world",
       }
@@ -99,6 +100,7 @@ describe('extractTranscription', () => {
     ])
     expect(result).toMatchInlineSnapshot(`
       {
+        "agent": undefined,
         "queueMessage": true,
         "transcription": "Fix the login bug in auth.ts",
       }

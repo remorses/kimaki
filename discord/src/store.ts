@@ -25,6 +25,8 @@ export type RegisteredUserCommand = {
 export type DeterministicTranscriptionConfig = {
   transcription: string
   queueMessage: boolean
+  /** Agent name extracted from voice message. Only set if user explicitly requested an agent. */
+  agent?: string
   /** Artificial delay before returning the result (ms). Default 0. */
   delayMs?: number
 }

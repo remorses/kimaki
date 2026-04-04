@@ -10,6 +10,7 @@
 import type { Message, ThreadChannel } from 'discord.js'
 import type { DiscordFileAttachment } from './message-formatting.js'
 import type { PreprocessResult } from './session-handler/thread-session-runtime.js'
+import type { AgentInfo } from './system-message.js'
 import {
   resolveMentions,
   getFileAttachments,
@@ -29,6 +30,28 @@ const voiceLogger = createLogger(LogPrefix.VOICE)
 
 export const VOICE_MESSAGE_TRANSCRIPTION_PREFIX =
   'Voice message transcription from Discord user:\n'
+
+/** Fetch available agents from OpenCode for voice transcription agent selection. */
+async function fetchAvailableAgents(
+  getClient: Awaited<ReturnType<typeof initializeOpencodeForDirectory>>,
+): Promise<AgentInfo[]> {
+  if (getClient instanceof Error) {
+    return []
+  }
+  const result = await errore.tryAsync(() => {
+    return getClient().app.agents({})
+  })
+  if (result instanceof Error) {
+    return []
+  }
+  return (result.data || [])
+    .filter((a) => {
+      return (a.mode === 'primary' || a.mode === 'all') && !a.hidden
+    })
+    .map((a) => {
+      return { name: a.name, description: a.description }
+    })
+}
 
 export type { PreprocessResult }
 
@@ -123,9 +146,10 @@ export async function preprocessExistingThreadMessage({
     ? (message.content || '')
     : resolveMentions(message)
 
-  // Fetch session context for voice transcription enrichment
+  // Fetch session context and available agents for voice transcription enrichment
   let currentSessionContext: string | undefined
   let lastSessionContext: string | undefined
+  let agents: AgentInfo[] = []
 
   if (projectDirectory) {
     try {
@@ -142,20 +166,25 @@ export async function preprocessExistingThreadMessage({
       }
       const client = getClient()
 
-      const result = await getCompactSessionContext({
-        client,
-        sessionId,
-        includeSystemPrompt: false,
-        maxMessages: 15,
-      })
-      if (errore.isOk(result)) {
-        currentSessionContext = result
-      }
+      const [sessionContextResult, lastSessionResult, fetchedAgents] = await Promise.all([
+        getCompactSessionContext({
+          client,
+          sessionId,
+          includeSystemPrompt: false,
+          maxMessages: 15,
+        }),
+        getLastSessionId({
+          client,
+          excludeSessionId: sessionId,
+        }),
+        fetchAvailableAgents(getClient),
+      ])
 
-      const lastSessionResult = await getLastSessionId({
-        client,
-        excludeSessionId: sessionId,
-      })
+      if (errore.isOk(sessionContextResult)) {
+        currentSessionContext = sessionContextResult
+      }
+      agents = fetchedAgents
+
       const lastSessionId = errore.unwrapOr(lastSessionResult, null)
       if (lastSessionId) {
         const result = await getCompactSessionContext({
@@ -181,6 +210,7 @@ export async function preprocessExistingThreadMessage({
     appId,
     currentSessionContext,
     lastSessionContext,
+    agents,
   })
   if (voiceResult) {
     messageContent = `${VOICE_MESSAGE_TRANSCRIPTION_PREFIX}${voiceResult.transcription}`
@@ -217,6 +247,7 @@ export async function preprocessExistingThreadMessage({
     prompt,
     images: fileAttachments.length > 0 ? fileAttachments : undefined,
     mode: qs.forceQueue || voiceResult?.queueMessage ? 'local-queue' : 'opencode',
+    agent: voiceResult?.agent,
   }
 }
 
@@ -240,12 +271,25 @@ export async function preprocessNewSessionMessage({
 }): Promise<PreprocessResult> {
   logger.log(`No session for thread ${thread.id}, starting new session`)
 
+  // Fetch available agents only for voice messages to avoid unnecessary SDK
+  // roundtrips on plain text messages.
+  let agents: AgentInfo[] = []
+  if (hasVoiceAttachment && projectDirectory) {
+    try {
+      const getClient = await initializeOpencodeForDirectory(projectDirectory)
+      agents = await fetchAvailableAgents(getClient)
+    } catch (e) {
+      voiceLogger.error(`Could not fetch agents for voice transcription:`, e)
+    }
+  }
+
   let prompt = resolveMentions(message)
   const voiceResult = await processVoiceAttachment({
     message,
     thread,
     projectDirectory,
     appId,
+    agents,
   })
   if (voiceResult) {
     prompt = `${VOICE_MESSAGE_TRANSCRIPTION_PREFIX}${voiceResult.transcription}`
@@ -291,6 +335,7 @@ export async function preprocessNewSessionMessage({
   return {
     prompt: qs.prompt,
     mode: qs.forceQueue || voiceResult?.queueMessage ? 'local-queue' : 'opencode',
+    agent: voiceResult?.agent,
   }
 }
 
@@ -311,6 +356,18 @@ export async function preprocessNewThreadMessage({
   hasVoiceAttachment: boolean
   appId?: string
 }): Promise<PreprocessResult> {
+  // Fetch available agents only for voice messages to avoid unnecessary SDK
+  // roundtrips on plain text messages.
+  let agents: AgentInfo[] = []
+  if (hasVoiceAttachment && projectDirectory) {
+    try {
+      const getClient = await initializeOpencodeForDirectory(projectDirectory)
+      agents = await fetchAvailableAgents(getClient)
+    } catch (e) {
+      voiceLogger.error(`Could not fetch agents for voice transcription:`, e)
+    }
+  }
+
   let messageContent = resolveMentions(message)
   const voiceResult = await processVoiceAttachment({
     message,
@@ -318,6 +375,7 @@ export async function preprocessNewThreadMessage({
     projectDirectory,
     isNewThread: true,
     appId,
+    agents,
   })
   if (voiceResult) {
     messageContent = `${VOICE_MESSAGE_TRANSCRIPTION_PREFIX}${voiceResult.transcription}`
@@ -353,5 +411,6 @@ export async function preprocessNewThreadMessage({
     prompt,
     images: fileAttachments.length > 0 ? fileAttachments : undefined,
     mode: qs.forceQueue || voiceResult?.queueMessage ? 'local-queue' : 'opencode',
+    agent: voiceResult?.agent,
   }
 }
