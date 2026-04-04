@@ -3,8 +3,8 @@ name: new-skill
 description: >
   Best practices for creating a SKILL.md file. Covers file structure,
   frontmatter, writing style, and where to place skills in a repository.
-  Use when the user wants to create a new skill, write a SKILL.md, or
-  asks how skills work.
+  Use when the user wants to create a new skill, update an existing
+  skill, write a SKILL.md, or asks how skills work.
 ---
 
 # Creating a SKILL.md
@@ -31,6 +31,12 @@ For personal skills that follow you across all repos and are not meant for distr
 
 Personal skills are only available on your machine. Repository skills are shared with everyone who clones the repo.
 
+## Editing skills synced from other repositories
+
+Some projects (like kimaki) sync skills from external GitHub repositories into a local skills folder. If a skill was synced from another repo, **never edit the synced copy**. The synced folder is overwritten on every sync and your changes will be lost.
+
+Instead, find the source repository where the skill originates and edit the SKILL.md there. The sync process will pick up the changes on the next run. If you are unsure which repo a skill comes from, check for a sync script (e.g. `scripts/sync-skills.ts`) or a `source-repo` field in the skill's frontmatter.
+
 ## Distribution and installation
 
 When you publish skills in a GitHub repository, other users can install them with the `skills` CLI:
@@ -42,27 +48,16 @@ npx skills add owner/repo
 This downloads the skills from the repo and symlinks them into the user's agent directories. Add this to your repo's README so users know how to install:
 
 ```markdown
-## Install skills
+## Install skill for AI agents
 
 \`\`\`bash
-npx skills add owner/repo
+npx -y skills add owner/repo
 \`\`\`
+
+This installs [skills](https://skills.sh) for AI coding agents like
+Claude Code, Cursor, Windsurf, and others. Skills teach agents the
+workflows, patterns, and tools specific to this project.
 ```
-
-The CLI also supports installing specific skills from a repo, listing available skills before installing, and global installs:
-
-```bash
-# List available skills without installing
-npx skills add owner/repo --list
-
-# Install a specific skill only
-npx skills add owner/repo --skill critique
-
-# Install globally (available across all projects)
-npx skills add owner/repo --global
-```
-
-Users can manage installed skills with `npx skills list`, `npx skills remove`, and `npx skills update`.
 
 ## Frontmatter
 
