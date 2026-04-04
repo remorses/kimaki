@@ -27,6 +27,9 @@ import { notifyError } from './sentry.js'
 const logger = createLogger(LogPrefix.SESSION)
 const voiceLogger = createLogger(LogPrefix.VOICE)
 
+export const VOICE_MESSAGE_TRANSCRIPTION_PREFIX =
+  'Voice message transcription from Discord user:\n'
+
 export type { PreprocessResult }
 
 // Matches punctuation + "queue" at the end of a message (case-insensitive).
@@ -180,7 +183,7 @@ export async function preprocessExistingThreadMessage({
     lastSessionContext,
   })
   if (voiceResult) {
-    messageContent = `Voice message transcription from Discord user:\n${voiceResult.transcription}`
+    messageContent = `${VOICE_MESSAGE_TRANSCRIPTION_PREFIX}${voiceResult.transcription}`
   }
 
   // Voice transcription failed and no text — drop silently
@@ -245,7 +248,7 @@ export async function preprocessNewSessionMessage({
     appId,
   })
   if (voiceResult) {
-    prompt = `Voice message transcription from Discord user:\n${voiceResult.transcription}`
+    prompt = `${VOICE_MESSAGE_TRANSCRIPTION_PREFIX}${voiceResult.transcription}`
   }
 
   // Voice transcription failed and no text — drop silently
@@ -317,7 +320,7 @@ export async function preprocessNewThreadMessage({
     appId,
   })
   if (voiceResult) {
-    messageContent = `Voice message transcription from Discord user:\n${voiceResult.transcription}`
+    messageContent = `${VOICE_MESSAGE_TRANSCRIPTION_PREFIX}${voiceResult.transcription}`
   }
 
   // Voice transcription failed and no text — drop silently

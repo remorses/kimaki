@@ -12,60 +12,114 @@ import {
   waitForBotMessageContaining,
   waitForFooterMessage,
 } from './test-utils.js'
-import { pendingQuestionContexts } from './commands/ask-question.js'
 import { store, type DeterministicTranscriptionConfig } from './store.js'
+import { getOpencodeClient } from './opencode.js'
+import { getThreadSession } from './database.js'
+import type { Message, Part } from '@opencode-ai/sdk/v2'
 
 const TEXT_CHANNEL_ID = '200000000000001007'
 const VOICE_CHANNEL_ID = '200000000000001017'
-
-async function waitForPendingQuestion({
-  threadId,
-  timeoutMs,
-}: {
-  threadId: string
-  timeoutMs: number
-}): Promise<{ contextHash: string }> {
-  const start = Date.now()
-  while (Date.now() - start < timeoutMs) {
-    const entry = [...pendingQuestionContexts.entries()].find(([, context]) => {
-      return context.thread.id === threadId
-    })
-    if (entry) {
-      return { contextHash: entry[0] }
-    }
-    await new Promise<void>((resolve) => {
-      setTimeout(resolve, 100)
-    })
-  }
-  throw new Error('Timed out waiting for pending question context')
-}
-
-async function waitForNoPendingQuestion({
-  threadId,
-  timeoutMs,
-}: {
-  threadId: string
-  timeoutMs: number
-}): Promise<void> {
-  const start = Date.now()
-  while (Date.now() - start < timeoutMs) {
-    const stillPending = [...pendingQuestionContexts.values()].some((context) => {
-      return context.thread.id === threadId
-    })
-    if (!stillPending) {
-      return
-    }
-    await new Promise<void>((resolve) => {
-      setTimeout(resolve, 100)
-    })
-  }
-  throw new Error('Timed out waiting for question context cleanup')
-}
 
 function setDeterministicTranscription(config: DeterministicTranscriptionConfig | null) {
   store.setState({
     test: { deterministicTranscription: config },
   })
+}
+
+type SessionMessage = { info: Message; parts: Part[] }
+
+function getOpencodeClientForTest(projectDirectory: string) {
+  const client = getOpencodeClient(projectDirectory)
+  if (!client) {
+    throw new Error('OpenCode client not found for project directory')
+  }
+  return client
+}
+
+function getTextFromParts(parts: Part[]): string[] {
+  return parts.flatMap((part) => {
+    if (part.type === 'text') {
+      return [part.text]
+    }
+    return []
+  })
+}
+
+function normalizeSessionText(text: string): string {
+  return text
+    .replace(/\[current git branch is [^\]]+\]/g, '')
+    .replace(/<discord-user[^>]*\/>/g, '<discord-user />')
+    .trim()
+}
+
+function getSessionRoleTextTimeline(messages: SessionMessage[]) {
+  return messages.flatMap((message) => {
+    const text = normalizeSessionText(getTextFromParts(message.parts).join(''))
+    if (!text.trim()) {
+      return []
+    }
+    return [{ role: message.info.role, text }]
+  })
+}
+
+function getSessionMessageSummary(messages: SessionMessage[]) {
+  return messages.map((message) => {
+    return {
+      role: message.info.role,
+      parts: message.parts.map((part) => {
+        if (part.type === 'text') {
+          return {
+            type: part.type,
+            text: normalizeSessionText(part.text),
+          }
+        }
+        if (part.type === 'tool') {
+          return {
+            type: part.type,
+            tool: part.tool,
+            status: part.state.status,
+            title: part.state.status === 'completed' ? part.state.title : undefined,
+            output: part.state.status === 'completed' ? part.state.output : undefined,
+          }
+        }
+        return { type: part.type }
+      }),
+    }
+  })
+}
+
+async function waitForSessionMessages({
+  projectDirectory,
+  sessionId,
+  timeoutMs,
+  predicate,
+}: {
+  projectDirectory: string
+  sessionId: string
+  timeoutMs: number
+  predicate: (messages: SessionMessage[]) => boolean
+}): Promise<SessionMessage[]> {
+  const client = getOpencodeClientForTest(projectDirectory)
+  const start = Date.now()
+  while (Date.now() - start < timeoutMs) {
+    const response = await client.session.messages({
+      sessionID: sessionId,
+      directory: projectDirectory,
+    })
+    const messages = response.data ?? []
+    if (predicate(messages)) {
+      return messages
+    }
+    await new Promise<void>((resolve) => {
+      setTimeout(resolve, 100)
+    })
+  }
+
+  const finalResponse = await client.session.messages({
+    sessionID: sessionId,
+    directory: projectDirectory,
+  })
+  return finalResponse.data ?? []
 }
 
 describe('queue advanced: question tool answer', () => {
@@ -177,13 +231,17 @@ describe('queue advanced: voice message during pending question', () => {
       })
 
       // Send a voice message while the question is pending.
-      // message.content is "" for voice messages — only the attachment exists.
+      // Reproduction: Discord voice messages can still carry non-empty
+      // message.content. The bug consumed that raw text before transcription,
+      // so the session never received the spoken content.
       setDeterministicTranscription({
         transcription: 'I want option Alpha please',
         queueMessage: false,
       })
 
-      await th.user(TEST_USER_ID).sendVoiceMessage()
+      await th.user(TEST_USER_ID).sendVoiceMessage({
+        content: 'VOICE_TEXT_CONTENT_SHOULD_NOT_REACH_MODEL',
+      })
 
       // Give time for question cleanup to propagate
       await new Promise((r) => {
@@ -207,6 +265,110 @@ describe('queue advanced: voice message during pending question', () => {
         afterAuthorId: ctx.discord.botUserId,
       })
 
+      const sessionId = await getThreadSession(thread.id)
+      expect(sessionId).toBeTruthy()
+
+      const sessionMessages = await waitForSessionMessages({
+        projectDirectory: ctx.directories.projectDirectory,
+        sessionId: sessionId!,
+        timeoutMs: 8_000,
+        predicate: (messages) => {
+          const timeline = getSessionRoleTextTimeline(messages)
+          return timeline.some((entry) => {
+            return entry.text.includes('I want option Alpha please')
+          })
+        },
+      })
+
+      const sessionTimeline = getSessionRoleTextTimeline(sessionMessages)
+      expect(sessionTimeline).toMatchInlineSnapshot(`
+        [
+          {
+            "role": "user",
+            "text": "QUESTION_TEXT_ANSWER_MARKER<discord-user />",
+          },
+          {
+            "role": "user",
+            "text": "Voice message transcription from Discord user:
+        I want option Alpha please<discord-user />",
+          },
+          {
+            "role": "assistant",
+            "text": "ok",
+          },
+        ]
+      `)
+      expect(getSessionMessageSummary(sessionMessages)).toMatchInlineSnapshot(`
+        [
+          {
+            "parts": [
+              {
+                "text": "",
+                "type": "text",
+              },
+              {
+                "text": "QUESTION_TEXT_ANSWER_MARKER",
+                "type": "text",
+              },
+              {
+                "text": "<discord-user />",
+                "type": "text",
+              },
+            ],
+            "role": "user",
+          },
+          {
+            "parts": [],
+            "role": "assistant",
+          },
+          {
+            "parts": [
+              {
+                "text": "Voice message transcription from Discord user:
+        I want option Alpha please",
+                "type": "text",
+              },
+              {
+                "text": "<discord-user />",
+                "type": "text",
+              },
+            ],
+            "role": "user",
+          },
+          {
+            "parts": [
+              {
+                "type": "step-start",
+              },
+              {
+                "text": "ok",
+                "type": "text",
+              },
+              {
+                "type": "step-finish",
+              },
+            ],
+            "role": "assistant",
+          },
+        ]
+      `)
+
+      const latestUserText = sessionTimeline
+        .filter((entry) => {
+          return entry.role === 'user'
+        })
+        .at(-1)?.text
+      const assistantTexts = sessionTimeline.flatMap((entry) => {
+        if (entry.role === 'assistant') {
+          return [entry.text]
+        }
+        return []
+      })
+
+      expect(latestUserText).toContain('I want option Alpha please')
+      expect(latestUserText).not.toContain('VOICE_TEXT_CONTENT_SHOULD_NOT_REACH_MODEL')
+      expect(assistantTexts).toContain('ok')
+
       const timeline = await th.text({ showInteractions: true })
       expect(timeline).toMatchInlineSnapshot(`
         "--- from: user (queue-question-tester)
@@ -215,10 +377,12 @@ describe('queue advanced: voice message during pending question', () => {
         **Pick one**
         Which option do you prefer?
         --- from: user (queue-question-tester)
+        VOICE_TEXT_CONTENT_SHOULD_NOT_REACH_MODEL
         [attachment: voice-message.ogg]
         --- from: assistant (TestBot)
         🎤 Transcribing voice message...
         📝 **Transcribed message:** I want option Alpha please
+        *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2*
         ⬥ ok
         *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2*"
       `)

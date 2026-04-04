@@ -643,27 +643,12 @@ export async function startDiscordBot({
               reason: 'user sent a new message while permission was pending',
             })
           }
-          // For text messages: pass the content as the question answer so the
-          // model sees the user's response. The early return prevents the message
-          // from also being sent as a new prompt (duplicate).
-          // For voice/image messages: message.content is "" (audio is in
-          // attachments, transcription happens later). Passing "" as the answer
-          // loses the content entirely. Instead, reply with "" to properly
-          // unblock OpenCode's question.waitForReply (without a reply the next
-          // promptAsync immediately fails with MessageAbortedError), then let
-          // the voice message flow through normal preprocessing — it gets
-          // transcribed and queued as the next user message after the model
-          // finishes responding to the empty answer.
-          if (message.content.trim().length > 0) {
-            const questionResult = await cancelPendingQuestion(thread.id, message.content)
-            if (questionResult === 'replied') {
-              void cancelPendingFileUpload(thread.id)
-              return
-            }
-          } else if (hasPendingQuestionForThread(thread.id)) {
-            // Reply empty to unblock the question tool — no early return so
-            // the voice/image message continues through to enqueueIncoming.
-            await cancelPendingQuestion(thread.id, '')
+          const dismissedQuestion = hasPendingQuestionForThread(thread.id)
+          if (dismissedQuestion) {
+            await cancelPendingQuestion(thread.id)
+            await runtime.abortActiveRunAndWait({
+              reason: 'user sent a new message while question was pending',
+            })
           }
           void cancelPendingFileUpload(thread.id)
         }
