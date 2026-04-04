@@ -1,0 +1,216 @@
+---
+name: new-skill
+description: >
+  Best practices for creating a SKILL.md file. Covers file structure,
+  frontmatter, writing style, and where to place skills in a repository.
+  Use when the user wants to create a new skill, write a SKILL.md, or
+  asks how skills work.
+---
+
+# Creating a SKILL.md
+
+A skill is a markdown file that teaches an AI agent a specific workflow, tool, or pattern. Skills are loaded into context when the agent recognizes a task that matches the skill's description.
+
+## File location
+
+Place the skill at the root of your repository:
+
+```
+skills/<skill-name>/SKILL.md
+```
+
+For example: `skills/critique/SKILL.md`, `skills/errore/SKILL.md`.
+
+The folder name should match the skill name in kebab-case. Each skill gets its own folder so it can include companion files if needed (scripts, templates, references).
+
+For personal skills that follow you across all repos and are not meant for distribution in a GitHub repository, place them in:
+
+```
+~/.opencode/skills/<skill-name>/SKILL.md
+```
+
+Personal skills are only available on your machine. Repository skills are shared with everyone who clones the repo.
+
+## Distribution and installation
+
+When you publish skills in a GitHub repository, other users can install them with the `skills` CLI:
+
+```bash
+npx skills add owner/repo
+```
+
+This downloads the skills from the repo and symlinks them into the user's agent directories. Add this to your repo's README so users know how to install:
+
+```markdown
+## Install skills
+
+\`\`\`bash
+npx skills add owner/repo
+\`\`\`
+```
+
+The CLI also supports installing specific skills from a repo, listing available skills before installing, and global installs:
+
+```bash
+# List available skills without installing
+npx skills add owner/repo --list
+
+# Install a specific skill only
+npx skills add owner/repo --skill critique
+
+# Install globally (available across all projects)
+npx skills add owner/repo --global
+```
+
+Users can manage installed skills with `npx skills list`, `npx skills remove`, and `npx skills update`.
+
+## Frontmatter
+
+Every SKILL.md starts with YAML frontmatter containing two required fields:
+
+```yaml
+---
+name: skill-name
+description: >
+  One to three sentences explaining what this skill does and when to use it.
+  Start with a noun or verb phrase. Include trigger conditions so the agent
+  knows when to load this skill automatically.
+---
+```
+
+- **name**: kebab-case identifier matching the folder name
+- **description**: this is the most important field. The agent reads descriptions of all available skills and decides which to load based on this text. Be specific about when the skill applies. Include keywords the user might say.
+
+Good description example:
+```yaml
+description: >
+  Git diff viewer. Renders diffs as web pages, images, and PDFs
+  with syntax highlighting. Use this skill when working with critique
+  for showing diffs, generating diff URLs, or selective hunk staging.
+```
+
+Bad description example:
+```yaml
+description: A helpful tool for developers.
+```
+
+## File structure
+
+After the frontmatter, write the skill as a normal markdown document. Follow this general structure:
+
+```markdown
+# Skill Title
+
+One paragraph explaining what this skill is and why it exists.
+
+## Key section
+
+Core rules, commands, or patterns. Use code blocks for commands
+and examples. Use numbered lists for sequential steps.
+
+## Another section
+
+More detail, edge cases, gotchas, tips.
+```
+
+There is no rigid template. Structure the content in whatever way communicates the workflow most clearly. Some skills are short (20 lines for a simple CLI tool), others are long (600+ lines for a complex pattern like errore).
+
+## Writing style
+
+**Write for an AI agent, not a human.** The reader is a language model that will follow these instructions while helping a user. This changes how you write:
+
+- **Be direct and imperative.** Say "Always run `tool --help` first" not "You might want to consider running the help command."
+- **Include concrete commands and code.** The agent needs copy-pasteable examples, not abstract descriptions.
+- **State rules as rules.** Use "Never", "Always", "Must" when something is non-negotiable.
+- **Show the right way, not just the wrong way.** After saying what not to do, immediately show what to do instead.
+- **Use code blocks with language hints.** The agent uses these to generate correct code.
+- **Keep prose short between code blocks.** One or two sentences of explanation, then an example.
+- **Call out common mistakes.** If there is a gotcha the agent will likely hit, warn about it explicitly.
+
+## What makes a good skill
+
+A good skill captures **hard-won knowledge** that is not obvious from reading docs or source code alone. Focus on:
+
+- **Correct usage patterns** — the commands and code that actually work, not just what the docs say
+- **Gotchas and edge cases** — things that break in subtle ways (e.g. "libsql transaction() with file::memory: silently uses a separate empty database unless you add ?cache=shared")
+- **Opinionated defaults** — when there are multiple ways to do something, state which way to use and why
+- **Integration context** — how this tool fits into the broader workflow (e.g. "Always use critique when showing diffs to Discord users because they cannot see terminal output")
+
+A bad skill is just a copy of the tool's README or man page. If the agent could figure it out from `--help`, it does not need a skill for it.
+
+## Skills for CLI tools
+
+For CLI tools, put as much documentation as possible into the CLI itself — in command descriptions, option help text, and examples shown by `--help`. The skill file should not duplicate that content. Instead, the skill should instruct the agent to run the help command first:
+
+```markdown
+**Always run `mytool --help` before using this tool.** The help output
+is the source of truth for all commands, options, and examples.
+```
+
+This keeps documentation in one place (the CLI binary) and avoids the skill going stale when the CLI updates.
+
+When running help commands, the agent must read the **full untruncated output**. Never pipe help output through `head`, `tail`, `sed -n`, or any command that strips or truncates lines. Agents do this frequently and it causes them to miss critical options and context. The help output exists to be read in full.
+
+## Examples from real skills
+
+**Simple CLI tool skill** (gitchamber — 93 lines):
+```markdown
+---
+name: gitchamber
+description: CLI to download npm packages, PyPI packages, crates, or GitHub
+  repo source code into node_modules/.gitchamber/ for analysis. Use when you
+  need to read a package's inner workings, documentation, examples, or source
+  code.
+---
+
+# gitchamber
+
+CLI to download source code for npm packages, PyPI packages, crates.io
+crates, or GitHub repos into `node_modules/.gitchamber/`.
+
+Always run `gitchamber --help` first. The help output has all commands,
+options, and examples.
+
+## Fetch packages
+
+\`\`\`bash
+chamber zod
+chamber pypi:requests
+chamber github:owner/repo
+\`\`\`
+```
+
+**Pattern/convention skill** (errore — 647 lines):
+```markdown
+---
+name: errore
+description: >
+  errore is Go-style error handling for TypeScript: return errors instead
+  of throwing them. ALWAYS read this skill when a repo uses the errore
+  "errors as values" convention.
+---
+
+# errore
+
+Go-style error handling for TypeScript. Functions return errors instead
+of throwing them.
+
+## Rules
+
+1. Always `import * as errore from 'errore'` — namespace import
+2. Never throw for expected failures — return errors as values
+3. Use `createTaggedError` for domain errors
+...
+```
+
+Notice both follow the same pattern: minimal frontmatter, clear title, actionable content with code examples. The simple tool skill is short and focused on commands. The pattern skill is long and focused on rules and conventions.
+
+## Checklist
+
+Before saving a new skill:
+
+1. Does the **description** clearly state when to load this skill? Would an agent reading just the description know whether to load it?
+2. Does the **name** match the folder name?
+3. Are there **concrete code examples** for the main workflows?
+4. Did you avoid duplicating content the agent can get from `--help` or standard docs?
+5. Did you capture the **gotchas** — the things that took trial and error to figure out?
