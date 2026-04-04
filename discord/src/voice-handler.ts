@@ -677,6 +677,9 @@ export async function processVoiceAttachment({
     thread,
     `📝 **Transcribed message:** ${escapeDiscordFormatting(text)}`,
   )
+  if (agent) {
+    await sendThreadMessage(thread, `Detected agent: ${agent}`)
+  }
   return transcription
 }
 
