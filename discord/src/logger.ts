@@ -6,7 +6,6 @@
 import fs from 'node:fs'
 import path from 'node:path'
 import util from 'node:util'
-import pc from 'picocolors'
 import { sanitizeSensitiveText, sanitizeUnknownValue } from './privacy-sanitizer.js'
 
 // All known log prefixes - add new ones here to keep alignment consistent
@@ -134,7 +133,7 @@ function padPrefix(prefix: string): string {
 }
 
 function formatMessage(timestamp: string, prefix: string, args: unknown[]): string {
-  return [pc.dim(timestamp), prefix, ...args.map(formatArg)].join(' ')
+  return [timestamp, prefix, ...args.map(formatArg)].join(' ')
 }
 
 // Suppress clack terminal output during vitest runs to avoid flooding
@@ -160,10 +159,10 @@ export function createLogger(prefix: LogPrefixType | string) {
     const message = formatMessage(
       getTimestamp(),
       {
-        log: pc.cyan(paddedPrefix),
-        error: pc.red(paddedPrefix),
-        warn: pc.yellow(paddedPrefix),
-        info: pc.blue(paddedPrefix),
+        log: paddedPrefix,
+        error: paddedPrefix,
+        warn: paddedPrefix,
+        info: paddedPrefix,
       }[level],
       args,
     )
