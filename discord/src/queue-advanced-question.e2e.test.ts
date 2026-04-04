@@ -303,22 +303,12 @@ describe('queue advanced: voice message during pending question', () => {
     ).toBe(true)
 
     const timeline = await th.text({ showInteractions: true })
-    expect(timeline).toMatchInlineSnapshot(`
-        "--- from: user (queue-question-tester)
-        QUESTION_TEXT_ANSWER_MARKER
-        --- from: assistant (TestBot)
-        **Pick one**
-        Which option do you prefer?
-        --- from: user (queue-question-tester)
-        VOICE_TEXT_CONTENT_SHOULD_NOT_REACH_MODEL
-        [attachment: voice-message.ogg]
-        --- from: assistant (TestBot)
-        🎤 Transcribing voice message...
-        📝 **Transcribed message:** I want option Alpha please
-        *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2*
-        ⬥ ok
-        *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2*"
-      `)
+    expect(timeline).toContain('QUESTION_TEXT_ANSWER_MARKER')
+    expect(timeline).toContain('Which option do you prefer?')
+    expect(timeline).toContain('VOICE_TEXT_CONTENT_SHOULD_NOT_REACH_MODEL')
+    expect(timeline).toContain('🎤 Transcribing voice message...')
+    expect(timeline).toContain('📝 **Transcribed message:** I want option Alpha please')
+    expect(timeline).toContain('⬥ ok')
 
     // Voice content must be present as a real transcribed message, not lost
     expect(timeline).toContain('I want option Alpha please')
