@@ -1,12 +1,15 @@
-// /worktrees command — list all worktree sessions sorted by creation date.
+// /worktrees command — list worktree sessions for the current channel's project.
 // Renders a markdown table that the CV2 pipeline auto-formats for Discord,
 // including HTML-backed action buttons for deletable worktrees.
 
 import {
   ButtonInteraction,
   ChatInputCommandInteraction,
+  ChannelType,
   ComponentType,
   MessageFlags,
+  type TextChannel,
+  type ThreadChannel,
   type APIMessageTopLevelComponent,
   type APITextDisplayComponent,
   type InteractionEditReplyOptions,
@@ -25,6 +28,7 @@ import {
 } from '../html-actions.js'
 import * as errore from 'errore'
 import { GitCommandError } from '../errors.js'
+import { resolveWorkingDirectory } from '../discord-utils.js'
 import { deleteWorktree, git, getDefaultBranch } from '../worktrees.js'
 
 // Extracts the git stderr from a deleteWorktree error via errore.findCause.
@@ -80,6 +84,7 @@ type WorktreesReplyTarget = {
   guildId: string
   userId: string
   channelId: string
+  projectDirectory: string
   notice?: string
   editReply: (
     options: string | InteractionEditReplyOptions,
@@ -261,9 +266,16 @@ async function resolveGitStatuses({
   }
 }
 
-async function getRecentWorktrees(): Promise<ThreadWorktree[]> {
+async function getRecentWorktrees({
+  projectDirectory,
+}: {
+  projectDirectory: string
+}): Promise<ThreadWorktree[]> {
   const prisma = await getPrisma()
   return await prisma.thread_worktrees.findMany({
+    where: {
+      project_directory: projectDirectory,
+    },
     orderBy: { created_at: 'desc' },
     take: 10,
   })
@@ -279,17 +291,33 @@ function getWorktreesActionOwnerKey({
   return `worktrees:${userId}:${channelId}`
 }
 
+function isProjectChannel(
+  channel: ChatInputCommandInteraction['channel'] | ButtonInteraction['channel'],
+): boolean {
+  if (!channel) {
+    return false
+  }
+
+  return [
+    ChannelType.GuildText,
+    ChannelType.PublicThread,
+    ChannelType.PrivateThread,
+    ChannelType.AnnouncementThread,
+  ].includes(channel.type)
+}
+
 async function renderWorktreesReply({
   guildId,
   userId,
   channelId,
+  projectDirectory,
   notice,
   editReply,
 }: WorktreesReplyTarget): Promise<void> {
   const ownerKey = getWorktreesActionOwnerKey({ userId, channelId })
   cancelHtmlActionsForOwner(ownerKey)
 
-  const worktrees = await getRecentWorktrees()
+  const worktrees = await getRecentWorktrees({ projectDirectory })
   if (worktrees.length === 0) {
     const message = notice ? `${notice}\n\nNo worktrees found.` : 'No worktrees found.'
     const textDisplay: APITextDisplayComponent = {
@@ -384,10 +412,40 @@ async function handleDeleteWorktreeAction({
 
   const worktree = await getThreadWorktree(threadId)
   if (!worktree) {
+    if (!isProjectChannel(interaction.channel)) {
+      await interaction.editReply({
+        components: [
+          {
+            type: ComponentType.TextDisplay,
+            content: 'This action can only be used in a project channel or thread.',
+          },
+        ],
+        flags: MessageFlags.IsComponentsV2,
+      })
+      return
+    }
+
+    const resolved = await resolveWorkingDirectory({
+      channel: interaction.channel as TextChannel | ThreadChannel,
+    })
+    if (!resolved) {
+      await interaction.editReply({
+        components: [
+          {
+            type: ComponentType.TextDisplay,
+            content: 'Could not determine the project folder for this channel.',
+          },
+        ],
+        flags: MessageFlags.IsComponentsV2,
+      })
+      return
+    }
+
     await renderWorktreesReply({
       guildId,
       userId: interaction.user.id,
       channelId: interaction.channelId,
+      projectDirectory: resolved.projectDirectory,
       notice: 'Worktree was already removed.',
       editReply: (options) => {
         return interaction.editReply(options)
@@ -401,6 +459,7 @@ async function handleDeleteWorktreeAction({
       guildId,
       userId: interaction.user.id,
       channelId: interaction.channelId,
+      projectDirectory: worktree.project_directory,
       notice: `Cannot delete \`${worktree.worktree_name}\` because it is ${worktree.status}.`,
       editReply: (options) => {
         return interaction.editReply(options)
@@ -437,6 +496,7 @@ async function handleDeleteWorktreeAction({
     guildId,
     userId: interaction.user.id,
     channelId: interaction.channelId,
+    projectDirectory: worktree.project_directory,
     notice: `Deleted \`${worktree.worktree_name}\`.`,
     editReply: (options) => {
       return interaction.editReply(options)
@@ -450,10 +510,30 @@ export async function handleWorktreesCommand({
   command: ChatInputCommandInteraction
   appId: string
 }): Promise<void> {
+  const channel = command.channel
   const guildId = command.guildId
-  if (!guildId) {
+  if (!guildId || !channel) {
     await command.reply({
-      content: 'This command can only be used in a server.',
+      content: 'This command can only be used in a server channel.',
+      flags: MessageFlags.Ephemeral,
+    })
+    return
+  }
+
+  if (!isProjectChannel(channel)) {
+    await command.reply({
+      content: 'This command can only be used in a project channel or thread.',
+      flags: MessageFlags.Ephemeral,
+    })
+    return
+  }
+
+  const resolved = await resolveWorkingDirectory({
+    channel: channel as TextChannel | ThreadChannel,
+  })
+  if (!resolved) {
+    await command.reply({
+      content: 'Could not determine the project folder for this channel.',
       flags: MessageFlags.Ephemeral,
     })
     return
@@ -464,6 +544,7 @@ export async function handleWorktreesCommand({
     guildId,
     userId: command.user.id,
     channelId: command.channelId,
+    projectDirectory: resolved.projectDirectory,
     editReply: (options) => {
       return command.editReply(options)
     },
