@@ -10,6 +10,7 @@
     "dist"
   ],
   "scripts": {
+    "prepare:build": "pnpm run build",
     "build": "tsc",
     "dev": "tsc --watch",
     "typecheck": "tsc --noEmit",

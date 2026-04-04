@@ -2,6 +2,7 @@
   "name": "root",
   "private": true,
   "scripts": {
+    "prepare": "pnpm -r --if-present run prepare:build",
     "test": "NODE_ENV=test pnpm --filter discord run vitest",
     "dev": "pnpm --filter kimaki dev",
     "agents.md": "agentsdotmd ./KIMAKI_AGENTS.md core.md typescript.md pnpm.md sentry.md vitest.md gitchamber.md changelog.md docs-writing.md cac.md shadcn.md tailwind.md spiceflow.md vercel-ai-sdk.md playwright.md zod.md",

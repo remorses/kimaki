@@ -33,6 +33,7 @@
     }
   },
   "scripts": {
+    "prepare:build": "pnpm run build",
     "build": "tsc",
     "test": "vitest",
     "typecheck": "tsc --noEmit",

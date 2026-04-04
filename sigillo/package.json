@@ -27,6 +27,7 @@
     "README.md"
   ],
   "scripts": {
+    "prepare:build": "pnpm run build",
     "build": "rm -rf dist *.tsbuildinfo && tsc && chmod +x dist/cli.js",
     "prepublishOnly": "pnpm build"
   },

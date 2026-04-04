@@ -12,11 +12,14 @@ import { createLogger, LogPrefix } from './logger.js'
 
 const DEFAULT_EXEC_TIMEOUT_MS = 10_000
 const SUBMODULE_INIT_TIMEOUT_MS = 20 * 60_000
+const INSTALL_TIMEOUT_MS = 60_000
 
 const _execAsync = promisify(exec)
 
 // Wraps child_process.exec with a default 10s timeout via Promise.race.
 // Callers can override with a longer timeout in the options.
+// Kills the entire process group on timeout so child trees (e.g. pnpm install)
+// don't survive as orphans. The timer is cleared on success to avoid leaks.
 export function execAsync(
   command: string,
   options?: Parameters<typeof _execAsync>[1],
@@ -27,13 +30,25 @@ export function execAsync(
     stdout: string
     stderr: string
   }> & { child?: import('node:child_process').ChildProcess }
+  let timer: ReturnType<typeof setTimeout> | undefined
   const timeoutPromise = new Promise<never>((_, reject) => {
-    setTimeout(() => {
-      execPromise.child?.kill()
+    timer = setTimeout(() => {
+      // Kill the process group (-pid) so child processes don't survive
+      const pid = execPromise.child?.pid
+      if (pid) {
+        try {
+          process.kill(-pid, 'SIGTERM')
+        } catch {
+          // Process group may not exist; fall back to direct kill
+          execPromise.child?.kill('SIGTERM')
+        }
+      }
       reject(new Error(`Command timed out after ${timeoutMs}ms: ${command}`))
     }, timeoutMs)
   })
-  return Promise.race([execPromise, timeoutPromise])
+  return Promise.race([execPromise, timeoutPromise]).finally(() => {
+    clearTimeout(timer)
+  })
 }
 
 const logger = createLogger(LogPrefix.WORKTREE)
@@ -53,6 +68,32 @@ function detectInstallCommand(directory: string): string | null {
     }
   }
   return null
+}
+
+/**
+ * Run the detected package manager install in a worktree directory.
+ * Non-fatal: returns Error on failure/timeout so callers can log and continue.
+ * The 60s timeout kills the process if install hangs.
+ */
+export async function runDependencyInstall({
+  directory,
+}: {
+  directory: string
+}): Promise<void | Error> {
+  const installCommand = detectInstallCommand(directory)
+  if (!installCommand) {
+    return
+  }
+  logger.log(`Running "${installCommand}" in ${directory} (timeout=${INSTALL_TIMEOUT_MS}ms)`)
+  try {
+    await execAsync(installCommand, {
+      cwd: directory,
+      timeout: INSTALL_TIMEOUT_MS,
+    })
+    logger.log(`Dependencies installed in ${directory}`)
+  } catch (e) {
+    return new Error(`Install failed: ${formatCommandError(e)}`, { cause: e })
+  }
 }
 
 type CommandError = Error & {
@@ -599,11 +640,14 @@ export async function createWorktreeWithSubmodules({
   directory,
   name,
   baseBranch,
+  onProgress,
 }: {
   directory: string
   name: string
   /** Override the base branch to create the worktree from. Defaults to origin/HEAD → main → master → HEAD. */
   baseBranch?: string
+  /** Called with a short phase label so callers can update UI (e.g. Discord status message). */
+  onProgress?: (phase: string) => void
 }): Promise<WorktreeResult | Error> {
   // 1. Create worktree via git (checked out immediately).
   const worktreeDir = getManagedWorktreeDirectory({ directory, name })
@@ -670,10 +714,17 @@ export async function createWorktreeWithSubmodules({
     })
   }
 
-  // 5. Dependency install disabled.
-  // `npx -y ni` resolved to the wrong npm package `ni` (browser-launcher), not `@antfu/ni`.
-  // detectInstallCommand() was built as a replacement but install is skipped for now.
-  // Opencode sessions can run install themselves if needed.
+  // 5. Dependency install (non-fatal, 60s timeout).
+  // Runs the detected package manager install so workspace packages with
+  // `prepare` scripts get built (e.g. errore → dist/).
+  onProgress?.('Installing dependencies...')
+  const installResult = await runDependencyInstall({ directory: worktreeDir })
+  if (installResult instanceof Error) {
+    logger.error('Dependency install failed (non-fatal)', {
+      worktreeDir,
+      error: installResult.message,
+    })
+  }
 
   return { directory: worktreeDir, branch: name }
 }

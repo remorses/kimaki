@@ -66,6 +66,7 @@ import {
   type SessionStartSourceContext,
 } from './session-handler/model-utils.js'
 import {
+  getRuntime,
   getOrCreateRuntime,
   disposeRuntime,
 } from './session-handler/thread-session-runtime.js'
@@ -548,10 +549,14 @@ export async function startDiscordBot({
           }
         }
 
-        // Check if this thread is a worktree thread
+        // Check if this thread is a worktree thread.
+        // When the runtime exists in memory, pending worktrees are handled by
+        // the preprocess chain (messages queue behind the worktree promise).
+        // After a bot restart the runtime is gone, so we must reject messages
+        // for pending worktrees to avoid running in the base directory.
         const worktreeInfo = await getThreadWorktree(thread.id)
         if (worktreeInfo) {
-          if (worktreeInfo.status === 'pending') {
+          if (worktreeInfo.status === 'pending' && !getRuntime(thread.id)) {
             await message.reply({
               content: '⏳ Worktree is still being created. Please wait...',
               flags: SILENT_MESSAGE_FLAGS,
@@ -584,9 +589,14 @@ export async function startDiscordBot({
           return
         }
 
-        // ! prefix runs a shell command instead of starting/continuing a session
-        // Use worktree directory if available, so commands run in the worktree cwd
-        if (message.content?.startsWith('!') && projectDirectory) {
+        // ! prefix runs a shell command instead of starting/continuing a session.
+        // Use worktree directory if available, so commands run in the worktree cwd.
+        // Skip shell commands while worktree is pending — they'd run in the base dir.
+        if (
+          message.content?.startsWith('!') &&
+          projectDirectory &&
+          worktreeInfo?.status !== 'pending'
+        ) {
           const shellCmd = message.content.slice(1).trim()
           if (shellCmd) {
             const shellDir =
@@ -797,8 +807,11 @@ export async function startDiscordBot({
 
         discordLogger.log(`Created thread "${thread.name}" (${thread.id})`)
 
-        // Create worktree if worktrees are enabled (CLI flag OR channel setting)
-        let sessionDirectory = projectDirectory
+        // Create runtime immediately so follow-up messages queue naturally
+        // via the preprocess chain instead of being rejected with "please wait".
+        // When worktrees are enabled, the worktree promise runs concurrently
+        // and the first message's preprocess callback awaits it before resolving.
+        let worktreePromise: Promise<string | Error> | undefined
         if (shouldUseWorktrees) {
           const worktreeName = formatWorktreeName(
             hasVoice ? `voice-${Date.now()}` : threadName.slice(0, 50),
@@ -812,24 +825,20 @@ export async function startDiscordBot({
             })
             .catch(() => undefined)
 
-          const result = await createWorktreeInBackground({
+          worktreePromise = createWorktreeInBackground({
             thread,
             starterMessage: worktreeStatusMessage,
             worktreeName,
             projectDirectory,
             rest: discordClient.rest,
           })
-
-          if (!(result instanceof Error)) {
-            sessionDirectory = result
-          }
         }
 
         const channelRuntime = getOrCreateRuntime({
           threadId: thread.id,
           thread,
-          projectDirectory: sessionDirectory,
-          sdkDirectory: sessionDirectory,
+          projectDirectory,
+          sdkDirectory: projectDirectory,
           channelId: textChannel.id,
           appId: currentAppId,
         })
@@ -841,7 +850,20 @@ export async function startDiscordBot({
           sourceMessageId: message.id,
           sourceThreadId: thread.id,
           appId: currentAppId,
-          preprocess: () => {
+          preprocess: async () => {
+            // Wait for worktree creation + install before preprocessing.
+            // Follow-up messages queue behind this in the preprocess chain.
+            let sessionDirectory = projectDirectory
+            if (worktreePromise) {
+              const result = await worktreePromise
+              if (!(result instanceof Error)) {
+                sessionDirectory = result
+                channelRuntime.handleDirectoryChanged({
+                  oldDirectory: projectDirectory,
+                  newDirectory: sessionDirectory,
+                })
+              }
+            }
             return preprocessNewThreadMessage({
               message,
               thread,
@@ -959,12 +981,11 @@ export async function startDiscordBot({
         return
       }
 
-      // Create worktree if requested
-      const sessionDirectory: string = await (async () => {
-        if (!marker.worktree) {
-          return projectDirectory
-        }
-
+      // Start worktree creation concurrently if requested.
+      // The runtime is created immediately so follow-up messages queue
+      // naturally; the worktree promise is awaited inside enqueueIncoming.
+      let worktreePromise: Promise<string | Error> | undefined
+      if (marker.worktree) {
         discordLogger.log(`[BOT_SESSION] Creating worktree: ${marker.worktree}`)
 
         const worktreeStatusMessage = await thread
@@ -974,20 +995,14 @@ export async function startDiscordBot({
           })
           .catch(() => undefined)
 
-        const result = await createWorktreeInBackground({
+        worktreePromise = createWorktreeInBackground({
           thread,
           starterMessage: worktreeStatusMessage,
           worktreeName: marker.worktree,
           projectDirectory,
           rest: discordClient.rest,
         })
-
-        if (result instanceof Error) {
-          return projectDirectory
-        }
-
-        return result
-      })()
+      }
 
       discordLogger.log(
         `[BOT_SESSION] Starting session for thread ${thread.id} with prompt: "${prompt.slice(0, 50)}..."`,
@@ -999,12 +1014,12 @@ export async function startDiscordBot({
         threadId: thread.id,
         thread,
         projectDirectory,
-        sdkDirectory: sessionDirectory,
+        sdkDirectory: projectDirectory,
         channelId: parent.id,
         appId: currentAppId,
       })
       await runtime.enqueueIncoming({
-        prompt,
+        prompt: '',
         userId: marker.userId || '',
         username: marker.username || 'bot',
         appId: currentAppId,
@@ -1019,6 +1034,19 @@ export async function startDiscordBot({
               scheduledTaskId: botThreadStartSource.scheduledTaskId,
             }
           : undefined,
+        preprocess: async () => {
+          // Wait for worktree creation + install before starting session.
+          if (worktreePromise) {
+            const result = await worktreePromise
+            if (!(result instanceof Error)) {
+              runtime.handleDirectoryChanged({
+                oldDirectory: projectDirectory,
+                newDirectory: result,
+              })
+            }
+          }
+          return { prompt, mode: 'opencode' }
+        },
       })
     } catch (error) {
       voiceLogger.error(

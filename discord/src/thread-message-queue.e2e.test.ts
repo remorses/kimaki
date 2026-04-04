@@ -1190,7 +1190,6 @@ e2eTest('thread message queue ordering', () => {
         Reply with exactly: november
         --- from: assistant (TestBot)
         ⬥ ok
-        *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2*
         *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2*"
       `)
       // E's user message appears before the final bot response

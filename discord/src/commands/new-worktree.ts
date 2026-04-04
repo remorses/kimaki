@@ -148,19 +148,32 @@ export async function createWorktreeInBackground({
         projectDirectory,
       })
 
+      // Serialize status message edits so onProgress can't overwrite the
+      // final success/error edit even if Discord's API is slow.
+      let editChain: Promise<void> = Promise.resolve()
+      const editStatus = (content: string) => {
+        editChain = editChain
+          .then(async () => {
+            await starterMessage?.edit(content)
+          })
+          .catch(() => {})
+      }
+
       const worktreeResult = await createWorktreeWithSubmodules({
         directory: projectDirectory,
         name: worktreeName,
         baseBranch,
+        onProgress: (phase) => {
+          editStatus(`🌳 **Worktree: ${worktreeName}**\n${phase}`)
+        },
       })
 
       if (worktreeResult instanceof Error) {
         const errorMsg = worktreeResult.message
         logger.error('[WORKTREE] Creation failed:', worktreeResult)
         await setWorktreeError({ threadId: thread.id, errorMessage: errorMsg })
-        await starterMessage
-          ?.edit(`🌳 **Worktree: ${worktreeName}**\n❌ ${errorMsg}`)
-          .catch(() => {})
+        editStatus(`🌳 **Worktree: ${worktreeName}**\n❌ ${errorMsg}`)
+        await editChain
         return worktreeResult
       }
 
@@ -178,13 +191,12 @@ export async function createWorktreeInBackground({
         emoji: '🌳',
       })
 
-      await starterMessage
-        ?.edit(
-          `🌳 **Worktree: ${worktreeName}**\n` +
-            `📁 \`${worktreeResult.directory}\`\n` +
-            `🌿 Branch: \`${worktreeResult.branch}\``,
-        )
-        .catch(() => {})
+      editStatus(
+        `🌳 **Worktree: ${worktreeName}**\n` +
+          `📁 \`${worktreeResult.directory}\`\n` +
+          `🌿 Branch: \`${worktreeResult.branch}\``,
+      )
+      await editChain
 
       return worktreeResult.directory
     },
