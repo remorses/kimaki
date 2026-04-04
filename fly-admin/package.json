@@ -29,7 +29,6 @@
     "access": "public"
   },
   "scripts": {
-    "prepare:build": "pnpm run build",
     "build": "tsc",
     "prepublishOnly": "pnpm build"
   },
