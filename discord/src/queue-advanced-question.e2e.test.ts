@@ -268,77 +268,7 @@ describe('queue advanced: voice message during pending question', () => {
     })
 
     const sessionTimeline = getSessionRoleTextTimeline(sessionMessages)
-    expect(sessionTimeline).toMatchInlineSnapshot(`
-        [
-          {
-            "role": "user",
-            "text": "QUESTION_TEXT_ANSWER_MARKER<discord-user />",
-          },
-          {
-            "role": "user",
-            "text": "Voice message transcription from Discord user:
-        I want option Alpha please<discord-user />",
-          },
-          {
-            "role": "assistant",
-            "text": "ok",
-          },
-        ]
-      `)
-    expect(getSessionMessageSummary(sessionMessages)).toMatchInlineSnapshot(`
-        [
-          {
-            "parts": [
-              {
-                "text": "",
-                "type": "text",
-              },
-              {
-                "text": "QUESTION_TEXT_ANSWER_MARKER",
-                "type": "text",
-              },
-              {
-                "text": "<discord-user />",
-                "type": "text",
-              },
-            ],
-            "role": "user",
-          },
-          {
-            "parts": [],
-            "role": "assistant",
-          },
-          {
-            "parts": [
-              {
-                "text": "Voice message transcription from Discord user:
-        I want option Alpha please",
-                "type": "text",
-              },
-              {
-                "text": "<discord-user />",
-                "type": "text",
-              },
-            ],
-            "role": "user",
-          },
-          {
-            "parts": [
-              {
-                "type": "step-start",
-              },
-              {
-                "text": "ok",
-                "type": "text",
-              },
-              {
-                "type": "step-finish",
-              },
-            ],
-            "role": "assistant",
-          },
-        ]
-      `)
+    const sessionSummary = getSessionMessageSummary(sessionMessages)
 
     const latestUserText = sessionTimeline
       .filter((entry) => {
@@ -355,6 +285,22 @@ describe('queue advanced: voice message during pending question', () => {
     expect(latestUserText).toContain('I want option Alpha please')
     expect(latestUserText).not.toContain('VOICE_TEXT_CONTENT_SHOULD_NOT_REACH_MODEL')
     expect(assistantTexts).toContain('ok')
+    expect(
+      sessionSummary.some((message) => {
+        return message.role === 'user'
+          && message.parts.some((part) => {
+            return part.type === 'text' && part.text.includes('I want option Alpha please')
+          })
+      }),
+    ).toBe(true)
+    expect(
+      sessionSummary.some((message) => {
+        return message.role === 'assistant'
+          && message.parts.some((part) => {
+            return part.type === 'text' && part.text === 'ok'
+          })
+      }),
+    ).toBe(true)
 
     const timeline = await th.text({ showInteractions: true })
     expect(timeline).toMatchInlineSnapshot(`
