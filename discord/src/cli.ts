@@ -124,6 +124,11 @@ import {
   type ParsedSendAt,
   type ScheduledTaskPayload,
 } from './task-schedule.js'
+import {
+  accountsFilePath,
+  loadAccountStore,
+  removeAccount,
+} from './anthropic-auth-plugin.js'
 
 const cliLogger = createLogger(LogPrefix.CLI)
 
@@ -3170,6 +3175,47 @@ cli
       )
       process.exit(EXIT_NO_RESTART)
     }
+  })
+
+cli
+  .command(
+    'anthropic-accounts list',
+    'List stored Anthropic OAuth accounts used for automatic rotation',
+  )
+  .hidden()
+  .action(async () => {
+    const store = await loadAccountStore()
+    console.log(`Store: ${accountsFilePath()}`)
+    if (store.accounts.length === 0) {
+      console.log('No Anthropic OAuth accounts configured.')
+      process.exit(0)
+    }
+
+    store.accounts.forEach((account, index) => {
+      const active = index === store.activeIndex ? '*' : ' '
+      const label = `${account.refresh.slice(0, 8)}...${account.refresh.slice(-4)}`
+      console.log(`${active} ${index + 1}. ${label}`)
+    })
+
+    process.exit(0)
+  })
+
+cli
+  .command(
+    'anthropic-accounts remove <index>',
+    'Remove a stored Anthropic OAuth account from the rotation pool',
+  )
+  .hidden()
+  .action(async (index: string) => {
+    const value = Number(index)
+    if (!Number.isInteger(value) || value < 1) {
+      cliLogger.error('Usage: kimaki anthropic-accounts remove <index>')
+      process.exit(EXIT_NO_RESTART)
+    }
+
+    await removeAccount(value - 1)
+    cliLogger.log(`Removed Anthropic account ${value}`)
+    process.exit(0)
   })
 
 cli

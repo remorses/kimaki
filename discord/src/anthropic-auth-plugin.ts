@@ -8,10 +8,11 @@
  *   bun init -y
  *   bun add proper-lockfile
  *
- * Handles two concerns:
+ * Handles three concerns:
  * 1. OAuth login + token refresh (PKCE flow against claude.ai)
  * 2. Request/response rewriting (tool names, system prompt, beta headers)
  *    so the Anthropic API treats requests as Claude Code CLI requests.
+ * 3. Multi-account OAuth rotation after Anthropic rate-limit/auth failures.
  *
  * Login mode is chosen from environment:
  * - `KIMAKI` set: remote-first pasted callback URL/raw code flow
@@ -121,6 +122,17 @@ type ApiKeySuccess = {
 
 type AuthResult = OAuthSuccess | ApiKeySuccess | { type: "failed" };
 
+type AccountRecord = OAuthStored & {
+  addedAt: number;
+  lastUsed: number;
+};
+
+type AccountStore = {
+  version: number;
+  activeIndex: number;
+  accounts: AccountRecord[];
+};
+
 // --- HTTP helpers ---
 
 // Claude OAuth token exchange can 429 when this runs inside the opencode auth
@@ -218,9 +230,23 @@ async function postJson(url: string, body: Record<string, string | number>): Pro
   return JSON.parse(responseText) as unknown;
 }
 
-// --- File lock for token refresh ---
+async function readJson<T>(filePath: string, fallback: T): Promise<T> {
+  try {
+    return JSON.parse(await fs.readFile(filePath, 'utf8')) as T
+  } catch {
+    return fallback
+  }
+}
 
-let pendingRefresh: Promise<OAuthStored> | undefined;
+async function writeJson(filePath: string, value: unknown) {
+  await fs.mkdir(path.dirname(filePath), { recursive: true })
+  await fs.writeFile(filePath, JSON.stringify(value, null, 2), 'utf8')
+  await fs.chmod(filePath, 0o600)
+}
+
+// --- File lock for auth state updates ---
+
+const pendingRefresh = new Map<string, Promise<OAuthStored>>();
 
 function authFilePath() {
   if (process.env.XDG_DATA_HOME) {
@@ -229,7 +255,14 @@ function authFilePath() {
   return path.join(homedir(), ".local", "share", "opencode", "auth.json");
 }
 
-async function withAuthRefreshLock<T>(fn: () => Promise<T>) {
+function accountsFilePath() {
+  if (process.env.XDG_DATA_HOME) {
+    return path.join(process.env.XDG_DATA_HOME, "opencode", "anthropic-oauth-accounts.json");
+  }
+  return path.join(homedir(), ".local", "share", "opencode", "anthropic-oauth-accounts.json");
+}
+
+async function withAuthStateLock<T>(fn: () => Promise<T>) {
   const file = authFilePath();
   await fs.mkdir(path.dirname(file), { recursive: true });
   await fs.appendFile(file, "");
@@ -247,6 +280,187 @@ async function withAuthRefreshLock<T>(fn: () => Promise<T>) {
   } finally {
     await release().catch(() => {});
   }
+}
+
+function normalizeAccountStore(
+  input: Partial<AccountStore> | null | undefined,
+): AccountStore {
+  const accounts = Array.isArray(input?.accounts)
+    ? input.accounts.filter(
+        (account): account is AccountRecord =>
+          !!account &&
+          account.type === "oauth" &&
+          typeof account.refresh === "string" &&
+          typeof account.access === "string" &&
+          typeof account.expires === "number" &&
+          typeof account.addedAt === "number" &&
+          typeof account.lastUsed === "number",
+      )
+    : [];
+  const rawIndex =
+    typeof input?.activeIndex === "number" ? Math.floor(input.activeIndex) : 0;
+  const activeIndex =
+    accounts.length === 0
+      ? 0
+      : ((rawIndex % accounts.length) + accounts.length) % accounts.length;
+  return { version: 1, activeIndex, accounts };
+}
+
+async function loadAccountStore() {
+  const raw = await readJson<Partial<AccountStore> | null>(accountsFilePath(), null);
+  return normalizeAccountStore(raw);
+}
+
+async function saveAccountStore(store: AccountStore) {
+  await writeJson(accountsFilePath(), normalizeAccountStore(store));
+}
+
+function findCurrentAccountIndex(store: AccountStore, auth: OAuthStored) {
+  if (!store.accounts.length) return 0;
+  const byRefresh = store.accounts.findIndex((account) => account.refresh === auth.refresh);
+  if (byRefresh >= 0) return byRefresh;
+  const byAccess = store.accounts.findIndex((account) => account.access === auth.access);
+  if (byAccess >= 0) return byAccess;
+  return store.activeIndex;
+}
+
+function upsertAccount(
+  store: AccountStore,
+  auth: OAuthStored,
+  now = Date.now(),
+) {
+  const index = store.accounts.findIndex(
+    (account) => account.refresh === auth.refresh || account.access === auth.access,
+  );
+  const nextAccount: AccountRecord = {
+    type: "oauth",
+    refresh: auth.refresh,
+    access: auth.access,
+    expires: auth.expires,
+    addedAt: now,
+    lastUsed: now,
+  };
+
+  if (index < 0) {
+    store.accounts.push(nextAccount);
+    store.activeIndex = store.accounts.length - 1;
+    return store.activeIndex;
+  }
+
+  const existing = store.accounts[index];
+  if (!existing) return index;
+  store.accounts[index] = {
+    ...existing,
+    ...nextAccount,
+    addedAt: existing.addedAt,
+  };
+  store.activeIndex = index;
+  return index;
+}
+
+async function rememberAnthropicOAuth(auth: OAuthStored) {
+  await withAuthStateLock(async () => {
+    const store = await loadAccountStore();
+    upsertAccount(store, auth);
+    await saveAccountStore(store);
+  });
+}
+
+async function writeAnthropicAuthFile(auth: OAuthStored | undefined) {
+  const file = authFilePath();
+  const data = await readJson<Record<string, unknown>>(file, {});
+  if (auth) {
+    data.anthropic = auth;
+  } else {
+    delete data.anthropic;
+  }
+  await writeJson(file, data);
+}
+
+async function setAnthropicAuth(
+  auth: OAuthStored,
+  client: Parameters<Plugin>[0]["client"],
+) {
+  await writeAnthropicAuthFile(auth);
+  await client.auth.set({ path: { id: "anthropic" }, body: auth });
+}
+
+async function rotateAnthropicAccount(
+  auth: OAuthStored,
+  client: Parameters<Plugin>[0]["client"],
+) {
+  return withAuthStateLock(async () => {
+    const store = await loadAccountStore();
+    if (store.accounts.length < 2) return undefined;
+
+    const currentIndex = findCurrentAccountIndex(store, auth);
+    const nextIndex = (currentIndex + 1) % store.accounts.length;
+    const nextAccount = store.accounts[nextIndex];
+    if (!nextAccount) return undefined;
+
+    nextAccount.lastUsed = Date.now();
+    store.activeIndex = nextIndex;
+    await saveAccountStore(store);
+
+    const nextAuth: OAuthStored = {
+      type: "oauth",
+      refresh: nextAccount.refresh,
+      access: nextAccount.access,
+      expires: nextAccount.expires,
+    };
+    await setAnthropicAuth(nextAuth, client);
+    return nextAuth;
+  });
+}
+
+async function removeAccount(index: number) {
+  return withAuthStateLock(async () => {
+    const store = await loadAccountStore();
+    if (!Number.isInteger(index) || index < 0 || index >= store.accounts.length) {
+      throw new Error(`Account ${index + 1} does not exist`);
+    }
+
+    store.accounts.splice(index, 1);
+    if (store.accounts.length === 0) {
+      store.activeIndex = 0;
+      await saveAccountStore(store);
+      await writeAnthropicAuthFile(undefined);
+      return { store, active: undefined };
+    }
+
+    if (store.activeIndex > index) {
+      store.activeIndex -= 1;
+    } else if (store.activeIndex >= store.accounts.length) {
+      store.activeIndex = 0;
+    }
+
+    const active = store.accounts[store.activeIndex];
+    if (!active) throw new Error("Active Anthropic account disappeared during removal");
+    active.lastUsed = Date.now();
+    await saveAccountStore(store);
+    const nextAuth: OAuthStored = {
+      type: "oauth",
+      refresh: active.refresh,
+      access: active.access,
+      expires: active.expires,
+    };
+    await writeAnthropicAuthFile(nextAuth);
+    return { store, active: nextAuth };
+  });
+}
+
+function shouldRotateAuth(status: number, bodyText: string) {
+  const haystack = bodyText.toLowerCase();
+  if (status === 429) return true;
+  if (status === 401 || status === 403) return true;
+  return (
+    haystack.includes("rate_limit") ||
+    haystack.includes("rate limit") ||
+    haystack.includes("invalid api key") ||
+    haystack.includes("authentication_error") ||
+    haystack.includes("permission_error") ||
+    haystack.includes("oauth")
+  );
 }
 
 // --- OAuth token exchange & refresh ---
@@ -469,6 +683,12 @@ function buildAuthorizeHandler(mode: "oauth" | "apikey") {
       if (mode === "apikey") {
         return createApiKey(creds.access);
       }
+      await rememberAnthropicOAuth({
+        type: "oauth",
+        refresh: creds.refresh,
+        access: creds.access,
+        expires: creds.expires,
+      });
       return creds;
     };
 
@@ -701,8 +921,12 @@ async function getFreshOAuth(
   if (!isOAuthStored(auth)) return undefined;
   if (auth.access && auth.expires > Date.now()) return auth;
 
-  if (!pendingRefresh) {
-    pendingRefresh = withAuthRefreshLock(async () => {
+  const pending = pendingRefresh.get(auth.refresh);
+  if (pending) {
+    return pending;
+  }
+
+  const refreshPromise = withAuthStateLock(async () => {
       const latest = await getAuth();
       if (!isOAuthStored(latest)) {
         throw new Error("Anthropic OAuth credentials disappeared during refresh");
@@ -710,14 +934,18 @@ async function getFreshOAuth(
       if (latest.access && latest.expires > Date.now()) return latest;
 
       const refreshed = await refreshAnthropicToken(latest.refresh);
-      await client.auth.set({ path: { id: "anthropic" }, body: refreshed });
+      await setAnthropicAuth(refreshed, client);
+      const store = await loadAccountStore();
+      if (store.accounts.length > 0) {
+        upsertAccount(store, refreshed);
+        await saveAccountStore(store);
+      }
       return refreshed;
-    }).finally(() => {
-      pendingRefresh = undefined;
     });
-  }
-
-  return pendingRefresh;
+  pendingRefresh.set(auth.refresh, refreshPromise);
+  return refreshPromise.finally(() => {
+    pendingRefresh.delete(auth.refresh);
+  });
 }
 
 // --- Plugin export ---
@@ -750,9 +978,6 @@ const AnthropicAuthPlugin: Plugin = async ({ client }) => {
             })();
             if (!url || !ANTHROPIC_HOSTS.has(url.hostname)) return fetch(input, init);
 
-            const freshAuth = await getFreshOAuth(getAuth, client);
-            if (!freshAuth) return fetch(input, init);
-
             const originalBody = typeof init?.body === "string"
               ? init.body
               : input instanceof Request
@@ -766,19 +991,39 @@ const AnthropicAuthPlugin: Plugin = async ({ client }) => {
             }
             const betas = getRequiredBetas(rewritten.modelId);
 
-            headers.set("accept", "application/json");
-            headers.set("anthropic-beta", mergeBetas(headers.get("anthropic-beta"), betas));
-            headers.set("anthropic-dangerous-direct-browser-access", "true");
-            headers.set("authorization", `Bearer ${freshAuth.access}`);
-            headers.set("user-agent", process.env.OPENCODE_ANTHROPIC_USER_AGENT || `claude-cli/${CLAUDE_CODE_VERSION}`);
-            headers.set("x-app", "cli");
-            headers.delete("x-api-key");
+            const runRequest = async (auth: OAuthStored) => {
+              const requestHeaders = new Headers(headers);
+              requestHeaders.set("accept", "application/json");
+              requestHeaders.set("anthropic-beta", mergeBetas(requestHeaders.get("anthropic-beta"), betas));
+              requestHeaders.set("anthropic-dangerous-direct-browser-access", "true");
+              requestHeaders.set("authorization", `Bearer ${auth.access}`);
+              requestHeaders.set("user-agent", process.env.OPENCODE_ANTHROPIC_USER_AGENT || `claude-cli/${CLAUDE_CODE_VERSION}`);
+              requestHeaders.set("x-app", "cli");
+              requestHeaders.delete("x-api-key");
 
-            const response = await fetch(input, {
-              ...(init ?? {}),
-              body: rewritten.body,
-              headers,
-            });
+              return fetch(input, {
+                ...(init ?? {}),
+                body: rewritten.body,
+                headers: requestHeaders,
+              });
+            };
+
+            const freshAuth = await getFreshOAuth(getAuth, client);
+            if (!freshAuth) return fetch(input, init);
+
+            let response = await runRequest(freshAuth);
+            if (!response.ok) {
+              const bodyText = await response.clone().text().catch(() => "");
+              if (shouldRotateAuth(response.status, bodyText)) {
+                const rotated = await rotateAnthropicAccount(freshAuth, client);
+                if (rotated) {
+                  const retryAuth = await getFreshOAuth(getAuth, client);
+                  if (retryAuth) {
+                    response = await runRequest(retryAuth);
+                  }
+                }
+              }
+            }
 
             return wrapResponseStream(response, rewritten.reverseToolNameMap);
           },
@@ -805,4 +1050,15 @@ const AnthropicAuthPlugin: Plugin = async ({ client }) => {
   };
 };
 
-export { AnthropicAuthPlugin as anthropicAuthPlugin };
+export {
+  AnthropicAuthPlugin as anthropicAuthPlugin,
+  accountsFilePath,
+  authFilePath,
+  loadAccountStore,
+  normalizeAccountStore,
+  removeAccount,
+  rememberAnthropicOAuth,
+  rotateAnthropicAccount,
+  saveAccountStore,
+  shouldRotateAuth,
+};

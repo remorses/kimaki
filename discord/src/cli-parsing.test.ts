@@ -27,6 +27,8 @@ function createCliForIdParsing() {
     .option('-g, --guild <guildId>', 'Discord guild/server ID')
 
   cli.command('task delete <id>', 'Delete task')
+  cli.command('anthropic-accounts list', 'List stored Anthropic accounts').hidden()
+  cli.command('anthropic-accounts remove <index>', 'Remove stored Anthropic account').hidden()
 
   return cli
 }
@@ -159,5 +161,35 @@ describe('goke CLI ID parsing', () => {
 
     expect(result.args[0]).toBe(taskId)
     expect(typeof result.args[0]).toBe('string')
+  })
+
+  test('hidden anthropic account commands still parse', () => {
+    const cli = createCliForIdParsing()
+
+    const result = cli.parse(
+      ['node', 'kimaki', 'anthropic-accounts', 'remove', '2'],
+      { run: false },
+    )
+
+    expect(result.args[0]).toBe('2')
+    expect(typeof result.args[0]).toBe('string')
+  })
+
+  test('hidden anthropic account commands are excluded from help output', () => {
+    const stdout = {
+      text: '',
+      write(data: string | Uint8Array) {
+        this.text += String(data)
+      },
+    }
+
+    const cli = goke('kimaki', { stdout: stdout as never })
+    cli.command('send', 'Send a message')
+    cli.command('anthropic-accounts list', 'List stored Anthropic accounts').hidden()
+    cli.help()
+    cli.parse(['node', 'kimaki', '--help'], { run: false })
+
+    expect(stdout.text).toContain('send')
+    expect(stdout.text).not.toContain('anthropic-accounts')
   })
 })
