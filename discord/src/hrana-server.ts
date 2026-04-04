@@ -272,7 +272,10 @@ export async function evictExistingInstance({ port }: { port: number }) {
     try: () => {
       process.kill(targetPid, 'SIGTERM')
     },
-    catch: (e) => e as Error,
+    catch: (e) =>
+      new Error('Failed to send SIGTERM to existing kimaki process', {
+        cause: e,
+      }),
   })
   if (killResult instanceof Error) {
     hranaLogger.log(`Failed to kill PID ${targetPid}: ${killResult.message}`)
@@ -290,12 +293,21 @@ export async function evictExistingInstance({ port }: { port: number }) {
   if (secondProbe instanceof Error) return
 
   hranaLogger.log(`PID ${targetPid} still alive after SIGTERM, sending SIGKILL`)
-  errore.try({
+  const forceKillResult = errore.try({
     try: () => {
       process.kill(targetPid, 'SIGKILL')
     },
-    catch: (e) => e as Error,
+    catch: (e) =>
+      new Error('Failed to send SIGKILL to existing kimaki process', {
+        cause: e,
+      }),
   })
+  if (forceKillResult instanceof Error) {
+    hranaLogger.log(
+      `Failed to force-kill PID ${targetPid}: ${forceKillResult.message}`,
+    )
+    return
+  }
   await new Promise((resolve) => {
     setTimeout(resolve, 1000)
   })

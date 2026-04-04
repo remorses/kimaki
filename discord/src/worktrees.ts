@@ -1062,8 +1062,23 @@ export async function mergeWorktree({
     if (!tempBranch) {
       return
     }
-    await git(worktreeDir, 'checkout --detach')
-    await git(worktreeDir, `branch -D "${tempBranch}"`)
+
+    const detachResult = await git(worktreeDir, 'checkout --detach')
+    if (detachResult instanceof Error) {
+      logger.warn(
+        `[MERGE CLEANUP] Failed to detach HEAD before deleting temp branch: ${detachResult.message}`,
+      )
+    }
+
+    const deleteTempBranchResult = await git(
+      worktreeDir,
+      `branch -D "${tempBranch}"`,
+    )
+    if (deleteTempBranchResult instanceof Error) {
+      logger.warn(
+        `[MERGE CLEANUP] Failed to delete temp branch ${tempBranch}: ${deleteTempBranchResult.message}`,
+      )
+    }
   }
 
   // ── Step 1: Reject uncommitted changes ──
@@ -1215,10 +1230,30 @@ export async function mergeWorktree({
 
   // ── Step 5: Clean up -- detach HEAD and delete branch ──
   log('Cleaning up worktree...')
-  await git(worktreeDir, `checkout --detach "${defaultBranch}"`)
-  await git(worktreeDir, `branch -D "${branchName}"`)
+  const detachResult = await git(worktreeDir, `checkout --detach "${defaultBranch}"`)
+  if (detachResult instanceof Error) {
+    logger.warn(
+      `[MERGE CLEANUP] Failed to detach worktree HEAD after push: ${detachResult.message}`,
+    )
+  }
+
+  const deleteBranchResult = await git(worktreeDir, `branch -D "${branchName}"`)
+  if (deleteBranchResult instanceof Error) {
+    logger.warn(
+      `[MERGE CLEANUP] Failed to delete branch ${branchName}: ${deleteBranchResult.message}`,
+    )
+  }
+
   if (branchName !== worktreeName && worktreeName) {
-    await git(worktreeDir, `branch -D "${worktreeName}"`)
+    const deleteWorktreeBranchResult = await git(
+      worktreeDir,
+      `branch -D "${worktreeName}"`,
+    )
+    if (deleteWorktreeBranchResult instanceof Error) {
+      logger.warn(
+        `[MERGE CLEANUP] Failed to delete worktree branch ${worktreeName}: ${deleteWorktreeBranchResult.message}`,
+      )
+    }
   }
 
   return {

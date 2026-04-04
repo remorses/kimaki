@@ -510,10 +510,16 @@ export async function processVoiceAttachment({
     if (isNewThread) {
       const threadName = result.transcription.replace(/\s+/g, ' ').trim().slice(0, 80)
       if (threadName) {
-        await errore.tryAsync({
+        const renameResult = await errore.tryAsync({
           try: () => thread.setName(threadName),
-          catch: (e) => e as Error,
+          catch: (e) =>
+            new Error('Failed to update thread name from deterministic transcription', {
+              cause: e,
+            }),
         })
+        if (renameResult instanceof Error) {
+          voiceLogger.log(`Could not update thread name:`, renameResult.message)
+        }
       }
     }
     await sendThreadMessage(

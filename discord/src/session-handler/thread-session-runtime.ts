@@ -3790,13 +3790,24 @@ export class ThreadSessionRuntime {
 
     // Store session start source for scheduled tasks
     if (createdNewSession && sessionStartScheduleKind) {
-      await errore.tryAsync(() => {
-        return setSessionStartSource({
-          sessionId: session!.id,
-          scheduleKind: sessionStartScheduleKind,
-          scheduledTaskId: sessionStartScheduledTaskId,
-        })
+      const sessionStartSourceResult = await errore.tryAsync({
+        try: () => {
+          return setSessionStartSource({
+            sessionId: session.id,
+            scheduleKind: sessionStartScheduleKind,
+            scheduledTaskId: sessionStartScheduledTaskId,
+          })
+        },
+        catch: (e) =>
+          new Error('Failed to persist scheduled session start source', {
+            cause: e,
+          }),
       })
+      if (sessionStartSourceResult instanceof Error) {
+        logger.warn(
+          `[SESSION START SOURCE] ${sessionStartSourceResult.message}`,
+        )
+      }
     }
 
     // Store agent preference if provided
