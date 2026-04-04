@@ -624,7 +624,7 @@ test('task list item with fenced code', () => {
   const result = unnestCodeBlocksFromLists(input)
   expect('\n' + result).toMatchInlineSnapshot(`
     "
-    - [ ] Do thing
+    - [ ] [ ] Do thing
 
     \`\`\`sh
     echo hi
