@@ -385,6 +385,39 @@ export function isEssentialToolPart(part: Part): boolean {
   return true
 }
 
+// ── Thread title derivation ──────────────────────────────────────
+
+const DISCORD_THREAD_NAME_MAX = 100
+const WORKTREE_THREAD_PREFIX = '⬦ '
+
+// Pure derivation: given an OpenCode session title and the current thread name,
+// return the new thread name to apply, or undefined when no rename is needed.
+// - Skips placeholder titles ("New Session - ...") to match external-sync.
+// - Preserves worktree prefix when the current name carries it.
+// - Returns undefined when the candidate matches currentName already.
+export function deriveThreadNameFromSessionTitle({
+  sessionTitle,
+  currentName,
+}: {
+  sessionTitle: string | undefined | null
+  currentName: string
+}): string | undefined {
+  const trimmed = sessionTitle?.trim()
+  if (!trimmed) {
+    return undefined
+  }
+  if (/^new session\s*-/i.test(trimmed)) {
+    return undefined
+  }
+  const hasWorktreePrefix = currentName.startsWith(WORKTREE_THREAD_PREFIX)
+  const prefix = hasWorktreePrefix ? WORKTREE_THREAD_PREFIX : ''
+  const candidate = `${prefix}${trimmed}`.slice(0, DISCORD_THREAD_NAME_MAX)
+  if (candidate === currentName) {
+    return undefined
+  }
+  return candidate
+}
+
 // ── Ingress input type ───────────────────────────────────────────
 
 export type EnqueueResult = {
@@ -503,6 +536,14 @@ export class ThreadSessionRuntime {
   // Notification throttles for retry/context notices.
   private lastDisplayedContextPercentage = 0
   private lastRateLimitDisplayTime = 0
+
+  // Last OpenCode-generated session title we successfully applied to the
+  // Discord thread name. Used to dedupe repeated session.updated events so
+  // we only call thread.setName() once per distinct title. Discord rate-limits
+  // channel/thread renames to ~2 per 10 minutes per thread, so we must avoid
+  // retrying. Not persisted — worst case on restart we re-apply the same title
+  // once (which is a no-op via deriveThreadNameFromSessionTitle).
+  private appliedOpencodeTitle: string | undefined
 
   // Part output buffering (write-side cache, not domain state)
   private partBuffer = new Map<string, Map<string, Part>>()
@@ -1378,6 +1419,9 @@ export class ThreadSessionRuntime {
         break
       case 'session.status':
         await this.handleSessionStatus(event.properties)
+        break
+      case 'session.updated':
+        await this.handleSessionUpdated(event.properties.info)
         break
       case 'tui.toast.show':
         await this.handleTuiToast(event.properties)
@@ -2598,6 +2642,73 @@ export class ThreadSessionRuntime {
     if (retryResult instanceof Error) {
       discordLogger.error('Failed to send retry notice:', retryResult)
     }
+  }
+
+  // Rename the Discord thread to match the OpenCode-generated session title.
+  //
+  // Discord rate-limits channel/thread renames heavily — reported as ~2 per
+  // 10 minutes per thread (discord/discord-api-docs#1900, discordjs/discord.js#6651)
+  // and discord.js setName() can block silently on the 3rd attempt. We therefore:
+  // - rename at most once per distinct title (deduped via appliedOpencodeTitle)
+  // - race setName() against an AbortSignal.timeout() so a throttled call never
+  //   blocks the event loop
+  // - fail soft (log + continue) on timeout, 429, or any other error
+  private async handleSessionUpdated(info: {
+    id: string
+    title: string
+  }): Promise<void> {
+    // Only act on the main session for this thread
+    if (info.id !== this.state?.sessionId) {
+      return
+    }
+    const desiredName = deriveThreadNameFromSessionTitle({
+      sessionTitle: info.title,
+      currentName: this.thread.name,
+    })
+    if (!desiredName) {
+      return
+    }
+    const normalizedTitle = info.title.trim()
+    if (this.appliedOpencodeTitle === normalizedTitle) {
+      return
+    }
+    // Mark before the call so concurrent session.updated events don't stack
+    // rename attempts. On failure we keep the mark — a retry won't help
+    // because the failure is almost always a rate limit.
+    this.appliedOpencodeTitle = normalizedTitle
+
+    const RENAME_TIMEOUT_MS = 3000
+    const timeoutSignal = AbortSignal.timeout(RENAME_TIMEOUT_MS)
+    const renameResult = await Promise.race([
+      errore.tryAsync({
+        try: () => this.thread.setName(desiredName),
+        catch: (e) =>
+          new Error('Failed to rename thread from OpenCode title', {
+            cause: e,
+          }),
+      }),
+      new Promise<'timeout'>((resolve) => {
+        timeoutSignal.addEventListener('abort', () => {
+          resolve('timeout')
+        })
+      }),
+    ])
+
+    if (renameResult === 'timeout') {
+      logger.warn(
+        `[TITLE] setName timed out after ${RENAME_TIMEOUT_MS}ms for thread ${this.threadId} (likely rate-limited)`,
+      )
+      return
+    }
+    if (renameResult instanceof Error) {
+      logger.warn(
+        `[TITLE] Could not rename thread ${this.threadId}: ${renameResult.message}`,
+      )
+      return
+    }
+    logger.log(
+      `[TITLE] Renamed thread ${this.threadId} to "${desiredName}" from OpenCode session title`,
+    )
   }
 
   private async handleTuiToast(properties: {
