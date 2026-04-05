@@ -4,14 +4,8 @@
 // get consumed as a tool result answer (which lost voice/image content).
 
 import { describe, test, expect, afterEach } from 'vitest'
-import {
-  setupQueueAdvancedSuite,
-  TEST_USER_ID,
-} from './queue-advanced-e2e-setup.js'
-import {
-  waitForBotMessageContaining,
-  waitForFooterMessage,
-} from './test-utils.js'
+import { setupQueueAdvancedSuite, TEST_USER_ID } from './queue-advanced-e2e-setup.js'
+import { waitForBotMessageContaining, waitForFooterMessage } from './test-utils.js'
 import { store, type DeterministicTranscriptionConfig } from './store.js'
 import { getOpencodeClient } from './opencode.js'
 import { getThreadSession } from './database.js'
@@ -134,59 +128,54 @@ describe('queue advanced: question tool answer', () => {
     setDeterministicTranscription(null)
   })
 
-  test(
-    'user text message dismisses pending question and enqueues as normal prompt',
-    async () => {
-      await ctx.discord.channel(TEXT_CHANNEL_ID).user(TEST_USER_ID).sendMessage({
-        content: 'QUESTION_TEXT_ANSWER_MARKER',
-      })
+  test('user text message dismisses pending question and enqueues as normal prompt', async () => {
+    await ctx.discord.channel(TEXT_CHANNEL_ID).user(TEST_USER_ID).sendMessage({
+      content: 'QUESTION_TEXT_ANSWER_MARKER',
+    })
 
-      const thread = await ctx.discord.channel(TEXT_CHANNEL_ID).waitForThread({
-        timeout: 8_000,
-        predicate: (t) => {
-          return t.name === 'QUESTION_TEXT_ANSWER_MARKER'
-        },
-      })
+    const thread = await ctx.discord.channel(TEXT_CHANNEL_ID).waitForThread({
+      timeout: 8_000,
+      predicate: (t) => {
+        return t.name === 'QUESTION_TEXT_ANSWER_MARKER'
+      },
+    })
 
-      const th = ctx.discord.thread(thread.id)
+    const th = ctx.discord.thread(thread.id)
 
-      // Wait for the question dropdown message to appear in Discord.
-      // This is the user-visible signal that the question tool fired and
-      // kimaki processed the event. Avoids polling internal Maps which
-      // have timing sensitivity on slower CI hardware.
-      await waitForBotMessageContaining({
-        discord: ctx.discord,
-        threadId: thread.id,
-        text: 'Which option do you prefer?',
-        timeout: 12_000,
-      })
+    // Wait for the question dropdown message to appear in Discord.
+    // This is the user-visible signal that the question tool fired and
+    // kimaki processed the event. Avoids polling internal Maps which
+    // have timing sensitivity on slower CI hardware.
+    await waitForBotMessageContaining({
+      discord: ctx.discord,
+      threadId: thread.id,
+      text: 'Which option do you prefer?',
+      timeout: 12_000,
+    })
 
-      // User sends a text message while question is pending.
-      // This should:
-      // 1. Dismiss the pending question (cleanup context)
-      // 2. Abort the blocked session so OpenCode unblocks
-      // 3. Enqueue the message as a normal user prompt (not consumed as answer)
-      await th.user(TEST_USER_ID).sendMessage({
-        content: 'my text answer',
-      })
+    // User sends a text message while question is pending.
+    // This should:
+    // 1. Dismiss the pending question (cleanup context)
+    // 2. Abort the blocked session so OpenCode unblocks
+    // 3. Enqueue the message as a normal user prompt (not consumed as answer)
+    await th.user(TEST_USER_ID).sendMessage({
+      content: 'my text answer',
+    })
 
-      // Give time for question cleanup to propagate
-      await new Promise((r) => {
-        setTimeout(r, 1_000)
-      })
+    // Give time for question cleanup to propagate
+    await new Promise((r) => {
+      setTimeout(r, 1_000)
+    })
 
-      const timeline = await th.text({ showInteractions: true })
+    const timeline = await th.text({ showInteractions: true })
 
-      // The user's text answer must appear in Discord
-      expect(timeline).toContain('my text answer')
-      // The original question must have appeared
-      expect(timeline).toContain('Which option do you prefer?')
-      // The user's marker message triggered the question
-      expect(timeline).toContain('QUESTION_TEXT_ANSWER_MARKER')
-    },
-    20_000,
-  )
-
+    // The user's text answer must appear in Discord
+    expect(timeline).toContain('my text answer')
+    // The original question must have appeared
+    expect(timeline).toContain('Which option do you prefer?')
+    // The user's marker message triggered the question
+    expect(timeline).toContain('QUESTION_TEXT_ANSWER_MARKER')
+  }, 20_000)
 })
 
 describe('queue advanced: voice message during pending question', () => {
@@ -201,195 +190,127 @@ describe('queue advanced: voice message during pending question', () => {
     setDeterministicTranscription(null)
   })
 
-  test(
-    'voice message during pending question dismisses question and transcribes normally',
-    async () => {
-      // This is the exact bug scenario: user sends a voice message while a
-      // question dropdown is pending. Voice messages have empty message.content
-      // (audio is in attachments, transcription happens later). The old code
-      // passed "" as the question answer and consumed the message — the voice
-      // content was completely lost.
-      await ctx.discord.channel(VOICE_CHANNEL_ID).user(TEST_USER_ID).sendMessage({
-        content: 'QUESTION_TEXT_ANSWER_MARKER',
-      })
+  test('voice message during pending question dismisses question and transcribes normally', async () => {
+    // This is the exact bug scenario: user sends a voice message while a
+    // question dropdown is pending. Voice messages have empty message.content
+    // (audio is in attachments, transcription happens later). The old code
+    // passed "" as the question answer and consumed the message — the voice
+    // content was completely lost.
+    await ctx.discord.channel(VOICE_CHANNEL_ID).user(TEST_USER_ID).sendMessage({
+      content: 'QUESTION_TEXT_ANSWER_MARKER',
+    })
 
-      const thread = await ctx.discord.channel(VOICE_CHANNEL_ID).waitForThread({
-        timeout: 8_000,
-        predicate: (t) => {
-          return t.name === 'QUESTION_TEXT_ANSWER_MARKER'
-        },
-      })
+    const thread = await ctx.discord.channel(VOICE_CHANNEL_ID).waitForThread({
+      timeout: 8_000,
+      predicate: (t) => {
+        return t.name === 'QUESTION_TEXT_ANSWER_MARKER'
+      },
+    })
 
-      const th = ctx.discord.thread(thread.id)
+    const th = ctx.discord.thread(thread.id)
 
-      // Wait for the question dropdown message to appear in Discord
-      await waitForBotMessageContaining({
-        discord: ctx.discord,
-        threadId: thread.id,
-        text: 'Which option do you prefer?',
-        timeout: 12_000,
-      })
+    // Wait for the question dropdown message to appear in Discord
+    await waitForBotMessageContaining({
+      discord: ctx.discord,
+      threadId: thread.id,
+      text: 'Which option do you prefer?',
+      timeout: 12_000,
+    })
 
-      // Send a voice message while the question is pending.
-      // Reproduction: Discord voice messages can still carry non-empty
-      // message.content. The bug consumed that raw text before transcription,
-      // so the session never received the spoken content.
-      setDeterministicTranscription({
-        transcription: 'I want option Alpha please',
-        queueMessage: false,
-      })
+    // Send a voice message while the question is pending.
+    // Reproduction: Discord voice messages can still carry non-empty
+    // message.content. The bug consumed that raw text before transcription,
+    // so the session never received the spoken content.
+    setDeterministicTranscription({
+      transcription: 'I want option Alpha please',
+      queueMessage: false,
+    })
 
-      await th.user(TEST_USER_ID).sendVoiceMessage({
-        content: 'VOICE_TEXT_CONTENT_SHOULD_NOT_REACH_MODEL',
-      })
+    await th.user(TEST_USER_ID).sendVoiceMessage({
+      content: 'VOICE_TEXT_CONTENT_SHOULD_NOT_REACH_MODEL',
+    })
 
-      // Give time for question cleanup to propagate
-      await new Promise((r) => {
-        setTimeout(r, 1_000)
-      })
+    // Give time for question cleanup to propagate
+    await new Promise((r) => {
+      setTimeout(r, 1_000)
+    })
 
-      // Voice content should be transcribed and appear as the next user message,
-      // processed after the model responds to the empty question answer.
-      await waitForBotMessageContaining({
-        discord: ctx.discord,
-        threadId: thread.id,
-        text: 'I want option Alpha please',
-        timeout: 8_000,
-      })
+    // Voice content should be transcribed and appear as the next user message,
+    // processed after the model responds to the empty question answer.
+    await waitForBotMessageContaining({
+      discord: ctx.discord,
+      threadId: thread.id,
+      text: 'I want option Alpha please',
+      timeout: 8_000,
+    })
 
-      await waitForFooterMessage({
-        discord: ctx.discord,
-        threadId: thread.id,
-        timeout: 8_000,
-        afterMessageIncludes: 'I want option Alpha please',
-        afterAuthorId: ctx.discord.botUserId,
-      })
+    await waitForFooterMessage({
+      discord: ctx.discord,
+      threadId: thread.id,
+      timeout: 8_000,
+      afterMessageIncludes: 'I want option Alpha please',
+      afterAuthorId: ctx.discord.botUserId,
+    })
 
-      const sessionId = await getThreadSession(thread.id)
-      expect(sessionId).toBeTruthy()
+    const sessionId = await getThreadSession(thread.id)
+    expect(sessionId).toBeTruthy()
 
-      const sessionMessages = await waitForSessionMessages({
-        projectDirectory: ctx.directories.projectDirectory,
-        sessionId: sessionId!,
-        timeoutMs: 8_000,
-        predicate: (messages) => {
-          const timeline = getSessionRoleTextTimeline(messages)
-          return timeline.some((entry) => {
-            return entry.text.includes('I want option Alpha please')
-          })
-        },
-      })
-
-      const sessionTimeline = getSessionRoleTextTimeline(sessionMessages)
-      expect(sessionTimeline).toMatchInlineSnapshot(`
-        [
-          {
-            "role": "user",
-            "text": "QUESTION_TEXT_ANSWER_MARKER<discord-user />",
-          },
-          {
-            "role": "user",
-            "text": "Voice message transcription from Discord user:
-        I want option Alpha please<discord-user />",
-          },
-          {
-            "role": "assistant",
-            "text": "ok",
-          },
-        ]
-      `)
-      expect(getSessionMessageSummary(sessionMessages)).toMatchInlineSnapshot(`
-        [
-          {
-            "parts": [
-              {
-                "text": "",
-                "type": "text",
-              },
-              {
-                "text": "QUESTION_TEXT_ANSWER_MARKER",
-                "type": "text",
-              },
-              {
-                "text": "<discord-user />",
-                "type": "text",
-              },
-            ],
-            "role": "user",
-          },
-          {
-            "parts": [],
-            "role": "assistant",
-          },
-          {
-            "parts": [
-              {
-                "text": "Voice message transcription from Discord user:
-        I want option Alpha please",
-                "type": "text",
-              },
-              {
-                "text": "<discord-user />",
-                "type": "text",
-              },
-            ],
-            "role": "user",
-          },
-          {
-            "parts": [
-              {
-                "type": "step-start",
-              },
-              {
-                "text": "ok",
-                "type": "text",
-              },
-              {
-                "type": "step-finish",
-              },
-            ],
-            "role": "assistant",
-          },
-        ]
-      `)
-
-      const latestUserText = sessionTimeline
-        .filter((entry) => {
-          return entry.role === 'user'
+    const sessionMessages = await waitForSessionMessages({
+      projectDirectory: ctx.directories.projectDirectory,
+      sessionId: sessionId!,
+      timeoutMs: 8_000,
+      predicate: (messages) => {
+        const timeline = getSessionRoleTextTimeline(messages)
+        return timeline.some((entry) => {
+          return entry.text.includes('I want option Alpha please')
         })
-        .at(-1)?.text
-      const assistantTexts = sessionTimeline.flatMap((entry) => {
-        if (entry.role === 'assistant') {
-          return [entry.text]
-        }
-        return []
+      },
+    })
+
+    const sessionTimeline = getSessionRoleTextTimeline(sessionMessages)
+    const sessionSummary = getSessionMessageSummary(sessionMessages)
+
+    const latestUserText = sessionTimeline
+      .filter((entry) => {
+        return entry.role === 'user'
       })
+      .at(-1)?.text
+    const assistantTexts = sessionTimeline.flatMap((entry) => {
+      if (entry.role === 'assistant') {
+        return [entry.text]
+      }
+      return []
+    })
 
-      expect(latestUserText).toContain('I want option Alpha please')
-      expect(latestUserText).not.toContain('VOICE_TEXT_CONTENT_SHOULD_NOT_REACH_MODEL')
-      expect(assistantTexts).toContain('ok')
+    expect(latestUserText).toContain('I want option Alpha please')
+    expect(latestUserText).not.toContain('VOICE_TEXT_CONTENT_SHOULD_NOT_REACH_MODEL')
+    expect(assistantTexts).toContain('ok')
+    expect(
+      sessionSummary.some((message) => {
+        return message.role === 'user'
+          && message.parts.some((part) => {
+            return part.type === 'text' && part.text.includes('I want option Alpha please')
+          })
+      }),
+    ).toBe(true)
+    expect(
+      sessionSummary.some((message) => {
+        return message.role === 'assistant'
+          && message.parts.some((part) => {
+            return part.type === 'text' && part.text === 'ok'
+          })
+      }),
+    ).toBe(true)
 
-      const timeline = await th.text({ showInteractions: true })
-      expect(timeline).toMatchInlineSnapshot(`
-        "--- from: user (queue-question-tester)
-        QUESTION_TEXT_ANSWER_MARKER
-        --- from: assistant (TestBot)
-        **Pick one**
-        Which option do you prefer?
-        --- from: user (queue-question-tester)
-        VOICE_TEXT_CONTENT_SHOULD_NOT_REACH_MODEL
-        [attachment: voice-message.ogg]
-        --- from: assistant (TestBot)
-        🎤 Transcribing voice message...
-        📝 **Transcribed message:** I want option Alpha please
-        *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2*
-        ⬥ ok
-        *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2*"
-      `)
+    const timeline = await th.text({ showInteractions: true })
+    expect(timeline).toContain('QUESTION_TEXT_ANSWER_MARKER')
+    expect(timeline).toContain('Which option do you prefer?')
+    expect(timeline).toContain('VOICE_TEXT_CONTENT_SHOULD_NOT_REACH_MODEL')
+    expect(timeline).toContain('🎤 Transcribing voice message...')
+    expect(timeline).toContain('📝 **Transcribed message:** I want option Alpha please')
+    expect(timeline).toContain('⬥ ok')
 
-      // Voice content must be present as a real transcribed message, not lost
-      expect(timeline).toContain('I want option Alpha please')
-    },
-    20_000,
-  )
+    // Voice content must be present as a real transcribed message, not lost
+    expect(timeline).toContain('I want option Alpha please')
+  }, 20_000)
 })

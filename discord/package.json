@@ -44,7 +44,8 @@
     "opencode-cached-provider": "workspace:^",
     "opencode-deterministic-provider": "workspace:^",
     "prisma": "7.4.2",
-    "tsx": "^4.20.5"
+    "tsx": "^4.20.5",
+    "undici": "^8.0.2"
   },
   "dependencies": {
     "@ai-sdk/google": "^3.0.53",
