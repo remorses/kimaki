@@ -73,7 +73,10 @@ function processListItem(item: Tokens.ListItem, prefix: string): Segment[] {
       // After a code block, use '-' as continuation prefix to avoid repeating numbers
       const effectivePrefix = seenCodeBlock ? '- ' : prefix
       const marker = !wroteFirstListItem ? taskMarker : ''
-      const normalizedText = text.replace(/^\s+/, '')
+      const normalizedText = normalizeListItemText({
+        text,
+        isTaskItem: item.task,
+      })
       segments.push({
         type: 'list-item',
         prefix: effectivePrefix,
@@ -136,6 +139,20 @@ function extractText(token: Token): string {
   }
 
   return ''
+}
+
+function normalizeListItemText({
+  text,
+  isTaskItem,
+}: {
+  text: string
+  isTaskItem: boolean
+}): string {
+  const withoutIndent = text.replace(/^\s+/, '')
+  if (!isTaskItem) {
+    return withoutIndent
+  }
+  return withoutIndent.replace(/^\[(?: |x|X)\]\s+/, '')
 }
 
 function renderSegments(segments: Segment[]): string {

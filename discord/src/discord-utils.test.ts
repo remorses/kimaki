@@ -77,6 +77,27 @@ describe('splitMarkdownForDiscord', () => {
       ]
     `)
   })
+
+  test('task list code block does not duplicate checkbox marker when splitting', () => {
+    const content = `- [ ] Do thing
+  \`\`\`sh
+  echo hi
+  \`\`\`
+`
+
+    const result = splitMarkdownForDiscord({ content, maxLength: 80 })
+    expect(result.join('')).toContain('- [ ] Do thing\n')
+    expect(result.join('')).not.toContain('- [ ] [ ] Do thing')
+    expect(result).toMatchInlineSnapshot(`
+      [
+        "- [ ] Do thing
+        \`\`\`sh
+        echo hi
+        \`\`\`
+      ",
+      ]
+    `)
+  })
 })
 
 describe('hasKimakiBotPermission', () => {

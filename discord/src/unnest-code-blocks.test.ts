@@ -624,11 +624,45 @@ test('task list item with fenced code', () => {
   const result = unnestCodeBlocksFromLists(input)
   expect('\n' + result).toMatchInlineSnapshot(`
     "
-    - [ ] [ ] Do thing
+    - [ ] Do thing
 
     \`\`\`sh
     echo hi
     \`\`\`"
+  `)
+})
+
+test('checked task list item keeps a single checkbox marker', () => {
+  const input = `- [x] Ship fix
+  \`\`\`ts
+  console.log('done')
+  \`\`\``
+  const result = unnestCodeBlocksFromLists(input)
+  expect('\n' + result).toMatchInlineSnapshot(`
+    "
+    - [x] Ship fix
+
+    \`\`\`ts
+    console.log('done')
+    \`\`\`"
+  `)
+})
+
+test('task list item with trailing text keeps one checkbox marker after hoisting code', () => {
+  const input = `- [ ] Do thing
+  \`\`\`sh
+  echo hi
+  \`\`\`
+  then report back`
+  const result = unnestCodeBlocksFromLists(input)
+  expect('\n' + result).toMatchInlineSnapshot(`
+    "
+    - [ ] Do thing
+
+    \`\`\`sh
+    echo hi
+    \`\`\`
+    - then report back"
   `)
 })
 
