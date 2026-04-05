@@ -40,7 +40,7 @@
     "db": "workspace:^",
     "discord-digital-twin": "workspace:^",
     "eventsource-parser": "^3.0.6",
-    "lintcn": "^0.3.0",
+    "lintcn": "^0.7.1",
     "opencode-cached-provider": "workspace:^",
     "opencode-deterministic-provider": "workspace:^",
     "prisma": "7.4.2",
