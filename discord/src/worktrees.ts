@@ -3,11 +3,12 @@
 // submodule initialization, and git diff transfer utilities.
 
 import crypto from 'node:crypto'
-import { exec, spawn } from 'node:child_process'
+import { exec } from 'node:child_process'
 import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
 import { promisify } from 'node:util'
+import * as errore from 'errore'
 import { createLogger, LogPrefix } from './logger.js'
 
 const DEFAULT_EXEC_TIMEOUT_MS = 10_000
@@ -729,47 +730,12 @@ export async function createWorktreeWithSubmodules({
   return { directory: worktreeDir, branch: name }
 }
 
-/**
- * Run a git command with stdin input.
- * Used by mergeWorktree squash commit flow.
- */
-function runGitWithStdin(
-  args: string[],
-  cwd: string,
-  input: string,
-): Promise<void> {
-  return new Promise((resolve, reject) => {
-    const child = spawn('git', args, { cwd, stdio: ['pipe', 'pipe', 'pipe'] })
-
-    let stderr = ''
-    child.stderr?.on('data', (data) => {
-      stderr += data.toString()
-    })
-
-    child.on('close', (code) => {
-      if (code === 0) {
-        resolve()
-      } else {
-        reject(
-          new Error(stderr || `git ${args.join(' ')} failed with code ${code}`),
-        )
-      }
-    })
-
-    child.on('error', reject)
-
-    child.stdin?.write(input)
-    child.stdin?.end()
-  })
-}
-
 // ─── Worktree merge ──────────────────────────────────────────────────────────
-// Implements a worktrunk-style merge pipeline:
+// Merge pipeline (preserves all worktree commits, no squash):
 //   1. Reject if uncommitted changes exist
-//   2. Squash all commits since merge-base into one
-//   3. Rebase onto target (default branch)
-//   4. Fast-forward push to target via local git push
-//   5. Switch to detached HEAD, delete branch
+//   2. Rebase worktree commits onto target (default branch)
+//   3. Fast-forward push to target via local git push
+//   4. Switch to detached HEAD, delete branch
 //
 // Uses `git push <git-common-dir> HEAD:<target>` with
 // `receive.denyCurrentBranch=updateInstead` to fast-forward the target
@@ -778,7 +744,6 @@ function runGitWithStdin(
 // Returns MergeWorktreeErrors | MergeSuccess. All errors are tagged via errore.
 // - DirtyWorktreeError         → git untouched
 // - NothingToMergeError        → git untouched
-// - SquashError                → HEAD may be at merge-base with staged changes
 // - RebaseConflictError        → git left mid-rebase for AI/user resolution
 // - RebaseError                → rebase not in progress; temp branch cleaned
 // - NotFastForwardError        → source intact; no push
@@ -786,11 +751,9 @@ function runGitWithStdin(
 // - PushError                  → source rebased but target unchanged
 // - GitCommandError            → catch-all for unexpected git failures
 
-import * as errore from 'errore'
 import {
   DirtyWorktreeError,
   NothingToMergeError,
-  SquashError,
   RebaseConflictError,
   RebaseError,
   NotFastForwardError,
@@ -1046,29 +1009,9 @@ async function isRebaseInProgress(dir: string): Promise<boolean> {
   return false
 }
 
-export function buildSquashMessage({
-  branchName,
-  commitMessages,
-}: {
-  branchName: string
-  commitMessages: string[]
-}): string {
-  const lines: string[] = [`worktree merge: ${branchName}`]
-  if (commitMessages.length > 0) {
-    lines.push('')
-    for (const message of commitMessages) {
-      const msgLines = message.split('\n')
-      lines.push(`- ${msgLines[0]}`)
-      for (const extra of msgLines.slice(1)) {
-        lines.push(`  ${extra}`)
-      }
-    }
-  }
-  return lines.join('\n')
-}
-
 /**
- * Merge a worktree branch into the default branch using worktrunk-style pipeline.
+ * Merge a worktree branch into the default branch by rebasing all commits
+ * onto target, then fast-forward pushing. Preserves every worktree commit.
  * Returns MergeWorktreeErrors | MergeSuccess.
  */
 export async function mergeWorktree({
@@ -1132,16 +1075,27 @@ export async function mergeWorktree({
     }
   }
 
-  // ── Step 1: Reject uncommitted changes ──
+  // ── Step 1: If a rebase is already paused mid-flight, surface it ──
+  // This happens when the user reruns /merge-worktree while the model is
+  // still resolving conflicts. With multi-commit rebases, each conflict
+  // leaves staged conflict markers (isDirty would say yes) AND merge-base
+  // may already equal target (isRebasedOnto would say yes), so neither
+  // of those checks is safe to run first. We must detect the in-progress
+  // rebase explicitly and route back to the AI-resolve flow.
+  if (await isRebaseInProgress(worktreeDir)) {
+    return new RebaseConflictError({ target: defaultBranch })
+  }
+
+  // ── Step 2: Reject uncommitted changes ──
   if (await isDirty(worktreeDir)) {
     await cleanupTempBranch()
     return new DirtyWorktreeError()
   }
 
-  // ── Step 2: Squash + Step 3: Rebase ──
-  // If already rebased onto target, skip squash+rebase entirely.
-  // This happens on retry after the model resolved a rebase conflict --
-  // the previous run already squashed, and the model completed the rebase.
+  // ── Step 3: Rebase worktree commits onto target ──
+  // If already rebased onto target AND no rebase is in progress, skip
+  // rebase entirely. The in-progress check above guarantees the second
+  // half; we keep it implicit here.
   const alreadyRebased = await isRebasedOnto(worktreeDir, defaultBranch)
 
   const mergeBaseResult = await git(
@@ -1167,61 +1121,12 @@ export async function mergeWorktree({
   }
 
   if (!alreadyRebased) {
-    // Squash into single commit with full commit messages
+    // Rebase all worktree commits onto target, preserving each commit.
     log(
       commitCount > 1
-        ? `Squashing ${commitCount} commits...`
-        : 'Preparing merge commit...',
+        ? `Rebasing ${commitCount} commits onto ${defaultBranch}...`
+        : `Rebasing onto ${defaultBranch}...`,
     )
-
-    const SEP = '---KIMAKI-COMMIT-SEP---'
-    const logRange = `${mergeBase}..HEAD`
-    const messagesResult = await git(
-      worktreeDir,
-      `log --format="%B${SEP}" --reverse "${logRange}"`,
-    )
-    if (messagesResult instanceof Error) {
-      await cleanupTempBranch()
-      return new SquashError({
-        reason: 'Failed to read commit messages',
-        cause: messagesResult,
-      })
-    }
-
-    const commitMessages = messagesResult
-      .split(SEP)
-      .map((m) => {
-        return m.trim()
-      })
-      .filter(Boolean)
-
-    const squashMessage = buildSquashMessage({
-      branchName: worktreeName || branchName,
-      commitMessages,
-    })
-
-    const resetResult = await git(worktreeDir, `reset --soft "${mergeBase}"`)
-    if (resetResult instanceof Error) {
-      await cleanupTempBranch()
-      return new SquashError({
-        reason: 'git reset --soft failed',
-        cause: resetResult,
-      })
-    }
-
-    const commitResult = await errore.tryAsync({
-      try: () =>
-        runGitWithStdin(['commit', '-m', squashMessage, '--'], worktreeDir, ''),
-      catch: (e) =>
-        new SquashError({ reason: 'git commit failed after reset', cause: e }),
-    })
-    if (commitResult instanceof Error) {
-      await cleanupTempBranch()
-      return commitResult
-    }
-
-    // Rebase onto target
-    log(`Rebasing onto ${defaultBranch}...`)
     const rebaseResult = await git(worktreeDir, `rebase "${defaultBranch}"`, {
       timeout: 60_000,
     })

@@ -136,11 +136,6 @@ export class NothingToMergeError extends createTaggedError({
   message: 'No commits to merge -- branch is already up to date with $target',
 }) {}
 
-export class SquashError extends createTaggedError({
-  name: 'SquashError',
-  message: 'Squash failed: $reason',
-}) {}
-
 export class RebaseConflictError extends createTaggedError({
   name: 'RebaseConflictError',
   message:
@@ -198,7 +193,6 @@ export type SessionErrors =
 export type MergeWorktreeErrors =
   | DirtyWorktreeError
   | NothingToMergeError
-  | SquashError
   | RebaseConflictError
   | RebaseError
   | NotFastForwardError

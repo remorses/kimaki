@@ -1,6 +1,7 @@
 // /merge-worktree command - Merge worktree commits into default branch.
-// Uses worktrunk-style pipeline: squash -> rebase -> local push.
-// On rebase conflicts, asks the AI model in the thread to resolve them.
+// Pipeline: rebase worktree commits onto target -> local fast-forward push.
+// Preserves all commits (no squash). On rebase conflicts, asks the AI model
+// in the thread to resolve them.
 
 import { type TextChannel, type ThreadChannel } from 'discord.js'
 import type { AutocompleteContext, CommandContext } from './types.js'
@@ -153,12 +154,14 @@ export async function handleMergeWorktreeCommand({
       await sendPromptToModel({
         prompt: [
           'A rebase conflict occurred while merging this worktree into the default branch.',
+          'Rebasing multiple commits can pause on each commit that conflicts, so you may need to repeat the resolve/continue loop several times.',
           'Please resolve the rebase conflicts:',
           '1. Check `git status` to see which files have conflicts',
           '2. Edit the conflicted files to resolve the merge markers',
           '3. Stage resolved files with `git add`',
           '4. Continue the rebase with `git rebase --continue`',
-          '5. After the rebase completes successfully, tell me so I can run `/merge-worktree` again',
+          '5. If git reports more conflicts, repeat steps 1-4 until the rebase finishes (no more MERGE markers, `git status` shows no rebase in progress)',
+          '6. Once the rebase is fully complete, tell me so I can run `/merge-worktree` again',
         ].join('\n'),
         thread,
         projectDirectory: worktreeInfo.project_directory,
