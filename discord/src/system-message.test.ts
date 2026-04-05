@@ -14,6 +14,11 @@ describe('system-message', () => {
         channelId: 'chan_123',
         guildId: 'guild_123',
         threadId: 'thread_123',
+        channelTopic: 'Investigate prompt cache behavior',
+        agents: [
+          { name: 'plan', description: 'planning only' },
+          { name: 'build', description: 'edits files' },
+        ],
       }).replace(/`[^`]*\/kimaki\.log`/, '`<data-dir>/kimaki.log`'),
     ).toMatchInlineSnapshot(`
       "
@@ -31,7 +36,7 @@ describe('system-message', () => {
       Your current Discord thread ID is: thread_123
       Your current Discord guild ID is: guild_123
 
-      Per-turn Discord metadata like the current user, channel topic, worktree details, and active agent is delivered in synthetic user message parts. Use the latest synthetic parts as the current turn context.
+      Per-turn Discord metadata like the current user and current agent is delivered in synthetic user message parts. Worktree reminders are emitted only when the worktree changes.
 
       ## permissions
 
@@ -125,6 +130,11 @@ describe('system-message', () => {
       Use --agent to specify which agent to use for the session:
 
       kimaki send --channel chan_123 --prompt "Plan the refactor of the auth module" --agent plan
+
+
+      Available agents:
+      - \`plan\`: planning only
+      - \`build\`: edits files
 
       ## switching agents in the current session
 
@@ -531,6 +541,11 @@ describe('system-message', () => {
 
 
 
+
+
+      <channel-topic>
+      Investigate prompt cache behavior
+      </channel-topic>
       "
     `)
   })
@@ -542,12 +557,8 @@ describe('system-message', () => {
         userId: 'user_123',
         sourceMessageId: 'msg_123',
         sourceThreadId: 'thread_123',
-        channelTopic: 'Investigate prompt cache behavior',
         currentAgent: 'build',
-        agents: [
-          { name: 'plan', description: 'planning only' },
-          { name: 'build', description: 'edits files' },
-        ],
+        worktreeChanged: true,
         worktree: {
           worktreeDirectory: '/repo/.worktrees/prompt-cache',
           branch: 'prompt-cache',
@@ -557,15 +568,8 @@ describe('system-message', () => {
     ).toMatchInlineSnapshot(`
       "<discord-user name="Tommy" user-id="user_123" message-id="msg_123" thread-id="thread_123" />
 
-      <channel-topic>
-      Investigate prompt cache behavior
-      </channel-topic>
-
       <system-reminder>
       Current agent: build
-      Available agents:
-      - plan: planning only
-      - build: edits files
       </system-reminder>
 
       <system-reminder>

@@ -518,6 +518,17 @@ type AbortRunOutcome = {
   apiAbortPromise: Promise<void> | undefined
 }
 
+function getWorktreePromptKey(worktree: WorktreeInfo | undefined): string | null {
+  if (!worktree) {
+    return null
+  }
+  return [
+    worktree.worktreeDirectory,
+    worktree.branch,
+    worktree.mainRepoDirectory,
+  ].join('::')
+}
+
 // ── Runtime class ────────────────────────────────────────────────
 
 export class ThreadSessionRuntime {
@@ -569,6 +580,7 @@ export class ThreadSessionRuntime {
   // Derivable cache (perf optimization for provider.list API call)
   private modelContextLimit: number | undefined
   private modelContextLimitKey: string | undefined
+  private lastPromptWorktreeKey: string | null | undefined
 
   // Bounded buffer of recent SSE events with timestamps.
   // Used by waitForEvent() to scan for specific events that arrived
@@ -629,6 +641,15 @@ export class ThreadSessionRuntime {
         this.restartTypingKeepalive({ sendNow: true })
       },
     })
+  }
+
+  private consumeWorktreePromptChange(
+    worktree: WorktreeInfo | undefined,
+  ): boolean {
+    const nextKey = getWorktreePromptKey(worktree)
+    const changed = this.lastPromptWorktreeKey !== nextKey
+    this.lastPromptWorktreeKey = nextKey
+    return changed
   }
 
   // Read own state from global store
@@ -2961,15 +2982,15 @@ export class ThreadSessionRuntime {
         return fetched.topic?.trim() || undefined
       })()
 
+      const worktreeChanged = this.consumeWorktreePromptChange(worktree)
       const syntheticContext = getOpencodePromptContext({
         username: input.username,
         userId: input.userId,
         sourceMessageId: input.sourceMessageId,
         sourceThreadId: input.sourceThreadId,
         worktree,
-        channelTopic,
-        agents: availableAgents,
         currentAgent: resolvedAgent,
+        worktreeChanged,
       })
       const parts = [
         { type: 'text' as const, text: promptWithImagePaths },
@@ -2986,6 +3007,8 @@ export class ThreadSessionRuntime {
           channelId,
           guildId: this.thread.guildId,
           threadId: this.thread.id,
+          channelTopic,
+          agents: availableAgents,
         }),
         ...(resolvedAgent ? { agent: resolvedAgent } : {}),
         ...(modelField ? { model: modelField } : {}),
@@ -3626,15 +3649,15 @@ export class ThreadSessionRuntime {
       return fetched.topic?.trim() || undefined
     })()
 
+    const worktreeChanged = this.consumeWorktreePromptChange(worktree)
     const syntheticContext = getOpencodePromptContext({
       username: input.username,
       userId: input.userId,
       sourceMessageId: input.sourceMessageId,
       sourceThreadId: input.sourceThreadId,
       worktree,
-      channelTopic,
-      agents: earlyAvailableAgents,
       currentAgent: earlyAgentPreference,
+      worktreeChanged,
     })
     const parts = [
       { type: 'text' as const, text: promptWithImagePaths },
@@ -3777,6 +3800,8 @@ export class ThreadSessionRuntime {
           channelId,
           guildId: this.thread.guildId,
           threadId: this.thread.id,
+          channelTopic,
+          agents: earlyAvailableAgents,
         }),
         model: earlyModelParam,
         agent: earlyAgentPreference,

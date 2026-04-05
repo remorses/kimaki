@@ -268,17 +268,16 @@ export function getOpencodePromptContext({
   sourceMessageId,
   sourceThreadId,
   worktree,
-  channelTopic,
-  agents,
   currentAgent,
-}: {pn
+  worktreeChanged,
+}: {
+  username?: string
   userId?: string
   sourceMessageId?: string
   sourceThreadId?: string
   worktree?: WorktreeInfo
-  channelTopic?: string
-  agents?: AgentInfo[]
   currentAgent?: string
+  worktreeChanged?: boolean
 }): string {
   const userAttrs = [
     ...(username
@@ -294,25 +293,12 @@ export function getOpencodePromptContext({
       ? [` thread-id="${escapePromptAttribute(sourceThreadId)}"`]
       : []),
   ].join('')
-  const topicText = channelTopic?.trim()
-  const agentLines = [
-    ...(currentAgent ? [`Current agent: ${currentAgent}`] : []),
-    ...((agents?.length || 0) > 0
-      ? [
-          'Available agents:',
-          ...agents!.map((agent) => {
-            return `- ${agent.name}${agent.description ? `: ${agent.description}` : ''}`
-          }),
-        ]
-      : []),
-  ]
   const sections = [
     ...(userAttrs ? [`<discord-user${userAttrs} />`] : []),
-    ...(topicText ? [`<channel-topic>\n${topicText}\n</channel-topic>`] : []),
-    ...(agentLines.length > 0
-      ? [`<system-reminder>\n${agentLines.join('\n')}\n</system-reminder>`]
+    ...(currentAgent
+      ? [`<system-reminder>\nCurrent agent: ${currentAgent}\n</system-reminder>`]
       : []),
-    ...(worktree
+    ...(worktree && worktreeChanged
       ? [
           `<system-reminder>\nThis session is running inside a git worktree.\n- Worktree path: ${worktree.worktreeDirectory}\n- Branch: ${worktree.branch}\n- Main repo: ${worktree.mainRepoDirectory}\nRun checks in this worktree. Do not create another worktree by default. Ask before merging changes back to the main branch.\n</system-reminder>`,
         ]
@@ -326,6 +312,8 @@ export function getOpencodeSystemMessage({
   channelId,
   guildId,
   threadId,
+  channelTopic,
+  agents,
 }: {
   sessionId: string
   channelId?: string
@@ -333,7 +321,20 @@ export function getOpencodeSystemMessage({
   guildId?: string
   /** Discord thread ID (the thread this session runs in) */
   threadId?: string
+  channelTopic?: string
+  agents?: AgentInfo[]
 }) {
+  const topicContext = channelTopic?.trim()
+    ? `\n\n<channel-topic>\n${channelTopic.trim()}\n</channel-topic>`
+    : ''
+  const availableAgentsContext =
+    agents && agents.length > 0
+      ? `\n\nAvailable agents:\n${agents
+          .map((agent) => {
+            return `- \`${agent.name}\`${agent.description ? `: ${agent.description}` : ''}`
+          })
+          .join('\n')}`
+      : ''
   return `
 The user is reading your messages from inside Discord, via kimaki.xyz
 
@@ -346,7 +347,7 @@ This is required to distinguish essential bash calls from read-only ones in low-
 
 Your current OpenCode session ID is: ${sessionId}${channelId ? `\nYour current Discord channel ID is: ${channelId}` : ''}${threadId ? `\nYour current Discord thread ID is: ${threadId}` : ''}${guildId ? `\nYour current Discord guild ID is: ${guildId}` : ''}
 
-Per-turn Discord metadata like the current user, channel topic, worktree details, and active agent is delivered in synthetic user message parts. Use the latest synthetic parts as the current turn context.
+Per-turn Discord metadata like the current user and current agent is delivered in synthetic user message parts. Worktree reminders are emitted only when the worktree changes.
 
 ## permissions
 
@@ -442,6 +443,7 @@ Important:
 Use --agent to specify which agent to use for the session:
 
 kimaki send --channel ${channelId} --prompt "Plan the refactor of the auth module" --agent plan
+${availableAgentsContext}
 
 ## switching agents in the current session
 
@@ -672,5 +674,6 @@ Examples:
 
 
 
+${topicContext}
 `
 }
