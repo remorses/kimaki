@@ -69,7 +69,9 @@ async function executeThreadScheduledTask({
       : {}),
   }
   const embed = [{ color: 0x2b2d31, footer: { text: YAML.stringify(marker) } }]
-  const prefixedPrompt = `» **kimaki-cli:** ${payload.prompt}`
+  // Newline between prefix and prompt so leading /command detection can
+  // find the command on its own line.
+  const prefixedPrompt = `» **kimaki-cli:**\n${payload.prompt}`
 
   const postResult = await rest
     .post(Routes.channelMessages(payload.threadId), {

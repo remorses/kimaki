@@ -2779,8 +2779,10 @@ cli
             },
           ]
 
-          // Prefix the prompt so it's clear who sent it (matches /queue format)
-          const prefixedPrompt = `» **kimaki-cli:** ${prompt}`
+          // Prefix the prompt so it's clear who sent it (matches /queue format).
+          // Use a newline between prefix and prompt so leading /command
+          // detection can find the command on its own line.
+          const prefixedPrompt = `» **kimaki-cli:**\n${prompt}`
 
           await sendDiscordMessageWithOptionalAttachment({
             channelId: targetThreadId,

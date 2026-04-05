@@ -120,10 +120,10 @@ describe('extractLeadingOpencodeCommand', () => {
     `)
   })
 
-  test('kimaki-cli prefix stripped', () => {
+  test('kimaki-cli prefix on its own line', () => {
     expect(
       extractLeadingOpencodeCommand(
-        '» **kimaki-cli:** /build foo bar',
+        '» **kimaki-cli:**\n/build foo bar',
         fixtures,
       ),
     ).toMatchInlineSnapshot(`
@@ -136,9 +136,9 @@ describe('extractLeadingOpencodeCommand', () => {
     `)
   })
 
-  test('queue-style user prefix stripped', () => {
+  test('queue-style user prefix on its own line', () => {
     expect(
-      extractLeadingOpencodeCommand('» **Tommy:** /build hey', fixtures),
+      extractLeadingOpencodeCommand('» **Tommy:**\n/build hey', fixtures),
     ).toMatchInlineSnapshot(`
       {
         "command": {
@@ -149,9 +149,9 @@ describe('extractLeadingOpencodeCommand', () => {
     `)
   })
 
-  test('username containing asterisk is handled', () => {
+  test('username containing asterisk on its own line', () => {
     expect(
-      extractLeadingOpencodeCommand('» **A*B:** /build hi', fixtures),
+      extractLeadingOpencodeCommand('» **A*B:**\n/build hi', fixtures),
     ).toMatchInlineSnapshot(`
       {
         "command": {
@@ -162,15 +162,14 @@ describe('extractLeadingOpencodeCommand', () => {
     `)
   })
 
-  test('multiline args', () => {
-    expect(
-      extractLeadingOpencodeCommand('/build line1\nline2\nline3', fixtures),
-    ).toMatchInlineSnapshot(`
+  test('Context from thread wrapping still detects command', () => {
+    const wrapped =
+      'Context from thread:\nsome starter text\n\nUser request:\n/build foo'
+    expect(extractLeadingOpencodeCommand(wrapped, fixtures))
+      .toMatchInlineSnapshot(`
       {
         "command": {
-          "arguments": "line1
-      line2
-      line3",
+          "arguments": "foo",
           "name": "build",
         },
       }
@@ -183,9 +182,9 @@ describe('extractLeadingOpencodeCommand', () => {
     ).toMatchInlineSnapshot(`null`)
   })
 
-  test('no leading slash returns null', () => {
+  test('no leading slash on any line returns null', () => {
     expect(
-      extractLeadingOpencodeCommand('hello /build', fixtures),
+      extractLeadingOpencodeCommand('hello /build\nmore text', fixtures),
     ).toMatchInlineSnapshot(`null`)
   })
 
@@ -214,6 +213,32 @@ describe('extractLeadingOpencodeCommand', () => {
       {
         "command": {
           "arguments": "foo",
+          "name": "build",
+        },
+      }
+    `)
+  })
+
+  test('first matching line wins', () => {
+    const prompt = 'noise line\n/build first args\n/review second args'
+    expect(extractLeadingOpencodeCommand(prompt, fixtures))
+      .toMatchInlineSnapshot(`
+      {
+        "command": {
+          "arguments": "first args",
+          "name": "build",
+        },
+      }
+    `)
+  })
+
+  test('unknown command on one line, known on next', () => {
+    const prompt = '/unknown foo\n/build bar'
+    expect(extractLeadingOpencodeCommand(prompt, fixtures))
+      .toMatchInlineSnapshot(`
+      {
+        "command": {
+          "arguments": "bar",
           "name": "build",
         },
       }

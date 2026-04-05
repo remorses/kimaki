@@ -1,22 +1,18 @@
-// Detect a leading /commandname token in a user prompt and resolve it to a
-// registered opencode command. Mirrors the Discord slash command flow
+// Detect a /commandname token on its own line in a user prompt and resolve it
+// to a registered opencode command. Mirrors the Discord slash command flow
 // (commands/user-command.ts) so users can type `/build foo` or `/build-cmd foo`
 // in chat, via `/new-session`, through `kimaki send --prompt`, or scheduled
 // tasks and have it routed to opencode's session.command API instead of going
 // to the model as plain text.
 //
-// Prefix handling: CLI-injected messages and /queue reposts carry a
-// `» **<username>:** ` prefix before the user's content. We strip that prefix
-// before looking for the leading slash so the detection works regardless of
-// source.
+// Detection is line-based: we scan each line and return the first one whose
+// first non-whitespace token is `/<registered-command>`. This keeps the
+// detector oblivious to prefix lines (`» **kimaki-cli:**`, `Context from
+// thread:`, etc). Producers that add such prefixes must put them on their
+// own line so the user's content starts on a fresh line.
 
 import type { RegisteredUserCommand } from './store.js'
 import { store } from './store.js'
-
-// Matches `» **anything:** ` at the start of the string (CLI + /queue prefix).
-// Uses a non-greedy `[\s\S]+?` so usernames containing `*` (rare but allowed
-// in Discord display names) still match. The trailing `:** ` anchors the end.
-const USER_PREFIX_RE = /^»\s*\*\*[\s\S]+?:\*\*\s*/
 
 const DISCORD_SUFFIXES = ['-mcp-prompt', '-skill', '-cmd'] as const
 
@@ -44,10 +40,7 @@ function findRegisteredCommand({
 
   // Fall back to matching after stripping -cmd / -skill / -mcp-prompt from
   // the user's token. This lets `/build-cmd` resolve to an opencode command
-  // registered with discordCommandName `build-cmd` via its base name `build`,
-  // and also handles users typing the Discord-sanitized form of a namespaced
-  // command (e.g. `/foo-bar-cmd` → opencode name `foo:bar` whose discord name
-  // is `foo-bar-cmd`).
+  // whose base name is `build`.
   const base = stripDiscordSuffix(token)
   if (base === token) return undefined
   return registered.find((c) => {
@@ -62,27 +55,25 @@ export function extractLeadingOpencodeCommand(
   if (!prompt) return null
   if (registered.length === 0) return null
 
-  // Strip the `» **kimaki-cli:** ` / `» **Tommy:** ` prefix if present so
-  // detection works uniformly for user-typed, CLI-injected, and queued
-  // messages.
-  const withoutPrefix = prompt.replace(USER_PREFIX_RE, '')
-  const trimmed = withoutPrefix.trimStart()
-  if (!trimmed.startsWith('/')) return null
-
-  // Capture the first whitespace-delimited token after the leading slash.
-  // Rest is everything after the first whitespace run (may span newlines).
-  const match = trimmed.match(/^\/([^\s]+)(?:\s+([\s\S]*))?$/)
-  if (!match) return null
-  const [, token, rest] = match
-  if (!token) return null
-
-  const resolved = findRegisteredCommand({ token, registered })
-  if (!resolved) return null
-
-  return {
-    command: {
-      name: resolved.name,
-      arguments: (rest ?? '').trim(),
-    },
+  // Scan each line; the first line whose trimmed start is `/<token>` and
+  // resolves against registeredUserCommands wins. Args are everything after
+  // the command token on that line. Lines before and after are ignored —
+  // they're prefix (`» **name:**`) or context noise.
+  for (const line of prompt.split('\n')) {
+    const trimmed = line.trimStart()
+    if (!trimmed.startsWith('/')) continue
+    const match = trimmed.match(/^\/([^\s]+)(?:\s+(.*))?$/)
+    if (!match) continue
+    const [, token, rest] = match
+    if (!token) continue
+    const resolved = findRegisteredCommand({ token, registered })
+    if (!resolved) continue
+    return {
+      command: {
+        name: resolved.name,
+        arguments: (rest ?? '').trim(),
+      },
+    }
   }
+  return null
 }
