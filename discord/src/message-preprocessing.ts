@@ -21,6 +21,7 @@ import { isVoiceAttachment } from './voice-attachment.js'
 import { initializeOpencodeForDirectory } from './opencode.js'
 import { getCompactSessionContext, getLastSessionId } from './markdown.js'
 import { getThreadSession } from './database.js'
+import { extractLeadingOpencodeCommand } from './opencode-command-detection.js'
 import * as errore from 'errore'
 import { createLogger, LogPrefix } from './logger.js'
 import { notifyError } from './sentry.js'
@@ -310,7 +311,15 @@ export async function preprocessNewSessionMessage({
       )
       return null
     })
-  if (starterMessage && starterMessage.content !== message.content) {
+  // Skip "Context from thread" wrapping when the user message is a leading
+  // /command invocation — otherwise the wrapping pushes the command away from
+  // the start and downstream detection in enqueueIncoming can't find it.
+  const isLeadingCommand = extractLeadingOpencodeCommand(prompt) !== null
+  if (
+    !isLeadingCommand &&
+    starterMessage &&
+    starterMessage.content !== message.content
+  ) {
     const starterTextAttachments = await getTextAttachments(starterMessage)
     const starterContent = resolveMentions(starterMessage)
     const starterText = starterTextAttachments

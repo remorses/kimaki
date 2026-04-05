@@ -130,6 +130,7 @@ import { notifyError } from '../sentry.js'
 import { createDebouncedProcessFlush } from '../debounced-process-flush.js'
 import { cancelHtmlActionsForThread } from '../html-actions.js'
 import { createDebouncedTimeout } from '../debounce-timeout.js'
+import { extractLeadingOpencodeCommand } from '../opencode-command-detection.js'
 
 const logger = createLogger(LogPrefix.SESSION)
 const discordLogger = createLogger(LogPrefix.DISCORD)
@@ -492,6 +493,22 @@ export type IngressInput = {
    * runtime stays platform-agnostic — it just awaits the callback.
    */
   preprocess?: () => Promise<PreprocessResult>
+}
+
+// Rewrite `{ prompt: "/build foo" }` → `{ prompt: "", command: { name, arguments }, mode: "local-queue" }`
+// when the prompt's leading token matches a registered opencode command.
+// Skip if a command is already set or there's no prompt to inspect.
+function maybeConvertLeadingCommand(input: IngressInput): IngressInput {
+  if (input.command) return input
+  if (!input.prompt) return input
+  const extracted = extractLeadingOpencodeCommand(input.prompt)
+  if (!extracted) return input
+  return {
+    ...input,
+    prompt: '',
+    command: extracted.command,
+    mode: 'local-queue',
+  }
 }
 
 type AbortRunOutcome = {
@@ -3089,6 +3106,12 @@ export class ThreadSessionRuntime {
     if (input.preprocess) {
       return this.enqueueWithPreprocess(input)
     }
+    // If the prompt starts with `/cmdname ...` (and no explicit command is
+    // already set), rewrite it into a command invocation so it goes through
+    // opencode's session.command API instead of being sent to the model as
+    // plain text. Covers Discord chat messages, /new-session, /queue, CLI
+    // `kimaki send --prompt`, and scheduled tasks — all funnel through here.
+    input = maybeConvertLeadingCommand(input)
     if (input.mode === 'local-queue') {
       return this.enqueueViaLocalQueue(input)
     }
@@ -3131,7 +3154,7 @@ export class ThreadSessionRuntime {
           resolveOuter({ queued: false })
           return
         }
-        const resolvedInput: IngressInput = {
+        const resolvedInput: IngressInput = maybeConvertLeadingCommand({
           ...input,
           prompt: result.prompt,
           images: result.images,
@@ -3140,7 +3163,7 @@ export class ThreadSessionRuntime {
           // no explicit agent was already set (CLI --agent flag wins).
           agent: input.agent || result.agent,
           preprocess: undefined,
-        }
+        })
 
         const hasPromptText = resolvedInput.prompt.trim().length > 0
         const hasImages = (resolvedInput.images?.length || 0) > 0
