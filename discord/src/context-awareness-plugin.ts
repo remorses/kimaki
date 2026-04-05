@@ -2,7 +2,7 @@
 // - Git branch / detached HEAD changes
 // - Working directory (pwd) changes (e.g. after /new-worktree mid-session)
 // - MEMORY.md table of contents on first message
-// - Idle time gap detection with timestamps
+// - MEMORY.md reminder after a large assistant reply
 // - Onboarding tutorial instructions (when TUTORIAL_WELCOME_TEXT detected)
 //
 // Synthetic parts are hidden from the TUI but sent to the model, keeping it
@@ -50,8 +50,8 @@ type GitState = {
 // All per-session mutable state in one place. One Map entry, one delete.
 type SessionState = {
   gitState: GitState | undefined
-  lastMessageTime: number | undefined
   memoryInjected: boolean
+  lastMemoryReminderAssistantMessageId: string | undefined
   tutorialInjected: boolean
   // Last directory observed via session.get(). Refreshed on each real user
   // message so directory-change reminders compare the latest observed session
@@ -64,8 +64,8 @@ type SessionState = {
 function createSessionState(): SessionState {
   return {
     gitState: undefined,
-    lastMessageTime: undefined,
     memoryInjected: false,
+    lastMemoryReminderAssistantMessageId: undefined,
     tutorialInjected: false,
     resolvedDirectory: undefined,
     announcedDirectory: undefined,
@@ -76,6 +76,10 @@ function createSessionState(): SessionState {
 type PluginClient = {
   session: {
     get: (params: { path: { id: string } }) => Promise<{ data?: { directory?: string } }>
+    messages: (params: {
+      path: { id: string }
+      query?: { directory?: string; limit?: number }
+    }) => Promise<{ data?: Array<{ info: AssistantMessageInfo }> }>
   }
 }
 
@@ -128,43 +132,55 @@ export function shouldInjectPwd({
   }
 }
 
-const TEN_MINUTES = 10 * 60 * 1000
+const MEMORY_REMINDER_OUTPUT_TOKENS = 12_000
 
-export function shouldInjectTimeGap({
-  lastMessageTime,
-  now,
+type AssistantTokenUsage = {
+  input: number
+  output: number
+  reasoning: number
+  cache: { read: number; write: number }
+}
+
+type AssistantMessageInfo = {
+  id: string
+  role: string
+  time?: { completed?: number; created?: number }
+  tokens?: AssistantTokenUsage
+}
+
+function getOutputTokenTotal(tokens: AssistantTokenUsage): number {
+  return Math.max(0, tokens.output + tokens.reasoning)
+}
+
+export function shouldInjectMemoryReminderFromLatestAssistant({
+  lastMemoryReminderAssistantMessageId,
+  latestAssistantMessage,
+  threshold = MEMORY_REMINDER_OUTPUT_TOKENS,
 }: {
-  lastMessageTime: number | undefined
-  now: number
-}): { inject: false } | { inject: true; elapsedStr: string; utcStr: string; localStr: string; localTz: string } {
-  if (!lastMessageTime) {
+  lastMemoryReminderAssistantMessageId?: string
+  latestAssistantMessage: AssistantMessageInfo | undefined
+  threshold?: number
+}): { inject: false } | { inject: true; assistantMessageId: string } {
+  if (!latestAssistantMessage) {
     return { inject: false }
   }
-  const elapsed = now - lastMessageTime
-  if (elapsed < TEN_MINUTES) {
+  if (latestAssistantMessage.role !== 'assistant') {
     return { inject: false }
   }
-  const totalMinutes = Math.floor(elapsed / 60_000)
-  const hours = Math.floor(totalMinutes / 60)
-  const minutes = totalMinutes % 60
-  const elapsedStr = hours > 0 ? `${hours}h ${minutes}m` : `${totalMinutes}m`
-
-  const utcStr = new Date(now)
-    .toISOString()
-    .replace('T', ' ')
-    .replace(/\.\d+Z$/, ' UTC')
-  const localTz = Intl.DateTimeFormat().resolvedOptions().timeZone
-  const localStr = new Date(now).toLocaleString('en-US', {
-    timeZone: localTz,
-    year: 'numeric',
-    month: '2-digit',
-    day: '2-digit',
-    hour: '2-digit',
-    minute: '2-digit',
-    hour12: false,
-  })
-
-  return { inject: true, elapsedStr, utcStr, localStr, localTz }
+  if (typeof latestAssistantMessage.time?.completed !== 'number') {
+    return { inject: false }
+  }
+  if (!latestAssistantMessage.tokens) {
+    return { inject: false }
+  }
+  if (lastMemoryReminderAssistantMessageId === latestAssistantMessage.id) {
+    return { inject: false }
+  }
+  const outputTokens = getOutputTokenTotal(latestAssistantMessage.tokens)
+  if (outputTokens < threshold) {
+    return { inject: false }
+  }
+  return { inject: true, assistantMessageId: latestAssistantMessage.id }
 }
 
 export function shouldInjectTutorial({
@@ -331,7 +347,6 @@ const contextAwarenessPlugin: Plugin = async ({ directory, client }) => {
           // -- Find first non-synthetic user text part --
           // All remaining injections (branch, pwd, memory, time gap) only
           // apply to real user messages, not empty or synthetic-only messages.
-          const now = Date.now()
           const first = output.parts.find((part) => {
             if (part.type !== 'text') {
               return true
@@ -343,6 +358,22 @@ const contextAwarenessPlugin: Plugin = async ({ directory, client }) => {
           }
 
           const messageID = first.messageID
+
+          const latestAssistantMessageResult = await errore.tryAsync(() => {
+            return client.session.messages({
+              path: { id: sessionID },
+              query: { directory, limit: 20 },
+            })
+          })
+          const latestAssistantMessage =
+            latestAssistantMessageResult instanceof Error
+              ? undefined
+              : [...(latestAssistantMessageResult.data || [])]
+                  .reverse()
+                  .find((entry) => {
+                    return entry.info.role === 'assistant'
+                  })
+                  ?.info
 
           // -- Resolve session working directory --
           const sessionDirectory = await resolveSessionDirectory({
@@ -402,31 +433,22 @@ const contextAwarenessPlugin: Plugin = async ({ directory, client }) => {
             }
           }
 
-          // -- Time since last message --
-          const timeGapResult = shouldInjectTimeGap({
-            lastMessageTime: state.lastMessageTime,
-            now,
+          const memoryReminder = shouldInjectMemoryReminderFromLatestAssistant({
+            lastMemoryReminderAssistantMessageId:
+              state.lastMemoryReminderAssistantMessageId,
+            latestAssistantMessage,
           })
-          state.lastMessageTime = now
-
-          if (timeGapResult.inject) {
+          if (memoryReminder.inject) {
             output.parts.push({
               id: `prt_${crypto.randomUUID()}`,
               sessionID,
               messageID,
               type: 'text' as const,
-              text: `[${timeGapResult.elapsedStr} since last message | UTC: ${timeGapResult.utcStr} | Local (${timeGapResult.localTz}): ${timeGapResult.localStr}]`,
+              text: '<system-reminder>The previous assistant message was large. If the previous conversation had important learnings, tips, insights that will help prevent the same mistakes, or context worth preserving, update MEMORY.md before starting the new task.</system-reminder>',
               synthetic: true,
             })
-
-            output.parts.push({
-              id: `prt_${crypto.randomUUID()}`,
-              sessionID,
-              messageID,
-              type: 'text' as const,
-              text: '<system-reminder>Long gap since last message. If the previous conversation had important learnings, tips, insights that will help prevent same mistakes, or context worth preserving, update MEMORY.md before starting the new task.</system-reminder>',
-              synthetic: true,
-            })
+            state.lastMemoryReminderAssistantMessageId =
+              memoryReminder.assistantMessageId
           }
 
           // -- Branch injection (last synthetic part) --
@@ -459,7 +481,7 @@ const contextAwarenessPlugin: Plugin = async ({ directory, client }) => {
     },
 
     // Clean up per-session state when sessions are deleted.
-    // Single delete instead of 5 parallel Map/Set deletes.
+    // Single delete instead of parallel Map/Set deletes.
     event: async ({ event }) => {
       const cleanupResult = await errore.tryAsync({
         try: async () => {
