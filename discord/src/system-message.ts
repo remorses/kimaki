@@ -1,6 +1,8 @@
-// OpenCode system prompt generator.
-// Creates the system message injected into every OpenCode session,
-// including Discord-specific formatting rules, diff commands, and permissions info.
+// OpenCode session prompt helpers.
+// Creates the session-stable system message injected into every OpenCode
+// session, plus per-turn synthetic context for Discord/user/worktree metadata.
+// Keep per-message data out of the system prompt so prompt caching can reuse
+// the same session prefix across turns.
 
 import { getDataDir } from './config.js'
 import { store } from './store.js'
@@ -252,17 +254,78 @@ export type AgentInfo = {
   description?: string
 }
 
+function escapePromptAttribute(value: string): string {
+  return value
+    .replaceAll('&', '&amp;')
+    .replaceAll('"', '&quot;')
+    .replaceAll('<', '&lt;')
+    .replaceAll('>', '&gt;')
+}
+
+export function getOpencodePromptContext({
+  username,
+  userId,
+  sourceMessageId,
+  sourceThreadId,
+  worktree,
+  channelTopic,
+  agents,
+  currentAgent,
+}: {pn
+  userId?: string
+  sourceMessageId?: string
+  sourceThreadId?: string
+  worktree?: WorktreeInfo
+  channelTopic?: string
+  agents?: AgentInfo[]
+  currentAgent?: string
+}): string {
+  const userAttrs = [
+    ...(username
+      ? [` name="${escapePromptAttribute(username)}"`]
+      : []),
+    ...(userId
+      ? [` user-id="${escapePromptAttribute(userId)}"`]
+      : []),
+    ...(sourceMessageId
+      ? [` message-id="${escapePromptAttribute(sourceMessageId)}"`]
+      : []),
+    ...(sourceThreadId
+      ? [` thread-id="${escapePromptAttribute(sourceThreadId)}"`]
+      : []),
+  ].join('')
+  const topicText = channelTopic?.trim()
+  const agentLines = [
+    ...(currentAgent ? [`Current agent: ${currentAgent}`] : []),
+    ...((agents?.length || 0) > 0
+      ? [
+          'Available agents:',
+          ...agents!.map((agent) => {
+            return `- ${agent.name}${agent.description ? `: ${agent.description}` : ''}`
+          }),
+        ]
+      : []),
+  ]
+  const sections = [
+    ...(userAttrs ? [`<discord-user${userAttrs} />`] : []),
+    ...(topicText ? [`<channel-topic>\n${topicText}\n</channel-topic>`] : []),
+    ...(agentLines.length > 0
+      ? [`<system-reminder>\n${agentLines.join('\n')}\n</system-reminder>`]
+      : []),
+    ...(worktree
+      ? [
+          `<system-reminder>\nThis session is running inside a git worktree.\n- Worktree path: ${worktree.worktreeDirectory}\n- Branch: ${worktree.branch}\n- Main repo: ${worktree.mainRepoDirectory}\nRun checks in this worktree. Do not create another worktree by default. Ask before merging changes back to the main branch.\n</system-reminder>`,
+        ]
+      : []),
+  ]
+  return sections.join('\n\n')
+}
+
 export function getOpencodeSystemMessage({
   sessionId,
   channelId,
   guildId,
   threadId,
-  worktree,
-  channelTopic,
-  username,
-  userId,
-  agents,
-  currentAgent,
 }: {
   sessionId: string
   channelId?: string
@@ -270,21 +333,7 @@ export function getOpencodeSystemMessage({
   guildId?: string
   /** Discord thread ID (the thread this session runs in) */
   threadId?: string
-  worktree?: WorktreeInfo
-  channelTopic?: string
-  /** Current Discord username */
-  username?: string
-  /** Current Discord user ID, used in example commands */
-  userId?: string
-  /** Available agents from OpenCode */
-  agents?: AgentInfo[]
-  /** Currently active agent name for this session */
-  currentAgent?: string
 }) {
-  const agentFlag = currentAgent ? ` --agent ${currentAgent}` : ''
-  const topicContext = channelTopic?.trim()
-    ? `\n\n<channel-topic>\n${channelTopic.trim()}\n</channel-topic>`
-    : ''
   return `
 The user is reading your messages from inside Discord, via kimaki.xyz
 
@@ -295,7 +344,9 @@ Set \`hasSideEffect: true\` for any command that writes files, modifies repo sta
 Set \`hasSideEffect: false\` for read-only commands (e.g. ls, tree, cat, rg, grep, git status, git diff, pwd, whoami, etc).
 This is required to distinguish essential bash calls from read-only ones in low-verbosity mode.
 
-Your current OpenCode session ID is: ${sessionId}${channelId ? `\nYour current Discord channel ID is: ${channelId}` : ''}${threadId ? `\nYour current Discord thread ID is: ${threadId}` : ''}${guildId ? `\nYour current Discord guild ID is: ${guildId}` : ''}${userId ? `\nCurrent Discord user ID is: ${userId} (mention with <@${userId}>)` : ''}
+Your current OpenCode session ID is: ${sessionId}${channelId ? `\nYour current Discord channel ID is: ${channelId}` : ''}${threadId ? `\nYour current Discord thread ID is: ${threadId}` : ''}${guildId ? `\nYour current Discord guild ID is: ${guildId}` : ''}
+
+Per-turn Discord metadata like the current user, channel topic, worktree details, and active agent is delivered in synthetic user message parts. Use the latest synthetic parts as the current turn context.
 
 ## permissions
 
@@ -352,7 +403,7 @@ ${
 
 To start a new thread/session in this channel pro-grammatically, run:
 
-kimaki send --channel ${channelId} --prompt "your prompt here"${agentFlag}${username ? ` --user "${username}"` : ''}
+kimaki send --channel ${channelId} --prompt "your prompt here"
 
 You can use this to "spawn" parallel helper sessions like teammates: start new threads with focused prompts, then come back and collect the results.
 
@@ -374,9 +425,13 @@ Use --notify-only to create a notification thread without starting an AI session
 
 kimaki send --channel ${channelId} --prompt "User cancelled subscription" --notify-only
 
+Use --user to add a specific Discord user to the new thread:
+
+kimaki send --channel ${channelId} --prompt "Review the latest CI failure" --user "username"
+
 Use --worktree to create a git worktree for the session (ONLY when the user explicitly asks for a worktree):
 
-kimaki send --channel ${channelId} --prompt "Add dark mode support" --worktree dark-mode${agentFlag}${username ? ` --user "${username}"` : ''}
+kimaki send --channel ${channelId} --prompt "Add dark mode support" --worktree dark-mode
 
 Important:
 - NEVER use \`--worktree\` unless the user explicitly requests a worktree. Most tasks should use normal threads without worktrees.
@@ -386,11 +441,8 @@ Important:
 
 Use --agent to specify which agent to use for the session:
 
-kimaki send --channel ${channelId} --prompt "Plan the refactor of the auth module" --agent plan${username ? ` --user "${username}"` : ''}
-${agents && agents.length > 0 ? `
-Available agents:
-${agents.map((a) => { return `- \`${a.name}\`${a.name === currentAgent ? ' (current)' : ''}${a.description ? `: ${a.description}` : ''}` }).join('\n')}
-` : ''}
+kimaki send --channel ${channelId} --prompt "Plan the refactor of the auth module" --agent plan
+
 ## switching agents in the current session
 
 The user can switch the active agent mid-session using the Discord slash command \`/<agentname>-agent\`. For example if you are in plan mode and the user asks you to edit files, tell them to run \`/build-agent\` to switch to the build agent first.
@@ -420,7 +472,7 @@ Notification prompts must be very detailed. The user receiving the notification 
 Notification strategy for scheduled tasks:
 - Prefer selective mentions in the prompt instead of relying on broad thread notifications.
 - If a task needs user attention, include this instruction in the prompt: "mention @username when task requires user review or notification".
-- Replace \`@username\` with the actual user from the current thread context${username ? ` (in this thread: @${username})` : ''}.
+- Replace \`@username\` with the relevant user from the current thread context.
 - Without \`--user\`, there is no guaranteed direct user mention path; task output should mention users only when relevant.
 - With \`--user\`, the user is added to the thread and may receive more frequent thread-level notifications.
 
@@ -434,13 +486,13 @@ kimaki task delete <id>
 
 Use case patterns:
 - Reminder flows: create deadline reminders in this channel with one-time \`--send-at\`; mention only if action is required.
-- Proactive reminders: when you encounter time-sensitive information during your work (e.g. creating an API key that expires in 90 days, a certificate with an expiration date, a trial period ending, a deadline mentioned in code comments), proactively schedule a \`--notify-only\` reminder before the expiration so the user gets notified in time. For example, if you generate an API key expiring on 2026-06-01, schedule a reminder a few days before: \`kimaki send --channel ${channelId} --prompt "Reminder: <@${userId || 'USER_ID'}> the API key created on 2026-03-01 expires on 2026-06-01. Renew it before it breaks production." --send-at "2026-05-28T09:00:00Z" --notify-only\`. Always tell the user you scheduled the reminder so they know.
-- Weekly QA: schedule "run full test suite, inspect failures, post summary, and mention ${username ? `@${username}` : '@username'} only when failures require review".
+- Proactive reminders: when you encounter time-sensitive information during your work (e.g. creating an API key that expires in 90 days, a certificate with an expiration date, a trial period ending, a deadline mentioned in code comments), proactively schedule a \`--notify-only\` reminder before the expiration so the user gets notified in time. For example, if you generate an API key expiring on 2026-06-01, schedule a reminder a few days before: \`kimaki send --channel ${channelId} --prompt "Reminder: <@USER_ID> the API key created on 2026-03-01 expires on 2026-06-01. Renew it before it breaks production." --send-at "2026-05-28T09:00:00Z" --notify-only\`. Always tell the user you scheduled the reminder so they know.
+- Weekly QA: schedule "run full test suite, inspect failures, post summary, and mention @username only when failures require review".
 - Weekly benchmark automation: schedule a benchmark prompt that runs model evals, writes JSON outputs in the repo, commits results, and mentions only for regressions.
 - Recurring maintenance: use cron \`--send-at\` for repetitive tasks like rotating secrets, checking dependency updates, running security audits, or cleaning up stale branches. Example: \`--send-at "0 9 1 * *"\` to run on the 1st of every month.
 - Thread reminders: when the user says "remind me about this in 2 hours" (or any duration), use \`--send-at\` with \`--thread\` to resurface the current thread. Compute the future UTC time and send a mention so Discord shows a notification:
 
-kimaki send --session ${sessionId} --prompt "Reminder: <@${userId || 'USER_ID'}> you asked to be reminded about this thread." --send-at "<future_UTC_time>" --notify-only
+kimaki send --session ${sessionId} --prompt "Reminder: <@USER_ID> you asked to be reminded about this thread." --send-at "<future_UTC_time>" --notify-only
 
 Replace \`<future_UTC_time>\` with the computed UTC ISO timestamp. The \`--notify-only\` flag creates just a notification message without starting a new AI session. The \`<@userId>\` mention ensures the user gets a Discord notification.
 
@@ -455,7 +507,7 @@ ONLY create worktrees when the user explicitly asks for one. Never proactively u
 When the user asks to "create a worktree" or "make a worktree", they mean you should use the kimaki CLI to create it. Do NOT use raw \`git worktree add\` commands. Instead use:
 
 \`\`\`bash
-kimaki send --channel ${channelId} --prompt "your task description" --worktree worktree-name${agentFlag}${username ? ` --user "${username}"` : ''}
+kimaki send --channel ${channelId} --prompt "your task description" --worktree worktree-name
 \`\`\`
 
 This creates a new Discord thread with an isolated git worktree and starts a session in it. The worktree name should be kebab-case and descriptive of the task.
@@ -473,7 +525,7 @@ This is useful for automation (cron jobs, GitHub webhooks, n8n, etc.)
 When you are approaching the **context window limit** or the user explicitly asks to **handoff to a new thread**, use the \`kimaki send\` command to start a fresh session with context:
 
 \`\`\`bash
-kimaki send --channel ${channelId} --prompt "Continuing from previous session: <summary of current task and state>"${agentFlag}${username ? ` --user "${username}"` : ''}
+kimaki send --channel ${channelId} --prompt "Continuing from previous session: <summary of current task and state>"
 \`\`\`
 
 The command automatically handles long prompts (over 2000 chars) by sending them as file attachments.
@@ -571,32 +623,7 @@ Use \`--wait\` when you need to:
 - **Chain sessions sequentially** where the next depends on the previous output
 `
     : ''
-}${
-    worktree
-      ? `
-## worktree
-
-This session is running inside a git worktree.
-- **Worktree path:** \`${worktree.worktreeDirectory}\`
-- **Branch:** \`${worktree.branch}\`
-- **Main repo:** \`${worktree.mainRepoDirectory}\`
-
-This thread already has a worktree. Do not create another worktree by default.
-If the user asks for checks/validation, run them in this existing worktree.
-
-Before finishing a task, ask the user if they want to merge changes back to the main branch.
-
-To merge (without leaving the worktree):
-\`\`\`bash
-# Get the default branch name
-DEFAULT_BRANCH=$(git -C ${worktree.mainRepoDirectory} symbolic-ref refs/remotes/origin/HEAD 2>/dev/null | sed 's@^refs/remotes/origin/@@' || echo "main")
-
-# Merge worktree branch into main
-git -C ${worktree.mainRepoDirectory} checkout $DEFAULT_BRANCH && git -C ${worktree.mainRepoDirectory} merge ${worktree.branch}
-\`\`\`
-`
-      : ''
-  }
+}
 ${store.getState().critiqueEnabled ? getCritiqueInstructions(sessionId) : ''}
 ${KIMAKI_TUNNEL_INSTRUCTIONS}
 ## markdown formatting
@@ -645,6 +672,5 @@ Examples:
 
 
 
-${topicContext}
 `
 }

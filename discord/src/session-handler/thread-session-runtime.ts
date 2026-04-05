@@ -77,6 +77,7 @@ import {
   ensureSessionPreferencesSnapshot,
 } from '../commands/model.js'
 import {
+  getOpencodePromptContext,
   getOpencodeSystemMessage,
   type AgentInfo,
   type WorktreeInfo,
@@ -2930,19 +2931,7 @@ export class ThreadSessionRuntime {
         return `${input.prompt}\n\n**The following images are already included in this message as inline content (do not use Read tool on these):**\n${imageList}`
       })()
 
-      let syntheticContext = ''
-      if (input.username) {
-        const msgAttr = input.sourceMessageId ? ` message-id="${input.sourceMessageId}"` : ''
-        const thrAttr = input.sourceThreadId ? ` thread-id="${input.sourceThreadId}"` : ''
-        syntheticContext += `<discord-user name="${input.username}"${msgAttr}${thrAttr} />`
-      }
-      const parts = [
-        { type: 'text' as const, text: promptWithImagePaths },
-        { type: 'text' as const, text: syntheticContext, synthetic: true },
-        ...images,
-      ]
-
-      // ── Worktree + channel topic for system message ─────────
+      // ── Worktree + channel topic for per-turn prompt context ──
       const worktreeInfo = await getThreadWorktree(this.thread.id)
       const worktree: WorktreeInfo | undefined =
         worktreeInfo?.status === 'ready' && worktreeInfo.worktree_directory
@@ -2972,6 +2961,22 @@ export class ThreadSessionRuntime {
         return fetched.topic?.trim() || undefined
       })()
 
+      const syntheticContext = getOpencodePromptContext({
+        username: input.username,
+        userId: input.userId,
+        sourceMessageId: input.sourceMessageId,
+        sourceThreadId: input.sourceThreadId,
+        worktree,
+        channelTopic,
+        agents: availableAgents,
+        currentAgent: resolvedAgent,
+      })
+      const parts = [
+        { type: 'text' as const, text: promptWithImagePaths },
+        { type: 'text' as const, text: syntheticContext, synthetic: true },
+        ...images,
+      ]
+
       const request = {
         sessionID: session.id,
         directory: this.sdkDirectory,
@@ -2981,12 +2986,6 @@ export class ThreadSessionRuntime {
           channelId,
           guildId: this.thread.guildId,
           threadId: this.thread.id,
-          worktree,
-          channelTopic,
-          username: input.username,
-          userId: input.userId,
-          agents: availableAgents,
-          currentAgent: resolvedAgent,
         }),
         ...(resolvedAgent ? { agent: resolvedAgent } : {}),
         ...(modelField ? { model: modelField } : {}),
@@ -3597,19 +3596,7 @@ export class ThreadSessionRuntime {
       return `${input.prompt}\n\n**The following images are already included in this message as inline content (do not use Read tool on these):**\n${imageList}`
     })()
 
-    let syntheticContext = ''
-    if (input.username) {
-      const msgAttr = input.sourceMessageId ? ` message-id="${input.sourceMessageId}"` : ''
-      const thrAttr = input.sourceThreadId ? ` thread-id="${input.sourceThreadId}"` : ''
-      syntheticContext += `<discord-user name="${input.username}"${msgAttr}${thrAttr} />`
-    }
-    const parts = [
-      { type: 'text' as const, text: promptWithImagePaths },
-      { type: 'text' as const, text: syntheticContext, synthetic: true },
-      ...images,
-    ]
-
-    // ── Worktree info for system message ──────────────────────
+    // ── Worktree info for per-turn prompt context ─────────────
     const worktreeInfo = await getThreadWorktree(this.thread.id)
     const worktree: WorktreeInfo | undefined =
       worktreeInfo?.status === 'ready' && worktreeInfo.worktree_directory
@@ -3638,6 +3625,22 @@ export class ThreadSessionRuntime {
       }
       return fetched.topic?.trim() || undefined
     })()
+
+    const syntheticContext = getOpencodePromptContext({
+      username: input.username,
+      userId: input.userId,
+      sourceMessageId: input.sourceMessageId,
+      sourceThreadId: input.sourceThreadId,
+      worktree,
+      channelTopic,
+      agents: earlyAvailableAgents,
+      currentAgent: earlyAgentPreference,
+    })
+    const parts = [
+      { type: 'text' as const, text: promptWithImagePaths },
+      { type: 'text' as const, text: syntheticContext, synthetic: true },
+      ...images,
+    ]
 
     const variantField = earlyThinkingValue
       ? { variant: earlyThinkingValue }
@@ -3774,12 +3777,6 @@ export class ThreadSessionRuntime {
           channelId,
           guildId: this.thread.guildId,
           threadId: this.thread.id,
-          worktree,
-          channelTopic,
-          username: input.username,
-          userId: input.userId,
-          agents: earlyAvailableAgents,
-          currentAgent: earlyAgentPreference,
         }),
         model: earlyModelParam,
         agent: earlyAgentPreference,

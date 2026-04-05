@@ -101,7 +101,7 @@ function createDeterministicMatchers(): DeterministicMatcher[] {
     when: {
       lastMessageRole: 'user',
       latestUserTextIncludes: 'Reply with exactly: system-context-check',
-      rawPromptIncludes: `Current Discord user ID is: ${TEST_USER_ID}`,
+      promptTextIncludes: `<discord-user name="agent-model-tester" user-id="${TEST_USER_ID}"`,
     },
     then: {
       parts: [
