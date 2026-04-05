@@ -429,6 +429,8 @@ the plugin does NOT receive `KIMAKI_BOT_TOKEN`. discord REST operations (user li
 
 when adding new bot-side config that the plugin needs, add it as a `KIMAKI_*` env var in `opencode.ts` spawn env and read `process.env.KIMAKI_*` in the plugin. never import config.ts getters in the plugin.
 
+**NEVER use `console.log`, `console.error`, or any `console.*` in plugin code.** opencode captures plugin stdout/stderr and it pollutes the opencode server output, breaking structured logging. plugins must be silent — fail gracefully and return null/undefined on errors instead of logging.
+
 ## skills folder
 
 skills is a symlink to discord/skills. this is a folder of skills for kimaki. loaded by all kimaki users. some skills are synced from github repos. see discord/scripts/sync-skills.ts. so never manually update them. instead if need to updaste them start kimaki threads on those project, found via kimaki cli.
