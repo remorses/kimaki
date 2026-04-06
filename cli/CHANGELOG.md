@@ -1,5 +1,22 @@
 # Changelog
 
+## 0.4.91
+
+1. **New `--cwd` flag for `kimaki send`** — start a session using an existing git worktree directory instead of the main project directory:
+   ```bash
+   kimaki send --channel <id> --prompt "task" --cwd /path/to/worktree
+   kimaki send --channel <id> --prompt "task" --cwd /path/to/worktree --send-at "2026-04-07T09:00:00Z"
+   ```
+   The path is validated against `git worktree list` to ensure it belongs to the project. If `--cwd` points to the main project directory it is silently ignored.
+
+2. **Discord reply context in prompts** — when you reply to a Discord message in a session thread, the agent now sees what message you replied to as part of the turn context. Useful for referencing earlier responses without quoting them manually.
+
+3. **Fixed queued prompts being dropped after an interrupted session** — when OpenCode aborted a running turn (e.g. a long tool call), follow-up messages queued via `/queue` or the bot's queue mechanism were silently discarded or sent to the wrong model. The interrupt plugin now replays the original queued message with its full prompt parts, agent, and model context after abort.
+
+4. **Fixed external sync session discovery** — the external sync poller reverted to per-directory session listing which reliably finds active sessions. The previous global endpoint caused sync to miss sessions and show stale state in linked channels.
+
+5. **Removed automatic Kimaki Discord role management** — the bot no longer auto-creates or repositions a "Kimaki" role in your server on startup. Role management is left to server admins.
+
 ## 0.4.90
 
 1. **Fixed `/btw` forked sessions continuing the parent task** — the forked thread now only answers the side question and does not resume or reference whatever the original session was working on. The prompt is wrapped with explicit framing so the model stays focused on the question.
