@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.4.92
+
+1. **Fixed `/command-cmd` prompts being sent to the model when the bot starts up** — when using `kimaki send --prompt "/hello-test-cmd"` (or any `/commandname-cmd` prompt), the command was routed as plain text to the model instead of being executed via `session.command`. This happened because the registered commands list is empty during the gateway startup race (before `backgroundInit` completes). The detector now falls back to suffix-stripping (`-cmd`, `-skill`, `-mcp-prompt`) when the list is empty, so commands are correctly routed regardless of startup timing. Fixes [#97](https://github.com/remorses/kimaki/issues/97).
+
+2. **Footer truncates long folder and branch names** — project directory names and branch names longer than 15 characters are now capped with a `…` suffix so the footer line stays compact in Discord.
+
+3. **Subagent sessions excluded from external sync** — helper task sessions (whose title ends with `subagent)`) no longer create or update mirrored Discord threads in external sync, reducing noise.
+
 ## 0.4.91
 
 1. **New `--cwd` flag for `kimaki send`** — start a session using an existing git worktree directory instead of the main project directory:
