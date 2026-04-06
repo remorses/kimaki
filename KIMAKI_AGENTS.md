@@ -429,6 +429,8 @@ when adding new bot-side config that the plugin needs, add it as a `KIMAKI_*` en
 
 **NEVER use `console.log`, `console.error`, or any `console.*` in plugin code.** opencode captures plugin stdout/stderr and it pollutes the opencode server output, breaking structured logging. plugins must be silent — fail gracefully and return null/undefined on errors instead of logging.
 
+OpenCode plugin files must also avoid importing `cli/src/logger.ts`. That logger pulls in `@clack/prompts` / `picocolors`, which can fail under the plugin loader's ESM/CJS interop. For plugin code, use a separate plugin-safe logger module that only appends to the kimaki log file and never writes to stdout/stderr.
+
 ## skills folder
 
 skills is a symlink to cli/skills. this is a folder of skills for kimaki. loaded by all kimaki users. some skills are synced from github repos. see cli/scripts/sync-skills.ts. so never manually update them. instead if need to updaste them start kimaki threads on those project, found via kimaki cli.

@@ -22,11 +22,10 @@ import fs from 'node:fs'
 import path from 'node:path'
 import * as errore from 'errore'
 import {
-  createLogger,
-  formatErrorWithStack,
-  LogPrefix,
-  setLogFilePath,
-} from './logger.js'
+  createPluginLogger,
+  formatPluginErrorWithStack,
+  setPluginLogFilePath,
+} from './plugin-logger.js'
 import { setDataDir } from './config.js'
 import { initSentry, notifyError } from './sentry.js'
 import { execAsync } from './worktrees.js'
@@ -36,7 +35,7 @@ import {
   TUTORIAL_WELCOME_TEXT,
 } from './onboarding-tutorial.js'
 
-const logger = createLogger(LogPrefix.OPENCODE)
+const logger = createPluginLogger('OPENCODE')
 
 // ── Types ────────────────────────────────────────────────────────
 
@@ -300,7 +299,7 @@ const contextAwarenessPlugin: Plugin = async ({ directory, client }) => {
   const dataDir = process.env.KIMAKI_DATA_DIR
   if (dataDir) {
     setDataDir(dataDir)
-    setLogFilePath(dataDir)
+    setPluginLogFilePath(dataDir)
   }
 
   // Single Map for all per-session state. One entry per session, one
@@ -474,7 +473,7 @@ const contextAwarenessPlugin: Plugin = async ({ directory, client }) => {
       })
       if (hookResult instanceof Error) {
         logger.warn(
-          `[context-awareness-plugin] ${formatErrorWithStack(hookResult)}`,
+          `[context-awareness-plugin] ${formatPluginErrorWithStack(hookResult)}`,
         )
         void notifyError(hookResult, 'context-awareness plugin chat.message hook failed')
       }
@@ -500,7 +499,7 @@ const contextAwarenessPlugin: Plugin = async ({ directory, client }) => {
       })
       if (cleanupResult instanceof Error) {
         logger.warn(
-          `[context-awareness-plugin] ${formatErrorWithStack(cleanupResult)}`,
+          `[context-awareness-plugin] ${formatPluginErrorWithStack(cleanupResult)}`,
         )
         void notifyError(cleanupResult, 'context-awareness plugin event hook failed')
       }

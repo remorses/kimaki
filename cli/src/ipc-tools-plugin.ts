@@ -12,9 +12,8 @@ import type { Plugin } from '@opencode-ai/plugin'
 import type { ToolContext } from '@opencode-ai/plugin/tool'
 import dedent from 'string-dedent'
 import { z } from 'zod'
-import { getPrisma, createIpcRequest, getIpcRequestById } from './database.js'
 import { setDataDir } from './config.js'
-import { createLogger, LogPrefix, setLogFilePath } from './logger.js'
+import { createPluginLogger, setPluginLogFilePath } from './plugin-logger.js'
 import { initSentry } from './sentry.js'
 
 // Inlined from '@opencode-ai/plugin/tool' because the subpath value import
@@ -39,11 +38,18 @@ function tool<Args extends z.ZodRawShape>(input: {
   return input
 }
 
-const logger = createLogger(LogPrefix.OPENCODE)
+const logger = createPluginLogger('OPENCODE')
 
 const FILE_UPLOAD_TIMEOUT_MS = 6 * 60 * 1000
 const DEFAULT_FILE_UPLOAD_MAX_FILES = 5
 const ACTION_BUTTON_TIMEOUT_MS = 30 * 1000
+
+async function loadDatabaseModule() {
+  // The plugin-loading e2e test boots OpenCode directly without the bot-side
+  // Hrana env vars. Lazy-loading avoids pulling Prisma + libsql sqlite mode
+  // during plugin startup when no IPC tool is being executed yet.
+  return import('./database.js')
+}
 
 // @opencode-ai/plugin bundles zod 4.1.x as a hard dep; our code uses 4.3.x
 // (required by goke for ~standard.jsonSchema). The Plugin return type is
@@ -54,11 +60,11 @@ const ACTION_BUTTON_TIMEOUT_MS = 30 * 1000
 const ipcToolsPlugin: any = async () => {
   initSentry()
 
-  const dataDir = process.env.KIMAKI_DATA_DIR
-  if (dataDir) {
-    setDataDir(dataDir)
-    setLogFilePath(dataDir)
-  }
+    const dataDir = process.env.KIMAKI_DATA_DIR
+    if (dataDir) {
+      setDataDir(dataDir)
+      setPluginLogFilePath(dataDir)
+    }
 
   return {
     tool: {
@@ -85,6 +91,7 @@ const ipcToolsPlugin: any = async () => {
             ),
         },
         async execute({ prompt, maxFiles }, context) {
+          const { getPrisma, createIpcRequest, getIpcRequestById } = await loadDatabaseModule()
           const prisma = await getPrisma()
           const row = await prisma.thread_sessions.findFirst({
             where: { session_id: context.sessionID },
@@ -176,6 +183,7 @@ const ipcToolsPlugin: any = async () => {
             ),
         },
         async execute({ buttons }, context) {
+          const { getPrisma, createIpcRequest, getIpcRequestById } = await loadDatabaseModule()
           const prisma = await getPrisma()
           const row = await prisma.thread_sessions.findFirst({
             where: { session_id: context.sessionID },
