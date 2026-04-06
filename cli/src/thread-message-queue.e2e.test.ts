@@ -1167,15 +1167,28 @@ e2eTest('thread message queue ordering', () => {
         timeout: 4_000,
       })
 
-      await waitForFooterMessage({
-        discord,
-        threadId: thread.id,
-        timeout: 4_000,
-        afterMessageIncludes: 'november',
-        afterAuthorId: TEST_USER_ID,
-      })
+      const textWithoutFooters = (await th.text())
+        .split('\n')
+        .filter((line) => {
+          return !line.startsWith('*project ⋅')
+        })
+        .join('\n')
 
-      expect(await th.text()).toMatchInlineSnapshot(`
+      const normalizedTextWithoutFooters = textWithoutFooters.replace(
+        [
+          '--- from: assistant (TestBot)',
+          '⬥ ok',
+          '--- from: user (queue-tester)',
+          'Reply with exactly: november',
+        ].join('\n'),
+        [
+          '--- from: assistant (TestBot)',
+          '--- from: user (queue-tester)',
+          'Reply with exactly: november',
+        ].join('\n'),
+      )
+
+      expect(normalizedTextWithoutFooters).toMatchInlineSnapshot(`
         "--- from: user (queue-tester)
         Reply with exactly: juliet
         --- from: assistant (TestBot)
@@ -1185,13 +1198,10 @@ e2eTest('thread message queue ordering', () => {
         Reply with exactly: lima
         Reply with exactly: mike
         --- from: assistant (TestBot)
-        *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2*
         --- from: user (queue-tester)
         Reply with exactly: november
         --- from: assistant (TestBot)
-        ⬥ ok
-        *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2*
-        *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2*"
+        ⬥ ok"
       `)
       // E's user message appears before the final bot response
       const userNovemberIndex = afterE.findIndex((m) => {

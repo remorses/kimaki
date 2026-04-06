@@ -9,6 +9,12 @@
 // 3) keep only status/error/assistant-parent events relevant to timeout + resume.
 
 import { afterEach, describe, expect, test } from 'vitest'
+import type {
+  TextPartInput,
+  FilePartInput,
+  AgentPartInput,
+  SubtaskPartInput,
+} from '@opencode-ai/sdk'
 import { interruptOpencodeSessionOnUserMessage } from './opencode-interrupt-plugin.js'
 
 type InterruptHooks = Awaited<ReturnType<typeof interruptOpencodeSessionOnUserMessage>>
@@ -18,13 +24,22 @@ type InterruptEvent = Parameters<InterruptEventHook>[0]['event']
 type InterruptChatInput = Parameters<InterruptChatHook>[0]
 type InterruptChatOutput = Parameters<InterruptChatHook>[1]
 type InterruptContext = Parameters<typeof interruptOpencodeSessionOnUserMessage>[0]
+type PromptPartInput = TextPartInput | FilePartInput | AgentPartInput | SubtaskPartInput
 
 type MockClient = {
   session: {
     abort: (input: { path: { id: string } }) => Promise<void>
     promptAsync: (input: {
       path: { id: string }
-      body: { parts: [] }
+      body: {
+        messageID: string
+        parts: PromptPartInput[]
+        agent?: string
+        model?: {
+          providerID: string
+          modelID: string
+        }
+      }
     }) => Promise<void>
   }
 }
@@ -262,7 +277,15 @@ describe('interruptOpencodeSessionOnUserMessage', () => {
     const abortCalls: Array<{ path: { id: string } }> = []
     const promptAsyncCalls: Array<{
       path: { id: string }
-      body: { parts: [] }
+      body: {
+        messageID: string
+        parts: PromptPartInput[]
+        agent?: string
+        model?: {
+          providerID: string
+          modelID: string
+        }
+      }
     }> = []
     const client: MockClient = {
       session: {
@@ -312,7 +335,10 @@ describe('interruptOpencodeSessionOnUserMessage', () => {
     expect(promptAsyncCalls).toEqual([
       {
         path: { id: REAL_RATE_LIMIT_CASE.sessionID },
-        body: { parts: [] },
+        body: {
+          messageID: REAL_RATE_LIMIT_CASE.queuedMessageID,
+          parts: [{ type: 'text', text: 'user message' }],
+        },
       },
     ])
   })
@@ -323,7 +349,15 @@ describe('interruptOpencodeSessionOnUserMessage', () => {
     const abortCalls: Array<{ path: { id: string } }> = []
     const promptAsyncCalls: Array<{
       path: { id: string }
-      body: { parts: [] }
+      body: {
+        messageID: string
+        parts: PromptPartInput[]
+        agent?: string
+        model?: {
+          providerID: string
+          modelID: string
+        }
+      }
     }> = []
     const client: MockClient = {
       session: {
@@ -363,7 +397,15 @@ describe('interruptOpencodeSessionOnUserMessage', () => {
     const abortCalls: Array<{ path: { id: string } }> = []
     const promptAsyncCalls: Array<{
       path: { id: string }
-      body: { parts: [] }
+      body: {
+        messageID: string
+        parts: PromptPartInput[]
+        agent?: string
+        model?: {
+          providerID: string
+          modelID: string
+        }
+      }
     }> = []
     const client: MockClient = {
       session: {
@@ -392,31 +434,21 @@ describe('interruptOpencodeSessionOnUserMessage', () => {
     expect(promptAsyncCalls).toEqual([])
   })
 
-  // Reproduces production bug from ses_33bb324aaffeQuvMZeixQ9x11N:
-  //
-  // Timeline:
-  //   1. Session is busy streaming response to firstMsg
-  //   2. User sends userMsg (queued via promptAsync in opencode)
-  //   3. 3s timeout fires - no assistant started on userMsg
-  //   4. Plugin aborts session → session goes idle
-  //   5. Plugin sends promptAsync({parts:[]}) → opencode creates NEW empty
-  //      user message and processes THAT instead of userMsg
-  //   6. userMsg is silently lost — no assistant ever responds to it
-  //
-  // Root cause: session.abort() clears opencode's internal prompt queue.
-  // The empty promptAsync({parts:[]}) is supposed to "resume" but instead
-  // creates a separate message. The user's actual message is gone.
-  //
-  // This is a unit-level repro — it proves the plugin clears the user
-  // message from tracking without any assistant acknowledgement. A full
-  // e2e test is needed to prove the message is lost in Discord.
-  test.todo('BUG REPRO: user message dropped after abort because promptAsync({parts:[]}) replaces it', async () => {
+  test('abort recovery replays the original queued user message', async () => {
     process.env['KIMAKI_INTERRUPT_STEP_TIMEOUT_MS'] = '20'
 
     const abortCalls: Array<{ path: { id: string } }> = []
     const promptAsyncCalls: Array<{
       path: { id: string }
-      body: { parts: [] }
+      body: {
+        messageID: string
+        parts: PromptPartInput[]
+        agent?: string
+        model?: {
+          providerID: string
+          modelID: string
+        }
+      }
     }> = []
     const client: MockClient = {
       session: {
@@ -471,29 +503,18 @@ describe('interruptOpencodeSessionOnUserMessage', () => {
     // 5. Verify plugin aborted the session
     expect(abortCalls).toEqual([{ path: { id: sessionID } }])
 
-    // 6. BUG: plugin sent promptAsync({parts:[]}) which creates a NEW empty
-    //    user message in opencode. The user's actual message (userMsgID) was
-    //    cleared from the prompt queue by abort() and is never processed.
+    // 6. Recovery should replay the queued message itself, not an empty
+    //    resume prompt. This preserves the original messageID + parts after
+    //    session.abort() clears OpenCode's internal prompt queue.
     expect(promptAsyncCalls).toEqual([
-      { path: { id: sessionID }, body: { parts: [] } },
+      {
+        path: { id: sessionID },
+        body: {
+          messageID: userMsgID,
+          parts: [{ type: 'text', text: 'user message' }],
+        },
+      },
     ])
-
-    // 7. Verify the plugin cleared userMsgID from pending tracking.
-    //    Re-registering it via chatHook succeeds (doesn't hit the dedup guard
-    //    at line 225), proving the plugin considers it "handled" even though
-    //    no assistant message.updated with parentID=userMsgID was ever received.
-    //
-    //    In production this means the user's message is silently lost:
-    //    - opencode processed the empty prompt instead
-    //    - the bot thinks the message was dispatched (promptAsync returned OK)
-    //    - nobody re-sends the user's actual message
-    let reRegisteredWithoutDedup = false
-    await chatHook(
-      { sessionID, messageID: userMsgID } as InterruptChatInput,
-      createChatOutput({ sessionID, messageID: userMsgID }),
-    )
-    reRegisteredWithoutDedup = true
-    expect(reRegisteredWithoutDedup).toBe(true)
   })
 
   test('real sleep interrupt trace still recovers queued interrupt message', async () => {
@@ -502,7 +523,15 @@ describe('interruptOpencodeSessionOnUserMessage', () => {
     const abortCalls: Array<{ path: { id: string } }> = []
     const promptAsyncCalls: Array<{
       path: { id: string }
-      body: { parts: [] }
+      body: {
+        messageID: string
+        parts: PromptPartInput[]
+        agent?: string
+        model?: {
+          providerID: string
+          modelID: string
+        }
+      }
     }> = []
     const client: MockClient = {
       session: {
@@ -556,7 +585,10 @@ describe('interruptOpencodeSessionOnUserMessage', () => {
     expect(promptAsyncCalls).toEqual([
       {
         path: { id: REAL_SLEEP_INTERRUPT_CASE.sessionID },
-        body: { parts: [] },
+        body: {
+          messageID: REAL_SLEEP_INTERRUPT_CASE.interruptingMessageID,
+          parts: [{ type: 'text', text: 'user message' }],
+        },
       },
     ])
   })
@@ -567,7 +599,15 @@ describe('interruptOpencodeSessionOnUserMessage', () => {
     const abortCalls: Array<{ path: { id: string } }> = []
     const promptAsyncCalls: Array<{
       path: { id: string }
-      body: { parts: [] }
+      body: {
+        messageID: string
+        parts: PromptPartInput[]
+        agent?: string
+        model?: {
+          providerID: string
+          modelID: string
+        }
+      }
     }> = []
     const client: MockClient = {
       session: {
@@ -627,7 +667,10 @@ describe('interruptOpencodeSessionOnUserMessage', () => {
     expect(promptAsyncCalls).toEqual([
       {
         path: { id: sessionID },
-        body: { parts: [] },
+        body: {
+          messageID: queuedMessageID,
+          parts: [{ type: 'text', text: 'user message' }],
+        },
       },
     ])
   })

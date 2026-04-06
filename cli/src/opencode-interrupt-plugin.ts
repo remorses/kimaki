@@ -10,15 +10,24 @@
 // forgetting to clear a timer.
 
 import type { Plugin } from '@opencode-ai/plugin'
+import type {
+  Part,
+  TextPartInput,
+  FilePartInput,
+  AgentPartInput,
+  SubtaskPartInput,
+} from '@opencode-ai/sdk'
 
 type PluginHooks = Awaited<ReturnType<Plugin>>
 type InterruptEvent = Parameters<NonNullable<PluginHooks['event']>>[0]['event']
+type PromptPartInput = TextPartInput | FilePartInput | AgentPartInput | SubtaskPartInput
 
 type PendingMessage = {
   sessionID: string
   started: boolean
   timer: ReturnType<typeof setTimeout>
   abortAfterStepMessageID: string | undefined
+  parts: PromptPartInput[]
   agent: string | undefined
   model:
     | {
@@ -26,6 +35,62 @@ type PendingMessage = {
         modelID: string
       }
     | undefined
+}
+
+type InterruptChatOutput =
+  NonNullable<PluginHooks['chat.message']> extends (
+    input: unknown,
+    output: infer T,
+  ) => Promise<void>
+    ? T
+    : never
+
+function toPromptParts(parts: Part[]): PromptPartInput[] {
+  return parts.reduce<PromptPartInput[]>((acc, part) => {
+    if (part.type === 'text') {
+      acc.push({
+        id: part.id,
+        type: 'text',
+        text: part.text,
+        synthetic: part.synthetic,
+        ignored: part.ignored,
+        time: part.time,
+        metadata: part.metadata,
+      })
+      return acc
+    }
+    if (part.type === 'file') {
+      acc.push({
+        id: part.id,
+        type: 'file',
+        mime: part.mime,
+        filename: part.filename,
+        url: part.url,
+        source: part.source,
+      })
+      return acc
+    }
+    if (part.type === 'agent') {
+      acc.push({
+        id: part.id,
+        type: 'agent',
+        name: part.name,
+        source: part.source,
+      })
+      return acc
+    }
+    if (part.type === 'subtask') {
+      acc.push({
+        id: part.id,
+        type: 'subtask',
+        prompt: part.prompt,
+        description: part.description,
+        agent: part.agent,
+      })
+      return acc
+    }
+    return acc
+  }, [])
 }
 
 type EventWaiter = {
@@ -134,11 +199,13 @@ function createInterruptState() {
     schedulePending({
       messageID,
       sessionID,
+      parts,
       delayMs,
       onTimeout,
     }: {
       messageID: string
       sessionID: string
+      parts: PromptPartInput[]
       delayMs: number
       onTimeout: () => void
     }): void {
@@ -152,6 +219,7 @@ function createInterruptState() {
         started: false,
         timer,
         abortAfterStepMessageID: latestAssistantMessageIDBySession.get(sessionID),
+        parts,
         agent: undefined,
         model: undefined,
       })
@@ -223,6 +291,7 @@ const interruptOpencodeSessionOnUserMessage: Plugin = async (ctx) => {
       state.schedulePending({
         messageID,
         sessionID,
+        parts: pending.parts,
         delayMs: 200,
         onTimeout: () => {
           void interruptPendingMessage(messageID)
@@ -263,24 +332,30 @@ const interruptOpencodeSessionOnUserMessage: Plugin = async (ctx) => {
         return
       }
 
-      // Keep the queued user message execution context across abort+resume.
-      // Without this, OpenCode re-resolves model defaults and can ignore
-      // /model session overrides (issue #77).
-      const resumeBody: {
-        parts: []
+      // Resubmit the original queued user message after abort.
+      // session.abort() clears OpenCode's internal prompt queue, so resuming
+      // with an empty parts array can silently drop the user's message.
+      // Keep the original messageID + parts and preserve agent/model context so
+      // session overrides (issue #77) survive the abort + replay path.
+      const replayBody: {
+        messageID: string
+        parts: PromptPartInput[]
         agent?: string
         model?: { providerID: string; modelID: string }
-      } = { parts: [] }
+      } = {
+        messageID,
+        parts: currentPending.parts,
+      }
       if (currentPending.agent) {
-        resumeBody.agent = currentPending.agent
+        replayBody.agent = currentPending.agent
       }
       if (currentPending.model) {
-        resumeBody.model = currentPending.model
+        replayBody.model = currentPending.model
       }
 
       await ctx.client.session.promptAsync({
         path: { id: sessionID },
-        body: resumeBody,
+        body: replayBody,
       })
       state.clearPending(messageID)
 
@@ -291,6 +366,7 @@ const interruptOpencodeSessionOnUserMessage: Plugin = async (ctx) => {
       state.schedulePending({
         messageID: nextPending.messageID,
         sessionID,
+        parts: nextPending.pending.parts,
         delayMs: 50,
         onTimeout: () => {
           void interruptPendingMessage(nextPending.messageID)
@@ -382,6 +458,7 @@ const interruptOpencodeSessionOnUserMessage: Plugin = async (ctx) => {
       state.schedulePending({
         messageID,
         sessionID,
+        parts: toPromptParts(output.parts),
         delayMs: interruptStepTimeoutMs,
         onTimeout: () => {
           void interruptPendingMessage(messageID)
