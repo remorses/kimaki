@@ -514,6 +514,8 @@ kimaki send --channel ${channelId} --prompt "your task description" --worktree w
 
 This creates a new Discord thread with an isolated git worktree and starts a session in it. The worktree name should be kebab-case and descriptive of the task.
 
+By default, worktrees are created from \`origin/HEAD\` (the remote's default branch). To change the base branch for a project, the user can run \`git remote set-head origin <branch>\` in the project directory. For example, \`git remote set-head origin dev\` makes all new worktrees branch off \`origin/dev\` instead of \`origin/main\`.
+
 Critical recursion guard:
 - If you already are in a worktree thread, do not create another worktree unless the user explicitly asks for a nested worktree.
 - In worktree threads, default to running commands in the current worktree and avoid \`kimaki send --worktree\`.
