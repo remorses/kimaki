@@ -821,9 +821,6 @@ export async function initializeOpencodeForDirectory(
 
   if (!initializedDirectories.has(directory)) {
     initializedDirectories.add(directory)
-    opencodeLogger.log(
-      `Using shared server on port ${server.port} for directory: ${directory}`,
-    )
   }
 
   return () => {

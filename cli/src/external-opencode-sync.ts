@@ -603,7 +603,6 @@ async function pollExternalSessions({
       return !/^new session\s*-/i.test(session.title || '')
     })
     const sorted = sortSessionsByRecency(sessions)
-    logger.log(`[EXTERNAL_SYNC] ${directory}: ${sorted.length} sessions to sync`)
 
     for (const session of sorted) {
       await syncSessionToThread({
@@ -641,7 +640,6 @@ export function startExternalOpencodeSessionSync({
     return
   }
 
-  logger.log(`[EXTERNAL_SYNC] started, polling every ${EXTERNAL_SYNC_INTERVAL_MS}ms`)
   let polling = false
   const runPoll = async (): Promise<void> => {
     if (polling) {
