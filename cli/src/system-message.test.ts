@@ -575,6 +575,10 @@ describe('system-message', () => {
         userId: 'user_123',
         sourceMessageId: 'msg_123',
         sourceThreadId: 'thread_123',
+        repliedMessage: {
+          authorUsername: 'alice',
+          text: 'Original replied message',
+        },
         currentAgent: 'build',
         worktreeChanged: true,
         worktree: {
@@ -585,6 +589,12 @@ describe('system-message', () => {
       }),
     ).toMatchInlineSnapshot(`
       "<discord-user name="Tommy" user-id="user_123" message-id="msg_123" thread-id="thread_123" />
+
+      This message was a reply to message
+
+      <replied-message author="alice">
+      Original replied message
+      </replied-message>
 
       <system-reminder>
       Current agent: build

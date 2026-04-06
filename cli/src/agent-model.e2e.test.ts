@@ -123,6 +123,35 @@ function createDeterministicMatchers(): DeterministicMatcher[] {
     },
   }
 
+  const replyContextMatcher: DeterministicMatcher = {
+    id: 'reply-context-check',
+    priority: 15,
+    when: {
+      lastMessageRole: 'user',
+      latestUserTextIncludes: 'Reply with exactly: reply-context-check',
+      promptTextIncludes:
+        'This message was a reply to message\n\n<replied-message author="agent-model-tester">\nfirst message in thread\n</replied-message>',
+    },
+    then: {
+      parts: [
+        { type: 'stream-start', warnings: [] },
+        { type: 'text-start', id: 'reply-context-reply' },
+        {
+          type: 'text-delta',
+          id: 'reply-context-reply',
+          delta: 'reply-context-ok',
+        },
+        { type: 'text-end', id: 'reply-context-reply' },
+        {
+          type: 'finish',
+          finishReason: 'stop',
+          usage: { inputTokens: 1, outputTokens: 1, totalTokens: 2 },
+        },
+      ],
+      partDelaysMs: [0, 100, 0, 0, 0],
+    },
+  }
+
   const userReplyMatcher: DeterministicMatcher = {
     id: 'user-reply',
     priority: 10,
@@ -146,7 +175,7 @@ function createDeterministicMatchers(): DeterministicMatcher[] {
     },
   }
 
-  return [systemContextMatcher, userReplyMatcher]
+  return [systemContextMatcher, replyContextMatcher, userReplyMatcher]
 }
 
 /**
@@ -456,6 +485,70 @@ describe('agent model resolution', () => {
         Reply with exactly: system-context-check
         --- from: assistant (TestBot)
         ⬥ system-context-ok
+        *project ⋅ main ⋅ Ns ⋅ N% ⋅ agent-model-v2 ⋅ **test-agent***"
+      `)
+    },
+    15_000,
+  )
+
+  test(
+    'reply message injects replied-message context',
+    async () => {
+      await discord.channel(TEXT_CHANNEL_ID).user(TEST_USER_ID).sendMessage({
+        content: 'first message in thread',
+      })
+
+      const thread = await discord.channel(TEXT_CHANNEL_ID).waitForThread({
+        timeout: 4_000,
+        predicate: (t) => {
+          return t.name === 'first message in thread'
+        },
+      })
+
+      const threadMessagesBeforeReply = await discord.thread(thread.id).getMessages()
+      const firstUserMessage = threadMessagesBeforeReply.find((message) => {
+        return (
+          message.author.id === TEST_USER_ID
+          && message.content === 'first message in thread'
+        )
+      })
+      expect(firstUserMessage).toBeDefined()
+      if (!firstUserMessage) {
+        throw new Error('Expected first user message in thread')
+      }
+
+      await discord.thread(thread.id).user(TEST_USER_ID).sendMessage({
+        content: 'Reply with exactly: reply-context-check',
+        messageReference: {
+          message_id: firstUserMessage.id,
+          channel_id: thread.id,
+          guild_id: discord.guildId,
+        },
+      })
+
+      await waitForBotMessageContaining({
+        discord,
+        threadId: thread.id,
+        userId: TEST_USER_ID,
+        text: 'reply-context-ok',
+        timeout: 4_000,
+      })
+
+      await waitForFooterMessage({
+        discord,
+        threadId: thread.id,
+        timeout: 4_000,
+        afterMessageIncludes: 'reply-context-ok',
+        afterAuthorId: discord.botUserId,
+      })
+
+      expect(await discord.thread(thread.id).text()).toMatchInlineSnapshot(`
+        "--- from: user (agent-model-tester)
+        first message in thread
+        Reply with exactly: reply-context-check
+        --- from: assistant (TestBot)
+        ⬥ ok
+        ⬥ reply-context-ok
         *project ⋅ main ⋅ Ns ⋅ N% ⋅ agent-model-v2 ⋅ **test-agent***"
       `)
     },

@@ -200,6 +200,11 @@ export type WorktreeInfo = {
   mainRepoDirectory: string
 }
 
+export type RepliedMessageContext = {
+  authorUsername?: string
+  text: string
+}
+
 /** YAML marker embedded in thread starter message footer for bot to parse */
 export type ThreadStartMarker = {
   /** Whether to auto-start an AI session */
@@ -264,11 +269,19 @@ function escapePromptAttribute(value: string): string {
     .replaceAll('>', '&gt;')
 }
 
+function escapePromptText(value: string): string {
+  return value
+    .replaceAll('&', '&amp;')
+    .replaceAll('<', '&lt;')
+    .replaceAll('>', '&gt;')
+}
+
 export function getOpencodePromptContext({
   username,
   userId,
   sourceMessageId,
   sourceThreadId,
+  repliedMessage,
   worktree,
   currentAgent,
   worktreeChanged,
@@ -277,6 +290,7 @@ export function getOpencodePromptContext({
   userId?: string
   sourceMessageId?: string
   sourceThreadId?: string
+  repliedMessage?: RepliedMessageContext
   worktree?: WorktreeInfo
   currentAgent?: string
   worktreeChanged?: boolean
@@ -295,8 +309,16 @@ export function getOpencodePromptContext({
       ? [` thread-id="${escapePromptAttribute(sourceThreadId)}"`]
       : []),
   ].join('')
+  const repliedMessageXml = repliedMessage
+    ? `This message was a reply to message
+
+<replied-message${repliedMessage.authorUsername ? ` author="${escapePromptAttribute(repliedMessage.authorUsername)}"` : ''}>
+${escapePromptText(repliedMessage.text)}
+</replied-message>`
+    : undefined
   const sections = [
     ...(userAttrs ? [`<discord-user${userAttrs} />`] : []),
+    ...(repliedMessageXml ? [repliedMessageXml] : []),
     ...(currentAgent
       ? [`<system-reminder>\nCurrent agent: ${currentAgent}\n</system-reminder>`]
       : []),

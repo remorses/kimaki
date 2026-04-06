@@ -18,6 +18,7 @@ import type {
   APIEmbed,
   APIAttachment,
   APIInteraction,
+  APIMessageReference,
 } from 'discord-api-types/v10'
 import { createPrismaClient, type PrismaClient } from './db.js'
 import { generateSnowflake } from './snowflake.js'
@@ -288,12 +289,14 @@ export class DigitalDiscord {
     content,
     embeds,
     attachments,
+    messageReference,
   }: {
     channelId: string
     userId: string
     content: string
     embeds?: APIEmbed[]
     attachments?: APIAttachment[]
+    messageReference?: APIMessageReference
   }): Promise<APIMessage> {
     if (!this.server) {
       throw new Error('Server not started')
@@ -307,6 +310,9 @@ export class DigitalDiscord {
         content,
         embeds: JSON.stringify(embeds ?? []),
         attachments: JSON.stringify(attachments ?? []),
+        messageReference: messageReference
+          ? JSON.stringify(messageReference)
+          : null,
       },
     })
     await this.prisma.channel.update({
@@ -1241,10 +1247,12 @@ export class ScopedUserActor {
     content,
     embeds,
     attachments,
+    messageReference,
   }: {
     content: string
     embeds?: APIEmbed[]
     attachments?: APIAttachment[]
+    messageReference?: APIMessageReference
   }) {
     return this.discord.simulateUserMessage({
       channelId: this.channelId,
@@ -1252,6 +1260,7 @@ export class ScopedUserActor {
       content,
       embeds,
       attachments,
+      messageReference,
     })
   }
 

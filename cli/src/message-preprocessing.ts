@@ -10,7 +10,7 @@
 import type { Message, ThreadChannel } from 'discord.js'
 import type { DiscordFileAttachment } from './message-formatting.js'
 import type { PreprocessResult } from './session-handler/thread-session-runtime.js'
-import type { AgentInfo } from './system-message.js'
+import type { AgentInfo, RepliedMessageContext } from './system-message.js'
 import {
   resolveMentions,
   getFileAttachments,
@@ -61,6 +61,7 @@ export type { PreprocessResult }
 // When present the suffix is stripped and the message is routed through
 // kimaki's local queue (same as /queue command).
 const QUEUE_SUFFIX_RE = /[.!?,;:]\s*queue\.?\s*$/i
+const REPLIED_MESSAGE_TEXT_LIMIT = 1_000
 
 function extractQueueSuffix(prompt: string): { prompt: string; forceQueue: boolean } {
   if (!QUEUE_SUFFIX_RE.test(prompt)) {
@@ -98,6 +99,38 @@ function shouldSkipEmptyPrompt({
     `[INGRESS] Skipping empty prompt after preprocessing attachments=${message.attachments.size} hasVoiceAttachment=${hasVoiceAttachment} inferredVoiceAttachment=${inferredVoiceAttachment}`,
   )
   return true
+}
+
+async function getRepliedMessageContext({
+  message,
+}: {
+  message: Message
+}): Promise<RepliedMessageContext | undefined> {
+  if (!message.reference?.messageId) {
+    return undefined
+  }
+
+  const referencedMessage = await errore.tryAsync(() => {
+    return message.fetchReference()
+  })
+  if (referencedMessage instanceof Error) {
+    logger.warn(
+      `[INGRESS] Failed to fetch replied message ${message.reference.messageId} for ${message.id}: ${referencedMessage.message}`,
+    )
+    return undefined
+  }
+
+  const repliedText = resolveMentions(referencedMessage)
+    .trim()
+    .slice(0, REPLIED_MESSAGE_TEXT_LIMIT)
+  if (!repliedText) {
+    return undefined
+  }
+
+  return {
+    authorUsername: referencedMessage.author.username,
+    text: repliedText,
+  }
 }
 
 /**
@@ -145,6 +178,7 @@ export async function preprocessExistingThreadMessage({
   let messageContent = isCliInjected
     ? (message.content || '')
     : resolveMentions(message)
+  const repliedMessage = await getRepliedMessageContext({ message })
 
   // Fetch session context and available agents for voice transcription enrichment
   let currentSessionContext: string | undefined
@@ -246,6 +280,7 @@ export async function preprocessExistingThreadMessage({
   return {
     prompt,
     images: fileAttachments.length > 0 ? fileAttachments : undefined,
+    repliedMessage,
     mode: qs.forceQueue || voiceResult?.queueMessage ? 'local-queue' : 'opencode',
     agent: voiceResult?.agent,
   }
@@ -284,6 +319,7 @@ export async function preprocessNewSessionMessage({
   }
 
   let prompt = resolveMentions(message)
+  const repliedMessage = await getRepliedMessageContext({ message })
   const voiceResult = await processVoiceAttachment({
     message,
     thread,
@@ -334,6 +370,7 @@ export async function preprocessNewSessionMessage({
 
   return {
     prompt: qs.prompt,
+    repliedMessage,
     mode: qs.forceQueue || voiceResult?.queueMessage ? 'local-queue' : 'opencode',
     agent: voiceResult?.agent,
   }
@@ -369,6 +406,7 @@ export async function preprocessNewThreadMessage({
   }
 
   let messageContent = resolveMentions(message)
+  const repliedMessage = await getRepliedMessageContext({ message })
   const voiceResult = await processVoiceAttachment({
     message,
     thread,
@@ -410,6 +448,7 @@ export async function preprocessNewThreadMessage({
   return {
     prompt,
     images: fileAttachments.length > 0 ? fileAttachments : undefined,
+    repliedMessage,
     mode: qs.forceQueue || voiceResult?.queueMessage ? 'local-queue' : 'opencode',
     agent: voiceResult?.agent,
   }

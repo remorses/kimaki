@@ -80,6 +80,7 @@ import {
   getOpencodePromptContext,
   getOpencodeSystemMessage,
   type AgentInfo,
+  type RepliedMessageContext,
   type WorktreeInfo,
 } from '../system-message.js'
 import { resolveValidatedAgentPreference } from './agent-utils.js'
@@ -437,6 +438,7 @@ export type EnqueueResult = {
 export type PreprocessResult = {
   prompt: string
   images?: DiscordFileAttachment[]
+  repliedMessage?: RepliedMessageContext
   /** Resolved mode based on voice transcription result. */
   mode: 'opencode' | 'local-queue'
   /** When true, preprocessing determined the message should be silently dropped. */
@@ -454,6 +456,7 @@ export type IngressInput = {
   // messages that originated from Discord and skip re-mirroring them.
   sourceMessageId?: string
   sourceThreadId?: string
+  repliedMessage?: RepliedMessageContext
   images?: DiscordFileAttachment[]
   appId?: string
   command?: { name: string; arguments: string }
@@ -2988,6 +2991,7 @@ export class ThreadSessionRuntime {
         userId: input.userId,
         sourceMessageId: input.sourceMessageId,
         sourceThreadId: input.sourceThreadId,
+        repliedMessage: input.repliedMessage,
         worktree,
         currentAgent: resolvedAgent,
         worktreeChanged,
@@ -3081,6 +3085,7 @@ export class ThreadSessionRuntime {
       injectionGuardPatterns: input.injectionGuardPatterns,
       sourceMessageId: input.sourceMessageId,
       sourceThreadId: input.sourceThreadId,
+      repliedMessage: input.repliedMessage,
       sessionStartScheduleKind: input.sessionStartSource?.scheduleKind,
       sessionStartScheduledTaskId: input.sessionStartSource?.scheduledTaskId,
     }
@@ -3187,6 +3192,7 @@ export class ThreadSessionRuntime {
           // Voice transcription can extract an agent name — apply it only if
           // no explicit agent was already set (CLI --agent flag wins).
           agent: input.agent || result.agent,
+          repliedMessage: result.repliedMessage,
           preprocess: undefined,
         })
 
@@ -3657,6 +3663,7 @@ export class ThreadSessionRuntime {
       userId: input.userId,
       sourceMessageId: input.sourceMessageId,
       sourceThreadId: input.sourceThreadId,
+      repliedMessage: input.repliedMessage,
       worktree,
       currentAgent: earlyAgentPreference,
       worktreeChanged,
@@ -3701,9 +3708,13 @@ export class ThreadSessionRuntime {
       // session.command() only accepts FilePart in parts, not text parts.
       // Append <discord-user /> tag to arguments so external sync can
       // detect this message came from Discord (same tag as promptAsync).
-      const discordTag = input.username
-        ? `\n<discord-user name="${input.username}" />`
-        : ''
+      const discordTag = getOpencodePromptContext({
+        username: input.username,
+        userId: input.userId,
+        sourceMessageId: input.sourceMessageId,
+        sourceThreadId: input.sourceThreadId,
+        repliedMessage: input.repliedMessage,
+      })
       const commandResponse = await errore.tryAsync(() => {
         return getClient().session.command(
           {
@@ -3711,7 +3722,7 @@ export class ThreadSessionRuntime {
 
             directory: this.sdkDirectory,
             command: queuedCommand.name,
-            arguments: queuedCommand.arguments + discordTag,
+            arguments: queuedCommand.arguments + (discordTag ? `\n${discordTag}` : ''),
             agent: earlyAgentPreference,
             ...variantField,
           },

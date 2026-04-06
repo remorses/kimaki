@@ -12,6 +12,7 @@
 // state field, ask if it can be derived from existing state instead.
 
 import type { DiscordFileAttachment } from '../message-formatting.js'
+import type { RepliedMessageContext } from '../system-message.js'
 import { store } from '../store.js'
 
 // ── Shared types ─────────────────────────────────────────────────
@@ -51,6 +52,7 @@ export type QueuedMessage = {
   // messages that originated from Discord and skip re-mirroring them.
   sourceMessageId?: string
   sourceThreadId?: string
+  repliedMessage?: RepliedMessageContext
   // Tracking fields for scheduled tasks. Stored in the DB via
   // setSessionStartSource() after the session is created, so the session
   // list can show which sessions were started by scheduled tasks.
