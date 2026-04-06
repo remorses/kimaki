@@ -3,54 +3,17 @@
 // submodule initialization, and git diff transfer utilities.
 
 import crypto from 'node:crypto'
-import { exec } from 'node:child_process'
 import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
-import { promisify } from 'node:util'
 import * as errore from 'errore'
+import { execAsync } from './exec-async.js'
 import { createLogger, LogPrefix } from './logger.js'
 
-const DEFAULT_EXEC_TIMEOUT_MS = 10_000
+export { execAsync } from './exec-async.js'
+
 const SUBMODULE_INIT_TIMEOUT_MS = 20 * 60_000
 const INSTALL_TIMEOUT_MS = 60_000
-
-const _execAsync = promisify(exec)
-
-// Wraps child_process.exec with a default 10s timeout via Promise.race.
-// Callers can override with a longer timeout in the options.
-// Kills the entire process group on timeout so child trees (e.g. pnpm install)
-// don't survive as orphans. The timer is cleared on success to avoid leaks.
-export function execAsync(
-  command: string,
-  options?: Parameters<typeof _execAsync>[1],
-): Promise<{ stdout: string; stderr: string }> {
-  const timeoutMs =
-    (options as { timeout?: number })?.timeout || DEFAULT_EXEC_TIMEOUT_MS
-  const execPromise = _execAsync(command, options) as Promise<{
-    stdout: string
-    stderr: string
-  }> & { child?: import('node:child_process').ChildProcess }
-  let timer: ReturnType<typeof setTimeout> | undefined
-  const timeoutPromise = new Promise<never>((_, reject) => {
-    timer = setTimeout(() => {
-      // Kill the process group (-pid) so child processes don't survive
-      const pid = execPromise.child?.pid
-      if (pid) {
-        try {
-          process.kill(-pid, 'SIGTERM')
-        } catch {
-          // Process group may not exist; fall back to direct kill
-          execPromise.child?.kill('SIGTERM')
-        }
-      }
-      reject(new Error(`Command timed out after ${timeoutMs}ms: ${command}`))
-    }, timeoutMs)
-  })
-  return Promise.race([execPromise, timeoutPromise]).finally(() => {
-    clearTimeout(timer)
-  })
-}
 
 const logger = createLogger(LogPrefix.WORKTREE)
 

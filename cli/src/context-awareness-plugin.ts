@@ -28,7 +28,7 @@ import {
 } from './plugin-logger.js'
 import { setDataDir } from './config.js'
 import { initSentry, notifyError } from './sentry.js'
-import { execAsync } from './worktrees.js'
+import { execAsync } from './exec-async.js'
 import { condenseMemoryMd } from './condense-memory.js'
 import {
   ONBOARDING_TUTORIAL_INSTRUCTIONS,
