@@ -13,11 +13,14 @@ import {
   getPrisma,
   cancelAllPendingIpcRequests,
   deleteChannelDirectoryById,
+  createPendingWorktree,
+  setWorktreeReady,
 } from './database.js'
 import {
   stopOpencodeServer,
 } from './opencode.js'
 import { formatWorktreeName, createWorktreeInBackground, worktreeCreatingMessage } from './commands/new-worktree.js'
+import { validateWorktreeDirectory, git } from './worktrees.js'
 import { WORKTREE_PREFIX } from './commands/merge-worktree.js'
 import {
   escapeBackticksInCodeBlocks,
@@ -115,6 +118,7 @@ import {
   type ThreadChannel,
 } from 'discord.js'
 import fs from 'node:fs'
+import path from 'node:path'
 import * as errore from 'errore'
 import { createLogger, formatErrorWithStack, LogPrefix } from './logger.js'
 import { writeHeapSnapshot, startHeapMonitor } from './heap-monitor.js'
@@ -933,6 +937,11 @@ export async function startDiscordBot({
         return
       }
 
+      // Only process markers from our own bot messages to prevent crafted embeds
+      if (starterMessage.author?.id !== discordClient.user?.id) {
+        return
+      }
+
       const marker = parseEmbedFooterMarker<ThreadStartMarker>({
         footer: embedFooter,
       })
@@ -1004,6 +1013,58 @@ export async function startDiscordBot({
         })
       }
 
+      // --cwd: reuse an existing worktree directory. Revalidate at bot-time
+      // (CLI validated at send-time but the path could become stale).
+      // Store in thread_worktrees as ready with origin=external so
+      // destructive actions (merge, delete) are gated.
+      // --cwd: if it matches projectDirectory, ignore silently (already the default).
+      // Otherwise revalidate as a git worktree and store with origin=external.
+      let cwdDirectory: string | undefined
+      if (marker.cwd) {
+        const cwdResult = await validateWorktreeDirectory({
+          projectDirectory,
+          candidatePath: marker.cwd,
+        })
+        if (cwdResult instanceof Error) {
+          discordLogger.error(`[BOT_SESSION] --cwd validation failed: ${cwdResult.message}`)
+          await thread.send({
+            content: `✗ --cwd validation failed: ${cwdResult.message.slice(0, 1900)}`,
+            flags: NOTIFY_MESSAGE_FLAGS,
+          })
+          return
+        }
+
+        // If cwd is the same as projectDirectory, skip worktree setup entirely
+        if (path.resolve(cwdResult) !== path.resolve(projectDirectory)) {
+          cwdDirectory = cwdResult
+
+
+          // Resolve actual branch name instead of using directory basename
+          const branchResult = await git(cwdDirectory, 'symbolic-ref --short HEAD')
+          const cwdWorktreeName = branchResult instanceof Error
+            ? path.basename(cwdDirectory)
+            : branchResult
+
+          await createPendingWorktree({
+            threadId: thread.id,
+            worktreeName: cwdWorktreeName,
+            projectDirectory,
+          })
+          await setWorktreeReady({
+            threadId: thread.id,
+            worktreeDirectory: cwdDirectory,
+          })
+
+          // React with tree emoji to mark as worktree thread
+          await reactToThread({
+            rest: discordClient.rest,
+            threadId: thread.id,
+            channelId: parent.id,
+            emoji: '🌳',
+          })
+        }
+      }
+
       discordLogger.log(
         `[BOT_SESSION] Starting session for thread ${thread.id} with prompt: "${prompt.slice(0, 50)}..."`,
       )
@@ -1044,6 +1105,13 @@ export async function startDiscordBot({
                 newDirectory: result,
               })
             }
+          }
+          // --cwd: switch sdkDirectory to the existing worktree path
+          if (cwdDirectory) {
+            runtime.handleDirectoryChanged({
+              oldDirectory: projectDirectory,
+              newDirectory: cwdDirectory,
+            })
           }
           return { prompt, mode: 'opencode' }
         },

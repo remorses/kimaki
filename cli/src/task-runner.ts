@@ -107,6 +107,7 @@ async function executeChannelScheduledTask({
         scheduledKind: task.schedule_kind,
         scheduledTaskId: task.id,
         ...(payload.worktreeName ? { worktree: payload.worktreeName } : {}),
+        ...(payload.cwd ? { cwd: payload.cwd } : {}),
         ...(payload.agent ? { agent: payload.agent } : {}),
         ...(payload.model ? { model: payload.model } : {}),
         ...(payload.username ? { username: payload.username } : {}),

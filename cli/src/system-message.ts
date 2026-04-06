@@ -211,6 +211,8 @@ export type ThreadStartMarker = {
   cliThreadPrompt?: boolean
   /** Worktree name to create */
   worktree?: string
+  /** Existing worktree directory to use as working directory (must be a git worktree of the project) */
+  cwd?: string
   /** Discord username who initiated the thread */
   username?: string
   /** Discord user ID who initiated the thread */
@@ -434,8 +436,13 @@ Use --worktree to create a git worktree for the session (ONLY when the user expl
 
 kimaki send --channel ${channelId} --prompt "Add dark mode support" --worktree dark-mode
 
+Use --cwd to start a session in an existing git worktree directory (must be a worktree of the project):
+
+kimaki send --channel ${channelId} --prompt "Continue work on feature" --cwd /path/to/existing-worktree
+
 Important:
 - NEVER use \`--worktree\` unless the user explicitly requests a worktree. Most tasks should use normal threads without worktrees.
+- Use \`--cwd\` to reuse an existing worktree directory. Use \`--worktree\` to create a new one.
 - The prompt passed to \`--worktree\` is the task for the new thread running inside that worktree.
 - Do NOT tell that prompt to "create a new worktree" again, or it can create recursive worktree threads.
 - Ask the new session to operate on its current checkout only (e.g. "validate current worktree", "run checks in this repo").
@@ -519,6 +526,16 @@ By default, worktrees are created from \`origin/HEAD\` (the remote's default bra
 Critical recursion guard:
 - If you already are in a worktree thread, do not create another worktree unless the user explicitly asks for a nested worktree.
 - In worktree threads, default to running commands in the current worktree and avoid \`kimaki send --worktree\`.
+
+### Sending sessions to existing worktrees
+
+Use \`--cwd\` to start a session in an existing git worktree directory instead of creating a new one:
+
+\`\`\`bash
+kimaki send --channel ${channelId} --prompt "Continue work on feature X" --cwd /path/to/existing-worktree
+\`\`\`
+
+The path must be a git worktree of the project (validated via \`git worktree list\`). The session resolves to the correct project channel but uses the worktree as its working directory. Use \`--worktree\` to create a new worktree, \`--cwd\` to reuse an existing one.
 
 **Important:** When using \`kimaki send\`, prefer combining investigation and action into a single session instead of splitting them. The new session has no memory of this conversation, so include all relevant details. Use **bold**, \`code\`, lists, and > quotes for readability.
 

@@ -107,7 +107,7 @@ import {
   getDataDir,
   getProjectsDir,
 } from './config.js'
-import { execAsync } from './worktrees.js'
+import { execAsync, validateWorktreeDirectory } from './worktrees.js'
 import {
   backgroundUpgradeKimaki,
   upgrade,
@@ -2399,6 +2399,10 @@ cli
     '--worktree [name]',
     'Create git worktree for session (name optional, derives from thread name)',
   )
+  .option(
+    '--cwd <path>',
+    'Start session in an existing git worktree directory instead of the main project directory',
+  )
   .option('-u, --user <username>', 'Discord username to add to thread')
   .option('--agent <agent>', 'Agent to use for the session')
   .option('--model <model>', 'Model to use (format: provider/model)')
@@ -2438,6 +2442,7 @@ cli
       appId?: string
       notifyOnly?: boolean
       worktree?: string | boolean
+      cwd?: string
       user?: string
       agent?: string
       model?: string
@@ -2523,6 +2528,16 @@ cli
           process.exit(EXIT_NO_RESTART)
         }
 
+        if (options.cwd && options.worktree) {
+          cliLogger.error('Cannot use --cwd with --worktree')
+          process.exit(EXIT_NO_RESTART)
+        }
+
+        if (options.cwd && notifyOnly) {
+          cliLogger.error('Cannot use --cwd with --notify-only')
+          process.exit(EXIT_NO_RESTART)
+        }
+
         if (options.wait && notifyOnly) {
           cliLogger.error('Cannot use --wait with --notify-only')
           process.exit(EXIT_NO_RESTART)
@@ -2535,6 +2550,9 @@ cli
           }
           if (options.worktree) {
             incompatibleFlags.push('--worktree')
+          }
+          if (options.cwd) {
+            incompatibleFlags.push('--cwd')
           }
           if (name) {
             incompatibleFlags.push('--name')
@@ -2835,6 +2853,20 @@ cli
 
         const projectDirectory = channelConfig.directory
 
+        // Validate --cwd is an existing git worktree of the project
+        let resolvedCwd: string | undefined
+        if (options.cwd) {
+          const cwdResult = await validateWorktreeDirectory({
+            projectDirectory,
+            candidatePath: options.cwd,
+          })
+          if (cwdResult instanceof Error) {
+            cliLogger.error(cwdResult.message)
+            process.exit(EXIT_NO_RESTART)
+          }
+          resolvedCwd = cwdResult
+        }
+
         // Resolve username to user ID if provided
         const resolvedUser = await (async (): Promise<
           { id: string; username: string } | undefined
@@ -2900,6 +2932,7 @@ cli
             name: name || null,
             notifyOnly: Boolean(notifyOnly),
             worktreeName: worktreeName || null,
+            cwd: resolvedCwd || null,
             agent: options.agent || null,
             model: options.model || null,
             username: resolvedUser?.username || null,
@@ -2935,6 +2968,7 @@ cli
           : {
               start: true,
               ...(worktreeName && { worktree: worktreeName }),
+              ...(resolvedCwd && { cwd: resolvedCwd }),
               ...(resolvedUser && {
                 username: resolvedUser.username,
                 userId: resolvedUser.id,
@@ -2980,7 +3014,9 @@ cli
 
         const worktreeNote = worktreeName
           ? `\nWorktree: ${worktreeName} (will be created by bot)`
-          : ''
+          : resolvedCwd
+            ? `\nWorking directory: ${resolvedCwd}`
+            : ''
         const successMessage = notifyOnly
           ? `Thread: ${threadData.name}\nDirectory: ${projectDirectory}\n\nNotification created. Reply to start a session.\n\nURL: ${threadUrl}`
           : `Thread: ${threadData.name}\nDirectory: ${projectDirectory}${worktreeNote}\n\nThe running bot will pick this up and start the session.\n\nURL: ${threadUrl}`

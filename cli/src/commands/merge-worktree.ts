@@ -115,6 +115,8 @@ export async function handleMergeWorktreeCommand({
     return
   }
 
+
+
   const rawTargetBranch = command.options.getString('target-branch') || undefined
   let targetBranch = rawTargetBranch
   if (targetBranch) {

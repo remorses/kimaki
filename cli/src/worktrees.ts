@@ -1287,3 +1287,45 @@ export async function validateBranchRef({
   }
   return result
 }
+
+/**
+ * Validate that a directory is a git worktree of the given project.
+ * Parses `git worktree list --porcelain` from the project directory and
+ * checks that the candidate path appears as one of the listed worktrees.
+ * Returns the resolved absolute path on success, or an Error on failure.
+ */
+export async function validateWorktreeDirectory({
+  projectDirectory,
+  candidatePath,
+}: {
+  projectDirectory: string
+  candidatePath: string
+}): Promise<string | Error> {
+  const absoluteCandidate = path.resolve(candidatePath)
+
+  if (!fs.existsSync(absoluteCandidate)) {
+    return new Error(`Directory does not exist: ${absoluteCandidate}`)
+  }
+
+  const result = await git(projectDirectory, 'worktree list --porcelain')
+  if (result instanceof Error) {
+    return new Error('Failed to list git worktrees', { cause: result })
+  }
+
+  const worktreePaths = result
+    .split('\n')
+    .filter((line) => {
+      return line.startsWith('worktree ')
+    })
+    .map((line) => {
+      return line.slice('worktree '.length)
+    })
+
+  if (!worktreePaths.includes(absoluteCandidate)) {
+    return new Error(
+      `Directory is not a git worktree of ${projectDirectory}: ${absoluteCandidate}`,
+    )
+  }
+
+  return absoluteCandidate
+}
