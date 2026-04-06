@@ -72,10 +72,6 @@ type DirectorySyncTarget = {
   startMs: number
 }
 
-type GlobalListedSession = NonNullable<
-  Awaited<ReturnType<OpencodeClient['experimental']['session']['list']>>['data']
->[number]
-
 let externalSyncInterval: ReturnType<typeof setInterval> | null = null
 
 function isSyntheticTextPart(part: Extract<Part, { type: 'text' }>): boolean {
@@ -545,8 +541,8 @@ async function pulseTypingForBusySessions({
   }
 }
 
-// Use experimental.session.list (global, all directories) to reduce from
-// N*2 HTTP calls to 1 global list + per-active-directory status calls.
+const EXTERNAL_SYNC_MAX_SESSIONS = 50
+
 async function pollExternalSessions({
   discordClient,
 }: {
@@ -561,91 +557,51 @@ async function pollExternalSessions({
     return
   }
 
-  // Build a lookup: directory → { channelId, startMs }
-  const directoryMap = new Map<string, { channelId: string; startMs: number }>()
   for (const target of directoryTargets) {
-    directoryMap.set(target.directory, {
-      channelId: target.channelId,
-      startMs: target.startMs,
+    const directory = target.directory
+    const channelId = target.channelId
+    const startMs = target.startMs
+
+    const clientResult = await initializeOpencodeForDirectory(directory, {
+      channelId,
     })
-  }
-
-  // Use earliest startMs across all directories for the global query
-  const globalStartMs = Math.min(...directoryTargets.map((t) => {
-    return t.startMs
-  }))
-
-  // Get one opencode client — try each existing directory until one succeeds
-  let client: OpencodeClient | undefined
-  for (const target of directoryTargets) {
-    const result = await initializeOpencodeForDirectory(target.directory, {
-      channelId: target.channelId,
-    })
-    if (!(result instanceof Error)) {
-      client = result()
-      break
-    }
-  }
-  if (!client) {
-    return
-  }
-
-  // One global API call for all sessions across all directories.
-  // Results are sorted by most recently updated, so a fixed limit of 50
-  // is enough — we always get the most active sessions first.
-  const sessionsResponse = await client.experimental.session.list({
-    roots: true,
-    start: globalStartMs,
-    limit: 50,
-  }).catch((error) => {
-    return new Error('Failed to list global sessions', { cause: error })
-  })
-  if (sessionsResponse instanceof Error) {
-    logger.warn(`[EXTERNAL_SYNC] ${sessionsResponse.message}`)
-    return
-  }
-
-  const allSessions = sessionsResponse.data || []
-
-  // Group sessions by directory, filtering to tracked directories only
-  const sessionsByDirectory = new Map<string, GlobalListedSession[]>()
-  for (const session of allSessions) {
-    const target = directoryMap.get(session.directory)
-    if (!target) {
+    if (clientResult instanceof Error) {
+      logger.warn(
+        `[EXTERNAL_SYNC] Failed to initialize OpenCode for ${directory}: ${clientResult.message}`,
+      )
       continue
     }
-    // Filter by per-directory startMs (time.updated or time.created)
-    if ((session.time.updated || session.time.created || 0) < target.startMs) {
-      continue
-    }
-    // Skip sessions whose title hasn't been generated yet
-    if (/^new session\s*-/i.test(session.title || '')) {
-      continue
-    }
-    const existing = sessionsByDirectory.get(session.directory) || []
-    existing.push(session)
-    sessionsByDirectory.set(session.directory, existing)
-  }
 
-  // Fetch session.status() only for directories that have sessions to sync.
-  // session.status() is instance-scoped (uses x-opencode-directory header),
-  // so we must call it per directory — but only for active ones, not all 30+.
-  const activeDirectories = [...sessionsByDirectory.keys()]
-  const statusResults = await Promise.all(
-    activeDirectories.map(async (directory) => {
-      const res = await client.session.status({ directory }).catch(() => {
-        return null
+    const client = clientResult()
+    const sessionsResponse = await client.session.list({
+      directory,
+      start: startMs,
+      limit: EXTERNAL_SYNC_MAX_SESSIONS,
+    }).catch((error) => {
+      return new Error(`Failed to list sessions for ${directory}`, {
+        cause: error,
       })
-      return res?.data ? Object.entries(res.data) : []
-    }),
-  )
-  const mergedStatuses = Object.fromEntries(statusResults.flat()) as Record<string, { type: string }>
+    })
+    if (sessionsResponse instanceof Error) {
+      logger.warn(`[EXTERNAL_SYNC] ${sessionsResponse.message}`)
+      continue
+    }
 
-  // Pulse typing for busy sessions
-  await pulseTypingForBusySessions({ discordClient, statuses: mergedStatuses }).catch(() => {})
+    const statusesResponse = await client.session.status({
+      directory,
+    }).catch(() => {
+      return null
+    })
+    if (statusesResponse?.data) {
+      await pulseTypingForBusySessions({
+        discordClient,
+        statuses: statusesResponse.data as Record<string, { type: string }>,
+      }).catch(() => {})
+    }
 
-  for (const [directory, sessions] of sessionsByDirectory) {
-    const target = directoryMap.get(directory)!
+    const sessions = (sessionsResponse.data || []).filter((session) => {
+      return !/^new session\s*-/i.test(session.title || '')
+    })
     const sorted = sortSessionsByRecency(sessions)
     logger.log(`[EXTERNAL_SYNC] ${directory}: ${sorted.length} sessions to sync`)
 
@@ -654,7 +610,7 @@ async function pollExternalSessions({
         client,
         discordClient,
         directory,
-        channelId: target.channelId,
+        channelId,
         sessionId: session.id,
         sessionTitle: session.title,
       }).catch((error) => {
