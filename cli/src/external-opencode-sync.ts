@@ -600,7 +600,11 @@ async function pollExternalSessions({
     }
 
     const sessions = (sessionsResponse.data || []).filter((session) => {
-      return !/^new session\s*-/i.test(session.title || '')
+      const title = session.title || ''
+      if (/^new session\s*-/i.test(title)) {
+        return false
+      }
+      return !/subagent\)\s*$/i.test(title)
     })
     const sorted = sortSessionsByRecency(sessions)
 
