@@ -642,7 +642,7 @@ async function startSingleServer(): Promise<ServerStartError | SingleServer> {
         return
       }
       for (const line of lines) {
-        opencodeLogger.log(`[server:${port}] ${line}`)
+        opencodeLogger.log(line)
       }
     } catch (error) {
       logBuffer.push(`Failed to process stdout startup logs: ${error}`)
@@ -659,7 +659,7 @@ async function startSingleServer(): Promise<ServerStartError | SingleServer> {
         return
       }
       for (const line of lines) {
-        opencodeLogger.error(`[server:${port}] ${line}`)
+        opencodeLogger.error(line)
       }
     } catch (error) {
       logBuffer.push(`Failed to process stderr startup logs: ${error}`)
@@ -740,7 +740,7 @@ async function startSingleServer(): Promise<ServerStartError | SingleServer> {
   // Always dump startup logs so plugin loading errors and other startup output
   // are visible in kimaki.log.
   for (const line of logBuffer) {
-    opencodeLogger.log(`[server:${port}:startup] ${line}`)
+    opencodeLogger.log(line)
   }
 
   const server: SingleServer = {
