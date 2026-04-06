@@ -689,48 +689,13 @@ type CliOptions = {
 import { store } from './store.js'
 import { registerCommands, SKIP_USER_COMMANDS } from './discord-command-registration.js'
 
-async function reconcileKimakiRole({ guild }: { guild: Guild }): Promise<void> {
-  try {
-    const roles = await guild.roles.fetch()
-    const existingRole = roles.find(
-      (role) => role.name.toLowerCase() === 'kimaki',
-    )
-
-    if (existingRole) {
-      if (existingRole.position > 1) {
-        await existingRole.setPosition(1)
-        cliLogger.info(`Moved "Kimaki" role to bottom in ${guild.name}`)
-      }
-      return
-    }
-
-    await guild.roles.create({
-      name: 'Kimaki',
-      position: 1,
-      reason:
-        'Kimaki bot permission role - assign to users who can start sessions, send messages in threads, and use voice features',
-    })
-    cliLogger.info(`Created "Kimaki" role in ${guild.name}`)
-  } catch (error) {
-    cliLogger.warn(
-      `Could not reconcile Kimaki role in ${guild.name}: ${error instanceof Error ? error.message : String(error)}`,
-    )
-  }
-}
-
 async function collectKimakiChannels({
   guilds,
-  reconcileRoles,
 }: {
   guilds: Guild[]
-  reconcileRoles: boolean
 }): Promise<{ guild: Guild; channels: ChannelWithTags[] }[]> {
   const guildResults = await Promise.all(
     guilds.map(async (guild) => {
-      if (reconcileRoles) {
-        void reconcileKimakiRole({ guild })
-      }
-
       const channels = await getChannelsWithDescriptions(guild)
       const kimakiChans = channels.filter((ch) => ch.kimakiDirectory)
 
@@ -1472,10 +1437,7 @@ async function run({
         }
 
         // Process guild metadata when setup flow needs channel prompts.
-        const guildResults = await collectKimakiChannels({
-          guilds,
-          reconcileRoles: true,
-        })
+        const guildResults = await collectKimakiChannels({ guilds })
 
         // Collect results
         for (const result of guildResults) {
@@ -1547,10 +1509,7 @@ async function run({
     // Never blocks ready state.
     void (async () => {
       try {
-        const backgroundChannels = await collectKimakiChannels({
-          guilds,
-          reconcileRoles: true,
-        })
+        const backgroundChannels = await collectKimakiChannels({ guilds })
         await storeChannelDirectories({ kimakiChannels: backgroundChannels })
         cliLogger.log(
           `Background channel sync completed for ${backgroundChannels.length} guild(s)`,
