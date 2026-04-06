@@ -8,7 +8,7 @@ description: 'Spiceflow is a super simple, fast, and type-safe API and React Ser
 Every time you work with spiceflow, you MUST fetch the latest README from the main branch:
 
 ```bash
-curl -s https://raw.githubusercontent.com/remorses/spiceflow/main/spiceflow/README.md # NEVER pipe to head/tail, read the full output
+curl -s https://raw.githubusercontent.com/remorses/spiceflow/main/README.md # NEVER pipe to head/tail, read the full output
 ```
 
 NEVER use `head`, `tail`, or any other command to truncate the output. Read the full README every time. It contains the complete API reference, usage examples, and framework conventions you need.

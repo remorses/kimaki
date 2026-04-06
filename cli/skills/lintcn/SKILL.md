@@ -1,6 +1,11 @@
 ---
 name: lintcn
-description: "Write, add, and update type-aware TypeScript lint rules in .lintcn/ Go files. ALWAYS use this skill when creating, editing, or debugging .lintcn/*.go rule files. Covers the tsgolint rule API, AST visitors, type checker, reporting, fixes, testing, and all patterns from the 50+ built-in rules."
+description: |
+  Type-aware TypeScript lint rules in .lintcn/ Go files. Only load this skill when creating, editing, or debugging rule files.
+
+  To just run the linter: `npx lintcn lint` (or `--fix`, `--tsconfig <path>`). Finds .lintcn/ by walking up from cwd. First build ~30s, cached ~1s. In monorepos, run from each package folder, not the root.
+
+  Warnings don't fail CI and only show for git-changed files by default. Use `--all-warnings` to see them across the entire codebase.
 ---
 
 # lintcn — Writing Custom tsgolint Lint Rules
