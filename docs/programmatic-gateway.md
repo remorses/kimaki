@@ -8,8 +8,8 @@ prompt: |
   Create a doc explaining how to start kimaki programmatically in --gateway
   mode for the use case of offering kimaki as a cloud service. Cover the
   SSE event protocol, eventsource-parser usage, the full event lifecycle,
-  and custom callback URLs. Reference discord/src/cli.ts ProgrammaticEvent
-  type and discord/scripts/test-gateway-programmatic.ts for the working
+   and custom callback URLs. Reference cli/src/cli.ts ProgrammaticEvent
+   type and cli/scripts/test-gateway-programmatic.ts for the working
   example.
 -->
 
@@ -49,7 +49,7 @@ install_url  →  authorized  →  ready
 | `ready` | `{ type, app_id, guild_ids }` | Bot is connected and listening |
 | `error` | `{ type, message, install_url? }` | Something went wrong |
 
-These are defined as the `ProgrammaticEvent` union type in `discord/src/cli.ts`.
+These are defined as the `ProgrammaticEvent` union type in `cli/src/cli.ts`.
 
 ## SSE wire format
 
@@ -186,10 +186,10 @@ SSE format solves this because:
 
 ## Working example
 
-See `discord/scripts/test-gateway-programmatic.ts` for a complete working
+See `cli/scripts/test-gateway-programmatic.ts` for a complete working
 script with colored terminal output that demonstrates the full flow.
 
 ```bash
-cd discord
+cd cli
 npx tsx scripts/test-gateway-programmatic.ts
 ```

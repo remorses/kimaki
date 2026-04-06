@@ -1,16 +1,16 @@
 #!/usr/bin/env tsx
 /**
- * Sync skills from remote repos into discord/skills/.
+ * Sync skills from remote repos into cli/skills/.
  *
  * Reimplements the core discovery logic from the `skills` npm CLI
  * (vercel-labs/skills) without depending on it. The flow is:
  *   1. Shallow-clone each source repo to ./tmp/
  *   2. Recursively walk for SKILL.md files, parse frontmatter
- *   3. Copy discovered skill directories into discord/skills/<name>/
+ *   3. Copy discovered skill directories into cli/skills/<name>/
  *   4. Clean up temp dirs
  *
- * Usage:  pnpm sync-skills          (from discord/ or root)
- *         tsx scripts/sync-skills.ts (from discord/)
+ * Usage:  pnpm sync-skills          (from cli/ or root)
+ *         tsx scripts/sync-skills.ts (from cli/)
  */
 
 import fs from 'node:fs'

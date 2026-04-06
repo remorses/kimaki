@@ -51,9 +51,9 @@ jobs:
         run: pnpm generate
         working-directory: discord-digital-twin
 
-      - name: Generate Prisma + SQL (discord)
+      - name: Generate Prisma + SQL (cli)
         run: pnpm generate
-        working-directory: discord
+        working-directory: cli
 
       - name: Build discord-digital-twin
         run: pnpm build
@@ -63,6 +63,6 @@ jobs:
       # (question tool cleanup races, reply ordering under slower I/O).
       - name: Run tests
         run: pnpm test -- --run --retry 3
-        working-directory: discord
+        working-directory: cli
         env:
           NODE_ENV: test

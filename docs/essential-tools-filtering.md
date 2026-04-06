@@ -19,7 +19,7 @@ The `isEssentialToolPart()` function determines whether a tool execution should 
 
 ## Non-Essential Tools List
 
-**File:** `discord/src/session-handler.ts`, lines 58-73
+**File:** `cli/src/session-handler.ts`, lines 58-73
 
 Non-essential tools are hidden in `text-and-essential-tools` mode:
 
@@ -45,7 +45,7 @@ function isEssentialToolName(toolName: string): boolean {
 ### Non-Essential Tool Categories
 
 - **Read-only navigation:** `read`, `list`, `glob`, `grep` - file discovery/viewing
-- **Skill tools:** `skill` - reusable OpenCode skills (loaded from `discord/skills/`)
+- **Skill tools:** `skill` - reusable OpenCode skills (loaded from `cli/skills/`)
 - **Question/Input:** `question` - user interaction tools
 - **Documentation:** `webfetch` - web content fetching
 - **Todo inspection:** `todoread` - reading todo state (but `todowrite` is essential)
@@ -61,7 +61,7 @@ Everything NOT in the non-essential list is essential, including:
 
 ## The `isEssentialToolPart()` Function
 
-**File:** `discord/src/session-handler.ts`, lines 75-87
+**File:** `cli/src/session-handler.ts`, lines 75-87
 
 ```typescript
 function isEssentialToolPart(part: Part): boolean {
@@ -90,7 +90,7 @@ function isEssentialToolPart(part: Part): boolean {
 
 ## Verbosity Filtering in `sendPartMessage()`
 
-**File:** `discord/src/session-handler.ts`, lines 880-895
+**File:** `cli/src/session-handler.ts`, lines 880-895
 
 This is where verbosity filtering is applied during message streaming:
 
@@ -138,7 +138,7 @@ const sendPartMessage = async (part: Part) => {
 
 ## Tool Formatting: Skill Tools
 
-**File:** `discord/src/message-formatting.ts`, lines 346-349
+**File:** `cli/src/message-formatting.ts`, lines 346-349
 
 Skill tools are formatted with italics and the skill name:
 
@@ -156,7 +156,7 @@ Example Discord output:
 
 ## Skill Tool Configuration
 
-**File:** `discord/src/opencode.ts`, lines 182-183
+**File:** `cli/src/opencode.ts`, lines 182-183
 
 Skills are loaded from the local filesystem:
 
@@ -166,7 +166,7 @@ skills: {
 }
 ```
 
-Skills are discovered from `discord/skills/` directory (see `scripts/sync-skills.ts` for remote syncing).
+Skills are discovered from `cli/skills/` directory (see `scripts/sync-skills.ts` for remote syncing).
 
 ## Other Verbosity Filtering Uses
 
@@ -177,7 +177,7 @@ Verbosity filtering is also used for:
 
 ## Database
 
-**File:** `discord/src/database.ts`, lines 388-413
+**File:** `cli/src/database.ts`, lines 388-413
 
 Verbosity settings are stored per-channel in SQLite:
 
@@ -208,7 +208,7 @@ export async function setChannelVerbosity(
 
 ## Verbosity Command
 
-**File:** `discord/src/commands/verbosity.ts`
+**File:** `cli/src/commands/verbosity.ts`
 
 The `/verbosity` command allows users to set channel-level verbosity:
 

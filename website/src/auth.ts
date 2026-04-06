@@ -18,7 +18,7 @@ import { createPrisma } from 'db/src'
 import type { Env } from './env.js'
 import { upsertGatewayClientAndRefreshKv } from './gateway-client-kv.js'
 
-// Same permissions list used in discord/src/utils.ts generateBotInstallUrl.
+// Same permissions list used in cli/src/utils.ts generateBotInstallUrl.
 // Hardcoded to avoid importing discord-api-types/v10 barrel which adds ~204 KiB
 // to the CF Worker bundle (pulls in gateway, payloads, rest, rpc modules).
 // Computed from PermissionFlagsBits: ViewChannel | ManageChannels | SendMessages |

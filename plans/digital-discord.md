@@ -7,9 +7,9 @@ description: |
   WebSocket, and Prisma + libsql for in-memory state.
 prompt: |
   Voice transcript from Tommy asking to create a "digital twin" of Discord for
-  testing Kimaki. The plan was created by reading: discord/src/discord-bot.ts,
-  discord/src/discord-utils.ts, discord/src/interaction-handler.ts, all files
-  in discord/src/commands/, the discord/package.json, the official Discord
+  testing Kimaki. The plan was created by reading: cli/src/discord-bot.ts,
+  cli/src/discord-utils.ts, cli/src/interaction-handler.ts, all files
+  in cli/src/commands/, the cli/package.json, the official Discord
   OpenAPI spec at opensrc/repos/github.com/discord/discord-api-spec/specs/
   openapi.json (139 paths, 498 schemas), Spiceflow source at opensrc/repos/
   github.com/remorses/spiceflow/, and the discord.js SDK source (@discordjs/
@@ -1701,7 +1701,7 @@ Prisma schema changes, these statements must be updated to match. Run
   patterns, especially `handleForNode` from `spiceflow/_node-server`
 - Fetch https://discord.com/developers/docs/events/gateway for the full
   Gateway connection flow documentation
-- Read `discord/src/discord-bot.ts:165-180` for the Client constructor
+- Read `cli/src/discord-bot.ts:165-180` for the Client constructor
   options Kimaki uses
 
 ### Phase 2: Messages + Reactions (~60k tokens estimated)
@@ -1795,7 +1795,7 @@ connections share the same in-memory DB.
   `APIThreadChannel`, thread metadata types
 - OpenAPI spec: `/channels/{channel_id}/threads` paths
 - Fetch https://discord.com/developers/docs/resources/channel#start-thread-without-message
-- Read `discord/src/commands/worktree.ts` and `discord/src/discord-bot.ts`
+- Read `cli/src/commands/worktree.ts` and `cli/src/discord-bot.ts`
   for how Kimaki creates threads
 
 ### Phase 4: Interactions (~60k tokens estimated)
@@ -1838,10 +1838,10 @@ connections share the same in-memory DB.
   `InteractionResponseType`, `APIInteractionResponse`
 - OpenAPI spec: `/interactions/{interaction_id}/{interaction_token}/callback`
 - Fetch https://discord.com/developers/docs/interactions/receiving-and-responding
-- Read `discord/src/interaction-handler.ts` and `discord/src/commands/`
+- Read `cli/src/interaction-handler.ts` and `cli/src/commands/`
   for how Kimaki handles interactions
-- Read `discord/src/commands/permissions.ts` for button interaction flow
-- Read `discord/src/commands/model.ts` for select menu interaction flow
+- Read `cli/src/commands/permissions.ts` for button interaction flow
+- Read `cli/src/commands/model.ts` for select menu interaction flow
 
 ### Phase 5: Guild Management + Polish (~40k tokens estimated)
 
@@ -1872,7 +1872,7 @@ remaining guild operations.
 
 - Start `DigitalDiscord` with channel topics matching Kimaki's format
 - Start the full Kimaki bot (reuse `startDiscordBot()` from
-  `discord/src/discord-bot.ts`)
+  `cli/src/discord-bot.ts`)
 - Verify the bot logs in, registers commands, and scans channels
 - Simulate a user message and verify Kimaki creates a thread + starts
   processing
@@ -1881,9 +1881,9 @@ remaining guild operations.
 **Key references**:
 
 - OpenAPI spec: `/guilds/{guild_id}/channels`, `/guilds/{guild_id}/roles`
-- Read `discord/src/channel-management.ts` for how Kimaki creates channels
-- Read `discord/src/cli.ts` for command registration and startup flow
-- Read `discord/src/discord-utils.ts:604` (`getKimakiMetadata`) for how
+- Read `cli/src/channel-management.ts` for how Kimaki creates channels
+- Read `cli/src/cli.ts` for command registration and startup flow
+- Read `cli/src/discord-utils.ts:604` (`getKimakiMetadata`) for how
   channel topics are parsed
 
 ---

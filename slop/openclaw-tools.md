@@ -337,7 +337,7 @@ openclaw's memory reliable.
 ### Gap analysis: kimaki vs openclaw
 
 Kimaki currently has **only mechanism 2, partially**. The system
-prompt in `discord/src/system-message.ts:122-183` says "before
+prompt in `cli/src/system-message.ts:122-183` says "before
 answering questions about prior work... list existing files and read
 relevant ones" but:
 

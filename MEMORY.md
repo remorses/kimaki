@@ -3,7 +3,7 @@
 ## Prompt ingress architecture
 
 All user prompts funnel through `ThreadSessionRuntime.enqueueIncoming` in
-`discord/src/session-handler/thread-session-runtime.ts`. This is the single
+`cli/src/session-handler/thread-session-runtime.ts`. This is the single
 centralized injection point for any cross-cutting prompt transformation
 (command detection, prefix stripping, etc). The 6 sources that funnel here:
 
@@ -96,17 +96,7 @@ Design rules for any code that calls `thread.setName()`:
 - Don't let a blocked rename block queue draining, typing, or event handling.
 
 Reference implementation: `handleSessionUpdated` in
-`discord/src/session-handler/thread-session-runtime.ts`.
-
-## OpenCode session.updated event carries the generated title
-
-When an OpenCode session is created without a title, OpenCode generates a
-summary title from the first turn and emits a `session.updated` event with
-the full `Session` object (including `info.title`). See
-`@opencode-ai/sdk/dist/v2/gen/types.gen.d.ts` types `EventSessionUpdated`
-and `Session`. The title starts as a placeholder matching
-`/^new session\s*-/i` — skip renames until a real title arrives (matches
-the filter in `external-opencode-sync.ts`).
+`cli/src/session-handler/thread-session-runtime.ts`.
 
 ## OpenCode permission.reply cannot widen/change scope — patterns are fixed by permission.asked
 
@@ -124,7 +114,7 @@ rule (e.g. grant permission for a parent directory instead of a single
 file), the user must configure permission rules in OpenCode config / via
 per-session `permissions` option (see `parsePermissionRules` and the
 `--permission "tool:pattern:action"` CLI flag in
-`discord/src/session-handler/thread-session-runtime.ts`), not via
+`cli/src/session-handler/thread-session-runtime.ts`), not via
 `permission.reply`.
 
 There is also a legacy `PermissionRespond` endpoint
@@ -133,9 +123,9 @@ body shape — no scope override there either.
 
 ## undici is a devDependency but easy to miss-install
 
-`discord/package.json` lists `undici: ^8.0.2` as a devDependency (used by
+`cli/package.json` lists `undici: ^8.0.2` as a devDependency (used by
 `gateway-proxy-reconnect.e2e.test.ts` for `setGlobalDispatcher`). If you
 see `Cannot find package 'undici'` from that test, just run `pnpm install`
-inside `discord/`. Do NOT assume it's a transitive dep — the comment in
+inside `cli/`. Do NOT assume it's a transitive dep — the comment in
 `discord-bot.ts:125` saying "undici is a transitive dep from discord.js"
 is misleading for the test file which needs the explicit dependency.

@@ -1,12 +1,12 @@
 <!-- This AGENTS.md file is generated. Look for an agents.md package.json script to see what files to update instead. -->
 
-after every change always run tsc inside discord to validate your changes. try to never use as any
+after every change always run tsc inside cli to validate your changes. try to never use as any
 
 do not use spawnSync. use our util execAsync. which uses spawn under the hood
 
-the important package in this repo is discord. it contains the discord bot code.
+the important package in this repo is cli. it contains the discord bot code.
 
-after making important changes to queueing or message handling always run the full test suite inside discord to make sure our changes did not break anything. also run with -u and see snapshots updates in git diff if needed. `pnpm test -u --run`
+after making important changes to queueing or message handling always run the full test suite inside cli to make sure our changes did not break anything. also run with -u and see snapshots updates in git diff if needed. `pnpm test -u --run`
 
 # repo architecture
 
@@ -15,7 +15,7 @@ kimaki is a monorepo with three main packages that communicate via a shared Post
 ```
 ┌─────────────────────────────────────────────────────────────┐
 │  User's machine                                             │
-│  discord/ (TypeScript CLI + Discord bot)                    │
+│  cli/ (TypeScript CLI + Discord bot)                        │
 │  ├── src/cli.ts        main CLI, onboarding wizard          │
 │  ├── src/discord-bot.ts  event loop, session routing        │
 │  └── SQLite (~/.kimaki/discord-sessions.db)                 │
@@ -77,7 +77,7 @@ key files:
 
 auth flow: client sends IDENTIFY with token `client_id:client_secret` → proxy validates against the CLIENTS map (from DB) → returns `SessionPrincipal::Client(id)` + `authorized_guilds` → only forwards events for those guilds.
 
-gateway REST rule for discord package code: when running with `client_id:secret`
+gateway REST rule for cli package code: when running with `client_id:secret`
 through gateway-proxy, Discord REST calls must be guild-scoped or explicitly
 allowlisted by the proxy (`/gateway/bot`, `/users/@me`, etc). avoid global
 application routes like `/applications/{app_id}/commands`; use
@@ -96,7 +96,7 @@ multi-tenant REST safety invariant:
 
 ## gateway onboarding flow (gateway mode)
 
-the gateway mode onboarding (in `discord/src/cli.ts`, the `run()` function) works as follows:
+the gateway mode onboarding (in `cli/src/cli.ts`, the `run()` function) works as follows:
 
 1. CLI generates `clientId` (UUID) + `clientSecret` (32-byte hex)
 2. builds Discord OAuth URL with `state=JSON({clientId, clientSecret})` and `redirect_uri=https://kimaki.xyz/api/auth/callback/discord`
@@ -111,7 +111,7 @@ use `--gateway` to force gateway mode even if self-hosted credentials are alread
 
 ## db package
 
-`db` is a devDependency of `discord`. this means discord can only import **types** from `db`, not runtime values. use `import type { ... } from 'db/...'` in discord code. website has `db` as a normal dependency so it can import runtime values (functions, classes, etc.).
+`db` is a devDependency of `cli`. this means cli can only import **types** from `db`, not runtime values. use `import type { ... } from 'db/...'` in cli code. website has `db` as a normal dependency so it can import runtime values (functions, classes, etc.).
 
 ## opencode SDK
 
@@ -178,12 +178,12 @@ if we added new fields on the schema then we would also need to update db.ts wit
 
 ## prisma
 
-we use prisma to write type safe queries. the database schema is defined in `discord/schema.prisma`.
+we use prisma to write type safe queries. the database schema is defined in `cli/schema.prisma`.
 
-`discord/src/schema.sql` is **generated** from the prisma schema — never edit it directly. to regenerate it after modifying schema.prisma:
+`cli/src/schema.sql` is **generated** from the prisma schema — never edit it directly. to regenerate it after modifying schema.prisma:
 
 ```bash
-cd discord && pnpm generate
+cd cli && pnpm generate
 ```
 
 this runs `prisma generate` (for the client) and `pnpm generate:sql` (which creates a temp sqlite db, pushes the prisma schema, and extracts the CREATE TABLE statements). the resulting `schema.sql` uses `CREATE TABLE IF NOT EXISTS`, so it creates tables for new users automatically on startup.
@@ -208,15 +208,15 @@ this is the only migration pattern needed. ALTER TABLE ADD COLUMN silently fails
 
 **workflow for adding a new column:**
 
-1. add the field to `discord/schema.prisma`
-2. run `pnpm generate` inside discord folder (regenerates prisma client + schema.sql)
+1. add the field to `cli/schema.prisma`
+2. run `pnpm generate` inside cli folder (regenerates prisma client + schema.sql)
 3. add `ALTER TABLE ... ADD COLUMN` in `db.ts` `migrateSchema()` with try/catch
 4. schema.sql handles new installs, the ALTER handles existing installs
 
 when adding new tables:
 
-1. add the model to `discord/schema.prisma`
-2. run `pnpm generate` inside discord folder
+1. add the model to `cli/schema.prisma`
+2. run `pnpm generate` inside cli folder
 3. add getter/setter functions in `database.ts` only if the query is complex or reused in many places
 
 do NOT add simple prisma query wrappers to database.ts. if a query is a straightforward `findMany`, `findUnique`, `create`, etc. with no complex logic, inline the prisma call directly at the call site. database.ts is not a repository layer — it only exists for queries that are genuinely complex (multi-step transactions, migrations) or called from 3+ places. when in doubt, inline it.
@@ -331,15 +331,15 @@ signal summary:
 - `SIGUSR1`: write heap snapshot to disk
 - `SIGUSR2`: graceful restart (existing)
 
-the implementation is in `discord/src/heap-monitor.ts`.
+the implementation is in `cli/src/heap-monitor.ts`.
 
 ## cpu profiling tests
 
-set `VITEST_CPU_PROF=1` to generate `.cpuprofile` files when running vitest. profiles land in `discord/tmp/cpu-profiles/`. always run a single test file to avoid hanging the machine — the config forces `maxForks: 1` when profiling.
+set `VITEST_CPU_PROF=1` to generate `.cpuprofile` files when running vitest. profiles land in `cli/tmp/cpu-profiles/`. always run a single test file to avoid hanging the machine — the config forces `maxForks: 1` when profiling.
 
 ```bash
 # run one test file with profiling
-cd discord
+cd cli
 VITEST_CPU_PROF=1 pnpm test --run src/some-file.e2e.test.ts
 ```
 
@@ -375,7 +375,7 @@ for live user-session debugging (without restarting with env vars), export the p
 
 `kimaki session export-events-jsonl --session <session_id> --out ./tmp/session-events.jsonl`
 
-use this when debugging session-state regressions (for example footer appearing after abort). the exported jsonl can be copied into `discord/src/session-handler/event-stream-fixtures/` and used to add/update `event-stream-state.test.ts` coverage for pure derivation helpers.
+use this when debugging session-state regressions (for example footer appearing after abort). the exported jsonl can be copied into `cli/src/session-handler/event-stream-fixtures/` and used to add/update `event-stream-state.test.ts` coverage for pure derivation helpers.
 
 runtime note: `ThreadSessionRuntime` keeps the last 1000 opencode events in memory per thread (`eventBuffer`) for event-sourcing derivation and waiters. the buffer stores a compacted event shape to avoid memory spikes.
 
@@ -414,7 +414,7 @@ for checkout validation requests, prefer non-recursive checks unless the user as
 
 ## opencode plugin and env vars
 
-the opencode plugin (`discord/src/kimaki-opencode-plugin.ts`) runs inside the **opencode server process**, not the kimaki bot process. this means `config.ts` state (like `getDataDir()`, etc.) is not available there.
+the opencode plugin (`cli/src/kimaki-opencode-plugin.ts`) runs inside the **opencode server process**, not the kimaki bot process. this means `config.ts` state (like `getDataDir()`, etc.) is not available there.
 
 **CRITICAL: never export utility functions from `kimaki-opencode-plugin.ts`.** opencode's plugin loader calls every exported function in the module as a plugin initializer. if you export a helper like `condenseMemoryMd(content: string)`, it will be called with a PluginInput object instead of a string and crash. only the plugin entrypoint function should be exported. move any utilities to separate files (e.g. `condense-memory.ts`) and import them.
 
@@ -433,7 +433,7 @@ when adding new bot-side config that the plugin needs, add it as a `KIMAKI_*` en
 
 ## skills folder
 
-skills is a symlink to discord/skills. this is a folder of skills for kimaki. loaded by all kimaki users. some skills are synced from github repos. see discord/scripts/sync-skills.ts. so never manually update them. instead if need to updaste them start kimaki threads on those project, found via kimaki cli.
+skills is a symlink to cli/skills. this is a folder of skills for kimaki. loaded by all kimaki users. some skills are synced from github repos. see cli/scripts/sync-skills.ts. so never manually update them. instead if need to updaste them start kimaki threads on those project, found via kimaki cli.
 
 ## discord-digital-twin e2e style
 
@@ -525,7 +525,7 @@ with fixture jsonl streams and inline snapshots.
 
 if mutable state is really needed, centralize it.
 
-- use `discord/src/store.ts` for global shared state so every read/write path is visible.
+- use `cli/src/store.ts` for global shared state so every read/write path is visible.
 - keep global state at a minimum. every new field multiplies the number of possible app states and increases bug surface.
 - prefer deriving values from events/existing state instead of storing mirrored flags.
 - if state is local-only, keep it local and encapsulated (for example a local `let count = 0` in one function/loop). do not promote temporary local state to global store.

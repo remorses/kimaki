@@ -4,14 +4,14 @@ description: |
   Plan for abstracting Discord-specific APIs into a platform-independent
   KimakiAdapter interface that supports both Discord and Slack.
 prompt: |
-  Explored all 48 files with discord.js imports across discord/src/.
+  Explored all 48 files with discord.js imports across cli/src/.
   Read the chat SDK source (opensrc/repos/github.com/vercel/chat/packages/chat)
   including types.ts, chat.ts, thread.ts, channel.ts, and index.ts.
   Compared chat SDK's Adapter interface with Kimaki's needs.
   Designed KimakiAdapter interface modeled after chat SDK patterns
   but extended for Kimaki's Gateway-first, long-running CLI architecture.
   Files referenced:
-    - discord/src/**/*.ts (all 48 files with discord.js imports)
+    - cli/src/**/*.ts (all 48 files with discord.js imports)
     - opensrc/repos/github.com/vercel/chat/packages/chat/src/types.ts
     - opensrc/repos/github.com/vercel/chat/packages/chat/src/chat.ts
     - opensrc/repos/github.com/vercel/chat/packages/chat/src/thread.ts
@@ -847,11 +847,11 @@ All test files create discord.js `Client` instances — need a
 
 ## 11. Implementation Order
 
-1. Create `KimakiAdapter` interface in `discord/src/platform/types.ts`
-2. Create `DiscordAdapter` in `discord/src/platform/discord-adapter.ts`
+1. Create `KimakiAdapter` interface in `cli/src/platform/types.ts`
+2. Create `DiscordAdapter` in `cli/src/platform/discord-adapter.ts`
    wrapping existing discord.js code
 3. Update `discord-bot.ts` to use adapter (Tier 1)
 4. Update `commands/types.ts` to use platform-agnostic event types
 5. Update commands one by one (Tier 3 — all follow the same pattern)
-6. Create `SlackAdapter` in `discord/src/platform/slack-adapter.ts`
+6. Create `SlackAdapter` in `cli/src/platform/slack-adapter.ts`
 7. Add platform selection to `cli.ts` startup

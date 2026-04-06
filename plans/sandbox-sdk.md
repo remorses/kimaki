@@ -66,11 +66,11 @@ All git operations (checkout, commit, push, branch) happen through
 
 ## Package location
 
-`discord/src/sandbox/` — not a separate npm package, lives inside
-the kimaki discord package. Can be extracted later if needed.
+`cli/src/sandbox/` — not a separate npm package, lives inside
+the kimaki cli package. Can be extracted later if needed.
 
 ```
-discord/src/sandbox/
+cli/src/sandbox/
   index.ts                  — re-exports
   types.ts                  — shared types, SandboxStatus, etc.
   sandbox-handle.ts         — SandboxHandle abstract class
@@ -731,7 +731,7 @@ Plus integration into kimaki:
 ## Dependencies to add
 
 ```bash
-cd discord && pnpm install @vercel/sandbox @daytonaio/sdk
+cd cli && pnpm install @vercel/sandbox @daytonaio/sdk
 ```
 
 Both are optional peer dependencies — only loaded when the provider

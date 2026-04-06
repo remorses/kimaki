@@ -211,7 +211,7 @@ export class SlackDigitalTwin {
 
     const sql = fs.readFileSync(schemaPath, 'utf-8')
 
-    // Same parsing approach as discord/src/db.ts migrateSchema():
+    // Same parsing approach as cli/src/db.ts migrateSchema():
     // 1. Split on semicolons into statements
     // 2. Strip per-line SQL comments within each statement
     // 3. Filter out empty and sqlite_sequence statements

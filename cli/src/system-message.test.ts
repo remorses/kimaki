@@ -453,7 +453,7 @@ describe('system-message', () => {
       tmux new-session -d -s myapp-dev
 
       # Run the dev server with kimaki tunnel inside the session
-      tmux send-keys -t myapp-dev "kimaki tunnel --kill -p 3000 -- pnpm dev" Enter
+      tmux send-keys -t myapp-dev "kimaki tunnel -p 3000 -- pnpm dev" Enter
       \`\`\`
 
       ### getting the tunnel URL
@@ -468,15 +468,15 @@ describe('system-message', () => {
       \`\`\`bash
       # Next.js project
       tmux new-session -d -s projectname-nextjs-dev-3000
-      tmux send-keys -t nextjs-dev "kimaki tunnel --kill -p 3000 -- pnpm dev" Enter
+      tmux send-keys -t nextjs-dev "kimaki tunnel -p 3000 -- pnpm dev" Enter
 
       # Vite project on port 5173
       tmux new-session -d -s vite-dev-5173
-      tmux send-keys -t vite-dev "kimaki tunnel --kill -p 5173 -- pnpm dev" Enter
+      tmux send-keys -t vite-dev "kimaki tunnel -p 5173 -- pnpm dev" Enter
 
       # Custom tunnel ID (only for intentionally public-safe services)
       tmux new-session -d -s holocron-dev
-      tmux send-keys -t holocron-dev "kimaki tunnel --kill -p 3000 -t holocron -- pnpm dev" Enter
+      tmux send-keys -t holocron-dev "kimaki tunnel -p 3000 -t holocron -- pnpm dev" Enter
       \`\`\`
 
       ### stopping the dev server

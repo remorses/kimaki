@@ -4,7 +4,7 @@
 
 ## Package purpose
 
-This package exists to let Kimaki (from the `discord` package) run on Slack in
+This package exists to let Kimaki (from the `cli` package) run on Slack in
 the future with minimal behavior differences. The adapter translates Discord
 Gateway and REST semantics to Slack APIs so Kimaki can keep the same runtime
 model:
@@ -166,7 +166,7 @@ compatibility. `resolveSlackTarget` also handles legacy `THR_` IDs.
 
 - After bridge changes, always run:
   - `cd discord-slack-bridge && pnpm typecheck && pnpm test --run`
-  - `cd discord && pnpm tsc`
+  - `cd cli && pnpm tsc`
 
 ## Website KV auth cache architecture (Slack gateway)
 
