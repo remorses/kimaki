@@ -4108,9 +4108,14 @@ export class ThreadSessionRuntime {
       )
     }
 
-    const projectInfo = branchName
-      ? `${folderName} ⋅ ${branchName} ⋅ `
-      : `${folderName} ⋅ `
+    const truncate = (s: string, max: number) => {
+      return s.length > max ? s.slice(0, max - 1) + '\u2026' : s
+    }
+    const truncatedFolder = truncate(folderName, 15)
+    const truncatedBranch = truncate(branchName, 15)
+    const projectInfo = truncatedBranch
+      ? `${truncatedFolder} ⋅ ${truncatedBranch} ⋅ `
+      : `${truncatedFolder} ⋅ `
     const footerText = `*${projectInfo}${sessionDuration}${contextInfo}${modelInfo}${agentInfo}*`
     this.stopTyping()
 
