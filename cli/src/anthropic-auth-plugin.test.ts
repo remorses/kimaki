@@ -12,7 +12,7 @@ import {
   rotateAnthropicAccount,
   saveAccountStore,
   shouldRotateAuth,
-} from './anthropic-auth-plugin.js'
+} from './anthropic-auth-state.js'
 
 const firstAccount = {
   type: 'oauth' as const,

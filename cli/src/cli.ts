@@ -128,7 +128,7 @@ import {
   accountsFilePath,
   loadAccountStore,
   removeAccount,
-} from './anthropic-auth-plugin.js'
+} from './anthropic-auth-state.js'
 
 const cliLogger = createLogger(LogPrefix.CLI)
 
