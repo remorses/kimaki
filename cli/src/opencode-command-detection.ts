@@ -25,27 +25,34 @@ function stripDiscordSuffix(token: string): string {
   return token
 }
 
-function findRegisteredCommand({
+// Resolve a /token against registeredUserCommands. When the list is empty
+// (gateway startup race), falls back to suffix-stripping so tokens like
+// /build-cmd still route to session.command('build'). Tokens without a
+// recognizable suffix return undefined to avoid false positives.
+function resolveCommandName({
   token,
   registered,
 }: {
   token: string
   registered: RegisteredUserCommand[]
-}): RegisteredUserCommand | undefined {
-  // Try exact matches first (original name, then Discord-sanitized name).
+}): string | undefined {
   const exact = registered.find((c) => {
     return c.name === token || c.discordCommandName === token
   })
-  if (exact) return exact
+  if (exact) return exact.name
 
-  // Fall back to matching after stripping -cmd / -skill / -mcp-prompt from
-  // the user's token. This lets `/build-cmd` resolve to an opencode command
-  // whose base name is `build`.
   const base = stripDiscordSuffix(token)
   if (base === token) return undefined
-  return registered.find((c) => {
+
+  const stripped = registered.find((c) => {
     return c.name === base || c.discordCommandName === base
   })
+  if (stripped) return stripped.name
+
+  // Empty registry fallback: suffix was stripped, trust it
+  if (registered.length === 0) return base
+
+  return undefined
 }
 
 export function extractLeadingOpencodeCommand(
@@ -53,12 +60,7 @@ export function extractLeadingOpencodeCommand(
   registered: RegisteredUserCommand[] = store.getState().registeredUserCommands,
 ): { command: { name: string; arguments: string } } | null {
   if (!prompt) return null
-  if (registered.length === 0) return null
 
-  // Scan each line; the first line whose trimmed start is `/<token>` and
-  // resolves against registeredUserCommands wins. Args are everything after
-  // the command token on that line. Lines before and after are ignored —
-  // they're prefix (`» **name:**`) or context noise.
   for (const line of prompt.split('\n')) {
     const trimmed = line.trimStart()
     if (!trimmed.startsWith('/')) continue
@@ -66,14 +68,9 @@ export function extractLeadingOpencodeCommand(
     if (!match) continue
     const [, token, rest] = match
     if (!token) continue
-    const resolved = findRegisteredCommand({ token, registered })
-    if (!resolved) continue
-    return {
-      command: {
-        name: resolved.name,
-        arguments: (rest ?? '').trim(),
-      },
-    }
+    const name = resolveCommandName({ token, registered })
+    if (!name) continue
+    return { command: { name, arguments: (rest ?? '').trim() } }
   }
   return null
 }

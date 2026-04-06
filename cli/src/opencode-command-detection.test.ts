@@ -200,10 +200,49 @@ describe('extractLeadingOpencodeCommand', () => {
     )
   })
 
-  test('empty registry returns null even for known-looking commands', () => {
+  test('empty registry returns null for tokens without Discord suffix', () => {
     expect(extractLeadingOpencodeCommand('/build foo', [])).toMatchInlineSnapshot(
       `null`,
     )
+  })
+
+  test('empty registry fallback: -cmd suffix strips and returns base name', () => {
+    expect(
+      extractLeadingOpencodeCommand('/hello-test-cmd', []),
+    ).toMatchInlineSnapshot(`
+      {
+        "command": {
+          "arguments": "",
+          "name": "hello-test",
+        },
+      }
+    `)
+  })
+
+  test('empty registry fallback: -skill suffix with args', () => {
+    expect(
+      extractLeadingOpencodeCommand('/review-skill check auth', []),
+    ).toMatchInlineSnapshot(`
+      {
+        "command": {
+          "arguments": "check auth",
+          "name": "review",
+        },
+      }
+    `)
+  })
+
+  test('empty registry fallback skips non-suffixed, matches suffixed on next line', () => {
+    expect(
+      extractLeadingOpencodeCommand('/unknown\n/deploy-cmd now', []),
+    ).toMatchInlineSnapshot(`
+      {
+        "command": {
+          "arguments": "now",
+          "name": "deploy",
+        },
+      }
+    `)
   })
 
   test('leading whitespace before slash still matches', () => {

@@ -112,7 +112,27 @@ function createDeterministicMatchers(): DeterministicMatcher[] {
     },
   }
 
-  return [userReplyMatcher]
+  // Catch-all: any user message gets a reply
+  const catchAll: DeterministicMatcher = {
+    id: 'catch-all',
+    priority: 0,
+    when: { lastMessageRole: 'user' },
+    then: {
+      parts: [
+        { type: 'stream-start', warnings: [] },
+        { type: 'text-start', id: 'catch' },
+        { type: 'text-delta', id: 'catch', delta: 'caught-by-model' },
+        { type: 'text-end', id: 'catch' },
+        {
+          type: 'finish',
+          finishReason: 'stop',
+          usage: { inputTokens: 1, outputTokens: 1, totalTokens: 2 },
+        },
+      ],
+    },
+  }
+
+  return [userReplyMatcher, catchAll]
 }
 
 describe('kimaki send --channel thread creation', () => {
@@ -256,6 +276,83 @@ describe('kimaki send --channel thread creation', () => {
       fs.rmSync(directories.dataDir, { recursive: true, force: true })
     }
   }, 10_000)
+
+  test(
+    'kimaki send --prompt "/hello-test-cmd" falls through as text when registeredUserCommands is empty (repro #97)',
+    async () => {
+      // Reproduce GitHub #97: when registeredUserCommands is empty (gateway mode
+      // startup race, or backgroundInit not complete), the prompt "/hello-test-cmd"
+      // is NOT detected as a command and is sent to the model as plain text.
+
+      const prevCommands = store.getState().registeredUserCommands
+      // Ensure store is empty — this is the bug condition
+      store.setState({ registeredUserCommands: [] })
+
+      try {
+        const prompt = '/hello-test-cmd'
+        const embedMarker: ThreadStartMarker = {
+          start: true,
+          username: 'cli-send-tester',
+          userId: TEST_USER_ID,
+        }
+
+        const starterMessage = (await botClient.rest.post(
+          Routes.channelMessages(TEXT_CHANNEL_ID),
+          {
+            body: {
+              content: prompt,
+              embeds: [
+                { color: 0x2b2d31, footer: { text: YAML.stringify(embedMarker) } },
+              ],
+            },
+          },
+        )) as { id: string }
+
+        await new Promise((resolve) => {
+          setTimeout(resolve, 200)
+        })
+
+        const threadData = (await botClient.rest.post(
+          Routes.threads(TEXT_CHANNEL_ID, starterMessage.id),
+          {
+            body: { name: 'cmd-detection-test', auto_archive_duration: 1440 },
+          },
+        )) as { id: string }
+
+        await botClient.rest.put(
+          Routes.threadMembers(threadData.id, TEST_USER_ID),
+        )
+
+        // Wait for any bot reply AFTER the starter message
+        await waitForBotMessageContaining({
+          discord,
+          threadId: threadData.id,
+          userId: discord.botUserId,
+          text: '',
+          afterMessageId: starterMessage.id,
+          timeout: 4_000,
+        })
+
+        const messages = await discord.thread(threadData.id).getMessages()
+        const botReplies = messages.filter((m) => {
+          return m.author.id === discord.botUserId && m.id !== starterMessage.id
+        })
+
+        const allContent = botReplies.map((m) => {
+          return m.content.slice(0, 200)
+        })
+        expect(allContent).toMatchInlineSnapshot(`
+          [
+            "✗ opencode session error: Command not found: "hello-test". Available commands: init, review, goke, security-review, jitter, proxyman, gitchamber, event-sourcing-state, usecomputer, spiceflow, batch, x",
+            "✗ OpenCode API error: Command not found: "hello-test". Available commands: init, review, goke, security-review, jitter, proxyman, gitchamber, event-sourcing-state, usecomputer, spiceflow, batch, x-art",
+          ]
+        `)
+      } finally {
+        store.setState({ registeredUserCommands: prevCommands })
+      }
+    },
+    15_000,
+  )
 
   test(
     'bot-posted starter message with start marker creates thread without DiscordAPIError[160004]',
