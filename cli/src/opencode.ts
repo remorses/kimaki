@@ -462,10 +462,14 @@ async function startSingleServer(): Promise<ServerStartError | SingleServer> {
 
   const port = await getOpenPort()
 
-  const serveArgs = ['serve', '--port', port.toString()]
-  if (store.getState().verboseOpencodeServer) {
-    serveArgs.push('--print-logs', '--log-level', 'DEBUG')
-  }
+  const serveArgs = [
+    'serve',
+    '--port',
+    port.toString(),
+    '--print-logs',
+    '--log-level',
+    'WARN',
+  ]
 
   const {
     command: spawnCommand,
@@ -621,7 +625,6 @@ async function startSingleServer(): Promise<ServerStartError | SingleServer> {
   startingServerProcess = serverProcess
 
   // Buffer logs until we know if server started successfully.
-  // Once ready, switch to forwarding if --verbose-opencode-server is set.
   const logBuffer: string[] = []
   const startupStderrTail: string[] = []
   let serverReady = false
@@ -638,10 +641,8 @@ async function startSingleServer(): Promise<ServerStartError | SingleServer> {
         logBuffer.push(...lines.map((line) => `[stdout] ${line}`))
         return
       }
-      if (store.getState().verboseOpencodeServer) {
-        for (const line of lines) {
-          opencodeLogger.log(`[server:${port}] ${line}`)
-        }
+      for (const line of lines) {
+        opencodeLogger.log(`[server:${port}] ${line}`)
       }
     } catch (error) {
       logBuffer.push(`Failed to process stdout startup logs: ${error}`)
@@ -657,10 +658,8 @@ async function startSingleServer(): Promise<ServerStartError | SingleServer> {
         pushStartupStderrTail({ stderrTail: startupStderrTail, chunk })
         return
       }
-      if (store.getState().verboseOpencodeServer) {
-        for (const line of lines) {
-          opencodeLogger.error(`[server:${port}] ${line}`)
-        }
+      for (const line of lines) {
+        opencodeLogger.error(`[server:${port}] ${line}`)
       }
     } catch (error) {
       logBuffer.push(`Failed to process stderr startup logs: ${error}`)
@@ -738,12 +737,10 @@ async function startSingleServer(): Promise<ServerStartError | SingleServer> {
   serverReady = true
   opencodeLogger.log(`Server ready on port ${port}`)
 
-  // When verbose mode is enabled, also dump startup logs so plugin loading
-  // errors and other startup output are visible in kimaki.log.
-  if (store.getState().verboseOpencodeServer) {
-    for (const line of logBuffer) {
-      opencodeLogger.log(`[server:${port}:startup] ${line}`)
-    }
+  // Always dump startup logs so plugin loading errors and other startup output
+  // are visible in kimaki.log.
+  for (const line of logBuffer) {
+    opencodeLogger.log(`[server:${port}:startup] ${line}`)
   }
 
   const server: SingleServer = {

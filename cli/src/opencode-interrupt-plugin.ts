@@ -10,24 +10,15 @@
 // forgetting to clear a timer.
 
 import type { Plugin } from '@opencode-ai/plugin'
-import type {
-  Part,
-  TextPartInput,
-  FilePartInput,
-  AgentPartInput,
-  SubtaskPartInput,
-} from '@opencode-ai/sdk'
 
 type PluginHooks = Awaited<ReturnType<Plugin>>
 type InterruptEvent = Parameters<NonNullable<PluginHooks['event']>>[0]['event']
-type PromptPartInput = TextPartInput | FilePartInput | AgentPartInput | SubtaskPartInput
 
 type PendingMessage = {
   sessionID: string
   started: boolean
   timer: ReturnType<typeof setTimeout>
   abortAfterStepMessageID: string | undefined
-  parts: PromptPartInput[]
   agent: string | undefined
   model:
     | {
@@ -35,62 +26,6 @@ type PendingMessage = {
         modelID: string
       }
     | undefined
-}
-
-type InterruptChatOutput =
-  NonNullable<PluginHooks['chat.message']> extends (
-    input: unknown,
-    output: infer T,
-  ) => Promise<void>
-    ? T
-    : never
-
-function toPromptParts(parts: Part[]): PromptPartInput[] {
-  return parts.reduce<PromptPartInput[]>((acc, part) => {
-    if (part.type === 'text') {
-      acc.push({
-        id: part.id,
-        type: 'text',
-        text: part.text,
-        synthetic: part.synthetic,
-        ignored: part.ignored,
-        time: part.time,
-        metadata: part.metadata,
-      })
-      return acc
-    }
-    if (part.type === 'file') {
-      acc.push({
-        id: part.id,
-        type: 'file',
-        mime: part.mime,
-        filename: part.filename,
-        url: part.url,
-        source: part.source,
-      })
-      return acc
-    }
-    if (part.type === 'agent') {
-      acc.push({
-        id: part.id,
-        type: 'agent',
-        name: part.name,
-        source: part.source,
-      })
-      return acc
-    }
-    if (part.type === 'subtask') {
-      acc.push({
-        id: part.id,
-        type: 'subtask',
-        prompt: part.prompt,
-        description: part.description,
-        agent: part.agent,
-      })
-      return acc
-    }
-    return acc
-  }, [])
 }
 
 type EventWaiter = {
@@ -166,9 +101,9 @@ function createInterruptState() {
     })
   }
 
-  function getNextPendingForSession(
-    sessionID: string,
-  ): { messageID: string; pending: PendingMessage } | undefined {
+  function getNextPendingForSession(sessionID: string):
+    | { messageID: string; pending: PendingMessage }
+    | undefined {
     for (const [messageID, pending] of pendingByMessageId.entries()) {
       if (pending.sessionID !== sessionID) {
         continue
@@ -199,13 +134,11 @@ function createInterruptState() {
     schedulePending({
       messageID,
       sessionID,
-      parts,
       delayMs,
       onTimeout,
     }: {
       messageID: string
       sessionID: string
-      parts: PromptPartInput[]
       delayMs: number
       onTimeout: () => void
     }): void {
@@ -219,7 +152,6 @@ function createInterruptState() {
         started: false,
         timer,
         abortAfterStepMessageID: latestAssistantMessageIDBySession.get(sessionID),
-        parts,
         agent: undefined,
         model: undefined,
       })
@@ -291,7 +223,6 @@ const interruptOpencodeSessionOnUserMessage: Plugin = async (ctx) => {
       state.schedulePending({
         messageID,
         sessionID,
-        parts: pending.parts,
         delayMs: 200,
         onTimeout: () => {
           void interruptPendingMessage(messageID)
@@ -305,10 +236,10 @@ const interruptOpencodeSessionOnUserMessage: Plugin = async (ctx) => {
       const abortedAssistantWait = state.waitForEvent({
         match: (event) => {
           return (
-            event.type === 'message.updated' &&
-            event.properties.info.role === 'assistant' &&
-            event.properties.info.sessionID === sessionID &&
-            event.properties.info.error?.name === 'MessageAbortedError'
+            event.type === 'message.updated'
+            && event.properties.info.role === 'assistant'
+            && event.properties.info.sessionID === sessionID
+            && event.properties.info.error?.name === 'MessageAbortedError'
           )
         },
         timeoutMs: 5_000,
@@ -320,7 +251,9 @@ const interruptOpencodeSessionOnUserMessage: Plugin = async (ctx) => {
         timeoutMs: 10_000,
       })
 
-      await ctx.client.session.abort({ path: { id: sessionID } })
+      await ctx.client.session.abort({
+        path: { id: sessionID },
+      })
       await abortedAssistantWait
       await idleWait
 
@@ -330,30 +263,24 @@ const interruptOpencodeSessionOnUserMessage: Plugin = async (ctx) => {
         return
       }
 
-      // Resubmit the original queued user message after abort.
-      // session.abort() clears OpenCode's internal prompt queue, so resuming
-      // with an empty parts array can silently drop the user's message.
-      // Keep the original messageID + parts and preserve agent/model context so
-      // session overrides (issue #77) survive the abort + replay path.
-      const replayBody: {
-        messageID: string
-        parts: PromptPartInput[]
+      // Keep the queued user message execution context across abort+resume.
+      // Without this, OpenCode re-resolves model defaults and can ignore
+      // /model session overrides (issue #77).
+      const resumeBody: {
+        parts: []
         agent?: string
         model?: { providerID: string; modelID: string }
-      } = {
-        messageID,
-        parts: currentPending.parts,
-      }
+      } = { parts: [] }
       if (currentPending.agent) {
-        replayBody.agent = currentPending.agent
+        resumeBody.agent = currentPending.agent
       }
       if (currentPending.model) {
-        replayBody.model = currentPending.model
+        resumeBody.model = currentPending.model
       }
 
       await ctx.client.session.promptAsync({
         path: { id: sessionID },
-        body: replayBody,
+        body: resumeBody,
       })
       state.clearPending(messageID)
 
@@ -364,7 +291,6 @@ const interruptOpencodeSessionOnUserMessage: Plugin = async (ctx) => {
       state.schedulePending({
         messageID: nextPending.messageID,
         sessionID,
-        parts: nextPending.pending.parts,
         delayMs: 50,
         onTimeout: () => {
           void interruptPendingMessage(nextPending.messageID)
@@ -380,7 +306,9 @@ const interruptOpencodeSessionOnUserMessage: Plugin = async (ctx) => {
       state.dispatchEvent(event)
 
       if (event.type === 'message.part.updated' && event.properties.part.type === 'step-finish') {
-        const nextPending = state.getNextPendingForSession(event.properties.part.sessionID)
+        const nextPending = state.getNextPendingForSession(
+          event.properties.part.sessionID,
+        )
         if (!nextPending) {
           return
         }
@@ -399,15 +327,20 @@ const interruptOpencodeSessionOnUserMessage: Plugin = async (ctx) => {
 
       if (event.type === 'message.updated' && event.properties.info.role === 'assistant') {
         if (!event.properties.info.error) {
-          state.setLatestAssistantMessage(event.properties.info.sessionID, event.properties.info.id)
+          state.setLatestAssistantMessage(
+            event.properties.info.sessionID,
+            event.properties.info.id,
+          )
         }
 
-        const nextPending = state.getNextPendingForSession(event.properties.info.sessionID)
+        const nextPending = state.getNextPendingForSession(
+          event.properties.info.sessionID,
+        )
         if (
-          nextPending &&
-          !nextPending.pending.started &&
-          !event.properties.info.error &&
-          event.properties.info.parentID !== nextPending.messageID
+          nextPending
+          && !nextPending.pending.started
+          && !event.properties.info.error
+          && event.properties.info.parentID !== nextPending.messageID
         ) {
           nextPending.pending.abortAfterStepMessageID = event.properties.info.id
         }
@@ -449,7 +382,6 @@ const interruptOpencodeSessionOnUserMessage: Plugin = async (ctx) => {
       state.schedulePending({
         messageID,
         sessionID,
-        parts: toPromptParts(output.parts),
         delayMs: interruptStepTimeoutMs,
         onTimeout: () => {
           void interruptPendingMessage(messageID)

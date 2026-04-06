@@ -1870,10 +1870,6 @@ cli
     '--auto-restart',
     'Automatically restart the bot on crash or OOM kill',
   )
-  .option(
-    '--verbose-opencode-server',
-    'Forward OpenCode server stdout/stderr to kimaki.log',
-  )
   .option('--no-sentry', 'Disable Sentry error reporting')
   .option(
     '--gateway',
@@ -1896,7 +1892,6 @@ cli
       mentionMode?: boolean
       noCritique?: boolean
       autoRestart?: boolean
-      verboseOpencodeServer?: boolean
       noSentry?: boolean
       gateway?: boolean
       gatewayCallbackUrl?: string
@@ -1952,7 +1947,6 @@ cli
           }),
           ...(options.mentionMode && { defaultMentionMode: true }),
           ...(options.noCritique && { critiqueEnabled: false }),
-          ...(options.verboseOpencodeServer && { verboseOpencodeServer: true }),
         })
 
         if (options.verbosity) {
@@ -1968,12 +1962,6 @@ cli
             'Critique disabled: diffs will not be auto-uploaded to critique.work',
           )
         }
-        if (options.verboseOpencodeServer) {
-          cliLogger.log(
-            'Verbose OpenCode server: stdout/stderr will be forwarded to kimaki.log',
-          )
-        }
-
         if (options.noSentry) {
           process.env.KIMAKI_SENTRY_DISABLED = '1'
           cliLogger.log('Sentry error reporting disabled (--no-sentry)')

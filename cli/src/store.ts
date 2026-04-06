@@ -65,12 +65,6 @@ export type KimakiState = {
   // Read by: system-message.ts (conditionally appends critique instructions).
   critiqueEnabled: boolean
 
-  // When true, adds --print-logs --log-level DEBUG to the opencode serve
-  // args and forwards stdout/stderr to kimaki.log after server is ready.
-  // Changes: set once at startup from --verbose-opencode-server CLI flag.
-  // Read by: opencode.ts (spawn args and log forwarding).
-  verboseOpencodeServer: boolean
-
   // Base URL for Discord REST API calls (default https://discord.com).
   // Overridden when using a gateway-proxy or gateway Discord mode.
   // Changes: set by getBotTokenWithMode() which runs at startup and on
@@ -120,7 +114,6 @@ export const store = createStore<KimakiState>(() => ({
   defaultVerbosity: 'text_and_essential_tools',
   defaultMentionMode: false,
   critiqueEnabled: true,
-  verboseOpencodeServer: false,
   discordBaseUrl: 'https://discord.com',
   gatewayToken: null,
   registeredUserCommands: [],
