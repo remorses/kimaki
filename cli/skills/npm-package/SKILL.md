@@ -39,8 +39,8 @@ Use this skill when scaffolding or fixing npm packages.
    - any runtime-required extra files (for example `schema.prisma`)
    - docs like `README.md` and `CHANGELOG.md`
    - if tests are inside src and gets included in dist, it's fine. don't try to exclude them
-10. `scripts.build` should be `rm -rf dist *.tsbuildinfo && tsc && chmod +x dist/cli.js` (skip the chmod
-     if the package has no bin). No bundling. We remove dist to cleanup old transpiled files. Also pass tsbuildinfo to remove also the tsc incremental compilation state. Without that tsc would not generate again files to dist.
+10. `scripts.build` should be `rimraf dist "*.tsbuildinfo" && tsc && chmod +x dist/cli.js` (skip the chmod
+     if the package has no bin). No bundling. We remove dist to cleanup old transpiled files. Use `rimraf` here instead of bare shell globs so the script behaves the same in zsh, bash, and Windows shells even when no `.tsbuildinfo` file exists. This also removes the tsc incremental compilation state. Without that tsc would not generate again files to dist.
      Optionally include running scripts with tsx if needed to generate build artifacts.
 11. `prepublishOnly` must always run `build` (optionally run generation before
      build when required). Always add this script:
@@ -236,3 +236,4 @@ Workspace packages inside a monorepo inherit the root `.gitignore`, so this only
 
 - if you need to use zod always use latest version
 - always install packages as dev dependencies if used only for scripts, testing or types only
+- if the package uses `rimraf` in scripts, install it as a dev dependency instead of relying on platform-specific shell behavior
