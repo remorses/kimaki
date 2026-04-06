@@ -15,7 +15,11 @@
 
 4. **Fixed external sync session discovery** — the external sync poller reverted to per-directory session listing which reliably finds active sessions. The previous global endpoint caused sync to miss sessions and show stale state in linked channels.
 
-5. **Removed automatic Kimaki Discord role management** — the bot no longer auto-creates or repositions a "Kimaki" role in your server on startup. Role management is left to server admins.
+5. **Fixed OpenCode plugin compatibility with recent OpenCode releases** — resolved plugin startup failures caused by clack logger imports and plugin logging isolation issues that broke after upstream OpenCode changes.
+
+6. **OpenCode server warnings and errors now appear in kimaki logs** — opencode server log output at warning level and above is forwarded to `~/.kimaki/kimaki.log`, making it easier to debug server-side issues without checking separate log files.
+
+7. **Removed automatic Kimaki Discord role management** — the bot no longer auto-creates or repositions a "Kimaki" role in your server on startup. Role management is left to server admins.
 
 ## 0.4.90
 
