@@ -27,8 +27,9 @@ const HEAP_SNAPSHOT_DIR = path.join(os.homedir(), '.kimaki', 'heap-snapshots')
 // If it doesn't start with '-', it's a subcommand (e.g. "send", "tunnel", "project").
 const firstArg = process.argv[2]
 const isSubcommand = firstArg && !firstArg.startsWith('-')
+const isHelpFlag = process.argv.includes('--help')
 
-if (process.env.__KIMAKI_CHILD || isSubcommand) {
+if (process.env.__KIMAKI_CHILD || isSubcommand || isHelpFlag) {
   await import('./cli.js')
 } else {
   console.error('no subcommand detected. kimaki will automatically restart on crash')
