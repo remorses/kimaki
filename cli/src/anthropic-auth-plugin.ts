@@ -48,7 +48,9 @@ import * as fs from 'node:fs/promises'
 import { createServer, type Server } from 'node:http'
 import { homedir } from 'node:os'
 import path from 'node:path'
-import lockfile from 'proper-lockfile'
+import lockfile_ from 'proper-lockfile'
+
+const lockfile = (lockfile_ as any)?.default || lockfile_
 
 // --- Constants ---
 
