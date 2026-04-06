@@ -80,6 +80,57 @@ Before committing, run `git status -s` and `git diff <file>` on any file
 you don't remember touching. If it's unrelated to your task, leave it out
 of the commit.
 
+## Discord thread rename is heavily rate-limited
+
+Discord rate-limits channel/thread renames to ~2 per 10 minutes per thread,
+and the limit is **undocumented** in headers — `setName()` will silently
+block on the 3rd attempt rather than returning 429. See
+discord/discord-api-docs#1900 and discordjs/discord.js#6651.
+
+Design rules for any code that calls `thread.setName()`:
+
+- Rename at most once per distinct new value (dedup via a runtime-local field).
+- Race `setName()` against `AbortSignal.timeout(...)` (discord.js doesn't
+  take a signal directly, so wrap in `Promise.race`).
+- Fail soft on timeout/429/error — log and continue, never retry.
+- Don't let a blocked rename block queue draining, typing, or event handling.
+
+Reference implementation: `handleSessionUpdated` in
+`discord/src/session-handler/thread-session-runtime.ts`.
+
+## OpenCode session.updated event carries the generated title
+
+When an OpenCode session is created without a title, OpenCode generates a
+summary title from the first turn and emits a `session.updated` event with
+the full `Session` object (including `info.title`). See
+`@opencode-ai/sdk/dist/v2/gen/types.gen.d.ts` types `EventSessionUpdated`
+and `Session`. The title starts as a placeholder matching
+`/^new session\s*-/i` — skip renames until a real title arrives (matches
+the filter in `external-opencode-sync.ts`).
+
+## OpenCode permission.reply cannot widen/change scope — patterns are fixed by permission.asked
+
+`client.permission.reply({ requestID, directory, workspace, reply, message })`
+is the only SDK method to answer a `permission.asked` event. The body only
+accepts `reply: "once" | "always" | "reject"` plus an optional `message`.
+There is **no** field to override the directory/path/patterns of the
+permission. The `directory` and `workspace` query params are just routing
+hints to identify which OpenCode server context the reply belongs to —
+they do NOT change what the "always" rule covers.
+
+The scope of "always" is determined entirely by `PermissionRequest.patterns`
+set by OpenCode when it emitted `permission.asked`. If you want a broader
+rule (e.g. grant permission for a parent directory instead of a single
+file), the user must configure permission rules in OpenCode config / via
+per-session `permissions` option (see `parsePermissionRules` and the
+`--permission "tool:pattern:action"` CLI flag in
+`discord/src/session-handler/thread-session-runtime.ts`), not via
+`permission.reply`.
+
+There is also a legacy `PermissionRespond` endpoint
+(`POST /session/{sessionID}/permissions/{permissionID}`) with the same
+body shape — no scope override there either.
+
 ## undici is a devDependency but easy to miss-install
 
 `discord/package.json` lists `undici: ^8.0.2` as a devDependency (used by
