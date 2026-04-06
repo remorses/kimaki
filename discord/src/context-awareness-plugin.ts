@@ -427,7 +427,7 @@ const contextAwarenessPlugin: Plugin = async ({ directory, client }) => {
                 sessionID,
                 messageID,
                 type: 'text' as const,
-                text: `<system-reminder>Project memory from MEMORY.md (condensed table of contents, line numbers shown):\n${condensed}\nOnly headings are shown above — section bodies are hidden. Use Grep to search MEMORY.md for specific topics, or Read with offset and limit to read a section's content. When writing to MEMORY.md, make headings detailed and descriptive since they are the only thing visible in this prompt. You can update MEMORY.md to store learnings, tips, insights that will help prevent same mistakes, and context worth preserving across sessions.</system-reminder>`,
+                text: `<system-reminder>Project memory from MEMORY.md (condensed table of contents, line numbers shown):\n${condensed}\nOnly headings are shown above — section bodies are hidden. Use Grep to search MEMORY.md for specific topics, or Read with offset and limit to read a section's content. When writing to MEMORY.md, keep titles concise (under 10 words) and content brief (2-3 sentences max). Only track non-obvious learnings that prevent future mistakes and are not already documented in code comments or AGENTS.md. Do not duplicate information that is self-evident from the code.</system-reminder>`,
                 synthetic: true,
               })
             }
@@ -444,7 +444,7 @@ const contextAwarenessPlugin: Plugin = async ({ directory, client }) => {
               sessionID,
               messageID,
               type: 'text' as const,
-              text: '<system-reminder>The previous assistant message was large. If the previous conversation had important learnings, tips, insights that will help prevent the same mistakes, or context worth preserving, update MEMORY.md before starting the new task.</system-reminder>',
+              text: '<system-reminder>The previous assistant message was large. If the conversation had non-obvious learnings that prevent future mistakes and are not already in code comments or AGENTS.md, add them to MEMORY.md with concise titles and brief content (2-3 sentences max).</system-reminder>',
               synthetic: true,
             })
             state.lastMemoryReminderAssistantMessageId =
