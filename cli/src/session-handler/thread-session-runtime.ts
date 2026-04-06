@@ -529,6 +529,7 @@ function getWorktreePromptKey(worktree: WorktreeInfo | undefined): string | null
   ].join('::')
 }
 
+
 // ── Runtime class ────────────────────────────────────────────────
 
 export class ThreadSessionRuntime {
@@ -2981,7 +2982,6 @@ export class ThreadSessionRuntime {
         }
         return fetched.topic?.trim() || undefined
       })()
-
       const worktreeChanged = this.consumeWorktreePromptChange(worktree)
       const syntheticContext = getOpencodePromptContext({
         username: input.username,
@@ -3009,6 +3009,7 @@ export class ThreadSessionRuntime {
           threadId: this.thread.id,
           channelTopic,
           agents: availableAgents,
+          username: this.state?.sessionUsername || input.username,
         }),
         ...(resolvedAgent ? { agent: resolvedAgent } : {}),
         ...(modelField ? { model: modelField } : {}),
@@ -3123,6 +3124,8 @@ export class ThreadSessionRuntime {
    * discord-bot.ts.
    */
   async enqueueIncoming(input: IngressInput): Promise<EnqueueResult> {
+    threadState.setSessionUsername(this.threadId, input.username)
+
     // When a preprocessor is provided, we must resolve it inside
     // dispatchAction before we know the final mode for routing.
     if (input.preprocess) {
@@ -3648,7 +3651,6 @@ export class ThreadSessionRuntime {
       }
       return fetched.topic?.trim() || undefined
     })()
-
     const worktreeChanged = this.consumeWorktreePromptChange(worktree)
     const syntheticContext = getOpencodePromptContext({
       username: input.username,
@@ -3802,6 +3804,7 @@ export class ThreadSessionRuntime {
           threadId: this.thread.id,
           channelTopic,
           agents: earlyAvailableAgents,
+          username: this.state?.sessionUsername || input.username,
         }),
         model: earlyModelParam,
         agent: earlyAgentPreference,

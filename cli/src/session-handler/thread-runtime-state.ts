@@ -70,6 +70,11 @@ export type ThreadRunState = {
   // Read by: dispatchPrompt, ensureSession, abortSessionViaApi, footer.
   sessionId: string | undefined
 
+  // Stable first author for this thread runtime. Used for session-stable
+  // system prompt examples like `kimaki send --user ...` so notifications keep
+  // working without changing the cached system prompt on every follow-up.
+  sessionUsername: string | undefined
+
   // FIFO queue of pending inputs waiting for kimaki-local dispatch.
   // Normal user messages default to opencode queue mode; this queue is
   // for explicit local-queue flows (for example /queue).
@@ -99,6 +104,7 @@ export type ThreadRunState = {
 export function initialThreadState(): ThreadRunState {
   return {
     sessionId: undefined,
+    sessionUsername: undefined,
     queueItems: [],
     listenerController: undefined,
     sentPartIds: new Set(),
@@ -153,6 +159,15 @@ export function removeThread(threadId: string): void {
 
 export function setSessionId(threadId: string, sessionId: string): void {
   updateThread(threadId, (t) => ({ ...t, sessionId }))
+}
+
+export function setSessionUsername(threadId: string, username: string): void {
+  updateThread(threadId, (t) => {
+    if (t.sessionUsername) {
+      return t
+    }
+    return { ...t, sessionUsername: username }
+  })
 }
 
 export function enqueueItem(threadId: string, item: QueuedMessage): void {
