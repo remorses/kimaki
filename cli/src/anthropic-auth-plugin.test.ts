@@ -88,7 +88,13 @@ describe('rotateAnthropicAccount', () => {
       anthropic?: { refresh?: string }
     }
 
-    expect(rotated).toMatchObject({ refresh: 'refresh-second' })
+    expect(rotated).toMatchObject({
+      auth: { refresh: 'refresh-second' },
+      fromLabel: '#1 (refresh-...irst)',
+      toLabel: '#2 (refresh-...cond)',
+      fromIndex: 0,
+      toIndex: 1,
+    })
     expect(store.activeIndex).toBe(1)
     expect(authJson.anthropic?.refresh).toBe('refresh-second')
     expect(authSetCalls).toEqual([

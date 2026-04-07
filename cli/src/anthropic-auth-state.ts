@@ -133,6 +133,21 @@ export async function saveAccountStore(store: AccountStore) {
   await writeJson(accountsFilePath(), normalizeAccountStore(store))
 }
 
+/** Short label for an account: first 8 + last 4 chars of refresh token. */
+export function accountLabel(account: OAuthStored, index?: number): string {
+  const r = account.refresh
+  const short = r.length > 12 ? `${r.slice(0, 8)}...${r.slice(-4)}` : r
+  return index !== undefined ? `#${index + 1} (${short})` : short
+}
+
+export type RotationResult = {
+  auth: OAuthStored
+  fromLabel: string
+  toLabel: string
+  fromIndex: number
+  toIndex: number
+}
+
 function findCurrentAccountIndex(store: AccountStore, auth: OAuthStored) {
   if (!store.accounts.length) return 0
   const byRefresh = store.accounts.findIndex((account) => {
@@ -206,15 +221,20 @@ export async function setAnthropicAuth(
 export async function rotateAnthropicAccount(
   auth: OAuthStored,
   client: Parameters<Plugin>[0]['client'],
-) {
+): Promise<RotationResult | undefined> {
   return withAuthStateLock(async () => {
     const store = await loadAccountStore()
     if (store.accounts.length < 2) return undefined
 
     const currentIndex = findCurrentAccountIndex(store, auth)
+    const currentAccount = store.accounts[currentIndex]
     const nextIndex = (currentIndex + 1) % store.accounts.length
     const nextAccount = store.accounts[nextIndex]
     if (!nextAccount) return undefined
+
+    const fromLabel = currentAccount
+      ? accountLabel(currentAccount, currentIndex)
+      : accountLabel(auth, currentIndex)
 
     nextAccount.lastUsed = Date.now()
     store.activeIndex = nextIndex
@@ -227,7 +247,13 @@ export async function rotateAnthropicAccount(
       expires: nextAccount.expires,
     }
     await setAnthropicAuth(nextAuth, client)
-    return nextAuth
+    return {
+      auth: nextAuth,
+      fromLabel,
+      toLabel: accountLabel(nextAccount, nextIndex),
+      fromIndex: currentIndex,
+      toIndex: nextIndex,
+    }
   })
 }
 

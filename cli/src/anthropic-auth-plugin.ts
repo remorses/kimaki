@@ -823,6 +823,13 @@ const AnthropicAuthPlugin: Plugin = async ({ client }) => {
               if (shouldRotateAuth(response.status, bodyText)) {
                 const rotated = await rotateAnthropicAccount(freshAuth, client)
                 if (rotated) {
+                  // Show toast notification so Discord thread shows the rotation
+                  client.tui.showToast({
+                    body: {
+                      message: `Switching from account ${rotated.fromLabel} to account ${rotated.toLabel}`,
+                      variant: 'info',
+                    },
+                  }).catch(() => {})
                   const retryAuth = await getFreshOAuth(getAuth, client)
                   if (retryAuth) {
                     response = await runRequest(retryAuth)

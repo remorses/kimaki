@@ -125,6 +125,7 @@ import {
   type ScheduledTaskPayload,
 } from './task-schedule.js'
 import {
+  accountLabel,
   accountsFilePath,
   loadAccountStore,
   removeAccount,
@@ -3178,8 +3179,7 @@ cli
 
     store.accounts.forEach((account, index) => {
       const active = index === store.activeIndex ? '*' : ' '
-      const label = `${account.refresh.slice(0, 8)}...${account.refresh.slice(-4)}`
-      console.log(`${active} ${index + 1}. ${label}`)
+      console.log(`${active} ${index + 1}. ${accountLabel(account)}`)
     })
 
     process.exit(0)
