@@ -39,15 +39,20 @@ Use this skill when scaffolding or fixing npm packages.
    - any runtime-required extra files (for example `schema.prisma`)
    - docs like `README.md` and `CHANGELOG.md`
    - if tests are inside src and gets included in dist, it's fine. don't try to exclude them
-10. `scripts.build` should be `rimraf dist "*.tsbuildinfo" && tsc && chmod +x dist/cli.js` (skip the chmod
-     if the package has no bin). No bundling. We remove dist to cleanup old transpiled files. Use `rimraf` here instead of bare shell globs so the script behaves the same in zsh, bash, and Windows shells even when no `.tsbuildinfo` file exists. This also removes the tsc incremental compilation state. Without that tsc would not generate again files to dist.
-     Optionally include running scripts with tsx if needed to generate build artifacts.
-11. `prepublishOnly` must always run `build` (optionally run generation before
-     build when required). Always add this script:
+10. `scripts.build` should be `tsc && chmod +x dist/cli.js` (skip the chmod if
+     the package has no bin). No bundling. Do not delete `dist/` in `build` by
+     default because forcing a clean build on every local build can cause
+     issues. Optionally include running scripts with `tsx` if needed to
+     generate build artifacts.
+11. `prepublishOnly` must always do the cleanup before `build` (optionally run
+     generation before build when required). Always add this script:
      ```json
-     { "prepublishOnly": "pnpm build" }
+     { "prepublishOnly": "rimraf dist \"*.tsbuildinfo\" && pnpm build" }
      ```
-     This ensures `dist/` is fresh before every `npm publish`.
+     This ensures `dist/` is fresh before every `npm publish`, so deleted files
+     do not accidentally stay in the published package. Use `rimraf` here
+     instead of bare shell globs so the script behaves the same in zsh, bash,
+     and Windows shells even when no `.tsbuildinfo` file exists.
 
 ## bin field
 
@@ -71,8 +76,8 @@ Add the shebang as the first line of the source file (`src/cli.ts`):
 ```
 
 `tsc` preserves the shebang in the emitted `.js` file. The `chmod +x` is
-already part of the `build` script, so `prepublishOnly: "pnpm build"` handles
-it automatically.
+already part of the `build` script, so `prepublishOnly` still gets it through
+`pnpm build` after the cleanup step.
 
 ## Reading package version at runtime
 
