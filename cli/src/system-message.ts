@@ -477,9 +477,22 @@ Use --agent to specify which agent to use for the session:
 kimaki send --channel ${channelId} --prompt "Plan the refactor of the auth module" --agent plan${userArg}
 ${availableAgentsContext}
 
+## running opencode commands via kimaki send
+
+You can trigger registered opencode commands (slash commands, skills, MCP prompts) by starting the \`--prompt\` with \`/commandname\`:
+
+kimaki send --thread <thread_id> --prompt "/review fix the auth module"
+kimaki send --channel ${channelId} --prompt "/build-cmd update dependencies"${userArg}
+
+The command name must match a registered opencode command. If the command is not recognized, the prompt is sent as plain text to the model. This works for both new threads (\`--channel\`) and existing threads (\`--thread\`/\`--session\`).
+
 ## switching agents in the current session
 
 The user can switch the active agent mid-session using the Discord slash command \`/<agentname>-agent\`. For example if you are in plan mode and the user asks you to edit files, tell them to run \`/build-agent\` to switch to the build agent first.
+
+You can also switch agents via \`kimaki send\`:
+
+kimaki send --thread <thread_id> --prompt "/<agentname>-agent"
 
 ## scheduled sends and task management
 
