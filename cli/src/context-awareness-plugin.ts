@@ -126,7 +126,7 @@ export function shouldInjectPwd({
     text:
       `\n[working directory changed. Previous working directory: ${priorDirectory}. ` +
       `Current working directory: ${currentDir}. ` +
-      `You MUST read, write, and edit files only under ${currentDir}. ` +
+      `You should read, write, and edit files under ${currentDir}. ` +
       `Do NOT read, write, or edit files under ${priorDirectory}.]`,
   }
 }
