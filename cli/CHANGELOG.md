@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.4.93
+
+1. **Claude account rotation is now visible in Discord** — when Anthropic OAuth hits a rate limit or auth failure and kimaki rotates to another saved Claude account, the thread now shows a toast-style notice with the account labels so you can see which account it switched from and to.
+
+2. **`/merge-worktree` conflict recovery now preserves both sides more reliably** — when a rebase conflict happens during merge, the follow-up AI instructions now explicitly walk through reading the merge base, both sides' commit history, and both diffs before editing conflicted files. This reduces the chance of the model dropping a fix or feature while resolving conflicts.
+
+3. **Agent-switch replies now say when the change applies** — thread-scoped `/agent` and quick `/<agent>-agent` commands now tell you the new agent takes effect on the next message, instead of implying the running turn changed immediately.
+
+4. **Footer keeps more of long folder and branch names** — kimaki now truncates footer folder and branch labels at 30 characters instead of 15, so project info stays readable without overflowing Discord.
+
 ## 0.4.92
 
 1. **Fixed `/command-cmd` prompts being sent to the model when the bot starts up** — when using `kimaki send --prompt "/hello-test-cmd"` (or any `/commandname-cmd` prompt), the command was routed as plain text to the model instead of being executed via `session.command`. This happened because the registered commands list is empty during the gateway startup race (before `backgroundInit` completes). The detector now falls back to suffix-stripping (`-cmd`, `-skill`, `-mcp-prompt`) when the list is empty, so commands are correctly routed regardless of startup timing. Fixes [#97](https://github.com/remorses/kimaki/issues/97).
