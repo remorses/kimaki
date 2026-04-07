@@ -950,7 +950,8 @@ describe('agent model resolution', () => {
         --- from: assistant (TestBot)
         ⬥ ok
         *project ⋅ main ⋅ Ns ⋅ N% ⋅ agent-model-v2 ⋅ **test-agent***
-        Switched to **plan** agent for this session next messages (was **test-agent**)
+        Switched to **plan** agent for this session (was **test-agent**)
+        The agent will change on the next message.
         --- from: user (agent-model-tester)
         Reply with exactly: after-switch-msg
         --- from: assistant (TestBot)
