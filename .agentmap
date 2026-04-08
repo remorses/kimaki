@@ -1,0 +1,3739 @@
+kimakivoice:
+  README.md:
+    description: |-
+      Kimaki is a Discord bot that lets you control OpenCode coding sessions from Discord. Send a message in a Discord channel, an AI agent edits code on your machine.
+      Quick Start
+      ```bash
+      npx -y kimaki@latest
+      ```
+      The CLI walks you through everything. Setup takes about 1 minute — you install the Kimaki bot to your Discord server with one click, pick your projects, and you're done.
+      ... and 15 more lines
+  .lintcn:
+    no_unhandled_error:
+      no_unhandled_error.go:
+        description: |-
+          lintcn:name no-unhandled-error
+          lintcn:description Disallow discarding expressions that are subtypes of Error. Enforces the errore pattern where errors are values that must be checked.
+        defs:
+          NoUnhandledErrorRule: exported const
+  cli:
+    bin.js:
+      description: "#!/usr/bin/env node"
+    examples:
+      system-prompt-drift-plugin:
+        always-update-system-message-plugin.ts:
+          description: |-
+            Example plugin that mutates the system prompt on every turn.
+            Loaded before the drift detector so the example can force a prompt-cache bust
+            and surface the detector toast in a reproducible local run.
+          defs:
+            alwaysUpdateSystemMessagePlugin: fn
+    scripts:
+      debug-external-sync.ts:
+        description: "#!/usr/bin/env tsx"
+        defs:
+          main: fn
+      get-last-session-messages.ts:
+        description: "#!/usr/bin/env tsx"
+        defs:
+          getLastSessionMessages: fn
+          getOpenPort: fn
+          waitForServer: fn
+      list-projects.ts:
+        description: duplicate of db/.gitignore
+      pcm-to-mp3.ts:
+        description: "#!/usr/bin/env bun"
+        defs:
+          convertToMp3: fn
+          findAudioFiles: fn
+          main: fn
+      sync-skills.ts:
+        description: |-
+          #!/usr/bin/env tsx
+          Sync skills from remote repos into cli/skills/.
+
+          Reimplements the core discovery logic from the `skills` npm CLI
+          (vercel-labs/skills) without depending on it. The flow is:
+            1. Shallow-clone each source repo to ./tmp/
+            2. Recursively walk for SKILL.md files, parse frontmatter
+            3. Copy discovered skill directories into cli/skills/<name>/
+          ... and 4 more lines
+        defs:
+          cloneRepo: fn
+          copySkill: fn
+          discoverSkills: fn
+          main: fn
+          parseFrontmatter: fn
+          parseSource: fn
+          sanitizeName: fn
+          walkForSkills: fn
+      test-gateway-programmatic.ts:
+        description: |-
+          Test script: start kimaki in --gateway mode programmatically, parse SSE events from stdout.
+          Validates the non-TTY event flow: install_url → authorized → ready.
+          Run with: npx tsx scripts/test-gateway-programmatic.ts
+        defs:
+          logEvent: fn
+      test-model-id.ts:
+        description: |-
+          Test script to validate model ID format and provider.list API.
+
+          Usage: npx tsx scripts/test-model-id.ts [directory]
+
+          This script:
+          1. Calls provider.list() to get all available providers and models
+          2. Validates that model IDs can be correctly parsed into provider/model format
+          3. Logs the available models sorted by release date
+        defs:
+          getOpenPort: fn
+          main: fn
+          waitForServer: fn
+      test-project-list.ts:
+        description: "#!/usr/bin/env tsx"
+        defs:
+          testProjectList: fn
+      validate-typing-indicator.ts:
+        description: |-
+          #!/usr/bin/env tsx
+          Script that probes Discord typing request lifetime in a real thread.
+        defs:
+          createProbeThread: fn
+          getToken: fn
+          logProbeOutcome: fn
+          measureTypingRequest: fn
+          resolveTextChannel: fn
+    skills:
+      jitter:
+        utils:
+          actions.ts:
+            description: Action helpers for modifying Jitter projects
+            defs:
+              addObject: exported fn
+              batchReplace: exported fn
+              moveNode: exported fn
+              removeNodes: exported fn
+              renameNode: exported fn
+              replaceAssetUrl: exported fn
+              ReplacementItem: exported interface
+              replaceText: exported fn
+              resizeNode: exported fn
+              selectNodes: exported fn
+              setCurrentTime: exported fn
+              setOpacity: exported fn
+              setRotation: exported fn
+              updateNode: exported fn
+          export.ts:
+            description: Export URL generation utilities
+            defs:
+              CurrentProjectExportOptions: exported interface
+              ExportUrlOptions: exported interface
+              generateExportUrl: exported fn
+              generateExportUrlFromCurrentProject: exported fn
+              generateNodeUrl: exported fn
+              getCurrentProjectUrl: exported fn
+              getFileMeta: exported fn
+              ParsedJitterUrl: exported interface
+              parseJitterUrl: exported fn
+          index.ts:
+            description: |-
+              Jitter Utils - Bundle entry point
+              Exports all utilities and attaches to globalThis.jitterUtils
+          snapshot.ts:
+            description: Snapshot and restore utilities for temporary project modifications
+            defs:
+              createMediaSnapshot: exported fn
+              createSnapshot: exported fn
+              createTextSnapshot: exported fn
+              ExportWithRestoreOptions: exported interface
+              restoreFromSnapshot: exported fn
+              Snapshot: exported type
+              withTemporaryChanges: exported fn
+          traverse.ts:
+            description: Tree traversal utilities for Jitter project structure
+            defs:
+              ArtboardInfo: exported interface
+              findAllMediaNodes: exported fn
+              findAllTextNodes: exported fn
+              findNodeById: exported fn
+              findNodesByName: exported fn
+              findNodesByType: exported fn
+              flattenTree: exported fn
+              getAncestors: exported fn
+              getArtboards: exported fn
+              getParentNode: exported fn
+              MediaNodeInfo: exported interface
+              TextNodeInfo: exported interface
+          types.ts:
+            description: Jitter type definitions extracted from the editor API
+            exports:
+              # ... 5 more exports
+              AnimationOperation: exported interface
+              ArtboardProperties: exported interface
+              BaseLayerProperties: exported interface
+              EasingConfig: exported interface
+              EllipseProperties: exported interface
+              ExportProfile: exported type
+              FileMeta: exported interface
+              FillColor: exported type
+              GifProperties: exported interface
+              Gradient: exported interface
+              GradientStop: exported interface
+              GradientTransform: exported interface
+              ImageProperties: exported interface
+              JitterConf: exported interface
+              JitterFont: exported interface
+              JitterNode: exported interface
+              LayerGrpProperties: exported interface
+              LayerProperties: exported type
+              LayerType: exported type
+              RectProperties: exported interface
+              StarProperties: exported interface
+              SvgProperties: exported interface
+              TextProperties: exported interface
+              UpdateAction: exported interface
+              VideoProperties: exported interface
+          wait.ts:
+            description: Waiting utilities for Jitter app initialization and sync
+            defs:
+              isAppReady: exported fn
+              waitFor: exported fn
+              waitForApp: exported fn
+              waitForConfigChange: exported fn
+              waitForNode: exported fn
+    src:
+      agent-model.e2e.test.ts:
+        description: |-
+          E2e test for agent model resolution in new threads.
+          Reproduces a bug where /agent channel preference is ignored by the
+          promptAsync path: submitViaOpencodeQueue only passes input.agent/input.model
+          (undefined for normal Discord messages) instead of resolving channel agent
+          preferences from DB like dispatchPrompt does.
+          ... and 6 more lines
+        defs:
+          createAgentFile: fn
+          createDeterministicMatchers: fn
+          createDiscordJsClient: fn
+          createRunDirectories: fn
+      ai-tool-to-genai.ts:
+        description: |-
+          Tool definition to Google GenAI tool converter.
+          Transforms Kimaki's minimal Tool definitions into Google GenAI CallableTool format
+          for use with Gemini's function calling in the voice assistant.
+        defs:
+          aiToolToCallableTool: exported fn
+          aiToolToGenAIFunction: exported fn
+          callableToolsFromObject: exported fn
+          extractSchemaFromTool: exported fn
+          jsonSchemaToGenAISchema: fn
+      ai-tool.ts:
+        description: |-
+          Minimal tool definition helper used by Kimaki.
+          This replaces the Vercel AI SDK `tool()` helper so Kimaki can define typed
+          tools (Zod input schema + execute) without depending on the full `ai` package.
+        defs:
+          AnyTool: exported type
+          Tool: exported type
+          ToolExecuteOptions: exported type
+      anthropic-account-identity.test.ts:
+        description: Tests Anthropic OAuth account identity parsing and normalization.
+      anthropic-account-identity.ts:
+        description: Helpers for extracting and normalizing Anthropic OAuth account identity.
+        defs:
+          AnthropicAccountIdentity: exported type
+          collectIdentityCandidates: fn
+          extractAnthropicAccountIdentity: exported fn
+          getCandidateFromRecord: fn
+          normalizeAnthropicAccountIdentity: exported fn
+      anthropic-auth-plugin.ts:
+        description: |-
+          Anthropic OAuth authentication plugin for OpenCode.
+
+          If you're copy-pasting this plugin into your OpenCode config folder,
+          you need to install the runtime dependencies first:
+
+            cd ~/.config/opencode
+            bun init -y
+            bun add proper-lockfile
+
+          Handles three concerns:
+          1. OAuth login + token refresh (PKCE flow against claude.ai)
+          ... and 10 more lines
+        defs:
+          AnthropicAuthPlugin: fn
+          appendToastSessionMarker: fn
+          base64urlEncode: fn
+          beginAuthorizationFlow: fn
+          buildAuthorizeHandler: fn
+          closeServer: fn
+          createApiKey: fn
+          exchangeAuthorizationCode: fn
+          fetchAnthropicAccountIdentity: fn
+          generatePKCE: fn
+          getFreshOAuth: fn
+          getRequiredBetas: fn
+          mergeBetas: fn
+          parseManualInput: fn
+          parseTokenResponse: fn
+          postJson: fn
+          prependClaudeCodeIdentity: fn
+          refreshAnthropicToken: fn
+          requestText: fn
+          rewriteRequestPayload: fn
+          sanitizeSystemText: fn
+          startCallbackServer: fn
+          waitForCallback: fn
+          wrapResponseStream: fn
+      anthropic-auth-state.test.ts:
+        description: Tests Anthropic OAuth account persistence, deduplication, and rotation.
+      bin.ts:
+        description: |-
+          Respawn wrapper for the kimaki bot process.
+          When running the default command (no subcommand) with --auto-restart,
+          spawns cli.js as a child process and restarts it on non-zero exit codes
+          (crash, OOM kill, etc). Intentional exits (code 0 or EXIT_NO_RESTART=64)
+          are not restarted.
+
+          Subcommands (send, tunnel, project, etc.) run directly without the wrapper
+          ... and 10 more lines
+      channel-management.ts:
+        description: |-
+          Discord channel and category management.
+          Creates and manages Kimaki project channels (text + voice pairs),
+          extracts channel metadata from topic tags, and ensures category structure.
+        defs:
+          ChannelWithTags: exported type
+          createDefaultKimakiChannel: exported fn
+          createProjectChannels: exported fn
+          ensureKimakiAudioCategory: exported fn
+          ensureKimakiCategory: exported fn
+          getChannelsWithDescriptions: exported fn
+      cli-parsing.test.ts:
+        description: Regression tests for CLI argument parsing around Discord ID string preservation.
+        defs:
+          createCliForIdParsing: fn
+      cli-send-thread.e2e.test.ts:
+        description: |-
+          E2e test for `kimaki send --channel` flow.
+          Reproduces the race condition where the bot's MessageCreate GuildText handler
+          tries to call startThread() on the same message that the CLI already created
+          a thread for via REST, causing DiscordAPIError[160004].
+
+          The test simulates the exact flow: bot posts a starter message with a
+          ... and 6 more lines
+        defs:
+          createDeterministicMatchers: fn
+          createDiscordJsClient: fn
+          createRunDirectories: fn
+      cli.ts:
+        description: |-
+          #!/usr/bin/env node
+          Main CLI entrypoint for the Kimaki Discord bot.
+          Handles interactive setup, Discord OAuth, slash command registration,
+          project channel creation, and launching the bot with opencode integration.
+        defs:
+          appIdFromToken: fn
+          backgroundInit: fn
+          collectKimakiChannels: fn
+          ensureCommandAvailable: fn
+          ensureDefaultChannelsWithWelcome: fn
+          exitNonInteractiveSetup: fn
+          formatRelativeTime: fn
+          formatTaskScheduleLine: fn
+          isThreadChannelType: fn
+          printDiscordInstallUrlAndExit: fn
+          ProgrammaticEvent: exported type
+          resolveBotCredentials: fn
+          resolveCredentials: fn
+          resolveGatewayInstallCredentials: fn
+          run: fn
+          sendDiscordMessageWithOptionalAttachment: fn
+          showReadyMessage: fn
+          startCaffeinate: fn
+          storeChannelDirectories: fn
+          stripBracketedPaste: fn
+          withTempDiscordClient: fn
+      commands:
+        abort.ts:
+          description: /abort command - Abort the current OpenCode request in this thread.
+          defs:
+            handleAbortCommand: exported fn
+        action-buttons.ts:
+          description: |-
+            Action button tool handler - Shows Discord buttons for quick model actions.
+            Used by the kimaki_action_buttons tool to render up to 3 buttons and route
+            button clicks back into the session as a new user message.
+          defs:
+            ActionButtonColor: exported type
+            ActionButtonOption: exported type
+            ActionButtonsRequest: exported type
+            cancelPendingActionButtons: exported fn
+            handleActionButton: exported fn
+            pendingActionButtonContexts: exported const
+            queueActionButtonsRequest: exported fn
+            resolveContext: fn
+            sendClickedActionToModel: fn
+            showActionButtons: exported fn
+            toButtonStyle: fn
+            updateButtonMessage: fn
+            waitForQueuedActionButtonsRequest: exported fn
+        add-project.ts:
+          description: /add-project command - Create Discord channels for an existing OpenCode project.
+          defs:
+            handleAddProjectAutocomplete: exported fn
+            handleAddProjectCommand: exported fn
+        agent.ts:
+          description: |-
+            /agent command - Set the preferred agent for this channel or session.
+            Also provides quick agent commands like /plan-agent, /build-agent that switch instantly.
+          defs:
+            AgentCommandContext: exported type
+            buildQuickAgentCommandDescription: exported fn
+            CurrentAgentInfo: exported type
+            getCurrentAgentInfo: exported fn
+            handleAgentCommand: exported fn
+            handleAgentSelectMenu: exported fn
+            handleQuickAgentCommand: exported fn
+            parseQuickAgentNameFromDescription: fn
+            resolveAgentCommandContext: exported fn
+            resolveQuickAgentNameFromInteraction: fn
+            sanitizeAgentName: exported fn
+            setAgentForContext: exported fn
+        ask-question.ts:
+          description: |-
+            AskUserQuestion tool handler - Shows Discord dropdowns for AI questions.
+            When the AI uses the AskUserQuestion tool, this module renders dropdowns
+            for each question and collects user responses.
+          defs:
+            AskUserQuestionInput: exported type
+            cancelPendingQuestion: exported fn
+            CancelQuestionResult: exported type
+            handleAskQuestionSelectMenu: exported fn
+            parseAskUserQuestionTool: exported fn
+            pendingQuestionContexts: exported const
+            showAskUserQuestionDropdowns: exported fn
+            submitQuestionAnswers: fn
+        btw.ts:
+          description: |-
+            /btw command - Fork the current session with full context and send a new prompt.
+            Unlike /fork, this does not replay past messages in Discord. It just creates
+            a new thread, forks the entire session (no messageID), and immediately
+            dispatches the user's prompt so the forked session starts working right away.
+          defs:
+            handleBtwCommand: exported fn
+        compact.ts:
+          description: /compact command - Trigger context compaction (summarization) for the current session.
+          defs:
+            handleCompactCommand: exported fn
+        context-usage.ts:
+          description: /context-usage command - Show token usage and context window percentage for the current session.
+          defs:
+            getTokenTotal: fn
+            handleContextUsageCommand: exported fn
+        create-new-project.ts:
+          description: |-
+            /create-new-project command - Create a new project folder, initialize git, and start a session.
+            Also exports createNewProject() for reuse during onboarding (welcome channel creation).
+          defs:
+            createNewProject: exported fn
+            handleCreateNewProjectCommand: exported fn
+        diff.ts:
+          description: /diff command - Show git diff as a shareable URL.
+          defs:
+            handleDiffCommand: exported fn
+        file-upload.ts:
+          description: |-
+            File upload tool handler - Shows Discord modal with FileUploadBuilder.
+            When the AI uses the kimaki_file_upload tool, the plugin inserts a row into
+            the ipc_requests DB table. The bot polls this table, picks up the request,
+            and shows a button in the thread. User clicks it to open a modal with a
+            native file picker. Uploaded files are downloaded to the project directory.
+            ... and 2 more lines
+          defs:
+            cancelPendingFileUpload: exported fn
+            FileUploadRequest: exported type
+            handleFileUploadButton: exported fn
+            handleFileUploadModalSubmit: exported fn
+            pendingFileUploadContexts: exported const
+            resolveContext: fn
+            sanitizeFilename: fn
+            showFileUploadButton: exported fn
+            updateButtonMessage: fn
+        fork.ts:
+          description: /fork command - Fork the session from a past user message.
+          defs:
+            handleForkCommand: exported fn
+            handleForkSelectMenu: exported fn
+        gemini-apikey.ts:
+          description: |-
+            Transcription API key button, slash command, and modal handlers.
+            Auto-detects provider from key prefix: sk-* = OpenAI, otherwise Gemini.
+          defs:
+            buildTranscriptionApiKeyModal: fn
+            handleTranscriptionApiKeyButton: exported fn
+            handleTranscriptionApiKeyCommand: exported fn
+            handleTranscriptionApiKeyModalSubmit: exported fn
+        login.ts:
+          description: |-
+            /login command — authenticate with AI providers (OAuth or API key).
+
+            Uses a unified select handler (`login_select:<hash>`) for all sequential
+            select menus (provider → method → plugin prompts). The context tracks a
+            `step` field so one handler drives the whole flow.
+
+            CustomId patterns:
+              login_select:<hash>  — all select menus (provider, method, prompts)
+            ... and 2 more lines
+          defs:
+            buildPromptSteps: fn
+            buildSelectMenu: fn
+            createContextHash: fn
+            extractErrorMessage: fn
+            handleApiKeyModalSubmit: exported fn
+            handleLoginApiKeyButton: exported fn
+            handleLoginCommand: exported fn
+            handleLoginSelect: exported fn
+            handleLoginTextButton: exported fn
+            handleLoginTextModalSubmit: exported fn
+            handleMethodStep: fn
+            handleOAuthCodeButton: exported fn
+            handleOAuthCodeModalSubmit: exported fn
+            handlePromptStep: fn
+            handleProviderStep: fn
+            shouldShowPrompt: fn
+            showApiKeyModal: fn
+            showNextStep: fn
+            startOAuthFlow: fn
+        mcp.ts:
+          description: |-
+            /mcp command - List and toggle MCP servers for the current project.
+            Uses OpenCode SDK mcp.status/connect/disconnect to manage servers.
+            MCP state is project-scoped (per channel), not per thread or session.
+            No database storage needed — state lives in OpenCode's config.
+          defs:
+            formatServerLine: exported fn
+            getStatusError: fn
+            handleMcpCommand: exported fn
+            handleMcpSelectMenu: exported fn
+            toggleActionLabel: exported fn
+        memory-snapshot.ts:
+          description: |-
+            /memory-snapshot command - Write a V8 heap snapshot and show the file path.
+            Reuses writeHeapSnapshot() from heap-monitor.ts which writes gzip-compressed
+            .heapsnapshot.gz files to ~/.kimaki/heap-snapshots/.
+          defs:
+            handleMemorySnapshotCommand: exported fn
+        mention-mode.ts:
+          description: |-
+            /toggle-mention-mode command.
+            Toggles mention-only mode for a channel.
+            When enabled, bot only responds to messages that @mention it.
+            Messages in threads are not affected - they always work without mentions.
+          defs:
+            handleToggleMentionModeCommand: exported fn
+        merge-worktree.ts:
+          description: |-
+            /merge-worktree command - Merge worktree commits into default branch.
+            Pipeline: rebase worktree commits onto target -> local fast-forward push.
+            Preserves all commits (no squash). On rebase conflicts, asks the AI model
+            in the thread to resolve them.
+          defs:
+            handleMergeWorktreeAutocomplete: exported fn
+            handleMergeWorktreeCommand: exported fn
+            removeWorktreePrefixFromTitle: fn
+            sendPromptToModel: fn
+            WORKTREE_PREFIX: exported const
+        model-variant.ts:
+          description: |-
+            /model-variant command — quickly change the thinking level variant for the current model.
+            Shows both the variant picker and scope picker in a single reply (two action rows)
+            so the user can select both without waiting for sequential menus.
+
+            Cross-menu state: Discord doesn't expose already-selected values on sibling
+            ... and 2 more lines
+          defs:
+            applyVariant: fn
+            formatSourceLabel: fn
+            handleModelVariantCommand: exported fn
+            handleVariantQuickSelectMenu: exported fn
+            handleVariantScopeSelectMenu: exported fn
+        model.ts:
+          description: /model command - Set the preferred model for this channel or session.
+          defs:
+            CurrentModelInfo: exported type
+            ensureSessionPreferencesSnapshot: exported fn
+            getCurrentModelInfo: exported fn
+            handleModelCommand: exported fn
+            handleModelScopeSelectMenu: exported fn
+            handleModelSelectMenu: exported fn
+            handleModelVariantSelectMenu: exported fn
+            handleProviderSelectMenu: exported fn
+            ModelSource: exported type
+            parseModelId: fn
+            ProviderInfo: exported type
+            setModelContext: fn
+            showScopeMenu: fn
+        new-worktree.ts:
+          description: |-
+            Worktree management command: /new-worktree
+            Uses OpenCode SDK v2 to create worktrees with kimaki- prefix
+            Creates thread immediately, then worktree in background so user can type
+          defs:
+            createWorktreeInBackground: exported fn
+            deriveWorktreeNameFromThread: fn
+            findExistingWorktreePath: fn
+            formatWorktreeName: exported fn
+            getProjectDirectoryFromChannel: fn
+            handleNewWorktreeAutocomplete: exported fn
+            handleNewWorktreeCommand: exported fn
+            handleWorktreeInThread: fn
+            WorktreeError: class
+        paginated-select.ts:
+          description: |-
+            Reusable paginated select menu helpers for Discord StringSelectMenuBuilder.
+            Discord caps select menus at 25 options. This module slices a full options
+            list into pages of PAGE_SIZE real items and appends "← Previous page" /
+            "Next page →" sentinel options so the user can navigate. Handlers detect
+            sentinel values via parsePaginationValue() and re-render the same select
+            ... and 1 more lines
+          defs:
+            buildPaginatedOptions: exported fn
+            parsePaginationValue: exported fn
+            SelectOption: exported type
+        permissions.ts:
+          description: |-
+            Permission button handler - Shows buttons for permission requests.
+            When OpenCode asks for permission, this module renders 3 buttons:
+            Accept, Accept Always, and Deny.
+          defs:
+            addPermissionRequestToContext: exported fn
+            arePatternsCoveredBy: exported fn
+            cancelPendingPermission: exported fn
+            compactPermissionPatterns: exported fn
+            handlePermissionButton: exported fn
+            pendingPermissionContexts: exported const
+            showPermissionButtons: exported fn
+            takePendingPermissionContext: fn
+            updatePermissionMessage: fn
+            wildcardMatch: fn
+        queue.ts:
+          description: Queue commands - /queue, /queue-command, /clear-queue
+          defs:
+            handleClearQueueCommand: exported fn
+            handleQueueCommand: exported fn
+            handleQueueCommandAutocomplete: exported fn
+            handleQueueCommandCommand: exported fn
+        remove-project.ts:
+          description: /remove-project command - Remove Discord channels for a project.
+          defs:
+            handleRemoveProjectAutocomplete: exported fn
+            handleRemoveProjectCommand: exported fn
+        restart-opencode-server.ts:
+          description: |-
+            /restart-opencode-server command - Restart the single shared opencode server
+            and re-register Discord slash commands.
+            Used for resolving opencode state issues, internal bugs, refreshing auth state,
+            plugins, and picking up new/changed slash commands or agents. Aborts in-progress
+            sessions in this channel before restarting. Note: since there is one shared server,
+            ... and 2 more lines
+          defs:
+            handleRestartOpencodeServerCommand: exported fn
+        resume.ts:
+          description: /resume command - Resume an existing OpenCode session.
+          defs:
+            handleResumeAutocomplete: exported fn
+            handleResumeCommand: exported fn
+        run-command.ts:
+          description: |-
+            /run-shell-command command - Run an arbitrary shell command in the project directory.
+            Resolves the project directory from the channel and executes the command with it as cwd.
+            Also used by the ! prefix shortcut in discord messages (e.g. "!ls -la").
+            Messages starting with ! are intercepted before session handling and routed here.
+          defs:
+            formatOutput: fn
+            handleRunCommand: exported fn
+            runShellCommand: exported fn
+        screenshare.ts:
+          description: |-
+            /screenshare command - Start screen sharing via VNC + WebSocket bridge + kimaki tunnel.
+            On macOS: uses built-in Screen Sharing (port 5900).
+            On Linux: spawns x11vnc against the current $DISPLAY.
+            Exposes the VNC stream via an in-process websockify bridge and a traforo tunnel,
+            then sends the user a noVNC URL they can open in a browser.
+            ... and 2 more lines
+          defs:
+            buildNoVncUrl: exported fn
+            cleanupAllScreenshares: exported fn
+            cleanupSession: exported fn
+            ensureMacRemoteManagement: exported fn
+            handleScreenshareCommand: exported fn
+            handleScreenshareStopCommand: exported fn
+            ScreenshareSession: exported type
+            spawnX11Vnc: exported fn
+            startScreenshare: exported fn
+            stopScreenshare: exported fn
+            waitForPort: fn
+        session-id.ts:
+          description: /session-id command - Show current session ID and an opencode attach command.
+          defs:
+            handleSessionIdCommand: exported fn
+            shellQuote: fn
+        session.ts:
+          description: /new-session command - Start a new OpenCode session.
+          defs:
+            handleAgentAutocomplete: fn
+            handleSessionAutocomplete: exported fn
+            handleSessionCommand: exported fn
+        share.ts:
+          description: /share command - Share the current session as a public URL.
+          defs:
+            handleShareCommand: exported fn
+        tasks.ts:
+          description: |-
+            /tasks command — list all scheduled tasks sorted by next run time.
+            Renders a markdown table that the CV2 pipeline auto-formats for Discord,
+            including HTML-backed action buttons for cancellable tasks.
+          defs:
+            buildActionCell: fn
+            buildTaskTable: fn
+            formatTimeUntil: fn
+            getTasksActionOwnerKey: fn
+            handleCancelTaskAction: fn
+            handleTasksCommand: exported fn
+            renderTasksReply: fn
+            scheduleLabel: fn
+        types.ts:
+          description: Shared types for command handlers.
+          defs:
+            AutocompleteContext: exported type
+            AutocompleteHandler: exported type
+            CommandContext: exported type
+            CommandHandler: exported type
+            SelectMenuHandler: exported type
+        undo-redo.ts:
+          description: Undo/Redo commands - /undo, /redo
+          defs:
+            handleRedoCommand: exported fn
+            handleUndoCommand: exported fn
+            waitForSessionIdle: fn
+        unset-model.ts:
+          description: /unset-model-override command - Remove model overrides and use default instead.
+          defs:
+            formatModelSource: fn
+            handleUnsetModelCommand: exported fn
+        upgrade.ts:
+          description: |-
+            /upgrade-and-restart command - Upgrade kimaki to the latest version and restart the bot.
+            Checks npm for a newer version, installs it globally, then spawns a new kimaki process.
+            The new process kills the old one on startup (kimaki's single-instance lock).
+          defs:
+            handleUpgradeAndRestartCommand: exported fn
+        user-command.ts:
+          description: |-
+            User-defined OpenCode command handler.
+            Handles slash commands that map to user-configured commands in opencode.json.
+          defs:
+            handleUserCommand: exported fn
+        verbosity.ts:
+          description: |-
+            /verbosity command.
+            Shows a dropdown to set output verbosity level for sessions in a channel.
+            'text_and_essential_tools' (default): shows text and essential tools (edits, custom MCP tools)
+            'tools_and_text': shows all output including tool executions
+            'text_only': only shows text responses
+          defs:
+            getChannelVerbosityOverride: fn
+            handleVerbosityCommand: exported fn
+            handleVerbositySelectMenu: exported fn
+            resolveChannelId: fn
+        worktree-settings.ts:
+          description: |-
+            /toggle-worktrees command.
+            Allows per-channel opt-in for automatic worktree creation,
+            as an alternative to the global --use-worktrees CLI flag.
+          defs:
+            handleToggleWorktreesCommand: exported fn
+        worktrees.ts:
+          description: |-
+            /worktrees command — list worktree sessions for the current channel's project.
+            Renders a markdown table that the CV2 pipeline auto-formats for Discord,
+            including HTML-backed action buttons for deletable worktrees.
+          defs:
+            buildActionCell: fn
+            buildDeleteButtonHtml: fn
+            buildWorktreeTable: fn
+            canDeleteWorktree: fn
+            extractGitStderr: exported fn
+            formatTimeAgo: exported fn
+            getRecentWorktrees: fn
+            getWorktreeGitStatus: fn
+            getWorktreesActionOwnerKey: fn
+            handleDeleteWorktreeAction: fn
+            handleWorktreesCommand: exported fn
+            isProjectChannel: fn
+            renderWorktreesReply: fn
+            resolveGitStatuses: fn
+            statusLabel: fn
+      condense-memory.ts:
+        description: |-
+          Utility to condense MEMORY.md into a line-numbered table of contents.
+          Separated from kimaki-opencode-plugin.ts because OpenCode's plugin loader calls
+          every exported function in the module as a plugin initializer — exporting
+          this utility from the plugin entry file caused it to be invoked with a
+          PluginInput object instead of a string, crashing inside marked's Lexer.
+        defs:
+          condenseMemoryMd: exported fn
+      config.ts:
+        description: |-
+          Runtime configuration for Kimaki bot.
+          Thin re-export layer over the centralized zustand store (store.ts).
+          Getter/setter functions are kept for backwards compatibility so existing
+          import sites don't need to change. They delegate to store.getState() and
+          store.setState() under the hood.
+        defs:
+          getDataDir: exported fn
+          getLockPort: exported fn
+          getProjectsDir: exported fn
+          setDataDir: exported fn
+          setProjectsDir: exported fn
+      context-awareness-plugin.test.ts:
+        description: Tests for context-awareness directory switch reminders.
+      context-awareness-plugin.ts:
+        description: |-
+          OpenCode plugin that injects synthetic message parts for context awareness:
+          - Git branch / detached HEAD changes
+          - Working directory (pwd) changes (e.g. after /new-worktree mid-session)
+          - MEMORY.md table of contents on first message
+          - MEMORY.md reminder after a large assistant reply
+          - Onboarding tutorial instructions (when TUTORIAL_WELCOME_TEXT detected)
+          ... and 11 more lines
+        defs:
+          contextAwarenessPlugin: fn
+          createSessionState: fn
+          resolveGitState: fn
+          resolveSessionDirectory: fn
+          shouldInjectBranch: exported fn
+          shouldInjectMemoryReminderFromLatestAssistant: exported fn
+          shouldInjectPwd: exported fn
+          shouldInjectTutorial: exported fn
+      critique-utils.ts:
+        description: |-
+          Shared utilities for invoking the critique CLI and parsing its JSON output.
+          Used by /diff command and footer diff link uploads.
+        defs:
+          CritiqueResult: exported type
+          parseCritiqueOutput: exported fn
+          uploadGitDiffViaCritique: exported fn
+          uploadPatchViaCritique: exported fn
+      database.ts:
+        description: |-
+          SQLite database manager for persistent bot state using Prisma.
+          Stores thread-session mappings, bot tokens, channel directories,
+          API keys, and model preferences in <dataDir>/discord-sessions.db.
+        exports:
+          # ... 57 more exports
+          cancelScheduledTask: exported fn
+          claimScheduledTaskRunning: exported fn
+          createScheduledTask: exported fn
+          getChannelModel: exported fn
+          getDuePlannedScheduledTasks: exported fn
+          getGlobalModel: exported fn
+          getScheduledTask: exported fn
+          getSessionModel: exported fn
+          getSessionStartSourcesBySessionIds: exported fn
+          listScheduledTasks: exported fn
+          markScheduledTaskCronRescheduled: exported fn
+          markScheduledTaskCronRetry: exported fn
+          markScheduledTaskFailed: exported fn
+          markScheduledTaskOneShotCompleted: exported fn
+          ModelPreference: exported type
+          recoverStaleRunningScheduledTasks: exported fn
+          ScheduledTask: exported type
+          ScheduledTaskScheduleKind: exported type
+          ScheduledTaskStatus: exported type
+          SessionStartSource: exported type
+          setChannelModel: exported fn
+          setGlobalModel: exported fn
+          setSessionStartSource: exported fn
+          ThreadWorktree: exported type
+          updateScheduledTask: exported fn
+      db.test.ts:
+        description: |-
+          Tests for Prisma client initialization and schema migration.
+          Auto-isolated via VITEST guards in config.ts (temp data dir) and db.ts (clears KIMAKI_DB_URL).
+      db.ts:
+        description: |-
+          Prisma client initialization with libsql adapter.
+          Uses KIMAKI_DB_URL env var when set (plugin process → Hrana HTTP),
+          otherwise falls back to direct file: access (bot process, CLI subcommands).
+        defs:
+          closePrisma: exported fn
+          getDbAuthToken: fn
+          getDbUrl: fn
+          getPrisma: exported fn
+          initializePrisma: fn
+          migrateSchema: fn
+      debounce-timeout.ts:
+        description: |-
+          Reusable debounce helper for timeout-based callbacks.
+          Encapsulates the timer handle and exposes trigger/clear/isPending so callers
+          can batch clustered events without leaking timeout state into domain logic.
+        defs:
+          createDebouncedTimeout: exported fn
+      debounced-process-flush.ts:
+        description: |-
+          Debounced async callback with centralized shutdown flushing.
+          Used for persistence paths that should batch writes during runtime
+          while allowing the bot's single SIGTERM/SIGINT handler to flush all callbacks.
+        defs:
+          createDebouncedProcessFlush: exported fn
+          flushDebouncedProcessCallbacks: exported fn
+      discord-bot.ts:
+        description: |-
+          Core Discord bot module that handles message events and bot lifecycle.
+          Bridges Discord messages to OpenCode sessions, manages voice connections,
+          and orchestrates the main event loop for the Kimaki bot.
+        defs:
+          createDiscordClient: exported fn
+          describeCloseCode: fn
+          getOrCreateShardState: fn
+          parseEmbedFooterMarker: fn
+          parseSessionStartSourceFromMarker: fn
+          startDiscordBot: exported fn
+      discord-command-registration.ts:
+        description: |-
+          Discord slash command registration logic, extracted from cli.ts to avoid
+          circular dependencies (cli → discord-bot → interaction-handler → command → cli).
+          Imported by both cli.ts (startup registration) and restart-opencode-server.ts
+          (post-restart re-registration).
+        defs:
+          AgentInfo: exported type
+          deleteLegacyGlobalCommands: fn
+          getDiscordCommandSuffix: fn
+          isDiscordCommandSummary: fn
+          registerCommands: exported fn
+          SKIP_USER_COMMANDS: exported const
+      discord-urls.ts:
+        description: |-
+          Configurable Discord API endpoint URLs.
+          Base URL for REST calls lives in the centralized zustand store (store.ts),
+          replacing the old process.env['DISCORD_REST_BASE_URL'] mutation.
+
+          DISCORD_GATEWAY_URL: WebSocket gateway URL (default: undefined, auto-discovered via /gateway/bot)
+            discord.js has no direct ws.gateway option — the gateway URL comes from the
+          ... and 3 more lines
+        defs:
+          DISCORD_GATEWAY_URL: exported const
+          getGatewayProxyRestBaseUrl: exported fn
+      discord-utils.ts:
+        description: |-
+          Discord-specific utility functions.
+          Handles markdown splitting for Discord's 2000-char limit, code block escaping,
+          thread message sending, and channel metadata extraction from topic tags.
+          Use namespace import for CJS interop — discord.js is CJS and its named
+          exports aren't detectable by all ESM loaders (e.g. tsx/esbuild) because
+          ... and 1 more lines
+        defs:
+          archiveThread: exported fn
+          escapeBackticksInCodeBlocks: exported fn
+          getKimakiMetadata: exported fn
+          hasKimakiBotPermission: exported fn
+          hasNoKimakiRole: exported fn
+          hasRoleByName: fn
+          NOTIFY_MESSAGE_FLAGS: exported const
+          reactToThread: exported fn
+          resolveProjectDirectoryFromAutocomplete: exported fn
+          resolveTextChannel: exported fn
+          resolveWorkingDirectory: exported fn
+          sendThreadMessage: exported fn
+          SILENT_MESSAGE_FLAGS: exported const
+          splitMarkdownForDiscord: exported fn
+          stripMentions: exported fn
+          uploadFilesToDiscord: exported fn
+      errors.ts:
+        description: |-
+          TaggedError definitions for type-safe error handling with errore.
+          Errors are grouped by category: infrastructure, domain, and validation.
+          Use errore.matchError() for exhaustive error handling in command handlers.
+        defs:
+          MergeWorktreeErrors: exported type
+          OpenCodeErrors: exported type
+          SessionErrors: exported type
+          TranscriptionErrors: exported type
+      event-stream-real-capture.e2e.test.ts:
+        description: |-
+          E2e capture tests for generating real OpenCode session-event JSONL fixtures.
+          Uses opencode-cached-provider + Gemini to record real tool/lifecycle streams
+          (task, interruption, permission, action buttons, and question flows).
+        defs:
+          createDiscordJsClient: fn
+          createRunDirectories: fn
+          hasToolEvent: fn
+          readJsonlEvents: fn
+          waitForNewOrUpdatedSessionLog: fn
+          waitForPendingActionButtons: fn
+          waitForPendingPermission: fn
+          waitForPendingQuestion: fn
+      eventsource-parser.test.ts:
+        description: "Experiment: test if eventsource-parser can extract `data:` lines from noisy process output"
+        defs:
+          parseSSEFromChunks: fn
+      format-tables.ts:
+        description: |-
+          Markdown table formatter for Discord.
+          Converts GFM tables to Discord Components V2 (ContainerBuilder with TextDisplay
+          key-value pairs and Separators between row groups). Large tables are split
+          across multiple Container components to stay within the 40-component limit.
+        defs:
+          buildButtonRow: fn
+          buildRenderedRow: fn
+          buildTableComponents: exported fn
+          buildTextRow: fn
+          chunkRowsByComponentLimit: fn
+          ContentSegment: exported type
+          extractCellText: fn
+          extractRenderableText: fn
+          extractTokenText: fn
+          getRenderedCellText: fn
+          renderTableCell: fn
+          splitTablesFromMarkdown: exported fn
+          toButtonStyle: fn
+      forum-sync:
+        config.ts:
+          description: |-
+            Forum sync configuration from SQLite database.
+            Reads forum_sync_configs table and resolves relative output dirs.
+            On first run, migrates any existing forum-sync.json into the DB.
+          defs:
+            migrateLegacyConfig: fn
+            readForumSyncConfig: exported fn
+        discord-operations.ts:
+          description: |-
+            Discord API operations for forum sync.
+            Resolves forum channels, fetches threads (active + archived) with pagination,
+            fetches thread messages, loads existing forum files from disk, and ensures directories.
+          defs:
+            collectMarkdownFiles: fn
+            ensureDirectory: exported fn
+            fetchForumThreads: exported fn
+            fetchThreadMessages: exported fn
+            getCanonicalThreadFilePath: exported fn
+            loadExistingForumFiles: exported fn
+            resolveForumChannel: exported fn
+        index.ts:
+          description: |-
+            Forum sync module entry point.
+            Re-exports the public API for forum <-> markdown synchronization.
+        markdown.ts:
+          description: |-
+            Markdown parsing, serialization, and section formatting for forum sync.
+            Handles frontmatter extraction, message section building, and
+            conversion between Discord messages and markdown format.
+          defs:
+            appendProjectChannelFooter: exported fn
+            buildMessageSections: exported fn
+            extractProjectChannelFromContent: exported fn
+            extractStarterContent: exported fn
+            formatMessageSection: exported fn
+            parseFrontmatter: exported fn
+            splitSections: exported fn
+            stringifyFrontmatter: exported fn
+        sync-to-discord.ts:
+          description: |-
+            Filesystem -> Discord sync.
+            Reads markdown files and creates/updates/deletes forum threads to match.
+            Handles upsert logic: new files create threads, existing files update them.
+          defs:
+            collectMarkdownEntries: fn
+            createNewThread: fn
+            deleteThreadFromFilePath: fn
+            ensureForumTags: fn
+            isValidPastIsoDate: fn
+            resolveTagIds: fn
+            stripSystemFieldsFromUnsyncedFile: fn
+            syncFilesToForum: exported fn
+            updateExistingThread: fn
+            upsertThreadFromFile: fn
+        sync-to-files.ts:
+          description: |-
+            Discord -> filesystem sync.
+            Fetches forum threads from Discord and writes them as markdown files.
+            Handles incremental sync (skip unchanged threads) and stale file cleanup.
+          defs:
+            buildFrontmatter: fn
+            resolveSubfolderForThread: fn
+            resolveTagNames: fn
+            syncForumToFiles: exported fn
+            syncSingleThreadToFile: exported fn
+        types.ts:
+          description: |-
+            Type definitions, tagged errors, and constants for forum sync.
+            All shared types and error classes live here to avoid circular dependencies
+            between the sync modules.
+          defs:
+            addIgnoredPath: exported fn
+            DEFAULT_DEBOUNCE_MS: exported const
+            DEFAULT_RATE_LIMIT_DELAY_MS: exported const
+            ExistingForumFile: exported type
+            ForumFileSyncResult: exported type
+            ForumMarkdownFrontmatter: exported type
+            ForumMessageSection: exported type
+            ForumRuntimeState: exported type
+            ForumSyncDirection: exported type
+            ForumSyncEntry: exported type
+            ForumSyncResult: exported type
+            LoadedForumConfig: exported type
+            ParsedMarkdownFile: exported type
+            shouldIgnorePath: exported fn
+            StartForumSyncOptions: exported type
+            SyncFilesToForumOptions: exported type
+            SyncForumToFilesOptions: exported type
+            WRITE_IGNORE_TTL_MS: exported const
+        watchers.ts:
+          description: |-
+            Runtime state management, file watchers, and Discord event listeners.
+            Manages the lifecycle of forum sync: initial sync, live Discord event handling,
+            file system watcher for bidirectional sync, and debounced sync scheduling.
+          defs:
+            buildRuntimeState: fn
+            findThreadFilePath: fn
+            getEventThreadFromMessage: fn
+            getThreadEventData: fn
+            queueFileEvent: fn
+            registerDiscordSyncListeners: fn
+            runQueuedFileEvents: fn
+            scheduleDiscordSync: fn
+            startConfiguredForumSync: exported fn
+            startWatcherForRuntimeState: fn
+            stopConfiguredForumSync: exported fn
+            tryHandleThreadEvent: fn
+      gateway-proxy-reconnect.e2e.test.ts:
+        description: |-
+          Gateway-proxy reconnection test.
+
+          Parameterized: can test against local digital-twin OR a real production gateway.
+
+          Local mode (default):
+            Starts a digital-twin + local gateway-proxy binary, kills and restarts the proxy.
+
+          Production mode (env vars):
+            GATEWAY_TEST_URL        - production gateway WS+REST URL (e.g. wss://discord-gateway.kimaki.xyz)
+          ... and 12 more lines
+        defs:
+          attachEventCollector: fn
+          createDiscordJsClient: fn
+          dumpProxyLogs: fn
+          getAvailablePort: fn
+          killProxy: fn
+          startProxy: fn
+          waitForClientReady: fn
+          waitForProxyReady: fn
+          waitForReconnection: fn
+      gateway-proxy.e2e.test.ts:
+        description: |-
+          Gateway-proxy integration test.
+          Starts a discord-digital-twin (fake Discord), a gateway-proxy Rust binary
+          in front of it, and the kimaki bot connecting through the proxy.
+          Validates that messages create threads, bot replies, and multi-tenant
+          guild filtering routes events to the right clients.
+
+          Requires the gateway-proxy binary at gateway-proxy/target/release/gateway-proxy.
+          ... and 1 more lines
+        defs:
+          createDiscordJsClient: fn
+          createMatchers: fn
+          createRunDirectories: fn
+          getAvailablePort: fn
+          hasStringId: fn
+          startGatewayProxy: fn
+          waitForProxyReady: fn
+      genai-worker-wrapper.ts:
+        description: |-
+          Main thread interface for the GenAI worker.
+          Spawns and manages the worker thread, handling message passing for
+          audio input/output, tool call completions, and graceful shutdown.
+        defs:
+          createGenAIWorker: exported fn
+          GenAIWorker: exported interface
+          GenAIWorkerOptions: exported interface
+      genai-worker.ts:
+        description: |-
+          Worker thread for GenAI voice processing.
+          Runs in a separate thread to handle audio encoding/decoding without blocking.
+          Resamples 24kHz GenAI output to 48kHz stereo Opus packets for Discord.
+        defs:
+          cleanupAsync: fn
+          createAssistantAudioLogStream: fn
+          sendError: fn
+          startPacketSending: fn
+          stopPacketSending: fn
+      genai.ts:
+        description: |-
+          Google GenAI Live session manager for real-time voice interactions.
+          Establishes bidirectional audio streaming with Gemini, handles tool calls,
+          and manages the assistant's audio output for Discord voice channels.
+        defs:
+          convertToWav: fn
+          createWavHeader: fn
+          defaultAudioChunkHandler: fn
+          parseMimeType: fn
+          saveBinaryFile: fn
+          startGenAiSession: exported fn
+      heap-monitor.ts:
+        description: |-
+          Heap memory monitor and snapshot writer.
+          Periodically checks V8 heap usage and writes gzip-compressed .heapsnapshot.gz
+          files to ~/.kimaki/heap-snapshots/ when memory usage is high.
+          Also exposes writeHeapSnapshot() for on-demand snapshots via SIGUSR1.
+
+          Snapshots use v8.getHeapSnapshot() streaming API piped through gzip for ~5-10x
+          ... and 7 more lines
+        defs:
+          checkHeapUsage: fn
+          ensureSnapshotDir: fn
+          getHeapStats: fn
+          startHeapMonitor: exported fn
+          stopHeapMonitor: exported fn
+          writeHeapSnapshot: exported fn
+      hrana-server.ts:
+        description: |-
+          In-process HTTP server speaking the Hrana v2 protocol.
+          Backed by the `libsql` npm package (better-sqlite3 API).
+          Binds to the fixed lock port for single-instance enforcement.
+
+          Protocol logic is implemented in the `libsqlproxy` package.
+          This file handles: server lifecycle, single-instance enforcement,
+          ... and 4 more lines
+        defs:
+          ensureServiceAuthTokenInStore: fn
+          evictExistingInstance: exported fn
+          getRequestAuthToken: fn
+          isAuthorizedRequest: fn
+          markDiscordGatewayReady: exported fn
+          startHranaServer: exported fn
+          stopHranaServer: exported fn
+          waitForDiscordGatewayReady: fn
+      html-actions.ts:
+        description: |-
+          HTML action registry for rendered Discord components.
+          Stores short-lived button callbacks by generated id so HTML-backed UI can
+          attach interactions without leaking closures across rerenders.
+        defs:
+          cancelHtmlActionsForOwner: exported fn
+          cancelHtmlActionsForThread: exported fn
+          handleHtmlActionButton: exported fn
+          pendingHtmlActions: exported const
+          registerHtmlAction: exported fn
+          resolveHtmlAction: fn
+      html-components.ts:
+        description: |-
+          HTML fragment parser for Discord-renderable components.
+          Supports a small reusable subset today (text + button) so tables and other
+          CV2 renderers can map inline HTML into Discord UI elements.
+        defs:
+          extractNodeText: fn
+          HtmlButtonRenderable: exported type
+          HtmlRenderable: exported type
+          HtmlTextRenderable: exported type
+          normalizeButtonVariant: fn
+          parseButtonElement: fn
+          parseInlineHtmlRenderables: exported fn
+          parseRenderableNodes: fn
+      image-optimizer-plugin.ts:
+        description: |-
+          Optimizes oversized images before they reach the LLM API.
+          Prevents "image dimensions exceed max allowed" errors from Anthropic/Google/OpenAI.
+          Hooks into tool.execute.after (read) and experimental.chat.messages.transform (clipboard paste).
+          Uses sharp to resize images > 2000px and compress images > 4MB.
+          ... and 1 more lines
+        defs:
+          extractBase64Data: fn
+          getSharp: fn
+          hasAttachments: fn
+          imageOptimizerPlugin: fn
+          optimizeImage: fn
+      image-utils.ts:
+        description: |-
+          Image processing utilities for Discord attachments.
+          Uses sharp (optional) to resize large images and heic-convert (optional) for HEIC support.
+          Falls back gracefully if dependencies are not available.
+        defs:
+          processImage: exported fn
+          tryLoadHeicConvert: fn
+          tryLoadSharp: fn
+      interaction-handler.ts:
+        description: |-
+          Discord slash command and interaction handler.
+          Processes all slash commands (/session, /resume, /fork, /model, /abort, etc.)
+          and manages autocomplete, select menu interactions for the bot.
+        defs:
+          registerInteractionHandler: exported fn
+      ipc-polling.ts:
+        description: |-
+          IPC polling bridge between the opencode plugin and the Discord bot.
+          The plugin inserts rows into ipc_requests (via Prisma). This module polls
+          that table, claims pending rows atomically, and dispatches them by type.
+          Replaces the old HTTP lock-server approach with DB-based IPC.
+        defs:
+          dispatchRequest: fn
+          parseButtons: fn
+          startIpcPolling: exported fn
+      ipc-tools-plugin.ts:
+        description: |-
+          OpenCode plugin that provides IPC-based tools for Discord interaction:
+          - kimaki_file_upload: prompts the Discord user to upload files via native picker
+          - kimaki_action_buttons: shows clickable action buttons in the Discord thread
+
+          Tools communicate with the bot process via IPC rows in SQLite (the plugin
+          ... and 4 more lines
+        defs:
+          ipcToolsPlugin: fn
+          loadDatabaseModule: fn
+          tool: fn
+      kimaki-digital-twin.e2e.test.ts:
+        description: |-
+          End-to-end test using discord-digital-twin + real Kimaki bot runtime.
+          Verifies onboarding channel creation, message -> thread creation, and assistant reply.
+        defs:
+          createDiscordJsClient: fn
+          createRunDirectories: fn
+      kimaki-opencode-plugin-loading.e2e.test.ts:
+        description: |-
+          E2e test for OpenCode plugin loading.
+          Spawns `opencode serve` directly with our plugin in OPENCODE_CONFIG_CONTENT,
+          waits for the health endpoint, then checks stderr for plugin errors.
+          No Discord infrastructure needed — just the OpenCode server process.
+        defs:
+          waitForHealth: fn
+      kimaki-opencode-plugin.ts:
+        description: |-
+          OpenCode plugin entry point for Kimaki Discord bot.
+          Each export is treated as a separate plugin by OpenCode's plugin loader.
+          CRITICAL: never export utility functions from this file — only plugin
+          initializer functions. OpenCode calls every export as a plugin.
+
+          Plugins are split into focused modules:
+          - ipc-tools-plugin: file upload + action buttons (IPC-based Discord tools)
+          ... and 3 more lines
+      limit-heading-depth.ts:
+        description: |-
+          Limit heading depth for Discord.
+          Discord only supports headings up to ### (h3), so this converts
+          ####, #####, etc. to ### to maintain consistent rendering.
+        defs:
+          limitHeadingDepth: exported fn
+      logger.ts:
+        description: |-
+          Prefixed logging utility using @clack/prompts for consistent visual style.
+          All log methods use clack's log.message() with appropriate symbols to prevent
+          output interleaving from concurrent async operations.
+        defs:
+          createLogger: exported fn
+          formatArg: fn
+          formatErrorWithStack: exported fn
+          formatMessage: fn
+          initLogFile: exported fn
+          LogPrefix: exported const
+          LogPrefixType: exported type
+          writeToFile: fn
+      markdown.test.ts:
+        description: |-
+          Deterministic markdown export tests.
+          Uses the shared opencode server manager with the deterministic provider,
+          creates sessions with known content, and validates markdown output.
+          No dependency on machine-local session state.
+        defs:
+          createMatchers: fn
+          createRunDirectories: fn
+          normalizeMarkdown: fn
+      markdown.ts:
+        description: |-
+          Session-to-markdown renderer for sharing.
+          Generates shareable markdown from OpenCode sessions, formatting
+          user messages, assistant responses, tool calls, and reasoning blocks.
+          Uses errore for type-safe error handling.
+        defs:
+          getCompactSessionContext: exported fn
+          getLastSessionId: exported fn
+          ShareMarkdown: exported class
+      message-finish-field.e2e.test.ts:
+        description: |-
+          E2e test verifying that the opencode server populates the `finish` field
+          on assistant messages. This field is critical for kimaki's footer logic:
+          isAssistantMessageNaturalCompletion checks `message.finish !== 'tool-calls'`
+          to suppress footers on intermediate tool-call steps.
+          When `finish` is missing/null, every completed assistant message gets a
+          ... and 3 more lines
+        defs:
+          createMatchers: fn
+          createRunDirectories: fn
+      message-formatting.ts:
+        description: |-
+          OpenCode message part formatting for Discord.
+          Converts SDK message parts (text, tools, reasoning) to Discord-friendly format,
+          handles file attachments, and provides tool summary generation.
+        defs:
+          batchChunksForDiscord: exported fn
+          collectSessionChunks: exported fn
+          DiscordFileAttachment: exported type
+          formatPart: exported fn
+          formatTodoList: exported fn
+          getFileAttachments: exported fn
+          getTextAttachments: exported fn
+          getToolSummaryText: exported fn
+          isTextMimeType: exported fn
+          resolveMentions: exported fn
+          SessionChunk: exported type
+          TEXT_MIME_TYPES: exported const
+      message-preprocessing.ts:
+        description: |-
+          Message pre-processing pipeline for incoming Discord messages.
+          Extracts prompt text, voice transcription, file/text attachments, and
+          session context from a Discord Message before handing off to the runtime.
+
+          This module exists so discord-bot.ts stays a thin event router and the
+          expensive async work (voice transcription, context fetch, attachment
+          ... and 2 more lines
+        defs:
+          extractQueueSuffix: fn
+          fetchAvailableAgents: fn
+          getRepliedMessageContext: fn
+          preprocessExistingThreadMessage: exported fn
+          preprocessNewSessionMessage: exported fn
+          preprocessNewThreadMessage: exported fn
+          shouldSkipEmptyPrompt: fn
+          VOICE_MESSAGE_TRANSCRIPTION_PREFIX: exported const
+      onboarding-tutorial.ts:
+        description: |-
+          Onboarding tutorial system instructions injected by the plugin when the
+          user starts a 3D game tutorial session. The `markdown` tag is a no-op
+          identity function — it exists only for editor syntax highlighting.
+
+          This file has no discord.js deps so it can be safely imported by both
+          the welcome message (discord side) and the opencode plugin.
+          ... and 3 more lines
+        defs:
+          ONBOARDING_TUTORIAL_INSTRUCTIONS: exported const
+          TUTORIAL_WELCOME_TEXT: exported const
+      onboarding-welcome.ts:
+        description: |-
+          Onboarding welcome message for the default kimaki channel.
+          Sends a message explaining what Kimaki is, then creates a thread from it
+          so the user can respond there to start a tutorial session.
+          Sends a smaller follow-up message inside the thread with the installer
+          mention so the notification is less noisy.
+          ... and 1 more lines
+        defs:
+          buildWelcomeText: fn
+          sendWelcomeMessage: exported fn
+      openai-realtime.ts:
+        description: |-
+          eslint-disable @typescript-eslint/ban-ts-comment
+          istanbul ignore file
+          @ts-nocheck
+        defs:
+          convertToWav: fn
+          createWavHeader: fn
+          defaultAudioChunkHandler: fn
+          GenAISessionResult: exported interface
+          OpenAIRealtimeSession: exported interface
+          parseMimeType: fn
+          saveBinaryFile: fn
+          startGenAiSession: exported fn
+      opencode-command-detection.ts:
+        description: |-
+          Detect a /commandname token on its own line in a user prompt and resolve it
+          to a registered opencode command. Mirrors the Discord slash command flow
+          (commands/user-command.ts) so users can type `/build foo` or `/build-cmd foo`
+          in chat, via `/new-session`, through `kimaki send --prompt`, or scheduled
+          ... and 8 more lines
+        defs:
+          extractLeadingOpencodeCommand: exported fn
+          resolveCommandName: fn
+          stripDiscordSuffix: fn
+      opencode-command.test.ts:
+        description: Regression tests for Windows OpenCode command resolution and spawn args.
+      opencode-command.ts:
+        description: |-
+          Shared OpenCode and Kimaki command resolution helpers.
+          Normalizes `which`/`where` output across platforms, builds safe spawn
+          arguments for Windows npm `.cmd` shims without relying on `shell: true`,
+          and creates a stable `kimaki` shim for OpenCode child processes.
+        defs:
+          ensureKimakiCommandShim: exported fn
+          getSpawnCommandAndArgs: exported fn
+          prependPathEntry: exported fn
+          quoteWindowsCommandSegment: fn
+          selectResolvedCommand: exported fn
+          splitCommandLookupOutput: exported fn
+          writeShimIfNeeded: fn
+      opencode-interrupt-plugin.test.ts:
+        description: |-
+          Runtime tests for queued-message interrupt plugin behavior.
+
+          Event fixtures here come from real Kimaki sessions, trimmed to only the parts
+          that affect interrupt behavior:
+          1) export session events:
+             `pnpm tsx src/cli.ts session export-events-jsonl --session <id> --out ../tmp/<id>.jsonl`
+          2) inspect timeline:
+          ... and 2 more lines
+        defs:
+          createAssistantAbortedEvent: fn
+          createAssistantStartedEvent: fn
+          createChatOutput: fn
+          createContext: fn
+          createSessionErrorEvent: fn
+          createSessionIdleEvent: fn
+          createStepFinishEvent: fn
+          delay: fn
+          requireHooks: fn
+      opencode-interrupt-plugin.ts:
+        description: |-
+          OpenCode plugin for interrupting queued user messages at the next assistant
+          step boundary, with a hard timeout as fallback.
+          Tracks only whether each user message has started processing by
+          correlating assistant message parentID events.
+
+          State design: all mutable state (pending messages, recovery locks, event
+          ... and 4 more lines
+        defs:
+          createInterruptState: fn
+          getInterruptStepTimeoutMsFromEnv: fn
+          interruptOpencodeSessionOnUserMessage: fn
+          toPromptParts: fn
+      opencode.ts:
+        description: |-
+          OpenCode single-server process manager.
+
+          Architecture: ONE opencode serve process shared by all project directories.
+          Each SDK client uses the x-opencode-directory header to scope requests to a
+          specific project. The server lazily creates and caches an Instance per unique
+          directory path internally.
+
+          Per-directory permissions (external_directory rules for worktrees, tmpdir,
+          ... and 6 more lines
+        defs:
+          buildSessionPermissions: exported fn
+          buildStartupTimeoutReason: fn
+          ensureProcessCleanupHandlersRegistered: fn
+          ensureSingleServer: fn
+          getOpencodeClient: exported fn
+          getOpenPort: fn
+          getOrCreateClient: fn
+          initializeOpencodeForDirectory: exported fn
+          killSingleServerProcessNow: fn
+          killStartingServerProcessNow: fn
+          parsePermissionRules: exported fn
+          pushStartupStderrTail: fn
+          readInjectionGuardConfig: exported fn
+          removeInjectionGuardConfig: exported fn
+          resolveOpencodeCommand: exported fn
+          restartOpencodeServer: exported fn
+          splitOutputChunkLines: fn
+          startSingleServer: fn
+          stopOpencodeServer: exported fn
+          subscribeOpencodeServerLifecycle: exported fn
+          truncateWithEllipsis: fn
+          waitForServer: fn
+          writeInjectionGuardConfig: exported fn
+      parse-permission-rules.test.ts:
+        description: Tests for parsePermissionRules() from opencode.ts
+      patch-text-parser.ts:
+        description: |-
+          Shared apply_patch text parsing utilities.
+          Used by diff-patch-plugin.ts (file path extraction for snapshots) and
+          message-formatting.ts (per-file addition/deletion counts for Discord display).
+
+          The apply_patch tool uses three path header formats:
+            *** Add File: path    — new file
+            *** Update File: path — existing file edit
+          ... and 6 more lines
+        defs:
+          extractPatchFilePaths: exported fn
+          parsePatchFileCounts: exported fn
+      privacy-sanitizer.ts:
+        description: |-
+          Sensitive data redaction helpers for logs and telemetry payloads.
+          Redacts common secrets, identifiers, emails, and can optionally redact paths.
+        defs:
+          sanitizeSensitiveText: exported fn
+          sanitizeUnknownValue: exported fn
+      queue-advanced-abort.e2e.test.ts:
+        description: |-
+          E2e tests for abort, model-switch, and retry scenarios.
+          Split from thread-queue-advanced.e2e.test.ts for parallelization.
+      queue-advanced-action-buttons.e2e.test.ts:
+        description: |-
+          E2e regression test for action button click continuation in thread sessions.
+          Reproduces the bug where button click interaction acks but the session does not continue.
+        defs:
+          waitForNoPendingActionButtons: fn
+          waitForPendingActionButtons: fn
+      queue-advanced-e2e-setup.ts:
+        description: |-
+          Shared setup for queue-advanced e2e test files.
+          Extracted so vitest can parallelize the split test files across workers.
+        defs:
+          chooseLockPort: exported fn
+          createDeterministicMatchers: exported fn
+          createDiscordJsClient: exported fn
+          createRunDirectories: exported fn
+          QueueAdvancedContext: exported type
+          setupQueueAdvancedSuite: exported fn
+          TEST_USER_ID: exported const
+      queue-advanced-footer.e2e.test.ts:
+        description: |-
+          E2e tests for footer emission in advanced queue scenarios.
+          Split from thread-queue-advanced.e2e.test.ts for parallelization.
+      queue-advanced-model-switch.e2e.test.ts:
+        description: |-
+          E2e test for /model switch behavior through interrupt recovery.
+          Reproduces fallback where interrupt plugin resume can run without model,
+          causing default opencode.json model to be used after switching session model.
+        defs:
+          getCustomIdFromInteractionData: fn
+          waitForInteractionMessage: fn
+          waitForMessageComponentsWithCustomId: fn
+      queue-advanced-permissions-typing.e2e.test.ts:
+        description: E2e tests for typing indicator behavior around permission prompts.
+        defs:
+          waitForPendingPermission: fn
+      queue-advanced-question.e2e.test.ts:
+        description: |-
+          E2e test for question tool: user text message during pending question should
+          dismiss the question (abort), then enqueue as a normal user prompt.
+          The user's message must appear as a real user message in the thread, not
+          get consumed as a tool result answer (which lost voice/image content).
+        defs:
+          getOpencodeClientForTest: fn
+          getSessionMessageSummary: fn
+          getSessionRoleTextTimeline: fn
+          getTextFromParts: fn
+          normalizeSessionText: fn
+          waitForSessionMessages: fn
+      queue-advanced-typing-interrupt.e2e.test.ts:
+        description: |-
+          E2e test for typing indicator lifecycle during interruption flow.
+          Split from queue-advanced-typing.e2e.test.ts for parallelization.
+      queue-advanced-typing.e2e.test.ts:
+        description: |-
+          E2e tests for typing indicator lifecycle in advanced queue scenarios.
+          Split from thread-queue-advanced.e2e.test.ts for parallelization.
+      queue-drain-after-interactive-ui.e2e.test.ts:
+        description: |-
+          E2e test: queued messages must drain immediately when the session is idle,
+          even if action buttons are still pending. The isSessionBusy check is
+          sufficient — hasPendingInteractiveUi() should NOT block queue drain.
+      queue-interrupt-drain.e2e.test.ts:
+        description: |-
+          E2e test for queue + interrupt interaction.
+          Validates that a user can queue a command via /queue while a slow session
+          is in progress, then send a normal (non-queued) message to interrupt.
+
+          Expected behavior:
+            1. Slow session is running
+            2. User queues a message via /queue (enters kimaki local queue)
+          ... and 7 more lines
+      queue-question-select-drain.e2e.test.ts:
+        description: |-
+          E2e test: queued message must drain after the user answers a pending question
+          via the Discord dropdown select menu. Reproduces a bug where answering via
+          select (not text) leaves queued messages stuck because the session continues
+          processing after the answer and may enter another blocking state.
+        defs:
+          waitForPendingQuestion: fn
+      runtime-idle-sweeper.ts:
+        description: |-
+          Runtime inactivity sweeper.
+          Periodically disposes thread runtimes that stayed idle past a timeout.
+        defs:
+          DEFAULT_RUNTIME_IDLE_MS: exported const
+          DEFAULT_SWEEP_INTERVAL_MS: exported const
+          startRuntimeIdleSweeper: exported fn
+      runtime-lifecycle.e2e.test.ts:
+        description: |-
+          E2e tests for ThreadSessionRuntime lifecycle behaviors.
+          Tests scenarios not covered by the queue/interrupt tests:
+          1. Sequential completions: listener stays alive across multiple full run cycles
+          2. Concurrent first messages: runtime serialization without threadMessageQueue
+
+          Uses opencode-deterministic-provider (no real LLM calls).
+          ... and 1 more lines
+        defs:
+          createDeterministicMatchers: fn
+          createDiscordJsClient: fn
+          createRunDirectories: fn
+      sentry.ts:
+        description: |-
+          Sentry stubs. @sentry/node was removed — these are no-op placeholders
+          so the 20+ files importing notifyError/initSentry don't need changing.
+          If Sentry is re-enabled in the future, replace these stubs with real calls.
+          Initialize Sentry. Currently a no-op.
+        defs:
+          AppError: exported class
+      session-handler:
+        agent-utils.ts:
+          description: |-
+            Agent preference resolution utility.
+            Validates agent preferences against the OpenCode API.
+          defs:
+            resolveValidatedAgentPreference: exported fn
+        event-stream-state.test.ts:
+          description: |-
+            Fixture-driven tests for pure event-stream derivation helpers.
+            Focuses on assistant message completion boundaries instead of session.idle.
+          defs:
+            findAssistantCompletionEventIndex: fn
+            getAssistantMessageById: fn
+            getAssistantMessages: fn
+            getSessionId: fn
+            loadFixture: fn
+        event-stream-state.ts:
+          description: |-
+            Pure event-stream derivation functions for session lifecycle state.
+            These functions derive lifecycle decisions from an event buffer array.
+            Zero imports from thread-session-runtime.ts, store.ts, or state.ts.
+            Only types from @opencode-ai/sdk/v2 and the getOpencodeEventSessionId helper.
+          defs:
+            doesLatestUserTurnHaveNaturalCompletion: exported fn
+            EventBufferEntry: exported type
+            getAssistantMessageIdsForLatestUserTurn: exported fn
+            getCurrentTurnStartTime: exported fn
+            getDerivedSubtaskAgentType: exported fn
+            getDerivedSubtaskIndex: exported fn
+            getLatestAssistantMessageIdForLatestUserTurn: exported fn
+            getLatestRunInfo: exported fn
+            getLatestUserMessage: exported fn
+            getTaskCandidateFromEvent: fn
+            getTaskChildSessionId: fn
+            getTokenTotal: fn
+            hasAssistantMessageCompletedBefore: exported fn
+            hasAssistantPartEvidence: fn
+            hasAssistantStepFinished: fn
+            hasRenderablePartSummary: fn
+            isAssistantMessageInLatestUserTurn: exported fn
+            isAssistantMessageNaturalCompletion: exported fn
+            isSessionBusy: exported fn
+        model-utils.ts:
+          description: |-
+            Model resolution utilities.
+            getDefaultModel resolves the default model from OpenCode when no user preference is set.
+          defs:
+            DefaultModelSource: exported type
+            getDefaultModel: exported fn
+            getRecentModelsFromTuiState: fn
+            isModelValid: fn
+            parseModelString: fn
+            SessionStartSourceContext: exported type
+        opencode-session-event-log.ts:
+          description: |-
+            Debug helper for writing raw OpenCode event stream entries as JSONL.
+            When enabled, writes one file per session ID so event ordering and
+            lifecycle behavior can be analyzed with jq.
+          defs:
+            appendOpencodeSessionEventLog: exported fn
+            buildOpencodeEventLogLine: exported fn
+            getOpencodeEventSessionId: exported fn
+            OpencodeEventLogEntry: exported type
+            resolveEventLogDirectory: fn
+        thread-runtime-state.ts:
+          description: |-
+            Per-thread state type, transition functions, and selectors.
+            All transitions operate on the global store from ../store.js.
+
+            ThreadRunState is a value-type: one entry per active thread in the
+            global store's `threads` Map. Transition functions produce new Map +
+            new ThreadRunState objects each time (immutable updates).
+            ... and 6 more lines
+          defs:
+            dequeueItem: exported fn
+            enqueueItem: exported fn
+            ensureThread: exported fn
+            initialThreadState: exported fn
+            QueuedMessage: exported type
+            removeThread: exported fn
+            setSessionUsername: exported fn
+            ThreadRunState: exported type
+            updateThread: exported fn
+        thread-session-runtime.ts:
+          description: |-
+            ThreadSessionRuntime — one per active thread.
+            Owns resource handles (listener controller, typing timers, part buffer).
+            Delegates all state to the global store via thread-runtime-state.ts transitions.
+
+            This is the sole session orchestrator. Discord handlers and slash commands
+            call runtime APIs (enqueueIncoming, abortActiveRun, etc.) without inspecting
+            ... and 1 more lines
+          defs:
+            buildPermissionDedupeKey: fn
+            cleanupPendingUiForThread: fn
+            deriveThreadNameFromSessionTitle: exported fn
+            disposeInactiveRuntimes: exported fn
+            disposeRuntime: exported fn
+            disposeRuntimesForDirectory: exported fn
+            EnqueueResult: exported type
+            formatSessionErrorFromProps: fn
+            getFallbackContextLimit: fn
+            getOrCreateRuntime: exported fn
+            getTimestampFromSnowflake: fn
+            getTokenTotal: fn
+            getWorktreePromptKey: fn
+            IngressInput: exported type
+            isEssentialToolName: exported fn
+            isEssentialToolPart: exported fn
+            maybeConvertLeadingCommand: fn
+            pendingPermissions: exported const
+            PreprocessResult: exported type
+            RuntimeOptions: exported type
+            ThreadSessionRuntime: exported class
+      session-handler.ts:
+        description: |-
+          Thin re-export shim for backward compatibility.
+          Logic lives in:
+            - session-handler/thread-session-runtime.ts (runtime class + registry)
+            - session-handler/thread-runtime-state.ts (state transitions)
+            - session-handler/model-utils.ts (getDefaultModel, types)
+            - session-handler/agent-utils.ts (resolveValidatedAgentPreference)
+          ... and 1 more lines
+      session-search.test.ts:
+        description: Tests for session search query parsing and snippet matching helpers.
+      session-search.ts:
+        description: |-
+          Session search helpers for kimaki CLI commands.
+          Parses string/regex queries and builds readable snippets from matched content.
+        defs:
+          buildSessionSearchSnippet: exported fn
+          findFirstSessionSearchHit: exported fn
+          getPartSearchTexts: exported fn
+          parseSessionSearchPattern: exported fn
+          SessionSearchHit: exported type
+          SessionSearchPattern: exported type
+          stringifyUnknown: fn
+      session-title-rename.test.ts:
+        description: |-
+          Unit tests for deriveThreadNameFromSessionTitle — the pure helper that
+          decides whether (and how) to rename a Discord thread based on an
+          OpenCode session title. Kept focused and deterministic; no Discord mocks.
+      startup-service.ts:
+        description: |-
+          Cross-platform startup service registration for kimaki daemon.
+          Vendored from startup-run (MIT, github.com/vilicvane/startup-run) with
+          significant simplifications: no abstract classes, no fs-extra, no winreg
+          npm dep, no separate daemon process (kimaki's bin.ts already handles
+          respawn/crash-loop). Just writes/deletes the platform service file.
+          ... and 4 more lines
+        defs:
+          buildLinuxDesktop: fn
+          buildMacOSPlist: fn
+          disableStartupService: exported fn
+          enableStartupService: exported fn
+          escapeXml: fn
+          getServiceFilePath: fn
+          getServiceLocationDescription: exported fn
+          isStartupServiceEnabled: exported fn
+          shellEscape: fn
+          StartupServiceOptions: exported type
+      startup-time.e2e.test.ts:
+        description: |-
+          Measures time-to-ready for the kimaki Discord bot startup.
+          Used as a baseline to track startup performance and guide optimizations
+          for scale-to-zero deployments where cold start time is critical.
+
+          Measures each phase independently:
+            1. Hrana server start (DB + lock port)
+            2. Database init (Prisma connect via HTTP)
+          ... and 7 more lines
+        defs:
+          createDiscordJsClient: fn
+          createMinimalMatchers: fn
+          createRunDirectories: fn
+      store.ts:
+        description: |-
+          Centralized zustand/vanilla store for global bot state.
+          Replaces scattered module-level `let` variables, process.env mutations,
+          and mutable arrays with a single immutable state atom.
+          See cli/skills/zustand-centralized-state/SKILL.md for the pattern.
+        defs:
+          DeterministicTranscriptionConfig: exported type
+          KimakiState: exported type
+          RegisteredUserCommand: exported type
+          store: exported const
+      system-message.test.ts:
+        description: Tests for session-stable system prompt generation and per-turn prompt context.
+      system-message.ts:
+        description: |-
+          OpenCode session prompt helpers.
+          Creates the session-stable system message injected into every OpenCode
+          session, plus per-turn synthetic context for Discord/user/worktree metadata.
+          Keep per-message data out of the system prompt so prompt caching can reuse
+          the same session prefix across turns.
+        defs:
+          AgentInfo: exported type
+          escapePromptAttribute: fn
+          escapePromptText: fn
+          getCritiqueInstructions: fn
+          getOpencodePromptContext: exported fn
+          getOpencodeSystemMessage: exported fn
+          isInjectedPromptMarker: exported fn
+          RepliedMessageContext: exported type
+          ThreadStartMarker: exported type
+          WorktreeInfo: exported type
+      system-prompt-drift-plugin.ts:
+        description: |-
+          OpenCode plugin that detects per-session system prompt drift across turns.
+          When the effective system prompt changes after the first user message, it
+          writes a debug diff file and shows a toast because prompt-cache invalidation
+          increases rate-limit usage and usually means another plugin is mutating the
+          ... and 1 more lines
+        defs:
+          appendToastSessionMarker: fn
+          buildPatch: fn
+          buildTurnContext: fn
+          getDeletedSessionId: fn
+          getOrCreateSessionState: fn
+          handleSystemTransform: fn
+          shouldSuppressDiffNotice: fn
+          systemPromptDriftPlugin: fn
+          writeSystemPromptDiffFile: fn
+      task-runner.ts:
+        description: Scheduled task runner for executing due `send --send-at` jobs in the bot process.
+        defs:
+          executeChannelScheduledTask: fn
+          executeScheduledTask: fn
+          executeThreadScheduledTask: fn
+          finalizeFailedTask: fn
+          finalizeSuccessfulTask: fn
+          parseMessageId: fn
+          processDueTask: fn
+          runTaskRunnerTick: fn
+          startTaskRunner: exported fn
+      task-schedule.test.ts:
+        description: Tests for scheduled task date/cron parsing and UTC validation rules.
+      task-schedule.ts:
+        description: Scheduled task parsing utilities for `send --send-at` and task runner execution.
+        defs:
+          asString: fn
+          asStringArray: fn
+          getLocalTimeZone: exported fn
+          getNextCronRun: exported fn
+          getPromptPreview: exported fn
+          ParsedSendAt: exported type
+          parseScheduledTaskPayload: exported fn
+          parseSendAtValue: exported fn
+          parseUtcSendAtDate: fn
+          ScheduledTaskPayload: exported type
+      test-utils.ts:
+        description: |-
+          Shared e2e test utilities for session cleanup, server cleanup, and
+          Discord message polling helpers.
+          Uses directory + start timestamp double-filter to ensure we only
+          delete sessions created by this specific test run, never real user sessions.
+
+          Prefers using the existing opencode client (already running server) to avoid
+          ... and 2 more lines
+        defs:
+          chooseLockPort: exported fn
+          cleanupTestSessions: exported fn
+          initTestGitRepo: exported fn
+          isFooterMessage: fn
+          waitForBotMessageContaining: exported fn
+          waitForBotMessageCount: exported fn
+          waitForBotReplyAfterUserMessage: exported fn
+          waitForFooterMessage: exported fn
+          waitForMessageById: exported fn
+          waitForThreadQueueLength: exported fn
+          waitForThreadState: exported fn
+      thinking-utils.ts:
+        description: |-
+          Utilities for extracting and matching model variant (thinking level) values
+          from the provider.list() API response. Used by model selector and session handler
+          to validate variant preferences against what the current model actually supports.
+        defs:
+          getModelVariants: fn
+          getThinkingValuesForModel: exported fn
+          matchThinkingValue: exported fn
+          ThinkingProvider: exported type
+      thread-message-queue.e2e.test.ts:
+        description: |-
+          E2e tests for basic per-thread message queue ordering.
+          Advanced interrupt/abort/retry tests are in thread-queue-advanced.e2e.test.ts.
+
+          Uses opencode-deterministic-provider which returns canned responses instantly
+          (no real LLM calls), so poll timeouts can be aggressive (4s). The only real
+          latency is OpenCode server startup (beforeAll) and intentional partDelaysMs
+          ... and 4 more lines
+        defs:
+          createDeterministicMatchers: fn
+          createDiscordJsClient: fn
+          createRunDirectories: fn
+      tools.ts:
+        description: |-
+          Voice assistant tool definitions for the GenAI worker.
+          Provides tools for managing OpenCode sessions (create, submit, abort),
+          listing chats, searching files, and reading session messages.
+        defs:
+          getTools: exported fn
+      undici.d.ts:
+        description: |-
+          Minimal type declarations for undici (transitive dep from discord.js).
+          We don't list undici in package.json — discord.js bundles it.
+      undo-redo.e2e.test.ts:
+        description: |-
+          E2e test for /undo command.
+          Validates that:
+          1. After /undo, session.revert state is set (files reverted, revert boundary marked)
+          2. Messages are NOT deleted yet (they stay until next prompt cleans them up)
+          3. On the next user message, reverted messages are cleaned up by OpenCode's
+             SessionRevert.cleanup() and the model only sees pre-revert messages
+          ... and 8 more lines
+      unnest-code-blocks.ts:
+        description: |-
+          Unnest code blocks from list items for Discord.
+          Discord doesn't render code blocks inside lists, so this hoists them
+          to root level while preserving list structure.
+        defs:
+          extractText: fn
+          normalizeListItemText: fn
+          processListItem: fn
+          processListToken: fn
+          renderSegments: fn
+          unnestCodeBlocksFromLists: exported fn
+      upgrade.ts:
+        description: |-
+          Kimaki self-upgrade utilities.
+          Detects the package manager used to install kimaki, checks npm for newer versions,
+          and runs the global upgrade command. Used by both CLI `kimaki upgrade` and
+          the Discord `/upgrade-and-restart` command, plus background auto-upgrade on startup.
+        defs:
+          backgroundUpgradeKimaki: exported fn
+          detectPm: exported fn
+          getLatestNpmVersion: exported fn
+          resolveScriptRealpath: fn
+          upgrade: exported fn
+      utils.ts:
+        description: |-
+          General utility functions for the bot.
+          Includes Discord OAuth URL generation, array deduplication,
+          abort error detection, and date/time formatting helpers.
+        defs:
+          abbreviatePath: exported fn
+          deduplicateByKey: exported fn
+          formatDistanceToNow: exported fn
+          generateBotInstallUrl: exported fn
+          generateDiscordInstallUrlForBot: exported fn
+          isAbortError: exported fn
+          KIMAKI_GATEWAY_APP_ID: exported const
+          KIMAKI_WEBSITE_URL: exported const
+      voice-attachment.ts:
+        description: |-
+          Voice attachment detection helpers.
+          Normalizes Discord attachment heuristics for voice-message detection so
+          message routing, transcription, and empty-prompt guards all agree even when
+          Discord omits contentType on uploaded audio attachments.
+        defs:
+          getVoiceAttachmentMatchReason: exported fn
+          VoiceAttachmentLike: exported type
+      voice-handler.ts:
+        description: |-
+          Discord voice channel connection and audio stream handler.
+          Manages joining/leaving voice channels, captures user audio, resamples to 16kHz,
+          and routes audio to the GenAI worker for real-time voice assistant interactions.
+        defs:
+          cleanupVoiceConnection: exported fn
+          convertToMono16k: exported fn
+          createUserAudioLogStream: exported fn
+          frameMono16khz: exported fn
+          processVoiceAttachment: exported fn
+          registerVoiceStateHandler: exported fn
+          setupVoiceHandling: exported fn
+          VoiceConnectionData: exported type
+          voiceConnections: exported const
+      voice-message.e2e.test.ts:
+        description: |-
+          E2e tests for voice message handling (audio attachment transcription).
+          Uses deterministic transcription (store.test.deterministicTranscription) to
+          bypass real AI model calls and control transcription output, timing, and
+          queueMessage flag. Combined with opencode-deterministic-provider for session
+          responses. Tests validate the full flow: attachment detection → transcription
+          ... and 4 more lines
+        defs:
+          createDeterministicMatchers: fn
+          createDiscordJsClient: fn
+          createRunDirectories: fn
+          getOpencodeClientForTest: fn
+          getTextFromParts: fn
+          waitForSessionMessages: fn
+      voice.test.ts:
+        description: |-
+          Tests for voice transcription using AI SDK provider (LanguageModelV3).
+          Uses the example audio files at scripts/example-audio.{mp3,ogg}.
+      voice.ts:
+        description: |-
+          Audio transcription service using AI SDK providers.
+          Both providers use LanguageModelV3 (chat model) with audio file parts + tool calling,
+          so we can pass full context (file tree, session info) for better word recognition.
+            - OpenAI: gpt-4o-audio-preview via .chat() (Chat Completions API). MUST use .chat()
+          ... and 5 more lines
+        defs:
+          buildTranscriptionTool: fn
+          convertM4aToWav: exported fn
+          convertOggToWav: exported fn
+          createTranscriptionModel: exported fn
+          createWavHeader: fn
+          extractTranscription: exported fn
+          getOpenAIAudioConversionStrategy: exported fn
+          normalizeAudioMediaType: exported fn
+          runTranscriptionOnce: fn
+          transcribeAudio: exported fn
+          TranscribeAudioErrors: exported type
+          TranscriptionProvider: exported type
+          TranscriptionResult: exported type
+      wait-session.ts:
+        description: |-
+          Wait utilities for polling session completion.
+          Used by `kimaki send --wait` to block until a session finishes,
+          then output the session markdown to stdout.
+        defs:
+          waitAndOutputSession: exported fn
+          waitForSessionComplete: exported fn
+          waitForSessionId: exported fn
+      websockify.ts:
+        description: |-
+          In-process WebSocket-to-TCP bridge (websockify replacement).
+          Accepts WebSocket connections and pipes raw bytes to/from a TCP target.
+          Used by /screenshare to bridge noVNC (WebSocket) to a VNC server (TCP).
+          Supports the 'binary' subprotocol required by noVNC.
+        defs:
+          startWebsockify: exported fn
+      worker-types.ts:
+        description: |-
+          Type definitions for worker thread message passing.
+          Defines the protocol between main thread and GenAI worker for
+          audio streaming, tool calls, and session lifecycle management.
+          Messages sent from main thread to worker
+        defs:
+          WorkerInMessage: exported type
+          WorkerOutMessage: exported type
+      worktree-lifecycle.e2e.test.ts:
+        description: |-
+          E2e test for worktree lifecycle: /new-worktree inside an existing thread,
+          then verify the session still works after sdkDirectory switches.
+          Validates that handleDirectoryChanged() reconnects the event listener
+          so events from the worktree Instance reach the runtime (PR #75 fix).
+
+          Uses opencode-deterministic-provider (no real LLM calls).
+          ... and 2 more lines
+        defs:
+          createDeterministicMatchers: fn
+          createDiscordJsClient: fn
+          createRunDirectories: fn
+          initGitRepo: fn
+      worktree-utils.ts:
+        description: |-
+          Backward-compatible re-export for worktree helpers.
+          New code should import from worktrees.ts.
+      worktrees.test.ts:
+        description: |-
+          Tests for reusable worktree and submodule initialization helpers.
+          Uses temporary local git repositories to validate submodule behavior end to end.
+        defs:
+          git: fn
+          gitCommand: fn
+      worktrees.ts:
+        description: |-
+          Worktree service and git helpers.
+          Provides reusable, Discord-agnostic worktree creation/merge logic,
+          submodule initialization, and git diff transfer utilities.
+        exports:
+          buildSubmoduleReferencePlan: exported fn
+          buildSubmoduleUpdateCommandArgs: exported fn
+          createWorktreeWithSubmodules: exported fn
+          deleteWorktree: exported fn
+          getDefaultBranch: exported fn
+          git: exported fn
+          isDirty: exported fn
+          listBranchesByLastCommit: exported fn
+          MergeSuccess: exported type
+          mergeWorktree: exported fn
+          parseGitmodulesFileContent: exported fn
+          runDependencyInstall: exported fn
+          SubmoduleReferencePlan: exported type
+          validateBranchRef: exported fn
+          validateWorktreeDirectory: exported fn
+      xml.ts:
+        description: |-
+          XML/HTML tag content extractor.
+          Parses XML-like tags from strings (e.g., channel topics) to extract
+          Kimaki configuration like directory paths and app IDs.
+        defs:
+          extractTagsArrays: exported fn
+    vitest.config.ts:
+      description: |-
+        Vitest configuration for the kimaki discord package.
+        Injects KIMAKI_VITEST=1 so config.ts and db.ts auto-isolate from the real
+        ~/.kimaki/ database and the running bot's Hrana server.
+
+        CPU profiling: set VITEST_CPU_PROF=1 to generate .cpuprofile files in
+        ./tmp/cpu-profiles/. Analyze with: node ../profano/dist/cli.js tmp/cpu-profiles/CPU.*.cpuprofile
+        ... and 2 more lines
+  db:
+    src:
+      prisma-cloudflare.ts:
+        description: |-
+          Cloudflare-targeted Prisma client factory for db package consumers.
+          Uses the workerd runtime-generated Prisma client with @prisma/adapter-pg.
+        defs:
+          createPrisma: exported fn
+      prisma-node.ts:
+        description: |-
+          Node-targeted Prisma client factory for db package consumers.
+          Uses the Node runtime-generated Prisma client with @prisma/adapter-pg.
+        defs:
+          createPrisma: exported fn
+  discord-digital-twin:
+    README.md:
+      description: |-
+        Discord Digital Twin
+        > Experimental and unstable. APIs may change without notice between versions.
+        `discord-digital-twin` is a local Discord API twin for tests.
+        It runs:
+        - Discord-like REST routes on `/api/v10/*`
+        - Discord-like Gateway WebSocket on `/gateway`
+        - In-memory state with Prisma + libsql
+        The goal is testing real `discord.js` flows without calling Discord servers.
+        ... and 13 more lines
+    src:
+      db.ts:
+        description: |-
+          Prisma client initialization with in-memory libsql.
+          Vitest runs each test file in a separate worker thread, so all
+          instances within the same file share file::memory:?cache=shared
+          and cross-file isolation comes from separate processes/threads.
+        defs:
+          createPrismaClient: exported fn
+      gateway.ts:
+        description: |-
+          Discord Gateway WebSocket server.
+          Implements the minimum Gateway protocol needed for discord.js to connect:
+          Hello -> Identify -> Ready -> GUILD_CREATE, plus heartbeat keep-alive.
+          REST routes call gateway.broadcast() to push events to connected clients.
+        defs:
+          DiscordGateway: exported class
+          GatewayGuildState: exported interface
+          GatewayState: exported interface
+      index.ts:
+        description: |-
+          DigitalDiscord - Local Discord API test server.
+          Creates a fake Discord server (REST + Gateway WebSocket) that discord.js
+          can connect to. Used for automated testing of the Kimaki bot without
+          hitting real Discord.
+        defs:
+          ChannelScope: exported class
+          compareSnowflakeDesc: fn
+          DigitalDiscord: exported class
+          DigitalDiscordChannelOption: exported type
+          DigitalDiscordCommandOption: exported type
+          DigitalDiscordGuildOption: exported type
+          DigitalDiscordMessagePredicate: exported type
+          DigitalDiscordModalField: exported type
+          DigitalDiscordOptions: exported interface
+          DigitalDiscordSelectOption: exported type
+          DigitalDiscordThreadPredicate: exported type
+          DigitalDiscordTypingEvent: exported type
+          ScopedUserActor: exported class
+      serializers.ts:
+        description: |-
+          Converters from Prisma DB rows to Discord API object shapes.
+          Uses discord-api-types for return types. Return type annotations enforce
+          type safety -- the compiler rejects missing/wrong fields. We avoid blanket
+          `as Type` casts which silently bypass that checking.
+
+          Exceptions where `as` is still used (each documented inline):
+          ... and 7 more lines
+        defs:
+          channelToAPI: exported fn
+          guildToAPI: exported fn
+          memberToAPI: exported fn
+          messageToAPI: exported fn
+          roleToAPI: exported fn
+          threadMemberToAPI: exported fn
+          userToAPI: exported fn
+      server.ts:
+        description: |-
+          Combined HTTP (Spiceflow) + WebSocket (ws) server on a single port.
+          The Spiceflow app handles REST API routes at /api/v10/*.
+          The ws WebSocketServer handles Gateway connections at /gateway.
+          All routes are defined inline since each is small.
+        defs:
+          createServer: exported fn
+          getErrorMessage: fn
+          getErrorStack: fn
+          ServerComponents: exported interface
+          startServer: exported fn
+          stopServer: exported fn
+          TypingEventRecord: exported type
+      snowflake.ts:
+        description: |-
+          Discord snowflake ID generator.
+          Snowflakes encode a timestamp (ms since Discord epoch 2015-01-01),
+          worker ID, process ID, and a 12-bit increment counter.
+          We use worker=0, process=0 since this is a single-process test server.
+        defs:
+          generateSnowflake: exported fn
+    tests:
+      guilds.test.ts:
+        description: |-
+          Phase 5 tests: guild routes (channels, roles, members, active threads).
+          Validates that discord.js managers can call guild REST endpoints against
+          the DigitalDiscord server and that gateway updates stay in sync.
+      interactions.test.ts:
+        description: |-
+          Phase 4 tests: interactions (slash commands, replies, deferred responses, follow-ups).
+          Validates that discord.js Client can receive INTERACTION_CREATE events and
+          respond via interaction callback, webhook follow-up, and edit endpoints.
+      messages.test.ts:
+        description: |-
+          Phase 2 tests: messages, edits, deletes, and reactions.
+          Validates that discord.js Client can send/receive messages through the
+          DigitalDiscord server and that state is correctly persisted in the DB.
+      sdk-compat.test.ts:
+        description: |-
+          SDK compatibility test: validates that a real discord.js Client can
+          connect to the DigitalDiscord server, complete the Gateway handshake,
+          and see the seeded guild/channels.
+      threads.test.ts:
+        description: |-
+          Phase 3 tests: channels, threads, thread members, archiving.
+          Validates that discord.js Client can create threads, send messages in them,
+          archive them, and manage thread members through the DigitalDiscord server.
+  discord-slack-bridge:
+    README.md:
+      description: |-
+        discord-slack-bridge
+        `discord-slack-bridge` lets a `discord.js` bot control a Slack workspace by
+        translating Discord Gateway + REST behavior to Slack APIs.
+        Slack app scopes for Kimaki
+        To let Kimaki do the same core actions it does on Discord (commands, channel
+        and thread lifecycle, messages, reactions, file uploads), configure these bot
+        ... and 15 more lines
+    scripts:
+      echo-bot.ts:
+        description: |-
+          Echo bot: tests discord-slack-bridge against a real Slack workspace.
+          Required env vars: SLACK_BOT_TOKEN, SLACK_SIGNING_SECRET.
+          Required Slack app setup:
+          - Event Subscriptions Request URL -> {tunnel}/slack/events
+          - Interactivity & Shortcuts Request URL -> {tunnel}/slack/events
+          - Bot token scope includes files:write for demo:image and demo:text-file.
+          ... and 1 more lines
+        defs:
+          # ... 5 more definitions
+          createDemoImageAttachment: fn
+          createDeployedRuntime: fn
+          decodeRawErrorText: fn
+          describeError: fn
+          formatAttachmentSummary: fn
+          formatBytes: fn
+          handleButtonInteraction: fn
+          handleDemoSwitch: fn
+          handleInteractionCreate: fn
+          handleMessageCreate: fn
+          handleModalSubmitInteraction: fn
+          handleSelectInteraction: fn
+          handleSlashCommandInteraction: fn
+          main: fn
+          pulseTyping: fn
+          readGatewayModeArgv: fn
+          readNumberProp: fn
+          readStringProp: fn
+          registerDemoCommands: fn
+          resolveReplyThread: fn
+          sendV2TableMessage: fn
+          sleep: fn
+          startLocalRuntime: fn
+          toDemoTextCommand: fn
+          trySend: fn
+    src:
+      component-converter.ts:
+        description: |-
+          Converts Discord message components to Slack Block Kit blocks.
+
+          Supported Discord components:
+            ActionRow → actions block (contains buttons/selects)
+            Button    → button element (primary/danger/secondary styles)
+            StringSelect/UserSelect/RoleSelect/MentionableSelect/ChannelSelect
+                      → Slack select elements (best-effort for role/mentionable)
+          ... and 8 more lines
+        defs:
+          componentsToBlocks: exported fn
+          convertActionRow: fn
+          convertButton: fn
+          convertChannelSelect: fn
+          convertComponent: fn
+          convertContainer: fn
+          convertMentionableSelect: fn
+          convertRoleSelect: fn
+          convertSection: fn
+          convertSelect: fn
+          convertStringSelect: fn
+          convertTextDisplay: fn
+          convertUserSelect: fn
+          defaultRoleValueToOption: fn
+          discordChannelTypesToSlackFilter: fn
+          isTypeObject: fn
+          labelFromButton: fn
+          SlackBlock: exported interface
+      component-id-codec.ts:
+        description: Encodes and decodes component metadata into Slack action_id values.
+        defs:
+          decodeComponentActionId: exported fn
+          encodeComponentActionId: exported fn
+      event-translator.ts:
+        description: |-
+          Translates Slack webhook events into Discord Gateway dispatch payloads.
+          Each function takes a Slack event and returns a Discord-shaped object
+          that can be broadcast via the Gateway.
+        defs:
+          buildThreadChannel: exported fn
+          mapSlackFilesToDiscordAttachments: fn
+          translateChannelCreate: exported fn
+          translateChannelDelete: exported fn
+          translateChannelRename: exported fn
+          translateMemberJoinedChannel: exported fn
+          translateMessageCreate: exported fn
+          translateMessageDelete: exported fn
+          translateMessageUpdate: exported fn
+          translateReaction: exported fn
+      file-upload.ts:
+        description: |-
+          Handles file uploads from Discord to Slack.
+
+          Discord sends file attachments as URLs in the message body.
+          Slack requires a 2-step upload flow:
+            1. files.getUploadURLExternal → get a presigned URL
+            2. PUT the file content to that URL
+            3. files.completeUploadExternal → share the file to the channel/thread
+          ... and 2 more lines
+        defs:
+          DiscordAttachment: exported interface
+          resolveAttachmentBuffer: fn
+          uploadAttachmentsToSlack: exported fn
+          uploadSingleFile: fn
+          uploadToSlackUrl: fn
+      format-converter.ts:
+        description: |-
+          Bidirectional format converter between Discord markdown and Slack mrkdwn.
+
+          Discord markdown uses:
+            **bold**, ~~strike~~, [text](url), `code`, ```code blocks```
+
+          Slack mrkdwn uses:
+            *bold*, ~strike~, <url|text>, `code`, ```code blocks```
+
+          Both use _ for italic and same code block syntax.
+          Mentions (<@U123>) are the same format in both.
+          ... and 2 more lines
+        defs:
+          markdownToMrkdwn: exported fn
+          mrkdwnToMarkdown: exported fn
+      gateway-session-manager.ts:
+        description: |-
+          Runtime-agnostic Discord Gateway session manager.
+          Handles identify/heartbeat/ready/dispatch using a generic socket interface
+          so Node ws and Cloudflare Durable Object WebSockets can share one protocol core.
+        defs:
+          GatewayClientSnapshot: exported type
+          GatewaySessionManager: exported class
+          GatewaySocketTransport: exported interface
+          parseGatewaySendPayload: fn
+          readNumber: fn
+          readRecord: fn
+          readString: fn
+      gateway.ts:
+        description: |-
+          Discord Gateway WebSocket server for the Slack bridge.
+          Reuses the same protocol as discord-digital-twin: Hello -> Identify -> Ready
+          -> GUILD_CREATE, plus heartbeat keep-alive. The bridge pushes translated
+          Slack events via broadcast().
+        defs:
+          GatewayGuildState: exported interface
+          GatewayState: exported interface
+          SlackBridgeGateway: exported class
+      id-converter.ts:
+        description: |-
+          Stateless ID converter between Discord and Slack ID formats.
+
+          ## Why snowflake-compatible?
+
+          discord.js parses message IDs (and sometimes channel IDs) as BigInt
+          snowflakes internally — for createdTimestamp, sorting, and caching.
+          Non-numeric IDs like "MSG_C04_17000..." cause `Cannot convert to BigInt`
+          ... and 14 more lines
+        defs:
+          channelToNumeric: exported fn
+          decodeMessageId: exported fn
+          decodeSlackTs: exported fn
+          decodeThreadId: exported fn
+          encodeSlackTs: exported fn
+          encodeThreadId: exported fn
+          numericToChannel: exported fn
+          resolveDiscordChannelId: exported fn
+          resolveSlackTarget: exported fn
+      index.ts:
+        description: |-
+          Public exports for discord-slack-bridge.
+          Runtime-specific implementations live in dedicated files.
+      node-bridge.ts:
+        description: |-
+          Node runtime wrapper for discord-slack-bridge.
+          Keeps Node server lifecycle out of the package root exports.
+        defs:
+          buildWebSocketUrl: fn
+          normalizeAuthIdentity: fn
+          readString: fn
+          SlackBridge: exported class
+      rest-translator.ts:
+        description: |-
+          Translates Discord REST API calls into Slack Web API calls.
+          Each function takes Discord-shaped request data and calls the
+          appropriate Slack method, then returns a Discord-shaped response.
+        exports:
+          # ... 7 more exports
+          addReaction: exported fn
+          clearThreadTypingStatus: exported fn
+          createChannel: exported fn
+          createThread: exported fn
+          createThreadFromMessage: exported fn
+          deleteMessage: exported fn
+          editMessage: exported fn
+          getActiveThreads: exported fn
+          getChannel: exported fn
+          getGuildMember: exported fn
+          getMessage: exported fn
+          getMessages: exported fn
+          getThreadMember: exported fn
+          getUser: exported fn
+          joinThreadMember: exported fn
+          leaveThreadMember: exported fn
+          listChannels: exported fn
+          listGuildMembers: exported fn
+          listGuildRoles: exported fn
+          listThreadMembers: exported fn
+          openModalView: exported fn
+          postMessage: exported fn
+          removeReaction: exported fn
+          setThreadTypingStatus: exported fn
+          updateChannel: exported fn
+      server.ts:
+        description: |-
+          HTTP server for the discord-slack-bridge.
+          Exposes two sets of routes on the same port:
+            1. /api/v10/* — Discord REST routes consumed by discord.js
+            2. /slack/events — Slack webhook receiver for Events API + interactions
+
+          Also hosts the WebSocket gateway at /gateway for discord.js Gateway.
+        exports:
+          BridgeAppComponents: exported interface
+          buildDiscordComponentDataFromSlackAction: exported fn
+          buildResolvedData: exported fn
+          createBridgeApp: exported fn
+          createServer: exported fn
+          GatewayEmitter: exported interface
+          normalizeModalComponents: exported fn
+          normalizeSlackInteractivePayload: exported fn
+          ServerComponents: exported interface
+          ServerConfig: exported interface
+          startServer: exported fn
+          stopServer: exported fn
+          toDiscordModalComponents: exported fn
+      types.ts:
+        description: Shared types for the discord-slack-bridge adapter.
+        exports:
+          # ... 11 more exports
+          BridgeAuthorizeCallback: exported type
+          BridgeAuthorizeContext: exported interface
+          BridgeAuthorizeKind: exported type
+          BridgeAuthorizeResult: exported interface
+          NormalizedSlackAction: exported interface
+          NormalizedSlackActionType: exported type
+          NormalizedSlackBlockActionsPayload: exported interface
+          NormalizedSlackBlockSuggestionPayload: exported interface
+          NormalizedSlackChannelCreatedEvent: exported interface
+          NormalizedSlackChannelDeletedEvent: exported interface
+          NormalizedSlackChannelRenameEvent: exported interface
+          NormalizedSlackEvent: exported type
+          NormalizedSlackEventEnvelope: exported type
+          NormalizedSlackFile: exported interface
+          NormalizedSlackInteractivePayload: exported type
+          NormalizedSlackMemberJoinedChannelEvent: exported interface
+          NormalizedSlackMessage: exported interface
+          NormalizedSlackMessageEvent: exported interface
+          NormalizedSlackReactionEvent: exported interface
+          NormalizedSlackViewSubmissionPayload: exported interface
+          NormalizedSlackViewSubmissionStateValue: exported interface
+          SlackBridgeConfig: exported interface
+          SlackInteractiveChannel: exported type
+          SlackInteractiveUser: exported type
+          SupportedSlackEventType: exported type
+      typing-state.ts:
+        description: Pure event-sourced typing state derivation for Slack assistant thread status.
+        defs:
+          appendTypingEvent: exported fn
+          createTypingCoordinator: exported fn
+          DEFAULT_TYPING_STATE_CONFIG: exported const
+          deriveTypingIntent: exported fn
+          lastEventAt: fn
+          lastRateLimitedUntil: fn
+          normalizeRetryAfterMs: fn
+          readNumber: fn
+          readRecord: fn
+          readSlackRetryAfterMs: fn
+          readString: fn
+          ThreadTypingTarget: exported type
+          TypingCoordinator: exported type
+          TypingEvent: exported type
+          TypingIntent: exported type
+          TypingStateConfig: exported type
+      webhook-team-id.ts:
+        description: Extracts Slack workspace/team IDs from inbound webhook payloads.
+        defs:
+          getTeamIdForWebhookEvent: exported fn
+          getTeamIdFromJsonPayload: fn
+          readRecord: fn
+    tests:
+      active-threads.e2e.test.ts:
+        description: E2E coverage for active thread discovery route.
+      application-commands.e2e.test.ts:
+        description: E2E coverage for application command registration/listing parity routes.
+      auth-callbacks.e2e.test.ts:
+        description: E2E coverage for callback-based bridge authorization.
+      bootstrap.e2e.test.ts:
+        description: "E2E: verify bridge boots correctly with port:0, READY payload, and basic wiring."
+      channels.e2e.test.ts:
+        description: "E2E: Channel operations through the bridge."
+      component-id-codec.test.ts:
+        description: Tests encoding/decoding Discord component metadata into Slack action IDs.
+      discord-js-query-propagation.test.ts:
+        description: Verifies current discord.js behavior for REST base URL query parameters.
+      e2e-setup.ts:
+        description: |-
+          E2E test setup helper for discord-slack-bridge.
+          Wires up: discord.js Client → SlackBridge → SlackDigitalTwin
+          No real Discord or Slack APIs are called.
+        defs:
+          E2EContext: exported interface
+          E2ESetupOptions: exported interface
+          setupE2E: exported fn
+          waitFor: exported fn
+      event-translator.test.ts:
+        description: Tests event translation from Slack payloads into Discord gateway payloads.
+      file-attachments.e2e.test.ts:
+        description: |-
+          E2E: Attachment parity flows used by Kimaki (Discord<->Slack bridge).
+          Covers discord.js multipart sends and Slack webhook file payload mapping.
+      format-e2e.test.ts:
+        description: |-
+          E2E: Markdown ↔ mrkdwn format conversion through the full bridge stack.
+          Discord markdown → Slack mrkdwn (Discord → Slack direction)
+          Slack mrkdwn → Discord markdown (Slack → Discord direction)
+      interactions.e2e.test.ts:
+        description: E2E coverage for Slack interactive payloads -> Discord interactionCreate events.
+        defs:
+          getFirstActionId: fn
+      messages.e2e.test.ts:
+        description: "E2E: Discord → Slack message operations (post, edit, delete, fetch)."
+      reactions.e2e.test.ts:
+        description: "E2E: Reaction operations through the bridge (Discord → Slack)."
+      rest-parity-edge-routes.e2e.test.ts:
+        description: E2E parity checks for edge REST routes and Discord-shaped errors.
+      rest-translator-errors.test.ts:
+        description: Unit tests for Slack-to-Discord REST error mapping behavior.
+        defs:
+          buildSlackApiError: fn
+      slack-to-discord.e2e.test.ts:
+        description: |-
+          E2E: Slack → Discord event flow (webhook events through the bridge).
+          Slack user actions trigger webhooks → bridge translates → discord.js receives Gateway events.
+      slash-command-modals.e2e.test.ts:
+        description: E2E coverage for Slack slash command -> modal -> Discord chat command flow.
+      thread-members.e2e.test.ts:
+        description: E2E coverage for Discord thread member routes exposed by the bridge.
+        defs:
+          isThreadMember: fn
+      threads.e2e.test.ts:
+        description: |-
+          E2E: Thread creation and replies through the bridge.
+          Discord threads map to Slack threads (thread_ts replies).
+      typing-state.test.ts:
+        description: Unit tests for pure event-sourced typing intent derivation.
+      webhook-team-id.test.ts:
+        description: Verifies Slack webhook team-id extraction across event and action payload shapes.
+  errore:
+    submodule: detached @ 3b7cd48
+    README.md:
+      description: |-
+        errore
+        Type-safe error handling for TypeScript. Return errors instead of throwing them — as a union type (`Error | T`), not a wrapper. TypeScript's type narrowing does the rest: forget to handle an error and your code won't compile.
+        Why?
+        In Go, functions return errors as values instead of throwing exceptions. errore brings the same convention to TypeScript — but instead of a tuple with two separate variables, functions return a single `Error | T` union. You check `instanceof Error` instead of `err != nil`, and TypeScript narrows the type automatically. No wrapper types like `Result<T, E>`, no monads — just plain unions and `instanceof`:
+        ... and 17 more lines
+    benchmarks:
+      create-tagged-error.ts:
+        description: Benchmark createTaggedError constructor interpolation performance.
+        defs:
+          RegexReplaceError: class
+      effect-vs-errore.ts:
+        description: |-
+          Benchmark: Effect.gen (generators) vs errore (plain instanceof).
+          Compares speed and memory for sync and async loops with typed error handling.
+          Run: bun run bench
+
+          Both sides do identical work: fetch user by ID → validate → collect results.
+          Every 7th ID triggers NotFoundError, every 13th triggers ValidationError.
+          ... and 4 more lines
+        defs:
+          effFetchUserAsync: fn
+          makeUser: fn
+    src:
+      cli.ts:
+        description: |-
+          #!/usr/bin/env node
+          Errore CLI.
+          Provides the `skill` command to output SKILL.md contents for LLM context.
+      disposable.ts:
+        description: |-
+          Polyfills for DisposableStack and AsyncDisposableStack.
+          These provide Go-like `defer` cleanup semantics using the TC39 Explicit
+          Resource Management proposal (TypeScript 5.2+ `using` / `await using`).
+
+          Works in every runtime — no native DisposableStack support required.
+          Only needs Symbol.dispose / Symbol.asyncDispose to exist (polyfilled here).
+          ... and 2 more lines
+        defs:
+          AsyncDisposableStack: exported class
+          buildSuppressedError: fn
+          DisposableStack: exported class
+      extract.ts:
+        description: |-
+          Extract the value or throw if it's an error.
+
+          @example
+          const user = unwrap(result) // throws if result is an error
+          console.log(user.name)
+
+          @example With custom message
+          const user = unwrap(result, 'Failed to get user')
+        defs:
+          match: exported fn
+          partition: exported fn
+          unwrap: exported fn
+          unwrapOr: exported fn
+      index.ts:
+        description: Types
+      serialize-cause.ts:
+        description: Shared helper to serialize unknown `cause` values to JSON-safe data.
+        defs:
+          serializeCause: exported fn
+      transform.ts:
+        description: |-
+          Transform the value if not an error.
+          If the value is an error, returns it unchanged.
+
+          @example
+          const result = map(user, u => u.name)
+          // If user is User, result is string
+          // If user is NotFoundError, result is NotFoundError
+        defs:
+          andThen: exported fn
+          andThenAsync: exported fn
+          map: exported fn
+          mapError: exported fn
+          tap: exported fn
+          tapAsync: exported fn
+      types.ts:
+        description: |-
+          The core type: either an Error or a value T.
+          Unlike Result<T, E>, this is just a union - no wrapper needed.
+        defs:
+          EnsureNotError: exported type
+          Errore: exported type
+          InferError: exported type
+          InferValue: exported type
+    worker:
+      comparison-page.ts:
+        description: |-
+          Comparison page renderer for /errore-vs-effect.
+          Parses the MD content file into sections, highlights code blocks
+          with @code-hike/lighter, renders prose with marked, and outputs
+          a full HTML page with side-by-side comparison layout.
+        defs:
+          escapeHtml: fn
+          getStyles: fn
+          parseSections: fn
+          renderComparisonPage: exported fn
+          renderSection: fn
+      env.d.ts:
+        description: Type declarations for non-TS module imports in the worker.
+      highlight.ts:
+        description: |-
+          Server-side syntax highlighting using @code-hike/lighter.
+          Parses focus annotations (// !focus, # !focus) from code comments,
+          highlights with lighter, and renders to HTML strings with focus dimming.
+          Renders both light and dark themes, toggled via CSS prefers-color-scheme.
+        defs:
+          escapeHtml: fn
+          highlightCode: exported fn
+          parseFocusAnnotations: exported fn
+          renderLines: fn
+      shared-styles.ts:
+        description: |-
+          Shared CSS utilities used by both the index page and comparison page.
+          Deduplicates the base reset, font smoothing, and tagged template helper.
+          Tagged template for CSS strings. Provides syntax highlighting in editors
+          that support css`` tagged templates (e.g. VSCode with lit-plugin).
+        defs:
+          baseReset: exported const
+          css: exported fn
+          darkModeColors: exported const
+          fonts: exported const
+          hideScrollbars: exported const
+  fly-admin:
+    README.md:
+      description: |-
+        @fly.io/sdk
+        TypeScript SDK for Fly Machines REST and GraphQL APIs.
+        This package is maintained in the `fly-admin` folder of the kimaki monorepo:
+        https://github.com/remorses/kimaki/tree/main/fly-admin
+        Install
+        ```bash
+        pnpm add @fly.io/sdk
+        ```
+        Quick start
+        ```ts
+        import { Client } from '@fly.io/sdk'
+        const client = new Client({
+        ... and 9 more lines
+    src:
+      app.ts:
+        description: |-
+          App management for Fly Machines REST + GraphQL API.
+          Types aligned with OpenAPI spec at https://docs.machines.dev/spec/openapi3.json
+        exports:
+          # ... 5 more exports
+          AppInfo: exported type
+          AppOrganizationInfo: exported type
+          AppResponse: exported interface
+          AppStatus: exported enum
+          CertificateRequest: exported interface
+          CreateAppRequest: exported interface
+          CreateDeployTokenRequest: exported interface
+          DeleteAppRequest: exported type
+          GetAppRequest: exported type
+          IPAddress: exported interface
+          ListAppRequest: exported type
+          ListAppResponse: exported type
+          ListAppsParams: exported interface
+          ListCertificatesRequest: exported interface
+          ListSecretKeysRequest: exported interface
+          ListSecretsRequest: exported interface
+          RequestAcmeCertificateRequest: exported interface
+          RequestCustomCertificateRequest: exported interface
+          SecretKeyDecryptRequest: exported interface
+          SecretKeyEncryptRequest: exported interface
+          SecretKeyRequest: exported interface
+          SecretKeySignRequest: exported interface
+          SecretKeyVerifyRequest: exported interface
+          SetSecretKeyRequest: exported interface
+          UpdateSecretsRequest: exported interface
+      client.ts:
+        description: |-
+          HTTP client for Fly.io Machines REST API and GraphQL API.
+          Uses native fetch (no cross-fetch dependency).
+          Vendored from supabase/fly-admin with modifications.
+        defs:
+          Client: exported class
+          ClientConfig: exported interface
+          ClientInput: exported interface
+          FLY_API_GRAPHQL: exported const
+          FLY_API_HOSTNAME: exported const
+          parseJson: fn
+      errors.ts:
+        description: Typed Fly API error classes and HTTP/GraphQL error mapping helpers.
+        defs:
+          createFlyGraphQLError: exported fn
+          createFlyHttpError: exported fn
+          FlyClientError: exported type
+          FlyResult: exported type
+          parseErrorResponsePayload: exported fn
+      index.ts:
+        description: |-
+          fly-admin — TypeScript client for Fly Machines REST and GraphQL APIs.
+          Vendored fork of supabase/fly-admin. Uses native fetch, adds exec/releaseLease/metadata.
+      machine.ts:
+        description: |-
+          Machine management for Fly Machines REST API.
+          Vendored from supabase/fly-admin with added exec, releaseLease, and metadata methods.
+        exports:
+          # ... 17 more exports
+          AcquireLeaseRequest: exported interface
+          ConnectionHandler: exported enum
+          CreateMachineRequest: exported interface
+          DeleteMachineRequest: exported interface
+          GetLeaseRequest: exported type
+          GetMachineRequest: exported interface
+          LeaseResponse: exported interface
+          ListEventsRequest: exported type
+          ListMachineRequest: exported type
+          ListProcessesRequest: exported interface
+          ListVersionsRequest: exported type
+          MachineConfig: exported interface
+          MachineEvent: exported type
+          MachineResponse: exported interface
+          MachineState: exported enum
+          MachineVersionResponse: exported interface
+          ProcessResponse: exported interface
+          ReleaseLeaseRequest: exported interface
+          RestartMachineRequest: exported interface
+          SignalMachineRequest: exported interface
+          StartMachineRequest: exported type
+          StopMachineRequest: exported interface
+          UpdateMachineRequest: exported interface
+          WaitMachineRequest: exported interface
+          WaitMachineStopRequest: exported interface
+      network.ts:
+        description: Network (IP address) management via Fly GraphQL API.
+        defs:
+          AddressType: exported enum
+          AllocateIPAddressInput: exported interface
+          AllocateIPAddressOutput: exported interface
+          Network: exported class
+          ReleaseIPAddressInput: exported interface
+          ReleaseIPAddressOutput: exported interface
+      organization.ts:
+        description: Organization queries via Fly GraphQL API.
+        defs:
+          GetOrganizationInput: exported type
+          GetOrganizationOutput: exported interface
+          Organization: exported class
+      regions.ts:
+        description: Region listing via Fly GraphQL API.
+        defs:
+          GetPlatformRegionsRequest: exported interface
+          GetRegionsOutput: exported interface
+          Regions: exported class
+      secret.ts:
+        description: Secrets management via Fly GraphQL API.
+        defs:
+          Secret: exported class
+          SetSecretsInput: exported interface
+          SetSecretsOutput: exported interface
+          UnsetSecretsInput: exported interface
+          UnsetSecretsOutput: exported interface
+      token.ts:
+        description: Token management for Fly Machines REST API.
+        defs:
+          RequestOIDCTokenRequest: exported interface
+          Token: exported class
+      types.ts:
+        description: |-
+          Generated types from Fly Machines OpenAPI spec.
+          Originally produced by swagger-typescript-api from supabase/fly-admin.
+        exports:
+          # ... 154 more exports
+          ApiDNSConfig: exported interface
+          ApiDNSForwardRule: exported interface
+          ApiDNSOption: exported interface
+          CheckStatus: exported interface
+          CreateMachineRequest: exported interface
+          CreateVolumeRequest: exported interface
+          ErrorResponse: exported interface
+          ExtendVolumeRequest: exported interface
+          ExtendVolumeResponse: exported interface
+          ImageRef: exported interface
+          Lease: exported interface
+          ListenSocket: exported interface
+          Machine: exported interface
+          MachineEvent: exported interface
+          MachineExecRequest: exported interface
+          MachineExecResponse: exported interface
+          MachineVersion: exported interface
+          Organization: exported interface
+          ProcessStat: exported interface
+          SignalRequest: exported interface
+          StopRequest: exported interface
+          UpdateMachineRequest: exported interface
+          UpdateVolumeRequest: exported interface
+          Volume: exported interface
+          VolumeSnapshot: exported interface
+      volume.ts:
+        description: Volume management for Fly Machines REST API.
+        defs:
+          CreateVolumeRequest: exported interface
+          DeleteVolumeRequest: exported type
+          ExtendVolumeRequest: exported interface
+          ExtendVolumeResponse: exported interface
+          GetVolumeRequest: exported interface
+          ListSnapshotsRequest: exported type
+          ListVolumesRequest: exported interface
+          SnapshotResponse: exported interface
+          UpdateVolumeRequest: exported interface
+          Volume: exported class
+          VolumeResponse: exported interface
+  gateway-proxy:
+    submodule: detached @ cc1c58c
+    README.md:
+      description: |-
+        gateway-proxy
+        > This is a very hacky project, so it might stop working if Discord changes their API core. This is unlikely, but keep that in mind while using the proxy.
+        This is a proxy for Discord gateway connections - clients can connect to this proxy instead of the Discord Gateway and interact with it just like they would with the Discord Gateway.
+        ... and 18 more lines
+    examples:
+      jda:
+        README.md:
+          description: |-
+            JDA Example
+            This repository showcases the usage of the gateway proxy with JDA. It uses Spring-Boot as the bootstrap environment and
+            uses ByteBuddy for hacking around a JDA 4 limitation. This repository requires Java 8 but is compatible with newer
+            versions.
+            Log is set to `TRACE` for JDA so payloads are visible. To start, you need to configure the `application.yml` file under
+            ... and 1 more lines
+      twilight:
+        README.md:
+          description: |-
+            Twilight Example
+            This is a very minimal example of how to use the gateway-proxy together with twilight's http-proxy in a single twilight bot.
+            Logging is set to DEBUG by default to showcase that heartbeating is working and payloads are properly formatted.
+            For this to work, run the http-proxy on port 8080 and the gateway-proxy on port 7878.
+            ... and 1 more lines
+    scripts:
+      deployment.ts:
+        description: |-
+          #!/usr/bin/env tsx
+          Fly.io deployment for the gateway-proxy (Discord gateway WebSocket proxy).
+          Cross-compiles Rust binary from macOS to Linux x86_64 musl, then deploys
+          a minimal scratch Docker image to fly.io.
+
+          Config is hardcoded here except for TOKEN which comes from Doppler
+          (project: 'website', stage: 'production').
+          ... and 4 more lines
+        defs:
+          main: fn
+      dev.ts:
+        description: |-
+          #!/usr/bin/env tsx
+          Local dev runner for gateway-proxy.
+          Builds CONFIG from env vars (typically loaded via `doppler run`) and starts `cargo run`.
+        defs:
+          readPort: fn
+          run: fn
+      test-gateway-client.ts:
+        description: |-
+          #!/usr/bin/env tsx
+          Test script to verify discord.js can connect through the gateway-proxy on fly.io.
+
+          Connects to wss://discord-gateway.kimaki.xyz instead of the real Discord
+          gateway. Uses `ws.buildStrategy` to patch the gateway URL that discord.js
+          discovers from GET /gateway/bot — REST calls still go to real Discord.
+          ... and 7 more lines
+    src:
+      auth.rs:
+        description: Shared authentication for gateway WebSocket and REST proxy paths.
+        defs:
+          authenticate_gateway_token: exported fn
+      db_config.rs:
+        description: |-
+          Dynamic client registry with optional database-backed sync.
+
+          On startup, CLIENTS is seeded from config.json. If DIRECT_DATABASE_URL
+          (or DATABASE_URL fallback) is set,
+          a background task prefers LISTEN/NOTIFY for incremental updates and keeps
+          a low-frequency reconcile as a safety net. If LISTEN/NOTIFY is unavailable
+          ... and 1 more lines
+        defs:
+          authenticate_client_with_id: exported fn
+          CLIENTS: exported const
+          group_rows_into_clients: fn
+          install_database_objects: fn
+          load_clients_snapshot: fn
+          parse_gateway_clients_change_payload: fn
+          refresh_clients_by_ids: fn
+          run_poll_loop: fn
+          run_realtime_loop: fn
+          should_reject_stale_client_data: fn
+          signal_initial_sync_ready: fn
+          snapshot_client_row_from_row: fn
+          start_polling: exported fn
+      deserializer.rs:
+        description: |-
+          This file is modified from Twilight to also include the position of each
+
+          ISC License (ISC)
+
+          Copyright (c) 2019 (c) The Twilight Contributors
+
+          Permission to use, copy, modify, and/or distribute this software for any purpose
+          with or without fee is hereby granted, provided that the above copyright notice
+          ... and 9 more lines
+        defs:
+          GatewayEvent: exported struct
+      rest_proxy.rs:
+        description: HTTP REST proxy for Discord API with client token authorization.
+        defs:
+          build_response: fn
+          discord_rest_base_url: fn
+          handle_rest_request: exported fn
+          is_client_authorized_for_route: fn
+          json_error: fn
+          lookup_channel_guild_id: fn
+          parse_guild_id_from_channel_payload: fn
+          resolve_channel_guild_id: fn
+          resolve_route_scope: fn
+          rewrite_gateway_bot_payload: fn
+          should_skip_request_header: fn
+      wake.rs:
+        description: |-
+          Wake helpers for internet-reachable kimaki clients.
+          Sends POST /kimaki/wake to the client's reachable URL and waits until
+          kimaki reports discord.js is connected.
+        defs:
+          wake_client: exported fn
+  libsqlproxy:
+    README.md:
+      description: |-
+        libsqlproxy
+        Runtime-agnostic Hrana v2 HTTP server for SQLite. Expose any SQLite database via the libSQL remote protocol.
+        Expose your Cloudflare Durable Object data to data explorers like Drizzle Studio and TablePlus so you can browse, edit, and manage your DO storage from a GUI. Also works with Node.js `libsql`, `better-sqlite3`, or any custom SQL driver.
+        ... and 18 more lines
+    src:
+      durable-object-executor.ts:
+        description: |-
+          Executor adapter for Cloudflare Durable Object SQLite storage.
+          Synchronous — ctx.storage.sql.exec() returns a synchronous cursor.
+
+          Usage:
+            import { durableObjectExecutor } from 'libsqlproxy'
+            const executor = durableObjectExecutor(ctx.storage)
+
+          Important: CF DO sql.exec() cannot use BEGIN TRANSACTION directly.
+          ... and 2 more lines
+        defs:
+          durableObjectExecutor: exported fn
+          DurableObjectSqlCursor: exported interface
+          DurableObjectSqlStorage: exported interface
+          DurableObjectStorage: exported interface
+          isReadonlyQuery: fn
+      executor.ts:
+        description: |-
+          SQL executor interface for dependency injection.
+          Implementations can be synchronous or asynchronous — the protocol handler
+          awaits all return values uniformly.
+        defs:
+          LibsqlExecutor: exported interface
+      handler.ts:
+        description: |-
+          Web standard Hrana v2 handler.
+          createLibsqlHandler(executor) returns a function: (Request) => Promise<Response>
+
+          Handles:
+            GET  /v2          — version check
+            POST /v2/pipeline — pipeline execution with baton-based stream management
+
+          Baton and stream state is scoped to the handler instance (not module-global),
+          ... and 2 more lines
+        defs:
+          createLibsqlHandler: exported fn
+          LibsqlHandler: exported type
+      index.ts:
+        description: |-
+          libsqlproxy — Runtime-agnostic Hrana v2 HTTP server for SQLite.
+
+          Expose any SQLite database via the libSQL remote protocol.
+          Works with Cloudflare Durable Objects, Node.js libsql, better-sqlite3,
+          or any custom SQL driver via the LibsqlExecutor interface.
+
+          Auth model for multi-tenant (Cloudflare Workers):
+          ... and 5 more lines
+      libsql-executor.ts:
+        description: |-
+          Executor adapter for the `libsql` npm package (better-sqlite3 compatible API).
+          Synchronous — all methods return values directly.
+
+          Usage:
+            import Database from 'libsql'
+            const executor = libsqlExecutor(new Database('path.db'))
+        defs:
+          LibsqlDatabase: exported interface
+          libsqlExecutor: exported fn
+          LibsqlStatement: exported interface
+      node-handler.ts:
+        description: |-
+          Node.js http adapter for the Hrana handler.
+          Converts Node.js IncomingMessage/ServerResponse to Web Request/Response.
+
+          Usage:
+            import http from 'node:http'
+            import { createLibsqlHandler, createLibsqlNodeHandler, libsqlExecutor } from 'libsqlproxy'
+
+            const handler = createLibsqlHandler(libsqlExecutor(database))
+          ... and 2 more lines
+        defs:
+          createLibsqlNodeHandler: exported fn
+          LibsqlNodeHandler: exported type
+          LibsqlNodeHandlerOptions: exported interface
+          NodeIncomingMessage: exported interface
+          NodeServerResponse: exported interface
+          sendWebResponse: fn
+          timingSafeEqual: fn
+      protocol.ts:
+        description: |-
+          Hrana v2 protocol request processing.
+          Pure logic — no I/O, no HTTP. Takes an executor and processes pipeline requests.
+        defs:
+          evaluateHranaCondition: exported fn
+          handleBatch: fn
+          handleDescribe: fn
+          handleExecute: fn
+          handleSequence: fn
+          processHranaRequest: exported fn
+          resolveRawSql: fn
+          resolveStmtSql: fn
+          toHranaError: fn
+      proxy.ts:
+        description: |-
+          Cloudflare Worker proxy for routing libSQL requests to Durable Objects.
+
+          Auth model: Bearer token = "namespace:secret"
+            - namespace: identifies which Durable Object to route to
+            - secret: validated against the shared secret
+
+          The proxy parses the Bearer token, validates the secret, resolves the DO
+          stub via getStub(), and calls stub.hranaHandler(request) via RPC.
+          ... and 13 more lines
+        defs:
+          createLibsqlProxy: exported fn
+          LibsqlDurableObjectStub: exported interface
+          LibsqlProxyOptions: exported interface
+          timingSafeEqual: fn
+      types.ts:
+        description: |-
+          Hrana v2 protocol types for the libSQL remote protocol.
+          Spec: https://github.com/tursodatabase/libsql/blob/main/docs/HTTP_V2_SPEC.md
+        defs:
+          HranaBatchStep: exported interface
+          HranaColInfo: exported interface
+          HranaCondition: exported interface
+          HranaDescribeResult: exported interface
+          HranaError: exported interface
+          HranaExecuteResult: exported interface
+          HranaPipelineRequest: exported interface
+          HranaPipelineResponse: exported interface
+          HranaRequest: exported interface
+          HranaStmt: exported interface
+          HranaStreamResult: exported type
+          HranaValue: exported type
+      values.ts:
+        description: |-
+          Hrana v2 value encoding/decoding.
+
+          SQLite -> Hrana JSON:
+            INTEGER -> {"type":"integer","value":"42"}  (string to avoid precision loss)
+            REAL    -> {"type":"float","value":3.14}
+            TEXT    -> {"type":"text","value":"hello"}
+            BLOB    -> {"type":"blob","base64":"..."}
+            NULL    -> {"type":"null"}
+        defs:
+          base64ToUint8Array: fn
+          decodeHranaParams: exported fn
+          decodeHranaValue: exported fn
+          encodeHranaValue: exported fn
+          uint8ArrayToBase64: fn
+  opencode-cached-provider:
+    src:
+      cached-opencode-provider-proxy.ts:
+        description: |-
+          Local caching proxy for OpenCode provider HTTP traffic.
+          Proxies provider requests (Anthropic-compatible by default) and stores
+          responses in a local libsql-backed SQLite cache for deterministic replays.
+        defs:
+          CachedOpencodeProviderConfigOptions: exported type
+          CachedOpencodeProviderProxy: exported class
+          CachedOpencodeProviderProxyOptions: exported type
+      index.ts:
+        description: Public SDK entrypoint for the cached OpenCode provider proxy.
+  opencode-deterministic-provider:
+    src:
+      deterministic-provider.test.ts:
+        description: Tests for deterministic provider matcher selection and tool-call output.
+        defs:
+          collectParts: fn
+      deterministic-provider.ts:
+        description: Deterministic AI SDK provider for e2e tests with matcher-driven outputs.
+        defs:
+          buildDeterministicOpencodeConfig: exported fn
+          BuildDeterministicOpencodeConfigOptions: exported type
+          buildGenerateResult: fn
+          createDeterministicProvider: exported fn
+          DeterministicMatcher: exported type
+          DeterministicProvider: exported interface
+          DeterministicProviderSettings: exported type
+          ensureTerminalStreamPartsAndDelays: fn
+          getLastMessageRole: fn
+          getLastMessageText: fn
+          getLatestUserText: fn
+          getPromptText: fn
+          matcherMatches: fn
+          normalizeFinishReason: fn
+          normalizeMatchers: fn
+          normalizeSettingsInput: fn
+          normalizeStreamPart: fn
+          normalizeUsage: fn
+          resolveMatch: fn
+          streamPartsWithDelay: fn
+      index.ts:
+        description: Public entrypoint for deterministic OpenCode-compatible AI SDK provider.
+  opencode-injection-guard:
+    submodule: detached @ 4b4e16b
+    README.md:
+      description: |-
+        opencode-injection-guard
+        Open-source prompt injection detection for OpenCode. Works with any model -- not locked to OpenAI.
+        An alternative to OpenAI Guardrails that runs as an OpenCode plugin, using a cheap/fast LLM as a judge to detect prompt injection in tool call outputs before they reach the main agent.
+        ... and 18 more lines
+    src:
+      config.ts:
+        description: |-
+          Config loading for opencode-injection-guard.
+
+          The plugin is opt-in: if no config file is found AND no env var is set,
+          loadConfig() returns null and the plugin does nothing.
+
+          Priority order (highest wins):
+            1. OPENCODE_INJECTION_GUARD env var (JSON string)
+            2. .opencode/injection-guard.json file (find-up from project dir)
+          ... and 4 more lines
+        defs:
+          findConfigFile: fn
+          getDefaultConfig: exported fn
+          getExplicitModel: fn
+          InjectionGuardConfig: exported interface
+          loadConfig: exported fn
+          loadEnvConfig: fn
+          MODEL_PRIORITY: exported const
+          parseModelId: exported fn
+          readKimakiSessionScanPatterns: exported fn
+          resolveModel: exported fn
+      index.ts:
+        description: |-
+          opencode-injection-guard: OpenCode plugin that detects prompt injection
+          in tool call outputs using an LLM judge session.
+
+          Opt-in: only active if .opencode/injection-guard.json exists (searched
+          upward from project dir) or OPENCODE_INJECTION_GUARD env var is set.
+          If neither is found, the plugin is a no-op.
+          ... and 4 more lines
+        defs:
+          injectionGuard: exported fn
+          injectionGuardInternal: exported fn
+      judge.ts:
+        description: |-
+          Judge module: creates a sandboxed OpenCode session to evaluate tool output
+          for prompt injection. The session has all tools denied so the judge model
+          cannot execute anything -- it only produces text.
+          Uses os.tmpdir() as session cwd so judge sessions don't pollute the project.
+        defs:
+          InjectionJudge: exported class
+          JudgeResult: exported interface
+          parseJudgeResponse: exported fn
+          stripJsonCodeFence: fn
+      patterns.ts:
+        description: |-
+          Wildcard pattern matching for tool:args scan patterns.
+          Format: "toolname:argsGlob"
+          The "*" character matches any substring (including empty).
+          Check if a tool call matches any of the scan patterns.
+          Pattern format: "tool:argsGlob"
+          - "bash:*" matches all bash calls
+          - "bash:*curl*" matches bash calls containing "curl" in args
+          ... and 1 more lines
+        defs:
+          matchesScanPatterns: exported fn
+          matchPattern: fn
+          wildcardMatch: exported fn
+      prompt.ts:
+        description: |-
+          System prompt for the injection detection judge.
+          Adapted from OpenAI Guardrails Python (MIT license):
+          https://github.com/openai/openai-guardrails-python
+
+          The original prompt checks alignment between user intent and tool behavior.
+          We adapt it for the opencode plugin context where we only see tool name,
+          ... and 3 more lines
+        defs:
+          buildJudgeUserMessage: exported fn
+          INJECTION_DETECTION_PROMPT: exported const
+          INJECTION_DETECTION_PROMPT_WITH_REASONING: exported const
+  profano:
+    src:
+      cli.ts:
+        description: |-
+          #!/usr/bin/env node
+          profano — CLI tool to analyze .cpuprofile files and print top functions
+          by self-time or total-time in the terminal. Designed for AI agents and
+          humans who want quick profiling insights without opening a browser.
+      format.ts:
+        description: Format profile analysis results as a terminal table.
+        defs:
+          formatTable: exported fn
+          shortenPath: exported fn
+          SortMode: exported type
+      parse.ts:
+        description: |-
+          Parse V8 .cpuprofile files and compute self-time / total-time per node.
+          The .cpuprofile format is a JSON object with:
+            nodes: array of { id, callFrame: { functionName, url, lineNumber, ... }, children?: number[] }
+            samples: array of node IDs (one per sampling tick)
+            startTime / endTime: microseconds
+          ... and 1 more lines
+        defs:
+          analyze: exported fn
+          CallFrame: exported interface
+          CpuProfile: exported interface
+          FunctionStat: exported interface
+          ProfileNode: exported interface
+  sigillo:
+    src:
+      cli.ts:
+        description: |-
+          #!/usr/bin/env node
+          sigillo CLI entrypoint
+      index.ts:
+        description: sigillo - secrets and environment variable management
+  slack-digital-twin:
+    src:
+      bot-workflows.test.ts:
+        description: |-
+          Tests that simulate real bot workflows similar to what Kimaki does on Discord.
+          These validate the slack-digital-twin handles the interaction patterns that
+          the discord-slack-bridge relies on: thread creation via first message,
+          sequential bot messages in threads, edit-then-delete flows, reactions,
+          file uploads, channel lifecycle, and concurrent operations.
+      db.ts:
+        description: |-
+          Prisma client initialization with in-memory libsql.
+          Uses cache=shared so libsql's transaction() doesn't create a separate
+          empty in-memory DB (see discord-digital-twin/src/db.ts for details).
+      index.ts:
+        description: |-
+          SlackDigitalTwin - Local Slack API test server.
+          Creates a fake Slack Web API server that @slack/web-api WebClient can
+          connect to. Used for automated testing of Slack bots and integrations
+          without hitting real Slack servers.
+
+          Architecture:
+            - Spiceflow HTTP server implementing Slack Web API routes (/api/*)
+          ... and 3 more lines
+        defs:
+          ChannelScope: exported class
+          SlackDigitalTwin: exported class
+          SlackDigitalTwinChannelOption: exported type
+          SlackDigitalTwinOptions: exported interface
+          SlackDigitalTwinUserOption: exported type
+          UserActor: exported class
+      serializers.ts:
+        description: |-
+          Converters from Prisma DB rows to Slack Web API response shapes.
+          Slack API responses always wrap data in { ok: true, ... }.
+        defs:
+          channelToSlack: exported fn
+          messageToSlack: exported fn
+          userToSlack: exported fn
+      server.test.ts:
+        description: |-
+          Tests for the Slack digital twin server using the official @slack/web-api SDK.
+          This validates that our mock server is compliant with what WebClient expects.
+          Each test creates a fresh SlackDigitalTwin, starts it, uses the real WebClient
+          to call API methods, and asserts the responses match Slack's expected shapes.
+      server.ts:
+        description: |-
+          HTTP server implementing Slack Web API routes (/api/*).
+          All Slack Web API methods are POST requests that accept form or JSON bodies
+          and return { ok: true, ... } or { ok: false, error: "..." }.
+
+          This server is used by @slack/web-api WebClient configured with a custom
+          slackApiUrl pointing to our local server.
+        defs:
+          createServer: exported fn
+          getErrorMessage: fn
+          normalizeOpenedView: fn
+          parseBody: fn
+          parseUnknownBody: fn
+          resolveOpenedViewTitle: fn
+          ServerComponents: exported interface
+          ServerConfig: exported interface
+          startServer: exported fn
+          stopServer: exported fn
+      slack-ids.ts:
+        description: |-
+          Slack-style ID generation for test fixtures.
+          Slack IDs are prefixed strings: T (workspace), C (channel), U (user).
+          Message timestamps are Unix seconds with microsecond precision: "1700000001.000001"
+        defs:
+          generateMessageTs: exported fn
+          resetIds: exported fn
+      types.ts:
+        description: |-
+          Slack API types for the digital twin server.
+          Response types (User, Channel, Message, Reaction, File) are extracted from
+          the official @slack/web-api SDK response types to guarantee shape compliance.
+          Events API envelope types stay custom — they represent inbound webhook
+          payloads that aren't modeled by the SDK's response types.
+        defs:
+          SlackBlockActionsPayload: exported type
+          SlackBlockSuggestionPayload: exported type
+          SlackChannel: exported type
+          SlackEdited: exported type
+          SlackEventEnvelope: exported interface
+          SlackEventPayload: exported interface
+          SlackFile: exported type
+          SlackInteractiveActionPayload: exported type
+          SlackInteractiveChannel: exported type
+          SlackInteractiveContainer: exported type
+          SlackInteractiveMessage: exported type
+          SlackInteractiveOption: exported type
+          SlackInteractivePayload: exported type
+          SlackInteractiveUser: exported type
+          SlackMessage: exported type
+          SlackOpenedView: exported type
+          SlackReaction: exported type
+          SlackUser: exported type
+          SlackViewSubmissionPayload: exported type
+          SlackViewSubmissionStateValue: exported type
+      webhook-sender.ts:
+        description: |-
+          Sends signed Slack Events API payloads to a webhook endpoint.
+          Used to simulate Slack → your app event delivery.
+          Signs payloads with HMAC-SHA256 matching Slack's signature verification.
+        defs:
+          sendInteractivePayload: exported fn
+          sendSignedPayload: fn
+          sendSlashCommand: exported fn
+          sendWebhookEvent: exported fn
+          WebhookSenderConfig: exported interface
+  traforo:
+    submodule: main @ dae3518
+    README:
+      description: |-
+        TRAFORO
+        HTTP tunnel via Cloudflare Durable Objects and WebSockets.
+        Expose local servers to the internet with a simple CLI.
+        Infinitely scalable with support for Cloudflare CDN caching and password protection.
+        INSTALLATION
+        ```
+        npm install -g traforo
+        ```
+        USAGE
+        Expose a local server:
+        ```
+        traforo -p 3000
+        ... and 9 more lines
+    e2e:
+      fixtures:
+        express-app:
+          server.js:
+            description: global process, console
+        hono-app:
+          server.js:
+            description: global process, console
+      src:
+        harness.ts:
+          description: |-
+            E2E test harness for framework integration tests.
+
+            Spawns a framework dev server as a child process, waits for its port,
+            connects a TunnelClient to the preview deployment, and returns a context
+            for making requests through the tunnel. Adapted from portless e2e harness
+            but uses traforo's TunnelClient instead of a local proxy.
+          defs:
+            E2EContext: exported type
+            killPort: fn
+            resolveBin: fn
+            startFramework: exported fn
+            StartFrameworkOptions: exported type
+            waitForPort: fn
+    example-static:
+      server.ts:
+        description: |-
+          Example Bun server for testing traforo tunnel.
+          Features: static files, WebSocket, SSE, and slow endpoint.
+    src:
+      cache-policy.ts:
+        description: |-
+          Cloudflare-like cache eligibility policy used by the Durable Object cache layer.
+
+          Source references for Cloudflare behavior:
+          - https://developers.cloudflare.com/cache/concepts/default-cache-behavior/
+          - https://developers.cloudflare.com/cache/concepts/cache-control/
+          - https://developers.cloudflare.com/cache/how-to/configure-cache-status-code/
+          ... and 1 more lines
+        defs:
+          evaluateCloudflareCacheability: exported fn
+          getExtension: fn
+          getRequestCacheBypassReason: exported fn
+          headersToRecord: fn
+      cli.ts:
+        description: "#!/usr/bin/env node"
+      client.ts:
+        description: Local tunnel client - runs on user's machine to expose a local server.
+        defs:
+          rawDataToBuffer: fn
+          TunnelClient: exported class
+      lockfile.ts:
+        description: |-
+          Port lockfile management for traforo tunnels.
+
+          Stores one JSON file per active tunnel port in ~/.traforo/{port}.json.
+          Used to detect port conflicts, show tunnel info in error messages,
+          and let agents reuse existing tunnels instead of killing them.
+
+          Override the lockfile directory with TRAFORO_HOME env var (useful for tests).
+        defs:
+          isLockfileStale: exported fn
+          LockfileData: exported type
+          readLockfile: exported fn
+          removeLockfile: exported fn
+          writeLockfile: exported fn
+      tunnel.test.ts:
+        description: |-
+          Integration tests for traforo tunnel.
+
+          These tests run against the preview deployment at *-tunnel-preview.traforo.dev.
+          They start a local test server, connect via TunnelClient, and verify HTTP,
+          WebSocket, and SSE requests work through the tunnel.
+
+          Run: pnpm test
+          Note: Requires preview deployment to be active (pnpm deploy:preview)
+        defs:
+          createTestServer: fn
+      types.ts:
+        description: |-
+          ============================================
+          Messages: Worker/DO → Local Client (upstream)
+          ============================================
+          HTTP request to be proxied to local server
+        defs:
+          DownstreamEvent: exported type
+          DownstreamMessage: exported type
+          HttpErrorMessage: exported type
+          HttpRequestMessage: exported type
+          HttpResponseChunkMessage: exported type
+          HttpResponseEndMessage: exported type
+          HttpResponseMessage: exported type
+          HttpResponseStartMessage: exported type
+          parseDownstreamMessage: exported fn
+          parseUpstreamMessage: exported fn
+          ResponseHeaders: exported type
+          UpstreamConnectedEvent: exported type
+          UpstreamDisconnectedEvent: exported type
+          UpstreamMessage: exported type
+          WsClosedMessage: exported type
+          WsCloseMessage: exported type
+          WsErrorMessage: exported type
+          WsFrameMessage: exported type
+          WsFrameResponseMessage: exported type
+          WsOpenedMessage: exported type
+          WsOpenMessage: exported type
+  usecomputer:
+    README.md:
+      description: |-
+        usecomputer
+        This package has moved to its own repository: https://github.com/remorses/usecomputer
+  website:
+    scripts:
+      verify-slack-bridge.ts:
+        description: Verifies deployed slack-bridge worker routes are reachable and coherent.
+        defs:
+          checkGatewayBotEndpoint: fn
+          checkGatewayProxyEndpoint: fn
+          checkWebhookEndpoint: fn
+          main: fn
+          readStringField: fn
+    src:
+      auth.ts:
+        description: |-
+          Per-request better-auth factory for the Cloudflare Worker.
+
+          Creates a new betterAuth instance per request because CF Workers cannot
+          reuse database connections across requests (Hyperdrive per-request pooling).
+
+          Gateway onboarding persistence is handled in hooks.after:
+          - reads guild_id from Discord callback query params
+          ... and 5 more lines
+        defs:
+          createAuth: exported fn
+          getGuildIdFromRequestUrl: fn
+          parseAllowedCallbackUrl: exported fn
+      env.ts:
+        description: |-
+          Typed environment variables for the Cloudflare Worker.
+          DISCORD_CLIENT_ID and DISCORD_CLIENT_SECRET are the shared Kimaki bot's
+          OAuth2 credentials, used by better-auth's Discord provider.
+          AUTH_SECRET is the secret key for better-auth session encryption.
+        defs:
+          Env: exported type
+      gateway-client-kv.ts:
+        description: KV helpers for gateway client auth, Slack install state, and team routing cache.
+        defs:
+          deleteSlackInstallStateInKv: exported fn
+          GatewayClientCacheRecord: exported type
+          GatewayClientPlatform: exported type
+          getGatewayClientFromKv: exported fn
+          getSlackInstallStateFromKv: exported fn
+          getTeamClientIdsFromKv: exported fn
+          invalidateTeamClientIdsInKv: exported fn
+          isGatewayClientCacheRecord: fn
+          isSlackInstallStateRecord: fn
+          normalizeGatewayClientRow: exported fn
+          resolveGatewayClientFromCacheOrDb: exported fn
+          setGatewayClientInKv: exported fn
+          setSlackInstallStateInKv: exported fn
+          setTeamClientIdsInKv: exported fn
+          SlackInstallStateRecord: exported type
+          upsertGatewayClientAndRefreshKv: exported fn
+      index.tsx:
+        description: |-
+          Cloudflare Worker entrypoint for the Kimaki website.
+          Handles Discord OAuth bot install via better-auth and onboarding status polling.
+
+          Uses Hyperdrive for pooled DB connections (env.HYPERDRIVE binding).
+          Each request gets a fresh PrismaClient and betterAuth instance
+          because CF Workers cannot reuse connections across requests.
+        defs:
+          app: exported const
+          getClientIdFromAuthorizationHeader: fn
+          headersToPairs: fn
+          isOptionalIdRecord: fn
+          isSlackGatewayHost: fn
+          isSlackOAuthAccessResponse: fn
+          normalizeHeaderPairs: fn
+          PolicyPage: fn
+          proxyGatewayToDurableObject: fn
+          resolveClientIdsForTeamId: fn
+          summarizeErrorReason: fn
+          summarizeSlackWebhookBodyForLogs: fn
+          toResponse: fn
+      slack-bridge-do.ts:
+        description: |-
+          Durable Object runtime for discord-slack-bridge in Cloudflare Workers.
+          Uses a runtime-agnostic gateway session manager so WebSocket transport
+          details are isolated from gateway protocol logic.
+        defs:
+          buildGatewayGuild: fn
+          createGatewaySocketTransport: fn
+          isBridgeRpcRequest: fn
+          isGatewayClientSnapshot: fn
+          loadGatewayState: fn
+          parseGatewayToken: fn
+          readSocketAttachment: fn
+          serializeResponse: fn
+          SlackBridgeDO: exported class
+          toRequest: fn
+          writeSocketAttachment: fn
