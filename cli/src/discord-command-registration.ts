@@ -488,6 +488,13 @@ export async function registerCommands({
       .setDescription(truncateCommandDescription('Stop screen sharing'))
       .setDMPermission(false)
       .toJSON(),
+    new SlashCommandBuilder()
+      .setName('vscode')
+      .setDescription(
+        truncateCommandDescription('Open VS Code in the browser for this project or worktree (auto-stops after 30 minutes)'),
+      )
+      .setDMPermission(false)
+      .toJSON(),
   ]
 
   // Dynamic commands are registered in priority order: agents → user commands → skills → MCP prompts.
