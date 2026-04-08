@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.4.95
+
+1. **Fixed Claude Max subscription prompt stripping** — instead of replacing the entire system prompt or splicing out the whole OpenCode identity block, kimaki now removes only the section from `"You are OpenCode…"` up to `"# Code References"`, preserving the rest of the prompt that Anthropic's API expects. This restores correct behaviour for Claude Pro/Max OAuth users. Shows a toast error if the expected marker is not found.
+
+2. **Fixed discord.js CJS interop in plugin chain** — the plugin loader now uses a namespace import for discord.js to avoid CJS/ESM interop crashes when running inside the OpenCode plugin host process.
+
 ## 0.4.94
 
 1. **Fixed Claude Max subscription support** — the error message "Third-party apps now draw from your extra usage, not your plan limits" no longer breaks authentication. Kimaki now correctly detects active Max subscriptions and continues using them without requiring a re-login.
