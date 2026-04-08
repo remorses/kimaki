@@ -1024,7 +1024,8 @@ async function resolveCredentials({
           options: [
             {
               value: 'gateway' as const,
-              label: 'Gateway (pre-built Kimaki bot — no setup needed)',
+              disabled: true,
+              label: 'Gateway (pre-built Kimaki bot, currently disabled because of Discord verification process. will be re-enabled soon)',
             },
             {
               value: 'self_hosted' as const,
