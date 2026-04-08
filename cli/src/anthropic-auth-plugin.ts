@@ -528,17 +528,26 @@ function toClaudeCodeToolName(name: string) {
   return OPENCODE_TO_CLAUDE_CODE_TOOL_NAME[name.toLowerCase()] ?? name
 }
 
-function sanitizeSystemText(text: string) {
-  return text.replaceAll(OPENCODE_IDENTITY, CLAUDE_CODE_IDENTITY)
+function sanitizeSystemText(text: string, onError?: (msg: string) => void) {
+  const startIdx = text.indexOf(OPENCODE_IDENTITY)
+  if (startIdx === -1) return text
+  const codeRefsMarker = '# Code References'
+  const endIdx = text.indexOf(codeRefsMarker, startIdx)
+  if (endIdx === -1) {
+    onError?.(`sanitizeSystemText: could not find '# Code References' after OpenCode identity`)
+    return text
+  }
+  // Remove everything from the OpenCode identity up to (but not including) '# Code References'
+  return text.slice(0, startIdx) + text.slice(endIdx)
 }
 
-function prependClaudeCodeIdentity(system: unknown) {
+function prependClaudeCodeIdentity(system: unknown, onError?: (msg: string) => void) {
   const identityBlock = { type: 'text', text: CLAUDE_CODE_IDENTITY }
 
   if (typeof system === 'undefined') return [identityBlock]
 
   if (typeof system === 'string') {
-    const sanitized = sanitizeSystemText(system)
+    const sanitized = sanitizeSystemText(system, onError)
     if (sanitized === CLAUDE_CODE_IDENTITY) return [identityBlock]
     return [identityBlock, { type: 'text', text: sanitized }]
   }
@@ -546,11 +555,11 @@ function prependClaudeCodeIdentity(system: unknown) {
   if (!Array.isArray(system)) return [identityBlock, system]
 
   const sanitized = system.map((item) => {
-    if (typeof item === 'string') return { type: 'text', text: sanitizeSystemText(item) }
+    if (typeof item === 'string') return { type: 'text', text: sanitizeSystemText(item, onError) }
     if (item && typeof item === 'object' && (item as { type?: unknown }).type === 'text') {
       const text = (item as { text?: unknown }).text
       if (typeof text === 'string') {
-        return { ...(item as Record<string, unknown>), text: sanitizeSystemText(text) }
+        return { ...(item as Record<string, unknown>), text: sanitizeSystemText(text, onError) }
       }
     }
     return item
@@ -568,7 +577,7 @@ function prependClaudeCodeIdentity(system: unknown) {
   return [identityBlock, ...sanitized]
 }
 
-function rewriteRequestPayload(body: string | undefined) {
+function rewriteRequestPayload(body: string | undefined, onError?: (msg: string) => void) {
   if (!body) return { body, modelId: undefined, reverseToolNameMap: new Map<string, string>() }
 
   try {
@@ -589,7 +598,7 @@ function rewriteRequestPayload(body: string | undefined) {
     }
 
     // Rename system prompt
-    payload.system = prependClaudeCodeIdentity(payload.system)
+    payload.system = prependClaudeCodeIdentity(payload.system, onError)
 
     // Rename tool_choice
     if (
@@ -743,14 +752,6 @@ async function getFreshOAuth(
 
 const AnthropicAuthPlugin: Plugin = async ({ client }) => {
   return {
-    "experimental.chat.system.transform": async (input, output) => {
-      if (input.model.providerID !== ('anthropic')) return
-      const opencodePromptPart = output.system.findIndex(x => x?.includes('https://github.com/anomalyco/opencode'))
-      // Remove the OpenCode system prompt part if present
-      if (opencodePromptPart !== -1) {
-        output.system.splice(opencodePromptPart, 1)
-      }
-    },
     auth: {
       provider: 'anthropic',
       async loader(
@@ -787,7 +788,11 @@ const AnthropicAuthPlugin: Plugin = async ({ client }) => {
                       .catch(() => undefined)
                   : undefined
 
-            const rewritten = rewriteRequestPayload(originalBody)
+            const rewritten = rewriteRequestPayload(originalBody, (msg) => {
+              client.tui.showToast({
+                body: { message: msg, variant: 'error' },
+              }).catch(() => {})
+            })
             const headers = new Headers(init?.headers)
             if (input instanceof Request) {
               input.headers.forEach((v, k) => {
