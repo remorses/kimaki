@@ -141,6 +141,7 @@ function writeSystemPromptDiffFile({
   const timestamp = new Date().toISOString().replaceAll(':', '-')
   const sessionDir = path.join(getSystemPromptDiffDir({ dataDir }), sessionId)
   const filePath = path.join(sessionDir, `${timestamp}.diff`)
+  const latestPromptPath = path.join(sessionDir, `${sessionId}.md`)
   const fileContent = [
     `Session: ${sessionId}`,
     `Created: ${new Date().toISOString()}`,
@@ -154,6 +155,7 @@ function writeSystemPromptDiffFile({
     try: () => {
       fs.mkdirSync(sessionDir, { recursive: true })
       fs.writeFileSync(filePath, fileContent)
+      // fs.writeFileSync(latestPromptPath, afterPrompt)
       return {
         additions: diff.additions,
         deletions: diff.deletions,
