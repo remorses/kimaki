@@ -11,6 +11,7 @@ import { createPatch, diffLines } from 'diff'
 import * as errore from 'errore'
 import { createPluginLogger, formatPluginErrorWithStack, setPluginLogFilePath } from './plugin-logger.js'
 import { initSentry, notifyError } from './sentry.js'
+import { abbreviatePath } from './utils.js'
 
 const logger = createPluginLogger('OPENCODE')
 
@@ -20,6 +21,8 @@ type SystemTransformInput = Parameters<SystemTransformHook>[0]
 type SystemTransformOutput = Parameters<SystemTransformHook>[1]
 type PluginEventHook = NonNullable<PluginHooks['event']>
 type PluginEvent = Parameters<PluginEventHook>[0]['event']
+type ChatMessageHook = NonNullable<PluginHooks['chat.message']>
+type ChatMessageInput = Parameters<ChatMessageHook>[0]
 
 type SessionState = {
   userTurnCount: number
@@ -27,6 +30,8 @@ type SessionState = {
   latestTurnPrompt: string | undefined
   latestTurnPromptTurn: number
   comparedTurn: number
+  previousTurnContext: TurnContext | undefined
+  currentTurnContext: TurnContext | undefined
 }
 
 type SystemPromptDiff = {
@@ -35,12 +40,52 @@ type SystemPromptDiff = {
   patch: string
 }
 
+type TurnContext = {
+  agent: string | undefined
+  model: string | undefined
+  directory: string
+}
+
 function getSystemPromptDiffDir({ dataDir }: { dataDir: string }): string {
   return path.join(dataDir, 'system-prompt-diffs')
 }
 
 function normalizeSystemPrompt({ system }: { system: string[] }): string {
   return system.join('\n')
+}
+
+function buildTurnContext({
+  input,
+  directory,
+}: {
+  input: ChatMessageInput
+  directory: string
+}): TurnContext {
+  const model = input.model
+    ? `${input.model.providerID}/${input.model.modelID}${input.variant ? `:${input.variant}` : ''}`
+    : undefined
+  return {
+    agent: input.agent,
+    model,
+    directory,
+  }
+}
+
+function shouldSuppressDiffNotice({
+  previousContext,
+  currentContext,
+}: {
+  previousContext: TurnContext | undefined
+  currentContext: TurnContext | undefined
+}): boolean {
+  if (!previousContext || !currentContext) {
+    return false
+  }
+  return (
+    previousContext.agent !== currentContext.agent
+    || previousContext.model !== currentContext.model
+    || previousContext.directory !== currentContext.directory
+  )
 }
 
 function buildPatch({
@@ -138,6 +183,8 @@ function getOrCreateSessionState({
     latestTurnPrompt: undefined,
     latestTurnPromptTurn: 0,
     comparedTurn: 0,
+    previousTurnContext: undefined,
+    currentTurnContext: undefined,
   }
   sessions.set(sessionId, state)
   return state
@@ -181,6 +228,14 @@ async function handleSystemTransform({
   if (!previousPrompt || previousPrompt === currentPrompt) {
     return
   }
+  if (
+    shouldSuppressDiffNotice({
+      previousContext: state.previousTurnContext,
+      currentContext: state.currentTurnContext,
+    })
+  ) {
+    return
+  }
 
   if (!dataDir) {
     return
@@ -198,18 +253,17 @@ async function handleSystemTransform({
 
   await client.tui.showToast({
     body: {
-      variant: 'error',
-      title: 'System prompt changed',
+      variant: 'info',
+      title: 'Context cache discarded',
       message:
-        `The system prompt changed since the previous message (+${diffFileResult.additions} / -${diffFileResult.deletions}). ` +
-        `This discards context cache and increases rate limits. ` +
-        `This usually means a plugin is mutating the system prompt. ` +
-        `Diff: ${diffFileResult.filePath}`,
+        `System prompt changed since the previous message (+${diffFileResult.additions} / -${diffFileResult.deletions}). ` +
+        `This usually means a plugin mutated the prompt and increased rate-limit usage. ` +
+        `Diff: ${abbreviatePath(diffFileResult.filePath)}`,
     },
   })
 }
 
-const systemPromptDriftPlugin: Plugin = async ({ client }) => {
+const systemPromptDriftPlugin: Plugin = async ({ client, directory }) => {
   initSentry()
 
   const dataDir = process.env.KIMAKI_DATA_DIR
@@ -231,7 +285,9 @@ const systemPromptDriftPlugin: Plugin = async ({ client }) => {
         && state.latestTurnPromptTurn === state.userTurnCount
       ) {
         state.previousTurnPrompt = state.latestTurnPrompt
+        state.previousTurnContext = state.currentTurnContext
       }
+      state.currentTurnContext = buildTurnContext({ input, directory })
       state.userTurnCount += 1
     },
     'experimental.chat.system.transform': async (input, output) => {
