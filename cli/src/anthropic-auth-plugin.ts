@@ -559,6 +559,8 @@ function toClaudeCodeToolName(name: string) {
 function sanitizeSystemText(text: string, onError?: (msg: string) => void) {
   const startIdx = text.indexOf(OPENCODE_IDENTITY)
   if (startIdx === -1) return text
+  // to find the last heading to match readhttps://github.com/anomalyco/opencode/blob/dev/packages/opencode/src/session/prompt/anthropic.txt
+  // it contains the opencode injected prompt. you must keep the codeRefsMarker updated with that package
   const codeRefsMarker = '# Code References'
   const endIdx = text.indexOf(codeRefsMarker, startIdx)
   if (endIdx === -1) {
