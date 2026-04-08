@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.4.96
+
+1. **System prompt drift toasts now route to the correct Discord thread** — toasts from the `systemPromptDriftPlugin` are now scoped to the active session's thread. A hidden session marker is appended in the plugin and stripped before rendering, so drift notices appear only in the thread that triggered the event instead of broadcasting globally.
+
+2. **Simpler debug filenames for system prompt drift** — saved system prompt and diff files now share a timestamped basename (e.g. `2026-04-08T10-01.md` / `2026-04-08T10-01.diff`) instead of using the session ID, keeping the debug paths shorter and each event self-contained.
+
+3. **Cleaner drift toast copy** — diff and latest-prompt paths are now shown as inline code; wording is lower-cased and the extra explanatory sentence is removed to keep the notice concise.
+
 ## 0.4.95
 
 1. **Fixed Claude Max subscription prompt stripping** — instead of replacing the entire system prompt or splicing out the whole OpenCode identity block, kimaki now removes only the section from `"You are OpenCode…"` up to `"# Code References"`, preserving the rest of the prompt that Anthropic's API expects. This restores correct behaviour for Claude Pro/Max OAuth users. Shows a toast error if the expected marker is not found.
