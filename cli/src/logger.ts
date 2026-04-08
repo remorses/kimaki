@@ -95,12 +95,19 @@ export function getLogFilePath(): string | null {
   return logFilePath
 }
 
+const MAX_LOG_ARG_LENGTH = 1000
+
+function truncate(str: string, max: number): string {
+  if (str.length <= max) return str
+  return str.slice(0, max) + `… [truncated ${str.length - max} chars]`
+}
+
 function formatArg(arg: unknown): string {
   if (typeof arg === 'string') {
-    return sanitizeSensitiveText(arg, { redactPaths: false })
+    return truncate(sanitizeSensitiveText(arg, { redactPaths: false }), MAX_LOG_ARG_LENGTH)
   }
   const safeArg = sanitizeUnknownValue(arg, { redactPaths: false })
-  return util.inspect(safeArg, { colors: true, depth: 4 })
+  return truncate(util.inspect(safeArg, { colors: true, depth: 4 }), MAX_LOG_ARG_LENGTH)
 }
 
 export function formatErrorWithStack(error: unknown): string {
