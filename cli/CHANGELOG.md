@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.4.97
+
+1. **Anthropic account CLI commands are now visible in help** — `kimaki anthropic account list/add/remove` commands appear in normal `--help` output. `remove` now accepts either a 1-based index or a stored email address for easier cleanup.
+
+2. **Anthropic account identity persisted across OAuth rotation** — kimaki fetches your Anthropic profile email and account IDs during login and stores them alongside credentials. Account records are deduplicated by stable identity so rotating tokens doesn't create phantom duplicate entries.
+
+3. **Anthropic plugin toasts scoped to the active session** — account-switch and rewrite warnings now appear only in the Discord thread that triggered the event instead of broadcasting to all threads.
+
+4. **Worktrees now branch from current HEAD** — new worktrees start from whatever your local checkout is at, including commits that haven't been pushed yet. Previously, only the remote `origin/HEAD` was used as the base.
+
 ## 0.4.96
 
 1. **System prompt drift toasts now route to the correct Discord thread** — toasts from the `systemPromptDriftPlugin` are now scoped to the active session's thread. A hidden session marker is appended in the plugin and stripped before rendering, so drift notices appear only in the thread that triggered the event instead of broadcasting globally.
