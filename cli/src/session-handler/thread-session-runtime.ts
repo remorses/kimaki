@@ -137,6 +137,17 @@ import { extractLeadingOpencodeCommand } from '../opencode-command-detection.js'
 const logger = createLogger(LogPrefix.SESSION)
 const discordLogger = createLogger(LogPrefix.DISCORD)
 const DETERMINISTIC_CONTEXT_LIMIT = 100_000
+const TOAST_SESSION_ID_REGEX = /\b(ses_[A-Za-z0-9]+)\b\s*$/u
+
+function extractToastSessionId({ message }: { message: string }): string | undefined {
+  const match = message.match(TOAST_SESSION_ID_REGEX)
+  return match?.[1]
+}
+
+function stripToastSessionId({ message }: { message: string }): string {
+  return message.replace(TOAST_SESSION_ID_REGEX, '').trimEnd()
+}
+
 const shouldLogSessionEvents =
   process.env['KIMAKI_LOG_SESSION_EVENTS'] === '1' ||
   process.env['KIMAKI_VITEST'] === '1'
@@ -1381,6 +1392,9 @@ export class ThreadSessionRuntime {
     const sessionId = this.state?.sessionId
 
     const eventSessionId = getOpencodeEventSessionId(event)
+    const toastSessionId = event.type === 'tui.toast.show'
+      ? extractToastSessionId({ message: event.properties.message })
+      : undefined
 
     if (shouldLogSessionEvents) {
       const eventDetails = (() => {
@@ -1412,12 +1426,18 @@ export class ThreadSessionRuntime {
     }
 
     const isGlobalEvent = event.type === 'tui.toast.show'
+    const isScopedToastEvent = Boolean(toastSessionId)
 
     // Drop events that don't match current session (stale events from
     // previous sessions), unless it's a global event or a subtask session.
     if (!isGlobalEvent && eventSessionId && eventSessionId !== sessionId) {
       if (!this.getSubtaskInfoForSession(eventSessionId)) {
         return // stale event from previous session
+      }
+    }
+    if (isScopedToastEvent && toastSessionId !== sessionId) {
+      if (!this.getSubtaskInfoForSession(toastSessionId!)) {
+        return
       }
     }
 
@@ -2763,7 +2783,7 @@ export class ThreadSessionRuntime {
     if (properties.variant === 'warning') {
       return
     }
-    const toastMessage = properties.message.trim()
+    const toastMessage = stripToastSessionId({ message: properties.message }).trim()
     if (!toastMessage) {
       return
     }

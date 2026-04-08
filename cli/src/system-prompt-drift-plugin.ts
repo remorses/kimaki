@@ -14,6 +14,7 @@ import { initSentry, notifyError } from './sentry.js'
 import { abbreviatePath } from './utils.js'
 
 const logger = createPluginLogger('OPENCODE')
+const TOAST_SESSION_MARKER_SEPARATOR = ' '
 
 type PluginHooks = Awaited<ReturnType<Plugin>>
 type SystemTransformHook = NonNullable<PluginHooks['experimental.chat.system.transform']>
@@ -52,6 +53,16 @@ function getSystemPromptDiffDir({ dataDir }: { dataDir: string }): string {
 
 function normalizeSystemPrompt({ system }: { system: string[] }): string {
   return system.join('\n')
+}
+
+function appendToastSessionMarker({
+  message,
+  sessionId,
+}: {
+  message: string
+  sessionId: string
+}): string {
+  return `${message}${TOAST_SESSION_MARKER_SEPARATOR}${sessionId}`
 }
 
 function buildTurnContext({
@@ -263,10 +274,13 @@ async function handleSystemTransform({
     body: {
       variant: 'info',
       title: 'Context cache discarded',
-      message:
+      message: appendToastSessionMarker({
+        sessionId,
+        message:
         `system prompt changed since the previous message (+${diffFileResult.additions} / -${diffFileResult.deletions}). ` +
         `Diff: \`${abbreviatePath(diffFileResult.filePath)}\`. ` +
         `Latest prompt: \`${abbreviatePath(diffFileResult.latestPromptPath)}\``,
+      }),
     },
   })
 }
