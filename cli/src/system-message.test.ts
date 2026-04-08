@@ -224,7 +224,7 @@ describe('system-message', () => {
 
       This creates a new Discord thread with an isolated git worktree and starts a session in it. The worktree name should be kebab-case and descriptive of the task.
 
-      By default, worktrees are created from \`origin/HEAD\` (the remote's default branch). To change the base branch for a project, the user can run \`git remote set-head origin <branch>\` in the project directory. For example, \`git remote set-head origin dev\` makes all new worktrees branch off \`origin/dev\` instead of \`origin/main\`.
+      By default, worktrees are created from \`HEAD\`, which means whatever commit or branch the current checkout is on. If you want a different base, pass \`--base-branch\` or use the slash command option explicitly.
 
       Critical recursion guard:
       - If you already are in a worktree thread, do not create another worktree unless the user explicitly asks for a nested worktree.

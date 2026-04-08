@@ -527,52 +527,6 @@ type WorktreeResult = {
 async function resolveDefaultWorktreeTarget(
   directory: string,
 ): Promise<string> {
-  const remoteHead = await execAsync(
-    'git symbolic-ref refs/remotes/origin/HEAD',
-    {
-      cwd: directory,
-    },
-  ).catch(() => {
-    return null
-  })
-
-  const remoteRef = remoteHead?.stdout.trim()
-  if (remoteRef?.startsWith('refs/remotes/')) {
-    return remoteRef.replace('refs/remotes/', '')
-  }
-
-  const hasMain = await execAsync(
-    'git show-ref --verify --quiet refs/heads/main',
-    {
-      cwd: directory,
-    },
-  )
-    .then(() => {
-      return true
-    })
-    .catch(() => {
-      return false
-    })
-  if (hasMain) {
-    return 'main'
-  }
-
-  const hasMaster = await execAsync(
-    'git show-ref --verify --quiet refs/heads/master',
-    {
-      cwd: directory,
-    },
-  )
-    .then(() => {
-      return true
-    })
-    .catch(() => {
-      return false
-    })
-  if (hasMaster) {
-    return 'master'
-  }
-
   return 'HEAD'
 }
 
@@ -608,7 +562,7 @@ export async function createWorktreeWithSubmodules({
 }: {
   directory: string
   name: string
-  /** Override the base branch to create the worktree from. Defaults to origin/HEAD → main → master → HEAD. */
+  /** Override the base branch to create the worktree from. Defaults to HEAD. */
   baseBranch?: string
   /** Called with a short phase label so callers can update UI (e.g. Discord status message). */
   onProgress?: (phase: string) => void

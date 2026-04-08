@@ -220,4 +220,5 @@ describe('worktrees', () => {
       fs.rmSync(sandbox, { recursive: true, force: true })
     }
   })
+
 })
