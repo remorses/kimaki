@@ -81,6 +81,7 @@ const CLAUDE_CODE_BETA = 'claude-code-20250219'
 const OAUTH_BETA = 'oauth-2025-04-20'
 const FINE_GRAINED_TOOL_STREAMING_BETA = 'fine-grained-tool-streaming-2025-05-14'
 const INTERLEAVED_THINKING_BETA = 'interleaved-thinking-2025-05-14'
+const TOAST_SESSION_HEADER = 'x-kimaki-session-id'
 
 const ANTHROPIC_HOSTS = new Set([
   'api.anthropic.com',
@@ -682,6 +683,19 @@ function wrapResponseStream(response: Response, reverseToolNameMap: Map<string, 
   })
 }
 
+function appendToastSessionMarker({
+  message,
+  sessionId,
+}: {
+  message: string
+  sessionId: string | undefined
+}) {
+  if (!sessionId) {
+    return message
+  }
+  return `${message} ${sessionId}`
+}
+
 // --- Beta headers ---
 
 function getRequiredBetas(modelId: string | undefined) {
@@ -752,6 +766,12 @@ async function getFreshOAuth(
 
 const AnthropicAuthPlugin: Plugin = async ({ client }) => {
   return {
+    'chat.headers': async (input, output) => {
+      if (input.model.providerID !== 'anthropic') {
+        return
+      }
+      output.headers[TOAST_SESSION_HEADER] = input.sessionID
+    },
     auth: {
       provider: 'anthropic',
       async loader(
@@ -788,21 +808,27 @@ const AnthropicAuthPlugin: Plugin = async ({ client }) => {
                       .catch(() => undefined)
                   : undefined
 
-            const rewritten = rewriteRequestPayload(originalBody, (msg) => {
-              client.tui.showToast({
-                body: { message: msg, variant: 'error' },
-              }).catch(() => {})
-            })
             const headers = new Headers(init?.headers)
             if (input instanceof Request) {
               input.headers.forEach((v, k) => {
                 if (!headers.has(k)) headers.set(k, v)
               })
             }
+            const sessionId = headers.get(TOAST_SESSION_HEADER) ?? undefined
+
+            const rewritten = rewriteRequestPayload(originalBody, (msg) => {
+              client.tui.showToast({
+                body: {
+                  message: appendToastSessionMarker({ message: msg, sessionId }),
+                  variant: 'error',
+                },
+              }).catch(() => {})
+            })
             const betas = getRequiredBetas(rewritten.modelId)
 
             const runRequest = async (auth: OAuthStored) => {
               const requestHeaders = new Headers(headers)
+              requestHeaders.delete(TOAST_SESSION_HEADER)
               requestHeaders.set('accept', 'application/json')
               requestHeaders.set(
                 'anthropic-beta',
@@ -839,9 +865,13 @@ const AnthropicAuthPlugin: Plugin = async ({ client }) => {
                   // Show toast notification so Discord thread shows the rotation
                   client.tui.showToast({
                     body: {
-                      message: `Switching from account ${rotated.fromLabel} to account ${rotated.toLabel}`,
+                      message: appendToastSessionMarker({
+                        message: `Switching from account ${rotated.fromLabel} to account ${rotated.toLabel}`,
+                        sessionId,
+                      }),
                       variant: 'info',
                     },
+
                   }).catch(() => {})
                   const retryAuth = await getFreshOAuth(getAuth, client)
                   if (retryAuth) {
