@@ -2,6 +2,10 @@ import type { Plugin } from '@opencode-ai/plugin'
 import * as fs from 'node:fs/promises'
 import { homedir } from 'node:os'
 import path from 'node:path'
+import {
+  normalizeAnthropicAccountIdentity,
+  type AnthropicAccountIdentity,
+} from './anthropic-account-identity.js'
 
 const AUTH_LOCK_STALE_MS = 30_000
 const AUTH_LOCK_RETRY_MS = 100
@@ -14,6 +18,8 @@ export type OAuthStored = {
 }
 
 type AccountRecord = OAuthStored & {
+  email?: string
+  accountId?: string
   addedAt: number
   lastUsed: number
 }
@@ -114,6 +120,8 @@ export function normalizeAccountStore(
           typeof account.refresh === 'string' &&
           typeof account.access === 'string' &&
           typeof account.expires === 'number' &&
+          (typeof account.email === 'undefined' || typeof account.email === 'string') &&
+          (typeof account.accountId === 'undefined' || typeof account.accountId === 'string') &&
           typeof account.addedAt === 'number' &&
           typeof account.lastUsed === 'number',
       )
@@ -135,8 +143,13 @@ export async function saveAccountStore(store: AccountStore) {
 
 /** Short label for an account: first 8 + last 4 chars of refresh token. */
 export function accountLabel(account: OAuthStored, index?: number): string {
+  const accountWithIdentity = account as OAuthStored & AnthropicAccountIdentity
+  const identity = accountWithIdentity.email || accountWithIdentity.accountId
   const r = account.refresh
   const short = r.length > 12 ? `${r.slice(0, 8)}...${r.slice(-4)}` : r
+  if (identity) {
+    return index !== undefined ? `#${index + 1} (${identity})` : identity
+  }
   return index !== undefined ? `#${index + 1} (${short})` : short
 }
 
@@ -162,14 +175,29 @@ function findCurrentAccountIndex(store: AccountStore, auth: OAuthStored) {
 }
 
 export function upsertAccount(store: AccountStore, auth: OAuthStored, now = Date.now()) {
+  const authWithIdentity = auth as OAuthStored & AnthropicAccountIdentity
+  const identity = normalizeAnthropicAccountIdentity({
+    email: authWithIdentity.email,
+    accountId: authWithIdentity.accountId,
+  })
   const index = store.accounts.findIndex((account) => {
-    return account.refresh === auth.refresh || account.access === auth.access
+    if (account.refresh === auth.refresh || account.access === auth.access) {
+      return true
+    }
+    if (identity?.accountId && account.accountId === identity.accountId) {
+      return true
+    }
+    if (identity?.email && account.email === identity.email) {
+      return true
+    }
+    return false
   })
   const nextAccount: AccountRecord = {
     type: 'oauth',
     refresh: auth.refresh,
     access: auth.access,
     expires: auth.expires,
+    ...identity,
     addedAt: now,
     lastUsed: now,
   }
@@ -186,15 +214,20 @@ export function upsertAccount(store: AccountStore, auth: OAuthStored, now = Date
     ...existing,
     ...nextAccount,
     addedAt: existing.addedAt,
+    email: nextAccount.email || existing.email,
+    accountId: nextAccount.accountId || existing.accountId,
   }
   store.activeIndex = index
   return index
 }
 
-export async function rememberAnthropicOAuth(auth: OAuthStored) {
+export async function rememberAnthropicOAuth(
+  auth: OAuthStored,
+  identity?: AnthropicAccountIdentity,
+) {
   await withAuthStateLock(async () => {
     const store = await loadAccountStore()
-    upsertAccount(store, auth)
+    upsertAccount(store, { ...auth, ...normalizeAnthropicAccountIdentity(identity) })
     await saveAccountStore(store)
   })
 }
