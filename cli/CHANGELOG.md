@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.4.94
+
+1. **Fixed Claude Max subscription support** — the error message "Third-party apps now draw from your extra usage, not your plan limits" no longer breaks authentication. Kimaki now correctly detects active Max subscriptions and continues using them without requiring a re-login.
+
+2. **New `systemPromptDriftPlugin`** — detects when the effective system prompt changes between turns inside an OpenCode session. When drift is detected, it writes a unified diff to the Kimaki data directory and shows a Discord toast with addition/deletion counts, making it easy to spot which plugin is busting the prompt cache and driving up rate-limit usage.
+
+3. **Log output is now capped at 1 000 characters per argument** — prevents runaway log files when tools return very large outputs. Truncated portions show a `… [truncated N chars]` suffix so nothing is silently dropped.
+
+4. **Softer wording on worktree directory reminders** — the mid-session reminder injected when switching to a worktree now says "You should read, write, and edit files under …" instead of "You MUST …", reducing unnecessary alarm in the agent's context.
+
 ## 0.4.93
 
 1. **Claude account rotation is now visible in Discord** — when Anthropic OAuth hits a rate limit or auth failure and kimaki rotates to another saved Claude account, the thread now shows a toast-style notice with the account labels so you can see which account it switched from and to.
