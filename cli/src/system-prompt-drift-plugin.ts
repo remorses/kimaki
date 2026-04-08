@@ -146,7 +146,6 @@ function writeSystemPromptDiffFile({
   additions: number
   deletions: number
   filePath: string
-  latestPromptPath: string
 } {
   const diff = buildPatch({
     beforeText: beforePrompt,
@@ -157,7 +156,7 @@ function writeSystemPromptDiffFile({
   const timestamp = new Date().toISOString().replaceAll(':', '-')
   const sessionDir = path.join(getSystemPromptDiffDir({ dataDir }), sessionId)
   const filePath = path.join(sessionDir, `${timestamp}.diff`)
-  const latestPromptPath = path.join(sessionDir, `${timestamp}.md`)
+
   const fileContent = [
     `Session: ${sessionId}`,
     `Created: ${new Date().toISOString()}`,
@@ -176,7 +175,6 @@ function writeSystemPromptDiffFile({
           additions: diff.additions,
           deletions: diff.deletions,
           filePath,
-          latestPromptPath,
         }
     },
     catch: (error) => {
@@ -278,8 +276,7 @@ async function handleSystemTransform({
         sessionId,
         message:
         `system prompt changed since the previous message (+${diffFileResult.additions} / -${diffFileResult.deletions}). ` +
-        `Diff: \`${abbreviatePath(diffFileResult.filePath)}\`. ` +
-        `Latest prompt: \`${abbreviatePath(diffFileResult.latestPromptPath)}\``,
+        `Diff: \`${abbreviatePath(diffFileResult.filePath)}\`. `
       }),
     },
   })
