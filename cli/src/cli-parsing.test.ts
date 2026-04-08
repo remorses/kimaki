@@ -27,8 +27,8 @@ function createCliForIdParsing() {
     .option('-g, --guild <guildId>', 'Discord guild/server ID')
 
   cli.command('task delete <id>', 'Delete task')
-  cli.command('anthropic-accounts list', 'List stored Anthropic accounts').hidden()
-  cli.command('anthropic-accounts remove <index>', 'Remove stored Anthropic account').hidden()
+  cli.command('anthropic-accounts list', 'List stored Anthropic accounts')
+  cli.command('anthropic-accounts remove <indexOrEmail>', 'Remove stored Anthropic account')
 
   return cli
 }
@@ -163,19 +163,26 @@ describe('goke CLI ID parsing', () => {
     expect(typeof result.args[0]).toBe('string')
   })
 
-  test('hidden anthropic account commands still parse', () => {
+  test('anthropic account remove parses index and email as strings', () => {
     const cli = createCliForIdParsing()
 
-    const result = cli.parse(
+    const indexResult = cli.parse(
       ['node', 'kimaki', 'anthropic-accounts', 'remove', '2'],
       { run: false },
     )
 
-    expect(result.args[0]).toBe('2')
-    expect(typeof result.args[0]).toBe('string')
+    const emailResult = cli.parse(
+      ['node', 'kimaki', 'anthropic-accounts', 'remove', 'user@example.com'],
+      { run: false },
+    )
+
+    expect(indexResult.args[0]).toBe('2')
+    expect(typeof indexResult.args[0]).toBe('string')
+    expect(emailResult.args[0]).toBe('user@example.com')
+    expect(typeof emailResult.args[0]).toBe('string')
   })
 
-  test('hidden anthropic account commands are excluded from help output', () => {
+  test('anthropic account commands are included in help output', () => {
     const stdout = {
       text: '',
       write(data: string | Uint8Array) {
@@ -185,11 +192,11 @@ describe('goke CLI ID parsing', () => {
 
     const cli = goke('kimaki', { stdout: stdout as never })
     cli.command('send', 'Send a message')
-    cli.command('anthropic-accounts list', 'List stored Anthropic accounts').hidden()
+    cli.command('anthropic-accounts list', 'List stored Anthropic accounts')
     cli.help()
     cli.parse(['node', 'kimaki', '--help'], { run: false })
 
     expect(stdout.text).toContain('send')
-    expect(stdout.text).not.toContain('anthropic-accounts')
+    expect(stdout.text).toContain('anthropic-accounts')
   })
 })

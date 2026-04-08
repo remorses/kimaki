@@ -3168,7 +3168,6 @@ cli
     'anthropic-accounts list',
     'List stored Anthropic OAuth accounts used for automatic rotation',
   )
-  .hidden()
   .action(async () => {
     const store = await loadAccountStore()
     console.log(`Store: ${accountsFilePath()}`)
@@ -3187,19 +3186,37 @@ cli
 
 cli
   .command(
-    'anthropic-accounts remove <index>',
-    'Remove a stored Anthropic OAuth account from the rotation pool',
+    'anthropic-accounts remove <indexOrEmail>',
+    'Remove a stored Anthropic OAuth account from the rotation pool by index or email',
   )
-  .hidden()
-  .action(async (index: string) => {
-    const value = Number(index)
-    if (!Number.isInteger(value) || value < 1) {
-      cliLogger.error('Usage: kimaki anthropic-accounts remove <index>')
+  .action(async (indexOrEmail: string) => {
+    const value = Number(indexOrEmail)
+    const store = await loadAccountStore()
+    const resolvedIndex = (() => {
+      if (Number.isInteger(value) && value >= 1) {
+        return value - 1
+      }
+      const email = indexOrEmail.trim().toLowerCase()
+      if (!email) {
+        return -1
+      }
+      return store.accounts.findIndex((account) => {
+        return account.email?.toLowerCase() === email
+      })
+    })()
+
+    if (resolvedIndex < 0) {
+      cliLogger.error(
+        'Usage: kimaki anthropic-accounts remove <index-or-email>',
+      )
       process.exit(EXIT_NO_RESTART)
     }
 
-    await removeAccount(value - 1)
-    cliLogger.log(`Removed Anthropic account ${value}`)
+    const removed = store.accounts[resolvedIndex]
+    await removeAccount(resolvedIndex)
+    cliLogger.log(
+      `Removed Anthropic account ${removed ? accountLabel(removed, resolvedIndex) : indexOrEmail}`,
+    )
     process.exit(0)
   })
 
