@@ -2,19 +2,21 @@
 // Handles markdown splitting for Discord's 2000-char limit, code block escaping,
 // thread message sending, and channel metadata extraction from topic tags.
 
-import {
-  type APIInteractionGuildMember,
-  type AutocompleteInteraction,
-  ChannelType,
-  GuildMember,
-  MessageFlags,
-  PermissionsBitField,
-  type Guild,
-  type Message,
-  type TextChannel,
-  type ThreadChannel,
+// Use namespace import for CJS interop — discord.js is CJS and its named
+// exports aren't detectable by all ESM loaders (e.g. tsx/esbuild) because
+// discord.js uses tslib's __exportStar which is opaque to static analysis.
+import * as discord from 'discord.js'
+import type {
+  APIInteractionGuildMember,
+  AutocompleteInteraction,
+  GuildMember as GuildMemberType,
+  Guild,
+  Message,
+  REST as RESTType,
+  TextChannel,
+  ThreadChannel,
 } from 'discord.js'
-import { REST, Routes } from 'discord.js'
+const { ChannelType, GuildMember, MessageFlags, PermissionsBitField, REST, Routes } = discord
 import type { OpencodeClient } from '@opencode-ai/sdk/v2'
 import { discordApiUrl } from './discord-urls.js'
 import { Lexer } from 'marked'
@@ -37,7 +39,7 @@ const discordLogger = createLogger(LogPrefix.DISCORD)
  * Returns false if member is null or has the "no-kimaki" role (overrides all).
  */
 export function hasKimakiBotPermission(
-  member: GuildMember | APIInteractionGuildMember | null,
+  member: GuildMemberType | APIInteractionGuildMember | null,
   guild?: Guild | null,
 ): boolean {
   if (!member) {
@@ -61,7 +63,7 @@ export function hasKimakiBotPermission(
 }
 
 function hasRoleByName(
-  member: GuildMember | APIInteractionGuildMember,
+  member: GuildMemberType | APIInteractionGuildMember,
   roleName: string,
   guild?: Guild | null,
 ): boolean {
@@ -89,7 +91,7 @@ function hasRoleByName(
  * Check if the member has the "no-kimaki" role that blocks bot access.
  * Separate from hasKimakiBotPermission so callers can show a specific error message.
  */
-export function hasNoKimakiRole(member: GuildMember | null): boolean {
+export function hasNoKimakiRole(member: GuildMemberType | null): boolean {
   if (!member?.roles?.cache) {
     return false
   }
@@ -108,7 +110,7 @@ export async function reactToThread({
   channelId,
   emoji,
 }: {
-  rest: REST
+  rest: RESTType
   threadId: string
   /** Parent channel ID where the thread starter message lives.
    * If not provided, fetches the thread info from Discord API to resolve it. */
@@ -169,7 +171,7 @@ export async function archiveThread({
   client,
   archiveDelay = 0,
 }: {
-  rest: REST
+  rest: RESTType
   threadId: string
   parentChannelId?: string
   sessionId?: string

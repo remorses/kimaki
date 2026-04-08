@@ -3,7 +3,11 @@
 // abort error detection, and date/time formatting helpers.
 
 import os from 'node:os'
-import { PermissionsBitField } from 'discord.js'
+// Use namespace import for CJS interop — discord.js is CJS and its named
+// exports aren't detectable by all ESM loaders (e.g. tsx/esbuild) because
+// discord.js uses tslib's __exportStar which is opaque to static analysis.
+import * as discord from 'discord.js'
+const { PermissionsBitField } = discord
 import type { BotMode } from './database.js'
 import * as errore from 'errore'
 
