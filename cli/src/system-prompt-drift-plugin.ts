@@ -258,9 +258,9 @@ async function handleSystemTransform({
       variant: 'info',
       title: 'Context cache discarded',
       message:
-        `System prompt changed since the previous message (+${diffFileResult.additions} / -${diffFileResult.deletions}). ` +
-        `This usually means a plugin mutated the prompt and increased rate-limit usage. ` +
-        `Diff: ${abbreviatePath(diffFileResult.filePath)}`,
+        `system prompt changed since the previous message (+${diffFileResult.additions} / -${diffFileResult.deletions}). ` +
+        `Diff: \`${abbreviatePath(diffFileResult.filePath)}\`. ` +
+        `Latest prompt: \`${abbreviatePath(path.join(path.dirname(diffFileResult.filePath), `${sessionId}.md`))}\``,
     },
   })
 }
