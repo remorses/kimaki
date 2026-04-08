@@ -743,6 +743,14 @@ async function getFreshOAuth(
 
 const AnthropicAuthPlugin: Plugin = async ({ client }) => {
   return {
+    "experimental.chat.system.transform": async (input, output) => {
+      if (input.model.providerID !== ('anthropic')) return
+      const opencodePromptPart = output.system.findIndex(x => x?.includes('https://github.com/anomalyco/opencode'))
+      // Remove the OpenCode system prompt part if present
+      if (opencodePromptPart !== -1) {
+        output.system.splice(opencodePromptPart, 1)
+      }
+    },
     auth: {
       provider: 'anthropic',
       async loader(
