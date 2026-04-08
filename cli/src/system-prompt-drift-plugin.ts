@@ -131,7 +131,12 @@ function writeSystemPromptDiffFile({
   sessionId: string
   beforePrompt: string
   afterPrompt: string
-}): Error | { additions: number; deletions: number; filePath: string } {
+}): Error | {
+  additions: number
+  deletions: number
+  filePath: string
+  latestPromptPath: string
+} {
   const diff = buildPatch({
     beforeText: beforePrompt,
     afterText: afterPrompt,
@@ -141,7 +146,7 @@ function writeSystemPromptDiffFile({
   const timestamp = new Date().toISOString().replaceAll(':', '-')
   const sessionDir = path.join(getSystemPromptDiffDir({ dataDir }), sessionId)
   const filePath = path.join(sessionDir, `${timestamp}.diff`)
-  const latestPromptPath = path.join(sessionDir, `${sessionId}.md`)
+  const latestPromptPath = path.join(sessionDir, `${timestamp}.md`)
   const fileContent = [
     `Session: ${sessionId}`,
     `Created: ${new Date().toISOString()}`,
@@ -156,11 +161,12 @@ function writeSystemPromptDiffFile({
       fs.mkdirSync(sessionDir, { recursive: true })
       fs.writeFileSync(filePath, fileContent)
       // fs.writeFileSync(latestPromptPath, afterPrompt)
-      return {
-        additions: diff.additions,
-        deletions: diff.deletions,
-        filePath,
-      }
+        return {
+          additions: diff.additions,
+          deletions: diff.deletions,
+          filePath,
+          latestPromptPath,
+        }
     },
     catch: (error) => {
       return new Error('Failed to write system prompt diff file', { cause: error })
@@ -260,7 +266,7 @@ async function handleSystemTransform({
       message:
         `system prompt changed since the previous message (+${diffFileResult.additions} / -${diffFileResult.deletions}). ` +
         `Diff: \`${abbreviatePath(diffFileResult.filePath)}\`. ` +
-        `Latest prompt: \`${abbreviatePath(path.join(path.dirname(diffFileResult.filePath), `${sessionId}.md`))}\``,
+        `Latest prompt: \`${abbreviatePath(diffFileResult.latestPromptPath)}\``,
     },
   })
 }
