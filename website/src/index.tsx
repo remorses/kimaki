@@ -599,7 +599,7 @@ export const app = new Spiceflow()
   })
 
   // Slack gateway: Discord REST proxy → Durable Object
-  // Only active on slack-gateway.kimaki.xyz host.
+  // Only active on slack-gateway.* hosts.
   .route({
     method: '*',
     path: '/api/v10/*',
@@ -1080,6 +1080,8 @@ function summarizeErrorReason(reason: unknown): string {
 function isSlackGatewayHost(requestUrl: string): boolean {
   const host = new URL(requestUrl).host.toLowerCase()
   const isGatewayHost =
+    host === 'slack-gateway.kimaki.dev' ||
+    host === 'preview-slack-gateway.kimaki.dev' ||
     host === 'slack-gateway.kimaki.xyz' ||
     host === 'preview-slack-gateway.kimaki.xyz'
   console.log('[slack-gateway-host-check]', {

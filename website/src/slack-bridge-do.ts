@@ -271,7 +271,7 @@ export class SlackBridgeDO extends DurableObject<Env> {
     }
     const botUsername = authResult.user ?? 'kimaki'
 
-    let publicGatewayUrl = 'wss://slack-gateway.kimaki.xyz/slack/gateway'
+    let publicGatewayUrl = 'wss://slack-gateway.kimaki.dev/slack/gateway'
 
     const gatewaySessionManager = new GatewaySessionManager({
       loadState: async () => {

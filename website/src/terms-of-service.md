@@ -3,7 +3,7 @@
 Effective date: March 28, 2026
 
 These Terms of Service govern your use of Kimaki, including the shared Discord
-bot, `kimaki.xyz`, onboarding pages, Slack bridge flows, and related services.
+bot, `kimaki.dev`, onboarding pages, Slack bridge flows, and related services.
 By using Kimaki, you agree to these terms.
 
 ## 1. Use of the service
@@ -102,4 +102,4 @@ after an update means you accept the revised terms.
 
 ## 13. Contact
 
-For questions about these terms, contact: `tommy@kimaki.xyz`
+For questions about these terms, contact: `tommy@kimaki.dev`

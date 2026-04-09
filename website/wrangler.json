@@ -37,6 +37,14 @@
   ],
   "routes": [
     {
+      "pattern": "kimaki.dev/*",
+      "zone_name": "kimaki.dev"
+    },
+    {
+      "pattern": "slack-gateway.kimaki.dev/*",
+      "zone_name": "kimaki.dev"
+    },
+    {
       "pattern": "kimaki.xyz/*",
       "zone_name": "kimaki.xyz"
     },
@@ -69,6 +77,14 @@
         }
       ],
       "routes": [
+        {
+          "pattern": "preview.kimaki.dev/*",
+          "zone_name": "kimaki.dev"
+        },
+        {
+          "pattern": "preview-slack-gateway.kimaki.dev/*",
+          "zone_name": "kimaki.dev"
+        },
         {
           "pattern": "preview.kimaki.xyz/*",
           "zone_name": "kimaki.xyz"

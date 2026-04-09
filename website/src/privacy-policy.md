@@ -3,7 +3,7 @@
 Effective date: March 28, 2026
 
 Kimaki is a coding agent that can run through Discord and related onboarding pages
-at `kimaki.xyz`. This Privacy Policy explains what information Kimaki processes,
+at `kimaki.dev`. This Privacy Policy explains what information Kimaki processes,
 why it processes it, and how that information is shared when you use the shared
 Kimaki bot, the website, or the Slack bridge onboarding flow.
 
@@ -133,4 +133,4 @@ will be posted on this page with a new effective date.
 
 ## Contact
 
-For privacy questions or data requests, contact: `tommy@kimaki.xyz`
+For privacy questions or data requests, contact: `tommy@kimaki.dev`
