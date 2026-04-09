@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.4.100
+
+1. **`/vscode` now opens reliably through the Kimaki tunnel** — the browser editor no longer depends on Coderaft's `?tkn=` connection-token redirect flow, which could fail and return `Forbidden` after passing through the public tunnel. Kimaki now launches Coderaft without a connection token and returns the unique tunnel URL directly:
+   ```text
+   /vscode
+   ```
+   The session still auto-stops after 30 minutes, and the generated tunnel host remains high-entropy and hard to guess.
+
 ## 0.4.99
 
 1. **Existing gateway installs now auto-migrate to `kimaki.dev`** — on startup, kimaki rewrites saved gateway proxy URLs from `discord-gateway.kimaki.xyz` to `discord-gateway.kimaki.dev` in local SQLite for gateway mode. This prevents legacy endpoint drift that could cause Discord interactions to time out with "application did not respond".

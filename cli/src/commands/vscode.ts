@@ -21,7 +21,6 @@ const MAX_SESSION_MINUTES = 30
 const MAX_SESSION_MS = MAX_SESSION_MINUTES * 60 * 1000
 const TUNNEL_BASE_DOMAIN = 'kimaki.dev'
 const TUNNEL_ID_BYTES = 16
-const CONNECTION_TOKEN_BYTES = 16
 const READY_TIMEOUT_MS = 60_000
 const LOCAL_HOST = '127.0.0.1'
 
@@ -41,29 +40,11 @@ export function createVscodeTunnelId(): string {
   return crypto.randomBytes(TUNNEL_ID_BYTES).toString('hex')
 }
 
-export function createVscodeConnectionToken(): string {
-  return crypto.randomBytes(CONNECTION_TOKEN_BYTES).toString('hex')
-}
-
-export function buildVscodeUrl({
-  tunnelUrl,
-  connectionToken,
-}: {
-  tunnelUrl: string
-  connectionToken: string
-}): string {
-  const url = new URL(tunnelUrl)
-  url.searchParams.set('tkn', connectionToken)
-  return url.toString()
-}
-
 export function buildCoderaftArgs({
   port,
-  connectionToken,
   workingDirectory,
 }: {
   port: number
-  connectionToken: string
   workingDirectory: string
 }): string[] {
   return [
@@ -72,8 +53,7 @@ export function buildCoderaftArgs({
     String(port),
     '--host',
     LOCAL_HOST,
-    '--connection-token',
-    connectionToken,
+    '--without-connection-token',
     '--disable-workspace-trust',
     '--default-folder',
     workingDirectory,
@@ -186,11 +166,9 @@ export async function startVscode({
   }
 
   const port = await getAvailablePort()
-  const connectionToken = createVscodeConnectionToken()
   const tunnelId = createVscodeTunnelId()
   const args = buildCoderaftArgs({
     port,
-    connectionToken,
     workingDirectory,
   })
   const coderaftProcess = spawn('bunx', args, {
@@ -246,10 +224,7 @@ export async function startVscode({
     throw error
   }
 
-  const url = buildVscodeUrl({
-    tunnelUrl: tunnelClient.url,
-    connectionToken,
-  })
+  const url = tunnelClient.url
 
   const timeoutTimer = setTimeout(() => {
     logger.log(`VS Code auto-stopped after ${MAX_SESSION_MINUTES} minutes (key: ${sessionKey})`)
@@ -326,7 +301,7 @@ export async function handleVscodeCommand({
     await command.editReply({
       content:
         `VS Code is already running for this thread. ` +
-        `It auto-stops after ${MAX_SESSION_MINUTES} minutes from startup.\n` +
+        `This unique tunnel auto-stops after ${MAX_SESSION_MINUTES} minutes from startup.\n` +
         `${existing.url}`,
     })
     return
@@ -341,7 +316,7 @@ export async function handleVscodeCommand({
     await command.editReply({
       content:
         `VS Code started for \`${session.workingDirectory}\`. ` +
-        `This private link auto-stops after ${MAX_SESSION_MINUTES} minutes, so open it before it expires.\n` +
+        `This unique tunnel auto-stops after ${MAX_SESSION_MINUTES} minutes, so open it before it expires.\n` +
         `${session.url}`,
     })
   } catch (error) {
