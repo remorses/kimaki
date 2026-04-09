@@ -90,6 +90,7 @@ const CLAUDE_CODE_IDENTITY =
   "You are Claude Code, Anthropic's official CLI for Claude.";
 const OPENCODE_IDENTITY =
   "You are OpenCode, the best coding agent on the planet.";
+const ANTHROPIC_PROMPT_MARKER = "Skills provide specialized instructions";
 const CLAUDE_CODE_BETA = "claude-code-20250219";
 const OAUTH_BETA = "oauth-2025-04-20";
 const FINE_GRAINED_TOOL_STREAMING_BETA =
@@ -136,6 +137,10 @@ type ApiKeySuccess = {
 };
 
 type AuthResult = OAuthSuccess | ApiKeySuccess | { type: "failed" };
+type PluginHooks = Awaited<ReturnType<Plugin>>;
+type SystemTransformHook = NonNullable<
+  PluginHooks["experimental.chat.system.transform"]
+>;
 
 // --- HTTP helpers ---
 
@@ -587,6 +592,53 @@ function toClaudeCodeToolName(name: string) {
   return OPENCODE_TO_CLAUDE_CODE_TOOL_NAME[name.toLowerCase()] ?? name;
 }
 
+function sanitizeAnthropicSystemText(
+  text: string,
+  onError?: (msg: string) => void,
+) {
+  const startIdx = text.indexOf(OPENCODE_IDENTITY);
+  if (startIdx === -1) return text;
+
+  // Keep the marker aligned with the current OpenCode Anthropic prompt.
+  const endIdx = text.indexOf(ANTHROPIC_PROMPT_MARKER, startIdx);
+  if (endIdx === -1) {
+    onError?.(
+      "sanitizeAnthropicSystemText: could not find Anthropic prompt marker after OpenCode identity",
+    );
+    return text;
+  }
+
+  return (text.slice(0, startIdx) + text.slice(endIdx)).replaceAll(
+    "opencode",
+    "openc0de",
+  );
+}
+
+function mapSystemTextPart(
+  part: unknown,
+  onError?: (msg: string) => void,
+): unknown {
+  if (typeof part === "string") {
+    return { type: "text", text: sanitizeAnthropicSystemText(part, onError) };
+  }
+
+  if (
+    part &&
+    typeof part === "object" &&
+    "type" in part &&
+    part.type === "text" &&
+    "text" in part &&
+    typeof part.text === "string"
+  ) {
+    return {
+      ...part,
+      text: sanitizeAnthropicSystemText(part.text, onError),
+    };
+  }
+
+  return part;
+}
+
 
 function prependClaudeCodeIdentity(
   system: unknown,
@@ -597,7 +649,7 @@ function prependClaudeCodeIdentity(
   if (typeof system === "undefined") return [identityBlock];
 
   if (typeof system === "string") {
-    const sanitized = system;
+    const sanitized = sanitizeAnthropicSystemText(system, onError);
     if (sanitized === CLAUDE_CODE_IDENTITY) return [identityBlock];
     return [identityBlock, { type: "text", text: sanitized }];
   }
@@ -605,30 +657,17 @@ function prependClaudeCodeIdentity(
   if (!Array.isArray(system)) return [identityBlock, system];
 
   const sanitized = system.map((item) => {
-    if (typeof item === "string")
-      return { type: "text", text: (item) };
-    if (
-      item &&
-      typeof item === "object" &&
-      (item as { type?: unknown }).type === "text"
-    ) {
-      const text = (item as { text?: unknown }).text;
-      if (typeof text === "string") {
-        return {
-          ...(item as Record<string, unknown>),
-          text: (text),
-        };
-      }
-    }
-    return item;
+    return mapSystemTextPart(item, onError);
   });
 
   const first = sanitized[0];
   if (
     first &&
     typeof first === "object" &&
-    (first as { type?: unknown }).type === "text" &&
-    (first as { text?: unknown }).text === CLAUDE_CODE_IDENTITY
+    "type" in first &&
+    first.type === "text" &&
+    "text" in first &&
+    first.text === CLAUDE_CODE_IDENTITY
   ) {
     return sanitized;
   }
@@ -1013,34 +1052,20 @@ const AnthropicAuthPlugin: Plugin = async ({ client }) => {
   };
 };
 
-const replacer: Plugin = async ({ client }) => {
+const replacer: Plugin = async () => {
   return {
-    "experimental.chat.system.transform": async (input, output) => {
+    "experimental.chat.system.transform": (async (input, output) => {
       if (input.model.providerID !== "anthropic") return;
       const textIndex = output.system.findIndex((x) =>
         x.includes(OPENCODE_IDENTITY),
       );
-      let text = output.system[textIndex] || "";
+      const text = output.system[textIndex];
       if (!text) {
-        // console.error("cannot find identity prompt", output.system);
-        return
+        return;
       }
-      const startIdx = text.indexOf(OPENCODE_IDENTITY);
-      if (startIdx === -1) return text;
 
-      // read prompt at https://github.com/anomalyco/opencode/blob/dev/packages/opencode/src/session/prompt/anthropic.txt to see what to remove
-      const codeRefsMarker = "Skills provide specialized instructions";
-      const endIdx = text.indexOf(codeRefsMarker, startIdx);
-      if (endIdx === -1) {
-        // console.error?.(
-        //   `sanitizeSystemText: could not find '# Code References' after OpenCode identity`,
-        // );
-        return
-      }
-      text = text.slice(0, startIdx) + text.slice(endIdx);
-      text = text.replaceAll("opencode", "openc0de");
-      output.system[textIndex] = text;
-    },
+      output.system[textIndex] = sanitizeAnthropicSystemText(text);
+    }) satisfies SystemTransformHook,
   };
 };
 
