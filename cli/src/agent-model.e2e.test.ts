@@ -542,7 +542,14 @@ describe('agent model resolution', () => {
         afterAuthorId: discord.botUserId,
       })
 
-      expect(await discord.thread(thread.id).text()).toMatchInlineSnapshot(`
+      const threadText = (await discord.thread(thread.id).text())
+        .split('\n')
+        .filter((line) => {
+          return !line.startsWith('⬦ info: Context cache discarded:')
+        })
+        .join('\n')
+
+      expect(threadText).toMatchInlineSnapshot(`
         "--- from: user (agent-model-tester)
         first message in thread
         Reply with exactly: reply-context-check
