@@ -27,7 +27,7 @@ kimaki is a monorepo with three main packages that communicate via a shared Post
 ┌─────────────────────┐   ┌──────────────────────────────────┐
 │  gateway-proxy/      │   │  website/                        │
 │  (Rust, fly.io)      │   │  (Cloudflare Worker, Hono)       │
-│                      │   │  https://kimaki.xyz           │
+│                      │   │  https://kimaki.dev           │
 │  Sits between the    │   │                                  │
 │  CLI and Discord.    │   │  GET /oauth/callback              │
 │  One shared bot for  │   │    → upserts gateway_clients row │
@@ -99,7 +99,7 @@ multi-tenant REST safety invariant:
 the gateway mode onboarding (in `cli/src/cli.ts`, the `run()` function) works as follows:
 
 1. CLI generates `clientId` (UUID) + `clientSecret` (32-byte hex)
-2. builds Discord OAuth URL with `state=JSON({clientId, clientSecret})` and `redirect_uri=https://kimaki.xyz/api/auth/callback/discord`
+2. builds Discord OAuth URL with `state=JSON({clientId, clientSecret})` and `redirect_uri=https://kimaki.dev/api/auth/callback/discord`
 3. opens browser to the Discord install URL
 4. user authorizes the shared Kimaki bot in their server
 5. Discord redirects to `website/src/routes/oauth-callback.tsx` with `guild_id` + `state` — website upserts `gateway_clients` row in Postgres
@@ -430,6 +430,8 @@ the plugin does NOT receive `KIMAKI_BOT_TOKEN`. discord REST operations (user li
 when adding new bot-side config that the plugin needs, add it as a `KIMAKI_*` env var in `opencode.ts` spawn env and read `process.env.KIMAKI_*` in the plugin. never import config.ts getters in the plugin.
 
 **NEVER use `console.log`, `console.error`, or any `console.*` in plugin code.** opencode captures plugin stdout/stderr and it pollutes the opencode server output, breaking structured logging. plugins must be silent — fail gracefully and return null/undefined on errors instead of logging.
+
+OpenCode plugin files must also avoid importing `cli/src/logger.ts`. That logger pulls in `@clack/prompts` / `picocolors`, which can fail under the plugin loader's ESM/CJS interop. For plugin code, use a separate plugin-safe logger module that only appends to the kimaki log file and never writes to stdout/stderr.
 
 ## skills folder
 
@@ -974,7 +976,7 @@ to understand how the code you are writing works, you should add inline snapshot
 
 - for very long snapshots you should use `toMatchFileSnapshot(filename)` instead of `toMatchInlineSnapshot()`. put the snapshot files in a snapshots/ directory and use the appropriate extension for the file based on the content
 
-never test client react components. only React and browser independent code.
+never test client react components. only React and browser independent code. 
 
 most tests should be simple calls to functions with some expect calls, no mocks. test files should be called the same as the file where the tested function is being exported from.
 
@@ -1123,3 +1125,4 @@ const jsonSchema = toJSONSchema(mySchema, {
   removeAdditionalStrategy: "strict",
 });
 ```
+
