@@ -235,6 +235,7 @@ async function migrateSchema(prisma: PrismaClient): Promise<void> {
   // Also fix NULL worktree status rows that predate the required enum.
   const defensiveMigrations = [
     "UPDATE bot_tokens SET bot_mode = 'self_hosted' WHERE bot_mode = 'self-hosted'",
+    "UPDATE bot_tokens SET proxy_url = REPLACE(proxy_url, 'discord-gateway.kimaki.xyz', 'discord-gateway.kimaki.dev') WHERE bot_mode = 'gateway' AND proxy_url LIKE '%discord-gateway.kimaki.xyz%'",
     "UPDATE thread_worktrees SET status = 'pending' WHERE status IS NULL",
   ]
   for (const stmt of defensiveMigrations) {
