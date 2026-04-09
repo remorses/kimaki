@@ -1,7 +1,6 @@
 // OpenCode plugin that injects synthetic message parts for context awareness:
 // - Git branch / detached HEAD changes
 // - Working directory (pwd) changes (e.g. after /new-worktree mid-session)
-// - MEMORY.md table of contents on first message
 // - MEMORY.md reminder after a large assistant reply
 // - Onboarding tutorial instructions (when TUTORIAL_WELCOME_TEXT detected)
 //
@@ -18,8 +17,6 @@
 
 import type { Plugin } from '@opencode-ai/plugin'
 import crypto from 'node:crypto'
-import fs from 'node:fs'
-import path from 'node:path'
 import * as errore from 'errore'
 import {
   createPluginLogger,
@@ -29,7 +26,6 @@ import {
 import { setDataDir } from './config.js'
 import { initSentry, notifyError } from './sentry.js'
 import { execAsync } from './exec-async.js'
-import { condenseMemoryMd } from './condense-memory.js'
 import {
   ONBOARDING_TUTORIAL_INSTRUCTIONS,
   TUTORIAL_WELCOME_TEXT,
@@ -49,7 +45,6 @@ type GitState = {
 // All per-session mutable state in one place. One Map entry, one delete.
 type SessionState = {
   gitState: GitState | undefined
-  memoryInjected: boolean
   lastMemoryReminderAssistantMessageId: string | undefined
   tutorialInjected: boolean
   // Last directory observed via session.get(). Refreshed on each real user
@@ -58,17 +53,6 @@ type SessionState = {
   resolvedDirectory: string | undefined
   // Last directory we announced via pwd injection.
   announcedDirectory: string | undefined
-}
-
-function createSessionState(): SessionState {
-  return {
-    gitState: undefined,
-    memoryInjected: false,
-    lastMemoryReminderAssistantMessageId: undefined,
-    tutorialInjected: false,
-    resolvedDirectory: undefined,
-    announcedDirectory: undefined,
-  }
 }
 
 // Minimal type for the opencode plugin client (v1 SDK style with path objects).
@@ -147,10 +131,6 @@ type AssistantMessageInfo = {
   tokens?: AssistantTokenUsage
 }
 
-function getOutputTokenTotal(tokens: AssistantTokenUsage): number {
-  return Math.max(0, tokens.output + tokens.reasoning)
-}
-
 export function shouldInjectMemoryReminderFromLatestAssistant({
   lastMemoryReminderAssistantMessageId,
   latestAssistantMessage,
@@ -175,7 +155,10 @@ export function shouldInjectMemoryReminderFromLatestAssistant({
   if (lastMemoryReminderAssistantMessageId === latestAssistantMessage.id) {
     return { inject: false }
   }
-  const outputTokens = getOutputTokenTotal(latestAssistantMessage.tokens)
+  const outputTokens = Math.max(
+    0,
+    latestAssistantMessage.tokens.output + latestAssistantMessage.tokens.reasoning,
+  )
   if (outputTokens < threshold) {
     return { inject: false }
   }
@@ -311,7 +294,13 @@ const contextAwarenessPlugin: Plugin = async ({ directory, client }) => {
     if (existing) {
       return existing
     }
-    const state = createSessionState()
+    const state: SessionState = {
+      gitState: undefined,
+      lastMemoryReminderAssistantMessageId: undefined,
+      tutorialInjected: false,
+      resolvedDirectory: undefined,
+      announcedDirectory: undefined,
+    }
     sessions.set(sessionID, state)
     return state
   }
@@ -410,26 +399,6 @@ const contextAwarenessPlugin: Plugin = async ({ directory, client }) => {
               text: pwdResult.text,
               synthetic: true,
             })
-          }
-
-          // -- MEMORY.md injection --
-          if (!state.memoryInjected) {
-            state.memoryInjected = true
-            const memoryPath = path.join(effectiveDirectory, 'MEMORY.md')
-            const memoryContent = await fs.promises
-              .readFile(memoryPath, 'utf-8')
-              .catch(() => null)
-            if (memoryContent) {
-              const condensed = condenseMemoryMd(memoryContent)
-              output.parts.push({
-                id: `prt_${crypto.randomUUID()}`,
-                sessionID,
-                messageID,
-                type: 'text' as const,
-                text: `<system-reminder>Project memory from MEMORY.md (condensed table of contents, line numbers shown):\n${condensed}\nOnly headings are shown above — section bodies are hidden. Use Grep to search MEMORY.md for specific topics, or Read with offset and limit to read a section's content. When writing to MEMORY.md, keep titles concise (under 10 words) and content brief (2-3 sentences max). Only track non-obvious learnings that prevent future mistakes and are not already documented in code comments or AGENTS.md. Do not duplicate information that is self-evident from the code.</system-reminder>`,
-                synthetic: true,
-              })
-            }
           }
 
           const memoryReminder = shouldInjectMemoryReminderFromLatestAssistant({
