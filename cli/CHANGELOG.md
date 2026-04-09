@@ -1,5 +1,16 @@
 # Changelog
 
+## 0.4.98
+
+1. **New `/vscode` Discord command** — open the current project or worktree in browser VS Code (Coderaft) through a private tunnel, with automatic 30-minute shutdown. This is useful for quick remote edits without leaving Discord:
+   ```text
+   /vscode
+   ```
+
+2. **`kimaki.dev` is now the default domain for new sessions and links** — default onboarding website URL, gateway proxy URL, and tunnel-based features now point to `kimaki.dev`. Existing `kimaki.xyz` routes remain supported during migration.
+
+3. **System prompt drift notices are less noisy** — drift detection now waits until system-transform hooks finish mutating the prompt before comparing turns, reducing false positives in "Context cache discarded" toasts.
+
 ## 0.4.97
 
 1. **Anthropic account CLI commands are now visible in help** — `kimaki anthropic account list/add/remove` commands appear in normal `--help` output. `remove` now accepts either a 1-based index or a stored email address for easier cleanup.
