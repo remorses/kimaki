@@ -1,5 +1,16 @@
 # Changelog
 
+## 0.4.101
+
+1. **Claude Max login works again when Anthropic shows the new third-party app billing prompt** — kimaki now rewrites Anthropic's transformed system prompt in the hook Anthropic actually reads, so OAuth login keeps working when Claude shows messages like "Third-party apps now draw from your extra usage" instead of silently falling back to a broken prompt state.
+
+2. **`MEMORY.md` heading overview is now frozen per session** — kimaki snapshots the condensed `MEMORY.md` table of contents on the first real user message and reuses that same overview for the rest of the session. Editing `MEMORY.md` mid-session no longer mutates the active system prompt or invalidates the session cache; starting a new session still picks up the latest headings.
+
+3. **`/login` now surfaces `opencode` and `opencode-go` providers** — the provider picker prioritizes both entries so they are easier to find when signing in through Discord:
+   ```text
+   /login
+   ```
+
 ## 0.4.100
 
 1. **`/vscode` now opens reliably through the Kimaki tunnel** — the browser editor no longer depends on Coderaft's `?tkn=` connection-token redirect flow, which could fail and return `Forbidden` after passing through the public tunnel. Kimaki now launches Coderaft without a connection token and returns the unique tunnel URL directly:
