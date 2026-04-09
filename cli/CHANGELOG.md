@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.4.99
+
+1. **Existing gateway installs now auto-migrate to `kimaki.dev`** — on startup, kimaki rewrites saved gateway proxy URLs from `discord-gateway.kimaki.xyz` to `discord-gateway.kimaki.dev` in local SQLite for gateway mode. This prevents legacy endpoint drift that could cause Discord interactions to time out with "application did not respond".
+
 ## 0.4.98
 
 1. **New `/vscode` Discord command** — open the current project or worktree in browser VS Code (Coderaft) through a private tunnel, with automatic 30-minute shutdown. This is useful for quick remote edits without leaving Discord:
