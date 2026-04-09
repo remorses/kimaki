@@ -44,7 +44,7 @@ import { SlackBridge } from '../src/index.js'
 
 const TUNNEL_ID = 'dsb-echo-bot'
 const BRIDGE_PORT = Number(process.env.ECHO_BOT_PORT ?? '3710')
-const PREVIEW_GATEWAY_BASE_URL = 'https://preview-slack-gateway.kimaki.xyz'
+const PREVIEW_GATEWAY_BASE_URL = 'https://preview-slack-gateway.kimaki.dev'
 const PREVIEW_WORKSPACE_ID = 'T08NQ7ULTUL'
 const PREVIEW_CLIENT_ID = 'echo-bot-client'
 const PREVIEW_MAPPING_USER_EMAIL = 'beats.by.morse@gmail.com'

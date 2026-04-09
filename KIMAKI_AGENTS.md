@@ -25,7 +25,7 @@ kimaki is a monorepo with three main packages that communicate via a shared Post
 ┌─────────────────────┐   ┌──────────────────────────────────┐
 │  gateway-proxy/      │   │  website/                        │
 │  (Rust, fly.io)      │   │  (Cloudflare Worker, Hono)       │
-│                      │   │  https://kimaki.xyz           │
+│                      │   │  https://kimaki.dev           │
 │  Sits between the    │   │                                  │
 │  CLI and Discord.    │   │  GET /oauth/callback              │
 │  One shared bot for  │   │    → upserts gateway_clients row │
@@ -97,7 +97,7 @@ multi-tenant REST safety invariant:
 the gateway mode onboarding (in `cli/src/cli.ts`, the `run()` function) works as follows:
 
 1. CLI generates `clientId` (UUID) + `clientSecret` (32-byte hex)
-2. builds Discord OAuth URL with `state=JSON({clientId, clientSecret})` and `redirect_uri=https://kimaki.xyz/api/auth/callback/discord`
+2. builds Discord OAuth URL with `state=JSON({clientId, clientSecret})` and `redirect_uri=https://kimaki.dev/api/auth/callback/discord`
 3. opens browser to the Discord install URL
 4. user authorizes the shared Kimaki bot in their server
 5. Discord redirects to `website/src/routes/oauth-callback.tsx` with `guild_id` + `state` — website upserts `gateway_clients` row in Postgres

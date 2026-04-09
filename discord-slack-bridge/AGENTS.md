@@ -38,7 +38,7 @@ to how it behaves in Discord, with this bridge handling protocol translation.
 
 - Use `discord-slack-bridge/scripts/echo-bot.ts` to verify end-to-end Slack + gateway behavior.
 - For deployed gateway testing, run `pnpm echo-bot --gateway` from `discord-slack-bridge/`.
-- This validates Discord REST + Gateway routing through `slack-gateway.kimaki.xyz` and Slack webhook/interactivity handling at `/slack/events`.
+- This validates Discord REST + Gateway routing through `slack-gateway.kimaki.dev` and Slack webhook/interactivity handling at `/slack/events`.
 - Important: this requires real user interaction in Slack. The script only starts the bridge client and registers commands; someone must send messages, run slash commands, and click interactive components in Slack to exercise Events + Interactivity webhooks end-to-end.
 
 ## Non-negotiable typing rules
