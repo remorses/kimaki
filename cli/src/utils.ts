@@ -82,7 +82,7 @@ export function generateBotInstallUrl({
 
 export const KIMAKI_GATEWAY_APP_ID =
   process.env.KIMAKI_GATEWAY_APP_ID || '1477605701202481173'
-export const KIMAKI_WEBSITE_URL = process.env.KIMAKI_WEBSITE_URL || 'https://kimaki.xyz'
+export const KIMAKI_WEBSITE_URL = process.env.KIMAKI_WEBSITE_URL || 'https://kimaki.dev'
 
 export function generateDiscordInstallUrlForBot({
   appId,

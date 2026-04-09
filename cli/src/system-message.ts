@@ -363,7 +363,7 @@ export function getOpencodeSystemMessage({
           .join('\n')}`
       : ''
   return `
-The user is reading your messages from inside Discord, via kimaki.xyz
+The user is reading your messages from inside Discord, via kimaki.dev
 
 ## bash tool
 

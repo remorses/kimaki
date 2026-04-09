@@ -56,7 +56,7 @@ These are defined as the `ProgrammaticEvent` union type in `cli/src/cli.ts`.
 Each event is a single line prefixed with `data: ` and terminated with `\n\n`:
 
 ```
-data: {"type":"install_url","url":"https://kimaki.xyz/discord-install?clientId=...&callbackUrl=..."}\n\n
+data: {"type":"install_url","url":"https://kimaki.dev/discord-install?clientId=...&callbackUrl=..."}\n\n
 ```
 
 This is standard SSE format. The `data:` prefix is what makes it robust — log
@@ -148,7 +148,7 @@ kimaki --gateway --gateway-callback-url https://your-platform.com/setup-done
 The install URL emitted in the `install_url` event will include the callback:
 
 ```
-https://kimaki.xyz/discord-install?clientId=...&callbackUrl=https%3A%2F%2Fyour-platform.com%2Fsetup-done
+https://kimaki.dev/discord-install?clientId=...&callbackUrl=https%3A%2F%2Fyour-platform.com%2Fsetup-done
 ```
 
 After the user authorizes, Discord redirects to kimaki's OAuth handler, which

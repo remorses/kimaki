@@ -23,7 +23,7 @@ describe('system-message', () => {
       }).replace(/`[^`]*\/kimaki\.log`/, '`<data-dir>/kimaki.log`'),
     ).toMatchInlineSnapshot(`
       "
-      The user is reading your messages from inside Discord, via kimaki.xyz
+      The user is reading your messages from inside Discord, via kimaki.dev
 
       ## bash tool
 

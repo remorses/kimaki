@@ -6,7 +6,7 @@
 //   Starts a digital-twin + local gateway-proxy binary, kills and restarts the proxy.
 //
 // Production mode (env vars):
-//   GATEWAY_TEST_URL        - production gateway WS+REST URL (e.g. wss://discord-gateway.kimaki.xyz)
+//   GATEWAY_TEST_URL        - production gateway WS+REST URL (e.g. wss://discord-gateway.kimaki.dev)
 //   GATEWAY_TEST_TOKEN      - client token (clientId:secret)
 //   GATEWAY_TEST_REDEPLOY   - if "1", runs `fly deploy` between kill/restart instead of local binary
 //
@@ -15,7 +15,7 @@
 //   pnpm test --run src/gateway-proxy-reconnect.e2e.test.ts
 //
 //   # Against production (just connect + kill WS + wait for reconnect):
-//   GATEWAY_TEST_URL=wss://discord-gateway.kimaki.xyz \
+//   GATEWAY_TEST_URL=wss://discord-gateway.kimaki.dev \
 //   GATEWAY_TEST_TOKEN=myclientid:mysecret \
 //   KIMAKI_TEST_LOGS=1 \
 //   pnpm test --run src/gateway-proxy-reconnect.e2e.test.ts -t "production"

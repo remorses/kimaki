@@ -141,7 +141,7 @@ const cliLogger = createLogger(LogPrefix.CLI)
 // These are hardcoded because they're deploy-time constants for the gateway infrastructure.
 const KIMAKI_GATEWAY_PROXY_URL =
   process.env.KIMAKI_GATEWAY_PROXY_URL ||
-  'wss://discord-gateway.kimaki.xyz'
+  'wss://discord-gateway.kimaki.dev'
 
 const KIMAKI_GATEWAY_PROXY_REST_BASE_URL = getGatewayProxyRestBaseUrl({
   gatewayUrl: KIMAKI_GATEWAY_PROXY_URL,
@@ -3792,7 +3792,7 @@ cli
         port,
         tunnelId: options.tunnelId,
         localHost: options.host,
-        baseDomain: 'kimaki.xyz',
+        baseDomain: 'kimaki.dev',
         serverUrl: options.server,
         command: command.length > 0 ? command : undefined,
         kill: options.kill,

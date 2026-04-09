@@ -40,7 +40,7 @@ const activeSessions = new Map<string, ScreenshareSession>()
 const VNC_PORT = 5900
 const MAX_SESSION_MINUTES = 30
 const MAX_SESSION_MS = MAX_SESSION_MINUTES * 60 * 1000
-const TUNNEL_BASE_DOMAIN = 'kimaki.xyz'
+const TUNNEL_BASE_DOMAIN = 'kimaki.dev'
 const SCREENSHARE_TUNNEL_ID_BYTES = 16
 
 // Public noVNC client — we point it at our tunnel URL
