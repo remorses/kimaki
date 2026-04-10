@@ -100,6 +100,7 @@ export async function handleClearQueueCommand({
   command,
 }: CommandContext): Promise<void> {
   const channel = command.channel
+  const position = command.options.getInteger('position') ?? undefined
 
   if (!channel) {
     await command.reply({
@@ -131,6 +132,27 @@ export async function handleClearQueueCommand({
       content: 'No messages in queue',
       flags: MessageFlags.Ephemeral | SILENT_MESSAGE_FLAGS,
     })
+    return
+  }
+
+  if (position !== undefined) {
+    const removed = runtime?.removeQueuePosition(position)
+    if (!removed) {
+      await command.reply({
+        content: `No queued message at position ${position}`,
+        flags: MessageFlags.Ephemeral | SILENT_MESSAGE_FLAGS,
+      })
+      return
+    }
+
+    await command.reply({
+      content: `Cleared queued message at position ${position}`,
+      flags: SILENT_MESSAGE_FLAGS,
+    })
+
+    logger.log(
+      `[QUEUE] User ${command.user.displayName} cleared queued position ${position} in thread ${channel.id}`,
+    )
     return
   }
 

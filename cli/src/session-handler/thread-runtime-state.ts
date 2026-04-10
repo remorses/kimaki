@@ -80,7 +80,8 @@ export type ThreadRunState = {
   // FIFO queue of pending inputs waiting for kimaki-local dispatch.
   // Normal user messages default to opencode queue mode; this queue is
   // for explicit local-queue flows (for example /queue).
-  // Changes: enqueueItem (append), dequeueItem (head removal), clearQueueItems.
+  // Changes: enqueueItem (append), dequeueItem (head removal),
+  // clearQueueItems, removeQueueItemAtPosition.
   // Read by: runtime queue gating, hasQueue helpers, /queue command display.
   queueItems: QueuedMessage[]
 
@@ -199,6 +200,40 @@ export function dequeueItem(threadId: string): QueuedMessage | undefined {
 
 export function clearQueueItems(threadId: string): void {
   updateThread(threadId, (t) => ({ ...t, queueItems: [] }))
+}
+
+export function removeQueueItemAtPosition(
+  threadId: string,
+  position: number,
+): QueuedMessage | undefined {
+  if (position < 1) {
+    return undefined
+  }
+
+  let removedItem: QueuedMessage | undefined
+  store.setState((s) => {
+    const t = s.threads.get(threadId)
+    if (!t) {
+      return s
+    }
+
+    const index = position - 1
+    const removed = t.queueItems[index]
+    if (!removed) {
+      return s
+    }
+
+    removedItem = removed
+    const newThreads = new Map(s.threads)
+    newThreads.set(threadId, {
+      ...t,
+      queueItems: t.queueItems.filter((_, itemIndex) => {
+        return itemIndex !== index
+      }),
+    })
+    return { threads: newThreads }
+  })
+  return removedItem
 }
 
 // ── Queries ──────────────────────────────────────────────────────

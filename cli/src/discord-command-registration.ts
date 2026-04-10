@@ -384,6 +384,16 @@ export async function registerCommands({
     new SlashCommandBuilder()
       .setName('clear-queue')
       .setDescription(truncateCommandDescription('Clear all queued messages in this thread'))
+      .addIntegerOption((option) => {
+        option
+          .setName('position')
+          .setDescription(
+            truncateCommandDescription('1-based queued message position to clear (default: all)'),
+          )
+          .setMinValue(1)
+
+        return option
+      })
       .setDMPermission(false)
       .toJSON(),
     new SlashCommandBuilder()

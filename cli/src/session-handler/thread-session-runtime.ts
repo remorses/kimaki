@@ -3398,6 +3398,11 @@ export class ThreadSessionRuntime {
     threadState.clearQueueItems(this.threadId)
   }
 
+  /** Remove a queued message by its 1-based position. */
+  removeQueuePosition(position: number): threadState.QueuedMessage | undefined {
+    return threadState.removeQueueItemAtPosition(this.threadId, position)
+  }
+
   // ── Queue Drain ─────────────────────────────────────────────
 
   /**
