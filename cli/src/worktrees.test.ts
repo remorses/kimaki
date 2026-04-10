@@ -13,14 +13,6 @@ import {
 
 const GIT_TIMEOUT_MS = 60_000
 
-function gitCommand(args: string[]): string {
-  return `git ${args
-    .map((arg) => {
-      return JSON.stringify(arg)
-    })
-    .join(' ')}`
-}
-
 async function git({
   cwd,
   args,
@@ -28,7 +20,13 @@ async function git({
   cwd: string
   args: string[]
 }): Promise<string> {
-  const result = await execAsync(gitCommand(args), {
+  const command = `git ${args
+    .map((arg) => {
+      return JSON.stringify(arg)
+    })
+    .join(' ')}`
+
+  const result = await execAsync(command, {
     cwd,
     timeout: GIT_TIMEOUT_MS,
   })
@@ -212,6 +210,87 @@ describe('worktrees', () => {
       if (createdWorktreeDirectory) {
         await git({
           cwd: parentRepo,
+          args: ['worktree', 'remove', '--force', createdWorktreeDirectory],
+        }).catch(() => {
+          return ''
+        })
+      }
+      fs.rmSync(sandbox, { recursive: true, force: true })
+    }
+  })
+
+  test('createWorktreeWithSubmodules uses current HEAD even when origin does not have the commit', async () => {
+    const sandbox = createTestRoot()
+    const parentRemote = path.join(sandbox, 'parent-remote.git')
+    const parentLocal = path.join(sandbox, 'parent-local')
+    const worktreeName = `opencode/kimaki-local-head-${Date.now()}`
+
+    let createdWorktreeDirectory = ''
+
+    try {
+      await git({ cwd: sandbox, args: ['init', '--bare', '-b', 'main', parentRemote] })
+      await git({ cwd: sandbox, args: ['clone', parentRemote, parentLocal] })
+
+      await git({
+        cwd: parentLocal,
+        args: ['config', 'user.email', 'kimaki-tests@example.com'],
+      })
+      await git({
+        cwd: parentLocal,
+        args: ['config', 'user.name', 'Kimaki Tests'],
+      })
+
+      fs.writeFileSync(path.join(parentLocal, 'README.md'), 'v1\n', 'utf-8')
+      await git({ cwd: parentLocal, args: ['add', 'README.md'] })
+      await git({ cwd: parentLocal, args: ['commit', '-m', 'v1'] })
+      await git({ cwd: parentLocal, args: ['push', 'origin', 'HEAD:main'] })
+
+      fs.writeFileSync(path.join(parentLocal, 'README.md'), 'v2-local-only\n', 'utf-8')
+      await git({ cwd: parentLocal, args: ['commit', '-am', 'v2 local only'] })
+
+      const localHeadSha = await git({
+        cwd: parentLocal,
+        args: ['rev-parse', 'HEAD'],
+      })
+      const originHeadSha = await git({
+        cwd: parentLocal,
+        args: ['rev-parse', 'origin/main'],
+      })
+
+      const worktreeResult = await createWorktreeWithSubmodules({
+        directory: parentLocal,
+        name: worktreeName,
+      })
+
+      if (worktreeResult instanceof Error) {
+        throw worktreeResult
+      }
+
+      createdWorktreeDirectory = worktreeResult.directory
+      const worktreeHeadSha = await git({
+        cwd: createdWorktreeDirectory,
+        args: ['rev-parse', 'HEAD'],
+      })
+
+      expect({
+        localHeadShaLength: localHeadSha.length,
+        originHeadShaLength: originHeadSha.length,
+        worktreeHeadShaLength: worktreeHeadSha.length,
+        usesLocalOnlyHead: localHeadSha === worktreeHeadSha,
+        differsFromOrigin: localHeadSha !== originHeadSha,
+      }).toMatchInlineSnapshot(`
+        {
+          "differsFromOrigin": true,
+          "localHeadShaLength": 40,
+          "originHeadShaLength": 40,
+          "usesLocalOnlyHead": true,
+          "worktreeHeadShaLength": 40,
+        }
+      `)
+    } finally {
+      if (createdWorktreeDirectory) {
+        await git({
+          cwd: parentLocal,
           args: ['worktree', 'remove', '--force', createdWorktreeDirectory],
         }).catch(() => {
           return ''

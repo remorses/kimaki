@@ -36,6 +36,26 @@ import type { AutocompleteContext } from './types.js'
 import * as errore from 'errore'
 
 const logger = createLogger(LogPrefix.WORKTREE)
+const DEFAULT_WORKTREE_BASE_REF = 'HEAD'
+
+async function resolveRequestedWorktreeBaseRef({
+  projectDirectory,
+  rawBaseBranch,
+}: {
+  projectDirectory: string
+  rawBaseBranch?: string
+}): Promise<string | Error> {
+  if (!rawBaseBranch) {
+    // Default to the current local HEAD so worktrees can branch from
+    // unpublished commits in the main checkout.
+    return DEFAULT_WORKTREE_BASE_REF
+  }
+
+  return validateBranchRef({
+    directory: projectDirectory,
+    ref: rawBaseBranch,
+  })
+}
 
 /** Status message shown while a worktree is being created. */
 export function worktreeCreatingMessage(worktreeName: string): string {
@@ -43,7 +63,7 @@ export function worktreeCreatingMessage(worktreeName: string): string {
 }
 
 class WorktreeError extends Error {
-  constructor(message: string, options?: { cause?: unknown }) {
+  constructor(message: string, options?: ErrorOptions) {
     super(message, options)
     this.name = 'WorktreeError'
   }
@@ -254,15 +274,14 @@ export async function handleNewWorktreeCommand({
     return
   }
 
-  const isThread =
+  // Handle command in existing thread - attach worktree to this thread
+  if (
     channel.type === ChannelType.PublicThread ||
     channel.type === ChannelType.PrivateThread
-
-  // Handle command in existing thread - attach worktree to this thread
-  if (isThread) {
+  ) {
     await handleWorktreeInThread({
       command,
-      thread: channel as ThreadChannel,
+      thread: channel,
     })
     return
   }
@@ -292,7 +311,7 @@ export async function handleNewWorktreeCommand({
     return
   }
 
-  const textChannel = channel as TextChannel
+  const textChannel = channel
 
   const projectDirectory = await getProjectDirectoryFromChannel(
     textChannel,
@@ -302,17 +321,13 @@ export async function handleNewWorktreeCommand({
     return
   }
 
-  let baseBranch = rawBaseBranch
-  if (baseBranch) {
-    const validated = await validateBranchRef({
-      directory: projectDirectory,
-      ref: baseBranch,
-    })
-    if (validated instanceof Error) {
-      await command.editReply(`Invalid base branch: \`${baseBranch}\``)
-      return
-    }
-    baseBranch = validated
+  const baseBranch = await resolveRequestedWorktreeBaseRef({
+    projectDirectory,
+    rawBaseBranch,
+  })
+  if (baseBranch instanceof Error) {
+    await command.editReply(`Invalid base branch: \`${rawBaseBranch}\``)
+    return
   }
 
   const existingWorktree = await findExistingWorktreePath({
@@ -415,24 +430,20 @@ async function handleWorktreeInThread({
   }
 
   const projectDirectory = await getProjectDirectoryFromChannel(
-    parent as TextChannel,
+    parent,
   )
   if (errore.isError(projectDirectory)) {
     await command.editReply(projectDirectory.message)
     return
   }
 
-  let baseBranch = rawBaseBranch
-  if (baseBranch) {
-    const validated = await validateBranchRef({
-      directory: projectDirectory,
-      ref: baseBranch,
-    })
-    if (validated instanceof Error) {
-      await command.editReply(`Invalid base branch: \`${baseBranch}\``)
-      return
-    }
-    baseBranch = validated
+  const baseBranch = await resolveRequestedWorktreeBaseRef({
+    projectDirectory,
+    rawBaseBranch,
+  })
+  if (baseBranch instanceof Error) {
+    await command.editReply(`Invalid base branch: \`${rawBaseBranch}\``)
+    return
   }
 
   const existingWorktreePath = await findExistingWorktreePath({

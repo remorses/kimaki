@@ -182,7 +182,7 @@ export async function registerCommands({
     new SlashCommandBuilder()
       .setName('new-worktree')
       .setDescription(
-        truncateCommandDescription('Create a git worktree branch from HEAD by default. Optionally pick a base branch.'),
+        truncateCommandDescription('Create a git worktree from the current HEAD by default. Optionally pick a base branch.'),
       )
       .addStringOption((option) => {
         option
@@ -198,7 +198,7 @@ export async function registerCommands({
         option
           .setName('base-branch')
           .setDescription(
-            truncateCommandDescription('Branch to create the worktree from (default: HEAD)'),
+            truncateCommandDescription('Branch to create the worktree from (default: current HEAD)'),
           )
           .setRequired(false)
           .setAutocomplete(true)
