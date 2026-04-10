@@ -15,10 +15,7 @@
 
 import fs from 'node:fs'
 import path from 'node:path'
-import { promisify } from 'node:util'
-import { exec } from 'node:child_process'
-
-const execAsync = promisify(exec)
+import { execAsync } from '../src/exec-async.js'
 
 // ─── Config ──────────────────────────────────────────────────────────────────
 // Each entry is a GitHub URL. Subpath after /tree/branch/ narrows the search.
@@ -216,7 +213,30 @@ async function cloneRepo(
   const refArgs = parsed.ref ? `--branch ${parsed.ref}` : ''
   const cmd = `git clone --depth 1 ${refArgs} ${parsed.url} ${targetDir}`
 
-  await execAsync(cmd, { timeout: 60_000 })
+  const maxAttempts = 3
+  for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+    try {
+      await execAsync(cmd, { timeout: 60_000 })
+      return targetDir
+    } catch (error) {
+      if (attempt === maxAttempts) {
+        throw error
+      }
+
+      if (fs.existsSync(targetDir)) {
+        fs.rmSync(targetDir, { recursive: true, force: true })
+      }
+
+      const retryDelayMs = attempt * 1_000
+      console.log(
+        `    clone attempt ${attempt} failed, retrying in ${retryDelayMs}ms...`,
+      )
+      await new Promise((resolve) => {
+        setTimeout(resolve, retryDelayMs)
+      })
+    }
+  }
+
   return targetDir
 }
 
