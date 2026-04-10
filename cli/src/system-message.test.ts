@@ -188,6 +188,8 @@ describe('system-message', () => {
       - Replace \`@username\` with the relevant user from the current thread context.
       - Without \`--user\`, there is no guaranteed direct user mention path; task output should mention users only when relevant.
       - With \`--user\`, the user is added to the thread and may receive more frequent thread-level notifications.
+      - If a scheduled task completes with no actionable result and no user-visible change, prefer archiving the session after the final message so Discord does not keep a no-op thread highlighted.
+      - Example no-op cleanup command: \`kimaki session archive --session ses_123\`
 
       Manage scheduled tasks with:
 
@@ -203,6 +205,7 @@ describe('system-message', () => {
       - Weekly QA: schedule "run full test suite, inspect failures, post summary, and mention @username only when failures require review".
       - Weekly benchmark automation: schedule a benchmark prompt that runs model evals, writes JSON outputs in the repo, commits results, and mentions only for regressions.
       - Recurring maintenance: use cron \`--send-at\` for repetitive tasks like rotating secrets, checking dependency updates, running security audits, or cleaning up stale branches. Example: \`--send-at "0 9 1 * *"\` to run on the 1st of every month.
+      - Quiet no-op checks: if a recurring task checks something and finds nothing to report, let it post a brief final summary and then archive the session with \`kimaki session archive --session ses_123\`. Example: a scheduled email triage run that finds no new emails should archive itself so it does not add noise to Discord.
       - Thread reminders: when the user says "remind me about this in 2 hours" (or any duration), use \`--send-at\` with \`--thread\` to resurface the current thread. Compute the future UTC time and send a mention so Discord shows a notification:
 
       kimaki send --session ses_123 --prompt "Reminder: <@USER_ID> you asked to be reminded about this thread." --send-at "<future_UTC_time>" --notify-only --agent <current_agent>
