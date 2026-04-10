@@ -22,6 +22,94 @@ import type { CommandContext } from './types.js'
 
 const logger = createLogger(LogPrefix.FORK)
 
+export async function forkSessionToBtwThread({
+  sourceThread,
+  projectDirectory,
+  prompt,
+  userId,
+  username,
+  appId,
+}: {
+  sourceThread: ThreadChannel
+  projectDirectory: string
+  prompt: string
+  userId: string
+  username: string
+  appId: string | undefined
+}): Promise<{ thread: ThreadChannel; forkedSessionId: string } | Error> {
+  const sessionId = await getThreadSession(sourceThread.id)
+  if (!sessionId) {
+    return new Error('No active session in this thread')
+  }
+
+  const getClient = await initializeOpencodeForDirectory(projectDirectory)
+  if (getClient instanceof Error) {
+    return new Error(`Failed to fork session: ${getClient.message}`, {
+      cause: getClient,
+    })
+  }
+
+  const forkResponse = await getClient().session.fork({
+    sessionID: sessionId,
+  })
+  if (!forkResponse.data) {
+    return new Error('Failed to fork session')
+  }
+
+  const textChannel = await resolveTextChannel(sourceThread)
+  if (!textChannel) {
+    return new Error('Could not resolve parent text channel')
+  }
+
+  const forkedSession = forkResponse.data
+  const thread = await textChannel.threads.create({
+    name: `btw: ${prompt}`.slice(0, 100),
+    autoArchiveDuration: ThreadAutoArchiveDuration.OneDay,
+    reason: `btw fork from session ${sessionId}`,
+  })
+
+  await setThreadSession(thread.id, forkedSession.id)
+  await thread.members.add(userId)
+
+  logger.log(
+    `Created btw fork session ${forkedSession.id} in thread ${thread.id} from ${sessionId}`,
+  )
+
+  const sourceThreadLink = `<#${sourceThread.id}>`
+  await sendThreadMessage(
+    thread,
+    `Reusing context from ${sourceThreadLink} to answer prompt...\n${prompt}`,
+  )
+
+  const wrappedPrompt = [
+    `The user asked a side question while you were working on another task.`,
+    `This is a forked session whose ONLY goal is to answer this question.`,
+    `Do NOT continue, resume, or reference the previous task. Only answer the question below.\n`,
+    prompt,
+  ].join('\n')
+
+  const runtime = getOrCreateRuntime({
+    threadId: thread.id,
+    thread,
+    projectDirectory,
+    sdkDirectory: projectDirectory,
+    channelId: textChannel.id,
+    appId,
+  })
+  await runtime.enqueueIncoming({
+    prompt: wrappedPrompt,
+    userId,
+    username,
+    appId,
+    mode: 'opencode',
+  })
+
+  return {
+    thread,
+    forkedSessionId: forkedSession.id,
+  }
+}
+
 export async function handleBtwCommand({
   command,
   appId,
@@ -36,13 +124,11 @@ export async function handleBtwCommand({
     return
   }
 
-  const isThread = [
-    ChannelType.PublicThread,
-    ChannelType.PrivateThread,
-    ChannelType.AnnouncementThread,
-  ].includes(channel.type)
-
-  if (!isThread) {
+  if (
+    channel.type !== ChannelType.PublicThread
+    && channel.type !== ChannelType.PrivateThread
+    && channel.type !== ChannelType.AnnouncementThread
+  ) {
     await command.reply({
       content:
         'This command can only be used in a thread with an active session',
@@ -51,10 +137,12 @@ export async function handleBtwCommand({
     return
   }
 
+  const threadChannel = channel
+
   const prompt = command.options.getString('prompt', true)
 
   const resolved = await resolveWorkingDirectory({
-    channel: channel as ThreadChannel,
+    channel: threadChannel,
   })
 
   if (!resolved) {
@@ -67,93 +155,25 @@ export async function handleBtwCommand({
 
   const { projectDirectory } = resolved
 
-  const sessionId = await getThreadSession(channel.id)
-
-  if (!sessionId) {
-    await command.reply({
-      content: 'No active session in this thread',
-      flags: MessageFlags.Ephemeral,
-    })
-    return
-  }
-
   await command.deferReply({ flags: MessageFlags.Ephemeral })
 
-  const getClient = await initializeOpencodeForDirectory(projectDirectory)
-  if (getClient instanceof Error) {
-    await command.editReply({
-      content: `Failed to fork session: ${getClient.message}`,
-    })
-    return
-  }
-
   try {
-    // Fork the entire session (no messageID = fork at the latest point)
-    const forkResponse = await getClient().session.fork({
-      sessionID: sessionId,
-    })
-
-    if (!forkResponse.data) {
-      await command.editReply('Failed to fork session')
-      return
-    }
-
-    const forkedSession = forkResponse.data
-
-    const textChannel = await resolveTextChannel(channel as ThreadChannel)
-    if (!textChannel) {
-      await command.editReply('Could not resolve parent text channel')
-      return
-    }
-
-    const threadName = `btw: ${prompt}`.slice(0, 100)
-    const thread = await textChannel.threads.create({
-      name: threadName,
-      autoArchiveDuration: ThreadAutoArchiveDuration.OneDay,
-      reason: `btw fork from session ${sessionId}`,
-    })
-
-    // Claim the forked session immediately so external polling does not race
-    await setThreadSession(thread.id, forkedSession.id)
-
-    await thread.members.add(command.user.id)
-
-    logger.log(
-      `Created btw fork session ${forkedSession.id} in thread ${thread.id} from ${sessionId}`,
-    )
-
-    // Short status message with prompt instead of replaying past messages
-    const sourceThreadLink = `<#${channel.id}>`
-    await sendThreadMessage(
-      thread,
-      `Reusing context from ${sourceThreadLink} to answer prompt...\n${prompt}`,
-    )
-
-    const wrappedPrompt = [
-      `The user asked a side question while you were working on another task.`,
-      `This is a forked session whose ONLY goal is to answer this question.`,
-      `Do NOT continue, resume, or reference the previous task. Only answer the question below.\n`,
-      prompt,
-    ].join('\n')
-
-    const runtime = getOrCreateRuntime({
-      threadId: thread.id,
-      thread,
+    const result = await forkSessionToBtwThread({
+      sourceThread: threadChannel,
       projectDirectory,
-      sdkDirectory: projectDirectory,
-      channelId: textChannel.id,
-      appId,
-    })
-    await runtime.enqueueIncoming({
-      prompt: wrappedPrompt,
+      prompt,
       userId: command.user.id,
       username: command.user.displayName,
       appId,
-      mode: 'opencode',
     })
 
+    if (result instanceof Error) {
+      await command.editReply(result.message)
+      return
+    }
+
     await command.editReply(
-      `Session forked! Continue in ${thread.toString()}`,
+      `Session forked! Continue in ${result.thread.toString()}`,
     )
   } catch (error) {
     logger.error('Error in /btw:', error)

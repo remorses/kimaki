@@ -43,7 +43,9 @@ import {
   getTextAttachments,
   resolveMentions,
 } from './message-formatting.js'
+import { extractBtwPrefix } from './btw-prefix-detection.js'
 import { isVoiceAttachment } from './voice-attachment.js'
+import { forkSessionToBtwThread } from './commands/btw.js'
 import {
   preprocessExistingThreadMessage,
   preprocessNewThreadMessage,
@@ -618,6 +620,40 @@ export async function startDiscordBot({
             await loadingReply.edit({ content: result })
             return
           }
+        }
+
+        // Raw `btw ` mirrors /btw for fast side-question forks from Discord.
+        // Keep this at ingress instead of preprocess because it must create a
+        // new thread/runtime, not just transform the current prompt.
+        // Voice-transcribed `btw` still goes through normal preprocessing.
+        const btwShortcut =
+          projectDirectory && worktreeInfo?.status !== 'pending'
+            ? extractBtwPrefix(message.content || '')
+            : null
+        if (btwShortcut && projectDirectory) {
+          const result = await forkSessionToBtwThread({
+            sourceThread: thread,
+            projectDirectory,
+            prompt: btwShortcut.prompt,
+            userId: message.author.id,
+            username:
+              message.member?.displayName || message.author.displayName,
+            appId: currentAppId,
+          })
+
+          if (result instanceof Error) {
+            await message.reply({
+              content: result.message,
+              flags: SILENT_MESSAGE_FLAGS,
+            })
+            return
+          }
+
+          await message.reply({
+            content: `Session forked! Continue in ${result.thread.toString()}`,
+            flags: SILENT_MESSAGE_FLAGS,
+          })
+          return
         }
 
         const hasVoiceAttachment = message.attachments.some((attachment) => {
