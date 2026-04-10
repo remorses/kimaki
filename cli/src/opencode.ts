@@ -548,11 +548,17 @@ async function startSingleServer(): Promise<ServerStartError | SingleServer> {
   // priority chain, so project-level opencode.json can override kimaki defaults.
   // OPENCODE_CONFIG_CONTENT was loaded last and overrode user project configs,
   // causing issue #90 (project permissions not being respected).
+  const isDev = import.meta.url.endsWith('.ts') || import.meta.url.endsWith('.tsx')
   const opencodeConfig = {
     $schema: 'https://opencode.ai/config.json',
     lsp: false,
     formatter: false,
-    plugin: [new URL('../src/kimaki-opencode-plugin.ts', import.meta.url).href],
+    plugin: [
+      new URL(
+        isDev ? './kimaki-opencode-plugin.ts' : './kimaki-opencode-plugin.js',
+        import.meta.url,
+      ).href,
+    ],
     permission: {
       edit: 'allow',
       bash: 'allow',
