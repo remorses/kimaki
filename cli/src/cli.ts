@@ -127,6 +127,8 @@ import {
 import {
   accountLabel,
   accountsFilePath,
+  authFilePath,
+  getCurrentAnthropicAccount,
   loadAccountStore,
   removeAccount,
 } from './anthropic-auth-state.js'
@@ -3182,6 +3184,42 @@ cli
       console.log(`${active} ${index + 1}. ${accountLabel(account)}`)
     })
 
+    process.exit(0)
+  })
+
+cli
+  .command(
+    'anthropic-accounts current',
+    'Show the current Anthropic OAuth account being used, if any',
+  )
+  .action(async () => {
+    const current = await getCurrentAnthropicAccount()
+    console.log(`Store: ${accountsFilePath()}`)
+    console.log(`Auth: ${authFilePath()}`)
+
+    if (!current) {
+      console.log('No active Anthropic OAuth account configured.')
+      process.exit(0)
+    }
+
+    const lines: string[] = []
+    lines.push(`Current: ${accountLabel(current.account || current.auth, current.index)}`)
+
+    if (current.account?.email) {
+      lines.push(`Email: ${current.account.email}`)
+    } else {
+      lines.push('Email: unavailable')
+    }
+
+    if (current.account?.accountId) {
+      lines.push(`Account ID: ${current.account.accountId}`)
+    }
+
+    if (!current.account) {
+      lines.push('Rotation pool entry: not found')
+    }
+
+    console.log(lines.join('\n'))
     process.exit(0)
   })
 

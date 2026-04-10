@@ -17,6 +17,12 @@ export type OAuthStored = {
   expires: number
 }
 
+export type CurrentAnthropicAccount = {
+  auth: OAuthStored
+  account?: OAuthStored & AnthropicAccountIdentity
+  index?: number
+}
+
 type AccountRecord = OAuthStored & {
   email?: string
   accountId?: string
@@ -241,6 +247,45 @@ async function writeAnthropicAuthFile(auth: OAuthStored | undefined) {
     delete data.anthropic
   }
   await writeJson(file, data)
+}
+
+function isOAuthStored(value: unknown): value is OAuthStored {
+  if (!value || typeof value !== 'object') {
+    return false
+  }
+
+  const record = value as Record<string, unknown>
+  return (
+    record.type === 'oauth' &&
+    typeof record.refresh === 'string' &&
+    typeof record.access === 'string' &&
+    typeof record.expires === 'number'
+  )
+}
+
+export async function getCurrentAnthropicAccount() {
+  const authJson = await readJson<Record<string, unknown>>(authFilePath(), {})
+  const auth = authJson.anthropic
+  if (!isOAuthStored(auth)) {
+    return null
+  }
+
+  const store = await loadAccountStore()
+  const index = findCurrentAccountIndex(store, auth)
+  const account = store.accounts[index]
+  if (!account) {
+    return { auth } satisfies CurrentAnthropicAccount
+  }
+
+  if (account.refresh !== auth.refresh && account.access !== auth.access) {
+    return { auth } satisfies CurrentAnthropicAccount
+  }
+
+  return {
+    auth,
+    account,
+    index,
+  } satisfies CurrentAnthropicAccount
 }
 
 export async function setAnthropicAuth(
