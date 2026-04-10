@@ -23,6 +23,7 @@ import {
 import { initializeOpencodeForDirectory } from '../opencode.js'
 import { resolveTextChannel, getKimakiMetadata } from '../discord-utils.js'
 import { createLogger, LogPrefix } from '../logger.js'
+import { getCurrentModelInfo } from './model.js'
 
 const agentLogger = createLogger(LogPrefix.AGENT)
 
@@ -455,13 +456,34 @@ export async function handleQuickAgentCommand({
       ? ` (was **${previousAgentName}**)`
       : ''
 
+    // Resolve the model that will now be used for the new agent so we can
+    // show it in the reply. setAgentForContext already cleared any session
+    // model preference, so getCurrentModelInfo falls through to the agent's
+    // configured model (or channel/global/default).
+    const modelInfo = await (async () => {
+      const getClient = await initializeOpencodeForDirectory(context.dir)
+      if (getClient instanceof Error) {
+        return { type: 'none' as const }
+      }
+      return getCurrentModelInfo({
+        sessionId: context.sessionId,
+        channelId: context.channelId,
+        appId,
+        agentPreference: resolvedAgentName,
+        getClient,
+      })
+    })()
+
+    const modelText =
+      modelInfo.type === 'none' ? '' : `\nModel: *${modelInfo.model}*`
+
     if (context.isThread && context.sessionId) {
       await command.editReply({
-        content: `Switched to **${resolvedAgentName}** agent for this session${previousText}\nThe agent will change on the next message.`,
+        content: `Switched to **${resolvedAgentName}** agent for this session${previousText}${modelText}\nThe agent will change on the next message.`,
       })
     } else {
       await command.editReply({
-        content: `Switched to **${resolvedAgentName}** agent for this channel${previousText}\nAll new sessions will use this agent.`,
+        content: `Switched to **${resolvedAgentName}** agent for this channel${previousText}${modelText}\nAll new sessions will use this agent.`,
       })
     }
   } catch (error) {
