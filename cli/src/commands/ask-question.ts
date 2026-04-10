@@ -49,6 +49,48 @@ type PendingQuestionContext = {
 const QUESTION_CONTEXT_TTL_MS = 10 * 60 * 1000
 export const pendingQuestionContexts = new Map<string, PendingQuestionContext>()
 
+export function findPendingQuestionContextForRequest({
+  threadId,
+  requestId,
+}: {
+  threadId: string
+  requestId: string
+}): { contextHash: string; context: PendingQuestionContext } | null {
+  for (const [contextHash, context] of pendingQuestionContexts) {
+    if (context.thread.id !== threadId) {
+      continue
+    }
+    if (context.requestId !== requestId) {
+      continue
+    }
+    return { contextHash, context }
+  }
+  return null
+}
+
+export function deletePendingQuestionContextsForRequest({
+  threadId,
+  requestId,
+}: {
+  threadId: string
+  requestId: string
+}): number {
+  const matchingContextHashes = [...pendingQuestionContexts.entries()]
+    .filter(([, context]) => {
+      return context.thread.id === threadId && context.requestId === requestId
+    })
+    .map(([contextHash]) => {
+      return contextHash
+    })
+
+  matchingContextHashes.map((contextHash) => {
+    pendingQuestionContexts.delete(contextHash)
+    return contextHash
+  })
+
+  return matchingContextHashes.length
+}
+
 export function hasPendingQuestionForThread(threadId: string): boolean {
   return [...pendingQuestionContexts.values()].some((ctx) => {
     return ctx.thread.id === threadId
@@ -75,6 +117,17 @@ export async function showAskUserQuestionDropdowns({
   /** Suppress notification when queue has pending items */
   silent?: boolean
 }): Promise<void> {
+  const existingPending = findPendingQuestionContextForRequest({
+    threadId: thread.id,
+    requestId,
+  })
+  if (existingPending) {
+    logger.log(
+      `Deduped question ${requestId} for thread ${thread.id} (existing context ${existingPending.contextHash})`,
+    )
+    return
+  }
+
   const contextHash = crypto.randomBytes(8).toString('hex')
 
   const context: PendingQuestionContext = {
@@ -103,7 +156,10 @@ export async function showAskUserQuestionDropdowns({
     // Without this, a user clicking during the abort() await would still
     // be accepted by handleAskQuestionSelectMenu, then abort() would
     // kill that valid run.
-    pendingQuestionContexts.delete(contextHash)
+    deletePendingQuestionContextsForRequest({
+      threadId: ctx.thread.id,
+      requestId: ctx.requestId,
+    })
     // Abort the session so OpenCode isn't stuck waiting for a reply
     const client = getOpencodeClient(ctx.directory)
     if (client) {
@@ -232,7 +288,10 @@ export async function handleAskQuestionSelectMenu(
   if (context.answeredCount >= context.totalQuestions) {
     // All questions answered - send result back to session
     await submitQuestionAnswers(context)
-    pendingQuestionContexts.delete(contextHash)
+    deletePendingQuestionContextsForRequest({
+      threadId: context.thread.id,
+      requestId: context.requestId,
+    })
   }
 }
 
@@ -357,7 +416,10 @@ export async function cancelPendingQuestion(
   // the question without providing an answer (e.g. voice/attachment-only
   // messages where content needs transcription before it can be an answer).
   if (userMessage === undefined) {
-    pendingQuestionContexts.delete(contextHash)
+    deletePendingQuestionContextsForRequest({
+      threadId: context.thread.id,
+      requestId: context.requestId,
+    })
     return 'no-pending'
   }
 
@@ -385,6 +447,9 @@ export async function cancelPendingQuestion(
     return 'reply-failed'
   }
 
-  pendingQuestionContexts.delete(contextHash)
+  deletePendingQuestionContextsForRequest({
+    threadId: context.thread.id,
+    requestId: context.requestId,
+  })
   return 'replied'
 }
