@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.4.102
+
+1. **Fixed OpenCode plugin failing to load in the published npm package** — kimaki now loads `dist/kimaki-opencode-plugin.js` in published builds instead of the TypeScript source entrypoint, which imported `.js` sibling files that don't exist under `src/` in the npm tarball. Users running kimaki under PM2 or npx saw `ERR_MODULE_NOT_FOUND: Cannot find module 'ipc-tools-plugin.js'` on startup; this is now fixed.
+
+2. **`~/.opensrc` is now pre-allowed in OpenCode permissions** — agents can inspect cached opensrc package checkouts without triggering interactive permission prompts.
+
 ## 0.4.101
 
 1. **Claude Max login works again when Anthropic shows the new third-party app billing prompt** — kimaki now rewrites Anthropic's transformed system prompt in the hook Anthropic actually reads, so OAuth login keeps working when Claude shows messages like "Third-party apps now draw from your extra usage" instead of silently falling back to a broken prompt state.
