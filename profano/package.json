@@ -16,7 +16,7 @@
     "prepublishOnly": "tsc"
   },
   "dependencies": {
-    "goke": "^6.5.2",
+    "goke": "^6.6.0",
     "zod": "^4.3.6"
   },
   "devDependencies": {

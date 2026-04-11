@@ -2384,32 +2384,12 @@ cli
     '--wait',
     'Wait for session to complete, then print session text to stdout',
   )
-  .action(
-    async (options: {
-      channel?: string
-      project?: string
-      prompt?: string
-      name?: string | boolean
-      appId?: string | boolean
-      notifyOnly?: boolean
-      worktree?: string | boolean
-      cwd?: string
-      user?: string
-      agent?: string
-      model?: string
-      permission?: string[]
-      injectionGuard?: string[]
-      sendAt?: string
-      thread?: string
-      session?: string
-      wait?: boolean
-    }) => {
+  .action(async (options) => {
       try {
-        // Optional-value flags ([value]) surface as string | boolean in goke; narrow to string | undefined
-        const nameOpt =
-          typeof options.name === 'string' ? options.name : undefined
-        const optionAppId =
-          typeof options.appId === 'string' ? options.appId : undefined
+        // `--name` / `--app-id` are optional-value flags: `undefined` when
+        // omitted, `''` when passed bare, a real string when given a value.
+        // `||` collapses `''` to `undefined` for downstream consumers.
+        const optionAppId = options.appId || undefined
         let {
           channel: channelId,
           prompt,
@@ -2417,7 +2397,7 @@ cli
           thread: threadId,
           session: sessionId,
         } = options
-        let name: string | undefined = nameOpt
+        let name: string | undefined = options.name || undefined
         const { project: projectPath } = options
         const sendAt = options.sendAt
 
@@ -3735,16 +3715,15 @@ cli
   )
   .option('-g, --guild <guildId>', 'Discord guild/server ID (required)')
   .option('-q, --query [query]', 'Search query to filter users by name')
-  .action(async (options: { guild?: string; query?: string | boolean }) => {
+  .action(async (options) => {
     try {
       if (!options.guild) {
         cliLogger.error('Guild ID is required. Use --guild <guildId>')
         process.exit(EXIT_NO_RESTART)
       }
       const guildId = String(options.guild)
-      // Optional-value flag: narrow string | boolean to string | undefined
-      const query =
-        typeof options.query === 'string' ? options.query : undefined
+      // Bare `--query` comes through as `''`; collapse it to undefined
+      const query = options.query || undefined
 
       await initDatabase()
       const { token: botToken } = await resolveBotCredentials()
@@ -3806,14 +3785,7 @@ cli
   .option('-h, --host [host]', 'Local host (default: localhost)')
   .option('-s, --server [url]', 'Tunnel server URL')
   .option('-k, --kill', 'Kill any existing process on the port before starting')
-  .action(
-    async (options: {
-      port?: string
-      tunnelId?: string | boolean
-      host?: string | boolean
-      server?: string | boolean
-      kill?: boolean
-    }) => {
+  .action(async (options) => {
       const { runTunnel, parseCommandFromArgv, CLI_NAME } = await import(
         'traforo/run-tunnel'
       )
@@ -3833,16 +3805,12 @@ cli
       // Parse command after -- from argv
       const { command } = parseCommandFromArgv(process.argv)
 
-      // Optional-value flags ([value]) can be boolean true when bare; narrow to string | undefined
-      const asOptionalString = (v: string | boolean | undefined) =>
-        typeof v === 'string' ? v : undefined
-
       await runTunnel({
         port,
-        tunnelId: asOptionalString(options.tunnelId),
-        localHost: asOptionalString(options.host),
+        tunnelId: options.tunnelId || undefined,
+        localHost: options.host || undefined,
         baseDomain: 'kimaki.dev',
-        serverUrl: asOptionalString(options.server),
+        serverUrl: options.server || undefined,
         command: command.length > 0 ? command : undefined,
         kill: options.kill,
       })
