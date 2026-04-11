@@ -618,11 +618,11 @@ describe('system-message', () => {
       </system-reminder>
 
       <system-reminder>
-      This session is running inside a git worktree. The working directory (cwd / pwd) changed.
-      - Worktree path (new cwd / pwd): /repo/.worktrees/prompt-cache
+      This session is running inside a git worktree. The working directory (cwd / pwd) has changed. The user expects you to edit files in the new cwd. You MUST operate inside the new worktree from now on.
+      - New worktree path (new cwd / pwd, edit files here): /repo/.worktrees/prompt-cache
       - Branch: prompt-cache
-      - Main repo (previous folder): /repo
-      Run checks in this worktree. Read, write, and edit files only under /repo/.worktrees/prompt-cache. Do NOT read, write, or edit files under /repo. Do not create another worktree by default. Ask before merging changes back to the main branch.
+      - Main repo path (previous folder, DO NOT TOUCH): /repo
+      You MUST read, write, and edit files only under the new worktree path /repo/.worktrees/prompt-cache. You MUST NOT read, write, or edit any files under the main repo path /repo — even though it is the same project, that folder is a separate checkout and the user or another agent may be actively working there, so writing to it would override their unrelated changes. Run all checks (tests, builds, lint) inside the new worktree. Do not create another worktree by default. Ask before merging changes back to the main branch.
       </system-reminder>
       "
     `)

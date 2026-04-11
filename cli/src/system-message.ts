@@ -324,7 +324,7 @@ ${escapePromptText(repliedMessage.text)}
       : []),
     ...(worktree && worktreeChanged
       ? [
-          `<system-reminder>\nThis session is running inside a git worktree. The working directory (cwd / pwd) changed.\n- Worktree path (new cwd / pwd): ${worktree.worktreeDirectory}\n- Branch: ${worktree.branch}\n- Main repo (previous folder): ${worktree.mainRepoDirectory}\nRun checks in this worktree. Read, write, and edit files only under ${worktree.worktreeDirectory}. Do NOT read, write, or edit files under ${worktree.mainRepoDirectory}. Do not create another worktree by default. Ask before merging changes back to the main branch.\n</system-reminder>`,
+          `<system-reminder>\nThis session is running inside a git worktree. The working directory (cwd / pwd) has changed. The user expects you to edit files in the new cwd. You MUST operate inside the new worktree from now on.\n- New worktree path (new cwd / pwd, edit files here): ${worktree.worktreeDirectory}\n- Branch: ${worktree.branch}\n- Main repo path (previous folder, DO NOT TOUCH): ${worktree.mainRepoDirectory}\nYou MUST read, write, and edit files only under the new worktree path ${worktree.worktreeDirectory}. You MUST NOT read, write, or edit any files under the main repo path ${worktree.mainRepoDirectory} — even though it is the same project, that folder is a separate checkout and the user or another agent may be actively working there, so writing to it would override their unrelated changes. Run all checks (tests, builds, lint) inside the new worktree. Do not create another worktree by default. Ask before merging changes back to the main branch.\n</system-reminder>`,
         ]
       : []),
   ]

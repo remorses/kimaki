@@ -46,7 +46,7 @@ describe('shouldInjectPwd', () => {
       {
         "inject": true,
         "text": "
-      [working directory changed (cwd / pwd changed). Previous folder: /repo/main. Current folder (new cwd / pwd): /repo/worktree. You should read, write, and edit files under /repo/worktree. Do NOT read, write, or edit files under the previous folder /repo/main.]
+      [working directory changed (cwd / pwd has changed). The user expects you to edit files in the new cwd. Previous folder (DO NOT TOUCH): /repo/main. New folder (new cwd / pwd, edit files here): /repo/worktree. You MUST read, write, and edit files only under the new folder /repo/worktree. You MUST NOT read, write, or edit any files under the previous folder /repo/main — that folder is a separate checkout and the user or another agent may be actively working there, so writing to it would override their unrelated changes.]
       ",
       }
     `)
@@ -63,7 +63,7 @@ describe('shouldInjectPwd', () => {
       {
         "inject": true,
         "text": "
-      [working directory changed (cwd / pwd changed). Previous folder: /repo/worktree-a. Current folder (new cwd / pwd): /repo/worktree-b. You should read, write, and edit files under /repo/worktree-b. Do NOT read, write, or edit files under the previous folder /repo/worktree-a.]
+      [working directory changed (cwd / pwd has changed). The user expects you to edit files in the new cwd. Previous folder (DO NOT TOUCH): /repo/worktree-a. New folder (new cwd / pwd, edit files here): /repo/worktree-b. You MUST read, write, and edit files only under the new folder /repo/worktree-b. You MUST NOT read, write, or edit any files under the previous folder /repo/worktree-a — that folder is a separate checkout and the user or another agent may be actively working there, so writing to it would override their unrelated changes.]
       ",
       }
     `)

@@ -112,10 +112,14 @@ export function shouldInjectPwd({
     // Trailing newline so this synthetic part does not fuse with the next text
     // part when the model concatenates message parts.
     text:
-      `\n[working directory changed (cwd / pwd changed). Previous folder: ${priorDirectory}. ` +
-      `Current folder (new cwd / pwd): ${currentDir}. ` +
-      `You should read, write, and edit files under ${currentDir}. ` +
-      `Do NOT read, write, or edit files under the previous folder ${priorDirectory}.]\n`,
+      `\n[working directory changed (cwd / pwd has changed). ` +
+      `The user expects you to edit files in the new cwd. ` +
+      `Previous folder (DO NOT TOUCH): ${priorDirectory}. ` +
+      `New folder (new cwd / pwd, edit files here): ${currentDir}. ` +
+      `You MUST read, write, and edit files only under the new folder ${currentDir}. ` +
+      `You MUST NOT read, write, or edit any files under the previous folder ${priorDirectory} — ` +
+      `that folder is a separate checkout and the user or another agent may be actively working there, ` +
+      `so writing to it would override their unrelated changes.]\n`,
   }
 }
 
