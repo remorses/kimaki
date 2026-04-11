@@ -623,7 +623,8 @@ describe('system-message', () => {
       - Branch: prompt-cache
       - Main repo: /repo
       Run checks in this worktree. Do not create another worktree by default. Ask before merging changes back to the main branch.
-      </system-reminder>"
+      </system-reminder>
+      "
     `)
   })
 })

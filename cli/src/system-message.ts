@@ -328,7 +328,13 @@ ${escapePromptText(repliedMessage.text)}
         ]
       : []),
   ]
-  return sections.join('\n\n')
+  if (sections.length === 0) {
+    return ''
+  }
+  // Always end synthetic context with a trailing newline so it does not fuse
+  // with the next text part (for example the user's actual prompt) when the
+  // model concatenates message parts.
+  return `${sections.join('\n\n')}\n`
 }
 
 export function getOpencodeSystemMessage({

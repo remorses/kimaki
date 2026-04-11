@@ -83,8 +83,10 @@ export function shouldInjectBranch({
   if (previousGitState && previousGitState.key === currentGitState.key) {
     return { inject: false }
   }
-  const text = currentGitState.warning || `\n[current git branch is ${currentGitState.label}]`
-  return { inject: true, text }
+  // Trailing newline so this synthetic part does not fuse with the next text
+  // part when the model concatenates message parts.
+  const base = currentGitState.warning || `\n[current git branch is ${currentGitState.label}]`
+  return { inject: true, text: `${base}\n` }
 }
 
 export function shouldInjectPwd({
@@ -107,11 +109,13 @@ export function shouldInjectPwd({
 
   return {
     inject: true,
+    // Trailing newline so this synthetic part does not fuse with the next text
+    // part when the model concatenates message parts.
     text:
       `\n[working directory changed. Previous working directory: ${priorDirectory}. ` +
       `Current working directory: ${currentDir}. ` +
       `You should read, write, and edit files under ${currentDir}. ` +
-      `Do NOT read, write, or edit files under ${priorDirectory}.]`,
+      `Do NOT read, write, or edit files under ${priorDirectory}.]\n`,
   }
 }
 
@@ -327,7 +331,7 @@ const contextAwarenessPlugin: Plugin = async ({ directory, client }) => {
               sessionID,
               messageID: firstTextPart.messageID,
               type: 'text' as const,
-              text: `<system-reminder>\n${ONBOARDING_TUTORIAL_INSTRUCTIONS}\n</system-reminder>`,
+              text: `<system-reminder>\n${ONBOARDING_TUTORIAL_INSTRUCTIONS}\n</system-reminder>\n`,
               synthetic: true,
             })
           }
@@ -412,7 +416,7 @@ const contextAwarenessPlugin: Plugin = async ({ directory, client }) => {
               sessionID,
               messageID,
               type: 'text' as const,
-              text: '<system-reminder>The previous assistant message was large. If the conversation had non-obvious learnings that prevent future mistakes and are not already in code comments or AGENTS.md, add them to MEMORY.md with concise titles and brief content (2-3 sentences max).</system-reminder>',
+              text: '<system-reminder>The previous assistant message was large. If the conversation had non-obvious learnings that prevent future mistakes and are not already in code comments or AGENTS.md, add them to MEMORY.md with concise titles and brief content (2-3 sentences max).</system-reminder>\n',
               synthetic: true,
             })
             state.lastMemoryReminderAssistantMessageId =
