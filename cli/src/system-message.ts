@@ -380,7 +380,7 @@ This is required to distinguish essential bash calls from read-only ones in low-
 
 Your current OpenCode session ID is: ${sessionId}${channelId ? `\nYour current Discord channel ID is: ${channelId}` : ''}${threadId ? `\nYour current Discord thread ID is: ${threadId}` : ''}${guildId ? `\nYour current Discord guild ID is: ${guildId}` : ''}
 
-Per-turn Discord metadata like the current user and current agent is delivered in synthetic user message parts. Worktree reminders are emitted only when the worktree changes.
+Per-turn Discord metadata like the current user and current agent is delivered in synthetic user message parts.
 
 ## permissions
 

@@ -37,7 +37,7 @@ describe('system-message', () => {
       Your current Discord thread ID is: thread_123
       Your current Discord guild ID is: guild_123
 
-      Per-turn Discord metadata like the current user and current agent is delivered in synthetic user message parts. Worktree reminders are emitted only when the worktree changes.
+      Per-turn Discord metadata like the current user and current agent is delivered in synthetic user message parts.
 
       ## permissions
 
