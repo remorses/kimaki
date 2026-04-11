@@ -958,6 +958,7 @@ describe('agent model resolution', () => {
         ⬥ ok
         *project ⋅ main ⋅ Ns ⋅ N% ⋅ agent-model-v2 ⋅ **test-agent***
         Switched to **plan** agent for this session (was **test-agent**)
+        Model: *deterministic-provider/plan-model-v2*
         The agent will change on the next message.
         --- from: user (agent-model-tester)
         Reply with exactly: after-switch-msg
