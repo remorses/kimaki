@@ -133,18 +133,41 @@ A good skill captures **hard-won knowledge** that is not obvious from reading do
 
 A bad skill is just a copy of the tool's README or man page. If the agent could figure it out from `--help`, it does not need a skill for it.
 
-## Skills for CLI tools
+## Keep the SKILL.md thin — point at canonical docs
 
-For CLI tools, put as much documentation as possible into the CLI itself — in command descriptions, option help text, and examples shown by `--help`. The skill file should not duplicate that content. Instead, the skill should instruct the agent to run the help command first:
+The best skills are **thin**. They contain almost no documentation themselves. Their only job is to tell the agent where to find the full, fresh docs and to forbid truncation. This keeps docs in one place and stops the skill from going stale.
+
+There are two variants:
+
+**1. CLI tools → run `<tool> --help`**
+
+Put as much documentation as possible into the CLI itself — command descriptions, option help text, examples. The skill then says:
 
 ```markdown
-**Always run `mytool --help` before using this tool.** The help output
-is the source of truth for all commands, options, and examples.
+Every time you use mytool, you MUST run:
+
+\`\`\`bash
+mytool --help # NEVER pipe to head/tail, read the full output
+\`\`\`
 ```
 
-This keeps documentation in one place (the CLI binary) and avoids the skill going stale when the CLI updates.
+Exception: some CLIs have a dedicated `<tool> skill` subcommand when `--help` is not rich enough (e.g. `playwriter skill`). Prefer `--help` by default and only use a custom subcommand when the CLI ships one.
 
-When running help commands, the agent must read the **full untruncated output**. Never pipe help output through `head`, `tail`, `sed -n`, or any command that strips or truncates lines. Agents do this frequently and it causes them to miss critical options and context. The help output exists to be read in full.
+**2. Libraries and projects → curl the raw README**
+
+For libraries, frameworks, and pattern skills, keep the canonical docs in `README.md` and have the skill curl the raw file from the main branch so the agent always reads the latest version:
+
+```markdown
+Every time you work with myproject, you MUST fetch the latest README:
+
+\`\`\`bash
+curl -s https://raw.githubusercontent.com/owner/repo/main/README.md # NEVER pipe to head/tail
+\`\`\`
+```
+
+If the README lives in a subdirectory (e.g. a package inside a monorepo), include that subpath: `.../main/packagename/README.md`.
+
+**Never truncate docs output.** The agent must read `--help` and curl'd README output **in full**. Never pipe through `head`, `tail`, `sed -n`, `awk`, `| less`, or any command that strips or limits lines. Critical rules are spread throughout the doc, not just at the top. Agents truncate frequently and miss important context — forbid it explicitly in the skill body.
 
 ## Examples from real skills
 
@@ -206,6 +229,7 @@ Before saving a new skill:
 
 1. Does the **description** clearly state when to load this skill? Would an agent reading just the description know whether to load it?
 2. Does the **name** match the folder name?
-3. Are there **concrete code examples** for the main workflows?
-4. Did you avoid duplicating content the agent can get from `--help` or standard docs?
-5. Did you capture the **gotchas** — the things that took trial and error to figure out?
+3. Does the skill **point at a single source of truth** (README curl URL or `--help` command) instead of duplicating docs inline?
+4. Is there an explicit **"never truncate"** rule next to any docs command?
+5. Are there **concrete code examples** for the main workflows?
+6. Did you capture the **gotchas** — the things that took trial and error to figure out?

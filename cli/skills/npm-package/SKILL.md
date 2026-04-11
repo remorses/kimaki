@@ -260,6 +260,69 @@ npx -y skills add owner/repo
 Remember to add `skills` to the `files` array in `package.json` so the skill
 directory is included when publishing.
 
+### Keep the SKILL.md thin
+
+The SKILL.md body should be a **few lines**, not a full docs dump. Put all
+real documentation in `README.md` (which already lives in `files`) and have
+the skill tell the agent to fetch it. This way agents always read the latest
+docs and the skill never goes stale.
+
+The body stays thin, but the **frontmatter `description` must be rich**. It
+is what the agent sees in its main context, and it is the only signal the
+agent uses to decide whether to load the skill. Make it long enough to
+cover: what the package is, the core concepts and APIs, concrete trigger
+phrases the user might say, and explicit "ALWAYS load this skill when..."
+conditions. A one-sentence description is almost always too short. See the
+`new-skill` skill for full guidance on writing descriptions.
+
+**CLI package template:**
+
+```md
+---
+name: mypkg
+description: |
+  mypkg is <what it does and the core concepts>. It exposes <main commands
+  or APIs> and is used for <typical tasks>. ALWAYS load this skill when
+  the user mentions mypkg, runs <binary>, edits files that import mypkg,
+  or asks about <trigger keywords>. Load it before writing any code that
+  touches mypkg so you know the correct usage patterns and gotchas.
+---
+
+# mypkg
+
+Every time you use mypkg, you MUST run:
+
+\`\`\`bash
+mypkg --help # NEVER pipe to head/tail, read the full output
+\`\`\`
+```
+
+**Library package template:**
+
+```md
+---
+name: mypkg
+description: |
+  mypkg is <what it does and the core concepts>. It exports <main APIs>
+  and is used for <typical tasks>. ALWAYS load this skill when the user
+  mentions mypkg, imports from mypkg, edits files that depend on it, or
+  asks about <trigger keywords>. Load it before writing any code that
+  touches mypkg so you know the correct usage patterns and gotchas.
+---
+
+# mypkg
+
+Every time you work with mypkg, you MUST fetch the latest README:
+
+\`\`\`bash
+curl -s https://raw.githubusercontent.com/owner/repo/main/README.md # NEVER pipe to head/tail
+\`\`\`
+```
+
+Because the SKILL.md body points at the README, the README must contain
+everything the agent needs: API reference, examples, gotchas, and rules.
+See the `new-skill` skill for the full pattern.
+
 ## .gitignore
 
 For non-workspace (standalone) packages, always create a `.gitignore` with:
