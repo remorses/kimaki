@@ -2389,8 +2389,8 @@ cli
       channel?: string
       project?: string
       prompt?: string
-      name?: string
-      appId?: string
+      name?: string | boolean
+      appId?: string | boolean
       notifyOnly?: boolean
       worktree?: string | boolean
       cwd?: string
@@ -2405,15 +2405,19 @@ cli
       wait?: boolean
     }) => {
       try {
+        // Optional-value flags ([value]) surface as string | boolean in goke; narrow to string | undefined
+        const nameOpt =
+          typeof options.name === 'string' ? options.name : undefined
+        const optionAppId =
+          typeof options.appId === 'string' ? options.appId : undefined
         let {
           channel: channelId,
           prompt,
-          name,
-          appId: optionAppId,
           notifyOnly,
           thread: threadId,
           session: sessionId,
         } = options
+        let name: string | undefined = nameOpt
         const { project: projectPath } = options
         const sendAt = options.sendAt
 
@@ -3731,13 +3735,16 @@ cli
   )
   .option('-g, --guild <guildId>', 'Discord guild/server ID (required)')
   .option('-q, --query [query]', 'Search query to filter users by name')
-  .action(async (options: { guild?: string; query?: string }) => {
+  .action(async (options: { guild?: string; query?: string | boolean }) => {
     try {
       if (!options.guild) {
         cliLogger.error('Guild ID is required. Use --guild <guildId>')
         process.exit(EXIT_NO_RESTART)
       }
       const guildId = String(options.guild)
+      // Optional-value flag: narrow string | boolean to string | undefined
+      const query =
+        typeof options.query === 'string' ? options.query : undefined
 
       await initDatabase()
       const { token: botToken } = await resolveBotCredentials()
@@ -3749,9 +3756,9 @@ cli
       }
 
       const members: GuildMember[] = await (async () => {
-        if (options.query) {
+        if (query) {
           return (await rest.get(Routes.guildMembersSearch(guildId), {
-            query: new URLSearchParams({ query: options.query, limit: '20' }),
+            query: new URLSearchParams({ query, limit: '20' }),
           })) as GuildMember[]
         }
         return (await rest.get(Routes.guildMembers(guildId), {
@@ -3760,8 +3767,8 @@ cli
       })()
 
       if (members.length === 0) {
-        const msg = options.query
-          ? `No users found matching "${options.query}"`
+        const msg = query
+          ? `No users found matching "${query}"`
           : 'No users found in guild'
         cliLogger.log(msg)
         process.exit(0)
@@ -3774,8 +3781,8 @@ cli
         })
         .join('\n')
 
-      const header = options.query
-        ? `Found ${members.length} users matching "${options.query}":`
+      const header = query
+        ? `Found ${members.length} users matching "${query}":`
         : `Found ${members.length} users:`
 
       console.log(`${header}\n${userList}`)
@@ -3802,9 +3809,9 @@ cli
   .action(
     async (options: {
       port?: string
-      tunnelId?: string
-      host?: string
-      server?: string
+      tunnelId?: string | boolean
+      host?: string | boolean
+      server?: string | boolean
       kill?: boolean
     }) => {
       const { runTunnel, parseCommandFromArgv, CLI_NAME } = await import(
@@ -3826,12 +3833,16 @@ cli
       // Parse command after -- from argv
       const { command } = parseCommandFromArgv(process.argv)
 
+      // Optional-value flags ([value]) can be boolean true when bare; narrow to string | undefined
+      const asOptionalString = (v: string | boolean | undefined) =>
+        typeof v === 'string' ? v : undefined
+
       await runTunnel({
         port,
-        tunnelId: options.tunnelId,
-        localHost: options.host,
+        tunnelId: asOptionalString(options.tunnelId),
+        localHost: asOptionalString(options.host),
         baseDomain: 'kimaki.dev',
-        serverUrl: options.server,
+        serverUrl: asOptionalString(options.server),
         command: command.length > 0 ? command : undefined,
         kill: options.kill,
       })

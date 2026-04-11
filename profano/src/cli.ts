@@ -54,7 +54,7 @@ cli
 
       const profile = loadProfile(filePath)
       const result = analyze(profile)
-      console.log(formatTable({ ...result, limit: options.limit, sort }))
+      console.log(formatTable({ ...result, limit: options.limit ?? 30, sort }))
     }
   })
 
