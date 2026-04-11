@@ -112,10 +112,10 @@ export function shouldInjectPwd({
     // Trailing newline so this synthetic part does not fuse with the next text
     // part when the model concatenates message parts.
     text:
-      `\n[working directory changed. Previous working directory: ${priorDirectory}. ` +
-      `Current working directory: ${currentDir}. ` +
+      `\n[working directory changed (cwd / pwd changed). Previous folder: ${priorDirectory}. ` +
+      `Current folder (new cwd / pwd): ${currentDir}. ` +
       `You should read, write, and edit files under ${currentDir}. ` +
-      `Do NOT read, write, or edit files under ${priorDirectory}.]\n`,
+      `Do NOT read, write, or edit files under the previous folder ${priorDirectory}.]\n`,
   }
 }
 

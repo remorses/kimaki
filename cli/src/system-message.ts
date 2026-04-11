@@ -324,7 +324,7 @@ ${escapePromptText(repliedMessage.text)}
       : []),
     ...(worktree && worktreeChanged
       ? [
-          `<system-reminder>\nThis session is running inside a git worktree.\n- Worktree path: ${worktree.worktreeDirectory}\n- Branch: ${worktree.branch}\n- Main repo: ${worktree.mainRepoDirectory}\nRun checks in this worktree. Do not create another worktree by default. Ask before merging changes back to the main branch.\n</system-reminder>`,
+          `<system-reminder>\nThis session is running inside a git worktree. The working directory (cwd / pwd) changed.\n- Worktree path (new cwd / pwd): ${worktree.worktreeDirectory}\n- Branch: ${worktree.branch}\n- Main repo (previous folder): ${worktree.mainRepoDirectory}\nRun checks in this worktree. Read, write, and edit files only under ${worktree.worktreeDirectory}. Do NOT read, write, or edit files under ${worktree.mainRepoDirectory}. Do not create another worktree by default. Ask before merging changes back to the main branch.\n</system-reminder>`,
         ]
       : []),
   ]

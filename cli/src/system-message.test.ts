@@ -618,11 +618,11 @@ describe('system-message', () => {
       </system-reminder>
 
       <system-reminder>
-      This session is running inside a git worktree.
-      - Worktree path: /repo/.worktrees/prompt-cache
+      This session is running inside a git worktree. The working directory (cwd / pwd) changed.
+      - Worktree path (new cwd / pwd): /repo/.worktrees/prompt-cache
       - Branch: prompt-cache
-      - Main repo: /repo
-      Run checks in this worktree. Do not create another worktree by default. Ask before merging changes back to the main branch.
+      - Main repo (previous folder): /repo
+      Run checks in this worktree. Read, write, and edit files only under /repo/.worktrees/prompt-cache. Do NOT read, write, or edit files under /repo. Do not create another worktree by default. Ask before merging changes back to the main branch.
       </system-reminder>
       "
     `)

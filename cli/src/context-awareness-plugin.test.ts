@@ -46,7 +46,7 @@ describe('shouldInjectPwd', () => {
       {
         "inject": true,
         "text": "
-      [working directory changed. Previous working directory: /repo/main. Current working directory: /repo/worktree. You should read, write, and edit files under /repo/worktree. Do NOT read, write, or edit files under /repo/main.]
+      [working directory changed (cwd / pwd changed). Previous folder: /repo/main. Current folder (new cwd / pwd): /repo/worktree. You should read, write, and edit files under /repo/worktree. Do NOT read, write, or edit files under the previous folder /repo/main.]
       ",
       }
     `)
@@ -63,7 +63,7 @@ describe('shouldInjectPwd', () => {
       {
         "inject": true,
         "text": "
-      [working directory changed. Previous working directory: /repo/worktree-a. Current working directory: /repo/worktree-b. You should read, write, and edit files under /repo/worktree-b. Do NOT read, write, or edit files under /repo/worktree-a.]
+      [working directory changed (cwd / pwd changed). Previous folder: /repo/worktree-a. Current folder (new cwd / pwd): /repo/worktree-b. You should read, write, and edit files under /repo/worktree-b. Do NOT read, write, or edit files under the previous folder /repo/worktree-a.]
       ",
       }
     `)
