@@ -222,6 +222,109 @@ Use Node ESM-compatible compiler settings:
 ```
 
 
+## Package.json `imports` map (internal `#` aliases)
+
+Use `imports` when you need a package to swap between different implementations
+based on runtime (Node vs Bun vs browser vs SQLite vs better-sqlite3, etc.).
+Internal imports are `#`-prefixed, scoped to the package itself, and never
+leak to consumers. Consumers resolve through `exports`, not `imports`.
+
+### Point `types` at `dist`, not `src`
+
+The TypeScript docs are explicit about this:
+
+> If the package.json is part of the local project, an additional remapping
+> step is performed in order to find the **input** TypeScript implementation
+> file... This remapping uses the `outDir`/`declarationDir` and `rootDir`
+> from the tsconfig.json, so using `"imports"` usually requires an explicit
+> `rootDir` to be set.
+>
+> This variation allows package authors to write `"imports"` and `"exports"`
+> fields that reference only the compilation outputs that will be published
+> to npm, while still allowing local development to use the original
+> TypeScript source files.
+
+In other words, TypeScript automatically walks from `./dist/foo.d.ts` back
+to `./src/foo.ts` using `outDir` → `rootDir` during compilation. You do not
+need to point `types` at `src` manually — **let TypeScript remap it**.
+
+```json
+{
+  "imports": {
+    "#sqlite": {
+      "bun": "./src/platform/bun/sqlite.ts",
+      "node": {
+        "types": "./dist/platform/node/sqlite.d.ts",
+        "default": "./dist/platform/node/sqlite.js"
+      },
+      "default": {
+        "types": "./dist/platform/node/sqlite.d.ts",
+        "default": "./dist/platform/node/sqlite.js"
+      }
+    }
+  }
+}
+```
+
+Resolution flow when `tsc` sees `import db from '#sqlite'`:
+
+1. `imports["#sqlite"].node.types` → `./dist/platform/node/sqlite.d.ts`
+2. package.json is in the local project → apply the remap.
+3. Replace `outDir` (`dist`) with `rootDir` (`src`) → `./src/platform/node/sqlite.d.ts`
+4. Replace `.d.ts` with the source extension `.ts` → `./src/platform/node/sqlite.ts`
+5. Return `./src/platform/node/sqlite.ts` (it exists on a fresh clone, no build needed).
+6. Otherwise fall back to `./dist/platform/node/sqlite.d.ts`.
+
+### Why dist-first is correct
+
+- **No chicken-and-egg.** The remap is compile-time, so `tsc` works on a fresh
+  clone without `dist/` existing yet.
+- **Published map describes shipped files.** Every `imports` entry points at
+  something that will actually be in the npm tarball. No stale src paths
+  leaking into the published package.json.
+- **Works under plain Node.** If the package is loaded by Node without
+  TypeScript involvement, Node reads the same `imports` map at runtime and
+  resolves to real `dist/*.js` files that exist.
+- **Bun / browser runtime conditions can still point at `src`**, because
+  those runtimes execute `.ts` directly and skip the build step.
+
+### Requirements
+
+This only works when:
+
+- `moduleResolution` is `node16`, `nodenext`, or `bundler`
+- `rootDir` is set explicitly in `tsconfig.json` (the skill's tsconfig rules
+  already require `"rootDir": "src"`)
+- `outDir` is set (already in the template)
+- `resolvePackageJsonImports` is not disabled (it is on by default for the
+  supported `moduleResolution` modes)
+
+### Anti-pattern: pointing `types` at `src` manually
+
+```json
+{
+  "imports": {
+    "#sqlite": {
+      "node": {
+        "types": "./src/platform/node/sqlite.ts",   // ❌ don't do this
+        "default": "./dist/platform/node/sqlite.js"
+      }
+    }
+  }
+}
+```
+
+This works but:
+
+1. The published `package.json` advertises `src/*.ts` paths that may or may
+   not exist depending on what you include in `files`.
+2. It bypasses TypeScript's built-in remapping, which is the whole point of
+   the local-project `imports` feature.
+3. It is inconsistent with `default` — mixing source (for types) and dist
+   (for runtime) paths in the same entry is easy to get wrong.
+
+Source of truth: [TypeScript Modules Reference — package.json "imports" and self-name imports](https://www.typescriptlang.org/docs/handbook/modules/reference.html#packagejson-imports-and-self-name-imports).
+
 ## tests location
 
 test files should be close with the associated source files. for example if you have an utils.ts file you will create utils.test.ts file next to it. with tests, importing from utils. preferred testing framework is vitest (or bun if project already using `bun test` or depends on bun APIs, rare)
