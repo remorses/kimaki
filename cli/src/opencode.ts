@@ -64,6 +64,7 @@ import {
   prependPathEntry,
   selectResolvedCommand,
 } from './opencode-command.js'
+import { computeSkillPermission } from './skill-filter.js'
 
 const opencodeLogger = createLogger(LogPrefix.OPENCODE)
 
@@ -549,6 +550,13 @@ async function startSingleServer(): Promise<ServerStartError | SingleServer> {
   // OPENCODE_CONFIG_CONTENT was loaded last and overrode user project configs,
   // causing issue #90 (project permissions not being respected).
   const isDev = import.meta.url.endsWith('.ts') || import.meta.url.endsWith('.tsx')
+  // Skill whitelist/blacklist from --enable-skill / --disable-skill CLI flags.
+  // Applied as opencode permission.skill rules so every agent inherits the
+  // filter via Permission.merge(defaults, agentRules, user).
+  const skillPermission = computeSkillPermission({
+    enabledSkills: store.getState().enabledSkills,
+    disabledSkills: store.getState().disabledSkills,
+  })
   const opencodeConfig = {
     $schema: 'https://opencode.ai/config.json',
     lsp: false,
@@ -564,6 +572,7 @@ async function startSingleServer(): Promise<ServerStartError | SingleServer> {
       bash: 'allow',
       external_directory: externalDirectoryPermissions,
       webfetch: 'allow',
+      ...(skillPermission && { skill: skillPermission }),
     },
     agent: {
       explore: {

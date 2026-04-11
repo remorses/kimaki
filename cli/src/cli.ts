@@ -90,6 +90,7 @@ import { createDiscordRest, discordApiUrl, getDiscordRestApiUrl, getGatewayProxy
 import crypto from 'node:crypto'
 import path from 'node:path'
 import fs from 'node:fs'
+import { fileURLToPath } from 'node:url'
 import * as errore from 'errore'
 
 import { createLogger, formatErrorWithStack, initLogFile, LogPrefix } from './logger.js'
@@ -1842,6 +1843,24 @@ cli
     '--gateway-callback-url <url>',
     'After gateway OAuth install, redirect to this URL instead of the default success page (appends ?guild_id=<id>)',
   )
+  .option(
+    '--enable-skill <name>',
+    z
+      .array(z.string())
+      .optional()
+      .describe(
+        'Whitelist a built-in skill by name. Only the listed skills are injected into the model (all others are hidden via an opencode permission.skill deny-all rule). Repeatable: pass --enable-skill multiple times. Mutually exclusive with --disable-skill. See https://github.com/remorses/kimaki/tree/main/cli/skills for available skills.',
+      ),
+  )
+  .option(
+    '--disable-skill <name>',
+    z
+      .array(z.string())
+      .optional()
+      .describe(
+        'Blacklist a built-in skill by name. Listed skills are hidden from the model. Repeatable: pass --disable-skill multiple times. Mutually exclusive with --enable-skill. See https://github.com/remorses/kimaki/tree/main/cli/skills for available skills.',
+      ),
+  )
   .action(
     async (options: {
       restartOnboarding?: boolean
@@ -1858,6 +1877,8 @@ cli
       noSentry?: boolean
       gateway?: boolean
       gatewayCallbackUrl?: string
+      enableSkill?: string[]
+      disableSkill?: string[]
     }) => {
       // Guard: only one kimaki bot process can run at a time (they share a lock
       // port). Running `kimaki` here would kill the already-running bot process
@@ -1901,6 +1922,47 @@ cli
           }
         }
 
+        // --enable-skill and --disable-skill are mutually exclusive: the user
+        // either whitelists a small allowlist or blacklists a few unwanted
+        // skills, never both. Applied later in opencode.ts as permission.skill
+        // rules via computeSkillPermission().
+        const enabledSkills = options.enableSkill ?? []
+        const disabledSkills = options.disableSkill ?? []
+        if (enabledSkills.length > 0 && disabledSkills.length > 0) {
+          cliLogger.error(
+            'Cannot use --enable-skill and --disable-skill at the same time. Use one or the other.',
+          )
+          process.exit(EXIT_NO_RESTART)
+        }
+        // Soft-validate skill names against the bundled skills/ folder. Users
+        // may rely on skills loaded from their own .opencode / .claude / .agents
+        // dirs, so unknown names only emit a warning rather than hard-failing.
+        if (enabledSkills.length > 0 || disabledSkills.length > 0) {
+          const bundledSkillsDir = path.resolve(
+            path.dirname(fileURLToPath(import.meta.url)),
+            '..',
+            'skills',
+          )
+          const availableBundledSkills = (() => {
+            try {
+              return fs
+                .readdirSync(bundledSkillsDir, { withFileTypes: true })
+                .filter((entry) => entry.isDirectory())
+                .map((entry) => entry.name)
+            } catch {
+              return [] as string[]
+            }
+          })()
+          const availableSet = new Set(availableBundledSkills)
+          for (const name of [...enabledSkills, ...disabledSkills]) {
+            if (!availableSet.has(name)) {
+              cliLogger.warn(
+                `Skill "${name}" is not a bundled kimaki skill. Rule will still apply (user-provided skills from .opencode/.claude/.agents dirs may match). Available bundled skills: ${availableBundledSkills.join(', ')}`,
+              )
+            }
+          }
+        }
+
         store.setState({
           ...(options.verbosity && {
             defaultVerbosity: options.verbosity as
@@ -1910,7 +1972,20 @@ cli
           }),
           ...(options.mentionMode && { defaultMentionMode: true }),
           ...(options.noCritique && { critiqueEnabled: false }),
+          ...(enabledSkills.length > 0 && { enabledSkills }),
+          ...(disabledSkills.length > 0 && { disabledSkills }),
         })
+
+        if (enabledSkills.length > 0) {
+          cliLogger.log(
+            `Skill whitelist enabled: only [${enabledSkills.join(', ')}] will be injected`,
+          )
+        }
+        if (disabledSkills.length > 0) {
+          cliLogger.log(
+            `Skill blacklist enabled: [${disabledSkills.join(', ')}] will be hidden`,
+          )
+        }
 
         if (options.verbosity) {
           cliLogger.log(`Default verbosity: ${options.verbosity}`)

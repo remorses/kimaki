@@ -65,6 +65,21 @@ export type KimakiState = {
   // Read by: system-message.ts (conditionally appends critique instructions).
   critiqueEnabled: boolean
 
+  // User-specified skill whitelist. When non-empty, only these skill names
+  // are injected into the model's system prompt (all others are hidden
+  // behind an opencode permission.skill deny-all rule). Mutually exclusive
+  // with disabledSkills — cli.ts enforces this at startup.
+  // Changes: set once at startup from --enable-skill CLI flag.
+  // Read by: opencode.ts when building opencode-config.json.
+  enabledSkills: string[]
+
+  // User-specified skill blacklist. Skills listed here are hidden from the
+  // model via opencode permission.skill deny rules. Mutually exclusive with
+  // enabledSkills — cli.ts enforces this at startup.
+  // Changes: set once at startup from --disable-skill CLI flag.
+  // Read by: opencode.ts when building opencode-config.json.
+  disabledSkills: string[]
+
   // Base URL for Discord REST API calls (default https://discord.com).
   // Overridden when using a gateway-proxy or gateway Discord mode.
   // Changes: set by getBotTokenWithMode() which runs at startup and on
@@ -114,6 +129,8 @@ export const store = createStore<KimakiState>(() => ({
   defaultVerbosity: 'text_and_essential_tools',
   defaultMentionMode: false,
   critiqueEnabled: true,
+  enabledSkills: [],
+  disabledSkills: [],
   discordBaseUrl: 'https://discord.com',
   gatewayToken: null,
   registeredUserCommands: [],
