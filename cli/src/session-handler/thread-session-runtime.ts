@@ -2594,8 +2594,9 @@ export class ThreadSessionRuntime {
 
     // When a question is answered and the local queue has items, the model may
     // continue the same run without ever reaching the local-queue idle gate.
-    // Hand the queued items to OpenCode's own prompt queue immediately instead
-    // of waiting for tryDrainQueue() to see an idle session.
+    // Hand off only the next queued item to OpenCode immediately so the queue
+    // resumes, but keep later items local so their `» user:` indicators still
+    // appear one-by-one when they actually become active.
     if (this.getQueueLength() > 0 && !this.questionReplyQueueHandoffPromise) {
       logger.log(
         `[QUESTION REPLIED] Queue has ${this.getQueueLength()} items, handing off to opencode queue`,
@@ -2614,8 +2615,8 @@ export class ThreadSessionRuntime {
   }
 
   // Detached helper promise for the "question answered while local queue has
-  // items" flow. Prevents starting two overlapping local->opencode queue
-  // handoff sequences when multiple question replies land close together.
+  // items" flow. Prevents starting two overlapping single-item handoffs when
+  // multiple question replies land close together.
   private questionReplyQueueHandoffPromise: Promise<void> | null = null
 
   private async handoffQueuedItemsAfterQuestionReply({
@@ -2633,24 +2634,22 @@ export class ThreadSessionRuntime {
       return
     }
 
-    while (this.state?.sessionId === sessionId) {
-      const next = threadState.dequeueItem(this.threadId)
-      if (!next) {
-        return
-      }
-
-      const displayText = next.command
-        ? `/${next.command.name}`
-        : `${next.prompt.slice(0, 150)}${next.prompt.length > 150 ? '...' : ''}`
-      if (displayText.trim()) {
-        await sendThreadMessage(
-          this.thread,
-          `» **${next.username}:** ${displayText}`,
-        )
-      }
-
-      await this.submitViaOpencodeQueue(next)
+    const next = threadState.dequeueItem(this.threadId)
+    if (!next) {
+      return
     }
+
+    const displayText = next.command
+      ? `/${next.command.name}`
+      : `${next.prompt.slice(0, 150)}${next.prompt.length > 150 ? '...' : ''}`
+    if (displayText.trim()) {
+      await sendThreadMessage(
+        this.thread,
+        `» **${next.username}:** ${displayText}`,
+      )
+    }
+
+    await this.submitViaOpencodeQueue(next)
   }
 
   private async handleSessionStatus(properties: {
