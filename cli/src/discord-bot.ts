@@ -19,7 +19,7 @@ import {
 import {
   stopOpencodeServer,
 } from './opencode.js'
-import { formatWorktreeName, createWorktreeInBackground, worktreeCreatingMessage } from './commands/new-worktree.js'
+import { formatAutoWorktreeName, createWorktreeInBackground, worktreeCreatingMessage } from './commands/new-worktree.js'
 import { validateWorktreeDirectory, git } from './worktrees.js'
 import { WORKTREE_PREFIX } from './commands/merge-worktree.js'
 import {
@@ -853,7 +853,9 @@ export async function startDiscordBot({
         // and the first message's preprocess callback awaits it before resolving.
         let worktreePromise: Promise<string | Error> | undefined
         if (shouldUseWorktrees) {
-          const worktreeName = formatWorktreeName(
+          // Auto-derived from thread name -- compress long slugs so the
+          // folder path stays short and the agent doesn't reuse old worktrees.
+          const worktreeName = formatAutoWorktreeName(
             hasVoice ? `voice-${Date.now()}` : threadName.slice(0, 50),
           )
           discordLogger.log(`[WORKTREE] Creating worktree: ${worktreeName}`)

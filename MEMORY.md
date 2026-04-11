@@ -129,3 +129,12 @@ see `Cannot find package 'undici'` from that test, just run `pnpm install`
 inside `cli/`. Do NOT assume it's a transitive dep — the comment in
 `discord-bot.ts:125` saying "undici is a transitive dep from discord.js"
 is misleading for the test file which needs the explicit dependency.
+
+## Worktree folder name ≠ branch name
+
+`getManagedWorktreeDirectory` strips the `opencode/kimaki-` prefix from the
+on-disk folder basename but the git branch name still keeps it. Two format
+helpers exist: `formatWorktreeName` (verbatim, for user-provided names) and
+`formatAutoWorktreeName` (vowel-compressed if >20 chars, for auto-derived
+names from thread titles/prompts). Worktrees now live under
+`<kimakiDataDir>/worktrees/<8charProjectHash>/<basename>`.

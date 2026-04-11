@@ -70,26 +70,82 @@ class WorktreeError extends Error {
 }
 
 /**
- * Format worktree name: lowercase, spaces to dashes, remove special chars, add opencode/kimaki- prefix.
- * "My Feature" → "opencode/kimaki-my-feature"
- * Returns empty string if no valid name can be extracted.
+ * Lowercase, collapse whitespace to dashes, drop non-[a-z0-9-] chars.
+ * Does NOT add the `opencode/kimaki-` prefix — callers do that so they can
+ * optionally compress the slug first for auto-derived names.
  */
-export function formatWorktreeName(name: string): string {
-  const formatted = name
+export function slugifyWorktreeName(name: string): string {
+  return name
     .toLowerCase()
     .trim()
     .replace(/\s+/g, '-')
     .replace(/[^a-z0-9-]/g, '')
+}
 
-  if (!formatted) {
+/**
+ * Compress a slug by stripping vowels from each dash-separated word, but
+ * keeping the first character so the word stays recognizable.
+ * Only applied to slugs longer than 20 chars — short names are left alone.
+ *
+ * "configurable-sidebar-width-by-component" → "cnfgrbl-sdbr-wdth-by-cmpnnt"
+ *
+ * Used ONLY for auto-derived worktree names (thread name, prompt slug)
+ * so long Discord titles don't produce 80-char folder paths that make
+ * the agent lazy and reuse the previous worktree. User-provided names
+ * via `--worktree <name>` or `/new-worktree name:` are never compressed.
+ */
+export function shortenWorktreeSlug(slug: string): string {
+  if (slug.length <= 20) {
+    return slug
+  }
+  const shortened = slug
+    .split('-')
+    .map((word) => {
+      if (!word) {
+        return word
+      }
+      const first = word[0]
+      const rest = word.slice(1).replace(/[aeiou]/g, '')
+      return first + rest
+    })
+    .join('-')
+  return shortened || slug
+}
+
+/**
+ * Format worktree name: lowercase, spaces to dashes, remove special chars, add opencode/kimaki- prefix.
+ * "My Feature" → "opencode/kimaki-my-feature"
+ * Returns empty string if no valid name can be extracted.
+ *
+ * This is the "explicit" path used when the user provides a specific name.
+ * The slug is NOT compressed — if you ask for `my-long-explicit-branch-name`
+ * you get `opencode/kimaki-my-long-explicit-branch-name` verbatim.
+ */
+export function formatWorktreeName(name: string): string {
+  const slug = slugifyWorktreeName(name)
+  if (!slug) {
     return ''
   }
-  return `opencode/kimaki-${formatted}`
+  return `opencode/kimaki-${slug}`
+}
+
+/**
+ * Format an auto-derived worktree name (from a Discord thread title or a
+ * prompt). Same as formatWorktreeName but compresses slugs longer than 20
+ * chars by stripping vowels so the on-disk folder name stays short.
+ */
+export function formatAutoWorktreeName(name: string): string {
+  const slug = slugifyWorktreeName(name)
+  if (!slug) {
+    return ''
+  }
+  return `opencode/kimaki-${shortenWorktreeSlug(slug)}`
 }
 
 /**
  * Derive worktree name from thread name.
  * Handles existing "⬦ worktree: opencode/kimaki-name" format or uses thread name directly.
+ * Uses formatAutoWorktreeName so long thread titles get vowel-compressed.
  */
 function deriveWorktreeNameFromThread(threadName: string): string {
   // Handle existing "⬦ worktree: opencode/kimaki-name" format
@@ -100,10 +156,10 @@ function deriveWorktreeNameFromThread(threadName: string): string {
     if (extractedName.startsWith('opencode/kimaki-')) {
       return extractedName
     }
-    return formatWorktreeName(extractedName)
+    return formatAutoWorktreeName(extractedName)
   }
-  // Use thread name directly
-  return formatWorktreeName(threadName)
+  // Use thread name directly (compressed if > 20 chars)
+  return formatAutoWorktreeName(threadName)
 }
 
 /**

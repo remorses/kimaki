@@ -8,8 +8,15 @@ import {
   buildSubmoduleReferencePlan,
   createWorktreeWithSubmodules,
   execAsync,
+  getManagedWorktreeDirectory,
   parseGitmodulesFileContent,
 } from './worktrees.js'
+import {
+  formatAutoWorktreeName,
+  formatWorktreeName,
+  shortenWorktreeSlug,
+} from './commands/new-worktree.js'
+import { setDataDir } from './config.js'
 
 const GIT_TIMEOUT_MS = 60_000
 
@@ -300,4 +307,64 @@ describe('worktrees', () => {
     }
   })
 
+  test('shortenWorktreeSlug leaves short slugs alone', () => {
+    expect(shortenWorktreeSlug('short-name')).toMatchInlineSnapshot(
+      `"short-name"`,
+    )
+    expect(shortenWorktreeSlug('exactly-twenty-chars')).toMatchInlineSnapshot(
+      `"exactly-twenty-chars"`,
+    )
+  })
+
+  test('shortenWorktreeSlug strips vowels from long slugs', () => {
+    expect(
+      shortenWorktreeSlug('configurable-sidebar-width-by-component'),
+    ).toMatchInlineSnapshot(`"cnfgrbl-sdbr-wdth-by-cmpnnt"`)
+    expect(
+      shortenWorktreeSlug('add-dark-mode-toggle-to-settings-page'),
+    ).toMatchInlineSnapshot(`"add-drk-md-tggl-t-sttngs-pg"`)
+  })
+
+  test('formatWorktreeName keeps user-provided slugs verbatim', () => {
+    expect(
+      formatWorktreeName('Configurable sidebar width by component'),
+    ).toMatchInlineSnapshot(`"opencode/kimaki-configurable-sidebar-width-by-component"`)
+    expect(formatWorktreeName('my-feature')).toMatchInlineSnapshot(`"opencode/kimaki-my-feature"`)
+  })
+
+  test('formatAutoWorktreeName compresses long auto-derived slugs', () => {
+    expect(
+      formatAutoWorktreeName('Configurable sidebar width by component'),
+    ).toMatchInlineSnapshot(`"opencode/kimaki-cnfgrbl-sdbr-wdth-by-cmpnnt"`)
+    expect(formatAutoWorktreeName('my-feature')).toMatchInlineSnapshot(`"opencode/kimaki-my-feature"`)
+  })
+
+  test('getManagedWorktreeDirectory writes under kimaki data dir and strips prefix', () => {
+    const sandbox = createTestRoot()
+    try {
+      setDataDir(sandbox)
+      const dir = getManagedWorktreeDirectory({
+        directory: '/Users/test/projects/my-app',
+        name: 'opencode/kimaki-cnfgrbl-sdbr-wdth-by-cmpnnt',
+      })
+      // Must sit inside <dataDir>/worktrees/<8hash>/<basename>
+      const rel = path.relative(sandbox, dir)
+      const parts = rel.split(path.sep)
+      expect({
+        topLevel: parts[0],
+        hashLength: parts[1]?.length,
+        basename: parts[2],
+        partsCount: parts.length,
+      }).toMatchInlineSnapshot(`
+        {
+          "basename": "cnfgrbl-sdbr-wdth-by-cmpnnt",
+          "hashLength": 8,
+          "partsCount": 3,
+          "topLevel": "worktrees",
+        }
+      `)
+    } finally {
+      fs.rmSync(sandbox, { recursive: true, force: true })
+    }
+  })
 })

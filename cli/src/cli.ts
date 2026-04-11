@@ -64,7 +64,7 @@ import {
   buildSessionSearchSnippet,
   getPartSearchTexts,
 } from './session-search.js'
-import { formatWorktreeName } from './commands/new-worktree.js'
+import { formatWorktreeName, formatAutoWorktreeName } from './commands/new-worktree.js'
 import { WORKTREE_PREFIX } from './commands/merge-worktree.js'
 import type { ThreadStartMarker } from './system-message.js'
 import { sendWelcomeMessage } from './onboarding-welcome.js'
@@ -2923,12 +2923,12 @@ cli
           (cleanPrompt.length > 80
             ? cleanPrompt.slice(0, 77) + '...'
             : cleanPrompt)
+        // Explicit string => use as-is via formatWorktreeName (no vowel strip).
+        // Boolean true => derived from thread/prompt, compress via formatAutoWorktreeName.
         const worktreeName = options.worktree
-          ? formatWorktreeName(
-              typeof options.worktree === 'string'
-                ? options.worktree
-                : baseThreadName,
-            )
+          ? typeof options.worktree === 'string'
+            ? formatWorktreeName(options.worktree)
+            : formatAutoWorktreeName(baseThreadName)
           : undefined
         const threadName = worktreeName
           ? `${WORKTREE_PREFIX}${baseThreadName}`

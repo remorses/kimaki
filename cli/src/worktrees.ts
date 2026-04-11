@@ -4,9 +4,9 @@
 
 import crypto from 'node:crypto'
 import fs from 'node:fs'
-import os from 'node:os'
 import path from 'node:path'
 import * as errore from 'errore'
+import { getDataDir } from './config.js'
 import { execAsync } from './exec-async.js'
 import { createLogger, LogPrefix } from './logger.js'
 
@@ -530,24 +530,38 @@ async function resolveDefaultWorktreeTarget(
   return 'HEAD'
 }
 
-function getManagedWorktreeDirectory({
+/**
+ * Build the on-disk directory for a managed worktree.
+ *
+ * Layout: `<kimakiDataDir>/worktrees/<8charProjectHash>/<basename>`
+ *
+ * - Lives under the kimaki data dir instead of the long
+ *   `~/.local/share/opencode/worktree/<40-char-hash>/<name>` path so folder
+ *   names stay short and readable (agents tend to give up and reuse the old
+ *   worktree when paths get absurdly long).
+ * - The 8-char project hash keeps worktrees from different projects that
+ *   happen to share a slug from colliding.
+ * - Strips the `opencode/kimaki-` (or `opencode-kimaki-`) prefix from the
+ *   folder name since it's redundant noise on disk. The git branch name
+ *   itself still uses `opencode/kimaki-<slug>` so merge/cleanup logic is
+ *   unchanged.
+ */
+export function getManagedWorktreeDirectory({
   directory,
   name,
 }: {
   directory: string
   name: string
 }): string {
-  const projectHash = crypto.createHash('sha1').update(directory).digest('hex')
-  const safeName = name.replaceAll('/', '-')
-  return path.join(
-    os.homedir(),
-    '.local',
-    'share',
-    'opencode',
-    'worktree',
-    projectHash,
-    safeName,
-  )
+  const projectHash = crypto
+    .createHash('sha1')
+    .update(directory)
+    .digest('hex')
+    .slice(0, 8)
+  const withoutPrefix = name
+    .replace(/^opencode\/kimaki-/, '')
+    .replaceAll('/', '-')
+  return path.join(getDataDir(), 'worktrees', projectHash, withoutPrefix)
 }
 
 /**
