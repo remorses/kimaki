@@ -625,10 +625,13 @@ function sanitizeAnthropicSystemText(
   // Re-inject the process working directory that was inside the stripped block.
   const envContext = `\n<environment>\n<cwd>${process.cwd()}</cwd>\n</environment>\n`;
 
-  return (text.slice(0, startIdx) + envContext + text.slice(endIdx)).replaceAll(
-    "opencode",
-    "openc0de",
-  );
+  // Replace all case-insensitive whole-word occurrences of "opencode" with "openc0de"
+  const result =
+    text.slice(0, startIdx) +
+    envContext +
+    text.slice(endIdx);
+  // Use a regex with global, case-insensitive, and word boundary flags
+  return result.replace(/\bopencode\b/gi, "openc0de");
 }
 
 function mapSystemTextPart(
