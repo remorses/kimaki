@@ -10,6 +10,7 @@ import {
   execAsync,
   getManagedWorktreeDirectory,
   parseGitmodulesFileContent,
+  parseGitWorktreeListPorcelain,
 } from './worktrees.js'
 import {
   formatAutoWorktreeName,
@@ -366,5 +367,123 @@ describe('worktrees', () => {
     } finally {
       fs.rmSync(sandbox, { recursive: true, force: true })
     }
+  })
+})
+
+describe('parseGitWorktreeListPorcelain', () => {
+  test('parses porcelain output, skips main worktree', () => {
+    const output = [
+      'worktree /Users/me/project',
+      'HEAD abc123',
+      'branch refs/heads/main',
+      '',
+      'worktree /Users/me/.local/share/opencode/worktree/hash/opencode-kimaki-feature',
+      'HEAD def456',
+      'branch refs/heads/opencode/kimaki-feature',
+      '',
+      'worktree /Users/me/project-manual-wt',
+      'HEAD 789abc',
+      'branch refs/heads/my-branch',
+      '',
+    ].join('\n')
+
+    expect(parseGitWorktreeListPorcelain(output)).toMatchInlineSnapshot(`
+      [
+        {
+          "branch": "opencode/kimaki-feature",
+          "detached": false,
+          "directory": "/Users/me/.local/share/opencode/worktree/hash/opencode-kimaki-feature",
+          "head": "def456",
+          "locked": false,
+          "prunable": false,
+        },
+        {
+          "branch": "my-branch",
+          "detached": false,
+          "directory": "/Users/me/project-manual-wt",
+          "head": "789abc",
+          "locked": false,
+          "prunable": false,
+        },
+      ]
+    `)
+  })
+
+  test('handles detached HEAD worktrees', () => {
+    const output = [
+      'worktree /Users/me/project',
+      'HEAD abc123',
+      'branch refs/heads/main',
+      '',
+      'worktree /Users/me/detached-wt',
+      'HEAD deadbeef',
+      'detached',
+      '',
+    ].join('\n')
+
+    const result = parseGitWorktreeListPorcelain(output)
+    expect(result).toMatchInlineSnapshot(`
+      [
+        {
+          "branch": null,
+          "detached": true,
+          "directory": "/Users/me/detached-wt",
+          "head": "deadbeef",
+          "locked": false,
+          "prunable": false,
+        },
+      ]
+    `)
+  })
+
+  test('parses locked and prunable flags', () => {
+    const output = [
+      'worktree /Users/me/project',
+      'HEAD abc123',
+      'branch refs/heads/main',
+      '',
+      'worktree /Users/me/locked-wt',
+      'HEAD aaa111',
+      'branch refs/heads/feature-locked',
+      'locked portable disk',
+      '',
+      'worktree /Users/me/prunable-wt',
+      'HEAD bbb222',
+      'branch refs/heads/stale-branch',
+      'prunable gitdir file points to non-existent location',
+      '',
+    ].join('\n')
+
+    expect(parseGitWorktreeListPorcelain(output)).toMatchInlineSnapshot(`
+      [
+        {
+          "branch": "feature-locked",
+          "detached": false,
+          "directory": "/Users/me/locked-wt",
+          "head": "aaa111",
+          "locked": true,
+          "prunable": false,
+        },
+        {
+          "branch": "stale-branch",
+          "detached": false,
+          "directory": "/Users/me/prunable-wt",
+          "head": "bbb222",
+          "locked": false,
+          "prunable": true,
+        },
+      ]
+    `)
+  })
+
+  test('returns empty array when only main worktree exists', () => {
+    const output = [
+      'worktree /Users/me/project',
+      'HEAD abc123',
+      'branch refs/heads/main',
+      '',
+    ].join('\n')
+
+    expect(parseGitWorktreeListPorcelain(output)).toMatchInlineSnapshot(`[]`)
   })
 })

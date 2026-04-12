@@ -1,4 +1,7 @@
-// /worktrees command — list worktree sessions for the current channel's project.
+// /worktrees command — list all git worktrees for the current channel's project.
+// Uses `git worktree list --porcelain` as source of truth, enriched with
+// DB metadata (thread link, created_at) when available. Shows kimaki-created,
+// opencode-created, and manually created worktrees in a single table.
 // Renders a markdown table that the CV2 pipeline auto-formats for Discord,
 // including HTML-backed action buttons for deletable worktrees.
 
@@ -16,7 +19,6 @@ import {
 } from 'discord.js'
 import {
   deleteThreadWorktree,
-  getThreadWorktree,
   type ThreadWorktree,
 } from '../database.js'
 import { getPrisma } from '../db.js'
@@ -27,9 +29,17 @@ import {
   registerHtmlAction,
 } from '../html-actions.js'
 import * as errore from 'errore'
+import crypto from 'node:crypto'
 import { GitCommandError } from '../errors.js'
 import { resolveWorkingDirectory } from '../discord-utils.js'
-import { deleteWorktree, git, getDefaultBranch } from '../worktrees.js'
+import {
+  deleteWorktree,
+  git,
+  getDefaultBranch,
+  listGitWorktrees,
+  type GitWorktree,
+} from '../worktrees.js'
+import path from 'node:path'
 
 // Extracts the git stderr from a deleteWorktree error via errore.findCause.
 // Chain: Error { cause: GitCommandError { cause: CommandError { stderr } } }.
@@ -65,14 +75,26 @@ export function formatTimeAgo(date: Date): string {
   return remainingHours > 0 ? `${days}d ${remainingHours}h ago` : `${days}d ago`
 }
 
-function statusLabel(wt: ThreadWorktree): string {
-  if (wt.status === 'ready') {
-    return 'ready'
-  }
-  if (wt.status === 'error') {
-    return 'error'
-  }
-  return 'pending'
+// Stable button ID derived from directory path via sha1 hash.
+// Avoids collisions that truncated path suffixes can cause.
+function worktreeButtonKey(directory: string): string {
+  return crypto.createHash('sha1').update(directory).digest('hex').slice(0, 12)
+}
+
+// Unified worktree row that merges git data with optional DB metadata.
+type WorktreeRow = {
+  directory: string
+  branch: string | null
+  name: string
+  threadId: string | null
+  guildId: string | null
+  createdAt: Date | null
+  source: 'kimaki' | 'opencode' | 'manual'
+  // DB-only worktrees (pending/error) won't appear in git list
+  dbStatus: 'ready' | 'pending' | 'error'
+  // Git-level flags that block deletion
+  locked: boolean
+  prunable: boolean
 }
 
 type WorktreeGitStatus = {
@@ -96,26 +118,40 @@ type WorktreesReplyTarget = {
 const GIT_CMD_TIMEOUT = 5_000
 const GLOBAL_TIMEOUT = 10_000
 
+// Detect worktree source from branch name and directory path.
+// opencode/kimaki-* branches → kimaki, opencode worktree paths → opencode, else manual.
+function detectWorktreeSource({
+  branch,
+  directory,
+}: {
+  branch: string | null
+  directory: string
+}): 'kimaki' | 'opencode' | 'manual' {
+  if (branch?.startsWith('opencode/kimaki-')) {
+    return 'kimaki'
+  }
+  // opencode stores worktrees under ~/.local/share/opencode/worktree/
+  if (directory.includes('/opencode/worktree/')) {
+    return 'opencode'
+  }
+  return 'manual'
+}
+
 // Checks dirty state and commits ahead of default branch in parallel.
-// Returns null for worktrees that aren't ready or when the directory is
-// missing / git commands fail / timeout (e.g. deleted worktree folder).
+// Returns null when the directory is missing / git commands fail / timeout.
 async function getWorktreeGitStatus({
-  wt,
+  directory,
   defaultBranch,
 }: {
-  wt: ThreadWorktree
+  directory: string
   defaultBranch: string
 }): Promise<WorktreeGitStatus | null> {
-  if (wt.status !== 'ready' || !wt.worktree_directory) {
-    return null
-  }
   try {
-    const dir = wt.worktree_directory
     // Use raw git calls so errors/timeouts are visible — isDirty() swallows
     // errors and returns false, which would render "merged" instead of "unknown".
     const [statusResult, aheadResult] = await Promise.all([
-      git(dir, 'status --porcelain', { timeout: GIT_CMD_TIMEOUT }),
-      git(dir, `rev-list --count "${defaultBranch}..HEAD"`, {
+      git(directory, 'status --porcelain', { timeout: GIT_CMD_TIMEOUT }),
+      git(directory, `rev-list --count "${defaultBranch}..HEAD"`, {
         timeout: GIT_CMD_TIMEOUT,
       }),
     ])
@@ -133,23 +169,35 @@ async function getWorktreeGitStatus({
 }
 
 function buildWorktreeTable({
-  worktrees,
+  rows,
   gitStatuses,
   guildId,
 }: {
-  worktrees: ThreadWorktree[]
+  rows: WorktreeRow[]
   gitStatuses: (WorktreeGitStatus | null)[]
   guildId: string
 }): string {
-  const header = '| Thread | Name | Status | Created | Folder | Action |'
+  const header = '| Source | Name | Status | Created | Folder | Action |'
   const separator = '|---|---|---|---|---|---|'
-  const rows = worktrees.map((wt, i) => {
-    const threadLink = `[thread](https://discord.com/channels/${guildId}/${wt.thread_id})`
-    const name = wt.worktree_name
+  const tableRows = rows.map((row, i) => {
+    const sourceCell = (() => {
+      if (row.threadId && row.guildId) {
+        const threadLink = `[${row.source}](https://discord.com/channels/${row.guildId}/${row.threadId})`
+        return threadLink
+      }
+      return row.source
+    })()
+    const name = row.name
     const gs = gitStatuses[i] ?? null
     const status = (() => {
-      if (wt.status !== 'ready') {
-        return statusLabel(wt)
+      if (row.dbStatus !== 'ready') {
+        return row.dbStatus
+      }
+      if (row.locked) {
+        return 'locked'
+      }
+      if (row.prunable) {
+        return 'prunable'
       }
       if (!gs) {
         return 'unknown'
@@ -165,27 +213,26 @@ function buildWorktreeTable({
       }
       return parts.join(', ')
     })()
-    const created = wt.created_at ? formatTimeAgo(wt.created_at) : 'unknown'
-    const folder = wt.worktree_directory ?? wt.project_directory
-    const action = buildActionCell({ wt, gitStatus: gs })
-    return `| ${threadLink} | ${name} | ${status} | ${created} | ${folder} | ${action} |`
+    const created = row.createdAt ? formatTimeAgo(row.createdAt) : '-'
+    const folder = row.directory
+    const action = buildActionCell({ row, gitStatus: gs })
+    return `| ${sourceCell} | ${name} | ${status} | ${created} | ${folder} | ${action} |`
   })
-  return [header, separator, ...rows].join('\n')
+  return [header, separator, ...tableRows].join('\n')
 }
 
 function buildActionCell({
-  wt,
+  row,
   gitStatus,
 }: {
-  wt: ThreadWorktree
+  row: WorktreeRow
   gitStatus: WorktreeGitStatus | null
 }): string {
-  if (!canDeleteWorktree({ wt, gitStatus })) {
+  if (!canDeleteWorktree({ row, gitStatus })) {
     return '-'
   }
-
   return buildDeleteButtonHtml({
-    buttonId: `delete-worktree-${wt.thread_id}`,
+    buttonId: `del-wt-${worktreeButtonKey(row.directory)}`,
   })
 }
 
@@ -198,13 +245,16 @@ function buildDeleteButtonHtml({
 }
 
 function canDeleteWorktree({
-  wt,
+  row,
   gitStatus,
 }: {
-  wt: ThreadWorktree
+  row: WorktreeRow
   gitStatus: WorktreeGitStatus | null
 }): boolean {
-  if (wt.status !== 'ready' || !wt.worktree_directory) {
+  if (row.dbStatus !== 'ready') {
+    return false
+  }
+  if (row.locked) {
     return false
   }
   if (!gitStatus) {
@@ -217,17 +267,16 @@ function canDeleteWorktree({
 }
 
 // Resolves git statuses for all worktrees within a single global deadline.
-// Caches getDefaultBranch per project_directory to avoid redundant spawns.
-// Returns null for any worktree whose git calls fail, timeout, or exceed
-// the global deadline — the table renders those as "unknown".
 async function resolveGitStatuses({
-  worktrees,
+  rows,
+  projectDirectory,
   timeout,
 }: {
-  worktrees: ThreadWorktree[]
+  rows: WorktreeRow[]
+  projectDirectory: string
   timeout: number
 }): Promise<(WorktreeGitStatus | null)[]> {
-  const nullFallback = worktrees.map(() => null)
+  const nullFallback = rows.map(() => null)
 
   let timer: ReturnType<typeof setTimeout> | undefined
   const deadline = new Promise<(WorktreeGitStatus | null)[]>((resolve) => {
@@ -237,24 +286,16 @@ async function resolveGitStatuses({
   })
 
   const work = (async () => {
-    // Resolve default branch once per unique project directory (avoids
-    // redundant git subprocess spawns when multiple worktrees share a project).
-    const uniqueProjectDirs = [
-      ...new Set(worktrees.map((wt) => wt.project_directory)),
-    ]
-    const defaultBranchEntries = await Promise.all(
-      uniqueProjectDirs.map(async (dir) => {
-        const branch = await getDefaultBranch(dir, { timeout: GIT_CMD_TIMEOUT })
-        return [dir, branch] as const
-      }),
-    )
-    const defaultBranchByProject = new Map(defaultBranchEntries)
+    const defaultBranch = await getDefaultBranch(projectDirectory, {
+      timeout: GIT_CMD_TIMEOUT,
+    })
 
     return Promise.all(
-      worktrees.map((wt) => {
-        const defaultBranch =
-          defaultBranchByProject.get(wt.project_directory) ?? 'main'
-        return getWorktreeGitStatus({ wt, defaultBranch })
+      rows.map((row) => {
+        if (row.dbStatus !== 'ready' || row.locked || row.prunable) {
+          return null
+        }
+        return getWorktreeGitStatus({ directory: row.directory, defaultBranch })
       }),
     )
   })()
@@ -266,19 +307,102 @@ async function resolveGitStatuses({
   }
 }
 
-async function getRecentWorktrees({
+// Merge git worktrees with DB metadata into unified WorktreeRows.
+// Git is the source of truth for what exists on disk. DB rows that aren't
+// in the git list (pending/error) are appended at the end.
+async function buildWorktreeRows({
   projectDirectory,
+  gitWorktrees,
 }: {
   projectDirectory: string
-}): Promise<ThreadWorktree[]> {
+  gitWorktrees: GitWorktree[]
+}): Promise<WorktreeRow[]> {
   const prisma = await getPrisma()
-  return await prisma.thread_worktrees.findMany({
-    where: {
-      project_directory: projectDirectory,
-    },
-    orderBy: { created_at: 'desc' },
-    take: 10,
+  const dbWorktrees = await prisma.thread_worktrees.findMany({
+    where: { project_directory: projectDirectory },
   })
+
+  // Index DB worktrees by directory for fast lookup
+  const dbByDirectory = new Map<string, ThreadWorktree>()
+  for (const dbWt of dbWorktrees) {
+    if (dbWt.worktree_directory) {
+      dbByDirectory.set(dbWt.worktree_directory, dbWt)
+    }
+  }
+
+  // Track which DB rows got matched so we can append unmatched ones
+  const matchedDbThreadIds = new Set<string>()
+
+  // Build rows from git worktrees (the source of truth for on-disk state).
+  // Use real DB status when available — a git-visible worktree whose DB row
+  // is still 'pending' means setup hasn't finished (race window).
+  const gitRows: WorktreeRow[] = gitWorktrees.map((gw) => {
+    const dbMatch = dbByDirectory.get(gw.directory)
+    if (dbMatch) {
+      matchedDbThreadIds.add(dbMatch.thread_id)
+    }
+    const source = detectWorktreeSource({
+      branch: gw.branch,
+      directory: gw.directory,
+    })
+    const name = gw.branch ?? path.basename(gw.directory)
+    const dbStatus: 'ready' | 'pending' | 'error' = (() => {
+      if (!dbMatch) {
+        return 'ready'
+      }
+      if (dbMatch.status === 'error') {
+        return 'error'
+      }
+      if (dbMatch.status === 'pending') {
+        return 'pending'
+      }
+      return 'ready'
+    })()
+    return {
+      directory: gw.directory,
+      branch: gw.branch,
+      name,
+      threadId: dbMatch?.thread_id ?? null,
+      guildId: null, // filled in by caller
+      createdAt: dbMatch?.created_at ?? null,
+      source,
+      dbStatus,
+      locked: gw.locked,
+      prunable: gw.prunable,
+    }
+  })
+
+  // Append DB-only worktrees (pending/error/stale — not visible to git).
+  // Preserve actual DB status so stale 'ready' rows show as 'ready' (missing).
+  const dbOnlyRows: WorktreeRow[] = dbWorktrees
+    .filter((dbWt) => {
+      return !matchedDbThreadIds.has(dbWt.thread_id)
+    })
+    .map((dbWt) => {
+      const dbStatus: 'ready' | 'pending' | 'error' = (() => {
+        if (dbWt.status === 'error') {
+          return 'error'
+        }
+        if (dbWt.status === 'pending') {
+          return 'pending'
+        }
+        return 'ready'
+      })()
+      return {
+        directory: dbWt.worktree_directory ?? dbWt.project_directory,
+        branch: null,
+        name: dbWt.worktree_name,
+        threadId: dbWt.thread_id,
+        guildId: null,
+        createdAt: dbWt.created_at,
+        source: 'kimaki' as const,
+        dbStatus,
+        locked: false,
+        prunable: false,
+      }
+    })
+
+  return [...gitRows, ...dbOnlyRows]
 }
 
 function getWorktreesActionOwnerKey({
@@ -317,9 +441,23 @@ async function renderWorktreesReply({
   const ownerKey = getWorktreesActionOwnerKey({ userId, channelId })
   cancelHtmlActionsForOwner(ownerKey)
 
-  const worktrees = await getRecentWorktrees({ projectDirectory })
-  if (worktrees.length === 0) {
-    const message = notice ? `${notice}\n\nNo worktrees found.` : 'No worktrees found.'
+  const gitWorktrees = await listGitWorktrees({
+    projectDirectory,
+    timeout: GIT_CMD_TIMEOUT,
+  })
+  // On git failure, fall back to empty list (DB-only rows still shown)
+  const gitList = gitWorktrees instanceof Error ? [] : gitWorktrees
+
+  const rows = await buildWorktreeRows({ projectDirectory, gitWorktrees: gitList })
+  // Inject guildId into all rows for thread link rendering
+  for (const row of rows) {
+    row.guildId = guildId
+  }
+
+  if (rows.length === 0) {
+    const message = notice
+      ? `${notice}\n\nNo worktrees found.`
+      : 'No worktrees found.'
     const textDisplay: APITextDisplayComponent = {
       type: ComponentType.TextDisplay,
       content: message,
@@ -332,38 +470,43 @@ async function renderWorktreesReply({
   }
 
   const gitStatuses = await resolveGitStatuses({
-    worktrees,
+    rows,
+    projectDirectory,
     timeout: GLOBAL_TIMEOUT,
   })
-  const deletableWorktreesByButtonId = new Map<string, ThreadWorktree>()
-  worktrees.forEach((wt, index) => {
+
+  // Map deletable worktrees by button ID for the HTML action resolver.
+  // Uses the same worktreeButtonKey() as buildActionCell.
+  const deletableRowsByButtonId = new Map<string, WorktreeRow>()
+  rows.forEach((row, index) => {
     const gitStatus = gitStatuses[index] ?? null
-    if (!canDeleteWorktree({ wt, gitStatus })) {
+    if (!canDeleteWorktree({ row, gitStatus })) {
       return
     }
-    deletableWorktreesByButtonId.set(`delete-worktree-${wt.thread_id}`, wt)
+    deletableRowsByButtonId.set(`del-wt-${worktreeButtonKey(row.directory)}`, row)
   })
 
   const tableMarkdown = buildWorktreeTable({
-    worktrees,
+    rows,
     gitStatuses,
     guildId,
   })
   const markdown = notice ? `${notice}\n\n${tableMarkdown}` : tableMarkdown
   const segments = splitTablesFromMarkdown(markdown, {
     resolveButtonCustomId: ({ button }) => {
-      const worktree = deletableWorktreesByButtonId.get(button.id)
-      if (!worktree) {
+      const row = deletableRowsByButtonId.get(button.id)
+      if (!row) {
         return new Error(`No worktree registered for button ${button.id}`)
       }
 
       const actionId = registerHtmlAction({
         ownerKey,
-        threadId: worktree.thread_id,
+        threadId: row.threadId ?? row.directory,
         run: async ({ interaction }) => {
           await handleDeleteWorktreeAction({
             interaction,
-            threadId: worktree.thread_id,
+            row,
+            projectDirectory,
           })
         },
       })
@@ -391,10 +534,12 @@ async function renderWorktreesReply({
 
 async function handleDeleteWorktreeAction({
   interaction,
-  threadId,
+  row,
+  projectDirectory,
 }: {
   interaction: ButtonInteraction
-  threadId: string
+  row: WorktreeRow
+  projectDirectory: string
 }): Promise<void> {
   const guildId = interaction.guildId
   if (!guildId) {
@@ -410,79 +555,22 @@ async function handleDeleteWorktreeAction({
     return
   }
 
-  const worktree = await getThreadWorktree(threadId)
-  if (!worktree) {
-    if (!isProjectChannel(interaction.channel)) {
-      await interaction.editReply({
-        components: [
-          {
-            type: ComponentType.TextDisplay,
-            content: 'This action can only be used in a project channel or thread.',
-          },
-        ],
-        flags: MessageFlags.IsComponentsV2,
-      })
-      return
-    }
-
-    const resolved = await resolveWorkingDirectory({
-      channel: interaction.channel as TextChannel | ThreadChannel,
-    })
-    if (!resolved) {
-      await interaction.editReply({
-        components: [
-          {
-            type: ComponentType.TextDisplay,
-            content: 'Could not determine the project folder for this channel.',
-          },
-        ],
-        flags: MessageFlags.IsComponentsV2,
-      })
-      return
-    }
-
-    await renderWorktreesReply({
-      guildId,
-      userId: interaction.user.id,
-      channelId: interaction.channelId,
-      projectDirectory: resolved.projectDirectory,
-      notice: 'Worktree was already removed.',
-      editReply: (options) => {
-        return interaction.editReply(options)
-      },
-    })
-    return
-  }
-
-  if (worktree.status !== 'ready' || !worktree.worktree_directory) {
-    await renderWorktreesReply({
-      guildId,
-      userId: interaction.user.id,
-      channelId: interaction.channelId,
-      projectDirectory: worktree.project_directory,
-      notice: `Cannot delete \`${worktree.worktree_name}\` because it is ${worktree.status}.`,
-      editReply: (options) => {
-        return interaction.editReply(options)
-      },
-    })
-    return
-  }
-
+  // Pass branch name for branch cleanup. Empty string for detached HEAD
+  // worktrees so deleteWorktree skips the `git branch -d` step.
+  const displayName = row.branch ?? row.name
   const deleteResult = await deleteWorktree({
-    projectDirectory: worktree.project_directory,
-    worktreeDirectory: worktree.worktree_directory,
-    worktreeName: worktree.worktree_name,
+    projectDirectory,
+    worktreeDirectory: row.directory,
+    worktreeName: row.branch ?? '',
   })
   if (deleteResult instanceof Error) {
-    // Send error as a separate ephemeral follow-up so the table stays intact.
-    // Dig into cause chain to surface the actual git stderr when available.
     const gitStderr = extractGitStderr(deleteResult)
     const detail = gitStderr
       ? `\`\`\`\n${gitStderr}\n\`\`\``
       : deleteResult.message
     await interaction
       .followUp({
-        content: `Failed to delete \`${worktree.worktree_name}\`\n${detail}`,
+        content: `Failed to delete \`${displayName}\`\n${detail}`,
         flags: MessageFlags.Ephemeral,
       })
       .catch(() => {
@@ -491,13 +579,17 @@ async function handleDeleteWorktreeAction({
     return
   }
 
-  await deleteThreadWorktree(threadId)
+  // Clean up DB row if this was a kimaki-tracked worktree
+  if (row.threadId) {
+    await deleteThreadWorktree(row.threadId)
+  }
+
   await renderWorktreesReply({
     guildId,
     userId: interaction.user.id,
     channelId: interaction.channelId,
-    projectDirectory: worktree.project_directory,
-    notice: `Deleted \`${worktree.worktree_name}\`.`,
+    projectDirectory,
+    notice: `Deleted \`${displayName}\`.`,
     editReply: (options) => {
       return interaction.editReply(options)
     },
