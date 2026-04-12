@@ -343,10 +343,10 @@ cd cli
 VITEST_CPU_PROF=1 pnpm test --run src/some-file.e2e.test.ts
 ```
 
-to get a top-down self-time report without opening a browser, use profano (a workspace package in `profano/`):
+to get a top-down self-time report without opening a browser, use profano:
 
 ```bash
-node ../profano/dist/cli.js tmp/cpu-profiles/CPU.*.cpuprofile
+bunx profano tmp/cpu-profiles/CPU.*.cpuprofile
 ```
 
 for an interactive flame chart in the browser, use cpupro:
