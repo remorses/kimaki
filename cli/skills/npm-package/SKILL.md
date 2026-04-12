@@ -426,6 +426,137 @@ Because the SKILL.md body points at the README, the README must contain
 everything the agent needs: API reference, examples, gotchas, and rules.
 See the `new-skill` skill for the full pattern.
 
+## pnpm workspaces
+
+When the project is a monorepo, use pnpm workspaces with flat `./*` glob paths
+in `pnpm-workspace.yaml`. All packages live at the repo root as siblings, no
+nested `packages/` directory:
+
+```yaml
+packages:
+  - ./*
+```
+
+This means the repo looks like:
+
+```
+my-monorepo/
+  package.json        # root (private: true)
+  pnpm-workspace.yaml
+  cli/                # workspace package
+  website/            # workspace package
+  db/                 # workspace package
+  errore/             # workspace package (submodule)
+```
+
+### Common dev dependencies at root
+
+Install shared dev tooling **only at the root** `package.json` so every
+workspace package uses the same version without duplicating installs:
+
+```json
+{
+  "private": true,
+  "devDependencies": {
+    "typescript": "^5.9.2",
+    "tsx": "^4.20.5",
+    "vitest": "^3.2.4",
+    "oxfmt": "^0.24.0"
+  }
+}
+```
+
+Packages that need these tools (like `tsc` or `vitest`) will resolve them
+from the root `node_modules` via pnpm's hoisting. Do **not** add
+`typescript`, `tsx`, `vitest`, or `oxfmt` as devDependencies in individual
+workspace packages — only add them at root.
+
+Package-specific dev dependencies (for example `@types/node`, `rimraf`,
+`prisma`) still go in each package's own `devDependencies`.
+
+### Cross-workspace dependencies
+
+Use `workspace:^` (not `workspace:*`) for local package versions so that
+when published, the dependency resolves to a caret range instead of a pinned
+version:
+
+```json
+{
+  "dependencies": {
+    "my-utils": "workspace:^"
+  }
+}
+```
+
+Use `pnpm install package@workspace:^` to add a workspace dependency, or
+add it to `package.json` manually with the `workspace:^` protocol.
+
+## CI (GitHub Actions)
+
+Standard CI workflow for pnpm workspace monorepos. Key points:
+
+- **Checkout submodules** with `submodules: recursive` if the repo uses git
+  submodules (common for shared libraries like errore).
+- **Use `pnpm/action-setup@v4`** with the pnpm version matching your lockfile.
+- **Use Node 24** (or latest LTS) via `actions/setup-node@v4` with `cache: pnpm`.
+- **Build workspace packages** that export from `dist/` before running tests,
+  since submodules and some packages have `dist/` gitignored.
+- **Run tests from the package directory**, not root.
+
+Example `.github/workflows/ci.yml`:
+
+```yaml
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  test:
+    name: Tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 9
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install
+
+      # Submodules and workspace packages with dist/ gitignored
+      # need to be built after checkout before anything can import them.
+      - name: Build workspace packages with dist/ exports
+        run: |
+          pnpm --filter my-lib run build
+          pnpm --filter my-utils run build
+
+      - name: Run tests
+        run: pnpm test -- --run
+        working-directory: cli
+```
+
+If the repo has Prisma schemas, add generate steps before tests:
+
+```yaml
+      - name: Generate Prisma client
+        run: pnpm generate
+        working-directory: cli
+```
+
 ## .gitignore
 
 For non-workspace (standalone) packages, always create a `.gitignore` with:
