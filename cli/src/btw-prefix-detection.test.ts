@@ -27,6 +27,38 @@ describe('extractBtwPrefix', () => {
     `)
   })
 
+  test('matches dot separator', () => {
+    expect(extractBtwPrefix('btw. fix this')).toMatchInlineSnapshot(`
+      {
+        "prompt": "fix this",
+      }
+    `)
+  })
+
+  test('matches comma separator', () => {
+    expect(extractBtwPrefix('btw, fix this')).toMatchInlineSnapshot(`
+      {
+        "prompt": "fix this",
+      }
+    `)
+  })
+
+  test('matches colon separator', () => {
+    expect(extractBtwPrefix('btw: fix this')).toMatchInlineSnapshot(`
+      {
+        "prompt": "fix this",
+      }
+    `)
+  })
+
+  test('matches punctuation without trailing space', () => {
+    expect(extractBtwPrefix('btw.fix this')).toMatchInlineSnapshot(`
+      {
+        "prompt": "fix this",
+      }
+    `)
+  })
+
   test('does not match without separating whitespace', () => {
     expect(extractBtwPrefix('btwfix this')).toMatchInlineSnapshot(`null`)
   })

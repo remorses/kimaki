@@ -8,7 +8,8 @@ export function extractBtwPrefix(
     return null
   }
 
-  const match = content.match(/^\s*btw\s+([\s\S]+)$/i)
+  // Match "btw" followed by whitespace or punctuation (. , : ; ! ?) then the prompt
+  const match = content.match(/^\s*btw[.,;:!?\s]\s*([\s\S]+)$/i)
   if (!match) {
     return null
   }
