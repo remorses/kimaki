@@ -26,7 +26,7 @@ The folder name should match the skill name in kebab-case. Each skill gets its o
 For personal skills that follow you across all repos and are not meant for distribution in a GitHub repository, place them in:
 
 ```
-~/.opencode/skills/<skill-name>/SKILL.md
+~/.config/opencode/skills/<skill-name>/SKILL.md
 ```
 
 Personal skills are only available on your machine. Repository skills are shared with everyone who clones the repo.
