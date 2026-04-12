@@ -95,6 +95,24 @@ describe('deriveThreadNameFromSessionTitle', () => {
     ).toMatchInlineSnapshot(`undefined`)
   })
 
+  test('preserves btw: prefix from current name', () => {
+    expect(
+      deriveThreadNameFromSessionTitle({
+        sessionTitle: 'Side question about auth',
+        currentName: 'btw: why is auth broken',
+      }),
+    ).toMatchInlineSnapshot(`"btw: Side question about auth"`)
+  })
+
+  test('preserves Fork: prefix from current name', () => {
+    expect(
+      deriveThreadNameFromSessionTitle({
+        sessionTitle: 'Forked task title',
+        currentName: 'Fork: old session title',
+      }),
+    ).toMatchInlineSnapshot(`"Fork: Forked task title"`)
+  })
+
   test('returns undefined for null/undefined title', () => {
     expect(
       deriveThreadNameFromSessionTitle({

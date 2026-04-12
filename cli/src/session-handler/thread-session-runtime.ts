@@ -404,11 +404,14 @@ export function isEssentialToolPart(part: Part): boolean {
 const DISCORD_THREAD_NAME_MAX = 100
 const WORKTREE_THREAD_PREFIX = '⬦ '
 
-// Pure derivation: given an OpenCode session title and the current thread name,
-// return the new thread name to apply, or undefined when no rename is needed.
-// - Skips placeholder titles ("New Session - ...") to match external-sync.
-// - Preserves worktree prefix when the current name carries it.
-// - Returns undefined when the candidate matches currentName already.
+// Prefixes that should survive OpenCode session title renames.
+// When a thread starts with one of these, the rename preserves it.
+const PRESERVED_THREAD_PREFIXES: string[] = [
+  WORKTREE_THREAD_PREFIX,
+  'btw: ',
+  'Fork: ',
+]
+
 export function deriveThreadNameFromSessionTitle({
   sessionTitle,
   currentName,
@@ -423,9 +426,11 @@ export function deriveThreadNameFromSessionTitle({
   if (/^new session\s*-/i.test(trimmed)) {
     return undefined
   }
-  const hasWorktreePrefix = currentName.startsWith(WORKTREE_THREAD_PREFIX)
-  const prefix = hasWorktreePrefix ? WORKTREE_THREAD_PREFIX : ''
-  const candidate = `${prefix}${trimmed}`.slice(0, DISCORD_THREAD_NAME_MAX)
+  const matchedPrefix =
+    PRESERVED_THREAD_PREFIXES.find((p) => {
+      return currentName.startsWith(p)
+    }) ?? ''
+  const candidate = `${matchedPrefix}${trimmed}`.slice(0, DISCORD_THREAD_NAME_MAX)
   if (candidate === currentName) {
     return undefined
   }
