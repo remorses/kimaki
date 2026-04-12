@@ -1,6 +1,12 @@
 // /worktrees command — list worktree sessions for the current channel's project.
 // Renders a markdown table that the CV2 pipeline auto-formats for Discord,
 // including HTML-backed action buttons for deletable worktrees.
+//
+// Lists ALL git worktrees for the project, not only kimaki-managed ones.
+// Kimaki-tracked worktrees come from the local SQLite thread_worktrees table
+// (with thread links and delete buttons). External worktrees (created manually
+// with `git worktree add`) come from `git worktree list --porcelain` and appear
+// with their branch/path but no thread link or delete button.
 
 import {
   ButtonInteraction,
@@ -35,7 +41,9 @@ import { deleteWorktree, git, getDefaultBranch } from '../worktrees.js'
 // Chain: Error { cause: GitCommandError { cause: CommandError { stderr } } }.
 export function extractGitStderr(error: Error): string | undefined {
   const gitErr = errore.findCause(error, GitCommandError)
-  const stderr = (gitErr?.cause as { stderr?: string } | undefined)?.stderr?.trim()
+  const stderr = (
+    gitErr?.cause as { stderr?: string } | undefined
+  )?.stderr?.trim()
   if (stderr && stderr.length > 0) {
     return stderr
   }
@@ -86,9 +94,7 @@ type WorktreesReplyTarget = {
   channelId: string
   projectDirectory: string
   notice?: string
-  editReply: (
-    options: string | InteractionEditReplyOptions,
-  ) => Promise<unknown>
+  editReply: (options: string | InteractionEditReplyOptions) => Promise<unknown>
 }
 
 // 5s timeout per git call — prevents hangs from deleted dirs, git locks, slow disks.
@@ -189,11 +195,7 @@ function buildActionCell({
   })
 }
 
-function buildDeleteButtonHtml({
-  buttonId,
-}: {
-  buttonId: string
-}): string {
+function buildDeleteButtonHtml({ buttonId }: { buttonId: string }): string {
   return `<button id="${buttonId}" variant="secondary">Delete</button>`
 }
 
@@ -292,7 +294,9 @@ function getWorktreesActionOwnerKey({
 }
 
 function isProjectChannel(
-  channel: ChatInputCommandInteraction['channel'] | ButtonInteraction['channel'],
+  channel:
+    | ChatInputCommandInteraction['channel']
+    | ButtonInteraction['channel'],
 ): boolean {
   if (!channel) {
     return false
@@ -319,7 +323,9 @@ async function renderWorktreesReply({
 
   const worktrees = await getRecentWorktrees({ projectDirectory })
   if (worktrees.length === 0) {
-    const message = notice ? `${notice}\n\nNo worktrees found.` : 'No worktrees found.'
+    const message = notice
+      ? `${notice}\n\nNo worktrees found.`
+      : 'No worktrees found.'
     const textDisplay: APITextDisplayComponent = {
       type: ComponentType.TextDisplay,
       content: message,
@@ -371,17 +377,19 @@ async function renderWorktreesReply({
     },
   })
 
-  const components: APIMessageTopLevelComponent[] = segments.flatMap((segment) => {
-    if (segment.type === 'components') {
-      return segment.components
-    }
+  const components: APIMessageTopLevelComponent[] = segments.flatMap(
+    (segment) => {
+      if (segment.type === 'components') {
+        return segment.components
+      }
 
-    const textDisplay: APITextDisplayComponent = {
-      type: ComponentType.TextDisplay,
-      content: segment.text,
-    }
-    return [textDisplay]
-  })
+      const textDisplay: APITextDisplayComponent = {
+        type: ComponentType.TextDisplay,
+        content: segment.text,
+      }
+      return [textDisplay]
+    },
+  )
 
   await editReply({
     components,
@@ -417,7 +425,8 @@ async function handleDeleteWorktreeAction({
         components: [
           {
             type: ComponentType.TextDisplay,
-            content: 'This action can only be used in a project channel or thread.',
+            content:
+              'This action can only be used in a project channel or thread.',
           },
         ],
         flags: MessageFlags.IsComponentsV2,
