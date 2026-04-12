@@ -2074,6 +2074,8 @@ export class ThreadSessionRuntime {
   }
 
   private async handleMainPart(part: Part): Promise<void> {
+    const sessionId = this.state?.sessionId
+
     if (part.type === 'step-start') {
       this.ensureTypingNow()
       return
@@ -2089,13 +2091,42 @@ export class ThreadSessionRuntime {
 
       // Track task tool spawning subtask sessions
       if (part.tool === 'task' && !this.state?.sentPartIds.has(part.id)) {
-        const description = (part.state.input?.description as string) || ''
-        const agent = (part.state.input?.subagent_type as string) || 'task'
-        const childSessionId = (part.state.metadata?.sessionId as string) || ''
+        const description =
+          typeof part.state.input?.description === 'string'
+            ? part.state.input.description
+            : ''
+        const agent =
+          typeof part.state.input?.subagent_type === 'string'
+            ? part.state.input.subagent_type
+            : 'task'
+        const childSessionId =
+          typeof part.state.metadata?.sessionId === 'string'
+            ? part.state.metadata.sessionId
+            : ''
         if (description && childSessionId) {
           if ((await this.getVerbosity()) !== 'text_only') {
             const taskDisplay = `┣ ${agent} **${description}**`
-            await sendThreadMessage(this.thread, taskDisplay + '\n\n')
+            threadState.updateThread(this.threadId, (t) => {
+              const newIds = new Set(t.sentPartIds)
+              newIds.add(part.id)
+              return { ...t, sentPartIds: newIds }
+            })
+            const sendResult = await errore.tryAsync(() => {
+              return sendThreadMessage(this.thread, taskDisplay + '\n\n')
+            })
+            if (sendResult instanceof Error) {
+              threadState.updateThread(this.threadId, (t) => {
+                const newIds = new Set(t.sentPartIds)
+                newIds.delete(part.id)
+                return { ...t, sentPartIds: newIds }
+              })
+              discordLogger.error(
+                `ERROR: Failed to send task part ${part.id}:`,
+                sendResult,
+              )
+              return
+            }
+            await setPartMessage(part.id, sendResult.id, this.thread.id)
           }
         }
       }
