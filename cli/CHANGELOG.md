@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.4.104
+
+1. **Queued messages now keep moving while question dropdowns are open** — if the assistant asks a dropdown question and you queue a follow-up message, kimaki now hands off the first queued item immediately instead of waiting for the dropdown to be answered. This keeps the visible `» user:` dispatch indicator moving and prevents queued work from feeling stuck behind interactive prompts.
+
 ## 0.4.103
 
 1. **`btw` message shortcut for side-question forks** — type `btw fix the auth bug` directly in a thread to fork the session with full context, without using the `/btw` slash command. Supports punctuation separators like `btw. check this`, `btw, why is this broken`, `btw: look at that`. Thread titles preserve the `btw:` and `Fork:` prefixes when OpenCode renames them.
