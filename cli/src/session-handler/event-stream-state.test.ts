@@ -5,12 +5,10 @@ import fs from 'node:fs'
 import path from 'node:path'
 import type { Message as OpenCodeMessage } from '@opencode-ai/sdk/v2'
 import { describe, expect, test } from 'vitest'
-import {
-  getOpencodeEventSessionId,
-  type OpencodeEventLogEntry,
-} from './opencode-session-event-log.js'
+import { type OpencodeEventLogEntry } from './opencode-session-event-log.js'
 import {
   getAssistantMessageIdsForLatestUserTurn,
+  getEventBufferSessionId,
   getCurrentTurnStartTime,
   getDerivedSubtaskIndex,
   getLatestAssistantMessageIdForLatestUserTurn,
@@ -39,7 +37,7 @@ function loadFixture(filename: string): EventBufferEntry[] {
 
 function getSessionId(events: EventBufferEntry[]): string {
   for (const entry of events) {
-    const sessionId = getOpencodeEventSessionId(entry.event)
+    const sessionId = getEventBufferSessionId(entry.event)
     if (sessionId) {
       return sessionId
     }

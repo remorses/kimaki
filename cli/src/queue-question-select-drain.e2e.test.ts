@@ -130,7 +130,17 @@ describe('queue drain after question select answer', () => {
         throw new Error('Expected /queue response message id')
       }
 
-      // 4. Answer the question via dropdown select (pick first option "Alpha")
+      // 4. The first queued item should be handed off immediately even while
+      //    the question is still pending, so the visible dispatch indicator
+      //    appears before the user answers the dropdown.
+      await waitForBotMessageContaining({
+        discord: ctx.discord,
+        threadId: thread.id,
+        text: '» **question-select-tester:** Reply with exactly: post-question-drain',
+        timeout: 8_000,
+      })
+
+      // 5. Answer the question via dropdown select (pick first option "Alpha")
       const interaction = await th.user(TEST_USER_ID).selectMenu({
         messageId: questionMsg.id,
         customId: `ask_question:${pending.contextHash}:0`,
@@ -139,16 +149,6 @@ describe('queue drain after question select answer', () => {
 
       await th.waitForInteractionAck({
         interactionId: interaction.id,
-        timeout: 8_000,
-      })
-
-      // 5. Queued message should be handed off to OpenCode's own prompt queue
-      //    after the question reply, so the dispatch indicator appears without
-      //    waiting for a later natural idle.
-      await waitForBotMessageContaining({
-        discord: ctx.discord,
-        threadId: thread.id,
-        text: '» **question-select-tester:** Reply with exactly: post-question-drain',
         timeout: 8_000,
       })
 
@@ -161,10 +161,21 @@ describe('queue drain after question select answer', () => {
         afterAuthorId: ctx.discord.botUserId,
       })
 
-      // Assert key invariants instead of exact snapshot — on CI the deterministic
-      // matcher can fire a second time after the drained message (rawPromptIncludes
-      // scans full history), adding an extra question to the timeline.
       const timeline = await th.text({ showInteractions: true })
+      expect(timeline).toMatchInlineSnapshot(`
+        "--- from: user (question-select-tester)
+        QUESTION_SELECT_QUEUE_MARKER
+        --- from: assistant (TestBot)
+        **Select action**
+        How to proceed?
+        ✓ _Alpha_
+        [user interaction]
+        » **question-select-tester:** Reply with exactly: post-question-drain
+        Queued message (position 1)
+        [user selects dropdown: 0]
+        ⬥ ok
+        *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2*"
+      `)
       expect(timeline).toContain('QUESTION_SELECT_QUEUE_MARKER')
       expect(timeline).toContain('How to proceed?')
       expect(timeline).toContain('[user selects dropdown: 0]')
@@ -295,11 +306,11 @@ describe('queue drain after question select answer', () => {
         How to proceed?
         ✓ _Alpha_
         [user interaction]
+        » **question-select-tester:** SLOW_ABORT_MARKER run long response
         Queued message (position 1)
         [user interaction]
-        Queued message (position 2)
+        Queued message (position 1)
         [user selects dropdown: 0]
-        » **question-select-tester:** SLOW_ABORT_MARKER run long response
         ⬥ slow-response-started
         *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2*
         » **question-select-tester:** Reply with exactly: post-question-second

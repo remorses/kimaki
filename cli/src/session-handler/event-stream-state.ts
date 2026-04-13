@@ -10,10 +10,26 @@ import type {
 } from '@opencode-ai/sdk/v2'
 import { getOpencodeEventSessionId } from './opencode-session-event-log.js'
 
+type QueueQuestionHandoffStartedEvent = {
+  type: 'queue.question-handoff-started'
+  properties: {
+    sessionID: string
+  }
+}
+
+export type EventBufferEvent = OpenCodeEvent | QueueQuestionHandoffStartedEvent
+
 export type EventBufferEntry = {
-  event: OpenCodeEvent
+  event: EventBufferEvent
   timestamp: number
   eventIndex?: number
+}
+
+export function getEventBufferSessionId(event: EventBufferEvent): string | undefined {
+  if (event.type === 'queue.question-handoff-started') {
+    return event.properties.sessionID
+  }
+  return getOpencodeEventSessionId(event)
 }
 
 type AssistantMessage = Extract<OpenCodeMessage, { role: 'assistant' }>
@@ -45,7 +61,7 @@ function getTaskCandidateFromEvent({
   event,
   mainSessionId,
 }: {
-  event: OpenCodeEvent
+  event: EventBufferEvent
   mainSessionId: string
 }): { assistantMessageId: string; childSessionId: string; subagentType?: string } | undefined {
   if (event.type !== 'message.part.updated') {
@@ -90,8 +106,8 @@ export function isSessionBusy({
     if (!entry) {
       continue
     }
-    const e = entry.event
-    const eid = getOpencodeEventSessionId(e)
+     const e = entry.event
+     const eid = getEventBufferSessionId(e)
     if (eid !== sessionId) {
       continue
     }
@@ -100,6 +116,36 @@ export function isSessionBusy({
     }
     if (e.type === 'session.status') {
       return e.properties.status.type === 'busy'
+    }
+  }
+  return false
+}
+
+export function didQuestionQueueHandoffSinceLatestQuestionAsked({
+  events,
+  sessionId,
+  upToIndex,
+}: {
+  events: EventBufferEntry[]
+  sessionId: string
+  upToIndex?: number
+}): boolean {
+  const end = upToIndex ?? events.length - 1
+  for (let i = end; i >= 0; i--) {
+    const entry = events[i]
+    if (!entry) {
+      continue
+    }
+    const event = entry.event
+    const eventSessionId = getEventBufferSessionId(event)
+    if (eventSessionId !== sessionId) {
+      continue
+    }
+    if (event.type === 'queue.question-handoff-started') {
+      return true
+    }
+    if (event.type === 'question.asked') {
+      return false
     }
   }
   return false

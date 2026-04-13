@@ -478,12 +478,16 @@ opencode uses the event subscription (sdk call `event.subscribe`) as single sour
 
 prefer event sourcing over mirrored mutable run state.
 
+always read the `event-sourcing-state` skill before updating code in `cli/src/session-handler/thread-session-runtime.ts`.
+
 why this is preferred:
 
 - one source of truth: the event stream. no duplicated "phase" or "current run" state that can desync.
 - easier debugging: read the jsonl stream and replay decisions from history.
 - easier testing: derivation logic is pure and deterministic with fixture inputs.
 - fewer race bugs: state is derived from observed events, not guessed from local transitions.
+
+when the user mentions a specific kimaki session while reporting a bug, always export its jsonl first with `kimaki session export-events-jsonl --session <id> --out ./tmp/<id>.jsonl` and inspect that stream before guessing about runtime state.
 
 write derivation as pure functions that accept events and return computed state.
 prefer existing derivation helpers from `event-stream-state.ts` (for example

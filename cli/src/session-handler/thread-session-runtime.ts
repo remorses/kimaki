@@ -91,6 +91,7 @@ import {
 } from './opencode-session-event-log.js'
 import {
   doesLatestUserTurnHaveNaturalCompletion,
+  didQuestionQueueHandoffSinceLatestQuestionAsked,
   getAssistantMessageIdsForLatestUserTurn,
   getCurrentTurnStartTime,
   isSessionBusy,
@@ -101,6 +102,7 @@ import {
   hasAssistantMessageCompletedBefore,
   isAssistantMessageInLatestUserTurn,
   isAssistantMessageNaturalCompletion,
+  type EventBufferEvent,
   type EventBufferEntry,
 } from './event-stream-state.js'
 
@@ -778,7 +780,7 @@ export class ThreadSessionRuntime {
     const hydratedEvents: EventBufferEntry[] = rows.flatMap((row) => {
       const eventResult = errore.try({
         try: () => {
-          return JSON.parse(row.event_json) as OpenCodeEvent
+          return JSON.parse(row.event_json) as EventBufferEvent
         },
         catch: (error) => {
           return new Error('Failed to parse persisted session event JSON', {
@@ -818,7 +820,9 @@ export class ThreadSessionRuntime {
     }
 
     const events = this.eventBuffer.flatMap((entry) => {
-      const eventSessionId = getOpencodeEventSessionId(entry.event)
+      const eventSessionId = entry.event.type === 'queue.question-handoff-started'
+        ? entry.event.properties.sessionID
+        : getOpencodeEventSessionId(entry.event)
       if (eventSessionId !== sessionId) {
         return []
       }
@@ -1069,15 +1073,19 @@ export class ThreadSessionRuntime {
   }
 
   private finalizeCompactedEventForEventBuffer(
-    event: OpenCodeEvent,
-  ): OpenCodeEvent {
+    event: EventBufferEvent,
+  ): EventBufferEvent {
     this.pruneLargeStringsForEventBuffer(event, new WeakSet<object>())
     return event
   }
 
   private compactEventForEventBuffer(
-    event: OpenCodeEvent,
-  ): OpenCodeEvent | undefined {
+    event: EventBufferEvent,
+  ): EventBufferEvent | undefined {
+    if (event.type === 'queue.question-handoff-started') {
+      return this.finalizeCompactedEventForEventBuffer(structuredClone(event))
+    }
+
     if (event.type === 'session.diff') {
       return undefined
     }
@@ -1179,7 +1187,7 @@ export class ThreadSessionRuntime {
     return this.finalizeCompactedEventForEventBuffer(compacted)
   }
 
-  private appendEventToBuffer(event: OpenCodeEvent): void {
+  private appendEventToBuffer(event: EventBufferEvent): void {
     const compactedEvent = this.compactEventForEventBuffer(event)
     if (!compactedEvent) {
       return
@@ -1221,6 +1229,15 @@ export class ThreadSessionRuntime {
     })
   }
 
+  private markQuestionQueueHandoffStarted(sessionId: string): void {
+    this.appendEventToBuffer({
+      type: 'queue.question-handoff-started',
+      properties: {
+        sessionID: sessionId,
+      },
+    })
+  }
+
   /**
    * Generic event waiter: polls the event buffer until a matching event
    * appears (with timestamp >= sinceTimestamp), or timeout/abort.
@@ -1230,11 +1247,11 @@ export class ThreadSessionRuntime {
    * the buffer that handleEvent() fills. Works for any event type.
    */
   private async waitForEvent(opts: {
-    predicate: (event: OpenCodeEvent) => boolean
+    predicate: (event: EventBufferEvent) => boolean
     sinceTimestamp: number
     timeoutMs: number
     pollMs?: number
-  }): Promise<OpenCodeEvent | undefined> {
+  }): Promise<EventBufferEvent | undefined> {
     const { predicate, sinceTimestamp, timeoutMs, pollMs = 50 } = opts
     const deadline = Date.now() + timeoutMs
 
@@ -1552,13 +1569,14 @@ export class ThreadSessionRuntime {
 
   // ── Typing Indicator Management ─────────────────────────────
 
+  private hasPendingQuestionUi(): boolean {
+    return [...pendingQuestionContexts.values()].some((ctx) => {
+      return ctx.thread.id === this.thread.id
+    })
+  }
+
   private hasPendingInteractiveUi(): boolean {
-    const hasPendingQuestion = [...pendingQuestionContexts.values()].some(
-      (ctx) => {
-        return ctx.thread.id === this.thread.id
-      },
-    )
-    if (hasPendingQuestion) {
+    if (this.hasPendingQuestionUi()) {
       return true
     }
     const hasPendingActionButtons = [...pendingActionButtonContexts.values()].some(
@@ -2617,8 +2635,10 @@ export class ThreadSessionRuntime {
       },
     })
 
-    // Queue drain is intentionally NOT done here — tryDrainQueue() already
-    // blocks dispatch while interactive UI (question/permission) is pending.
+    this.maybeHandoffQueuedItemForPendingQuestion({
+      sessionId,
+      reason: 'question-shown',
+    })
   }
 
   private handleQuestionReplied(properties: { sessionID: string }): void {
@@ -2633,29 +2653,55 @@ export class ThreadSessionRuntime {
     // Hand off only the next queued item to OpenCode immediately so the queue
     // resumes, but keep later items local so their `» user:` indicators still
     // appear one-by-one when they actually become active.
-    if (this.getQueueLength() > 0 && !this.questionReplyQueueHandoffPromise) {
-      logger.log(
-        `[QUESTION REPLIED] Queue has ${this.getQueueLength()} items, handing off to opencode queue`,
-      )
-      this.questionReplyQueueHandoffPromise = this.handoffQueuedItemsAfterQuestionReply({
-        sessionId,
-      }).catch((error) => {
-        logger.error('[QUESTION REPLIED] Failed to hand off queued messages:', error)
-        if (error instanceof Error) {
-          void notifyError(error, 'Failed to hand off queued messages after question reply')
-        }
-      }).finally(() => {
-        this.questionReplyQueueHandoffPromise = null
-      })
-    }
+    this.maybeHandoffQueuedItemForPendingQuestion({
+      sessionId,
+      reason: 'question-replied',
+    })
   }
 
-  // Detached helper promise for the "question answered while local queue has
-  // items" flow. Prevents starting two overlapping single-item handoffs when
-  // multiple question replies land close together.
-  private questionReplyQueueHandoffPromise: Promise<void> | null = null
+  // Detached helper promise for the "question blocks while local queue has
+  // items" flow. Prevents overlapping single-item handoffs when the question is
+  // shown, answered, and new /queue items arrive close together.
+  private questionQueueHandoffPromise: Promise<void> | null = null
 
-  private async handoffQueuedItemsAfterQuestionReply({
+  private maybeHandoffQueuedItemForPendingQuestion({
+    sessionId,
+    reason,
+  }: {
+    sessionId: string | undefined
+    reason: 'question-shown' | 'question-replied' | 'queue-added-during-question'
+  }): void {
+    if (!sessionId) {
+      return
+    }
+    if (didQuestionQueueHandoffSinceLatestQuestionAsked({
+      events: this.eventBuffer,
+      sessionId,
+    })) {
+      return
+    }
+    if (this.getQueueLength() === 0) {
+      return
+    }
+    if (this.questionQueueHandoffPromise) {
+      return
+    }
+    logger.log(
+      `[QUESTION QUEUE HANDOFF] Queue has ${this.getQueueLength()} items, handing off first item (${reason})`,
+    )
+    this.questionQueueHandoffPromise = this.handoffQueuedItemForPendingQuestion({
+      sessionId,
+    }).catch((error) => {
+      logger.error('[QUESTION QUEUE HANDOFF] Failed to hand off queued message:', error)
+      if (error instanceof Error) {
+        void notifyError(error, 'Failed to hand off queued message during pending question')
+      }
+    }).finally(() => {
+      this.questionQueueHandoffPromise = null
+    })
+  }
+
+  private async handoffQueuedItemForPendingQuestion({
     sessionId,
   }: {
     sessionId: string
@@ -2665,7 +2711,7 @@ export class ThreadSessionRuntime {
     }
     if (this.state?.sessionId !== sessionId) {
       logger.log(
-        `[QUESTION REPLIED] Session changed before queue handoff for thread ${this.threadId}`,
+        `[QUESTION QUEUE HANDOFF] Session changed before queue handoff for thread ${this.threadId}`,
       )
       return
     }
@@ -2685,6 +2731,7 @@ export class ThreadSessionRuntime {
       )
     }
 
+    this.markQuestionQueueHandoffStarted(sessionId)
     await this.submitViaOpencodeQueue(next)
   }
 
@@ -3167,6 +3214,13 @@ export class ThreadSessionRuntime {
       // Ensure listener is running
       if (!this.listenerLoopRunning) {
         void this.startEventListener()
+      }
+
+      if (this.hasPendingQuestionUi()) {
+        this.maybeHandoffQueuedItemForPendingQuestion({
+          sessionId: stateAfterEnqueue?.sessionId || this.state?.sessionId,
+          reason: 'queue-added-during-question',
+        })
       }
 
       await this.tryDrainQueue()
