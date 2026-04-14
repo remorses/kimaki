@@ -542,10 +542,21 @@ describe('agent model resolution', () => {
         afterAuthorId: discord.botUserId,
       })
 
+      let isSkippingContextCacheDiff = false
       const threadText = (await discord.thread(thread.id).text())
         .split('\n')
         .filter((line) => {
-          return !line.startsWith('⬦ info: Context cache discarded:')
+          if (line.startsWith('⬦ info: Context cache discarded:')) {
+            isSkippingContextCacheDiff = true
+            return false
+          }
+          if (!isSkippingContextCacheDiff) {
+            return true
+          }
+          if (line === '```') {
+            isSkippingContextCacheDiff = false
+          }
+          return false
         })
         .join('\n')
 

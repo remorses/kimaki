@@ -1,17 +1,14 @@
 // OpenCode plugin that detects per-session system prompt drift across turns.
 // When the effective system prompt changes after the first user message, it
-// writes a debug diff file and shows a toast because prompt-cache invalidation
-// increases rate-limit usage and usually means another plugin is mutating the
-// system prompt unexpectedly.
+// shows a short markdown diff snippet in a toast because prompt-cache
+// invalidation increases rate-limit usage and usually means another plugin is
+// mutating the system prompt unexpectedly.
 
-import fs from 'node:fs'
-import path from 'node:path'
 import type { Plugin } from '@opencode-ai/plugin'
-import { createPatch, diffLines } from 'diff'
+import { diffLines } from 'diff'
 import * as errore from 'errore'
 import { createPluginLogger, formatPluginErrorWithStack, setPluginLogFilePath } from './plugin-logger.js'
 import { initSentry, notifyError } from './sentry.js'
-import { abbreviatePath } from './utils.js'
 
 const logger = createPluginLogger('OPENCODE')
 const TOAST_SESSION_MARKER_SEPARATOR = ' '
@@ -39,17 +36,13 @@ type SessionState = {
 type SystemPromptDiff = {
   additions: number
   deletions: number
-  patch: string
+  toastSnippet: string
 }
 
 type TurnContext = {
   agent: string | undefined
   model: string | undefined
   directory: string
-}
-
-function getSystemPromptDiffDir({ dataDir }: { dataDir: string }): string {
-  return path.join(dataDir, 'system-prompt-diffs')
 }
 
 function normalizeSystemPrompt({ system }: { system: string[] }): string {
@@ -103,13 +96,9 @@ function shouldSuppressDiffNotice({
 function buildPatch({
   beforeText,
   afterText,
-  beforeLabel,
-  afterLabel,
 }: {
   beforeText: string
   afterText: string
-  beforeLabel: string
-  afterLabel: string
 }): SystemPromptDiff {
   const changes = diffLines(beforeText, afterText)
   const additions = changes.reduce((count, change) => {
@@ -124,64 +113,38 @@ function buildPatch({
     }
     return count + change.count
   }, 0)
-  const patch = createPatch(afterLabel, beforeText, afterText, beforeLabel, afterLabel)
+  const diffLinesForToast: string[] = []
+  const maxDiffLines = 100
+
+  changes.forEach((change) => {
+    if (diffLinesForToast.length >= maxDiffLines) {
+      return
+    }
+
+    const prefix = change.added ? '+' : change.removed ? '-' : ' '
+    const rawSegmentLines = change.value.split('\n')
+    const normalizedSegmentLines = change.value.endsWith('\n')
+      ? rawSegmentLines.slice(0, -1)
+      : rawSegmentLines
+    const segmentLines = normalizedSegmentLines.map((line) => {
+      return `${prefix}${line}`
+    })
+
+    const remainingLines = maxDiffLines - diffLinesForToast.length
+    diffLinesForToast.push(...segmentLines.slice(0, remainingLines))
+  })
+
+  const wasTruncated = diffLinesForToast.length === maxDiffLines
+  const toastSnippetBody = wasTruncated
+    ? [...diffLinesForToast.slice(0, -1), '… diff truncated …'].join('\n')
+    : diffLinesForToast.join('\n')
+  const toastSnippet = ['```diff', toastSnippetBody, '```'].join('\n')
 
   return {
     additions,
     deletions,
-    patch,
+    toastSnippet,
   }
-}
-
-function writeSystemPromptDiffFile({
-  dataDir,
-  sessionId,
-  beforePrompt,
-  afterPrompt,
-}: {
-  dataDir: string
-  sessionId: string
-  beforePrompt: string
-  afterPrompt: string
-}): Error | {
-  additions: number
-  deletions: number
-  filePath: string
-} {
-  const diff = buildPatch({
-    beforeText: beforePrompt,
-    afterText: afterPrompt,
-    beforeLabel: 'system-before.txt',
-    afterLabel: 'system-after.txt',
-  })
-  const timestamp = new Date().toISOString().replaceAll(':', '-')
-  const sessionDir = path.join(getSystemPromptDiffDir({ dataDir }), sessionId)
-  const filePath = path.join(sessionDir, `${timestamp}.diff`)
-
-  const fileContent = [
-    `Session: ${sessionId}`,
-    `Created: ${new Date().toISOString()}`,
-    `Additions: ${diff.additions}`,
-    `Deletions: ${diff.deletions}`,
-    '',
-    diff.patch,
-  ].join('\n')
-
-  return errore.try({
-    try: () => {
-      fs.mkdirSync(sessionDir, { recursive: true })
-      fs.writeFileSync(filePath, fileContent)
-      // fs.writeFileSync(latestPromptPath, afterPrompt)
-        return {
-          additions: diff.additions,
-          deletions: diff.deletions,
-          filePath,
-        }
-    },
-    catch: (error) => {
-      return new Error('Failed to write system prompt diff file', { cause: error })
-    },
-  })
 }
 
 function getOrCreateSessionState({
@@ -213,13 +176,11 @@ async function handleSystemTransform({
   input,
   output,
   sessions,
-  dataDir,
   client,
 }: {
   input: SystemTransformInput
   output: SystemTransformOutput
   sessions: Map<string, SessionState>
-  dataDir: string | undefined
   client: Parameters<Plugin>[0]['client']
 }): Promise<void> {
   const sessionId = input.sessionID
@@ -256,19 +217,10 @@ async function handleSystemTransform({
     return
   }
 
-  if (!dataDir) {
-    return
-  }
-
-  const diffFileResult = writeSystemPromptDiffFile({
-    dataDir,
-    sessionId,
-    beforePrompt: previousPrompt,
-    afterPrompt: currentPrompt,
+  const promptDiff = buildPatch({
+    beforeText: previousPrompt,
+    afterText: currentPrompt,
   })
-  if (diffFileResult instanceof Error) {
-    throw diffFileResult
-  }
 
   await client.tui.showToast({
     body: {
@@ -277,8 +229,7 @@ async function handleSystemTransform({
       message: appendToastSessionMarker({
         sessionId,
         message:
-        `system prompt changed since the previous message (+${diffFileResult.additions} / -${diffFileResult.deletions}). ` +
-        `Diff: \`${abbreviatePath(diffFileResult.filePath)}\`. `
+          `system prompt changed since the previous message (+${promptDiff.additions} / -${promptDiff.deletions}).\n${promptDiff.toastSnippet}`,
       }),
     },
   })
@@ -332,7 +283,6 @@ const systemPromptDriftPlugin: Plugin = async ({ client, directory }) => {
                   input,
                   output,
                   sessions,
-                  dataDir,
                   client,
                 })
               },
