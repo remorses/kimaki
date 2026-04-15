@@ -4,7 +4,6 @@ import { describe, expect, test } from 'vitest'
 import fs from 'node:fs'
 import path from 'node:path'
 import {
-  appendSessionPermissionRules,
   buildAddDirPermissionRules,
   resolveDirectoryPermissionPattern,
 } from './add-dir.js'
@@ -38,26 +37,14 @@ describe('resolveDirectoryPermissionPattern', () => {
       ]
     `)
   })
-})
 
-describe('appendSessionPermissionRules', () => {
-  test('appends missing external_directory allow rules', () => {
+  test('builds allow rules for a specific directory', () => {
     expect(
-      appendSessionPermissionRules({
-        existingPermissions: [
-          { permission: 'bash', pattern: '*', action: 'deny' },
-        ],
-        addedRules: buildAddDirPermissionRules({
-          resolvedPattern: '/repo/extra',
-        }),
+      buildAddDirPermissionRules({
+        resolvedPattern: '/repo/extra',
       }),
     ).toMatchInlineSnapshot(`
       [
-        {
-          "action": "deny",
-          "pattern": "*",
-          "permission": "bash",
-        },
         {
           "action": "allow",
           "pattern": "/repo/extra",
@@ -66,27 +53,6 @@ describe('appendSessionPermissionRules', () => {
         {
           "action": "allow",
           "pattern": "/repo/extra/*",
-          "permission": "external_directory",
-        },
-      ]
-    `)
-  })
-
-  test('keeps permissions unchanged when the path is already covered', () => {
-    expect(
-      appendSessionPermissionRules({
-        existingPermissions: [
-          { permission: 'external_directory', pattern: '*', action: 'allow' },
-        ],
-        addedRules: buildAddDirPermissionRules({
-          resolvedPattern: '/repo/extra',
-        }),
-      }),
-    ).toMatchInlineSnapshot(`
-      [
-        {
-          "action": "allow",
-          "pattern": "*",
           "permission": "external_directory",
         },
       ]

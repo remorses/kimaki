@@ -1,6 +1,6 @@
 // /add-dir command - Expand the current session's external_directory permissions.
 // Resolves the requested directory against the active working directory, then
-// updates the existing session permission ruleset in place.
+// updates the current session permission rules via OpenCode.
 
 import {
   ChannelType,
@@ -12,7 +12,6 @@ import type { PermissionRuleset } from '@opencode-ai/sdk/v2'
 import fs from 'node:fs'
 import path from 'node:path'
 import type { CommandContext } from './types.js'
-import { arePatternsCoveredBy } from './permissions.js'
 import { getThreadSession } from '../database.js'
 import {
   getOpencodeClient,
@@ -89,45 +88,6 @@ export function buildAddDirPermissionRules({
       action: 'allow',
     },
   ]
-}
-
-export function appendSessionPermissionRules({
-  existingPermissions,
-  addedRules,
-}: {
-  existingPermissions: PermissionRuleset | undefined
-  addedRules: PermissionRuleset
-}): PermissionRuleset {
-  const currentPermissions: PermissionRuleset = existingPermissions || []
-  const currentAllowPatterns = currentPermissions
-    .filter((rule) => {
-      return rule.permission === 'external_directory' && rule.action === 'allow'
-    })
-    .map((rule) => {
-      return rule.pattern
-    })
-  const addedPatterns = addedRules.map((rule) => {
-    return rule.pattern
-  })
-
-  if (
-    arePatternsCoveredBy({
-      patterns: addedPatterns,
-      coveringPatterns: currentAllowPatterns,
-    })
-  ) {
-    return currentPermissions
-  }
-
-  const uniqueAddedRules = addedRules.filter((rule) => {
-    return !currentPermissions.some((existingRule) => {
-      return existingRule.permission === rule.permission &&
-        existingRule.pattern === rule.pattern &&
-        existingRule.action === rule.action
-    })
-  })
-
-  return [...currentPermissions, ...uniqueAddedRules]
 }
 
 export async function handleAddDirCommand({
@@ -207,35 +167,9 @@ export async function handleAddDirCommand({
   }
 
   try {
-    const sessionResponse = await client.session.get({
-      sessionID: sessionId,
-      directory: resolvedDirectories.workingDirectory,
-    })
-    if (sessionResponse.error || !sessionResponse.data) {
-      await command.editReply('Failed to load current session permissions')
-      return
-    }
-
-    const addedRules = buildAddDirPermissionRules({ resolvedPattern })
-    const previousPermissions = sessionResponse.data.permission || []
-    const nextPermissions = appendSessionPermissionRules({
-      existingPermissions: previousPermissions,
-      addedRules,
-    })
-
-    if (nextPermissions.length === previousPermissions.length) {
-      await command.editReply(
-        resolvedPattern === ALL_DIRECTORIES_PATTERN
-          ? 'All external directories are already allowed for this session'
-          : `Directory already allowed for this session: \`${resolvedPattern}\``,
-      )
-      return
-    }
-
     const updateResponse = await client.session.update({
       sessionID: sessionId,
-      directory: resolvedDirectories.workingDirectory,
-      permission: nextPermissions,
+      permission: buildAddDirPermissionRules({ resolvedPattern }),
     })
     if (updateResponse.error) {
       await command.editReply('Failed to update session permissions')
