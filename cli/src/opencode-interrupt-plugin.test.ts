@@ -116,6 +116,11 @@ function createContext({ client }: { client: MockClient }): InterruptContext {
     },
     directory: '/Users/morse/Documents/GitHub/kimakivoice',
     worktree: '/Users/morse/Documents/GitHub/kimakivoice',
+    experimental_workspace: {
+      register: () => {
+        return
+      },
+    },
     serverUrl: new URL('http://127.0.0.1:4096'),
     $: {} as InterruptContext['$'],
   }
