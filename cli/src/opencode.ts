@@ -18,6 +18,7 @@ import fs from 'node:fs'
 import net from 'node:net'
 import os from 'node:os'
 import path from 'node:path'
+import readline from 'node:readline'
 import { fileURLToPath } from 'node:url'
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
@@ -98,11 +99,8 @@ function stripAnsiCodes(value: string): string {
   return value.replaceAll(ANSI_ESCAPE_REGEX, '')
 }
 
-function splitOutputChunkLines(chunk: string): string[] {
-  return chunk
-    .split(/\r?\n/g)
-    .map((line) => stripAnsiCodes(line).trim())
-    .filter((line) => line.length > 0)
+function sanitizeOutputLine(line: string): string {
+  return stripAnsiCodes(line).trim()
 }
 
 function sanitizeForCodeFence(line: string): string {
@@ -111,23 +109,52 @@ function sanitizeForCodeFence(line: string): string {
 
 function pushStartupStderrTail({
   stderrTail,
-  chunk,
+  line,
 }: {
   stderrTail: string[]
-  chunk: string
+  line: string
 }): void {
-  const incomingLines = splitOutputChunkLines(chunk)
-  const truncatedLines = incomingLines.map((line) => {
-    const sanitizedLine = sanitizeForCodeFence(line)
-    return truncateWithEllipsis({
-      value: sanitizedLine,
-      maxLength: STARTUP_STDERR_LINE_MAX_LENGTH,
-    })
+  const sanitizedLine = sanitizeOutputLine(line)
+  if (sanitizedLine.length === 0) {
+    return
+  }
+
+  const truncatedLine = truncateWithEllipsis({
+    value: sanitizeForCodeFence(sanitizedLine),
+    maxLength: STARTUP_STDERR_LINE_MAX_LENGTH,
   })
-  stderrTail.push(...truncatedLines)
+
+  stderrTail.push(truncatedLine)
   if (stderrTail.length > STARTUP_STDERR_TAIL_LIMIT) {
     stderrTail.splice(0, stderrTail.length - STARTUP_STDERR_TAIL_LIMIT)
   }
+}
+
+function subscribeToProcessLogStream({
+  stream,
+  onLine,
+}: {
+  stream: NodeJS.ReadableStream | null | undefined
+  onLine: (line: string) => void
+}): readline.Interface | null {
+  if (!stream) {
+    return null
+  }
+
+  const logReader = readline.createInterface({
+    input: stream,
+    crlfDelay: Infinity,
+  })
+
+  logReader.on('line', (line) => {
+    const sanitizedLine = sanitizeOutputLine(line)
+    if (sanitizedLine.length === 0) {
+      return
+    }
+    onLine(sanitizedLine)
+  })
+
+  return logReader
 }
 
 function buildStartupTimeoutReason({
@@ -653,37 +680,27 @@ async function startSingleServer(): Promise<ServerStartError | SingleServer> {
     `Spawned opencode serve --port ${port} (pid: ${serverProcess.pid})`,
   )
 
-  serverProcess.stdout?.on('data', (data) => {
-    try {
-      const chunk = data.toString()
-      const lines = splitOutputChunkLines(chunk)
+  const stdoutReader = subscribeToProcessLogStream({
+    stream: serverProcess.stdout,
+    onLine: (line) => {
       if (!serverReady) {
-        logBuffer.push(...lines.map((line) => `[stdout] ${line}`))
+        logBuffer.push(`[stdout] ${line}`)
         return
       }
-      for (const line of lines) {
-        opencodeLogger.log(line)
-      }
-    } catch (error) {
-      logBuffer.push(`Failed to process stdout startup logs: ${error}`)
-    }
+      opencodeLogger.log(line)
+    },
   })
 
-  serverProcess.stderr?.on('data', (data) => {
-    try {
-      const chunk = data.toString()
-      const lines = splitOutputChunkLines(chunk)
+  const stderrReader = subscribeToProcessLogStream({
+    stream: serverProcess.stderr,
+    onLine: (line) => {
       if (!serverReady) {
-        logBuffer.push(...lines.map((line) => `[stderr] ${line}`))
-        pushStartupStderrTail({ stderrTail: startupStderrTail, chunk })
+        logBuffer.push(`[stderr] ${line}`)
+        pushStartupStderrTail({ stderrTail: startupStderrTail, line })
         return
       }
-      for (const line of lines) {
-        opencodeLogger.error(line)
-      }
-    } catch (error) {
-      logBuffer.push(`Failed to process stderr startup logs: ${error}`)
-    }
+      opencodeLogger.error(line)
+    },
   })
 
   serverProcess.on('error', (error) => {
@@ -691,6 +708,9 @@ async function startSingleServer(): Promise<ServerStartError | SingleServer> {
   })
 
   serverProcess.on('exit', (code, signal) => {
+    stdoutReader?.close()
+    stderrReader?.close()
+
     if (startingServerProcess === serverProcess) {
       startingServerProcess = null
     }
