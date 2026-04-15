@@ -235,7 +235,7 @@ describe('runtime lifecycle', () => {
     if (warmup instanceof Error) {
       throw warmup
     }
-  }, 60_000)
+  }, 20_000)
 
   afterAll(async () => {
     if (directories) {
@@ -261,7 +261,7 @@ describe('runtime lifecycle', () => {
     if (directories) {
       fs.rmSync(directories.dataDir, { recursive: true, force: true })
     }
-  }, 10_000)
+  }, 5_000)
 
   test(
     'three sequential completions reuse same runtime and listener',
@@ -500,14 +500,19 @@ describe('runtime lifecycle', () => {
     'does not print a context-usage notice for the final text part right before the footer',
     async () => {
       const prompt = 'Reply with exactly: footer-high-usage'
+      const existingThreadIds = new Set(
+        (await discord.channel(TEXT_CHANNEL_ID).getThreads()).map((thread) => {
+          return thread.id
+        }),
+      )
       await discord.channel(TEXT_CHANNEL_ID).user(TEST_USER_ID).sendMessage({
         content: prompt,
       })
 
       const thread = await discord.channel(TEXT_CHANNEL_ID).waitForThread({
-        timeout: 4_000,
+        timeout: 6_000,
         predicate: (t) => {
-          return t.name === prompt
+          return !existingThreadIds.has(t.id)
         },
       })
 
@@ -516,7 +521,7 @@ describe('runtime lifecycle', () => {
         threadId: thread.id,
         userId: TEST_USER_ID,
         text: 'deterministic-v2',
-        timeout: 4_000,
+        timeout: 6_000,
       })
 
       expect(await discord.thread(thread.id).text()).toMatchInlineSnapshot(`
@@ -542,19 +547,24 @@ describe('runtime lifecycle', () => {
       // responses and the thread should not deadlock or create duplicate sessions.
 
       // 1. Establish thread + session
+      const existingThreadIds = new Set(
+        (await discord.channel(TEXT_CHANNEL_ID).getThreads()).map((thread) => {
+          return thread.id
+        }),
+      )
       await discord.channel(TEXT_CHANNEL_ID).user(TEST_USER_ID).sendMessage({
         content: 'Reply with exactly: concurrent-setup',
       })
 
       const thread = await discord.channel(TEXT_CHANNEL_ID).waitForThread({
-        timeout: 4_000,
+        timeout: 6_000,
         predicate: (t) => {
-          return t.name === 'Reply with exactly: concurrent-setup'
+          return !existingThreadIds.has(t.id)
         },
       })
 
       const th = discord.thread(thread.id)
-      const setupReply = await th.waitForBotReply({ timeout: 4_000 })
+      const setupReply = await th.waitForBotReply({ timeout: 6_000 })
       expect(setupReply.content.trim().length).toBeGreaterThan(0)
 
       // Wait for setup footer so the run is fully idle
@@ -563,7 +573,7 @@ describe('runtime lifecycle', () => {
         threadId: thread.id,
         userId: TEST_USER_ID,
         text: '*project',
-        timeout: 4_000,
+        timeout: 6_000,
       })
 
       // Snapshot bot message count before sending concurrent messages

@@ -243,7 +243,7 @@ describe('kimaki send --channel thread creation', () => {
     if (warmup instanceof Error) {
       throw warmup
     }
-  }, 60_000)
+  }, 20_000)
 
   afterAll(async () => {
     if (directories) {
@@ -275,7 +275,7 @@ describe('kimaki send --channel thread creation', () => {
     if (directories) {
       fs.rmSync(directories.dataDir, { recursive: true, force: true })
     }
-  }, 10_000)
+  }, 5_000)
 
   test(
     'kimaki send --prompt "/hello-test-cmd" falls through as text when registeredUserCommands is empty (repro #97)',

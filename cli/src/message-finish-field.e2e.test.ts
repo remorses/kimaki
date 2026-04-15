@@ -119,7 +119,7 @@ beforeAll(async () => {
     throw getClient
   }
   client = getClient()
-}, 60_000)
+}, 20_000)
 
 afterAll(async () => {
   await cleanupTestSessions({
@@ -127,7 +127,7 @@ afterAll(async () => {
     testStartTime,
   })
   await stopOpencodeServer()
-}, 10_000)
+}, 5_000)
 
 test('tool-call step has finish="tool-calls", follow-up has finish="stop"', async () => {
   const session = await client.session.create({
@@ -148,7 +148,10 @@ test('tool-call step has finish="tool-calls", follow-up has finish="stop"', asyn
   let completedAssistants: Array<{ finish: string | null; partTypes: string[] }> = []
 
   while (Date.now() - pollStart < maxWait) {
-    const msgs = await client.session.messages({ sessionID })
+    const msgs = await client.session.messages({
+      sessionID,
+      directory: directories.projectDirectory,
+    })
     completedAssistants = (msgs.data || [])
       .filter((m) => {
         return m.info.role === 'assistant' && m.info.time.completed
@@ -189,4 +192,4 @@ test('tool-call step has finish="tool-calls", follow-up has finish="stop"', asyn
 
   const finishes = completedAssistants.map((m) => { return m.finish })
   expect(finishes).toEqual(['tool-calls', 'stop'])
-}, 15_000)
+}, 5_000)

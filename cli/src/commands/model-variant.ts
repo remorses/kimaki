@@ -155,6 +155,7 @@ export async function handleModelVariantCommand({
       channelId: targetChannelId,
       appId,
       getClient,
+      directory: projectDirectory,
     })
   }
 
@@ -165,6 +166,7 @@ export async function handleModelVariantCommand({
         channelId: targetChannelId,
         appId,
         getClient,
+        directory: projectDirectory,
       }),
       getVariantCascade({
         sessionId,

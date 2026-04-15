@@ -129,7 +129,10 @@ beforeAll(async () => {
   const maxWait = 15_000
   const pollStart = Date.now()
   while (Date.now() - pollStart < maxWait) {
-    const msgs = await client.session.messages({ sessionID })
+    const msgs = await client.session.messages({
+      sessionID,
+      directory: directories.projectDirectory,
+    })
     const assistantMsg = msgs.data?.find((m) => m.info.role === 'assistant')
     const hasTextParts = assistantMsg?.parts?.some((p) => {
       return p.type === 'text' && p.text && !p.synthetic
@@ -145,7 +148,7 @@ beforeAll(async () => {
       setTimeout(resolve, 200)
     })
   }
-}, 60_000)
+}, 20_000)
 
 afterAll(async () => {
   if (directories) {
@@ -158,7 +161,7 @@ afterAll(async () => {
   if (directories) {
     fs.rmSync(directories.dataDir, { recursive: true, force: true })
   }
-}, 10_000)
+}, 5_000)
 
 // Strip dynamic parts (timestamps, durations, branch names) for stable assertions
 function normalizeMarkdown(md: string): string {

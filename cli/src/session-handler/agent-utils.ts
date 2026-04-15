@@ -15,11 +15,13 @@ export async function resolveValidatedAgentPreference({
   sessionId,
   channelId,
   getClient,
+  directory,
 }: {
   agent?: string
   sessionId: string
   channelId?: string
   getClient: Awaited<ReturnType<typeof initializeOpencodeForDirectory>>
+  directory?: string
 }): Promise<{ agentPreference?: string; agents: AgentInfo[] }> {
   const agentPreference = await (async (): Promise<string | undefined> => {
     if (agent) {
@@ -46,8 +48,12 @@ export async function resolveValidatedAgentPreference({
     return { agentPreference: agentPreference || undefined, agents: [] }
   }
 
+  if (!agentPreference) {
+    return { agentPreference: undefined, agents: [] }
+  }
+
   const agentsResponse = await errore.tryAsync(() => {
-    return getClient().app.agents({})
+    return getClient().app.agents({ directory })
   })
   if (agentsResponse instanceof Error) {
     if (agentPreference) {
@@ -70,10 +76,6 @@ export async function resolveValidatedAgentPreference({
     .map((a) => {
       return { name: a.name, description: a.description }
     })
-
-  if (!agentPreference) {
-    return { agentPreference: undefined, agents }
-  }
 
   const hasAgent = availableAgents.some((availableAgent) => {
     return availableAgent.name === agentPreference

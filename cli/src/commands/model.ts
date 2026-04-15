@@ -136,6 +136,7 @@ export async function ensureSessionPreferencesSnapshot({
   channelId,
   appId,
   getClient,
+  directory,
   agentOverride,
   modelOverride,
   force,
@@ -144,6 +145,7 @@ export async function ensureSessionPreferencesSnapshot({
   channelId?: string
   appId?: string
   getClient: Awaited<ReturnType<typeof initializeOpencodeForDirectory>>
+  directory?: string
   agentOverride?: string
   modelOverride?: string
   force?: boolean
@@ -202,6 +204,7 @@ export async function ensureSessionPreferencesSnapshot({
     appId,
     agentPreference: bootstrappedAgent,
     getClient,
+    directory,
   })
   if (bootstrappedModel.type === 'none') {
     return
@@ -232,12 +235,14 @@ export async function getCurrentModelInfo({
   appId,
   agentPreference,
   getClient,
+  directory,
 }: {
   sessionId?: string
   channelId?: string
   appId?: string
   agentPreference?: string
   getClient: Awaited<ReturnType<typeof initializeOpencodeForDirectory>>
+  directory?: string
 }): Promise<CurrentModelInfo> {
   if (getClient instanceof Error) {
     return { type: 'none' }
@@ -264,7 +269,7 @@ export async function getCurrentModelInfo({
         ? await getChannelAgent(channelId)
         : undefined)
   if (effectiveAgent) {
-    const agentsResponse = await getClient().app.agents({})
+    const agentsResponse = await getClient().app.agents({ directory })
     if (agentsResponse.data) {
       const agent = agentsResponse.data.find((a) => a.name === effectiveAgent)
       if (agent?.model) {
@@ -303,7 +308,7 @@ export async function getCurrentModelInfo({
   }
 
   // 5. Get opencode default (config > recent > provider default)
-  const defaultModel = await getDefaultModel({ getClient })
+  const defaultModel = await getDefaultModel({ getClient, directory })
   if (defaultModel) {
     const model = `${defaultModel.providerID}/${defaultModel.modelID}`
     return {
@@ -399,6 +404,7 @@ export async function handleModelCommand({
         channelId: targetChannelId,
         appId: effectiveAppId,
         getClient,
+        directory: projectDirectory,
       })
     }
 
@@ -412,6 +418,7 @@ export async function handleModelCommand({
           channelId: targetChannelId,
           appId: effectiveAppId,
           getClient,
+          directory: projectDirectory,
         }),
         getVariantCascade({
           sessionId,

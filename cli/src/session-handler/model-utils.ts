@@ -67,6 +67,30 @@ function parseModelString(
   return { providerID, modelID }
 }
 
+function getModelFromProjectConfig({
+  directory,
+}: {
+  directory?: string
+}): { providerID: string; modelID: string } | undefined {
+  if (!directory) {
+    return undefined
+  }
+
+  const result = errore.tryFn(() => {
+    const configPath = path.join(directory, 'opencode.json')
+    const raw = fs.readFileSync(configPath, 'utf-8')
+    const parsed = JSON.parse(raw) as { model?: string }
+    if (!parsed.model) {
+      return undefined
+    }
+    return parseModelString(parsed.model)
+  })
+  if (result instanceof Error) {
+    return undefined
+  }
+  return result
+}
+
 /**
  * Validate that a model is available (provider connected + model exists).
  */
@@ -93,8 +117,10 @@ function isModelValid(
  */
 export async function getDefaultModel({
   getClient,
+  directory,
 }: {
   getClient: Awaited<ReturnType<typeof initializeOpencodeForDirectory>>
+  directory?: string
 }): Promise<
   | { providerID: string; modelID: string; source: DefaultModelSource }
   | undefined
@@ -103,9 +129,17 @@ export async function getDefaultModel({
     return undefined
   }
 
+  const configModel = getModelFromProjectConfig({ directory })
+  if (configModel) {
+    sessionLogger.log(
+      `[MODEL] Using project config model: ${configModel.providerID}/${configModel.modelID}`,
+    )
+    return { ...configModel, source: 'opencode-config' }
+  }
+
   // Fetch connected providers to validate any model we return
   const providersResponse = await errore.tryAsync(() => {
-    return getClient().provider.list({})
+    return getClient().provider.list({ directory })
   })
   if (providersResponse instanceof Error) {
     sessionLogger.log(
@@ -130,7 +164,7 @@ export async function getDefaultModel({
 
   // 1. Check OpenCode config.model setting (highest priority after user preference)
   const configResponse = await errore.tryAsync(() => {
-    return getClient().config.get({})
+    return getClient().config.get({ directory })
   })
   if (!(configResponse instanceof Error) && configResponse.data?.model) {
     const configModel = parseModelString(configResponse.data.model)

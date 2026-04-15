@@ -1002,6 +1002,9 @@ export class ThreadSessionRuntime {
   }: {
     port: number
   }): void {
+    if (!this.state?.sessionId) {
+      return
+    }
     const currentController = this.state?.listenerController
     if (!currentController) {
       return
@@ -2906,10 +2909,6 @@ export class ThreadSessionRuntime {
         return
       }
 
-      if (!this.listenerLoopRunning) {
-        void this.startEventListener()
-      }
-
       // Helper: stop typing and drain queued local messages on error.
       const cleanupOnError = async (errorMessage: string) => {
         this.stopTyping()
@@ -2956,6 +2955,7 @@ export class ThreadSessionRuntime {
         channelId,
         appId: resolvedAppId,
         getClient,
+        directory: this.sdkDirectory,
         agentOverride: input.agent,
         modelOverride: input.model,
         force: createdNewSession,
@@ -2967,6 +2967,7 @@ export class ThreadSessionRuntime {
           sessionId: session.id,
           channelId,
           getClient,
+          directory: this.sdkDirectory,
         })
       })
       if (agentResult instanceof Error) {
@@ -2991,6 +2992,7 @@ export class ThreadSessionRuntime {
             appId: resolvedAppId,
             agentPreference: resolvedAgent,
             getClient,
+            directory: this.sdkDirectory,
           })
           if (modelInfo.type === 'none') {
             return undefined
@@ -3212,7 +3214,7 @@ export class ThreadSessionRuntime {
         : { queued: false }
 
       // Ensure listener is running
-      if (!this.listenerLoopRunning) {
+      if (!this.listenerLoopRunning && this.state?.sessionId) {
         void this.startEventListener()
       }
 
@@ -3621,6 +3623,7 @@ export class ThreadSessionRuntime {
       channelId,
       appId: resolvedAppId,
       getClient,
+      directory: this.sdkDirectory,
       agentOverride: input.agent,
       modelOverride: input.model,
       force: createdNewSession,
@@ -3632,6 +3635,7 @@ export class ThreadSessionRuntime {
         sessionId: session.id,
         channelId,
         getClient,
+        directory: this.sdkDirectory,
       })
     })
     if (earlyAgentResult instanceof Error) {
@@ -3663,6 +3667,7 @@ export class ThreadSessionRuntime {
           appId: resolvedAppId,
           agentPreference: earlyAgentPreference,
           getClient,
+          directory: this.sdkDirectory,
         })
         if (modelInfo.type === 'none') {
           return undefined

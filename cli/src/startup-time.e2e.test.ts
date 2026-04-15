@@ -137,7 +137,7 @@ describe('startup time measurement', () => {
     if (directories) {
       fs.rmSync(directories.dataDir, { recursive: true, force: true })
     }
-  })
+  }, 5_000)
 
   test('measures per-phase startup timings', async () => {
     directories = createRunDirectories()

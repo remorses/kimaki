@@ -39,6 +39,15 @@ import {
   isoTimestamp,
 } from './serializers.js'
 
+const MAX_VITEST_WAIT_TIMEOUT_MS = 10_000
+
+function normalizeWaitTimeout(timeout: number): number {
+  if (process.env['KIMAKI_VITEST'] === '1') {
+    return Math.min(timeout, MAX_VITEST_WAIT_TIMEOUT_MS)
+  }
+  return timeout
+}
+
 export type DigitalDiscordChannelOption = {
   id?: string
   name: string
@@ -1024,8 +1033,9 @@ export class ChannelScope {
     timeout?: number
     afterTimestamp?: number
   } = {}): Promise<DigitalDiscordTypingEvent> {
+    const effectiveTimeout = normalizeWaitTimeout(timeout)
     const start = Date.now()
-    while (Date.now() - start < timeout) {
+    while (Date.now() - start < effectiveTimeout) {
       const event = this.getTypingEvents().find((entry) => {
         return entry.timestamp > afterTimestamp
       })
@@ -1050,9 +1060,10 @@ export class ChannelScope {
     idleMs?: number
     afterTimestamp?: number
   } = {}): Promise<void> {
+    const effectiveTimeout = normalizeWaitTimeout(timeout)
     const start = Date.now()
     const baselineTimestamp = afterTimestamp ?? start
-    while (Date.now() - start < timeout) {
+    while (Date.now() - start < effectiveTimeout) {
       const latestTypingTimestamp = this.getTypingEvents()
         .filter((entry) => {
           return entry.timestamp >= baselineTimestamp
@@ -1111,8 +1122,9 @@ export class ChannelScope {
     timeout?: number
     predicate?: DigitalDiscordMessagePredicate
   } = {}): Promise<APIMessage> {
+    const effectiveTimeout = normalizeWaitTimeout(timeout)
     const start = Date.now()
-    while (Date.now() - start < timeout) {
+    while (Date.now() - start < effectiveTimeout) {
       const messages = await this.getMessages()
       const matchedMessage = [...messages]
         .reverse()
@@ -1150,8 +1162,9 @@ export class ChannelScope {
     timeout?: number
     predicate?: DigitalDiscordThreadPredicate
   } = {}): Promise<APIChannel> {
+    const effectiveTimeout = normalizeWaitTimeout(timeout)
     const start = Date.now()
-    while (Date.now() - start < timeout) {
+    while (Date.now() - start < effectiveTimeout) {
       const threads = await this.getThreads()
       const matchedThreads = predicate
         ? threads.filter((thread) => {
@@ -1203,8 +1216,9 @@ export class ChannelScope {
     messageId: string | null
     acknowledged: boolean
   }> {
+    const effectiveTimeout = normalizeWaitTimeout(timeout)
     const start = Date.now()
-    while (Date.now() - start < timeout) {
+    while (Date.now() - start < effectiveTimeout) {
       const response =
         await this.discord.prisma.interactionResponse.findUnique({
           where: { interactionId },

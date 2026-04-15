@@ -15,6 +15,7 @@
 
 import { spawn, execFileSync, type ChildProcess } from 'node:child_process'
 import fs from 'node:fs'
+import http from 'node:http'
 import net from 'node:net'
 import os from 'node:os'
 import path from 'node:path'
@@ -78,6 +79,38 @@ const STARTUP_STDERR_LINE_MAX_LENGTH = 120
 const STARTUP_ERROR_REASON_MAX_LENGTH = 1500
 const ANSI_ESCAPE_REGEX =
   /[\u001B\u009B][[\]()#;?]*(?:(?:(?:[a-zA-Z\d]*(?:;[a-zA-Z\d]*)*)?\u0007)|(?:(?:\d{1,4}(?:;\d{0,4})*)?[\dA-PR-TZcf-nq-uy=><~]))/g
+
+async function requestHealthcheck({
+  url,
+}: {
+  url: string
+}): Promise<{ status: number; body: string }> {
+  return new Promise((resolve, reject) => {
+    const req = http.request(
+      url,
+      {
+        method: 'GET',
+        headers: {
+          connection: 'close',
+        },
+      },
+      (res) => {
+        const chunks: Buffer[] = []
+        res.on('data', (chunk) => {
+          chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk))
+        })
+        res.on('end', () => {
+          resolve({
+            status: res.statusCode || 0,
+            body: Buffer.concat(chunks).toString('utf-8'),
+          })
+        })
+      },
+    )
+    req.on('error', reject)
+    req.end()
+  })
+}
 
 function truncateWithEllipsis({
   value,
@@ -223,9 +256,6 @@ let serverRetryCount = 0
 const serverLifecycleListeners = new Set<(event: ServerLifecycleEvent) => void>()
 let processCleanupHandlersRegistered = false
 let startingServerProcess: ChildProcess | null = null
-
-// Cached SDK clients per directory. Each client has a fixed
-// x-opencode-directory header pointing to its project directory.
 const clientCache = new Map<string, OpencodeClient>()
 
 function notifyServerLifecycle(event: ServerLifecycleEvent): void {
@@ -420,18 +450,23 @@ async function getOpenPort(): Promise<number> {
 
 async function waitForServer({
   port,
+  directory,
   maxAttempts = 300,
   startupStderrTail,
 }: {
   port: number
+  directory?: string
   maxAttempts?: number
   startupStderrTail: string[]
 }): Promise<ServerStartError | true> {
-  const endpoint = `http://127.0.0.1:${port}/api/health`
+  const endpoint = new URL(`http://127.0.0.1:${port}/api/health`)
+  if (directory) {
+    endpoint.searchParams.set('directory', directory)
+  }
   for (let i = 0; i < maxAttempts; i++) {
     const response = await errore.tryAsync({
-      try: () => fetch(endpoint),
-      catch: (e) => new FetchError({ url: endpoint, cause: e }),
+      try: () => requestHealthcheck({ url: endpoint.toString() }),
+      catch: (e) => new FetchError({ url: endpoint.toString(), cause: e }),
     })
     if (response instanceof Error) {
       // Connection refused or other transient errors - continue polling.
@@ -443,7 +478,7 @@ async function waitForServer({
     if (response.status < 500) {
       return true
     }
-    const body = await response.text()
+    const body = response.body
     // Fatal errors that won't resolve with retrying
     if (body.includes('BunInstallFailedError')) {
       return new ServerStartError({ port, reason: body.slice(0, 200) })
@@ -466,8 +501,14 @@ async function waitForServer({
 
 // In-flight promise to prevent concurrent startups from racing
 let startingServer: Promise<ServerStartError | SingleServer> | null = null
+let preferredStartupDirectory: string | null = null
 
-async function ensureSingleServer(): Promise<ServerStartError | SingleServer> {
+async function ensureSingleServer({
+  directory,
+}: {
+  directory?: string
+} = {}): Promise<ServerStartError | SingleServer> {
+  const startupDirectory = directory || preferredStartupDirectory || undefined
   if (singleServer && !singleServer.process.killed) {
     return singleServer
   }
@@ -477,7 +518,7 @@ async function ensureSingleServer(): Promise<ServerStartError | SingleServer> {
     return startingServer
   }
 
-  startingServer = startSingleServer()
+  startingServer = startSingleServer({ directory: startupDirectory })
   try {
     return await startingServer
   } finally {
@@ -485,7 +526,11 @@ async function ensureSingleServer(): Promise<ServerStartError | SingleServer> {
   }
 }
 
-async function startSingleServer(): Promise<ServerStartError | SingleServer> {
+async function startSingleServer({
+  directory,
+}: {
+  directory?: string
+} = {}): Promise<ServerStartError | SingleServer> {
   ensureProcessCleanupHandlersRegistered()
 
   const port = await getOpenPort()
@@ -759,6 +804,7 @@ async function startSingleServer(): Promise<ServerStartError | SingleServer> {
 
   const waitResult = await waitForServer({
     port,
+    directory,
     startupStderrTail,
   })
   if (waitResult instanceof Error) {
@@ -795,9 +841,6 @@ async function startSingleServer(): Promise<ServerStartError | SingleServer> {
   notifyServerLifecycle({ type: 'started', port })
   return server
 }
-
-// ── Client cache ─────────────────────────────────────────────────
-// One SDK client per directory, each with a fixed x-opencode-directory header.
 
 function getOrCreateClient({
   baseUrl,
@@ -854,7 +897,9 @@ export async function initializeOpencodeForDirectory(
     return accessCheck
   }
 
-  const server = await ensureSingleServer()
+  preferredStartupDirectory = directory
+
+  const server = await ensureSingleServer({ directory })
   if (server instanceof Error) {
     return server
   }
@@ -1141,7 +1186,6 @@ export async function stopOpencodeServer(): Promise<boolean> {
 /**
  * Restart the single opencode server.
  * Kills the existing process and starts a new one.
- * All directory clients are invalidated and recreated on next use.
  * Used for resolving opencode state issues, refreshing auth, plugins, etc.
  */
 export async function restartOpencodeServer(): Promise<OpenCodeErrors | true> {

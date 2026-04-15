@@ -471,6 +471,7 @@ export async function handleQuickAgentCommand({
         appId,
         agentPreference: resolvedAgentName,
         getClient,
+        directory: context.dir,
       })
     })()
 

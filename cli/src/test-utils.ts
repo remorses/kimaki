@@ -56,6 +56,15 @@ import {
   type ThreadRunState,
 } from './session-handler/thread-runtime-state.js'
 
+const MAX_VITEST_WAIT_TIMEOUT_MS = 10_000
+
+function normalizeWaitTimeout(timeout: number): number {
+  if (process.env['KIMAKI_VITEST'] === '1') {
+    return Math.min(timeout, MAX_VITEST_WAIT_TIMEOUT_MS)
+  }
+  return timeout
+}
+
 /**
  * Delete all opencode sessions created during a test run.
  * Uses directory + start timestamp to scope strictly to test sessions.
@@ -116,8 +125,9 @@ export async function waitForBotMessageCount({
   count: number
   timeout: number
 }): Promise<APIMessage[]> {
+  const effectiveTimeout = normalizeWaitTimeout(timeout)
   const start = Date.now()
-  while (Date.now() - start < timeout) {
+  while (Date.now() - start < effectiveTimeout) {
     const messages = await discord.thread(threadId).getMessages()
     const botMessages = messages.filter((m) => {
       return m.author.id === discord.botUserId
@@ -151,8 +161,9 @@ export async function waitForBotReplyAfterUserMessage({
   userMessageIncludes: string
   timeout: number
 }): Promise<APIMessage[]> {
+  const effectiveTimeout = normalizeWaitTimeout(timeout)
   const start = Date.now()
-  while (Date.now() - start < timeout) {
+  while (Date.now() - start < effectiveTimeout) {
     const messages = await discord.thread(threadId).getMessages()
     const userMessageIndex = messages.findIndex((message) => {
       return (
@@ -196,9 +207,10 @@ export async function waitForBotMessageContaining({
   afterMessageId?: string
   timeout: number
 }): Promise<APIMessage[]> {
+  const effectiveTimeout = normalizeWaitTimeout(timeout)
   const start = Date.now()
   let lastMessages: APIMessage[] = []
-  while (Date.now() - start < timeout) {
+  while (Date.now() - start < effectiveTimeout) {
     const messages = await discord.thread(threadId).getMessages()
     lastMessages = messages
     const afterIndex = (() => {
@@ -265,8 +277,9 @@ export async function waitForMessageById({
   messageId: string
   timeout: number
 }): Promise<APIMessage> {
+  const effectiveTimeout = normalizeWaitTimeout(timeout)
   const start = Date.now()
-  while (Date.now() - start < timeout) {
+  while (Date.now() - start < effectiveTimeout) {
     const messages = await discord.thread(threadId).getMessages()
     const message = messages.find((candidate) => {
       return candidate.id === messageId
@@ -317,9 +330,10 @@ export async function waitForFooterMessage({
   afterMessageIncludes?: string
   afterAuthorId?: string
 }): Promise<APIMessage[]> {
+  const effectiveTimeout = normalizeWaitTimeout(timeout)
   const start = Date.now()
   let lastMessages: APIMessage[] = []
-  while (Date.now() - start < timeout) {
+  while (Date.now() - start < effectiveTimeout) {
     const messages = await discord.thread(threadId).getMessages()
     lastMessages = messages
     const afterIndex = afterMessageIncludes
@@ -381,8 +395,9 @@ export async function waitForThreadQueueLength({
   count: number
   timeout: number
 }): Promise<ThreadRunState> {
+  const effectiveTimeout = normalizeWaitTimeout(timeout)
   const start = Date.now()
-  while (Date.now() - start < timeout) {
+  while (Date.now() - start < effectiveTimeout) {
     const state = getThreadState(threadId)
     if (state && state.queueItems.length >= count) {
       return state
@@ -414,8 +429,9 @@ export async function waitForThreadState({
   /** Human-readable description for timeout error messages */
   description?: string
 }): Promise<ThreadRunState> {
+  const effectiveTimeout = normalizeWaitTimeout(timeout)
   const start = Date.now()
-  while (Date.now() - start < timeout) {
+  while (Date.now() - start < effectiveTimeout) {
     const state = getThreadState(threadId)
     if (state && predicate(state)) {
       return state

@@ -145,6 +145,7 @@ export async function handleUnsetModelCommand({
       channelId: targetChannelId,
       appId,
       getClient,
+      directory: projectDirectory,
     })
 
     newModelText =

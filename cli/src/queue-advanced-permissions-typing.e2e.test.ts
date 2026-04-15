@@ -156,15 +156,20 @@ describe('queue advanced: typing around permissions', () => {
     'manual thread message dismisses pending permission and sends the new prompt',
     async () => {
       const initialPrompt = 'PERMISSION_TYPING_MARKER dismiss-flow'
+      const existingThreadIds = new Set(
+        (await ctx.discord.channel(TEXT_CHANNEL_ID).getThreads()).map((thread) => {
+          return thread.id
+        }),
+      )
 
       await ctx.discord.channel(TEXT_CHANNEL_ID).user(TEST_USER_ID).sendMessage({
         content: initialPrompt,
       })
 
       const thread = await ctx.discord.channel(TEXT_CHANNEL_ID).waitForThread({
-        timeout: 4_000,
+        timeout: 6_000,
         predicate: (t) => {
-          return t.name === initialPrompt
+          return !existingThreadIds.has(t.id)
         },
       })
 

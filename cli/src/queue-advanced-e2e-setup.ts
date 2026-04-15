@@ -824,7 +824,7 @@ export function setupQueueAdvancedSuite({
     if (warmup instanceof Error) {
       throw warmup
     }
-  }, 60_000)
+  }, 20_000)
 
   afterAll(async () => {
     if (ctx.directories) {
@@ -856,7 +856,7 @@ export function setupQueueAdvancedSuite({
     if (ctx.directories) {
       fs.rmSync(ctx.directories.dataDir, { recursive: true, force: true })
     }
-  }, 10_000)
+  }, 5_000)
 
   afterEach(async () => {
     const threadIds = [...store.getState().threads.keys()]
@@ -867,7 +867,7 @@ export function setupQueueAdvancedSuite({
       projectDirectory: ctx.directories.projectDirectory,
       testStartTime: ctx.testStartTime,
     })
-  })
+  }, 5_000)
 
   return ctx
 }

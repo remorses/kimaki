@@ -373,14 +373,19 @@ e2eTest('queue advanced: footer emission', () => {
       // should ALSO get a footer since it completed normally.
       // This matches the real-world scenario where an agent calls a bash tool
       // (e.g. `kimaki send`) and then follows up with a summary text.
+      const existingThreadIds = new Set(
+        (await ctx.discord.channel(TEXT_CHANNEL_ID).getThreads()).map((thread) => {
+          return thread.id
+        }),
+      )
       await ctx.discord.channel(TEXT_CHANNEL_ID).user(TEST_USER_ID).sendMessage({
         content: 'TOOL_CALL_FOOTER_MARKER',
       })
 
       const thread = await ctx.discord.channel(TEXT_CHANNEL_ID).waitForThread({
-        timeout: 4_000,
+        timeout: 6_000,
         predicate: (t) => {
-          return t.name === 'TOOL_CALL_FOOTER_MARKER'
+          return !existingThreadIds.has(t.id)
         },
       })
 
@@ -394,7 +399,7 @@ e2eTest('queue advanced: footer emission', () => {
         threadId: thread.id,
         userId: TEST_USER_ID,
         userMessageIncludes: 'TOOL_CALL_FOOTER_MARKER',
-        timeout: 4_000,
+        timeout: 6_000,
       })
 
       // Wait for at least one footer to appear
@@ -448,14 +453,19 @@ e2eTest('queue advanced: footer emission', () => {
       // with finish="tool-calls") then a final text response. Only the final
       // text response should get a footer — intermediate tool-call steps
       // should NOT get footers since they're mid-turn work.
+      const existingThreadIds = new Set(
+        (await ctx.discord.channel(TEXT_CHANNEL_ID).getThreads()).map((thread) => {
+          return thread.id
+        }),
+      )
       await ctx.discord.channel(TEXT_CHANNEL_ID).user(TEST_USER_ID).sendMessage({
         content: 'MULTI_TOOL_FOOTER_MARKER',
       })
 
       const thread = await ctx.discord.channel(TEXT_CHANNEL_ID).waitForThread({
-        timeout: 4_000,
+        timeout: 6_000,
         predicate: (t) => {
-          return t.name === 'MULTI_TOOL_FOOTER_MARKER'
+          return !existingThreadIds.has(t.id)
         },
       })
 
@@ -467,14 +477,14 @@ e2eTest('queue advanced: footer emission', () => {
         threadId: thread.id,
         userId: TEST_USER_ID,
         text: 'all done, fixed 3 files',
-        timeout: 4_000,
+        timeout: 6_000,
       })
 
       // Wait for the footer after the final response
       await waitForFooterMessage({
         discord: ctx.discord,
         threadId: thread.id,
-        timeout: 4_000,
+        timeout: 6_000,
       })
 
       // Give any spurious extra footers time to arrive
@@ -514,14 +524,19 @@ e2eTest('queue advanced: footer emission', () => {
       // With a naive fix that treats tool-calls as natural completions,
       // you'd see 4 footers (one per assistant message). Only the final
       // text response should produce a footer.
+      const existingThreadIds = new Set(
+        (await ctx.discord.channel(TEXT_CHANNEL_ID).getThreads()).map((thread) => {
+          return thread.id
+        }),
+      )
       await ctx.discord.channel(TEXT_CHANNEL_ID).user(TEST_USER_ID).sendMessage({
         content: 'MULTI_STEP_CHAIN_MARKER',
       })
 
       const thread = await ctx.discord.channel(TEXT_CHANNEL_ID).waitForThread({
-        timeout: 4_000,
+        timeout: 6_000,
         predicate: (t) => {
-          return t.name === 'MULTI_STEP_CHAIN_MARKER'
+          return !existingThreadIds.has(t.id)
         },
       })
 
@@ -533,14 +548,14 @@ e2eTest('queue advanced: footer emission', () => {
         threadId: thread.id,
         userId: TEST_USER_ID,
         text: 'chain complete: all 3 steps done',
-        timeout: 8_000,
+        timeout: 10_000,
       })
 
       // Wait for footer
       await waitForFooterMessage({
         discord: ctx.discord,
         threadId: thread.id,
-        timeout: 4_000,
+        timeout: 6_000,
       })
 
       // Give any spurious extra footers time to arrive

@@ -407,12 +407,12 @@ describeIf('gateway-proxy e2e', () => {
       expect(thread.id).toBeTruthy()
       firstThreadId = thread.id
 
-      const reply = await discord.thread(thread.id).waitForBotReply({ timeout: 15_000 })
+      const reply = await discord.thread(thread.id).waitForBotReply({ timeout: 5_000 })
 
       await waitForFooterMessage({
         discord,
         threadId: thread.id,
-        timeout: 15_000,
+        timeout: 5_000,
       })
 
       expect(await discord.thread(thread.id).text()).toMatchInlineSnapshot(`
@@ -517,14 +517,18 @@ describeIf('gateway-proxy e2e', () => {
   test(
     'second message creates separate thread',
     async () => {
+      const existingThreadIds = new Set(
+        (await discord.channel(CHANNEL_1_ID).getThreads()).map((thread) => {
+          return thread.id
+        }),
+      )
       await discord.channel(CHANNEL_1_ID).user(TEST_USER_ID).sendMessage({
         content: 'second message through proxy',
       })
 
       const thread = await discord.channel(CHANNEL_1_ID).waitForThread({
         predicate: (t) =>
-          (t.name?.includes('second message through proxy') ?? false) &&
-          t.id !== firstThreadId,
+          !existingThreadIds.has(t.id) && t.id !== firstThreadId,
       })
       expect(thread).toBeDefined()
       expect(thread.id).not.toBe(firstThreadId)

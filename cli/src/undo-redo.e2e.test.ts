@@ -66,12 +66,12 @@ e2eTest('/undo sets revert state and cleans up on next prompt', () => {
         })
 
       const th = ctx.discord.thread(thread.id)
-      await th.waitForBotReply({ timeout: 8_000 })
+      await th.waitForBotReply({ timeout: 4_000 })
 
       await waitForFooterMessage({
         discord: ctx.discord,
         threadId: thread.id,
-        timeout: 8_000,
+        timeout: 4_000,
       })
 
       // 2. Get session ID and verify it has messages

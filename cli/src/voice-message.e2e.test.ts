@@ -383,7 +383,7 @@ e2eTest('voice message handling', () => {
     if (warmup instanceof Error) {
       throw warmup
     }
-  }, 60_000)
+  }, 20_000)
 
   afterAll(async () => {
     // Reset deterministic transcription
@@ -419,7 +419,7 @@ e2eTest('voice message handling', () => {
     if (directories) {
       fs.rmSync(directories.dataDir, { recursive: true, force: true })
     }
-  }, 10_000)
+  }, 5_000)
 
   beforeEach(() => {
     // Reset deterministic transcription before each test to prevent leakage

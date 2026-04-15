@@ -369,7 +369,7 @@ describeLocal('gateway-proxy reconnection (local binary)', () => {
     if (tmpDir) {
       fs.rmSync(tmpDir, { recursive: true, force: true })
     }
-  }, 15_000)
+  }, 5_000)
 
   test(
     'reconnects after local proxy restart (REST through proxy, clientId:secret)',

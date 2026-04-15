@@ -229,7 +229,7 @@ describe('worktree lifecycle', () => {
     if (warmup instanceof Error) {
       throw warmup
     }
-  }, 60_000)
+  }, 20_000)
 
   afterAll(async () => {
     if (directories) {
@@ -280,7 +280,7 @@ describe('worktree lifecycle', () => {
       ).catch(() => { return })
       fs.rmSync(directories.dataDir, { recursive: true, force: true })
     }
-  }, 10_000)
+  }, 5_000)
 
   test(
     'session responds after /new-worktree switches sdkDirectory in existing thread',
