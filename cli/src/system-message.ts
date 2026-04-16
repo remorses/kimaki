@@ -143,12 +143,32 @@ Use a tmux session with a descriptive name like \`projectname-dev\` so you can r
 
 Use random tunnel IDs by default. Only pass \`-t\` when exposing a service that is safe to be publicly discoverable.
 
+\`kimaki tunnel\` injects \`TRAFORO_URL\` into the child process. Prefer wiring your app to that URL so OAuth callbacks, webhook URLs, and absolute links use the public tunnel instead of localhost.
+
 \`\`\`bash
 # Create a tmux session (use project name + dev, e.g. "myapp-dev", "website-dev")
 tmux new-session -d -s myapp-dev
 
 # Run the dev server with kimaki tunnel inside the session
 tmux send-keys -t myapp-dev "kimaki tunnel -p 3000 -- pnpm dev" Enter
+\`\`\`
+
+### passing the public URL to your app
+
+If you launch the server command through \`kimaki tunnel -- ...\`, the local port is auto-detected from the child process logs in many common dev-server setups, so \`--port\` is often unnecessary.
+
+\`\`\`bash
+# Your app can read process.env.TRAFORO_URL directly
+tmux send-keys -t myapp-dev "kimaki tunnel -- node server.js" Enter
+
+# better-auth example
+tmux send-keys -t myapp-dev "kimaki tunnel -- sh -c 'BETTER_AUTH_URL=$TRAFORO_URL exec pnpm dev'" Enter
+
+# Next.js example
+tmux send-keys -t myapp-dev "kimaki tunnel -- sh -c 'APP_URL=$TRAFORO_URL exec pnpm dev'" Enter
+
+# Vite example
+tmux send-keys -t myapp-dev "kimaki tunnel -- sh -c 'VITE_BASE_URL=$TRAFORO_URL exec pnpm dev'" Enter
 \`\`\`
 
 ### getting the tunnel URL
