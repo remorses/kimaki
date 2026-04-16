@@ -7,6 +7,10 @@ import {
   buildAddDirPermissionRules,
   resolveDirectoryPermissionPattern,
 } from './add-dir.js'
+import {
+  buildExternalDirectoryPermissionRules,
+  buildSessionPermissions,
+} from '../opencode.js'
 
 describe('resolveDirectoryPermissionPattern', () => {
   test('resolves relative directories against the working directory', () => {
@@ -53,6 +57,50 @@ describe('resolveDirectoryPermissionPattern', () => {
         {
           "action": "allow",
           "pattern": "/repo/extra/*",
+          "permission": "external_directory",
+        },
+      ]
+    `)
+  })
+
+  test('builds deny rules for a specific directory', () => {
+    expect(
+      buildExternalDirectoryPermissionRules({
+        resolvedPattern: '/repo',
+        action: 'deny',
+      }),
+    ).toMatchInlineSnapshot(`
+      [
+        {
+          "action": "deny",
+          "pattern": "/repo",
+          "permission": "external_directory",
+        },
+        {
+          "action": "deny",
+          "pattern": "/repo/*",
+          "permission": "external_directory",
+        },
+      ]
+    `)
+  })
+
+  test('worktree sessions deny the original checkout last', () => {
+    expect(
+      buildSessionPermissions({
+        directory: '/Users/me/.kimaki/worktrees/hash/feature',
+        originalRepoDirectory: '/Users/me/project',
+      }).slice(-2),
+    ).toMatchInlineSnapshot(`
+      [
+        {
+          "action": "deny",
+          "pattern": "/Users/me/project",
+          "permission": "external_directory",
+        },
+        {
+          "action": "deny",
+          "pattern": "/Users/me/project/*",
           "permission": "external_directory",
         },
       ]

@@ -1001,15 +1001,53 @@ export function buildSessionPermissions({
     },
   )
 
-  // For worktrees: allow access to the original repository directory
-  if (originalRepo) {
+  // For worktree sessions: explicitly deny the original checkout so agents do
+  // not keep editing the main repo after the thread has moved to a managed
+  // worktree. Deny rules are appended last so they override earlier allow/
+  // ask defaults via opencode's findLast() evaluation.
+  if (originalRepo && originalRepo !== normalizedDirectory) {
     rules.push(
-      { permission: 'external_directory', pattern: originalRepo, action: 'allow' },
-      { permission: 'external_directory', pattern: `${originalRepo}/*`, action: 'allow' },
+      ...buildExternalDirectoryPermissionRules({
+        resolvedPattern: originalRepo,
+        action: 'deny',
+      }),
     )
   }
 
   return rules
+}
+
+const ALL_EXTERNAL_DIRECTORIES_PATTERN = '*'
+
+export function buildExternalDirectoryPermissionRules({
+  resolvedPattern,
+  action,
+}: {
+  resolvedPattern: string
+  action: 'allow' | 'deny' | 'ask'
+}): PermissionRuleset {
+  if (resolvedPattern === ALL_EXTERNAL_DIRECTORIES_PATTERN) {
+    return [
+      {
+        permission: 'external_directory',
+        pattern: ALL_EXTERNAL_DIRECTORIES_PATTERN,
+        action,
+      },
+    ]
+  }
+
+  return [
+    {
+      permission: 'external_directory',
+      pattern: resolvedPattern,
+      action,
+    },
+    {
+      permission: 'external_directory',
+      pattern: `${resolvedPattern}/*`,
+      action,
+    },
+  ]
 }
 
 /**

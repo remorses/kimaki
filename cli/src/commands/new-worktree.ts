@@ -17,6 +17,7 @@ import {
   setWorktreeError,
   getChannelDirectory,
   getThreadWorktree,
+  getThreadSession,
 } from '../database.js'
 import {
   SILENT_MESSAGE_FLAGS,
@@ -31,6 +32,11 @@ import {
   listBranchesByLastCommit,
   validateBranchRef,
 } from '../worktrees.js'
+import {
+  buildExternalDirectoryPermissionRules,
+  getOpencodeClient,
+  initializeOpencodeForDirectory,
+} from '../opencode.js'
 import { WORKTREE_PREFIX } from './merge-worktree.js'
 import type { AutocompleteContext } from './types.js'
 import * as errore from 'errore'
@@ -259,6 +265,11 @@ export async function createWorktreeInBackground({
         worktreeDirectory: worktreeResult.directory,
       })
 
+      await denyPreviousCheckoutForExistingSession({
+        threadId: thread.id,
+        projectDirectory,
+      })
+
       // React with tree emoji to mark as worktree thread
       await reactToThread({
         rest,
@@ -281,6 +292,61 @@ export async function createWorktreeInBackground({
       return new Error(`Worktree creation failed: ${e instanceof Error ? e.message : String(e)}`, { cause: e })
     },
   })
+}
+
+async function denyPreviousCheckoutForExistingSession({
+  threadId,
+  projectDirectory,
+}: {
+  threadId: string
+  projectDirectory: string
+}): Promise<void> {
+  const sessionId = await getThreadSession(threadId)
+  if (!sessionId) {
+    return
+  }
+
+  const initializeResult = await initializeOpencodeForDirectory(projectDirectory)
+  if (initializeResult instanceof Error) {
+    logger.warn(
+      `[WORKTREE] Failed to initialize OpenCode before denying previous checkout for thread ${threadId}: ${initializeResult.message}`,
+    )
+    return
+  }
+
+  const client = getOpencodeClient(projectDirectory)
+  if (!client) {
+    logger.warn(
+      `[WORKTREE] Missing OpenCode client for previous checkout deny update in thread ${threadId}`,
+    )
+    return
+  }
+
+  const updateResult = await errore.tryAsync({
+    try: async () => {
+      await client.session.update({
+        sessionID: sessionId,
+        permission: buildExternalDirectoryPermissionRules({
+          resolvedPattern: projectDirectory.replaceAll('\\', '/'),
+          action: 'deny',
+        }),
+      })
+    },
+    catch: (e) =>
+      new Error('Failed to deny previous checkout for existing session', {
+        cause: e,
+      }),
+  })
+  if (updateResult instanceof Error) {
+    logger.warn(
+      `[WORKTREE] Failed to deny previous checkout for existing session in thread ${threadId}: ${updateResult.message}`,
+    )
+    return
+  }
+
+  logger.log(
+    `[WORKTREE] Denied previous checkout for existing session ${sessionId} in thread ${threadId}`,
+  )
 }
 
 async function findExistingWorktreePath({

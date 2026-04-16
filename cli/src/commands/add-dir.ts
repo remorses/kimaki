@@ -14,6 +14,7 @@ import path from 'node:path'
 import type { CommandContext } from './types.js'
 import { getThreadSession } from '../database.js'
 import {
+  buildExternalDirectoryPermissionRules,
   getOpencodeClient,
   initializeOpencodeForDirectory,
 } from '../opencode.js'
@@ -66,28 +67,10 @@ export function buildAddDirPermissionRules({
 }: {
   resolvedPattern: string
 }): PermissionRuleset {
-  if (resolvedPattern === ALL_DIRECTORIES_PATTERN) {
-    return [
-      {
-        permission: 'external_directory',
-        pattern: ALL_DIRECTORIES_PATTERN,
-        action: 'allow',
-      },
-    ]
-  }
-
-  return [
-    {
-      permission: 'external_directory',
-      pattern: resolvedPattern,
-      action: 'allow',
-    },
-    {
-      permission: 'external_directory',
-      pattern: `${resolvedPattern}/*`,
-      action: 'allow',
-    },
-  ]
+  return buildExternalDirectoryPermissionRules({
+    resolvedPattern,
+    action: 'allow',
+  })
 }
 
 export async function handleAddDirCommand({
