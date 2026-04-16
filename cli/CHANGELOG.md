@@ -1,5 +1,27 @@
 # Changelog
 
+## 0.5.0
+
+1. **New `/add-dir` Discord command** — expand the current session's directory access permissions without restarting. In a thread with an active session, run `/add-dir <path>` to grant the AI access to a specific external directory, or `/add-dir *` to allow all directories:
+   ```text
+   /add-dir ../other-project
+   /add-dir /tmp/shared-data
+   /add-dir *
+   ```
+
+2. **Worktree sessions can no longer edit the main checkout** — when a thread moves into a git worktree, existing and newly created sessions automatically deny write access to the original repo path. This prevents the agent from accidentally modifying the main branch while working in a worktree.
+
+3. **System prompt drift notices show inline diff snippets** — the "Context cache discarded" toast now includes a short markdown diff snippet directly in Discord, instead of writing a debug file to disk. Makes it immediately visible which parts of the system prompt changed.
+
+4. **`kimaki tunnel` now injects `TRAFORO_URL` into the child process** — apps launched through `kimaki tunnel` can read `process.env.TRAFORO_URL` to wire OAuth callbacks, webhook URLs, and absolute links to the public tunnel instead of localhost:
+   ```bash
+   kimaki tunnel -- sh -c 'BETTER_AUTH_URL=$TRAFORO_URL exec pnpm dev'
+   ```
+
+5. **Fixed OpenCode directory resolution for worktree sessions** — agent, model, provider, and config calls now pass the worktree-aware directory instead of the client default, so worktree sessions resolve against the active checkout correctly.
+
+6. **Fixed OpenCode log chunking** — stderr/stdout from the opencode server process is now read line-by-line instead of splitting raw chunks, preventing garbled or merged log lines.
+
 ## 0.4.104
 
 1. **Queued messages now keep moving while question dropdowns are open** — if the assistant asks a dropdown question and you queue a follow-up message, kimaki now hands off the first queued item immediately instead of waiting for the dropdown to be answered. This keeps the visible `» user:` dispatch indicator moving and prevents queued work from feeling stuck behind interactive prompts.
