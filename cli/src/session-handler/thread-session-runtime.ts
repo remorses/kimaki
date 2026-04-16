@@ -135,20 +135,11 @@ import { createDebouncedProcessFlush } from '../debounced-process-flush.js'
 import { cancelHtmlActionsForThread } from '../html-actions.js'
 import { createDebouncedTimeout } from '../debounce-timeout.js'
 import { extractLeadingOpencodeCommand } from '../opencode-command-detection.js'
+import { handleTuiToast, stripToastSessionId, extractToastSessionId } from './toast-handler.js'
 
 const logger = createLogger(LogPrefix.SESSION)
 const discordLogger = createLogger(LogPrefix.DISCORD)
 const DETERMINISTIC_CONTEXT_LIMIT = 100_000
-const TOAST_SESSION_ID_REGEX = /\b(ses_[A-Za-z0-9]+)\b\s*$/u
-
-function extractToastSessionId({ message }: { message: string }): string | undefined {
-  const match = message.match(TOAST_SESSION_ID_REGEX)
-  return match?.[1]
-}
-
-function stripToastSessionId({ message }: { message: string }): string {
-  return message.replace(TOAST_SESSION_ID_REGEX, '').trimEnd()
-}
 
 const shouldLogSessionEvents =
   process.env['KIMAKI_LOG_SESSION_EVENTS'] === '1' ||
@@ -1512,7 +1503,7 @@ export class ThreadSessionRuntime {
         await this.handleSessionUpdated(event.properties.info)
         break
       case 'tui.toast.show':
-        await this.handleTuiToast(event.properties)
+        await handleTuiToast.call(this, event.properties)
         break
       default:
         break
@@ -2859,30 +2850,7 @@ export class ThreadSessionRuntime {
     )
   }
 
-  private async handleTuiToast(properties: {
-    title?: string
-    message: string
-    variant: 'info' | 'success' | 'warning' | 'error'
-    duration?: number
-  }): Promise<void> {
-    if (properties.variant === 'warning') {
-      return
-    }
-    const toastMessage = stripToastSessionId({ message: properties.message }).trim()
-    if (!toastMessage) {
-      return
-    }
-    const titlePrefix = properties.title
-      ? `${properties.title.trim()}: `
-      : ''
-    const chunk = `⬦ ${properties.variant}: ${titlePrefix}${toastMessage}`
-    const toastResult = await errore.tryAsync(() => {
-      return this.thread.send({ content: chunk, flags: SILENT_MESSAGE_FLAGS })
-    })
-    if (toastResult instanceof Error) {
-      discordLogger.error('Failed to send toast notice:', toastResult)
-    }
-  }
+  // handleTuiToast was extracted to toast-handler.ts to keep toast logic focused
 
   // ── Ingress API ─────────────────────────────────────────────
 
