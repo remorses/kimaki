@@ -2868,6 +2868,10 @@ export class ThreadSessionRuntime {
     if (properties.variant === 'warning') {
       return
     }
+    const toastSessionId = extractToastSessionId({ message: properties.message })
+    if (!toastSessionId) {
+      return
+    }
     const toastMessage = stripToastSessionId({ message: properties.message }).trim()
     if (!toastMessage) {
       return
