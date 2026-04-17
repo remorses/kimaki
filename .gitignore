@@ -14,7 +14,7 @@ discord-audio-logs
 tmp
 
 # opensrc - source code for packages
-opensrc/
+/opensrc
 __snapshots__
 traforo/dist/
 skills/jitter/dist/
