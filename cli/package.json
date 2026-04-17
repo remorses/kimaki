@@ -68,6 +68,7 @@
     "errore": "workspace:^",
     "goke": "^6.8.0",
     "htmlparser2": "^12.0.0",
+    "https-proxy-agent": "^9.0.0",
     "kitty-graphics-agent": "^0.0.5",
     "libsql": "^0.5.22",
     "libsqlproxy": "workspace:^",

@@ -23,11 +23,33 @@ import path from 'node:path'
 
 const HEAP_SNAPSHOT_DIR = path.join(os.homedir(), '.kimaki', 'heap-snapshots')
 
+// Detect proxy env vars. When set, inject Node.js flags so all HTTP and
+// WebSocket connections route through the proxy. This is required in
+// environments where Discord is blocked (e.g. GFW) and a local VPN/proxy
+// is running on 127.0.0.1. Only activates when the user has explicitly
+// configured a proxy — zero impact on default usage.
+const PROXY_URL =
+  process.env.https_proxy ||
+  process.env.HTTPS_PROXY ||
+  process.env.http_proxy ||
+  process.env.HTTP_PROXY
+
 // First arg after node + script is either a subcommand or a flag.
 // If it doesn't start with '-', it's a subcommand (e.g. "send", "tunnel", "project").
 const firstArg = process.argv[2]
 const isSubcommand = firstArg && !firstArg.startsWith('-')
 const isHelpFlag = process.argv.includes('--help')
+
+// When running as the child process and proxy is configured, apply the
+// ws module monkey-patch so discord.js WebSocket connections go through
+// the proxy. HTTP requests are handled by --use-env-proxy instead.
+if (PROXY_URL) {
+  try {
+    require('./proxy-bootstrap.cjs')
+  } catch {
+    // proxy-bootstrap.cjs may not exist in some builds — non-critical
+  }
+}
 
 if (process.env.__KIMAKI_CHILD || isSubcommand || isHelpFlag) {
   await import('./cli.js')
@@ -52,7 +74,18 @@ if (process.env.__KIMAKI_CHILD || isSubcommand || isHelpFlag) {
       `--heapsnapshot-near-heap-limit=3`,
       `--diagnostic-dir=${HEAP_SNAPSHOT_DIR}`,
     ]
-    const args = [...heapArgs, ...process.execArgv, ...process.argv.slice(1)]
+    // When a proxy is configured, inject --use-env-proxy so Node.js native
+    // fetch/HTTP uses the proxy, and --require proxy-bootstrap.cjs so the
+    // ws module (used by discord.js for Gateway WebSocket) is also proxied.
+    const proxyArgs: string[] = []
+    if (PROXY_URL) {
+      const bootstrapPath = path.join(__dirname, 'proxy-bootstrap.cjs')
+      if (fs.existsSync(bootstrapPath)) {
+        proxyArgs.push('--require', bootstrapPath)
+      }
+      proxyArgs.push('--use-env-proxy')
+    }
+    const args = [...heapArgs, ...proxyArgs, ...process.execArgv, ...process.argv.slice(1)]
     child = spawn(
       process.argv[0]!,
       args,
