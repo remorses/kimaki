@@ -1,204 +1,10 @@
-// Tests the subagent-only rate-limit model switching plugin.
+// Tests the fallback model ranking for subagent rate-limit recovery.
 
 import { describe, expect, test } from 'vitest'
-import { subagentRateLimitPlugin } from './subagent-rate-limit-plugin.js'
+import { listCandidateModels } from './subagent-rate-limit-plugin.js'
 
-type PluginHooks = Awaited<ReturnType<typeof subagentRateLimitPlugin>>
-type EventHook = NonNullable<PluginHooks['event']>
-type PluginEvent = Parameters<EventHook>[0]['event']
-type PluginContext = Parameters<typeof subagentRateLimitPlugin>[0]
-
-type MockProviderData = {
-  all: Array<{
-    id: string
-    models: Record<string, { id: string; name: string; release_date: string }>
-  }>
-  default: Record<string, string>
-  connected: string[]
-}
-
-type MockClient = {
-  provider: {
-    list: (input: { query?: { directory?: string } }) => Promise<{
-      data?: MockProviderData
-    }>
-  }
-  session: {
-    promptAsync: (input: {
-      path: { id: string }
-      body: {
-        parts: unknown[]
-        model?: {
-          providerID: string
-          modelID: string
-        }
-      }
-    }) => Promise<void>
-  }
-  tui: {
-    showToast: (input: {
-      body: {
-        message: string
-        variant: 'info' | 'success' | 'warning' | 'error'
-      }
-    }) => Promise<void>
-  }
-}
-
-function createContext({ client }: { client: MockClient }): PluginContext {
+function createProviderData(): Parameters<typeof listCandidateModels>[0]['providerData'] {
   return {
-    client: client as unknown as PluginContext['client'],
-    project: {
-      id: 'project-id',
-      worktree: '/Users/morse/Documents/GitHub/kimakivoice',
-      time: { created: Date.now() },
-    },
-    directory: '/Users/morse/Documents/GitHub/kimakivoice',
-    worktree: '/Users/morse/Documents/GitHub/kimakivoice',
-    experimental_workspace: {
-      register: () => {
-        return
-      },
-    },
-    serverUrl: new URL('http://127.0.0.1:4096'),
-    $: {} as PluginContext['$'],
-  }
-}
-
-async function requireEventHook({ client }: { client: MockClient }): Promise<EventHook> {
-  const hooks = await subagentRateLimitPlugin(createContext({ client }))
-  if (!hooks.event) {
-    throw new Error('Expected event hook')
-  }
-  return hooks.event
-}
-
-function createTaskChildEvent({
-  childSessionId,
-  subagentType = 'general',
-}: {
-  childSessionId: string
-  subagentType?: string
-}): PluginEvent {
-  return {
-    type: 'message.part.updated',
-    properties: {
-      part: {
-        id: 'part-task',
-        sessionID: 'ses-main',
-        messageID: 'msg-main-assistant',
-        type: 'tool',
-        callID: 'call-task',
-        tool: 'task',
-        state: {
-          status: 'running',
-          input: { subagent_type: subagentType },
-          metadata: { sessionId: childSessionId },
-          time: { start: Date.now() },
-        },
-      },
-    },
-  } as PluginEvent
-}
-
-function createAssistantMessageEvent({
-  sessionID,
-  providerID,
-  modelID,
-}: {
-  sessionID: string
-  providerID: string
-  modelID: string
-}): PluginEvent {
-  return {
-    type: 'message.updated',
-    properties: {
-      info: {
-        id: 'msg-assistant',
-        sessionID,
-        role: 'assistant',
-        parentID: 'msg-user',
-        providerID,
-        modelID,
-        mode: 'chat',
-        path: {
-          cwd: '/Users/morse/Documents/GitHub/kimakivoice',
-          root: '/Users/morse/Documents/GitHub/kimakivoice',
-        },
-        time: { created: Date.now() },
-        cost: 0,
-        tokens: {
-          input: 0,
-          output: 0,
-          reasoning: 0,
-          cache: { read: 0, write: 0 },
-        },
-      },
-    },
-  } as PluginEvent
-}
-
-function createRetryStatusEvent({
-  sessionID,
-  message,
-}: {
-  sessionID: string
-  message: string
-}): PluginEvent {
-  return {
-    type: 'session.status',
-    properties: {
-      sessionID,
-      status: {
-        type: 'retry',
-        attempt: 1,
-        message,
-        next: Date.now() + 5_000,
-      },
-    },
-  } as PluginEvent
-}
-
-function createApiErrorEvent({
-  sessionID,
-  statusCode,
-  responseBody,
-}: {
-  sessionID: string
-  statusCode?: number
-  responseBody?: string
-}): PluginEvent {
-  return {
-    type: 'session.error',
-    properties: {
-      sessionID,
-      error: {
-        name: 'APIError',
-        data: {
-          message: 'provider error',
-          statusCode,
-          isRetryable: true,
-          responseBody,
-        },
-      },
-    },
-  } as PluginEvent
-}
-
-function createMockClient() {
-  const promptAsyncCalls: Array<{
-    path: { id: string }
-    body: {
-      parts: unknown[]
-      model?: {
-        providerID: string
-        modelID: string
-      }
-    }
-  }> = []
-  const toastCalls: Array<string> = []
-
-  const providerData: MockProviderData = {
     connected: ['anthropic', 'openai'],
     default: {
       anthropic: 'claude-sonnet-4-5',
@@ -207,112 +13,115 @@ function createMockClient() {
     all: [
       {
         id: 'anthropic',
+        api: 'https://api.anthropic.com',
+        name: 'Anthropic',
+        env: ['ANTHROPIC_API_KEY'],
         models: {
           'claude-sonnet-4-5': {
             id: 'claude-sonnet-4-5',
             name: 'Claude Sonnet 4.5',
             release_date: '2026-01-01',
+            attachment: true,
+            reasoning: true,
+            temperature: true,
+            tool_call: true,
+            limit: { context: 200_000, output: 16_000 },
+            options: {},
+            cost: { input: 3, output: 15 },
+            modalities: { input: ['text'], output: ['text'] },
+          },
+          'claude-haiku-4-5': {
+            id: 'claude-haiku-4-5',
+            name: 'Claude Haiku 4.5',
+            release_date: '2026-01-01',
+            attachment: true,
+            reasoning: false,
+            temperature: true,
+            tool_call: true,
+            limit: { context: 200_000, output: 16_000 },
+            options: {},
+            cost: { input: 1, output: 5 },
+            modalities: { input: ['text'], output: ['text'] },
           },
         },
       },
       {
         id: 'openai',
+        api: 'https://api.openai.com/v1',
+        name: 'OpenAI',
+        env: ['OPENAI_API_KEY'],
         models: {
           'gpt-5': {
             id: 'gpt-5',
             name: 'GPT-5',
             release_date: '2026-01-01',
+            attachment: true,
+            reasoning: true,
+            temperature: true,
+            tool_call: true,
+            limit: { context: 200_000, output: 16_000 },
+            options: {},
+            cost: { input: 1.25, output: 10 },
+            modalities: { input: ['text'], output: ['text'] },
+          },
+          'gpt-4o-mini': {
+            id: 'gpt-4o-mini',
+            name: 'GPT-4o mini',
+            release_date: '2026-01-01',
+            attachment: true,
+            reasoning: false,
+            temperature: true,
+            tool_call: true,
+            limit: { context: 200_000, output: 16_000 },
+            options: {},
+            cost: { input: 0.15, output: 0.6 },
+            modalities: { input: ['text'], output: ['text'] },
           },
         },
       },
     ],
   }
-
-  const client: MockClient = {
-    provider: {
-      list: async () => {
-        return {
-          data: providerData,
-        }
-      },
-    },
-    session: {
-      promptAsync: async (input) => {
-        promptAsyncCalls.push(input)
-      },
-    },
-    tui: {
-      showToast: async (input) => {
-        toastCalls.push(input.body.message)
-      },
-    },
-  }
-
-  return { client, promptAsyncCalls, toastCalls }
 }
 
-describe('subagentRateLimitPlugin', () => {
-  test('switches only task child sessions after retry rate limit events', async () => {
-    const { client, promptAsyncCalls, toastCalls } = createMockClient()
-    const eventHook = await requireEventHook({ client })
-
-    await eventHook({ event: createTaskChildEvent({ childSessionId: 'ses-child' }) })
-    await eventHook({
-      event: createAssistantMessageEvent({
-        sessionID: 'ses-child',
+describe('listCandidateModels', () => {
+  test('prefers the cheapest model from other connected providers', () => {
+    const result = listCandidateModels({
+      providerData: createProviderData(),
+      currentModel: {
         providerID: 'anthropic',
         modelID: 'claude-sonnet-4-5',
-      }),
-    })
-    await eventHook({
-      event: createRetryStatusEvent({
-        sessionID: 'ses-child',
-        message: 'Resource exhausted, please retry after 8.643s.',
-      }),
+      },
     })
 
-    expect(promptAsyncCalls).toMatchInlineSnapshot(`
+    expect(result).toMatchInlineSnapshot(`
       [
         {
-          "body": {
-            "model": {
-              "modelID": "gpt-5",
-              "providerID": "openai",
-            },
-            "parts": [],
-          },
-          "path": {
-            "id": "ses-child",
-          },
+          "modelID": "gpt-4o-mini",
+          "providerID": "openai",
+        },
+        {
+          "modelID": "gpt-5",
+          "providerID": "openai",
         },
       ]
     `)
-    expect(toastCalls[0]).toContain('Switching general to openai/gpt-5 after rate limit')
   })
 
-  test('detects API 429 errors for registered subagents too', async () => {
-    const { client, promptAsyncCalls } = createMockClient()
-    const eventHook = await requireEventHook({ client })
+  test('never falls back to models from the same provider', () => {
+    const providerData = createProviderData()
+    providerData.connected = ['anthropic']
+    providerData.all = providerData.all.filter((provider) => {
+      return provider.id === 'anthropic'
+    })
 
-    await eventHook({ event: createTaskChildEvent({ childSessionId: 'ses-child' }) })
-    await eventHook({
-      event: createAssistantMessageEvent({
-        sessionID: 'ses-child',
+    const result = listCandidateModels({
+      providerData,
+      currentModel: {
         providerID: 'anthropic',
         modelID: 'claude-sonnet-4-5',
-      }),
-    })
-    await eventHook({
-      event: createApiErrorEvent({
-        sessionID: 'ses-child',
-        statusCode: 429,
-        responseBody: 'rate_limit exceeded',
-      }),
+      },
     })
 
-    expect(promptAsyncCalls[0]?.body.model).toEqual({
-      providerID: 'openai',
-      modelID: 'gpt-5',
-    })
+    expect(result).toEqual([])
   })
 })

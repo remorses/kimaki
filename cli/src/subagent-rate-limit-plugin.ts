@@ -1,5 +1,5 @@
 // OpenCode plugin that watches task-created subagent sessions for rate limits
-// and resumes only that child session on a different model.
+// and resumes only that child session on a different provider/model.
 
 import type { Hooks, Plugin } from '@opencode-ai/plugin'
 import * as errore from 'errore'
@@ -22,11 +22,18 @@ const RATE_LIMIT_TEXT_PATTERNS = [
   'quota exceeded',
 ] as const
 
-type PluginInput = Parameters<Plugin>[0]
-type PluginClient = PluginInput['client']
+const CHEAP_FALLBACK_MODELS: Record<string, string[]> = {
+  anthropic: ['claude-haiku-4-5', 'claude-3-5-haiku-latest'],
+  google: ['gemini-2.5-flash-lite', 'gemini-2.0-flash-lite', 'gemini-2.0-flash'],
+  openai: ['gpt-4o-mini', 'gpt-5-mini', 'gpt-5-nano'],
+  groq: ['llama-3.1-8b-instant', 'llama-3.3-70b-versatile'],
+  mistral: ['mistral-small-latest'],
+  xai: ['grok-4-1-fast-reasoning'],
+  deepseek: ['deepseek-chat'],
+} as const
+
+type PluginClient = Parameters<Plugin>[0]['client']
 type PluginEvent = Parameters<NonNullable<Hooks['event']>>[0]['event']
-type PromptAsyncInput = Parameters<PluginClient['session']['promptAsync']>[0]
-type ProviderListResponse = Awaited<ReturnType<PluginClient['provider']['list']>>
 
 type ModelIdentifier = {
   providerID: string
@@ -34,7 +41,6 @@ type ModelIdentifier = {
 }
 
 type SubagentSessionState = {
-  parentSessionId: string
   subagentType?: string
   attemptedModelKeys: Set<string>
   currentModel?: ModelIdentifier
@@ -42,24 +48,12 @@ type SubagentSessionState = {
   ignoreRateLimitsUntil: number
 }
 
-const EMPTY_PROMPT_PARTS: NonNullable<PromptAsyncInput['body']>['parts'] = []
-
-function isTruthy<T>(value: T): value is NonNullable<T> {
-  return Boolean(value)
-}
+const EMPTY_PROMPT_PARTS: NonNullable<
+  Parameters<PluginClient['session']['promptAsync']>[0]['body']
+>['parts'] = []
 
 function modelKey(model: ModelIdentifier): string {
   return `${model.providerID}/${model.modelID}`
-}
-
-function appendToastSessionMarker({
-  message,
-  sessionId,
-}: {
-  message: string
-  sessionId: string
-}): string {
-  return `${message} ${sessionId}`
 }
 
 function isRateLimitText(text: string | undefined): boolean {
@@ -72,29 +66,18 @@ function isRateLimitText(text: string | undefined): boolean {
   })
 }
 
-function getTaskChildSessionId({
-  event,
-}: {
-  event: PluginEvent
-}): { childSessionId: string; parentSessionId: string; subagentType?: string } | undefined {
+function getTaskChildSessionId(event: PluginEvent) {
   if (event.type !== 'message.part.updated') {
     return undefined
   }
+
   const part = event.properties.part
   if (part.type !== 'tool' || part.tool !== 'task') {
     return undefined
   }
 
-  const metadataValue = (() => {
-    if (part.state.status === 'pending') {
-      return undefined
-    }
-    return part.state.metadata
-  })()
-  const childSessionId =
-    metadataValue && typeof metadataValue === 'object'
-      ? (metadataValue as { sessionId?: unknown }).sessionId
-      : undefined
+  const metadata = part.state.status === 'pending' ? undefined : part.state.metadata
+  const childSessionId = metadata?.sessionId
   if (typeof childSessionId !== 'string' || childSessionId.length === 0) {
     return undefined
   }
@@ -102,7 +85,6 @@ function getTaskChildSessionId({
   const subagentType = part.state.input?.subagent_type
   return {
     childSessionId,
-    parentSessionId: part.sessionID,
     subagentType: typeof subagentType === 'string' ? subagentType : undefined,
   }
 }
@@ -120,38 +102,33 @@ function getEventSessionId(event: PluginEvent): string | undefined {
   if (event.type === 'message.part.updated') {
     return event.properties.part.sessionID
   }
-  if (event.type === 'session.created' || event.type === 'session.updated' || event.type === 'session.deleted') {
+  if (
+    event.type === 'session.created'
+    || event.type === 'session.updated'
+    || event.type === 'session.deleted'
+  ) {
     return event.properties.info.id
   }
   return undefined
 }
 
-function getAssistantModel({
-  event,
-}: {
-  event: PluginEvent
-}): ModelIdentifier | undefined {
+function getAssistantModel(event: PluginEvent): ModelIdentifier | undefined {
   if (event.type !== 'message.updated') {
     return undefined
   }
+
   const info = event.properties.info
-  if (info.role !== 'assistant') {
+  if (info.role !== 'assistant' || !info.providerID || !info.modelID) {
     return undefined
   }
-  if (!info.providerID || !info.modelID) {
-    return undefined
-  }
+
   return {
     providerID: info.providerID,
     modelID: info.modelID,
   }
 }
 
-function extractRateLimitReason({
-  event,
-}: {
-  event: PluginEvent
-}): string | undefined {
+function extractRateLimitReason(event: PluginEvent): string | undefined {
   if (event.type === 'session.status' && event.properties.status.type === 'retry') {
     return isRateLimitText(event.properties.status.message)
       ? event.properties.status.message
@@ -163,11 +140,12 @@ function extractRateLimitReason({
     if (retryError.data.statusCode === 429) {
       return retryError.data.message
     }
-    return isRateLimitText(retryError.data.responseBody)
-      ? retryError.data.responseBody
-      : isRateLimitText(retryError.data.message)
-        ? retryError.data.message
-        : undefined
+    if (isRateLimitText(retryError.data.responseBody)) {
+      return retryError.data.responseBody
+    }
+    return isRateLimitText(retryError.data.message)
+      ? retryError.data.message
+      : undefined
   }
 
   const apiError = (() => {
@@ -193,53 +171,62 @@ function extractRateLimitReason({
   if (isRateLimitText(apiError.responseBody)) {
     return apiError.responseBody
   }
-  if (isRateLimitText(apiError.message)) {
-    return apiError.message
-  }
-  return undefined
+  return isRateLimitText(apiError.message) ? apiError.message : undefined
 }
 
-function listCandidateModels({
+export function listCandidateModels({
   providerData,
   currentModel,
 }: {
-  providerData: NonNullable<ProviderListResponse['data']>
+  providerData: NonNullable<Awaited<ReturnType<PluginClient['provider']['list']>>['data']>
   currentModel?: ModelIdentifier
 }): ModelIdentifier[] {
-  const providerById = new Map(
+  const availableModelIds = new Map(
     providerData.all.map((provider) => {
-      return [provider.id, provider] as const
+      return [provider.id, new Set(Object.keys(provider.models))] as const
     }),
   )
+  const otherProviders = providerData.connected.filter((providerID) => {
+    return providerID !== currentModel?.providerID
+  })
 
-  const otherProviderDefaults = providerData.connected
-    .filter((providerID) => {
-      return providerID !== currentModel?.providerID
-    })
-    .map((providerID) => {
-      const defaultModelID = providerData.default[providerID]
-      if (!defaultModelID) {
-        return undefined
-      }
-      return { providerID, modelID: defaultModelID }
-    })
-    .filter(isTruthy)
-
-  const allConnectedModels = providerData.connected.flatMap((providerID) => {
-    const provider = providerById.get(providerID)
-    if (!provider) {
+  const preferredModels = otherProviders.flatMap((providerID) => {
+    const providerModels = availableModelIds.get(providerID)
+    if (!providerModels) {
       return []
     }
-    return Object.values(provider.models).map((model) => {
-      return {
-        providerID,
-        modelID: model.id,
+    return (CHEAP_FALLBACK_MODELS[providerID] || []).flatMap((modelID) => {
+      if (!providerModels.has(modelID)) {
+        return []
       }
+      return [{ providerID, modelID }]
     })
   })
 
+  const defaultModels = otherProviders.flatMap((providerID) => {
+    const modelID = providerData.default[providerID]
+    if (!modelID) {
+      return []
+    }
+    return [{ providerID, modelID }]
+  })
+
+  const remainingModels = otherProviders.flatMap((providerID) => {
+    const providerModels = availableModelIds.get(providerID)
+    if (!providerModels) {
+      return []
+    }
+    return [...providerModels]
+      .sort((a, b) => {
+        return a.localeCompare(b)
+      })
+      .map((modelID) => {
+        return { providerID, modelID }
+      })
+  })
+
   const seen = new Set<string>()
-  return [...otherProviderDefaults, ...allConnectedModels].filter((candidate) => {
+  return [...preferredModels, ...defaultModels, ...remainingModels].filter((candidate) => {
     const key = modelKey(candidate)
     if (currentModel && key === modelKey(currentModel)) {
       return false
@@ -252,74 +239,6 @@ function listCandidateModels({
   })
 }
 
-function createSubagentState() {
-  const sessions = new Map<string, SubagentSessionState>()
-
-  function getOrCreate({
-    childSessionId,
-    parentSessionId,
-    subagentType,
-  }: {
-    childSessionId: string
-    parentSessionId: string
-    subagentType?: string
-  }): SubagentSessionState {
-    const existing = sessions.get(childSessionId)
-    if (existing) {
-      if (subagentType) {
-        existing.subagentType = subagentType
-      }
-      return existing
-    }
-    const nextState: SubagentSessionState = {
-      parentSessionId,
-      subagentType,
-      attemptedModelKeys: new Set<string>(),
-      switching: false,
-      ignoreRateLimitsUntil: 0,
-    }
-    sessions.set(childSessionId, nextState)
-    return nextState
-  }
-
-  return {
-    rememberTaskChild({
-      childSessionId,
-      parentSessionId,
-      subagentType,
-    }: {
-      childSessionId: string
-      parentSessionId: string
-      subagentType?: string
-    }): void {
-      getOrCreate({ childSessionId, parentSessionId, subagentType })
-    },
-
-    rememberAssistantModel({
-      sessionId,
-      model,
-    }: {
-      sessionId: string
-      model: ModelIdentifier
-    }): void {
-      const session = sessions.get(sessionId)
-      if (!session) {
-        return
-      }
-      session.currentModel = model
-      session.attemptedModelKeys.add(modelKey(model))
-    },
-
-    getSubagent(sessionId: string): SubagentSessionState | undefined {
-      return sessions.get(sessionId)
-    },
-
-    cleanup(sessionId: string): void {
-      sessions.delete(sessionId)
-    },
-  }
-}
-
 export const subagentRateLimitPlugin: Plugin = async ({ client, directory }) => {
   initSentry()
 
@@ -328,13 +247,25 @@ export const subagentRateLimitPlugin: Plugin = async ({ client, directory }) => 
     setPluginLogFilePath(dataDir)
   }
 
-  const state = createSubagentState()
+  const subagentSessions = new Map<string, SubagentSessionState>()
 
   return {
     event: async ({ event }) => {
-      const taskChild = getTaskChildSessionId({ event })
+      const taskChild = getTaskChildSessionId(event)
       if (taskChild) {
-        state.rememberTaskChild(taskChild)
+        const existing = subagentSessions.get(taskChild.childSessionId)
+        if (existing) {
+          if (taskChild.subagentType) {
+            existing.subagentType = taskChild.subagentType
+          }
+        } else {
+          subagentSessions.set(taskChild.childSessionId, {
+            subagentType: taskChild.subagentType,
+            attemptedModelKeys: new Set<string>(),
+            switching: false,
+            ignoreRateLimitsUntil: 0,
+          })
+        }
       }
 
       const eventSessionId = getEventSessionId(event)
@@ -343,31 +274,29 @@ export const subagentRateLimitPlugin: Plugin = async ({ client, directory }) => 
       }
 
       if (event.type === 'session.deleted') {
-        state.cleanup(eventSessionId)
+        subagentSessions.delete(eventSessionId)
         return
       }
 
-      const assistantModel = getAssistantModel({ event })
+      const assistantModel = getAssistantModel(event)
       if (assistantModel) {
-        state.rememberAssistantModel({
-          sessionId: eventSessionId,
-          model: assistantModel,
-        })
+        const session = subagentSessions.get(eventSessionId)
+        if (session) {
+          session.currentModel = assistantModel
+          session.attemptedModelKeys.add(modelKey(assistantModel))
+        }
       }
 
-      const rateLimitReason = extractRateLimitReason({ event })
+      const rateLimitReason = extractRateLimitReason(event)
       if (!rateLimitReason) {
         return
       }
 
-      const subagent = state.getSubagent(eventSessionId)
+      const subagent = subagentSessions.get(eventSessionId)
       if (!subagent) {
         return
       }
-      if (subagent.switching) {
-        return
-      }
-      if (Date.now() < subagent.ignoreRateLimitsUntil) {
+      if (subagent.switching || Date.now() < subagent.ignoreRateLimitsUntil) {
         return
       }
 
@@ -406,20 +335,14 @@ export const subagentRateLimitPlugin: Plugin = async ({ client, directory }) => 
             },
           })
 
-          await client.tui
-            .showToast({
-              body: {
-                message: appendToastSessionMarker({
-                  message:
-                    `Switching ${subagent.subagentType || 'subagent'} to ${modelKey(nextModel)} after rate limit: ${rateLimitReason}`,
-                  sessionId: eventSessionId,
-                }),
-                variant: 'info',
-              },
-            })
-            .catch(() => {
-              return
-            })
+          await client.tui.showToast({
+            body: {
+              message: `Switching ${subagent.subagentType || 'subagent'} to ${modelKey(nextModel)} after rate limit: ${rateLimitReason} ${eventSessionId}`,
+              variant: 'info',
+            },
+          }).catch(() => {
+            return
+          })
 
           logger.info(
             `Switched subagent ${eventSessionId} to ${modelKey(nextModel)} after rate limit`,
