@@ -976,7 +976,7 @@ to understand how the code you are writing works, you should add inline snapshot
 
 - for very long snapshots you should use `toMatchFileSnapshot(filename)` instead of `toMatchInlineSnapshot()`. put the snapshot files in a snapshots/ directory and use the appropriate extension for the file based on the content
 
-never test client react components. only React and browser independent code. 
+never test client react components. only React and browser independent code.
 
 most tests should be simple calls to functions with some expect calls, no mocks. test files should be called the same as the file where the tested function is being exported from.
 
@@ -1038,13 +1038,6 @@ user interfaces are mostly text so using the letter width and height as a base u
 
 use grow instead of flex-1.
 
-# spiceflow
-
-before writing or updating spiceflow related code always execute this command to get Spiceflow full documentation: `curl -s https://gitchamber.com/repos/remorses/spiceflow/main/files/README.md`
-
-spiceflow is an API library similar to hono, it allows you to write api servers using whatwg requests and responses
-
-use zod to create schemas and types that need to be used for tool inputs or spiceflow API routes.
 
 ## calling the server from the clientE
 
@@ -1125,4 +1118,3 @@ const jsonSchema = toJSONSchema(mySchema, {
   removeAdditionalStrategy: "strict",
 });
 ```
-
