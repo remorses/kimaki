@@ -952,53 +952,39 @@ export function buildSessionPermissions({
     { permission: 'external_directory', pattern: `${normalizedDirectory}/*`, action: 'allow' },
   ]
 
+  const homeDirectoryRules = ({ relativePath }: { relativePath: string }) => {
+    const normalizedRelativePath = relativePath.replaceAll('\\', '/')
+    const basePattern = `~/${normalizedRelativePath}`
+    return [
+      { permission: 'external_directory', pattern: basePattern, action: 'allow' },
+      { permission: 'external_directory', pattern: `${basePattern}/*`, action: 'allow' },
+    ] satisfies PermissionRuleset
+  }
+
   // Allow ~/.config/opencode so the agent doesn't get permission prompts when
   // it tries to read the global AGENTS.md or opencode config (the path is
   // visible in the system prompt, so models sometimes try to read it).
-  const opencodeConfigDir = path
-    .join(os.homedir(), '.config', 'opencode')
-    .replaceAll('\\', '/')
-  rules.push(
-    { permission: 'external_directory', pattern: opencodeConfigDir, action: 'allow' },
-    { permission: 'external_directory', pattern: `${opencodeConfigDir}/*`, action: 'allow' },
-  )
+  rules.push(...homeDirectoryRules({ relativePath: '.config/opencode' }))
 
   // Allow ~/.opensrc so agents can inspect cached opensrc checkouts without
   // permission prompts.
-  const opensrcDir = path
-    .join(os.homedir(), '.opensrc')
-    .replaceAll('\\', '/')
-  rules.push(
-    { permission: 'external_directory', pattern: opensrcDir, action: 'allow' },
-    { permission: 'external_directory', pattern: `${opensrcDir}/*`, action: 'allow' },
-  )
+  rules.push(...homeDirectoryRules({ relativePath: '.opensrc' }))
 
   // Allow ~/.kimaki so the agent can access kimaki data dir (logs, db, etc.)
   // without permission prompts.
-  const kimakiDataDir = path
-    .join(os.homedir(), '.kimaki')
-    .replaceAll('\\', '/')
-  rules.push(
-    { permission: 'external_directory', pattern: kimakiDataDir, action: 'allow' },
-    { permission: 'external_directory', pattern: `${kimakiDataDir}/*`, action: 'allow' },
-  )
+  rules.push(...homeDirectoryRules({ relativePath: '.kimaki' }))
 
   // Allow opencode tool output artifacts under XDG data so agents can inspect
   // prior tool outputs without interactive permission prompts.
-  const opencodeToolOutputDir = path
-    .join(os.homedir(), '.local', 'share', 'opencode', 'tool-output')
-    .replaceAll('\\', '/')
+  rules.push(...homeDirectoryRules({ relativePath: '.local/share/opencode/tool-output' }))
+
+  // Allow common language caches under the user's home directory so toolchains
+  // can inspect downloaded modules and artifacts without external_directory prompts.
   rules.push(
-    {
-      permission: 'external_directory',
-      pattern: opencodeToolOutputDir,
-      action: 'allow',
-    },
-    {
-      permission: 'external_directory',
-      pattern: `${opencodeToolOutputDir}/*`,
-      action: 'allow',
-    },
+    ...homeDirectoryRules({ relativePath: '.cache/zig' }),
+    ...homeDirectoryRules({ relativePath: '.cargo' }),
+    ...homeDirectoryRules({ relativePath: '.cache/go-build' }),
+    ...homeDirectoryRules({ relativePath: 'go/pkg' }),
   )
 
   // For worktree sessions: explicitly deny the original checkout so agents do

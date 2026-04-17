@@ -106,4 +106,42 @@ describe('resolveDirectoryPermissionPattern', () => {
       ]
     `)
   })
+
+  test('pre-allows common toolchain caches under home with ~ patterns', () => {
+    expect(
+      buildSessionPermissions({
+        directory: '/Users/me/project',
+      }).filter((rule) => {
+        return [
+          '~/.cache/zig',
+          '~/.cargo',
+          '~/.cache/go-build',
+          '~/go/pkg',
+        ].includes(rule.pattern)
+      }),
+    ).toMatchInlineSnapshot(`
+      [
+        {
+          "action": "allow",
+          "pattern": "~/.cache/zig",
+          "permission": "external_directory",
+        },
+        {
+          "action": "allow",
+          "pattern": "~/.cargo",
+          "permission": "external_directory",
+        },
+        {
+          "action": "allow",
+          "pattern": "~/.cache/go-build",
+          "permission": "external_directory",
+        },
+        {
+          "action": "allow",
+          "pattern": "~/go/pkg",
+          "permission": "external_directory",
+        },
+      ]
+    `)
+  })
 })
