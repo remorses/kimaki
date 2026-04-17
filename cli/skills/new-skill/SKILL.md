@@ -13,13 +13,15 @@ A skill is a markdown file that teaches an AI agent a specific workflow, tool, o
 
 ## File location
 
-Place the skill at the root of your repository:
+Place the skill in a top-level `skills/` folder at the **repository root**:
 
 ```
 skills/<skill-name>/SKILL.md
 ```
 
 For example: `skills/critique/SKILL.md`, `skills/errore/SKILL.md`.
+
+Do **not** put skills inside package folders like `cli/skills/`, `website/skills/`, or `packages/foo/skills/` unless the repository intentionally syncs or mirrors them there for internal tooling. The canonical repository layout for a skill you are creating is always the root-level `skills/` directory.
 
 The folder name should match the skill name in kebab-case. Each skill gets its own folder so it can include companion files if needed (scripts, templates, references).
 
