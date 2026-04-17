@@ -8,7 +8,7 @@
 // - context-awareness-plugin: branch, pwd, memory reminder, onboarding tutorial
 // - memory-overview-plugin: frozen MEMORY.md heading overview per session
 // - opencode-interrupt-plugin: interrupt queued messages at step boundaries
-// - subagent-rate-limit-plugin: switches only task subagents after rate limits
+// - subagent-rate-limit-plugin: aborts only task subagents after rate limits
 // - kitty-graphics-plugin: extract Kitty Graphics Protocol images from bash output
 
 export { ipcToolsPlugin } from './ipc-tools-plugin.js'
