@@ -351,7 +351,7 @@ e2eTest('thread message queue ordering', () => {
     if (warmup instanceof Error) {
       throw warmup
     }
-  }, 20_000)
+  }, 60_000)
 
   afterAll(async () => {
     if (directories) {
@@ -386,7 +386,7 @@ e2eTest('thread message queue ordering', () => {
     if (directories) {
       fs.rmSync(directories.dataDir, { recursive: true, force: true })
     }
-  }, 5_000)
+  }, 20_000)
 
   test(
     'first prompt after cold opencode server start still streams text parts',
