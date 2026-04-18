@@ -1,5 +1,21 @@
 # Changelog
 
+## 0.6.0
+
+1. **Subagent rate-limit handling** — when a task-created child session hits a provider rate limit (HTTP 429), kimaki now automatically aborts the subagent session instead of letting the error cascade to the parent. The parent task session recovers on its own, keeping rate-limit noise out of your Discord threads.
+
+2. **Bash tool for the voice assistant** — the GenAI worker now includes a shell execution tool that can run commands in the project directory. It also supports remote skill loading: skill SKILL.md files fetched from URLs are cached locally and their metadata is injected into the tool description so the model can discover specialized workflows.
+
+3. **Common toolchain caches pre-allowed** — zig, cargo, go build, and go pkg cache directories under `~` are now pre-allowed as external directories. Agents using these toolchains no longer trigger permission prompts for inspecting downloaded modules and build artifacts.
+
+4. **Fixed infinite abort-replay loop on large contexts** — when the LLM took >3 seconds to return the first token (e.g. 239K token prompts), the interrupt plugin would abort and replay the message in a tight loop every 3 seconds. Replayed message IDs are now tracked to break the cycle.
+
+5. **Fixed unscoped Discord toasts** — global plugin toasts without a session-scoped marker were being forwarded into unrelated Discord threads. Toasts are now only rendered when they carry a session ID, preventing rate-limit and status toasts from spamming conversations.
+
+6. **Fixed Anthropic OAuth identity in system prompt** — the Anthropic auth plugin now correctly rebrands the openc0de identity and allows `~/.config/openc0de` as a valid config directory, fixing repeated auth failures.
+
+7. **Fixed home directory resolution bug** — corrected path resolution for the user's home directory in opencode startup.
+
 ## 0.5.0
 
 1. **New `/add-dir` Discord command** — expand the current session's directory access permissions without restarting. In a thread with an active session, run `/add-dir <path>` to grant the AI access to a specific external directory, or `/add-dir *` to allow all directories:
