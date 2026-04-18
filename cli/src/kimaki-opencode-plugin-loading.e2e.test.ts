@@ -47,6 +47,18 @@ test(
     const pluginPath = new URL('../src/kimaki-opencode-plugin.ts', import.meta.url).href
     const stderrLines: string[] = []
     const isolatedOpencodeRoot = path.join(projectDir, 'opencode-test-home')
+    const xdgDirectories = {
+      OPENCODE_CONFIG_DIR: path.join(isolatedOpencodeRoot, '.opencode-kimaki'),
+      XDG_CONFIG_HOME: path.join(isolatedOpencodeRoot, '.config'),
+      XDG_DATA_HOME: path.join(isolatedOpencodeRoot, '.local', 'share'),
+      XDG_CACHE_HOME: path.join(isolatedOpencodeRoot, '.cache'),
+      XDG_STATE_HOME: path.join(isolatedOpencodeRoot, '.local', 'state'),
+    }
+
+    fs.mkdirSync(isolatedOpencodeRoot, { recursive: true })
+    Object.values(xdgDirectories).forEach((directory) => {
+      fs.mkdirSync(directory, { recursive: true })
+    })
 
     const {
       command,
@@ -70,11 +82,7 @@ test(
           plugin: [pluginPath],
         }),
         OPENCODE_TEST_HOME: isolatedOpencodeRoot,
-        OPENCODE_CONFIG_DIR: path.join(isolatedOpencodeRoot, '.opencode-kimaki'),
-        XDG_CONFIG_HOME: path.join(isolatedOpencodeRoot, '.config'),
-        XDG_DATA_HOME: path.join(isolatedOpencodeRoot, '.local', 'share'),
-        XDG_CACHE_HOME: path.join(isolatedOpencodeRoot, '.cache'),
-        XDG_STATE_HOME: path.join(isolatedOpencodeRoot, '.local', 'state'),
+        ...xdgDirectories,
       },
     })
 
