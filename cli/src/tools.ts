@@ -1,14 +1,11 @@
 // Voice assistant tool definitions for the GenAI worker.
-// Provides tools for managing OpenCode sessions (create, submit, abort),
-// listing chats, searching files, and reading session messages.
+// Provides tools for shell access, managing OpenCode sessions, listing chats,
+// searching files, and reading session messages.
 
 import { tool } from './ai-tool.js'
 import { z } from 'zod'
-import { spawn, type ChildProcess } from 'node:child_process'
-import net from 'node:net'
 import {
   type OpencodeClient,
-  type AssistantMessage,
   type Provider,
 } from '@opencode-ai/sdk/v2'
 import { createLogger, LogPrefix } from './logger.js'
@@ -23,19 +20,29 @@ import {
   initializeOpencodeForDirectory,
   getOpencodeSystemMessage,
 } from './discord-bot.js'
+import { createBashTool } from './bash-tool.js'
+
+type MessageCompletedParams = {
+  sessionId: string
+  messageId: string
+  data?: { info: { role: 'assistant' } }
+  error?: Error
+  markdown?: string
+}
+
+function getCompletedAt({ time }: { time: { created: number } }): number | undefined {
+  const completed = Reflect.get(time, 'completed')
+  return typeof completed === 'number' ? completed : undefined
+}
 
 export async function getTools({
   onMessageCompleted,
   directory,
+  bashSkillUrls = [],
 }: {
   directory: string
-  onMessageCompleted?: (params: {
-    sessionId: string
-    messageId: string
-    data?: { info: AssistantMessage }
-    error?: unknown
-    markdown?: string
-  }) => void
+  bashSkillUrls?: string[]
+  onMessageCompleted?: (params: MessageCompletedParams) => void
 }) {
   const getClient = await initializeOpencodeForDirectory(directory)
   if (getClient instanceof Error) {
@@ -44,6 +51,10 @@ export async function getTools({
   const client = getClient()
 
   const markdownRenderer = new ShareMarkdown(client)
+  const bash = await createBashTool({
+    directory,
+    skillUrls: bashSkillUrls,
+  })
 
   const providersResponse = await client.config.providers()
   const providers: Provider[] = providersResponse.data?.providers || []
@@ -57,17 +68,20 @@ export async function getTools({
     if (!data || data.length === 0) return undefined
     for (let i = data.length - 1; i >= 0; i--) {
       const info = data?.[i]?.info
-      if (info?.role === 'assistant') {
-        const ai = info as AssistantMessage
-        if (!ai.summary && ai.providerID && ai.modelID) {
-          return { providerID: ai.providerID, modelID: ai.modelID }
-        }
+      if (
+        info?.role === 'assistant' &&
+        !info.summary &&
+        info.providerID &&
+        info.modelID
+      ) {
+        return { providerID: info.providerID, modelID: info.modelID }
       }
     }
     return undefined
   }
 
   const tools = {
+    bash,
     submitMessage: tool({
       description:
         'Submit a message to an existing chat session. Does not wait for the message to complete',
@@ -98,10 +112,12 @@ export async function getTools({
             })
           })
           .catch((error) => {
+            const cause =
+              error instanceof Error ? error : new Error(String(error))
             onMessageCompleted?.({
               sessionId,
               messageId: '',
-              error,
+              error: cause,
             })
           })
         return {
@@ -167,10 +183,12 @@ export async function getTools({
               })
             })
             .catch((error) => {
+              const cause =
+                error instanceof Error ? error : new Error(String(error))
               onMessageCompleted?.({
                 sessionId: session.data.id,
                 messageId: '',
-                error,
+                error: cause,
               })
             })
 
@@ -301,11 +319,9 @@ export async function getTools({
           }
 
           const lastMessage = assistantMessages[assistantMessages.length - 1]
-          const status =
-            'completed' in lastMessage!.info.time &&
-            lastMessage!.info.time.completed
-              ? 'completed'
-              : 'in_progress'
+          const status = getCompletedAt({ time: lastMessage!.info.time })
+            ? 'completed'
+            : 'in_progress'
 
           const markdownResult = await markdownRenderer.generate({
             sessionID: sessionId,
@@ -335,8 +351,7 @@ export async function getTools({
           const status =
             lastMessage?.info.role === 'assistant' &&
             lastMessage?.info.time &&
-            'completed' in lastMessage.info.time &&
-            !lastMessage.info.time.completed
+            !getCompletedAt({ time: lastMessage.info.time })
               ? 'in_progress'
               : 'completed'
 
