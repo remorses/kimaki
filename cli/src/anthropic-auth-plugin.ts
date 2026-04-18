@@ -89,7 +89,7 @@ const CLAUDE_CODE_VERSION = "2.1.75";
 const CLAUDE_CODE_IDENTITY =
   "You are Claude Code, Anthropic's official CLI for Claude.";
 const OPENC0DE_NOTE =
-  'When the prompt says "openc0de", read it as "opencode" by replacing 0 with o.';
+  'When the prompt says "openc0de" I mean it replacing 0 with o.';
 const OPENCODE_IDENTITY =
   "You are OpenCode, the best coding agent on the planet.";
 const ANTHROPIC_PROMPT_MARKER = "Skills provide specialized instructions";
@@ -625,7 +625,7 @@ function sanitizeAnthropicSystemText(
   }
 
   // Re-inject the process working directory that was inside the stripped block.
-  const envContext = `\n<environment>\n<cwd>${process.cwd()}</cwd>\n</environment>\n`;
+  const envContext = `\n<environment>\n<cwd>${process.cwd()}</cwd>\n</environment>\n\n${OPENC0DE_NOTE}\n\n`;
 
   const result =
     text.slice(0, startIdx) +
@@ -667,7 +667,7 @@ function prependClaudeCodeIdentity(
 ) {
   const identityBlock = {
     type: "text",
-    text: `${CLAUDE_CODE_IDENTITY}\n${OPENC0DE_NOTE}`,
+    text: CLAUDE_CODE_IDENTITY,
   };
 
   if (typeof system === "undefined") return [identityBlock];
