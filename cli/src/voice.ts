@@ -360,6 +360,7 @@ async function runTranscriptionOnce({
   mediaType,
   temperature,
   agentNames,
+  provider,
 }: {
   model: LanguageModelV3
   prompt: string
@@ -367,6 +368,7 @@ async function runTranscriptionOnce({
   mediaType: string
   temperature: number
   agentNames?: string[]
+  provider?: TranscriptionProvider
 }): Promise<TranscriptionLoopError | TranscriptionResult> {
   const tool = buildTranscriptionTool({ agentNames })
   const options: LanguageModelV3CallOptions = {
@@ -388,6 +390,14 @@ async function runTranscriptionOnce({
     tools: [tool],
     toolChoice: { type: 'tool', toolName: 'transcriptionResult' },
     providerOptions: {
+      ...(provider === 'openai'
+        ? {
+            openai: {
+              safetyIdentifier: 'kimaki:voice-transcription',
+              user: 'kimaki:voice-transcription',
+            },
+          }
+        : {}),
       google: {
         thinkingConfig: { thinkingBudget: 1024 },
       },
@@ -623,5 +633,6 @@ Note: "critique" is a CLI tool for showing diffs in the browser.`
     mediaType,
     temperature: temperature ?? 0.3,
     agentNames: agentNames && agentNames.length > 0 ? agentNames : undefined,
+    provider: resolvedProvider,
   })
 }
