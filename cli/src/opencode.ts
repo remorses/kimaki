@@ -954,7 +954,7 @@ export function buildSessionPermissions({
 
   const homeDirectoryRules = ({ relativePath }: { relativePath: string }) => {
     const normalizedRelativePath = relativePath.replaceAll('\\', '/')
-    const basePattern = `~/${normalizedRelativePath}`
+    const basePattern = path.resolve(`~/${normalizedRelativePath}`)
     return [
       { permission: 'external_directory', pattern: basePattern, action: 'allow' },
       { permission: 'external_directory', pattern: `${basePattern}/*`, action: 'allow' },
@@ -965,6 +965,10 @@ export function buildSessionPermissions({
   // it tries to read the global AGENTS.md or opencode config (the path is
   // visible in the system prompt, so models sometimes try to read it).
   rules.push(...homeDirectoryRules({ relativePath: '.config/opencode' }))
+
+  // Allow ~/.config/openc0de too because the Anthropic plugin rewrites the
+  // name in the system prompt and some models may try to inspect that path.
+  rules.push(...homeDirectoryRules({ relativePath: '.config/openc0de' }))
 
   // Allow ~/.opensrc so agents can inspect cached opensrc checkouts without
   // permission prompts.
