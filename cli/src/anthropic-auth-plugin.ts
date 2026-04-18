@@ -89,7 +89,7 @@ const CLAUDE_CODE_VERSION = "2.1.75";
 const CLAUDE_CODE_IDENTITY =
   "You are Claude Code, Anthropic's official CLI for Claude.";
 const OPENC0DE_NOTE =
-  'When the prompt says "openc0de" I mean it replacing 0 with o.';
+  'When the prompt says "openc0de" I actually mean it with 0 replaced with o. open code.';
 const OPENCODE_IDENTITY =
   "You are OpenCode, the best coding agent on the planet.";
 const ANTHROPIC_PROMPT_MARKER = "Skills provide specialized instructions";
