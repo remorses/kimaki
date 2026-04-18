@@ -954,7 +954,7 @@ export function buildSessionPermissions({
 
   const homeDirectoryRules = ({ relativePath }: { relativePath: string }) => {
     const normalizedRelativePath = relativePath.replaceAll('\\', '/')
-    const basePattern = path.resolve(`~/${normalizedRelativePath}`)
+    const basePattern = path.resolve(os.homedir(), normalizedRelativePath)
     return [
       { permission: 'external_directory', pattern: basePattern, action: 'allow' },
       { permission: 'external_directory', pattern: `${basePattern}/*`, action: 'allow' },
@@ -1003,6 +1003,7 @@ export function buildSessionPermissions({
       }),
     )
   }
+
 
   return rules
 }
