@@ -503,6 +503,16 @@ async function waitForServer({
 let startingServer: Promise<ServerStartError | SingleServer> | null = null
 let preferredStartupDirectory: string | null = null
 
+function ensureOpencodeHomeDirectories({
+  directories,
+}: {
+  directories: Record<string, string>
+}) {
+  Object.values(directories).map((directory) => {
+    fs.mkdirSync(directory, { recursive: true })
+  })
+}
+
 async function ensureSingleServer({
   directory,
 }: {
@@ -606,7 +616,7 @@ async function startSingleServer({
       return {}
     }
     const root = path.join(getDataDir(), 'opencode-vitest-home')
-    return {
+    const directories = {
       OPENCODE_TEST_HOME: root,
       OPENCODE_CONFIG_DIR: path.join(root, '.opencode-kimaki'),
       XDG_CONFIG_HOME: path.join(root, '.config'),
@@ -614,6 +624,13 @@ async function startSingleServer({
       XDG_CACHE_HOME: path.join(root, '.cache'),
       XDG_STATE_HOME: path.join(root, '.local', 'state'),
     }
+    // OpenCode writes state/config files into these XDG locations during boot.
+    // In CI, a fresh temp data dir means the parent folders may not exist yet,
+    // and some writes fail closed with NotFound before OpenCode has a chance to
+    // create them lazily. Pre-create the directories so startup-time tests do
+    // not flap based on process scheduling.
+    ensureOpencodeHomeDirectories({ directories })
+    return directories
   })()
 
   // Write config to a file instead of passing via OPENCODE_CONFIG_CONTENT env var.
