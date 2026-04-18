@@ -114,8 +114,7 @@ function getInterruptStepTimeoutMsFromEnv(): number {
 }
 
 // ── Encapsulated interrupt state ─────────────────────────────────
-// All 4 mutable variables (pendingByMessageId, latestAssistantMessageID,
-// recoveringSessions, waiters) are trapped inside this closure. The plugin
+// All mutable variables are trapped inside this closure. The plugin
 // hooks only see the returned API methods — they cannot break invariants
 // like forgetting to clear a timer or leaving a stale recovery lock.
 
@@ -124,6 +123,11 @@ function createInterruptState() {
   const latestAssistantMessageIDBySession = new Map<string, string>()
   const recoveringSessions = new Set<string>()
   const waiters = new Set<EventWaiter>()
+  // Messages that were replayed after an abort. chat.message must skip
+  // scheduling a new interrupt timer for these to prevent an infinite
+  // abort→replay loop when the LLM takes >interruptStepTimeoutMs to
+  // return the first token (e.g. 239K token prompts).
+  const replayedMessageIds = new Set<string>()
 
   function clearPending(messageID: string): void {
     const pending = pendingByMessageId.get(messageID)
@@ -256,6 +260,18 @@ function createInterruptState() {
       latestAssistantMessageIDBySession.delete(sessionID)
     },
 
+    markReplayed(messageID: string): void {
+      replayedMessageIds.add(messageID)
+    },
+
+    isReplayed(messageID: string): boolean {
+      return replayedMessageIds.has(messageID)
+    },
+
+    clearReplayed(messageID: string): void {
+      replayedMessageIds.delete(messageID)
+    },
+
     // Clean up all state for a deleted session — timers, recovery locks, etc.
     cleanupSession(sessionID: string): void {
       latestAssistantMessageIDBySession.delete(sessionID)
@@ -263,6 +279,7 @@ function createInterruptState() {
         if (pending.sessionID !== sessionID) {
           return
         }
+        replayedMessageIds.delete(messageID)
         clearPending(messageID)
       })
     },
@@ -353,6 +370,12 @@ const interruptOpencodeSessionOnUserMessage: Plugin = async (ctx) => {
         replayBody.model = currentPending.model
       }
 
+      // Mark as replayed BEFORE promptAsync so the chat.message hook
+      // (which fires synchronously when opencode processes the message)
+      // knows to skip scheduling a new interrupt timer. Without this,
+      // replayed messages re-enter the interrupt pipeline and create an
+      // infinite abort→replay loop when the LLM takes >timeout to respond.
+      state.markReplayed(messageID)
       await ctx.client.session.promptAsync({
         path: { id: sessionID },
         body: replayBody,
@@ -450,6 +473,13 @@ const interruptOpencodeSessionOnUserMessage: Plugin = async (ctx) => {
 
       const messageID = input.messageID || output.message.id
       if (!messageID) {
+        return
+      }
+      // Skip replayed messages — they were already interrupted and replayed
+      // by interruptPendingMessage. Scheduling a new timer would create an
+      // infinite abort→replay loop when the LLM is slow (large context).
+      if (state.isReplayed(messageID)) {
+        state.clearReplayed(messageID)
         return
       }
       if (state.hasPending(messageID)) {
