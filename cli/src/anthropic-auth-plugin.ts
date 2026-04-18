@@ -88,8 +88,7 @@ const OAUTH_TIMEOUT_MS = 5 * 60 * 1000;
 const CLAUDE_CODE_VERSION = "2.1.75";
 const CLAUDE_CODE_IDENTITY =
   "You are Claude Code, Anthropic's official CLI for Claude.";
-const OPENC0DE_NOTE =
-  'When the prompt says "openc0de" I actually mean it with 0 replaced with o. open code.';
+
 const OPENCODE_IDENTITY =
   "You are OpenCode, the best coding agent on the planet.";
 const ANTHROPIC_PROMPT_MARKER = "Skills provide specialized instructions";
@@ -625,14 +624,15 @@ function sanitizeAnthropicSystemText(
   }
 
   // Re-inject the process working directory that was inside the stripped block.
-  const envContext = `\n<environment>\n<cwd>${process.cwd()}</cwd>\n</environment>\n\n${OPENC0DE_NOTE}\n\n`;
+  const envContext = `\n<environment>\n<cwd>${process.cwd()}</cwd>\n</environment>\n\n`;
 
   const result =
     text.slice(0, startIdx) +
     envContext +
     text.slice(endIdx);
 
-  return result.replace(/\bopencode\b/gi, "openc0de");
+  return result
+  // return result.replace(/\bopencode\b/gi, "openc0de");
 }
 
 function mapSystemTextPart(
