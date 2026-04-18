@@ -24,6 +24,7 @@
  */
 
 import type { Plugin } from "@opencode-ai/plugin";
+import { appendToastSessionMarker } from "./plugin-logger.js";
 import {
   loadAccountStore,
   rememberAnthropicOAuth,
@@ -823,18 +824,7 @@ function wrapResponseStream(
   });
 }
 
-function appendToastSessionMarker({
-  message,
-  sessionId,
-}: {
-  message: string;
-  sessionId: string | undefined;
-}) {
-  if (!sessionId) {
-    return message;
-  }
-  return `${message} ${sessionId}`;
-}
+
 
 // --- Beta headers ---
 

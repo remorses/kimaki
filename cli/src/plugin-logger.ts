@@ -66,3 +66,19 @@ export function createPluginLogger(prefix: string) {
     },
   }
 }
+
+// Append a session ID marker at the end of a toast message so the bot-side
+// handleTuiToast can route the toast to the correct Discord thread.
+// Without this marker the toast is silently dropped.
+export function appendToastSessionMarker({
+  message,
+  sessionId,
+}: {
+  message: string
+  sessionId: string | undefined
+}): string {
+  if (!sessionId) {
+    return message
+  }
+  return `${message} ${sessionId}`
+}

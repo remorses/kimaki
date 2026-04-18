@@ -7,11 +7,10 @@
 import type { Plugin } from '@opencode-ai/plugin'
 import { diffLines } from 'diff'
 import * as errore from 'errore'
-import { createPluginLogger, formatPluginErrorWithStack, setPluginLogFilePath } from './plugin-logger.js'
+import { appendToastSessionMarker, createPluginLogger, formatPluginErrorWithStack, setPluginLogFilePath } from './plugin-logger.js'
 import { initSentry, notifyError } from './sentry.js'
 
 const logger = createPluginLogger('OPENCODE')
-const TOAST_SESSION_MARKER_SEPARATOR = ' '
 
 type PluginHooks = Awaited<ReturnType<Plugin>>
 type SystemTransformHook = NonNullable<PluginHooks['experimental.chat.system.transform']>
@@ -47,16 +46,6 @@ type TurnContext = {
 
 function normalizeSystemPrompt({ system }: { system: string[] }): string {
   return system.join('\n')
-}
-
-function appendToastSessionMarker({
-  message,
-  sessionId,
-}: {
-  message: string
-  sessionId: string
-}): string {
-  return `${message}${TOAST_SESSION_MARKER_SEPARATOR}${sessionId}`
 }
 
 function buildTurnContext({

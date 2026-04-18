@@ -3,6 +3,7 @@
 import type { Hooks, Plugin } from '@opencode-ai/plugin'
 import * as errore from 'errore'
 import {
+  appendToastSessionMarker,
   createPluginLogger,
   formatPluginErrorWithStack,
   setPluginLogFilePath,
@@ -184,7 +185,10 @@ export const subagentRateLimitPlugin: Plugin = async ({ client, directory }) => 
 
           await client.tui.showToast({
             body: {
-              message: `Aborting ${subagent.subagentType || 'subagent'} after rate limit so the parent task can recover: ${rateLimitReason} ${eventSessionId}`,
+              message: appendToastSessionMarker({
+                message: `Aborting ${subagent.subagentType || 'subagent'} after rate limit so the parent task can recover: ${rateLimitReason}`,
+                sessionId: eventSessionId,
+              }),
               variant: 'info',
             },
           }).catch(() => {
