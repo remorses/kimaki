@@ -574,6 +574,7 @@ for the first section of readme use markup like this
     <br/>
 </div>
 ```
+there cannot be markdown inside the html.
 
 or a variant with a logo image:
 
@@ -609,3 +610,5 @@ Workspace packages inside a monorepo inherit the root `.gitignore`, so this only
 - if you need to use zod always use latest version
 - always install packages as dev dependencies if used only for scripts, testing or types only
 - if the package uses `rimraf` in scripts, install it as a dev dependency instead of relying on platform-specific shell behavior
+- never use em-dashes (—) or dashes as inline separators (like `word - word`) in README or documentation. instead restructure the sentence: use periods to split into two sentences, colons, commas, or parentheses
+- never add badge images (shields.io, etc.) or any images you don't have locally in the repo. don't invent image URLs
