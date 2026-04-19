@@ -306,7 +306,7 @@ export async function registerCommands({
         option
           .setName('directory')
           .setDescription(truncateCommandDescription('Directory to allow, resolved from the current worktree. Use * for all folders'))
-          .setRequired(true)
+          .setRequired(false)
 
         return option
       })

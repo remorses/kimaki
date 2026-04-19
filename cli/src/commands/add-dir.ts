@@ -111,7 +111,7 @@ export async function handleAddDirCommand({
     return
   }
 
-  const requestedDirectory = command.options.getString('directory', true)
+  const requestedDirectory = command.options.getString('directory') ?? ALL_DIRECTORIES_PATTERN
   const resolvedPattern = resolveDirectoryPermissionPattern({
     input: requestedDirectory,
     workingDirectory: resolvedDirectories.workingDirectory,

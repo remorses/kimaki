@@ -29,6 +29,13 @@ describe('resolveDirectoryPermissionPattern', () => {
 
   test('supports allowing every directory with *', () => {
     expect(
+      resolveDirectoryPermissionPattern({
+        input: ' * ',
+        workingDirectory: '/repo',
+      }),
+    ).toBe('*')
+
+    expect(
       buildAddDirPermissionRules({
         resolvedPattern: '*',
       }),
