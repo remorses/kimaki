@@ -592,6 +592,8 @@ or a variant with a logo image:
 </div>
 ```
 
+> Notice the use of h3, not h1. and h4 for the tagline
+
 ## .gitignore
 
 For non-workspace (standalone) packages, always create a `.gitignore` with:
