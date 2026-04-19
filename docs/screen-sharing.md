@@ -11,8 +11,8 @@ Share your machine's screen to anyone with a browser link. Uses VNC under the ho
 # Start sharing (runs in foreground, Ctrl+C to stop)
 kimaki screenshare
 
-# Run in background with tmux
-tmux new-session -d -s screenshare "kimaki screenshare"
+# Run in background with tuistory
+tuistory launch "kimaki screenshare" -s screenshare
 ```
 
 Or use the `/screenshare` slash command in Discord — it posts the URL directly in the channel.

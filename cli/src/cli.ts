@@ -3895,7 +3895,7 @@ cli
 cli
   .command(
     'screenshare',
-    'Share your screen via VNC tunnel. Auto-stops after 30 minutes. Runs until Ctrl+C. Use tmux to run in background.',
+    'Share your screen via VNC tunnel. Auto-stops after 30 minutes. Runs until Ctrl+C. For background usage, start with bunx tuistory --help, then run it in a tuistory session.',
   )
   .action(async () => {
     const { startScreenshare } = await import(

@@ -35,7 +35,7 @@ Enter plan mode, then:
 
 3. **Determine the e2e test recipe.** Figure out how a worker can verify its change actually works end-to-end — not just that unit tests pass. Look for:
    - A browser-automation tool (for UI changes: click through the affected flow, screenshot the result)
-   - A tmux or CLI-verifier skill (for CLI changes: launch the app interactively, exercise the changed behavior)
+   - A tuistory or CLI-verifier skill (for CLI changes: launch the app interactively, exercise the changed behavior)
    - A dev-server + curl pattern (for API changes: start the server, hit the affected endpoints)
    - An existing e2e/integration test suite the worker can run
 

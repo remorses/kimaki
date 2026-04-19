@@ -465,32 +465,29 @@ describe('system-message', () => {
 
       ALWAYS use \`kimaki tunnel\` when starting any dev server. NEVER run \`pnpm dev\`, \`npm run dev\`, or any dev server command without wrapping it in \`kimaki tunnel\`. Always invoke Kimaki directly as \`kimaki\`, never via \`npx\` or \`bunx\`. The user is on Discord, not at the terminal — localhost URLs are useless to them. They need a tunnel URL to access the site.
 
-      Use \`tmux\` to run the tunnel + dev server combo in the background so it persists across commands.
+      Use \`bunx tuistory\` to run the tunnel + dev server combo in the background so it persists across commands. This is preferable to raw shell backgrounding because you can wait for real output, read logs, and interact with the running process.
 
-      ### installing tmux (if missing)
+      ### read tuistory help first
 
       \`\`\`bash
-      # macOS
-      brew install tmux
-
-      # Ubuntu/Debian
-      sudo apt-get install tmux
+      bunx tuistory --help
       \`\`\`
 
       ### starting a dev server with tunnel
 
-      Use a tmux session with a descriptive name like \`projectname-dev\` so you can reuse it later:
+      Use a tuistory session with a descriptive name like \`projectname-dev\` so you can reuse it later:
 
       Use random tunnel IDs by default. Only pass \`-t\` when exposing a service that is safe to be publicly discoverable.
 
       \`kimaki tunnel\` injects \`TRAFORO_URL\` into the child process. Prefer wiring your app to that URL so OAuth callbacks, webhook URLs, and absolute links use the public tunnel instead of localhost.
 
       \`\`\`bash
-      # Create a tmux session (use project name + dev, e.g. "myapp-dev", "website-dev")
-      tmux new-session -d -s myapp-dev
+      # Start the dev server in a named background session
+      bunx tuistory launch "kimaki tunnel -p 3000 -- pnpm dev" -s myapp-dev
 
-      # Run the dev server with kimaki tunnel inside the session
-      tmux send-keys -t myapp-dev "kimaki tunnel -p 3000 -- pnpm dev" Enter
+      # Wait until the dev server prints something useful, then inspect it
+      bunx tuistory -s myapp-dev wait "/ready|local|tunnel/i" --timeout 30000
+      bunx tuistory read -s myapp-dev
       \`\`\`
 
       ### passing the public URL to your app
@@ -499,55 +496,50 @@ describe('system-message', () => {
 
       \`\`\`bash
       # Your app can read process.env.TRAFORO_URL directly
-      tmux send-keys -t myapp-dev "kimaki tunnel -- node server.js" Enter
+      bunx tuistory launch "kimaki tunnel -- node server.js" -s myapp-dev
 
       # better-auth example
-      tmux send-keys -t myapp-dev "kimaki tunnel -- sh -c 'BETTER_AUTH_URL=$TRAFORO_URL exec pnpm dev'" Enter
+      bunx tuistory launch "kimaki tunnel -- sh -c 'BETTER_AUTH_URL=$TRAFORO_URL exec pnpm dev'" -s myapp-dev
 
       # Next.js example
-      tmux send-keys -t myapp-dev "kimaki tunnel -- sh -c 'APP_URL=$TRAFORO_URL exec pnpm dev'" Enter
+      bunx tuistory launch "kimaki tunnel -- sh -c 'APP_URL=$TRAFORO_URL exec pnpm dev'" -s myapp-dev
 
       # Vite example
-      tmux send-keys -t myapp-dev "kimaki tunnel -- sh -c 'VITE_BASE_URL=$TRAFORO_URL exec pnpm dev'" Enter
+      bunx tuistory launch "kimaki tunnel -- sh -c 'VITE_BASE_URL=$TRAFORO_URL exec pnpm dev'" -s myapp-dev
       \`\`\`
 
       ### getting the tunnel URL
 
       \`\`\`bash
-      # View session output to find the tunnel URL
-      tmux capture-pane -t myapp-dev -p | grep -i "tunnel"
+      # View the latest output to find the tunnel URL
+      bunx tuistory read -s myapp-dev
       \`\`\`
 
       ### examples
 
       \`\`\`bash
       # Next.js project
-      tmux new-session -d -s projectname-nextjs-dev-3000
-      tmux send-keys -t nextjs-dev "kimaki tunnel -p 3000 -- pnpm dev" Enter
+      bunx tuistory launch "kimaki tunnel -p 3000 -- pnpm dev" -s projectname-nextjs-dev-3000
 
       # Vite project on port 5173
-      tmux new-session -d -s vite-dev-5173
-      tmux send-keys -t vite-dev "kimaki tunnel -p 5173 -- pnpm dev" Enter
+      bunx tuistory launch "kimaki tunnel -p 5173 -- pnpm dev" -s vite-dev-5173
 
       # Custom tunnel ID (only for intentionally public-safe services)
-      tmux new-session -d -s holocron-dev
-      tmux send-keys -t holocron-dev "kimaki tunnel -p 3000 -t holocron -- pnpm dev" Enter
+      bunx tuistory launch "kimaki tunnel -p 3000 -t holocron -- pnpm dev" -s holocron-dev
       \`\`\`
 
       ### stopping the dev server
 
       \`\`\`bash
-      # Send Ctrl+C to stop the process
-      tmux send-keys -t myapp-dev C-c
-
-      # Or kill the entire session
-      tmux kill-session -t myapp-dev
+      # Send Ctrl+C to stop the process, then close the session
+      bunx tuistory -s myapp-dev press ctrl c
+      bunx tuistory -s myapp-dev close
       \`\`\`
 
       ### listing sessions
 
       \`\`\`bash
-      tmux list-sessions
+      bunx tuistory sessions
       \`\`\`
 
       ## markdown formatting

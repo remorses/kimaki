@@ -33,21 +33,13 @@ ${backticks}bash
 curl -fsSL https://bun.sh/install | bash
 ${backticks}
 
-**tmux** — needed to run the dev server in the background with kimaki tunnel:
+**tuistory** — needed to run the dev server in the background with kimaki tunnel:
 
 ${backticks}bash
-tmux -V
+bunx tuistory --help
 ${backticks}
 
-If missing, tell the user to install it: https://github.com/tmux/tmux/wiki/Installing — or:
-
-${backticks}bash
-# macOS
-brew install tmux
-
-# Ubuntu/Debian
-sudo apt-get install tmux
-${backticks}
+This works without installing it globally because \`bunx\` can run it on demand.
 
 Do NOT use Node.js, npm, or npx. Use Bun for everything.
 
@@ -144,15 +136,14 @@ Pick a random port between 3000-9000 to avoid conflicts:
 
 ${backticks}bash
 PORT=$((RANDOM % 6000 + 3000))
-tmux kill-session -t game-dev 2>/dev/null
-tmux new-session -d -s game-dev -c "$PWD"
-tmux send-keys -t game-dev "PORT=$PORT kimaki tunnel -p $PORT -- bun run server.ts" Enter
+bunx tuistory launch "PORT=$PORT kimaki tunnel -p $PORT -- bun run server.ts" -s game-dev --cwd "$PWD"
 ${backticks}
 
 Wait a moment, then get the tunnel URL:
 
 ${backticks}bash
-sleep 1 && tmux capture-pane -t game-dev -p
+bunx tuistory -s game-dev wait "/tunnel|https?:\/\//i" --timeout 30000
+bunx tuistory read -s game-dev
 ${backticks}
 
 If the tunnel URL is not visible yet, run the capture command again — it usually appears within a few seconds.

@@ -465,7 +465,7 @@ User has a VPS with code at `/home/user/myapp`.
 2. SSHs into the VPS (using configured SSH key)
 3. Installs opencode if not present
 4. Writes env vars to the remote environment
-5. Starts opencode serve with basic auth (via systemd or tmux)
+5. Starts opencode serve with basic auth (via systemd or tuistory)
 6. Verifies health endpoint is reachable (with basic auth)
 7. Creates Discord thread "my-vps" in #myapp
 8. Stores machine record in DB
