@@ -34,14 +34,16 @@ Use this skill when scaffolding or fixing npm packages.
      files in `src` (not `./dist/*.d.ts`).
 8. Always include `default` in exports.
 9. `files` must include at least:
-   - `src`
-   - `dist`
-   - any runtime-required extra files (for example `schema.prisma`)
-   - docs like `README.md` and `CHANGELOG.md`
-   - `skills/` directory if the package ships an agent skill (see "Agent
-     skill" section below). Skill files live at `skills/<name>/SKILL.md`,
-     never at the package root.
-   - if tests are inside src and gets included in dist, it's fine. don't try to exclude them
+    - `src`
+    - `dist`
+    - any runtime-required extra files (for example `schema.prisma`)
+    - `skills/` directory if the package ships an agent skill (see "Agent
+      skill" section below). Skill files live at `skills/<name>/SKILL.md`,
+      never at the package root.
+    - if tests are inside src and gets included in dist, it's fine. don't try to exclude them
+    - **Do NOT create package-level README.md files.** In workspaces, keep one
+      README at the repository root. Package READMEs don't get read by anyone.
+      The root README is the single source of truth for the whole project.
 10. `scripts.build` should be `tsc && chmod +x dist/cli.js` (skip the chmod if
      the package has no bin). No bundling. Do not delete `dist/` in `build` by
      default because forcing a clean build on every local build can cause

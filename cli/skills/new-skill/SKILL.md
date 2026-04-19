@@ -167,7 +167,7 @@ curl -s https://raw.githubusercontent.com/owner/repo/main/README.md # NEVER pipe
 \`\`\`
 ```
 
-If the README lives in a subdirectory (e.g. a package inside a monorepo), include that subpath: `.../main/packagename/README.md`.
+**In monorepos/workspaces, always put the README at the repository root** — not inside individual package folders. Package-level READMEs don't get read by anyone. One root README is the single source of truth for the whole project. The skill should curl the root README path (`.../main/README.md`), not a package subdirectory.
 
 **Never truncate docs output.** The agent must read `--help` and curl'd README output **in full**. Never pipe through `head`, `tail`, `sed -n`, `awk`, `| less`, or any command that strips or limits lines. Critical rules are spread throughout the doc, not just at the top. Agents truncate frequently and miss important context — forbid it explicitly in the skill body.
 
