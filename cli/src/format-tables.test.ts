@@ -5,11 +5,26 @@ import {
   type ContentSegment,
 } from './format-tables.js'
 import { Lexer, type Tokens } from 'marked'
+import { ComponentType } from 'discord.js'
+
+function isTableToken(token: Tokens.Generic | Tokens.Table): token is Tokens.Table {
+  return (
+    token.type === 'table' &&
+    Object.hasOwn(token, 'header') &&
+    Object.hasOwn(token, 'rows')
+  )
+}
 
 function parseTable(markdown: string): Tokens.Table {
   const lexer = new Lexer()
   const tokens = lexer.lex(markdown)
-  return tokens.find((t) => t.type === 'table') as Tokens.Table
+  const table = tokens.find((token) => {
+    return isTableToken(token)
+  })
+  if (!table || !isTableToken(table)) {
+    throw new Error('Expected markdown to contain a table token')
+  }
+  return table
 }
 
 /** Extract the first container's children from buildTableComponents result */
@@ -20,13 +35,25 @@ function getContainerChildren(
   if (seg.type !== 'components') {
     throw new Error('Expected components segment')
   }
-  const container = seg.components[0] as { type: number; components: unknown[] }
-  return container.components as {
-    type: number
-    content?: string
-    divider?: boolean
-    spacing?: number
-  }[]
+  const container = seg.components[0]
+  if (!container || container.type !== ComponentType.Container) {
+    throw new Error('Expected first top-level component to be a container')
+  }
+  return container.components.map((component) => {
+    const content =
+      component.type === ComponentType.TextDisplay ? component.content : undefined
+    const divider =
+      component.type === ComponentType.Separator ? component.divider : undefined
+    const spacing =
+      component.type === ComponentType.Separator ? component.spacing : undefined
+
+    return {
+      type: component.type,
+      content,
+      divider,
+      spacing,
+    }
+  })
 }
 
 describe('buildTableComponents', () => {
@@ -329,6 +356,139 @@ Done.`)
         "text",
         "components",
         "text",
+      ]
+    `)
+  })
+
+  test('renders callout text inside an accented container', () => {
+    const result = splitTablesFromMarkdown(`<callout accent="#2b7fff">
+## Important
+
+Read this first.
+</callout>`)
+    expect(result).toMatchInlineSnapshot(`
+      [
+        {
+          "components": [
+            {
+              "accent_color": 2850815,
+              "components": [
+                {
+                  "content": "## Important
+
+      Read this first.",
+                  "type": 10,
+                },
+              ],
+              "type": 17,
+            },
+          ],
+          "type": "components",
+        },
+      ]
+    `)
+  })
+
+  test('renders tables inside callouts recursively', () => {
+    const result = splitTablesFromMarkdown(`<callout accent="#2b7fff">
+## Important
+
+| Key | Value |
+| --- | --- |
+| a | 1 |
+</callout>`)
+    expect(result).toMatchInlineSnapshot(`
+      [
+        {
+          "components": [
+            {
+              "accent_color": 2850815,
+              "components": [
+                {
+                  "content": "## Important",
+                  "type": 10,
+                },
+                {
+                  "content": "**Key** a
+      **Value** 1",
+                  "type": 10,
+                },
+              ],
+              "type": 17,
+            },
+          ],
+          "type": "components",
+        },
+      ]
+    `)
+  })
+
+  test('renders button rows inside callouts recursively', () => {
+    const result = splitTablesFromMarkdown(
+      `<callout accent="#2b7fff">
+## Actions
+
+| Name | Action |
+| --- | --- |
+| feature-a | <button id="delete-a" variant="secondary">Delete</button> |
+</callout>`,
+      {
+        resolveButtonCustomId: ({ button }) => {
+          return `html_action:${button.id}`
+        },
+      },
+    )
+    expect(result).toMatchInlineSnapshot(`
+      [
+        {
+          "components": [
+            {
+              "accent_color": 2850815,
+              "components": [
+                {
+                  "content": "## Actions",
+                  "type": 10,
+                },
+                {
+                  "content": "**Name** feature-a",
+                  "type": 10,
+                },
+                {
+                  "components": [
+                    {
+                      "custom_id": "html_action:delete-a",
+                      "disabled": false,
+                      "label": "Delete",
+                      "style": 2,
+                      "type": 2,
+                    },
+                  ],
+                  "type": 1,
+                },
+              ],
+              "type": 17,
+            },
+          ],
+          "type": "components",
+        },
+      ]
+    `)
+  })
+
+  test('falls back to plain text when a callout is not closed', () => {
+    const result = splitTablesFromMarkdown(`<callout accent="#2b7fff">
+## Important
+
+Still open`)
+    expect(result).toMatchInlineSnapshot(`
+      [
+        {
+          "text": "<callout accent="#2b7fff">
+      ## Important
+
+      Still open",
+          "type": "text",
+        },
       ]
     `)
   })

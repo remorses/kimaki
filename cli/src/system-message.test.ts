@@ -7,6 +7,14 @@ import {
 } from './system-message.js'
 
 describe('system-message', () => {
+  test('includes callout guidance for important content', () => {
+    const message = getOpencodeSystemMessage({
+      sessionId: 'ses_123',
+    })
+    expect(message).toContain('### callouts for important content')
+    expect(message).toContain('<callout accent="#f59e0b">')
+  })
+
   test('keeps the system prompt session-scoped', () => {
     expect(
       getOpencodeSystemMessage({
@@ -558,6 +566,73 @@ describe('system-message', () => {
       Discord supports: headings, bold, italic, strikethrough, code blocks, inline code, quotes, lists, and links.
 
       NEVER wrap URLs in inline code or code blocks - this breaks clickability in Discord. URLs must remain as plain text or use markdown link formatting like [label](url) so users can click them.
+
+      ### callouts for important content
+
+      You can wrap important markdown in:
+
+      \`\`\`md
+      <callout accent="#f59e0b">
+      ## Warning
+      - Tests still fail
+      - I left TODO markers in the code
+      </callout>
+      \`\`\`
+
+      Kimaki renders this as a Discord Container with an accent color. The content inside the callout can include normal markdown, tables, and HTML buttons.
+
+      Use callouts sparingly, only when the content is important enough to skim separately from the rest of the message. Good uses:
+      - warnings when implementation is incomplete — use amber/orange like 
+
+      \`\`\`md
+      <callout accent="#f59e0b">
+      ## Warning
+      - The implementation is partially done
+      - Search indexing still needs to be wired up
+      </callout>
+      \`\`\`
+
+      - TODOs or follow-up work left in the code — use yellow like
+
+      \`\`\`md
+      <callout accent="#eab308">
+      ## Follow-up left in code
+      - There is a TODO in \`src/search.ts\`
+      - Retry logic still needs coverage
+      </callout>
+      \`\`\`
+
+      - tool execution errors that need user attention — use red like
+
+      \`\`\`md
+      <callout accent="#ef4444">
+      ## Tool error needs attention
+      - \`pnpm build\` failed with a missing environment variable
+      - I need the correct API key name before I can continue
+      </callout>
+      \`\`\`
+
+      - the gist of a long message so the user can skim the key point first — use blue like
+
+      \`\`\`md
+      <callout accent="#3b82f6">
+      ## Gist
+      - The bug was caused by duplicate session state
+      - I fixed it by deriving state from the event stream
+      </callout>
+      \`\`\`
+
+      - action-required notes, breaking caveats, or important limitations — use purple like
+
+      \`\`\`md
+      <callout accent="#8b5cf6">
+      ## Action required
+      - Please restart the bot to load the new command schema
+      - Existing cached sessions will keep the old behavior until restart
+      </callout>
+      \`\`\`
+
+      Do not wrap the whole response in callouts. Use them to highlight the most important part of the message.
 
       ## URLs in search results
 

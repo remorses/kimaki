@@ -10,6 +10,7 @@ import {
   SeparatorSpacingSize,
   type APIActionRowComponent,
   type APIButtonComponent,
+  type APIComponentInContainer,
   type APIContainerComponent,
   type APITextDisplayComponent,
   type APISeparatorComponent,
@@ -50,6 +51,10 @@ type RenderedTableRow = {
   componentCost: number
 }
 
+type CalloutDescriptor = {
+  accentColor?: number
+}
+
 // Max 40 components per message (nested components count toward the limit).
 // Row cost is dynamic now because a table row can render as a plain TextDisplay
 // or as a TextDisplay plus an Action Row holding one or more buttons.
@@ -64,18 +69,113 @@ export function splitTablesFromMarkdown(
   markdown: string,
   options: TableRenderOptions = {},
 ): ContentSegment[] {
-  const lexer = new Lexer()
-  const tokens = lexer.lex(markdown)
-  const segments: ContentSegment[] = []
+  const blocks = splitMarkdownByCallouts({ markdown })
+  return blocks.flatMap((block) => {
+    if (block.type === 'callout') {
+      const innerSegments = splitTablesFromMarkdown(block.content, options)
+      return buildCalloutSegments({
+        segments: innerSegments,
+        callout: block.callout,
+      })
+    }
+
+    return splitTableSegmentsFromText({
+      markdown: block.text,
+      options,
+    })
+  })
+}
+
+type MarkdownBlock =
+  | { type: 'text'; text: string }
+  | { type: 'callout'; content: string; callout: CalloutDescriptor }
+
+function splitMarkdownByCallouts({
+  markdown,
+}: {
+  markdown: string
+}): MarkdownBlock[] {
+  const lines = markdown.match(/.*(?:\n|$)/g)?.filter((line) => {
+    return line.length > 0
+  }) ?? [markdown]
+  const blocks: MarkdownBlock[] = []
   let textBuffer = ''
 
+  for (let index = 0; index < lines.length; index++) {
+    const line = lines[index]!
+    const callout = parseCalloutOpenLine({ line })
+    if (!callout) {
+      textBuffer += line
+      continue
+    }
+
+    if (textBuffer.length > 0) {
+      blocks.push({ type: 'text', text: textBuffer })
+      textBuffer = ''
+    }
+
+    const body = collectCalloutBodyFromLines({
+      lines,
+      startIndex: index,
+    })
+    if (body instanceof Error) {
+      textBuffer += line
+      continue
+    }
+
+    blocks.push({
+      type: 'callout',
+      content: body.content,
+      callout,
+    })
+    index = body.endIndex
+  }
+
+  if (textBuffer.length > 0) {
+    blocks.push({ type: 'text', text: textBuffer })
+  }
+
+  return blocks
+}
+
+function splitTableSegmentsFromText({
+  markdown,
+  options,
+}: {
+  markdown: string
+  options: TableRenderOptions
+}): ContentSegment[] {
+  const lexer = new Lexer()
+  return splitTokensIntoSegments({
+    tokens: lexer.lex(markdown),
+    options,
+  })
+}
+
+function splitTokensIntoSegments({
+  tokens,
+  options,
+}: {
+  tokens: Token[]
+  options: TableRenderOptions
+}): ContentSegment[] {
+  const segments: ContentSegment[] = []
+  let textBuffer = ''
+  const isTableToken = (token: Token): token is Tokens.Table => {
+    return (
+      token.type === 'table' &&
+      Object.hasOwn(token, 'header') &&
+      Object.hasOwn(token, 'rows')
+    )
+  }
+
   for (const token of tokens) {
-    if (token.type === 'table') {
+    if (isTableToken(token)) {
       if (textBuffer.trim()) {
         segments.push({ type: 'text', text: textBuffer })
         textBuffer = ''
       }
-      const componentSegments = buildTableComponents(token as Tokens.Table, options)
+      const componentSegments = buildTableComponents(token, options)
       segments.push(...componentSegments)
     } else {
       textBuffer += token.raw
@@ -87,6 +187,171 @@ export function splitTablesFromMarkdown(
   }
 
   return segments
+}
+
+function buildCalloutSegments({
+  segments,
+  callout,
+}: {
+  segments: ContentSegment[]
+  callout: CalloutDescriptor
+}): ContentSegment[] {
+  const children = flattenCalloutChildren({ segments })
+  if (children.length === 0) {
+    return []
+  }
+
+  const chunks = chunkCalloutChildrenByComponentLimit({ children })
+  return chunks.map((chunk) => {
+    const container: APIContainerComponent = {
+      type: ComponentType.Container,
+      ...(callout.accentColor !== undefined
+        ? { accent_color: callout.accentColor }
+        : {}),
+      components: chunk,
+    }
+    const components: APIMessageTopLevelComponent[] = [container]
+    return {
+      type: 'components' as const,
+      components,
+    }
+  })
+}
+
+function flattenCalloutChildren({
+  segments,
+}: {
+  segments: ContentSegment[]
+}): APIComponentInContainer[] {
+  return segments.flatMap((segment) => {
+    if (segment.type === 'text') {
+      if (!segment.text.trim()) {
+        return []
+      }
+      return [
+        {
+          type: ComponentType.TextDisplay,
+          content: segment.text.trim(),
+        } satisfies APITextDisplayComponent,
+      ]
+    }
+
+    return segment.components.flatMap((component) => {
+      if (component.type !== ComponentType.Container) {
+        return []
+      }
+      return component.components
+    })
+  })
+}
+
+function chunkCalloutChildrenByComponentLimit({
+  children,
+}: {
+  children: APIComponentInContainer[]
+}): APIComponentInContainer[][] {
+  const chunks: APIComponentInContainer[][] = []
+  let currentChunk: APIComponentInContainer[] = []
+
+  for (const child of children) {
+    if (currentChunk.length > 0 && currentChunk.length + 2 > MAX_COMPONENTS) {
+      chunks.push(currentChunk)
+      currentChunk = []
+    }
+    currentChunk.push(child)
+  }
+
+  if (currentChunk.length > 0) {
+    chunks.push(currentChunk)
+  }
+
+  return chunks
+}
+
+function collectCalloutBodyFromLines({
+  lines,
+  startIndex,
+}: {
+  lines: string[]
+  startIndex: number
+}): { content: string; endIndex: number } | Error {
+  let depth = 0
+  const contentLines: string[] = []
+
+  for (let index = startIndex; index < lines.length; index++) {
+    const line = lines[index]!
+    const nestedCallout = parseCalloutOpenLine({ line })
+    if (nestedCallout) {
+      if (depth > 0) {
+        contentLines.push(line)
+      }
+      depth += 1
+      continue
+    }
+
+    if (/^<\/callout>$/i.test(line.trim())) {
+      depth -= 1
+      if (depth === 0) {
+        return {
+          content: contentLines.join(''),
+          endIndex: index,
+        }
+      }
+      contentLines.push(line)
+      continue
+    }
+
+    if (depth > 0) {
+      contentLines.push(line)
+    }
+  }
+
+  return new Error('Unclosed <callout> block')
+}
+
+function parseCalloutOpenLine({
+  line,
+}: {
+  line: string
+}): CalloutDescriptor | null {
+  const match = line.trim().match(/^<callout(?:\s+[^>]*)?>$/i)
+  if (!match) {
+    return null
+  }
+
+  const accentValue = line.match(/\baccent=(['"])(.*?)\1/i)?.[2]?.trim()
+  const accentColor = accentValue
+    ? parseAccentColor({ value: accentValue })
+    : undefined
+
+  return {
+    accentColor: accentColor instanceof Error ? undefined : accentColor,
+  }
+}
+
+function parseAccentColor({
+  value,
+}: {
+  value: string
+}): number | Error {
+  const hex = value.trim().toLowerCase()
+  if (/^#[0-9a-f]{6}$/.test(hex)) {
+    return Number.parseInt(hex.slice(1), 16)
+  }
+  if (/^#[0-9a-f]{3}$/.test(hex)) {
+    const expanded = hex
+      .slice(1)
+      .split('')
+      .map((char) => {
+        return `${char}${char}`
+      })
+      .join('')
+    return Number.parseInt(expanded, 16)
+  }
+  if (/^\d+$/.test(hex)) {
+    return Number.parseInt(hex, 10)
+  }
+  return new Error(`Unsupported callout accent color: ${value}`)
 }
 
 /**
@@ -135,10 +400,11 @@ export function buildTableComponents(
       type: ComponentType.Container,
       components: children,
     }
+    const components: APIMessageTopLevelComponent[] = [container]
 
     return {
       type: 'components' as const,
-      components: [container] as APIMessageTopLevelComponent[],
+      components,
     }
   })
 }
@@ -432,12 +698,19 @@ function extractTokenText(token: Token): string {
     case 'br':
       return ' '
     default: {
-      const tokenAny = token as { tokens?: Token[]; text?: string }
-      if (tokenAny.tokens && Array.isArray(tokenAny.tokens)) {
-        return extractCellText(tokenAny.tokens)
+      const nestedTokens = Reflect.get(token, 'tokens')
+      if (Array.isArray(nestedTokens)) {
+        return extractCellText(nestedTokens.filter((value): value is Token => {
+          return (
+            typeof value === 'object' &&
+            value !== null &&
+            typeof Reflect.get(value, 'type') === 'string'
+          )
+        }))
       }
-      if (typeof tokenAny.text === 'string') {
-        return tokenAny.text
+      const text = Reflect.get(token, 'text')
+      if (typeof text === 'string') {
+        return text
       }
       return ''
     }
