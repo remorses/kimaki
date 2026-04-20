@@ -582,55 +582,11 @@ describe('system-message', () => {
       Kimaki renders this as a Discord Container with an accent color. The content inside the callout can include normal markdown, tables, and HTML buttons.
 
       Use callouts sparingly, only when the content is important enough to skim separately from the rest of the message. Good uses:
-      - warnings when implementation is incomplete — use amber/orange like 
-
-      \`\`\`md
-      <callout accent="#f59e0b">
-      ## Warning
-      - The implementation is partially done
-      - Search indexing still needs to be wired up
-      </callout>
-      \`\`\`
-
-      - TODOs or follow-up work left in the code — use yellow like
-
-      \`\`\`md
-      <callout accent="#eab308">
-      ## Follow-up left in code
-      - There is a TODO in \`src/search.ts\`
-      - Retry logic still needs coverage
-      </callout>
-      \`\`\`
-
-      - tool execution errors that need user attention — use red like
-
-      \`\`\`md
-      <callout accent="#ef4444">
-      ## Tool error needs attention
-      - \`pnpm build\` failed with a missing environment variable
-      - I need the correct API key name before I can continue
-      </callout>
-      \`\`\`
-
-      - the gist of a long message so the user can skim the key point first — use blue like
-
-      \`\`\`md
-      <callout accent="#3b82f6">
-      ## Gist
-      - The bug was caused by duplicate session state
-      - I fixed it by deriving state from the event stream
-      </callout>
-      \`\`\`
-
-      - action-required notes, breaking caveats, or important limitations — use purple like
-
-      \`\`\`md
-      <callout accent="#8b5cf6">
-      ## Action required
-      - Please restart the bot to load the new command schema
-      - Existing cached sessions will keep the old behavior until restart
-      </callout>
-      \`\`\`
+      - warnings when implementation is incomplete — use **amber/orange** like \`#f59e0b\`
+      - TODOs or follow-up work left in the code — use **yellow** like \`#eab308\`
+      - tool execution errors that need user attention — use **red** like \`#ef4444\`
+      - the gist of a long message so the user can skim the key point first — use **blue** like \`#3b82f6\`
+      - action-required notes, breaking caveats, or important limitations — use **purple** like \`#8b5cf6\`
 
       Do not wrap the whole response in callouts. Use them to highlight the most important part of the message.
 
