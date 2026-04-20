@@ -480,12 +480,16 @@ opencode uses the event subscription (sdk call `event.subscribe`) as single sour
 
 prefer event sourcing over mirrored mutable run state.
 
+always read the `event-sourcing-state` skill before updating code in `cli/src/session-handler/thread-session-runtime.ts`.
+
 why this is preferred:
 
 - one source of truth: the event stream. no duplicated "phase" or "current run" state that can desync.
 - easier debugging: read the jsonl stream and replay decisions from history.
 - easier testing: derivation logic is pure and deterministic with fixture inputs.
 - fewer race bugs: state is derived from observed events, not guessed from local transitions.
+
+when the user mentions a specific kimaki session while reporting a bug, always export its jsonl first with `kimaki session export-events-jsonl --session <id> --out ./tmp/<id>.jsonl` and inspect that stream before guessing about runtime state.
 
 write derivation as pure functions that accept events and return computed state.
 prefer existing derivation helpers from `event-stream-state.ts` (for example
@@ -634,7 +638,7 @@ when summarizing changes at the end of the message, be super short, a few words 
 
 please ask questions and confirm assumptions before generating complex architecture code.
 
-NEVER run commands with & at the end to run them in the background. this is leaky and harmful! instead ask me to run commands in the background using tmux if needed.
+NEVER run commands with & at the end to run them in the background. this is leaky and harmful! instead use tuistory for background processes so you can wait for real output, read logs, and interact with the process without guessing with sleep.
 
 NEVER commit yourself unless asked to do so. I will commit the code myself.
 
@@ -976,7 +980,7 @@ to understand how the code you are writing works, you should add inline snapshot
 
 - for very long snapshots you should use `toMatchFileSnapshot(filename)` instead of `toMatchInlineSnapshot()`. put the snapshot files in a snapshots/ directory and use the appropriate extension for the file based on the content
 
-never test client react components. only React and browser independent code.
+never test client react components. only React and browser independent code. 
 
 most tests should be simple calls to functions with some expect calls, no mocks. test files should be called the same as the file where the tested function is being exported from.
 
@@ -1038,6 +1042,13 @@ user interfaces are mostly text so using the letter width and height as a base u
 
 use grow instead of flex-1.
 
+# spiceflow
+
+before writing or updating spiceflow related code always execute this command to get Spiceflow full documentation: `curl -s https://gitchamber.com/repos/remorses/spiceflow/main/files/README.md`
+
+spiceflow is an API library similar to hono, it allows you to write api servers using whatwg requests and responses
+
+use zod to create schemas and types that need to be used for tool inputs or spiceflow API routes.
 
 ## calling the server from the clientE
 
