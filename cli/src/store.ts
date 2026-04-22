@@ -1,7 +1,7 @@
 // Centralized zustand/vanilla store for global bot state.
 // Replaces scattered module-level `let` variables, process.env mutations,
 // and mutable arrays with a single immutable state atom.
-// See cli/skills/zustand-centralized-state/SKILL.md for the pattern.
+// See skills/zustand-centralized-state/SKILL.md for the pattern.
 
 import { createStore } from 'zustand/vanilla'
 import type { VerbosityLevel } from './generated/client.js'

@@ -12,6 +12,7 @@ useraudio
 *.wav
 discord-audio-logs
 tmp
+/cli/skills
 
 # opensrc - source code for packages
 /opensrc

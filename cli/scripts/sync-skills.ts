@@ -1,12 +1,12 @@
 #!/usr/bin/env tsx
 /**
- * Sync skills from remote repos into cli/skills/.
+ * Sync skills from remote repos into the repository root skills/ folder.
  *
  * Reimplements the core discovery logic from the `skills` npm CLI
  * (vercel-labs/skills) without depending on it. The flow is:
  *   1. Shallow-clone each source repo to ./tmp/
  *   2. Recursively walk for SKILL.md files, parse frontmatter
- *   3. Copy discovered skill directories into cli/skills/<name>/
+ *   3. Copy discovered skill directories into skills/<name>/
  *   4. Clean up temp dirs
  *
  * Usage:  pnpm sync-skills          (from cli/ or root)
@@ -275,9 +275,10 @@ async function copySkill(skill: SkillInfo, outputDir: string): Promise<string> {
 
 async function main() {
   const scriptDir = path.dirname(new URL(import.meta.url).pathname)
-  const discordDir = path.resolve(scriptDir, '..')
-  const outputDir = path.join(discordDir, 'skills')
-  const tmpDir = path.join(discordDir, '..', 'tmp')
+  const cliDir = path.resolve(scriptDir, '..')
+  const repoRootDir = path.resolve(cliDir, '..')
+  const outputDir = path.join(repoRootDir, 'skills')
+  const tmpDir = path.join(repoRootDir, 'tmp')
 
   // Ensure output and tmp dirs exist
   fs.mkdirSync(outputDir, { recursive: true })
@@ -311,7 +312,7 @@ async function main() {
       for (const skill of skills) {
         const dest = await copySkill(skill, outputDir)
         console.log(
-          `      - ${skill.name} -> ${path.relative(discordDir, dest)}`,
+          `      - ${skill.name} -> ${path.relative(repoRootDir, dest)}`,
         )
         totalSynced++
       }

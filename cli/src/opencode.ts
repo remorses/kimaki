@@ -34,6 +34,7 @@ import {
   getDataDir,
   getLockPort,
 } from './config.js'
+import { resolveBundledSkillsDir } from './bundled-skills.js'
 import { store } from './store.js'
 import { getHranaUrl } from './hrana-server.js'
 
@@ -684,7 +685,7 @@ async function startSingleServer({
       },
     },
     skills: {
-      paths: [path.resolve(__dirname, '..', 'skills')],
+      paths: [resolveBundledSkillsDir()],
     },
   } satisfies Config
   const opencodeConfigPath = path.join(getDataDir(), 'opencode-config.json')

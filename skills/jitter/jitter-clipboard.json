@@ -1,0 +1,1042 @@
+{
+  "type": "figmaPluginV2",
+  "fileName": "Hero Sections (Community)",
+  "nodes": [
+    {
+      "id": "6asUTHOHtsxyzBh5rXcfn:2:1775",
+      "item": {
+        "type": "layerGrp",
+        "name": "8 Boostify",
+        "figmaId": "2:1775",
+        "x": 10945,
+        "y": 0,
+        "width": 1440,
+        "height": 1024,
+        "angle": 0,
+        "scale": 1,
+        "background": true,
+        "fillColor": "#040b10",
+        "strokeEnabled": false,
+        "shadowEnabled": false,
+        "opacity": 100,
+        "isHidden": false,
+        "isLocked": false,
+        "cornerRadius": 0,
+        "clipsContent": true
+      },
+      "position": { "parentId": null, "index": "a0" }
+    },
+    {
+      "id": "6asUTHOHtsxyzBh5rXcfn:2:1776",
+      "item": {
+        "type": "ellipse",
+        "name": "Ellipse 13",
+        "figmaId": "2:1776",
+        "x": 983,
+        "y": -457,
+        "width": 914,
+        "height": 914,
+        "angle": 0,
+        "scale": 1,
+        "background": false,
+        "strokeEnabled": true,
+        "strokeColor": "#246bfd",
+        "strokeWeight": 100,
+        "strokePosition": "inside",
+        "shadowEnabled": false,
+        "opacity": 5.000000074505806,
+        "isHidden": false,
+        "isLocked": false,
+        "sweep": 100,
+        "ratio": 0,
+        "startAngle": 0
+      },
+      "position": { "parentId": "6asUTHOHtsxyzBh5rXcfn:2:1775", "index": "a0" }
+    },
+    {
+      "id": "6asUTHOHtsxyzBh5rXcfn:2:1777",
+      "item": {
+        "type": "ellipse",
+        "name": "Ellipse 12",
+        "figmaId": "2:1777",
+        "x": -457,
+        "y": 615,
+        "width": 914,
+        "height": 914,
+        "angle": 0,
+        "scale": 1,
+        "background": false,
+        "strokeEnabled": true,
+        "strokeColor": "#246bfd",
+        "strokeWeight": 100,
+        "strokePosition": "inside",
+        "shadowEnabled": false,
+        "opacity": 5.000000074505806,
+        "isHidden": false,
+        "isLocked": false,
+        "sweep": 100,
+        "ratio": 0,
+        "startAngle": 0
+      },
+      "position": { "parentId": "6asUTHOHtsxyzBh5rXcfn:2:1775", "index": "a1" }
+    },
+    {
+      "id": "6asUTHOHtsxyzBh5rXcfn:2:1778",
+      "item": {
+        "type": "ellipse",
+        "name": "Ellipse 9",
+        "figmaId": "2:1778",
+        "x": -444,
+        "y": -443,
+        "width": 887,
+        "height": 887,
+        "angle": 0,
+        "scale": 1,
+        "background": true,
+        "fillColor": "#246bfd33",
+        "strokeEnabled": true,
+        "strokeColor": "#ffffff",
+        "strokeWeight": 1,
+        "strokePosition": "inside",
+        "shadowEnabled": false,
+        "blurRadius": 200,
+        "opacity": 100,
+        "isHidden": false,
+        "isLocked": false,
+        "sweep": 100,
+        "ratio": 0,
+        "startAngle": 0
+      },
+      "position": { "parentId": "6asUTHOHtsxyzBh5rXcfn:2:1775", "index": "a2" }
+    },
+    {
+      "id": "6asUTHOHtsxyzBh5rXcfn:2:1779",
+      "item": {
+        "type": "layerGrp",
+        "name": "Hero",
+        "figmaId": "2:1779",
+        "x": 0,
+        "y": 100,
+        "width": 1440,
+        "height": 1578,
+        "angle": 0,
+        "scale": 1,
+        "background": false,
+        "strokeEnabled": false,
+        "shadowEnabled": false,
+        "opacity": 100,
+        "isHidden": false,
+        "isLocked": false,
+        "cornerRadius": 0,
+        "clipsContent": false
+      },
+      "position": { "parentId": "6asUTHOHtsxyzBh5rXcfn:2:1775", "index": "a3" }
+    },
+    {
+      "id": "6asUTHOHtsxyzBh5rXcfn:2:1780",
+      "item": {
+        "type": "layerGrp",
+        "name": "Hero Container",
+        "figmaId": "2:1780",
+        "x": 234,
+        "y": 120,
+        "width": 972,
+        "height": 434,
+        "angle": 0,
+        "scale": 1,
+        "background": false,
+        "strokeEnabled": false,
+        "shadowEnabled": false,
+        "opacity": 100,
+        "isHidden": false,
+        "isLocked": false,
+        "cornerRadius": 0,
+        "clipsContent": false
+      },
+      "position": { "parentId": "6asUTHOHtsxyzBh5rXcfn:2:1779", "index": "a0" }
+    },
+    {
+      "id": "6asUTHOHtsxyzBh5rXcfn:2:1781",
+      "item": {
+        "type": "layerGrp",
+        "name": "Text Container",
+        "figmaId": "2:1781",
+        "x": 0,
+        "y": 0,
+        "width": 972,
+        "height": 282,
+        "angle": 0,
+        "scale": 1,
+        "background": false,
+        "strokeEnabled": false,
+        "shadowEnabled": false,
+        "opacity": 100,
+        "isHidden": false,
+        "isLocked": false,
+        "cornerRadius": 0,
+        "clipsContent": false
+      },
+      "position": { "parentId": "6asUTHOHtsxyzBh5rXcfn:2:1780", "index": "a0" }
+    },
+    {
+      "id": "6asUTHOHtsxyzBh5rXcfn:2:1782",
+      "item": {
+        "figmaId": "2:1782",
+        "name": "Headline",
+        "opacity": 100,
+        "shadowEnabled": false,
+        "strokeEnabled": false,
+        "isHidden": false,
+        "isLocked": false,
+        "type": "textImg",
+        "text": "Automate Your Social Media Growth with Ease",
+        "font": { "type": "missingFont", "name": "Satoshi", "weight": 700 },
+        "fontSize": 76,
+        "textAlign": "center",
+        "verticalAlign": "top",
+        "autoResize": "height",
+        "case": "normal",
+        "kerning": true,
+        "ligatures": true,
+        "lineHeight": 120.00000762939453,
+        "letterSpacing": 0,
+        "x": 0,
+        "y": 0,
+        "width": 972,
+        "height": 182,
+        "angle": 0,
+        "scale": 1,
+        "background": true,
+        "fillColor": {
+          "stops": [
+            { "id": "0", "color": "#ffffff", "position": 0.30000001192092896 },
+            { "id": "1", "color": "#c5dcff99", "position": 0.8477022051811218 }
+          ],
+          "type": "GRADIENT_RADIAL",
+          "transform": {
+            "angle": 0.1850994786736122,
+            "sx": 1.0173788827021508,
+            "sy": 0.3680886139006839,
+            "skew": -0.932255381106815,
+            "tx": 0.4999999813582181,
+            "ty": 0.5
+          }
+        },
+        "characterStyleOverrides": [
+          0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+          0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0
+        ],
+        "styleOverrideTable": {},
+        "textVector": "https://snackthis-userdata.s3-eu-west-1.amazonaws.com/9faa3933-a482-4587-b9dd-f19b95d8c8c8.svg"
+      },
+      "position": { "parentId": "6asUTHOHtsxyzBh5rXcfn:2:1781", "index": "a0" }
+    },
+    {
+      "id": "6asUTHOHtsxyzBh5rXcfn:2:1783",
+      "item": {
+        "figmaId": "2:1783",
+        "name": "Subheadline",
+        "opacity": 100,
+        "shadowEnabled": false,
+        "strokeEnabled": false,
+        "isHidden": false,
+        "isLocked": false,
+        "type": "textImg",
+        "text": "Boostify helps small businesses grow their online presence with AI-powered social media management tools.",
+        "font": { "type": "missingFont", "name": "Satoshi", "weight": 400 },
+        "fontSize": 24,
+        "textAlign": "center",
+        "verticalAlign": "top",
+        "autoResize": "height",
+        "case": "normal",
+        "kerning": true,
+        "ligatures": true,
+        "lineHeight": 160,
+        "letterSpacing": 0,
+        "x": 159,
+        "y": 206,
+        "width": 654,
+        "height": 76,
+        "angle": 0,
+        "scale": 1,
+        "background": true,
+        "fillColor": "#afbcd5",
+        "characterStyleOverrides": [
+          0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+          0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+          0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+          0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+          0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0
+        ],
+        "styleOverrideTable": {},
+        "textVector": "https://snackthis-userdata.s3-eu-west-1.amazonaws.com/b47dfb42-c571-4edf-9897-3d7753487882.svg"
+      },
+      "position": { "parentId": "6asUTHOHtsxyzBh5rXcfn:2:1781", "index": "a1" }
+    },
+    {
+      "id": "6asUTHOHtsxyzBh5rXcfn:2:1784",
+      "item": {
+        "type": "layerGrp",
+        "name": "Button and Rating Container",
+        "figmaId": "2:1784",
+        "x": 365.5,
+        "y": 330,
+        "width": 241,
+        "height": 104,
+        "angle": 0,
+        "scale": 1,
+        "background": false,
+        "strokeEnabled": false,
+        "shadowEnabled": false,
+        "opacity": 100,
+        "isHidden": false,
+        "isLocked": false,
+        "cornerRadius": 0,
+        "clipsContent": false
+      },
+      "position": { "parentId": "6asUTHOHtsxyzBh5rXcfn:2:1780", "index": "a1" }
+    },
+    {
+      "id": "6asUTHOHtsxyzBh5rXcfn:2:1785",
+      "item": {
+        "type": "layerGrp",
+        "name": "Button",
+        "figmaId": "2:1785",
+        "x": 0,
+        "y": 0,
+        "width": 241,
+        "height": 56,
+        "angle": 0,
+        "scale": 1,
+        "background": false,
+        "strokeEnabled": false,
+        "shadowEnabled": false,
+        "opacity": 100,
+        "isHidden": false,
+        "isLocked": false,
+        "cornerRadius": 0,
+        "clipsContent": false
+      },
+      "position": { "parentId": "6asUTHOHtsxyzBh5rXcfn:2:1784", "index": "a0" }
+    },
+    {
+      "id": "6asUTHOHtsxyzBh5rXcfn:2:1786",
+      "item": {
+        "type": "layerGrp",
+        "name": "Button - Get a Free Demo",
+        "figmaId": "2:1786",
+        "x": 0,
+        "y": 0,
+        "width": 241,
+        "height": 56,
+        "angle": 0,
+        "scale": 1,
+        "background": true,
+        "fillColor": {
+          "stops": [
+            { "id": "0", "color": "#246bfd", "position": 0.06959374994039536 },
+            { "id": "1", "color": "#0040c3", "position": 0.8164248466491699 }
+          ],
+          "type": "GRADIENT_LINEAR",
+          "transform": {
+            "angle": 0.3612322114328737,
+            "sx": 0.9158662641079427,
+            "tx": 0.5338234960785545,
+            "ty": 0.44298213720321655
+          }
+        },
+        "strokeEnabled": true,
+        "strokeColor": {
+          "stops": [
+            { "id": "0", "color": "#246bfd", "position": 0.06959374994039536 },
+            { "id": "1", "color": "#0040c3", "position": 0.8164248466491699 }
+          ],
+          "type": "GRADIENT_LINEAR",
+          "transform": {
+            "angle": 0.3612322114328737,
+            "sx": 0.9158662641079427,
+            "tx": 0.5338234960785545,
+            "ty": 0.44298213720321655
+          }
+        },
+        "strokeWeight": 1,
+        "strokePosition": "inside",
+        "shadowEnabled": true,
+        "shadowBlur": 24,
+        "shadowColor": "#246bfd",
+        "shadowOffsetX": 4,
+        "shadowOffsetY": 8,
+        "shadowOpacity": 25,
+        "opacity": 100,
+        "isHidden": false,
+        "isLocked": false,
+        "cornerRadius": 30,
+        "clipsContent": false
+      },
+      "position": { "parentId": "6asUTHOHtsxyzBh5rXcfn:2:1785", "index": "a0" }
+    },
+    {
+      "id": "6asUTHOHtsxyzBh5rXcfn:2:1787",
+      "item": {
+        "type": "layerGrp",
+        "name": "energy",
+        "figmaId": "2:1787",
+        "x": 24,
+        "y": 16,
+        "width": 24,
+        "height": 24,
+        "angle": 0,
+        "scale": 1,
+        "background": false,
+        "strokeEnabled": false,
+        "shadowEnabled": false,
+        "opacity": 100,
+        "isHidden": false,
+        "isLocked": false,
+        "cornerRadius": 0,
+        "clipsContent": false
+      },
+      "position": { "parentId": "6asUTHOHtsxyzBh5rXcfn:2:1786", "index": "a0" }
+    },
+    {
+      "id": "6asUTHOHtsxyzBh5rXcfn:2:1788",
+      "item": {
+        "type": "shape",
+        "name": "Vector",
+        "figmaId": "2:1788",
+        "x": 5.999999046325684,
+        "y": 2.999997138977051,
+        "width": 11.999978065490723,
+        "height": 17.999982833862305,
+        "angle": 0,
+        "scale": 1,
+        "background": true,
+        "fillColor": "#ffffff",
+        "strokeEnabled": true,
+        "strokeColor": "#ffffff",
+        "strokeWeight": 1,
+        "strokePosition": "inside",
+        "shadowEnabled": false,
+        "opacity": 40.00000059604645,
+        "isHidden": false,
+        "isLocked": false,
+        "cornerRadius": 0,
+        "path": {
+          "spline": {
+            "controls": [
+              {
+                "anchor": [0.016125949934966365, 0.46647279042710477],
+                "leadingHandle": [-0.020361615534642857, 0.4992561534029363],
+                "tag": "2:1788-12-0"
+              },
+              {
+                "anchor": [0.5160010393402681, 0.017325737010369855],
+                "trailingHandle": [0.5550927761582819, -0.017801517862830313],
+                "tag": "2:1788-12-1"
+              },
+              {
+                "anchor": [0.6283761828744919, 0.050853541160816605],
+                "leadingHandle": [0.6283761828744919, 0.004061832004426455],
+                "tag": "2:1788-12-2"
+              },
+              {
+                "anchor": [0.6283761828744919, 0.398494981524715],
+                "trailingHandle": [0.6283761828744919, 0.4265283400221268],
+                "tag": "2:1788-12-3"
+              },
+              {
+                "anchor": [0.6925596923767626, 0.44925058202142903],
+                "leadingHandle": [0.6571096295710614, 0.44925058202142903],
+                "tag": "2:1788-12-4"
+              },
+              {
+                "anchor": [0.935693435982042, 0.44925058202142903],
+                "trailingHandle": [0.9909185350502714, 0.44925058202142903],
+                "tag": "2:1788-12-5"
+              },
+              {
+                "anchor": [0.9838768048217273, 0.5335284483985813],
+                "leadingHandle": [1.020360202925764, 0.5007450854227499],
+                "tag": "2:1788-12-6"
+              },
+              {
+                "anchor": [0.4840009169611027, 0.9826733841927928],
+                "trailingHandle": [0.44490918014308894, 1.017801195376523],
+                "tag": "2:1788-12-7"
+              },
+              {
+                "anchor": [0.37162577342687886, 0.9491455552070546],
+                "leadingHandle": [0.37162577342687886, 0.9959400426047225],
+                "tag": "2:1788-12-8"
+              },
+              {
+                "anchor": [0.37162577342687886, 0.6015062573009711],
+                "trailingHandle": [0.37162577342687886, 0.5734728988035592],
+                "tag": "2:1788-12-9"
+              },
+              {
+                "anchor": [0.30744313812763663, 0.550750656804257],
+                "leadingHandle": [0.34289236895034203, 0.550750656804257],
+                "tag": "2:1788-12-10"
+              },
+              {
+                "anchor": [0.06431102868597276, 0.550750656804257],
+                "trailingHandle": [0.009079263819652272, 0.550750656804257],
+                "tag": "2:1788-12-11"
+              }
+            ],
+            "closed": true
+          }
+        }
+      },
+      "position": { "parentId": "6asUTHOHtsxyzBh5rXcfn:2:1787", "index": "a0" }
+    },
+    {
+      "id": "6asUTHOHtsxyzBh5rXcfn:2:1789",
+      "item": {
+        "figmaId": "2:1789",
+        "name": "Vector",
+        "opacity": 100,
+        "shadowEnabled": false,
+        "strokeEnabled": false,
+        "isHidden": false,
+        "isLocked": false,
+        "x": 4.5,
+        "y": 2,
+        "width": 15,
+        "height": 20,
+        "angle": 0,
+        "scale": 1,
+        "issues": [
+          "stroke.joinisnotmiter",
+          "stroke.cap",
+          "vector.strokeCap",
+          "vector.strokeJoin"
+        ],
+        "type": "svg",
+        "cornerRadius": 0,
+        "url": "data:image/svg+xml;base64,PHN2ZyB3aWR0aD0iMTQiIGhlaWdodD0iMjAiIHZpZXdCb3g9IjAgMCAxNCAyMCIgZmlsbD0ibm9uZSIgeG1sbnM9Imh0dHA6Ly93d3cudzMub3JnLzIwMDAvc3ZnIj4KPHBhdGggZD0iTTAuOTQzNTExIDkuMTQ2NUw2Ljk0MiAxLjA2MTg2QzcuNDExMSAwLjQyOTU3MyA4LjI5MDUgMC44MjMxMTMgOC4yOTA1IDEuNjY1MzZWNy45MjI5QzguMjkwNSA4LjQyNzUgOC42MzUzIDguODM2NSA5LjA2MDcgOC44MzY1SDExLjk3ODNDMTIuNjQxIDguODM2NSAxMi45OTQzIDkuNzYzNCAxMi41NTY1IDEwLjM1MzVMNi41NTggMTguNDM4MUM2LjA4ODkgMTkuMDcwNCA1LjIwOTUgMTguNjc2OSA1LjIwOTUgMTcuODM0NlYxMS41NzcxQzUuMjA5NSAxMS4wNzI1IDQuODY0NyAxMC42NjM1IDQuNDM5MzEgMTAuNjYzNUgxLjUyMTczQzAuODU4OTUxIDEwLjY2MzUgMC41MDU2NjEgOS43MzY2IDAuOTQzNTExIDkuMTQ2NVoiIGZpbGw9IndoaXRlIiBmaWxsLW9wYWNpdHk9IjAuNCIgc3Ryb2tlPSJ3aGl0ZSIgc3Ryb2tlLXdpZHRoPSIxLjUiIHN0cm9rZS1saW5lY2FwPSJyb3VuZCIgc3Ryb2tlLWxpbmVqb2luPSJyb3VuZCIvPgo8L3N2Zz4K",
+        "mediaName": "fallback.svg"
+      },
+      "position": { "parentId": "6asUTHOHtsxyzBh5rXcfn:2:1787", "index": "a1" }
+    },
+    {
+      "id": "6asUTHOHtsxyzBh5rXcfn:2:1790",
+      "item": {
+        "figmaId": "2:1790",
+        "name": "Button Text",
+        "opacity": 100,
+        "shadowEnabled": false,
+        "strokeEnabled": false,
+        "isHidden": false,
+        "isLocked": false,
+        "x": 58.5,
+        "y": 21,
+        "width": 157,
+        "height": 15,
+        "angle": 0,
+        "scale": 1,
+        "issues": ["font.case_not_supported"],
+        "type": "svg",
+        "cornerRadius": 0,
+        "url": "data:image/svg+xml;base64,PHN2ZyB3aWR0aD0iMTU3IiBoZWlnaHQ9IjE0IiB2aWV3Qm94PSIwIDAgMTU3IDE0IiBmaWxsPSJub25lIiB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciPgo8cGF0aCBkPSJNMC4xNzk5NSAzLjc0NDA1QzAuMTc5OTUgMS41MTIwNSAxLjk3OTk1IDQuNTc3NjRlLTA1IDQuNjYxOTUgNC41Nzc2NGUtMDVDNy4xNDU5NSA0LjU3NzY0ZS0wNSA4Ljc0Nzk1IDEuMzg2MDUgOC44OTE5NSAzLjYzNjA1SDcuMTA5OTVDNy4wMTk5NSAyLjM0MDA1IDYuMTAxOTUgMS41ODQwNSA0LjY0Mzk1IDEuNTg0MDVDMy4wMDU5NSAxLjU4NDA1IDEuOTQzOTUgMi40MTIwNSAxLjk0Mzk1IDMuNjkwMDVDMS45NDM5NSA0LjczNDA1IDIuNTM3OTUgNS4zNjQwNSAzLjc2MTk1IDUuNjUyMDVMNS45MDM5NSA2LjE1NjA1QzguMDI3OTUgNi42NDIwNSA5LjEwNzk1IDcuNzk0MDUgOS4xMDc5NSA5LjYzMDA1QzkuMTA3OTUgMTEuOTcgNy4yODk5NSAxMy40NjQgNC41MTc5NSAxMy40NjRDMS44NzE5NSAxMy40NjQgMC4xMDc5NSAxMi4wNzggLTQuOTc3NzNlLTA1IDkuODQ2MDVIMS43OTk5NUMxLjgzNTk1IDExLjA4OCAyLjg3OTk1IDExLjg4IDQuNTE3OTUgMTEuODhDNi4yNDU5NSAxMS44OCA3LjM0Mzk1IDExLjA3IDcuMzQzOTUgOS43NzQwNUM3LjM0Mzk1IDguNzQ4MDUgNi43ODU5NSA4LjEwMDA1IDUuNTQzOTUgNy44MTIwNUwzLjQwMTk1IDcuMzI2MDVDMS4yNzc5NSA2Ljg0MDA1IDAuMTc5OTUgNS42MTYwNSAwLjE3OTk1IDMuNzQ0MDVaTTEzLjUyMDYgMTMuMjQ4SDExLjgyODZWNS44NjgwNUgxMC4xMDA2VjQuNDQ2MDVIMTEuODI4NlYxLjY5MjA1SDEzLjUyMDZWNC40NDYwNUgxNS4yNDg2VjUuODY4MDVIMTMuNTIwNlYxMy4yNDhaTTE5LjIzNTYgMTMuNDY0QzE3LjM0NTYgMTMuNDY0IDE2LjIyOTYgMTIuNDAyIDE2LjIyOTYgMTAuOEMxNi4yMjk2IDkuMTgwMDUgMTcuNDM1NiA4LjE3MjA1IDE5LjUwNTYgOC4wMTAwNUwyMi4yNzc2IDcuNzk0MDVWNy41NDIwNUMyMi4yNzc2IDYuMDY2MDUgMjEuMzk1NiA1LjU0NDA1IDIwLjIwNzYgNS41NDQwNUMxOC43ODU2IDUuNTQ0MDUgMTcuOTc1NiA2LjE3NDA1IDE3Ljk3NTYgNy4yMzYwNUgxNi40OTk2QzE2LjQ5OTYgNS40MDAwNSAxOC4wMTE2IDQuMTk0MDUgMjAuMjc5NiA0LjE5NDA1QzIyLjQ1NzYgNC4xOTQwNSAyMy45MzM2IDUuMzQ2MDUgMjMuOTMzNiA3LjcyMjA1VjEzLjI0OEgyMi40OTM2TDIyLjMxMzYgMTEuODI2QzIxLjg2MzYgMTIuODM0IDIwLjY1NzYgMTMuNDY0IDE5LjIzNTYgMTMuNDY0Wk0xOS43MjE2IDEyLjE1QzIxLjMyMzYgMTIuMTUgMjIuMjk1NiAxMS4xMDYgMjIuMjk1NiA5LjQ1MDA1VjguOTgyMDVMMjAuMDQ1NiA5LjE2MjA1QzE4LjU1MTYgOS4zMDYwNSAxNy45Mzk2IDkuODgyMDUgMTcuOTM5NiAxMC43NDZDMTcuOTM5NiAxMS42ODIgMTguNjIzNiAxMi4xNSAxOS43MjE2IDEyLjE1Wk0zMS4zMTY5IDQuMzc0MDVWNS45MjIwNUgzMC41NjA5QzI4Ljk1ODkgNS45MjIwNSAyNy45Njg5IDYuODk0MDUgMjcuOTY4OSA4LjU4NjA1VjEzLjI0OEgyNi4yNzY5VjQuNDY0MDVIMjcuODYwOUwyNy45Njg5IDUuNzk2MDVDMjguMzI4OSA0Ljg3ODA1IDI5LjIxMDkgNC4yNjYwNSAzMC40MTY5IDQuMjY2MDVDMzAuNzIyOSA0LjI2NjA1IDMwLjk3NDkgNC4zMDIwNSAzMS4zMTY5IDQuMzc0MDVaTTM1LjczOTQgMTMuMjQ4SDM0LjA0NzRWNS44NjgwNUgzMi4zMTk0VjQuNDQ2MDVIMzQuMDQ3NFYxLjY5MjA1SDM1LjczOTRWNC40NDYwNUgzNy40Njc0VjUuODY4MDVIMzUuNzM5NFYxMy4yNDhaTTQ3LjI3MzcgNy45NTYwNUw0Mi44NjM3IDAuMjM0MDQ2SDQ0Ljg0MzdMNDcuNzQxNyA1LjQzNjA1QzQ3LjkyMTcgNS43NDIwNSA0OC4wMjk3IDUuOTk0MDUgNDguMTczNyA2LjMwMDA1QzQ4LjMzNTcgNS45NzYwNSA0OC4zNzE3IDUuODY4MDUgNDguNjA1NyA1LjQzNjA1TDUxLjQ4NTcgMC4yMzQwNDZINTMuNDExN0w0OS4wMzc3IDcuOTU2MDVWMTMuMjQ4SDQ3LjI3MzdWNy45NTYwNVpNNTIuNDcyMyA4LjgzODA1QzUyLjQ3MjMgNi4xMjAwNSA1NC40MTYzIDQuMjEyMDUgNTcuMDYyMyA0LjIxMjA1QzU5LjY5MDMgNC4yMTIwNSA2MS42MzQzIDYuMTIwMDUgNjEuNjM0MyA4LjgzODA1QzYxLjYzNDMgMTEuNTU2IDU5LjY5MDMgMTMuNDY0IDU3LjA2MjMgMTMuNDY0QzU0LjQxNjMgMTMuNDY0IDUyLjQ3MjMgMTEuNTU2IDUyLjQ3MjMgOC44MzgwNVpNNTQuMTgyMyA4LjgzODA1QzU0LjE4MjMgMTAuNjc0IDU1LjM1MjMgMTEuOTUyIDU3LjA2MjMgMTEuOTUyQzU4Ljc1NDMgMTEuOTUyIDU5Ljk0MjMgMTAuNjc0IDU5Ljk0MjMgOC44MzgwNUM1OS45NDIzIDcuMDAyMDUgNTguNzU0MyA1LjcyNDA1IDU3LjA2MjMgNS43MjQwNUM1NS4zNTIzIDUuNzI0MDUgNTQuMTgyMyA3LjAwMjA1IDU0LjE4MjMgOC44MzgwNVpNNjkuMzgwNCA0LjQ0NjA1SDcxLjA1NDRWMTMuMjQ4SDY5LjU0MjRMNjkuMzYyNCAxMS45MTZDNjguODU4NCAxMi44MzQgNjcuNjg4NCAxMy40NjQgNjYuMzkyNCAxMy40NjRDNjQuMzQwNCAxMy40NjQgNjMuMTg4NCAxMi4wNzggNjMuMTg4NCA5LjkxODA1VjQuNDQ2MDVINjQuODgwNFY5LjM2MDA1QzY0Ljg4MDQgMTEuMjUgNjUuNjkwNCAxMS45NyA2Ni45ODY0IDExLjk3QzY4LjUzNDQgMTEuOTcgNjkuMzgwNCAxMC45OCA2OS4zODA0IDkuMDkwMDVWNC40NDYwNVpNNzguNTQ5MyA0LjM3NDA1VjUuOTIyMDVINzcuNzkzM0M3Ni4xOTEzIDUuOTIyMDUgNzUuMjAxMyA2Ljg5NDA1IDc1LjIwMTMgOC41ODYwNVYxMy4yNDhINzMuNTA5M1Y0LjQ2NDA1SDc1LjA5MzNMNzUuMjAxMyA1Ljc5NjA1Qzc1LjU2MTMgNC44NzgwNSA3Ni40NDMzIDQuMjY2MDUgNzcuNjQ5MyA0LjI2NjA1Qzc3Ljk1NTMgNC4yNjYwNSA3OC4yMDczIDQuMzAyMDUgNzguNTQ5MyA0LjM3NDA1Wk05Mi4yMjIxIDcuNzIyMDVIODcuMTEwMVYxMy4yNDhIODUuMzQ2MVYwLjIzNDA0Nkg5My4xOTQxVjEuODU0MDVIODcuMTEwMVY2LjEyMDA1SDkyLjIyMjFWNy43MjIwNVpNOTkuNTM3NiA0LjM3NDA1VjUuOTIyMDVIOTguNzgxNkM5Ny4xNzk2IDUuOTIyMDUgOTYuMTg5NiA2Ljg5NDA1IDk2LjE4OTYgOC41ODYwNVYxMy4yNDhIOTQuNDk3NlY0LjQ2NDA1SDk2LjA4MTZMOTYuMTg5NiA1Ljc5NjA1Qzk2LjU0OTYgNC44NzgwNSA5Ny40MzE2IDQuMjY2MDUgOTguNjM3NiA0LjI2NjA1Qzk4Ljk0MzYgNC4yNjYwNSA5OS4xOTU2IDQuMzAyMDUgOTkuNTM3NiA0LjM3NDA1Wk0xMDQuNjA2IDEzLjQ2NEMxMDIuMDE0IDEzLjQ2NCAxMDAuMjMyIDExLjU5MiAxMDAuMjMyIDguODU2MDVDMTAwLjIzMiA2LjEwMjA1IDEwMS45NzggNC4xOTQwNSAxMDQuNTM0IDQuMTk0MDVDMTA3LjAzNiA0LjE5NDA1IDEwOC42NzQgNS45MjIwNSAxMDguNjc0IDguNTMyMDVWOS4xNjIwNUwxMDEuODcgOS4xODAwNUMxMDEuOTk2IDExLjAzNCAxMDIuOTY4IDEyLjA2IDEwNC42NDIgMTIuMDZDMTA1Ljk1NiAxMi4wNiAxMDYuODIgMTEuNTIgMTA3LjEwOCAxMC41MTJIMTA4LjY5MkMxMDguMjYgMTIuNDAyIDEwNi43ODQgMTMuNDY0IDEwNC42MDYgMTMuNDY0Wk0xMDQuNTM0IDUuNjE2MDVDMTAzLjA1OCA1LjYxNjA1IDEwMi4xMjIgNi40OTgwNSAxMDEuOTA2IDguMDQ2MDVIMTA2Ljk4MkMxMDYuOTgyIDYuNTg4MDUgMTA2LjAyOCA1LjYxNjA1IDEwNC41MzQgNS42MTYwNVpNMTE0LjM2MiAxMy40NjRDMTExLjc3IDEzLjQ2NCAxMDkuOTg4IDExLjU5MiAxMDkuOTg4IDguODU2MDVDMTA5Ljk4OCA2LjEwMjA1IDExMS43MzQgNC4xOTQwNSAxMTQuMjkgNC4xOTQwNUMxMTYuNzkyIDQuMTk0MDUgMTE4LjQzIDUuOTIyMDUgMTE4LjQzIDguNTMyMDVWOS4xNjIwNUwxMTEuNjI2IDkuMTgwMDVDMTExLjc1MiAxMS4wMzQgMTEyLjcyNCAxMi4wNiAxMTQuMzk4IDEyLjA2QzExNS43MTIgMTIuMDYgMTE2LjU3NiAxMS41MiAxMTYuODY0IDEwLjUxMkgxMTguNDQ4QzExOC4wMTYgMTIuNDAyIDExNi41NCAxMy40NjQgMTE0LjM2MiAxMy40NjRaTTExNC4yOSA1LjYxNjA1QzExMi44MTQgNS42MTYwNSAxMTEuODc4IDYuNDk4MDUgMTExLjY2MiA4LjA0NjA1SDExNi43MzhDMTE2LjczOCA2LjU4ODA1IDExNS43ODQgNS42MTYwNSAxMTQuMjkgNS42MTYwNVpNMTI0LjI3IDEuODU0MDVWMC4yMzQwNDZIMTMzLjg2NFYxLjg1NDA1SDEyOS45NThWMTMuMjQ4SDEyOC4xOTRWMS44NTQwNUgxMjQuMjdaTTEzOS4zMTcgNC4zNzQwNVY1LjkyMjA1SDEzOC41NjFDMTM2Ljk1OSA1LjkyMjA1IDEzNS45NjkgNi44OTQwNSAxMzUuOTY5IDguNTg2MDVWMTMuMjQ4SDEzNC4yNzdWNC40NjQwNUgxMzUuODYxTDEzNS45NjkgNS43OTYwNUMxMzYuMzI5IDQuODc4MDUgMTM3LjIxMSA0LjI2NjA1IDEzOC40MTcgNC4yNjYwNUMxMzguNzIzIDQuMjY2MDUgMTM4Ljk3NSA0LjMwMjA1IDEzOS4zMTcgNC4zNzQwNVpNMTQxLjczMiAyLjM1ODA1QzE0MS4xMiAyLjM1ODA1IDE0MC42MTYgMS44NTQwNSAxNDAuNjE2IDEuMjQyMDVDMTQwLjYxNiAwLjYxMjA0NiAxNDEuMTIgMC4xMjYwNDYgMTQxLjczMiAwLjEyNjA0NkMxNDIuMzQ0IDAuMTI2MDQ2IDE0Mi44NDggMC42MTIwNDYgMTQyLjg0OCAxLjI0MjA1QzE0Mi44NDggMS44NTQwNSAxNDIuMzQ0IDIuMzU4MDUgMTQxLjczMiAyLjM1ODA1Wk0xNDAuOTA0IDEzLjI0OFY0LjQ0NjA1SDE0Mi41OTZWMTMuMjQ4SDE0MC45MDRaTTE0Ny42MjYgMTMuNDY0QzE0NS43MzYgMTMuNDY0IDE0NC42MiAxMi40MDIgMTQ0LjYyIDEwLjhDMTQ0LjYyIDkuMTgwMDUgMTQ1LjgyNiA4LjE3MjA1IDE0Ny44OTYgOC4wMTAwNUwxNTAuNjY4IDcuNzk0MDVWNy41NDIwNUMxNTAuNjY4IDYuMDY2MDUgMTQ5Ljc4NiA1LjU0NDA1IDE0OC41OTggNS41NDQwNUMxNDcuMTc2IDUuNTQ0MDUgMTQ2LjM2NiA2LjE3NDA1IDE0Ni4zNjYgNy4yMzYwNUgxNDQuODlDMTQ0Ljg5IDUuNDAwMDUgMTQ2LjQwMiA0LjE5NDA1IDE0OC42NyA0LjE5NDA1QzE1MC44NDggNC4xOTQwNSAxNTIuMzI0IDUuMzQ2MDUgMTUyLjMyNCA3LjcyMjA1VjEzLjI0OEgxNTAuODg0TDE1MC43MDQgMTEuODI2QzE1MC4yNTQgMTIuODM0IDE0OS4wNDggMTMuNDY0IDE0Ny42MjYgMTMuNDY0Wk0xNDguMTEyIDEyLjE1QzE0OS43MTQgMTIuMTUgMTUwLjY4NiAxMS4xMDYgMTUwLjY4NiA5LjQ1MDA1VjguOTgyMDVMMTQ4LjQzNiA5LjE2MjA1QzE0Ni45NDIgOS4zMDYwNSAxNDYuMzMgOS44ODIwNSAxNDYuMzMgMTAuNzQ2QzE0Ni4zMyAxMS42ODIgMTQ3LjAxNCAxMi4xNSAxNDguMTEyIDEyLjE1Wk0xNTYuMzk1IDEzLjI0OEgxNTQuNzAzVjQuNTc3NjRlLTA1SDE1Ni4zOTVWMTMuMjQ4WiIgZmlsbD0id2hpdGUiLz4KPC9zdmc+Cg==",
+        "mediaName": "fallback.svg"
+      },
+      "position": { "parentId": "6asUTHOHtsxyzBh5rXcfn:2:1786", "index": "a1" }
+    },
+    {
+      "id": "6asUTHOHtsxyzBh5rXcfn:2:1791",
+      "item": {
+        "type": "layerGrp",
+        "name": "rating",
+        "figmaId": "2:1791",
+        "x": 4,
+        "y": 80,
+        "width": 233,
+        "height": 24,
+        "angle": 0,
+        "scale": 1,
+        "background": false,
+        "strokeEnabled": false,
+        "shadowEnabled": false,
+        "opacity": 100,
+        "isHidden": false,
+        "isLocked": false,
+        "cornerRadius": 0,
+        "clipsContent": false
+      },
+      "position": { "parentId": "6asUTHOHtsxyzBh5rXcfn:2:1784", "index": "a1" }
+    },
+    {
+      "id": "6asUTHOHtsxyzBh5rXcfn:2:1792",
+      "item": {
+        "type": "layerGrp",
+        "name": "icon",
+        "figmaId": "2:1792",
+        "x": 0,
+        "y": 0,
+        "width": 136,
+        "height": 24,
+        "angle": 0,
+        "scale": 1,
+        "background": false,
+        "strokeEnabled": false,
+        "shadowEnabled": false,
+        "opacity": 100,
+        "isHidden": false,
+        "isLocked": false,
+        "cornerRadius": 0,
+        "clipsContent": false
+      },
+      "position": { "parentId": "6asUTHOHtsxyzBh5rXcfn:2:1791", "index": "a0" }
+    },
+    {
+      "id": "6asUTHOHtsxyzBh5rXcfn:2:1793",
+      "item": {
+        "type": "layerGrp",
+        "name": "Iconly - outline",
+        "figmaId": "2:1793",
+        "x": 0,
+        "y": 0,
+        "width": 24,
+        "height": 24,
+        "angle": 0,
+        "scale": 1,
+        "background": false,
+        "strokeEnabled": false,
+        "shadowEnabled": false,
+        "opacity": 100,
+        "isHidden": false,
+        "isLocked": false,
+        "cornerRadius": 0,
+        "clipsContent": false
+      },
+      "position": { "parentId": "6asUTHOHtsxyzBh5rXcfn:2:1792", "index": "a0" }
+    },
+    {
+      "id": "6asUTHOHtsxyzBh5rXcfn:2:1794",
+      "item": {
+        "type": "layerGrp",
+        "name": "Star",
+        "figmaId": "2:1794",
+        "x": 2.5,
+        "y": 3,
+        "width": 19.00274658203125,
+        "height": 17.999879837036133,
+        "angle": 0,
+        "scale": 1,
+        "background": false,
+        "strokeEnabled": false,
+        "shadowEnabled": false,
+        "opacity": 100,
+        "isHidden": false,
+        "isLocked": false,
+        "cornerRadius": 0,
+        "clipsContent": false
+      },
+      "position": { "parentId": "6asUTHOHtsxyzBh5rXcfn:2:1793", "index": "a0" }
+    },
+    {
+      "id": "6asUTHOHtsxyzBh5rXcfn:2:1795",
+      "item": {
+        "figmaId": "2:1795",
+        "name": "Star",
+        "opacity": 100,
+        "shadowEnabled": false,
+        "strokeEnabled": false,
+        "isHidden": false,
+        "isLocked": false,
+        "x": 0,
+        "y": 0,
+        "width": 20,
+        "height": 18,
+        "angle": 0,
+        "scale": 1,
+        "issues": ["vector.strokeCap", "vector.strokeJoin", "vector.fillRule"],
+        "type": "svg",
+        "cornerRadius": 0,
+        "url": "data:image/svg+xml;base64,PHN2ZyB3aWR0aD0iMTkiIGhlaWdodD0iMTgiIHZpZXdCb3g9IjAgMCAxOSAxOCIgZmlsbD0ibm9uZSIgeG1sbnM9Imh0dHA6Ly93d3cudzMub3JnLzIwMDAvc3ZnIj4KPHBhdGggZmlsbC1ydWxlPSJldmVub2RkIiBjbGlwLXJ1bGU9ImV2ZW5vZGQiIGQ9Ik0xMC4yMTQxIDAuNDQwODNMMTIuNTMwMSA1LjA5OTgzQzEyLjY0NjEgNS4zMzQ4MyAxMi44NzAxIDUuNDk4ODMgMTMuMTMwMSA1LjUzNjgzTDE4LjMxNTEgNi4yODU4M0MxOC41MjUxIDYuMzEzODMgMTguNzE0MSA2LjQyMzgzIDE4Ljg0MzEgNi41OTE4M0MxOS4wODUxIDYuOTA2ODMgMTkuMDQ4MSA3LjM1MjgzIDE4Ljc1ODEgNy42MjM4M0wxNS4wMDAxIDExLjI1NzhDMTQuODA5MSAxMS40Mzc4IDE0LjcyNDEgMTEuNzAxOCAxNC43NzQxIDExLjk1ODhMMTUuNjc0MSAxNy4wODY4QzE1LjczNzEgMTcuNTExOCAxNS40NDcxIDE3LjkwOTggMTUuMDIyMSAxNy45Nzg4QzE0Ljg0NjEgMTguMDA1OCAxNC42NjYxIDE3Ljk3NzggMTQuNTA2MSAxNy44OTg4TDkuODg4MTMgMTUuNDc3OEM5LjY1NjEzIDE1LjM1MTggOS4zNzgxMyAxNS4zNTE4IDkuMTQ2MTMgMTUuNDc3OEw0LjQ5NDEzIDE3LjkxMThDNC4xMDUxMyAxOC4xMDk4IDMuNjI5MTMgMTcuOTYyOCAzLjQxNzEzIDE3LjU4MThDMy4zMzYxMyAxNy40Mjc4IDMuMzA4MTMgMTcuMjUyOCAzLjMzNjEzIDE3LjA4MThMNC4yMzYxMyAxMS45NTM4QzQuMjgxMTMgMTEuNjk3OCA0LjE5NjEzIDExLjQzNDggNC4wMTAxMyAxMS4yNTM4TDAuMjMyMTI5IDcuNjIwODNDLTAuMDc1ODcxMiA3LjMxNDgzIC0wLjA3Nzg3MTIgNi44MTY4MyAwLjIyOTEyOSA2LjUwODgzQzAuMjMwMTI5IDYuNTA3ODMgMC4yMzExMjkgNi41MDU4MyAwLjIzMjEyOSA2LjUwNDgzQzAuMzU5MTI5IDYuMzg5ODMgMC41MTUxMjkgNi4zMTI4MyAwLjY4NDEyOSA2LjI4MjgzTDUuODcwMTMgNS41MzM4M0M2LjEyOTEzIDUuNDkyODMgNi4zNTIxMyA1LjMzMDgzIDYuNDcwMTMgNS4wOTU4M0w4Ljc4NDEzIDAuNDQwODNDOC44NzcxMyAwLjI1MTgzIDkuMDQyMTMgMC4xMDY4MyA5LjI0MjEzIDAuMDQwODMwMkM5LjQ0MzEzIC0wLjAyNjE2OTggOS42NjMxMyAtMC4wMTAxNjk4IDkuODUyMTMgMC4wODQ4MzAyQzEwLjAwNzEgMC4xNjE4MyAxMC4xMzQxIDAuMjg2ODMgMTAuMjE0MSAwLjQ0MDgzWiIgZmlsbD0iI0Y5RDAwNiIvPgo8L3N2Zz4K",
+        "mediaName": "fallback.svg"
+      },
+      "position": { "parentId": "6asUTHOHtsxyzBh5rXcfn:2:1794", "index": "a0" }
+    },
+    {
+      "id": "6asUTHOHtsxyzBh5rXcfn:2:1796",
+      "item": {
+        "type": "layerGrp",
+        "name": "Iconly - outline",
+        "figmaId": "2:1796",
+        "x": 28,
+        "y": 0,
+        "width": 24,
+        "height": 24,
+        "angle": 0,
+        "scale": 1,
+        "background": false,
+        "strokeEnabled": false,
+        "shadowEnabled": false,
+        "opacity": 100,
+        "isHidden": false,
+        "isLocked": false,
+        "cornerRadius": 0,
+        "clipsContent": false
+      },
+      "position": { "parentId": "6asUTHOHtsxyzBh5rXcfn:2:1792", "index": "a1" }
+    },
+    {
+      "id": "6asUTHOHtsxyzBh5rXcfn:2:1797",
+      "item": {
+        "type": "layerGrp",
+        "name": "Star",
+        "figmaId": "2:1797",
+        "x": 2.5,
+        "y": 3,
+        "width": 19.00274658203125,
+        "height": 17.999879837036133,
+        "angle": 0,
+        "scale": 1,
+        "background": false,
+        "strokeEnabled": false,
+        "shadowEnabled": false,
+        "opacity": 100,
+        "isHidden": false,
+        "isLocked": false,
+        "cornerRadius": 0,
+        "clipsContent": false
+      },
+      "position": { "parentId": "6asUTHOHtsxyzBh5rXcfn:2:1796", "index": "a0" }
+    },
+    {
+      "id": "6asUTHOHtsxyzBh5rXcfn:2:1798",
+      "item": {
+        "figmaId": "2:1798",
+        "name": "Star",
+        "opacity": 100,
+        "shadowEnabled": false,
+        "strokeEnabled": false,
+        "isHidden": false,
+        "isLocked": false,
+        "x": 0,
+        "y": 0,
+        "width": 20,
+        "height": 18,
+        "angle": 0,
+        "scale": 1,
+        "issues": ["vector.strokeCap", "vector.strokeJoin", "vector.fillRule"],
+        "type": "svg",
+        "cornerRadius": 0,
+        "url": "data:image/svg+xml;base64,PHN2ZyB3aWR0aD0iMTkiIGhlaWdodD0iMTgiIHZpZXdCb3g9IjAgMCAxOSAxOCIgZmlsbD0ibm9uZSIgeG1sbnM9Imh0dHA6Ly93d3cudzMub3JnLzIwMDAvc3ZnIj4KPHBhdGggZmlsbC1ydWxlPSJldmVub2RkIiBjbGlwLXJ1bGU9ImV2ZW5vZGQiIGQ9Ik0xMC4yMTQxIDAuNDQwODNMMTIuNTMwMSA1LjA5OTgzQzEyLjY0NjEgNS4zMzQ4MyAxMi44NzAxIDUuNDk4ODMgMTMuMTMwMSA1LjUzNjgzTDE4LjMxNTEgNi4yODU4M0MxOC41MjUxIDYuMzEzODMgMTguNzE0MSA2LjQyMzgzIDE4Ljg0MzEgNi41OTE4M0MxOS4wODUxIDYuOTA2ODMgMTkuMDQ4MSA3LjM1MjgzIDE4Ljc1ODEgNy42MjM4M0wxNS4wMDAxIDExLjI1NzhDMTQuODA5MSAxMS40Mzc4IDE0LjcyNDEgMTEuNzAxOCAxNC43NzQxIDExLjk1ODhMMTUuNjc0MSAxNy4wODY4QzE1LjczNzEgMTcuNTExOCAxNS40NDcxIDE3LjkwOTggMTUuMDIyMSAxNy45Nzg4QzE0Ljg0NjEgMTguMDA1OCAxNC42NjYxIDE3Ljk3NzggMTQuNTA2MSAxNy44OTg4TDkuODg4MTMgMTUuNDc3OEM5LjY1NjEzIDE1LjM1MTggOS4zNzgxMyAxNS4zNTE4IDkuMTQ2MTMgMTUuNDc3OEw0LjQ5NDEzIDE3LjkxMThDNC4xMDUxMyAxOC4xMDk4IDMuNjI5MTMgMTcuOTYyOCAzLjQxNzEzIDE3LjU4MThDMy4zMzYxMyAxNy40Mjc4IDMuMzA4MTMgMTcuMjUyOCAzLjMzNjEzIDE3LjA4MThMNC4yMzYxMyAxMS45NTM4QzQuMjgxMTMgMTEuNjk3OCA0LjE5NjEzIDExLjQzNDggNC4wMTAxMyAxMS4yNTM4TDAuMjMyMTI5IDcuNjIwODNDLTAuMDc1ODcxMiA3LjMxNDgzIC0wLjA3Nzg3MTIgNi44MTY4MyAwLjIyOTEyOSA2LjUwODgzQzAuMjMwMTI5IDYuNTA3ODMgMC4yMzExMjkgNi41MDU4MyAwLjIzMjEyOSA2LjUwNDgzQzAuMzU5MTI5IDYuMzg5ODMgMC41MTUxMjkgNi4zMTI4MyAwLjY4NDEyOSA2LjI4MjgzTDUuODcwMTMgNS41MzM4M0M2LjEyOTEzIDUuNDkyODMgNi4zNTIxMyA1LjMzMDgzIDYuNDcwMTMgNS4wOTU4M0w4Ljc4NDEzIDAuNDQwODNDOC44NzcxMyAwLjI1MTgzIDkuMDQyMTMgMC4xMDY4MyA5LjI0MjEzIDAuMDQwODMwMkM5LjQ0MzEzIC0wLjAyNjE2OTggOS42NjMxMyAtMC4wMTAxNjk4IDkuODUyMTMgMC4wODQ4MzAyQzEwLjAwNzEgMC4xNjE4MyAxMC4xMzQxIDAuMjg2ODMgMTAuMjE0MSAwLjQ0MDgzWiIgZmlsbD0iI0Y5RDAwNiIvPgo8L3N2Zz4K",
+        "mediaName": "fallback.svg"
+      },
+      "position": { "parentId": "6asUTHOHtsxyzBh5rXcfn:2:1797", "index": "a0" }
+    },
+    {
+      "id": "6asUTHOHtsxyzBh5rXcfn:2:1799",
+      "item": {
+        "type": "layerGrp",
+        "name": "Iconly - outline",
+        "figmaId": "2:1799",
+        "x": 56,
+        "y": 0,
+        "width": 24,
+        "height": 24,
+        "angle": 0,
+        "scale": 1,
+        "background": false,
+        "strokeEnabled": false,
+        "shadowEnabled": false,
+        "opacity": 100,
+        "isHidden": false,
+        "isLocked": false,
+        "cornerRadius": 0,
+        "clipsContent": false
+      },
+      "position": { "parentId": "6asUTHOHtsxyzBh5rXcfn:2:1792", "index": "a2" }
+    },
+    {
+      "id": "6asUTHOHtsxyzBh5rXcfn:2:1800",
+      "item": {
+        "type": "layerGrp",
+        "name": "Star",
+        "figmaId": "2:1800",
+        "x": 2.5,
+        "y": 3,
+        "width": 19.00274658203125,
+        "height": 17.999879837036133,
+        "angle": 0,
+        "scale": 1,
+        "background": false,
+        "strokeEnabled": false,
+        "shadowEnabled": false,
+        "opacity": 100,
+        "isHidden": false,
+        "isLocked": false,
+        "cornerRadius": 0,
+        "clipsContent": false
+      },
+      "position": { "parentId": "6asUTHOHtsxyzBh5rXcfn:2:1799", "index": "a0" }
+    },
+    {
+      "id": "6asUTHOHtsxyzBh5rXcfn:2:1801",
+      "item": {
+        "figmaId": "2:1801",
+        "name": "Star",
+        "opacity": 100,
+        "shadowEnabled": false,
+        "strokeEnabled": false,
+        "isHidden": false,
+        "isLocked": false,
+        "x": 0,
+        "y": 0,
+        "width": 20,
+        "height": 18,
+        "angle": 0,
+        "scale": 1,
+        "issues": ["vector.strokeCap", "vector.strokeJoin", "vector.fillRule"],
+        "type": "svg",
+        "cornerRadius": 0,
+        "url": "data:image/svg+xml;base64,PHN2ZyB3aWR0aD0iMTkiIGhlaWdodD0iMTgiIHZpZXdCb3g9IjAgMCAxOSAxOCIgZmlsbD0ibm9uZSIgeG1sbnM9Imh0dHA6Ly93d3cudzMub3JnLzIwMDAvc3ZnIj4KPHBhdGggZmlsbC1ydWxlPSJldmVub2RkIiBjbGlwLXJ1bGU9ImV2ZW5vZGQiIGQ9Ik0xMC4yMTQxIDAuNDQwODNMMTIuNTMwMSA1LjA5OTgzQzEyLjY0NjEgNS4zMzQ4MyAxMi44NzAxIDUuNDk4ODMgMTMuMTMwMSA1LjUzNjgzTDE4LjMxNTEgNi4yODU4M0MxOC41MjUxIDYuMzEzODMgMTguNzE0MSA2LjQyMzgzIDE4Ljg0MzEgNi41OTE4M0MxOS4wODUxIDYuOTA2ODMgMTkuMDQ4MSA3LjM1MjgzIDE4Ljc1ODEgNy42MjM4M0wxNS4wMDAxIDExLjI1NzhDMTQuODA5MSAxMS40Mzc4IDE0LjcyNDEgMTEuNzAxOCAxNC43NzQxIDExLjk1ODhMMTUuNjc0MSAxNy4wODY4QzE1LjczNzEgMTcuNTExOCAxNS40NDcxIDE3LjkwOTggMTUuMDIyMSAxNy45Nzg4QzE0Ljg0NjEgMTguMDA1OCAxNC42NjYxIDE3Ljk3NzggMTQuNTA2MSAxNy44OTg4TDkuODg4MTMgMTUuNDc3OEM5LjY1NjEzIDE1LjM1MTggOS4zNzgxMyAxNS4zNTE4IDkuMTQ2MTMgMTUuNDc3OEw0LjQ5NDEzIDE3LjkxMThDNC4xMDUxMyAxOC4xMDk4IDMuNjI5MTMgMTcuOTYyOCAzLjQxNzEzIDE3LjU4MThDMy4zMzYxMyAxNy40Mjc4IDMuMzA4MTMgMTcuMjUyOCAzLjMzNjEzIDE3LjA4MThMNC4yMzYxMyAxMS45NTM4QzQuMjgxMTMgMTEuNjk3OCA0LjE5NjEzIDExLjQzNDggNC4wMTAxMyAxMS4yNTM4TDAuMjMyMTI5IDcuNjIwODNDLTAuMDc1ODcxMiA3LjMxNDgzIC0wLjA3Nzg3MTIgNi44MTY4MyAwLjIyOTEyOSA2LjUwODgzQzAuMjMwMTI5IDYuNTA3ODMgMC4yMzExMjkgNi41MDU4MyAwLjIzMjEyOSA2LjUwNDgzQzAuMzU5MTI5IDYuMzg5ODMgMC41MTUxMjkgNi4zMTI4MyAwLjY4NDEyOSA2LjI4MjgzTDUuODcwMTMgNS41MzM4M0M2LjEyOTEzIDUuNDkyODMgNi4zNTIxMyA1LjMzMDgzIDYuNDcwMTMgNS4wOTU4M0w4Ljc4NDEzIDAuNDQwODNDOC44NzcxMyAwLjI1MTgzIDkuMDQyMTMgMC4xMDY4MyA5LjI0MjEzIDAuMDQwODMwMkM5LjQ0MzEzIC0wLjAyNjE2OTggOS42NjMxMyAtMC4wMTAxNjk4IDkuODUyMTMgMC4wODQ4MzAyQzEwLjAwNzEgMC4xNjE4MyAxMC4xMzQxIDAuMjg2ODMgMTAuMjE0MSAwLjQ0MDgzWiIgZmlsbD0iI0Y5RDAwNiIvPgo8L3N2Zz4K",
+        "mediaName": "fallback.svg"
+      },
+      "position": { "parentId": "6asUTHOHtsxyzBh5rXcfn:2:1800", "index": "a0" }
+    },
+    {
+      "id": "6asUTHOHtsxyzBh5rXcfn:2:1802",
+      "item": {
+        "type": "layerGrp",
+        "name": "Iconly - outline",
+        "figmaId": "2:1802",
+        "x": 84,
+        "y": 0,
+        "width": 24,
+        "height": 24,
+        "angle": 0,
+        "scale": 1,
+        "background": false,
+        "strokeEnabled": false,
+        "shadowEnabled": false,
+        "opacity": 100,
+        "isHidden": false,
+        "isLocked": false,
+        "cornerRadius": 0,
+        "clipsContent": false
+      },
+      "position": { "parentId": "6asUTHOHtsxyzBh5rXcfn:2:1792", "index": "a3" }
+    },
+    {
+      "id": "6asUTHOHtsxyzBh5rXcfn:2:1803",
+      "item": {
+        "type": "layerGrp",
+        "name": "Star",
+        "figmaId": "2:1803",
+        "x": 2.5,
+        "y": 3,
+        "width": 19.00274658203125,
+        "height": 17.999879837036133,
+        "angle": 0,
+        "scale": 1,
+        "background": false,
+        "strokeEnabled": false,
+        "shadowEnabled": false,
+        "opacity": 100,
+        "isHidden": false,
+        "isLocked": false,
+        "cornerRadius": 0,
+        "clipsContent": false
+      },
+      "position": { "parentId": "6asUTHOHtsxyzBh5rXcfn:2:1802", "index": "a0" }
+    },
+    {
+      "id": "6asUTHOHtsxyzBh5rXcfn:2:1804",
+      "item": {
+        "figmaId": "2:1804",
+        "name": "Star",
+        "opacity": 100,
+        "shadowEnabled": false,
+        "strokeEnabled": false,
+        "isHidden": false,
+        "isLocked": false,
+        "x": 0,
+        "y": 0,
+        "width": 20,
+        "height": 18,
+        "angle": 0,
+        "scale": 1,
+        "issues": ["vector.strokeCap", "vector.strokeJoin", "vector.fillRule"],
+        "type": "svg",
+        "cornerRadius": 0,
+        "url": "data:image/svg+xml;base64,PHN2ZyB3aWR0aD0iMTkiIGhlaWdodD0iMTgiIHZpZXdCb3g9IjAgMCAxOSAxOCIgZmlsbD0ibm9uZSIgeG1sbnM9Imh0dHA6Ly93d3cudzMub3JnLzIwMDAvc3ZnIj4KPHBhdGggZmlsbC1ydWxlPSJldmVub2RkIiBjbGlwLXJ1bGU9ImV2ZW5vZGQiIGQ9Ik0xMC4yMTQxIDAuNDQwODNMMTIuNTMwMSA1LjA5OTgzQzEyLjY0NjEgNS4zMzQ4MyAxMi44NzAxIDUuNDk4ODMgMTMuMTMwMSA1LjUzNjgzTDE4LjMxNTEgNi4yODU4M0MxOC41MjUxIDYuMzEzODMgMTguNzE0MSA2LjQyMzgzIDE4Ljg0MzEgNi41OTE4M0MxOS4wODUxIDYuOTA2ODMgMTkuMDQ4MSA3LjM1MjgzIDE4Ljc1ODEgNy42MjM4M0wxNS4wMDAxIDExLjI1NzhDMTQuODA5MSAxMS40Mzc4IDE0LjcyNDEgMTEuNzAxOCAxNC43NzQxIDExLjk1ODhMMTUuNjc0MSAxNy4wODY4QzE1LjczNzEgMTcuNTExOCAxNS40NDcxIDE3LjkwOTggMTUuMDIyMSAxNy45Nzg4QzE0Ljg0NjEgMTguMDA1OCAxNC42NjYxIDE3Ljk3NzggMTQuNTA2MSAxNy44OTg4TDkuODg4MTMgMTUuNDc3OEM5LjY1NjEzIDE1LjM1MTggOS4zNzgxMyAxNS4zNTE4IDkuMTQ2MTMgMTUuNDc3OEw0LjQ5NDEzIDE3LjkxMThDNC4xMDUxMyAxOC4xMDk4IDMuNjI5MTMgMTcuOTYyOCAzLjQxNzEzIDE3LjU4MThDMy4zMzYxMyAxNy40Mjc4IDMuMzA4MTMgMTcuMjUyOCAzLjMzNjEzIDE3LjA4MThMNC4yMzYxMyAxMS45NTM4QzQuMjgxMTMgMTEuNjk3OCA0LjE5NjEzIDExLjQzNDggNC4wMTAxMyAxMS4yNTM4TDAuMjMyMTI5IDcuNjIwODNDLTAuMDc1ODcxMiA3LjMxNDgzIC0wLjA3Nzg3MTIgNi44MTY4MyAwLjIyOTEyOSA2LjUwODgzQzAuMjMwMTI5IDYuNTA3ODMgMC4yMzExMjkgNi41MDU4MyAwLjIzMjEyOSA2LjUwNDgzQzAuMzU5MTI5IDYuMzg5ODMgMC41MTUxMjkgNi4zMTI4MyAwLjY4NDEyOSA2LjI4MjgzTDUuODcwMTMgNS41MzM4M0M2LjEyOTEzIDUuNDkyODMgNi4zNTIxMyA1LjMzMDgzIDYuNDcwMTMgNS4wOTU4M0w4Ljc4NDEzIDAuNDQwODNDOC44NzcxMyAwLjI1MTgzIDkuMDQyMTMgMC4xMDY4MyA5LjI0MjEzIDAuMDQwODMwMkM5LjQ0MzEzIC0wLjAyNjE2OTggOS42NjMxMyAtMC4wMTAxNjk4IDkuODUyMTMgMC4wODQ4MzAyQzEwLjAwNzEgMC4xNjE4MyAxMC4xMzQxIDAuMjg2ODMgMTAuMjE0MSAwLjQ0MDgzWiIgZmlsbD0iI0Y5RDAwNiIvPgo8L3N2Zz4K",
+        "mediaName": "fallback.svg"
+      },
+      "position": { "parentId": "6asUTHOHtsxyzBh5rXcfn:2:1803", "index": "a0" }
+    },
+    {
+      "id": "6asUTHOHtsxyzBh5rXcfn:2:1805",
+      "item": {
+        "type": "layerGrp",
+        "name": "Iconly - outline",
+        "figmaId": "2:1805",
+        "x": 112,
+        "y": 0,
+        "width": 24,
+        "height": 24,
+        "angle": 0,
+        "scale": 1,
+        "background": false,
+        "strokeEnabled": false,
+        "shadowEnabled": false,
+        "opacity": 100,
+        "isHidden": false,
+        "isLocked": false,
+        "cornerRadius": 0,
+        "clipsContent": false
+      },
+      "position": { "parentId": "6asUTHOHtsxyzBh5rXcfn:2:1792", "index": "a4" }
+    },
+    {
+      "id": "6asUTHOHtsxyzBh5rXcfn:2:1806",
+      "item": {
+        "type": "layerGrp",
+        "name": "Star",
+        "figmaId": "2:1806",
+        "x": 2.5,
+        "y": 3,
+        "width": 19.00274658203125,
+        "height": 17.999879837036133,
+        "angle": 0,
+        "scale": 1,
+        "background": false,
+        "strokeEnabled": false,
+        "shadowEnabled": false,
+        "opacity": 100,
+        "isHidden": false,
+        "isLocked": false,
+        "cornerRadius": 0,
+        "clipsContent": false
+      },
+      "position": { "parentId": "6asUTHOHtsxyzBh5rXcfn:2:1805", "index": "a0" }
+    },
+    {
+      "id": "6asUTHOHtsxyzBh5rXcfn:2:1807",
+      "item": {
+        "figmaId": "2:1807",
+        "name": "Star",
+        "opacity": 100,
+        "shadowEnabled": false,
+        "strokeEnabled": false,
+        "isHidden": false,
+        "isLocked": false,
+        "x": 0,
+        "y": 0,
+        "width": 20,
+        "height": 18,
+        "angle": 0,
+        "scale": 1,
+        "issues": ["vector.strokeCap", "vector.strokeJoin", "vector.fillRule"],
+        "type": "svg",
+        "cornerRadius": 0,
+        "url": "data:image/svg+xml;base64,PHN2ZyB3aWR0aD0iMTkiIGhlaWdodD0iMTgiIHZpZXdCb3g9IjAgMCAxOSAxOCIgZmlsbD0ibm9uZSIgeG1sbnM9Imh0dHA6Ly93d3cudzMub3JnLzIwMDAvc3ZnIj4KPHBhdGggZmlsbC1ydWxlPSJldmVub2RkIiBjbGlwLXJ1bGU9ImV2ZW5vZGQiIGQ9Ik0xMC4yMTQxIDAuNDQwODNMMTIuNTMwMSA1LjA5OTgzQzEyLjY0NjEgNS4zMzQ4MyAxMi44NzAxIDUuNDk4ODMgMTMuMTMwMSA1LjUzNjgzTDE4LjMxNTEgNi4yODU4M0MxOC41MjUxIDYuMzEzODMgMTguNzE0MSA2LjQyMzgzIDE4Ljg0MzEgNi41OTE4M0MxOS4wODUxIDYuOTA2ODMgMTkuMDQ4MSA3LjM1MjgzIDE4Ljc1ODEgNy42MjM4M0wxNS4wMDAxIDExLjI1NzhDMTQuODA5MSAxMS40Mzc4IDE0LjcyNDEgMTEuNzAxOCAxNC43NzQxIDExLjk1ODhMMTUuNjc0MSAxNy4wODY4QzE1LjczNzEgMTcuNTExOCAxNS40NDcxIDE3LjkwOTggMTUuMDIyMSAxNy45Nzg4QzE0Ljg0NjEgMTguMDA1OCAxNC42NjYxIDE3Ljk3NzggMTQuNTA2MSAxNy44OTg4TDkuODg4MTMgMTUuNDc3OEM5LjY1NjEzIDE1LjM1MTggOS4zNzgxMyAxNS4zNTE4IDkuMTQ2MTMgMTUuNDc3OEw0LjQ5NDEzIDE3LjkxMThDNC4xMDUxMyAxOC4xMDk4IDMuNjI5MTMgMTcuOTYyOCAzLjQxNzEzIDE3LjU4MThDMy4zMzYxMyAxNy40Mjc4IDMuMzA4MTMgMTcuMjUyOCAzLjMzNjEzIDE3LjA4MThMNC4yMzYxMyAxMS45NTM4QzQuMjgxMTMgMTEuNjk3OCA0LjE5NjEzIDExLjQzNDggNC4wMTAxMyAxMS4yNTM4TDAuMjMyMTI5IDcuNjIwODNDLTAuMDc1ODcxMiA3LjMxNDgzIC0wLjA3Nzg3MTIgNi44MTY4MyAwLjIyOTEyOSA2LjUwODgzQzAuMjMwMTI5IDYuNTA3ODMgMC4yMzExMjkgNi41MDU4MyAwLjIzMjEyOSA2LjUwNDgzQzAuMzU5MTI5IDYuMzg5ODMgMC41MTUxMjkgNi4zMTI4MyAwLjY4NDEyOSA2LjI4MjgzTDUuODcwMTMgNS41MzM4M0M2LjEyOTEzIDUuNDkyODMgNi4zNTIxMyA1LjMzMDgzIDYuNDcwMTMgNS4wOTU4M0w4Ljc4NDEzIDAuNDQwODNDOC44NzcxMyAwLjI1MTgzIDkuMDQyMTMgMC4xMDY4MyA5LjI0MjEzIDAuMDQwODMwMkM5LjQ0MzEzIC0wLjAyNjE2OTggOS42NjMxMyAtMC4wMTAxNjk4IDkuODUyMTMgMC4wODQ4MzAyQzEwLjAwNzEgMC4xNjE4MyAxMC4xMzQxIDAuMjg2ODMgMTAuMjE0MSAwLjQ0MDgzWiIgZmlsbD0iI0Y5RDAwNiIvPgo8L3N2Zz4K",
+        "mediaName": "fallback.svg"
+      },
+      "position": { "parentId": "6asUTHOHtsxyzBh5rXcfn:2:1806", "index": "a0" }
+    },
+    {
+      "id": "6asUTHOHtsxyzBh5rXcfn:2:1808",
+      "item": {
+        "figmaId": "2:1808",
+        "name": "Reviews Text",
+        "opacity": 100,
+        "shadowEnabled": false,
+        "strokeEnabled": false,
+        "isHidden": false,
+        "isLocked": false,
+        "x": 144.5,
+        "y": 8,
+        "width": 88,
+        "height": 11,
+        "angle": 0,
+        "scale": 1,
+        "issues": ["font.mixed_properties"],
+        "type": "svg",
+        "cornerRadius": 0,
+        "url": "data:image/svg+xml;base64,PHN2ZyB3aWR0aD0iODgiIGhlaWdodD0iMTAiIHZpZXdCb3g9IjAgMCA4OCAxMCIgZmlsbD0ibm9uZSIgeG1sbnM9Imh0dHA6Ly93d3cudzMub3JnLzIwMDAvc3ZnIj4KPHBhdGggZD0iTTEuNzUxOTYgMC45NDc3NjVILTQuMzk0MzVlLTA1VjAuMTY3NzY1SDIuNTc5OTZWOC43NTk3N0gxLjc1MTk2VjAuOTQ3NzY1Wk00LjI0Nzc3IDQuNDYzNzdDNC4yNDc3NyAxLjc5OTc3IDUuNTU1NzcgLTAuMDAwMjM0NjA0IDcuNjkxNzcgLTAuMDAwMjM0NjA0QzkuODE1NzcgLTAuMDAwMjM0NjA0IDExLjEyMzggMS43OTk3NyAxMS4xMjM4IDQuNDYzNzdDMTEuMTIzOCA3LjEzOTc3IDkuODM5NzcgOC45MTU3NyA3LjY5MTc3IDguOTE1NzdDNS41MzE3NyA4LjkxNTc3IDQuMjQ3NzcgNy4xMzk3NyA0LjI0Nzc3IDQuNDYzNzdaTTUuMDk5NzcgNC40NjM3N0M1LjA5OTc3IDYuNjk1NzcgNi4wNDc3NyA4LjEzNTc3IDcuNjkxNzcgOC4xMzU3N0M5LjMzNTc3IDguMTM1NzcgMTAuMjgzOCA2LjY5NTc3IDEwLjI4MzggNC40NjM3N0MxMC4yODM4IDIuMjE5NzcgOS4zMzU3NyAwLjc5MTc2NSA3LjY5MTc3IDAuNzkxNzY1QzYuMDQ3NzcgMC43OTE3NjUgNS4wOTk3NyAyLjIxOTc3IDUuMDk5NzcgNC40NjM3N1pNMTMuNTU2NCA4LjM1MTc3QzEzLjU1NjQgOS4wOTU3NyAxMi45ODA0IDkuNzQzNzcgMTIuMjM2NCA5Ljg1MTc3VjkuNDA3NzdDMTIuNjY4NCA5LjMzNTc3IDEyLjk4MDQgOS4wMjM3NyAxMi45ODA0IDguNjg3NzdDMTIuOTA4NCA4LjczNTc3IDEyLjgxMjQgOC43NzE3NyAxMi42Njg0IDguNzcxNzdDMTIuMzMyNCA4Ljc3MTc3IDEyLjA0NDQgOC41MzE3NyAxMi4wNDQ0IDguMTIzNzdDMTIuMDQ0NCA3LjcwMzc3IDEyLjMzMjQgNy40MDM3NyAxMi43NTI0IDcuNDAzNzdDMTMuMTg0NCA3LjQwMzc3IDEzLjU1NjQgNy43NTE3NyAxMy41NTY0IDguMzUxNzdaTTE0LjQ3ODIgNC40NjM3N0MxNC40NzgyIDEuNzk5NzcgMTUuNzg2MiAtMC4wMDAyMzQ2MDQgMTcuOTIyMiAtMC4wMDAyMzQ2MDRDMjAuMDQ2MiAtMC4wMDAyMzQ2MDQgMjEuMzU0MiAxLjc5OTc3IDIxLjM1NDIgNC40NjM3N0MyMS4zNTQyIDcuMTM5NzcgMjAuMDcwMiA4LjkxNTc3IDE3LjkyMjIgOC45MTU3N0MxNS43NjIyIDguOTE1NzcgMTQuNDc4MiA3LjEzOTc3IDE0LjQ3ODIgNC40NjM3N1pNMTUuMzMwMiA0LjQ2Mzc3QzE1LjMzMDIgNi42OTU3NyAxNi4yNzgyIDguMTM1NzcgMTcuOTIyMiA4LjEzNTc3QzE5LjU2NjIgOC4xMzU3NyAyMC41MTQyIDYuNjk1NzcgMjAuNTE0MiA0LjQ2Mzc3QzIwLjUxNDIgMi4yMTk3NyAxOS41NjYyIDAuNzkxNzY1IDE3LjkyMjIgMC43OTE3NjVDMTYuMjc4MiAwLjc5MTc2NSAxNS4zMzAyIDIuMjE5NzcgMTUuMzMwMiA0LjQ2Mzc3Wk0yMi42Njk2IDQuNDYzNzdDMjIuNjY5NiAxLjc5OTc3IDIzLjk3NzYgLTAuMDAwMjM0NjA0IDI2LjExMzYgLTAuMDAwMjM0NjA0QzI4LjIzNzYgLTAuMDAwMjM0NjA0IDI5LjU0NTYgMS43OTk3NyAyOS41NDU2IDQuNDYzNzdDMjkuNTQ1NiA3LjEzOTc3IDI4LjI2MTYgOC45MTU3NyAyNi4xMTM2IDguOTE1NzdDMjMuOTUzNiA4LjkxNTc3IDIyLjY2OTYgNy4xMzk3NyAyMi42Njk2IDQuNDYzNzdaTTIzLjUyMTYgNC40NjM3N0MyMy41MjE2IDYuNjk1NzcgMjQuNDY5NiA4LjEzNTc3IDI2LjExMzYgOC4xMzU3N0MyNy43NTc2IDguMTM1NzcgMjguNzA1NiA2LjY5NTc3IDI4LjcwNTYgNC40NjM3N0MyOC43MDU2IDIuMjE5NzcgMjcuNzU3NiAwLjc5MTc2NSAyNi4xMTM2IDAuNzkxNzY1QzI0LjQ2OTYgMC43OTE3NjUgMjMuNTIxNiAyLjIxOTc3IDIzLjUyMTYgNC40NjM3N1pNMzAuODYxIDQuNDYzNzdDMzAuODYxIDEuNzk5NzcgMzIuMTY5IC0wLjAwMDIzNDYwNCAzNC4zMDUgLTAuMDAwMjM0NjA0QzM2LjQyOTEgLTAuMDAwMjM0NjA0IDM3LjczNzEgMS43OTk3NyAzNy43MzcxIDQuNDYzNzdDMzcuNzM3MSA3LjEzOTc3IDM2LjQ1MzEgOC45MTU3NyAzNC4zMDUgOC45MTU3N0MzMi4xNDUgOC45MTU3NyAzMC44NjEgNy4xMzk3NyAzMC44NjEgNC40NjM3N1pNMzEuNzEzIDQuNDYzNzdDMzEuNzEzIDYuNjk1NzcgMzIuNjYxIDguMTM1NzcgMzQuMzA1IDguMTM1NzdDMzUuOTQ5MSA4LjEzNTc3IDM2Ljg5NzEgNi42OTU3NyAzNi44OTcxIDQuNDYzNzdDMzYuODk3MSAyLjIxOTc3IDM1Ljk0OTEgMC43OTE3NjUgMzQuMzA1IDAuNzkxNzY1QzMyLjY2MSAwLjc5MTc2NSAzMS43MTMgMi4yMTk3NyAzMS43MTMgNC40NjM3N1pNMzkuMzUyNSA0LjM0Mzc3SDQxLjk4MDVWMS43MTU3N0g0Mi43MjQ1VjQuMzQzNzdINDUuMzUyNVY1LjA4Nzc3SDQyLjcyNDVWNy43Mjc3N0g0MS45ODA1VjUuMDg3NzdIMzkuMzUyNVY0LjM0Mzc3WiIgZmlsbD0id2hpdGUiLz4KPHBhdGggZD0iTTUzLjU0MjUgMi44Nzk3N1YzLjYyMzc3SDUzLjA4NjVDNTIuMDE4NSAzLjYyMzc3IDUxLjMzNDUgNC4zNDM3NyA1MS4zMzQ1IDUuNDQ3NzdWOC43NTk3N0g1MC41MDY1VjIuOTUxNzdINTEuMjg2NUw1MS4zNDY1IDMuODUxNzdDNTEuNTc0NSAzLjIyNzc3IDUyLjE4NjUgMi44MTk3NyA1My4wMDI1IDIuODE5NzdDNTMuMTgyNSAyLjgxOTc3IDUzLjMzODUgMi44MzE3NyA1My41NDI1IDIuODc5NzdaTTU2Ljg1NjUgOC45MDM3N0M1NS4xNTI1IDguOTAzNzcgNTQuMDEyNSA3LjY3OTc3IDU0LjAxMjUgNS44NTU3N0M1NC4wMTI1IDQuMDQzNzcgNTUuMTQwNSAyLjc5NTc3IDU2Ljc5NjUgMi43OTU3N0M1OC4zNjg1IDIuNzk1NzcgNTkuNDM2NSAzLjkxMTc3IDU5LjQzNjUgNS41NTU3N1Y1Ljk2Mzc3SDU0LjgxNjVDNTQuODc2NSA3LjM3OTc3IDU1LjYyMDUgOC4xOTU3NyA1Ni44Njg1IDguMTk1NzdDNTcuODE2NSA4LjE5NTc3IDU4LjQyODUgNy43ODc3NyA1OC42NDQ1IDcuMDE5NzdINTkuNDM2NUM1OS4xMjQ1IDguMjQzNzcgNTguMjI0NSA4LjkwMzc3IDU2Ljg1NjUgOC45MDM3N1pNNTYuNzk2NSAzLjUwMzc3QzU1LjcwNDUgMy41MDM3NyA1NC45ODQ1IDQuMjIzNzcgNTQuODQwNSA1LjM2Mzc3SDU4LjYwODVDNTguNjA4NSA0LjI0Nzc3IDU3Ljg4ODUgMy41MDM3NyA1Ni43OTY1IDMuNTAzNzdaTTYyLjIyOCA4Ljc1OTc3TDU5Ljg1MiAyLjk1MTc3SDYwLjc0TDYyLjI0IDYuNjk1NzdDNjIuMzk2IDcuMTE1NzcgNjIuNTUyIDcuNTExNzcgNjIuNjYgNy44OTU3N0M2Mi43NjggNy40OTk3NyA2Mi45MjQgNy4xMTU3NyA2My4wOTIgNi42OTU3N0w2NC42MTYgMi45NTE3N0g2NS40NjhMNjMuMDU2IDguNzU5NzdINjIuMjI4Wk02Ni44NTIgMS4zNTU3N0M2Ni41MTYgMS4zNTU3NyA2Ni4yNCAxLjA3OTc3IDY2LjI0IDAuNzQzNzY1QzY2LjI0IDAuNDA3NzY1IDY2LjUxNiAwLjExOTc2NSA2Ni44NTIgMC4xMTk3NjVDNjcuMTg4IDAuMTE5NzY1IDY3LjQ3NiAwLjQwNzc2NSA2Ny40NzYgMC43NDM3NjVDNjcuNDc2IDEuMDc5NzcgNjcuMTg4IDEuMzU1NzcgNjYuODUyIDEuMzU1NzdaTTY2LjQ0NCA4Ljc1OTc3VjIuOTUxNzdINjcuMjcyVjguNzU5NzdINjYuNDQ0Wk03MS40MzQ2IDguOTAzNzdDNjkuNzMwNiA4LjkwMzc3IDY4LjU5MDYgNy42Nzk3NyA2OC41OTA2IDUuODU1NzdDNjguNTkwNiA0LjA0Mzc3IDY5LjcxODYgMi43OTU3NyA3MS4zNzQ2IDIuNzk1NzdDNzIuOTQ2NiAyLjc5NTc3IDc0LjAxNDYgMy45MTE3NyA3NC4wMTQ2IDUuNTU1NzdWNS45NjM3N0g2OS4zOTQ2QzY5LjQ1NDYgNy4zNzk3NyA3MC4xOTg2IDguMTk1NzcgNzEuNDQ2NiA4LjE5NTc3QzcyLjM5NDYgOC4xOTU3NyA3My4wMDY2IDcuNzg3NzcgNzMuMjIyNiA3LjAxOTc3SDc0LjAxNDZDNzMuNzAyNiA4LjI0Mzc3IDcyLjgwMjYgOC45MDM3NyA3MS40MzQ2IDguOTAzNzdaTTcxLjM3NDYgMy41MDM3N0M3MC4yODI2IDMuNTAzNzcgNjkuNTYyNiA0LjIyMzc3IDY5LjQxODYgNS4zNjM3N0g3My4xODY2QzczLjE4NjYgNC4yNDc3NyA3Mi40NjY2IDMuNTAzNzcgNzEuMzc0NiAzLjUwMzc3Wk03Ni40MTAxIDguNzU5NzdMNzQuNDkwMSAyLjk1MTc3SDc1LjM0MjFMNzYuNDgyMSA2LjQ1NTc3Qzc2LjYxNDEgNi44Mzk3NyA3Ni43MjIxIDcuMjM1NzcgNzYuODQyMSA3LjcwMzc3Qzc2LjkzODEgNy4yMzU3NyA3Ny4xMzAxIDYuNjQ3NzcgNzcuMTkwMSA2LjQ1NTc3TDc4LjM0MjEgMi45NTE3N0g3OS4xOTQxTDgwLjMzNDEgNi40NTU3N0M4MC40NDIxIDYuNzY3NzcgODAuNTg2MSA3LjI3MTc3IDgwLjY5NDEgNy43MDM3N0M4MC44MTQxIDcuMjIzNzcgODAuODM4MSA3LjA3OTc3IDgxLjA0MjEgNi40NTU3N0w4Mi4xOTQxIDIuOTUxNzdIODMuMDU4MUw4MS4wOTAxIDguNzU5NzdIODAuMjg2MUw3OS4wODYxIDUuMTExNzdDNzguOTQyMSA0LjY3OTc3IDc4Ljg0NjEgNC4zMTk3NyA3OC43NzQxIDMuOTcxNzdDNzguNjkwMSA0LjI4Mzc3IDc4LjU5NDEgNC42MzE3NyA3OC40MzgxIDUuMTExNzdMNzcuMjM4MSA4Ljc1OTc3SDc2LjQxMDFaTTgzLjU2NTIgNy4xMjc3N0g4NC4zNTcyQzg0LjM1NzIgNy43OTk3NyA4NC44NjEyIDguMjE5NzcgODUuNjc3MiA4LjIxOTc3Qzg2LjU3NzIgOC4yMTk3NyA4Ny4xMDUyIDcuODM1NzcgODcuMTA1MiA3LjIxMTc3Qzg3LjEwNTIgNi43MzE3NyA4Ni44NjUyIDYuNDU1NzcgODYuMTgxMiA2LjI4Nzc3TDg1LjE4NTIgNi4wMzU3N0M4NC4xNzcyIDUuNzgzNzcgODMuNjg1MiA1LjI1NTc3IDgzLjY4NTIgNC40NjM3N0M4My42ODUyIDMuNDQzNzcgODQuNTM3MiAyLjc5NTc3IDg1Ljc4NTIgMi43OTU3N0M4Ny4wMDkyIDIuNzk1NzcgODcuODAxMiAzLjQ2Nzc3IDg3LjgzNzIgNC41NDc3N0g4Ny4wMzMyQzg3LjAwOTIgMy44NzU3NyA4Ni41NDEyIDMuNDc5NzcgODUuNzYxMiAzLjQ3OTc3Qzg0Ljk0NTIgMy40Nzk3NyA4NC40ODkyIDMuODI3NzcgODQuNDg5MiA0LjQ1MTc3Qzg0LjQ4OTIgNC44OTU3NyA4NC44MDEyIDUuMjA3NzcgODUuNDM3MiA1LjM2Mzc3TDg2LjQzMzIgNS42MTU3N0M4Ny40NDEyIDUuODY3NzcgODcuODk3MiA2LjMzNTc3IDg3Ljg5NzIgNy4xNzU3N0M4Ny44OTcyIDguMjE5NzcgODcuMDA5MiA4LjkwMzc3IDg1LjY4OTIgOC45MDM3N0M4NC4zODEyIDguOTAzNzcgODMuNTY1MiA4LjIwNzc3IDgzLjU2NTIgNy4xMjc3N1oiIGZpbGw9IiNBRkJDRDUiLz4KPC9zdmc+Cg==",
+        "mediaName": "fallback.svg"
+      },
+      "position": { "parentId": "6asUTHOHtsxyzBh5rXcfn:2:1791", "index": "a1" }
+    },
+    {
+      "id": "6asUTHOHtsxyzBh5rXcfn:2:1809",
+      "item": {
+        "figmaId": "2:1809",
+        "name": "Wireframe - Dashboard",
+        "opacity": 100,
+        "shadowEnabled": false,
+        "strokeEnabled": false,
+        "isHidden": false,
+        "isLocked": false,
+        "x": -55,
+        "y": 474,
+        "width": 1549,
+        "height": 1203,
+        "angle": 0,
+        "scale": 1,
+        "issues": ["stroke.independants", "effect.dropshadow.spread"],
+        "type": "image",
+        "cornerRadius": 0,
+        "url": "https://snackthis-userdata.s3-eu-west-1.amazonaws.com/4c61fc8a-d7ad-452c-95b3-97697bbba0ab.png",
+        "mediaName": "fallback.png"
+      },
+      "position": { "parentId": "6asUTHOHtsxyzBh5rXcfn:2:1779", "index": "a1" }
+    },
+    {
+      "id": "6asUTHOHtsxyzBh5rXcfn:2:2117",
+      "item": {
+        "figmaId": "2:2117",
+        "name": "Navigation Bar",
+        "opacity": 100,
+        "shadowEnabled": false,
+        "strokeEnabled": false,
+        "isHidden": false,
+        "isLocked": false,
+        "x": 0,
+        "y": 0,
+        "width": 1440,
+        "height": 100,
+        "angle": 0,
+        "scale": 1,
+        "issues": ["stroke.independants"],
+        "type": "svg",
+        "cornerRadius": 0,
+        "url": "https://snackthis-userdata.s3-eu-west-1.amazonaws.com/08569fca-557e-4fde-985a-dda881419e4c.svg",
+        "mediaName": "fallback.svg"
+      },
+      "position": { "parentId": "6asUTHOHtsxyzBh5rXcfn:2:1775", "index": "a4" }
+    },
+    {
+      "id": "6asUTHOHtsxyzBh5rXcfn:2:2137",
+      "item": {
+        "type": "ellipse",
+        "name": "Ellipse 25",
+        "figmaId": "2:2137",
+        "x": 956,
+        "y": 8945,
+        "width": 967,
+        "height": 967,
+        "angle": 0,
+        "scale": 1,
+        "background": true,
+        "fillColor": "#246bfd33",
+        "strokeEnabled": false,
+        "shadowEnabled": false,
+        "blurRadius": 200,
+        "opacity": 100,
+        "isHidden": false,
+        "isLocked": false,
+        "sweep": 100,
+        "ratio": 0,
+        "startAngle": 0
+      },
+      "position": { "parentId": "6asUTHOHtsxyzBh5rXcfn:2:1775", "index": "a5" }
+    }
+  ]
+}

@@ -90,7 +90,6 @@ import { createDiscordRest, discordApiUrl, getDiscordRestApiUrl, getGatewayProxy
 import crypto from 'node:crypto'
 import path from 'node:path'
 import fs from 'node:fs'
-import { fileURLToPath } from 'node:url'
 import * as errore from 'errore'
 
 import { createLogger, formatErrorWithStack, initLogFile, LogPrefix } from './logger.js'
@@ -108,6 +107,7 @@ import {
   getDataDir,
   getProjectsDir,
 } from './config.js'
+import { listBundledSkillNames } from './bundled-skills.js'
 import { execAsync, validateWorktreeDirectory } from './worktrees.js'
 import {
   backgroundUpgradeKimaki,
@@ -1849,7 +1849,7 @@ cli
       .array(z.string())
       .optional()
       .describe(
-        'Whitelist a built-in skill by name. Only the listed skills are injected into the model (all others are hidden via an opencode permission.skill deny-all rule). Repeatable: pass --enable-skill multiple times. Mutually exclusive with --disable-skill. See https://github.com/remorses/kimaki/tree/main/cli/skills for available skills.',
+        'Whitelist a built-in skill by name. Only the listed skills are injected into the model (all others are hidden via an opencode permission.skill deny-all rule). Repeatable: pass --enable-skill multiple times. Mutually exclusive with --disable-skill. See https://github.com/remorses/kimaki/tree/main/skills for available skills.',
       ),
   )
   .option(
@@ -1858,7 +1858,7 @@ cli
       .array(z.string())
       .optional()
       .describe(
-        'Blacklist a built-in skill by name. Listed skills are hidden from the model. Repeatable: pass --disable-skill multiple times. Mutually exclusive with --enable-skill. See https://github.com/remorses/kimaki/tree/main/cli/skills for available skills.',
+        'Blacklist a built-in skill by name. Listed skills are hidden from the model. Repeatable: pass --disable-skill multiple times. Mutually exclusive with --enable-skill. See https://github.com/remorses/kimaki/tree/main/skills for available skills.',
       ),
   )
   .action(
@@ -1938,21 +1938,7 @@ cli
         // may rely on skills loaded from their own .opencode / .claude / .agents
         // dirs, so unknown names only emit a warning rather than hard-failing.
         if (enabledSkills.length > 0 || disabledSkills.length > 0) {
-          const bundledSkillsDir = path.resolve(
-            path.dirname(fileURLToPath(import.meta.url)),
-            '..',
-            'skills',
-          )
-          const availableBundledSkills = (() => {
-            try {
-              return fs
-                .readdirSync(bundledSkillsDir, { withFileTypes: true })
-                .filter((entry) => entry.isDirectory())
-                .map((entry) => entry.name)
-            } catch {
-              return [] as string[]
-            }
-          })()
+          const availableBundledSkills = listBundledSkillNames()
           const availableSet = new Set(availableBundledSkills)
           for (const name of [...enabledSkills, ...disabledSkills]) {
             if (!availableSet.has(name)) {
