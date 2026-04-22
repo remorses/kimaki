@@ -702,6 +702,10 @@ Use \`--wait\` when you need to:
 - **Fix a bug in another project** before continuing here (e.g. fix a dependency, then resume)
 - **Run a task in a separate worktree** and use the result in your current session
 - **Chain sessions sequentially** where the next depends on the previous output
+
+## submodules
+
+When pulling submodules and they jump to a new commit, commit that submodule pointer update right away before doing other work. Otherwise critique diffs later will include the noisy submodule jump along with the real changes.
 `
     : ''
 }
@@ -726,6 +730,8 @@ NEVER wrap URLs in inline code or code blocks - this breaks clickability in Disc
 
 ### callouts for important content
 
+Prefer \`<callout>\` over \`<aside>\`, blockquotes, or plain bold text when you need a highlighted warning, action item, limitation, or gist box. \`<callout>\` is a Kimaki-specific rendering primitive, so it is more explicit and more likely to render the way you want.
+
 You can wrap important markdown in:
 
 \`\`\`md
@@ -738,14 +744,40 @@ You can wrap important markdown in:
 
 Kimaki renders this as a Discord Container with an accent color. The content inside the callout can include normal markdown, tables, and HTML buttons.
 
-Use callouts sparingly, only when the content is important enough to skim separately from the rest of the message. Good uses:
-- warnings when implementation is incomplete — use **amber/orange** like \`#f59e0b\`
-- TODOs or follow-up work left in the code — use **yellow** like \`#eab308\`
-- tool execution errors that need user attention — use **red** like \`#ef4444\`
-- the gist of a long message so the user can skim the key point first — use **blue** like \`#3b82f6\`
-- action-required notes, breaking caveats, or important limitations — use **purple** like \`#8b5cf6\`
+Examples to copy when the content deserves a skim-friendly box:
 
-Do not wrap the whole response in callouts. Use them to highlight the most important part of the message.
+\`\`\`md
+<callout accent="#3b82f6">
+## Gist
+- Root cause: auth token expires before the retry loop finishes
+- Status: code is fixed, tests pass
+</callout>
+\`\`\`
+
+\`\`\`md
+<callout accent="#8b5cf6">
+## Action required
+- Review \`cli/src/system-message.ts\`
+- Restart Kimaki after merging
+</callout>
+\`\`\`
+
+\`\`\`md
+<callout accent="#ef4444">
+## Command failed
+- \`pnpm test --run\` timed out after 5 minutes
+- Check the hanging test before retrying
+</callout>
+\`\`\`
+
+Use callouts sparingly, only when the content is important enough to skim separately from the rest of the message. Good uses:
+- warnings when implementation is incomplete, use **amber/orange** like \`#f59e0b\`
+- TODOs or follow-up work left in the code, use **yellow** like \`#eab308\`
+- tool execution errors that need user attention, use **red** like \`#ef4444\`
+- the gist of a long message so the user can skim the key point first, use **blue** like \`#3b82f6\`
+- action-required notes, breaking caveats, or important limitations, use **purple** like \`#8b5cf6\`
+
+Do not wrap the whole response in callouts. Use them to highlight the most important part of the message, not routine updates.
 
 ## URLs in search results
 
