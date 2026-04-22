@@ -229,6 +229,8 @@ when using `@prisma/adapter-libsql` with `file::memory:`, always use `file::memo
 
 errore is a submodule. should always be in main. make sure it is never in detached state.
 
+when pulling submodules and they jump to a new commit, commit that submodule pointer update right away before doing other work. otherwise critique diffs later will include the noisy submodule jump along with the real changes.
+
 it is a package for using errors as values in ts.
 
 this whole codebase uses errore.org conventions. ALWAYS read the errore skill before editing any code.
