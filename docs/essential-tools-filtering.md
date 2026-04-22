@@ -166,7 +166,7 @@ skills: {
 }
 ```
 
-Skills are discovered from the repository root `skills/` directory and copied into `cli/skills/` during build/publish (see `scripts/sync-skills.ts` and `scripts/prepare-skills.ts`).
+Skills are discovered from the repository root `skills/` directory and copied into `cli/skills/` during build/publish (see `scripts/sync-skills.ts` and the `prepare-skills` package.json script).
 
 ## Other Verbosity Filtering Uses
 

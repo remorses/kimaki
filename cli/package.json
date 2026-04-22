@@ -18,7 +18,7 @@
     "register-commands": "tsx scripts/register-commands.ts",
     "lint": "lintcn lint",
     "format": "oxfmt src",
-    "prepare-skills": "tsx scripts/prepare-skills.ts",
+    "prepare-skills": "rm -rf skills && mkdir -p skills && cp -R ../skills/. skills",
     "sync-skills": "tsx scripts/sync-skills.ts"
   },
   "repository": "https://github.com/remorses/kimaki",
