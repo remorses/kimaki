@@ -37,6 +37,13 @@ The README and `zele --help` output are the source of truth for commands, option
 1. **Never use the TUI.** Running `zele` with no subcommand launches a human-facing TUI. Agents must use the CLI subcommands (`zele mail list`, `zele cal events`, etc.) which output structured YAML.
 2. **Always run `zele whoami` first** when the user asks to operate on a specific account. Pick the exact email from the output and pass it with `--account`. Never guess account emails.
 3. **Never truncate `--help` or README output** with `head`, `tail`, `sed`, `awk`, or `less`. Critical rules are spread throughout. Read them in full.
-4. **Parse YAML output with `yq`**, not regex. Pipe IDs through `xargs` for bulk actions: `zele mail list --filter "is:unread" | yq '.[].id' | xargs zele mail archive`.
+4. **Parse YAML output with `yq`**, not regex. Pipe IDs through `xargs` for bulk actions. Always use `--limit 100` (or higher) so you don't miss threads:
+   ```bash
+   # read all unread emails
+   zele mail list --filter "is:unread" --limit 100 | yq '.[].id' | xargs zele mail read
+
+   # bulk archive
+   zele mail list --filter "is:unread" --limit 100 | yq '.[].id' | xargs zele mail archive
+   ```
 5. **Google-only features** (labels, Gmail filters, `zele cal *`, full profile) fail on IMAP accounts with a clear error. Check `zele whoami` output for account type before using them.
-6. **Headless Google login** requires a `tuistory` session because `zele login` is interactive. Launch it with `tuistory launch "zele login" -s zele-login`, inspect the prompt with `snapshot` or `read`, then paste the callback URL with `type` and `press enter`. See the README "Remote / headless login" section for the exact flow.
+6. **Headless Google login** requires a tmux wrapper because `zele login` is interactive. See the README "Remote / headless login" section for the exact pattern.
