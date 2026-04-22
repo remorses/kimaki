@@ -624,16 +624,25 @@ function sanitizeAnthropicSystemText(
     return text;
   }
 
-  // Re-inject the process working directory that was inside the stripped block.
-  const envContext = `\n<environment>\n<cwd>${process.cwd()}</cwd>\n</environment>\n\n`;
+  // Extract the cwd from the block we're about to strip. OpenCode's system
+  // prompt embeds <environment><cwd>/path</cwd></environment> in the identity
+  // block. We preserve the per-session cwd instead of falling back to
+  // process.cwd() which is the opencode server's cwd and wrong for
+  // multi-session/worktree setups where each session has a different directory.
+  const strippedBlock = text.slice(startIdx, endIdx);
+  const cwdMatch = strippedBlock.match(/<cwd>([^<]+)<\/cwd>/);
+  const cwd = cwdMatch?.[1] || process.cwd();
+
+  const envContext =
+    `\n<environment>\n<cwd>${cwd}</cwd>\n</environment>\n` +
+    `Read, write, and edit files under <cwd>.\n\n`;
 
   const result =
     text.slice(0, startIdx) +
     envContext +
     text.slice(endIdx);
 
-  return result
-  // return result.replace(/\bopencode\b/gi, "openc0de");
+  return result;
 }
 
 function mapSystemTextPart(
