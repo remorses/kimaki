@@ -162,11 +162,11 @@ Skills are loaded from the local filesystem:
 
 ```typescript
 skills: {
-  paths: [resolveBundledSkillsDir()],
+  paths: [path.resolve(__dirname, '..', 'skills')],
 }
 ```
 
-Skills are discovered from the repository root `skills/` directory and copied into `cli/skills/` during build/publish (see `scripts/sync-skills.ts` and the `prepare-skills` package.json script).
+Skills are synced into the repository root `skills/` directory and the packaged `cli/skills/` copy. Runtime lookup assumes `cli/skills/` is available.
 
 ## Other Verbosity Filtering Uses
 

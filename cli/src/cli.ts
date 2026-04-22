@@ -90,6 +90,7 @@ import { createDiscordRest, discordApiUrl, getDiscordRestApiUrl, getGatewayProxy
 import crypto from 'node:crypto'
 import path from 'node:path'
 import fs from 'node:fs'
+import { fileURLToPath } from 'node:url'
 import * as errore from 'errore'
 
 import { createLogger, formatErrorWithStack, initLogFile, LogPrefix } from './logger.js'
@@ -107,7 +108,6 @@ import {
   getDataDir,
   getProjectsDir,
 } from './config.js'
-import { listBundledSkillNames } from './bundled-skills.js'
 import { execAsync, validateWorktreeDirectory } from './worktrees.js'
 import {
   backgroundUpgradeKimaki,
@@ -1938,7 +1938,21 @@ cli
         // may rely on skills loaded from their own .opencode / .claude / .agents
         // dirs, so unknown names only emit a warning rather than hard-failing.
         if (enabledSkills.length > 0 || disabledSkills.length > 0) {
-          const availableBundledSkills = listBundledSkillNames()
+          const bundledSkillsDir = path.resolve(
+            path.dirname(fileURLToPath(import.meta.url)),
+            '..',
+            'skills',
+          )
+          const availableBundledSkills = (() => {
+            try {
+              return fs
+                .readdirSync(bundledSkillsDir, { withFileTypes: true })
+                .filter((entry) => entry.isDirectory())
+                .map((entry) => entry.name)
+            } catch {
+              return [] as string[]
+            }
+          })()
           const availableSet = new Set(availableBundledSkills)
           for (const name of [...enabledSkills, ...disabledSkills]) {
             if (!availableSet.has(name)) {
