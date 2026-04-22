@@ -34,6 +34,7 @@ const SKILL_SOURCES: string[] = [
   'https://github.com/remorses/usecomputer',
   // 'https://github.com/remorses/gitchamber',
   'https://github.com/remorses/profano',
+  'https://github.com/remorses/sigillo',
 ]
 
 // Directories to skip during recursive SKILL.md search
