@@ -21,43 +21,116 @@ import {
   resolveTextChannel,
   sendThreadMessage,
 } from '../discord-utils.js'
-import { collectSessionChunks, batchChunksForDiscord } from '../message-formatting.js'
+import {
+  collectSessionChunks,
+  batchChunksForDiscord,
+} from '../message-formatting.js'
 import { createLogger, LogPrefix } from '../logger.js'
 import * as errore from 'errore'
 
 const sessionLogger = createLogger(LogPrefix.SESSION)
 const forkLogger = createLogger(LogPrefix.FORK)
 
+function isTruthy<T>(value: T): value is NonNullable<T> {
+  return Boolean(value)
+}
+
+function getThreadChannelFromCommand(
+  interaction: ChatInputCommandInteraction,
+): ThreadChannel | Error {
+  return getThreadChannel(interaction.channel)
+}
+
+function getThreadChannel(
+  channel: ChatInputCommandInteraction['channel'] | StringSelectMenuInteraction['channel'],
+): ThreadChannel | Error {
+  if (!channel) {
+    return new Error('This command can only be used in a channel')
+  }
+
+  if (
+    channel.type !== ChannelType.PublicThread
+    && channel.type !== ChannelType.PrivateThread
+    && channel.type !== ChannelType.AnnouncementThread
+  ) {
+    return new Error('This command can only be used in a thread with an active session')
+  }
+
+  return channel
+}
+
+function parsePersistedEventRows({
+  rows,
+}: {
+  rows: Array<{ event_json: string; timestamp: bigint; event_index: number; id: number }>
+}) {
+  return rows.flatMap((row) => {
+    const parsed = errore.try({
+      try: () => {
+        return JSON.parse(row.event_json)
+      },
+      catch: (error) => {
+        return new Error('Failed to parse persisted event JSON', {
+          cause: error,
+        })
+      },
+    })
+    if (parsed instanceof Error) {
+      forkLogger.warn(
+        `[fork] Skipping invalid persisted event row ${row.id}: ${parsed.message}`,
+      )
+      return []
+    }
+
+    return [{
+      event: parsed,
+      timestamp: Number(row.timestamp),
+      eventIndex: Number(row.event_index),
+    }]
+  })
+}
+
+function truncateLabelPart(text: string, maxLength: number): string {
+  if (text.length <= maxLength) {
+    return text
+  }
+  if (maxLength <= 1) {
+    return text.slice(0, maxLength)
+  }
+  return `${text.slice(0, maxLength - 1)}…`
+}
+
+function getSubagentOptionLabel({
+  subagentType,
+  description,
+}: {
+  subagentType?: string
+  description?: string
+}): string {
+  const agent = truncateLabelPart(subagentType || 'task', 24)
+  const cleanedDescription = description?.trim() || 'No description'
+  const descriptionBudget = Math.max(1, 100 - agent.length - 3)
+  const truncatedDescription = truncateLabelPart(
+    cleanedDescription,
+    descriptionBudget,
+  )
+  return `${agent} · ${truncatedDescription}`
+}
+
 export async function handleForkCommand(
   interaction: ChatInputCommandInteraction,
 ): Promise<void> {
-  const channel = interaction.channel
-
-  if (!channel) {
+  const threadChannel = getThreadChannelFromCommand(interaction)
+  if (threadChannel instanceof Error) {
     await interaction.reply({
-      content: 'This command can only be used in a channel',
-      flags: MessageFlags.Ephemeral,
-    })
-    return
-  }
-
-  const isThread = [
-    ChannelType.PublicThread,
-    ChannelType.PrivateThread,
-    ChannelType.AnnouncementThread,
-  ].includes(channel.type)
-
-  if (!isThread) {
-    await interaction.reply({
-      content:
-        'This command can only be used in a thread with an active session',
+      content: threadChannel.message,
       flags: MessageFlags.Ephemeral,
     })
     return
   }
 
   const resolved = await resolveWorkingDirectory({
-    channel: channel as ThreadChannel,
+    channel: threadChannel,
   })
 
   if (!resolved) {
@@ -70,7 +143,7 @@ export async function handleForkCommand(
 
   const { projectDirectory } = resolved
 
-  const sessionId = await getThreadSession(channel.id)
+  const sessionId = await getThreadSession(threadChannel.id)
 
   if (!sessionId) {
     await interaction.reply({
@@ -127,9 +200,9 @@ export async function handleForkCommand(
           },
           index: number,
         ) => {
-          const textPart = m.parts.find(
-            (p) => p.type === 'text' && !p.synthetic,
-          ) as { type: 'text'; text: string } | undefined
+          const textPart = m.parts.find((p) => {
+            return p.type === 'text' && !p.synthetic && typeof p.text === 'string'
+          })
           if (!textPart?.text) {
             return null
           }
@@ -145,9 +218,7 @@ export async function handleForkCommand(
           }
         },
       )
-      .filter(
-        (o): o is NonNullable<typeof o> => o !== null,
-      )
+      .filter(isTruthy)
 
     const selectMenu = new StringSelectMenuBuilder()
       // Discord component custom_id max length is 100 chars.
@@ -202,14 +273,14 @@ export async function handleForkSelectMenu(
 
   await interaction.deferReply()
 
-  const threadChannel = interaction.channel
-  if (!threadChannel) {
-    await interaction.editReply('Could not access thread channel')
+  const threadChannel = getThreadChannel(interaction.channel)
+  if (threadChannel instanceof Error) {
+    await interaction.editReply(threadChannel.message)
     return
   }
 
   const resolved = await resolveWorkingDirectory({
-    channel: threadChannel as ThreadChannel,
+    channel: threadChannel,
   })
   if (!resolved) {
     await interaction.editReply(
@@ -238,21 +309,13 @@ export async function handleForkSelectMenu(
     }
 
     const forkedSession = forkResponse.data
-    const parentChannel = interaction.channel
-
-    if (
-      !parentChannel ||
-      ![
-        ChannelType.PublicThread,
-        ChannelType.PrivateThread,
-        ChannelType.AnnouncementThread,
-      ].includes(parentChannel.type)
-    ) {
-      await interaction.editReply('Could not access parent channel')
+    const parentChannel = getThreadChannel(interaction.channel)
+    if (parentChannel instanceof Error) {
+      await interaction.editReply(parentChannel.message)
       return
     }
 
-    const textChannel = await resolveTextChannel(parentChannel as ThreadChannel)
+    const textChannel = await resolveTextChannel(parentChannel)
 
     if (!textChannel) {
       await interaction.editReply('Could not resolve parent text channel')
@@ -319,3 +382,5 @@ export async function handleForkSelectMenu(
     )
   }
 }
+
+export { getThreadChannel, parsePersistedEventRows }

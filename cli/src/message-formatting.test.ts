@@ -1,5 +1,8 @@
 import { describe, test, expect } from 'vitest'
-import { formatTodoList } from './message-formatting.js'
+import {
+  collectFullSessionChunks,
+  formatTodoList,
+} from './message-formatting.js'
 import type { Part } from '@opencode-ai/sdk/v2'
 
 describe('formatTodoList', () => {
@@ -77,5 +80,85 @@ describe('formatTodoList', () => {
     }
 
     expect(formatTodoList(part)).toMatchInlineSnapshot(`"⒈ **fix the bug**"`)
+  })
+})
+
+describe('collectFullSessionChunks', () => {
+  test('includes user prompts and assistant history in order', () => {
+    const messages: Parameters<typeof collectFullSessionChunks>[0]['messages'] = [
+      {
+        info: { role: 'user', id: 'msg-user-1' },
+        parts: [
+          {
+            id: 'part-user-synthetic',
+            type: 'text',
+            text: 'system reminder',
+            synthetic: true,
+            sessionID: 'ses_test',
+            messageID: 'msg-user-1',
+          },
+          {
+            id: 'part-user-1',
+            type: 'text',
+            text: 'Inspect the subagent session',
+            sessionID: 'ses_test',
+            messageID: 'msg-user-1',
+          },
+        ],
+      },
+      {
+        info: { role: 'assistant', id: 'msg-assistant-1' },
+        parts: [
+          {
+            id: 'part-assistant-1',
+            type: 'text',
+            text: 'Here is what happened.',
+            sessionID: 'ses_test',
+            messageID: 'msg-assistant-1',
+          },
+          {
+            id: 'part-assistant-tool',
+            type: 'tool',
+            tool: 'bash',
+            sessionID: 'ses_test',
+            messageID: 'msg-assistant-1',
+            callID: 'call-1',
+            state: {
+              status: 'completed',
+              input: {
+                command: 'git status',
+                description: 'Show repo status',
+              },
+              output: '',
+              title: 'bash',
+              metadata: {},
+              time: { start: 0, end: 1 },
+            },
+          },
+        ],
+      },
+    ]
+
+    expect(collectFullSessionChunks({ messages })).toMatchInlineSnapshot(`
+      [
+        {
+          "content": "**User**
+
+      Inspect the subagent session",
+          "partIds": [],
+        },
+        {
+          "content": "**Assistant**
+
+      ⬥ Here is what happened.
+
+      ┣ bash _git status_",
+          "partIds": [
+            "part-assistant-1",
+            "part-assistant-tool",
+          ],
+        },
+      ]
+    `)
   })
 })

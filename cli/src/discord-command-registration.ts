@@ -341,6 +341,11 @@ export async function registerCommands({
       .setDMPermission(false)
       .toJSON(),
     new SlashCommandBuilder()
+      .setName('fork-subagent')
+      .setDescription(truncateCommandDescription('Fork a subagent task session into a new thread'))
+      .setDMPermission(false)
+      .toJSON(),
+    new SlashCommandBuilder()
       .setName('btw')
       .setDescription(truncateCommandDescription('Ask something without polluting or blocking the current session'))
       .addStringOption((option) => {

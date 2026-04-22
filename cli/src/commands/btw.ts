@@ -10,7 +10,6 @@ import {
   MessageFlags,
 } from 'discord.js'
 import { getThreadSession, setThreadSession } from '../database.js'
-import { initializeOpencodeForDirectory } from '../opencode.js'
 import {
   resolveWorkingDirectory,
   resolveTextChannel,
@@ -19,6 +18,7 @@ import {
 import { getOrCreateRuntime } from '../session-handler/thread-session-runtime.js'
 import { createLogger, LogPrefix } from '../logger.js'
 import type { CommandContext } from './types.js'
+import { initializeOpencodeForDirectory } from '../opencode.js'
 
 const logger = createLogger(LogPrefix.FORK)
 
@@ -93,7 +93,7 @@ export async function forkSessionToBtwThread({
     thread,
     projectDirectory,
     sdkDirectory: projectDirectory,
-    channelId: textChannel.id,
+    channelId: sourceThread.parentId || sourceThread.id,
     appId,
   })
   await runtime.enqueueIncoming({

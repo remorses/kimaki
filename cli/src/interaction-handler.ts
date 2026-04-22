@@ -43,7 +43,14 @@ import { handleAddDirCommand } from './commands/add-dir.js'
 import { handleCompactCommand } from './commands/compact.js'
 import { handleShareCommand } from './commands/share.js'
 import { handleDiffCommand } from './commands/diff.js'
-import { handleForkCommand, handleForkSelectMenu } from './commands/fork.js'
+import {
+  handleForkCommand,
+  handleForkSelectMenu,
+} from './commands/fork.js'
+import {
+  handleForkSubagentCommand,
+  handleForkSubagentSelectMenu,
+} from './commands/fork-subagent.js'
 import { handleBtwCommand } from './commands/btw.js'
 import {
   handleModelCommand,
@@ -265,6 +272,10 @@ export function registerInteractionHandler({
               await handleForkCommand(interaction)
               return
 
+            case 'fork-subagent':
+              await handleForkSubagentCommand(interaction)
+              return
+
             case 'btw':
               await handleBtwCommand({ command: interaction, appId })
               return
@@ -460,6 +471,11 @@ export function registerInteractionHandler({
 
           if (customId.startsWith('fork_select:')) {
             await handleForkSelectMenu(interaction)
+            return
+          }
+
+          if (customId.startsWith('fork_subagent_select:')) {
+            await handleForkSubagentSelectMenu(interaction)
             return
           }
 

@@ -124,6 +124,58 @@ export function collectSessionChunks({
   return { chunks: allChunks, skippedCount: 0 }
 }
 
+export function collectFullSessionChunks({
+  messages,
+}: {
+  messages: GenericSessionMessage[]
+}): SessionChunk[] {
+  const chunks: SessionChunk[] = []
+
+  for (const message of messages) {
+    const lines: string[] = []
+    const partIds: string[] = []
+
+    if (message.info.role === 'user') {
+      lines.push('**User**')
+      for (const part of message.parts) {
+        if (part.type === 'text') {
+          if (part.synthetic || !part.text?.trim()) {
+            continue
+          }
+          lines.push(part.text.trim())
+          continue
+        }
+        if (part.type === 'file') {
+          lines.push(`📄 ${part.filename || 'File'}`)
+        }
+      }
+    }
+
+    if (message.info.role === 'assistant') {
+      lines.push('**Assistant**')
+      for (const part of message.parts) {
+        const content = formatPart(part)
+        if (!content.trim()) {
+          continue
+        }
+        lines.push(content.trimEnd())
+        partIds.push(part.id)
+      }
+    }
+
+    if (lines.length <= 1) {
+      continue
+    }
+
+    chunks.push({
+      partIds,
+      content: lines.join('\n\n').trimEnd(),
+    })
+  }
+
+  return chunks
+}
+
 // Merge consecutive SessionChunks into as few Discord messages as possible,
 // respecting the 2000 char limit.
 const DISCORD_BATCH_MAX_LENGTH = 2000

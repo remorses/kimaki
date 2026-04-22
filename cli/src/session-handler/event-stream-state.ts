@@ -63,7 +63,12 @@ function getTaskCandidateFromEvent({
 }: {
   event: EventBufferEvent
   mainSessionId: string
-}): { assistantMessageId: string; childSessionId: string; subagentType?: string } | undefined {
+}): {
+  assistantMessageId: string
+  childSessionId: string
+  subagentType?: string
+  description?: string
+} | undefined {
   if (event.type !== 'message.part.updated') {
     return undefined
   }
@@ -72,7 +77,7 @@ function getTaskCandidateFromEvent({
   if (part.sessionID !== mainSessionId) {
     return undefined
   }
-  if (part.type !== 'tool' || part.tool !== 'task') {
+  if (part.type !== 'tool' || part.tool !== 'task' || part.state.status === 'pending') {
     return undefined
   }
 
@@ -82,11 +87,20 @@ function getTaskCandidateFromEvent({
   }
 
   const subagentType = part.state.input?.subagent_type
+  const description = part.state.input?.description
   return {
     assistantMessageId: part.messageID,
     childSessionId,
     subagentType: typeof subagentType === 'string' ? subagentType : undefined,
+    description: typeof description === 'string' ? description : undefined,
   }
+}
+
+export type DerivedSubagentSession = {
+  childSessionId: string
+  subagentType?: string
+  description?: string
+  timestamp: number
 }
 
 // Scans backward for most recent session-scoped lifecycle event.
@@ -651,4 +665,42 @@ export function getDerivedSubtaskAgentType({
     return candidate.subagentType
   }
   return undefined
+}
+
+export function getDerivedSubagentSessions({
+  events,
+  mainSessionId,
+  upToIndex,
+}: {
+  events: EventBufferEntry[]
+  mainSessionId: string
+  upToIndex?: number
+}): DerivedSubagentSession[] {
+  const end = upToIndex ?? events.length - 1
+  const seenChildSessionIds = new Set<string>()
+  const sessions: DerivedSubagentSession[] = []
+
+  for (let i = end; i >= 0; i--) {
+    const entry = events[i]
+    if (!entry) {
+      continue
+    }
+    const candidate = getTaskCandidateFromEvent({
+      event: entry.event,
+      mainSessionId,
+    })
+    if (!candidate || seenChildSessionIds.has(candidate.childSessionId)) {
+      continue
+    }
+
+    seenChildSessionIds.add(candidate.childSessionId)
+    sessions.push({
+      childSessionId: candidate.childSessionId,
+      subagentType: candidate.subagentType,
+      description: candidate.description,
+      timestamp: entry.timestamp,
+    })
+  }
+
+  return sessions
 }
