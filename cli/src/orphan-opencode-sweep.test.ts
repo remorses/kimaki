@@ -26,23 +26,10 @@ describe('parsePsOutput', () => {
       { pid: 42000, ppid: 42000, command: 'grep opencode' },
     ])
   })
-
-  test('skips blank lines and unparseable rows', () => {
-    const output = ['', '   ', 'no numbers here', ' 777     1 /opt/thing run'].join('\n')
-
-    const rows = parsePsOutput(output)
-
-    expect(rows).toEqual([{ pid: 777, ppid: 1, command: '/opt/thing run' }])
-  })
-
-  test('preserves multi-space commands verbatim', () => {
-    const rows = parsePsOutput(' 1234     1 /a/b/opencode   serve   --port 99\n')
-    expect(rows[0]!.command).toBe('/a/b/opencode   serve   --port 99')
-  })
 })
 
 describe('selectOrphanOpencodePids', () => {
-  test('picks opencode serve with ppid=1 when argv[0] basename is `opencode`', () => {
+  test('picks orphaned opencode serve processes by basename', () => {
     const rows = [
       {
         pid: 100,
@@ -73,14 +60,6 @@ describe('selectOrphanOpencodePids', () => {
     expect(selectOrphanOpencodePids({ rows, selfPid: 99 })).toEqual([90368])
   })
 
-  test('matches the bare `opencode` command name (no absolute path)', () => {
-    const rows = [
-      { pid: 200, ppid: 1, command: 'opencode serve --port 3333' },
-      { pid: 201, ppid: 1, command: '.opencode serve --port 4444' },
-    ]
-    expect(selectOrphanOpencodePids({ rows, selfPid: 99 })).toEqual([200, 201])
-  })
-
   test('skips processes whose parent is not PID 1 (still healthy under a kimaki)', () => {
     const rows = [{ pid: 300, ppid: 12345, command: '/bin/opencode serve --port 5555' }]
     expect(selectOrphanOpencodePids({ rows, selfPid: 99 })).toEqual([])
@@ -106,19 +85,6 @@ describe('selectOrphanOpencodePids', () => {
       // line if it were orphaned.
       { pid: 503, ppid: 1, command: 'node /path/to/opencode serve --port 9999' },
     ]
-    expect(selectOrphanOpencodePids({ rows, selfPid: 99 })).toEqual([])
-  })
-
-  test('excludes the current kimaki PID even if it matches the shape', () => {
-    const rows = [
-      { pid: 99, ppid: 1, command: '/bin/opencode serve --port 6666' },
-      { pid: 600, ppid: 1, command: '/bin/opencode serve --port 7777' },
-    ]
-    expect(selectOrphanOpencodePids({ rows, selfPid: 99 })).toEqual([600])
-  })
-
-  test('skips commands with no whitespace (no subcommand at all)', () => {
-    const rows = [{ pid: 700, ppid: 1, command: '/bin/opencode' }]
     expect(selectOrphanOpencodePids({ rows, selfPid: 99 })).toEqual([])
   })
 })

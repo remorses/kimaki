@@ -13,7 +13,6 @@ import fs from 'node:fs'
 import http from 'node:http'
 import path from 'node:path'
 import crypto from 'node:crypto'
-import { execFileSync } from 'node:child_process'
 import Database from 'libsql'
 import * as errore from 'errore'
 import {
@@ -23,9 +22,10 @@ import {
 } from 'libsqlproxy'
 import { createLogger, LogPrefix } from './logger.js'
 import { ServerStartError, FetchError } from './errors.js'
+import { execAsync } from './exec-async.js'
 import { getLockPort } from './config.js'
 import { store } from './store.js'
-import { getOpencodeServerPid, resolveOpencodeCommand } from './opencode.js'
+import { getOpencodeServerPid } from './opencode.js'
 
 const hranaLogger = createLogger(LogPrefix.DB)
 
@@ -132,7 +132,7 @@ export async function startHranaServer({
   process.env.KIMAKI_DB_AUTH_TOKEN = serviceAuthToken
 
   fs.mkdirSync(path.dirname(dbPath), { recursive: true })
-  sweepOrphanOpencodeServers()
+  await sweepOrphanOpencodeServers()
   await evictExistingInstance({ port })
 
   hranaLogger.log(
@@ -207,12 +207,13 @@ export async function startHranaServer({
   const started = await new Promise<ServerStartError | true>((resolve) => {
     const srv = http.createServer(handler)
 
-    srv.on('error', (err: NodeJS.ErrnoException) => {
+    srv.on('error', (err) => {
+      const errorCode = Object.getOwnPropertyDescriptor(err, 'code')?.value
       resolve(
         new ServerStartError({
           port,
           reason:
-            err.code === 'EADDRINUSE'
+            errorCode === 'EADDRINUSE'
               ? `Port ${port} still in use after eviction`
               : err.message,
         }),
@@ -310,18 +311,14 @@ export async function evictExistingInstance({ port }: { port: number }) {
   )
   if (probe instanceof Error) return
 
-  const body = await (
-    probe.json() as Promise<{ pid?: number; opencodePid?: number | null }>
-  ).catch((e) => new FetchError({ url, cause: e }))
-  if (body instanceof Error) return
+  const bodyText = await probe.text().catch((e) => new FetchError({ url, cause: e }))
+  if (bodyText instanceof Error) return
 
+  const body = parseHealthPayload({ body: bodyText })
   const targetPid = body.pid
   if (!targetPid || targetPid === process.pid) return
 
-  const opencodePid =
-    typeof body.opencodePid === 'number' && body.opencodePid > 0
-      ? body.opencodePid
-      : null
+  const opencodePid = body.opencodePid
 
   hranaLogger.log(
     `Evicting existing kimaki process (PID: ${targetPid}, opencode PID: ${
@@ -392,6 +389,30 @@ export async function evictExistingInstance({ port }: { port: number }) {
 
 type PsRow = { pid: number; ppid: number; command: string }
 
+type HealthPayload = {
+  pid: number | null
+  opencodePid: number | null
+}
+
+function parseHealthPayload({ body }: { body: string }): HealthPayload {
+  const parsed = errore.try({
+    try: () => JSON.parse(body),
+    catch: () => null,
+  })
+  if (!parsed || parsed instanceof Error || Array.isArray(parsed)) {
+    return { pid: null, opencodePid: null }
+  }
+
+  const record = parsed as { pid?: unknown; opencodePid?: unknown }
+  return {
+    pid: typeof record.pid === 'number' ? record.pid : null,
+    opencodePid:
+      typeof record.opencodePid === 'number' && record.opencodePid > 0
+        ? record.opencodePid
+        : null,
+  }
+}
+
 /**
  * Parse `ps -axo pid=,ppid=,command=` output into rows.
  * Format per line: leading whitespace, pid, space(s), ppid, space(s), command.
@@ -429,10 +450,6 @@ export function parsePsOutput(output: string): PsRow[] {
  * and then dies, the reparented orphan shows a different absolute path
  * ending in `.opencode`. Matching on the basename catches both shapes.
  *
- * `opencodeBinary` is accepted for symmetry and future use but intentionally
- * not required for the match — any path whose basename is `opencode` /
- * `.opencode` and that is running `serve` qualifies as one of ours.
- *
  * Self-exclusion is done by PID (never the current kimaki); at
  * startHranaServer() boot time there is no live opencode child yet.
  */
@@ -441,7 +458,6 @@ export function selectOrphanOpencodePids({
   selfPid,
 }: {
   rows: PsRow[]
-  opencodeBinary?: string
   selfPid: number
 }): number[] {
   const orphans: number[] = []
@@ -478,38 +494,20 @@ export function selectOrphanOpencodePids({
  * Safe to call on boot. Skips gracefully on non-POSIX platforms where `ps`
  * isn't available in this form (notably Windows).
  */
-export function sweepOrphanOpencodeServers(): void {
+export async function sweepOrphanOpencodeServers(): Promise<void> {
   if (process.platform === 'win32') return
 
-  const psResult = errore.try({
-    try: () =>
-      execFileSync('ps', ['-axo', 'pid=,ppid=,command='], {
-        encoding: 'utf8',
-        timeout: 3000,
-      }),
-    catch: (e) => new Error('ps enumeration failed', { cause: e }),
-  })
+  const psResult = await execAsync('ps -axo pid=,ppid=,command=', {
+    timeout: 3000,
+  }).catch((e) => new Error('ps enumeration failed', { cause: e }))
   if (psResult instanceof Error) {
     hranaLogger.log(`Orphan sweep skipped: ${psResult.message}`)
     return
   }
 
-  // resolveOpencodeCommand() isn't required for matching (we match on
-  // basename) but calling it validates the opencode install is present
-  // before we start killing processes that look like ours.
-  const binary = errore.try({
-    try: () => resolveOpencodeCommand(),
-    catch: () => new Error('opencode binary not resolvable'),
-  })
-  if (binary instanceof Error) {
-    hranaLogger.log(`Orphan sweep skipped: ${binary.message}`)
-    return
-  }
-
-  const rows = parsePsOutput(psResult)
+  const rows = parsePsOutput(psResult.stdout)
   const orphans = selectOrphanOpencodePids({
     rows,
-    opencodeBinary: binary,
     selfPid: process.pid,
   })
   if (orphans.length === 0) return
