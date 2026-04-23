@@ -1178,6 +1178,18 @@ export function getOpencodeServerPort(_directory?: string): number | null {
   return singleServer?.port ?? null
 }
 
+/**
+ * PID of the currently running shared opencode server child process, if any.
+ *
+ * Exposed so hrana-server's /health endpoint can advertise it alongside the
+ * kimaki PID. A second kimaki doing eviction then knows how to clean up the
+ * opencode child even when the parent kimaki is SIGKILL'd (which skips
+ * in-process cleanup handlers registered in ensureProcessCleanupHandlersRegistered).
+ */
+export function getOpencodeServerPid(): number | null {
+  return singleServer?.process.pid ?? null
+}
+
 export function getOpencodeClient(directory: string): OpencodeClient | null {
   if (!singleServer) {
     return null

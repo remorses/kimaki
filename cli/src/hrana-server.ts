@@ -13,6 +13,7 @@ import fs from 'node:fs'
 import http from 'node:http'
 import path from 'node:path'
 import crypto from 'node:crypto'
+import { execFileSync } from 'node:child_process'
 import Database from 'libsql'
 import * as errore from 'errore'
 import {
@@ -24,6 +25,7 @@ import { createLogger, LogPrefix } from './logger.js'
 import { ServerStartError, FetchError } from './errors.js'
 import { getLockPort } from './config.js'
 import { store } from './store.js'
+import { getOpencodeServerPid, resolveOpencodeCommand } from './opencode.js'
 
 const hranaLogger = createLogger(LogPrefix.DB)
 
@@ -130,6 +132,7 @@ export async function startHranaServer({
   process.env.KIMAKI_DB_AUTH_TOKEN = serviceAuthToken
 
   fs.mkdirSync(path.dirname(dbPath), { recursive: true })
+  sweepOrphanOpencodeServers()
   await evictExistingInstance({ port })
 
   hranaLogger.log(
@@ -169,10 +172,22 @@ export async function startHranaServer({
       res.end(JSON.stringify({ ready: true }))
       return
     }
-    // Health check — no auth required
+    // Health check — no auth required.
+    //
+    // `opencodePid` is included so a second kimaki instance doing eviction
+    // can SIGTERM the opencode child alongside the parent. Without this, if
+    // the parent gets SIGKILL'd (our 1s grace timeout below, V8 heap OOM in
+    // bin.ts, Activity Monitor force-quit, etc.) the opencode child is
+    // reparented to PID 1 and leaks ~500 MB RSS indefinitely.
     if (pathname === '/health') {
       res.writeHead(200, { 'content-type': 'application/json' })
-      res.end(JSON.stringify({ status: 'ok', pid: process.pid }))
+      res.end(
+        JSON.stringify({
+          status: 'ok',
+          pid: process.pid,
+          opencodePid: getOpencodeServerPid(),
+        }),
+      )
       return
     }
     // Hrana routes: /v2, /v2/pipeline — require auth
@@ -244,10 +259,48 @@ export async function stopHranaServer() {
 
 // ── Single-instance enforcement ──────────────────────────────────────
 
+function signalPid({
+  pid,
+  signal,
+  label,
+}: {
+  pid: number
+  signal: NodeJS.Signals
+  label: string
+}): void {
+  const killResult = errore.try({
+    try: () => {
+      process.kill(pid, signal)
+    },
+    catch: (e) =>
+      new Error(`Failed to send ${signal} to ${label}`, { cause: e }),
+  })
+  if (killResult instanceof Error) {
+    hranaLogger.log(`Failed to ${signal} ${label} (PID ${pid}): ${killResult.message}`)
+  }
+}
+
+function isPidAlive(pid: number): boolean {
+  const result = errore.try({
+    try: () => {
+      // Signal 0 = existence check, no signal delivered.
+      process.kill(pid, 0)
+      return true
+    },
+    catch: () => new Error('not alive'),
+  })
+  return result === true
+}
+
 /**
  * Evict a previous kimaki instance on the lock port.
  * Fetches /health to get the running process PID, then kills it directly.
  * No lsof/netstat/spawnSync needed — the PID comes from the health response.
+ *
+ * Also kills the opencode child (from body.opencodePid) on the same deadline.
+ * The old kimaki's SIGTERM handler normally does this, but SIGKILL skips
+ * cleanup handlers and would leak a ~500 MB opencode process. Killing the
+ * child externally via the advertised PID survives that case.
  */
 export async function evictExistingInstance({ port }: { port: number }) {
   const url = `http://127.0.0.1:${port}/health`
@@ -257,58 +310,214 @@ export async function evictExistingInstance({ port }: { port: number }) {
   )
   if (probe instanceof Error) return
 
-  const body = await (probe.json() as Promise<{ pid?: number }>).catch(
-    (e) => new FetchError({ url, cause: e }),
-  )
+  const body = await (
+    probe.json() as Promise<{ pid?: number; opencodePid?: number | null }>
+  ).catch((e) => new FetchError({ url, cause: e }))
   if (body instanceof Error) return
 
   const targetPid = body.pid
   if (!targetPid || targetPid === process.pid) return
 
+  const opencodePid =
+    typeof body.opencodePid === 'number' && body.opencodePid > 0
+      ? body.opencodePid
+      : null
+
   hranaLogger.log(
-    `Evicting existing kimaki process (PID: ${targetPid}) on port ${port}`,
+    `Evicting existing kimaki process (PID: ${targetPid}, opencode PID: ${
+      opencodePid ?? 'none'
+    }) on port ${port}`,
   )
-  const killResult = errore.try({
-    try: () => {
-      process.kill(targetPid, 'SIGTERM')
-    },
-    catch: (e) =>
-      new Error('Failed to send SIGTERM to existing kimaki process', {
-        cause: e,
-      }),
-  })
-  if (killResult instanceof Error) {
-    hranaLogger.log(`Failed to kill PID ${targetPid}: ${killResult.message}`)
-    return
-  }
+  signalPid({ pid: targetPid, signal: 'SIGTERM', label: 'existing kimaki process' })
 
   await new Promise((resolve) => {
     setTimeout(resolve, 1000)
   })
 
-  // Verify it's gone — if still alive, escalate to SIGKILL
+  // Verify kimaki is gone — if still alive, escalate to SIGKILL.
   const secondProbe = await fetch(url, {
     signal: AbortSignal.timeout(500),
   }).catch((e) => new FetchError({ url, cause: e }))
-  if (secondProbe instanceof Error) return
+  const kimakiStillAlive = !(secondProbe instanceof Error)
 
-  hranaLogger.log(`PID ${targetPid} still alive after SIGTERM, sending SIGKILL`)
-  const forceKillResult = errore.try({
-    try: () => {
-      process.kill(targetPid, 'SIGKILL')
-    },
-    catch: (e) =>
-      new Error('Failed to send SIGKILL to existing kimaki process', {
-        cause: e,
-      }),
-  })
-  if (forceKillResult instanceof Error) {
+  if (kimakiStillAlive) {
     hranaLogger.log(
-      `Failed to force-kill PID ${targetPid}: ${forceKillResult.message}`,
+      `PID ${targetPid} still alive after SIGTERM, sending SIGKILL`,
     )
+    signalPid({
+      pid: targetPid,
+      signal: 'SIGKILL',
+      label: 'existing kimaki process',
+    })
+    await new Promise((resolve) => {
+      setTimeout(resolve, 1000)
+    })
+  }
+
+  // Clean up the opencode child regardless of how kimaki exited. If kimaki
+  // shut down gracefully its own handler already SIGTERM'd this PID, so
+  // isPidAlive will be false and we skip. If kimaki was SIGKILL'd (above,
+  // or by V8 OOM, Activity Monitor, etc.) the child is orphaned on PID 1
+  // with a closed socket and we kill it here.
+  if (opencodePid && opencodePid !== process.pid && isPidAlive(opencodePid)) {
+    hranaLogger.log(
+      `Cleaning up opencode child (PID: ${opencodePid}) orphaned by evicted kimaki`,
+    )
+    signalPid({
+      pid: opencodePid,
+      signal: 'SIGTERM',
+      label: 'orphaned opencode child',
+    })
+    await new Promise((resolve) => {
+      setTimeout(resolve, 1000)
+    })
+    if (isPidAlive(opencodePid)) {
+      signalPid({
+        pid: opencodePid,
+        signal: 'SIGKILL',
+        label: 'orphaned opencode child',
+      })
+    }
+  }
+}
+
+// ── Orphan sweep ─────────────────────────────────────────────────────
+//
+// Catches opencode servers abandoned by a prior kimaki that died before
+// this instance started (so /health is unreachable and evictExistingInstance
+// has nothing to read). Runs at startHranaServer() boot time.
+//
+// Exported for testing. Pure parsing is split out so we can unit-test the
+// PID selection logic without touching real processes.
+
+type PsRow = { pid: number; ppid: number; command: string }
+
+/**
+ * Parse `ps -axo pid=,ppid=,command=` output into rows.
+ * Format per line: leading whitespace, pid, space(s), ppid, space(s), command.
+ * `command` can contain arbitrary spaces/args and is kept verbatim.
+ */
+export function parsePsOutput(output: string): PsRow[] {
+  const rows: PsRow[] = []
+  for (const rawLine of output.split('\n')) {
+    const line = rawLine.trimStart()
+    if (!line) continue
+    const match = line.match(/^(\d+)\s+(\d+)\s+(.*)$/)
+    if (!match) continue
+    const pid = Number.parseInt(match[1]!, 10)
+    const ppid = Number.parseInt(match[2]!, 10)
+    const command = match[3]!
+    if (!Number.isFinite(pid) || !Number.isFinite(ppid)) continue
+    rows.push({ pid, ppid, command })
+  }
+  return rows
+}
+
+/**
+ * Pick orphan opencode server PIDs from `ps` output.
+ *
+ * An orphan is a process whose:
+ *  - parent is PID 1 (reparented after kimaki died without cleanup), and
+ *  - first token of the command is an opencode binary (basename `opencode`
+ *    or `.opencode`), and
+ *  - second token is `serve` (we never want to kill `opencode tui`, `run`,
+ *    or unrelated invocations).
+ *
+ * The binary path shape varies by install: kimaki's resolveOpencodeCommand()
+ * often returns `~/.nvm/.../bin/opencode` (a shell wrapper), but when that
+ * wrapper execs its sibling `.../lib/node_modules/opencode-ai/bin/.opencode`
+ * and then dies, the reparented orphan shows a different absolute path
+ * ending in `.opencode`. Matching on the basename catches both shapes.
+ *
+ * `opencodeBinary` is accepted for symmetry and future use but intentionally
+ * not required for the match — any path whose basename is `opencode` /
+ * `.opencode` and that is running `serve` qualifies as one of ours.
+ *
+ * Self-exclusion is done by PID (never the current kimaki); at
+ * startHranaServer() boot time there is no live opencode child yet.
+ */
+export function selectOrphanOpencodePids({
+  rows,
+  selfPid,
+}: {
+  rows: PsRow[]
+  opencodeBinary?: string
+  selfPid: number
+}): number[] {
+  const orphans: number[] = []
+  for (const row of rows) {
+    if (row.pid === selfPid) continue
+    if (row.ppid !== 1) continue
+
+    // Split on whitespace but preserve argv[0] intact even if it contains
+    // spaces-in-paths (unlikely but possible). First token = binary path.
+    const firstSpace = row.command.indexOf(' ')
+    if (firstSpace < 0) continue
+    const argv0 = row.command.slice(0, firstSpace)
+    const rest = row.command.slice(firstSpace + 1)
+
+    // Basename of argv[0].
+    const lastSlash = argv0.lastIndexOf('/')
+    const basename = lastSlash >= 0 ? argv0.slice(lastSlash + 1) : argv0
+    if (basename !== 'opencode' && basename !== '.opencode') continue
+
+    // Require `serve` as the subcommand (first positional arg).
+    const restTrimmed = rest.trimStart()
+    if (!restTrimmed.startsWith('serve')) continue
+    const afterServe = restTrimmed.slice('serve'.length)
+    if (afterServe.length > 0 && !/^\s/.test(afterServe)) continue
+
+    orphans.push(row.pid)
+  }
+  return orphans
+}
+
+/**
+ * Scan for orphan `opencode serve` processes and SIGTERM them.
+ *
+ * Safe to call on boot. Skips gracefully on non-POSIX platforms where `ps`
+ * isn't available in this form (notably Windows).
+ */
+export function sweepOrphanOpencodeServers(): void {
+  if (process.platform === 'win32') return
+
+  const psResult = errore.try({
+    try: () =>
+      execFileSync('ps', ['-axo', 'pid=,ppid=,command='], {
+        encoding: 'utf8',
+        timeout: 3000,
+      }),
+    catch: (e) => new Error('ps enumeration failed', { cause: e }),
+  })
+  if (psResult instanceof Error) {
+    hranaLogger.log(`Orphan sweep skipped: ${psResult.message}`)
     return
   }
-  await new Promise((resolve) => {
-    setTimeout(resolve, 1000)
+
+  // resolveOpencodeCommand() isn't required for matching (we match on
+  // basename) but calling it validates the opencode install is present
+  // before we start killing processes that look like ours.
+  const binary = errore.try({
+    try: () => resolveOpencodeCommand(),
+    catch: () => new Error('opencode binary not resolvable'),
   })
+  if (binary instanceof Error) {
+    hranaLogger.log(`Orphan sweep skipped: ${binary.message}`)
+    return
+  }
+
+  const rows = parsePsOutput(psResult)
+  const orphans = selectOrphanOpencodePids({
+    rows,
+    opencodeBinary: binary,
+    selfPid: process.pid,
+  })
+  if (orphans.length === 0) return
+
+  hranaLogger.log(
+    `Orphan sweep: found ${orphans.length} abandoned opencode serve process(es), sending SIGTERM`,
+  )
+  for (const pid of orphans) {
+    signalPid({ pid, signal: 'SIGTERM', label: `orphan opencode server` })
+  }
 }
