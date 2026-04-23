@@ -365,7 +365,7 @@ export async function registerCommands({
     new SlashCommandBuilder()
       .setName('model-variant')
       .setDescription(
-        truncateCommandDescription('Quickly change the thinking level variant for the current model'),
+        truncateCommandDescription('Change thinking level for current model. Tied to the model; lost when you switch models'),
       )
       .setDMPermission(false)
       .toJSON(),
