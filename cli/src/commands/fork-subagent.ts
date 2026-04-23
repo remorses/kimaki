@@ -20,7 +20,7 @@ import {
   sendThreadMessage,
 } from '../discord-utils.js'
 import {
-  collectFullSessionChunks,
+  collectSessionChunks,
   batchChunksForDiscord,
 } from '../message-formatting.js'
 import { initializeOpencodeForDirectory } from '../opencode.js'
@@ -61,39 +61,6 @@ function getSubagentOptionLabel({
     descriptionBudget,
   )
   return `${agent} · ${truncatedDescription}`
-}
-
-async function replayForkedSessionHistory({
-  thread,
-  projectDirectory,
-  sessionId,
-}: {
-  thread: ThreadChannel
-  projectDirectory: string
-  sessionId: string
-}): Promise<void> {
-  const getClient = await initializeOpencodeForDirectory(projectDirectory)
-  if (getClient instanceof Error) {
-    throw new Error(`Failed to load session history: ${getClient.message}`, {
-      cause: getClient,
-    })
-  }
-
-  const messagesResponse = await getClient().session.messages({
-    sessionID: sessionId,
-  })
-  if (!messagesResponse.data) {
-    throw new Error('Failed to fetch forked session messages')
-  }
-
-  const batched = batchChunksForDiscord(
-    collectFullSessionChunks({
-      messages: messagesResponse.data,
-    }),
-  )
-  for (const batch of batched) {
-    await sendThreadMessage(thread, batch.content)
-  }
 }
 
 export async function handleForkSubagentCommand(
@@ -163,7 +130,7 @@ export async function handleForkSubagentCommand(
 
   await interaction.editReply({
     content:
-      '**Fork Subagent Session**\nSelect a subagent task session to fork into a new thread. The new thread will show the full subagent conversation, including the initial prompt:',
+      '**Fork Subagent Session**\nSelect a subagent task session to fork into a new thread:',
     components: [actionRow],
   })
 }
@@ -260,20 +227,28 @@ export async function handleForkSubagentSelectMenu(
 
   await sendThreadMessage(
     forkedThread,
-    `**Forked subagent session created!**\nAgent: \`${agentLabel}\`\nTask: ${descriptionLabel}\nSource session: \`${selectedSessionId}\`\nNew session: \`${forkedSession.id}\``,
+    `**Forked subagent session created!**\nAgent: \`${agentLabel}\`\nTask: ${descriptionLabel}\nFrom: \`${selectedSessionId}\`\nNew session: \`${forkedSession.id}\``,
   )
 
   try {
-    await replayForkedSessionHistory({
-      thread: forkedThread,
-      projectDirectory: resolved.projectDirectory,
-      sessionId: forkedSession.id,
+    const messagesResponse = await getClient().session.messages({
+      sessionID: forkedSession.id,
     })
+    if (messagesResponse.data) {
+      const { chunks } = collectSessionChunks({
+        messages: messagesResponse.data,
+        limit: 30,
+      })
+      const batched = batchChunksForDiscord(chunks)
+      for (const batch of batched) {
+        await sendThreadMessage(forkedThread, batch.content)
+      }
+    }
   } catch (error) {
     forkLogger.error('Error replaying forked subagent history:', error)
     await sendThreadMessage(
       forkedThread,
-      'Failed to load full conversation history, but the session is connected and ready to continue.',
+      'Failed to load session messages, but the session is connected and ready to continue.',
     )
   }
 
