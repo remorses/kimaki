@@ -475,6 +475,26 @@ Read this first.
     `)
   })
 
+  test('renders callout that was prefixed with ⬥ as plain text (regression)', () => {
+    // Before the fix, formatPart would add ⬥ prefix to callout lines,
+    // breaking the callout parser. Now formatPart skips the prefix for callouts.
+    const result = splitTablesFromMarkdown(`⬥ <callout accent="#ef4444">
+## Top priority
+- **Stripe dispute** deadline
+</callout>`)
+    expect(result).toMatchInlineSnapshot(`
+      [
+        {
+          "text": "⬥ <callout accent="#ef4444">
+      ## Top priority
+      - **Stripe dispute** deadline
+      </callout>",
+          "type": "text",
+        },
+      ]
+    `)
+  })
+
   test('falls back to plain text when a callout is not closed', () => {
     const result = splitTablesFromMarkdown(`<callout accent="#2b7fff">
 ## Important

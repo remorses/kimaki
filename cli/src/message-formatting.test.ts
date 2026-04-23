@@ -1,6 +1,51 @@
 import { describe, test, expect } from 'vitest'
-import { formatTodoList } from './message-formatting.js'
+import { formatPart, formatTodoList } from './message-formatting.js'
 import type { Part } from '@opencode-ai/sdk/v2'
+
+describe('formatPart', () => {
+  test('callout text does not get ⬥ prefix', () => {
+    const part: Part = {
+      id: 'test',
+      type: 'text',
+      sessionID: 'ses_test',
+      messageID: 'msg_test',
+      text: `<callout accent="#ef4444">\n## Top priority\n- **Stripe dispute** deadline\n</callout>`,
+    }
+    expect(formatPart(part)).toMatchInlineSnapshot(`
+      "
+      <callout accent="#ef4444">
+      ## Top priority
+      - **Stripe dispute** deadline
+      </callout>"
+    `)
+  })
+
+  test('regular text gets ⬥ prefix', () => {
+    const part: Part = {
+      id: 'test',
+      type: 'text',
+      sessionID: 'ses_test',
+      messageID: 'msg_test',
+      text: 'hello world',
+    }
+    expect(formatPart(part)).toMatchInlineSnapshot(`"⬥ hello world"`)
+  })
+
+  test('text starting with heading does not get ⬥ prefix', () => {
+    const part: Part = {
+      id: 'test',
+      type: 'text',
+      sessionID: 'ses_test',
+      messageID: 'msg_test',
+      text: '## Summary\nDone.',
+    }
+    expect(formatPart(part)).toMatchInlineSnapshot(`
+      "
+      ## Summary
+      Done."
+    `)
+  })
+})
 
 describe('formatTodoList', () => {
   test('formats active todo with monospace numbers', () => {

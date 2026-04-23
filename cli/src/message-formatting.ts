@@ -412,7 +412,9 @@ export function formatPart(part: Part, prefix?: string): string {
     const firstChar = text[0] || ''
     const markdownStarters = ['#', '*', '_', '-', '>', '`', '[', '|']
     const startsWithMarkdown =
-      markdownStarters.includes(firstChar) || /^\d+\./.test(text)
+      markdownStarters.includes(firstChar) ||
+      /^\d+\./.test(text) ||
+      /^<callout[\s>]/i.test(text)
     if (startsWithMarkdown) {
       return `\n${text}`
     }
