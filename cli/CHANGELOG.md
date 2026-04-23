@@ -1,5 +1,29 @@
 # Changelog
 
+## 0.7.0
+
+1. **New `/fork-subagent` command** — fork an active subagent task session into its own Discord thread. Shows a dropdown of running subagent tasks with their prompt previews. The new thread inherits the full session context (memory, tool outputs, event history) so you can continue the subagent's work independently:
+
+   ```text
+   /fork-subagent
+   ```
+
+2. **Callout containers in Discord** — the bot now renders accent-colored callout blocks (warnings, tips, action-required notes) as Discord Components V2 containers. Callouts can recursively include tables and action buttons, making structured responses easier to scan. The system prompt includes color-coded callout types: orange for warnings, blue for TODOs, red for tool failures, purple for gist summaries.
+
+3. **`/add-dir` directory option now optional** — omit the directory argument to default to `*` (all directories) for the current session. Explicit paths are still resolved against the active worktree when provided:
+
+   ```text
+   # Allow all directories (no argument needed)
+   /add-dir
+
+   # Allow a specific directory (still works)
+   /add-dir ../shared-data
+   ```
+
+4. **Fix: Anthropic plugin per-session directory resolution** — the Anthropic auth plugin now extracts the per-session working directory from the OpenCode identity block instead of using the server's cwd. Fixes incorrect file paths in multi-session and worktree setups.
+
+5. **Fix: faster startup when replacing a running instance** — the Hrana database server now polls the old process every second during eviction instead of sleeping a fixed 6 seconds. Startup is faster when the old instance shuts down promptly while still allowing graceful cleanup.
+
 ## 0.6.0
 
 1. **Subagent rate-limit handling** — when a task-created child session hits a provider rate limit (HTTP 429), kimaki now automatically aborts the subagent session instead of letting the error cascade to the parent. The parent task session recovers on its own, keeping rate-limit noise out of your Discord threads.
