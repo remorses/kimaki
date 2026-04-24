@@ -93,6 +93,9 @@ const CLAUDE_CODE_IDENTITY =
 const OPENCODE_IDENTITY =
   "You are OpenCode, the best coding agent on the planet.";
 const ANTHROPIC_PROMPT_MARKER = "Skills provide specialized instructions";
+// Subagent prompts don't contain OPENCODE_IDENTITY; opencode appends this
+// line + an <env> block instead. We strip from here to </env> inclusive.
+const SUBAGENT_MODEL_IDENTITY = "You are powered by the model named";
 const CLAUDE_CODE_BETA = "claude-code-20250219";
 const OAUTH_BETA = "oauth-2025-04-20";
 const FINE_GRAINED_TOOL_STREAMING_BETA =
@@ -613,32 +616,62 @@ function sanitizeAnthropicSystemText(
   onError?: (msg: string) => void,
 ) {
   const startIdx = text.indexOf(OPENCODE_IDENTITY);
-  if (startIdx === -1) return text;
-
-  // Keep the marker aligned with the current OpenCode Anthropic prompt.
-  const endIdx = text.indexOf(ANTHROPIC_PROMPT_MARKER, startIdx);
-  if (endIdx === -1) {
-    onError?.(
-      "sanitizeAnthropicSystemText: could not find Anthropic prompt marker after OpenCode identity",
-    );
-    return text;
+  if (startIdx !== -1) {
+    // Main session path: strip from OpenCode identity to the Anthropic prompt marker.
+    // Keep the marker aligned with the current OpenCode Anthropic prompt.
+    const endIdx = text.indexOf(ANTHROPIC_PROMPT_MARKER, startIdx);
+    if (endIdx === -1) {
+      onError?.(
+        "sanitizeAnthropicSystemText: could not find Anthropic prompt marker after OpenCode identity",
+      );
+      return text;
+    }
+    return replaceBlockWithCompactEnv(text, startIdx, endIdx);
   }
 
-  // Extract the working directory from the block we're about to strip.
-  // Source: anomalyco/opencode packages/opencode/src/session/system.ts
-  // OpenCode's system prompt format (as of 2025):
-  //   <env>
-  //     Working directory: ${Instance.directory}
-  //     Workspace root folder: ${Instance.worktree}
-  //     Is directory a git repo: yes/no
-  //     Platform: ${process.platform}
-  //     Today's date: ${new Date().toDateString()}
-  //   </env>
-  // Older format used <environment><cwd>/path</cwd></environment>.
-  // We try both patterns to stay compatible across opencode versions.
-  // We preserve the per-session directory instead of falling back to
-  // process.cwd() which is the opencode server's cwd and wrong for
-  // multi-session/worktree setups where each session has a different directory.
+  // Subagent path: opencode appends "You are powered by the model named ..."
+  // followed by an <env> block. Strip from that line through </env>.
+  const subagentIdx = text.indexOf(SUBAGENT_MODEL_IDENTITY);
+  if (subagentIdx !== -1) {
+    const envCloseTag = "</env>";
+    const envCloseIdx = text.indexOf(envCloseTag, subagentIdx);
+    if (envCloseIdx === -1) {
+      onError?.(
+        "sanitizeAnthropicSystemText: could not find </env> after subagent model identity",
+      );
+      return text;
+    }
+    const endIdx = envCloseIdx + envCloseTag.length;
+    // Skip trailing newline so the join is clean
+    const afterEnd =
+      text[endIdx] === "\n" ? endIdx + 1 : endIdx;
+    return replaceBlockWithCompactEnv(text, subagentIdx, afterEnd);
+  }
+
+  return text;
+}
+
+// Extract cwd from the block being stripped and replace it with a compact
+// <environment> tag. Shared by both main-session and subagent paths.
+// Source: anomalyco/opencode packages/opencode/src/session/system.ts
+// OpenCode's system prompt format (as of 2025):
+//   <env>
+//     Working directory: ${Instance.directory}
+//     Workspace root folder: ${Instance.worktree}
+//     Is directory a git repo: yes/no
+//     Platform: ${process.platform}
+//     Today's date: ${new Date().toDateString()}
+//   </env>
+// Older format used <environment><cwd>/path</cwd></environment>.
+// We try both patterns to stay compatible across opencode versions.
+// We preserve the per-session directory instead of falling back to
+// process.cwd() which is the opencode server's cwd and wrong for
+// multi-session/worktree setups where each session has a different directory.
+function replaceBlockWithCompactEnv(
+  text: string,
+  startIdx: number,
+  endIdx: number,
+) {
   const strippedBlock = text.slice(startIdx, endIdx);
   const cwdMatch =
     strippedBlock.match(/Working directory:\s*(.+)/)?.[1]?.trim() ||
@@ -647,14 +680,13 @@ function sanitizeAnthropicSystemText(
 
   const envContext =
     `\n<environment>\n<cwd>${cwd}</cwd>\n</environment>\n` +
-    `Read, write, and edit files under <cwd>.\n\n`;
+    `Read, write, and edit files under ${cwd}.\n\n`;
 
-  const result =
+  return (
     text.slice(0, startIdx) +
     envContext +
-    text.slice(endIdx);
-
-  return result;
+    text.slice(endIdx)
+  );
 }
 
 function mapSystemTextPart(
