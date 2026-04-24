@@ -624,14 +624,26 @@ function sanitizeAnthropicSystemText(
     return text;
   }
 
-  // Extract the cwd from the block we're about to strip. OpenCode's system
-  // prompt embeds <environment><cwd>/path</cwd></environment> in the identity
-  // block. We preserve the per-session cwd instead of falling back to
+  // Extract the working directory from the block we're about to strip.
+  // Source: anomalyco/opencode packages/opencode/src/session/system.ts
+  // OpenCode's system prompt format (as of 2025):
+  //   <env>
+  //     Working directory: ${Instance.directory}
+  //     Workspace root folder: ${Instance.worktree}
+  //     Is directory a git repo: yes/no
+  //     Platform: ${process.platform}
+  //     Today's date: ${new Date().toDateString()}
+  //   </env>
+  // Older format used <environment><cwd>/path</cwd></environment>.
+  // We try both patterns to stay compatible across opencode versions.
+  // We preserve the per-session directory instead of falling back to
   // process.cwd() which is the opencode server's cwd and wrong for
   // multi-session/worktree setups where each session has a different directory.
   const strippedBlock = text.slice(startIdx, endIdx);
-  const cwdMatch = strippedBlock.match(/<cwd>([^<]+)<\/cwd>/);
-  const cwd = cwdMatch?.[1] || process.cwd();
+  const cwdMatch =
+    strippedBlock.match(/Working directory:\s*(.+)/)?.[1]?.trim() ||
+    strippedBlock.match(/<cwd>([^<]+)<\/cwd>/)?.[1];
+  const cwd = cwdMatch || process.cwd();
 
   const envContext =
     `\n<environment>\n<cwd>${cwd}</cwd>\n</environment>\n` +
