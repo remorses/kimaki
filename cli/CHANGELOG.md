@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.7.1
+
+1. **Fix: Claude subagent sessions (Task tool) now work correctly** — the Anthropic auth plugin now handles the subagent prompt structure. Subagent sessions spawned via the Task tool use a different system prompt format ("You are powered by the model named…" + `<env>` block) instead of the main-session `OPENCODE_IDENTITY` marker. The plugin now strips both patterns correctly, so Claude API calls from subagents no longer fail with malformed/oversized system prompts.
+
+2. **Fix: working directory extraction from updated OpenCode system prompt format** — OpenCode changed its environment block from `<environment><cwd>/path</cwd></environment>` to `<env>\nWorking directory: /path\n</env>`. The plugin now reads the new `Working directory:` format first and falls back to the old `<cwd>` tag for backwards compatibility. Fixes incorrect per-session directory in multi-session and worktree setups.
+
+3. **Fix: callout blocks now render as colored containers** — `<callout>` tags were getting the `⬥` text prefix because `<` was not in the markdown starters list. The prefix is now skipped for callout tags so the Discord Components V2 parser sees them correctly and renders them as accent-colored containers.
+
 ## 0.7.0
 
 1. **New `/fork-subagent` command** — fork an active subagent task session into its own Discord thread. Shows a dropdown of running subagent tasks with their prompt previews. The new thread inherits the full session context (memory, tool outputs, event history) so you can continue the subagent's work independently:
