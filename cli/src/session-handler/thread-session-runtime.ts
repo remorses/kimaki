@@ -3166,6 +3166,21 @@ export class ThreadSessionRuntime {
       logger.log(
         `[INGRESS] promptAsync accepted by opencode queue sessionId=${session.id} threadId=${this.threadId}`,
       )
+
+      // Show model + agent info as first message in new sessions
+      if (createdNewSession && modelField) {
+        const modelLabel = `${modelField.providerID}/${modelField.modelID}`
+        const agentLabel =
+          resolvedAgent && resolvedAgent.toLowerCase() !== 'build'
+            ? ` ⋅ ${resolvedAgent}`
+            : ''
+        void sendThreadMessage(
+          this.thread,
+          `*using ${modelLabel}${agentLabel}*`,
+          { flags: SILENT_MESSAGE_FLAGS },
+        ).catch(() => {})
+      }
+
       this.markQueueDispatchBusy(session.id)
     })
 
