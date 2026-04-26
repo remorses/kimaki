@@ -193,6 +193,7 @@ e2eTest('/undo sets revert state and cleans up on next prompt', () => {
         "--- from: user (undo-tester)
         UNDO_FILE_MARKER
         --- from: assistant (TestBot)
+        *using deterministic-provider/deterministic-v2*
         ⬥ creating undo file
         ⬥ undo file created
         *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2*

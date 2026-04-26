@@ -427,6 +427,7 @@ e2eTest('thread message queue ordering', () => {
         "--- from: user (queue-tester)
         Reply with exactly: cold-start-stream
         --- from: assistant (TestBot)
+        *using deterministic-provider/deterministic-v2*
         ⬥ ok
         *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2*"
       `)
@@ -594,6 +595,7 @@ e2eTest('thread message queue ordering', () => {
         "--- from: user (queue-tester)
         Reply with exactly: one
         --- from: assistant (TestBot)
+        *using deterministic-provider/deterministic-v2*
         ⬥ ok
         *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2*
         --- from: user (queue-tester)
@@ -691,6 +693,7 @@ e2eTest('thread message queue ordering', () => {
         "--- from: user (queue-tester)
         Reply with exactly: opencode-queue-setup
         --- from: assistant (TestBot)
+        *using deterministic-provider/deterministic-v2*
         ⬥ ok
         *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2*
         --- from: user (queue-tester)
@@ -783,6 +786,7 @@ e2eTest('thread message queue ordering', () => {
         "--- from: user (queue-tester)
         Reply with exactly: BASH_TOOL_FILE_MARKER
         --- from: assistant (TestBot)
+        *using deterministic-provider/deterministic-v2*
         ⬥ running create file
         ⬥ ok
         *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2*"
@@ -910,6 +914,7 @@ e2eTest('thread message queue ordering', () => {
         "--- from: user (queue-tester)
         Reply with exactly: queue-slash-setup
         --- from: assistant (TestBot)
+        *using deterministic-provider/deterministic-v2*
         ⬥ ok
         *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2*
         » **queue-tester:** Reply with exactly: race-final
@@ -1034,6 +1039,7 @@ e2eTest('thread message queue ordering', () => {
         "--- from: user (queue-tester)
         Reply with exactly: clear-queue-setup
         --- from: assistant (TestBot)
+        *using deterministic-provider/deterministic-v2*
         ⬥ ok
         *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2*
         » **queue-tester:** Reply with exactly: race-final
@@ -1216,6 +1222,7 @@ e2eTest('thread message queue ordering', () => {
         "--- from: user (queue-tester)
         Reply with exactly: golf
         --- from: assistant (TestBot)
+        *using deterministic-provider/deterministic-v2*
         ⬥ ok
         *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2*
         --- from: user (queue-tester)
@@ -1323,7 +1330,7 @@ e2eTest('thread message queue ordering', () => {
         "--- from: user (queue-tester)
         Reply with exactly: juliet
         --- from: assistant (TestBot)
-        ⬥ ok
+        *using deterministic-provider/deterministic-v2*
         --- from: user (queue-tester)
         Reply with exactly: kilo
         Reply with exactly: lima

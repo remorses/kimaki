@@ -166,6 +166,7 @@ describe('queue drain after question select answer', () => {
         "--- from: user (question-select-tester)
         QUESTION_SELECT_QUEUE_MARKER
         --- from: assistant (TestBot)
+        *using deterministic-provider/deterministic-v2*
         **Select action**
         How to proceed?
         ✓ _Alpha_
@@ -302,6 +303,7 @@ describe('queue drain after question select answer', () => {
         "--- from: user (question-select-tester)
         QUESTION_SELECT_QUEUE_MARKER second-test
         --- from: assistant (TestBot)
+        *using deterministic-provider/deterministic-v2*
         **Select action**
         How to proceed?
         ✓ _Alpha_

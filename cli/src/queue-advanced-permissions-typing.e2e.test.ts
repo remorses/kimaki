@@ -121,6 +121,7 @@ describe('queue advanced: typing around permissions', () => {
         "--- from: user (queue-permission-tester)
         PERMISSION_TYPING_MARKER
         --- from: assistant (TestBot)
+        *using deterministic-provider/deterministic-v2*
         ⬥ requesting external read permission
         ⚠️ **Permission Required**
         **Type:** \`external_directory\`

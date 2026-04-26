@@ -428,6 +428,7 @@ describe('agent model resolution', () => {
         "--- from: user (agent-model-tester)
         Reply with exactly: agent-model-check
         --- from: assistant (TestBot)
+        *using deterministic-provider/agent-model-v2 ⋅ test-agent*
         ⬥ ok
         *project ⋅ main ⋅ Ns ⋅ N% ⋅ agent-model-v2 ⋅ **test-agent***"
       `)
@@ -484,6 +485,7 @@ describe('agent model resolution', () => {
         "--- from: user (agent-model-tester)
         Reply with exactly: system-context-check
         --- from: assistant (TestBot)
+        *using deterministic-provider/agent-model-v2 ⋅ test-agent*
         ⬥ system-context-ok
         *project ⋅ main ⋅ Ns ⋅ N% ⋅ agent-model-v2 ⋅ **test-agent***"
       `)
@@ -602,6 +604,7 @@ describe('agent model resolution', () => {
         "--- from: user (agent-model-tester)
         Reply with exactly: channel-model-check
         --- from: assistant (TestBot)
+        *using deterministic-provider/channel-model-v2*
         ⬥ ok
         *project ⋅ main ⋅ Ns ⋅ N% ⋅ channel-model-v2*"
       `)
@@ -673,6 +676,7 @@ describe('agent model resolution', () => {
         "--- from: user (agent-model-tester)
         Reply with exactly: variant-check
         --- from: assistant (TestBot)
+        *using deterministic-provider/channel-model-v2*
         ⬥ ok
         *project ⋅ main ⋅ Ns ⋅ N% ⋅ channel-model-v2*"
       `)
@@ -759,6 +763,7 @@ describe('agent model resolution', () => {
         "--- from: user (agent-model-tester)
         Reply with exactly: first-thread-msg
         --- from: assistant (TestBot)
+        *using deterministic-provider/agent-model-v2 ⋅ test-agent*
         ⬥ ok
         *project ⋅ main ⋅ Ns ⋅ N% ⋅ agent-model-v2 ⋅ **test-agent***
         --- from: user (agent-model-tester)
@@ -861,6 +866,7 @@ describe('agent model resolution', () => {
         "--- from: user (agent-model-tester)
         Reply with exactly: default-thread-msg
         --- from: assistant (TestBot)
+        *using deterministic-provider/deterministic-v2*
         ⬥ ok
         *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2*
         --- from: user (agent-model-tester)
@@ -949,6 +955,7 @@ describe('agent model resolution', () => {
         "--- from: user (agent-model-tester)
         Reply with exactly: switch-in-thread-msg
         --- from: assistant (TestBot)
+        *using deterministic-provider/agent-model-v2 ⋅ test-agent*
         ⬥ ok
         *project ⋅ main ⋅ Ns ⋅ N% ⋅ agent-model-v2 ⋅ **test-agent***
         Switched to **plan** agent for this session (was **test-agent**)

@@ -50,6 +50,7 @@ e2eTest('queue advanced: footer emission', () => {
         "--- from: user (queue-advanced-tester)
         Reply with exactly: footer-check
         --- from: assistant (TestBot)
+        *using deterministic-provider/deterministic-v2*
         ⬥ ok
         *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2*"
       `)
@@ -118,6 +119,7 @@ e2eTest('queue advanced: footer emission', () => {
         "--- from: user (queue-advanced-tester)
         Reply with exactly: footer-multi-setup
         --- from: assistant (TestBot)
+        *using deterministic-provider/deterministic-v2*
         ⬥ ok
         *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2*
         --- from: user (queue-advanced-tester)
@@ -231,6 +233,7 @@ e2eTest('queue advanced: footer emission', () => {
         "--- from: user (queue-advanced-tester)
         Reply with exactly: interrupt-footer-setup
         --- from: assistant (TestBot)
+        *using deterministic-provider/deterministic-v2*
         ⬥ ok
         *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2*
         --- from: user (queue-advanced-tester)
@@ -327,6 +330,7 @@ e2eTest('queue advanced: footer emission', () => {
         "--- from: user (queue-advanced-tester)
         Reply with exactly: plugin-timeout-setup
         --- from: assistant (TestBot)
+        *using deterministic-provider/deterministic-v2*
         ⬥ ok
         *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2*
         --- from: user (queue-advanced-tester)
@@ -434,6 +438,7 @@ e2eTest('queue advanced: footer emission', () => {
         "--- from: user (queue-advanced-tester)
         TOOL_CALL_FOOTER_MARKER
         --- from: assistant (TestBot)
+        *using deterministic-provider/deterministic-v2*
         ⬥ running tool
         ⬥ ok
         *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2*"
@@ -503,6 +508,7 @@ e2eTest('queue advanced: footer emission', () => {
         "--- from: user (queue-advanced-tester)
         MULTI_TOOL_FOOTER_MARKER
         --- from: assistant (TestBot)
+        *using deterministic-provider/deterministic-v2*
         ⬥ investigating the issue
         ⬥ all done, fixed 3 files
         *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2*"
@@ -574,6 +580,7 @@ e2eTest('queue advanced: footer emission', () => {
         "--- from: user (queue-advanced-tester)
         MULTI_STEP_CHAIN_MARKER
         --- from: assistant (TestBot)
+        *using deterministic-provider/deterministic-v2*
         ⬥ chain step 1: reading config
         ⬥ chain step 2: analyzing results
         ⬥ chain step 3: applying fix

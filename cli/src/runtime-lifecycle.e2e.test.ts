@@ -353,6 +353,7 @@ describe('runtime lifecycle', () => {
         "--- from: user (lifecycle-tester)
         Reply with exactly: seq-alpha
         --- from: assistant (TestBot)
+        *using deterministic-provider/deterministic-v2*
         ⬥ ok
         *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2*
         --- from: user (lifecycle-tester)
@@ -390,7 +391,7 @@ describe('runtime lifecycle', () => {
         discord,
         threadId: thread.id,
         userId: TEST_USER_ID,
-        text: 'deterministic-v2',
+        text: '%',
         timeout: 4_000,
       })
 
@@ -403,13 +404,14 @@ describe('runtime lifecycle', () => {
         if (!message.content.startsWith('*')) {
           return false
         }
-        return message.content.includes('deterministic-v2')
+        return message.content.includes('deterministic-v2') && message.content.includes('%')
       })
 
       expect(await discord.thread(thread.id).text()).toMatchInlineSnapshot(`
         "--- from: user (lifecycle-tester)
         Reply with exactly: footer-check
         --- from: assistant (TestBot)
+        *using deterministic-provider/deterministic-v2*
         ⬥ ok
         *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2*"
       `)
@@ -481,6 +483,7 @@ describe('runtime lifecycle', () => {
         "--- from: user (lifecycle-tester)
         Reply with exactly: reconnect-alpha
         --- from: assistant (TestBot)
+        *using deterministic-provider/deterministic-v2*
         ⬥ ok
         *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2*
         --- from: user (lifecycle-tester)
@@ -528,8 +531,7 @@ describe('runtime lifecycle', () => {
         "--- from: user (lifecycle-tester)
         Reply with exactly: footer-high-usage
         --- from: assistant (TestBot)
-        ⬥ ok
-        *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2*"
+        *using deterministic-provider/deterministic-v2*"
       `)
 
       const threadText = await discord.thread(thread.id).text()

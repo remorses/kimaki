@@ -328,6 +328,7 @@ describe('queue advanced: /model with interrupt recovery', () => {
         "--- from: user (queue-model-switch-tester)
         Reply with exactly: model-switcher-setup
         --- from: assistant (TestBot)
+        *using deterministic-provider/deterministic-v2*
         ⬥ ok
         *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2*
         Model set for this session:

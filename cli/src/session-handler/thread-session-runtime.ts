@@ -3050,6 +3050,12 @@ export class ThreadSessionRuntime {
         ? { variant: thinkingValue }
         : {}
 
+      await this.sendNewSessionModelInfo({
+        createdNewSession,
+        model: modelField,
+        agent: resolvedAgent,
+      })
+
       // ── Build prompt parts ──────────────────────────────────
       const images = input.images || []
       const promptWithImagePaths = (() => {
@@ -3166,20 +3172,6 @@ export class ThreadSessionRuntime {
       logger.log(
         `[INGRESS] promptAsync accepted by opencode queue sessionId=${session.id} threadId=${this.threadId}`,
       )
-
-      // Show model + agent info as first message in new sessions
-      if (createdNewSession && modelField) {
-        const modelLabel = `${modelField.providerID}/${modelField.modelID}`
-        const agentLabel =
-          resolvedAgent && resolvedAgent.toLowerCase() !== 'build'
-            ? ` ⋅ ${resolvedAgent}`
-            : ''
-        void sendThreadMessage(
-          this.thread,
-          `*using ${modelLabel}${agentLabel}*`,
-          { flags: SILENT_MESSAGE_FLAGS },
-        ).catch(() => {})
-      }
 
       this.markQueueDispatchBusy(session.id)
     })
@@ -3752,6 +3744,12 @@ export class ThreadSessionRuntime {
       modelID: earlyModelParam.modelID,
     })
 
+    await this.sendNewSessionModelInfo({
+      createdNewSession,
+      model: earlyModelParam,
+      agent: earlyAgentPreference,
+    })
+
     // ── Build prompt parts ────────────────────────────────────
     const images = input.images || []
     const promptWithImagePaths = (() => {
@@ -4130,6 +4128,39 @@ export class ThreadSessionRuntime {
     }
 
     return { session, getClient, createdNewSession }
+  }
+
+  /**
+   * Emit the model + agent banner once, before the first prompt or OpenCode
+   * command can produce visible output in a newly-created session thread.
+   */
+  private async sendNewSessionModelInfo({
+    createdNewSession,
+    model,
+    agent,
+  }: {
+    createdNewSession: boolean
+    model: { providerID: string; modelID: string }
+    agent?: string
+  }): Promise<void> {
+    if (!createdNewSession) {
+      return
+    }
+
+    const modelLabel = `${model.providerID}/${model.modelID}`
+    const agentLabel = agent && agent.toLowerCase() !== 'build'
+      ? ` ⋅ ${agent}`
+      : ''
+    const result = await errore.tryAsync(() => {
+      return sendThreadMessage(
+        this.thread,
+        `*using ${modelLabel}${agentLabel}*`,
+        { flags: SILENT_MESSAGE_FLAGS },
+      )
+    })
+    if (result instanceof Error) {
+      logger.warn(`[SESSION INFO] Failed to send model info: ${result.message}`)
+    }
   }
 
   /**

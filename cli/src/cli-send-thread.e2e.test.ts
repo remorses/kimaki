@@ -323,12 +323,14 @@ describe('kimaki send --channel thread creation', () => {
           Routes.threadMembers(threadData.id, TEST_USER_ID),
         )
 
-        // Wait for any bot reply AFTER the starter message
+        // Wait for the command detection result AFTER the starter message.
+        // New-session model banners are also bot replies, so waiting for any
+        // message can return before the command result is visible.
         await waitForBotMessageContaining({
           discord,
           threadId: threadData.id,
           userId: discord.botUserId,
-          text: '',
+          text: 'Command not found: "hello-test"',
           afterMessageId: starterMessage.id,
           timeout: 4_000,
         })

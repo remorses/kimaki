@@ -106,6 +106,7 @@ e2eTest('queue advanced: typing interrupt', () => {
         "--- from: user (queue-advanced-tester)
         Reply with exactly: typing-stop-interrupt-setup
         --- from: assistant (TestBot)
+        *using deterministic-provider/deterministic-v2*
         ⬥ ok
         *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2*
         --- from: user (queue-advanced-tester)

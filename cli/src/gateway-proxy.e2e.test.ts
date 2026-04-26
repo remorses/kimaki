@@ -419,6 +419,7 @@ describeIf('gateway-proxy e2e', () => {
         "--- from: user (proxy-tester)
         hello from gateway proxy test
         --- from: assistant (TestBot)
+        *using deterministic-provider/deterministic-v2*
         ⬥ gateway-proxy-reply
         *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2*"
       `)
@@ -454,6 +455,7 @@ describeIf('gateway-proxy e2e', () => {
         "--- from: user (proxy-tester)
         hello from gateway proxy test
         --- from: assistant (TestBot)
+        *using deterministic-provider/deterministic-v2*
         ⬥ gateway-proxy-reply
         *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2*
         --- from: user (proxy-tester)
@@ -494,6 +496,7 @@ describeIf('gateway-proxy e2e', () => {
         "--- from: user (proxy-tester)
         hello from gateway proxy test
         --- from: assistant (TestBot)
+        *using deterministic-provider/deterministic-v2*
         ⬥ gateway-proxy-reply
         *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2*
         --- from: user (proxy-tester)
@@ -538,7 +541,7 @@ describeIf('gateway-proxy e2e', () => {
         "--- from: user (proxy-tester)
         second message through proxy
         --- from: assistant (TestBot)
-        ⬥ gateway-proxy-reply"
+        *using deterministic-provider/deterministic-v2*"
       `)
       expect(reply).toBeDefined()
       expect(reply.content.trim().length).toBeGreaterThan(0)

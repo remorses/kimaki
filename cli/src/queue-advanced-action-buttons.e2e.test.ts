@@ -165,6 +165,7 @@ describe('queue advanced: action buttons', () => {
         "--- from: user (queue-action-tester)
         Reply with exactly: action-button-setup
         --- from: assistant (TestBot)
+        *using deterministic-provider/deterministic-v2*
         ⬥ ok
         *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2*
         **Action Required**
@@ -253,6 +254,7 @@ describe('queue advanced: action buttons', () => {
         "--- from: user (queue-action-tester)
         Reply with exactly: action-button-dismiss-setup
         --- from: assistant (TestBot)
+        *using deterministic-provider/deterministic-v2*
         ⬥ ok
         *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2*
         **Action Required**

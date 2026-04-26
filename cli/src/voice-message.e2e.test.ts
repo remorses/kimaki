@@ -503,6 +503,7 @@ e2eTest('voice message handling', () => {
         --- from: assistant (TestBot)
         🎤 Transcribing voice message...
         📝 **Transcribed message:** Fix the login bug in auth.ts
+        *using deterministic-provider/deterministic-v2*
         ⬥ session-reply
         *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2*"
       `)
@@ -595,6 +596,7 @@ e2eTest('voice message handling', () => {
         --- from: assistant (TestBot)
         🎤 Transcribing voice message...
         📝 **Transcribed message:** Investigate the missing content type path
+        *using deterministic-provider/deterministic-v2*
         ⬥ session-reply
         *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2*"
       `)
@@ -703,6 +705,7 @@ e2eTest('voice message handling', () => {
         "--- from: user (voice-tester)
         FAST_RESPONSE_MARKER initial setup
         --- from: assistant (TestBot)
+        *using deterministic-provider/deterministic-v2*
         ⬥ fast-response-done
         *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2*
         --- from: user (voice-tester)
@@ -952,6 +955,9 @@ e2eTest('voice message handling', () => {
       expect(await th.text()).toMatchInlineSnapshot(`
         "--- from: user (voice-tester)
         SLOW_RESPONSE_MARKER start queued task
+        --- from: assistant (TestBot)
+        *using deterministic-provider/deterministic-v2*
+        --- from: user (voice-tester)
         [attachment: voice-message.ogg]
         --- from: assistant (TestBot)
         🎤 Transcribing voice message...
@@ -1078,6 +1084,7 @@ e2eTest('voice message handling', () => {
         "--- from: user (voice-tester)
         FAST_RESPONSE_MARKER quick task
         --- from: assistant (TestBot)
+        *using deterministic-provider/deterministic-v2*
         ⬥ fast-response-done
         *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2*
         --- from: user (voice-tester)
@@ -1215,6 +1222,7 @@ e2eTest('voice message handling', () => {
         "--- from: user (voice-tester)
         FAST_RESPONSE_MARKER fast before queued voice
         --- from: assistant (TestBot)
+        *using deterministic-provider/deterministic-v2*
         ⬥ fast-response-done
         *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2*
         --- from: user (voice-tester)

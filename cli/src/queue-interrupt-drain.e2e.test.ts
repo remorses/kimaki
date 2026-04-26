@@ -123,6 +123,7 @@ e2eTest('queue + interrupt drain ordering', () => {
         "--- from: user (interrupt-tester)
         Reply with exactly: setup-interrupt-drain
         --- from: assistant (TestBot)
+        *using deterministic-provider/deterministic-v2*
         ⬥ ok
         *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2*
         --- from: user (interrupt-tester)
