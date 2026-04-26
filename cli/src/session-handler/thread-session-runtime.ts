@@ -3862,6 +3862,7 @@ export class ThreadSessionRuntime {
             command: queuedCommand.name,
             arguments: queuedCommand.arguments + (discordTag ? `\n${discordTag}` : ''),
             agent: earlyAgentPreference,
+            model: `${earlyModelParam.providerID}/${earlyModelParam.modelID}`,
             ...variantField,
           },
           { signal: commandSignal },
