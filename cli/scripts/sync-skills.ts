@@ -1,13 +1,12 @@
 #!/usr/bin/env tsx
 /**
- * Sync skills from remote repos into the repository root skills/ folder and the
- * packaged cli/skills/ copy.
+ * Sync skills from remote repos into the packaged cli/skills/ copy.
  *
  * Reimplements the core discovery logic from the `skills` npm CLI
  * (vercel-labs/skills) without depending on it. The flow is:
  *   1. Shallow-clone each source repo to ./tmp/
  *   2. Recursively walk for SKILL.md files, parse frontmatter
- *   3. Copy discovered skill directories into skills/<name>/ and cli/skills/<name>/
+ *   3. Copy discovered skill directories into cli/skills/<name>/
  *   4. Clean up temp dirs
  *
  * Usage:  pnpm sync-skills          (from cli/ or root)
@@ -279,16 +278,14 @@ async function main() {
   const scriptDir = path.dirname(new URL(import.meta.url).pathname)
   const cliDir = path.resolve(scriptDir, '..')
   const repoRootDir = path.resolve(cliDir, '..')
-  const rootSkillsDir = path.join(repoRootDir, 'skills')
   const cliSkillsDir = path.join(cliDir, 'skills')
   const tmpDir = path.join(repoRootDir, 'tmp')
 
   // Ensure output and tmp dirs exist
-  fs.mkdirSync(rootSkillsDir, { recursive: true })
   fs.mkdirSync(cliSkillsDir, { recursive: true })
   fs.mkdirSync(tmpDir, { recursive: true })
 
-  console.log(`Syncing skills to ${rootSkillsDir} and ${cliSkillsDir}\n`)
+  console.log(`Syncing skills to ${cliSkillsDir}\n`)
 
   let totalSynced = 0
 
@@ -314,10 +311,9 @@ async function main() {
       console.log(`    found ${skills.length} skill(s):`)
 
       for (const skill of skills) {
-        const rootDest = await copySkill(skill, rootSkillsDir)
         const cliDest = await copySkill(skill, cliSkillsDir)
         console.log(
-          `      - ${skill.name} -> ${path.relative(repoRootDir, rootDest)} | ${path.relative(repoRootDir, cliDest)}`,
+          `      - ${skill.name} -> ${path.relative(repoRootDir, cliDest)}`,
         )
         totalSynced++
       }
