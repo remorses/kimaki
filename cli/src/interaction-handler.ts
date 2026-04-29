@@ -23,6 +23,7 @@ import {
 import { handleToggleWorktreesCommand } from './commands/worktree-settings.js'
 import { handleWorktreesCommand } from './commands/worktrees.js'
 import { handleTasksCommand } from './commands/tasks.js'
+import { handleLastSessionsCommand } from './commands/last-sessions.js'
 
 import {
   handleResumeCommand,
@@ -223,6 +224,13 @@ export function registerInteractionHandler({
 
             case 'tasks':
               await handleTasksCommand({
+                command: interaction,
+                appId,
+              })
+              return
+
+            case 'last-sessions':
+              await handleLastSessionsCommand({
                 command: interaction,
                 appId,
               })

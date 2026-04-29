@@ -238,6 +238,11 @@ export async function registerCommands({
       .setDMPermission(false)
       .toJSON(),
     new SlashCommandBuilder()
+      .setName('last-sessions')
+      .setDescription(truncateCommandDescription('List the 20 most recently active sessions across all projects'))
+      .setDMPermission(false)
+      .toJSON(),
+    new SlashCommandBuilder()
       .setName('tasks')
       .setDescription(truncateCommandDescription('List scheduled tasks created via send --send-at'))
       .addBooleanOption((option) => {
