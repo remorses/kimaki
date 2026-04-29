@@ -3,12 +3,9 @@
 // updates the current session permission rules via OpenCode.
 
 import {
-  ChannelType,
   MessageFlags,
-  type TextChannel,
-  type ThreadChannel,
 } from 'discord.js'
-import type { PermissionRuleset } from '@opencode-ai/sdk/v2'
+import type { OpencodeClient, PermissionRuleset } from '@opencode-ai/sdk/v2'
 import fs from 'node:fs'
 import path from 'node:path'
 import type { CommandContext } from './types.js'
@@ -26,6 +23,71 @@ import { createLogger, LogPrefix } from '../logger.js'
 
 const logger = createLogger(LogPrefix.PERMISSIONS)
 const ALL_DIRECTORIES_PATTERN = '*'
+
+async function waitForSessionIdle({
+  client,
+  sessionId,
+  directory,
+  timeoutMs = 2_000,
+}: {
+  client: OpencodeClient
+  sessionId: string
+  directory: string
+  timeoutMs?: number
+}): Promise<void> {
+  const deadline = Date.now() + timeoutMs
+  while (Date.now() < deadline) {
+    const statusResponse = await client.session.status({ directory })
+    const sessionStatus = statusResponse.data?.[sessionId]
+    if (!sessionStatus || sessionStatus.type === 'idle') {
+      return
+    }
+    await new Promise((resolve) => {
+      setTimeout(resolve, 50)
+    })
+  }
+}
+
+async function restartSessionIfBusy({
+  client,
+  sessionId,
+  directory,
+}: {
+  client: OpencodeClient
+  sessionId: string
+  directory: string
+}): Promise<Error | boolean> {
+  const statusResponse = await client.session.status({ directory })
+  if (statusResponse.error) {
+    return new Error('Failed to check session status')
+  }
+
+  const sessionStatus = statusResponse.data?.[sessionId]
+  if (!sessionStatus || sessionStatus.type === 'idle') {
+    return false
+  }
+
+  const abortResponse = await client.session.abort({
+    sessionID: sessionId,
+    directory,
+  })
+  if (abortResponse.error) {
+    return new Error('Failed to abort in-progress session')
+  }
+
+  await waitForSessionIdle({ client, sessionId, directory })
+
+  const resumeResponse = await client.session.promptAsync({
+    sessionID: sessionId,
+    directory,
+    parts: [],
+  })
+  if (resumeResponse.error) {
+    return new Error('Failed to resume session')
+  }
+
+  return true
+}
 
 export function resolveDirectoryPermissionPattern({
   input,
@@ -86,13 +148,7 @@ export async function handleAddDirCommand({
     return
   }
 
-  const isThread = [
-    ChannelType.PublicThread,
-    ChannelType.PrivateThread,
-    ChannelType.AnnouncementThread,
-  ].includes(channel.type)
-
-  if (!isThread) {
+  if (!channel.isThread()) {
     await command.reply({
       content: 'This command can only be used in a thread with an active session',
       flags: MessageFlags.Ephemeral | SILENT_MESSAGE_FLAGS,
@@ -101,7 +157,7 @@ export async function handleAddDirCommand({
   }
 
   const resolvedDirectories = await resolveWorkingDirectory({
-    channel: channel as TextChannel | ThreadChannel,
+    channel,
   })
   if (!resolvedDirectories) {
     await command.reply({
@@ -159,10 +215,25 @@ export async function handleAddDirCommand({
       return
     }
 
+    const restarted = await restartSessionIfBusy({
+      client,
+      sessionId,
+      directory: resolvedDirectories.workingDirectory,
+    })
+    if (restarted instanceof Error) {
+      await command.editReply(
+        `Updated session permissions, but ${restarted.message.toLowerCase()}`,
+      )
+      return
+    }
+
+    const restartSuffix = restarted
+      ? '. Restarted the in-progress session so the change applies now'
+      : ''
     await command.editReply(
       resolvedPattern === ALL_DIRECTORIES_PATTERN
-        ? 'Updated session permissions: all external directories are now allowed'
-        : `Updated session permissions: allowed \`${resolvedPattern}\``,
+        ? `Updated session permissions: all external directories are now allowed${restartSuffix}`
+        : `Updated session permissions: allowed \`${resolvedPattern}\`${restartSuffix}`,
     )
   } catch (error) {
     logger.error('[ADD-DIR] Failed to update session permissions:', error)
