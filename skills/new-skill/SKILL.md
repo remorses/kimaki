@@ -1,5 +1,6 @@
 ---
 name: new-skill
+repo: https://github.com/remorses/kimaki
 description: >
   Best practices for creating a SKILL.md file. Covers file structure,
   frontmatter, writing style, and where to place skills in a repository.
@@ -63,11 +64,12 @@ workflows, patterns, and tools specific to this project.
 
 ## Frontmatter
 
-Every SKILL.md starts with YAML frontmatter containing two required fields:
+Every SKILL.md starts with YAML frontmatter containing three required fields:
 
 ```yaml
 ---
 name: skill-name
+repo: https://github.com/remorses/critique # replace with the canonical skill repo
 description: >
   One to three sentences explaining what this skill does and when to use it.
   Start with a noun or verb phrase. Include trigger conditions so the agent
@@ -76,10 +78,13 @@ description: >
 ```
 
 - **name**: kebab-case identifier matching the folder name
+- **repo**: canonical repository URL for the skill, usually a GitHub URL. Use the repository that owns the skill, not a synced copy or generated package path.
 - **description**: this is the most important field. The agent reads descriptions of all available skills and decides which to load based on this text. Be specific about when the skill applies. Include keywords the user might say.
 
 Good description example:
 ```yaml
+name: critique
+repo: https://github.com/remorses/critique
 description: >
   Git diff viewer. Renders diffs as web pages, images, and PDFs
   with syntax highlighting. Use this skill when working with critique
@@ -137,7 +142,17 @@ A bad skill is just a copy of the tool's README or man page. If the agent could 
 
 ## Keep the SKILL.md thin — point at canonical docs
 
-The best skills are **thin**. They contain almost no documentation themselves. Their only job is to tell the agent where to find the full, fresh docs and to forbid truncation. This keeps docs in one place and stops the skill from going stale.
+The best skills are **thin**. Keep as much user-facing documentation as possible in the repository docs, README, or CLI help output. The SKILL.md should point agents at those canonical docs so content stays fresh, then add only the agent-specific instructions that do not belong in human-facing docs.
+
+Good **agent-only instructions** include rules a human reader does not need, but an agent must follow to avoid mistakes:
+
+- **When to load the skill** and which keywords should trigger it
+- **Commands to run first**, like fetching a README or reading full `--help` output
+- **Never truncate** rules for documentation commands
+- **Agent workflow constraints**, such as which files not to edit, which package manager to use, or how to validate changes
+- **Common model failure modes**, like using stale APIs, editing generated files, or skipping required setup
+
+Do not copy the whole README into the skill. Put general explanations, examples, API docs, and user-facing guides in the repo docs instead. The skill should be the small bridge between the agent and the canonical source of truth.
 
 There are two variants:
 
@@ -173,30 +188,27 @@ curl -s https://raw.githubusercontent.com/owner/repo/main/README.md # NEVER pipe
 
 ## Examples from real skills
 
-**Simple CLI tool skill** (gitchamber — 93 lines):
+**Simple CLI tool skill** (critique):
 ```markdown
 ---
-name: gitchamber
-description: CLI to download npm packages, PyPI packages, crates, or GitHub
-  repo source code into node_modules/.gitchamber/ for analysis. Use when you
-  need to read a package's inner workings, documentation, examples, or source
-  code.
+name: critique
+repo: https://github.com/remorses/critique
+description: Git diff viewer. Renders diffs as web pages, images, and PDFs
+  with syntax highlighting. Use this skill when working with critique for
+  showing diffs, generating diff URLs, or selective hunk staging.
 ---
 
-# gitchamber
+# critique
 
-CLI to download source code for npm packages, PyPI packages, crates.io
-crates, or GitHub repos into `node_modules/.gitchamber/`.
+Git diff viewer that creates shareable web pages, images, and PDFs.
 
-Always run `gitchamber --help` first. The help output has all commands,
+Always run `critique --help` first. The help output has all commands,
 options, and examples.
 
-## Fetch packages
+## Show a diff
 
 \`\`\`bash
-chamber zod
-chamber pypi:requests
-chamber github:owner/repo
+critique --web "Describe pending changes"
 \`\`\`
 ```
 
@@ -204,6 +216,7 @@ chamber github:owner/repo
 ```markdown
 ---
 name: errore
+repo: https://github.com/remorses/errore
 description: >
   errore is Go-style error handling for TypeScript: return errors instead
   of throwing them. ALWAYS read this skill when a repo uses the errore
@@ -231,7 +244,8 @@ Before saving a new skill:
 
 1. Does the **description** clearly state when to load this skill? Would an agent reading just the description know whether to load it?
 2. Does the **name** match the folder name?
-3. Does the skill **point at a single source of truth** (README curl URL or `--help` command) instead of duplicating docs inline?
-4. Is there an explicit **"never truncate"** rule next to any docs command?
-5. Are there **concrete code examples** for the main workflows?
-6. Did you capture the **gotchas** — the things that took trial and error to figure out?
+3. Does the **repo** field point to the canonical repository URL for this skill?
+4. Does the skill **point at a single source of truth** (README curl URL or `--help` command) instead of duplicating docs inline?
+5. Is there an explicit **"never truncate"** rule next to any docs command?
+6. Are there **concrete code examples** for the main workflows?
+7. Did you capture the **gotchas** — the things that took trial and error to figure out?
