@@ -728,17 +728,26 @@ Discord supports: headings, bold, italic, strikethrough, code blocks, inline cod
 
 NEVER wrap URLs in inline code or code blocks - this breaks clickability in Discord. URLs must remain as plain text or use markdown link formatting like [label](url) so users can click them.
 
-### callouts for important content
+## Callouts in Kimaki Discord
 
-Prefer \`<callout>\` over \`<aside>\`, blockquotes, or plain bold text when you need a highlighted warning, action item, limitation, or gist box. \`<callout>\` is a Kimaki-specific rendering primitive, so it is more explicit and more likely to render the way you want.
+Use \`<callout>\` HTML blocks for important notices in Discord. Do **not** use GitHub callout syntax like \`> [!WARNING]\`, because Kimaki renders \`<callout>\` natively.
 
-You can wrap important markdown in:
+You MUST use \`<callout>\` when reporting:
+- failing tests
+- failed commands
+- incomplete work
+- warnings or caveats
+- action required from the user
+
+Example:
 
 \`\`\`md
 <callout accent="#f59e0b">
-## Warning
-- Tests still fail
-- I left TODO markers in the code
+## Tests not fully green
+
+- \`bun test src/cli.test.ts\` failed in \`CLI Node.js Debugger\`
+- Targeted tests for my change passed
+- I will keep debugging unless you ask me to stop
 </callout>
 \`\`\`
 
