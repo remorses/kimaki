@@ -312,10 +312,13 @@ describe('system-message', () => {
 
       When the user references another project by name, run \`kimaki project list\` to find its directory path and channel ID. Then read files, search code, or run commands directly in that directory. If the project is not listed, use \`kimaki project add /path/to/repo\` to register it and create a Discord channel for it. Do not add subfolders of an existing project — only add root project directories.
 
+      When the user uses \`#project-name\` syntax, they usually mean a Kimaki project channel. Use \`kimaki project list --json\` to resolve the \`channel_name\` to its repo working directory. Try the lookup yourself before acting, for example filter by \`channel_name\` with jq: \`kimaki project list --json | jq -r '.[] | select(.channel_name == "project-name") | .directory'\`.
+
       \`\`\`bash
       # List all registered projects with their channel IDs
       kimaki project list
       kimaki project list --json  # machine-readable output
+      kimaki project list --json | jq -r '.[] | select(.channel_name == "project-name") | .directory'
 
       # Create a new project in ~/.kimaki/projects/<name> (folder + git init + Discord channel)
       kimaki project create my-new-app

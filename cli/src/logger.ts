@@ -1,6 +1,6 @@
-// Prefixed logging utility using @clack/prompts for consistent visual style.
-// All log methods use clack's log.message() with appropriate symbols to prevent
-// output interleaving from concurrent async operations.
+// Prefixed logging utility using @clack/prompts for consistent stderr diagnostics and file logs.
+// Never write logger output to stdout because many CLI subcommands print
+// machine-readable data there, for example `kimaki project list --json`.
 
 import { log as clackLog } from '@clack/prompts'
 import fs from 'node:fs'
@@ -96,13 +96,14 @@ export function getLogFilePath(): string | null {
 }
 
 const MAX_LOG_ARG_LENGTH = 1000
+type LogArg = unknown
 
 function truncate(str: string, max: number): string {
   if (str.length <= max) return str
   return str.slice(0, max) + `… [truncated ${str.length - max} chars]`
 }
 
-function formatArg(arg: unknown): string {
+function formatArg(arg: LogArg): string {
   if (typeof arg === 'string') {
     return truncate(sanitizeSensitiveText(arg, { redactPaths: false }), MAX_LOG_ARG_LENGTH)
   }
@@ -110,7 +111,7 @@ function formatArg(arg: unknown): string {
   return truncate(util.inspect(safeArg, { colors: true, depth: 4 }), MAX_LOG_ARG_LENGTH)
 }
 
-export function formatErrorWithStack(error: unknown): string {
+export function formatErrorWithStack<T>(error: T): string {
   if (error instanceof Error) {
     return sanitizeSensitiveText(
       error.stack ?? `${error.name}: ${error.message}`,
@@ -128,7 +129,15 @@ export function formatErrorWithStack(error: unknown): string {
   })
 }
 
-function writeToFile(level: string, prefix: string, args: unknown[]) {
+function writeToFile({
+  level,
+  prefix,
+  args,
+}: {
+  level: string
+  prefix: string
+  args: LogArg[]
+}) {
   const timestamp = new Date().toISOString()
   const message = `[${timestamp}] [${level}] [${prefix}] ${args.map(formatArg).join(' ')}\n`
   if (!logFilePath) {
@@ -142,19 +151,19 @@ function getTimestamp(): string {
   return `${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}`
 }
 
-function padPrefix(prefix: string): string {
-  return prefix.padEnd(MAX_PREFIX_LENGTH)
-}
-
-function formatMessage(
-  timestamp: string,
-  prefix: string,
-  args: unknown[],
-): string {
+function formatMessage({
+  timestamp,
+  prefix,
+  args,
+}: {
+  timestamp: string
+  prefix: string
+  args: LogArg[]
+}): string {
   return [pc.dim(timestamp), prefix, ...args.map(formatArg)].join(' ')
 }
 
-const noSpacing = { spacing: 0 }
+const stderrLogOptions = { output: process.stderr, spacing: 0 }
 
 // Suppress clack terminal output during vitest runs to avoid flooding
 // test output with hundreds of log lines. File logging still works.
@@ -164,50 +173,52 @@ const isVitest = !!process.env['KIMAKI_VITEST']
 const showTestLogs = isVitest && !!process.env['KIMAKI_TEST_LOGS']
 
 export function createLogger(prefix: LogPrefixType | string) {
-  const paddedPrefix = padPrefix(prefix)
+  const paddedPrefix = prefix.padEnd(MAX_PREFIX_LENGTH)
   const suppressConsole = isVitest && !showTestLogs
-  const log = (...args: unknown[]) => {
-    writeToFile('LOG', prefix, args)
+  const log = (...args: LogArg[]) => {
+    writeToFile({ level: 'LOG', prefix, args })
     if (suppressConsole) {
       return
     }
     clackLog.message(
-      formatMessage(getTimestamp(), pc.cyan(paddedPrefix), args),
-      {
-        ...noSpacing,
-      },
+      formatMessage({ timestamp: getTimestamp(), prefix: pc.cyan(paddedPrefix), args }),
+      stderrLogOptions,
     )
   }
   return {
     log,
-    error: (...args: unknown[]) => {
-      writeToFile('ERROR', prefix, args)
+    error: (...args: LogArg[]) => {
+      writeToFile({ level: 'ERROR', prefix, args })
       if (suppressConsole) {
         return
       }
       clackLog.error(
-        formatMessage(getTimestamp(), pc.red(paddedPrefix), args),
-        noSpacing,
+        formatMessage({ timestamp: getTimestamp(), prefix: pc.red(paddedPrefix), args }),
+        stderrLogOptions,
       )
     },
-    warn: (...args: unknown[]) => {
-      writeToFile('WARN', prefix, args)
+    warn: (...args: LogArg[]) => {
+      writeToFile({ level: 'WARN', prefix, args })
       if (suppressConsole) {
         return
       }
       clackLog.warn(
-        formatMessage(getTimestamp(), pc.yellow(paddedPrefix), args),
-        noSpacing,
+        formatMessage({
+          timestamp: getTimestamp(),
+          prefix: pc.yellow(paddedPrefix),
+          args,
+        }),
+        stderrLogOptions,
       )
     },
-    info: (...args: unknown[]) => {
-      writeToFile('INFO', prefix, args)
+    info: (...args: LogArg[]) => {
+      writeToFile({ level: 'INFO', prefix, args })
       if (suppressConsole) {
         return
       }
       clackLog.info(
-        formatMessage(getTimestamp(), pc.blue(paddedPrefix), args),
-        noSpacing,
+        formatMessage({ timestamp: getTimestamp(), prefix: pc.blue(paddedPrefix), args }),
+        stderrLogOptions,
       )
     },
     debug: log,
