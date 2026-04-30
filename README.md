@@ -109,7 +109,7 @@ npx -y kimaki@latest
 npx -y kimaki project add [directory]
 
 # Start a session programmatically
-npx -y kimaki send --channel <channel-id> --prompt "your prompt"
+npx -y kimaki send --channel <channel-id> --prompt 'your prompt'
 
 # Upgrade kimaki and restart
 npx -y kimaki upgrade

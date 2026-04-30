@@ -71,13 +71,13 @@ thread.
 ```bash
 # Create new sandbox + thread
 kimaki send --channel 123 --new-sandbox \
-  --prompt "Fix the auth bug" \
+  --prompt 'Fix the auth bug' \
   --sandbox-provider vercel \
   --sandbox-repo github.com/user/app
 
 # Reuse existing sandbox
 kimaki send --channel 123 --sandbox my-frontend-sandbox \
-  --prompt "Continue fixing the auth bug"
+  --prompt 'Continue fixing the auth bug'
 
 # Shorthand: just --sandbox with a name that doesn't exist yet
 # → creates it (if --sandbox-provider is also given)
@@ -447,7 +447,7 @@ User: /sandbox sandbox:my-frontend-sandbox prompt:"add dark mode"
 ### Flow 3: kimaki send --sandbox
 
 ```bash
-kimaki send --channel 123 --sandbox my-sandbox --prompt "run tests"
+kimaki send --channel 123 --sandbox my-sandbox --prompt 'run tests'
 
 1. CLI resolves sandbox by name from DB
 2. Creates Discord thread
@@ -460,7 +460,7 @@ kimaki send --channel 123 --sandbox my-sandbox --prompt "run tests"
 ```bash
 kimaki send --channel 123 --new-sandbox \
   --sandbox-provider daytona \
-  --prompt "set up CI pipeline"
+  --prompt 'set up CI pipeline'
 
 1. CLI reads provider config from DB
 2. Calls provider.create()

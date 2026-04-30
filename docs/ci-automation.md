@@ -53,9 +53,9 @@ jobs:
           KIMAKI_BOT_TOKEN: ${{ secrets.KIMAKI_BOT_TOKEN }}
         run: |
           npx -y kimaki send \
-            --channel "1234567890123456789" \
-            --prompt "Investigate issue ${{ github.event.issue.html_url }} using gh cli. Try fixing it in a new worktree ./${{ github.event.issue.number }}" \
-            --name "Issue #${{ github.event.issue.number }}"
+            --channel '1234567890123456789' \
+            --prompt 'Investigate issue ${{ github.event.issue.html_url }} using gh cli. Try fixing it in a new worktree ./${{ github.event.issue.number }}' \
+            --name 'Issue #${{ github.event.issue.number }}'
 ```
 
 **Setup:**
@@ -103,18 +103,18 @@ Add `--send-at` to any `kimaki send` command to schedule it for later. Supports 
 
 ```bash
 # One-time: run at a specific UTC time
-kimaki send --channel <channel-id> --prompt "Review open PRs" \
-  --send-at "2026-03-01T09:00:00Z"
+kimaki send --channel <channel-id> --prompt 'Review open PRs' \
+  --send-at '2026-03-01T09:00:00Z'
 
 # Recurring: every Monday at 9am UTC
 kimaki send --channel <channel-id> \
-  --prompt "Run weekly test suite and summarize failures" \
-  --send-at "0 9 * * 1"
+  --prompt 'Run weekly test suite and summarize failures' \
+  --send-at '0 9 * * 1'
 
 # Schedule a reminder into an existing thread
 kimaki send --session <session-id> \
-  --prompt "Reminder: <@user-id> check back on this thread" \
-  --send-at "2026-03-01T15:00:00Z" --notify-only
+  --prompt 'Reminder: <@user-id> check back on this thread' \
+  --send-at '2026-03-01T15:00:00Z' --notify-only
 ```
 
 All other `send` flags (`--notify-only`, `--worktree`, `--agent`, `--model`, `--user`) work with `--send-at`. The only exception is `--wait`, which is incompatible since the task runs in the future.
@@ -129,21 +129,21 @@ Format: `tool:action` or `tool:pattern:action`. Actions: `allow`, `deny`, `ask`.
 
 ```bash
 # Read-only session (no edits, no bash)
-kimaki send -c 123 -p "Review this code" \
-  --permission "bash:deny" \
-  --permission "edit:deny"
+kimaki send -c 123 -p 'Review this code' \
+  --permission 'bash:deny' \
+  --permission 'edit:deny'
 
 # Only allow git commands
-kimaki send -c 123 -p "Check git history" \
-  --permission "bash:git *:allow" \
-  --permission "bash:*:deny"
+kimaki send -c 123 -p 'Check git history' \
+  --permission 'bash:git *:allow' \
+  --permission 'bash:*:deny'
 
 # Deny everything except reading
-kimaki send -c 123 -p "Analyze the codebase" \
-  --permission "*:deny" \
-  --permission "read:allow" \
-  --permission "glob:allow" \
-  --permission "grep:allow"
+kimaki send -c 123 -p 'Analyze the codebase' \
+  --permission '*:deny' \
+  --permission 'read:allow' \
+  --permission 'glob:allow' \
+  --permission 'grep:allow'
 ```
 
 Rules are evaluated with `findLast()` — later rules override earlier ones. The `--permission` flag works with `--send-at` (scheduled tasks) and `--thread`/`--session` (existing threads) too.

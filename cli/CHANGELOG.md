@@ -190,7 +190,7 @@
 
 ## 0.4.92
 
-1. **Fixed `/command-cmd` prompts being sent to the model when the bot starts up** — when using `kimaki send --prompt "/hello-test-cmd"` (or any `/commandname-cmd` prompt), the command was routed as plain text to the model instead of being executed via `session.command`. This happened because the registered commands list is empty during the gateway startup race (before `backgroundInit` completes). The detector now falls back to suffix-stripping (`-cmd`, `-skill`, `-mcp-prompt`) when the list is empty, so commands are correctly routed regardless of startup timing. Fixes [#97](https://github.com/remorses/kimaki/issues/97).
+1. **Fixed `/command-cmd` prompts being sent to the model when the bot starts up** — when using `kimaki send --prompt '/hello-test-cmd'` (or any `/commandname-cmd` prompt), the command was routed as plain text to the model instead of being executed via `session.command`. This happened because the registered commands list is empty during the gateway startup race (before `backgroundInit` completes). The detector now falls back to suffix-stripping (`-cmd`, `-skill`, `-mcp-prompt`) when the list is empty, so commands are correctly routed regardless of startup timing. Fixes [#97](https://github.com/remorses/kimaki/issues/97).
 
 2. **Footer truncates long folder and branch names** — project directory names and branch names longer than 15 characters are now capped with a `…` suffix so the footer line stays compact in Discord.
 
@@ -200,8 +200,8 @@
 
 1. **New `--cwd` flag for `kimaki send`** — start a session using an existing git worktree directory instead of the main project directory:
    ```bash
-   kimaki send --channel <id> --prompt "task" --cwd /path/to/worktree
-   kimaki send --channel <id> --prompt "task" --cwd /path/to/worktree --send-at "2026-04-07T09:00:00Z"
+   kimaki send --channel <id> --prompt 'task' --cwd /path/to/worktree
+   kimaki send --channel <id> --prompt 'task' --cwd /path/to/worktree --send-at '2026-04-07T09:00:00Z'
    ```
    The path is validated against `git worktree list` to ensure it belongs to the project. If `--cwd` points to the main project directory it is silently ignored.
 
@@ -231,8 +231,8 @@
 
 1. **New `--injection-guard` flag for `kimaki send`** — enable prompt-injection scanning only for the session you are starting, without turning it on globally for the whole project:
    ```bash
-   kimaki send --prompt "Review this repo safely" --injection-guard "bash:*"
-   kimaki send --thread <thread-id> --prompt "Continue with web checks" --injection-guard "webfetch:*"
+   kimaki send --prompt 'Review this repo safely' --injection-guard 'bash:*'
+   kimaki send --thread <thread-id> --prompt 'Continue with web checks' --injection-guard 'webfetch:*'
    ```
    Patterns use the form `tool:argsGlob`, and you can repeat the flag multiple times to scan several tool families in one session.
 
@@ -373,9 +373,9 @@
 
 2. **New `--permission` flag for `kimaki send`** — restrict which tools an OpenCode session can use on a per-send basis:
    ```bash
-   kimaki send "Fix the bug" --permission "bash:deny"
-   kimaki send "Review only" --permission "edit:deny" --permission "write:deny"
-   kimaki send "Run tests"   --permission "bash:git *:allow"
+   kimaki send 'Fix the bug' --permission 'bash:deny'
+   kimaki send 'Review only' --permission 'edit:deny' --permission 'write:deny'
+   kimaki send 'Run tests'   --permission 'bash:git *:allow'
    ```
    Format is `tool:action` or `tool:pattern:action`. Rules are appended after base permissions so they take priority.
 
