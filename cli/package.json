@@ -4,7 +4,7 @@
   "type": "module",
   "version": "0.7.1",
   "scripts": {
-    "dev": "bun --env-file .env src/bin.ts",
+    "dev": "tsx src/bin.ts",
     "prepublishOnly": "pnpm build",
     "build": "pnpm prepare-skills && pnpm generate && pnpm tsc",
     "watch": "tsx scripts/watch-session.ts",
