@@ -1880,16 +1880,24 @@ cli
       enableSkill?: string[]
       disableSkill?: string[]
     }) => {
-      // Guard: only one kimaki bot process can run at a time (they share a lock
-      // port). Running `kimaki` here would kill the already-running bot process
-      // and take over the lock port, breaking all active Discord sessions.
-      if (process.env.KIMAKI_OPENCODE_PROCESS) {
+      // Guard: only one kimaki bot process can run per lock port. Agents may run
+      // a second dev bot only when they explicitly choose a different lock port.
+      const parentLockPort = process.env.KIMAKI_PARENT_LOCK_PORT
+      const currentLockPort = process.env.KIMAKI_LOCK_PORT
+      const usesDifferentLockPort = currentLockPort !== parentLockPort
+
+      if (process.env.KIMAKI_OPENCODE_PROCESS && !usesDifferentLockPort) {
         cliLogger.error(
           'Cannot run `kimaki` inside an OpenCode session — it would kill the already-running bot process.\n' +
           'Only one kimaki bot can run at a time (they share a lock port).\n' +
-          'Use `kimaki send`, `kimaki session`, or other subcommands instead.',
+          'Set KIMAKI_LOCK_PORT to a different port for an isolated dev process, or use `kimaki send`, `kimaki session`, and other subcommands instead.',
         )
         process.exit(EXIT_NO_RESTART)
+      }
+
+      if (process.env.KIMAKI_OPENCODE_PROCESS && usesDifferentLockPort) {
+        delete process.env['KIMAKI_DB_URL']
+        delete process.env['KIMAKI_DB_AUTH_TOKEN']
       }
 
       try {

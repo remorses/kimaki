@@ -717,6 +717,7 @@ async function startSingleServer({
         KIMAKI: '1',
         KIMAKI_DATA_DIR: getDataDir(),
         KIMAKI_LOCK_PORT: getLockPort().toString(),
+        KIMAKI_PARENT_LOCK_PORT: getLockPort().toString(),
         ...(gatewayToken && { KIMAKI_DB_AUTH_TOKEN: gatewayToken }),
         // Guard: prevents agents from running `kimaki` root command inside
         // an OpenCode session, which would steal the lock port and break the bot.
