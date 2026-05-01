@@ -52,7 +52,6 @@ import {
 } from '../database.js'
 import {
   showPermissionButtons,
-  cleanupPermissionContext,
   addPermissionRequestToContext,
   arePatternsCoveredBy,
   pendingPermissionContexts,
@@ -2599,7 +2598,7 @@ export class ThreadSessionRuntime {
     if (!pending) {
       return
     }
-    cleanupPermissionContext(pending.contextHash)
+    pendingPermissionContexts.delete(pending.contextHash)
     threadPermissions.delete(properties.requestID)
     if (threadPermissions.size === 0) {
       pendingPermissions.delete(this.thread.id)

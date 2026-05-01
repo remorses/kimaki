@@ -11,12 +11,47 @@ import {
   MessageFlags,
 } from 'discord.js'
 import crypto from 'node:crypto'
-import type { PermissionRequest } from '@opencode-ai/sdk/v2'
+import type { OpencodeClient, PermissionRequest } from '@opencode-ai/sdk/v2'
 import { getOpencodeClient } from '../opencode.js'
 import { NOTIFY_MESSAGE_FLAGS } from '../discord-utils.js'
 import { createLogger, LogPrefix } from '../logger.js'
 
 const logger = createLogger(LogPrefix.PERMISSIONS)
+
+async function resumeSessionIfIdleAfterPermission({
+  client,
+  sessionId,
+  directory,
+}: {
+  client: OpencodeClient
+  sessionId: string
+  directory: string
+}): Promise<Error | boolean> {
+  await new Promise((resolve) => {
+    setTimeout(resolve, 100)
+  })
+
+  const statusResponse = await client.session.status({ directory })
+  if (statusResponse.error) {
+    return new Error('Failed to check session status')
+  }
+
+  const sessionStatus = statusResponse.data?.[sessionId]
+  if (!sessionStatus || sessionStatus.type !== 'idle') {
+    return false
+  }
+
+  const resumeResponse = await client.session.promptAsync({
+    sessionID: sessionId,
+    directory,
+    parts: [],
+  })
+  if (resumeResponse.error) {
+    return new Error('Failed to resume session')
+  }
+
+  return true
+}
 
 function wildcardMatch({
   value,
@@ -145,6 +180,10 @@ export async function showPermissionButtons({
         }),
       ).catch((error) => {
         logger.error('Failed to auto-reject expired permission:', error)
+      })
+      updatePermissionMessage({
+        context: ctx,
+        status: '_Permission expired after 10 minutes and was rejected._',
       })
     }
   }, PERMISSION_CONTEXT_TTL_MS).unref()
@@ -305,16 +344,19 @@ export async function handlePermissionButton(
     return
   }
 
-  const response = actionPart.replace('permission_', '') as
-    | 'once'
-    | 'always'
-    | 'reject'
+  const response = actionPart.replace('permission_', '')
+  if (response !== 'once' && response !== 'always' && response !== 'reject') {
+    return
+  }
 
   // Atomic take: if TTL already expired and auto-rejected, context is gone.
   const context = takePendingPermissionContext(contextHash)
 
   if (!context) {
-    await interaction.update({ components: [] })
+    await interaction.update({
+      content: '_Permission expired and was already rejected. Send a new message to continue._',
+      components: [],
+    })
     return
   }
 
@@ -338,6 +380,20 @@ export async function handlePermissionButton(
         })
       }),
     )
+
+    if (response !== 'reject') {
+      const resumed = await resumeSessionIfIdleAfterPermission({
+        client: permClient,
+        sessionId: context.permission.sessionID,
+        directory: context.permissionDirectory,
+      })
+      if (resumed instanceof Error) {
+        logger.error('Failed to resume idle session after permission:', resumed)
+      }
+      if (resumed === true) {
+        logger.log(`Resumed idle session after permission ${context.permission.id}`)
+      }
+    }
 
     // Context already removed by takePendingPermissionContext above.
 
@@ -387,11 +443,4 @@ export function addPermissionRequestToContext({
   context.requestIds = [...context.requestIds, requestId]
   pendingPermissionContexts.set(contextHash, context)
   return true
-}
-
-/**
- * Clean up a pending permission context (e.g., on auto-reject).
- */
-export function cleanupPermissionContext(contextHash: string): void {
-  pendingPermissionContexts.delete(contextHash)
 }
