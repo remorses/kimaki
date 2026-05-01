@@ -1,9 +1,11 @@
 [submodule "errore"]
 	path = errore
 	url = https://github.com/remorses/errore.git
+	branch = main
 [submodule "traforo"]
 	path = traforo
 	url = https://github.com/remorses/traforo.git
+	branch = main
 [submodule "gateway-proxy"]
 	path = gateway-proxy
 	url = https://github.com/remorses/gateway-proxy.git
@@ -11,3 +13,4 @@
 [submodule "opencode-injection-guard"]
 	path = opencode-injection-guard
 	url = https://github.com/remorses/opencode-injection-guard.git
+	branch = main
