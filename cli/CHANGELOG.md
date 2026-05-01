@@ -1,5 +1,23 @@
 # Changelog
 
+## 0.8.0
+
+1. **New `/last-sessions` command** — list the 20 most recently active sessions across all projects, sorted by last activity. Shows a table with clickable thread links and project names:
+
+   ```text
+   /last-sessions
+   ```
+
+2. **Model and agent banner on new sessions** — when a new session thread is created, Kimaki now sends a silent status message showing the active model and agent (e.g. "using anthropic/claude-sonnet-4 · build"), so you always know which model is handling your request.
+
+3. **`/add-dir` now applies to busy sessions immediately** — previously the permission update only took effect on the next turn. Now Kimaki aborts and restarts any active run in the affected session so OpenCode picks up the new permissions right away. Idle sessions are left untouched.
+
+4. **Resume idle sessions after permission replies** — permission accepts that arrive after OpenCode has already gone idle (e.g. from auto-rejected or interrupted runs) now resume the session automatically. Expired permission prompts also update their Discord message to explain the expiry.
+
+5. **CLI JSON output is pipe-safe** — logger diagnostics are now routed to stderr so subcommands like `kimaki project list --json` can safely pipe stdout to `jq` without noise.
+
+6. **Fix: resolved model now passed correctly to opencode user commands** — custom opencode commands receive the correct model override instead of the default.
+
 ## 0.7.1
 
 1. **Fix: Claude subagent sessions (Task tool) now work correctly** — the Anthropic auth plugin now handles the subagent prompt structure. Subagent sessions spawned via the Task tool use a different system prompt format ("You are powered by the model named…" + `<env>` block) instead of the main-session `OPENCODE_IDENTITY` marker. The plugin now strips both patterns correctly, so Claude API calls from subagents no longer fail with malformed/oversized system prompts.
