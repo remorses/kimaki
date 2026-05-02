@@ -1097,11 +1097,19 @@ async function startOAuthFlow(
       return
     }
 
-    const { url, method, instructions } = (await authorizeRes.json()) as {
+    const loginData = (await authorizeRes.json()) as {
       url: string
       method: 'auto' | 'code'
       instructions: string
+    } | null
+    if (!loginData) {
+      await interaction.editReply({
+        content: 'Failed to parse authorization response',
+        components: [],
+      })
+      return
     }
+    const { url, method, instructions } = loginData
 
     let message = `**Authenticating with ${ctx.providerName}**\n\n`
     message += `Open this URL to authorize:\n${url}\n\n`

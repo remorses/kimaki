@@ -1131,8 +1131,8 @@ async function resolveCredentials({
           const data = (await resp.json()) as {
             guild_id?: string
             discord_user_id?: string
-          }
-          if (data.guild_id) {
+          } | null
+          if (data?.guild_id) {
             guildId = data.guild_id
             installerDiscordUserId = data.discord_user_id
             break

@@ -82,8 +82,8 @@ export async function getLatestNpmVersion(): Promise<string | null> {
     if (!res.ok) {
       return null
     }
-    const data = (await res.json()) as { version: string }
-    return data.version
+    const data = (await res.json()) as { version: string } | null
+    return data?.version ?? null
   } catch {
     return null
   }
