@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.8.1
+
+1. **Fixed Bun crash on startup** — `bunx --bun kimaki@latest` crashed with `TypeError: null is not an object (evaluating 'body.pid')` during Hrana server startup because Bun's `response.json()` can return `null` instead of throwing. Added null guards across all fetch `.json()` call sites.
+
 ## 0.8.0
 
 1. **New `/last-sessions` command** — list the 20 most recently active sessions across all projects, sorted by last activity. Shows a table with clickable thread links and project names:
