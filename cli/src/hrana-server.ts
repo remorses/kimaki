@@ -260,7 +260,7 @@ export async function evictExistingInstance({ port }: { port: number }) {
   const body = await (probe.json() as Promise<{ pid?: number }>).catch(
     (e) => new FetchError({ url, cause: e }),
   )
-  if (body instanceof Error) return
+  if (body instanceof Error || !body) return
 
   const targetPid = body.pid
   if (!targetPid || targetPid === process.pid) return
