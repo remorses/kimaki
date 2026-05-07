@@ -1,5 +1,5 @@
 // Drizzle schema for Kimaki's local SQLite database.
-// Mirrors the existing generated tables so user databases keep working.
+// Defines the tables created by src/schema.sql during local database startup.
 
 import { defineRelations } from 'drizzle-orm'
 import * as orm from 'drizzle-orm'

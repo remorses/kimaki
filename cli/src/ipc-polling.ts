@@ -1,7 +1,7 @@
 // IPC polling bridge between the opencode plugin and the Discord bot.
 // The plugin inserts rows into ipc_requests (via Drizzle). This module polls
 // that table, claims pending rows atomically, and dispatches them by type.
-// Replaces the old HTTP lock-server approach with DB-based IPC.
+// DB-backed IPC lets the OpenCode plugin request Discord UI interactions.
 
 import * as errore from 'errore'
 import { createTaggedError } from 'errore'

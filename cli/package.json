@@ -6,7 +6,7 @@
   "scripts": {
     "dev": "tsx src/bin.ts",
     "prepublishOnly": "pnpm build",
-    "build": "pnpm prepare-skills && pnpm generate && pnpm tsc",
+    "build": "rm -rf dist && pnpm prepare-skills && pnpm generate && pnpm tsc",
     "watch": "tsx scripts/watch-session.ts",
     "generate": "pnpm generate:sql",
     "generate:sql": "tsx scripts/generate-schema-sql.ts",
@@ -26,7 +26,6 @@
     "dist",
     "src",
     "skills",
-    "drizzle.config.ts",
     "bin.js"
   ],
   "devDependencies": {
