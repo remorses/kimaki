@@ -32,6 +32,8 @@ bunx critique main...new-branch --web "Describe branch changes"
 # Share a single commit
 bunx critique --commit HEAD --web "Describe latest commit"
 
+If the user asks to see a diff and you already committed the changes, prefer showing a separate diff URL for each commit instead of one unified diff. Run one \`bunx critique --commit <hash> --web\` per commit so each change is clearly scoped. Run all the critique calls in parallel tool calls.
+
 If there are other unrelated changes in the working directory, filter to only show the files you edited:
 
 # Share only specific files
