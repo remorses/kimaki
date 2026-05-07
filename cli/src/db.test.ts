@@ -1,8 +1,10 @@
-// Tests for Prisma client initialization and schema migration.
+// Tests for Drizzle client initialization and schema migration.
 // Auto-isolated via VITEST guards in config.ts (temp data dir) and db.ts (clears KIMAKI_DB_URL).
 
 import { afterAll, describe, expect, test } from 'vitest'
-import { getPrisma, closePrisma } from './db.js'
+import { closeDb, getDb } from './db.js'
+import * as orm from 'drizzle-orm'
+import * as schema from './schema.js'
 import {
   appendSessionEventsSinceLastTimestamp,
   createPendingWorktree,
@@ -10,32 +12,32 @@ import {
 } from './database.js'
 
 afterAll(async () => {
-  await closePrisma()
+  await closeDb()
 })
 
-describe('getPrisma', () => {
+describe('getDb', () => {
   test('creates sqlite file and migrates schema automatically', async () => {
-    const prisma = await getPrisma()
+    const db = await getDb()
 
-    const session = await prisma.thread_sessions.create({
-      data: { thread_id: 'test-thread-123', session_id: 'test-session-456' },
-    })
+    const [session] = await db.insert(schema.thread_sessions)
+      .values({ thread_id: 'test-thread-123', session_id: 'test-session-456' })
+      .returning()
+    expect(session).toBeDefined()
+    if (!session) throw new Error('Expected inserted session row')
     expect(session.thread_id).toBe('test-thread-123')
     expect(session.created_at).toBeInstanceOf(Date)
 
-    const found = await prisma.thread_sessions.findUnique({
+    const found = await db.query.thread_sessions.findFirst({
       where: { thread_id: session.thread_id },
     })
     expect(found?.session_id).toBe('test-session-456')
 
     // Cleanup test data
-    await prisma.thread_sessions.delete({
-      where: { thread_id: 'test-thread-123' },
-    })
+    await db.delete(schema.thread_sessions).where(orm.eq(schema.thread_sessions.thread_id, 'test-thread-123'))
   })
 
   test('createPendingWorktree creates parent and child rows', async () => {
-    const prisma = await getPrisma()
+    const db = await getDb()
     const threadId = `test-worktree-${Date.now()}`
 
     await createPendingWorktree({
@@ -44,13 +46,13 @@ describe('getPrisma', () => {
       projectDirectory: '/tmp/regression-project',
     })
 
-    const session = await prisma.thread_sessions.findUnique({
+    const session = await db.query.thread_sessions.findFirst({
       where: { thread_id: threadId },
     })
     expect(session).toBeTruthy()
     expect(session?.session_id).toBe('')
 
-    const worktree = await prisma.thread_worktrees.findUnique({
+    const worktree = await db.query.thread_worktrees.findFirst({
       where: { thread_id: threadId },
     })
     expect(worktree).toBeTruthy()
@@ -58,23 +60,21 @@ describe('getPrisma', () => {
     expect(worktree?.project_directory).toBe('/tmp/regression-project')
     expect(worktree?.status).toBe('pending')
 
-    await prisma.thread_worktrees.delete({ where: { thread_id: threadId } })
-    await prisma.thread_sessions.delete({ where: { thread_id: threadId } })
+    await db.delete(schema.thread_worktrees).where(orm.eq(schema.thread_worktrees.thread_id, threadId))
+    await db.delete(schema.thread_sessions).where(orm.eq(schema.thread_sessions.thread_id, threadId))
   })
 
   test('session event persistence uses (timestamp, event_index) ordering for deterministic same-ms replay', async () => {
-    const prisma = await getPrisma()
+    const db = await getDb()
     const threadId = 'test-session-events-thread'
     const sessionId = 'test-session-events-session'
 
-    await prisma.session_events.deleteMany({ where: { session_id: sessionId } })
-    await prisma.thread_sessions.deleteMany({ where: { thread_id: threadId } })
+    await db.delete(schema.session_events).where(orm.eq(schema.session_events.session_id, sessionId))
+    await db.delete(schema.thread_sessions).where(orm.eq(schema.thread_sessions.thread_id, threadId))
 
-    await prisma.thread_sessions.create({
-      data: { thread_id: threadId, session_id: sessionId },
-    })
+    await db.insert(schema.thread_sessions).values({ thread_id: threadId, session_id: sessionId })
 
-    const baseTimestamp = 1_700_000_000_000n
+    const baseTimestamp = 1_700_000_000_000
 
     const inserted1 = await appendSessionEventsSinceLastTimestamp({
       sessionId,
@@ -156,7 +156,7 @@ describe('getPrisma', () => {
       }
     `)
 
-    await prisma.session_events.deleteMany({ where: { session_id: sessionId } })
-    await prisma.thread_sessions.deleteMany({ where: { thread_id: threadId } })
+    await db.delete(schema.session_events).where(orm.eq(schema.session_events.session_id, sessionId))
+    await db.delete(schema.thread_sessions).where(orm.eq(schema.thread_sessions.thread_id, threadId))
   })
 })

@@ -10,7 +10,6 @@ import {
   getChannelWorktreesEnabled,
   getChannelMentionMode,
   getChannelDirectory,
-  getPrisma,
   cancelAllPendingIpcRequests,
   deleteChannelDirectoryById,
   createPendingWorktree,
@@ -91,7 +90,6 @@ export {
   initDatabase,
   closeDatabase,
   getChannelDirectory,
-  getPrisma,
 } from './database.js'
 export { initializeOpencodeForDirectory } from './opencode.js'
 export {

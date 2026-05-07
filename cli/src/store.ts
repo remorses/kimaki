@@ -4,7 +4,7 @@
 // See skills/zustand-centralized-state/SKILL.md for the pattern.
 
 import { createStore } from 'zustand/vanilla'
-import type { VerbosityLevel } from './generated/client.js'
+import type { VerbosityLevel } from './schema.js'
 import type { ThreadRunState } from './session-handler/thread-runtime-state.js'
 
 // Registered user commands, populated by registerCommands() in cli.ts.

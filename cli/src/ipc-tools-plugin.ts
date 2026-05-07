@@ -46,7 +46,7 @@ const ACTION_BUTTON_TIMEOUT_MS = 30 * 1000
 
 async function loadDatabaseModule() {
   // The plugin-loading e2e test boots OpenCode directly without the bot-side
-  // Hrana env vars. Lazy-loading avoids pulling Prisma + libsql sqlite mode
+  // Hrana env vars. Lazy-loading avoids opening libSQL sqlite mode
   // during plugin startup when no IPC tool is being executed yet.
   return import('./database.js')
 }
@@ -91,21 +91,17 @@ const ipcToolsPlugin: any = async () => {
             ),
         },
         async execute({ prompt, maxFiles }, context) {
-          const { getPrisma, createIpcRequest, getIpcRequestById } = await loadDatabaseModule()
-          const prisma = await getPrisma()
-          const row = await prisma.thread_sessions.findFirst({
-            where: { session_id: context.sessionID },
-            select: { thread_id: true },
-          })
+          const { getThreadIdBySessionId, createIpcRequest, getIpcRequestById } = await loadDatabaseModule()
+          const threadId = await getThreadIdBySessionId(context.sessionID)
 
-          if (!row?.thread_id) {
+          if (!threadId) {
             return 'Could not find thread for current session'
           }
 
           const ipcRow = await createIpcRequest({
             type: 'file_upload',
             sessionId: context.sessionID,
-            threadId: row.thread_id,
+            threadId,
             payload: JSON.stringify({
               prompt,
               maxFiles: maxFiles || DEFAULT_FILE_UPLOAD_MAX_FILES,
@@ -183,21 +179,17 @@ const ipcToolsPlugin: any = async () => {
             ),
         },
         async execute({ buttons }, context) {
-          const { getPrisma, createIpcRequest, getIpcRequestById } = await loadDatabaseModule()
-          const prisma = await getPrisma()
-          const row = await prisma.thread_sessions.findFirst({
-            where: { session_id: context.sessionID },
-            select: { thread_id: true },
-          })
+          const { getThreadIdBySessionId, createIpcRequest, getIpcRequestById } = await loadDatabaseModule()
+          const threadId = await getThreadIdBySessionId(context.sessionID)
 
-          if (!row?.thread_id) {
+          if (!threadId) {
             return 'Could not find thread for current session'
           }
 
           const ipcRow = await createIpcRequest({
             type: 'action_buttons',
             sessionId: context.sessionID,
-            threadId: row.thread_id,
+            threadId,
             payload: JSON.stringify({
               buttons,
               directory: context.directory,

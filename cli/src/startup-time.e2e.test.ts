@@ -4,7 +4,7 @@
 //
 // Measures each phase independently:
 //   1. Hrana server start (DB + lock port)
-//   2. Database init (Prisma connect via HTTP)
+//   2. Database init (Drizzle/libSQL connect via HTTP)
 //   3. Discord.js client creation + login (Gateway READY)
 //   4. startDiscordBot (event handlers + markDiscordGatewayReady)
 //   5. OpenCode server startup (spawn + health poll)

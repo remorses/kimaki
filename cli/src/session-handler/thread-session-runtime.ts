@@ -40,7 +40,7 @@ import { formatPart } from '../message-formatting.js'
 import {
   getChannelVerbosity,
   getPartMessageIds,
-  getPrisma,
+  getDb,
   setPartMessage,
   getThreadSession,
   setThreadSession,
@@ -51,6 +51,8 @@ import {
   appendSessionEventsSinceLastTimestamp,
   getSessionEventSnapshot,
 } from '../database.js'
+import * as orm from 'drizzle-orm'
+import * as schema from '../schema.js'
 import {
   showPermissionButtons,
   addPermissionRequestToContext,
@@ -889,7 +891,7 @@ export class ThreadSessionRuntime {
         {
           session_id: sessionId,
           thread_id: this.threadId,
-          timestamp: BigInt(entry.timestamp),
+          timestamp: entry.timestamp,
           event_index: entry.eventIndex || 0,
           event_json: JSON.stringify(entry.event),
         },
@@ -1873,7 +1875,7 @@ export class ThreadSessionRuntime {
       )
       return
     }
-    await setPartMessage(part.id, sendResult.id, this.thread.id)
+    await setPartMessage({ partId: part.id, messageId: sendResult.id, threadId: this.thread.id })
     if (repulseTyping) {
       this.requestTypingRepulse()
     }
@@ -2206,7 +2208,7 @@ export class ThreadSessionRuntime {
               )
               return
             }
-            await setPartMessage(part.id, sendResult.id, this.thread.id)
+            await setPartMessage({ partId: part.id, messageId: sendResult.id, threadId: this.thread.id })
           }
         }
       }
@@ -2404,7 +2406,7 @@ export class ThreadSessionRuntime {
       newIds.add(part.id)
       return { ...t, sentPartIds: newIds }
     })
-    await setPartMessage(part.id, sendResult.id, this.thread.id)
+    await setPartMessage({ partId: part.id, messageId: sendResult.id, threadId: this.thread.id })
     this.requestTypingRepulse()
   }
 
@@ -2940,22 +2942,20 @@ export class ThreadSessionRuntime {
   }
 
   private async loadLastSyncedThreadName() {
-    const prisma = await getPrisma()
-    const row = await prisma.thread_sessions.findUnique({
+    const db = await getDb()
+    const row = await db.query.thread_sessions.findFirst({
       where: { thread_id: this.threadId },
-      select: { last_synced_name: true },
+      columns: { last_synced_name: true },
     })
     return row?.last_synced_name ?? null
   }
 
   private async persistLastSyncedThreadName(name: string): Promise<void> {
     this.lastSyncedThreadName = name
-    const prisma = await getPrisma()
-    const result = await prisma.thread_sessions
-      .update({
-        where: { thread_id: this.threadId },
-        data: { last_synced_name: name },
-      })
+    const db = await getDb()
+    const result = await db.update(schema.thread_sessions)
+      .set({ last_synced_name: name })
+      .where(orm.eq(schema.thread_sessions.thread_id, this.threadId))
       .catch(
         (e) =>
           new Error('Failed to persist thread rename state', {

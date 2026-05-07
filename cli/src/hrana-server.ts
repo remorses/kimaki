@@ -103,7 +103,7 @@ function ensureServiceAuthTokenInStore(): string {
  * Get the Hrana HTTP URL for injecting into plugin child processes.
  * Returns null if the server hasn't been started yet.
  * Only used for KIMAKI_DB_URL env var in opencode.ts — the bot process
- * itself always uses direct file: access via Prisma.
+  * itself always uses direct file: access via Drizzle/libSQL.
  */
 export function getHranaUrl(): string | null {
   return hranaUrl

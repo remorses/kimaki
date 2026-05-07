@@ -11,7 +11,7 @@ import {
   type Client,
 } from 'discord.js'
 import path from 'node:path'
-import { getPrisma } from '../db.js'
+import { getDb } from '../db.js'
 import { getChannelDirectory } from '../database.js'
 import { splitTablesFromMarkdown } from '../format-tables.js'
 import { formatTimeAgo } from './worktrees.js'
@@ -30,20 +30,21 @@ async function fetchRecentSessions({
 }: {
   client: Client
 }): Promise<SessionRow[]> {
-  const prisma = await getPrisma()
+  const db = await getDb()
 
   // Fetch all thread sessions with their most recent event timestamp.
-  // Prisma doesn't support ORDER BY aggregated subquery, so we fetch all
-  // sessions with their latest event and sort in JS.
-  const sessions = await prisma.thread_sessions.findMany({
-    select: {
+  // Fetch all sessions with their latest event and sort in JS.
+  const sessions = await db.query.thread_sessions.findMany({
+    columns: {
       thread_id: true,
       session_id: true,
       created_at: true,
+    },
+    with: {
       session_events: {
         orderBy: { timestamp: 'desc' },
-        take: 1,
-        select: { timestamp: true },
+        limit: 1,
+        columns: { timestamp: true },
       },
     },
   })

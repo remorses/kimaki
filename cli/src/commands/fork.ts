@@ -62,7 +62,7 @@ function getThreadChannel(
 function parsePersistedEventRows({
   rows,
 }: {
-  rows: Array<{ event_json: string; timestamp: bigint; event_index: number; id: number }>
+  rows: Array<{ event_json: string; timestamp: number; event_index: number; id: number }>
 }) {
   return rows.flatMap((row) => {
     const parsed = errore.try({

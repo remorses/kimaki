@@ -12,7 +12,7 @@ import { fileURLToPath } from 'node:url'
 import { spawn, execSync } from 'node:child_process'
 import { createLogger, LogPrefix, initLogFile } from '../logger.js'
 import { createDiscordClient, initDatabase, getChannelDirectory, initializeOpencodeForDirectory, createProjectChannels } from '../discord-bot.js'
-import { getBotTokenWithMode, getThreadSession, getThreadIdBySessionId, getSessionEventSnapshot, getPrisma, createScheduledTask, listScheduledTasks, cancelScheduledTask, getScheduledTask, updateScheduledTask, getSessionStartSourcesBySessionIds, deleteChannelDirectoryById, findChannelsByDirectory } from '../database.js'
+import { getBotTokenWithMode, getThreadSession, getThreadIdBySessionId, getSessionEventSnapshot, getDb, createScheduledTask, listScheduledTasks, cancelScheduledTask, getScheduledTask, updateScheduledTask, getSessionStartSourcesBySessionIds, deleteChannelDirectoryById, findChannelsByDirectory } from '../database.js'
 import { ShareMarkdown } from '../markdown.js'
 import { parseSessionSearchPattern, findFirstSessionSearchHit, buildSessionSearchSnippet, getPartSearchTexts } from '../session-search.js'
 import { formatWorktreeName, formatAutoWorktreeName } from '../commands/new-worktree.js'
@@ -111,10 +111,10 @@ cli
         }
         guild = foundGuild
       } else {
-        const existingChannelId = await (await getPrisma()).channel_directories.findFirst({
+        const existingChannelId = await (await getDb()).query.channel_directories.findFirst({
           where: { channel_type: 'text' },
           orderBy: { created_at: 'desc' },
-          select: { channel_id: true },
+          columns: { channel_id: true },
         }).then((row) => row?.channel_id)
 
         if (existingChannelId) {
@@ -234,8 +234,8 @@ cli
   .action(async (options: { json?: boolean; prune?: boolean }) => {
     await initDatabase()
 
-    const prisma = await getPrisma()
-    const channels = await prisma.channel_directories.findMany({
+    const db = await getDb()
+    const channels = await db.query.channel_directories.findMany({
       where: { channel_type: 'text' },
       orderBy: { created_at: 'desc' },
     })

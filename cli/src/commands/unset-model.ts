@@ -13,7 +13,9 @@ import {
   getThreadSession,
   clearSessionModel,
 } from '../database.js'
-import { getPrisma } from '../db.js'
+import { getDb } from '../db.js'
+import * as orm from 'drizzle-orm'
+import * as schema from '../schema.js'
 import { initializeOpencodeForDirectory } from '../opencode.js'
 import { resolveTextChannel, getKimakiMetadata } from '../discord-utils.js'
 import { getRuntime } from '../session-handler/thread-session-runtime.js'
@@ -118,10 +120,10 @@ export async function handleUnsetModelCommand({
     unsetModelLogger.log(`[UNSET-MODEL] Cleared session model for ${sessionId}`)
   } else if (channelPref) {
     // Clear channel override
-    const prisma = await getPrisma()
-    await prisma.channel_models.deleteMany({
-      where: { channel_id: targetChannelId },
-    })
+    const db = await getDb()
+    await db.delete(schema.channel_models).where(
+      orm.eq(schema.channel_models.channel_id, targetChannelId),
+    )
     clearedType = 'channel'
     clearedModel = channelPref.modelId
     unsetModelLogger.log(

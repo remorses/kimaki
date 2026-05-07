@@ -40,8 +40,10 @@ import {
   setBotMode,
   setChannelDirectory,
   findChannelsByDirectory,
-  getPrisma,
+  getDb,
 } from './database.js'
+import * as orm from 'drizzle-orm'
+import * as dbSchema from './schema.js'
 import { selectResolvedCommand } from './opencode-command.js'
 import {
   Events,
@@ -482,8 +484,8 @@ export async function resolveGatewayInstallCredentials(): Promise<
     )
   }
 
-  const prisma = await getPrisma()
-  const gatewayBot = await prisma.bot_tokens.findUnique({
+  const db = await getDb()
+  const gatewayBot = await db.query.bot_tokens.findFirst({
     where: { app_id: KIMAKI_GATEWAY_APP_ID },
   })
 
@@ -1016,7 +1018,7 @@ export async function resolveCredentials({
   // directly. This lets users switch back and forth between modes without
   // re-running the onboarding wizard each time.
   const hasGatewayCreds = (forceGateway && existingBot?.mode !== 'gateway')
-    ? await (await getPrisma()).bot_tokens.findUnique({
+    ? await (await getDb()).query.bot_tokens.findFirst({
         where: { app_id: KIMAKI_GATEWAY_APP_ID },
       })
     : undefined
@@ -1448,10 +1450,9 @@ export async function run({
   // processes (send, upload-to-discord, project list) pick the correct bot.
   // getBotTokenWithMode() orders by last_used_at DESC as cross-process
   // source of truth.
-  await (await getPrisma()).bot_tokens.update({
-    where: { app_id: appId },
-    data: { last_used_at: new Date() },
-  })
+  await (await getDb()).update(dbSchema.bot_tokens)
+    .set({ last_used_at: new Date() })
+    .where(orm.eq(dbSchema.bot_tokens.app_id, appId))
 
   // skipChannelSetup: when true, skip interactive project/channel selection
   // and go straight to bot startup. Channel sync happens in the background.
@@ -1462,9 +1463,9 @@ export async function run({
   // and TTY is available, or user explicitly passed --add-channels.
   const isHeadlessGateway = isGatewayMode && !canUseInteractivePrompts()
   const hasConfiguredTextChannels = Boolean(
-    await (await getPrisma()).channel_directories.findFirst({
+    await (await getDb()).query.channel_directories.findFirst({
       where: { channel_type: 'text' },
-      select: { channel_id: true },
+      columns: { channel_id: true },
     }),
   )
   const skipChannelSetup = isHeadlessGateway || (() => {

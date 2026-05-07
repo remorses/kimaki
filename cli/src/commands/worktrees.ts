@@ -21,7 +21,7 @@ import {
   deleteThreadWorktree,
   type ThreadWorktree,
 } from '../database.js'
-import { getPrisma } from '../db.js'
+import { getDb } from '../db.js'
 import { splitTablesFromMarkdown } from '../format-tables.js'
 import {
   buildHtmlActionCustomId,
@@ -317,8 +317,8 @@ async function buildWorktreeRows({
   projectDirectory: string
   gitWorktrees: GitWorktree[]
 }): Promise<WorktreeRow[]> {
-  const prisma = await getPrisma()
-  const dbWorktrees = await prisma.thread_worktrees.findMany({
+  const db = await getDb()
+  const dbWorktrees = await db.query.thread_worktrees.findMany({
     where: { project_directory: projectDirectory },
   })
 

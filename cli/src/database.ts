@@ -1,152 +1,51 @@
-// SQLite database manager for persistent bot state using Prisma.
+// SQLite database manager for persistent bot state using Drizzle.
 // Stores thread-session mappings, bot tokens, channel directories,
 // API keys, and model preferences in <dataDir>/discord-sessions.db.
 
-import { getPrisma, closePrisma } from './db.js'
-import type { Prisma, session_events, BotMode, VerbosityLevel, WorktreeStatus, ChannelType as PrismaChannelType, ThreadSessionSource } from './generated/client.js'
 import crypto from 'node:crypto'
+import * as orm from 'drizzle-orm'
 
-import { store } from './store.js'
+import { getDb, closeDb } from './db.js'
 import { createLogger, LogPrefix } from './logger.js'
+import * as schema from './schema.js'
+import type {
+  BotMode,
+  ChannelType,
+  IpcRequestType,
+  SessionEvent,
+  ThreadSessionSource,
+  VerbosityLevel,
+  WorktreeStatus,
+} from './schema.js'
+import { store } from './store.js'
 
 const dbLogger = createLogger(LogPrefix.DB)
 
-// Re-export Prisma utilities
-export { getPrisma, closePrisma }
+export { getDb, closeDb }
 
-/**
- * Initialize the database.
- * Returns the Prisma client.
- */
 export async function initDatabase() {
-  const prisma = await getPrisma()
+  const db = await getDb()
   dbLogger.log('Database initialized')
-  return prisma
+  return db
 }
 
-/**
- * Close the database connection.
- */
-export async function closeDatabase() {
-  await closePrisma()
-}
+export const closeDatabase = closeDb
 
-// Re-export enum types from generated Prisma client
 export type { VerbosityLevel }
 export type { WorktreeStatus }
-export type { PrismaChannelType }
+export type DatabaseChannelType = ChannelType
 
-export type ThreadWorktree = {
-  thread_id: string
-  worktree_name: string
-  worktree_directory: string | null
-  project_directory: string
-  status: WorktreeStatus
-  error_message: string | null
-  created_at: Date | null
+export type ThreadWorktree = typeof schema.thread_worktrees.$inferSelect
+export type ScheduledTaskStatus = typeof schema.scheduled_tasks.$inferSelect.status
+export type ScheduledTaskScheduleKind = typeof schema.scheduled_tasks.$inferSelect.schedule_kind
+export type ScheduledTask = typeof schema.scheduled_tasks.$inferSelect
+export type SessionStartSource = typeof schema.session_start_sources.$inferSelect
+export type ModelPreference = { modelId: string; variant: string | null }
+export type { BotMode }
+
+function countRows<T>(rows: T[]) {
+  return rows.length
 }
-
-export type ScheduledTaskStatus =
-  | 'planned'
-  | 'running'
-  | 'completed'
-  | 'cancelled'
-  | 'failed'
-export type ScheduledTaskScheduleKind = 'at' | 'cron'
-
-export type ScheduledTask = {
-  id: number
-  status: ScheduledTaskStatus
-  schedule_kind: ScheduledTaskScheduleKind
-  run_at: Date | null
-  cron_expr: string | null
-  timezone: string | null
-  next_run_at: Date
-  running_started_at: Date | null
-  last_run_at: Date | null
-  last_error: string | null
-  attempts: number
-  payload_json: string
-  prompt_preview: string
-  channel_id: string | null
-  thread_id: string | null
-  session_id: string | null
-  project_directory: string | null
-  created_at: Date | null
-  updated_at: Date | null
-}
-
-export type SessionStartSource = {
-  session_id: string
-  schedule_kind: ScheduledTaskScheduleKind
-  scheduled_task_id: number | null
-  created_at: Date | null
-  updated_at: Date | null
-}
-
-function toScheduledTask(row: {
-  id: number
-  status: string
-  schedule_kind: string
-  run_at: Date | null
-  cron_expr: string | null
-  timezone: string | null
-  next_run_at: Date
-  running_started_at: Date | null
-  last_run_at: Date | null
-  last_error: string | null
-  attempts: number
-  payload_json: string
-  prompt_preview: string
-  channel_id: string | null
-  thread_id: string | null
-  session_id: string | null
-  project_directory: string | null
-  created_at: Date | null
-  updated_at: Date | null
-}): ScheduledTask {
-  return {
-    id: row.id,
-    status: row.status as ScheduledTaskStatus,
-    schedule_kind: row.schedule_kind as ScheduledTaskScheduleKind,
-    run_at: row.run_at,
-    cron_expr: row.cron_expr,
-    timezone: row.timezone,
-    next_run_at: row.next_run_at,
-    running_started_at: row.running_started_at,
-    last_run_at: row.last_run_at,
-    last_error: row.last_error,
-    attempts: row.attempts,
-    payload_json: row.payload_json,
-    prompt_preview: row.prompt_preview,
-    channel_id: row.channel_id,
-    thread_id: row.thread_id,
-    session_id: row.session_id,
-    project_directory: row.project_directory,
-    created_at: row.created_at,
-    updated_at: row.updated_at,
-  }
-}
-
-function toSessionStartSource(row: {
-  session_id: string
-  schedule_kind: string
-  scheduled_task_id: number | null
-  created_at: Date | null
-  updated_at: Date | null
-}): SessionStartSource {
-  return {
-    session_id: row.session_id,
-    schedule_kind: row.schedule_kind as ScheduledTaskScheduleKind,
-    scheduled_task_id: row.scheduled_task_id,
-    created_at: row.created_at,
-    updated_at: row.updated_at,
-  }
-}
-
-// ============================================================================
-// Scheduled Task Functions
-// ============================================================================
 
 export async function createScheduledTask({
   scheduleKind,
@@ -172,25 +71,23 @@ export async function createScheduledTask({
   threadId?: string | null
   sessionId?: string | null
   projectDirectory?: string | null
-}): Promise<number> {
-  const prisma = await getPrisma()
-  const row = await prisma.scheduled_tasks.create({
-    data: {
-      status: 'planned',
-      schedule_kind: scheduleKind,
-      run_at: runAt ?? null,
-      cron_expr: cronExpr ?? null,
-      timezone: timezone ?? null,
-      next_run_at: nextRunAt,
-      payload_json: payloadJson,
-      prompt_preview: promptPreview,
-      channel_id: channelId ?? null,
-      thread_id: threadId ?? null,
-      session_id: sessionId ?? null,
-      project_directory: projectDirectory ?? null,
-    },
-    select: { id: true },
-  })
+}) {
+  const db = await getDb()
+  const [row] = await db.insert(schema.scheduled_tasks).values({
+    status: 'planned',
+    schedule_kind: scheduleKind,
+    run_at: runAt ?? null,
+    cron_expr: cronExpr ?? null,
+    timezone: timezone ?? null,
+    next_run_at: nextRunAt,
+    payload_json: payloadJson,
+    prompt_preview: promptPreview,
+    channel_id: channelId ?? null,
+    thread_id: threadId ?? null,
+    session_id: sessionId ?? null,
+    project_directory: projectDirectory ?? null,
+  }).returning({ id: schema.scheduled_tasks.id })
+  if (!row) throw new Error('Failed to create scheduled task')
   return row.id
 }
 
@@ -198,26 +95,17 @@ export async function listScheduledTasks({
   statuses,
 }: {
   statuses?: ScheduledTaskStatus[]
-} = {}): Promise<ScheduledTask[]> {
-  const prisma = await getPrisma()
-  const rows = await prisma.scheduled_tasks.findMany({
-    where:
-      statuses && statuses.length > 0
-        ? { status: { in: statuses } }
-        : undefined,
-    orderBy: [{ next_run_at: 'asc' }, { id: 'asc' }],
+} = {}) {
+  const db = await getDb()
+  return db.query.scheduled_tasks.findMany({
+    where: statuses && statuses.length > 0 ? { status: { in: statuses } } : undefined,
+    orderBy: { next_run_at: 'asc', id: 'asc' },
   })
-  return rows.map((row) => toScheduledTask(row))
 }
 
-export async function getScheduledTask(
-  taskId: number,
-): Promise<ScheduledTask | null> {
-  const prisma = await getPrisma()
-  const row = await prisma.scheduled_tasks.findUnique({
-    where: { id: taskId },
-  })
-  return row ? toScheduledTask(row) : null
+export async function getScheduledTask(taskId: number) {
+  const db = await getDb()
+  return await db.query.scheduled_tasks.findFirst({ where: { id: taskId } }) ?? null
 }
 
 export async function updateScheduledTask({
@@ -238,1066 +126,432 @@ export async function updateScheduledTask({
   cronExpr?: string | null
   timezone?: string | null
   nextRunAt?: Date
-}): Promise<boolean> {
-  const prisma = await getPrisma()
-  const data: Record<string, unknown> = {
+}) {
+  const db = await getDb()
+  const data: Partial<typeof schema.scheduled_tasks.$inferInsert> = {
     payload_json: payloadJson,
     prompt_preview: promptPreview,
   }
-  if (scheduleKind !== undefined) {
-    data.schedule_kind = scheduleKind
-  }
-  if (runAt !== undefined) {
-    data.run_at = runAt
-  }
-  if (cronExpr !== undefined) {
-    data.cron_expr = cronExpr
-  }
-  if (timezone !== undefined) {
-    data.timezone = timezone
-  }
-  if (nextRunAt !== undefined) {
-    data.next_run_at = nextRunAt
-  }
-  const result = await prisma.scheduled_tasks.updateMany({
-    where: {
-      id: taskId,
-      status: 'planned',
-    },
-    data,
-  })
-  return result.count > 0
+  if (scheduleKind !== undefined) data.schedule_kind = scheduleKind
+  if (runAt !== undefined) data.run_at = runAt
+  if (cronExpr !== undefined) data.cron_expr = cronExpr
+  if (timezone !== undefined) data.timezone = timezone
+  if (nextRunAt !== undefined) data.next_run_at = nextRunAt
+  const rows = await db.update(schema.scheduled_tasks)
+    .set(data)
+    .where(orm.and(
+      orm.eq(schema.scheduled_tasks.id, taskId),
+      orm.eq(schema.scheduled_tasks.status, 'planned'),
+    ))
+    .returning({ id: schema.scheduled_tasks.id })
+  return countRows(rows) > 0
 }
 
-export async function cancelScheduledTask(taskId: number): Promise<boolean> {
-  const prisma = await getPrisma()
-  const result = await prisma.scheduled_tasks.updateMany({
-    where: {
-      id: taskId,
-      status: {
-        in: ['planned', 'running'],
-      },
-    },
-    data: {
-      status: 'cancelled',
-      running_started_at: null,
-    },
-  })
-  return result.count > 0
+export async function cancelScheduledTask(taskId: number) {
+  const db = await getDb()
+  const rows = await db.update(schema.scheduled_tasks)
+    .set({ status: 'cancelled', running_started_at: null })
+    .where(orm.and(
+      orm.eq(schema.scheduled_tasks.id, taskId),
+      orm.inArray(schema.scheduled_tasks.status, ['planned', 'running']),
+    ))
+    .returning({ id: schema.scheduled_tasks.id })
+  return countRows(rows) > 0
 }
 
-export async function getDuePlannedScheduledTasks({
-  now,
-  limit,
-}: {
-  now: Date
-  limit: number
-}): Promise<ScheduledTask[]> {
-  const prisma = await getPrisma()
-  const rows = await prisma.scheduled_tasks.findMany({
-    where: {
-      status: 'planned',
-      next_run_at: {
-        lte: now,
-      },
-    },
-    orderBy: [{ next_run_at: 'asc' }, { id: 'asc' }],
-    take: limit,
-  })
-  return rows.map((row) => toScheduledTask(row))
-}
-
-export async function claimScheduledTaskRunning({
-  taskId,
-  startedAt,
-}: {
-  taskId: number
-  startedAt: Date
-}): Promise<boolean> {
-  const prisma = await getPrisma()
-  const result = await prisma.scheduled_tasks.updateMany({
-    where: {
-      id: taskId,
-      status: 'planned',
-    },
-    data: {
-      status: 'running',
-      running_started_at: startedAt,
-    },
-  })
-  return result.count > 0
-}
-
-export async function recoverStaleRunningScheduledTasks({
-  staleBefore,
-}: {
-  staleBefore: Date
-}): Promise<number> {
-  const prisma = await getPrisma()
-  const result = await prisma.scheduled_tasks.updateMany({
-    where: {
-      status: 'running',
-      running_started_at: {
-        lte: staleBefore,
-      },
-    },
-    data: {
-      status: 'planned',
-      running_started_at: null,
-    },
-  })
-  return result.count
-}
-
-export async function markScheduledTaskOneShotCompleted({
-  taskId,
-  completedAt,
-}: {
-  taskId: number
-  completedAt: Date
-}): Promise<void> {
-  const prisma = await getPrisma()
-  await prisma.scheduled_tasks.update({
-    where: { id: taskId },
-    data: {
-      status: 'completed',
-      last_run_at: completedAt,
-      running_started_at: null,
-      last_error: null,
-    },
+export async function getDuePlannedScheduledTasks({ now, limit }: { now: Date; limit: number }) {
+  const db = await getDb()
+  return db.query.scheduled_tasks.findMany({
+    where: { status: 'planned', next_run_at: { lte: now } },
+    orderBy: { next_run_at: 'asc', id: 'asc' },
+    limit,
   })
 }
 
-export async function markScheduledTaskCronRescheduled({
-  taskId,
-  completedAt,
-  nextRunAt,
-}: {
-  taskId: number
-  completedAt: Date
-  nextRunAt: Date
-}): Promise<void> {
-  const prisma = await getPrisma()
-  await prisma.scheduled_tasks.update({
-    where: { id: taskId },
-    data: {
-      status: 'planned',
-      last_run_at: completedAt,
-      running_started_at: null,
-      last_error: null,
-      next_run_at: nextRunAt,
-    },
-  })
+export async function claimScheduledTaskRunning({ taskId, startedAt }: { taskId: number; startedAt: Date }) {
+  const db = await getDb()
+  const rows = await db.update(schema.scheduled_tasks)
+    .set({ status: 'running', running_started_at: startedAt })
+    .where(orm.and(
+      orm.eq(schema.scheduled_tasks.id, taskId),
+      orm.eq(schema.scheduled_tasks.status, 'planned'),
+    ))
+    .returning({ id: schema.scheduled_tasks.id })
+  return countRows(rows) > 0
 }
 
-export async function markScheduledTaskFailed({
-  taskId,
-  failedAt,
-  errorMessage,
-}: {
-  taskId: number
-  failedAt: Date
-  errorMessage: string
-}): Promise<void> {
-  const prisma = await getPrisma()
-  await prisma.scheduled_tasks.update({
-    where: { id: taskId },
-    data: {
+export async function recoverStaleRunningScheduledTasks({ staleBefore }: { staleBefore: Date }) {
+  const db = await getDb()
+  const rows = await db.update(schema.scheduled_tasks)
+    .set({ status: 'planned', running_started_at: null })
+    .where(orm.and(
+      orm.eq(schema.scheduled_tasks.status, 'running'),
+      orm.lte(schema.scheduled_tasks.running_started_at, staleBefore),
+    ))
+    .returning({ id: schema.scheduled_tasks.id })
+  return countRows(rows)
+}
+
+export async function markScheduledTaskOneShotCompleted({ taskId, completedAt }: { taskId: number; completedAt: Date }) {
+  const db = await getDb()
+  await db.update(schema.scheduled_tasks)
+    .set({ status: 'completed', last_run_at: completedAt, running_started_at: null, last_error: null })
+    .where(orm.eq(schema.scheduled_tasks.id, taskId))
+}
+
+export async function markScheduledTaskCronRescheduled({ taskId, completedAt, nextRunAt }: { taskId: number; completedAt: Date; nextRunAt: Date }) {
+  const db = await getDb()
+  await db.update(schema.scheduled_tasks)
+    .set({ status: 'planned', last_run_at: completedAt, running_started_at: null, last_error: null, next_run_at: nextRunAt })
+    .where(orm.eq(schema.scheduled_tasks.id, taskId))
+}
+
+export async function markScheduledTaskFailed({ taskId, failedAt, errorMessage }: { taskId: number; failedAt: Date; errorMessage: string }) {
+  const db = await getDb()
+  await db.update(schema.scheduled_tasks)
+    .set({
       status: 'failed',
       last_run_at: failedAt,
       running_started_at: null,
       last_error: errorMessage,
-      attempts: {
-        increment: 1,
-      },
-    },
-  })
+      attempts: orm.sql`${schema.scheduled_tasks.attempts} + 1`,
+    })
+    .where(orm.eq(schema.scheduled_tasks.id, taskId))
 }
 
-export async function markScheduledTaskCronRetry({
-  taskId,
-  failedAt,
-  errorMessage,
-  nextRunAt,
-}: {
-  taskId: number
-  failedAt: Date
-  errorMessage: string
-  nextRunAt: Date
-}): Promise<void> {
-  const prisma = await getPrisma()
-  await prisma.scheduled_tasks.update({
-    where: { id: taskId },
-    data: {
+export async function markScheduledTaskCronRetry({ taskId, failedAt, errorMessage, nextRunAt }: { taskId: number; failedAt: Date; errorMessage: string; nextRunAt: Date }) {
+  const db = await getDb()
+  await db.update(schema.scheduled_tasks)
+    .set({
       status: 'planned',
       next_run_at: nextRunAt,
       last_run_at: failedAt,
       running_started_at: null,
       last_error: errorMessage,
-      attempts: {
-        increment: 1,
-      },
-    },
-  })
+      attempts: orm.sql`${schema.scheduled_tasks.attempts} + 1`,
+    })
+    .where(orm.eq(schema.scheduled_tasks.id, taskId))
 }
 
-export async function setSessionStartSource({
-  sessionId,
-  scheduleKind,
-  scheduledTaskId,
-}: {
-  sessionId: string
-  scheduleKind: ScheduledTaskScheduleKind
-  scheduledTaskId?: number
-}): Promise<void> {
-  const prisma = await getPrisma()
-  await prisma.session_start_sources.upsert({
-    where: { session_id: sessionId },
-    create: {
-      session_id: sessionId,
-      schedule_kind: scheduleKind,
-      scheduled_task_id: scheduledTaskId ?? null,
-    },
-    update: {
-      schedule_kind: scheduleKind,
-      scheduled_task_id: scheduledTaskId ?? null,
-    },
-  })
+export async function setSessionStartSource({ sessionId, scheduleKind, scheduledTaskId }: { sessionId: string; scheduleKind: ScheduledTaskScheduleKind; scheduledTaskId?: number }) {
+  const db = await getDb()
+  await db.insert(schema.session_start_sources)
+    .values({ session_id: sessionId, schedule_kind: scheduleKind, scheduled_task_id: scheduledTaskId ?? null })
+    .onConflictDoUpdate({
+      target: schema.session_start_sources.session_id,
+      set: { schedule_kind: scheduleKind, scheduled_task_id: scheduledTaskId ?? null, updated_at: new Date() },
+    })
 }
 
-export async function getSessionStartSourcesBySessionIds(
-  sessionIds: string[],
-): Promise<Map<string, SessionStartSource>> {
-  if (sessionIds.length === 0) {
-    return new Map<string, SessionStartSource>()
-  }
-  const prisma = await getPrisma()
+export async function getSessionStartSourcesBySessionIds(sessionIds: string[]) {
+  if (sessionIds.length === 0) return new Map<string, SessionStartSource>()
+  const db = await getDb()
   const chunkSize = 500
-  const chunks: string[][] = []
+  const rows: SessionStartSource[] = []
   for (let index = 0; index < sessionIds.length; index += chunkSize) {
-    chunks.push(sessionIds.slice(index, index + chunkSize))
+    rows.push(...await db.query.session_start_sources.findMany({
+      where: { session_id: { in: sessionIds.slice(index, index + chunkSize) } },
+    }))
   }
-
-  const rowGroups = await Promise.all(
-    chunks.map((chunkSessionIds) => {
-      return prisma.session_start_sources.findMany({
-        where: {
-          session_id: {
-            in: chunkSessionIds,
-          },
-        },
-      })
-    }),
-  )
-  const rows = rowGroups.flatMap((group) => group)
-  return new Map(rows.map((row) => [row.session_id, toSessionStartSource(row)]))
+  return new Map(rows.map((row) => [row.session_id, row]))
 }
 
-// ============================================================================
-// Channel Model Functions
-// ============================================================================
-
-export type ModelPreference = { modelId: string; variant: string | null }
-
-/**
- * Get the model preference for a channel.
- * @returns Model ID in format "provider_id/model_id" + optional variant, or undefined
- */
-export async function getChannelModel(
-  channelId: string,
-): Promise<ModelPreference | undefined> {
-  const prisma = await getPrisma()
-  const row = await prisma.channel_models.findUnique({
-    where: { channel_id: channelId },
-  })
-  if (!row) {
-    return undefined
-  }
-  return { modelId: row.model_id, variant: row.variant }
+export async function getChannelModel(channelId: string) {
+  const db = await getDb()
+  const row = await db.query.channel_models.findFirst({ where: { channel_id: channelId } })
+  return row ? { modelId: row.model_id, variant: row.variant } : undefined
 }
 
-/**
- * Set the model preference for a channel.
- * @param modelId Model ID in format "provider_id/model_id"
- * @param variant Optional thinking/reasoning variant name
- */
-export async function setChannelModel({
-  channelId,
-  modelId,
-  variant,
-}: {
-  channelId: string
-  modelId: string
-  variant?: string | null
-}): Promise<void> {
-  const prisma = await getPrisma()
-  await prisma.channel_models.upsert({
-    where: { channel_id: channelId },
-    create: {
-      channel_id: channelId,
-      model_id: modelId,
-      variant: variant ?? null,
-    },
-    update: {
-      model_id: modelId,
-      variant: variant ?? null,
-      updated_at: new Date(),
-    },
-  })
+export async function setChannelModel({ channelId, modelId, variant }: { channelId: string; modelId: string; variant?: string | null }) {
+  const db = await getDb()
+  await db.insert(schema.channel_models)
+    .values({ channel_id: channelId, model_id: modelId, variant: variant ?? null })
+    .onConflictDoUpdate({
+      target: schema.channel_models.channel_id,
+      set: { model_id: modelId, variant: variant ?? null, updated_at: new Date() },
+    })
 }
 
-// ============================================================================
-// Global Model Functions
-// ============================================================================
-
-/**
- * Get the global default model for a bot.
- * @returns Model ID in format "provider_id/model_id" + optional variant, or undefined
- */
-export async function getGlobalModel(
-  appId: string,
-): Promise<ModelPreference | undefined> {
-  const prisma = await getPrisma()
-  const row = await prisma.global_models.findUnique({
-    where: { app_id: appId },
-  })
-  if (!row) {
-    return undefined
-  }
-  return { modelId: row.model_id, variant: row.variant }
+export async function getGlobalModel(appId: string) {
+  const db = await getDb()
+  const row = await db.query.global_models.findFirst({ where: { app_id: appId } })
+  return row ? { modelId: row.model_id, variant: row.variant } : undefined
 }
 
-/**
- * Set the global default model for a bot.
- * @param modelId Model ID in format "provider_id/model_id"
- * @param variant Optional thinking/reasoning variant name
- */
-export async function setGlobalModel({
-  appId,
-  modelId,
-  variant,
-}: {
-  appId: string
-  modelId: string
-  variant?: string | null
-}): Promise<void> {
-  const prisma = await getPrisma()
-  await prisma.global_models.upsert({
-    where: { app_id: appId },
-    create: { app_id: appId, model_id: modelId, variant: variant ?? null },
-    update: {
-      model_id: modelId,
-      variant: variant ?? null,
-      updated_at: new Date(),
-    },
-  })
+export async function setGlobalModel({ appId, modelId, variant }: { appId: string; modelId: string; variant?: string | null }) {
+  const db = await getDb()
+  await db.insert(schema.global_models)
+    .values({ app_id: appId, model_id: modelId, variant: variant ?? null })
+    .onConflictDoUpdate({
+      target: schema.global_models.app_id,
+      set: { model_id: modelId, variant: variant ?? null, updated_at: new Date() },
+    })
 }
 
-// ============================================================================
-// Session Model Functions
-// ============================================================================
-
-/**
- * Get the model preference for a session.
- * @returns Model ID in format "provider_id/model_id" + optional variant, or undefined
- */
-export async function getSessionModel(
-  sessionId: string,
-): Promise<ModelPreference | undefined> {
-  const prisma = await getPrisma()
-  const row = await prisma.session_models.findUnique({
-    where: { session_id: sessionId },
-  })
-  if (!row) {
-    return undefined
-  }
-  return { modelId: row.model_id, variant: row.variant }
+export async function getSessionModel(sessionId: string) {
+  const db = await getDb()
+  const row = await db.query.session_models.findFirst({ where: { session_id: sessionId } })
+  return row ? { modelId: row.model_id, variant: row.variant } : undefined
 }
 
-/**
- * Set the model preference for a session.
- * @param modelId Model ID in format "provider_id/model_id"
- * @param variant Optional thinking/reasoning variant name
- */
-export async function setSessionModel({
-  sessionId,
-  modelId,
-  variant,
-}: {
-  sessionId: string
-  modelId: string
-  variant?: string | null
-}): Promise<void> {
-  const prisma = await getPrisma()
-  await prisma.session_models.upsert({
-    where: { session_id: sessionId },
-    create: {
-      session_id: sessionId,
-      model_id: modelId,
-      variant: variant ?? null,
-    },
-    update: { model_id: modelId, variant: variant ?? null },
-  })
+export async function setSessionModel({ sessionId, modelId, variant }: { sessionId: string; modelId: string; variant?: string | null }) {
+  const db = await getDb()
+  await db.insert(schema.session_models)
+    .values({ session_id: sessionId, model_id: modelId, variant: variant ?? null })
+    .onConflictDoUpdate({
+      target: schema.session_models.session_id,
+      set: { model_id: modelId, variant: variant ?? null },
+    })
 }
 
-/**
- * Clear the model preference for a session.
- * Used when switching agents so the agent's model takes effect.
- */
-export async function clearSessionModel(sessionId: string): Promise<void> {
-  const prisma = await getPrisma()
-  await prisma.session_models.deleteMany({
-    where: { session_id: sessionId },
-  })
+export async function clearSessionModel(sessionId: string) {
+  const db = await getDb()
+  await db.delete(schema.session_models).where(orm.eq(schema.session_models.session_id, sessionId))
 }
 
-// ============================================================================
-// Variant Cascade Resolution
-// ============================================================================
-
-/**
- * Resolve the variant (thinking level) using the session → channel → global cascade.
- * Returns the first non-null variant found, or undefined if none set at any level.
- */
-export async function getVariantCascade({
-  sessionId,
-  channelId,
-  appId,
-}: {
-  sessionId?: string
-  channelId?: string
-  appId?: string
-}): Promise<string | undefined> {
+export async function getVariantCascade({ sessionId, channelId, appId }: { sessionId?: string; channelId?: string; appId?: string }) {
   if (sessionId) {
     const session = await getSessionModel(sessionId)
-    if (session?.variant) {
-      return session.variant
-    }
+    if (session?.variant) return session.variant
   }
   if (channelId) {
     const channel = await getChannelModel(channelId)
-    if (channel?.variant) {
-      return channel.variant
-    }
+    if (channel?.variant) return channel.variant
   }
   if (appId) {
     const global = await getGlobalModel(appId)
-    if (global?.variant) {
-      return global.variant
-    }
+    if (global?.variant) return global.variant
   }
   return undefined
 }
 
-// ============================================================================
-// Channel Agent Functions
-// ============================================================================
-
-/**
- * Get the agent preference for a channel.
- */
-export async function getChannelAgent(
-  channelId: string,
-): Promise<string | undefined> {
-  const prisma = await getPrisma()
-  const row = await prisma.channel_agents.findUnique({
-    where: { channel_id: channelId },
-  })
-  return row?.agent_name
+export async function getChannelAgent(channelId: string) {
+  const db = await getDb()
+  return (await db.query.channel_agents.findFirst({ where: { channel_id: channelId } }))?.agent_name
 }
 
-/**
- * Set the agent preference for a channel.
- */
-export async function setChannelAgent(
-  channelId: string,
-  agentName: string,
-): Promise<void> {
-  const prisma = await getPrisma()
-  await prisma.channel_agents.upsert({
-    where: { channel_id: channelId },
-    create: { channel_id: channelId, agent_name: agentName },
-    update: { agent_name: agentName, updated_at: new Date() },
-  })
+export async function setChannelAgent(channelId: string, agentName: string) {
+  const db = await getDb()
+  await db.insert(schema.channel_agents)
+    .values({ channel_id: channelId, agent_name: agentName })
+    .onConflictDoUpdate({ target: schema.channel_agents.channel_id, set: { agent_name: agentName, updated_at: new Date() } })
 }
 
-// ============================================================================
-// Session Agent Functions
-// ============================================================================
-
-/**
- * Get the agent preference for a session.
- */
-export async function getSessionAgent(
-  sessionId: string,
-): Promise<string | undefined> {
-  const prisma = await getPrisma()
-  const row = await prisma.session_agents.findUnique({
-    where: { session_id: sessionId },
-  })
-  return row?.agent_name
+export async function getSessionAgent(sessionId: string) {
+  const db = await getDb()
+  return (await db.query.session_agents.findFirst({ where: { session_id: sessionId } }))?.agent_name
 }
 
-/**
- * Set the agent preference for a session.
- */
-export async function setSessionAgent(
-  sessionId: string,
-  agentName: string,
-): Promise<void> {
-  const prisma = await getPrisma()
-  await prisma.session_agents.upsert({
-    where: { session_id: sessionId },
-    create: { session_id: sessionId, agent_name: agentName },
-    update: { agent_name: agentName },
-  })
+export async function setSessionAgent(sessionId: string, agentName: string) {
+  const db = await getDb()
+  await db.insert(schema.session_agents)
+    .values({ session_id: sessionId, agent_name: agentName })
+    .onConflictDoUpdate({ target: schema.session_agents.session_id, set: { agent_name: agentName } })
 }
 
-// ============================================================================
-// Thread Worktree Functions
-// ============================================================================
-
-/**
- * Get the worktree info for a thread.
- */
-export async function getThreadWorktree(
-  threadId: string,
-): Promise<ThreadWorktree | undefined> {
-  const prisma = await getPrisma()
-  return (await prisma.thread_worktrees.findUnique({
-    where: { thread_id: threadId },
-  })) ?? undefined
+export async function getThreadWorktree(threadId: string) {
+  const db = await getDb()
+  return await db.query.thread_worktrees.findFirst({ where: { thread_id: threadId } }) ?? undefined
 }
 
-/**
- * Create a pending worktree entry for a thread.
- * Ensures the parent thread_sessions row exists first (with empty session_id)
- * to satisfy the FK constraint. The real session_id is set later by setThreadSession().
- */
-export async function createPendingWorktree({
-  threadId,
-  worktreeName,
-  projectDirectory,
-}: {
-  threadId: string
-  worktreeName: string
-  projectDirectory: string
-}): Promise<void> {
-  const prisma = await getPrisma()
-  await prisma.$transaction([
-    prisma.thread_sessions.upsert({
-      where: { thread_id: threadId },
-      create: { thread_id: threadId, session_id: '' },
-      update: {},
-    }),
-    prisma.thread_worktrees.upsert({
-      where: { thread_id: threadId },
-      create: {
-        thread_id: threadId,
-        worktree_name: worktreeName,
-        project_directory: projectDirectory,
-        status: 'pending',
-      },
-      update: {
-        worktree_name: worktreeName,
-        project_directory: projectDirectory,
-        status: 'pending',
-        worktree_directory: null,
-        error_message: null,
-      },
-    }),
-  ])
+export async function createPendingWorktree({ threadId, worktreeName, projectDirectory }: { threadId: string; worktreeName: string; projectDirectory: string }) {
+  const db = await getDb()
+  await db.batch([
+    db.insert(schema.thread_sessions)
+      .values({ thread_id: threadId, session_id: '' })
+      .onConflictDoNothing({ target: schema.thread_sessions.thread_id }),
+    db.insert(schema.thread_worktrees)
+      .values({ thread_id: threadId, worktree_name: worktreeName, project_directory: projectDirectory, status: 'pending' })
+      .onConflictDoUpdate({
+        target: schema.thread_worktrees.thread_id,
+        set: { worktree_name: worktreeName, project_directory: projectDirectory, status: 'pending', worktree_directory: null, error_message: null },
+      }),
+  ] as const)
 }
 
-/**
- * Mark a worktree as ready with its directory.
- */
-export async function setWorktreeReady({
-  threadId,
-  worktreeDirectory,
-}: {
-  threadId: string
-  worktreeDirectory: string
-}): Promise<void> {
-  const prisma = await getPrisma()
-  await prisma.thread_worktrees.update({
-    where: { thread_id: threadId },
-    data: {
-      worktree_directory: worktreeDirectory,
-      status: 'ready',
-    },
-  })
+export async function setWorktreeReady({ threadId, worktreeDirectory }: { threadId: string; worktreeDirectory: string }) {
+  const db = await getDb()
+  await db.update(schema.thread_worktrees).set({ worktree_directory: worktreeDirectory, status: 'ready' }).where(orm.eq(schema.thread_worktrees.thread_id, threadId))
 }
 
-/**
- * Mark a worktree as failed with error message.
- */
-export async function setWorktreeError({
-  threadId,
-  errorMessage,
-}: {
-  threadId: string
-  errorMessage: string
-}): Promise<void> {
-  const prisma = await getPrisma()
-  await prisma.thread_worktrees.update({
-    where: { thread_id: threadId },
-    data: {
-      status: 'error',
-      error_message: errorMessage,
-    },
-  })
+export async function setWorktreeError({ threadId, errorMessage }: { threadId: string; errorMessage: string }) {
+  const db = await getDb()
+  await db.update(schema.thread_worktrees).set({ status: 'error', error_message: errorMessage }).where(orm.eq(schema.thread_worktrees.thread_id, threadId))
 }
 
-/**
- * Delete the worktree info for a thread.
- */
-export async function deleteThreadWorktree(threadId: string): Promise<void> {
-  const prisma = await getPrisma()
-  await prisma.thread_worktrees.deleteMany({
-    where: { thread_id: threadId },
-  })
+export async function deleteThreadWorktree(threadId: string) {
+  const db = await getDb()
+  await db.delete(schema.thread_worktrees).where(orm.eq(schema.thread_worktrees.thread_id, threadId))
 }
 
-// ============================================================================
-// Channel Verbosity Functions
-// ============================================================================
-
-/**
- * Get the verbosity setting for a channel.
- * Falls back to the global default set via --verbosity CLI flag if no per-channel override exists.
- */
-export async function getChannelVerbosity(
-  channelId: string,
-): Promise<VerbosityLevel> {
-  const prisma = await getPrisma()
-  const row = await prisma.channel_verbosity.findUnique({
-    where: { channel_id: channelId },
-  })
-  if (row?.verbosity) {
-    return row.verbosity
-  }
-  return store.getState().defaultVerbosity
+export async function getChannelVerbosity(channelId: string): Promise<VerbosityLevel> {
+  const db = await getDb()
+  const row = await db.query.channel_verbosity.findFirst({ where: { channel_id: channelId } })
+  return row?.verbosity ?? store.getState().defaultVerbosity
 }
 
-/**
- * Set the verbosity setting for a channel.
- */
-export async function setChannelVerbosity(
-  channelId: string,
-  verbosity: VerbosityLevel,
-): Promise<void> {
-  const prisma = await getPrisma()
-  await prisma.channel_verbosity.upsert({
-    where: { channel_id: channelId },
-    create: { channel_id: channelId, verbosity },
-    update: { verbosity, updated_at: new Date() },
-  })
+export async function setChannelVerbosity(channelId: string, verbosity: VerbosityLevel) {
+  const db = await getDb()
+  await db.insert(schema.channel_verbosity)
+    .values({ channel_id: channelId, verbosity })
+    .onConflictDoUpdate({ target: schema.channel_verbosity.channel_id, set: { verbosity, updated_at: new Date() } })
 }
 
-// ============================================================================
-// Channel Mention Mode Functions
-// ============================================================================
-
-/**
- * Get the mention mode setting for a channel.
- * Falls back to the global default set via --mention-mode CLI flag if no per-channel override exists.
- */
-export async function getChannelMentionMode(
-  channelId: string,
-): Promise<boolean> {
-  const prisma = await getPrisma()
-  const row = await prisma.channel_mention_mode.findUnique({
-    where: { channel_id: channelId },
-  })
-  if (row) {
-    return row.enabled === 1
-  }
-  return store.getState().defaultMentionMode
+export async function getChannelMentionMode(channelId: string) {
+  const db = await getDb()
+  const row = await db.query.channel_mention_mode.findFirst({ where: { channel_id: channelId } })
+  return row ? row.enabled === 1 : store.getState().defaultMentionMode
 }
 
-/**
- * Set the mention mode setting for a channel.
- */
-export async function setChannelMentionMode(
-  channelId: string,
-  enabled: boolean,
-): Promise<void> {
-  const prisma = await getPrisma()
-  await prisma.channel_mention_mode.upsert({
-    where: { channel_id: channelId },
-    create: { channel_id: channelId, enabled: enabled ? 1 : 0 },
-    update: { enabled: enabled ? 1 : 0, updated_at: new Date() },
-  })
+export async function setChannelMentionMode(channelId: string, enabled: boolean) {
+  const db = await getDb()
+  await db.insert(schema.channel_mention_mode)
+    .values({ channel_id: channelId, enabled: enabled ? 1 : 0 })
+    .onConflictDoUpdate({ target: schema.channel_mention_mode.channel_id, set: { enabled: enabled ? 1 : 0, updated_at: new Date() } })
 }
 
-// ============================================================================
-// Channel Worktree Settings Functions
-// ============================================================================
-
-/**
- * Check if automatic worktree creation is enabled for a channel.
- */
-export async function getChannelWorktreesEnabled(
-  channelId: string,
-): Promise<boolean> {
-  const prisma = await getPrisma()
-  const row = await prisma.channel_worktrees.findUnique({
-    where: { channel_id: channelId },
-  })
-  return row?.enabled === 1
+export async function getChannelWorktreesEnabled(channelId: string) {
+  const db = await getDb()
+  return (await db.query.channel_worktrees.findFirst({ where: { channel_id: channelId } }))?.enabled === 1
 }
 
-/**
- * Enable or disable automatic worktree creation for a channel.
- */
-export async function setChannelWorktreesEnabled(
-  channelId: string,
-  enabled: boolean,
-): Promise<void> {
-  const prisma = await getPrisma()
-  await prisma.channel_worktrees.upsert({
-    where: { channel_id: channelId },
-    create: { channel_id: channelId, enabled: enabled ? 1 : 0 },
-    update: { enabled: enabled ? 1 : 0, updated_at: new Date() },
-  })
+export async function setChannelWorktreesEnabled(channelId: string, enabled: boolean) {
+  const db = await getDb()
+  await db.insert(schema.channel_worktrees)
+    .values({ channel_id: channelId, enabled: enabled ? 1 : 0 })
+    .onConflictDoUpdate({ target: schema.channel_worktrees.channel_id, set: { enabled: enabled ? 1 : 0, updated_at: new Date() } })
 }
 
-// ============================================================================
-// Channel Directory Functions
-// ============================================================================
-
-/**
- * Get the directory for a channel from the database.
- * This is the single source of truth for channel-project mappings.
- */
-export async function getChannelDirectory(channelId: string): Promise<
-  | {
-      directory: string
-    }
-  | undefined
-> {
-  const prisma = await getPrisma()
-  const row = await prisma.channel_directories.findUnique({
-    where: { channel_id: channelId },
-  })
-
-  if (!row) {
-    return undefined
-  }
-
-  return {
-    directory: row.directory,
-  }
+export async function getChannelDirectory(channelId: string): Promise<{ directory: string } | undefined> {
+  const db = await getDb()
+  const row = await db.query.channel_directories.findFirst({ where: { channel_id: channelId } })
+  return row ? { directory: row.directory } : undefined
 }
 
-// ============================================================================
-// Thread Session Functions
-// ============================================================================
-
-/**
- * Get the session ID for a thread.
- */
-export async function getThreadSession(
-  threadId: string,
-): Promise<string | undefined> {
-  const prisma = await getPrisma()
-  const row = await prisma.thread_sessions.findUnique({
-    where: { thread_id: threadId },
-  })
-  return row?.session_id
+export async function getThreadSession(threadId: string) {
+  const db = await getDb()
+  return (await db.query.thread_sessions.findFirst({ where: { thread_id: threadId } }))?.session_id
 }
 
-/**
- * Set the session ID for a thread.
- */
-export async function setThreadSession(
-  threadId: string,
-  sessionId: string,
-): Promise<void> {
-  await upsertThreadSession({
-    threadId,
-    sessionId,
-    source: 'kimaki',
-  })
+export async function setThreadSession(threadId: string, sessionId: string) {
+  await upsertThreadSession({ threadId, sessionId, source: 'kimaki' })
 }
 
-export async function upsertThreadSession({
-  threadId,
-  sessionId,
-  source,
-}: {
-  threadId: string
-  sessionId: string
-  source: ThreadSessionSource
-}): Promise<void> {
-  const prisma = await getPrisma()
-  await prisma.thread_sessions.upsert({
-    where: { thread_id: threadId },
-    create: {
-      thread_id: threadId,
-      session_id: sessionId,
-      source,
-    },
-    update: {
-      session_id: sessionId,
-      source,
-    },
-  })
+export async function upsertThreadSession({ threadId, sessionId, source }: { threadId: string; sessionId: string; source: ThreadSessionSource }) {
+  const db = await getDb()
+  await db.insert(schema.thread_sessions)
+    .values({ thread_id: threadId, session_id: sessionId, source })
+    .onConflictDoUpdate({ target: schema.thread_sessions.thread_id, set: { session_id: sessionId, source } })
 }
 
-export async function getThreadSessionSource(
-  threadId: string,
-): Promise<ThreadSessionSource | undefined> {
-  const prisma = await getPrisma()
-  const row = await prisma.thread_sessions.findUnique({
-    where: { thread_id: threadId },
-    select: { source: true },
-  })
-  return row?.source
+export async function getThreadSessionSource(threadId: string) {
+  const db = await getDb()
+  return (await db.query.thread_sessions.findFirst({ where: { thread_id: threadId }, columns: { source: true } }))?.source
 }
 
-/**
- * Get the thread ID for a session.
- */
-export async function getThreadIdBySessionId(
-  sessionId: string,
-): Promise<string | undefined> {
-  const prisma = await getPrisma()
-  const row = await prisma.thread_sessions.findFirst({
-    where: { session_id: sessionId },
-  })
-  return row?.thread_id
+export async function getThreadIdBySessionId(sessionId: string) {
+  const db = await getDb()
+  return (await db.query.thread_sessions.findFirst({ where: { session_id: sessionId } }))?.thread_id
 }
 
-/**
- * Get all session IDs that are associated with threads.
- */
-export async function getAllThreadSessionIds(): Promise<string[]> {
-  const prisma = await getPrisma()
-  const rows = await prisma.thread_sessions.findMany({
-    select: { session_id: true },
-  })
+export async function getAllThreadSessionIds() {
+  const db = await getDb()
+  const rows = await db.query.thread_sessions.findMany({ columns: { session_id: true } })
   return rows.map((row) => row.session_id).filter((id) => id !== '')
 }
 
-export async function appendSessionEventsSinceLastTimestamp({
-  sessionId,
-  events,
-}: {
-  sessionId: string
-  events: Prisma.session_eventsCreateManyInput[]
-}): Promise<number> {
-  if (events.length === 0) {
-    return 0
-  }
-
-  const prisma = await getPrisma()
-  const sortedEvents = [...events]
-    .sort((a, b) => {
-      if (a.timestamp < b.timestamp) {
-        return -1
-      }
-      if (a.timestamp > b.timestamp) {
-        return 1
-      }
-      if (a.event_index < b.event_index) {
-        return -1
-      }
-      if (a.event_index > b.event_index) {
-        return 1
-      }
-      return 0
-    })
-
-  const latestPersisted = await prisma.session_events.findFirst({
-    where: {
-      session_id: sessionId,
-    },
-    orderBy: [{ timestamp: 'desc' }, { event_index: 'desc' }, { id: 'desc' }],
-    select: {
-      timestamp: true,
-      event_index: true,
-    },
+export async function appendSessionEventsSinceLastTimestamp({ sessionId, events }: { sessionId: string; events: Array<typeof schema.session_events.$inferInsert> }) {
+  if (events.length === 0) return 0
+  const db = await getDb()
+  const sortedEvents = [...events].sort((a, b) => {
+    if (a.timestamp !== b.timestamp) return a.timestamp - b.timestamp
+    return a.event_index - b.event_index
   })
-
+  const latestPersisted = await db.query.session_events.findFirst({
+    where: { session_id: sessionId },
+    orderBy: { timestamp: 'desc', event_index: 'desc', id: 'desc' },
+    columns: { timestamp: true, event_index: true },
+  })
   const eventsToInsert = sortedEvents.filter((event) => {
-    if (!latestPersisted) {
-      return true
-    }
-    if (event.timestamp > latestPersisted.timestamp) {
-      return true
-    }
-    if (event.timestamp < latestPersisted.timestamp) {
-      return false
-    }
+    if (!latestPersisted) return true
+    if (event.timestamp > latestPersisted.timestamp) return true
+    if (event.timestamp < latestPersisted.timestamp) return false
     return event.event_index > latestPersisted.event_index
   })
-
-  if (eventsToInsert.length === 0) {
-    return 0
-  }
-
-  await prisma.$transaction(async (tx) => {
-    await tx.session_events.createMany({
-      data: eventsToInsert,
-    })
-
-    const staleRows = await tx.session_events.findMany({
-      where: {
-        session_id: sessionId,
-      },
-      orderBy: [{ timestamp: 'desc' }, { event_index: 'desc' }, { id: 'desc' }],
-      skip: 1000,
-      select: {
-        id: true,
-      },
-    })
-    if (staleRows.length === 0) {
-      return
-    }
-
-    await tx.session_events.deleteMany({
-      where: {
-        id: {
-          in: staleRows.map((row) => {
-            return row.id
-          }),
-        },
-      },
-    })
+  if (eventsToInsert.length === 0) return 0
+  await db.insert(schema.session_events).values(eventsToInsert)
+  const staleRows = await db.query.session_events.findMany({
+    where: { session_id: sessionId },
+    orderBy: { timestamp: 'desc', event_index: 'desc', id: 'desc' },
+    limit: 1_000_000,
+    offset: 1000,
+    columns: { id: true },
   })
-
+  if (staleRows.length > 0) {
+    await db.delete(schema.session_events).where(orm.inArray(schema.session_events.id, staleRows.map((row) => row.id)))
+  }
   return eventsToInsert.length
 }
 
-export async function getSessionEventSnapshot({
-  sessionId,
-}: {
-  sessionId: string
-}): Promise<session_events[]> {
-  const prisma = await getPrisma()
-  return prisma.session_events.findMany({
-    where: {
-      session_id: sessionId,
-    },
-    orderBy: [{ timestamp: 'asc' }, { event_index: 'asc' }, { id: 'asc' }],
-    take: 1000,
+export async function getSessionEventSnapshot({ sessionId }: { sessionId: string }): Promise<SessionEvent[]> {
+  const db = await getDb()
+  return db.query.session_events.findMany({
+    where: { session_id: sessionId },
+    orderBy: { timestamp: 'asc', event_index: 'asc', id: 'asc' },
+    limit: 1000,
   })
 }
 
-// ============================================================================
-// Part Messages Functions
-// ============================================================================
-
-/**
- * Get all part IDs for a thread.
- */
-export async function getPartMessageIds(threadId: string): Promise<string[]> {
-  const prisma = await getPrisma()
-  const rows = await prisma.part_messages.findMany({
-    where: { thread_id: threadId },
-    select: { part_id: true },
-  })
+export async function getPartMessageIds(threadId: string) {
+  const db = await getDb()
+  const rows = await db.query.part_messages.findMany({ where: { thread_id: threadId }, columns: { part_id: true } })
   return rows.map((row) => row.part_id)
 }
 
-/**
- * Store a part-message mapping.
- * Note: The thread must already have a session (via setThreadSession) before calling this.
- */
-export async function setPartMessage(
-  partId: string,
-  messageId: string,
-  threadId: string,
-): Promise<void> {
-  const prisma = await getPrisma()
-  await prisma.part_messages.upsert({
-    where: { part_id: partId },
-    create: { part_id: partId, message_id: messageId, thread_id: threadId },
-    update: { message_id: messageId, thread_id: threadId },
-  })
+export async function setPartMessage({ partId, messageId, threadId }: { partId: string; messageId: string; threadId: string }) {
+  const db = await getDb()
+  await db.insert(schema.part_messages)
+    .values({ part_id: partId, message_id: messageId, thread_id: threadId })
+    .onConflictDoUpdate({ target: schema.part_messages.part_id, set: { message_id: messageId, thread_id: threadId } })
 }
 
-/**
- * Store multiple part-message mappings in a transaction.
- * More efficient and atomic for batch operations.
- * Note: The thread must already have a session (via setThreadSession) before calling this.
- */
-export async function setPartMessagesBatch(
-  partMappings: Array<{ partId: string; messageId: string; threadId: string }>,
-): Promise<void> {
-  if (partMappings.length === 0) {
-    return
+export async function setPartMessagesBatch(partMappings: Array<{ partId: string; messageId: string; threadId: string }>) {
+  if (partMappings.length === 0) return
+  const db = await getDb()
+  for (const { partId, messageId, threadId } of partMappings) {
+    await db.insert(schema.part_messages)
+      .values({ part_id: partId, message_id: messageId, thread_id: threadId })
+      .onConflictDoUpdate({ target: schema.part_messages.part_id, set: { message_id: messageId, thread_id: threadId } })
   }
-  const prisma = await getPrisma()
-  await prisma.$transaction(
-    partMappings.map(({ partId, messageId, threadId }) => {
-      return prisma.part_messages.upsert({
-        where: { part_id: partId },
-        create: { part_id: partId, message_id: messageId, thread_id: threadId },
-        update: { message_id: messageId, thread_id: threadId },
-      })
-    }),
-  )
 }
 
-// ============================================================================
-// Bot Token Functions
-// ============================================================================
+function splitServiceAuthToken({ token }: { token: string }): { clientId: string; clientSecret: string } | null {
+  const separatorIndex = token.indexOf(':')
+  if (separatorIndex <= 0 || separatorIndex >= token.length - 1) return null
+  return { clientId: token.slice(0, separatorIndex), clientSecret: token.slice(separatorIndex + 1) }
+}
 
-/**
- * Get the bot token to use, with mode info, in a single query.
- *
- * Selection logic (when multiple bot rows exist):
- * - If only one bot exists, use it regardless of mode.
- * - Picks the bot row with the most recent `last_used_at` timestamp, which is
- *   set by the `run()` command when the bot starts. This ensures subcommands
- *   in separate processes (send, project list, etc.) automatically use
- *   whichever bot mode (gateway or self-hosted) was last started.
- * - Falls back to `created_at` ordering when no row has `last_used_at` set
- *   (backward compat for existing DBs before this column was added).
- *
- * For gateway mode, the token is derived from client_id:client_secret
- * and REST routing is automatically enabled (idempotent env var set).
- * This ensures every code path that reads credentials gets correct routing
- * without needing to set discordBaseUrl separately.
- */
-export async function getBotTokenWithMode(): Promise<
-  | {
-      appId: string
-      token: string
-      gatewayToken: string
-      mode: BotMode
-      clientId: string | null
-      clientSecret: string | null
-      proxyUrl: string | null
-    }
-  | undefined
-> {
-  const prisma = await getPrisma()
-  // Pick the bot that was most recently started via run(). last_used_at is the
-  // cross-process source of truth — no in-memory flags needed.
-  // Fall back to created_at for DBs that predate the last_used_at column.
-  const allBots = await prisma.bot_tokens.findMany({
-    orderBy: [{ last_used_at: 'desc' }, { created_at: 'desc' }],
-  })
-  const row = allBots[0]
-  if (!row) {
-    return undefined
-  }
+function createServiceCredentials() {
+  return { clientId: crypto.randomUUID(), clientSecret: crypto.randomBytes(32).toString('hex') }
+}
+
+export async function getBotTokenWithMode(): Promise<{
+  appId: string
+  token: string
+  gatewayToken: string
+  mode: BotMode
+  clientId: string | null
+  clientSecret: string | null
+  proxyUrl: string | null
+} | undefined> {
+  const db = await getDb()
+  const [row] = await db.query.bot_tokens.findMany({ orderBy: { last_used_at: 'desc', created_at: 'desc' }, limit: 1 })
+  if (!row) return undefined
   const gatewayToken = await ensureServiceAuthToken({ appId: row.app_id })
   const serviceParts = splitServiceAuthToken({ token: gatewayToken })
   const mode: BotMode = row.bot_mode === 'gateway' ? 'gateway' : 'self_hosted'
-  const token = (mode === 'gateway' && serviceParts)
-    ? gatewayToken
-    : row.token
-  // Always reset discordBaseUrl on every read so a mode switch within
-  // the same process (e.g. DB has gateway row but user proceeds self-hosted)
-  // doesn't leave a stale proxy URL in the store.
-  const discordBaseUrl = (mode === 'gateway' && row.proxy_url)
-    ? row.proxy_url
-    : 'https://discord.com'
+  const token = mode === 'gateway' && serviceParts ? gatewayToken : row.token
+  const discordBaseUrl = mode === 'gateway' && row.proxy_url ? row.proxy_url : 'https://discord.com'
   store.setState({ discordBaseUrl, gatewayToken })
   return {
     appId: row.app_id,
@@ -1310,567 +564,223 @@ export async function getBotTokenWithMode(): Promise<
   }
 }
 
-function splitServiceAuthToken({ token }: { token: string }): { clientId: string; clientSecret: string } | null {
-  const separatorIndex = token.indexOf(':')
-  if (separatorIndex <= 0 || separatorIndex >= token.length - 1) {
-    return null
-  }
-  return {
-    clientId: token.slice(0, separatorIndex),
-    clientSecret: token.slice(separatorIndex + 1),
-  }
-}
-
-function createServiceCredentials(): { clientId: string; clientSecret: string } {
-  return {
-    clientId: crypto.randomUUID(),
-    clientSecret: crypto.randomBytes(32).toString('hex'),
-  }
-}
-
-export async function ensureServiceAuthToken({
-  appId,
-  preferredGatewayToken,
-}: {
-  appId: string
-  preferredGatewayToken?: string
-}): Promise<string> {
-  const prisma = await getPrisma()
-  const row = await prisma.bot_tokens.findUnique({
-    where: { app_id: appId },
-  })
-  if (!row) {
-    throw new Error(`Bot token row not found for app_id ${appId}`)
-  }
-
-  const preferred = preferredGatewayToken
-    ? splitServiceAuthToken({ token: preferredGatewayToken })
-    : null
-  const existing = (row.client_id && row.client_secret)
-    ? { clientId: row.client_id, clientSecret: row.client_secret }
-    : null
+export async function ensureServiceAuthToken({ appId, preferredGatewayToken }: { appId: string; preferredGatewayToken?: string }) {
+  const db = await getDb()
+  const row = await db.query.bot_tokens.findFirst({ where: { app_id: appId } })
+  if (!row) throw new Error(`Bot token row not found for app_id ${appId}`)
+  const preferred = preferredGatewayToken ? splitServiceAuthToken({ token: preferredGatewayToken }) : null
+  const existing = row.client_id && row.client_secret ? { clientId: row.client_id, clientSecret: row.client_secret } : null
   const fromStoredToken = splitServiceAuthToken({ token: row.token })
   const resolved = preferred || existing || fromStoredToken || createServiceCredentials()
-
   if (row.client_id !== resolved.clientId || row.client_secret !== resolved.clientSecret) {
-    await prisma.bot_tokens.update({
-      where: { app_id: appId },
-      data: {
-        client_id: resolved.clientId,
-        client_secret: resolved.clientSecret,
-      },
-    })
+    await db.update(schema.bot_tokens)
+      .set({ client_id: resolved.clientId, client_secret: resolved.clientSecret })
+      .where(orm.eq(schema.bot_tokens.app_id, appId))
   }
-
   return `${resolved.clientId}:${resolved.clientSecret}`
 }
 
-/**
- * Store a bot token.
- */
-export async function setBotToken(appId: string, token: string): Promise<void> {
-  const prisma = await getPrisma()
+export async function setBotToken(appId: string, token: string) {
+  const db = await getDb()
   const generated = createServiceCredentials()
-  await prisma.bot_tokens.upsert({
-    where: { app_id: appId },
-    create: {
-      app_id: appId,
-      token,
-      client_id: generated.clientId,
-      client_secret: generated.clientSecret,
-    },
-    update: { token },
-  })
+  await db.insert(schema.bot_tokens)
+    .values({ app_id: appId, token, client_id: generated.clientId, client_secret: generated.clientSecret })
+    .onConflictDoUpdate({ target: schema.bot_tokens.app_id, set: { token } })
   await ensureServiceAuthToken({ appId })
 }
 
-export type { BotMode }
-
-/**
- * Persist gateway bot mode credentials.
- * Upserts the row so a prior setBotToken call is not needed.
- */
-export async function setBotMode({
-  appId,
-  mode,
-  clientId,
-  clientSecret,
-  proxyUrl,
-}: {
-  appId: string
-  mode: BotMode
-  clientId?: string | null
-  clientSecret?: string | null
-  proxyUrl?: string | null
-}): Promise<void> {
-  const prisma = await getPrisma()
-  const data = {
-    bot_mode: mode,
-    client_id: clientId ?? null,
-    client_secret: clientSecret ?? null,
-    proxy_url: proxyUrl ?? null,
-  }
-  const createToken = (clientId && clientSecret) ? `${clientId}:${clientSecret}` : ''
-  await prisma.bot_tokens.upsert({
-    where: { app_id: appId },
-    create: { app_id: appId, token: createToken, ...data },
-    update: data,
-  })
-  await ensureServiceAuthToken({
-    appId,
-    preferredGatewayToken: (clientId && clientSecret) ? `${clientId}:${clientSecret}` : undefined,
-  })
+export async function setBotMode({ appId, mode, clientId, clientSecret, proxyUrl }: { appId: string; mode: BotMode; clientId?: string | null; clientSecret?: string | null; proxyUrl?: string | null }) {
+  const db = await getDb()
+  const token = clientId && clientSecret ? `${clientId}:${clientSecret}` : ''
+  const data = { bot_mode: mode, client_id: clientId ?? null, client_secret: clientSecret ?? null, proxy_url: proxyUrl ?? null }
+  await db.insert(schema.bot_tokens)
+    .values({ app_id: appId, token, ...data })
+    .onConflictDoUpdate({ target: schema.bot_tokens.app_id, set: data })
+  await ensureServiceAuthToken({ appId, preferredGatewayToken: token || undefined })
 }
 
-
-
-// ============================================================================
-// Bot API Keys Functions
-// ============================================================================
-
-/**
- * Get the Gemini API key for a bot.
- */
-export async function getGeminiApiKey(appId: string): Promise<string | null> {
-  const prisma = await getPrisma()
-  const row = await prisma.bot_api_keys.findUnique({
-    where: { app_id: appId },
-  })
-  return row?.gemini_api_key ?? null
+export async function getGeminiApiKey(appId: string) {
+  const db = await getDb()
+  return (await db.query.bot_api_keys.findFirst({ where: { app_id: appId } }))?.gemini_api_key ?? null
 }
 
-/**
- * Set the Gemini API key for a bot.
- * Note: The bot must already have a token (via setBotToken) before calling this.
- */
-export async function setGeminiApiKey(
-  appId: string,
-  apiKey: string,
-): Promise<void> {
-  const prisma = await getPrisma()
-  await prisma.bot_api_keys.upsert({
-    where: { app_id: appId },
-    create: { app_id: appId, gemini_api_key: apiKey },
-    update: { gemini_api_key: apiKey },
-  })
+export async function setGeminiApiKey(appId: string, apiKey: string) {
+  const db = await getDb()
+  await db.insert(schema.bot_api_keys)
+    .values({ app_id: appId, gemini_api_key: apiKey })
+    .onConflictDoUpdate({ target: schema.bot_api_keys.app_id, set: { gemini_api_key: apiKey } })
 }
 
-/**
- * Get the OpenAI API key for a bot.
- */
-export async function getOpenAIApiKey(appId: string): Promise<string | null> {
-  const prisma = await getPrisma()
-  const row = await prisma.bot_api_keys.findUnique({
-    where: { app_id: appId },
-  })
-  return row?.openai_api_key ?? null
+export async function getOpenAIApiKey(appId: string) {
+  const db = await getDb()
+  return (await db.query.bot_api_keys.findFirst({ where: { app_id: appId } }))?.openai_api_key ?? null
 }
 
-/**
- * Set the OpenAI API key for a bot.
- */
-export async function setOpenAIApiKey(
-  appId: string,
-  apiKey: string,
-): Promise<void> {
-  const prisma = await getPrisma()
-  await prisma.bot_api_keys.upsert({
-    where: { app_id: appId },
-    create: { app_id: appId, openai_api_key: apiKey },
-    update: { openai_api_key: apiKey },
-  })
+export async function setOpenAIApiKey(appId: string, apiKey: string) {
+  const db = await getDb()
+  await db.insert(schema.bot_api_keys)
+    .values({ app_id: appId, openai_api_key: apiKey })
+    .onConflictDoUpdate({ target: schema.bot_api_keys.app_id, set: { openai_api_key: apiKey } })
 }
 
-/**
- * Get the best available transcription API key for a bot.
- * Prefers OpenAI, falls back to Gemini.
- */
-export async function getTranscriptionApiKey(
-  appId: string,
-): Promise<{ provider: 'openai' | 'gemini'; apiKey: string } | null> {
-  const prisma = await getPrisma()
-  const row = await prisma.bot_api_keys.findUnique({
-    where: { app_id: appId },
-  })
+export async function getTranscriptionApiKey(appId: string): Promise<{ provider: 'openai' | 'gemini'; apiKey: string } | null> {
+  const db = await getDb()
+  const row = await db.query.bot_api_keys.findFirst({ where: { app_id: appId } })
   if (!row) return null
-  if (row.openai_api_key) {
-    return { provider: 'openai', apiKey: row.openai_api_key }
-  }
-  if (row.gemini_api_key) {
-    return { provider: 'gemini', apiKey: row.gemini_api_key }
-  }
+  if (row.openai_api_key) return { provider: 'openai', apiKey: row.openai_api_key }
+  if (row.gemini_api_key) return { provider: 'gemini', apiKey: row.gemini_api_key }
   return null
 }
 
-// ============================================================================
-// Channel Directory CRUD Functions
-// ============================================================================
-
-/**
- * Store a channel-directory mapping.
- * @param skipIfExists If true, behaves like INSERT OR IGNORE - skips if record exists.
- *                     If false (default), behaves like INSERT OR REPLACE - updates if exists.
- */
-export async function setChannelDirectory({
-  channelId,
-  directory,
-  channelType,
-  skipIfExists = false,
-}: {
-  channelId: string
-  directory: string
-  channelType: PrismaChannelType
-  skipIfExists?: boolean
-}): Promise<void> {
-  const prisma = await getPrisma()
+export async function setChannelDirectory({ channelId, directory, channelType, skipIfExists = false }: { channelId: string; directory: string; channelType: DatabaseChannelType; skipIfExists?: boolean }) {
+  const db = await getDb()
   if (skipIfExists) {
-    // INSERT OR IGNORE semantics - only insert if not exists
-    const existing = await prisma.channel_directories.findUnique({
-      where: { channel_id: channelId },
-    })
-    if (existing) {
-      return
-    }
-    await prisma.channel_directories.create({
-      data: {
-        channel_id: channelId,
-        directory,
-        channel_type: channelType,
-      },
-    })
-  } else {
-    // INSERT OR REPLACE semantics - upsert
-    await prisma.channel_directories.upsert({
-      where: { channel_id: channelId },
-      create: {
-        channel_id: channelId,
-        directory,
-        channel_type: channelType,
-      },
-      update: {
-        directory,
-        channel_type: channelType,
-      },
-    })
+    await db.insert(schema.channel_directories)
+      .values({ channel_id: channelId, directory, channel_type: channelType })
+      .onConflictDoNothing({ target: schema.channel_directories.channel_id })
+    return
   }
+  await db.insert(schema.channel_directories)
+    .values({ channel_id: channelId, directory, channel_type: channelType })
+    .onConflictDoUpdate({ target: schema.channel_directories.channel_id, set: { directory, channel_type: channelType } })
 }
 
-/**
- * Find channels by directory path.
- */
-export async function findChannelsByDirectory({
-  directory,
-  channelType,
-}: {
-  directory?: string
-  channelType?: PrismaChannelType
-}): Promise<
-  Array<{ channel_id: string; directory: string; channel_type: string }>
-> {
-  const prisma = await getPrisma()
-  const where: {
-    directory?: string
-    channel_type?: PrismaChannelType
-  } = {}
-  if (directory) {
-    where.directory = directory
-  }
-  if (channelType) {
-    where.channel_type = channelType
-  }
-  const rows = await prisma.channel_directories.findMany({
-    where,
-    select: { channel_id: true, directory: true, channel_type: true },
-  })
-  return rows
+export async function findChannelsByDirectory({ directory, channelType }: { directory?: string; channelType?: DatabaseChannelType }): Promise<Array<{ channel_id: string; directory: string; channel_type: string }>> {
+  const db = await getDb()
+  const where = directory && channelType
+    ? { directory, channel_type: channelType }
+    : directory
+      ? { directory }
+      : channelType
+        ? { channel_type: channelType }
+        : undefined
+  return db.query.channel_directories.findMany({ where, columns: { channel_id: true, directory: true, channel_type: true } })
 }
 
-/**
- * Get all distinct directories with text channels.
- */
-export async function getAllTextChannelDirectories(): Promise<string[]> {
-  const prisma = await getPrisma()
-  const rows = await prisma.channel_directories.findMany({
+export async function getAllTextChannelDirectories() {
+  const db = await getDb()
+  const rows = await db.query.channel_directories.findMany({ where: { channel_type: 'text' }, columns: { directory: true } })
+  return [...new Set(rows.map((row) => row.directory))]
+}
+
+export async function listTrackedTextChannels(): Promise<Array<{ channel_id: string; directory: string; created_at: Date | null }>> {
+  const db = await getDb()
+  return db.query.channel_directories.findMany({
     where: { channel_type: 'text' },
-    select: { directory: true },
-    distinct: ['directory'],
-  })
-  return rows.map((row) => row.directory)
-}
-
-export async function listTrackedTextChannels(): Promise<
-  Array<{ channel_id: string; directory: string; created_at: Date | null }>
-> {
-  const prisma = await getPrisma()
-  return prisma.channel_directories.findMany({
-    where: { channel_type: 'text' },
-    orderBy: [{ created_at: 'asc' }, { channel_id: 'asc' }],
-    select: { channel_id: true, directory: true, created_at: true },
+    orderBy: { created_at: 'asc', channel_id: 'asc' },
+    columns: { channel_id: true, directory: true, created_at: true },
   })
 }
 
-/**
- * Delete all channel directories for a specific directory.
- */
-export async function deleteChannelDirectoriesByDirectory(
-  directory: string,
-): Promise<void> {
-  const prisma = await getPrisma()
-  await prisma.channel_directories.deleteMany({
-    where: { directory },
-  })
+export async function deleteChannelDirectoriesByDirectory(directory: string) {
+  const db = await getDb()
+  await db.delete(schema.channel_directories).where(orm.eq(schema.channel_directories.directory, directory))
 }
 
-/**
- * Delete a single channel_directories row and all its child rows
- * (channel_models, channel_agents, channel_worktrees, channel_verbosity,
- * channel_mention_mode) in a single transaction. scheduled_tasks has
- * onDelete:SetNull so Prisma handles it automatically.
- */
-export async function deleteChannelDirectoryById(
-  channelId: string,
-): Promise<boolean> {
-  const prisma = await getPrisma()
-  const deletedCount = await prisma.$transaction(async (tx) => {
-    await tx.channel_models.deleteMany({ where: { channel_id: channelId } })
-    await tx.channel_agents.deleteMany({ where: { channel_id: channelId } })
-    await tx.channel_worktrees.deleteMany({ where: { channel_id: channelId } })
-    await tx.channel_verbosity.deleteMany({ where: { channel_id: channelId } })
-    await tx.channel_mention_mode.deleteMany({ where: { channel_id: channelId } })
-    const result = await tx.channel_directories.deleteMany({
-      where: { channel_id: channelId },
-    })
-    return result.count
-  })
-  return deletedCount > 0
+export async function deleteChannelDirectoryById(channelId: string) {
+  const db = await getDb()
+  await db.batch([
+    db.delete(schema.channel_models).where(orm.eq(schema.channel_models.channel_id, channelId)),
+    db.delete(schema.channel_agents).where(orm.eq(schema.channel_agents.channel_id, channelId)),
+    db.delete(schema.channel_worktrees).where(orm.eq(schema.channel_worktrees.channel_id, channelId)),
+    db.delete(schema.channel_verbosity).where(orm.eq(schema.channel_verbosity.channel_id, channelId)),
+    db.delete(schema.channel_mention_mode).where(orm.eq(schema.channel_mention_mode.channel_id, channelId)),
+  ] as const)
+  const rows = await db.delete(schema.channel_directories)
+    .where(orm.eq(schema.channel_directories.channel_id, channelId))
+    .returning({ channel_id: schema.channel_directories.channel_id })
+  return rows.length > 0
 }
 
-/**
- * Get the directory for a voice channel.
- */
-export async function getVoiceChannelDirectory(
-  channelId: string,
-): Promise<string | undefined> {
-  const prisma = await getPrisma()
-  const row = await prisma.channel_directories.findFirst({
-    where: { channel_id: channelId, channel_type: 'voice' },
-  })
-  return row?.directory
+export async function getVoiceChannelDirectory(channelId: string) {
+  const db = await getDb()
+  return (await db.query.channel_directories.findFirst({ where: { channel_id: channelId, channel_type: 'voice' } }))?.directory
 }
 
-/**
- * Find the text channel ID that shares the same directory as a voice channel.
- * Used to send error messages to text channels from voice handlers.
- */
-export async function findTextChannelByVoiceChannel(
-  voiceChannelId: string,
-): Promise<string | undefined> {
-  const prisma = await getPrisma()
-  // First get the directory for the voice channel
-  const voiceChannel = await prisma.channel_directories.findFirst({
-    where: { channel_id: voiceChannelId, channel_type: 'voice' },
-  })
-  if (!voiceChannel) {
-    return undefined
-  }
-  // Then find the text channel with the same directory
-  const textChannel = await prisma.channel_directories.findFirst({
-    where: { directory: voiceChannel.directory, channel_type: 'text' },
-  })
-  return textChannel?.channel_id
+export async function findTextChannelByVoiceChannel(voiceChannelId: string) {
+  const db = await getDb()
+  const voiceChannel = await db.query.channel_directories.findFirst({ where: { channel_id: voiceChannelId, channel_type: 'voice' } })
+  if (!voiceChannel) return undefined
+  return (await db.query.channel_directories.findFirst({ where: { directory: voiceChannel.directory, channel_type: 'text' } }))?.channel_id
 }
 
-// ============================================================================
-// Forum Sync Config Functions
-// ============================================================================
+export type ForumSyncConfigRow = { appId: string; forumChannelId: string; outputDir: string; direction: string }
 
-export type ForumSyncConfigRow = {
-  appId: string
-  forumChannelId: string
-  outputDir: string
-  direction: string
+export async function getForumSyncConfigs({ appId }: { appId: string }): Promise<ForumSyncConfigRow[]> {
+  const db = await getDb()
+  const rows = await db.query.forum_sync_configs.findMany({ where: { app_id: appId } })
+  return rows.map((row) => ({ appId: row.app_id, forumChannelId: row.forum_channel_id, outputDir: row.output_dir, direction: row.direction }))
 }
 
-export async function getForumSyncConfigs({
-  appId,
-}: {
-  appId: string
-}): Promise<ForumSyncConfigRow[]> {
-  const prisma = await getPrisma()
-  const rows = await prisma.forum_sync_configs.findMany({
-    where: { app_id: appId },
-  })
-  return rows.map((row) => ({
-    appId: row.app_id,
-    forumChannelId: row.forum_channel_id,
-    outputDir: row.output_dir,
-    direction: row.direction,
-  }))
+export async function upsertForumSyncConfig({ appId, forumChannelId, outputDir, direction = 'bidirectional' }: { appId: string; forumChannelId: string; outputDir: string; direction?: string }) {
+  const db = await getDb()
+  await db.insert(schema.forum_sync_configs)
+    .values({ app_id: appId, forum_channel_id: forumChannelId, output_dir: outputDir, direction })
+    .onConflictDoUpdate({ target: [schema.forum_sync_configs.app_id, schema.forum_sync_configs.forum_channel_id], set: { output_dir: outputDir, direction, updated_at: new Date() } })
 }
 
-export async function upsertForumSyncConfig({
-  appId,
-  forumChannelId,
-  outputDir,
-  direction = 'bidirectional',
-}: {
-  appId: string
-  forumChannelId: string
-  outputDir: string
-  direction?: string
-}) {
-  const prisma = await getPrisma()
-  await prisma.forum_sync_configs.upsert({
-    where: {
-      app_id_forum_channel_id: {
-        app_id: appId,
-        forum_channel_id: forumChannelId,
-      },
-    },
-    update: { output_dir: outputDir, direction },
-    create: {
-      app_id: appId,
-      forum_channel_id: forumChannelId,
-      output_dir: outputDir,
-      direction,
-    },
-  })
+export async function deleteForumSyncConfig({ appId, forumChannelId }: { appId: string; forumChannelId: string }) {
+  const db = await getDb()
+  await db.delete(schema.forum_sync_configs).where(orm.and(orm.eq(schema.forum_sync_configs.app_id, appId), orm.eq(schema.forum_sync_configs.forum_channel_id, forumChannelId)))
 }
 
-export async function deleteForumSyncConfig({
-  appId,
-  forumChannelId,
-}: {
-  appId: string
-  forumChannelId: string
-}) {
-  const prisma = await getPrisma()
-  await prisma.forum_sync_configs.deleteMany({
-    where: { app_id: appId, forum_channel_id: forumChannelId },
-  })
+export async function deleteStaleForumSyncConfigs({ appId, forumChannelId, outputDir }: { appId: string; forumChannelId: string; outputDir: string }) {
+  const db = await getDb()
+  await db.delete(schema.forum_sync_configs).where(orm.and(
+    orm.eq(schema.forum_sync_configs.app_id, appId),
+    orm.eq(schema.forum_sync_configs.output_dir, outputDir),
+    orm.ne(schema.forum_sync_configs.forum_channel_id, forumChannelId),
+  ))
 }
 
-/** Delete forum sync configs that share the same outputDir but have a different forumChannelId.
- * This cleans up stale entries left behind when a forum channel is deleted and recreated. */
-export async function deleteStaleForumSyncConfigs({
-  appId,
-  forumChannelId,
-  outputDir,
-}: {
-  appId: string
-  forumChannelId: string
-  outputDir: string
-}) {
-  const prisma = await getPrisma()
-  await prisma.forum_sync_configs.deleteMany({
-    where: {
-      app_id: appId,
-      output_dir: outputDir,
-      NOT: { forum_channel_id: forumChannelId },
-    },
-  })
+export async function createIpcRequest({ type, sessionId, threadId, payload }: { type: IpcRequestType; sessionId: string; threadId: string; payload: string }) {
+  const db = await getDb()
+  const [row] = await db.insert(schema.ipc_requests).values({ type, session_id: sessionId, thread_id: threadId, payload }).returning()
+  if (!row) throw new Error('Failed to create IPC request')
+  return row
 }
 
-// ═══════════════════════════════════════════════════════════════════════════
-// IPC REQUESTS - plugin <-> bot communication via DB polling
-// ═══════════════════════════════════════════════════════════════════════════
-
-export async function createIpcRequest({
-  type,
-  sessionId,
-  threadId,
-  payload,
-}: {
-  type: import('./generated/client.js').ipc_request_type
-  sessionId: string
-  threadId: string
-  payload: string
-}) {
-  const prisma = await getPrisma()
-  return prisma.ipc_requests.create({
-    data: {
-      type,
-      session_id: sessionId,
-      thread_id: threadId,
-      payload,
-    },
-  })
-}
-
-/**
- * Atomically claim pending IPC requests by updating status to 'processing'
- * only for rows that are still 'pending'. Returns the claimed rows.
- * This prevents duplicate dispatch when poll ticks overlap.
- */
 export async function claimPendingIpcRequests() {
-  const prisma = await getPrisma()
-  const pending = await prisma.ipc_requests.findMany({
-    where: { status: 'pending' },
-    orderBy: { created_at: 'asc' },
-  })
-  if (pending.length === 0) return pending
-
-  // Atomically claim each one (updateMany with status guard)
+  const db = await getDb()
+  const pending = await db.query.ipc_requests.findMany({ where: { status: 'pending' }, orderBy: { created_at: 'asc' } })
   const claimed: typeof pending = []
   for (const req of pending) {
-    const result = await prisma.ipc_requests.updateMany({
-      where: { id: req.id, status: 'pending' },
-      data: { status: 'processing' },
-    })
-    if (result.count > 0) {
-      claimed.push(req)
-    }
+    const rows = await db.update(schema.ipc_requests)
+      .set({ status: 'processing' })
+      .where(orm.and(orm.eq(schema.ipc_requests.id, req.id), orm.eq(schema.ipc_requests.status, 'pending')))
+      .returning()
+    if (rows.length > 0) claimed.push(req)
   }
   return claimed
 }
 
-export async function completeIpcRequest({
-  id,
-  response,
-}: {
-  id: string
-  response: string
-}) {
-  const prisma = await getPrisma()
-  return prisma.ipc_requests.update({
-    where: { id },
-    data: { response, status: 'completed' as const },
-  })
+export async function completeIpcRequest({ id, response }: { id: string; response: string }) {
+  const db = await getDb()
+  const [row] = await db.update(schema.ipc_requests)
+    .set({ response, status: 'completed' })
+    .where(orm.eq(schema.ipc_requests.id, id))
+    .returning()
+  return row
 }
 
 export async function getIpcRequestById({ id }: { id: string }) {
-  const prisma = await getPrisma()
-  return prisma.ipc_requests.findUnique({ where: { id } })
+  const db = await getDb()
+  return await db.query.ipc_requests.findFirst({ where: { id } }) ?? null
 }
 
-/** Cancel IPC requests stuck in 'processing' longer than the TTL (e.g. hung file upload). */
-export async function cancelStaleProcessingRequests({
-  ttlMs,
-}: {
-  ttlMs: number
-}) {
-  const prisma = await getPrisma()
+export async function cancelStaleProcessingRequests({ ttlMs }: { ttlMs: number }) {
+  const db = await getDb()
   const cutoff = new Date(Date.now() - ttlMs)
-  return prisma.ipc_requests.updateMany({
-    where: {
-      status: 'processing',
-      updated_at: { lt: cutoff },
-    },
-    data: {
-      status: 'cancelled' as const,
-      response: JSON.stringify({ error: 'Request timed out' }),
-    },
-  })
+  const rows = await db.update(schema.ipc_requests)
+    .set({ status: 'cancelled', response: JSON.stringify({ error: 'Request timed out' }) })
+    .where(orm.and(orm.eq(schema.ipc_requests.status, 'processing'), orm.lt(schema.ipc_requests.updated_at, cutoff)))
+    .returning({ id: schema.ipc_requests.id })
+  return { count: rows.length }
 }
 
-/** Cancel all pending IPC requests (on startup cleanup and shutdown). */
 export async function cancelAllPendingIpcRequests() {
-  const prisma = await getPrisma()
-  await prisma.ipc_requests.updateMany({
-    where: { status: { in: ['pending', 'processing'] } },
-    data: {
-      status: 'cancelled' as const,
-      response: JSON.stringify({ error: 'Bot shutting down' }),
-    },
-  })
+  const db = await getDb()
+  await db.update(schema.ipc_requests)
+    .set({ status: 'cancelled', response: JSON.stringify({ error: 'Bot shutting down' }) })
+    .where(orm.inArray(schema.ipc_requests.status, ['pending', 'processing']))
 }

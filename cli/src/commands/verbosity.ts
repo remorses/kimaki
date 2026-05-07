@@ -18,7 +18,7 @@ import {
   setChannelVerbosity,
   type VerbosityLevel,
 } from '../database.js'
-import { getPrisma } from '../db.js'
+import { getDb } from '../db.js'
 import { store } from '../store.js'
 import { createLogger, LogPrefix } from '../logger.js'
 
@@ -70,8 +70,8 @@ function resolveChannelId(channel: ChatInputCommandInteraction['channel']): stri
 async function getChannelVerbosityOverride(
   channelId: string,
 ): Promise<VerbosityLevel | null> {
-  const prisma = await getPrisma()
-  const row = await prisma.channel_verbosity.findUnique({
+  const db = await getDb()
+  const row = await db.query.channel_verbosity.findFirst({
     where: { channel_id: channelId },
   })
   if (row?.verbosity) {

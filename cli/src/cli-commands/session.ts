@@ -12,7 +12,7 @@ import { fileURLToPath } from 'node:url'
 import { spawn, execSync } from 'node:child_process'
 import { createLogger, LogPrefix, initLogFile } from '../logger.js'
 import { createDiscordClient, initDatabase, getChannelDirectory, initializeOpencodeForDirectory, createProjectChannels } from '../discord-bot.js'
-import { getBotTokenWithMode, getThreadSession, getThreadIdBySessionId, getSessionEventSnapshot, getPrisma, createScheduledTask, listScheduledTasks, cancelScheduledTask, getScheduledTask, updateScheduledTask, getSessionStartSourcesBySessionIds, deleteChannelDirectoryById, findChannelsByDirectory } from '../database.js'
+import { getBotTokenWithMode, getThreadSession, getThreadIdBySessionId, getSessionEventSnapshot, getDb, createScheduledTask, listScheduledTasks, cancelScheduledTask, getScheduledTask, updateScheduledTask, getSessionStartSourcesBySessionIds, deleteChannelDirectoryById, findChannelsByDirectory } from '../database.js'
 import { ShareMarkdown } from '../markdown.js'
 import { parseSessionSearchPattern, findFirstSessionSearchHit, buildSessionSearchSnippet, getPartSearchTexts } from '../session-search.js'
 import { formatWorktreeName, formatAutoWorktreeName } from '../commands/new-worktree.js'
@@ -74,9 +74,9 @@ cli
       }
 
       // Look up which sessions were started via kimaki (have a thread mapping)
-      const prisma = await getPrisma()
-      const threadSessions = await prisma.thread_sessions.findMany({
-        select: { thread_id: true, session_id: true },
+      const db = await getDb()
+      const threadSessions = await db.query.thread_sessions.findMany({
+        columns: { thread_id: true, session_id: true },
       })
       const sessionToThread = new Map(
         threadSessions
@@ -296,9 +296,9 @@ cli
         process.exit(0)
       }
 
-      const prisma = await getPrisma()
-      const threadSessions = await prisma.thread_sessions.findMany({
-        select: { thread_id: true, session_id: true },
+      const db = await getDb()
+      const threadSessions = await db.query.thread_sessions.findMany({
+        columns: { thread_id: true, session_id: true },
       })
       const sessionToThread = new Map(
         threadSessions

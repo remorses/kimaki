@@ -1,5 +1,5 @@
 // IPC polling bridge between the opencode plugin and the Discord bot.
-// The plugin inserts rows into ipc_requests (via Prisma). This module polls
+// The plugin inserts rows into ipc_requests (via Drizzle). This module polls
 // that table, claims pending rows atomically, and dispatches them by type.
 // Replaces the old HTTP lock-server approach with DB-based IPC.
 

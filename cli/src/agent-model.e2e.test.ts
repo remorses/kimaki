@@ -40,7 +40,9 @@ import {
   setChannelModel,
   type VerbosityLevel,
 } from './database.js'
-import { getPrisma } from './db.js'
+import { getDb } from './db.js'
+import * as orm from 'drizzle-orm'
+import * as schema from './schema.js'
 import { startHranaServer, stopHranaServer } from './hrana-server.js'
 import { initializeOpencodeForDirectory, stopOpencodeServer } from './opencode.js'
 import {
@@ -496,13 +498,9 @@ describe('agent model resolution', () => {
   test(
     'reply message injects replied-message context',
     async () => {
-      const prisma = await getPrisma()
-      await prisma.channel_agents.deleteMany({
-        where: { channel_id: TEXT_CHANNEL_ID },
-      })
-      await prisma.channel_models.deleteMany({
-        where: { channel_id: TEXT_CHANNEL_ID },
-      })
+      const db = await getDb()
+      await db.delete(schema.channel_agents).where(orm.eq(schema.channel_agents.channel_id, TEXT_CHANNEL_ID))
+      await db.delete(schema.channel_models).where(orm.eq(schema.channel_models.channel_id, TEXT_CHANNEL_ID))
 
       const existingThreadIds = new Set(
         (await discord.channel(TEXT_CHANNEL_ID).getThreads()).map((thread) => {
@@ -562,10 +560,8 @@ describe('agent model resolution', () => {
     'new thread uses channel model when channel model preference is set',
     async () => {
       // Clear channel agent so model resolution falls through to channel model
-      const prisma = await getPrisma()
-      await prisma.channel_agents.deleteMany({
-        where: { channel_id: TEXT_CHANNEL_ID },
-      })
+      const db = await getDb()
+      await db.delete(schema.channel_agents).where(orm.eq(schema.channel_agents.channel_id, TEXT_CHANNEL_ID))
 
       // Set channel model preference — simulates /model selecting a model at channel scope
       await setChannelModel({
@@ -629,10 +625,8 @@ describe('agent model resolution', () => {
     'channel model with variant preference completes without error',
     async () => {
       // Clear channel agent so model resolution falls through to channel model
-      const prisma = await getPrisma()
-      await prisma.channel_agents.deleteMany({
-        where: { channel_id: TEXT_CHANNEL_ID },
-      })
+      const db = await getDb()
+      await db.delete(schema.channel_agents).where(orm.eq(schema.channel_agents.channel_id, TEXT_CHANNEL_ID))
 
       // Set channel model with a variant (thinking level)
       // The deterministic provider doesn't support thinking, so the variant
@@ -795,14 +789,10 @@ describe('agent model resolution', () => {
     'thread created with no agent keeps default model after channel agent is set',
     async () => {
       // Clear any channel agent — thread starts with default (no agent)
-      const prisma = await getPrisma()
-      await prisma.channel_agents.deleteMany({
-        where: { channel_id: TEXT_CHANNEL_ID },
-      })
+      const db = await getDb()
+      await db.delete(schema.channel_agents).where(orm.eq(schema.channel_agents.channel_id, TEXT_CHANNEL_ID))
       // Also clear channel model so we get the pure default
-      await prisma.channel_models.deleteMany({
-        where: { channel_id: TEXT_CHANNEL_ID },
-      })
+      await db.delete(schema.channel_models).where(orm.eq(schema.channel_models.channel_id, TEXT_CHANNEL_ID))
 
       // 1. Send a message to create a thread (no channel agent set)
       await discord.channel(TEXT_CHANNEL_ID).user(TEST_USER_ID).sendMessage({
