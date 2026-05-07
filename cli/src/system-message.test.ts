@@ -118,7 +118,11 @@ describe('system-message', () => {
       Prefer passing the current agent with \`--agent <current_agent>\` so spawned or scheduled sessions keep the same agent unless you are intentionally switching. Replace \`<current_agent>\` with the value from the per-turn \`Current agent\` reminder.
       When writing \`kimaki send\` shell commands, use single quotes around \`--prompt\`, \`--user\`, \`--send-at\`, and other literal arguments so backticks inside prompts are not interpreted by the shell. Prefer \`--user '<discord-user-id>'\` over \`--user 'name'\` because name lookup depends on optional Server Members Intent.
 
-      IMPORTANT: NEVER use \`--worktree\` unless the user explicitly asks for a worktree. Default to creating normal threads without worktrees.
+      Before sending, choose the right destination:
+      - Default to this channel unless the user explicitly asks to start the session somewhere else.
+      - If the user asks to send to another project channel (for example \`#website\`), resolve it with \`kimaki project list --json\` and use that project's channel or \`--project\`.
+      - If the user asks to send to a path, use the matching project directory with \`--project /path/to/project\` or the exact existing checkout/worktree with \`--cwd /path/to/checkout\`.
+      - NEVER use \`--worktree\` unless the user explicitly asks for a worktree. Default to creating normal threads without worktrees.
 
       To send a prompt to an existing thread instead of creating a new one:
 
@@ -339,9 +343,12 @@ describe('system-message', () => {
 
       # Or use --project to resolve from directory
       kimaki send --project /path/to/other-repo --prompt 'Plan how to bump version to 1.2.0' --agent <current_agent>
+
+      # Or use --cwd for an existing checkout/worktree path
+      kimaki send --cwd /path/to/other-repo-worktree --prompt 'Plan how to update this checkout' --agent <current_agent>
       \`\`\`
 
-      When sending prompts to other projects, always ask the agent to plan first, never build upfront. The prompt should start with "Plan how to ..." so the user can review before greenlighting implementation.
+      When the user explicitly asks to send prompts to other projects, target the project/channel/path they named instead of the current channel. Ask the agent to plan first, never build upfront. The prompt should start with "Plan how to ..." so the user can review before greenlighting implementation.
 
       Use cases:
       - **Updating a fork or dependency** the user maintains locally
@@ -401,6 +408,8 @@ describe('system-message', () => {
 
       # Share a single commit
       bunx critique --commit HEAD --web "Describe latest commit"
+
+      If the user asks to see a diff and you already committed the changes, prefer showing a separate diff URL for each commit instead of one unified diff. Run one \`bunx critique --commit <hash> --web\` per commit so each change is clearly scoped. Run all the critique calls in parallel tool calls.
 
       If there are other unrelated changes in the working directory, filter to only show the files you edited:
 
