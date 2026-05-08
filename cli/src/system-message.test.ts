@@ -148,13 +148,13 @@ describe('system-message', () => {
 
       kimaki send --channel chan_123 --prompt 'Add dark mode support' --worktree dark-mode --agent <current_agent> --user '<discord-user-id>'
 
-      Use --cwd to start a session in an existing git worktree directory (must be a worktree of the project):
+      Use --cwd to start a session in an existing project subfolder or git worktree directory:
 
-      kimaki send --channel chan_123 --prompt 'Continue work on feature' --cwd /path/to/existing-worktree --agent <current_agent> --user '<discord-user-id>'
+      kimaki send --channel chan_123 --prompt 'Run the restricted task' --cwd /path/to/project/restricted-task --agent <current_agent> --user '<discord-user-id>'
 
       Important:
       - NEVER use \`--worktree\` unless the user explicitly requests a worktree. Most tasks should use normal threads without worktrees.
-      - Use \`--cwd\` to reuse an existing worktree directory. Use \`--worktree\` to create a new one.
+      - Use \`--cwd\` to reuse an existing project subfolder or worktree directory. Use \`--worktree\` to create a new worktree.
       - The prompt passed to \`--worktree\` is the task for the new thread running inside that worktree.
       - Do NOT tell that prompt to "create a new worktree" again, or it can create recursive worktree threads.
       - Ask the new session to operate on its current checkout only (e.g. "validate current worktree", "run checks in this repo").
@@ -259,15 +259,15 @@ describe('system-message', () => {
       - If you already are in a worktree thread, do not create another worktree unless the user explicitly asks for a nested worktree.
       - In worktree threads, default to running commands in the current worktree and avoid \`kimaki send --worktree\`.
 
-      ### Sending sessions to existing worktrees
+      ### Sending sessions to existing directories
 
-      Use \`--cwd\` to start a session in an existing git worktree directory instead of creating a new one:
+      Use \`--cwd\` to start a session in an existing project subfolder or git worktree directory instead of the project root:
 
       \`\`\`bash
-      kimaki send --channel chan_123 --prompt 'Continue work on feature X' --cwd /path/to/existing-worktree --agent <current_agent> --user '<discord-user-id>'
+      kimaki send --channel chan_123 --prompt 'Run restricted task X' --cwd /path/to/project/restricted-task --agent <current_agent> --user '<discord-user-id>'
       \`\`\`
 
-      The path must be a git worktree of the project (validated via \`git worktree list\`). The session resolves to the correct project channel but uses the worktree as its working directory. Use \`--worktree\` to create a new worktree, \`--cwd\` to reuse an existing one.
+      The path must be inside the project or be a git worktree of the project (validated via \`git worktree list\`). The session resolves to the correct project channel but uses that path as its working directory, so subfolder \`opencode.json\` config can apply. Passing the project root itself is allowed and behaves like the default. Use \`--worktree\` to create a new worktree, \`--cwd\` to reuse an existing directory.
 
       **Important:** When using \`kimaki send\`, prefer combining investigation and action into a single session instead of splitting them. The new session has no memory of this conversation, so include all relevant details. Use **bold**, \`code\`, lists, and > quotes for readability.
 

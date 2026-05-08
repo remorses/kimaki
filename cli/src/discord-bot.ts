@@ -19,7 +19,7 @@ import {
   stopOpencodeServer,
 } from './opencode.js'
 import { formatAutoWorktreeName, createWorktreeInBackground, worktreeCreatingMessage } from './commands/new-worktree.js'
-import { validateWorktreeDirectory, git, isGitRepositoryRoot } from './worktrees.js'
+import { resolveSessionWorkingDirectory, git, isGitRepositoryRoot } from './worktrees.js'
 import { WORKTREE_PREFIX } from './commands/merge-worktree.js'
 import {
   escapeBackticksInCodeBlocks,
@@ -1095,15 +1095,14 @@ export async function startDiscordBot({
         )
       }
 
-      // --cwd: reuse an existing worktree directory. Revalidate at bot-time
+      // --cwd: reuse an existing project subfolder or worktree directory. Revalidate at bot-time
       // (CLI validated at send-time but the path could become stale).
-      // Store in thread_worktrees as ready with origin=external so
-      // destructive actions (merge, delete) are gated.
+      // Only worktree directories are stored in thread_worktrees. Project
+      // subfolders simply become the OpenCode session directory.
       // --cwd: if it matches projectDirectory, ignore silently (already the default).
-      // Otherwise revalidate as a git worktree and store with origin=external.
       let cwdDirectory: string | undefined
       if (marker.cwd) {
-        const cwdResult = await validateWorktreeDirectory({
+        const cwdResult = await resolveSessionWorkingDirectory({
           projectDirectory,
           candidatePath: marker.cwd,
         })
@@ -1116,11 +1115,11 @@ export async function startDiscordBot({
           return
         }
 
-        // If cwd is the same as projectDirectory, skip worktree setup entirely
-        if (path.resolve(cwdResult) !== path.resolve(projectDirectory)) {
-          cwdDirectory = cwdResult
+        if (path.resolve(cwdResult.directory) !== path.resolve(projectDirectory)) {
+          cwdDirectory = cwdResult.directory
+        }
 
-
+        if (cwdResult.kind === 'worktree' && cwdDirectory) {
           // Resolve actual branch name instead of using directory basename
           const branchResult = await git(cwdDirectory, 'symbolic-ref --short HEAD')
           const cwdWorktreeName = branchResult instanceof Error

@@ -22,7 +22,7 @@ import { buildOpencodeEventLogLine } from '../session-handler/opencode-session-e
 import { createDiscordRest } from '../discord-urls.js'
 import { archiveThread, uploadFilesToDiscord, stripMentions } from '../discord-utils.js'
 import { setDataDir, setProjectsDir, getDataDir, getProjectsDir } from '../config.js'
-import { execAsync, validateWorktreeDirectory } from '../worktrees.js'
+import { execAsync, resolveSessionWorkingDirectory } from '../worktrees.js'
 import { upgrade, getCurrentVersion } from '../upgrade.js'
 import { getPromptPreview, parseSendAtValue, parseScheduledTaskPayload, serializeScheduledTaskPayload, type ScheduledTaskPayload } from '../task-schedule.js'
 import {
@@ -72,7 +72,7 @@ cli
   )
   .option(
     '--cwd <path>',
-    'Start session in an existing git worktree directory instead of the main project directory',
+    'Start session in an existing project subfolder or git worktree directory',
   )
   .option('-u, --user <user>', 'Discord user ID, mention, or username to add to thread')
   .option('--agent <agent>', 'Agent to use for the session')
@@ -508,10 +508,10 @@ cli
 
         const projectDirectory = channelConfig.directory
 
-        // Validate --cwd is an existing git worktree of the project
+        // Validate --cwd is inside the project or an existing git worktree.
         let resolvedCwd: string | undefined
         if (options.cwd) {
-          const cwdResult = await validateWorktreeDirectory({
+          const cwdResult = await resolveSessionWorkingDirectory({
             projectDirectory,
             candidatePath: options.cwd,
           })
@@ -519,7 +519,7 @@ cli
             cliLogger.error(cwdResult.message)
             process.exit(EXIT_NO_RESTART)
           }
-          resolvedCwd = cwdResult
+          resolvedCwd = cwdResult.directory
         }
 
         const resolvedUser = await resolveDiscordUserOption({

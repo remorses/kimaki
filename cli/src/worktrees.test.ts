@@ -12,6 +12,7 @@ import {
   mergeWorktree,
   parseGitmodulesFileContent,
   parseGitWorktreeListPorcelain,
+  resolveSessionWorkingDirectory,
 } from './worktrees.js'
 import { TargetDirtyWorktreeError } from './errors.js'
 import {
@@ -404,6 +405,141 @@ describe('worktrees', () => {
           "topLevel": "worktrees",
         }
       `)
+    } finally {
+      fs.rmSync(sandbox, { recursive: true, force: true })
+    }
+  })
+
+  test('resolveSessionWorkingDirectory accepts the project root', async () => {
+    const sandbox = createTestRoot()
+    try {
+      const projectDirectory = path.join(sandbox, 'project')
+      fs.mkdirSync(projectDirectory, { recursive: true })
+
+      const result = await resolveSessionWorkingDirectory({
+        projectDirectory,
+        candidatePath: projectDirectory,
+      })
+
+      if (result instanceof Error) {
+        throw result
+      }
+      expect({
+        kind: result.kind,
+        relativeDirectory: path.relative(projectDirectory, result.directory),
+      }).toMatchInlineSnapshot(`
+        {
+          "kind": "project",
+          "relativeDirectory": "",
+        }
+      `)
+    } finally {
+      fs.rmSync(sandbox, { recursive: true, force: true })
+    }
+  })
+
+  test('resolveSessionWorkingDirectory accepts project subfolders', async () => {
+    const sandbox = createTestRoot()
+    try {
+      const projectDirectory = path.join(sandbox, 'project')
+      const subfolder = path.join(projectDirectory, 'restricted-task')
+      fs.mkdirSync(subfolder, { recursive: true })
+
+      const result = await resolveSessionWorkingDirectory({
+        projectDirectory,
+        candidatePath: subfolder,
+      })
+
+      if (result instanceof Error) {
+        throw result
+      }
+      expect({
+        kind: result.kind,
+        relativeDirectory: path.relative(projectDirectory, result.directory),
+      }).toMatchInlineSnapshot(`
+        {
+          "kind": "project",
+          "relativeDirectory": "restricted-task",
+        }
+      `)
+    } finally {
+      fs.rmSync(sandbox, { recursive: true, force: true })
+    }
+  })
+
+  test('resolveSessionWorkingDirectory accepts project worktrees', async () => {
+    const sandbox = createTestRoot()
+    const projectDirectory = path.join(sandbox, 'project')
+    const worktreeDirectory = path.join(sandbox, 'feature-worktree')
+
+    try {
+      fs.mkdirSync(projectDirectory, { recursive: true })
+      await git({ cwd: projectDirectory, args: ['init', '-b', 'main'] })
+      await git({
+        cwd: projectDirectory,
+        args: ['config', 'user.email', 'kimaki-tests@example.com'],
+      })
+      await git({
+        cwd: projectDirectory,
+        args: ['config', 'user.name', 'Kimaki Tests'],
+      })
+      fs.writeFileSync(
+        path.join(projectDirectory, 'README.md'),
+        'project\n',
+        'utf-8',
+      )
+      await git({ cwd: projectDirectory, args: ['add', 'README.md'] })
+      await git({ cwd: projectDirectory, args: ['commit', '-m', 'init'] })
+      await git({
+        cwd: projectDirectory,
+        args: ['worktree', 'add', '-b', 'feature', worktreeDirectory],
+      })
+
+      const result = await resolveSessionWorkingDirectory({
+        projectDirectory,
+        candidatePath: worktreeDirectory,
+      })
+
+      if (result instanceof Error) {
+        throw result
+      }
+      expect({
+        kind: result.kind,
+        relativeDirectory: path.relative(sandbox, result.directory),
+      }).toMatchInlineSnapshot(`
+        {
+          "kind": "worktree",
+          "relativeDirectory": "feature-worktree",
+        }
+      `)
+    } finally {
+      fs.rmSync(sandbox, { recursive: true, force: true })
+    }
+  })
+
+  test('resolveSessionWorkingDirectory rejects unrelated directories', async () => {
+    const sandbox = createTestRoot()
+    try {
+      const projectDirectory = path.join(sandbox, 'project')
+      const siblingDirectory = path.join(sandbox, 'other-project')
+      fs.mkdirSync(projectDirectory, { recursive: true })
+      fs.mkdirSync(siblingDirectory, { recursive: true })
+      await git({ cwd: projectDirectory, args: ['init', '-b', 'main'] })
+
+      const result = await resolveSessionWorkingDirectory({
+        projectDirectory,
+        candidatePath: siblingDirectory,
+      })
+
+      expect(result).toBeInstanceOf(Error)
+      const message = result instanceof Error ? result.message : ''
+      expect(
+        message
+          .replace(projectDirectory, '<project>')
+          .replace(siblingDirectory, '<sibling>'),
+      ).toMatchInlineSnapshot(
+        `"Working directory must be inside <project> or a git worktree of it: <sibling>"`,
+      )
     } finally {
       fs.rmSync(sandbox, { recursive: true, force: true })
     }
