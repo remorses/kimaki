@@ -1,6 +1,8 @@
 // Drizzle client initialization with libSQL.
 // Uses KIMAKI_DB_URL env var when set (plugin process → Hrana HTTP),
 // otherwise falls back to direct file: access (bot process, CLI subcommands).
+// Schema bootstrap runs in both modes because tests and plugin children may be
+// the first process to touch a fresh SQLite file through Hrana.
 
 import fs from 'node:fs'
 import path from 'node:path'
@@ -96,11 +98,9 @@ async function initializeDb(): Promise<KimakiDb> {
       await client.execute('PRAGMA busy_timeout = 5000')
     }
 
-    if (isFileMode) {
-      dbLogger.log('Running schema migrations...')
-      await migrateSchema({ db, client })
-      dbLogger.log('Schema migration complete')
-    }
+    dbLogger.log('Running schema migrations...')
+    await migrateSchema({ db, client })
+    dbLogger.log('Schema migration complete')
   } catch (error) {
     dbLogger.error('Drizzle init failed:', formatErrorWithStack(error))
     throw error

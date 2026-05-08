@@ -1,6 +1,9 @@
 // Tests for Drizzle client initialization and schema migration.
 // Auto-isolated via VITEST guards in config.ts (temp data dir) and db.ts (clears KIMAKI_DB_URL).
 
+import fs from 'node:fs'
+import path from 'node:path'
+import crypto from 'node:crypto'
 import { afterAll, describe, expect, test } from 'vitest'
 import { closeDb, getDb } from './db.js'
 import * as orm from 'drizzle-orm'
@@ -10,6 +13,8 @@ import {
   createPendingWorktree,
   getSessionEventSnapshot,
 } from './database.js'
+import { startHranaServer, stopHranaServer } from './hrana-server.js'
+import { chooseLockPort } from './test-utils.js'
 
 afterAll(async () => {
   await closeDb()
@@ -34,6 +39,55 @@ describe('getDb', () => {
 
     // Cleanup test data
     await db.delete(schema.thread_sessions).where(orm.eq(schema.thread_sessions.thread_id, 'test-thread-123'))
+  })
+
+  test('migrates fresh sqlite files through hrana', async () => {
+    await closeDb()
+
+    const previousDbUrl = process.env['KIMAKI_DB_URL']
+    const previousLockPort = process.env['KIMAKI_LOCK_PORT']
+    const dbPath = path.join(
+      process.cwd(),
+      `tmp/test-db-hrana-${crypto.randomUUID().slice(0, 8)}.db`,
+    )
+
+    try {
+      process.env['KIMAKI_LOCK_PORT'] = String(chooseLockPort({ key: 'db-hrana-migration-test' }))
+      const hranaResult = await startHranaServer({ dbPath })
+      if (hranaResult instanceof Error) throw hranaResult
+      process.env['KIMAKI_DB_URL'] = hranaResult
+
+      const db = await getDb()
+      const [created] = await db.insert(schema.bot_tokens)
+        .values({ app_id: 'hrana-bot', token: 'test-token' })
+        .returning({ appId: schema.bot_tokens.app_id })
+
+      expect(created).toMatchInlineSnapshot(`
+        {
+          "appId": "hrana-bot",
+        }
+      `)
+    } finally {
+      await closeDb()
+      await stopHranaServer()
+      if (previousDbUrl === undefined) {
+        delete process.env['KIMAKI_DB_URL']
+      } else {
+        process.env['KIMAKI_DB_URL'] = previousDbUrl
+      }
+      if (previousLockPort === undefined) {
+        delete process.env['KIMAKI_LOCK_PORT']
+      } else {
+        process.env['KIMAKI_LOCK_PORT'] = previousLockPort
+      }
+      for (const file of [dbPath, `${dbPath}-wal`, `${dbPath}-shm`]) {
+        try {
+          fs.unlinkSync(file)
+        } catch {
+          // Test cleanup best effort.
+        }
+      }
+    }
   })
 
   test('createPendingWorktree creates parent and child rows', async () => {
