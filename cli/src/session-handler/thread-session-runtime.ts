@@ -10,6 +10,7 @@ import { ChannelType, type ThreadChannel } from 'discord.js'
 import type {
   Event as OpenCodeEvent,
   Part,
+  PermissionRuleset,
   PermissionRequest,
   QuestionRequest,
   Message as OpenCodeMessage,
@@ -514,6 +515,7 @@ export type PreprocessResult = {
   prompt: string
   images?: DiscordFileAttachment[]
   repliedMessage?: RepliedMessageContext
+  permissionRules?: PermissionRuleset
   /** Resolved mode based on voice transcription result. */
   mode: 'opencode' | 'local-queue'
   /** When true, preprocessing determined the message should be silently dropped. */
@@ -556,6 +558,7 @@ export type IngressInput = {
    * session creation (first dispatch).
    */
   permissions?: string[]
+  permissionRules?: PermissionRuleset
   injectionGuardPatterns?: string[]
   sessionStartSource?: { scheduleKind: 'at' | 'cron'; scheduledTaskId?: number }
   /** Optional guard for retries: skip enqueue when session has changed. */
@@ -3035,6 +3038,7 @@ export class ThreadSessionRuntime {
         prompt: input.prompt,
         agent: input.agent,
         permissions: input.permissions,
+        permissionRules: input.permissionRules,
         injectionGuardPatterns: input.injectionGuardPatterns,
         sessionStartScheduleKind: input.sessionStartSource?.scheduleKind,
         sessionStartScheduledTaskId: input.sessionStartSource?.scheduledTaskId,
@@ -3045,6 +3049,18 @@ export class ThreadSessionRuntime {
       }
 
       const { session, getClient, createdNewSession } = sessionResult
+
+      const updatePermissionsResult = await this.updateExistingSessionPermissions({
+        client: getClient(),
+        sessionId: session.id,
+        createdNewSession,
+        permissions: input.permissions,
+        permissionRules: input.permissionRules,
+      })
+      if (updatePermissionsResult instanceof Error) {
+        await cleanupOnError(`Failed to update session permissions: ${updatePermissionsResult.message}`)
+        return
+      }
 
       // If listener startup happened before initializeOpencodeForDirectory(),
       // startEventListener may have exited early with "No OpenCode client".
@@ -3306,6 +3322,7 @@ export class ThreadSessionRuntime {
       agent: input.agent,
       model: input.model,
       permissions: input.permissions,
+      permissionRules: input.permissionRules,
       injectionGuardPatterns: input.injectionGuardPatterns,
       sourceMessageId: input.sourceMessageId,
       sourceThreadId: input.sourceThreadId,
@@ -3425,6 +3442,10 @@ export class ThreadSessionRuntime {
           // no explicit agent was already set (CLI --agent flag wins).
           agent: input.agent || result.agent,
           repliedMessage: result.repliedMessage,
+          permissionRules: [
+            ...(input.permissionRules ?? []),
+            ...(result.permissionRules ?? []),
+          ],
           preprocess: undefined,
         })
 
@@ -3706,6 +3727,7 @@ export class ThreadSessionRuntime {
       prompt: input.prompt,
       agent: input.agent,
       permissions: input.permissions,
+      permissionRules: input.permissionRules,
       injectionGuardPatterns: input.injectionGuardPatterns,
       sessionStartScheduleKind: input.sessionStartScheduleKind,
       sessionStartScheduledTaskId: input.sessionStartScheduledTaskId,
@@ -3723,6 +3745,24 @@ export class ThreadSessionRuntime {
       return
     }
     const { session, getClient, createdNewSession } = sessionResult
+
+    const updatePermissionsResult = await this.updateExistingSessionPermissions({
+      client: getClient(),
+      sessionId: session.id,
+      createdNewSession,
+      permissions: input.permissions,
+      permissionRules: input.permissionRules,
+    })
+    if (updatePermissionsResult instanceof Error) {
+      this.stopTyping()
+      await sendThreadMessage(
+        this.thread,
+        `Failed to update session permissions: ${updatePermissionsResult.message}`,
+        { flags: NOTIFY_MESSAGE_FLAGS },
+      )
+      await this.tryDrainQueue({ showIndicator: true })
+      return
+    }
 
     // Ensure listener is running now that we have a valid OpenCode client.
     // The eager start in enqueueIncoming may have failed if the client
@@ -4101,10 +4141,51 @@ export class ThreadSessionRuntime {
   // ── Session Ensure ──────────────────────────────────────────
   // Creates or reuses the OpenCode session for this thread.
 
+  private async updateExistingSessionPermissions({
+    client,
+    sessionId,
+    createdNewSession,
+    permissions,
+    permissionRules,
+  }: {
+    client: OpencodeClient
+    sessionId: string
+    createdNewSession: boolean
+    permissions?: string[]
+    permissionRules?: PermissionRuleset
+  }) {
+    if (createdNewSession) {
+      return null
+    }
+
+    const rules = [
+      ...(permissionRules ?? []),
+      ...parsePermissionRules(permissions ?? []),
+    ]
+    if (rules.length === 0) {
+      return null
+    }
+
+    const updateResult = await errore.tryAsync(() => {
+      return client.session.update({
+        sessionID: sessionId,
+        permission: rules,
+      })
+    })
+    if (updateResult instanceof Error) {
+      return updateResult
+    }
+    if (updateResult.error) {
+      return new Error('OpenCode rejected permission update')
+    }
+    return null
+  }
+
   private async ensureSession({
     prompt,
     agent,
     permissions,
+    permissionRules,
     injectionGuardPatterns,
     sessionStartScheduleKind,
     sessionStartScheduledTaskId,
@@ -4113,6 +4194,7 @@ export class ThreadSessionRuntime {
     agent?: string
     /** Raw "tool:action" strings from --permission flag */
     permissions?: string[]
+    permissionRules?: PermissionRuleset
     injectionGuardPatterns?: string[]
     sessionStartScheduleKind?: 'at' | 'cron'
     sessionStartScheduledTaskId?: number
@@ -4179,6 +4261,7 @@ export class ThreadSessionRuntime {
           directory: this.sdkDirectory,
           originalRepoDirectory,
         }),
+        ...(permissionRules ?? []),
         ...parsePermissionRules(permissions ?? []),
       ]
       // Omit title so OpenCode auto-generates a summary from the conversation

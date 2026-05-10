@@ -54,6 +54,13 @@ export function chooseLockPort({ channelId }: { channelId: string }): number {
   return 51_000 + (Math.abs(hash) % 2_000)
 }
 
+export const CHANNEL_REFERENCE_EXTERNAL_DIR = path.resolve(
+  process.cwd(),
+  'tmp',
+  'kimaki-channel-reference-external',
+)
+export const CHANNEL_REFERENCE_EXTERNAL_FILE = `${CHANNEL_REFERENCE_EXTERNAL_DIR}/allowed.txt`
+
 export function createDiscordJsClient({ restUrl }: { restUrl: string }) {
   return new Client({
     intents: [
@@ -268,6 +275,64 @@ export function createDeterministicMatchers(): DeterministicMatcher[] {
       // Keep run busy long enough after permission reply so typing keepalive
       // must pulse again. This makes typing resume assertions deterministic.
       partDelaysMs: [0, 0, 0, 0, 8_000],
+    },
+  }
+
+  const channelReferencePermissionMatcher: DeterministicMatcher = {
+    id: 'channel-reference-permission-marker',
+    priority: 106,
+    when: {
+      lastMessageRole: 'user',
+      latestUserTextIncludes: 'CHANNEL_REFERENCE_PERMISSION_MARKER',
+    },
+    then: {
+      parts: [
+        { type: 'stream-start', warnings: [] },
+        { type: 'text-start', id: 'channel-reference-permission-start' },
+        {
+          type: 'text-delta',
+          id: 'channel-reference-permission-start',
+          delta: 'reading referenced channel directory',
+        },
+        { type: 'text-end', id: 'channel-reference-permission-start' },
+        {
+          type: 'tool-call',
+          toolCallId: 'channel-reference-read-call',
+          toolName: 'read',
+          input: JSON.stringify({ filePath: CHANNEL_REFERENCE_EXTERNAL_FILE }),
+        },
+        {
+          type: 'finish',
+          finishReason: 'tool-calls',
+          usage: { inputTokens: 1, outputTokens: 1, totalTokens: 2 },
+        },
+      ],
+    },
+  }
+
+  const channelReferencePermissionFollowupMatcher: DeterministicMatcher = {
+    id: 'channel-reference-permission-followup',
+    priority: 105,
+    when: {
+      latestUserTextIncludes: 'CHANNEL_REFERENCE_PERMISSION_MARKER',
+      rawPromptIncludes: 'reading referenced channel directory',
+    },
+    then: {
+      parts: [
+        { type: 'stream-start', warnings: [] },
+        { type: 'text-start', id: 'channel-reference-permission-followup' },
+        {
+          type: 'text-delta',
+          id: 'channel-reference-permission-followup',
+          delta: 'channel-reference-read-done',
+        },
+        { type: 'text-end', id: 'channel-reference-permission-followup' },
+        {
+          type: 'finish',
+          finishReason: 'stop',
+          usage: { inputTokens: 1, outputTokens: 1, totalTokens: 2 },
+        },
+      ],
     },
   }
 
@@ -695,6 +760,8 @@ export function createDeterministicMatchers(): DeterministicMatcher[] {
     questionSelectQueueMatcher,
     permissionTypingMatcher,
     permissionTypingFollowupMatcher,
+    channelReferencePermissionMatcher,
+    channelReferencePermissionFollowupMatcher,
     multiToolMatcher,
     multiToolFollowupMatcher,
     undoFileMatcher,
@@ -729,11 +796,13 @@ export const TEST_USER_ID = '200000000000000991'
 export function setupQueueAdvancedSuite({
   channelId,
   channelName,
+  extraChannels = [],
   dirName,
   username,
 }: {
   channelId: string
   channelName: string
+  extraChannels?: Array<{ id: string; name: string }>
   dirName: string
   username: string
 }): QueueAdvancedContext {
@@ -770,6 +839,9 @@ export function setupQueueAdvancedSuite({
       guild: { name: `${dirName} Guild`, ownerId: TEST_USER_ID },
       channels: [
         { id: channelId, name: channelName, type: ChannelType.GuildText },
+        ...extraChannels.map((channel) => {
+          return { id: channel.id, name: channel.name, type: ChannelType.GuildText }
+        }),
       ],
       users: [{ id: TEST_USER_ID, username }],
       dbUrl: `file:${digitalDiscordDbPath}`,

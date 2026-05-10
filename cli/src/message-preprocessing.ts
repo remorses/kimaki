@@ -7,7 +7,7 @@
 // download) runs inside the runtime's serialized preprocessChain —
 // preserving arrival order without a separate threadIngressQueue.
 
-import type { Message, ThreadChannel } from 'discord.js'
+import { ChannelType, type Message, type ThreadChannel } from 'discord.js'
 import type { DiscordFileAttachment } from './message-formatting.js'
 import type { PreprocessResult } from './session-handler/thread-session-runtime.js'
 import type { AgentInfo, RepliedMessageContext } from './system-message.js'
@@ -18,9 +18,12 @@ import {
 } from './message-formatting.js'
 import { processVoiceAttachment } from './voice-handler.js'
 import { isVoiceAttachment } from './voice-attachment.js'
-import { initializeOpencodeForDirectory } from './opencode.js'
+import {
+  buildExternalDirectoryPermissionRules,
+  initializeOpencodeForDirectory,
+} from './opencode.js'
 import { getCompactSessionContext, getLastSessionId } from './markdown.js'
-import { getThreadSession } from './database.js'
+import { getThreadSession, listTrackedTextChannels } from './database.js'
 import * as errore from 'errore'
 import { createLogger, LogPrefix } from './logger.js'
 import { notifyError } from './sentry.js'
@@ -64,6 +67,7 @@ export type { PreprocessResult }
 // kimaki's local queue (same as /queue command).
 const QUEUE_SUFFIX_RE = /(?:[.!?,;:]|^)\s*queue\.?\s*$|\n\s*queue\.?\s*$/i
 const REPLIED_MESSAGE_TEXT_LIMIT = 1_000
+const CHANNEL_REFERENCE_RE = /(^|\s)#([a-zA-Z0-9][\w-]{0,99})/g
 
 function extractQueueSuffix(prompt: string): { prompt: string; forceQueue: boolean } {
   if (!QUEUE_SUFFIX_RE.test(prompt)) {
@@ -133,6 +137,56 @@ async function getRepliedMessageContext({
     authorUsername: referencedMessage.author.username,
     text: repliedText,
   }
+}
+
+function extractChannelReferenceNames(text: string) {
+  const names = new Set<string>()
+  for (const match of text.matchAll(CHANNEL_REFERENCE_RE)) {
+    const name = match[2]
+    if (name) names.add(name.toLowerCase())
+  }
+  return names
+}
+
+export async function getChannelReferencePermissionRules({
+  message,
+}: {
+  message: Message
+}) {
+  const guild = message.guild
+  if (!guild) {
+    return []
+  }
+
+  const referencedNames = extractChannelReferenceNames(resolveMentions(message))
+  if (referencedNames.size === 0) {
+    return []
+  }
+
+  const trackedChannels = await listTrackedTextChannels()
+  const resolvedDirectories = new Set<string>()
+  for (const trackedChannel of trackedChannels) {
+    const channel = await guild.channels.fetch(trackedChannel.channel_id).catch((error) => {
+      logger.warn(
+        `[INGRESS] Failed to resolve referenced channel ${trackedChannel.channel_id}: ${error instanceof Error ? error.message : String(error)}`,
+      )
+      return null
+    })
+    if (!channel || channel.type !== ChannelType.GuildText) {
+      continue
+    }
+    if (!referencedNames.has(channel.name.toLowerCase())) {
+      continue
+    }
+    resolvedDirectories.add(trackedChannel.directory.replaceAll('\\', '/'))
+  }
+
+  return [...resolvedDirectories].flatMap((directory) => {
+    return buildExternalDirectoryPermissionRules({
+      resolvedPattern: directory,
+      action: 'allow',
+    })
+  })
 }
 
 /**
@@ -248,6 +302,7 @@ export async function preprocessExistingThreadMessage({
     lastSessionContext,
     agents,
   })
+  const permissionRules = await getChannelReferencePermissionRules({ message })
   if (voiceResult) {
     messageContent = `${VOICE_MESSAGE_TRANSCRIPTION_PREFIX}${voiceResult.transcription}`
   }
@@ -283,6 +338,7 @@ export async function preprocessExistingThreadMessage({
     prompt,
     images: fileAttachments.length > 0 ? fileAttachments : undefined,
     repliedMessage,
+    permissionRules,
     mode: qs.forceQueue || voiceResult?.queueMessage ? 'local-queue' : 'opencode',
     agent: voiceResult?.agent,
   }
@@ -322,6 +378,7 @@ export async function preprocessNewSessionMessage({
 
   let prompt = resolveMentions(message)
   const repliedMessage = await getRepliedMessageContext({ message })
+  const permissionRules = await getChannelReferencePermissionRules({ message })
   const voiceResult = await processVoiceAttachment({
     message,
     thread,
@@ -373,6 +430,7 @@ export async function preprocessNewSessionMessage({
   return {
     prompt: qs.prompt,
     repliedMessage,
+    permissionRules,
     mode: qs.forceQueue || voiceResult?.queueMessage ? 'local-queue' : 'opencode',
     agent: voiceResult?.agent,
   }
@@ -409,6 +467,7 @@ export async function preprocessNewThreadMessage({
 
   let messageContent = resolveMentions(message)
   const repliedMessage = await getRepliedMessageContext({ message })
+  const permissionRules = await getChannelReferencePermissionRules({ message })
   const voiceResult = await processVoiceAttachment({
     message,
     thread,
@@ -451,6 +510,7 @@ export async function preprocessNewThreadMessage({
     prompt,
     images: fileAttachments.length > 0 ? fileAttachments : undefined,
     repliedMessage,
+    permissionRules,
     mode: qs.forceQueue || voiceResult?.queueMessage ? 'local-queue' : 'opencode',
     agent: voiceResult?.agent,
   }
