@@ -45,7 +45,7 @@ import {
   stopOpencodeServer,
 } from './opencode.js'
 import {
-  chooseLockPort,
+  chooseAvailableLockPort,
   cleanupTestSessions,
   initTestGitRepo,
   waitForBotMessageContaining,
@@ -149,7 +149,7 @@ describe('kimaki send --channel thread creation', () => {
   beforeAll(async () => {
     testStartTime = Date.now()
     directories = createRunDirectories()
-    const lockPort = chooseLockPort({ key: 'cli-send-thread-e2e' })
+    const lockPort = await chooseAvailableLockPort({ key: 'cli-send-thread-e2e' })
 
     process.env['KIMAKI_LOCK_PORT'] = String(lockPort)
     setDataDir(directories.dataDir)

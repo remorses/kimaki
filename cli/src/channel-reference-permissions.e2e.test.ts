@@ -36,13 +36,13 @@ describe('channel reference permissions', () => {
     })
 
     await ctx.discord.channel(TEXT_CHANNEL_ID).user(TEST_USER_ID).sendMessage({
-      content: 'Use #external-project CHANNEL_REFERENCE_PERMISSION_MARKER first',
+      content: `Use <#${EXTERNAL_CHANNEL_ID}> CHANNEL_REFERENCE_PERMISSION_MARKER first`,
     })
 
     const thread = await ctx.discord.channel(TEXT_CHANNEL_ID).waitForThread({
       timeout: 4_000,
       predicate: (t) => {
-        return t.name === 'Use #external-project CHANNEL_REFERENCE_PERMISSION_MARKER first'
+        return t.name?.includes('CHANNEL_REFERENCE_PERMISSION_MARKER') ?? false
       },
     })
     const th = ctx.discord.thread(thread.id)
@@ -63,7 +63,7 @@ describe('channel reference permissions', () => {
     })
 
     await th.user(TEST_USER_ID).sendMessage({
-      content: 'Use #external-project CHANNEL_REFERENCE_PERMISSION_MARKER followup',
+      content: `Use <#${EXTERNAL_CHANNEL_ID}> CHANNEL_REFERENCE_PERMISSION_MARKER followup`,
     })
     await waitForBotMessageContaining({
       discord: ctx.discord,
@@ -84,14 +84,14 @@ describe('channel reference permissions', () => {
     const text = await th.text()
     expect(text).toMatchInlineSnapshot(`
       "--- from: user (channel-reference-tester)
-      Use #external-project CHANNEL_REFERENCE_PERMISSION_MARKER first
+      Use <#200000000000001022> CHANNEL_REFERENCE_PERMISSION_MARKER first
       --- from: assistant (TestBot)
       *using deterministic-provider/deterministic-v2*
       ⬥ reading referenced channel directory
       ⬥ channel-reference-read-done
       *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2*
       --- from: user (channel-reference-tester)
-      Use #external-project CHANNEL_REFERENCE_PERMISSION_MARKER followup
+      Use <#200000000000001022> CHANNEL_REFERENCE_PERMISSION_MARKER followup
       --- from: assistant (TestBot)
       ⬥ reading referenced channel directory
       ⬥ channel-reference-read-done

@@ -7,7 +7,7 @@
 // download) runs inside the runtime's serialized preprocessChain —
 // preserving arrival order without a separate threadIngressQueue.
 
-import { ChannelType, type Message, type ThreadChannel } from 'discord.js'
+import type { Message, ThreadChannel } from 'discord.js'
 import type { DiscordFileAttachment } from './message-formatting.js'
 import type { PreprocessResult } from './session-handler/thread-session-runtime.js'
 import type { AgentInfo, RepliedMessageContext } from './system-message.js'
@@ -67,8 +67,6 @@ export type { PreprocessResult }
 // kimaki's local queue (same as /queue command).
 const QUEUE_SUFFIX_RE = /(?:[.!?,;:]|^)\s*queue\.?\s*$|\n\s*queue\.?\s*$/i
 const REPLIED_MESSAGE_TEXT_LIMIT = 1_000
-const CHANNEL_REFERENCE_RE = /(^|\s)#([a-zA-Z0-9][\w-]{0,99})/g
-
 function extractQueueSuffix(prompt: string): { prompt: string; forceQueue: boolean } {
   if (!QUEUE_SUFFIX_RE.test(prompt)) {
     return { prompt, forceQueue: false }
@@ -139,47 +137,23 @@ async function getRepliedMessageContext({
   }
 }
 
-function extractChannelReferenceNames(text: string) {
-  const names = new Set<string>()
-  for (const match of text.matchAll(CHANNEL_REFERENCE_RE)) {
-    const name = match[2]
-    if (name) names.add(name.toLowerCase())
-  }
-  return names
-}
-
 export async function getChannelReferencePermissionRules({
   message,
 }: {
   message: Message
 }) {
-  const guild = message.guild
-  if (!guild) {
+  const channelIds = [...message.mentions.channels.keys()]
+  if (channelIds.length === 0) {
     return []
   }
 
-  const referencedNames = extractChannelReferenceNames(resolveMentions(message))
-  if (referencedNames.size === 0) {
-    return []
-  }
-
-  const trackedChannels = await listTrackedTextChannels()
-  const resolvedDirectories = new Set<string>()
-  for (const trackedChannel of trackedChannels) {
-    const channel = await guild.channels.fetch(trackedChannel.channel_id).catch((error) => {
-      logger.warn(
-        `[INGRESS] Failed to resolve referenced channel ${trackedChannel.channel_id}: ${error instanceof Error ? error.message : String(error)}`,
-      )
-      return null
-    })
-    if (!channel || channel.type !== ChannelType.GuildText) {
-      continue
-    }
-    if (!referencedNames.has(channel.name.toLowerCase())) {
-      continue
-    }
-    resolvedDirectories.add(trackedChannel.directory.replaceAll('\\', '/'))
-  }
+  const mentionedChannelIds = new Set(channelIds)
+  const referencedChannels = (await listTrackedTextChannels()).filter((channel) => {
+    return mentionedChannelIds.has(channel.channel_id)
+  })
+  const resolvedDirectories = new Set(
+    referencedChannels.map((channel) => channel.directory.replaceAll('\\', '/')),
+  )
 
   return [...resolvedDirectories].flatMap((directory) => {
     return buildExternalDirectoryPermissionRules({
