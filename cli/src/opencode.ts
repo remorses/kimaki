@@ -136,6 +136,80 @@ function sanitizeOutputLine(line: string): string {
   return stripAnsiCodes(line).trim()
 }
 
+// ── OpenCode stderr warning filter ───────────────────────────────
+// OpenCode may emit multi-line "duplicate skill name" warnings to stderr
+// when the same skill file is discovered through multiple scan paths.
+// These are false positives when existing === duplicate (the same file).
+// Track the 3-line pattern and suppress it when paths match.
+const DUPLICATE_SKILL_PENDING_NONE = 0
+const DUPLICATE_SKILL_PENDING_NAME = 1
+const DUPLICATE_SKILL_PENDING_EXISTING = 2
+let duplicateSkillPendingState = DUPLICATE_SKILL_PENDING_NONE
+let duplicateSkillPendingName = ''
+let duplicateSkillExistingPath = ''
+
+function duplicateSkillFilter({
+  line,
+  logger,
+}: {
+  line: string
+  logger: typeof opencodeLogger
+}): boolean {
+  // Returns true when line was consumed by the filter (handled or suppressed)
+
+  if (duplicateSkillPendingState === DUPLICATE_SKILL_PENDING_NONE) {
+    const nameMatch = line.match(/duplicate skill name "([^"]+)"/)
+    if (nameMatch) {
+      duplicateSkillPendingState = DUPLICATE_SKILL_PENDING_NAME
+      duplicateSkillPendingName = nameMatch[1]!
+      duplicateSkillExistingPath = ''
+      return true // consumed
+    }
+    return false // not a duplicate skill warning
+  }
+
+  if (duplicateSkillPendingState === DUPLICATE_SKILL_PENDING_NAME) {
+    const existingMatch = line.match(/existing:\s*(.+)/)
+    if (existingMatch) {
+      duplicateSkillExistingPath = existingMatch[1]!.trim()
+      duplicateSkillPendingState = DUPLICATE_SKILL_PENDING_EXISTING
+      return true // consumed
+    }
+    // Unexpected line after name — flush the pending name line
+    logger.warn(`duplicate skill name "${duplicateSkillPendingName}"`)
+    duplicateSkillPendingState = DUPLICATE_SKILL_PENDING_NONE
+    return false // let this line be handled normally
+  }
+
+  if (duplicateSkillPendingState === DUPLICATE_SKILL_PENDING_EXISTING) {
+    const duplicateMatch = line.match(/duplicate:\s*(.+)/)
+    if (duplicateMatch) {
+      const duplicatePath = duplicateMatch[1]!.trim()
+      if (duplicateSkillExistingPath === duplicatePath) {
+        // Same file — false positive, suppress entirely
+        duplicateSkillPendingState = DUPLICATE_SKILL_PENDING_NONE
+        return true // consumed + suppressed
+      }
+      // Different files — genuine duplicate, log as warning
+      logger.warn(
+        `duplicate skill name "${duplicateSkillPendingName}" (existing: ${duplicateSkillExistingPath}, duplicate: ${duplicatePath})`,
+      )
+      duplicateSkillPendingState = DUPLICATE_SKILL_PENDING_NONE
+      return true // consumed (re-logged as warn)
+    }
+    // Unexpected line — flush what we have
+    logger.warn(`duplicate skill name "${duplicateSkillPendingName}" (existing: ${duplicateSkillExistingPath})`)
+    duplicateSkillPendingState = DUPLICATE_SKILL_PENDING_NONE
+    return false
+  }
+
+  // Safety: unknown state, reset
+  duplicateSkillPendingState = DUPLICATE_SKILL_PENDING_NONE
+  return false
+}
+
+
+
 function sanitizeForCodeFence(line: string): string {
   return line.replaceAll('```', '`\u200b``')
 }
@@ -760,6 +834,12 @@ async function startSingleServer({
       if (!serverReady) {
         logBuffer.push(`[stderr] ${line}`)
         pushStartupStderrTail({ stderrTail: startupStderrTail, line })
+        return
+      }
+      // Filter false-positive "duplicate skill name" warnings where
+      // existing === duplicate (same file found via multiple scan paths).
+      // These are harmless and should not clutter error-level logs.
+      if (duplicateSkillFilter({ line, logger: opencodeLogger })) {
         return
       }
       opencodeLogger.error(line)
