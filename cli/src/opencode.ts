@@ -80,12 +80,25 @@ const STARTUP_ERROR_REASON_MAX_LENGTH = 1500
 const ANSI_ESCAPE_REGEX =
   /[\u001B\u009B][[\]()#;?]*(?:(?:(?:[a-zA-Z\d]*(?:;[a-zA-Z\d]*)*)?\u0007)|(?:(?:\d{1,4}(?:;\d{0,4})*)?[\dA-PR-TZcf-nq-uy=><~]))/g
 
-async function requestHealthcheck({
+export async function requestHealthcheck({
   url,
+  timeoutMs = 2000,
 }: {
   url: string
+  timeoutMs?: number
 }): Promise<{ status: number; body: string }> {
   return new Promise((resolve, reject) => {
+    let settled = false
+    let timeout: NodeJS.Timeout | null = null
+    const settle = (
+      handler: () => void,
+    ) => {
+      if (settled) return
+      settled = true
+      if (timeout) clearTimeout(timeout)
+      handler()
+    }
+
     const req = http.request(
       url,
       {
@@ -100,14 +113,27 @@ async function requestHealthcheck({
           chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk))
         })
         res.on('end', () => {
-          resolve({
-            status: res.statusCode || 0,
-            body: Buffer.concat(chunks).toString('utf-8'),
+          settle(() => {
+            resolve({
+              status: res.statusCode || 0,
+              body: Buffer.concat(chunks).toString('utf-8'),
+            })
           })
+        })
+        res.on('error', (error) => {
+          settle(() => reject(error))
         })
       },
     )
-    req.on('error', reject)
+    req.on('error', (error) => {
+      settle(() => reject(error))
+    })
+    timeout = setTimeout(() => {
+      settle(() => {
+        req.destroy()
+        reject(new Error(`Health check request timed out after ${timeoutMs}ms`))
+      })
+    }, timeoutMs)
     req.end()
   })
 }
