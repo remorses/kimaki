@@ -372,6 +372,9 @@ describe('system-message', () => {
 
       # Send to an existing thread and wait
       kimaki send --thread <thread_id> --prompt 'Run the tests' --wait --agent <current_agent>
+
+      # Wait for a session that was already started elsewhere
+      kimaki session wait <session_id>
       \`\`\`
 
       The command exits with the session markdown on stdout once the model finishes responding.

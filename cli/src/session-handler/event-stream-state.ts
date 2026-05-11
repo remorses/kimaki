@@ -165,6 +165,52 @@ export function didQuestionQueueHandoffSinceLatestQuestionAsked({
   return false
 }
 
+export function derivePendingInteractiveRequests({
+  events,
+  sessionId,
+}: {
+  events: EventBufferEntry[]
+  sessionId: string
+}): {
+  permissions: string[]
+  questions: string[]
+} {
+  const permissions = new Set<string>()
+  const questions = new Set<string>()
+
+  for (const entry of events) {
+    const event = entry.event
+    const eventSessionId = getEventBufferSessionId(event)
+    if (eventSessionId !== sessionId) {
+      continue
+    }
+
+    if (event.type === 'permission.asked') {
+      permissions.add(event.properties.id)
+      continue
+    }
+
+    if (event.type === 'permission.replied') {
+      permissions.delete(event.properties.requestID)
+      continue
+    }
+
+    if (event.type === 'question.asked') {
+      questions.add(event.properties.id)
+      continue
+    }
+
+    if (event.type === 'question.replied') {
+      questions.delete(event.properties.requestID)
+    }
+  }
+
+  return {
+    permissions: [...permissions],
+    questions: [...questions],
+  }
+}
+
 export function isAssistantMessageNaturalCompletion({
   message,
 }: {

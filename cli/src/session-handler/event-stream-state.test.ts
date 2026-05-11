@@ -7,6 +7,7 @@ import type { Message as OpenCodeMessage } from '@opencode-ai/sdk/v2'
 import { describe, expect, test } from 'vitest'
 import { type OpencodeEventLogEntry } from './opencode-session-event-log.js'
 import {
+  derivePendingInteractiveRequests,
   getAssistantMessageIdsForLatestUserTurn,
   getDerivedSubagentSessions,
   getEventBufferSessionId,
@@ -77,6 +78,10 @@ function getAssistantMessageById({
     throw new Error(`Assistant message ${messageId} not found`)
   }
   return message
+}
+
+function eventEntry(event: EventBufferEntry['event']): EventBufferEntry {
+  return { event, timestamp: 1 }
 }
 
 function findAssistantCompletionEventIndex({
@@ -157,6 +162,92 @@ describe('session-normal-completion', () => {
       agent: 'build',
       tokensUsed: 2,
     })
+  })
+})
+
+describe('derivePendingInteractiveRequests', () => {
+  test('tracks unresolved permission requests', () => {
+    const sessionId = 'ses_pending_permission'
+    const events = [
+      eventEntry({
+        type: 'permission.asked',
+        properties: {
+          id: 'perm_1',
+          sessionID: sessionId,
+          permission: 'bash',
+          patterns: ['*'],
+          always: [],
+          metadata: {},
+        },
+      }),
+      eventEntry({
+        type: 'permission.asked',
+        properties: {
+          id: 'perm_2',
+          sessionID: sessionId,
+          permission: 'edit',
+          patterns: ['src/**'],
+          always: [],
+          metadata: {},
+        },
+      }),
+      eventEntry({
+        type: 'permission.replied',
+        properties: {
+          requestID: 'perm_1',
+          sessionID: sessionId,
+          reply: 'once',
+        },
+      }),
+    ]
+
+    expect(derivePendingInteractiveRequests({ events, sessionId })).toMatchInlineSnapshot(`
+      {
+        "permissions": [
+          "perm_2",
+        ],
+        "questions": [],
+      }
+    `)
+  })
+
+  test('tracks unresolved question requests', () => {
+    const sessionId = 'ses_pending_question'
+    const events = [
+      eventEntry({
+        type: 'question.asked',
+        properties: {
+          id: 'question_1',
+          sessionID: sessionId,
+          questions: [],
+        },
+      }),
+      eventEntry({
+        type: 'question.asked',
+        properties: {
+          id: 'question_2',
+          sessionID: sessionId,
+          questions: [],
+        },
+      }),
+      eventEntry({
+        type: 'question.replied',
+        properties: {
+          sessionID: sessionId,
+          requestID: 'question_1',
+          answers: [],
+        },
+      }),
+    ]
+
+    expect(derivePendingInteractiveRequests({ events, sessionId })).toMatchInlineSnapshot(`
+      {
+        "permissions": [],
+        "questions": [
+          "question_2",
+        ],
+      }
+    `)
   })
 })
 
