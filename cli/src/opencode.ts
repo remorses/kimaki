@@ -86,6 +86,23 @@ async function requestHealthcheck({
   url: string
 }): Promise<{ status: number; body: string }> {
   return new Promise((resolve, reject) => {
+    let settled = false
+    const finish = <T>(
+      settle: (value: T) => void,
+      value: T,
+    ): void => {
+      if (settled) {
+        return
+      }
+      settled = true
+      clearTimeout(timeout)
+      settle(value)
+    }
+
+    const timeout = setTimeout(() => {
+      req.destroy(new Error('OpenCode healthcheck timed out'))
+    }, 2000)
+
     const req = http.request(
       url,
       {
@@ -100,14 +117,19 @@ async function requestHealthcheck({
           chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk))
         })
         res.on('end', () => {
-          resolve({
+          finish(resolve, {
             status: res.statusCode || 0,
             body: Buffer.concat(chunks).toString('utf-8'),
           })
         })
+        res.on('error', (error) => {
+          finish(reject, error)
+        })
       },
     )
-    req.on('error', reject)
+    req.on('error', (error) => {
+      finish(reject, error)
+    })
     req.end()
   })
 }
