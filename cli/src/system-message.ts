@@ -698,8 +698,9 @@ Use cases:
 
 Use \`--wait\` to block until a session completes and print its full conversation to stdout. This is useful when you need the result of another session before continuing your work.
 
-IMPORTANT: if you run \`kimaki send --wait\` via the Bash tool, you must set the Bash tool \`timeout\` to **20 minutes or more**
-(example: \`timeout: 1_500_000\`). Otherwise the tool will terminate early (default is 2 minutes) and you won't see long sessions.
+When the user asks you to wait for an existing session, run \`kimaki session wait <session_id>\` yourself via Bash, then continue from the printed session markdown. Do not tell the user to run the command.
+
+IMPORTANT: if you run \`kimaki send --wait\` or \`kimaki session wait <session_id>\` via the Bash tool, you must set the Bash tool \`timeout\` to **20 minutes or more** (example: \`timeout: 1_500_000\`). Otherwise the tool will terminate early (default is 2 minutes) and you won't see long sessions.
 
 If your Bash tool timeout triggers anyway, fall back to reading the session output from disk:
 

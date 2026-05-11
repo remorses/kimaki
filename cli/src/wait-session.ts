@@ -8,7 +8,7 @@ import { initializeOpencodeForDirectory } from './opencode.js'
 import { ShareMarkdown } from './markdown.js'
 import { createLogger, LogPrefix } from './logger.js'
 import {
-  derivePendingInteractiveRequests,
+  derivePendingPermissionRequests,
   isAssistantMessageNaturalCompletion,
   type EventBufferEntry,
   type EventBufferEvent,
@@ -91,21 +91,20 @@ export async function waitForSessionComplete({
     })
     const messages = messagesResponse.data || []
     const events = await loadPersistedSessionEvents({ sessionId })
-    const pendingInteractive = derivePendingInteractiveRequests({
+    const pendingPermissions = derivePendingPermissionRequests({
       events,
       sessionId,
     })
 
     const isIdle = !sessionStatus || sessionStatus.type === 'idle'
-    const hasPendingInteractive = pendingInteractive.permissions.length > 0
-      || pendingInteractive.questions.length > 0
+    const hasPendingPermissions = pendingPermissions.length > 0
     const hasCompletedTurn = hasCompletedUserTurn({
       messages,
       sessionId,
       waitStartedAtMs,
     })
 
-    if (isIdle && hasCompletedTurn && !hasPendingInteractive) {
+    if (isIdle && hasCompletedTurn && !hasPendingPermissions) {
       completedSinceMs ??= Date.now()
       if (Date.now() - completedSinceMs >= pollIntervalMs) {
         waitLogger.log(`Session ${sessionId} completed`)

@@ -165,18 +165,14 @@ export function didQuestionQueueHandoffSinceLatestQuestionAsked({
   return false
 }
 
-export function derivePendingInteractiveRequests({
+export function derivePendingPermissionRequests({
   events,
   sessionId,
 }: {
   events: EventBufferEntry[]
   sessionId: string
-}): {
-  permissions: string[]
-  questions: string[]
-} {
+}): string[] {
   const permissions = new Set<string>()
-  const questions = new Set<string>()
 
   for (const entry of events) {
     const event = entry.event
@@ -192,23 +188,10 @@ export function derivePendingInteractiveRequests({
 
     if (event.type === 'permission.replied') {
       permissions.delete(event.properties.requestID)
-      continue
-    }
-
-    if (event.type === 'question.asked') {
-      questions.add(event.properties.id)
-      continue
-    }
-
-    if (event.type === 'question.replied') {
-      questions.delete(event.properties.requestID)
     }
   }
 
-  return {
-    permissions: [...permissions],
-    questions: [...questions],
-  }
+  return [...permissions]
 }
 
 export function isAssistantMessageNaturalCompletion({

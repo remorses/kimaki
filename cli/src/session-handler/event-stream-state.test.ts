@@ -7,7 +7,7 @@ import type { Message as OpenCodeMessage } from '@opencode-ai/sdk/v2'
 import { describe, expect, test } from 'vitest'
 import { type OpencodeEventLogEntry } from './opencode-session-event-log.js'
 import {
-  derivePendingInteractiveRequests,
+  derivePendingPermissionRequests,
   getAssistantMessageIdsForLatestUserTurn,
   getDerivedSubagentSessions,
   getEventBufferSessionId,
@@ -165,7 +165,7 @@ describe('session-normal-completion', () => {
   })
 })
 
-describe('derivePendingInteractiveRequests', () => {
+describe('derivePendingPermissionRequests', () => {
   test('tracks unresolved permission requests', () => {
     const sessionId = 'ses_pending_permission'
     const events = [
@@ -201,52 +201,10 @@ describe('derivePendingInteractiveRequests', () => {
       }),
     ]
 
-    expect(derivePendingInteractiveRequests({ events, sessionId })).toMatchInlineSnapshot(`
-      {
-        "permissions": [
-          "perm_2",
-        ],
-        "questions": [],
-      }
-    `)
-  })
-
-  test('tracks unresolved question requests', () => {
-    const sessionId = 'ses_pending_question'
-    const events = [
-      eventEntry({
-        type: 'question.asked',
-        properties: {
-          id: 'question_1',
-          sessionID: sessionId,
-          questions: [],
-        },
-      }),
-      eventEntry({
-        type: 'question.asked',
-        properties: {
-          id: 'question_2',
-          sessionID: sessionId,
-          questions: [],
-        },
-      }),
-      eventEntry({
-        type: 'question.replied',
-        properties: {
-          sessionID: sessionId,
-          requestID: 'question_1',
-          answers: [],
-        },
-      }),
-    ]
-
-    expect(derivePendingInteractiveRequests({ events, sessionId })).toMatchInlineSnapshot(`
-      {
-        "permissions": [],
-        "questions": [
-          "question_2",
-        ],
-      }
+    expect(derivePendingPermissionRequests({ events, sessionId })).toMatchInlineSnapshot(`
+      [
+        "perm_2",
+      ]
     `)
   })
 })
