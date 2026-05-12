@@ -1345,35 +1345,16 @@ export async function run({
   const forceRestartOnboarding = Boolean(restartOnboarding)
   const forceGateway = Boolean(gateway)
 
-  // Step 0: Ensure required CLI tools are installed (OpenCode + Bun).
-  // Run checks in parallel since they're independent `which` calls.
-  await Promise.all([
-    ensureCommandAvailable({
-      name: 'opencode',
-      envPathKey: 'OPENCODE_PATH',
-      installUnix: 'curl -fsSL https://opencode.ai/install | bash',
-      installWindows: 'irm https://opencode.ai/install.ps1 | iex',
-      possiblePathsUnix: [
-        '~/.local/bin/opencode',
-        '~/.opencode/bin/opencode',
-        '/usr/local/bin/opencode',
-        '/opt/opencode/bin/opencode',
-      ],
-      possiblePathsWindows: [
-        '~\\.local\\bin\\opencode.exe',
-        '~\\AppData\\Local\\opencode\\opencode.exe',
-        '~\\.opencode\\bin\\opencode.exe',
-      ],
-    }),
-    ensureCommandAvailable({
-      name: 'bun',
-      envPathKey: 'BUN_PATH',
-      installUnix: 'curl -fsSL https://bun.sh/install | bash',
-      installWindows: 'irm bun.sh/install.ps1 | iex',
-      possiblePathsUnix: ['~/.bun/bin/bun', '/usr/local/bin/bun'],
-      possiblePathsWindows: ['~\\.bun\\bin\\bun.exe'],
-    }),
-  ])
+  // Step 0: Ensure bun is installed. OpenCode is downloaded on first run
+  // to ~/.kimaki/bin/ (pinned version), so no install check is needed.
+  await ensureCommandAvailable({
+    name: 'bun',
+    envPathKey: 'BUN_PATH',
+    installUnix: 'curl -fsSL https://bun.sh/install | bash',
+    installWindows: 'irm bun.sh/install.ps1 | iex',
+    possiblePathsUnix: ['~/.bun/bin/bun', '/usr/local/bin/bun'],
+    possiblePathsWindows: ['~\\.bun\\bin\\bun.exe'],
+  })
 
 
   void backgroundUpgradeKimaki()

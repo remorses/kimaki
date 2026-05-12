@@ -2,6 +2,7 @@
 import { createOpencodeClient } from '@opencode-ai/sdk/v2'
 import { spawn } from 'node:child_process'
 import net from 'node:net'
+import { resolveOpencodeCommand } from '../src/opencode.js'
 
 async function getOpenPort(): Promise<number> {
   return new Promise((resolve, reject) => {
@@ -45,7 +46,7 @@ async function getLastSessionMessages() {
 
   console.log(`Starting OpenCode server on port ${port}...`)
 
-  const opencodeCommand = process.env.OPENCODE_PATH || 'opencode'
+  const opencodeCommand = await resolveOpencodeCommand()
   const directory = process.cwd()
 
   // Start the OpenCode server

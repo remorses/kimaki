@@ -13,7 +13,7 @@
 //
 // Uses errore for type-safe error handling.
 
-import { spawn, execFileSync, type ChildProcess } from 'node:child_process'
+import { spawn, type ChildProcess } from 'node:child_process'
 import fs from 'node:fs'
 import http from 'node:http'
 import net from 'node:net'
@@ -406,9 +406,119 @@ function ensureProcessCleanupHandlersRegistered(): void {
 // cleanup sends SIGTERM it only kills the shell, leaving the actual opencode
 // process orphaned (reparented to PID 1). Resolving the path upfront lets
 // us spawn the binary directly and SIGTERM reaches the right process.
+//
+// Resolution order:
+// 1. OPENCODE_PATH env var (explicit user override)
+// 2. Downloaded binary in ~/.kimaki/bin/opencode-{VERSION}
+//
+// The binary is downloaded from GitHub releases on first run and cached.
+// Version is pinned in code so kimaki is not affected by bugged releases.
+// Always stored in the default data dir (~/.kimaki) regardless of custom
+// data dir settings, so one binary serves all configurations.
+
+const OPENCODE_VERSION = '1.14.41'
+
+// Always use ~/.kimaki/bin for the opencode binary, regardless of custom data dir.
+function getOpencodeBinDir(): string {
+  const defaultDataDir = path.join(os.homedir(), '.kimaki')
+  return path.join(defaultDataDir, 'bin')
+}
+
+function getOpencodeBinaryPath(): string {
+  const binaryName = process.platform === 'win32' ? `opencode-${OPENCODE_VERSION}.exe` : `opencode-${OPENCODE_VERSION}`
+  return path.join(getOpencodeBinDir(), binaryName)
+}
+
+function getOpencodeDownloadTarget(): string {
+  const platformMap: Record<string, string> = {
+    darwin: 'darwin',
+    linux: 'linux',
+    win32: 'windows',
+  }
+  const archMap: Record<string, string> = {
+    x64: 'x64',
+    arm64: 'arm64',
+    arm: 'arm',
+  }
+  const platform = platformMap[process.platform] || process.platform
+  const arch = archMap[process.arch] || process.arch
+  return `${platform}-${arch}`
+}
+
+function getOpencodeDownloadUrl(): string {
+  const target = getOpencodeDownloadTarget()
+  const ext = process.platform === 'linux' ? '.tar.gz' : '.zip'
+  return `https://github.com/anomalyco/opencode/releases/download/v${OPENCODE_VERSION}/opencode-${target}${ext}`
+}
+
+async function downloadOpencodeIfMissing(): Promise<string> {
+  const binaryPath = getOpencodeBinaryPath()
+  if (fs.existsSync(binaryPath)) {
+    return binaryPath
+  }
+
+  const binDir = getOpencodeBinDir()
+  fs.mkdirSync(binDir, { recursive: true })
+
+  const url = getOpencodeDownloadUrl()
+  const ext = process.platform === 'linux' ? '.tar.gz' : '.zip'
+  const tmpArchive = path.join(binDir, `opencode-download${ext}`)
+  const extractedName = process.platform === 'win32' ? 'opencode.exe' : 'opencode'
+
+  const { spinner } = await import('@clack/prompts')
+  const s = spinner()
+  s.start(`Downloading opencode v${OPENCODE_VERSION}...`)
+
+  try {
+    const response = await fetch(url, { redirect: 'follow' })
+    if (!response.ok) {
+      throw new Error(`Failed to download opencode: HTTP ${response.status} from ${url}`)
+    }
+    fs.writeFileSync(tmpArchive, Buffer.from(await response.arrayBuffer()))
+
+    // Extract
+    const { execFileSync } = await import('node:child_process')
+    if (process.platform === 'linux') {
+      execFileSync('tar', ['xzf', tmpArchive, '-C', binDir, extractedName], { timeout: 30_000 })
+    } else if (process.platform === 'win32') {
+      execFileSync('powershell.exe', [
+        '-NoProfile', '-Command',
+        `Expand-Archive -Path '${tmpArchive}' -DestinationPath '${binDir}' -Force`,
+      ], { timeout: 30_000 })
+    } else {
+      execFileSync('unzip', ['-o', tmpArchive, extractedName, '-d', binDir], { timeout: 30_000 })
+    }
+
+    // Rename to versioned path and make executable
+    const extractedPath = path.join(binDir, extractedName)
+    if (extractedPath !== binaryPath) {
+      fs.renameSync(extractedPath, binaryPath)
+    }
+    fs.chmodSync(binaryPath, 0o755)
+    try { fs.unlinkSync(tmpArchive) } catch { /* ignore */ }
+
+    // Delete old versions
+    const currentName = path.basename(binaryPath)
+    for (const entry of fs.readdirSync(binDir)) {
+      if (entry === currentName) continue
+      // Match opencode-X.Y.Z or opencode-X.Y.Z.exe
+      if (/^opencode-\d+\.\d+\.\d+/.test(entry)) {
+        try { fs.unlinkSync(path.join(binDir, entry)) } catch { /* ignore */ }
+      }
+    }
+
+    s.stop(`Downloaded opencode v${OPENCODE_VERSION}`)
+    return binaryPath
+  } catch (error) {
+    s.stop('Failed to download opencode')
+    try { fs.unlinkSync(tmpArchive) } catch { /* ignore */ }
+    throw error
+  }
+}
+
 let resolvedOpencodeCommand: string | null = null
 
-export function resolveOpencodeCommand(): string {
+export async function resolveOpencodeCommand(): Promise<string> {
   if (resolvedOpencodeCommand) {
     return resolvedOpencodeCommand
   }
@@ -421,40 +531,14 @@ export function resolveOpencodeCommand(): string {
     })
     if (resolvedFromEnv) {
       resolvedOpencodeCommand = resolvedFromEnv
+      opencodeLogger.log(`Resolved opencode binary from OPENCODE_PATH: ${resolvedFromEnv}`)
       return resolvedFromEnv
     }
   }
 
-  const isWindows = process.platform === 'win32'
-  const whichCmd = isWindows ? 'where' : 'which'
-  const result = errore.try({
-    try: () => {
-      const commandOutput = execFileSync(whichCmd, ['opencode'], {
-        encoding: 'utf8',
-        timeout: 5000,
-      })
-      const resolved = selectResolvedCommand({
-        output: commandOutput,
-        isWindows,
-      })
-      if (resolved) {
-        return resolved
-      }
-      throw new Error('opencode not found in PATH')
-    },
-    catch: () => new Error('opencode not found in PATH'),
-  })
-
-  if (result instanceof Error) {
-    // Fall back to bare command name — spawn will fail with a clear error
-    // if it can't find the binary.
-    opencodeLogger.warn('Could not resolve opencode path via which, falling back to "opencode"')
-    return 'opencode'
-  }
-
-  resolvedOpencodeCommand = result
-  opencodeLogger.log(`Resolved opencode binary: ${result}`)
-  return result
+  const downloaded = await downloadOpencodeIfMissing()
+  resolvedOpencodeCommand = downloaded
+  return downloaded
 }
 async function getOpenPort(): Promise<number> {
   return new Promise((resolve, reject) => {
@@ -585,7 +669,7 @@ async function startSingleServer({
     args: spawnArgs,
     windowsVerbatimArguments,
   } = getSpawnCommandAndArgs({
-    resolvedCommand: resolveOpencodeCommand(),
+    resolvedCommand: await resolveOpencodeCommand(),
     baseArgs: serveArgs,
   })
 

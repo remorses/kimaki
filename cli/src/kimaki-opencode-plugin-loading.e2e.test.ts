@@ -65,7 +65,7 @@ test(
       args,
       windowsVerbatimArguments,
     } = getSpawnCommandAndArgs({
-      resolvedCommand: resolveOpencodeCommand(),
+      resolvedCommand: await resolveOpencodeCommand(),
       baseArgs: ['serve', '--port', port.toString(), '--print-logs', '--log-level', 'DEBUG'],
     })
 
