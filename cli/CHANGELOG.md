@@ -1,5 +1,27 @@
 # Changelog
 
+## 0.10.0
+
+1. **Auto-grant cross-project directory access via channel mentions** — mention a registered project channel like `#website` in your message and Kimaki automatically grants the active session access to that project's directory. Works on both thread-starting messages and follow-ups, so cross-project requests can inspect referenced folders without a manual `/add-dir` step first.
+
+2. **New `kimaki session wait <sessionId>` command** — wait on an existing session without passing a project path. The command resolves sessions from the local database, blocks until OpenCode is idle (including through permission prompts), and prints the final session markdown to stdout.
+
+3. **`kimaki send --cwd` supports project subfolders** — scheduled and immediate sends can now target a subdirectory of the channel project as the OpenCode working directory. This lets you keep a restricted `opencode.json` in a subfolder and run recurring tasks there:
+
+   ```bash
+   kimaki send --project /repo --cwd /repo/restricted-task --send-at '0 9 * * 1' --prompt 'Run the restricted task'
+   ```
+
+4. **Migrated local database from Prisma to Drizzle** — the CLI now uses Drizzle/libSQL for all local SQLite operations. Same on-disk database, same startup migration behavior, but Prisma is no longer bundled in the published package. This reduces install size and simplifies the database layer.
+
+5. **Fixed startup healthcheck hangs** — Kimaki no longer gets stuck forever at `Waiting for OpenCode server...` when the server accepts the TCP connection but delays the HTTP response. Each healthcheck request now has a timeout and keeps polling. Fixes #123
+
+6. **Fixed Hrana SQLite schema bootstrap** — fresh databases created through the local Hrana HTTP bridge now receive the same schema bootstrap as direct file connections, preventing `no such table: bot_tokens` errors on first startup.
+
+7. **Fixed OpenCode 1.14 event stream handling** — adapted to OpenCode's global event subscription API so session events dispatch correctly. Thanks @ian-pascoe for #125.
+
+8. **Improved session routing guidance** — agents are now told to use the current channel by default, only target another project channel or checkout path when the user explicitly asks, and only create worktrees when explicitly requested.
+
 ## 0.9.1
 
 1. **Fixed worktree sessions for non-git-root project folders** — when worktrees are enabled but the configured project folder is not the git repository root, Kimaki now falls back to a normal session in that folder instead of creating a broken worktree record that makes every follow-up message reply with a worktree error. Fixes #112
