@@ -1434,7 +1434,7 @@ export class ThreadSessionRuntime {
             'payload' in rawEvent
               ? rawEvent.payload
               : rawEvent
-          ) as OpenCodeEvent
+          ) as OpenCodeEvent // as is needed because GlobalEvent is not assignable to Event. because it has a few more events inside its union
           if (!event || typeof event !== 'object' || !('type' in event)) {
             continue
           }
