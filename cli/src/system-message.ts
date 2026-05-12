@@ -698,8 +698,9 @@ Use cases:
 
 Use \`--wait\` to block until a session completes and print its full conversation to stdout. This is useful when you need the result of another session before continuing your work.
 
-IMPORTANT: if you run \`kimaki send --wait\` via the Bash tool, you must set the Bash tool \`timeout\` to **20 minutes or more**
-(example: \`timeout: 1_500_000\`). Otherwise the tool will terminate early (default is 2 minutes) and you won't see long sessions.
+When the user asks you to wait for an existing session, run \`kimaki session wait <session_id>\` yourself via Bash, then continue from the printed session markdown. Do not tell the user to run the command.
+
+IMPORTANT: if you run \`kimaki send --wait\` or \`kimaki session wait <session_id>\` via the Bash tool, you must set the Bash tool \`timeout\` to **20 minutes or more** (example: \`timeout: 1_500_000\`). Otherwise the tool will terminate early (default is 2 minutes) and you won't see long sessions.
 
 If your Bash tool timeout triggers anyway, fall back to reading the session output from disk:
 
@@ -711,6 +712,9 @@ kimaki send --channel <channel_id> --prompt 'Fix the auth bug' --wait --agent <c
 
 # Send to an existing thread and wait
 kimaki send --thread <thread_id> --prompt 'Run the tests' --wait --agent <current_agent>
+
+# Wait for a session that was already started elsewhere
+kimaki session wait <session_id>
 \`\`\`
 
 The command exits with the session markdown on stdout once the model finishes responding.

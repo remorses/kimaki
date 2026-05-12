@@ -178,6 +178,8 @@ cli
           process.exit(EXIT_NO_RESTART)
         }
 
+        const waitStartedAtMs = options.wait ? Date.now() : undefined
+
         if (!existingThreadMode && options.worktree && notifyOnly) {
           cliLogger.error('Cannot use --worktree with --notify-only')
           process.exit(EXIT_NO_RESTART)
@@ -477,6 +479,7 @@ cli
             await waitAndOutputSession({
               threadId: targetThreadId,
               projectDirectory: channelConfig.directory,
+              waitStartedAtMs,
             })
           }
 
@@ -658,6 +661,7 @@ cli
           await waitAndOutputSession({
             threadId: threadData.id,
             projectDirectory,
+            waitStartedAtMs,
           })
         }
 

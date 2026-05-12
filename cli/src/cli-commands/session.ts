@@ -12,7 +12,7 @@ import { fileURLToPath } from 'node:url'
 import { spawn, execSync } from 'node:child_process'
 import { createLogger, LogPrefix, initLogFile } from '../logger.js'
 import { createDiscordClient, initDatabase, getChannelDirectory, initializeOpencodeForDirectory, createProjectChannels } from '../discord-bot.js'
-import { getBotTokenWithMode, getThreadSession, getThreadIdBySessionId, getSessionEventSnapshot, getDb, createScheduledTask, listScheduledTasks, cancelScheduledTask, getScheduledTask, updateScheduledTask, getSessionStartSourcesBySessionIds, deleteChannelDirectoryById, findChannelsByDirectory } from '../database.js'
+import { getBotTokenWithMode, getThreadSession, getThreadIdBySessionId, getSessionEventSnapshot, getDb, createScheduledTask, listScheduledTasks, cancelScheduledTask, getScheduledTask, updateScheduledTask, getSessionStartSourcesBySessionIds, deleteChannelDirectoryById, findChannelsByDirectory, getThreadWorktree } from '../database.js'
 import { ShareMarkdown } from '../markdown.js'
 import { parseSessionSearchPattern, findFirstSessionSearchHit, buildSessionSearchSnippet, getPartSearchTexts } from '../session-search.js'
 import { formatWorktreeName, formatAutoWorktreeName } from '../commands/new-worktree.js'
@@ -41,6 +41,45 @@ import {
 
 const cliLogger = createLogger(LogPrefix.CLI)
 const cli = goke()
+
+async function resolveSessionDirectoryFromDatabase({
+  sessionId,
+}: {
+  sessionId: string
+}): Promise<Error | string> {
+  const threadId = await getThreadIdBySessionId(sessionId)
+  if (threadId) {
+    const worktree = await getThreadWorktree(threadId)
+    if (worktree?.status === 'ready' && worktree.worktree_directory) {
+      return worktree.worktree_directory
+    }
+
+    const { token: botToken } = await resolveBotCredentials({})
+    const rest = createDiscordRest(botToken)
+    const threadData = (await rest.get(Routes.channel(threadId))) as {
+      id: string
+      type: number
+      parent_id?: string
+    }
+    if (!isThreadChannelType(threadData.type)) {
+      return new Error(`Channel is not a thread: ${threadId}`)
+    }
+    if (!threadData.parent_id) {
+      return new Error(`Thread has no parent channel: ${threadId}`)
+    }
+    const channelConfig = await getChannelDirectory(threadData.parent_id)
+    if (!channelConfig) {
+      return new Error(
+        `Thread parent channel is not configured with a project directory: ${threadData.parent_id}`,
+      )
+    }
+    return channelConfig.directory
+  }
+
+  return new Error(
+    `Session is not linked to a Kimaki thread in the local database: ${sessionId}`,
+  )
+}
 
 cli
   .command(
@@ -208,6 +247,39 @@ cli
 
       cliLogger.error(`Session ${sessionId} not found in any project`)
       process.exit(EXIT_NO_RESTART)
+    } catch (error) {
+      cliLogger.error(
+        'Error:',
+        error instanceof Error ? error.stack : String(error),
+      )
+      process.exit(EXIT_NO_RESTART)
+    }
+  })
+
+cli
+  .command(
+    'session wait <sessionId>',
+    'Wait for a session to finish, then print its conversation as markdown',
+  )
+  .action(async (sessionId) => {
+    try {
+      await initDatabase()
+
+      const projectDirectory = await resolveSessionDirectoryFromDatabase({
+        sessionId,
+      })
+      if (projectDirectory instanceof Error) {
+        cliLogger.error(projectDirectory.message)
+        process.exit(EXIT_NO_RESTART)
+      }
+
+      const { waitAndOutputExistingSession } = await import('../wait-session.js')
+      await waitAndOutputExistingSession({
+        sessionId,
+        projectDirectory,
+      })
+
+      process.exit(0)
     } catch (error) {
       cliLogger.error(
         'Error:',

@@ -1,11 +1,18 @@
 // Wait utilities for polling session completion.
-// Used by `kimaki send --wait` to block until a session finishes,
-// then output the session markdown to stdout.
+// Used by `kimaki send --wait` and `kimaki session wait` to block until a
+// session is idle, interactive prompts are resolved, and output is stable.
 
-import { getThreadSession } from './database.js'
+import type { Message as OpenCodeMessage } from '@opencode-ai/sdk/v2'
+import { getSessionEventSnapshot, getThreadSession } from './database.js'
 import { initializeOpencodeForDirectory } from './opencode.js'
 import { ShareMarkdown } from './markdown.js'
 import { createLogger, LogPrefix } from './logger.js'
+import {
+  derivePendingPermissionRequests,
+  isAssistantMessageNaturalCompletion,
+  type EventBufferEntry,
+  type EventBufferEvent,
+} from './session-handler/event-stream-state.js'
 
 const waitLogger = createLogger(LogPrefix.SESSION)
 
@@ -41,20 +48,23 @@ export async function waitForSessionId({
 }
 
 /**
- * Poll the OpenCode SDK until the session's last assistant message
- * has `time.completed` set, meaning the model finished responding.
+ * Poll the OpenCode SDK and persisted Kimaki events until the session is idle,
+ * its latest user turn completed naturally, and no interactive UI is pending.
  */
 export async function waitForSessionComplete({
   projectDirectory,
   sessionId,
   timeoutMs = 30 * 60 * 1000,
+  waitStartedAtMs = 0,
 }: {
   projectDirectory: string
   sessionId: string
   timeoutMs?: number
+  waitStartedAtMs?: number
 }): Promise<void> {
-  const pollIntervalMs = 3_000
+  const pollIntervalMs = 5_000
   const startTime = Date.now()
+  let completedSinceMs: number | null = null
 
   const getClient = await initializeOpencodeForDirectory(projectDirectory)
   if (getClient instanceof Error) {
@@ -67,23 +77,41 @@ export async function waitForSessionComplete({
   }
 
   while (Date.now() - startTime < timeoutMs) {
+    const statusResponse = await getClient().session.status({
+      directory: projectDirectory,
+    })
+    if (statusResponse.error) {
+      throw new Error('Failed to check session status')
+    }
+    const sessionStatus = statusResponse.data?.[sessionId]
+
     const messagesResponse = await getClient().session.messages({
       sessionID: sessionId,
+      directory: projectDirectory,
     })
     const messages = messagesResponse.data || []
+    const events = await loadPersistedSessionEvents({ sessionId })
+    const pendingPermissions = derivePendingPermissionRequests({
+      events,
+      sessionId,
+    })
 
-    // Find the last assistant message
-    const lastAssistant = [...messages]
-      .reverse()
-      .find((m) => m.info.role === 'assistant')
+    const isIdle = !sessionStatus || sessionStatus.type === 'idle'
+    const hasPendingPermissions = pendingPermissions.length > 0
+    const hasCompletedTurn = hasCompletedUserTurn({
+      messages,
+      sessionId,
+      waitStartedAtMs,
+    })
 
-    if (
-      lastAssistant &&
-      lastAssistant.info.role === 'assistant' &&
-      lastAssistant.info.time.completed
-    ) {
-      waitLogger.log(`Session ${sessionId} completed`)
-      return
+    if (isIdle && hasCompletedTurn && !hasPendingPermissions) {
+      completedSinceMs ??= Date.now()
+      if (Date.now() - completedSinceMs >= pollIntervalMs) {
+        waitLogger.log(`Session ${sessionId} completed`)
+        return
+      }
+    } else {
+      completedSinceMs = null
     }
 
     await new Promise((resolve) => {
@@ -96,34 +124,35 @@ export async function waitForSessionComplete({
   )
 }
 
-/**
- * Wait for session completion and output the session markdown to stdout.
- * Orchestrates the full wait flow: session ID resolution -> completion -> output.
- */
-export async function waitAndOutputSession({
-  threadId,
+export async function waitAndOutputExistingSession({
+  sessionId,
   projectDirectory,
-  sessionIdTimeoutMs,
   completionTimeoutMs,
+  waitStartedAtMs,
 }: {
-  threadId: string
+  sessionId: string
   projectDirectory: string
-  sessionIdTimeoutMs?: number
   completionTimeoutMs?: number
+  waitStartedAtMs?: number
 }): Promise<void> {
-  waitLogger.log('Waiting for session ID...')
-  const sessionId = await waitForSessionId({
-    threadId,
-    timeoutMs: sessionIdTimeoutMs,
-  })
-
   waitLogger.log(`Waiting for session ${sessionId} to complete...`)
   await waitForSessionComplete({
     projectDirectory,
     sessionId,
     timeoutMs: completionTimeoutMs,
+    waitStartedAtMs,
   })
 
+  await outputSessionMarkdown({ sessionId, projectDirectory })
+}
+
+async function outputSessionMarkdown({
+  sessionId,
+  projectDirectory,
+}: {
+  sessionId: string
+  projectDirectory: string
+}): Promise<void> {
   waitLogger.log('Generating session output...')
   const getClient = await initializeOpencodeForDirectory(projectDirectory)
   if (getClient instanceof Error) {
@@ -144,4 +173,96 @@ export async function waitAndOutputSession({
   }
 
   process.stdout.write(result)
+}
+
+async function loadPersistedSessionEvents({
+  sessionId,
+}: {
+  sessionId: string
+}): Promise<EventBufferEntry[]> {
+  const rows = await getSessionEventSnapshot({ sessionId })
+  return rows.flatMap((row) => {
+    try {
+      return [{
+        event: JSON.parse(row.event_json) as EventBufferEvent,
+        timestamp: Number(row.timestamp),
+        eventIndex: Number(row.event_index),
+      }]
+    } catch (error) {
+      waitLogger.warn(
+        `Skipping invalid persisted session event for ${sessionId}: ${error instanceof Error ? error.message : String(error)}`,
+      )
+      return []
+    }
+  })
+}
+
+function hasCompletedUserTurn({
+  messages,
+  sessionId,
+  waitStartedAtMs,
+}: {
+  messages: Array<{ info: OpenCodeMessage }>
+  sessionId: string
+  waitStartedAtMs: number
+}): boolean {
+  const latestUserMessage = [...messages]
+    .reverse()
+    .map((message) => message.info)
+    .find((message) => {
+      return message.sessionID === sessionId
+        && message.role === 'user'
+        && message.time.created >= waitStartedAtMs
+    })
+  if (!latestUserMessage) {
+    return false
+  }
+
+  const latestAssistant = [...messages]
+    .reverse()
+    .map((message) => message.info)
+    .find((message): message is Extract<OpenCodeMessage, { role: 'assistant' }> => {
+      return message.sessionID === sessionId
+        && message.role === 'assistant'
+        && message.parentID === latestUserMessage.id
+    })
+  if (!latestAssistant) {
+    return false
+  }
+
+  return isAssistantMessageNaturalCompletion({ message: latestAssistant })
+}
+
+/**
+ * Wait for session completion and output the session markdown to stdout.
+ * Orchestrates the full wait flow: session ID resolution -> completion -> output.
+ */
+export async function waitAndOutputSession({
+  threadId,
+  projectDirectory,
+  sessionIdTimeoutMs,
+  completionTimeoutMs,
+  waitStartedAtMs,
+}: {
+  threadId: string
+  projectDirectory: string
+  sessionIdTimeoutMs?: number
+  completionTimeoutMs?: number
+  waitStartedAtMs?: number
+}): Promise<void> {
+  waitLogger.log('Waiting for session ID...')
+  const sessionId = await waitForSessionId({
+    threadId,
+    timeoutMs: sessionIdTimeoutMs,
+  })
+
+  waitLogger.log(`Waiting for session ${sessionId} to complete...`)
+  await waitForSessionComplete({
+    projectDirectory,
+    sessionId,
+    timeoutMs: completionTimeoutMs,
+    waitStartedAtMs,
+  })
+
+  await outputSessionMarkdown({ sessionId, projectDirectory })
 }

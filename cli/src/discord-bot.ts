@@ -46,6 +46,7 @@ import { extractBtwPrefix } from './btw-prefix-detection.js'
 import { isVoiceAttachment } from './voice-attachment.js'
 import { forkSessionToBtwThread } from './commands/btw.js'
 import {
+  getChannelReferencePermissionRules,
   preprocessExistingThreadMessage,
   preprocessNewThreadMessage,
 } from './message-preprocessing.js'
@@ -1194,7 +1195,10 @@ export async function startDiscordBot({
               newDirectory: cwdDirectory,
             })
           }
-          return { prompt, mode: 'opencode' }
+          const permissionRules = await getChannelReferencePermissionRules({
+            message: starterMessage,
+          })
+          return { prompt, permissionRules, mode: 'opencode' }
         },
       })
     } catch (error) {

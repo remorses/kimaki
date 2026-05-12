@@ -9,6 +9,7 @@
 
 import { execSync } from 'node:child_process'
 import fs from 'node:fs'
+import net from 'node:net'
 import path from 'node:path'
 import type { APIMessage } from 'discord.js'
 
@@ -27,6 +28,32 @@ export function chooseLockPort({ key }: { key: string }): number {
     hash |= 0
   }
   return 53_000 + (Math.abs(hash) % 2_000)
+}
+
+async function isTcpPortAvailable({ port }: { port: number }) {
+  const server = net.createServer()
+  return await new Promise<boolean>((resolve) => {
+    server.once('error', () => {
+      resolve(false)
+    })
+    server.listen(port, '127.0.0.1', () => {
+      server.close(() => {
+        resolve(true)
+      })
+    })
+  })
+}
+
+export async function chooseAvailableLockPort({ key }: { key: string }) {
+  const start = chooseLockPort({ key })
+  for (let offset = 0; offset < 2_000; offset += 1) {
+    const port = 53_000 + ((start - 53_000 + offset) % 2_000)
+    const available = await isTcpPortAvailable({ port })
+    if (available) {
+      return port
+    }
+  }
+  throw new Error('No available test lock port in 53000-54999')
 }
 /**
  * Initialize a git repo with a `main` branch and empty initial commit.
