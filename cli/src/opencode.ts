@@ -13,7 +13,7 @@
 //
 // Uses errore for type-safe error handling.
 
-import { spawn, type ChildProcess } from 'node:child_process'
+import { spawn, execFileSync, type ChildProcess } from 'node:child_process'
 import fs from 'node:fs'
 import http from 'node:http'
 import net from 'node:net'
@@ -448,7 +448,6 @@ function getOpencodeDownloadCandidates(): string[] {
   const isMusl = (() => {
     try { if (fs.existsSync('/etc/alpine-release')) return true } catch { /* ignore */ }
     try {
-      const { execFileSync } = require('node:child_process') as typeof import('node:child_process')
       const out = execFileSync('ldd', ['--version'], { encoding: 'utf8', timeout: 3000, stdio: ['pipe', 'pipe', 'pipe'] })
       if (out.toLowerCase().includes('musl')) return true
     } catch (e: unknown) {
@@ -537,7 +536,13 @@ async function downloadOpencodeIfMissing(): Promise<string> {
       throw new Error(`Expected binary not found after extraction: ${extractedPath}`)
     }
     fs.chmodSync(extractedPath, 0o755)
-    fs.renameSync(extractedPath, binaryPath)
+    try {
+      fs.renameSync(extractedPath, binaryPath)
+    } catch {
+      // Another concurrent process may have won the race; that's fine
+      if (fs.existsSync(binaryPath)) return binaryPath
+      throw new Error(`Failed to move opencode binary to ${binaryPath}`)
+    }
 
     // Delete old versions (match opencode-X.Y.Z or opencode-X.Y.Z.exe exactly)
     const currentName = path.basename(binaryPath)
