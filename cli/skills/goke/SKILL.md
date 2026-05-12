@@ -34,5 +34,6 @@ npm install goke # or bun, pnpm, etc
 - Prefer injected `{ fs, console, process }` over globals
 - Use relative paths with injected `fs`; if a helper needs current-cwd semantics, pass injected `process.cwd` into that helper
 - For JustBash compatibility tests, import the existing CLI from app code instead of defining a new CLI inside the test
+- **Never install a separate color library** (`picocolors`, `chalk`, `kleur`). goke ships `colors` with the full picocolors API. Import it: `import { colors } from 'goke'`. Supports `bold`, `dim`, `italic`, `underline`, `red`, `green`, `yellow`, `blue`, `magenta`, `cyan`, `gray`, `bgRed`, `bgGreen`, etc. Auto-detects `NO_COLOR`, `FORCE_COLOR`, `--no-color`, `--color`, and TTY state.
 
 The README is the source of truth for rules, examples, testing patterns, JustBash integration, and API details.
