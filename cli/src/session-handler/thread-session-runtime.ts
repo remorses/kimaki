@@ -1397,10 +1397,7 @@ export class ThreadSessionRuntime {
         continue
       }
       const subscribeResult = await errore.tryAsync(() => {
-        return client.event.subscribe(
-          { directory: this.sdkDirectory },
-          { signal },
-        )
+        return client.global.event({ signal })
       })
 
       if (subscribeResult instanceof Error) {
@@ -1430,7 +1427,17 @@ export class ThreadSessionRuntime {
       await this.bootstrapSentPartIds()
 
       const iterResult = await errore.tryAsync(async () => {
-        for await (const event of events) {
+        for await (const rawEvent of events) {
+          const event = (
+            rawEvent &&
+            typeof rawEvent === 'object' &&
+            'payload' in rawEvent
+              ? rawEvent.payload
+              : rawEvent
+          ) as OpenCodeEvent
+          if (!event || typeof event !== 'object' || !('type' in event)) {
+            continue
+          }
           // Each event is dispatched through the serialized action queue
           // to prevent interleaving mutations from concurrent events.
           await this.dispatchAction(() => {
