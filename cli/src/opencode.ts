@@ -429,26 +429,54 @@ function getOpencodeBinaryPath(): string {
   return path.join(getOpencodeBinDir(), binaryName)
 }
 
-function getOpencodeDownloadTarget(): string {
-  const platformMap: Record<string, string> = {
-    darwin: 'darwin',
-    linux: 'linux',
-    win32: 'windows',
-  }
-  const archMap: Record<string, string> = {
-    x64: 'x64',
-    arm64: 'arm64',
-    arm: 'arm',
-  }
+// Returns candidate target names ordered by preference, matching the logic in
+// the official opencode install script (musl detection, AVX2/baseline fallback).
+function getOpencodeDownloadCandidates(): string[] {
+  const platformMap: Record<string, string> = { darwin: 'darwin', linux: 'linux', win32: 'windows' }
+  const archMap: Record<string, string> = { x64: 'x64', arm64: 'arm64', arm: 'arm' }
   const platform = platformMap[process.platform] || process.platform
   const arch = archMap[process.arch] || process.arch
-  return `${platform}-${arch}`
+  const base = `${platform}-${arch}`
+
+  if (platform !== 'linux') {
+    // macOS/Windows: no musl, just check baseline for x64
+    if (arch === 'x64') return [`${base}-baseline`, base]
+    return [base]
+  }
+
+  // Linux: detect musl libc
+  const isMusl = (() => {
+    try { if (fs.existsSync('/etc/alpine-release')) return true } catch { /* ignore */ }
+    try {
+      const { execFileSync } = require('node:child_process') as typeof import('node:child_process')
+      const out = execFileSync('ldd', ['--version'], { encoding: 'utf8', timeout: 3000, stdio: ['pipe', 'pipe', 'pipe'] })
+      if (out.toLowerCase().includes('musl')) return true
+    } catch (e: unknown) {
+      // ldd --version writes to stderr on musl systems and exits non-zero
+      if (e && typeof e === 'object' && 'stderr' in e) {
+        const stderr = String((e as { stderr: unknown }).stderr)
+        if (stderr.toLowerCase().includes('musl')) return true
+      }
+    }
+    return false
+  })()
+
+  if (arch === 'x64') {
+    // x64 Linux: prefer baseline (safe on all x64 CPUs) then full, with musl variants
+    if (isMusl) return [`${base}-baseline-musl`, `${base}-musl`, `${base}-baseline`, base]
+    return [`${base}-baseline`, base, `${base}-baseline-musl`, `${base}-musl`]
+  }
+  // arm64 Linux
+  if (isMusl) return [`${base}-musl`, base]
+  return [base, `${base}-musl`]
 }
 
 function getOpencodeDownloadUrl(): string {
-  const target = getOpencodeDownloadTarget()
+  const candidates = getOpencodeDownloadCandidates()
   const ext = process.platform === 'linux' ? '.tar.gz' : '.zip'
-  return `https://github.com/anomalyco/opencode/releases/download/v${OPENCODE_VERSION}/opencode-${target}${ext}`
+  // Use the first candidate (best match). The download function will fall back
+  // to subsequent candidates if the first returns 404.
+  return `https://github.com/anomalyco/opencode/releases/download/v${OPENCODE_VERSION}/opencode-${candidates[0]}${ext}`
 }
 
 async function downloadOpencodeIfMissing(): Promise<string> {
@@ -460,49 +488,62 @@ async function downloadOpencodeIfMissing(): Promise<string> {
   const binDir = getOpencodeBinDir()
   fs.mkdirSync(binDir, { recursive: true })
 
-  const url = getOpencodeDownloadUrl()
+  const candidates = getOpencodeDownloadCandidates()
   const ext = process.platform === 'linux' ? '.tar.gz' : '.zip'
-  const tmpArchive = path.join(binDir, `opencode-download${ext}`)
   const extractedName = process.platform === 'win32' ? 'opencode.exe' : 'opencode'
+
+  // Use a unique temp dir to avoid races between concurrent first-run processes
+  const tmpDir = fs.mkdtempSync(path.join(binDir, '.opencode-dl-'))
+  const tmpArchive = path.join(tmpDir, `archive${ext}`)
 
   const { spinner } = await import('@clack/prompts')
   const s = spinner()
   s.start(`Downloading opencode v${OPENCODE_VERSION}...`)
 
   try {
-    const response = await fetch(url, { redirect: 'follow' })
-    if (!response.ok) {
-      throw new Error(`Failed to download opencode: HTTP ${response.status} from ${url}`)
+    // Try each candidate URL until one succeeds (handles musl/baseline variants)
+    let downloaded = false
+    for (const candidate of candidates) {
+      const url = `https://github.com/anomalyco/opencode/releases/download/v${OPENCODE_VERSION}/opencode-${candidate}${ext}`
+      const response = await fetch(url, { redirect: 'follow', signal: AbortSignal.timeout(120_000) })
+      if (response.status === 404) continue
+      if (!response.ok) {
+        throw new Error(`Failed to download opencode: HTTP ${response.status} from ${url}`)
+      }
+      fs.writeFileSync(tmpArchive, Buffer.from(await response.arrayBuffer()))
+      downloaded = true
+      break
     }
-    fs.writeFileSync(tmpArchive, Buffer.from(await response.arrayBuffer()))
+    if (!downloaded) {
+      throw new Error(`No opencode binary found for platform ${process.platform}/${process.arch} (tried: ${candidates.join(', ')})`)
+    }
 
-    // Extract
+    // Extract into the temp dir
     const { execFileSync } = await import('node:child_process')
     if (process.platform === 'linux') {
-      execFileSync('tar', ['xzf', tmpArchive, '-C', binDir, extractedName], { timeout: 30_000 })
+      execFileSync('tar', ['xzf', tmpArchive, '-C', tmpDir], { timeout: 30_000 })
     } else if (process.platform === 'win32') {
       execFileSync('powershell.exe', [
         '-NoProfile', '-Command',
-        `Expand-Archive -Path '${tmpArchive}' -DestinationPath '${binDir}' -Force`,
+        `Expand-Archive -LiteralPath '${tmpArchive.replaceAll("'", "''")}' -DestinationPath '${tmpDir.replaceAll("'", "''")}' -Force`,
       ], { timeout: 30_000 })
     } else {
-      execFileSync('unzip', ['-o', tmpArchive, extractedName, '-d', binDir], { timeout: 30_000 })
+      execFileSync('unzip', ['-o', tmpArchive, '-d', tmpDir], { timeout: 30_000 })
     }
 
-    // Rename to versioned path and make executable
-    const extractedPath = path.join(binDir, extractedName)
-    if (extractedPath !== binaryPath) {
-      fs.renameSync(extractedPath, binaryPath)
+    // Move extracted binary to versioned path
+    const extractedPath = path.join(tmpDir, extractedName)
+    if (!fs.existsSync(extractedPath)) {
+      throw new Error(`Expected binary not found after extraction: ${extractedPath}`)
     }
-    fs.chmodSync(binaryPath, 0o755)
-    try { fs.unlinkSync(tmpArchive) } catch { /* ignore */ }
+    fs.chmodSync(extractedPath, 0o755)
+    fs.renameSync(extractedPath, binaryPath)
 
-    // Delete old versions
+    // Delete old versions (match opencode-X.Y.Z or opencode-X.Y.Z.exe exactly)
     const currentName = path.basename(binaryPath)
     for (const entry of fs.readdirSync(binDir)) {
       if (entry === currentName) continue
-      // Match opencode-X.Y.Z or opencode-X.Y.Z.exe
-      if (/^opencode-\d+\.\d+\.\d+/.test(entry)) {
+      if (/^opencode-\d+\.\d+\.\d+(?:\.exe)?$/.test(entry)) {
         try { fs.unlinkSync(path.join(binDir, entry)) } catch { /* ignore */ }
       }
     }
@@ -511,8 +552,10 @@ async function downloadOpencodeIfMissing(): Promise<string> {
     return binaryPath
   } catch (error) {
     s.stop('Failed to download opencode')
-    try { fs.unlinkSync(tmpArchive) } catch { /* ignore */ }
     throw error
+  } finally {
+    // Clean up temp dir
+    try { fs.rmSync(tmpDir, { recursive: true, force: true }) } catch { /* ignore */ }
   }
 }
 
