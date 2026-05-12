@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.10.1
+
+1. **Fixed event stream reliability** — reverted to per-directory event subscription, avoiding spurious events from other sessions leaking into the active thread.
+
 ## 0.10.0
 
 1. **Auto-grant cross-project directory access via channel mentions** — mention a registered project channel like `#website` in your message and Kimaki automatically grants the active session access to that project's directory. Works on both thread-starting messages and follow-ups, so cross-project requests can inspect referenced folders without a manual `/add-dir` step first.
