@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.10.2
+
+1. **Pinned opencode binary to v1.14.41** — Kimaki now downloads the opencode binary from GitHub releases on first run instead of relying on a globally installed binary. The binary is cached at `~/.kimaki/bin/opencode-{version}` and old versions are cleaned up automatically. The `OPENCODE_PATH` env var still works as an explicit override. This prevents new opencode releases from unexpectedly breaking Kimaki for all users.
+
+2. **Fixed infinite event stream reconnect loop** — the bot no longer locks up when the opencode SSE endpoint closes the connection normally. The listener loop now uses exponential backoff (500ms up to 30s) before reconnecting, and backoff only resets after the stream delivers at least one event.
+
 ## 0.10.1
 
 1. **Fixed event stream reliability** — reverted to per-directory event subscription, avoiding spurious events from other sessions leaking into the active thread.
