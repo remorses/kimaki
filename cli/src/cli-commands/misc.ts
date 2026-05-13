@@ -1,4 +1,4 @@
-// File upload terminal command for sharing local files into Discord threads.
+// File upload and TTS terminal commands for sharing local files into Discord threads.
 import { goke } from 'goke'
 import { z } from 'zod'
 import { note } from '@clack/prompts'
@@ -12,7 +12,7 @@ import { fileURLToPath } from 'node:url'
 import { spawn, execSync } from 'node:child_process'
 import { createLogger, LogPrefix, initLogFile } from '../logger.js'
 import { createDiscordClient, initDatabase, getChannelDirectory, initializeOpencodeForDirectory, createProjectChannels } from '../discord-bot.js'
-import { getBotTokenWithMode, getThreadSession, getThreadIdBySessionId, getSessionEventSnapshot, createScheduledTask, listScheduledTasks, cancelScheduledTask, getScheduledTask, updateScheduledTask, getSessionStartSourcesBySessionIds, deleteChannelDirectoryById, findChannelsByDirectory } from '../database.js'
+import { getBotTokenWithMode, getThreadSession, getThreadIdBySessionId, getSessionEventSnapshot, createScheduledTask, listScheduledTasks, cancelScheduledTask, getScheduledTask, updateScheduledTask, getSessionStartSourcesBySessionIds, deleteChannelDirectoryById, findChannelsByDirectory, getAnyAudioApiKey } from '../database.js'
 import { ShareMarkdown } from '../markdown.js'
 import { parseSessionSearchPattern, findFirstSessionSearchHit, buildSessionSearchSnippet, getPartSearchTexts } from '../session-search.js'
 import { formatWorktreeName, formatAutoWorktreeName } from '../commands/new-worktree.js'
@@ -113,5 +113,93 @@ cli
     }
   })
 
+
+cli
+  .command('tts [text]', 'Generate speech audio from text. Reads from stdin if no text given.')
+  .option('-o, --output [path]', 'Output file path (default: speech.mp3)')
+  .option('-v, --voice [voice]', 'Voice ID, defaults to alloy (OpenAI) or Kore (Gemini)')
+  .option('-i, --instructions [text]', 'Style instructions, e.g. "Speak calmly" (OpenAI only)')
+  .option('--speed [speed]', 'Speed multiplier 0.25-4.0 (OpenAI only)')
+  .option('-p, --provider [provider]', 'openai or gemini (auto-detected from key)')
+  .option('-k, --api-key [key]', 'API key (falls back to stored key or env var)')
+  .action(async (text: string | undefined, options) => {
+    const { generateSpeech } = await import('../voice.js')
+    type SpeechProvider = import('../voice.js').SpeechProvider
+
+    // Read from stdin if no positional text argument
+    if (!text) {
+      if (process.stdin.isTTY) {
+        cliLogger.error('No text provided. Pass text as argument or pipe via stdin.')
+        process.exit(EXIT_NO_RESTART)
+      }
+      const chunks: Buffer[] = []
+      for await (const chunk of process.stdin) {
+        chunks.push(chunk as Buffer)
+      }
+      text = Buffer.concat(chunks).toString('utf-8').trim()
+      if (!text) {
+        cliLogger.error('Empty input from stdin.')
+        process.exit(EXIT_NO_RESTART)
+      }
+    }
+
+    await initDatabase()
+
+    // Resolve API key: flag → DB → env
+    let apiKey = options.apiKey
+    let provider: SpeechProvider | undefined = options.provider === 'openai' || options.provider === 'gemini'
+      ? options.provider
+      : undefined
+
+    if (!apiKey) {
+      const stored = await getAnyAudioApiKey()
+      if (stored) {
+        apiKey = stored.apiKey
+        provider = provider || stored.provider
+      }
+    }
+
+    if (!apiKey) {
+      if (process.env.OPENAI_API_KEY) {
+        apiKey = process.env.OPENAI_API_KEY
+        provider = provider || 'openai'
+      } else if (process.env.GEMINI_API_KEY) {
+        apiKey = process.env.GEMINI_API_KEY
+        provider = provider || 'gemini'
+      }
+    }
+
+    if (!apiKey) {
+      cliLogger.error('No API key found. Use --api-key, set OPENAI_API_KEY/GEMINI_API_KEY, or run /transcription-key in Discord.')
+      process.exit(EXIT_NO_RESTART)
+    }
+
+    const speed = options.speed ? Number(options.speed) : 1.25
+
+    cliLogger.log(`Generating speech with ${provider || 'auto-detected provider'}...`)
+
+    const result = await generateSpeech({
+      text,
+      voice: options.voice || undefined,
+      apiKey,
+      provider,
+      instructions: options.instructions || undefined,
+      speed,
+    })
+
+    if (result instanceof Error) {
+      cliLogger.error(`Speech generation failed: ${result.message}`)
+      process.exit(EXIT_NO_RESTART)
+    }
+
+    const ext = result.mediaType === 'audio/mp3' ? 'mp3' : 'wav'
+    const outputPath = options.output || `speech.${ext}`
+    const resolvedOutput = path.resolve(outputPath)
+
+    await fs.promises.writeFile(resolvedOutput, result.audio)
+
+    cliLogger.log(`Audio saved to ${resolvedOutput} (${(result.audio.length / 1024).toFixed(1)} KB)`)
+    process.exit(0)
+  })
 
 export default cli

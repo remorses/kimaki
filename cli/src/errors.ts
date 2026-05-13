@@ -64,6 +64,11 @@ export class TranscriptionError extends createTaggedError({
   message: 'Transcription failed: $reason',
 }) {}
 
+export class SpeechGenerationError extends createTaggedError({
+  name: 'SpeechGenerationError',
+  message: 'Speech generation failed: $reason',
+}) {}
+
 export class GrepSearchError extends createTaggedError({
   name: 'GrepSearchError',
   message: 'Grep search failed for pattern: $pattern',
@@ -195,6 +200,10 @@ export type SessionErrors =
   | SessionNotFoundError
   | MessagesNotFoundError
   | OpenCodeApiError
+
+export type SpeechGenerationErrors =
+  | ApiKeyMissingError
+  | SpeechGenerationError
 
 export type MergeWorktreeErrors =
   | DirtyWorktreeError

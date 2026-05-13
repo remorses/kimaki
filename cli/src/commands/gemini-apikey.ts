@@ -1,22 +1,27 @@
-// Transcription API key button, slash command, and modal handlers.
+// Audio API key button, slash command, and modal handlers.
+// Used for both transcription and speech generation — same OpenAI/Gemini keys.
 // Auto-detects provider from key prefix: sk-* = OpenAI, otherwise Gemini.
 
 import {
   ActionRowBuilder,
+  ButtonBuilder,
+  ButtonStyle,
   type ButtonInteraction,
   type ChatInputCommandInteraction,
   ModalBuilder,
   type ModalSubmitInteraction,
+  type ThreadChannel,
   TextInputBuilder,
   TextInputStyle,
   MessageFlags,
 } from 'discord.js'
 import { setGeminiApiKey, setOpenAIApiKey } from '../database.js'
+import { SILENT_MESSAGE_FLAGS } from '../discord-utils.js'
 
 function buildTranscriptionApiKeyModal(appId: string): ModalBuilder {
   const modal = new ModalBuilder()
     .setCustomId(`transcription_apikey_modal:${appId}`)
-    .setTitle('Transcription API Key')
+    .setTitle('Audio API Key')
 
   const apiKeyInput = new TextInputBuilder()
     .setCustomId('apikey')
@@ -30,6 +35,35 @@ function buildTranscriptionApiKeyModal(appId: string): ModalBuilder {
   )
   modal.addComponents(actionRow)
   return modal
+}
+
+/**
+ * Show a "Set API Key" button in a Discord thread.
+ * Reusable for both transcription and TTS — both use the same stored keys.
+ * The button opens a modal where the user can enter an OpenAI or Gemini key.
+ */
+export async function showApiKeyRequiredButton({
+  thread,
+  appId,
+  message,
+}: {
+  thread: ThreadChannel
+  appId: string
+  /** Custom message explaining why a key is needed */
+  message?: string
+}): Promise<void> {
+  const button = new ButtonBuilder()
+    .setCustomId(`transcription_apikey:${appId}`)
+    .setLabel('Set API Key')
+    .setStyle(ButtonStyle.Primary)
+
+  const row = new ActionRowBuilder<ButtonBuilder>().addComponents(button)
+
+  await thread.send({
+    content: message || 'An API key (OpenAI or Gemini) is required. Set one to continue.',
+    components: [row],
+    flags: SILENT_MESSAGE_FLAGS,
+  })
 }
 
 export async function handleTranscriptionApiKeyButton(
@@ -91,14 +125,12 @@ export async function handleTranscriptionApiKeyModalSubmit(
   if (apiKey.startsWith('sk-')) {
     await setOpenAIApiKey(appId, apiKey)
     await interaction.editReply({
-      content:
-        'OpenAI API key saved. Voice messages will be transcribed with OpenAI.',
+      content: 'OpenAI API key saved. Voice transcription and speech generation are now enabled.',
     })
   } else {
     await setGeminiApiKey(appId, apiKey)
     await interaction.editReply({
-      content:
-        'Gemini API key saved. Voice messages will be transcribed with Gemini.',
+      content: 'Gemini API key saved. Voice transcription and speech generation are now enabled.',
     })
   }
 }

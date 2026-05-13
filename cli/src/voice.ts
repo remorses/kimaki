@@ -14,6 +14,7 @@ import type {
   LanguageModelV3FunctionTool,
   LanguageModelV3Content,
   LanguageModelV3ToolCall,
+  SpeechModelV3,
 } from '@ai-sdk/provider'
 import { createGoogleGenerativeAI } from '@ai-sdk/google'
 import { createOpenAI } from '@ai-sdk/openai'
@@ -28,6 +29,8 @@ import {
   EmptyTranscriptionError,
   NoResponseContentError,
   NoToolResponseError,
+  SpeechGenerationError,
+  type SpeechGenerationErrors,
 } from './errors.js'
 
 const voiceLogger = createLogger(LogPrefix.VOICE)
@@ -637,4 +640,218 @@ Note: "critique" is a CLI tool for showing diffs in the browser.`
     agentNames: agentNames && agentNames.length > 0 ? agentNames : undefined,
     provider: resolvedProvider,
   })
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// TEXT-TO-SPEECH (TTS) — Generate audio from text
+// ═══════════════════════════════════════════════════════════════════════════
+//
+// Two provider paths:
+//   - OpenAI: SpeechModelV3 via .speech('gpt-4o-mini-tts') — clean dedicated API
+//   - Google: LanguageModelV3 with TTS model ID + responseModalities: ['AUDIO'],
+//     audio returned as LanguageModelV3File parts in response content
+
+export type SpeechProvider = 'openai' | 'gemini'
+
+/** Default voices per provider. OpenAI uses short names, Google uses prebuilt voice names. */
+const DEFAULT_VOICES: Record<SpeechProvider, string> = {
+  openai: 'alloy',
+  gemini: 'Kore',
+}
+
+/** Available OpenAI TTS models. gpt-4o-mini-tts supports instructions for style control. */
+const OPENAI_TTS_MODEL = 'gpt-4o-mini-tts'
+/** Gemini TTS model ID. Uses language model interface with AUDIO response modality. */
+const GEMINI_TTS_MODEL = 'gemini-2.5-flash-preview-tts'
+
+export type SpeechResult = {
+  /** Raw audio bytes */
+  audio: Buffer
+  /** MIME type of the audio (e.g. 'audio/mp3', 'audio/wav') */
+  mediaType: string
+}
+
+/**
+ * Create an OpenAI SpeechModelV3 for TTS.
+ * Uses gpt-4o-mini-tts which supports instructions for voice style control.
+ */
+function createOpenAISpeechModel({ apiKey }: { apiKey: string }): SpeechModelV3 {
+  const openai = createOpenAI({ apiKey })
+  return openai.speech(OPENAI_TTS_MODEL)
+}
+
+/**
+ * Generate speech via OpenAI SpeechModelV3.
+ * Returns mp3 audio by default.
+ */
+async function generateSpeechOpenAI({
+  text,
+  voice,
+  apiKey,
+  instructions,
+  speed,
+}: {
+  text: string
+  voice?: string
+  apiKey: string
+  instructions?: string
+  speed?: number
+}): Promise<SpeechGenerationErrors | SpeechResult> {
+  const model = createOpenAISpeechModel({ apiKey })
+
+  const response = await Promise.resolve(
+    model.doGenerate({
+      text,
+      voice: voice || DEFAULT_VOICES.openai,
+      outputFormat: 'mp3',
+      instructions,
+      speed,
+      providerOptions: {
+        openai: {
+          ...(instructions ? { instructions } : {}),
+          ...(speed ? { speed } : {}),
+        },
+      },
+    }),
+  ).catch(
+    (e) => new SpeechGenerationError({ reason: `OpenAI TTS API call failed: ${String(e)}`, cause: e }),
+  )
+  if (response instanceof Error) return response
+
+  const audioData = typeof response.audio === 'string'
+    ? Buffer.from(response.audio, 'base64')
+    : Buffer.from(response.audio)
+
+  if (audioData.length === 0) {
+    return new SpeechGenerationError({ reason: 'OpenAI TTS returned empty audio' })
+  }
+
+  return { audio: audioData, mediaType: 'audio/mp3' }
+}
+
+/**
+ * Generate speech via Google Gemini TTS model.
+ * Uses the language model interface with responseModalities: ['AUDIO'].
+ * Returns PCM WAV audio at 24kHz.
+ */
+async function generateSpeechGemini({
+  text,
+  voice,
+  apiKey,
+}: {
+  text: string
+  voice?: string
+  apiKey: string
+}): Promise<SpeechGenerationErrors | SpeechResult> {
+  const google = createGoogleGenerativeAI({ apiKey })
+  const model = google(GEMINI_TTS_MODEL)
+
+  const resolvedVoice = voice || DEFAULT_VOICES.gemini
+
+  const options: LanguageModelV3CallOptions = {
+    prompt: [
+      {
+        role: 'user',
+        content: [{ type: 'text', text }],
+      },
+    ],
+    providerOptions: {
+      google: {
+        responseModalities: ['AUDIO'],
+        speechConfig: {
+          voiceConfig: {
+            prebuiltVoiceConfig: {
+              voiceName: resolvedVoice,
+            },
+          },
+        },
+      },
+    },
+  }
+
+  const response = await Promise.resolve(model.doGenerate(options)).catch(
+    (e) => new SpeechGenerationError({ reason: `Gemini TTS API call failed: ${String(e)}`, cause: e }),
+  )
+  if (response instanceof Error) return response
+
+  // Gemini returns audio as LanguageModelV3File parts with inlineData
+  const filePart = response.content.find(
+    (c): c is Extract<typeof c, { type: 'file' }> => c.type === 'file',
+  )
+
+  if (!filePart) {
+    return new SpeechGenerationError({ reason: 'Gemini TTS returned no audio content' })
+  }
+
+  const audioData = typeof filePart.data === 'string'
+    ? Buffer.from(filePart.data, 'base64')
+    : Buffer.from(filePart.data)
+
+  if (audioData.length === 0) {
+    return new SpeechGenerationError({ reason: 'Gemini TTS returned empty audio' })
+  }
+
+  // Gemini TTS returns raw PCM at 24kHz mono 16-bit LE; wrap it in a WAV header
+  // so Discord and other players can handle it directly.
+  const mediaType = filePart.mediaType || 'audio/wav'
+  const needsWavHeader = mediaType === 'audio/L16' ||
+    mediaType === 'audio/pcm' ||
+    mediaType.startsWith('audio/l16')
+
+  if (needsWavHeader) {
+    const wavHeader = createWavHeader({
+      dataLength: audioData.length,
+      sampleRate: 24000,
+      numChannels: 1,
+      bitsPerSample: 16,
+    })
+    return { audio: Buffer.concat([wavHeader, audioData]), mediaType: 'audio/wav' }
+  }
+
+  return { audio: audioData, mediaType }
+}
+
+/**
+ * Generate speech audio from text using OpenAI or Google TTS.
+ * Calls the provider's TTS API directly via AI SDK without the `ai` npm package.
+ *
+ * Provider auto-detection: sk-* prefix → OpenAI, otherwise → Gemini.
+ * OpenAI returns mp3, Gemini returns WAV (24kHz mono).
+ */
+export async function generateSpeech({
+  text,
+  voice,
+  apiKey: apiKeyParam,
+  provider,
+  instructions,
+  speed,
+}: {
+  /** Text to convert to speech */
+  text: string
+  /** Voice ID. OpenAI: alloy, echo, fable, onyx, nova, shimmer. Google: Kore, Puck, Charon, etc. */
+  voice?: string
+  /** API key. Falls back to OPENAI_API_KEY or GEMINI_API_KEY env vars. */
+  apiKey?: string
+  /** Provider override. Auto-detected from key prefix if not specified. */
+  provider?: SpeechProvider
+  /** Style instructions (OpenAI gpt-4o-mini-tts only). E.g. "Speak in a calm, British accent". */
+  instructions?: string
+  /** Speech speed multiplier (OpenAI only). 0.25 to 4.0, default 1.0. */
+  speed?: number
+}): Promise<SpeechGenerationErrors | SpeechResult> {
+  const apiKey = apiKeyParam || process.env.OPENAI_API_KEY || process.env.GEMINI_API_KEY
+
+  if (!apiKey) {
+    return new ApiKeyMissingError({ service: 'OpenAI or Gemini' })
+  }
+
+  const resolvedProvider: SpeechProvider = provider || (apiKey.startsWith('sk-') ? 'openai' : 'gemini')
+
+  voiceLogger.log(`Generating speech with ${resolvedProvider}, text length: ${text.length}`)
+
+  if (resolvedProvider === 'openai') {
+    return generateSpeechOpenAI({ text, voice, apiKey, instructions, speed })
+  }
+
+  return generateSpeechGemini({ text, voice, apiKey })
 }

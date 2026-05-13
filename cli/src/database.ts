@@ -632,6 +632,22 @@ export async function getTranscriptionApiKey(appId: string): Promise<{ provider:
   return null
 }
 
+/**
+ * Get any stored audio API key (OpenAI or Gemini) without requiring a specific appId.
+ * Used by the plugin process which doesn't have direct access to the bot's appId.
+ * Returns the first available key found, preferring OpenAI.
+ */
+export async function getAnyAudioApiKey(): Promise<{ provider: 'openai' | 'gemini'; apiKey: string; appId: string } | null> {
+  const db = await getDb()
+  const row = await db.query.bot_api_keys.findFirst()
+  if (!row) return null
+  if (row.openai_api_key) return { provider: 'openai', apiKey: row.openai_api_key, appId: row.app_id }
+  if (row.gemini_api_key) return { provider: 'gemini', apiKey: row.gemini_api_key, appId: row.app_id }
+  return null
+}
+
+
+
 export async function setChannelDirectory({ channelId, directory, channelType, skipIfExists = false }: { channelId: string; directory: string; channelType: DatabaseChannelType; skipIfExists?: boolean }) {
   const db = await getDb()
   if (skipIfExists) {

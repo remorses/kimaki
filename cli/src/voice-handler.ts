@@ -18,9 +18,6 @@ import * as prism from 'prism-media'
 import dedent from 'string-dedent'
 import {
   Events,
-  ActionRowBuilder,
-  ButtonBuilder,
-  ButtonStyle,
   type Client,
   type Message,
   type ThreadChannel,
@@ -37,10 +34,10 @@ import {
 import {
   sendThreadMessage,
   escapeDiscordFormatting,
-  SILENT_MESSAGE_FLAGS,
   NOTIFY_MESSAGE_FLAGS,
   hasKimakiBotPermission,
 } from './discord-utils.js'
+import { showApiKeyRequiredButton } from './commands/gemini-apikey.js'
 import { transcribeAudio, type TranscriptionResult } from './voice.js'
 import { FetchError } from './errors.js'
 import { store } from './store.js'
@@ -593,18 +590,10 @@ export async function processVoiceAttachment({
 
   if (!transcriptionApiKey) {
     if (appId) {
-      const button = new ButtonBuilder()
-        .setCustomId(`transcription_apikey:${appId}`)
-        .setLabel('Set Transcription API Key')
-        .setStyle(ButtonStyle.Primary)
-
-      const row = new ActionRowBuilder<ButtonBuilder>().addComponents(button)
-
-      await thread.send({
-        content:
-          'Voice transcription requires an API key (OpenAI or Gemini). Set one to enable voice message transcription.',
-        components: [row],
-        flags: SILENT_MESSAGE_FLAGS,
+      await showApiKeyRequiredButton({
+        thread,
+        appId,
+        message: 'Voice transcription requires an API key (OpenAI or Gemini). Set one to enable voice message transcription.',
       })
     } else {
       await sendThreadMessage(
