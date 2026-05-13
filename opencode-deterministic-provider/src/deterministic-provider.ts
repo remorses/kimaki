@@ -324,6 +324,7 @@ function resolveMatch({
   const matched = sortedMatchers.find((matcher) => {
     return matcherMatches({ matcher, options })
   })
+
   if (matched) {
     return {
       parts: matched.then.parts,
@@ -443,11 +444,17 @@ function getLastMessageText({ prompt }: { prompt: LanguageModelV3Prompt }) {
     return ''
   }
   return last.content.reduce((acc, part) => {
-    if (part.type !== 'text' || typeof part.text !== 'string') {
-      return acc
+    if (part.type === 'text' && typeof part.text === 'string') {
+      return acc ? `${acc}\n${part.text}` : part.text
     }
-    return acc ? `${acc}\n${part.text}` : part.text
-  }, '')
+    if (part.type === 'tool-result') {
+      const resultText = extractToolResultText(part)
+      if (resultText) {
+        return acc ? `${acc}\n${resultText}` : resultText
+      }
+    }
+    return acc
+  }, '' as string)
 }
 
 function getLatestUserText({ prompt }: { prompt: LanguageModelV3Prompt }) {
@@ -478,13 +485,39 @@ function getPromptText({ prompt }: { prompt: LanguageModelV3Prompt }) {
         return ''
       }
       return message.content.reduce((acc, part) => {
-        if (part.type !== 'text' || typeof part.text !== 'string') {
-          return acc
+        if (part.type === 'text' && typeof part.text === 'string') {
+          return acc ? `${acc}\n${part.text}` : part.text
         }
-        return acc ? `${acc}\n${part.text}` : part.text
+        if (part.type === 'tool-result') {
+          const resultText = extractToolResultText(part)
+          if (resultText) {
+            return acc ? `${acc}\n${resultText}` : resultText
+          }
+        }
+        return acc
       }, '')
     })
     .join('\n')
+}
+
+function extractToolResultText(
+  part: { type: 'tool-result'; output: unknown } | { type: 'tool-result'; result: unknown },
+): string {
+  // V3 uses `output`, older versions may use `result`
+  const value = 'output' in part ? part.output : 'result' in part ? part.result : undefined
+  if (!value) return ''
+  if (typeof value === 'string') return value
+  if (Array.isArray(value)) {
+    return value
+      .map((r) => {
+        if (typeof r === 'string') return r
+        if (r && typeof r === 'object' && 'text' in r && typeof r.text === 'string') return r.text
+        return ''
+      })
+      .filter(Boolean)
+      .join('\n')
+  }
+  return JSON.stringify(value)
 }
 
 function ensureTerminalStreamPartsAndDelays({
