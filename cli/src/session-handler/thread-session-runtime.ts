@@ -2544,7 +2544,9 @@ export class ThreadSessionRuntime {
       return
     }
 
-    const errorMessage = formatSessionErrorFromProps(properties.error)
+    const errorMessage = truncateSessionErrorMessage(
+      formatSessionErrorFromProps(properties.error),
+    )
     logger.error(`Sending error to thread: ${errorMessage}`)
     await sendThreadMessage(
       this.thread,
@@ -4661,4 +4663,12 @@ function formatSessionErrorFromProps(error?: {
     parts.push(`[${data.providerID}]`)
   }
   return parts.length > 0 ? parts.join(' ') : error.name || 'Unknown error'
+}
+
+function truncateSessionErrorMessage(message: string): string {
+  const maxLength = 400
+  if (message.length <= maxLength) {
+    return message
+  }
+  return `${message.slice(0, maxLength - 1)}…`
 }
