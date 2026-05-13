@@ -223,6 +223,10 @@ do NOT add simple prisma query wrappers to database.ts. if a query is a straight
 
 prisma version in package.json MUST be pinned. no ^. this makes sure the generated prisma code is compatible with the prisma client used in the npm package
 
+## github issues
+
+never suggest installing kimaki from git (e.g. `npm i -g remorses/kimaki#main`). it does not work because the package needs a build step. always point users to the next npm release instead.
+
 ## libsql in-memory gotcha
 
 when using `@prisma/adapter-libsql` with `file::memory:`, always use `file::memory:?cache=shared`. without `cache=shared`, libsql's `transaction()` method sets its internal `#db = null` and lazily creates a `new Database("file::memory:")` on the next operation -- which gives a **separate empty in-memory database**. this silently breaks any Prisma operation that uses transactions internally (`upsert`, `$transaction`, etc.) while simple `create`/`findMany` keep working, making the bug hard to diagnose.
@@ -409,6 +413,14 @@ jq -r '[.timestamp, .event.type] | @tsv' ~/.kimaki/opencode-session-events/ses_x
 ```
 
 for checkout validation requests, prefer non-recursive checks unless the user asks otherwise.
+
+## kimaki command shim (`~/.kimaki/bin/kimaki`)
+
+`ensureKimakiCommandShim()` in `cli/src/opencode-command.ts` generates a shell script at `~/.kimaki/bin/kimaki` (or `kimaki.cmd` on Windows) every time the bot starts. it captures `process.execPath`, `process.execArgv`, and `process.argv[1]` into an `exec` one-liner so the shim always mirrors the current process.
+
+the shim directory is prepended to `PATH` in the env passed to the opencode server process (`cli/src/opencode.ts`). this lets AI agent sessions run `kimaki send`, `kimaki upload-to-discord`, `kimaki tunnel`, etc. as regular shell commands via the bash tool, regardless of how kimaki was installed (npx, global install, local dev).
+
+in local dev the shim contains tsx loader flags (`--require` / `--import`) because the bot was launched with tsx against the raw `.ts` entry point. in production (npm package) there are no tsx flags and the entry script is the compiled `bin.js`. the shim just reflects however the current process was started; there is no special-casing.
 
 ## opencode plugin and env vars
 
