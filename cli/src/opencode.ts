@@ -470,13 +470,6 @@ function getOpencodeDownloadCandidates(): string[] {
   return [base, `${base}-musl`]
 }
 
-function getOpencodeDownloadUrl(): string {
-  const candidates = getOpencodeDownloadCandidates()
-  const ext = process.platform === 'linux' ? '.tar.gz' : '.zip'
-  // Use the first candidate (best match). The download function will fall back
-  // to subsequent candidates if the first returns 404.
-  return `https://github.com/anomalyco/opencode/releases/download/v${OPENCODE_VERSION}/opencode-${candidates[0]}${ext}`
-}
 
 async function downloadOpencodeIfMissing(): Promise<string> {
   const binaryPath = getOpencodeBinaryPath()
@@ -497,7 +490,7 @@ async function downloadOpencodeIfMissing(): Promise<string> {
 
   const { spinner } = await import('@clack/prompts')
   const s = spinner()
-  s.start(`Downloading opencode v${OPENCODE_VERSION}...`)
+  s.start(`Downloading opencode v${OPENCODE_VERSION}...\n`)
 
   try {
     // Try each candidate URL until one succeeds (handles musl/baseline variants)
