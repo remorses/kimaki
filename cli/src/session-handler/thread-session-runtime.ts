@@ -1417,8 +1417,6 @@ export class ThreadSessionRuntime {
         continue
       }
 
-      // Reset backoff on successful connection
-      backoffMs = 500
       const events = subscribeResult.stream
 
       logger.log(
@@ -1429,8 +1427,10 @@ export class ThreadSessionRuntime {
       // parts that arrived while we were disconnected.
       await this.bootstrapSentPartIds()
 
+      let receivedAnyEvent = false
       const iterResult = await errore.tryAsync(async () => {
         for await (const event of events) {
+          receivedAnyEvent = true
           // Each event is dispatched through the serialized action queue
           // to prevent interleaving mutations from concurrent events.
           await this.dispatchAction(() => {
@@ -1438,6 +1438,14 @@ export class ThreadSessionRuntime {
           })
         }
       })
+
+      // Only reset backoff when the stream was alive long enough to
+      // deliver at least one event. If it closes immediately the server
+      // is likely not ready; keep escalating backoff to avoid a tight
+      // reconnect loop (GitHub issue #126).
+      if (receivedAnyEvent) {
+        backoffMs = 500
+      }
 
       if (iterResult instanceof Error) {
         if (isAbortError(iterResult)) {
@@ -1447,6 +1455,17 @@ export class ThreadSessionRuntime {
         logger.warn(
           `[LISTENER] Stream broke for thread ${this.threadId}, reconnecting in ${backoffMs}ms:`,
           iterError.message,
+        )
+        await delay(backoffMs)
+        backoffMs = Math.min(backoffMs * 2, maxBackoffMs)
+      } else {
+        // Stream completed normally (server closed the connection).
+        // This can happen when the opencode server restarts, the SSE
+        // endpoint times out, or there are no active sessions for this
+        // directory. Without a delay here the loop reconnects immediately,
+        // creating a tight infinite reconnect loop (GitHub issue #126).
+        logger.log(
+          `[LISTENER] Stream ended normally for thread ${this.threadId}, reconnecting in ${backoffMs}ms`,
         )
         await delay(backoffMs)
         backoffMs = Math.min(backoffMs * 2, maxBackoffMs)
