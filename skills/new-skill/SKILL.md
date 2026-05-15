@@ -128,6 +128,7 @@ There is no rigid template. Structure the content in whatever way communicates t
 - **Use code blocks with language hints.** The agent uses these to generate correct code.
 - **Keep prose short between code blocks.** One or two sentences of explanation, then an example.
 - **Call out common mistakes.** If there is a gotcha the agent will likely hit, warn about it explicitly.
+- **Do not add HTML comments.** Skills are instructions, not generated files. Avoid comments like `<!-- Skill instructions for agents using ... -->`.
 
 ## What makes a good skill
 
