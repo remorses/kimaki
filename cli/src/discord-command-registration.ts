@@ -41,74 +41,19 @@ function getDiscordCommandSuffix(
   return '-cmd'
 }
 
-type DiscordCommandSummary = {
-  id: string
-  name: string
-}
-
-function isDiscordCommandSummary(value: unknown): value is DiscordCommandSummary {
-  if (typeof value !== 'object' || value === null) {
-    return false
-  }
-
-  const id = Reflect.get(value, 'id')
-  const name = Reflect.get(value, 'name')
-  return typeof id === 'string' && typeof name === 'string'
-}
-
-async function deleteLegacyGlobalCommands({
+async function clearGlobalCommands({
   rest,
   appId,
-  commandNames,
 }: {
   rest: REST
   appId: string
-  commandNames: Set<string>
 }) {
   try {
-    const response = await rest.get(Routes.applicationCommands(appId))
-    if (!Array.isArray(response)) {
-      cliLogger.warn(
-        'COMMANDS: Unexpected global command payload while cleaning legacy global commands',
-      )
-      return
-    }
-
-    const legacyGlobalCommands = response
-      .filter(isDiscordCommandSummary)
-      .filter((command) => {
-        return commandNames.has(command.name)
-      })
-
-    if (legacyGlobalCommands.length === 0) {
-      return
-    }
-
-    const deletionResults = await Promise.allSettled(
-      legacyGlobalCommands.map(async (command) => {
-        await rest.delete(Routes.applicationCommand(appId, command.id))
-        return command
-      }),
-    )
-
-    const failedDeletions = deletionResults.filter((result) => {
-      return result.status === 'rejected'
-    })
-    if (failedDeletions.length > 0) {
-      cliLogger.warn(
-        `COMMANDS: Failed to delete ${failedDeletions.length} legacy global command(s)`,
-      )
-    }
-
-    const deletedCount = deletionResults.length - failedDeletions.length
-    if (deletedCount > 0) {
-      cliLogger.info(
-        `COMMANDS: Deleted ${deletedCount} legacy global command(s) to avoid guild/global duplicates`,
-      )
-    }
+    await rest.put(Routes.applicationCommands(appId), { body: [] })
+    cliLogger.info('COMMANDS: Cleared global slash commands')
   } catch (error) {
     cliLogger.warn(
-      `COMMANDS: Could not clean legacy global commands: ${error instanceof Error ? error.stack : String(error)}`,
+      `COMMANDS: Could not clear global slash commands: ${error instanceof Error ? error.stack : String(error)}`,
     )
   }
 }
@@ -639,16 +584,6 @@ export async function registerCommands({
 
   const rest = createDiscordRest(token)
   const uniqueGuildIds = Array.from(new Set(guildIds.filter((guildId) => guildId)))
-  const guildCommandNames = new Set(
-    commands
-      .map((command) => {
-        return command.name
-      })
-      .filter((name): name is string => {
-        return typeof name === 'string'
-      }),
-  )
-
   if (uniqueGuildIds.length === 0) {
     cliLogger.warn('COMMANDS: No guilds available, skipping slash command registration')
     return
@@ -716,10 +651,9 @@ export async function registerCommands({
     // exist for self-hosted bots that previously registered commands globally.
     const isGateway = store.getState().discordBaseUrl !== 'https://discord.com'
     if (!isGateway) {
-      await deleteLegacyGlobalCommands({
+      await clearGlobalCommands({
         rest,
         appId,
-        commandNames: guildCommandNames,
       })
     }
 
