@@ -1,5 +1,7 @@
 // /agent command - Set the preferred agent for this channel or session.
 // Also provides quick agent commands like /plan-agent, /build-agent that switch instantly.
+// When a prompt is provided to a quick agent command (e.g. /plan-agent "fix the bug"),
+// the prompt is sent as a one-shot with that agent without switching the persistent preference.
 
 import {
   ChatInputCommandInteraction,
@@ -7,6 +9,7 @@ import {
   StringSelectMenuBuilder,
   ActionRowBuilder,
   ChannelType,
+  ThreadAutoArchiveDuration,
   type ThreadChannel,
   type TextChannel,
   MessageFlags,
@@ -21,7 +24,13 @@ import {
   getChannelAgent,
 } from '../database.js'
 import { initializeOpencodeForDirectory } from '../opencode.js'
-import { resolveTextChannel, getKimakiMetadata } from '../discord-utils.js'
+import {
+  resolveTextChannel,
+  resolveWorkingDirectory,
+  getKimakiMetadata,
+  SILENT_MESSAGE_FLAGS,
+} from '../discord-utils.js'
+import { getOrCreateRuntime } from '../session-handler/thread-session-runtime.js'
 import { createLogger, LogPrefix } from '../logger.js'
 import { getCurrentModelInfo } from './model.js'
 
@@ -416,7 +425,15 @@ export async function handleQuickAgentCommand({
   appId: string
 }): Promise<void> {
   const fallbackAgentName = command.commandName.replace(/-agent$/, '')
+  const prompt = command.options.getString('prompt') || undefined
 
+  // One-shot prompt mode: send the prompt with a temporary agent override
+  // without changing the persistent agent preference.
+  if (prompt) {
+    return handleQuickAgentWithPrompt({ command, appId, fallbackAgentName, prompt })
+  }
+
+  // No prompt: switch the persistent agent preference (original behavior).
   await command.deferReply({ flags: MessageFlags.Ephemeral })
 
   const context = await resolveAgentCommandContext({
@@ -490,6 +507,135 @@ export async function handleQuickAgentCommand({
     agentLogger.error('Error in quick agent command:', error)
     await command.editReply({
       content: `Failed to switch agent: ${error instanceof Error ? error.message : 'Unknown error'}`,
+    })
+  }
+}
+
+/**
+ * Handle one-shot prompt mode: send a prompt with a temporary agent override.
+ * In a thread: enqueue the prompt with the agent override on the existing session.
+ * In a channel: create a new thread and enqueue the prompt with the agent override.
+ * Neither case changes the persistent agent preference.
+ */
+async function handleQuickAgentWithPrompt({
+  command,
+  appId,
+  fallbackAgentName,
+  prompt,
+}: {
+  command: ChatInputCommandInteraction
+  appId: string
+  fallbackAgentName: string
+  prompt: string
+}): Promise<void> {
+  const channel = command.channel
+  if (!channel) {
+    await command.reply({
+      content: 'This command can only be used in a channel',
+      flags: MessageFlags.Ephemeral,
+    })
+    return
+  }
+
+  const resolvedAgentName =
+    (await resolveQuickAgentNameFromInteraction({ command })) ||
+    fallbackAgentName
+
+  const isThread = [
+    ChannelType.PublicThread,
+    ChannelType.PrivateThread,
+    ChannelType.AnnouncementThread,
+  ].includes(channel.type)
+
+  const displayText = `${prompt.slice(0, 1000)}${prompt.length > 1000 ? '...' : ''}`
+
+  if (isThread) {
+    // In a thread: enqueue the prompt on the existing session with agent override.
+    const thread = channel as ThreadChannel
+    const resolved = await resolveWorkingDirectory({ channel: thread })
+    if (!resolved) {
+      await command.reply({
+        content: 'Could not determine project directory for this channel',
+        flags: MessageFlags.Ephemeral,
+      })
+      return
+    }
+
+    const runtime = getOrCreateRuntime({
+      threadId: thread.id,
+      thread,
+      projectDirectory: resolved.projectDirectory,
+      sdkDirectory: resolved.workingDirectory,
+      channelId: thread.parentId || thread.id,
+      appId,
+    })
+
+    // Visible reply showing the one-shot prompt (not ephemeral, so it appears in thread).
+    await command.reply({
+      content: `» **${command.user.displayName}** (${resolvedAgentName}): ${displayText}`,
+      flags: SILENT_MESSAGE_FLAGS,
+    })
+
+    await runtime.enqueueIncoming({
+      prompt,
+      userId: command.user.id,
+      username: command.user.displayName,
+      agent: resolvedAgentName,
+      appId,
+      mode: 'opencode',
+    })
+  } else if (channel.type === ChannelType.GuildText) {
+    // In a channel: create a new thread and enqueue with the agent override.
+    const textChannel = channel as TextChannel
+    const metadata = await getKimakiMetadata(textChannel)
+    const projectDirectory = metadata.projectDirectory
+
+    if (!projectDirectory) {
+      await command.reply({
+        content: 'This channel is not configured with a project directory',
+        flags: MessageFlags.Ephemeral,
+      })
+      return
+    }
+
+    await command.deferReply()
+
+    const starterMessage = await textChannel.send({
+      content: `» **${command.user.displayName}** (${resolvedAgentName}): ${displayText}`,
+      flags: SILENT_MESSAGE_FLAGS,
+    })
+
+    const thread = await starterMessage.startThread({
+      name: prompt.slice(0, 80),
+      autoArchiveDuration: ThreadAutoArchiveDuration.OneDay,
+      reason: `One-shot ${resolvedAgentName} agent prompt`,
+    })
+
+    await thread.members.add(command.user.id)
+
+    await command.editReply(`Sent with **${resolvedAgentName}** agent in ${thread.toString()}`)
+
+    const runtime = getOrCreateRuntime({
+      threadId: thread.id,
+      thread,
+      projectDirectory,
+      sdkDirectory: projectDirectory,
+      channelId: textChannel.id,
+      appId,
+    })
+
+    await runtime.enqueueIncoming({
+      prompt,
+      userId: command.user.id,
+      username: command.user.displayName,
+      agent: resolvedAgentName,
+      appId,
+      mode: 'opencode',
+    })
+  } else {
+    await command.reply({
+      content: 'This command can only be used in text channels or threads',
+      flags: MessageFlags.Ephemeral,
     })
   }
 }

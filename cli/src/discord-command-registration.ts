@@ -508,6 +508,12 @@ export async function registerCommands({
         .setName(commandName)
         .setDescription(truncateCommandDescription(description))
         .setDMPermission(false)
+        .addStringOption((opt) =>
+          opt
+            .setName('prompt')
+            .setDescription('Send a one-shot prompt with this agent without switching')
+            .setRequired(false),
+        )
         .toJSON(),
     )
   }
