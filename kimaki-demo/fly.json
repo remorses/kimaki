@@ -22,9 +22,9 @@
   ],
   "vm": [
     {
-      "size": "shared-cpu-2x",
-      "memory": "2048mb",
-      "cpus": 1
+      "cpu_kind": "shared",
+      "cpus": 2,
+      "memory": "2048mb"
     }
   ]
 }
