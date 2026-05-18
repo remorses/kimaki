@@ -9,6 +9,8 @@
 
 Kimaki is a Discord bot that lets you control [OpenCode](https://opencode.ai) coding sessions from Discord. Send a message in a Discord channel, an AI agent edits code on your machine.
 
+You can try out the bot in the [Kimaki Discord Server](https://discord.gg/qz3hapKcMM) to see what it can do!
+
 ## Quick Start
 
 ```bash
