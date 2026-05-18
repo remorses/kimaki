@@ -336,7 +336,7 @@ export async function handleModelCommand({
   modelLogger.log('[MODEL] handleModelCommand called')
 
   // Defer reply immediately to avoid 3-second timeout
-  await interaction.deferReply({ flags: MessageFlags.Ephemeral })
+  await interaction.deferReply()
   modelLogger.log('[MODEL] Deferred reply')
 
   const channel = interaction.channel

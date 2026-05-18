@@ -5,7 +5,6 @@ import {
   ChannelType,
   type ThreadChannel,
   type TextChannel,
-  MessageFlags,
 } from 'discord.js'
 import {
   getChannelModel,
@@ -57,7 +56,7 @@ export async function handleUnsetModelCommand({
 }): Promise<void> {
   unsetModelLogger.log('[UNSET-MODEL] handleUnsetModelCommand called')
 
-  await interaction.deferReply({ flags: MessageFlags.Ephemeral })
+  await interaction.deferReply()
 
   const channel = interaction.channel
 

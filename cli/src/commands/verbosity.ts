@@ -123,7 +123,6 @@ export async function handleVerbosityCommand({
   await command.reply({
     content: `**Verbosity**\nCurrent: \`${currentLevel}\` (${source})`,
     components: [actionRow],
-    flags: MessageFlags.Ephemeral,
   })
 }
 

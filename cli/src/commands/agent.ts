@@ -269,7 +269,7 @@ export async function handleAgentCommand({
   interaction: ChatInputCommandInteraction
   appId: string
 }): Promise<void> {
-  await interaction.deferReply({ flags: MessageFlags.Ephemeral })
+  await interaction.deferReply()
 
   const context = await resolveAgentCommandContext({ interaction, appId })
   if (!context) {
@@ -434,7 +434,7 @@ export async function handleQuickAgentCommand({
   }
 
   // No prompt: switch the persistent agent preference (original behavior).
-  await command.deferReply({ flags: MessageFlags.Ephemeral })
+  await command.deferReply()
 
   const context = await resolveAgentCommandContext({
     interaction: command,

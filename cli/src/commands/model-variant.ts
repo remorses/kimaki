@@ -94,7 +94,7 @@ export async function handleModelVariantCommand({
   interaction: ChatInputCommandInteraction
   appId: string
 }): Promise<void> {
-  await interaction.deferReply({ flags: MessageFlags.Ephemeral })
+  await interaction.deferReply()
 
   const channel = interaction.channel
   if (!channel) {

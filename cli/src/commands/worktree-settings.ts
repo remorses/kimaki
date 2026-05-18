@@ -64,6 +64,5 @@ export async function handleToggleWorktreesCommand({
     content: nextEnabled
       ? `Worktrees **enabled** for this channel.\n\nNew sessions started from messages in **#${channel.name}** will now automatically create git worktrees.\n\nNew setting for **#${channel.name}**: **enabled**.`
       : `Worktrees **disabled** for this channel.\n\nNew sessions started from messages in **#${channel.name}** will use the main project directory.\n\nNew setting for **#${channel.name}**: **disabled**.`,
-    flags: MessageFlags.Ephemeral,
   })
 }

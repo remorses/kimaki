@@ -62,6 +62,5 @@ export async function handleToggleMentionModeCommand({
     content: nextEnabled
       ? `Mention mode **enabled** for this channel.\nThe bot will only start new sessions when @mentioned.\nMessages in existing threads are not affected.`
       : `Mention mode **disabled** for this channel.\nThe bot will respond to all messages in **#${channel.name}**.`,
-    flags: MessageFlags.Ephemeral,
   })
 }
