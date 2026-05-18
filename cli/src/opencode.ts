@@ -416,7 +416,7 @@ function ensureProcessCleanupHandlersRegistered(): void {
 // Always stored in the default data dir (~/.kimaki) regardless of custom
 // data dir settings, so one binary serves all configurations.
 
-const OPENCODE_VERSION = '1.14.41'
+const OPENCODE_VERSION = '1.15.4'
 
 // Always use ~/.kimaki/bin for the opencode binary, regardless of custom data dir.
 function getOpencodeBinDir(): string {
