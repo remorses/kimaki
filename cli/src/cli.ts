@@ -78,6 +78,10 @@ cli
     '--auto-restart',
     'Automatically restart the bot on crash or OOM kill',
   )
+  .option(
+    '--allow-all-users',
+    'Allow all Discord users to start sessions without needing Kimaki role or admin permissions (no-kimaki role still blocks)',
+  )
   .option('--no-sentry', 'Disable Sentry error reporting')
   .option(
     '--gateway',
@@ -117,6 +121,7 @@ cli
       verbosity?: string
       mentionMode?: boolean
       noCritique?: boolean
+      allowAllUsers?: boolean
       autoRestart?: boolean
       noSentry?: boolean
       gateway?: boolean
@@ -226,6 +231,7 @@ cli
           }),
           ...(options.mentionMode && { defaultMentionMode: true }),
           ...(options.noCritique && { critiqueEnabled: false }),
+          ...(options.allowAllUsers && { allowAllUsers: true }),
           ...(enabledSkills.length > 0 && { enabledSkills }),
           ...(disabledSkills.length > 0 && { disabledSkills }),
         })
@@ -238,6 +244,12 @@ cli
         if (disabledSkills.length > 0) {
           cliLogger.log(
             `Skill blacklist enabled: [${disabledSkills.join(', ')}] will be hidden`,
+          )
+        }
+
+        if (options.allowAllUsers) {
+          cliLogger.log(
+            'Allow all users: any Discord member can start sessions (no-kimaki role still blocks)',
           )
         }
 

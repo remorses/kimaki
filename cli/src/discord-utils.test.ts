@@ -1,6 +1,7 @@
 import { PermissionsBitField } from 'discord.js'
-import { describe, expect, test } from 'vitest'
+import { afterEach, describe, expect, test } from 'vitest'
 import { hasKimakiBotPermission, splitMarkdownForDiscord } from './discord-utils.js'
+import { store } from './store.js'
 
 describe('splitMarkdownForDiscord', () => {
   test('never returns chunks over the max length with code fences', () => {
@@ -101,6 +102,47 @@ describe('splitMarkdownForDiscord', () => {
 })
 
 describe('hasKimakiBotPermission', () => {
+  afterEach(() => {
+    store.setState({ allowAllUsers: false })
+  })
+
+  test('allows any member when allowAllUsers is enabled', () => {
+    store.setState({ allowAllUsers: true })
+    const guild = {
+      ownerId: 'owner-id',
+      roles: { cache: new Map() },
+    } as any
+
+    const member = {
+      user: { id: 'member-id' },
+      permissions: '0',
+      roles: [],
+    } as any
+
+    expect(hasKimakiBotPermission(member, guild)).toBe(true)
+  })
+
+  test('still blocks no-kimaki role even when allowAllUsers is enabled', () => {
+    store.setState({ allowAllUsers: true })
+    const noKimakiRoleId = '222'
+    const guild = {
+      ownerId: 'owner-id',
+      roles: {
+        cache: new Map([
+          [noKimakiRoleId, { id: noKimakiRoleId, name: 'no-kimaki' }],
+        ]),
+      },
+    } as any
+
+    const member = {
+      user: { id: 'member-id' },
+      permissions: '0',
+      roles: [noKimakiRoleId],
+    } as any
+
+    expect(hasKimakiBotPermission(member, guild)).toBe(false)
+  })
+
   test('allows API interaction member when kimaki role exists', () => {
     const kimakiRoleId = '111'
     const guild = {

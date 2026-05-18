@@ -80,6 +80,13 @@ export type KimakiState = {
   // Read by: opencode.ts when building opencode-config.json.
   disabledSkills: string[]
 
+  // When true, all Discord users can start sessions and use commands without
+  // needing the Kimaki role, Administrator, Manage Server, or being the owner.
+  // The "no-kimaki" role still blocks access even when this is enabled.
+  // Changes: set once at startup from --allow-all-users CLI flag.
+  // Read by: discord-utils.ts hasKimakiBotPermission().
+  allowAllUsers: boolean
+
   // Base URL for Discord REST API calls (default https://discord.com).
   // Overridden when using a gateway-proxy or gateway Discord mode.
   // Changes: set by getBotTokenWithMode() which runs at startup and on
@@ -131,6 +138,7 @@ export const store = createStore<KimakiState>(() => ({
   critiqueEnabled: true,
   enabledSkills: [],
   disabledSkills: [],
+  allowAllUsers: false,
   discordBaseUrl: 'https://discord.com',
   gatewayToken: null,
   registeredUserCommands: [],

@@ -26,6 +26,7 @@ import { limitHeadingDepth } from './limit-heading-depth.js'
 import { unnestCodeBlocksFromLists } from './unnest-code-blocks.js'
 import { createLogger, LogPrefix } from './logger.js'
 import * as errore from 'errore'
+import { store } from './store.js'
 import mime from 'mime'
 import fs from 'node:fs'
 import path from 'node:path'
@@ -48,6 +49,9 @@ export function hasKimakiBotPermission(
   const hasNoKimakiRole = hasRoleByName(member, 'no-kimaki', guild)
   if (hasNoKimakiRole) {
     return false
+  }
+  if (store.getState().allowAllUsers) {
+    return true
   }
   const memberPermissions =
     member instanceof GuildMember
