@@ -11,8 +11,10 @@ RUN apt-get update && apt-get install -y git curl unzip && rm -rf /var/lib/apt/l
 RUN curl -fsSL https://bun.sh/install | bash
 ENV PATH="/root/.bun/bin:$PATH"
 
-# Install kimaki globally from npm
-RUN npm install -g kimaki@latest
+# Install kimaki globally from npm.
+# Pin the version so Docker layer cache busts on upgrade.
+# Bump this after publishing a new kimaki version, then fly deploy.
+RUN npm install -g kimaki@0.10.2
 
 # Pre-install tools the AI agent uses via bunx so first invocations are instant.
 # critique: diff viewing and sharing (bunx critique --web)
@@ -28,6 +30,6 @@ WORKDIR /data
 # --gateway: use the shared Kimaki bot via gateway-proxy (no bot token needed)
 # --data-dir /data: store sqlite DB and config on the persistent volume
 # --projects-dir /data/projects: store user-created projects on the volume
-# --allow-all-users: anyone in the Discord server can use the bot (add back after next kimaki publish)
+# --allow-all-users: anyone in the Discord server can use the bot
 # --auto-restart: respawn wrapper for crash recovery inside the container
-CMD ["kimaki", "--gateway", "--data-dir", "/data", "--projects-dir", "/data/projects", "--auto-restart"]
+CMD ["kimaki", "--gateway", "--data-dir", "/data", "--projects-dir", "/data/projects", "--allow-all-users", "--auto-restart"]
