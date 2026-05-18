@@ -1,0 +1,29 @@
+{
+  "app": "kimaki-demo",
+  "primary_region": "iad",
+  "build": {
+    "dockerfile": "Dockerfile"
+  },
+  "env": {
+    "NODE_ENV": "production",
+    "KIMAKI_DATA_DIR": "/data"
+  },
+  "mounts": [
+    {
+      "source": "kimaki_data",
+      "destination": "/data"
+    }
+  ],
+  "restart": [
+    {
+      "policy": "always",
+      "max_retries": 10
+    }
+  ],
+  "vm": [
+    {
+      "size": "shared-cpu-1x",
+      "memory": "1024mb"
+    }
+  ]
+}
