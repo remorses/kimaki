@@ -85,6 +85,22 @@ describe('system-message', () => {
 
       kimaki upload-to-discord --session ses_123 <file1> [file2] ...
 
+      ## generating audio from text
+
+      When the user asks you to generate audio of some text so they can listen instead of reading, use \`kimaki tts\` to create a speech file and \`kimaki upload-to-discord\` to send it to the thread. Only use this when the user explicitly asks for audio.
+
+      \`\`\`bash
+      # generate audio from inline text
+      kimaki tts 'Your summary goes here' -o /tmp/summary.mp3
+      kimaki upload-to-discord --session ses_123 /tmp/summary.mp3
+
+      # generate audio from a file (pipe via stdin)
+      cat docs/explanation.md | kimaki tts -o /tmp/explanation.mp3
+      kimaki upload-to-discord --session ses_123 /tmp/explanation.mp3
+      \`\`\`
+
+      see --help for options like voice, speed, etc.
+
       ## requesting files from the user
 
       To ask the user to upload files from their device, use the \`kimaki_file_upload\` tool. This shows a native file picker dialog in Discord. The files are downloaded to the project's \`uploads/\` directory and the tool returns the local file paths.

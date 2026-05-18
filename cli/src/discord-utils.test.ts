@@ -1,6 +1,11 @@
-import { PermissionsBitField } from 'discord.js'
+import { PermissionsBitField, type Message } from 'discord.js'
 import { afterEach, describe, expect, test } from 'vitest'
-import { hasKimakiAdminPermission, hasKimakiBotPermission, splitMarkdownForDiscord } from './discord-utils.js'
+import {
+  hasKimakiAdminPermission,
+  hasKimakiBotPermission,
+  resolveGuildMessageMember,
+  splitMarkdownForDiscord,
+} from './discord-utils.js'
 import { store } from './store.js'
 
 describe('splitMarkdownForDiscord', () => {
@@ -229,5 +234,61 @@ describe('hasKimakiAdminPermission', () => {
     } as any
 
     expect(hasKimakiAdminPermission(member, guild)).toBe(true)
+  })
+})
+
+describe('resolveGuildMessageMember', () => {
+  test('uses hydrated message member without fetching', async () => {
+    const member = { id: 'member-id' }
+    const message = {
+      guild: {
+        members: {
+          fetch() {
+            throw new Error('should not fetch')
+          },
+        },
+      },
+      member,
+      author: { id: 'member-id' },
+      id: 'message-id',
+    } as unknown as Message
+
+    await expect(resolveGuildMessageMember(message)).resolves.toBe(member)
+  })
+
+  test('fetches missing guild message member', async () => {
+    const member = { id: 'member-id' }
+    const message = {
+      guild: {
+        members: {
+          fetch(id: string) {
+            expect(id).toBe('member-id')
+            return Promise.resolve(member)
+          },
+        },
+      },
+      member: null,
+      author: { id: 'member-id' },
+      id: 'message-id',
+    } as unknown as Message
+
+    await expect(resolveGuildMessageMember(message)).resolves.toBe(member)
+  })
+
+  test('denies when missing guild message member cannot be fetched', async () => {
+    const message = {
+      guild: {
+        members: {
+          fetch() {
+            return Promise.reject(new Error('missing member'))
+          },
+        },
+      },
+      member: null,
+      author: { id: 'member-id' },
+      id: 'message-id',
+    } as unknown as Message
+
+    await expect(resolveGuildMessageMember(message)).resolves.toBe(null)
   })
 })

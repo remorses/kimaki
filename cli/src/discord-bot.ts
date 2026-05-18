@@ -31,6 +31,7 @@ import {
   stripMentions,
   hasKimakiBotPermission,
   hasNoKimakiRole,
+  resolveGuildMessageMember,
 } from './discord-utils.js'
 import {
   getOpencodeSystemMessage,
@@ -462,7 +463,8 @@ export async function startDiscordBot({
         isCliInjectedPrompt && message.author?.id === discordClient.user?.id
 
       if (message.author?.bot && !isInjectedSelfBotMessage) {
-        if (!hasKimakiBotPermission(message.member)) {
+        const member = await resolveGuildMessageMember(message)
+        if (!hasKimakiBotPermission(member, message.guild)) {
           return
         }
       }
@@ -509,8 +511,13 @@ export async function startDiscordBot({
         }
       }
 
-      if (!isCliInjectedPrompt && message.guild && message.member) {
-        if (hasNoKimakiRole(message.member)) {
+      if (!isCliInjectedPrompt && message.guild) {
+        const member = await resolveGuildMessageMember(message)
+        if (!member) {
+          return
+        }
+
+        if (hasNoKimakiRole(member)) {
           await message.reply({
             content: `You have the **no-kimaki** role which blocks bot access.\nRemove this role to use Kimaki.`,
             flags: SILENT_MESSAGE_FLAGS,
@@ -518,7 +525,7 @@ export async function startDiscordBot({
           return
         }
 
-        if (!hasKimakiBotPermission(message.member)) {
+        if (!hasKimakiBotPermission(member, message.guild)) {
           await message.reply({
             content: `You don't have permission to start sessions.\nTo use Kimaki, ask a server admin to give you the **Kimaki** role.`,
             flags: SILENT_MESSAGE_FLAGS,

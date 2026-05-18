@@ -147,6 +147,11 @@ export function registerInteractionHandler({
         )
 
         if (interaction.isAutocomplete()) {
+          if (!hasKimakiBotPermission(interaction.member, interaction.guild)) {
+            await interaction.respond([])
+            return
+          }
+
           switch (interaction.commandName) {
             case 'new-session':
               await handleSessionAutocomplete({ interaction, appId })

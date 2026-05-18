@@ -96,6 +96,25 @@ export function hasKimakiAdminPermission(
   return isOwner || isAdmin || canManageServer || hasKimakiRole
 }
 
+export async function resolveGuildMessageMember(
+  message: Message,
+): Promise<GuildMemberType | null> {
+  if (!message.guild) return null
+  if (message.member) return message.member
+
+  const fetchedMember = await message.guild.members
+    .fetch(message.author.id)
+    .catch((e) => new Error('Failed to fetch guild member', { cause: e }))
+  if (fetchedMember instanceof Error) {
+    discordLogger.warn(
+      `[PERMISSION] Denying message ${message.id}: ${fetchedMember.message}`,
+    )
+    return null
+  }
+
+  return fetchedMember
+}
+
 function hasRoleByName(
   member: GuildMemberType | APIInteractionGuildMember,
   roleName: string,
