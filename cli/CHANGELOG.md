@@ -1,5 +1,37 @@
 # Changelog
 
+## 0.11.0
+
+1. **New `kimaki tts` command for text-to-speech audio generation** — generate speech audio from text using OpenAI (`gpt-4o-mini-tts`) or Google Gemini (`gemini-2.5-flash-preview-tts`). Provider is auto-detected from the API key prefix (`sk-*` = OpenAI, otherwise Gemini).
+
+   ```bash
+   # Generate audio file
+   kimaki tts "Hello world" --voice alloy --output greeting.mp3
+
+   # Generate and upload directly to a Discord thread
+   kimaki tts "Build summary" --session ses_xxx
+   ```
+
+   API keys are resolved from the database (same keys set via `/transcription-key`), then falls back to `OPENAI_API_KEY` / `GEMINI_API_KEY` env vars.
+
+2. **New `--allow-all-users` flag** — bypass role and permission checks so any Discord member can start sessions and use slash commands without needing the Kimaki role, Administrator, or Manage Server permissions. The `no-kimaki` role still blocks access even when this flag is enabled. Credential-sensitive commands (`/login`, `/transcription-key`) remain restricted to admins.
+
+   ```bash
+   kimaki --allow-all-users
+   ```
+
+3. **One-shot prompts on quick agent commands** — `/plan-agent`, `/build-agent`, and other quick agent commands now accept an optional `prompt` argument. When provided, the prompt is sent with that agent as a temporary override without changing the persistent agent preference:
+
+   ```
+   /plan-agent prompt: fix the login bug
+   ```
+
+   In a thread this enqueues on the existing session; in a channel it creates a new thread.
+
+4. **Clear stale global Discord commands on startup** — Kimaki registers slash commands as guild commands so updates are immediate. Startup now also bulk-clears global commands for self-hosted bots, removing older commands that are no longer registered and preventing duplicate stale entries from staying visible in Discord.
+
+5. **Truncated session error messages in Discord** — provider error payloads can include enormous response bodies. Kimaki now truncates error messages to 400 characters, keeping them concise while still showing the important prefix and provider status.
+
 ## 0.10.2
 
 1. **Pinned opencode binary to v1.14.41** — Kimaki now downloads the opencode binary from GitHub releases on first run instead of relying on a globally installed binary. The binary is cached at `~/.kimaki/bin/opencode-{version}` and old versions are cleaned up automatically. The `OPENCODE_PATH` env var still works as an explicit override. This prevents new opencode releases from unexpectedly breaking Kimaki for all users.
