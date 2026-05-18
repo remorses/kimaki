@@ -358,6 +358,8 @@ importers:
         specifier: ^14.25.1
         version: 14.25.1
 
+  kimaki-demo: {}
+
   libsqlproxy:
     devDependencies:
       '@types/node':
