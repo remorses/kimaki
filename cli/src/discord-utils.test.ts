@@ -1,6 +1,6 @@
 import { PermissionsBitField } from 'discord.js'
 import { afterEach, describe, expect, test } from 'vitest'
-import { hasKimakiBotPermission, splitMarkdownForDiscord } from './discord-utils.js'
+import { hasKimakiAdminPermission, hasKimakiBotPermission, splitMarkdownForDiscord } from './discord-utils.js'
 import { store } from './store.js'
 
 describe('splitMarkdownForDiscord', () => {
@@ -191,5 +191,43 @@ describe('hasKimakiBotPermission', () => {
     } as any
 
     expect(hasKimakiBotPermission(member, guild)).toBe(false)
+  })
+})
+
+describe('hasKimakiAdminPermission', () => {
+  afterEach(() => {
+    store.setState({ allowAllUsers: false })
+  })
+
+  test('denies unprivileged member even when allowAllUsers is enabled', () => {
+    store.setState({ allowAllUsers: true })
+    const guild = {
+      ownerId: 'owner-id',
+      roles: { cache: new Map() },
+    } as any
+
+    const member = {
+      user: { id: 'member-id' },
+      permissions: '0',
+      roles: [],
+    } as any
+
+    expect(hasKimakiAdminPermission(member, guild)).toBe(false)
+  })
+
+  test('allows admin even when allowAllUsers is enabled', () => {
+    store.setState({ allowAllUsers: true })
+    const guild = {
+      ownerId: 'owner-id',
+      roles: { cache: new Map() },
+    } as any
+
+    const member = {
+      user: { id: 'member-id' },
+      permissions: PermissionsBitField.Flags.Administrator.toString(),
+      roles: [],
+    } as any
+
+    expect(hasKimakiAdminPermission(member, guild)).toBe(true)
   })
 })

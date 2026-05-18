@@ -66,6 +66,36 @@ export function hasKimakiBotPermission(
   return isOwner || isAdmin || canManageServer || hasKimakiRole
 }
 
+/**
+ * Stricter permission check that ignores allowAllUsers.
+ * Use for admin-only commands like /login and /transcription-key that
+ * configure shared credentials. Always requires owner, admin, manage
+ * server, or Kimaki role regardless of --allow-all-users flag.
+ */
+export function hasKimakiAdminPermission(
+  member: GuildMemberType | APIInteractionGuildMember | null,
+  guild?: Guild | null,
+): boolean {
+  if (!member) {
+    return false
+  }
+  const hasNoKimaki = hasRoleByName(member, 'no-kimaki', guild)
+  if (hasNoKimaki) {
+    return false
+  }
+  const memberPermissions =
+    member instanceof GuildMember
+      ? member.permissions
+      : new PermissionsBitField(BigInt(member.permissions))
+  const ownerId = member instanceof GuildMember ? member.guild.ownerId : guild?.ownerId
+  const memberId = member instanceof GuildMember ? member.id : member.user.id
+  const isOwner = ownerId ? memberId === ownerId : false
+  const isAdmin = memberPermissions.has(PermissionsBitField.Flags.Administrator)
+  const canManageServer = memberPermissions.has(PermissionsBitField.Flags.ManageGuild)
+  const hasKimakiRole = hasRoleByName(member, 'kimaki', guild)
+  return isOwner || isAdmin || canManageServer || hasKimakiRole
+}
+
 function hasRoleByName(
   member: GuildMemberType | APIInteractionGuildMember,
   roleName: string,
