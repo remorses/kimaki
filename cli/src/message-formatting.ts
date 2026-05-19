@@ -3,7 +3,7 @@
 // handles file attachments, and provides tool summary generation.
 
 import type { Part, FilePartInput } from '@opencode-ai/sdk/v2'
-import type { Message, TextChannel } from 'discord.js'
+import type { Embed, Message, TextChannel } from 'discord.js'
 
 // Extended FilePartInput with original Discord URL for reference in prompts
 export type DiscordFileAttachment = FilePartInput & {
@@ -24,8 +24,44 @@ type GenericSessionMessage = {
 const logger = createLogger(LogPrefix.FORMATTING)
 
 /**
+ * Serialize Discord embeds into plain text so the AI model can read them.
+ * Each embed becomes an <embed> XML block with title, author, description,
+ * fields, footer, and URL when present.
+ */
+export function serializeEmbeds(embeds: Embed[]): string {
+  if (embeds.length === 0) return ''
+  const parts: string[] = []
+  for (const embed of embeds) {
+    const lines: string[] = []
+    if (embed.author?.name) {
+      lines.push(`Author: ${embed.author.name}`)
+    }
+    if (embed.title) {
+      lines.push(`Title: ${embed.title}`)
+    }
+    if (embed.url) {
+      lines.push(`URL: ${embed.url}`)
+    }
+    if (embed.description) {
+      lines.push(embed.description)
+    }
+    for (const field of embed.fields) {
+      lines.push(`${field.name}: ${field.value}`)
+    }
+    if (embed.footer?.text) {
+      lines.push(`Footer: ${embed.footer.text}`)
+    }
+    if (lines.length > 0) {
+      parts.push(`<embed>\n${lines.join('\n')}\n</embed>`)
+    }
+  }
+  return parts.join('\n\n')
+}
+
+/**
  * Resolves Discord mentions in message content to human-readable names.
  * Replaces <@userId> with @displayName, <@&roleId> with @roleName, <#channelId> with #channelName.
+ * Appends serialized embed content so the AI model can see embedded text.
  */
 export function resolveMentions(message: Message): string {
   let content = message.content || ''
@@ -49,6 +85,12 @@ export function resolveMentions(message: Message): string {
   for (const [channelId, channel] of message.mentions.channels) {
     const name = 'name' in channel ? (channel as TextChannel).name : channelId
     content = content.replace(new RegExp(`<#${channelId}>`, 'g'), `#${name}`)
+  }
+
+  // Append embed content as text so the model can see it
+  const embedText = serializeEmbeds(message.embeds)
+  if (embedText) {
+    content = content ? `${content}\n\n${embedText}` : embedText
   }
 
   return content
