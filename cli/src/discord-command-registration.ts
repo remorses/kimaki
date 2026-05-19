@@ -511,7 +511,7 @@ export async function registerCommands({
         .addStringOption((opt) =>
           opt
             .setName('prompt')
-            .setDescription('Send a one-shot prompt with this agent without switching')
+            .setDescription('Send a prompt with this agent')
             .setRequired(false),
         )
         .toJSON(),

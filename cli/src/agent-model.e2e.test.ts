@@ -38,6 +38,8 @@ import {
   setChannelVerbosity,
   setChannelAgent,
   setChannelModel,
+  getThreadSession,
+  getSessionAgent,
   type VerbosityLevel,
 } from './database.js'
 import { getDb } from './db.js'
@@ -337,6 +339,12 @@ describe('agent model resolution', () => {
           }),
         )
         .setDMPermission(false)
+        .addStringOption((opt) =>
+          opt
+            .setName('prompt')
+            .setDescription('Send a prompt with this agent')
+            .setRequired(false),
+        )
         .toJSON()
     })
     const rest = new REST({ version: '10', api: discord.restUrl }).setToken(
@@ -880,6 +888,109 @@ describe('agent model resolution', () => {
       // NOT the test-agent's model (AGENT_MODEL)
       expect(secondFooter!.content).toContain(DEFAULT_MODEL)
       expect(secondFooter!.content).not.toContain(AGENT_MODEL)
+    },
+    20_000,
+  )
+
+  test(
+    '/plan-agent with prompt starts a session with the plan agent',
+    async () => {
+      await setChannelAgent(TEXT_CHANNEL_ID, 'test-agent')
+
+      const prompt = 'Reply with exactly: inline-plan-agent-msg'
+      const { id: interactionId } = await discord
+        .channel(TEXT_CHANNEL_ID)
+        .user(TEST_USER_ID)
+        .runSlashCommand({
+          name: 'plan-agent',
+          options: [{ name: 'prompt', type: 3, value: prompt }],
+        })
+
+      await discord
+        .channel(TEXT_CHANNEL_ID)
+        .waitForInteractionAck({ interactionId, timeout: 4_000 })
+
+      const thread = await discord.channel(TEXT_CHANNEL_ID).waitForThread({
+        timeout: 4_000,
+        predicate: (t) => {
+          return t.name === prompt
+        },
+      })
+
+      await waitForFooterMessage({
+        discord,
+        threadId: thread.id,
+        timeout: 4_000,
+        afterMessageIncludes: 'ok',
+        afterAuthorId: discord.botUserId,
+      })
+
+      expect(await discord.thread(thread.id).text()).toMatchInlineSnapshot(`
+        "--- from: assistant (TestBot)
+        » **agent-model-tester** (plan): Reply with exactly: inline-plan-agent-msg
+        *using deterministic-provider/plan-model-v2 ⋅ plan*
+        ⬥ ok
+        *project ⋅ main ⋅ Ns ⋅ N% ⋅ plan-model-v2 ⋅ **plan***"
+      `)
+    },
+    20_000,
+  )
+
+  test(
+    '/plan-agent with prompt in an existing thread changes the session agent',
+    async () => {
+      await setChannelAgent(TEXT_CHANNEL_ID, 'test-agent')
+
+      await discord.channel(TEXT_CHANNEL_ID).user(TEST_USER_ID).sendMessage({
+        content: 'Reply with exactly: inline-existing-first-msg',
+      })
+
+      const thread = await discord.channel(TEXT_CHANNEL_ID).waitForThread({
+        timeout: 4_000,
+        predicate: (t) => {
+          return t.name === 'Reply with exactly: inline-existing-first-msg'
+        },
+      })
+
+      await waitForFooterMessage({
+        discord,
+        threadId: thread.id,
+        timeout: 4_000,
+        afterMessageIncludes: 'ok',
+        afterAuthorId: discord.botUserId,
+      })
+
+      const prompt = 'Reply with exactly: inline-existing-plan-msg'
+      const th = discord.thread(thread.id)
+      const { id: interactionId } = await th.user(TEST_USER_ID).runSlashCommand({
+        name: 'plan-agent',
+        options: [{ name: 'prompt', type: 3, value: prompt }],
+      })
+
+      await th.waitForInteractionAck({ interactionId, timeout: 4_000 })
+
+      await waitForFooterMessage({
+        discord,
+        threadId: thread.id,
+        timeout: 4_000,
+        afterMessageIncludes: 'inline-existing-plan-msg',
+        afterAuthorId: discord.botUserId,
+      })
+
+      const sessionId = await getThreadSession(thread.id)
+      expect(sessionId).toBeDefined()
+      expect(sessionId ? await getSessionAgent(sessionId) : undefined).toBe('plan')
+      expect(await th.text()).toMatchInlineSnapshot(`
+        "--- from: user (agent-model-tester)
+        Reply with exactly: inline-existing-first-msg
+        --- from: assistant (TestBot)
+        *using deterministic-provider/agent-model-v2 ⋅ test-agent*
+        ⬥ ok
+        *project ⋅ main ⋅ Ns ⋅ N% ⋅ agent-model-v2 ⋅ **test-agent***
+        » **agent-model-tester** (plan): Reply with exactly: inline-existing-plan-msg
+        ⬥ ok
+        *project ⋅ main ⋅ Ns ⋅ N% ⋅ plan-model-v2 ⋅ **plan***"
+      `)
     },
     20_000,
   )

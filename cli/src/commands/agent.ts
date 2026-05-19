@@ -1,7 +1,7 @@
 // /agent command - Set the preferred agent for this channel or session.
 // Also provides quick agent commands like /plan-agent, /build-agent that switch instantly.
 // When a prompt is provided to a quick agent command (e.g. /plan-agent "fix the bug"),
-// the prompt is sent as a one-shot with that agent without switching the persistent preference.
+// the prompt is sent with that agent and the session keeps that agent afterwards.
 
 import {
   ChatInputCommandInteraction,
@@ -11,7 +11,6 @@ import {
   ChannelType,
   ThreadAutoArchiveDuration,
   type ThreadChannel,
-  type TextChannel,
   MessageFlags,
 } from 'discord.js'
 import crypto from 'node:crypto'
@@ -427,8 +426,7 @@ export async function handleQuickAgentCommand({
   const fallbackAgentName = command.commandName.replace(/-agent$/, '')
   const prompt = command.options.getString('prompt') || undefined
 
-  // One-shot prompt mode: send the prompt with a temporary agent override
-  // without changing the persistent agent preference.
+  // Prompt mode: send the prompt with this agent immediately.
   if (prompt) {
     return handleQuickAgentWithPrompt({ command, appId, fallbackAgentName, prompt })
   }
@@ -512,10 +510,10 @@ export async function handleQuickAgentCommand({
 }
 
 /**
- * Handle one-shot prompt mode: send a prompt with a temporary agent override.
- * In a thread: enqueue the prompt with the agent override on the existing session.
- * In a channel: create a new thread and enqueue the prompt with the agent override.
- * Neither case changes the persistent agent preference.
+ * Handle prompt mode: send a prompt with the requested agent.
+ * In a thread: enqueue the prompt on the existing session and switch that session.
+ * In a channel: create a new thread whose session starts with the requested agent.
+ * Channel-level preferences are not changed.
  */
 async function handleQuickAgentWithPrompt({
   command,
@@ -550,7 +548,7 @@ async function handleQuickAgentWithPrompt({
   const displayText = `${prompt.slice(0, 1000)}${prompt.length > 1000 ? '...' : ''}`
 
   if (isThread) {
-    // In a thread: enqueue the prompt on the existing session with agent override.
+    // In a thread: enqueue the prompt and switch the existing session to this agent.
     const thread = channel as ThreadChannel
     const resolved = await resolveWorkingDirectory({ channel: thread })
     if (!resolved) {
@@ -585,9 +583,8 @@ async function handleQuickAgentWithPrompt({
       mode: 'opencode',
     })
   } else if (channel.type === ChannelType.GuildText) {
-    // In a channel: create a new thread and enqueue with the agent override.
-    const textChannel = channel as TextChannel
-    const metadata = await getKimakiMetadata(textChannel)
+    // In a channel: create a new thread and enqueue with the requested agent.
+    const metadata = await getKimakiMetadata(channel)
     const projectDirectory = metadata.projectDirectory
 
     if (!projectDirectory) {
@@ -600,7 +597,7 @@ async function handleQuickAgentWithPrompt({
 
     await command.deferReply()
 
-    const starterMessage = await textChannel.send({
+    const starterMessage = await channel.send({
       content: `» **${command.user.displayName}** (${resolvedAgentName}): ${displayText}`,
       flags: SILENT_MESSAGE_FLAGS,
     })
@@ -608,7 +605,7 @@ async function handleQuickAgentWithPrompt({
     const thread = await starterMessage.startThread({
       name: prompt.slice(0, 80),
       autoArchiveDuration: ThreadAutoArchiveDuration.OneDay,
-      reason: `One-shot ${resolvedAgentName} agent prompt`,
+      reason: `${resolvedAgentName} agent prompt`,
     })
 
     await thread.members.add(command.user.id)
@@ -620,7 +617,7 @@ async function handleQuickAgentWithPrompt({
       thread,
       projectDirectory,
       sdkDirectory: projectDirectory,
-      channelId: textChannel.id,
+      channelId: channel.id,
       appId,
     })
 

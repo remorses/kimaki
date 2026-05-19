@@ -47,6 +47,7 @@ import {
   setThreadSession,
   getThreadWorktree,
   setSessionAgent,
+  clearSessionModel,
   getVariantCascade,
   setSessionStartSource,
   appendSessionEventsSinceLastTimestamp,
@@ -3095,8 +3096,12 @@ export class ThreadSessionRuntime {
       const channelId = this.channelId
       const resolvedAppId = input.appId
 
-      if (input.agent && createdNewSession) {
+      // Explicit agent prompts (for example /plan-agent <prompt>) must update
+      // the session preference before dispatch. Otherwise the model can resolve
+      // from the requested agent while OpenCode keeps running the old agent.
+      if (input.agent) {
         await setSessionAgent(session.id, input.agent)
+        await clearSessionModel(session.id)
       }
 
       await ensureSessionPreferencesSnapshot({
@@ -3796,8 +3801,12 @@ export class ThreadSessionRuntime {
     const channelId = this.channelId
     const resolvedAppId = input.appId
 
-    if (input.agent && createdNewSession) {
+    // Explicit agent prompts (for example /plan-agent <prompt>) must update
+    // the session preference before dispatch. Otherwise the model can resolve
+    // from the requested agent while OpenCode keeps running the old agent.
+    if (input.agent) {
       await setSessionAgent(session.id, input.agent)
+      await clearSessionModel(session.id)
     }
 
     await ensureSessionPreferencesSnapshot({
