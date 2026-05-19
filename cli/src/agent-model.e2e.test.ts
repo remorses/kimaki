@@ -40,6 +40,7 @@ import {
   setChannelModel,
   getThreadSession,
   getSessionAgent,
+  getChannelAgent,
   type VerbosityLevel,
 } from './database.js'
 import { getDb } from './db.js'
@@ -925,6 +926,10 @@ describe('agent model resolution', () => {
         afterAuthorId: discord.botUserId,
       })
 
+      const sessionId = await getThreadSession(thread.id)
+      expect(sessionId).toBeDefined()
+      expect(sessionId ? await getSessionAgent(sessionId) : undefined).toBe('plan')
+      expect(await getChannelAgent(TEXT_CHANNEL_ID)).toBe('test-agent')
       expect(await discord.thread(thread.id).text()).toMatchInlineSnapshot(`
         "--- from: assistant (TestBot)
         » **agent-model-tester** (plan): Reply with exactly: inline-plan-agent-msg
@@ -980,6 +985,7 @@ describe('agent model resolution', () => {
       const sessionId = await getThreadSession(thread.id)
       expect(sessionId).toBeDefined()
       expect(sessionId ? await getSessionAgent(sessionId) : undefined).toBe('plan')
+      expect(await getChannelAgent(TEXT_CHANNEL_ID)).toBe('test-agent')
       expect(await th.text()).toMatchInlineSnapshot(`
         "--- from: user (agent-model-tester)
         Reply with exactly: inline-existing-first-msg
