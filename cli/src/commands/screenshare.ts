@@ -1,6 +1,7 @@
 // /screenshare command - Start screen sharing via VNC + WebSocket bridge + kimaki tunnel.
 // On macOS: uses built-in Screen Sharing (port 5900).
-// On Linux: spawns x11vnc against the current $DISPLAY.
+// On Linux X11: spawns x11vnc against the current $DISPLAY.
+// On Linux Wayland: spawns w0vncserver (TigerVNC) for GNOME, wayvnc for wlroots.
 // Exposes the VNC stream via an in-process websockify bridge and a traforo tunnel,
 // then sends the user a noVNC URL they can open in a browser.
 //
@@ -24,7 +25,7 @@ const SECURE_REPLY_FLAGS = MessageFlags.Ephemeral | SILENT_MESSAGE_FLAGS
 export type ScreenshareSession = {
   tunnelClient: TunnelClient
   wss: WebSocketServer
-  /** x11vnc child process, only on Linux */
+  /** VNC child process: x11vnc (X11), w0vncserver (GNOME Wayland), or wayvnc (wlroots Wayland) */
   vncProcess: ChildProcess | undefined
   url: string
   noVncUrl: string
@@ -114,21 +115,96 @@ export function spawnX11Vnc(): ChildProcess {
   return child
 }
 
+// --- Wayland support ---
+
+type DisplayServer = 'x11' | 'wayland'
+
+/** Detect whether the current session is X11 or Wayland */
+export function detectDisplayServer(): DisplayServer | 'unknown' {
+  if (process.env['WAYLAND_DISPLAY']) return 'wayland'
+  if (process.env['DISPLAY']) return 'x11'
+  return 'unknown'
+}
+
+type WaylandCompositor = 'gnome' | 'wlroots' | 'unknown'
+
+/** Detect the Wayland compositor by scanning running processes */
+export async function detectWaylandCompositor(): Promise<WaylandCompositor> {
+  try {
+    const { stdout } = await execAsync('ps aux', { timeout: 3000 })
+    if (stdout.includes('gnome-shell')) return 'gnome'
+    if (stdout.includes('sway') || stdout.includes('river') || stdout.includes('wayfire')) return 'wlroots'
+    return 'unknown'
+  } catch {
+    return 'unknown'
+  }
+}
+
+/** Check that a binary exists on PATH, throw a helpful message if not */
+async function checkBinary(name: string, installHint: string): Promise<void> {
+  try {
+    await execAsync(`which ${name}`, { timeout: 3000 })
+  } catch {
+    throw new Error(`${name} is not installed. Install it with: ${installHint}`)
+  }
+}
+
+/** Spawn w0vncserver (TigerVNC) for GNOME/Wayland */
+export function spawnWaylandVncGnome(): ChildProcess {
+  const child = spawn('w0vncserver', [
+    '-SecurityTypes', 'None',
+    '-localhost',
+    '-rfbport', String(VNC_PORT),
+  ], {
+    stdio: ['ignore', 'pipe', 'pipe'],
+  })
+
+  child.stdout?.on('data', (data: Buffer) => {
+    logger.log(`w0vncserver: ${data.toString().trim()}`)
+  })
+  child.stderr?.on('data', (data: Buffer) => {
+    logger.error(`w0vncserver: ${data.toString().trim()}`)
+  })
+
+  return child
+}
+
+/** Spawn wayvnc for wlroots compositors (Sway, River, Wayfire) */
+export function spawnWaylandVncWlroots(): ChildProcess {
+  const child = spawn('wayvnc', [
+    'localhost',
+    String(VNC_PORT),
+  ], {
+    stdio: ['ignore', 'pipe', 'pipe'],
+  })
+
+  child.stdout?.on('data', (data: Buffer) => {
+    logger.log(`wayvnc: ${data.toString().trim()}`)
+  })
+  child.stderr?.on('data', (data: Buffer) => {
+    logger.error(`wayvnc: ${data.toString().trim()}`)
+  })
+
+  return child
+}
+
 function waitForPort({
   port,
   process: proc,
   timeoutMs,
+  processName = 'VNC server',
 }: {
   port: number
   process: ChildProcess
   timeoutMs: number
+  processName?: string
 }): Promise<void> {
   return new Promise((resolve, reject) => {
     const maxAttempts = Math.ceil(timeoutMs / 100)
     let attempts = 0
     const check = () => {
       if (proc.exitCode !== null) {
-        reject(new Error(`x11vnc exited with code ${proc.exitCode} before becoming ready`))
+        reject(new Error(`${processName} exited with code ${proc.exitCode} before becoming ready`))
         return
       }
       const sock = net.createConnection(port, 'localhost')
@@ -187,18 +263,46 @@ export async function startScreenshare({
   if (platform === 'darwin') {
     await ensureMacRemoteManagement()
   } else if (platform === 'linux') {
-    if (!process.env['DISPLAY']) {
-      throw new Error('No $DISPLAY found. Screen sharing requires a running X11 display.')
+    const displayType = detectDisplayServer()
+
+    if (displayType === 'unknown') {
+      throw new Error(
+        'No display server detected. Screen sharing requires X11 ($DISPLAY) or Wayland ($WAYLAND_DISPLAY).',
+      )
     }
-    try {
-      await execAsync('which x11vnc', { timeout: 3000 })
-    } catch {
-      throw new Error('x11vnc is not installed. Install it with: sudo apt install x11vnc')
+
+    if (displayType === 'x11') {
+      try {
+        await checkBinary('x11vnc', 'sudo apt install x11vnc')
+      } catch (err) {
+        if (err instanceof Error && err.message.startsWith('x11vnc is not installed')) {
+          throw err
+        }
+        throw new Error('x11vnc is not installed. Install it with: sudo apt install x11vnc')
+      }
+      vncProcess = spawnX11Vnc()
+      await waitForPort({ port: VNC_PORT, process: vncProcess, timeoutMs: 5000, processName: 'x11vnc' })
+    } else {
+      // Wayland path
+      const compositor = await detectWaylandCompositor()
+
+      if (compositor === 'gnome') {
+        await checkBinary('w0vncserver', 'sudo apt install tigervnc-standalone-server')
+        vncProcess = spawnWaylandVncGnome()
+        await waitForPort({ port: VNC_PORT, process: vncProcess, timeoutMs: 5000, processName: 'w0vncserver' })
+      } else if (compositor === 'wlroots') {
+        await checkBinary('wayvnc', 'sudo apt install wayvnc')
+        vncProcess = spawnWaylandVncWlroots()
+        await waitForPort({ port: VNC_PORT, process: vncProcess, timeoutMs: 5000, processName: 'wayvnc' })
+      } else {
+        throw new Error(
+          'Wayland detected but compositor not recognized.\n' +
+          'Supported compositors: GNOME (w0vncserver), Sway/River/Wayfire (wayvnc).\n' +
+          'For GNOME: sudo apt install tigervnc-standalone-server\n' +
+          'For wlroots: sudo apt install wayvnc',
+        )
+      }
     }
-    vncProcess = spawnX11Vnc()
-    // Wait for x11vnc to actually be ready (port 5900 accepting connections)
-    // instead of a blind 1s sleep. Polls every 100ms, fails if process exits first.
-    await waitForPort({ port: VNC_PORT, process: vncProcess, timeoutMs: 3000 })
   } else {
     throw new Error(`Screen sharing is not supported on ${platform}. Only macOS and Linux are supported.`)
   }
