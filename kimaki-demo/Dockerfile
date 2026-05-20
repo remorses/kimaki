@@ -25,6 +25,8 @@ RUN bun install -g critique tuistory opensrc
 # Create persistent data directories on the volume mount point
 RUN mkdir -p /data/projects
 
+ENV OPENCODE_ENABLE_EXA=1
+
 WORKDIR /data
 
 # --gateway: use the shared Kimaki bot via gateway-proxy (no bot token needed)
