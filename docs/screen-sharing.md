@@ -38,10 +38,32 @@ sudo /System/Library/CoreServices/RemoteManagement/ARDAgent.app/Contents/Resourc
 
 ## Linux Setup
 
-Requires `x11vnc` and a running X11 display (`$DISPLAY`):
+Kimaki auto-detects your display server (X11 or Wayland) and uses the appropriate VNC backend.
+
+### X11
+
+Requires `x11vnc`:
 
 ```bash
 sudo apt install x11vnc
 ```
 
-Kimaki spawns `x11vnc` automatically when you start screen sharing.
+### Wayland (GNOME)
+
+Requires TigerVNC 1.16+ (`w0vncserver`):
+
+```bash
+sudo apt install tigervnc-standalone-server
+```
+
+**Note:** First use may show a permission dialog asking to allow screen capture. Click "Allow" once — the permission is remembered.
+
+### Wayland (Sway, River, Wayfire)
+
+Requires `wayvnc`:
+
+```bash
+sudo apt install wayvnc
+```
+
+Kimaki spawns the correct VNC server automatically when you start screen sharing.
