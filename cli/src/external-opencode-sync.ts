@@ -38,6 +38,7 @@ import { extractNonXmlContent } from './xml.js'
 const logger = createLogger(LogPrefix.OPENCODE)
 
 const EXTERNAL_SYNC_INTERVAL_MS = 5_000
+const EXTERNAL_SYNC_ENABLED_VALUE = '1'
 // Don't sync sessions from before the CLI started. 5 min grace window
 // covers sessions that were just created before the bot connected.
 const CLI_START_MS = Date.now() - 5 * 60 * 1000
@@ -629,15 +630,17 @@ async function pollExternalSessions({
   }
 }
 
+function isExternalOpencodeSessionSyncEnabled(): boolean {
+  return process.env.KIMAKI_ENABLE_EXTERNAL_OPENCODE_SYNC === EXTERNAL_SYNC_ENABLED_VALUE
+}
+
 export function startExternalOpencodeSessionSync({
   discordClient,
 }: {
   discordClient: Client
 }): void {
-  if (
-    process.env.KIMAKI_VITEST &&
-    process.env.KIMAKI_ENABLE_EXTERNAL_OPENCODE_SYNC !== '1'
-  ) {
+  if (!isExternalOpencodeSessionSyncEnabled()) {
+    logger.log('[EXTERNAL_SYNC] Disabled; set KIMAKI_ENABLE_EXTERNAL_OPENCODE_SYNC=1 to mirror sessions started outside Discord')
     return
   }
   if (externalSyncInterval) {
@@ -682,4 +685,5 @@ export const externalOpencodeSyncInternals = {
   parseDiscordOriginMetadata,
   getDiscordOriginMetadataFromMessage,
   isLatestUserTurnFromDiscord,
+  isExternalOpencodeSessionSyncEnabled,
 }

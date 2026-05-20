@@ -35,6 +35,28 @@ import { buildPaginatedOptions, parsePaginationValue } from './paginated-select.
 
 const modelLogger = createLogger(LogPrefix.MODEL)
 
+
+function buildSafeSelectOption({
+  label,
+  value,
+  description,
+}: {
+  label: string | undefined
+  value: string | undefined
+  description?: string
+}) {
+  const safeLabel = (label || value || 'Unknown').trim().slice(0, 100)
+  const safeValue = (value || label || '').trim()
+  if (!safeLabel || !safeValue) {
+    return undefined
+  }
+  return {
+    label: safeLabel,
+    value: safeValue,
+    description: description?.slice(0, 100),
+  }
+}
+
 // Store context by hash to avoid customId length limits (Discord max: 100 chars).
 // Entries are TTL'd to prevent unbounded growth when users open /model and never
 // interact with the select menu.
@@ -492,16 +514,13 @@ export async function handleModelCommand({
       .sort((a, b) => a.name.localeCompare(b.name))
       .map((provider) => {
         const modelCount = Object.keys(provider.models || {}).length
-        return {
-          label: provider.name.slice(0, 100),
+        return buildSafeSelectOption({
+          label: provider.name,
           value: provider.id,
-          description:
-            `${modelCount} model${modelCount !== 1 ? 's' : ''} available`.slice(
-              0,
-              100,
-            ),
-        }
+          description: `${modelCount} model${modelCount !== 1 ? 's' : ''} available`,
+        })
       })
+      .filter((option): option is NonNullable<typeof option> => !!option)
 
     const { options } = buildPaginatedOptions({
       allOptions: allProviderOptions,
@@ -586,12 +605,13 @@ export async function handleProviderSelectMenu(
       .sort((a, b) => a.name.localeCompare(b.name))
       .map((p) => {
         const modelCount = Object.keys(p.models || {}).length
-        return {
-          label: p.name.slice(0, 100),
+        return buildSafeSelectOption({
+          label: p.name,
           value: p.id,
-          description: `${modelCount} model${modelCount !== 1 ? 's' : ''} available`.slice(0, 100),
-        }
+          description: `${modelCount} model${modelCount !== 1 ? 's' : ''} available`,
+        })
       })
+      .filter((option): option is NonNullable<typeof option> => !!option)
     const { options } = buildPaginatedOptions({ allOptions: allProviderOptions, page: providerNavPage })
     const selectMenu = new StringSelectMenuBuilder()
       .setCustomId(`model_provider:${contextHash}`)
@@ -642,9 +662,10 @@ export async function handleProviderSelectMenu(
     const models = Object.entries(provider.models || {})
       .map(([modelId, model]) => ({
         id: modelId,
-        name: model.name,
+        name: model.name || modelId,
         releaseDate: model.release_date,
       }))
+      .filter((model) => model.id && model.name)
       .sort((a, b) => a.name.localeCompare(b.name))
 
     if (models.length === 0) {
@@ -661,16 +682,18 @@ export async function handleProviderSelectMenu(
     context.modelPage = 0
     setModelContext(contextHash, context)
 
-    const allModelOptions = models.map((model) => {
-      const dateStr = model.releaseDate
-        ? new Date(model.releaseDate).toLocaleDateString()
-        : 'Unknown date'
-      return {
-        label: model.name.slice(0, 100),
-        value: model.id,
-        description: dateStr.slice(0, 100),
-      }
-    })
+    const allModelOptions = models
+      .map((model) => {
+        const dateStr = model.releaseDate
+          ? new Date(model.releaseDate).toLocaleDateString()
+          : 'Unknown date'
+        return buildSafeSelectOption({
+          label: model.name,
+          value: model.id,
+          description: dateStr,
+        })
+      })
+      .filter((option): option is NonNullable<typeof option> => !!option)
 
     const { options } = buildPaginatedOptions({
       allOptions: allModelOptions,
@@ -752,14 +775,16 @@ export async function handleModelSelectMenu(
       return
     }
     const allModelOptions = Object.entries(provider.models || {})
-      .map(([modelId, model]) => ({
-        label: model.name.slice(0, 100),
-        value: modelId,
-        description: (model.release_date
-          ? new Date(model.release_date).toLocaleDateString()
-          : 'Unknown date'
-        ).slice(0, 100),
-      }))
+      .map(([modelId, model]) =>
+        buildSafeSelectOption({
+          label: model.name || modelId,
+          value: modelId,
+          description: model.release_date
+            ? new Date(model.release_date).toLocaleDateString()
+            : 'Unknown date',
+        }),
+      )
+      .filter((option): option is NonNullable<typeof option> => !!option)
       .sort((a, b) => a.label.localeCompare(b.label))
     const { options } = buildPaginatedOptions({ allOptions: allModelOptions, page: modelNavPage })
     const selectMenu = new StringSelectMenuBuilder()
