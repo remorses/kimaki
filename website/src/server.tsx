@@ -44,6 +44,18 @@ const SLACK_INSTALL_SCOPES = [
 export const app = new Spiceflow()
   .state('env', {} as Env)
 
+  // Redirect kimaki.xyz → kimaki.dev, preserving path and subdomains
+  .use(async ({ request }) => {
+    const url = new URL(request.url)
+    if (url.hostname === 'kimaki.xyz' || url.hostname.endsWith('.kimaki.xyz')) {
+      url.hostname = url.hostname.replace(/kimaki\.xyz$/, 'kimaki.dev')
+      return new Response(null, {
+        status: 301,
+        headers: { Location: url.toString() },
+      })
+    }
+  })
+
   .layout('/install-success', ({ children }) => {
     return (
       <html lang="en">
@@ -232,14 +244,17 @@ export const app = new Spiceflow()
 
   .layout('/slack-install', ({ children }) => {
     return (
-      <>
+      <html lang="en">
         <Head>
           <Head.Title>Kimaki - Connect to Slack</Head.Title>
+          <Head.Meta name="viewport" content="width=device-width, initial-scale=1" />
         </Head>
-        <div className="flex min-h-screen items-center justify-center bg-white font-sans antialiased">
-          {children}
-        </div>
-      </>
+        <body className="min-h-screen bg-white font-sans text-stone-900 antialiased">
+          <div className="flex min-h-screen items-center justify-center">
+            {children}
+          </div>
+        </body>
+      </html>
     )
   })
 
