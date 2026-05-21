@@ -589,7 +589,7 @@ If the repo has Prisma schemas, add generate steps before tests:
 for the first section of readme use markup like this
 
 ```md
-<div align='center'>
+<div align='center' class='hidden'>
     <br/>
     <br/>
     <h3>projectname</h3>
@@ -603,7 +603,7 @@ there cannot be markdown inside the html.
 or a variant with a logo image:
 
 ```md
-<div align='center'>
+<div align='center' class='hidden'>
     <br/>
     <br/>
     <img src='https://genql.dev/banner.png' width='380px'>
@@ -617,6 +617,16 @@ or a variant with a logo image:
 ```
 
 > Notice the use of h3, not h1. and h4 for the tagline
+
+> `class='hidden'` is required to hide this if the README page is also imported in a holocron.so website. this way that html is only show in github readme and not holocron. which would display its own heading.
+
+if the README is being imported in holocron also follow holocron best practices like use of Aside and Note to highlight content. Non known github jsx tags are simply ignored by github which will still look fine. If you want to show a callback both in github and holocron you can use the callback syntax from github which works in both places:
+
+
+```
+> [!NOTE]
+> Useful information that users should know, even when skimming content.
+```
 
 ## .gitignore
 
