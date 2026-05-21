@@ -1,5 +1,27 @@
 # Changelog
 
+## 0.12.0
+
+1. **New `--disable-sync` flag** — turn off background mirroring of external OpenCode sessions into Discord:
+
+   ```bash
+   kimaki --disable-sync
+   ```
+
+   When enabled (default), sessions started from the OpenCode CLI or TUI automatically appear as Discord threads in the matching project channel. Use `--disable-sync` if you only use Kimaki through Discord and don't need the mirroring. The background sync loop also now uses per-directory timeouts with proper cancellation, so one slow or unresponsive OpenCode server cannot block syncing for other projects.
+
+2. **Opencode is no longer bundled** — Kimaki no longer downloads and pins a specific opencode version. It requires opencode to be installed globally. On startup, the bot checks PATH and prompts to install if missing via `curl -fsSL https://opencode.ai/install | bash`. This avoids version skew issues where an older bundled opencode ran alongside a newer global one. The `kimaki opencode` passthrough command has been removed accordingly.
+
+3. **Discord embeds, polls, and forwarded messages are now visible to the AI** — previously, Discord embeds (link previews, rich embeds), polls, and forwarded message snapshots were invisible to the AI model. Now they are serialized as structured text and included in the message context. This also works for replied-to messages.
+
+4. **State-changing slash commands are now visible to all users** — `/model`, `/model-variant`, `/agent`, `/verbosity`, `/toggle-worktrees`, `/toggle-mention-mode`, and `/unset-model` responses are no longer ephemeral. Everyone in the channel can see when someone changes the model or agent. Error-only early returns and credential-sensitive commands remain ephemeral.
+
+5. **Fix quick agent commands with inline prompts** — using `/plan-agent <prompt>` now correctly starts or continues the session with the `plan` agent instead of only borrowing that agent's model while OpenCode still ran the previous agent.
+
+6. **Harden Discord permission checks** — messages from uncached guild members now fetch the member before deciding access, autocomplete no longer exposes project metadata to unauthorized users, and live voice audio is ignored unless the speaker has Kimaki access.
+
+7. **Fix model/provider select menu crashes** — select menus no longer crash when a model name or provider name is undefined or exceeds Discord's character limits.
+
 ## 0.11.0
 
 1. **New `kimaki tts` command for text-to-speech audio generation** — generate speech audio from text using OpenAI (`gpt-4o-mini-tts`) or Google Gemini (`gemini-2.5-flash-preview-tts`). Provider is auto-detected from the API key prefix (`sk-*` = OpenAI, otherwise Gemini).
