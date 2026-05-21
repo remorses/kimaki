@@ -25,7 +25,7 @@ Sync is **enabled by default**, polls every 5 seconds, is lightweight when idle,
 
 - **Resume sessions from your phone.** Start a coding session on your desktop with the OpenCode CLI. Leave your desk. The session appears in Discord, so you can follow progress, send follow-up messages, or queue commands from your phone.
 - **Search past sessions.** Discord's search makes it easy to find sessions across all your projects. Every synced session is a thread with full message history, searchable by keyword, date, or channel.
-- **Team collaboration.** When someone on your team starts a session in their terminal, it shows up in the shared Discord channel. Others can see what's happening, jump into the thread, or continue the work without needing access to the original machine.
+- **Team collaboration.** If your team shares a machine running Kimaki (a dev server, shared workstation, or remote box), sessions started by anyone on that machine show up in the shared Discord channel. Others can see what's happening, jump into the thread, or continue the work.
 
 ## How it works
 

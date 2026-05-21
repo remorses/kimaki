@@ -445,6 +445,7 @@ async function syncSessionToThread({
   channelId,
   sessionId,
   sessionTitle,
+  signal,
 }: {
   client: OpencodeClient
   discordClient: Client
@@ -452,6 +453,7 @@ async function syncSessionToThread({
   channelId: string
   sessionId: string
   sessionTitle?: string | null
+  signal: AbortSignal
 }): Promise<void> {
   const messagesResponse = await client.session.messages({
     sessionID: sessionId,
@@ -464,6 +466,7 @@ async function syncSessionToThread({
   if (messagesResponse instanceof Error) {
     throw messagesResponse
   }
+  if (signal.aborted) return
   const messages = messagesResponse.data || []
 
   // Pure derivation from opencode events: if the latest user turn has
@@ -487,6 +490,7 @@ async function syncSessionToThread({
   if (thread instanceof Error) {
     throw thread
   }
+  if (signal.aborted) return
 
   const [existingPartIds, verbosity] = await Promise.all([
     getPartMessageIds(thread.id),
@@ -503,6 +507,7 @@ async function syncSessionToThread({
 
   const batched = batchChunksForDiscord(chunks)
   for (const batch of batched) {
+    if (signal.aborted) return
     const sentMessage = await sendThreadMessage(thread, batch.content)
     await setPartMessagesBatch(
       batch.partIds.map((partId) => ({
@@ -548,8 +553,15 @@ async function pulseTypingForBusySessions({
 
 const EXTERNAL_SYNC_MAX_SESSIONS = 50
 
-// Sync one directory with a timeout so a slow/hung opencode server
-// cannot block the entire poll cycle or keep the polling guard locked.
+// Tracks directories with an in-flight sync. When a directory times out,
+// its AbortController is aborted so the inner work stops producing side
+// effects (Discord messages, DB writes). The next poll tick skips the
+// directory if it still has an active controller (prevents overlap).
+const activeDirectorySyncs = new Map<string, AbortController>()
+
+// Sync one directory with a timeout and abort. If the opencode server is
+// slow or unresponsive, the AbortController fires so the inner work stops
+// before producing Discord side effects. The timer is always cleaned up.
 async function syncDirectory({
   target,
   discordClient,
@@ -557,19 +569,31 @@ async function syncDirectory({
   target: DirectorySyncTarget
   discordClient: Client
 }): Promise<void> {
-  const { directory, channelId, startMs } = target
+  const { directory } = target
 
-  // Race the actual work against a timeout. If the opencode server is
-  // slow or unresponsive for this directory, we abandon it and move on.
-  await Promise.race([
-    syncDirectoryInner({ directory, channelId, startMs, discordClient }),
-    new Promise<never>((_resolve, reject) => {
-      setTimeout(
-        () => reject(new Error(`Sync timed out after ${SYNC_PER_DIRECTORY_TIMEOUT_MS}ms for ${directory}`)),
-        SYNC_PER_DIRECTORY_TIMEOUT_MS,
-      )
-    }),
-  ])
+  // Skip if a previous timed-out sync for this directory is still running.
+  if (activeDirectorySyncs.has(directory)) {
+    logger.warn(`[EXTERNAL_SYNC] Skipping ${directory}: previous sync still in flight`)
+    return
+  }
+
+  const controller = new AbortController()
+  activeDirectorySyncs.set(directory, controller)
+
+  const timeout = setTimeout(() => {
+    controller.abort(new Error(`Sync timed out after ${SYNC_PER_DIRECTORY_TIMEOUT_MS}ms for ${directory}`))
+  }, SYNC_PER_DIRECTORY_TIMEOUT_MS)
+
+  try {
+    await syncDirectoryInner({
+      ...target,
+      discordClient,
+      signal: controller.signal,
+    })
+  } finally {
+    clearTimeout(timeout)
+    activeDirectorySyncs.delete(directory)
+  }
 }
 
 async function syncDirectoryInner({
@@ -577,11 +601,13 @@ async function syncDirectoryInner({
   channelId,
   startMs,
   discordClient,
+  signal,
 }: {
   directory: string
   channelId: string
   startMs: number
   discordClient: Client
+  signal: AbortSignal
 }): Promise<void> {
   const clientResult = await initializeOpencodeForDirectory(directory, {
     channelId,
@@ -592,6 +618,7 @@ async function syncDirectoryInner({
     )
     return
   }
+  if (signal.aborted) return
 
   const client = clientResult()
   const sessionsResponse = await client.session.list({
@@ -607,6 +634,7 @@ async function syncDirectoryInner({
     logger.warn(`[EXTERNAL_SYNC] ${sessionsResponse.message}`)
     return
   }
+  if (signal.aborted) return
 
   const statusesResponse = await client.session.status({
     directory,
@@ -619,6 +647,7 @@ async function syncDirectoryInner({
       statuses: statusesResponse.data as Record<string, { type: string }>,
     }).catch(() => {})
   }
+  if (signal.aborted) return
 
   const sessions = (sessionsResponse.data || []).filter((session) => {
     const title = session.title || ''
@@ -630,6 +659,7 @@ async function syncDirectoryInner({
   const sorted = sortSessionsByRecency(sessions)
 
   for (const session of sorted) {
+    if (signal.aborted) return
     await syncSessionToThread({
       client,
       discordClient,
@@ -637,6 +667,7 @@ async function syncDirectoryInner({
       channelId,
       sessionId: session.id,
       sessionTitle: session.title,
+      signal,
     }).catch((error) => {
       logger.warn(
         `[EXTERNAL_SYNC] Failed syncing session ${session.id}: ${error instanceof Error ? error.message : String(error)}`,
