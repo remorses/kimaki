@@ -66,8 +66,8 @@ export function HeroSection() {
             className='w-full h-full'
             config={{
               dotColor: '#5865F2',
-              dotSize: 8,
-              minDotSize: 1.5,
+              dotSize: 6,
+              minDotSize: 1,
               dotMargin: 1,
               animSpeed: 3,
               gamma: 0.8,
