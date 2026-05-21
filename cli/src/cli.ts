@@ -82,6 +82,10 @@ cli
     '--allow-all-users',
     'Allow all Discord users to start sessions without needing Kimaki role or admin permissions (no-kimaki role still blocks)',
   )
+  .option(
+    '--disable-sync',
+    'Disable background sync of external OpenCode sessions into Discord',
+  )
   .option('--no-sentry', 'Disable Sentry error reporting')
   .option(
     '--gateway',
@@ -122,6 +126,7 @@ cli
       mentionMode?: boolean
       noCritique?: boolean
       allowAllUsers?: boolean
+      disableSync?: boolean
       autoRestart?: boolean
       noSentry?: boolean
       gateway?: boolean
@@ -232,6 +237,7 @@ cli
           ...(options.mentionMode && { defaultMentionMode: true }),
           ...(options.noCritique && { critiqueEnabled: false }),
           ...(options.allowAllUsers && { allowAllUsers: true }),
+          ...(options.disableSync && { syncEnabled: false }),
           ...(enabledSkills.length > 0 && { enabledSkills }),
           ...(disabledSkills.length > 0 && { disabledSkills }),
         })
@@ -264,6 +270,11 @@ cli
         if (options.noCritique) {
           cliLogger.log(
             'Critique disabled: diffs will not be auto-uploaded to critique.work',
+          )
+        }
+        if (options.disableSync) {
+          cliLogger.log(
+            'Background sync disabled: external OpenCode sessions will not appear in Discord',
           )
         }
         if (options.noSentry) {

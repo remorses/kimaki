@@ -87,6 +87,14 @@ export type KimakiState = {
   // Read by: discord-utils.ts hasKimakiBotPermission().
   allowAllUsers: boolean
 
+  // Whether background sync of external OpenCode sessions is enabled.
+  // When true (default), sessions started from the OpenCode CLI or TUI
+  // are mirrored into Discord threads so they can be browsed, searched,
+  // and resumed from Discord. Set to false via --disable-sync CLI flag.
+  // Changes: set once at startup.
+  // Read by: external-opencode-sync.ts startExternalOpencodeSessionSync().
+  syncEnabled: boolean
+
   // Base URL for Discord REST API calls (default https://discord.com).
   // Overridden when using a gateway-proxy or gateway Discord mode.
   // Changes: set by getBotTokenWithMode() which runs at startup and on
@@ -139,6 +147,7 @@ export const store = createStore<KimakiState>(() => ({
   enabledSkills: [],
   disabledSkills: [],
   allowAllUsers: false,
+  syncEnabled: true,
   discordBaseUrl: 'https://discord.com',
   gatewayToken: null,
   registeredUserCommands: [],
