@@ -409,157 +409,15 @@ function ensureProcessCleanupHandlersRegistered(): void {
 //
 // Resolution order:
 // 1. OPENCODE_PATH env var (explicit user override)
-// 2. Downloaded binary in ~/.kimaki/bin/opencode-{VERSION}
+// 2. `which opencode` / `where opencode` (system PATH)
+// 3. Fall back to bare "opencode" (spawn will fail with a clear error)
 //
-// The binary is downloaded from GitHub releases on first run and cached.
-// Version is pinned in code so kimaki is not affected by bugged releases.
-// Always stored in the default data dir (~/.kimaki) regardless of custom
-// data dir settings, so one binary serves all configurations.
-
-const OPENCODE_VERSION = '1.15.4'
-
-// Always use ~/.kimaki/bin for the opencode binary, regardless of custom data dir.
-function getOpencodeBinDir(): string {
-  const defaultDataDir = path.join(os.homedir(), '.kimaki')
-  return path.join(defaultDataDir, 'bin')
-}
-
-function getOpencodeBinaryPath(): string {
-  const binaryName = process.platform === 'win32' ? `opencode-${OPENCODE_VERSION}.exe` : `opencode-${OPENCODE_VERSION}`
-  return path.join(getOpencodeBinDir(), binaryName)
-}
-
-// Returns candidate target names ordered by preference, matching the logic in
-// the official opencode install script (musl detection, AVX2/baseline fallback).
-function getOpencodeDownloadCandidates(): string[] {
-  const platformMap: Record<string, string> = { darwin: 'darwin', linux: 'linux', win32: 'windows' }
-  const archMap: Record<string, string> = { x64: 'x64', arm64: 'arm64', arm: 'arm' }
-  const platform = platformMap[process.platform] || process.platform
-  const arch = archMap[process.arch] || process.arch
-  const base = `${platform}-${arch}`
-
-  if (platform !== 'linux') {
-    // macOS/Windows: no musl, just check baseline for x64
-    if (arch === 'x64') return [`${base}-baseline`, base]
-    return [base]
-  }
-
-  // Linux: detect musl libc
-  const isMusl = (() => {
-    try { if (fs.existsSync('/etc/alpine-release')) return true } catch { /* ignore */ }
-    try {
-      const out = execFileSync('ldd', ['--version'], { encoding: 'utf8', timeout: 3000, stdio: ['pipe', 'pipe', 'pipe'] })
-      if (out.toLowerCase().includes('musl')) return true
-    } catch (e: unknown) {
-      // ldd --version writes to stderr on musl systems and exits non-zero
-      if (e && typeof e === 'object' && 'stderr' in e) {
-        const stderr = String((e as { stderr: unknown }).stderr)
-        if (stderr.toLowerCase().includes('musl')) return true
-      }
-    }
-    return false
-  })()
-
-  if (arch === 'x64') {
-    // x64 Linux: prefer baseline (safe on all x64 CPUs) then full, with musl variants
-    if (isMusl) return [`${base}-baseline-musl`, `${base}-musl`, `${base}-baseline`, base]
-    return [`${base}-baseline`, base, `${base}-baseline-musl`, `${base}-musl`]
-  }
-  // arm64 Linux
-  if (isMusl) return [`${base}-musl`, base]
-  return [base, `${base}-musl`]
-}
-
-
-async function downloadOpencodeIfMissing(): Promise<string> {
-  const binaryPath = getOpencodeBinaryPath()
-  if (fs.existsSync(binaryPath)) {
-    return binaryPath
-  }
-
-  const binDir = getOpencodeBinDir()
-  fs.mkdirSync(binDir, { recursive: true })
-
-  const candidates = getOpencodeDownloadCandidates()
-  const ext = process.platform === 'linux' ? '.tar.gz' : '.zip'
-  const extractedName = process.platform === 'win32' ? 'opencode.exe' : 'opencode'
-
-  // Use a unique temp dir to avoid races between concurrent first-run processes
-  const tmpDir = fs.mkdtempSync(path.join(binDir, '.opencode-dl-'))
-  const tmpArchive = path.join(tmpDir, `archive${ext}`)
-
-  const { spinner } = await import('@clack/prompts')
-  const s = spinner()
-  s.start(`Downloading opencode v${OPENCODE_VERSION}...\n`)
-
-  try {
-    // Try each candidate URL until one succeeds (handles musl/baseline variants)
-    let downloaded = false
-    for (const candidate of candidates) {
-      const url = `https://github.com/anomalyco/opencode/releases/download/v${OPENCODE_VERSION}/opencode-${candidate}${ext}`
-      const response = await fetch(url, { redirect: 'follow', signal: AbortSignal.timeout(120_000) })
-      if (response.status === 404) continue
-      if (!response.ok) {
-        throw new Error(`Failed to download opencode: HTTP ${response.status} from ${url}`)
-      }
-      fs.writeFileSync(tmpArchive, Buffer.from(await response.arrayBuffer()))
-      downloaded = true
-      break
-    }
-    if (!downloaded) {
-      throw new Error(`No opencode binary found for platform ${process.platform}/${process.arch} (tried: ${candidates.join(', ')})`)
-    }
-
-    // Extract into the temp dir
-    const { execFileSync } = await import('node:child_process')
-    if (process.platform === 'linux') {
-      execFileSync('tar', ['xzf', tmpArchive, '-C', tmpDir], { timeout: 30_000 })
-    } else if (process.platform === 'win32') {
-      execFileSync('powershell.exe', [
-        '-NoProfile', '-Command',
-        `Expand-Archive -LiteralPath '${tmpArchive.replaceAll("'", "''")}' -DestinationPath '${tmpDir.replaceAll("'", "''")}' -Force`,
-      ], { timeout: 30_000 })
-    } else {
-      execFileSync('unzip', ['-o', tmpArchive, '-d', tmpDir], { timeout: 30_000 })
-    }
-
-    // Move extracted binary to versioned path
-    const extractedPath = path.join(tmpDir, extractedName)
-    if (!fs.existsSync(extractedPath)) {
-      throw new Error(`Expected binary not found after extraction: ${extractedPath}`)
-    }
-    fs.chmodSync(extractedPath, 0o755)
-    try {
-      fs.renameSync(extractedPath, binaryPath)
-    } catch {
-      // Another concurrent process may have won the race; that's fine
-      if (fs.existsSync(binaryPath)) return binaryPath
-      throw new Error(`Failed to move opencode binary to ${binaryPath}`)
-    }
-
-    // Delete old versions (match opencode-X.Y.Z or opencode-X.Y.Z.exe exactly)
-    const currentName = path.basename(binaryPath)
-    for (const entry of fs.readdirSync(binDir)) {
-      if (entry === currentName) continue
-      if (/^opencode-\d+\.\d+\.\d+(?:\.exe)?$/.test(entry)) {
-        try { fs.unlinkSync(path.join(binDir, entry)) } catch { /* ignore */ }
-      }
-    }
-
-    s.stop(`Downloaded opencode v${OPENCODE_VERSION}`)
-    return binaryPath
-  } catch (error) {
-    s.stop('Failed to download opencode')
-    throw error
-  } finally {
-    // Clean up temp dir
-    try { fs.rmSync(tmpDir, { recursive: true, force: true }) } catch { /* ignore */ }
-  }
-}
+// OpenCode must be installed globally before running kimaki. The bot startup
+// checks for it via ensureCommandAvailable and prompts to install if missing.
 
 let resolvedOpencodeCommand: string | null = null
 
-export async function resolveOpencodeCommand(): Promise<string> {
+export function resolveOpencodeCommand(): string {
   if (resolvedOpencodeCommand) {
     return resolvedOpencodeCommand
   }
@@ -572,14 +430,40 @@ export async function resolveOpencodeCommand(): Promise<string> {
     })
     if (resolvedFromEnv) {
       resolvedOpencodeCommand = resolvedFromEnv
-      opencodeLogger.log(`Resolved opencode binary from OPENCODE_PATH: ${resolvedFromEnv}`)
       return resolvedFromEnv
     }
   }
 
-  const downloaded = await downloadOpencodeIfMissing()
-  resolvedOpencodeCommand = downloaded
-  return downloaded
+  const isWindows = process.platform === 'win32'
+  const whichCmd = isWindows ? 'where' : 'which'
+  const result = errore.try({
+    try: () => {
+      const commandOutput = execFileSync(whichCmd, ['opencode'], {
+        encoding: 'utf8',
+        timeout: 5000,
+      })
+      const resolved = selectResolvedCommand({
+        output: commandOutput,
+        isWindows,
+      })
+      if (resolved) {
+        return resolved
+      }
+      throw new Error('opencode not found in PATH')
+    },
+    catch: () => new Error('opencode not found in PATH'),
+  })
+
+  if (result instanceof Error) {
+    // Fall back to bare command name — spawn will fail with a clear error
+    // if it can't find the binary.
+    opencodeLogger.warn('Could not resolve opencode path via which, falling back to "opencode"')
+    return 'opencode'
+  }
+
+  resolvedOpencodeCommand = result
+  opencodeLogger.log(`Resolved opencode binary: ${result}`)
+  return result
 }
 async function getOpenPort(): Promise<number> {
   return new Promise((resolve, reject) => {
@@ -710,7 +594,7 @@ async function startSingleServer({
     args: spawnArgs,
     windowsVerbatimArguments,
   } = getSpawnCommandAndArgs({
-    resolvedCommand: await resolveOpencodeCommand(),
+    resolvedCommand: resolveOpencodeCommand(),
     baseArgs: serveArgs,
   })
 

@@ -188,4 +188,29 @@ cli
     },
   )
 
+cli
+  .command(
+    'opencode',
+    'Run the resolved opencode binary with the given arguments',
+  )
+  .action(async () => {
+    const { resolveOpencodeCommand } = await import('../opencode.js')
+    const opencodeBinary = resolveOpencodeCommand()
+
+    // Extract everything after 'opencode' from process.argv, including `--` args.
+    // goke strips unknown flags, so we parse argv directly.
+    const rawArgs = process.argv.slice(2)
+    const opencodeIdx = rawArgs.indexOf('opencode')
+    const passthroughArgs = opencodeIdx >= 0 ? rawArgs.slice(opencodeIdx + 1) : []
+
+    const { spawn } = await import('node:child_process')
+    const child = spawn(opencodeBinary, passthroughArgs, {
+      stdio: 'inherit',
+      env: process.env,
+    })
+    child.on('exit', (code) => {
+      process.exit(code ?? 1)
+    })
+  })
+
 export default cli

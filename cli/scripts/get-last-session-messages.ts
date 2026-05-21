@@ -46,7 +46,7 @@ async function getLastSessionMessages() {
 
   console.log(`Starting OpenCode server on port ${port}...`)
 
-  const opencodeCommand = await resolveOpencodeCommand()
+  const opencodeCommand = resolveOpencodeCommand()
   const directory = process.cwd()
 
   // Start the OpenCode server
