@@ -44,8 +44,10 @@ function buildSafeSelectOption({
   value: string | undefined
   description?: string
 }) {
-  const safeLabel = (label || value || 'Unknown').trim().slice(0, 100)
-  const safeValue = (value || label || '').trim()
+  const trimmedLabel = label?.trim()
+  const trimmedValue = value?.trim()
+  const safeLabel = (trimmedLabel || trimmedValue || 'Unknown').slice(0, 100)
+  const safeValue = trimmedValue || trimmedLabel || ''
   if (!safeLabel || !safeValue) {
     return undefined
   }
@@ -510,7 +512,7 @@ export async function handleModelCommand({
     setModelContext(contextHash, context)
 
     const allProviderOptions = [...availableProviders]
-      .sort((a, b) => a.name.localeCompare(b.name))
+      .sort((a, b) => (a.name || a.id || '').localeCompare(b.name || b.id || ''))
       .map((provider) => {
         const modelCount = Object.keys(provider.models || {}).length
         return buildSafeSelectOption({
@@ -601,7 +603,7 @@ export async function handleProviderSelectMenu(
     const { all: allProviders, connected } = providersResponse.data
     const availableProviders = allProviders.filter((p) => connected.includes(p.id))
     const allProviderOptions = [...availableProviders]
-      .sort((a, b) => a.name.localeCompare(b.name))
+      .sort((a, b) => (a.name || a.id || '').localeCompare(b.name || b.id || ''))
       .map((p) => {
         const modelCount = Object.keys(p.models || {}).length
         return buildSafeSelectOption({
@@ -665,7 +667,7 @@ export async function handleProviderSelectMenu(
         releaseDate: model.release_date,
       }))
       .filter((model) => model.id && model.name)
-      .sort((a, b) => a.name.localeCompare(b.name))
+      .sort((a, b) => (a.name || a.id || '').localeCompare(b.name || b.id || ''))
 
     if (models.length === 0) {
       await interaction.editReply({
@@ -677,7 +679,7 @@ export async function handleProviderSelectMenu(
 
     // Update context with provider info and reuse the same hash
     context.providerId = selectedProviderId
-    context.providerName = provider.name
+    context.providerName = provider.name?.trim() || provider.id
     context.modelPage = 0
     setModelContext(contextHash, context)
 
