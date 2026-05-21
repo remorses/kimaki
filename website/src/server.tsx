@@ -1,16 +1,15 @@
 // Cloudflare Worker entrypoint for the Kimaki website.
-// Handles Discord OAuth bot install via better-auth and onboarding status polling.
+// Mounts holocron docs alongside onboarding, OAuth, and Slack gateway routes.
 //
 // Uses Hyperdrive for pooled DB connections (env.HYPERDRIVE binding).
 // Each request gets a fresh PrismaClient and betterAuth instance
 // because CF Workers cannot reuse connections across requests.
 
-import './globals.css'
 import { z } from 'zod'
-import { marked } from 'marked'
 import { Spiceflow } from 'spiceflow'
 import { Head } from 'spiceflow/react'
 import { createPrisma } from 'db/src'
+import { app as holocronApp } from '@holocron.so/vite/app'
 import { getTeamIdForWebhookEvent } from 'discord-slack-bridge/src/webhook-team-id'
 import {
   deleteSlackInstallStateInKv,
@@ -24,52 +23,8 @@ import { createAuth, parseAllowedCallbackUrl } from './auth.js'
 import { SlackBridgeDO } from './slack-bridge-do.js'
 import { SlackInstallPage } from './slack-install-page.js'
 import type { Env } from './env.js'
-import privacyPolicyMarkdown from './privacy-policy.md?raw'
-import termsOfServiceMarkdown from './terms-of-service.md?raw'
 
 export { SlackBridgeDO }
-
-function PolicyPage({
-  title,
-  description,
-  html,
-}: {
-  title: string
-  description: string
-  html: string
-}) {
-  return (
-    <>
-      <Head>
-        <Head.Title>{`Kimaki ${title}`}</Head.Title>
-        <Head.Meta name="description" content={description} />
-      </Head>
-
-      <main className="mx-auto flex min-h-screen w-full max-w-4xl flex-col gap-8 px-6 py-12 md:px-8 md:py-16">
-        <article className="flex flex-col gap-8 rounded-3xl border border-stone-200 bg-white p-6 shadow-sm md:p-10">
-          <header className="flex flex-col gap-3 border-b border-stone-200 pb-6">
-            <p className="text-sm font-medium uppercase tracking-[0.18em] text-stone-500">
-              Kimaki
-            </p>
-            <h1 className="text-4xl font-semibold tracking-tight text-balance md:text-5xl">
-              {title}
-            </h1>
-            <p className="max-w-2xl text-sm leading-6 text-stone-600 md:text-base">
-              {description}
-            </p>
-          </header>
-
-          <div
-            className="flex flex-col gap-4 text-sm leading-7 text-stone-700 md:text-base [&_a]:text-stone-900 [&_a]:underline [&_a]:underline-offset-4 [&_code]:rounded-md [&_code]:bg-stone-100 [&_code]:px-1.5 [&_code]:py-0.5 [&_code]:text-[0.95em] [&_h1]:hidden [&_h2]:mt-6 [&_h2]:text-2xl [&_h2]:font-semibold [&_h2]:tracking-tight [&_h3]:mt-4 [&_h3]:text-lg [&_h3]:font-semibold [&_li]:ml-6 [&_li]:list-disc [&_p]:text-pretty [&_ul]:flex [&_ul]:flex-col [&_ul]:gap-2"
-            dangerouslySetInnerHTML={{
-              __html: html,
-            }}
-          />
-        </article>
-      </main>
-    </>
-  )
-}
 
 const SLACK_OAUTH_CALLBACK_PATH = '/slack/oauth/callback'
 const SLACK_INSTALL_SCOPES = [
@@ -89,7 +44,7 @@ const SLACK_INSTALL_SCOPES = [
 export const app = new Spiceflow()
   .state('env', {} as Env)
 
-  .layout('/*', ({ children }) => {
+  .layout('/install-success', ({ children }) => {
     return (
       <html lang="en">
         <Head>
@@ -106,17 +61,6 @@ export const app = new Spiceflow()
     console.error(error)
     const message = error instanceof Error ? error.message : String(error)
     return new Response(message, { status: 500 })
-  })
-
-  .route({
-    method: 'GET',
-    path: '/',
-    handler() {
-      return new Response(null, {
-        status: 302,
-        headers: { Location: 'https://github.com/remorses/kimaki' },
-      })
-    },
   })
 
   .route({
@@ -561,43 +505,6 @@ export const app = new Spiceflow()
     },
   })
 
-  .page('/privacy', async () => {
-    const privacyPolicyHtml = await marked.parse(privacyPolicyMarkdown)
-
-    return (
-      <PolicyPage
-        title="Privacy Policy"
-        description="This page explains what Kimaki processes when you use the shared bot, onboarding website, and related integrations."
-        html={privacyPolicyHtml}
-      />
-    )
-  })
-
-  .page('/terms', async () => {
-    const termsOfServiceHtml = await marked.parse(termsOfServiceMarkdown)
-
-    return (
-      <PolicyPage
-        title="Terms of Service"
-        description="These terms govern use of Kimaki, the shared bot, onboarding pages, and related integrations."
-        html={termsOfServiceHtml}
-      />
-    )
-  })
-
-  .route({
-    method: 'GET',
-    path: '/terms-of-service',
-    handler({ request }) {
-      return new Response(null, {
-        status: 302,
-        headers: {
-          Location: new URL('/terms', request.url).toString(),
-        },
-      })
-    },
-  })
-
   // Slack gateway: Discord REST proxy → Durable Object
   // Only active on slack-gateway.* hosts.
   .route({
@@ -880,6 +787,9 @@ export const app = new Spiceflow()
       }
     },
   })
+
+  // Holocron docs mounted last so explicit routes above take priority.
+  .use(holocronApp)
 
 export default {
   fetch(request: Request, env: Env) {

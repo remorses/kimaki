@@ -1,0 +1,57 @@
+---
+title: Abort Session with "x"
+description: A simple OpenCode plugin that lets you interrupt a running session by typing "x" in Discord.
+icon: x-circle
+---
+
+## Why you need this
+
+When an AI is generating a long response or going down the wrong path, you want to stop it **fast**. Typing `/abort` or clicking buttons takes too long. Sometimes the model is deleting files or running commands you didn't want - every second counts.
+
+With this plugin, just type `x` and hit enter. The session stops immediately. The message isn't sent to the model, so you don't waste tokens or pollute your conversation history.
+
+## How it works
+
+The plugin hooks into `chat.message`, which fires when you send a message. If the message is exactly "x" (case-insensitive), it:
+
+1. Clears the message so it's never sent to the LLM
+2. Calls `session.abort()` to stop the current generation
+
+## Installation
+
+Kimaki supports any OpenCode plugin. Create this file at `~/.config/opencode/plugins/abort-on-x.ts`:
+
+```ts
+import type { Plugin } from '@opencode-ai/plugin'
+
+export const AbortOnXPlugin: Plugin = async ({ client }) => ({
+  'chat.message': async (input, output) => {
+    const text = output.parts
+      .filter((p) => p.type === 'text')
+      .map((p) => (p as { text: string }).text.trim())
+      .join('')
+
+    if (text.toLowerCase() === 'x') {
+      output.parts.length = 0
+      await client.session.abort({ path: { id: input.sessionID } })
+    }
+  },
+})
+```
+
+Plugins in `~/.config/opencode/plugins/` load automatically on startup. No config changes needed.
+
+## Using other OpenCode plugins
+
+Kimaki runs on OpenCode, so any OpenCode plugin works out of the box. You can:
+
+- **Load local plugins** by placing `.ts` or `.js` files in `~/.config/opencode/plugins/` (global) or `.opencode/plugins/` (per-project)
+- **Load npm plugins** by adding them to your `opencode.json`:
+
+```json
+{
+  "plugin": ["opencode-wakatime", "opencode-helicone-session"]
+}
+```
+
+Browse community plugins at [opencode.ai/docs/ecosystem](https://opencode.ai/docs/ecosystem#plugins) or read the [plugin docs](https://opencode.ai/docs/plugins) to write your own.

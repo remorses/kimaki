@@ -1,17 +1,10 @@
+import { holocron } from '@holocron.so/vite'
 import { cloudflare } from '@cloudflare/vite-plugin'
-import react from '@vitejs/plugin-react'
-import { spiceflowPlugin } from 'spiceflow/vite'
-import tailwindcss from '@tailwindcss/vite'
 import { defineConfig } from 'vite'
 
 export default defineConfig({
-  clearScreen: false,
   plugins: [
-    react(),
-    spiceflowPlugin({
-      entry: './src/index.tsx',
-    }),
-    tailwindcss(),
+    holocron({ entry: './src/server.tsx', pagesDir: './src/docs' }),
     cloudflare({
       viteEnvironment: {
         name: 'rsc',
@@ -19,4 +12,7 @@ export default defineConfig({
       },
     }),
   ],
+  resolve: {
+    dedupe: ['spiceflow', 'spiceflow/react', 'react', 'react-dom', 'react/jsx-runtime', 'react/jsx-dev-runtime'],
+  },
 })

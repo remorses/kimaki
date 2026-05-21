@@ -1,0 +1,82 @@
+{
+  "$schema": "https://unpkg.com/@holocron.so/vite/src/schema.json",
+  "name": "Kimaki",
+  "description": "Iron Man's Jarvis for coding agents, inside Discord",
+  "favicon": "/logo.jpeg",
+  "colors": {
+    "primary": "#5865F2"
+  },
+  "appearance": {
+    "default": "system"
+  },
+  "icons": {
+    "library": "lucide"
+  },
+  "navbar": {
+    "links": [
+      {
+        "type": "github",
+        "href": "https://github.com/remorses/kimaki"
+      },
+      {
+        "type": "discord",
+        "href": "https://discord.gg/qz3hapKcMM"
+      }
+    ]
+  },
+  "navigation": {
+    "groups": [
+      {
+        "group": "Getting Started",
+        "icon": "rocket",
+        "pages": [
+          "index",
+          "model-switching",
+          "background-sync"
+        ]
+      },
+      {
+        "group": "Guides",
+        "icon": "book-open",
+        "pages": [
+          "ci-automation",
+          "screen-sharing",
+          "advanced-setup",
+          "programmatic-gateway"
+        ]
+      },
+      {
+        "group": "Plugins",
+        "icon": "plug",
+        "pages": [
+          "plugins/abort-on-x"
+        ]
+      },
+      {
+        "group": "Reference",
+        "icon": "database",
+        "pages": [
+          "internals"
+        ]
+      },
+      {
+        "group": "Legal",
+        "icon": "scale",
+        "pages": [
+          "privacy",
+          "terms"
+        ]
+      }
+    ]
+  },
+  "knownPaths": [
+    "/discord-install",
+    "/install-success",
+    "/api/*",
+    "/health",
+    "/slack-install",
+    "/slack-install/*",
+    "/slack/*"
+  ],
+  "decorativeLines": "none"
+}
