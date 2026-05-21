@@ -188,44 +188,4 @@ cli
     },
   )
 
-cli
-  .command(
-    'opencode',
-    'Run the resolved opencode binary with the given arguments',
-  )
-  .allowUnknownOptions()
-  .action(async () => {
-    const { resolveOpencodeCommand } = await import('../opencode.js')
-    const { getSpawnCommandAndArgs } = await import('../opencode-command.js')
-
-    // Extract everything after 'opencode' from process.argv, including `--` args.
-    // goke strips unknown flags, so we parse argv directly.
-    const rawArgs = process.argv.slice(2)
-    const opencodeIdx = rawArgs.indexOf('opencode')
-    const passthroughArgs = opencodeIdx >= 0 ? rawArgs.slice(opencodeIdx + 1) : []
-    // Strip leading `--` separator if present (e.g. `kimaki opencode -- serve`)
-    const baseArgs = passthroughArgs[0] === '--'
-      ? passthroughArgs.slice(1)
-      : passthroughArgs
-
-    const {
-      command,
-      args,
-      windowsVerbatimArguments,
-    } = getSpawnCommandAndArgs({
-      resolvedCommand: resolveOpencodeCommand(),
-      baseArgs,
-    })
-
-    const { spawn } = await import('node:child_process')
-    const child = spawn(command, args, {
-      stdio: 'inherit',
-      env: process.env,
-      windowsVerbatimArguments,
-    })
-    child.on('exit', (code) => {
-      process.exit(code ?? 1)
-    })
-  })
-
 export default cli
