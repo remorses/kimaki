@@ -1,4 +1,4 @@
-<div align='center'>
+<div align='center' class='hidden'>
     <br/>
     <br/>
     <h3>kimaki</h3>
@@ -17,7 +17,7 @@ You can try out the bot in the [Kimaki Discord Server](https://discord.gg/qz3hap
 npx -y kimaki@latest
 ```
 
-The CLI walks you through everything. Setup takes about 1 minute — you install the Kimaki bot to your Discord server with one click, pick your projects, and you're done.
+The CLI walks you through everything. Setup takes about 1 minute. You install the Kimaki bot to your Discord server with one click, pick your projects, and you're done.
 
 ## What is Kimaki?
 
@@ -28,7 +28,7 @@ Kimaki connects Discord to [OpenCode](https://opencode.ai), a coding agent simil
 - Search your codebase
 - Use any tools you've configured
 
-Think of it as texting your codebase. You describe what you want, the AI does it.
+Think of it as texting your codebase; you describe what you want, the AI does it.
 
 ```diagram
 ┌─────────────┐         ┌─────────────────────────────────────────┐
@@ -53,26 +53,20 @@ npx -y kimaki@latest
 
 The setup wizard gives you two options:
 
-- **Gateway mode (default)** — Uses Kimaki's pre-built Discord bot. No Discord Developer Portal setup needed. You click one install link, authorize the bot in your server, and you're running. This is the recommended path.
-- **Self-hosted mode** — You create your own Discord bot at [discord.com/developers](https://discord.com/developers/applications). Takes 5-10 minutes. Useful if you want full control over the bot identity.
+- **Gateway mode (default)**: uses Kimaki's pre-built Discord bot. No Discord Developer Portal setup needed. You click one install link, authorize the bot in your server, and you're running. This is the recommended path.
+- **Self-hosted mode**: you create your own Discord bot at [discord.com/developers](https://discord.com/developers/applications). Takes 5-10 minutes. Useful if you want full control over the bot identity.
 
 Both modes work identically after setup. Keep the CLI running — it's the bridge between Discord and your machine.
 
 ## Features
 
-**Text messages** — Send any message in a channel linked to a project. Kimaki creates a thread and starts an OpenCode session.
-
-**File attachments** — Attach images, code files, or any other files to your message. Kimaki includes them in the session context.
-
-**Voice messages** — Record a voice message in Discord. Kimaki transcribes it using Google's Gemini API and processes it as text. The transcription uses your project's file tree for accuracy, recognizing function names and file paths you mention. Requires a Gemini API key (prompted during setup).
-
-**Session management** — Resume sessions where you left off, fork from any message, or generate public URLs to share your session.
-
-**Message queue** — Use `/queue <message>` to queue a follow-up while the AI is still responding. It sends automatically when the current response finishes. You can also end any message with `. queue` for the same behavior.
-
-**Memory** — Kimaki reads a `MEMORY.md` file from your project root at session start. The AI can update this file to store learnings, decisions, and context worth preserving across sessions.
-
-**Tool permissions** — When the AI tries to run something that needs approval (like shell commands or accessing files outside the project), Kimaki shows Accept / Accept Always / Deny buttons in the thread. Customize defaults in your project's `opencode.json`. See [OpenCode Permissions docs](https://opencode.ai/docs/permissions/).
+- **Text messages**: send any message in a channel linked to a project. Kimaki creates a thread and starts an OpenCode session.
+- **File attachments**: attach images, code files, or any other files to your message. Kimaki includes them in the session context.
+- **Voice messages**: record a voice message in Discord. Kimaki transcribes it using Google's Gemini API and processes it as text. The transcription uses your project's file tree for accuracy, recognizing function names and file paths you mention. Requires a Gemini API key (prompted during setup).
+- **Session management**: resume sessions where you left off, fork from any message, or generate public URLs to share your session.
+- **Message queue**: use `/queue <message>` to queue a follow-up while the AI is still responding. It sends automatically when the current response finishes. You can also end any message with `. queue` for the same behavior.
+- **Memory**: Kimaki reads a `MEMORY.md` file from your project root at session start. The AI can update this file to store learnings, decisions, and context worth preserving across sessions.
+- **Tool permissions**: when the AI tries to run something that needs approval (like shell commands or accessing files outside the project), Kimaki shows Accept / Accept Always / Deny buttons in the thread. Customize defaults in your project's `opencode.json`. See [OpenCode Permissions docs](https://opencode.ai/docs/permissions/).
 
 ## Commands
 
@@ -130,9 +124,8 @@ Kimaki checks Discord permissions before processing any message. Users need **on
 
 The "Kimaki" role is the recommended approach for team access. Messages from users without any of these are ignored.
 
-**Blocking access** — Create a role named **"no-kimaki"** (case-insensitive) to block specific users, even server owners. Useful for preventing accidental bot triggers in shared servers.
-
-**Multi-agent orchestration** — Other Discord bots are ignored by default. Assign the "Kimaki" role to another bot to let it trigger Kimaki sessions.
+- **Blocking access**: create a role named **"no-kimaki"** (case-insensitive) to block specific users, even server owners. Useful for preventing accidental bot triggers in shared servers.
+- **Multi-agent orchestration**: other Discord bots are ignored by default. Assign the "Kimaki" role to another bot to let it trigger Kimaki sessions.
 
 ## Model & Agent Configuration
 
@@ -150,15 +143,13 @@ Or use `/model` and `/agent` slash commands to change settings per channel or se
 
 ## Best Practices
 
-**Create a dedicated Discord server for your agents.** This keeps coding sessions separate from other servers and gives you full control over permissions.
-
-**Use the "Kimaki" role for team access.** Assign it to users who should be able to trigger sessions.
-
-**Send long prompts as file attachments.** Discord has character limits. Tap the plus icon and use "Send message as file" for longer prompts. Kimaki reads file attachments as your message.
+- **Create a dedicated Discord server** for your agents. This keeps coding sessions separate from other servers and gives you full control over permissions.
+- **Use the "Kimaki" role** for team access. Assign it to users who should be able to trigger sessions.
+- **Send long prompts as file attachments.** Discord has character limits. Tap the plus icon and use "Send message as file" for longer prompts. Kimaki reads file attachments as your message.
 
 ## Advanced Topics
 
-- [**Advanced Setup**](https://kimaki.dev/advanced-setup) — Running multiple instances, multiple Discord servers, architecture details
-- [**CI & Automation**](https://kimaki.dev/ci-automation) — Programmatic sessions, GitHub Actions, scheduled tasks, per-session permissions
-- [**Screen Sharing**](https://kimaki.dev/screen-sharing) — Share your screen via browser link (macOS & Linux setup)
-- [**Internals**](https://kimaki.dev/internals) — How Kimaki works under the hood (SQLite, lock port, channel metadata, voice processing)
+- [**Advanced Setup**](https://kimaki.dev/advanced-setup): running multiple instances, multiple Discord servers, architecture details
+- [**CI & Automation**](https://kimaki.dev/ci-automation): programmatic sessions, GitHub Actions, scheduled tasks, per-session permissions
+- [**Screen Sharing**](https://kimaki.dev/screen-sharing): share your screen via browser link (macOS & Linux setup)
+- [**Internals**](https://kimaki.dev/internals): how Kimaki works under the hood (SQLite, lock port, channel metadata, voice processing)
