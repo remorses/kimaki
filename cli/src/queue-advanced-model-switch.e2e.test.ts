@@ -335,7 +335,7 @@ describe('queue advanced: /model with interrupt recovery', () => {
         **Deterministic Provider** / **deterministic-v3**
         \`deterministic-provider/deterministic-v3\`
         _Restarting current request with new model..._
-        _Tip: create [agent .md files](https://github.com/remorses/kimaki/blob/main/docs/model-switching.md) in .opencode/agent/ for one-command model switching_
+        _Tip: create [agent .md files](https://kimaki.dev/docs/model-switching) in .opencode/agent/ for one-command model switching_
         --- from: user (queue-model-switch-tester)
         PLUGIN_TIMEOUT_SLEEP_MARKER
         --- from: assistant (TestBot)
