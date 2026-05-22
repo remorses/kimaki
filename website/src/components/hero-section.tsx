@@ -95,16 +95,7 @@ export function HeroSection() {
         <div className='flex flex-col items-center text-center'>
           <h1 className='flex flex-col items-center leading-none'>
             <span
-              className='text-[56px] sm:text-[80px] md:text-[96px] font-normal uppercase tracking-tight text-foreground'
-              style={{
-                fontFamily:
-                  "'Playfair Display', Georgia, 'Times New Roman', serif",
-              }}
-            >
-              Kimaki
-            </span>
-            <span
-              className='italic text-[36px] sm:text-[48px] md:text-[60px] font-normal text-foreground -mt-1 sm:-mt-2'
+              className='italic text-[36px] sm:text-[48px] md:text-[60px] font-normal text-foreground'
               style={{
                 fontFamily:
                   "'Playfair Display', Georgia, 'Times New Roman', serif",
