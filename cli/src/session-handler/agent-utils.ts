@@ -1,5 +1,8 @@
 // Agent preference resolution utility.
 // Validates agent preferences against the OpenCode API.
+// When a requested agent is not found, we fall back to the default agent
+// instead of throwing. This handles stale agent preferences from CLI send
+// commands or database references to agents that were removed from config.
 
 import * as errore from 'errore'
 import {
@@ -7,8 +10,11 @@ import {
   getSessionModel,
   getChannelAgent,
 } from '../database.js'
+import { createLogger } from '../logger.js'
 import { type initializeOpencodeForDirectory } from '../opencode.js'
 import { type AgentInfo } from '../system-message.js'
+
+const agentLogger = createLogger('agent')
 
 export async function resolveValidatedAgentPreference({
   agent,
@@ -84,16 +90,10 @@ export async function resolveValidatedAgentPreference({
     return { agentPreference, agents }
   }
 
-  const availableAgentNames = availableAgents
-    .map((availableAgent) => {
-      return availableAgent.name
-    })
-    .slice(0, 20)
-  const availableAgentsMessage =
-    availableAgentNames.length > 0
-      ? `Available agents: ${availableAgentNames.join(', ')}`
-      : 'No agents are available in this project.'
-  throw new Error(
-    `Agent "${agentPreference}" not found. ${availableAgentsMessage} Use /agent to choose a valid one.`,
+  // Fall back to default agent instead of erroring. This handles stale
+  // preferences from CLI send commands or removed agents in config.
+  agentLogger.warn(
+    `Agent "${agentPreference}" not found, falling back to default agent`,
   )
+  return { agentPreference: undefined, agents }
 }
