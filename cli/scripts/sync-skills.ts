@@ -29,6 +29,7 @@ const SKILL_SOURCES: string[] = [
   'https://github.com/remorses/termcast',
   'https://github.com/remorses/goke',
   'https://github.com/remorses/spiceflow',
+  'https://github.com/remorses/holocron',
   'https://github.com/remorses/lintcn',
   'https://github.com/remorses/usecomputer',
   // 'https://github.com/remorses/gitchamber',
