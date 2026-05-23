@@ -31,40 +31,40 @@
         "icon": "rocket",
         "pages": [
           "index",
-          "model-switching",
-          "background-sync"
+          "docs/model-switching",
+          "docs/background-sync"
         ]
       },
       {
         "group": "Guides",
         "icon": "book-open",
         "pages": [
-          "ci-automation",
-          "screen-sharing",
-          "advanced-setup",
-          "programmatic-gateway"
+          "docs/ci-automation",
+          "docs/screen-sharing",
+          "docs/advanced-setup",
+          "docs/programmatic-gateway"
         ]
       },
       {
         "group": "Plugins",
         "icon": "plug",
         "pages": [
-          "plugins/abort-on-x"
+          "docs/plugins/abort-on-x"
         ]
       },
       {
         "group": "Reference",
         "icon": "database",
         "pages": [
-          "internals"
+          "docs/internals"
         ]
       },
       {
         "group": "Legal",
         "icon": "scale",
         "pages": [
-          "privacy",
-          "terms"
+          "docs/privacy",
+          "docs/terms"
         ]
       }
     ]

@@ -111,7 +111,7 @@ npx -y kimaki send --channel <channel-id> --prompt 'your prompt'
 npx -y kimaki upgrade
 ```
 
-See [CI & Automation docs](https://kimaki.dev/ci-automation) for the full `send` command reference, GitHub Actions examples, and scheduled tasks.
+See [CI & Automation docs](https://kimaki.dev/docs/ci-automation) for the full `send` command reference, GitHub Actions examples, and scheduled tasks.
 
 ## Access Control
 
@@ -149,7 +149,7 @@ Or use `/model` and `/agent` slash commands to change settings per channel or se
 
 ## Advanced Topics
 
-- [**Advanced Setup**](https://kimaki.dev/advanced-setup): running multiple instances, multiple Discord servers, architecture details
-- [**CI & Automation**](https://kimaki.dev/ci-automation): programmatic sessions, GitHub Actions, scheduled tasks, per-session permissions
-- [**Screen Sharing**](https://kimaki.dev/screen-sharing): share your screen via browser link (macOS & Linux setup)
-- [**Internals**](https://kimaki.dev/internals): how Kimaki works under the hood (SQLite, lock port, channel metadata, voice processing)
+- [**Advanced Setup**](https://kimaki.dev/docs/advanced-setup): running multiple instances, multiple Discord servers, architecture details
+- [**CI & Automation**](https://kimaki.dev/docs/ci-automation): programmatic sessions, GitHub Actions, scheduled tasks, per-session permissions
+- [**Screen Sharing**](https://kimaki.dev/docs/screen-sharing): share your screen via browser link (macOS & Linux setup)
+- [**Internals**](https://kimaki.dev/docs/internals): how Kimaki works under the hood (SQLite, lock port, channel metadata, voice processing)
