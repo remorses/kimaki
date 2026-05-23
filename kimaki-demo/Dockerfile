@@ -12,9 +12,10 @@ RUN curl -fsSL https://bun.sh/install | bash
 ENV PATH="/root/.bun/bin:$PATH"
 
 # Install kimaki globally from npm.
-# Pin the version so Docker layer cache busts on upgrade.
+# IMPORTANT: always use the latest published version here.
+# Check with: npm view kimaki version
 # Bump this after publishing a new kimaki version, then fly deploy.
-RUN npm install -g kimaki@0.11.0
+RUN npm install -g kimaki@0.12.0
 
 # Pre-install tools the AI agent uses via bunx so first invocations are instant.
 # critique: diff viewing and sharing (bunx critique --web)
