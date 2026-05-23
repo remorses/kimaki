@@ -96,6 +96,15 @@ cli
     'After gateway OAuth install, redirect to this URL instead of the default success page (appends ?guild_id=<id>)',
   )
   .option(
+    '--allow-mention <type>',
+    z
+      .array(z.enum(['users', 'roles', 'everyone']))
+      .optional()
+      .describe(
+        'Which mention types the bot can trigger (users, roles, everyone). Repeatable. Default: users only.',
+      ),
+  )
+  .option(
     '--enable-skill <name>',
     z
       .array(z.string())
@@ -131,6 +140,7 @@ cli
       noSentry?: boolean
       gateway?: boolean
       gatewayCallbackUrl?: string
+      allowMention?: Array<'users' | 'roles' | 'everyone'>
       enableSkill?: string[]
       disableSkill?: string[]
     }) => {
@@ -240,6 +250,7 @@ cli
           ...(options.disableSync && { syncEnabled: false }),
           ...(enabledSkills.length > 0 && { enabledSkills }),
           ...(disabledSkills.length > 0 && { disabledSkills }),
+          ...(options.allowMention && { allowedMentions: options.allowMention }),
         })
 
         if (enabledSkills.length > 0) {

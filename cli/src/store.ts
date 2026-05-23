@@ -80,6 +80,13 @@ export type KimakiState = {
   // Read by: opencode.ts when building opencode-config.json.
   disabledSkills: string[]
 
+  // Which mention types the bot is allowed to trigger in messages.
+  // Maps directly to Discord's allowedMentions.parse array.
+  // Valid values: 'users', 'roles', 'everyone'.
+  // Changes: set once at startup from --allow-mention CLI flag.
+  // Read by: discord-bot.ts (Client constructor default), cli-runner.ts (raw REST calls).
+  allowedMentions: Array<'users' | 'roles' | 'everyone'>
+
   // When true, all Discord users can start sessions and use commands without
   // needing the Kimaki role, Administrator, Manage Server, or being the owner.
   // The "no-kimaki" role still blocks access even when this is enabled.
@@ -146,6 +153,7 @@ export const store = createStore<KimakiState>(() => ({
   critiqueEnabled: true,
   enabledSkills: [],
   disabledSkills: [],
+  allowedMentions: ['users'],
   allowAllUsers: false,
   syncEnabled: true,
   discordBaseUrl: 'https://discord.com',

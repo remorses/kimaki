@@ -182,7 +182,11 @@ export async function sendDiscordMessageWithOptionalAttachment({
   const discordMaxLength = 2000
   if (prompt.length <= discordMaxLength) {
     return (await rest.post(Routes.channelMessages(channelId), {
-      body: { content: prompt, embeds },
+      body: {
+        content: prompt,
+        embeds,
+        allowed_mentions: { parse: store.getState().allowedMentions },
+      },
     })) as { id: string }
   }
 
@@ -234,6 +238,7 @@ export async function sendDiscordMessageWithOptionalAttachment({
         content: summaryContent,
         attachments: [{ id: 0, filename: 'prompt.md' }],
         embeds,
+        allowed_mentions: { parse: store.getState().allowedMentions },
       }),
     )
     const buffer = fs.readFileSync(tmpFile)

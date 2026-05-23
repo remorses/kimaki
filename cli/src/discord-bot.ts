@@ -83,6 +83,7 @@ import { markDiscordGatewayReady, stopHranaServer } from './hrana-server.js'
 import { notifyError } from './sentry.js'
 import { flushDebouncedProcessCallbacks } from './debounced-process-flush.js'
 import { startRuntimeIdleSweeper } from './runtime-idle-sweeper.js'
+import { store } from './store.js'
 import {
   startExternalOpencodeSessionSync,
   stopExternalOpencodeSessionSync,
@@ -254,6 +255,7 @@ export async function createDiscordClient() {
   // Read REST API URL lazily so gateway mode can set store.discordBaseUrl
   // after module import but before client creation.
   const restApiUrl = getDiscordRestApiUrl()
+  const { allowedMentions } = store.getState()
   return new Client({
     intents: [
       GatewayIntentBits.Guilds,
@@ -268,6 +270,7 @@ export async function createDiscordClient() {
       Partials.ThreadMember,
     ],
     rest: { api: restApiUrl },
+    allowedMentions: { parse: allowedMentions },
   })
 }
 
