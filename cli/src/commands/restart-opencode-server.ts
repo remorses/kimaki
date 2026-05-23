@@ -70,7 +70,7 @@ export async function handleRestartOpencodeServerCommand({
   const { projectDirectory } = resolved
 
   // Defer reply since restart may take a moment
-  await command.deferReply({ flags: SILENT_MESSAGE_FLAGS })
+  await command.deferReply()
 
   // Dispose all runtimes for this directory/channel scope.
   // disposeRuntimesForDirectory aborts active runs, kills listeners, and

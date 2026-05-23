@@ -46,7 +46,7 @@ export async function handleAbortCommand({
     return
   }
 
-  await command.deferReply({ flags: SILENT_MESSAGE_FLAGS })
+  await command.deferReply()
 
   const resolved = await resolveWorkingDirectory({
     channel: channel as TextChannel | ThreadChannel,

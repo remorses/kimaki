@@ -94,7 +94,7 @@ export async function handleUndoCommand({
     return
   }
 
-  await command.deferReply({ flags: SILENT_MESSAGE_FLAGS })
+  await command.deferReply()
 
   const getClient = await initializeOpencodeForDirectory(projectDirectory)
   if (getClient instanceof Error) {
@@ -275,7 +275,7 @@ export async function handleRedoCommand({
     return
   }
 
-  await command.deferReply({ flags: SILENT_MESSAGE_FLAGS })
+  await command.deferReply()
 
   const getClient = await initializeOpencodeForDirectory(projectDirectory)
   if (getClient instanceof Error) {
