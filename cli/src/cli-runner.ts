@@ -728,6 +728,7 @@ export async function ensureCommandAvailable({
 // Run opencode upgrade in the background so the user always has the latest version.
 
 // Spawn caffeinate on macOS to prevent system sleep while bot is running.
+// Uses -s to also prevent sleep on lid close (AC power only, not battery).
 // Uses -w to watch the parent PID so caffeinate self-terminates if kimaki
 // exits for any reason (SIGTERM, crash, process.exit, supervisor stop).
 export function startCaffeinate() {
@@ -735,7 +736,7 @@ export function startCaffeinate() {
     return
   }
   try {
-    const proc = spawn('caffeinate', ['-i', '-w', String(process.pid)], {
+    const proc = spawn('caffeinate', ['-s', '-w', String(process.pid)], {
       stdio: 'ignore',
       detached: false,
     })
