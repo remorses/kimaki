@@ -100,6 +100,7 @@ type EventWaiter = {
 }
 
 const DEFAULT_INTERRUPT_STEP_TIMEOUT_MS = 3_000
+const POST_ABORT_IDLE_GRACE_MS = 250
 
 function getInterruptStepTimeoutMsFromEnv(): number {
   const raw = process.env['KIMAKI_INTERRUPT_STEP_TIMEOUT_MS']
@@ -330,18 +331,29 @@ const interruptOpencodeSessionOnUserMessage: Plugin = async (ctx) => {
         },
         timeoutMs: 5_000,
       })
-      const idleWait = state.waitForEvent({
+      const initialIdleWait = state.waitForEvent({
         match: (event) => {
           return event.type === 'session.idle' && event.properties.sessionID === sessionID
         },
         timeoutMs: 10_000,
       })
-
       await ctx.client.session.abort({
         path: { id: sessionID },
       })
       await abortedAssistantWait
-      await idleWait
+      await initialIdleWait
+
+      // OpenCode can emit `session.idle` before the aborted assistant update,
+      // then emit another idle after the cancelled run finishes cleanup. Replaying
+      // on the first idle can enqueue the replay behind the still-settling run.
+      // Some paths only emit the first idle, so wait briefly for a post-abort
+      // idle and then continue rather than dropping the user's interrupt.
+      await state.waitForEvent({
+        match: (event) => {
+          return event.type === 'session.idle' && event.properties.sessionID === sessionID
+        },
+        timeoutMs: POST_ABORT_IDLE_GRACE_MS,
+      })
 
       const currentPending = state.getPending(messageID)
       if (!currentPending || currentPending.started) {

@@ -334,6 +334,10 @@ describe('interruptOpencodeSessionOnUserMessage', () => {
         parentID: REAL_RATE_LIMIT_CASE.previousMessageID,
       }),
     })
+    await delay({ ms: 1 })
+    await eventHook({
+      event: createSessionIdleEvent({ sessionID: REAL_RATE_LIMIT_CASE.sessionID }),
+    })
     await delay({ ms: 20 })
 
     expect(abortCalls).toEqual([{ path: { id: REAL_RATE_LIMIT_CASE.sessionID } }])
@@ -493,7 +497,10 @@ describe('interruptOpencodeSessionOnUserMessage', () => {
     // 3. Timeout fires (20ms), plugin runs handleUnsentTimeout
     await delay({ ms: 30 })
 
-    // 4. Simulate abort completing (error + idle from opencode)
+    // 4. Simulate abort completing. OpenCode can emit an idle event before the
+    //    aborted assistant update, then emit another idle after cleanup settles.
+    //    Replaying before that post-abort idle can leave the replayed message
+    //    queued behind the cancelled run.
     await eventHook({ event: createSessionErrorEvent({ sessionID }) })
     await eventHook({ event: createSessionIdleEvent({ sessionID }) })
     await eventHook({
@@ -507,6 +514,11 @@ describe('interruptOpencodeSessionOnUserMessage', () => {
 
     // 5. Verify plugin aborted the session
     expect(abortCalls).toEqual([{ path: { id: sessionID } }])
+    expect(promptAsyncCalls).toEqual([])
+
+    await delay({ ms: 1 })
+    await eventHook({ event: createSessionIdleEvent({ sessionID }) })
+    await delay({ ms: 20 })
 
     // 6. Recovery should replay the queued message itself, not an empty
     //    resume prompt. This preserves the original messageID + parts after
@@ -575,8 +587,8 @@ describe('interruptOpencodeSessionOnUserMessage', () => {
     )
 
     await delay({ ms: 30 })
-    await eventHook({ event: REAL_SLEEP_INTERRUPT_CASE.idleEvent })
     await eventHook({ event: REAL_SLEEP_INTERRUPT_CASE.abortErrorEvent })
+    await eventHook({ event: REAL_SLEEP_INTERRUPT_CASE.idleEvent })
     await eventHook({
       event: createAssistantAbortedEvent({
         sessionID: REAL_SLEEP_INTERRUPT_CASE.sessionID,
@@ -587,6 +599,12 @@ describe('interruptOpencodeSessionOnUserMessage', () => {
     await delay({ ms: 20 })
 
     expect(abortCalls).toEqual([{ path: { id: REAL_SLEEP_INTERRUPT_CASE.sessionID } }])
+    expect(promptAsyncCalls).toEqual([])
+
+    await delay({ ms: 1 })
+    await eventHook({ event: REAL_SLEEP_INTERRUPT_CASE.idleEvent })
+    await delay({ ms: 20 })
+
     expect(promptAsyncCalls).toEqual([
       {
         path: { id: REAL_SLEEP_INTERRUPT_CASE.sessionID },
@@ -658,8 +676,8 @@ describe('interruptOpencodeSessionOnUserMessage', () => {
 
     expect(abortCalls).toEqual([{ path: { id: sessionID } }])
 
-    await eventHook({ event: createSessionIdleEvent({ sessionID }) })
     await eventHook({ event: createSessionErrorEvent({ sessionID }) })
+    await eventHook({ event: createSessionIdleEvent({ sessionID }) })
     await eventHook({
       event: createAssistantAbortedEvent({
         sessionID,
@@ -667,6 +685,12 @@ describe('interruptOpencodeSessionOnUserMessage', () => {
         parentID: runningMessageID,
       }),
     })
+    await delay({ ms: 20 })
+
+    expect(promptAsyncCalls).toEqual([])
+
+    await delay({ ms: 1 })
+    await eventHook({ event: createSessionIdleEvent({ sessionID }) })
     await delay({ ms: 20 })
 
     expect(promptAsyncCalls).toEqual([
