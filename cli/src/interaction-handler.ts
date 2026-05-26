@@ -75,6 +75,7 @@ import {
   handleTranscriptionApiKeyCommand,
   handleTranscriptionApiKeyModalSubmit,
 } from './commands/gemini-apikey.js'
+import { handleRetryTranscriptionButton } from './commands/retry-transcription.js'
 import {
   handleAgentCommand,
   handleAgentSelectMenu,
@@ -447,6 +448,13 @@ export function registerInteractionHandler({
               return
             }
             await handleTranscriptionApiKeyButton(interaction)
+            return
+          }
+
+          if (customId.startsWith('retry_transcription:')) {
+            // Permission check already gated by hasKimakiBotPermission above.
+            // Any thread member with the Kimaki role can retry a failed transcription.
+            await handleRetryTranscriptionButton(interaction)
             return
           }
 

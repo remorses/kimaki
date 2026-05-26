@@ -38,6 +38,7 @@ import {
   hasKimakiBotPermission,
 } from './discord-utils.js'
 import { showApiKeyRequiredButton } from './commands/gemini-apikey.js'
+import { buildRetryTranscriptionRow } from './commands/retry-transcription.js'
 import { transcribeAudio, type TranscriptionResult } from './voice.js'
 import { FetchError } from './errors.js'
 import { store } from './store.js'
@@ -567,11 +568,13 @@ export async function processVoiceAttachment({
       `Failed to download audio attachment:`,
       audioResponse.message,
     )
-    await sendThreadMessage(
-      thread,
-      `⚠️ Failed to download audio: ${audioResponse.message}`,
-      { flags: NOTIFY_MESSAGE_FLAGS },
-    )
+    // Discord CDN URLs are signed and can expire — clicking Retry will re-fetch
+    // the message which regenerates a fresh URL, so the retry button is useful here.
+    await thread.send({
+      content: `⚠️ Failed to download audio: ${audioResponse.message}`,
+      components: [buildRetryTranscriptionRow(message)],
+      flags: NOTIFY_MESSAGE_FLAGS,
+    })
     return null
   }
   const audioBuffer = Buffer.from(await audioResponse.arrayBuffer())
@@ -654,7 +657,13 @@ export async function processVoiceAttachment({
       Error: (e) => e.message,
     })
     voiceLogger.error(`Transcription failed:`, transcription)
-    await sendThreadMessage(thread, `⚠️ Transcription failed: ${errMsg}`, {
+    // Attach a 🔄 Retry button so users can re-run transcription after the model
+    // recovers from overload, after quota resets, or after a fresh API key is set.
+    // The handler in commands/retry-transcription.ts re-fetches the original voice
+    // attachment via the encoded channelId:messageId and re-runs the full pipeline.
+    await thread.send({
+      content: `⚠️ Transcription failed: ${errMsg}`,
+      components: [buildRetryTranscriptionRow(message)],
       flags: NOTIFY_MESSAGE_FLAGS,
     })
     return null
