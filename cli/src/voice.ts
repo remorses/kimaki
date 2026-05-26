@@ -4,7 +4,10 @@
 //   - OpenAI: gpt-4o-audio-preview via .chat() (Chat Completions API). MUST use .chat()
 //     because the default Responses API doesn't support audio file parts. The Chat
 //     Completions handler converts audio/mpeg file parts to input_audio format.
-//   - Gemini: gemini-2.5-flash natively accepts audio file parts in chat.
+//   - Gemini: walks GEMINI_TRANSCRIPTION_MODELS in order. The default chain starts
+//     with `gemini-3.1-flash-lite` (500 RPD on free tier) then rotates through higher
+//     quality models. Errors are classified (overload vs quota vs deprecated) so we
+//     retry transient overloads but skip exhausted/deprecated models permanently.
 // Calls model.doGenerate() directly without the `ai` npm package.
 // Uses errore for type-safe error handling.
 
@@ -34,6 +37,74 @@ import {
 } from './errors.js'
 
 const voiceLogger = createLogger(LogPrefix.VOICE)
+
+// Gemini fallback chain for transcription. Ordered by free-tier friendliness first
+// (so the most common case — users without billing enabled — still works) but every
+// model in this list accepts audio file parts in chat. Override per-call via the
+// `transcriptionModels` parameter to `transcribeAudio`.
+//
+// Free-tier daily request quotas (as of 2026-05):
+//   - gemini-3.1-flash-lite: 500 RPD  ← primary, proven on real audio
+//   - gemini-3.5-flash:       20 RPD  ← higher quality, lower quota
+//   - gemini-2.5-flash:       20 RPD  ← legacy default, retained for paid users
+//
+// Excluded on purpose: `gemini-2.5-pro` and `gemini-2.0-flash` have `limit: 0` on the
+// free tier (paid-only), and `gemini-1.5-flash` is deprecated on the v1beta endpoint.
+export const GEMINI_TRANSCRIPTION_MODELS: readonly string[] = [
+  'gemini-3.1-flash-lite',
+  'gemini-3.5-flash',
+  'gemini-2.5-flash',
+] as const
+
+/**
+ * Classification of a Gemini API error after a transcription attempt failed.
+ * Drives the per-model retry loop inside `transcribeWithGeminiFallback`.
+ */
+export type GeminiErrorClass =
+  | { kind: 'retry-then-next'; delayMs: number }
+  | { kind: 'next-model' }
+  | { kind: 'bail' }
+
+/**
+ * Inspect an AI SDK error from `model.doGenerate()` and decide what to do next.
+ * The AI SDK swallows the structured Google error code, so we pattern-match on the
+ * message string — these patterns mirror the real-world responses observed when
+ * running against the free tier with quota exhausted, paid-only models, and
+ * deprecated v1beta model IDs.
+ */
+export function classifyGeminiError(err: Error): GeminiErrorClass {
+  const msg = err.message.toLowerCase()
+
+  // Bad API key — no model in the chain will help.
+  if (msg.includes('api key not valid') || msg.includes('invalid api key')) {
+    return { kind: 'bail' }
+  }
+
+  // Model ID not recognised by the v1beta endpoint (deprecated or typo). Skip it
+  // for the rest of this transcription run.
+  if (msg.includes('is not found for api version') || msg.includes('not supported for generatecontent')) {
+    return { kind: 'next-model' }
+  }
+
+  // Quota exhausted — daily cap hit OR model is paid-only (`limit: 0`). Either way
+  // retrying this model right now won't help; move to the next.
+  if (
+    msg.includes('exceeded your current quota') ||
+    msg.includes('resource_exhausted') ||
+    msg.includes('quota exceeded')
+  ) {
+    return { kind: 'next-model' }
+  }
+
+  // Transient model overload — gemini occasionally returns this even when quota is
+  // healthy. Worth one retry with a small backoff before moving on.
+  if (msg.includes('experiencing high demand') || msg.includes('overloaded') || msg.includes('unavailable')) {
+    return { kind: 'retry-then-next', delayMs: 3000 }
+  }
+
+  // Anything else is treated as fatal for this model but not for the chain.
+  return { kind: 'next-model' }
+}
 
 // OpenAI input_audio only supports wav and mp3. Other formats (OGG Opus, etc)
 // must be converted before sending.
@@ -439,24 +510,127 @@ export type TranscriptionProvider = 'openai' | 'gemini'
  * OpenAI: must use .chat() to get the Chat Completions API model, because the
  * default callable (Responses API) doesn't support audio file parts.
  * Gemini: language models natively accept audio in chat.
+ *
+ * For Gemini, the model defaults to the first entry in `GEMINI_TRANSCRIPTION_MODELS`.
+ * The higher-level `transcribeAudio` walks the full chain — call this helper directly
+ * only when you want a single-shot model without fallback.
  */
 export function createTranscriptionModel({
   apiKey,
   provider,
+  modelId,
 }: {
   apiKey: string
   provider?: TranscriptionProvider
+  /** Override the model ID. Defaults to gpt-4o-audio-preview (OpenAI) or the head of GEMINI_TRANSCRIPTION_MODELS (Gemini). */
+  modelId?: string
 }): LanguageModelV3 {
   const resolvedProvider: TranscriptionProvider =
     provider || (apiKey.startsWith('sk-') ? 'openai' : 'gemini')
 
   if (resolvedProvider === 'openai') {
     const openai = createOpenAI({ apiKey })
-    return openai.chat('gpt-4o-audio-preview')
+    return openai.chat(modelId || 'gpt-4o-audio-preview')
   }
 
   const google = createGoogleGenerativeAI({ apiKey })
-  return google('gemini-2.5-flash')
+  return google(modelId || GEMINI_TRANSCRIPTION_MODELS[0]!)
+}
+
+/**
+ * Walk the Gemini fallback chain, running `runTranscriptionOnce` against each model
+ * in order. Per-model behaviour is driven by `classifyGeminiError`:
+ *
+ *   - `retry-then-next`  → one retry after `delayMs`, then move to the next model
+ *   - `next-model`       → skip to the next model immediately (no retry)
+ *   - `bail`             → return the error, stop walking the chain
+ *
+ * Returns the first successful transcription or the last error seen.
+ */
+async function transcribeWithGeminiFallback({
+  apiKey,
+  models,
+  prompt,
+  audioBase64,
+  mediaType,
+  temperature,
+  agentNames,
+}: {
+  apiKey: string
+  models: readonly string[]
+  prompt: string
+  audioBase64: string
+  mediaType: string
+  temperature: number
+  agentNames?: string[]
+}): Promise<TranscriptionLoopError | TranscriptionResult> {
+  if (models.length === 0) {
+    return new TranscriptionError({ reason: 'No Gemini models configured in fallback chain' })
+  }
+
+  const google = createGoogleGenerativeAI({ apiKey })
+  let lastError: TranscriptionLoopError | null = null
+
+  for (const modelId of models) {
+    voiceLogger.log(`Trying Gemini model: ${modelId}`)
+    const model = google(modelId)
+
+    // Up to 2 attempts per model — second attempt only fires for transient overloads.
+    let movedOn = false
+    for (let attempt = 1; attempt <= 2 && !movedOn; attempt++) {
+      const result = await runTranscriptionOnce({
+        model,
+        provider: 'gemini',
+        prompt,
+        audioBase64,
+        mediaType,
+        temperature,
+        agentNames,
+      })
+
+      if (!(result instanceof Error)) {
+        if (lastError) {
+          voiceLogger.log(`Gemini fallback recovered on ${modelId} after earlier failures`)
+        }
+        return result
+      }
+
+      lastError = result
+      const classification = classifyGeminiError(result)
+
+      if (classification.kind === 'bail') {
+        voiceLogger.error(`Gemini fallback bailing: ${result.message}`)
+        return result
+      }
+
+      if (classification.kind === 'next-model') {
+        voiceLogger.log(
+          `  ${modelId} failed (${result.message.split('\n')[0]!.slice(0, 120)}) — next model`,
+        )
+        movedOn = true
+        break
+      }
+
+      // retry-then-next
+      if (attempt < 2) {
+        voiceLogger.log(
+          `  ${modelId} overloaded, retrying in ${classification.delayMs}ms`,
+        )
+        await new Promise<void>((r) => {
+          setTimeout(r, classification.delayMs)
+        })
+        continue
+      }
+      voiceLogger.log(`  ${modelId} still overloaded after retry — next model`)
+    }
+  }
+
+  return (
+    lastError ||
+    new TranscriptionError({
+      reason: 'No Gemini models in fallback chain succeeded',
+    })
+  )
 }
 
 export async function transcribeAudio({
@@ -471,6 +645,7 @@ export async function transcribeAudio({
   currentSessionContext,
   lastSessionContext,
   agents,
+  transcriptionModels,
 }: {
   audio: Buffer | Uint8Array | ArrayBuffer | string
   prompt?: string
@@ -485,6 +660,11 @@ export async function transcribeAudio({
   lastSessionContext?: string
   /** Available agents for agent selection via voice. Names used as enum values in the tool schema. */
   agents?: Array<{ name: string; description?: string }>
+  /**
+   * Override the Gemini fallback chain. Defaults to `GEMINI_TRANSCRIPTION_MODELS`.
+   * Ignored when an explicit `model` is passed or when the provider is OpenAI.
+   */
+  transcriptionModels?: readonly string[]
 }): Promise<TranscribeAudioErrors | TranscriptionResult> {
   const apiKey =
     apiKeyParam || process.env.OPENAI_API_KEY || process.env.GEMINI_API_KEY
@@ -503,8 +683,11 @@ export async function transcribeAudio({
     return 'gemini'
   })()
 
-  const languageModel: LanguageModelV3 =
-    model || createTranscriptionModel({ apiKey: apiKey!, provider: resolvedProvider })
+  // When the caller provides their own `model`, honour it as a single-shot (no
+  // fallback chain). Otherwise we lazily construct the model — for Gemini that
+  // means walking GEMINI_TRANSCRIPTION_MODELS, so we defer model creation until
+  // after audio conversion below.
+  const explicitModel: LanguageModelV3 | null = model || null
 
   // Convert audio to Buffer for potential format conversion
   const audioBuffer: Buffer = (() => {
@@ -631,13 +814,36 @@ Note: "critique" is a CLI tool for showing diffs in the browser.`
     ?.map((a) => { return a.name })
     .filter((name) => { return name.length > 0 })
 
+  const finalAgentNames = agentNames && agentNames.length > 0 ? agentNames : undefined
+  const finalTemperature = temperature ?? 0.3
+
+  // Gemini + no explicit model = walk the fallback chain. Every other case is a
+  // single-shot call against whatever model the caller resolved.
+  if (resolvedProvider === 'gemini' && !explicitModel) {
+    return transcribeWithGeminiFallback({
+      apiKey: apiKey!,
+      models: transcriptionModels && transcriptionModels.length > 0
+        ? transcriptionModels
+        : GEMINI_TRANSCRIPTION_MODELS,
+      prompt: transcriptionPrompt,
+      audioBase64: finalAudioBase64,
+      mediaType,
+      temperature: finalTemperature,
+      agentNames: finalAgentNames,
+    })
+  }
+
+  const languageModel: LanguageModelV3 =
+    explicitModel ||
+    createTranscriptionModel({ apiKey: apiKey!, provider: resolvedProvider })
+
   return runTranscriptionOnce({
     model: languageModel,
     prompt: transcriptionPrompt,
     audioBase64: finalAudioBase64,
     mediaType,
-    temperature: temperature ?? 0.3,
-    agentNames: agentNames && agentNames.length > 0 ? agentNames : undefined,
+    temperature: finalTemperature,
+    agentNames: finalAgentNames,
     provider: resolvedProvider,
   })
 }
