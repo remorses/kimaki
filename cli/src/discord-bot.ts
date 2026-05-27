@@ -47,6 +47,7 @@ import { extractBtwPrefix } from './btw-prefix-detection.js'
 import { isVoiceAttachment } from './voice-attachment.js'
 import { forkSessionToBtwThread } from './commands/btw.js'
 import {
+  extractQueueSuffix,
   getChannelReferencePermissionRules,
   preprocessExistingThreadMessage,
   preprocessNewThreadMessage,
@@ -986,6 +987,51 @@ export async function startDiscordBot({
           sendError instanceof Error ? sendError.message : String(sendError),
         )
       }
+    }
+  })
+
+  // Handle user message edits to update queued messages.
+  // When a user edits a message that is still waiting in kimaki's local queue,
+  // the queue item is updated with the new content. If the edit removes the
+  // queue suffix, the item is removed from the queue.
+  discordClient.on(Events.MessageUpdate, async (_oldMessage, newMessage) => {
+    try {
+      if (newMessage.author?.bot) return
+      if (!newMessage.content) return
+
+      const channel = newMessage.channel
+      const isThread = [
+        ChannelType.PublicThread,
+        ChannelType.PrivateThread,
+        ChannelType.AnnouncementThread,
+      ].includes(channel.type)
+      if (!isThread) return
+
+      const runtime = getRuntime(channel.id)
+      if (!runtime) return
+
+      // Strip queue suffix from the edited content, same as initial preprocessing.
+      const { prompt, forceQueue } = extractQueueSuffix(
+        stripMentions(newMessage.content),
+      )
+
+      // If the edit removed the queue suffix, remove the item from the queue.
+      // If the suffix is still present, update the prompt.
+      const result = runtime.updateQueuedMessage(
+        newMessage.id,
+        forceQueue ? prompt : '',
+      )
+
+      if (result.found) {
+        discordLogger.log(
+          `[MESSAGE_EDIT] ${result.removed ? 'Removed' : 'Updated'} queued message ${newMessage.id} in thread ${channel.id}`,
+        )
+      }
+    } catch (error) {
+      discordLogger.error(
+        'Error handling message update:',
+        error instanceof Error ? error.stack : String(error),
+      )
     }
   })
 

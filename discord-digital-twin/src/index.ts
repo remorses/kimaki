@@ -358,6 +358,57 @@ export class DigitalDiscord {
     return apiMessage
   }
 
+  async simulateUserMessageEdit({
+    messageId,
+    channelId,
+    content,
+  }: {
+    messageId: string
+    channelId: string
+    content: string
+  }): Promise<APIMessage> {
+    if (!this.server) {
+      throw new Error('Server not started')
+    }
+    const existing = await this.prisma.message.findUnique({
+      where: { id: messageId },
+    })
+    if (!existing) {
+      throw new Error(`Message ${messageId} not found`)
+    }
+    await this.prisma.message.update({
+      where: { id: messageId },
+      data: { content, editedTimestamp: new Date() },
+    })
+    const dbMessage = await this.prisma.message.findUniqueOrThrow({
+      where: { id: messageId },
+    })
+    const author = await this.prisma.user.findUniqueOrThrow({
+      where: { id: dbMessage.authorId },
+    })
+    const channel = await this.prisma.channel.findUnique({
+      where: { id: channelId },
+    })
+    const guildId = channel?.guildId ?? undefined
+    const member = guildId
+      ? await this.prisma.guildMember.findUnique({
+          where: { guildId_userId: { guildId, userId: dbMessage.authorId } },
+          include: { user: true },
+        })
+      : null
+    const apiMessage = messageToAPI(
+      dbMessage,
+      author,
+      guildId,
+      member ?? undefined,
+    )
+    this.server.gateway.broadcast(GatewayDispatchEvents.MessageUpdate, {
+      ...apiMessage,
+      guild_id: guildId ?? '',
+    })
+    return apiMessage
+  }
+
   async simulateInteraction({
     type,
     channelId,
@@ -1297,6 +1348,20 @@ export class ScopedUserActor {
           proxy_url: 'https://fake-cdn.discord.test/voice-message.ogg',
         },
       ],
+    })
+  }
+
+  async editMessage({
+    messageId,
+    content,
+  }: {
+    messageId: string
+    content: string
+  }) {
+    return this.discord.simulateUserMessageEdit({
+      messageId,
+      channelId: this.channelId,
+      content,
     })
   }
 

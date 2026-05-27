@@ -251,6 +251,41 @@ export function removeQueueItemAtPosition(
   return removedItem
 }
 
+/**
+ * Find a queued item by its Discord source message ID and apply an updater.
+ * If the updater returns null, the item is removed from the queue.
+ * Returns the original (pre-update) item, or undefined if not found.
+ */
+export function updateQueueItemBySourceMessageId(
+  threadId: string,
+  sourceMessageId: string,
+  updater: (item: QueuedMessage) => QueuedMessage | null,
+): QueuedMessage | undefined {
+  let originalItem: QueuedMessage | undefined
+  store.setState((s) => {
+    const t = s.threads.get(threadId)
+    if (!t) return s
+
+    const index = t.queueItems.findIndex((item) => {
+      return item.sourceMessageId === sourceMessageId
+    })
+    if (index === -1) return s
+
+    originalItem = t.queueItems[index]!
+    const updated = updater(originalItem)
+
+    const newThreads = new Map(s.threads)
+    newThreads.set(threadId, {
+      ...t,
+      queueItems: updated === null
+        ? t.queueItems.filter((_, i) => i !== index)
+        : t.queueItems.map((item, i) => (i === index ? updated : item)),
+    })
+    return { threads: newThreads }
+  })
+  return originalItem
+}
+
 // ── Queries ──────────────────────────────────────────────────────
 
 export function getThreadState(threadId: string): ThreadRunState | undefined {

@@ -233,10 +233,36 @@ function createDeterministicMatchers() {
     },
   }
 
+  // Matcher that keeps the session busy for 2s after the first text part.
+  // Used by queue-edit tests to ensure the follow-up message lands in the
+  // local queue before the session finishes.
+  const slowBusyMatcher: DeterministicMatcher = {
+    id: 'slow-busy-reply',
+    priority: 115,
+    when: {
+      latestUserTextIncludes: 'SLOW_BUSY_MARKER',
+    },
+    then: {
+      parts: [
+        { type: 'stream-start', warnings: [] },
+        { type: 'text-start', id: 'slow-busy' },
+        { type: 'text-delta', id: 'slow-busy', delta: 'slow-busy-reply' },
+        { type: 'text-end', id: 'slow-busy' },
+        {
+          type: 'finish',
+          finishReason: 'stop',
+          usage: { inputTokens: 1, outputTokens: 1, totalTokens: 2 },
+        },
+      ],
+      partDelaysMs: [0, 100, 0, 0, 2_000],
+    },
+  }
+
   return [
     bashCreateFileMatcher,
     bashCreateFileFollowupMatcher,
     raceFinalReplyMatcher,
+    slowBusyMatcher,
     hotelSlowMatcher,
     userReplyMatcher,
   ]
@@ -788,7 +814,8 @@ e2eTest('thread message queue ordering', () => {
         --- from: assistant (TestBot)
         *using deterministic-provider/deterministic-v2*
         ⬥ running create file
-        ⬥ ok
+        ┣ bash _mkdir -p tmp && printf "created" > tmp/bash-tool-executed.txt_
+        ⬥ file created
         *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2*"
       `)
       expect(fs.existsSync(markerPath)).toBe(true)
@@ -1352,6 +1379,205 @@ e2eTest('thread message queue ordering', () => {
       expect(userNovemberIndex).toBeLessThan(lastBotIndex)
     },
     8_000,
+  )
+
+  test(
+    'editing a queued message updates its prompt before dispatch',
+    async () => {
+      // 1. Start a session with a slow matcher (2s busy) to keep it busy.
+      await discord.channel(TEXT_CHANNEL_ID).user(TEST_USER_ID).sendMessage({
+        content: 'SLOW_BUSY_MARKER Reply with exactly: edit-queue-setup',
+      })
+
+      const thread = await discord.channel(TEXT_CHANNEL_ID).waitForThread({
+        timeout: 4_000,
+        predicate: (t) => {
+          return t.name === 'SLOW_BUSY_MARKER Reply with exactly: edit-queue-setup'
+        },
+      })
+
+      const th = discord.thread(thread.id)
+
+      // 2. While session is busy (race-final has 500ms delay), queue a message
+      // with queue suffix. The queue suffix forces local-queue mode.
+      const queuedMsg = await th.user(TEST_USER_ID).sendMessage({
+        content: 'Reply with exactly: original-queued. queue',
+      })
+
+      // 3. Verify the message landed in the local queue.
+      const queuedState = await waitForThreadState({
+        threadId: thread.id,
+        predicate: (state) => {
+          return state.queueItems.length > 0
+        },
+        timeout: 4_000,
+        description: 'queue has item from suffix message',
+      })
+      expect(queuedState.queueItems.length).toBeGreaterThanOrEqual(1)
+      const queueItem = queuedState.queueItems.find((item) => {
+        return item.sourceMessageId === queuedMsg.id
+      })
+      expect(queueItem).toBeTruthy()
+      expect(queueItem!.prompt).toContain('original-queued')
+
+      // 4. Edit the message while it's still in the queue.
+      await th.user(TEST_USER_ID).editMessage({
+        messageId: queuedMsg.id,
+        content: 'Reply with exactly: edited-queued. queue',
+      })
+
+      // 5. Verify the queue item was updated.
+      const updatedState = await waitForThreadState({
+        threadId: thread.id,
+        predicate: (state) => {
+          return state.queueItems.some((item) => {
+            return item.prompt.includes('edited-queued')
+          })
+        },
+        timeout: 4_000,
+        description: 'queue item updated after edit',
+      })
+      const updatedItem = updatedState.queueItems.find((item) => {
+        return item.sourceMessageId === queuedMsg.id
+      })
+      expect(updatedItem).toBeTruthy()
+      expect(updatedItem!.prompt).toContain('edited-queued')
+      expect(updatedItem!.prompt).not.toContain('original-queued')
+
+      // 6. Wait for the queue to drain and verify the edited prompt was dispatched.
+      await waitForBotMessageContaining({
+        discord,
+        threadId: thread.id,
+        userId: TEST_USER_ID,
+        text: '» **queue-tester:** Reply with exactly: edited-queued',
+        timeout: 8_000,
+      })
+
+      await waitForFooterMessage({
+        discord,
+        threadId: thread.id,
+        timeout: 8_000,
+        afterMessageIncludes: 'edited-queued',
+        afterAuthorId: discord.botUserId,
+      })
+
+      expect(await th.text()).toMatchInlineSnapshot(`
+        "--- from: user (queue-tester)
+        SLOW_BUSY_MARKER Reply with exactly: edit-queue-setup
+        --- from: assistant (TestBot)
+        *using deterministic-provider/deterministic-v2*
+        --- from: user (queue-tester)
+        Reply with exactly: edited-queued. queue
+        --- from: assistant (TestBot)
+        Queued at position 1
+        ⬥ slow-busy-reply
+        *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2*
+        » **queue-tester:** Reply with exactly: edited-queued
+        ⬥ ok
+        *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2*"
+      `)
+
+      const finalText = await th.text()
+      expect(finalText).toContain('edited-queued')
+      expect(finalText).not.toContain('original-queued')
+    },
+    12_000,
+  )
+
+  test(
+    'editing a queued message to remove queue suffix removes it from queue',
+    async () => {
+      // 1. Start a session with a slow matcher (2s busy) to keep it busy.
+      await discord.channel(TEXT_CHANNEL_ID).user(TEST_USER_ID).sendMessage({
+        content: 'SLOW_BUSY_MARKER Reply with exactly: remove-queue-setup',
+      })
+
+      const thread = await discord.channel(TEXT_CHANNEL_ID).waitForThread({
+        timeout: 4_000,
+        predicate: (t) => {
+          return t.name === 'SLOW_BUSY_MARKER Reply with exactly: remove-queue-setup'
+        },
+      })
+
+      const th = discord.thread(thread.id)
+
+      // 2. Queue a message with queue suffix while session is busy.
+      const queuedMsg = await th.user(TEST_USER_ID).sendMessage({
+        content: 'Reply with exactly: will-be-removed. queue',
+      })
+
+      // 3. Verify the message is in the queue.
+      await waitForThreadState({
+        threadId: thread.id,
+        predicate: (state) => {
+          return state.queueItems.some((item) => {
+            return item.sourceMessageId === queuedMsg.id
+          })
+        },
+        timeout: 4_000,
+        description: 'queue has item to be removed',
+      })
+
+      // 4. Edit the message to remove the queue suffix.
+      await th.user(TEST_USER_ID).editMessage({
+        messageId: queuedMsg.id,
+        content: 'Reply with exactly: will-be-removed',
+      })
+
+      // 5. Verify the item was removed from the queue.
+      // Poll briefly since the MessageUpdate event is async.
+      for (let i = 0; i < 20; i++) {
+        const state = await waitForThreadState({
+          threadId: thread.id,
+          predicate: () => true,
+          timeout: 100,
+          description: 'check queue after edit',
+        })
+        const stillQueued = state.queueItems.some((item) => {
+          return item.sourceMessageId === queuedMsg.id
+        })
+        if (!stillQueued) break
+        await new Promise((r) => setTimeout(r, 50))
+      }
+
+      const finalState = await waitForThreadState({
+        threadId: thread.id,
+        predicate: () => true,
+        timeout: 100,
+        description: 'final queue check',
+      })
+      const removedItem = finalState.queueItems.find((item) => {
+        return item.sourceMessageId === queuedMsg.id
+      })
+      expect(removedItem).toBeUndefined()
+
+      // 6. Wait for the slow session to finish and verify the removed
+      // message was never dispatched as a queue drain (no » indicator).
+      await waitForFooterMessage({
+        discord,
+        threadId: thread.id,
+        timeout: 8_000,
+      })
+
+      const finalText = await th.text()
+      // The user message text appears in the thread, but the queue dispatch
+      // indicator (» **username:** ...) should NOT appear because the item
+      // was removed from the queue before drain.
+      expect(finalText).not.toContain('» **queue-tester:** Reply with exactly: will-be-removed')
+      expect(finalText).toMatchInlineSnapshot(`
+        "--- from: user (queue-tester)
+        SLOW_BUSY_MARKER Reply with exactly: remove-queue-setup
+        --- from: assistant (TestBot)
+        *using deterministic-provider/deterministic-v2*
+        --- from: user (queue-tester)
+        Reply with exactly: will-be-removed
+        --- from: assistant (TestBot)
+        Queued at position 1
+        ⬥ slow-busy-reply
+        *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2*"
+      `)
+    },
+    12_000,
   )
 
 })

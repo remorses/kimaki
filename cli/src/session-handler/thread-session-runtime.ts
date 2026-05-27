@@ -3662,6 +3662,30 @@ export class ThreadSessionRuntime {
     return threadState.removeQueueItemAtPosition(this.threadId, position)
   }
 
+  /**
+   * Update a queued message identified by its Discord source message ID.
+   * If newPrompt is empty, the item is removed from the queue.
+   * Returns { found: true, removed } if the item was in the queue,
+   * or { found: false } if it was already dispatched or never queued.
+   */
+  updateQueuedMessage(
+    sourceMessageId: string,
+    newPrompt: string,
+  ): { found: boolean; removed: boolean } {
+    const trimmed = newPrompt.trim()
+    const original = threadState.updateQueueItemBySourceMessageId(
+      this.threadId,
+      sourceMessageId,
+      (item) => {
+        if (!trimmed) return null
+        return { ...item, prompt: trimmed }
+      },
+    )
+    if (!original) return { found: false, removed: false }
+    if (!trimmed) return { found: true, removed: true }
+    return { found: true, removed: false }
+  }
+
   // ── Queue Drain ─────────────────────────────────────────────
 
   /**

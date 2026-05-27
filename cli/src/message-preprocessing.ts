@@ -67,7 +67,7 @@ export type { PreprocessResult }
 // kimaki's local queue (same as /queue command).
 const QUEUE_SUFFIX_RE = /(?:[.!?,;:]|^)\s*queue\.?\s*$|\n\s*queue\.?\s*$/i
 const REPLIED_MESSAGE_TEXT_LIMIT = 1_000
-function extractQueueSuffix(prompt: string): { prompt: string; forceQueue: boolean } {
+export function extractQueueSuffix(prompt: string): { prompt: string; forceQueue: boolean } {
   if (!QUEUE_SUFFIX_RE.test(prompt)) {
     return { prompt, forceQueue: false }
   }
