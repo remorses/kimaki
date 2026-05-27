@@ -376,6 +376,9 @@ export class DigitalDiscord {
     if (!existing) {
       throw new Error(`Message ${messageId} not found`)
     }
+    if (existing.channelId !== channelId) {
+      throw new Error(`Message ${messageId} is not in channel ${channelId}`)
+    }
     await this.prisma.message.update({
       where: { id: messageId },
       data: { content, editedTimestamp: new Date() },

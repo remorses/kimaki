@@ -996,10 +996,16 @@ export async function startDiscordBot({
   // queue suffix, the item is removed from the queue.
   discordClient.on(Events.MessageUpdate, async (_oldMessage, newMessage) => {
     try {
-      if (newMessage.author?.bot) return
-      if (!newMessage.content) return
+      // Fetch full message if partial (cache miss). Needed for mentions
+      // and content to be fully resolved.
+      const message = newMessage.partial
+        ? await newMessage.fetch().catch(() => null)
+        : newMessage
+      if (!message) return
+      if (message.author.bot) return
+      if (!message.content) return
 
-      const channel = newMessage.channel
+      const channel = message.channel
       const isThread = [
         ChannelType.PublicThread,
         ChannelType.PrivateThread,
@@ -1010,21 +1016,23 @@ export async function startDiscordBot({
       const runtime = getRuntime(channel.id)
       if (!runtime) return
 
-      // Strip queue suffix from the edited content, same as initial preprocessing.
+      // Use resolveMentions to match initial preprocessing and preserve
+      // newlines (stripMentions collapses them, breaking final-line queue
+      // suffix detection).
       const { prompt, forceQueue } = extractQueueSuffix(
-        stripMentions(newMessage.content),
+        resolveMentions(message),
       )
 
       // If the edit removed the queue suffix, remove the item from the queue.
       // If the suffix is still present, update the prompt.
       const result = runtime.updateQueuedMessage(
-        newMessage.id,
+        message.id,
         forceQueue ? prompt : '',
       )
 
       if (result.found) {
         discordLogger.log(
-          `[MESSAGE_EDIT] ${result.removed ? 'Removed' : 'Updated'} queued message ${newMessage.id} in thread ${channel.id}`,
+          `[MESSAGE_EDIT] ${result.removed ? 'Removed' : 'Updated'} queued message ${message.id} in thread ${channel.id}`,
         )
       }
     } catch (error) {
