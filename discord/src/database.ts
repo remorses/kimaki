@@ -1054,7 +1054,7 @@ export async function appendSessionEventsSinceLastTimestamp({
         session_id: sessionId,
       },
       orderBy: [{ timestamp: 'desc' }, { event_index: 'desc' }, { id: 'desc' }],
-      skip: 1000,
+      skip: 5000,
       select: {
         id: true,
       },
@@ -1088,8 +1088,100 @@ export async function getSessionEventSnapshot({
       session_id: sessionId,
     },
     orderBy: [{ timestamp: 'asc' }, { event_index: 'asc' }, { id: 'asc' }],
-    take: 1000,
+    take: 5000,
   })
+}
+
+export type SessionRecallResult = {
+  message_id: string
+  role: string
+  text: string
+  timestamp: number
+  snippet: string
+}
+
+export async function searchSessionArchive({
+  sessionId,
+  query,
+  role,
+  limit = 10,
+}: {
+  sessionId: string
+  query: string
+  role?: string
+  limit?: number
+}): Promise<SessionRecallResult[]> {
+  const prisma = await getPrisma()
+  const escapedQuery = query.replace(/'/g, "''")
+  let roleFilter = ''
+  if (role) {
+    const escapedRole = role.replace(/'/g, "''")
+    roleFilter = `AND json_extract(se.event_json, '$.properties.part.type') = 'text'`
+  } else {
+    roleFilter = `AND json_extract(se.event_json, '$.properties.part.type') = 'text'`
+  }
+
+  const sql = `
+    WITH text_parts AS (
+      SELECT
+        se.id,
+        se.event_json,
+        json_extract(se.event_json, '$.properties.part.text') AS part_text,
+        json_extract(se.event_json, '$.properties.part.messageID') AS message_id,
+        json_extract(se.event_json, '$.properties.part.sessionID') AS part_session_id,
+        se.timestamp
+      FROM session_events se
+      WHERE se.session_id = '${sessionId.replace(/'/g, "''")}'
+        AND json_extract(se.event_json, '$.type') = 'message.part.updated'
+        ${roleFilter}
+    ),
+    roles AS (
+      SELECT
+        msg.session_id AS msg_session_id,
+        json_extract(msg.event_json, '$.properties.info.id') AS msg_id,
+        json_extract(msg.event_json, '$.properties.info.role') AS msg_role
+      FROM session_events msg
+      WHERE msg.session_id = '${sessionId.replace(/'/g, "''")}'
+        AND json_extract(msg.event_json, '$.type') = 'message.updated'
+        AND json_extract(msg.event_json, '$.properties.info.role') IS NOT NULL
+    )
+    SELECT
+      tp.message_id,
+      COALESCE(r.msg_role, 'unknown') AS role,
+      tp.part_text AS text,
+      tp.timestamp,
+      CASE
+        WHEN length(tp.part_text) > 300 THEN substr(tp.part_text, 1, 300) || '...'
+        ELSE tp.part_text
+      END AS snippet
+    FROM text_parts tp
+    LEFT JOIN roles r ON r.msg_session_id = tp.part_session_id AND r.msg_id = tp.message_id
+    WHERE tp.part_text LIKE '%${escapedQuery}%'
+      AND tp.part_text IS NOT NULL
+      AND length(tp.part_text) > 0
+    ${role ? `AND COALESCE(r.msg_role, 'unknown') = '${role.replace(/'/g, "''")}'` : ''}
+    ORDER BY tp.timestamp DESC
+    LIMIT ${Math.min(limit, 50)}
+  `
+
+  type RawRow = {
+    message_id: string | null
+    role: string
+    text: string | null
+    timestamp: bigint
+    snippet: string | null
+  }
+
+  const rows = await prisma.$queryRawUnsafe<RawRow[]>(sql)
+  return rows
+    .filter((row): row is RawRow & { text: string } => !!row.text && row.text.length > 0)
+    .map((row) => ({
+      message_id: row.message_id || '',
+      role: row.role,
+      text: row.text as string,
+      timestamp: Number(row.timestamp),
+      snippet: row.snippet || '',
+    }))
 }
 
 // ============================================================================
