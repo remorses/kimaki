@@ -647,20 +647,18 @@ export async function startDiscordBot({
           }
         }
 
-        // `. btw <prompt>` suffix mirrors /btw for fast side-question forks.
-        // Keep this at ingress instead of preprocess because it must create a
-        // new thread/runtime, not just transform the current prompt.
-        // Only triggers when btw is preceded by punctuation or newline.
-        // Voice-transcribed `btw` still goes through normal preprocessing.
-        const btwShortcut =
+        // `. btw` suffix mirrors /btw for fast side-question forks.
+        // Works like queue: just the word "btw" at the end after punctuation
+        // or newline. The whole message (minus the suffix) becomes the fork prompt.
+        const btwResult =
           projectDirectory && worktreeInfo?.status !== 'pending'
             ? extractBtwSuffix(message.content || '')
             : null
-        if (btwShortcut && projectDirectory) {
+        if (btwResult?.forceBtw && projectDirectory) {
           const result = await forkSessionToBtwThread({
             sourceThread: thread,
             projectDirectory,
-            prompt: btwShortcut.prompt,
+            prompt: btwResult.prompt,
             userId: message.author.id,
             username:
               message.member?.displayName || message.author.displayName,
@@ -679,15 +677,7 @@ export async function startDiscordBot({
             content: `Session forked! Continue in ${result.thread.toString()}`,
             flags: SILENT_MESSAGE_FLAGS,
           })
-          // If there's remaining text before the btw suffix, let it fall
-          // through to normal message processing below. Otherwise return.
-          if (!btwShortcut.remaining) {
-            return
-          }
-          // Overwrite message content so downstream processing uses only the
-          // remaining text (everything before the btw suffix).
-          // discord.js Message.content is writable at runtime.
-          ;(message as { content: string }).content = btwShortcut.remaining
+          return
         }
 
         const hasVoiceAttachment = message.attachments.some((attachment) => {

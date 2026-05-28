@@ -3,99 +3,101 @@ import { extractBtwSuffix } from './btw-prefix-detection.js'
 
 describe('extractBtwSuffix', () => {
   test('matches after period', () => {
-    expect(extractBtwSuffix('fix the bug. btw check tests')).toMatchInlineSnapshot(`
+    expect(extractBtwSuffix('fix the bug. btw')).toMatchInlineSnapshot(`
       {
-        "prompt": "check tests",
-        "remaining": "fix the bug",
+        "forceBtw": true,
+        "prompt": "fix the bug",
       }
     `)
   })
 
   test('matches after exclamation', () => {
-    expect(extractBtwSuffix('done! btw also review auth')).toMatchInlineSnapshot(`
+    expect(extractBtwSuffix('done! btw')).toMatchInlineSnapshot(`
       {
-        "prompt": "also review auth",
-        "remaining": "done",
+        "forceBtw": true,
+        "prompt": "done",
       }
     `)
   })
 
   test('matches after comma', () => {
-    expect(extractBtwSuffix('sure, btw fix the tests')).toMatchInlineSnapshot(`
+    expect(extractBtwSuffix('sure, btw')).toMatchInlineSnapshot(`
       {
-        "prompt": "fix the tests",
-        "remaining": "sure",
+        "forceBtw": true,
+        "prompt": "sure",
       }
     `)
   })
 
   test('matches after newline', () => {
-    expect(extractBtwSuffix('fix the bug\nbtw check tests')).toMatchInlineSnapshot(`
+    expect(extractBtwSuffix('fix the bug\nbtw')).toMatchInlineSnapshot(`
       {
-        "prompt": "check tests",
-        "remaining": "fix the bug",
+        "forceBtw": true,
+        "prompt": "fix the bug",
+      }
+    `)
+  })
+
+  test('matches with trailing dot', () => {
+    expect(extractBtwSuffix('fix the bug. btw.')).toMatchInlineSnapshot(`
+      {
+        "forceBtw": true,
+        "prompt": "fix the bug",
       }
     `)
   })
 
   test('case insensitive', () => {
-    expect(extractBtwSuffix('done. BTW check this')).toMatchInlineSnapshot(`
+    expect(extractBtwSuffix('done. BTW')).toMatchInlineSnapshot(`
       {
-        "prompt": "check this",
-        "remaining": "done",
+        "forceBtw": true,
+        "prompt": "done",
       }
     `)
   })
 
-  test('btw with colon separator', () => {
-    expect(extractBtwSuffix('ok. btw: check this')).toMatchInlineSnapshot(`
+  test('no space between punctuation and btw', () => {
+    expect(extractBtwSuffix('done.btw')).toMatchInlineSnapshot(`
       {
-        "prompt": "check this",
-        "remaining": "ok",
-      }
-    `)
-  })
-
-  test('btw with dot separator', () => {
-    expect(extractBtwSuffix('ok. btw. check this')).toMatchInlineSnapshot(`
-      {
-        "prompt": "check this",
-        "remaining": "ok",
-      }
-    `)
-  })
-
-  test('multiline btw prompt', () => {
-    expect(extractBtwSuffix('fix the bug. btw first line\nsecond line')).toMatchInlineSnapshot(`
-      {
-        "prompt": "first line
-      second line",
-        "remaining": "fix the bug",
+        "forceBtw": true,
+        "prompt": "done",
       }
     `)
   })
 
   test('does not match at start of message', () => {
-    expect(extractBtwSuffix('btw fix this')).toMatchInlineSnapshot(`null`)
+    expect(extractBtwSuffix('btw fix this')).toMatchInlineSnapshot(`
+      {
+        "forceBtw": false,
+        "prompt": "btw fix this",
+      }
+    `)
   })
 
   test('does not match mid-message without punctuation', () => {
-    expect(extractBtwSuffix('hello btw fix this')).toMatchInlineSnapshot(`null`)
-  })
-
-  test('does not match empty payload after btw', () => {
-    expect(extractBtwSuffix('fix bug. btw   ')).toMatchInlineSnapshot(`null`)
+    expect(extractBtwSuffix('hello btw')).toMatchInlineSnapshot(`
+      {
+        "forceBtw": false,
+        "prompt": "hello btw",
+      }
+    `)
   })
 
   test('does not match empty content', () => {
-    expect(extractBtwSuffix('')).toMatchInlineSnapshot(`null`)
+    expect(extractBtwSuffix('')).toMatchInlineSnapshot(`
+      {
+        "forceBtw": false,
+        "prompt": "",
+      }
+    `)
   })
 
-  test('remaining is empty when btw follows punctuation at start', () => {
-    expect(extractBtwSuffix('. btw check this')).toMatchInlineSnapshot(`
+  test('multiline message with btw at end', () => {
+    expect(extractBtwSuffix('first line\nsecond line. btw')).toMatchInlineSnapshot(`
       {
-        "prompt": "check this",
-        "remaining": "",
+        "forceBtw": true,
+        "prompt": "first line
+      second line",
       }
     `)
   })
