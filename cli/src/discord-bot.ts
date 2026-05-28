@@ -43,7 +43,7 @@ import {
   getTextAttachments,
   resolveMentions,
 } from './message-formatting.js'
-import { extractBtwPrefix } from './btw-prefix-detection.js'
+import { extractBtwSuffix } from './btw-prefix-detection.js'
 import { isVoiceAttachment } from './voice-attachment.js'
 import { forkSessionToBtwThread } from './commands/btw.js'
 import {
@@ -647,13 +647,14 @@ export async function startDiscordBot({
           }
         }
 
-        // Raw `btw ` mirrors /btw for fast side-question forks from Discord.
+        // `. btw <prompt>` suffix mirrors /btw for fast side-question forks.
         // Keep this at ingress instead of preprocess because it must create a
         // new thread/runtime, not just transform the current prompt.
+        // Only triggers when btw is preceded by punctuation or newline.
         // Voice-transcribed `btw` still goes through normal preprocessing.
         const btwShortcut =
           projectDirectory && worktreeInfo?.status !== 'pending'
-            ? extractBtwPrefix(message.content || '')
+            ? extractBtwSuffix(message.content || '')
             : null
         if (btwShortcut && projectDirectory) {
           const result = await forkSessionToBtwThread({
@@ -678,7 +679,15 @@ export async function startDiscordBot({
             content: `Session forked! Continue in ${result.thread.toString()}`,
             flags: SILENT_MESSAGE_FLAGS,
           })
-          return
+          // If there's remaining text before the btw suffix, let it fall
+          // through to normal message processing below. Otherwise return.
+          if (!btwShortcut.remaining) {
+            return
+          }
+          // Overwrite message content so downstream processing uses only the
+          // remaining text (everything before the btw suffix).
+          // discord.js Message.content is writable at runtime.
+          ;(message as { content: string }).content = btwShortcut.remaining
         }
 
         const hasVoiceAttachment = message.attachments.some((attachment) => {
