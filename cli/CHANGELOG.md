@@ -1,5 +1,35 @@
 # Changelog
 
+## 0.13.0
+
+1. **New `--allow-mention` CLI flag** — control which Discord mention types the bot can trigger. Default is `users` only, which prevents the bot from pinging `@everyone`, `@here`, or roles. Repeatable flag to allow additional types:
+
+   ```bash
+   kimaki --allow-mention users --allow-mention roles
+   ```
+
+   Valid values: `users`, `roles`, `everyone`.
+
+2. **Support editing queued messages via Discord message edits** — when a user edits a Discord message that is still waiting in kimaki's local queue (messages ending with `. queue`), the queue item is updated with the new content. If the edit removes the queue suffix, the item is removed from the queue entirely.
+
+   ```
+   User sends:    "fix the bug. queue"     → queued at position 1
+   User edits to: "fix it properly. queue" → queue item updated
+   User edits to: "fix it properly"        → item removed from queue
+   ```
+
+   Messages that were already dispatched to opencode (dequeued) are unaffected by edits.
+
+3. **Change `btw` shortcut from prefix to suffix detection** — now only triggers when preceded by punctuation or a newline (e.g. `fix the bug. btw check tests`), matching the same pattern as the queue suffix. The text before `btw` continues in the current session while the btw prompt forks to a new thread.
+
+4. **Make state-changing slash commands non-ephemeral** — `/upgrade-and-restart`, `/abort`, `/undo`, `/redo`, `/restart-opencode-server` replies are now fully visible to all users and trigger normal Discord notifications. Error replies remain ephemeral.
+
+5. **Fix interrupt replay after abort** — kimaki now waits for OpenCode's post-abort idle event before replaying the interrupting user message, so the replay is not queued behind the cancelled run and its assistant response is visible in Discord. Fixes #133
+
+6. **Fall back to default agent when requested agent not found** — if `kimaki send --agent foo` references an agent that doesn't exist in the project's opencode config, it logs a warning and uses the default agent instead of failing. Closes #136
+
+7. **Use `caffeinate -s` for lid-close keep-awake** — the Mac stays awake even with the lid closed when on AC power. On battery, macOS still sleeps normally to preserve charge.
+
 ## 0.12.0
 
 1. **New `--disable-sync` flag** — turn off background mirroring of external OpenCode sessions into Discord:
