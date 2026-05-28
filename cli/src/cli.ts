@@ -331,4 +331,4 @@ cli.use(maintenanceCommands)
 
 cli.version(getCurrentVersion())
 cli.help()
-cli.parse()
+void cli.parse()
