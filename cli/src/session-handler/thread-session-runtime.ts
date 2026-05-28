@@ -4298,8 +4298,16 @@ export class ThreadSessionRuntime {
           directory: this.sdkDirectory,
         })
       })
-      if (!(sessionResponse instanceof Error) && sessionResponse.data) {
+      if (sessionResponse instanceof Error) {
+        logger.warn(
+          `[ENSURE SESSION] Failed to get existing session ${sessionId}: ${sessionResponse.message}`,
+        )
+      } else if (sessionResponse.data) {
         session = sessionResponse.data
+      } else {
+        logger.warn(
+          `[ENSURE SESSION] session.get returned no data for ${sessionId}`,
+        )
       }
     }
 
@@ -4319,11 +4327,27 @@ export class ThreadSessionRuntime {
         ...parsePermissionRules(permissions ?? []),
       ]
       // Omit title so OpenCode auto-generates a summary from the conversation
-      const sessionResponse = await getClient().session.create({
-        directory: this.sdkDirectory,
-        permission: sessionPermissions,
+      const createResult = await errore.tryAsync(() => {
+        return getClient().session.create({
+          directory: this.sdkDirectory,
+          permission: sessionPermissions,
+        })
       })
-      session = sessionResponse.data
+      if (createResult instanceof Error) {
+        logger.error(
+          `[ENSURE SESSION] session.create failed: ${createResult.message}`,
+        )
+        return new Error(
+          `Failed to create session: ${createResult.message}, threadId=${this.thread.id}, directory=${this.sdkDirectory}`,
+          { cause: createResult },
+        )
+      }
+      session = createResult.data
+      if (!session) {
+        logger.warn(
+          `[ENSURE SESSION] session.create returned no data, threadId=${this.thread.id}, directory=${this.sdkDirectory}`,
+        )
+      }
       // Insert DB row immediately so the external-sync poller sees
       // source='kimaki' before the next poll tick and skips this session.
       // The upsert at the end of ensureSession is kept for the reuse path.
@@ -4340,7 +4364,9 @@ export class ThreadSessionRuntime {
     }
 
     if (!session) {
-      return new Error('Failed to create or get session')
+      return new Error(
+        `Failed to create or get session: threadId=${this.thread.id}, channelId=${this.channelId}, directory=${directory}, sdkDirectory=${this.sdkDirectory}, existingSessionId=${sessionId ?? 'none'}, createdNewSession=${createdNewSession}`,
+      )
     }
 
     // Store session in DB and thread state
