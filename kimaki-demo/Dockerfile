@@ -30,6 +30,12 @@ ENV OPENCODE_ENABLE_EXA=1
 
 WORKDIR /data
 
+# Allow opencode to read/write all directories without prompting.
+# The demo server creates projects in /data/projects and the agent needs
+# unrestricted filesystem access since there is no human to approve prompts.
+RUN mkdir -p /root/.config/opencode && \
+    printf '{\n  "$schema": "https://opencode.ai/config.json",\n  "permission": "allow"\n}\n' > /root/.config/opencode/opencode.json
+
 # --gateway: use the shared Kimaki bot via gateway-proxy (no bot token needed)
 # --data-dir /data: store sqlite DB and config on the persistent volume
 # --projects-dir /data/projects: store user-created projects on the volume

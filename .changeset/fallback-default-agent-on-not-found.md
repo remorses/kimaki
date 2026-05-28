@@ -8,3 +8,5 @@ Previously, if `kimaki send --agent foo` referenced an agent that didn't exist i
 project's opencode config, the session would fail with an error. Now it logs a warning
 and uses the default agent, which is more resilient to stale agent preferences or
 removed agents.
+
+Closes #136
