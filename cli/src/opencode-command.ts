@@ -90,6 +90,31 @@ export function getSpawnCommandAndArgs({
   }
 }
 
+// Remove flags from the parent process's execArgv that must not leak into the
+// relocatable kimaki shim. The shim runs from arbitrary working directories
+// (it is on PATH for opencode child processes), so a relative `--env-file=.env`
+// would make node abort with ".env: not found" whenever the cwd has no .env.
+// The shim does not need to re-load env files at all: the env vars the bot
+// cares about are already in the inherited process environment. We strip both
+// `--env-file`/`--env-file-if-exists` forms: `--env-file=value` (single arg)
+// and `--env-file value` (two args).
+export function sanitizeShimExecArgv(execArgv: string[]): string[] {
+  const sanitized: string[] = []
+  for (let index = 0; index < execArgv.length; index++) {
+    const arg = execArgv[index]!
+    if (arg === '--env-file' || arg === '--env-file-if-exists') {
+      // Skip this flag and its separate value argument, if present.
+      index++
+      continue
+    }
+    if (arg.startsWith('--env-file=') || arg.startsWith('--env-file-if-exists=')) {
+      continue
+    }
+    sanitized.push(arg)
+  }
+  return sanitized
+}
+
 export function ensureKimakiCommandShim({
   dataDir,
   execPath,
@@ -108,7 +133,7 @@ export function ensureKimakiCommandShim({
 
   try {
     fs.mkdirSync(shimDirectory, { recursive: true })
-    const launcherArgs = [...execArgv, entryScript]
+    const launcherArgs = [...sanitizeShimExecArgv(execArgv), entryScript]
 
     if (effectivePlatform === 'win32') {
       const shimPath = path.join(shimDirectory, 'kimaki.cmd')
