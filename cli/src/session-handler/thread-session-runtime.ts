@@ -670,6 +670,7 @@ export class ThreadSessionRuntime {
   private modelContextLimit: number | undefined
   private modelContextLimitKey: string | undefined
   private lastPromptWorktreeKey: string | null | undefined
+  private invalidatedSessionIds = new Set<string>()
 
   // Bounded buffer of recent SSE events with timestamps.
   // Used by waitForEvent() to scan for specific events that arrived
@@ -1043,6 +1044,10 @@ export class ThreadSessionRuntime {
       `[LISTENER] sdkDirectory changed for thread ${this.threadId}: ${oldDirectory} → ${newDirectory}`,
     )
     this.sdkDirectory = newDirectory
+    const oldSessionId = this.state?.sessionId
+    if (oldSessionId) {
+      this.invalidatedSessionIds.add(oldSessionId)
+    }
 
     // Clear cached session — it was created under the old directory's
     // opencode Instance and can't be reused from the new one.
@@ -4268,7 +4273,10 @@ export class ThreadSessionRuntime {
     let sessionId = this.state?.sessionId
     if (!sessionId) {
       // Fallback to DB
-      sessionId = await getThreadSession(this.thread.id) || undefined
+      const dbSessionId = await getThreadSession(this.thread.id)
+      sessionId = dbSessionId && !this.invalidatedSessionIds.has(dbSessionId)
+        ? dbSessionId
+        : undefined
     }
 
     let session: { id: string } | undefined

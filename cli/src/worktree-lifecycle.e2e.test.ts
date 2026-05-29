@@ -373,11 +373,12 @@ describe('worktree lifecycle', () => {
 
       // 5. Verify the bot actually responds — this is the core assertion.
       // If the listener wasn't reconnected, this will time out.
-      await waitForBotReplyAfterUserMessage({
+      await waitForBotMessageContaining({
         discord,
         threadId: thread.id,
         userId: TEST_USER_ID,
-        userMessageIncludes: 'after-worktree',
+        text: '⬥ ok',
+        afterUserMessageIncludes: 'after-worktree',
         timeout: 4_000,
       })
 
@@ -434,11 +435,12 @@ describe('worktree lifecycle', () => {
 
       const th = discord.thread(thread.id)
 
-      await waitForBotReplyAfterUserMessage({
+      await waitForBotMessageContaining({
         discord,
         threadId: thread.id,
         userId: TEST_USER_ID,
-        userMessageIncludes: 'non-git-first',
+        text: '⬥ ok',
+        afterUserMessageIncludes: 'non-git-first',
         timeout: 4_000,
       })
 
@@ -470,10 +472,11 @@ describe('worktree lifecycle', () => {
         Reply with exactly: non-git-first
         --- from: assistant (TestBot)
         *using deterministic-provider/deterministic-v2*
+        ⬥ ok
         --- from: user (worktree-tester)
         Reply with exactly: non-git-second
         --- from: assistant (TestBot)
-        ⬥ ok
+        *non-git-project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2*
         ⬥ ok"
       `)
       expect(text).toContain('Reply with exactly: non-git-first')
