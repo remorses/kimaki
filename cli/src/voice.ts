@@ -437,7 +437,8 @@ export type TranscriptionProvider = 'openai' | 'gemini'
  * context (prompt, session info, tool calling) for better word recognition.
  *
  * OpenAI: must use .chat() to get the Chat Completions API model, because the
- * default callable (Responses API) doesn't support audio file parts.
+ * default callable (Responses API) doesn't support audio file parts. Use the
+ * GA audio model instead of older gpt-4o audio preview snapshots.
  * Gemini: language models natively accept audio in chat.
  */
 export function createTranscriptionModel({
@@ -452,7 +453,7 @@ export function createTranscriptionModel({
 
   if (resolvedProvider === 'openai') {
     const openai = createOpenAI({ apiKey })
-    return openai.chat('gpt-4o-audio-preview')
+    return openai.chat('gpt-audio')
   }
 
   const google = createGoogleGenerativeAI({ apiKey })
