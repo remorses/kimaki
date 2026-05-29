@@ -1,7 +1,7 @@
 // E2e test for worktree lifecycle: /new-worktree inside an existing thread,
 // then verify the session still works after sdkDirectory switches.
-// Validates that handleDirectoryChanged() reconnects the event listener
-// so events from the worktree Instance reach the runtime (PR #75 fix).
+// Existing conversations intentionally keep the same OpenCode session while
+// prompt calls switch to the worktree directory.
 //
 // Uses opencode-deterministic-provider (no real LLM calls).
 // Poll timeouts: 4s max, 100ms interval (except worktree creation which
@@ -29,6 +29,7 @@ import {
   setChannelDirectory,
   setChannelVerbosity,
   setChannelWorktreesEnabled,
+  getThreadSession,
   type VerbosityLevel,
 } from './database.js'
 import { startHranaServer, stopHranaServer } from './hrana-server.js'
@@ -40,7 +41,6 @@ import {
   chooseLockPort,
   cleanupTestSessions,
   waitForBotMessageContaining,
-  waitForBotReplyAfterUserMessage,
 } from './test-utils.js'
 import { execAsync } from './worktrees.js'
 
@@ -323,19 +323,23 @@ describe('worktree lifecycle', () => {
 
       const th = discord.thread(thread.id)
 
-      // Wait for first run to fully complete (footer appears)
+      // Wait for the first run to produce visible assistant output before
+      // running /new-worktree in the same thread.
       await waitForBotMessageContaining({
         discord,
         threadId: thread.id,
         userId: TEST_USER_ID,
-        text: '*project',
-        timeout: 4_000,
+        text: '⬥ ok',
+        afterUserMessageIncludes: 'before-worktree',
+        timeout: 10_000,
       })
 
       // Capture runtime — should survive the directory switch
       const runtimeBefore = getRuntime(thread.id)
       expect(runtimeBefore).toBeDefined()
       expect(runtimeBefore!.sdkDirectory).toBe(directories.projectDirectory)
+      const sessionBefore = await getThreadSession(thread.id)
+      expect(sessionBefore).toBeTruthy()
 
       // 2. Run /new-worktree inside the thread (in-thread flow).
       // This creates a pending worktree, then background creates the git worktree,
@@ -395,6 +399,7 @@ describe('worktree lifecycle', () => {
       // Runtime instance should be the same (not recreated)
       const runtimeAfter = getRuntime(thread.id)
       expect(runtimeAfter).toBe(runtimeBefore)
+      await expect(getThreadSession(thread.id)).resolves.toBe(sessionBefore)
 
       // sdkDirectory should now point to the worktree path
       expect(runtimeAfter!.sdkDirectory).not.toBe(directories.projectDirectory)

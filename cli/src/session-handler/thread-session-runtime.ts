@@ -670,7 +670,6 @@ export class ThreadSessionRuntime {
   private modelContextLimit: number | undefined
   private modelContextLimitKey: string | undefined
   private lastPromptWorktreeKey: string | null | undefined
-  private invalidatedSessionIds = new Set<string>()
 
   // Bounded buffer of recent SSE events with timestamps.
   // Used by waitForEvent() to scan for specific events that arrived
@@ -1044,13 +1043,16 @@ export class ThreadSessionRuntime {
       `[LISTENER] sdkDirectory changed for thread ${this.threadId}: ${oldDirectory} → ${newDirectory}`,
     )
     this.sdkDirectory = newDirectory
-    const oldSessionId = this.state?.sessionId
-    if (oldSessionId) {
-      this.invalidatedSessionIds.add(oldSessionId)
+
+    if (this.state?.sessionId) {
+      // Existing sessions stay subscribed through their original OpenCode
+      // directory. Prompt calls still use the new sdkDirectory, which lets the
+      // same conversation continue while tools run in the new checkout.
+      return
     }
 
-    // Clear cached session — it was created under the old directory's
-    // opencode Instance and can't be reused from the new one.
+    // Clear cached state so ensureSession revalidates the persisted session
+    // against the new directory before prompting.
     threadState.updateThread(this.threadId, (t) => ({
       ...t,
       sessionId: undefined,
@@ -4273,10 +4275,7 @@ export class ThreadSessionRuntime {
     let sessionId = this.state?.sessionId
     if (!sessionId) {
       // Fallback to DB
-      const dbSessionId = await getThreadSession(this.thread.id)
-      sessionId = dbSessionId && !this.invalidatedSessionIds.has(dbSessionId)
-        ? dbSessionId
-        : undefined
+      sessionId = await getThreadSession(this.thread.id) || undefined
     }
 
     let session: { id: string } | undefined
