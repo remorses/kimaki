@@ -10,6 +10,8 @@ import {
   extractTranscription,
   normalizeAudioMediaType,
   getOpenAIAudioConversionStrategy,
+  classifyGeminiError,
+  GEMINI_TRANSCRIPTION_MODELS,
 } from './voice.js'
 import {
   getVoiceAttachmentMatchReason,
@@ -169,6 +171,86 @@ describe('extractTranscription', () => {
     expect((result as Error).message).toMatchInlineSnapshot(
       `"Transcription failed: Model did not produce a transcription"`,
     )
+  })
+})
+
+describe('classifyGeminiError', () => {
+  test('classifies "high demand" overload as retry-then-next', () => {
+    const cls = classifyGeminiError(
+      new Error(
+        'API call failed: AI_APICallError: This model is currently experiencing high demand. Spikes in demand are usually temporary. Please try again later.',
+      ),
+    )
+    expect(cls).toMatchInlineSnapshot(`
+      {
+        "delayMs": 3000,
+        "kind": "retry-then-next",
+      }
+    `)
+  })
+
+  test('classifies "exceeded your current quota" as next-model (no retry)', () => {
+    const cls = classifyGeminiError(
+      new Error(
+        'API call failed: AI_APICallError: You exceeded your current quota, please check your plan and billing details.',
+      ),
+    )
+    expect(cls).toMatchInlineSnapshot(`
+      {
+        "kind": "next-model",
+      }
+    `)
+  })
+
+  test('classifies "not found for API version" (deprecated model) as next-model', () => {
+    const cls = classifyGeminiError(
+      new Error(
+        'API call failed: AI_APICallError: models/gemini-1.5-flash is not found for API version v1beta, or is not supported for generateContent.',
+      ),
+    )
+    expect(cls).toMatchInlineSnapshot(`
+      {
+        "kind": "next-model",
+      }
+    `)
+  })
+
+  test('classifies "API key not valid" as bail', () => {
+    const cls = classifyGeminiError(
+      new Error('API call failed: AI_APICallError: API key not valid. Please pass a valid API key.'),
+    )
+    expect(cls).toMatchInlineSnapshot(`
+      {
+        "kind": "bail",
+      }
+    `)
+  })
+
+  test('classifies unknown errors as next-model (degrade gracefully)', () => {
+    const cls = classifyGeminiError(new Error('something weird happened'))
+    expect(cls).toMatchInlineSnapshot(`
+      {
+        "kind": "next-model",
+      }
+    `)
+  })
+})
+
+describe('GEMINI_TRANSCRIPTION_MODELS chain', () => {
+  test('starts with the high-quota free-tier model', () => {
+    expect(GEMINI_TRANSCRIPTION_MODELS[0]).toMatchInlineSnapshot(`"gemini-3.1-flash-lite"`)
+  })
+
+  test('chain is non-empty and only contains audio-capable chat models', () => {
+    expect(GEMINI_TRANSCRIPTION_MODELS.length).toBeGreaterThan(0)
+    for (const model of GEMINI_TRANSCRIPTION_MODELS) {
+      // No paid-only models (`limit: 0` on free tier) and no deprecated v1beta models.
+      expect(model).not.toBe('gemini-2.5-pro')
+      expect(model).not.toBe('gemini-2.0-flash')
+      expect(model).not.toBe('gemini-1.5-flash')
+      // All entries are flash variants that accept audio file parts.
+      expect(model).toMatch(/^gemini-/)
+    }
   })
 })
 
