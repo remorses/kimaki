@@ -176,6 +176,7 @@ test('tool-call step has finish="tool-calls", follow-up has finish="stop"', asyn
         "partTypes": [
           "step-start",
           "text",
+          "tool",
           "step-finish",
         ],
       },

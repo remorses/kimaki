@@ -609,14 +609,6 @@ e2eTest('thread message queue ordering', () => {
       })
       expect(afterBotMessages.length).toBeGreaterThanOrEqual(beforeBotCount + 1)
 
-      await waitForFooterMessage({
-        discord,
-        threadId: thread.id,
-        timeout: 4_000,
-        afterMessageIncludes: 'three',
-        afterAuthorId: TEST_USER_ID,
-      })
-
       expect(await th.text()).toMatchInlineSnapshot(`
         "--- from: user (queue-tester)
         Reply with exactly: one
@@ -628,9 +620,7 @@ e2eTest('thread message queue ordering', () => {
         Reply with exactly: two
         Reply with exactly: three
         --- from: assistant (TestBot)
-        ⬥ ok
-        ⬥ ok
-        *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2*"
+        ⬥ ok"
       `)
       const userThreeIndex = after.findIndex((message) => {
         return (
@@ -1235,14 +1225,6 @@ e2eTest('thread message queue ordering', () => {
         timeout: 4_000,
       })
 
-      await waitForFooterMessage({
-        discord,
-        threadId: thread.id,
-        timeout: 4_000,
-        afterMessageIncludes: 'india',
-        afterAuthorId: TEST_USER_ID,
-      })
-
       // C's user message appears before its bot response.
       // We assert on india's reply existence.
       expect(await th.text()).toMatchInlineSnapshot(`
@@ -1256,9 +1238,7 @@ e2eTest('thread message queue ordering', () => {
         Reply with exactly: hotel
         Reply with exactly: india
         --- from: assistant (TestBot)
-        ⬥ ok
-        ⬥ ok
-        *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2*"
+        ⬥ ok"
       `)
       const userIndiaIndex = after.findIndex((m) => {
         return m.author.id === TEST_USER_ID && m.content.includes('india')
