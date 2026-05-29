@@ -11,6 +11,7 @@ import { getThreadSession } from '../database.js'
 import {
   initializeOpencodeForDirectory,
   getOpencodeClient,
+  extractSdkErrorMessage,
 } from '../opencode.js'
 import {
   resolveWorkingDirectory,
@@ -133,11 +134,7 @@ export async function handleCompactCommand({
 
     if (result.error) {
       logger.error('[COMPACT] Error:', result.error)
-      const errorData = result.error.data
-      const errorMessage =
-        errorData && typeof errorData === 'object' && 'message' in errorData
-          ? String(errorData.message || 'Unknown error')
-          : 'Unknown error'
+      const errorMessage = extractSdkErrorMessage(result.error)
       await command.editReply({
         content: `Failed to compact: ${errorMessage}`,
       })

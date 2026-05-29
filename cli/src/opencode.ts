@@ -1224,6 +1224,49 @@ export function getOpencodeClient(directory: string): OpencodeClient | null {
   })
 }
 
+// Structural union of the OpenCode v2 SDK error response shapes. The concrete
+// type of `result.error` varies per route, so we describe the fields each shape
+// may carry instead of importing every per-route error union:
+//   - NotFoundError / BadRequestError: { name, data: { message } }
+//   - InvalidRequestError: { _tag, message }
+//   - EffectHttpApiErrorBadRequest: { _tag: "BadRequest" } (no message)
+//   - some routes also surface { errors: [...] }
+export type SdkErrorResponse = {
+  data?: { message?: string } | null
+  message?: string
+  errors?: unknown[]
+  _tag?: string
+  name?: string
+}
+
+/**
+ * Extract a human-readable message from an OpenCode SDK error response.
+ * Probes each known shape and falls back to a generic message.
+ */
+export function extractSdkErrorMessage(error: SdkErrorResponse | null | undefined): string {
+  if (!error) {
+    return 'Unknown OpenCode API error'
+  }
+
+  if (error.data?.message) {
+    return error.data.message
+  }
+
+  if (error.message) {
+    return error.message
+  }
+
+  if (error.errors && error.errors.length > 0) {
+    return JSON.stringify(error.errors)
+  }
+
+  if (error._tag) {
+    return error._tag
+  }
+
+  return 'Unknown OpenCode API error'
+}
+
 /**
  * Stop the single opencode server.
  * Used for process teardown, tests, and explicit restarts.

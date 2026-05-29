@@ -80,8 +80,17 @@ function getAssistantMessageById({
   return message
 }
 
-function eventEntry(event: EventBufferEntry['event']): EventBufferEntry {
-  return { event, timestamp: 1 }
+// Test fixtures omit the top-level event `id` for brevity. The SDK event types
+// require it, so inject a synthetic id when missing. Derivation never reads the
+// top-level id (only properties.id / info.id), so the value is irrelevant.
+let syntheticEventIdCounter = 0
+function eventEntry(
+  event: Omit<EventBufferEntry['event'], 'id'> & { id?: string },
+): EventBufferEntry {
+  const withId = ('id' in event && event.id
+    ? event
+    : { ...event, id: `evt_${++syntheticEventIdCounter}` }) as EventBufferEntry['event']
+  return { event: withId, timestamp: 1 }
 }
 
 function findAssistantCompletionEventIndex({
@@ -352,6 +361,7 @@ describe('synthetic-question-followup', () => {
     {
       timestamp: 1,
       event: {
+        id: 'evt_user_1',
         type: 'message.updated',
         properties: {
           sessionID: sessionId,
@@ -372,6 +382,7 @@ describe('synthetic-question-followup', () => {
     {
       timestamp: 2,
       event: {
+        id: 'evt_asst_1',
         type: 'message.updated',
         properties: {
           sessionID: sessionId,
@@ -401,6 +412,7 @@ describe('synthetic-question-followup', () => {
     {
       timestamp: 4,
       event: {
+        id: 'evt_user_2',
         type: 'message.updated',
         properties: {
           sessionID: sessionId,

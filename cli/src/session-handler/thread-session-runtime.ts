@@ -6,6 +6,7 @@
 // call runtime APIs (enqueueIncoming, abortActiveRun, etc.) without inspecting
 // run internals.
 
+import crypto from 'node:crypto'
 import { ChannelType, type ThreadChannel } from 'discord.js'
 import type {
   Event as OpenCodeEvent,
@@ -28,6 +29,7 @@ import {
   parsePermissionRules,
   subscribeOpencodeServerLifecycle,
   writeInjectionGuardConfig,
+  extractSdkErrorMessage,
 } from '../opencode.js'
 import { isAbortError } from '../utils.js'
 import { createLogger, LogPrefix } from '../logger.js'
@@ -1280,6 +1282,7 @@ export class ThreadSessionRuntime {
   // they only stabilize event-derived busy/idle gating for local queue drains.
   private markQueueDispatchBusy(sessionId: string): void {
     this.appendEventToBuffer({
+      id: `synthetic-${crypto.randomUUID()}`,
       type: 'session.status',
       properties: {
         sessionID: sessionId,
@@ -1290,6 +1293,7 @@ export class ThreadSessionRuntime {
 
   private markQueueDispatchIdle(sessionId: string): void {
     this.appendEventToBuffer({
+      id: `synthetic-${crypto.randomUUID()}`,
       type: 'session.idle',
       properties: {
         sessionID: sessionId,
@@ -3288,30 +3292,9 @@ export class ThreadSessionRuntime {
         return getClient().session.promptAsync(request)
       })
       if (promptResult instanceof Error || promptResult.error) {
-        const errorMessage = (() => {
-          if (promptResult instanceof Error) {
-            return promptResult.message
-          }
-          const err = promptResult.error
-          if (err && typeof err === 'object') {
-            const data = err.data
-            if (
-              data &&
-              typeof data === 'object' &&
-              'message' in data
-            ) {
-              return String(data.message)
-            }
-            if (
-              'errors' in err &&
-              Array.isArray(err.errors) &&
-              err.errors.length > 0
-            ) {
-              return JSON.stringify(err.errors)
-            }
-          }
-          return 'Unknown OpenCode API error'
-        })()
+        const errorMessage = promptResult instanceof Error
+          ? promptResult.message
+          : extractSdkErrorMessage(promptResult.error)
         const errObj = promptResult instanceof Error
           ? promptResult
           : new Error(errorMessage)
