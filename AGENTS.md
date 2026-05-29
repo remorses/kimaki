@@ -13,21 +13,21 @@ after making important changes to queueing or message handling always run the fu
 kimaki is a monorepo with three main packages that communicate via a shared Postgres database hosted on PlanetScale.
 
 ```
-┌─────────────────────────────────────────────────────────────┐
-│  User's machine                                             │
-│  cli/ (TypeScript CLI + Discord bot)                        │
-│  ├── src/cli.ts        main CLI, onboarding wizard          │
-│  ├── src/discord-bot.ts  event loop, session routing        │
-│  └── SQLite (~/.kimaki/discord-sessions.db)                 │
-│         local state: bot tokens, channels, threads, models  │
-└────────┬──────────────────────────┬─────────────────────────┘
-         │ REST + WebSocket         │ polls /api/onboarding/status
-         │ (clientId:secret)        │ during first-time setup
-         ▼                          ▼
-┌─────────────────────┐   ┌──────────────────────────────────┐
+┌───────────────────────────────────────────────────────────────┐
+│  User's machine                                               │
+│  cli/ (TypeScript CLI + Discord bot)                          │
+│  ├── src/cli.ts        main CLI, onboarding wizard            │
+│  ├── src/discord-bot.ts  event loop, session routing          │
+│  └── SQLite (~/.kimaki/discord-sessions.db)                   │
+│         local state: bot tokens, channels, threads, models    │
+└─────────┬────────────────────────────┬───────────────────────┘
+          │ REST + WebSocket           │ polls /api/onboarding/status
+          │ (clientId:secret)          │ during first-time setup
+          ▼                            ▼
+┌──────────────────────┐   ┌──────────────────────────────────┐
 │  gateway-proxy/      │   │  website/                        │
 │  (Rust, fly.io)      │   │  (Cloudflare Worker, Hono)       │
-│                      │   │  https://kimaki.dev           │
+│                      │   │  https://kimaki.dev          │
 │  Sits between the    │   │                                  │
 │  CLI and Discord.    │   │  GET /oauth/callback              │
 │  One shared bot for  │   │    → upserts gateway_clients row │
@@ -45,20 +45,20 @@ kimaki is a monorepo with three main packages that communicate via a shared Post
 └──────────┬───────────┘              │
            │                          │
            ▼                          ▼
-┌──────────────────────────────────────────────────────────────┐
-│  Shared Postgres (PlanetScale)                               │
-│  db/schema.prisma                                            │
-│                                                              │
-│  gateway_clients table:                                      │
-│    client_id  TEXT   ── identifies the kimaki user            │
-│    secret     TEXT   ── authenticates gateway connections     │
-│    guild_id   TEXT   ── guild the user installed the bot in   │
-│    @@id([client_id, guild_id])                               │
-│                                                              │
-│  Written by: website (on OAuth callback)                     │
-│  Read by: gateway-proxy (polls every 1s via db_config.rs)    │
-│  Read by: website (onboarding status check)                  │
-└──────────────────────────────────────────────────────────────┘
+┌───────────────────────────────────────────────────────────────┐
+│  Shared Postgres (PlanetScale)                                │
+│  db/schema.prisma                                             │
+│                                                               │
+│  gateway_clients table:                                       │
+│    client_id  TEXT   ── identifies the kimaki user             │
+│    secret     TEXT   ── authenticates gateway connections      │
+│    guild_id   TEXT   ── guild the user installed the bot in    │
+│    @@id([client_id, guild_id])                                │
+│                                                               │
+│  Written by: website (on OAuth callback)                      │
+│  Read by: gateway-proxy (polls every 1s via db_config.rs)     │
+│  Read by: website (onboarding status check)                   │
+└───────────────────────────────────────────────────────────────┘
 ```
 
 ## gateway-proxy (Rust)
