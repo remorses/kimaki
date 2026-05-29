@@ -121,8 +121,8 @@ describe('rotateAnthropicAccount', () => {
     expect(authJson.anthropic?.refresh).toBe('refresh-second')
     expect(authSetCalls).toEqual([
       {
-        path: { id: 'anthropic' },
-        body: {
+        providerID: 'anthropic',
+        auth: {
           type: 'oauth',
           refresh: 'refresh-second',
           access: 'access-second',

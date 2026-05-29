@@ -8,6 +8,7 @@ import {
   formatPluginErrorWithStack,
   setPluginLogFilePath,
 } from './plugin-logger.js'
+import { createPluginClient } from './plugin-opencode-client.js'
 import { initSentry, notifyError } from './sentry.js'
 
 const logger = createPluginLogger('SUBMODEL')
@@ -125,13 +126,18 @@ function extractRateLimitReason(event: PluginEvent): string | undefined {
   return isRateLimitText(apiError.message) ? apiError.message : undefined
 }
 
-export const subagentRateLimitPlugin: Plugin = async ({ client, directory }) => {
+export const subagentRateLimitPlugin: Plugin = async ({ serverUrl, directory }) => {
   initSentry()
 
   const dataDir = process.env.KIMAKI_DATA_DIR
   if (dataDir) {
     setPluginLogFilePath(dataDir)
   }
+
+  // Build our own v2 client. The plugin-provided ctx.client (v1) does not
+  // reliably make REST calls (session.abort silently no-ops) from inside the
+  // plugin process. See plugin-opencode-client.ts.
+  const client = createPluginClient({ serverUrl, directory })
 
   const subagentSessions = new Map<string, {
     subagentType?: string
@@ -178,19 +184,14 @@ export const subagentRateLimitPlugin: Plugin = async ({ client, directory }) => 
       subagent.aborting = true
       const abortResult = await errore.tryAsync({
         try: async () => {
-          await client.session.abort({
-            path: { id: eventSessionId },
-            query: { directory },
-          })
+          await client.session.abort({ sessionID: eventSessionId, directory })
 
           await client.tui.showToast({
-            body: {
-              message: appendToastSessionMarker({
-                message: `Aborting ${subagent.subagentType || 'subagent'} after rate limit so the parent task can recover: ${rateLimitReason}`,
-                sessionId: eventSessionId,
-              }),
-              variant: 'info',
-            },
+            message: appendToastSessionMarker({
+              message: `Aborting ${subagent.subagentType || 'subagent'} after rate limit so the parent task can recover: ${rateLimitReason}`,
+              sessionId: eventSessionId,
+            }),
+            variant: 'info',
           }).catch(() => {
             return
           })

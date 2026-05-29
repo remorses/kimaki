@@ -15,7 +15,9 @@
  */
 
 import type { Hooks, Plugin } from '@opencode-ai/plugin'
+import type { OpencodeClient } from '@opencode-ai/sdk/v2'
 import { createPluginLogger, appendToastSessionMarker } from './plugin-logger.js'
+import { createPluginClient } from './plugin-opencode-client.js'
 import { isRateLimitRetryMessage, isTokenRefreshError, isOAuthStored, readJson, authFilePath } from './oauth-rotation-shared.js'
 import {
   detectAndRememberNewOpenAIAccount,
@@ -53,11 +55,11 @@ function isRetryStatusEvent(event: Parameters<NonNullable<Hooks['event']>>[0]['e
 // The retry event doesn't include model info directly, so we check
 // the last message in the session to find the model.
 async function isOpenAISession(
-  client: Parameters<Plugin>[0]['client'],
+  client: OpencodeClient,
   sessionID: string,
 ): Promise<boolean> {
   try {
-    const res = await client.session.messages({ path: { id: sessionID } })
+    const res = await client.session.messages({ sessionID })
     const lastMessage = res.data?.filter((m) => m.info).at(-1)?.info
     if (!lastMessage) return false
     const providerID =
@@ -74,8 +76,11 @@ async function isOpenAISession(
 let lastLoginCheckMs = 0
 const LOGIN_CHECK_INTERVAL_MS = 30_000
 
-const openaiRotationPlugin: Plugin = async ({ client }) => {
+const openaiRotationPlugin: Plugin = async ({ serverUrl, directory }) => {
   log.info('OpenAI rotation plugin loaded')
+  // Build our own v2 client. The plugin-provided ctx.client (v1) does not
+  // reliably make REST calls from inside the plugin process.
+  const client = createPluginClient({ serverUrl, directory })
   return {
     'chat.headers': async (input, output) => {
       if (input.model.providerID !== 'openai') return
@@ -98,13 +103,11 @@ const openaiRotationPlugin: Plugin = async ({ client }) => {
             const count = store?.accounts.length ?? 1
             client.tui
               .showToast({
-                body: {
-                  message: appendToastSessionMarker({
-                    message: `OpenAI account ${label} added to rotation pool (${count} account${count === 1 ? '' : 's'})`,
-                    sessionId: event.properties.sessionID,
-                  }),
-                  variant: 'info',
-                },
+                message: appendToastSessionMarker({
+                  message: `OpenAI account ${label} added to rotation pool (${count} account${count === 1 ? '' : 's'})`,
+                  sessionId: event.properties.sessionID,
+                }),
+                variant: 'info',
               })
               .catch(() => {})
           }
@@ -137,13 +140,11 @@ const openaiRotationPlugin: Plugin = async ({ client }) => {
         if (result) {
           client.tui
             .showToast({
-              body: {
-                message: appendToastSessionMarker({
-                  message: `Switching OpenAI from ${result.fromLabel} to ${result.toLabel}`,
-                  sessionId: sessionID,
-                }),
-                variant: 'info',
-              },
+              message: appendToastSessionMarker({
+                message: `Switching OpenAI from ${result.fromLabel} to ${result.toLabel}`,
+                sessionId: sessionID,
+              }),
+              variant: 'info',
             })
             .catch(() => {})
         }

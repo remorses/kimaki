@@ -5,7 +5,7 @@
  * identity normalization via AnthropicAccountIdentity.
  */
 
-import type { Plugin } from '@opencode-ai/plugin'
+import type { OpencodeClient } from '@opencode-ai/sdk/v2'
 import { homedir } from 'node:os'
 import path from 'node:path'
 import {
@@ -97,10 +97,10 @@ async function writeAnthropicAuthFile(auth: OAuthStored | undefined) {
 
 export async function setAnthropicAuth(
   auth: OAuthStored,
-  client: Parameters<Plugin>[0]['client'],
+  client: OpencodeClient,
 ) {
   await writeAnthropicAuthFile(auth)
-  await client.auth.set({ path: { id: 'anthropic' }, body: auth })
+  await client.auth.set({ providerID: 'anthropic', auth })
 }
 
 // --- Current account ---
@@ -134,7 +134,7 @@ export async function getCurrentAnthropicAccount() {
 
 export async function rotateAnthropicAccount(
   auth: OAuthStored,
-  client: Parameters<Plugin>[0]['client'],
+  client: OpencodeClient,
 ): Promise<RotationResult | undefined> {
   return withAuthStateLock(async () => {
     const store = await loadAccountStore()

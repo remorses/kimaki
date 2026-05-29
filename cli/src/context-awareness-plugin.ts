@@ -24,6 +24,7 @@ import {
   setPluginLogFilePath,
 } from './plugin-logger.js'
 import { setDataDir } from './config.js'
+import { createPluginClient } from './plugin-opencode-client.js'
 import { initSentry, notifyError } from './sentry.js'
 import { execAsync } from './exec-async.js'
 import {
@@ -55,13 +56,14 @@ type SessionState = {
   announcedDirectory: string | undefined
 }
 
-// Minimal type for the opencode plugin client (v1 SDK style with path objects).
+// Minimal type for the opencode v2 client (flat params).
 type PluginClient = {
   session: {
-    get: (params: { path: { id: string } }) => Promise<{ data?: { directory?: string } }>
+    get: (params: { sessionID: string; directory?: string }) => Promise<{ data?: { directory?: string } }>
     messages: (params: {
-      path: { id: string }
-      query?: { directory?: string; limit?: number }
+      sessionID: string
+      directory?: string
+      limit?: number
     }) => Promise<{ data?: Array<{ info: AssistantMessageInfo }> }>
   }
 }
@@ -267,7 +269,7 @@ async function resolveSessionDirectory({
 }> {
   const previousDirectory = state.resolvedDirectory
   const result = await errore.tryAsync(() => {
-    return client.session.get({ path: { id: sessionID } })
+    return client.session.get({ sessionID })
   })
   if (result instanceof Error || !result.data?.directory) {
     return {
@@ -284,7 +286,7 @@ async function resolveSessionDirectory({
 
 // ── Plugin ───────────────────────────────────────────────────────
 
-const contextAwarenessPlugin: Plugin = async ({ directory, client }) => {
+const contextAwarenessPlugin: Plugin = async ({ directory, serverUrl }) => {
   initSentry()
 
   const dataDir = process.env.KIMAKI_DATA_DIR
@@ -292,6 +294,10 @@ const contextAwarenessPlugin: Plugin = async ({ directory, client }) => {
     setDataDir(dataDir)
     setPluginLogFilePath(dataDir)
   }
+
+  // Build our own v2 client. The plugin-provided ctx.client (v1) does not
+  // reliably make REST calls from inside the plugin process.
+  const client: PluginClient = createPluginClient({ serverUrl, directory })
 
   // Single Map for all per-session state. One entry per session, one
   // delete on cleanup — no parallel Maps that can drift out of sync.
@@ -357,8 +363,9 @@ const contextAwarenessPlugin: Plugin = async ({ directory, client }) => {
 
           const latestAssistantMessageResult = await errore.tryAsync(() => {
             return client.session.messages({
-              path: { id: sessionID },
-              query: { directory, limit: 20 },
+              sessionID,
+              directory,
+              limit: 20,
             })
           })
           const latestAssistantMessage =

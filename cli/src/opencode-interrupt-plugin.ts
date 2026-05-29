@@ -1,517 +1,295 @@
-// OpenCode plugin for interrupting queued user messages at the next assistant
-// step boundary, with a hard timeout as fallback.
-// Tracks only whether each user message has started processing by
-// correlating assistant message parentID events.
+// Interrupts queued user messages while a session is busy, then replays them.
 //
-// State design: all mutable state (pending messages, recovery locks, event
-// waiters, latest assistant IDs) is encapsulated in a closure-based factory
-// (createInterruptState). The plugin hooks only interact with the returned
-// API — they cannot directly touch Maps/Sets or break invariants like
-// forgetting to clear a timer.
+// Runs INSIDE the opencode server child process. When a user sends a new
+// message while the session is busy (e.g. a long-running bash tool), this
+// plugin: (1) aborts the running message via session.abort, then (2) replays
+// the queued user message via session.promptAsync so the original parts +
+// agent/model overrides are preserved (session.abort clears OpenCode's
+// internal prompt queue, so replay is required, issue #77).
+//
+// IMPORTANT: this builds its OWN v2 OpenCode client from ctx.serverUrl instead
+// of using the plugin-provided ctx.client. The plugin's ctx.client (v1 SDK)
+// does not reliably make REST calls in this process: session.abort/status calls
+// through it silently no-op. See plugin-opencode-client.ts.
+//
+// Abort confirmation uses session.status polling, NOT event waiting. OpenCode's
+// SessionPrompt.cancel() (packages/opencode/src/session/prompt.ts) calls
+// abort.abort() then SessionStatus.set(idle) synchronously, so the session
+// reports idle right after abort. Event-based waiting was unreliable: the
+// post-abort message.updated (MessageAbortedError) and session.idle events did
+// not always reach the plugin's event hook, so abort silently no-opped.
+//
+// Logging goes through client.app.log (OpenCode's structured logger) via
+// createPluginAppLogger. Plugins must not use console.* or import the kimaki
+// logger.
 
-import type { Hooks, Plugin } from '@opencode-ai/plugin'
+import type { Plugin } from '@opencode-ai/plugin'
 import type {
   Part,
   TextPartInput,
   FilePartInput,
   AgentPartInput,
   SubtaskPartInput,
-} from '@opencode-ai/sdk'
+} from '@opencode-ai/sdk/v2'
+import {
+  createPluginClient,
+  createPluginAppLogger,
+} from './plugin-opencode-client.js'
 
-type PluginHooks = Hooks
-type InterruptEvent = Parameters<NonNullable<PluginHooks['event']>>[0]['event']
 type PromptPartInput = TextPartInput | FilePartInput | AgentPartInput | SubtaskPartInput
 
 type PendingMessage = {
   sessionID: string
-  started: boolean
   timer: ReturnType<typeof setTimeout>
-  abortAfterStepMessageID: string | undefined
   parts: PromptPartInput[]
   agent: string | undefined
-  model:
-    | {
-        providerID: string
-        modelID: string
-      }
-    | undefined
+  model: { providerID: string; modelID: string } | undefined
 }
 
-type InterruptChatOutput =
-  NonNullable<PluginHooks['chat.message']> extends (
-    input: unknown,
-    output: infer T,
-  ) => Promise<void>
-    ? T
-    : never
+const LOG_SERVICE = 'kimaki-interrupt'
+const DEFAULT_INTERRUPT_STEP_TIMEOUT_MS = 3_000
+
+// Poll session.status after abort until the session reports idle. cancel() sets
+// status to idle synchronously, so this usually resolves on the first poll.
+const ABORT_IDLE_POLL_INTERVAL_MS = 100
+const ABORT_IDLE_POLL_TIMEOUT_MS = 3_000
+
+function getInterruptStepTimeoutMs(): number {
+  const raw = process.env['KIMAKI_INTERRUPT_STEP_TIMEOUT_MS']
+  if (!raw) return DEFAULT_INTERRUPT_STEP_TIMEOUT_MS
+  const parsed = Number.parseInt(raw, 10)
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : DEFAULT_INTERRUPT_STEP_TIMEOUT_MS
+}
 
 function toPromptParts(parts: Part[]): PromptPartInput[] {
-  return parts.reduce<PromptPartInput[]>((acc, part) => {
-    if (part.type === 'text') {
-      acc.push({
-        id: part.id,
-        type: 'text',
-        text: part.text,
-        synthetic: part.synthetic,
-        ignored: part.ignored,
-        time: part.time,
-        metadata: part.metadata,
-      })
-      return acc
-    }
-    if (part.type === 'file') {
-      acc.push({
-        id: part.id,
-        type: 'file',
-        mime: part.mime,
-        filename: part.filename,
-        url: part.url,
-        source: part.source,
-      })
-      return acc
-    }
-    if (part.type === 'agent') {
-      acc.push({
-        id: part.id,
-        type: 'agent',
-        name: part.name,
-        source: part.source,
-      })
-      return acc
-    }
-    if (part.type === 'subtask') {
-      acc.push({
-        id: part.id,
-        type: 'subtask',
-        prompt: part.prompt,
-        description: part.description,
-        agent: part.agent,
-      })
-      return acc
-    }
-    return acc
-  }, [])
+  const PROMPT_PART_TYPES = new Set(['text', 'file', 'agent', 'subtask'])
+  return parts.filter((p): p is Part & { type: 'text' | 'file' | 'agent' | 'subtask' } =>
+    PROMPT_PART_TYPES.has(p.type),
+  ).map((p) => {
+    // Strip runtime-only fields (sessionID, messageID) that Part has but PartInput doesn't
+    const { sessionID: _s, messageID: _m, ...input } = p as Part & Record<string, unknown>
+    return input as PromptPartInput
+  })
 }
 
-type EventWaiter = {
-  match: (event: InterruptEvent) => boolean
-  finish: () => void
-  timer: ReturnType<typeof setTimeout>
+function delay(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms))
 }
 
-const DEFAULT_INTERRUPT_STEP_TIMEOUT_MS = 3_000
-const POST_ABORT_IDLE_GRACE_MS = 250
+const interruptOpencodeSessionOnUserMessage: Plugin = async (ctx) => {
+  const interruptStepTimeoutMs = getInterruptStepTimeoutMs()
+  const directory = ctx.directory
 
-function getInterruptStepTimeoutMsFromEnv(): number {
-  const raw = process.env['KIMAKI_INTERRUPT_STEP_TIMEOUT_MS']
-  if (!raw) {
-    return DEFAULT_INTERRUPT_STEP_TIMEOUT_MS
-  }
-  const parsed = Number.parseInt(raw, 10)
-  if (!Number.isFinite(parsed) || parsed <= 0) {
-    return DEFAULT_INTERRUPT_STEP_TIMEOUT_MS
-  }
-  return parsed
-}
+  // Build our own v2 client against the same server. ctx.client (v1) does not
+  // reliably make REST calls from inside this plugin process.
+  const client = createPluginClient({ serverUrl: ctx.serverUrl, directory })
+  const log = createPluginAppLogger({ client, service: LOG_SERVICE })
 
-// ── Encapsulated interrupt state ─────────────────────────────────
-// All mutable variables are trapped inside this closure. The plugin
-// hooks only see the returned API methods — they cannot break invariants
-// like forgetting to clear a timer or leaving a stale recovery lock.
-
-function createInterruptState() {
-  const pendingByMessageId = new Map<string, PendingMessage>()
-  const latestAssistantMessageIDBySession = new Map<string, string>()
-  const recoveringSessions = new Set<string>()
-  const waiters = new Set<EventWaiter>()
-  // Messages that were replayed after an abort. chat.message must skip
-  // scheduling a new interrupt timer for these to prevent an infinite
-  // abort→replay loop when the LLM takes >interruptStepTimeoutMs to
-  // return the first token (e.g. 239K token prompts).
+  // Queued messages awaiting their interrupt timer, keyed by messageID.
+  const pending = new Map<string, PendingMessage>()
+  // Sessions currently running an abort+replay. Guards against concurrent
+  // interrupts and re-entrant scheduling while an interrupt is in flight.
+  const interrupting = new Set<string>()
+  // Messages replayed after abort. chat.message skips scheduling a new
+  // interrupt timer for these to prevent infinite abort→replay loops when the
+  // LLM takes longer than interruptStepTimeoutMs to respond.
   const replayedMessageIds = new Set<string>()
 
   function clearPending(messageID: string): void {
-    const pending = pendingByMessageId.get(messageID)
-    if (!pending) {
-      return
-    }
-    clearTimeout(pending.timer)
-    pendingByMessageId.delete(messageID)
+    const entry = pending.get(messageID)
+    if (!entry) return
+    clearTimeout(entry.timer)
+    pending.delete(messageID)
   }
 
-  function dispatchEvent(event: InterruptEvent): void {
-    Array.from(waiters).forEach((waiter) => {
-      if (!waiter.match(event)) {
-        return
-      }
-      waiter.finish()
-    })
-  }
-
-  function waitForEvent(input: {
-    match: (event: InterruptEvent) => boolean
-    timeoutMs: number
-  }): Promise<boolean> {
-    return new Promise((resolve) => {
-      const finish = (matched: boolean) => {
-        clearTimeout(waiter.timer)
-        waiters.delete(waiter)
-        resolve(matched)
-      }
-      const waiter: EventWaiter = {
-        match: input.match,
-        finish: () => {
-          finish(true)
-        },
-        timer: setTimeout(() => {
-          finish(false)
-        }, input.timeoutMs),
-      }
-      waiters.add(waiter)
-    })
-  }
-
-  function getNextPendingForSession(sessionID: string):
-    | { messageID: string; pending: PendingMessage }
-    | undefined {
-    for (const [messageID, pending] of pendingByMessageId.entries()) {
-      if (pending.sessionID !== sessionID) {
-        continue
-      }
-      if (pending.started) {
-        continue
-      }
-      return { messageID, pending }
+  function getNextPending(sessionID: string): string | undefined {
+    for (const [messageID, entry] of pending.entries()) {
+      if (entry.sessionID === sessionID) return messageID
     }
     return undefined
   }
 
-  return {
-    dispatchEvent,
-    waitForEvent,
-    getNextPendingForSession,
-
-    hasPending(messageID: string): boolean {
-      return pendingByMessageId.has(messageID)
-    },
-
-    getPending(messageID: string): PendingMessage | undefined {
-      return pendingByMessageId.get(messageID)
-    },
-
-    // Schedule a timeout to interrupt a pending message. Cleans up any
-    // existing timer for the same messageID before setting a new one.
-    schedulePending({
-      messageID,
-      sessionID,
-      parts,
-      delayMs,
-      onTimeout,
-    }: {
-      messageID: string
-      sessionID: string
-      parts: PromptPartInput[]
-      delayMs: number
-      onTimeout: () => void
-    }): void {
-      const existing = pendingByMessageId.get(messageID)
-      if (existing) {
-        clearTimeout(existing.timer)
-      }
-      const timer = setTimeout(onTimeout, delayMs)
-      pendingByMessageId.set(messageID, {
-        sessionID,
-        started: false,
-        timer,
-        abortAfterStepMessageID: latestAssistantMessageIDBySession.get(sessionID),
-        parts,
-        agent: undefined,
-        model: undefined,
-      })
-    },
-
-    markStarted(messageID: string): void {
-      const pending = pendingByMessageId.get(messageID)
-      if (!pending) {
-        return
-      }
-      pending.started = true
-      clearPending(messageID)
-    },
-
-    clearPending,
-
-    isRecovering(sessionID: string): boolean {
-      return recoveringSessions.has(sessionID)
-    },
-
-    setRecovering(sessionID: string): void {
-      recoveringSessions.add(sessionID)
-    },
-
-    clearRecovering(sessionID: string): void {
-      recoveringSessions.delete(sessionID)
-    },
-
-    setLatestAssistantMessage(sessionID: string, messageID: string): void {
-      latestAssistantMessageIDBySession.set(sessionID, messageID)
-    },
-
-    clearLatestAssistantMessage(sessionID: string): void {
-      latestAssistantMessageIDBySession.delete(sessionID)
-    },
-
-    markReplayed(messageID: string): void {
-      replayedMessageIds.add(messageID)
-    },
-
-    isReplayed(messageID: string): boolean {
-      return replayedMessageIds.has(messageID)
-    },
-
-    clearReplayed(messageID: string): void {
+  function cleanupSession(sessionID: string): void {
+    for (const [messageID, entry] of [...pending.entries()]) {
+      if (entry.sessionID !== sessionID) continue
       replayedMessageIds.delete(messageID)
-    },
-
-    // Clean up all state for a deleted session — timers, recovery locks, etc.
-    cleanupSession(sessionID: string): void {
-      latestAssistantMessageIDBySession.delete(sessionID)
-      Array.from(pendingByMessageId.entries()).forEach(([messageID, pending]) => {
-        if (pending.sessionID !== sessionID) {
-          return
-        }
-        replayedMessageIds.delete(messageID)
-        clearPending(messageID)
-      })
-    },
+      clearPending(messageID)
+    }
   }
-}
 
-// ── Plugin ───────────────────────────────────────────────────────
+  function schedulePending(messageID: string, entry: Omit<PendingMessage, 'timer'>, delayMs: number): void {
+    clearPending(messageID)
+    const timer = setTimeout(() => void interruptPendingMessage(messageID), delayMs)
+    pending.set(messageID, { ...entry, timer })
+    log('info', 'scheduled pending interrupt', {
+      sessionID: entry.sessionID,
+      messageID,
+      delayMs,
+    })
+  }
 
-const interruptOpencodeSessionOnUserMessage: Plugin = async (ctx) => {
-  const interruptStepTimeoutMs = getInterruptStepTimeoutMsFromEnv()
-  const state = createInterruptState()
+  // Poll session.status until the session reports idle (or times out). Returns
+  // the number of polls and whether the session became idle.
+  async function waitForSessionIdle(
+    sessionID: string,
+  ): Promise<{ polls: number; becameIdle: boolean; finalStatus: string }> {
+    const startedAt = Date.now()
+    let polls = 0
+    let finalStatus = 'unknown'
+    while (Date.now() - startedAt < ABORT_IDLE_POLL_TIMEOUT_MS) {
+      polls += 1
+      const statusResponse = await client.session.status({ directory })
+      const sessionStatus = statusResponse.data?.[sessionID]
+      finalStatus = sessionStatus?.type ?? 'idle'
+      // No entry means the session is not running anything → idle.
+      if (!sessionStatus || sessionStatus.type === 'idle') {
+        return { polls, becameIdle: true, finalStatus }
+      }
+      await delay(ABORT_IDLE_POLL_INTERVAL_MS)
+    }
+    return { polls, becameIdle: false, finalStatus }
+  }
 
   async function interruptPendingMessage(messageID: string): Promise<void> {
-    const pending = state.getPending(messageID)
-    if (!pending) {
-      state.clearPending(messageID)
-      return
-    }
-    if (pending.started) {
-      state.clearPending(messageID)
+    const entry = pending.get(messageID)
+    if (!entry) return
+
+    const sessionID = entry.sessionID
+    if (interrupting.has(sessionID)) {
+      // Another interrupt is in flight for this session; retry shortly so we
+      // don't drop the user's message.
+      schedulePending(messageID, entry, 200)
       return
     }
 
-    const sessionID = pending.sessionID
-    if (state.isRecovering(sessionID)) {
-      state.schedulePending({
-        messageID,
-        sessionID,
-        parts: pending.parts,
-        delayMs: 200,
-        onTimeout: () => {
-          void interruptPendingMessage(messageID)
-        },
-      })
-      return
-    }
-
-    state.setRecovering(sessionID)
+    interrupting.add(sessionID)
     try {
-      const abortedAssistantWait = state.waitForEvent({
-        match: (event) => {
-          return (
-            event.type === 'message.updated'
-            && event.properties.info.role === 'assistant'
-            && event.properties.info.sessionID === sessionID
-            && event.properties.info.error?.name === 'MessageAbortedError'
-          )
-        },
-        timeoutMs: 5_000,
-      })
-      const initialIdleWait = state.waitForEvent({
-        match: (event) => {
-          return event.type === 'session.idle' && event.properties.sessionID === sessionID
-        },
-        timeoutMs: 10_000,
-      })
-      await ctx.client.session.abort({
-        path: { id: sessionID },
-      })
-      await abortedAssistantWait
-      await initialIdleWait
+      log('info', 'starting abort+replay', { sessionID, messageID })
 
-      // OpenCode can emit `session.idle` before the aborted assistant update,
-      // then emit another idle after the cancelled run finishes cleanup. Replaying
-      // on the first idle can enqueue the replay behind the still-settling run.
-      // Some paths only emit the first idle, so wait briefly for a post-abort
-      // idle and then continue rather than dropping the user's interrupt.
-      await state.waitForEvent({
-        match: (event) => {
-          return event.type === 'session.idle' && event.properties.sessionID === sessionID
-        },
-        timeoutMs: POST_ABORT_IDLE_GRACE_MS,
-      })
+      await client.session.abort({ sessionID, directory })
+      log('info', 'session.abort called', { sessionID, messageID })
 
-      const currentPending = state.getPending(messageID)
-      if (!currentPending || currentPending.started) {
-        state.clearPending(messageID)
+      const idleResult = await waitForSessionIdle(sessionID)
+      log(idleResult.becameIdle ? 'info' : 'warn', 'status poll resolved', {
+        sessionID,
+        messageID,
+        pollCount: idleResult.polls,
+        becameIdle: idleResult.becameIdle,
+        finalStatus: idleResult.finalStatus,
+        pollTimeoutMs: ABORT_IDLE_POLL_TIMEOUT_MS,
+      })
+      // On timeout we still replay rather than silently dropping the user's
+      // message: a queued promptAsync runs after the current turn anyway.
+
+      const current = pending.get(messageID)
+      if (!current) {
+        log('info', 'replay skipped (dropped during abort)', { sessionID, messageID })
         return
       }
 
-      // Resubmit the original queued user message after abort.
-      // session.abort() clears OpenCode's internal prompt queue, so resuming
-      // with an empty parts array can silently drop the user's message.
-      // Keep the original messageID + parts and preserve agent/model context so
-      // session overrides (issue #77) survive the abort + replay path.
-      const replayBody: {
+      // Replay the original queued message after abort. session.abort() clears
+      // OpenCode's internal prompt queue, so we must resend the original parts +
+      // agent/model to preserve session overrides (#77).
+      const replayParams: {
+        sessionID: string
+        directory: string
         messageID: string
         parts: PromptPartInput[]
         agent?: string
         model?: { providerID: string; modelID: string }
-      } = {
-        messageID,
-        parts: currentPending.parts,
-      }
-      if (currentPending.agent) {
-        replayBody.agent = currentPending.agent
-      }
-      if (currentPending.model) {
-        replayBody.model = currentPending.model
-      }
+      } = { sessionID, directory, messageID, parts: current.parts }
+      if (current.agent) replayParams.agent = current.agent
+      if (current.model) replayParams.model = current.model
 
-      // Mark as replayed BEFORE promptAsync so the chat.message hook
-      // (which fires synchronously when opencode processes the message)
-      // knows to skip scheduling a new interrupt timer. Without this,
-      // replayed messages re-enter the interrupt pipeline and create an
-      // infinite abort→replay loop when the LLM takes >timeout to respond.
-      state.markReplayed(messageID)
-      await ctx.client.session.promptAsync({
-        path: { id: sessionID },
-        body: replayBody,
-      })
-      state.clearPending(messageID)
-
-      const nextPending = state.getNextPendingForSession(sessionID)
-      if (!nextPending) {
-        return
-      }
-      state.schedulePending({
-        messageID: nextPending.messageID,
+      // Mark replayed BEFORE promptAsync so the chat.message hook skips
+      // scheduling a new interrupt timer for this message.
+      replayedMessageIds.add(messageID)
+      clearPending(messageID)
+      await client.session.promptAsync(replayParams)
+      log('info', 'replayed queued message', {
         sessionID,
-        parts: nextPending.pending.parts,
-        delayMs: 50,
-        onTimeout: () => {
-          void interruptPendingMessage(nextPending.messageID)
-        },
+        messageID,
+        replayPartCount: current.parts.length,
+      })
+    } catch (error) {
+      log('error', 'abort+replay threw', {
+        sessionID,
+        messageID,
+        error: error instanceof Error ? error.message : String(error),
       })
     } finally {
-      state.clearRecovering(sessionID)
+      interrupting.delete(sessionID)
+    }
+
+    // Drain the next queued message for this session, if any.
+    const next = getNextPending(sessionID)
+    if (next) {
+      const nextEntry = pending.get(next)
+      if (nextEntry) {
+        log('info', 'scheduling next pending after replay', {
+          sessionID,
+          nextMessageID: next,
+        })
+        schedulePending(next, nextEntry, 50)
+      }
     }
   }
 
   return {
     async event({ event }) {
-      state.dispatchEvent(event)
-
-      if (event.type === 'message.part.updated' && event.properties.part.type === 'step-finish') {
-        const nextPending = state.getNextPendingForSession(
-          event.properties.part.sessionID,
-        )
-        if (!nextPending) {
-          return
-        }
-        if (state.isRecovering(nextPending.pending.sessionID)) {
-          return
-        }
-        if (!nextPending.pending.abortAfterStepMessageID) {
-          return
-        }
-        if (event.properties.part.messageID !== nextPending.pending.abortAfterStepMessageID) {
-          return
-        }
-        void interruptPendingMessage(nextPending.messageID)
-        return
-      }
-
+      // When an assistant message starts processing a queued user message
+      // (parentID match), cancel its interrupt timer: the message began running
+      // normally within the timeout window, so there is nothing to interrupt.
       if (event.type === 'message.updated' && event.properties.info.role === 'assistant') {
         if (!event.properties.info.error) {
-          state.setLatestAssistantMessage(
-            event.properties.info.sessionID,
-            event.properties.info.id,
-          )
+          clearPending(event.properties.info.parentID)
         }
-
-        const nextPending = state.getNextPendingForSession(
-          event.properties.info.sessionID,
-        )
-        if (
-          nextPending
-          && !nextPending.pending.started
-          && !event.properties.info.error
-          && event.properties.info.parentID !== nextPending.messageID
-        ) {
-          nextPending.pending.abortAfterStepMessageID = event.properties.info.id
-        }
-
-        const parentID = event.properties.info.parentID
-        state.markStarted(parentID)
-        return
-      }
-
-      if (event.type === 'session.idle') {
-        state.clearLatestAssistantMessage(event.properties.sessionID)
         return
       }
 
       if (event.type === 'session.deleted') {
-        state.cleanupSession(event.properties.info.id)
+        log('debug', 'session deleted, cleaning up', { sessionID: event.properties.info.id })
+        cleanupSession(event.properties.info.id)
       }
     },
 
     async 'chat.message'(input, output) {
       const sessionID = input.sessionID
-      if (!sessionID) {
-        return
-      }
-
-      // Ignore empty-parts messages (e.g. our own promptAsync({ parts: [] })
-      // resume calls). These are synthetic and should not trigger interruption.
-      if (output.parts.length === 0) {
-        return
-      }
+      if (!sessionID) return
+      if (output.parts.length === 0) return
 
       const messageID = input.messageID || output.message.id
-      if (!messageID) {
+      if (!messageID) return
+
+      if (replayedMessageIds.has(messageID)) {
+        replayedMessageIds.delete(messageID)
+        log('debug', 'chat.message skipped (replayed message)', { sessionID, messageID })
         return
       }
-      // Skip replayed messages — they were already interrupted and replayed
-      // by interruptPendingMessage. Scheduling a new timer would create an
-      // infinite abort→replay loop when the LLM is slow (large context).
-      if (state.isReplayed(messageID)) {
-        state.clearReplayed(messageID)
+      if (pending.has(messageID)) {
+        log('debug', 'chat.message skipped (already pending)', { sessionID, messageID })
         return
       }
-      if (state.hasPending(messageID)) {
-        return
-      }
-      state.schedulePending({
+
+      schedulePending(
         messageID,
-        sessionID,
-        parts: toPromptParts(output.parts),
-        delayMs: interruptStepTimeoutMs,
-        onTimeout: () => {
-          void interruptPendingMessage(messageID)
+        {
+          sessionID,
+          parts: toPromptParts(output.parts),
+          agent: output.message.agent,
+          model: output.message.model,
         },
+        interruptStepTimeoutMs,
+      )
+      log('info', 'chat.message queued for interrupt', {
+        sessionID,
+        messageID,
+        agent: output.message.agent ?? null,
+        model: output.message.model
+          ? `${output.message.model.providerID}/${output.message.model.modelID}`
+          : null,
+        partCount: output.parts.length,
       })
-      const pending = state.getPending(messageID)
-      if (!pending) {
-        return
-      }
-      pending.agent = output.message.agent
-      pending.model = output.message.model
     },
   }
 }

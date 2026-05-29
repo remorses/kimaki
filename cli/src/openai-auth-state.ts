@@ -8,7 +8,7 @@
  * Migration: on first load, copies from multicodex-accounts.json if present.
  */
 
-import type { Plugin } from '@opencode-ai/plugin'
+import type { OpencodeClient } from '@opencode-ai/sdk/v2'
 import { homedir } from 'node:os'
 import path from 'node:path'
 import {
@@ -130,10 +130,10 @@ async function writeOpenAIAuthFile(auth: OAuthStored | undefined) {
 
 export async function setOpenAIAuth(
   auth: OAuthStored,
-  client: Parameters<Plugin>[0]['client'],
+  client: OpencodeClient,
 ) {
   await writeOpenAIAuthFile(auth)
-  await client.auth.set({ path: { id: 'openai' }, body: auth })
+  await client.auth.set({ providerID: 'openai', auth })
 }
 
 // --- Remember new login ---
@@ -201,7 +201,7 @@ export async function detectAndRememberNewOpenAIAccount(): Promise<AccountIdenti
 
 export async function rotateOpenAIAccount(
   auth: OAuthStored,
-  client: Parameters<Plugin>[0]['client'],
+  client: OpencodeClient,
 ): Promise<RotationResult | undefined> {
   return withAuthStateLock(async () => {
     const store = await loadOpenAIAccountStore()

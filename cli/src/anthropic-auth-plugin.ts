@@ -24,7 +24,9 @@
  */
 
 import type { Hooks, Plugin } from "@opencode-ai/plugin";
+import type { OpencodeClient } from "@opencode-ai/sdk/v2";
 import { appendToastSessionMarker } from "./plugin-logger.js";
+import { createPluginClient } from "./plugin-opencode-client.js";
 import {
   loadAccountStore,
   rememberAnthropicOAuth,
@@ -911,7 +913,7 @@ function isOAuthStored(auth: { type: string }): auth is OAuthStored {
 
 async function getFreshOAuth(
   getAuth: () => Promise<OAuthStored | { type: string }>,
-  client: Parameters<Plugin>[0]["client"],
+  client: OpencodeClient,
 ) {
   const auth = await getAuth();
   if (!isOAuthStored(auth)) return undefined;
@@ -959,7 +961,10 @@ async function getFreshOAuth(
   });
 }
 
-const AnthropicAuthPlugin: Plugin = async ({ client }) => {
+const AnthropicAuthPlugin: Plugin = async ({ serverUrl, directory }) => {
+  // Build our own v2 client. The plugin-provided ctx.client (v1) does not
+  // reliably make REST calls from inside the plugin process.
+  const client = createPluginClient({ serverUrl, directory });
   return {
     "chat.headers": async (input, output) => {
       if (input.model.providerID !== "anthropic") {
@@ -1017,13 +1022,11 @@ const AnthropicAuthPlugin: Plugin = async ({ client }) => {
             const rewritten = rewriteRequestPayload(originalBody, (msg) => {
               client.tui
                 .showToast({
-                  body: {
-                    message: appendToastSessionMarker({
-                      message: msg,
-                      sessionId,
-                    }),
-                    variant: "error",
-                  },
+                  message: appendToastSessionMarker({
+                    message: msg,
+                    sessionId,
+                  }),
+                  variant: "error",
                 })
                 .catch(() => {});
             });
@@ -1072,13 +1075,11 @@ const AnthropicAuthPlugin: Plugin = async ({ client }) => {
                   // Show toast notification so Discord thread shows the rotation
                   client.tui
                     .showToast({
-                      body: {
-                        message: appendToastSessionMarker({
-                          message: `Switching from account ${rotated.fromLabel} to account ${rotated.toLabel}`,
-                          sessionId,
-                        }),
-                        variant: "info",
-                      },
+                      message: appendToastSessionMarker({
+                        message: `Switching from account ${rotated.fromLabel} to account ${rotated.toLabel}`,
+                        sessionId,
+                      }),
+                      variant: "info",
                     })
                     .catch(() => {});
                   const retryAuth = await getFreshOAuth(getAuth, client);

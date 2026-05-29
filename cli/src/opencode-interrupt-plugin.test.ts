@@ -1,20 +1,17 @@
-// Runtime tests for queued-message interrupt plugin behavior.
+// Runtime tests for the queued-message interrupt plugin.
 //
-// Event fixtures here come from real Kimaki sessions, trimmed to only the parts
-// that affect interrupt behavior:
-// 1) export session events:
-//    `pnpm tsx src/cli.ts session export-events-jsonl --session <id> --out ../tmp/<id>.jsonl`
-// 2) inspect timeline:
-//    `jq -r '[.timestamp, .event.type, (.event.properties.status.type // .event.properties.info.role // .event.properties.error.name // ""), (.event.properties.info.id // .event.properties.sessionID // ""), (.event.properties.info.parentID // "")] | @tsv' ../tmp/<id>.jsonl`
-// 3) keep only status/error/assistant-parent events relevant to timeout + resume.
+// The plugin builds its OWN v2 OpenCode client from ctx.serverUrl and talks to
+// the real server over HTTP. To test without a real opencode/LLM, we spin up a
+// tiny local HTTP server that implements the three endpoints the plugin uses:
+//   GET  /session/status         → { [sessionID]: SessionStatus }
+//   POST /session/{id}/abort     → records abort, flips status to idle
+//   POST /session/{id}/prompt_async → records the replay
+// No module mocking: the plugin runs against a genuine HTTP endpoint.
 
-import { afterEach, describe, expect, test } from 'vitest'
-import type {
-  TextPartInput,
-  FilePartInput,
-  AgentPartInput,
-  SubtaskPartInput,
-} from '@opencode-ai/sdk'
+import http from 'node:http'
+import type { AddressInfo } from 'node:net'
+import { afterEach, beforeEach, describe, expect, test } from 'vitest'
+import type { SessionStatus } from '@opencode-ai/sdk/v2'
 import { interruptOpencodeSessionOnUserMessage } from './opencode-interrupt-plugin.js'
 
 type InterruptHooks = Awaited<ReturnType<typeof interruptOpencodeSessionOnUserMessage>>
@@ -24,91 +21,107 @@ type InterruptEvent = Parameters<InterruptEventHook>[0]['event']
 type InterruptChatInput = Parameters<InterruptChatHook>[0]
 type InterruptChatOutput = Parameters<InterruptChatHook>[1]
 type InterruptContext = Parameters<typeof interruptOpencodeSessionOnUserMessage>[0]
-type PromptPartInput = TextPartInput | FilePartInput | AgentPartInput | SubtaskPartInput
 
-type MockClient = {
-  session: {
-    abort: (input: { path: { id: string } }) => Promise<void>
-    promptAsync: (input: {
-      path: { id: string }
-      body: {
-        messageID: string
-        parts: PromptPartInput[]
-        agent?: string
-        model?: {
-          providerID: string
-          modelID: string
-        }
-      }
-    }) => Promise<void>
-  }
+type AbortCall = { sessionID: string }
+type PromptAsyncCall = {
+  sessionID: string
+  messageID?: string
+  parts?: unknown
+  agent?: string
+  model?: { providerID: string; modelID: string }
 }
 
-const REAL_RATE_LIMIT_CASE = {
-  sessionID: 'ses_34227488cffeO6V9KFc4QRzCr1',
-  previousMessageID: 'msg_cbdd8fa01001UYKvAEc7rx3nTO',
-  queuedMessageID: 'msg_cbdd923e5001ZSCxCbj9oGbdHV',
-  events: [
-    {
-      type: 'session.status',
-      properties: {
-        sessionID: 'ses_34227488cffeO6V9KFc4QRzCr1',
-        status: {
-          type: 'retry',
-          attempt: 1,
-          message: 'Resource exhausted, please retry after 8.643s.',
-          next: 1772711648923,
+// A tiny stand-in opencode server. Records abort/prompt_async calls and serves
+// a configurable per-session status. abort flips the session to idle, mirroring
+// OpenCode's synchronous cancel().
+function createStubServer(): Promise<{
+  baseUrl: string
+  abortCalls: AbortCall[]
+  promptAsyncCalls: PromptAsyncCall[]
+  setStatus: (sessionID: string, status: SessionStatus | undefined) => void
+  close: () => Promise<void>
+}> {
+  const abortCalls: AbortCall[] = []
+  const promptAsyncCalls: PromptAsyncCall[] = []
+  const statuses = new Map<string, SessionStatus>()
+
+  const readBody = (req: http.IncomingMessage): Promise<string> =>
+    new Promise((resolve) => {
+      let raw = ''
+      req.on('data', (chunk) => {
+        raw += chunk
+      })
+      req.on('end', () => resolve(raw))
+    })
+
+  const server = http.createServer(async (req, res) => {
+    const url = new URL(req.url ?? '/', 'http://localhost')
+    const sendJson = (body: unknown) => {
+      res.writeHead(200, { 'content-type': 'application/json' })
+      res.end(JSON.stringify(body))
+    }
+
+    if (req.method === 'GET' && url.pathname === '/session/status') {
+      const data: Record<string, SessionStatus> = {}
+      for (const [id, status] of statuses.entries()) data[id] = status
+      sendJson(data)
+      return
+    }
+
+    // The plugin logs through client.app.log (POST /log); accept and ignore.
+    if (req.method === 'POST' && url.pathname === '/log') {
+      await readBody(req)
+      sendJson(true)
+      return
+    }
+
+    const abortMatch = url.pathname.match(/^\/session\/([^/]+)\/abort$/)
+    if (req.method === 'POST' && abortMatch) {
+      const sessionID = decodeURIComponent(abortMatch[1]!)
+      abortCalls.push({ sessionID })
+      // Mirror OpenCode: cancel() sets status idle synchronously on abort.
+      statuses.delete(sessionID)
+      sendJson(true)
+      return
+    }
+
+    const promptMatch = url.pathname.match(/^\/session\/([^/]+)\/prompt_async$/)
+    if (req.method === 'POST' && promptMatch) {
+      const sessionID = decodeURIComponent(promptMatch[1]!)
+      const raw = await readBody(req)
+      const parsed = raw ? JSON.parse(raw) : {}
+      promptAsyncCalls.push({ sessionID, ...parsed })
+      sendJson({})
+      return
+    }
+
+    res.writeHead(404, { 'content-type': 'application/json' })
+    res.end(JSON.stringify({ error: 'not found', path: url.pathname }))
+  })
+
+  return new Promise((resolve) => {
+    server.listen(0, '127.0.0.1', () => {
+      const { port } = server.address() as AddressInfo
+      resolve({
+        baseUrl: `http://127.0.0.1:${port}`,
+        abortCalls,
+        promptAsyncCalls,
+        setStatus: (sessionID, status) => {
+          if (status) statuses.set(sessionID, status)
+          else statuses.delete(sessionID)
         },
-      },
-    },
-    {
-      type: 'message.updated',
-      properties: {
-        info: {
-          role: 'assistant',
-          sessionID: 'ses_34227488cffeO6V9KFc4QRzCr1',
-          parentID: 'msg_cbdd8fa01001UYKvAEc7rx3nTO',
-        },
-      },
-    },
-  ] as InterruptEvent[],
+        close: () =>
+          new Promise((done) => {
+            server.close(() => done())
+          }),
+      })
+    })
+  })
 }
 
-const REAL_SLEEP_INTERRUPT_CASE = {
-  sessionID: 'ses_342257e56ffeNdEEQ3lVVR3sZe',
-  runningMessageID: 'msg_cbddaa49c00123dKnwvzTVjutL',
-  interruptingMessageID: 'msg_cbddad73c001LZrsb4XMZt5Lls',
-  assistantRunningEvent: {
-    type: 'message.updated',
-    properties: {
-      info: {
-        role: 'assistant',
-        sessionID: 'ses_342257e56ffeNdEEQ3lVVR3sZe',
-        parentID: 'msg_cbddaa49c00123dKnwvzTVjutL',
-      },
-    },
-  } as InterruptEvent,
-  idleEvent: {
-    type: 'session.idle',
-    properties: {
-      sessionID: 'ses_342257e56ffeNdEEQ3lVVR3sZe',
-    },
-  } as InterruptEvent,
-  abortErrorEvent: {
-    type: 'session.error',
-    properties: {
-      sessionID: 'ses_342257e56ffeNdEEQ3lVVR3sZe',
-      error: {
-        name: 'MessageAbortedError',
-        data: { message: 'The operation was aborted.' },
-      },
-    },
-  } as InterruptEvent,
-}
-
-function createContext({ client }: { client: MockClient }): InterruptContext {
+function createContext({ baseUrl }: { baseUrl: string }): InterruptContext {
   return {
-    client: client as unknown as InterruptContext['client'],
+    client: {} as InterruptContext['client'],
     project: {
       id: 'project-id',
       worktree: '/Users/morse/Documents/GitHub/kimakivoice',
@@ -121,7 +134,7 @@ function createContext({ client }: { client: MockClient }): InterruptContext {
         return
       },
     },
-    serverUrl: new URL('http://127.0.0.1:4096'),
+    serverUrl: new URL(baseUrl),
     $: {} as InterruptContext['$'],
   }
 }
@@ -146,52 +159,6 @@ function createChatOutput({
   } as InterruptChatOutput
 }
 
-function createSessionErrorEvent({ sessionID }: { sessionID: string }): InterruptEvent {
-  return {
-    type: 'session.error',
-    properties: {
-      sessionID,
-      error: {
-        name: 'MessageAbortedError',
-        data: { message: 'The operation was aborted.' },
-      },
-    },
-  } as InterruptEvent
-}
-
-function createSessionIdleEvent({ sessionID }: { sessionID: string }): InterruptEvent {
-  return {
-    type: 'session.idle',
-    properties: { sessionID },
-  } as InterruptEvent
-}
-
-function createAssistantAbortedEvent({
-  sessionID,
-  assistantMessageID,
-  parentID,
-}: {
-  sessionID: string
-  assistantMessageID: string
-  parentID: string
-}): InterruptEvent {
-  return {
-    type: 'message.updated',
-    properties: {
-      info: {
-        id: assistantMessageID,
-        role: 'assistant',
-        sessionID,
-        parentID,
-        error: {
-          name: 'MessageAbortedError',
-          data: { message: 'The operation was aborted.' },
-        },
-      },
-    },
-  } as InterruptEvent
-}
-
 function createAssistantStartedEvent({
   sessionID,
   messageID,
@@ -214,34 +181,6 @@ function createAssistantStartedEvent({
   } as InterruptEvent
 }
 
-function createStepFinishEvent({
-  sessionID,
-  assistantMessageID,
-}: {
-  sessionID: string
-  assistantMessageID: string
-}): InterruptEvent {
-  return {
-    type: 'message.part.updated',
-    properties: {
-      part: {
-        id: 'prt-step-finish',
-        sessionID,
-        messageID: assistantMessageID,
-        type: 'step-finish',
-        reason: 'tool-calls',
-        cost: 0,
-        tokens: {
-          input: 0,
-          output: 0,
-          reasoning: 0,
-          cache: { read: 0, write: 0 },
-        },
-      },
-    },
-  } as InterruptEvent
-}
-
 function delay({ ms }: { ms: number }): Promise<void> {
   return new Promise((resolve) => {
     setTimeout(() => {
@@ -250,13 +189,14 @@ function delay({ ms }: { ms: number }): Promise<void> {
   })
 }
 
-async function requireHooks({
-  client,
-}: {
-  client: MockClient
-}): Promise<{ eventHook: InterruptEventHook; chatHook: InterruptChatHook }> {
+let stub: Awaited<ReturnType<typeof createStubServer>>
+
+async function requireHooks(): Promise<{
+  eventHook: InterruptEventHook
+  chatHook: InterruptChatHook
+}> {
   const hooks = await interruptOpencodeSessionOnUserMessage(
-    createContext({ client }),
+    createContext({ baseUrl: stub.baseUrl }),
   )
 
   const eventHook = hooks.event
@@ -271,115 +211,49 @@ async function requireHooks({
   return { eventHook, chatHook }
 }
 
-afterEach(() => {
+beforeEach(async () => {
+  stub = await createStubServer()
+})
+
+afterEach(async () => {
   delete process.env['KIMAKI_INTERRUPT_STEP_TIMEOUT_MS']
+  await stub.close()
 })
 
 describe('interruptOpencodeSessionOnUserMessage', () => {
-  test('real rate-limit trace keeps queued message unsent until timeout recovery', async () => {
+  test('aborts a busy session after timeout and replays the queued message', async () => {
     process.env['KIMAKI_INTERRUPT_STEP_TIMEOUT_MS'] = '20'
 
-    const abortCalls: Array<{ path: { id: string } }> = []
-    const promptAsyncCalls: Array<{
-      path: { id: string }
-      body: {
-        messageID: string
-        parts: PromptPartInput[]
-        agent?: string
-        model?: {
-          providerID: string
-          modelID: string
-        }
-      }
-    }> = []
-    const client: MockClient = {
-      session: {
-        abort: async (input) => {
-          abortCalls.push(input)
-        },
-        promptAsync: async (input) => {
-          promptAsyncCalls.push(input)
-        },
-      },
-    }
+    const { chatHook } = await requireHooks()
+    const sessionID = 'ses-busy'
+    const messageID = 'msg-queued'
 
-    const { eventHook, chatHook } = await requireHooks({ client })
+    // Session is busy with a long-running turn.
+    stub.setStatus(sessionID, { type: 'busy' })
 
     await chatHook(
-      {
-        sessionID: REAL_RATE_LIMIT_CASE.sessionID,
-        messageID: REAL_RATE_LIMIT_CASE.queuedMessageID,
-      } as InterruptChatInput,
-      createChatOutput({
-        sessionID: REAL_RATE_LIMIT_CASE.sessionID,
-        messageID: REAL_RATE_LIMIT_CASE.queuedMessageID,
-      }),
+      { sessionID, messageID } as InterruptChatInput,
+      createChatOutput({ sessionID, messageID }),
     )
 
-    for (const event of REAL_RATE_LIMIT_CASE.events) {
-      await eventHook({ event })
-    }
+    // Timer fires (20ms), abort is called, status poll sees idle (abort cleared
+    // it), replay runs.
+    await delay({ ms: 120 })
 
-    await delay({ ms: 30 })
-    await eventHook({
-      event: createSessionErrorEvent({ sessionID: REAL_RATE_LIMIT_CASE.sessionID }),
-    })
-    await eventHook({
-      event: createSessionIdleEvent({ sessionID: REAL_RATE_LIMIT_CASE.sessionID }),
-    })
-    await eventHook({
-      event: createAssistantAbortedEvent({
-        sessionID: REAL_RATE_LIMIT_CASE.sessionID,
-        assistantMessageID: 'msg-rate-limit-aborted',
-        parentID: REAL_RATE_LIMIT_CASE.previousMessageID,
-      }),
-    })
-    await delay({ ms: 1 })
-    await eventHook({
-      event: createSessionIdleEvent({ sessionID: REAL_RATE_LIMIT_CASE.sessionID }),
-    })
-    await delay({ ms: 20 })
-
-    expect(abortCalls).toEqual([{ path: { id: REAL_RATE_LIMIT_CASE.sessionID } }])
-    expect(promptAsyncCalls).toEqual([
+    expect(stub.abortCalls).toEqual([{ sessionID }])
+    expect(stub.promptAsyncCalls).toEqual([
       {
-        path: { id: REAL_RATE_LIMIT_CASE.sessionID },
-        body: {
-          messageID: REAL_RATE_LIMIT_CASE.queuedMessageID,
-          parts: [{ type: 'text', text: 'user message' }],
-        },
+        sessionID,
+        messageID,
+        parts: [{ type: 'text', text: 'user message' }],
       },
     ])
   })
 
-  test('assistant parent match marks sent and skips timeout abort', async () => {
+  test('assistant parent match cancels timer and skips abort/replay', async () => {
     process.env['KIMAKI_INTERRUPT_STEP_TIMEOUT_MS'] = '40'
 
-    const abortCalls: Array<{ path: { id: string } }> = []
-    const promptAsyncCalls: Array<{
-      path: { id: string }
-      body: {
-        messageID: string
-        parts: PromptPartInput[]
-        agent?: string
-        model?: {
-          providerID: string
-          modelID: string
-        }
-      }
-    }> = []
-    const client: MockClient = {
-      session: {
-        abort: async (input) => {
-          abortCalls.push(input)
-        },
-        promptAsync: async (input) => {
-          promptAsyncCalls.push(input)
-        },
-      },
-    }
-
-    const { eventHook, chatHook } = await requireHooks({ client })
+    const { eventHook, chatHook } = await requireHooks()
     const sessionID = 'ses-sent'
     const messageID = 'msg-sent'
 
@@ -387,6 +261,7 @@ describe('interruptOpencodeSessionOnUserMessage', () => {
       { sessionID, messageID } as InterruptChatInput,
       createChatOutput({ sessionID, messageID }),
     )
+    // Assistant starts processing this exact message before the timer fires.
     await eventHook({
       event: createAssistantStartedEvent({
         sessionID,
@@ -394,40 +269,16 @@ describe('interruptOpencodeSessionOnUserMessage', () => {
         assistantMessageID: 'msg-sent-assistant',
       }),
     })
-    await delay({ ms: 70 })
+    await delay({ ms: 90 })
 
-    expect(abortCalls).toEqual([])
-    expect(promptAsyncCalls).toEqual([])
+    expect(stub.abortCalls).toEqual([])
+    expect(stub.promptAsyncCalls).toEqual([])
   })
 
   test('empty resume messages do not schedule interruption tracking', async () => {
     process.env['KIMAKI_INTERRUPT_STEP_TIMEOUT_MS'] = '20'
 
-    const abortCalls: Array<{ path: { id: string } }> = []
-    const promptAsyncCalls: Array<{
-      path: { id: string }
-      body: {
-        messageID: string
-        parts: PromptPartInput[]
-        agent?: string
-        model?: {
-          providerID: string
-          modelID: string
-        }
-      }
-    }> = []
-    const client: MockClient = {
-      session: {
-        abort: async (input) => {
-          abortCalls.push(input)
-        },
-        promptAsync: async (input) => {
-          promptAsyncCalls.push(input)
-        },
-      },
-    }
-
-    const { chatHook } = await requireHooks({ client })
+    const { chatHook } = await requireHooks()
 
     await chatHook(
       { sessionID: 'ses-empty-resume', messageID: 'msg-empty-resume' } as InterruptChatInput,
@@ -437,269 +288,99 @@ describe('interruptOpencodeSessionOnUserMessage', () => {
         parts: [],
       }),
     )
-    await delay({ ms: 40 })
+    await delay({ ms: 60 })
 
-    expect(abortCalls).toEqual([])
-    expect(promptAsyncCalls).toEqual([])
+    expect(stub.abortCalls).toEqual([])
+    expect(stub.promptAsyncCalls).toEqual([])
   })
 
-  test('abort recovery replays the original queued user message', async () => {
+  test('replayed message does not schedule another interrupt (no abort loop)', async () => {
     process.env['KIMAKI_INTERRUPT_STEP_TIMEOUT_MS'] = '20'
 
-    const abortCalls: Array<{ path: { id: string } }> = []
-    const promptAsyncCalls: Array<{
-      path: { id: string }
-      body: {
-        messageID: string
-        parts: PromptPartInput[]
-        agent?: string
-        model?: {
-          providerID: string
-          modelID: string
-        }
-      }
-    }> = []
-    const client: MockClient = {
-      session: {
-        abort: async (input) => {
-          abortCalls.push(input)
-        },
-        promptAsync: async (input) => {
-          promptAsyncCalls.push(input)
-        },
-      },
-    }
+    const { chatHook } = await requireHooks()
+    const sessionID = 'ses-loop'
+    const messageID = 'msg-loop'
 
-    const { eventHook, chatHook } = await requireHooks({ client })
-    const sessionID = 'ses-33bb-repro'
-    const firstMsgID = 'msg-first-streaming'
-    const userMsgID = 'msg-user-queued'
+    stub.setStatus(sessionID, { type: 'busy' })
 
-    // 1. First message is running (assistant already started on it)
     await chatHook(
-      { sessionID, messageID: firstMsgID } as InterruptChatInput,
-      createChatOutput({ sessionID, messageID: firstMsgID }),
+      { sessionID, messageID } as InterruptChatInput,
+      createChatOutput({ sessionID, messageID }),
     )
-    await eventHook({
-      event: createAssistantStartedEvent({
-        sessionID,
-        messageID: firstMsgID,
-        assistantMessageID: 'msg-first-assistant',
-      }),
-    })
+    await delay({ ms: 120 })
 
-    // 2. User sends second message while session is busy streaming
+    // After replay, OpenCode emits chat.message again for the same messageID.
+    // The plugin must skip scheduling a new interrupt timer.
     await chatHook(
-      { sessionID, messageID: userMsgID } as InterruptChatInput,
-      createChatOutput({ sessionID, messageID: userMsgID }),
+      { sessionID, messageID } as InterruptChatInput,
+      createChatOutput({ sessionID, messageID }),
     )
+    await delay({ ms: 80 })
 
-    // 3. Timeout fires (20ms), plugin runs handleUnsentTimeout
-    await delay({ ms: 30 })
-
-    // 4. Simulate abort completing. OpenCode can emit an idle event before the
-    //    aborted assistant update, then emit another idle after cleanup settles.
-    //    Replaying before that post-abort idle can leave the replayed message
-    //    queued behind the cancelled run.
-    await eventHook({ event: createSessionErrorEvent({ sessionID }) })
-    await eventHook({ event: createSessionIdleEvent({ sessionID }) })
-    await eventHook({
-      event: createAssistantAbortedEvent({
-        sessionID,
-        assistantMessageID: 'msg-aborted-after-timeout',
-        parentID: firstMsgID,
-      }),
-    })
-    await delay({ ms: 20 })
-
-    // 5. Verify plugin aborted the session
-    expect(abortCalls).toEqual([{ path: { id: sessionID } }])
-    expect(promptAsyncCalls).toEqual([])
-
-    await delay({ ms: 1 })
-    await eventHook({ event: createSessionIdleEvent({ sessionID }) })
-    await delay({ ms: 20 })
-
-    // 6. Recovery should replay the queued message itself, not an empty
-    //    resume prompt. This preserves the original messageID + parts after
-    //    session.abort() clears OpenCode's internal prompt queue.
-    expect(promptAsyncCalls).toEqual([
+    expect(stub.abortCalls).toEqual([{ sessionID }])
+    expect(stub.promptAsyncCalls).toEqual([
       {
-        path: { id: sessionID },
-        body: {
-          messageID: userMsgID,
-          parts: [{ type: 'text', text: 'user message' }],
-        },
+        sessionID,
+        messageID,
+        parts: [{ type: 'text', text: 'user message' }],
       },
     ])
   })
 
-  test('real sleep interrupt trace still recovers queued interrupt message', async () => {
+  test('drains multiple queued messages in order', async () => {
     process.env['KIMAKI_INTERRUPT_STEP_TIMEOUT_MS'] = '20'
 
-    const abortCalls: Array<{ path: { id: string } }> = []
-    const promptAsyncCalls: Array<{
-      path: { id: string }
-      body: {
-        messageID: string
-        parts: PromptPartInput[]
-        agent?: string
-        model?: {
-          providerID: string
-          modelID: string
-        }
-      }
-    }> = []
-    const client: MockClient = {
-      session: {
-        abort: async (input) => {
-          abortCalls.push(input)
-        },
-        promptAsync: async (input) => {
-          promptAsyncCalls.push(input)
-        },
-      },
-    }
+    const { chatHook } = await requireHooks()
+    const sessionID = 'ses-drain'
+    const firstMessageID = 'msg-first'
+    const secondMessageID = 'msg-second'
 
-    const { eventHook, chatHook } = await requireHooks({ client })
+    stub.setStatus(sessionID, { type: 'busy' })
 
+    // Two messages queued while session is busy.
     await chatHook(
-      {
-        sessionID: REAL_SLEEP_INTERRUPT_CASE.sessionID,
-        messageID: REAL_SLEEP_INTERRUPT_CASE.runningMessageID,
-      } as InterruptChatInput,
-      createChatOutput({
-        sessionID: REAL_SLEEP_INTERRUPT_CASE.sessionID,
-        messageID: REAL_SLEEP_INTERRUPT_CASE.runningMessageID,
-      }),
+      { sessionID, messageID: firstMessageID } as InterruptChatInput,
+      createChatOutput({ sessionID, messageID: firstMessageID }),
     )
-    await eventHook({ event: REAL_SLEEP_INTERRUPT_CASE.assistantRunningEvent })
-
     await chatHook(
-      {
-        sessionID: REAL_SLEEP_INTERRUPT_CASE.sessionID,
-        messageID: REAL_SLEEP_INTERRUPT_CASE.interruptingMessageID,
-      } as InterruptChatInput,
-      createChatOutput({
-        sessionID: REAL_SLEEP_INTERRUPT_CASE.sessionID,
-        messageID: REAL_SLEEP_INTERRUPT_CASE.interruptingMessageID,
-      }),
+      { sessionID, messageID: secondMessageID } as InterruptChatInput,
+      createChatOutput({ sessionID, messageID: secondMessageID }),
     )
 
-    await delay({ ms: 30 })
-    await eventHook({ event: REAL_SLEEP_INTERRUPT_CASE.abortErrorEvent })
-    await eventHook({ event: REAL_SLEEP_INTERRUPT_CASE.idleEvent })
-    await eventHook({
-      event: createAssistantAbortedEvent({
-        sessionID: REAL_SLEEP_INTERRUPT_CASE.sessionID,
-        assistantMessageID: 'msg-sleep-aborted',
-        parentID: REAL_SLEEP_INTERRUPT_CASE.runningMessageID,
-      }),
-    })
-    await delay({ ms: 20 })
+    // First timer fires, aborts + replays first message, then schedules the
+    // second. Wait long enough for both to drain.
+    await delay({ ms: 300 })
 
-    expect(abortCalls).toEqual([{ path: { id: REAL_SLEEP_INTERRUPT_CASE.sessionID } }])
-    expect(promptAsyncCalls).toEqual([])
-
-    await delay({ ms: 1 })
-    await eventHook({ event: REAL_SLEEP_INTERRUPT_CASE.idleEvent })
-    await delay({ ms: 20 })
-
-    expect(promptAsyncCalls).toEqual([
-      {
-        path: { id: REAL_SLEEP_INTERRUPT_CASE.sessionID },
-        body: {
-          messageID: REAL_SLEEP_INTERRUPT_CASE.interruptingMessageID,
-          parts: [{ type: 'text', text: 'user message' }],
-        },
-      },
+    expect(stub.abortCalls).toEqual([{ sessionID }, { sessionID }])
+    expect(stub.promptAsyncCalls.map((c) => c.messageID)).toEqual([
+      firstMessageID,
+      secondMessageID,
     ])
   })
 
-  test('queued follow-up aborts on next blocking assistant step-finish before hard timeout', async () => {
-    process.env['KIMAKI_INTERRUPT_STEP_TIMEOUT_MS'] = '500'
+  test('preserves agent and model overrides on replay', async () => {
+    process.env['KIMAKI_INTERRUPT_STEP_TIMEOUT_MS'] = '20'
 
-    const abortCalls: Array<{ path: { id: string } }> = []
-    const promptAsyncCalls: Array<{
-      path: { id: string }
-      body: {
-        messageID: string
-        parts: PromptPartInput[]
-        agent?: string
-        model?: {
-          providerID: string
-          modelID: string
-        }
-      }
-    }> = []
-    const client: MockClient = {
-      session: {
-        abort: async (input) => {
-          abortCalls.push(input)
-        },
-        promptAsync: async (input) => {
-          promptAsyncCalls.push(input)
-        },
-      },
-    }
+    const { chatHook } = await requireHooks()
+    const sessionID = 'ses-overrides'
+    const messageID = 'msg-overrides'
 
-    const { eventHook, chatHook } = await requireHooks({ client })
-    const sessionID = 'ses-step-finish'
-    const runningMessageID = 'msg-running'
-    const runningAssistantMessageID = 'msg-running-assistant'
-    const queuedMessageID = 'msg-queued'
+    stub.setStatus(sessionID, { type: 'busy' })
 
-    await chatHook(
-      { sessionID, messageID: runningMessageID } as InterruptChatInput,
-      createChatOutput({ sessionID, messageID: runningMessageID }),
-    )
-    await eventHook({
-      event: createAssistantStartedEvent({
-        sessionID,
-        messageID: runningMessageID,
-        assistantMessageID: runningAssistantMessageID,
-      }),
-    })
+    const output = createChatOutput({ sessionID, messageID })
+    output.message.agent = 'plan'
+    output.message.model = { providerID: 'anthropic', modelID: 'claude' }
 
-    await chatHook(
-      { sessionID, messageID: queuedMessageID } as InterruptChatInput,
-      createChatOutput({ sessionID, messageID: queuedMessageID }),
-    )
+    await chatHook({ sessionID, messageID } as InterruptChatInput, output)
+    await delay({ ms: 120 })
 
-    await eventHook({
-      event: createStepFinishEvent({
-        sessionID,
-        assistantMessageID: runningAssistantMessageID,
-      }),
-    })
-    await delay({ ms: 10 })
-
-    expect(abortCalls).toEqual([{ path: { id: sessionID } }])
-
-    await eventHook({ event: createSessionErrorEvent({ sessionID }) })
-    await eventHook({ event: createSessionIdleEvent({ sessionID }) })
-    await eventHook({
-      event: createAssistantAbortedEvent({
-        sessionID,
-        assistantMessageID: runningAssistantMessageID,
-        parentID: runningMessageID,
-      }),
-    })
-    await delay({ ms: 20 })
-
-    expect(promptAsyncCalls).toEqual([])
-
-    await delay({ ms: 1 })
-    await eventHook({ event: createSessionIdleEvent({ sessionID }) })
-    await delay({ ms: 20 })
-
-    expect(promptAsyncCalls).toEqual([
+    expect(stub.promptAsyncCalls).toEqual([
       {
-        path: { id: sessionID },
-        body: {
-          messageID: queuedMessageID,
-          parts: [{ type: 'text', text: 'user message' }],
-        },
+        sessionID,
+        messageID,
+        parts: [{ type: 'text', text: 'user message' }],
+        agent: 'plan',
+        model: { providerID: 'anthropic', modelID: 'claude' },
       },
     ])
   })
