@@ -527,7 +527,7 @@ type WorktreeResult = {
 async function resolveDefaultWorktreeTarget(
   directory: string,
 ): Promise<string> {
-  return 'HEAD'
+  return getDefaultBranch(directory)
 }
 
 /**
