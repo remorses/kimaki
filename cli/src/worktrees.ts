@@ -528,7 +528,11 @@ type WorktreeResult = {
 async function resolveDefaultWorktreeTarget(
   directory: string,
 ): Promise<string> {
-  return getDefaultBranch(directory)
+  const branch = await getDefaultBranch(directory)
+  await git(directory, `fetch origin ${branch}`, { timeout: 30_000 }).catch(
+    () => {},
+  )
+  return `origin/${branch}`
 }
 
 /**
