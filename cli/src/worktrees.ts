@@ -522,6 +522,7 @@ async function validateSubmodulePointers(
 type WorktreeResult = {
   directory: string
   branch: string
+  baseBranch: string
 }
 
 async function resolveDefaultWorktreeTarget(
@@ -658,7 +659,7 @@ export async function createWorktreeWithSubmodules({
     })
   }
 
-  return { directory: worktreeDir, branch: name }
+  return { directory: worktreeDir, branch: name, baseBranch: targetRef }
 }
 
 // ─── Worktree merge ──────────────────────────────────────────────────────────
