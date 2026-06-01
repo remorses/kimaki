@@ -927,11 +927,22 @@ export async function startDiscordBot({
           })
         }
 
+        const sessionDirectory = await (async () => {
+          if (!worktreePromise) {
+            return projectDirectory
+          }
+          const result = await worktreePromise
+          if (result instanceof Error) {
+            return projectDirectory
+          }
+          return result
+        })()
+
         const channelRuntime = getOrCreateRuntime({
           threadId: thread.id,
           thread,
           projectDirectory,
-          sdkDirectory: projectDirectory,
+          sdkDirectory: sessionDirectory,
           channelId: channel.id,
           appId: currentAppId,
         })
@@ -944,19 +955,6 @@ export async function startDiscordBot({
           sourceThreadId: thread.id,
           appId: currentAppId,
           preprocess: async () => {
-            // Wait for worktree creation + install before preprocessing.
-            // Follow-up messages queue behind this in the preprocess chain.
-            let sessionDirectory = projectDirectory
-            if (worktreePromise) {
-              const result = await worktreePromise
-              if (!(result instanceof Error)) {
-                sessionDirectory = result
-                channelRuntime.handleDirectoryChanged({
-                  oldDirectory: projectDirectory,
-                  newDirectory: sessionDirectory,
-                })
-              }
-            }
             return preprocessNewThreadMessage({
               message,
               thread,
@@ -1216,11 +1214,25 @@ export async function startDiscordBot({
 
       const botThreadStartSource = parseSessionStartSourceFromMarker(marker)
 
+      const sessionDirectory = await (async () => {
+        if (cwdDirectory) {
+          return cwdDirectory
+        }
+        if (!worktreePromise) {
+          return projectDirectory
+        }
+        const result = await worktreePromise
+        if (result instanceof Error) {
+          return projectDirectory
+        }
+        return result
+      })()
+
       const runtime = getOrCreateRuntime({
         threadId: thread.id,
         thread,
         projectDirectory,
-        sdkDirectory: projectDirectory,
+        sdkDirectory: sessionDirectory,
         channelId: parent.id,
         appId: currentAppId,
       })
@@ -1241,23 +1253,6 @@ export async function startDiscordBot({
             }
           : undefined,
         preprocess: async () => {
-          // Wait for worktree creation + install before starting session.
-          if (worktreePromise) {
-            const result = await worktreePromise
-            if (!(result instanceof Error)) {
-              runtime.handleDirectoryChanged({
-                oldDirectory: projectDirectory,
-                newDirectory: result,
-              })
-            }
-          }
-          // --cwd: switch sdkDirectory to the existing worktree path
-          if (cwdDirectory) {
-            runtime.handleDirectoryChanged({
-              oldDirectory: projectDirectory,
-              newDirectory: cwdDirectory,
-            })
-          }
           const permissionRules = await getChannelReferencePermissionRules({
             message: starterMessage,
           })

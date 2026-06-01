@@ -195,13 +195,10 @@ export function getOrCreateRuntime(
 ): ThreadSessionRuntime {
   const existing = runtimes.get(opts.threadId)
   if (existing) {
-    // Reconcile sdkDirectory: worktree threads transition from pending
-    // (projectDirectory) to ready (worktree path) after runtime creation.
     if (existing.sdkDirectory !== opts.sdkDirectory) {
-      existing.handleDirectoryChanged({
-        oldDirectory: existing.sdkDirectory,
-        newDirectory: opts.sdkDirectory,
-      })
+      logger.warn(
+        `[RUNTIME] Ignoring sdkDirectory change for existing thread ${opts.threadId}: ${existing.sdkDirectory} → ${opts.sdkDirectory}`,
+      )
     }
     return existing
   }
@@ -619,10 +616,7 @@ function getWorktreePromptKey(worktree: WorktreeInfo | undefined): string | null
 export class ThreadSessionRuntime {
   readonly threadId: string
   readonly projectDirectory: string
-  // Mutable: worktree threads transition from pending (projectDirectory)
-  // to ready (worktree path) after creation. getOrCreateRuntime reconciles
-  // this on each call so dispatch always uses the current path.
-  sdkDirectory: string
+  readonly sdkDirectory: string
   readonly channelId: string | undefined
   readonly appId: string | undefined
   readonly thread: ThreadChannel
@@ -1026,51 +1020,6 @@ export class ThreadSessionRuntime {
     cleanupPendingUiForThread(this.thread.id)
   }
 
-  // Called when sdkDirectory changes (e.g. worktree becomes ready after
-  // /new-worktree in an existing thread). The event listener was subscribed
-  // to the old directory's Instance in opencode — events from the new
-  // directory's Instance won't reach it. We must reconnect the listener
-  // and clear the old session so ensureSession creates a fresh one under
-  // the new Instance.
-  handleDirectoryChanged({
-    oldDirectory,
-    newDirectory,
-  }: {
-    oldDirectory: string
-    newDirectory: string
-  }): void {
-    logger.log(
-      `[LISTENER] sdkDirectory changed for thread ${this.threadId}: ${oldDirectory} → ${newDirectory}`,
-    )
-    this.sdkDirectory = newDirectory
-
-    if (this.state?.sessionId) {
-      // Existing sessions stay subscribed through their original OpenCode
-      // directory. Prompt calls still use the new sdkDirectory, which lets the
-      // same conversation continue while tools run in the new checkout.
-      return
-    }
-
-    // Clear cached state so ensureSession revalidates the persisted session
-    // against the new directory before prompting.
-    threadState.updateThread(this.threadId, (t) => ({
-      ...t,
-      sessionId: undefined,
-    }))
-
-    // Restart event listener to subscribe under the new directory.
-    const currentController = this.state?.listenerController
-    if (currentController) {
-      currentController.abort(new Error('sdkDirectory changed'))
-      threadState.updateThread(this.threadId, (t) => ({
-        ...t,
-        listenerController: new AbortController(),
-      }))
-      this.listenerLoopRunning = false
-      void this.startEventListener()
-    }
-  }
-
   handleSharedServerStarted({
     port,
   }: {
@@ -1079,13 +1028,13 @@ export class ThreadSessionRuntime {
     if (!this.state?.sessionId) {
       return
     }
+    logger.log(
+      `[LISTENER] Refreshing listener for thread ${this.threadId} after shared server start on port ${port}`,
+    )
     const currentController = this.state?.listenerController
     if (!currentController) {
       return
     }
-    logger.log(
-      `[LISTENER] Refreshing listener for thread ${this.threadId} after shared server start on port ${port}`,
-    )
     currentController.abort(new Error('Shared OpenCode server restarted'))
     threadState.updateThread(this.threadId, (t) => ({
       ...t,
@@ -1380,7 +1329,6 @@ export class ThreadSessionRuntime {
       return
     }
     this.listenerLoopRunning = true
-
     // Bootstrap sentPartIds from DB so we don't re-send parts that
     // were already sent in a previous runtime or before a reconnect.
     await this.bootstrapSentPartIds()
@@ -1410,7 +1358,7 @@ export class ThreadSessionRuntime {
       }
       const subscribeResult = await errore.tryAsync(() => {
         return client.event.subscribe(
-          { directory: this.sdkDirectory },
+          { directory: this.projectDirectory },
           { signal },
         )
       })
@@ -4250,7 +4198,7 @@ export class ThreadSessionRuntime {
         createdNewSession: boolean
       }
   > {
-    const directory = this.projectDirectory
+    const directory = this.sdkDirectory
 
     // Resolve worktree info for server initialization
     const worktreeInfo = await getThreadWorktree(this.thread.id)
