@@ -1,0 +1,43 @@
+---
+title: Browser VS Code
+description: Open the current project or worktree in a full VS Code editor in your browser, tunneled from your machine.
+icon: lucide:code
+---
+
+The **`/vscode`** command opens the current project (or its [worktree](/docs/worktrees)) in a real **VS Code editor in your browser**, served from your machine through a private tunnel. Make a quick edit from your phone or any browser without leaving Discord.
+
+## Using it
+
+Run **`/vscode`** in a project channel or a thread. Kimaki:
+
+1. Launches a browser VS Code server (Coderaft) pointed at the working directory.
+2. Opens a **private tunnel** on `kimaki.dev` to that server.
+3. Replies with the editor URL (ephemeral, only you see it).
+
+```diagram
+   /vscode ──▶ browser VS Code on 127.0.0.1 ──▶ private tunnel ──▶ https://<id>.kimaki.dev
+                                                                          │
+                                                                          ▼
+                                                          edit files from any browser
+```
+
+The URL points at the **same directory the agent works in**: the worktree directory when the thread has a ready worktree, otherwise the channel's project directory.
+
+## Auto-stop after 30 minutes
+
+Each VS Code session **auto-stops after 30 minutes** to avoid leaving an editor exposed. Running `/vscode` again while a session is active returns the existing URL instead of starting a second one.
+
+<Aside>
+<Warning>
+The tunnel URL is unguessable but **publicly reachable** for its lifetime. Treat it like a temporary secret; do not share it, and let it expire when you're done.
+</Warning>
+</Aside>
+
+## When to use it vs alternatives
+
+| Want to...                                   | Use            |
+|----------------------------------------------|----------------|
+| Make a manual edit in a real editor          | **`/vscode`**  |
+| View a running dev server in a browser       | [Tunnels](/docs/tunnels) |
+| See your desktop screen and control it       | [Screen Sharing](/docs/screen-sharing) |
+| Have the agent make the change for you        | just send a message |

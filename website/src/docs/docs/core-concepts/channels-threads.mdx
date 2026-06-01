@@ -1,0 +1,88 @@
+---
+title: Channels & Threads
+description: How Kimaki maps Discord channels to projects and threads to coding sessions, the core orchestration model.
+icon: lucide:folder-tree
+---
+
+Kimaki's whole design rests on one mapping: a Discord **channel is a project**, and a **thread is a coding session**. Understanding this makes everything else obvious.
+
+```diagram
+  Discord                         Your machine
+  ┌─────────────────┐            ┌──────────────┐
+  │ server          │            │              │
+  │ #web-app ───────┼───────────┼──▶ /code/web │
+  │ ├─ login ───────┼───────────┼───▶ session A │
+  │ └─ dark ────────┼───────────┼───▶ session B │
+  │ #api ───────────┼───────────┼──▶ /code/api │
+  │ └─ limit ───────┼───────────┼───▶ session C │
+  └─────────────────┘            └──────────────┘
+```
+
+## Why this matters
+
+Most chat-based agent tools put **everything in one channel**, like an iMessage thread. Sessions stack on top of each other, context bleeds between unrelated tasks, and there is no clean way to find or resume a specific piece of work.
+
+Kimaki partitions work along the two axes that actually matter:
+
+- **Projects → channels.** Switch the project you're working on by switching channels.
+- **Sessions → threads.** Switch the task you're working on by switching threads.
+
+Each thread keeps its own conversation, its own session state, and its own history. You can leave a thread, come back days later, and resume exactly where you left off.
+
+<Aside>
+<Tip>
+Treat threads like git branches for conversations. One thread per task keeps each session focused and easy to search later.
+</Tip>
+</Aside>
+
+## How a channel becomes a project
+
+When you add a project, Kimaki creates a Discord channel and stores the link between that channel and a directory on your machine. The mapping lives in the channel topic as metadata:
+
+```xml
+<kimaki><directory>/code/web-app</directory><app>bot_id</app></kimaki>
+```
+
+Add projects during the setup wizard, with the `/add-project` slash command, or from the CLI:
+
+```bash
+# Add the current directory as a project channel
+npx -y kimaki project add
+
+# Add a specific directory
+npx -y kimaki project add /code/web-app
+```
+
+## How a message becomes a session
+
+The first message you send in a project channel **creates a thread** and starts an OpenCode session bound to that channel's directory. The agent replies inside the thread, prefixing text with `⬥` and showing tool activity as it works.
+
+From then on, messages **in that thread** continue the same session. Messages **in the channel** (outside any thread) start new threads and new sessions. This is what keeps tasks isolated.
+
+```diagram
+  #web-app channel
+       │
+       │ first message ──▶ creates "fix login" ──▶ session starts
+       │
+       │ another msg ────▶ creates "dark mode" ──▶ separate session
+       │
+       └── thread "fix login"────▶ continues the same session
+```
+
+## Resuming, forking, and searching
+
+Because every session is a thread, you get Discord's organization for free:
+
+- **Resume** any past session with `/resume` (autocomplete lists recent sessions).
+- **Fork** from any earlier message with `/fork`, or fork the whole context into a new thread with [`/btw`](/docs/btw).
+- **Search** across all your projects using Discord's built-in search; every thread is full message history.
+
+<Aside>
+<Note>
+Sessions you start outside Discord (OpenCode CLI or TUI) can also appear as threads automatically. See [Background Sync](/docs/background-sync).
+</Note>
+</Aside>
+
+## One server per machine, many channels
+
+A single Kimaki instance runs on one machine and can serve **many channels across many Discord servers**. Each channel points at a directory on the machine where the bot runs. To control more machines, run Kimaki on each and add their channels to the same server. See [Advanced Setup](/docs/advanced-setup) for multi-machine and multi-server layouts.

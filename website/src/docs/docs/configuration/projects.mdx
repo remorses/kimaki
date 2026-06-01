@@ -1,0 +1,54 @@
+---
+title: Managing Projects
+description: Add, create, and remove the Discord channels that map to project directories on your machine.
+icon: lucide:folder-plus
+---
+
+A **project** is a directory on your machine linked to a Discord channel. These commands manage that mapping. For the underlying model, see [Channels & Threads](/docs/channels-threads).
+
+## Adding an existing project
+
+Link a directory that already exists on your machine.
+
+```diagram
+   /add-project <project>   ──▶ pick a recent OpenCode project ──▶ creates its channel
+   npx kimaki project add   ──▶ add the current (or any) directory from the CLI
+```
+
+- **`/add-project <project>`** — autocompletes recent OpenCode projects and creates Discord channels for the one you pick. Run it in the server where you want the channels.
+- **CLI** for directories not in the recent list:
+
+```bash
+# Add the current directory
+npx -y kimaki project add
+
+# Add a specific directory
+npx -y kimaki project add /code/web-app
+
+# Specify the server when the bot is in multiple
+npx -y kimaki project add ./web-app --guild 123456789
+```
+
+## Creating a brand new project
+
+**`/create-new-project <name>`** creates a new project folder, initializes git, sets up the channel, and starts a session, all in one step. Great for spinning up a fresh repo entirely from Discord.
+
+<Aside>
+<Tip>
+New folders are created under Kimaki's projects directory. Run multiple isolated bots with separate projects directories using `--data-dir`; see [Advanced Setup](/docs/advanced-setup).
+</Tip>
+</Aside>
+
+## Removing a project
+
+**`/remove-project <project>`** removes the Discord channels for a project. The directory on your machine is left untouched; only the channel mapping is deleted.
+
+## Listing projects
+
+From the CLI:
+
+```bash
+npx -y kimaki project list
+```
+
+This shows every directory currently registered with the bot.

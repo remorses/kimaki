@@ -1,0 +1,55 @@
+---
+title: OpenCode Commands
+description: Your OpenCode commands, skills, and MCP prompts become Discord slash commands automatically.
+icon: lucide:terminal-square
+---
+
+Kimaki registers your project's **OpenCode commands, skills, and MCP prompts** as Discord slash commands. Anything you can invoke in OpenCode, you can invoke from Discord.
+
+## How names map
+
+Kimaki adds a suffix so each kind of command is distinct and avoids colliding with Kimaki's own commands:
+
+```diagram
+  OpenCode command "deploy"     ──▶ /deploy-cmd
+  skill "analysis"              ──▶ /analysis-skill
+  MCP prompt "git-commit"       ──▶ /git-commit-mcp-prompt
+```
+
+| Source         | Suffix          | Example slash command   |
+|----------------|-----------------|-------------------------|
+| Command        | `-cmd`          | `/deploy-cmd`           |
+| Skill          | `-skill`        | `/analysis-skill`       |
+| MCP prompt     | `-mcp-prompt`   | `/git-commit-mcp-prompt`|
+
+Names are lowercased and sanitized to fit Discord's 32-character limit, with the suffix preserved. The reserved `init` command is never registered.
+
+## Passing arguments
+
+Each generated slash command takes an optional **`arguments`** field, passed through to the underlying OpenCode command:
+
+```
+/deploy-cmd arguments: --staging
+```
+
+Run in a project channel, the command starts a new thread; run in a thread, it continues that session.
+
+## Triggering commands programmatically
+
+You can also invoke a registered command through `kimaki send` by starting the prompt with `/commandname`:
+
+```bash
+kimaki send --thread <thread-id> --prompt '/review fix the auth module'
+```
+
+If the name matches a registered command it runs as that command; otherwise the prompt is sent as plain text. See [CI & Automation](/docs/ci-automation) for more on `kimaki send`.
+
+## Refreshing the command list
+
+After adding or changing OpenCode commands, skills, or MCP servers, **restart Kimaki** so it re-registers the Discord slash commands. The `/restart-opencode-server` command also re-registers commands without a full restart.
+
+<Aside>
+<Tip>
+Skills you add to a project show up as `/<name>-skill`, so you can trigger a whole skill workflow from a single Discord command.
+</Tip>
+</Aside>

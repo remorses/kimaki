@@ -1,0 +1,32 @@
+---
+title: MCP Servers
+description: List and toggle Model Context Protocol servers for a project, straight from Discord.
+icon: lucide:plug-2
+---
+
+The **`/mcp`** command lets you list and toggle **MCP (Model Context Protocol) servers** for the current project without touching config files. MCP servers give the agent extra tools and data sources.
+
+## Using it
+
+Run **`/mcp`** in a project channel. Kimaki shows the configured servers and their status, with a menu to connect or disconnect each one.
+
+```diagram
+   /mcp ──▶ list configured MCP servers ──▶ pick one ──▶ connect / disconnect
+```
+
+- **Connect** — start the server so its tools become available to the agent.
+- **Disconnect** — stop it; its tools are removed.
+
+## Project-scoped, no extra storage
+
+MCP state is **project-scoped** (per channel), not per thread or session. The state lives in **OpenCode's own config**, so toggling from Discord changes the same configuration OpenCode uses everywhere. There's no separate Kimaki database for it.
+
+<Aside>
+<Note>
+MCP servers are configured in your OpenCode config. The `/mcp` command manages the ones already defined there; add new servers in your `opencode.json`.
+</Note>
+</Aside>
+
+## MCP prompts as slash commands
+
+If an MCP server exposes **prompts**, Kimaki registers them as Discord slash commands with the `-mcp-prompt` suffix (for example `/git-commit-mcp-prompt`). See [OpenCode Commands](/docs/opencode-commands) for how commands, skills, and MCP prompts map to slash commands.

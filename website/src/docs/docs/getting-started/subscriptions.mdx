@@ -1,0 +1,79 @@
+---
+title: Models & Subscriptions
+description: Use every OpenCode model from Discord, including your Claude and ChatGPT/Codex subscriptions via OAuth.
+icon: lucide:key-round
+---
+
+Kimaki gives you access to **every model OpenCode supports**: Anthropic, OpenAI, Google, and more. You can authenticate with an API key, or use your existing **Claude Pro/Max** and **ChatGPT/Codex** subscriptions via OAuth so you pay nothing extra per token.
+
+## The `/login` command
+
+Run `/login` in any project channel. Kimaki walks you through a short flow:
+
+```diagram
+  /login
+    │
+    ▼
+  ┌─────────┐     ┌──────────┐     ┌───────────┐
+  │provider │────▶ │method   │────▶ │auth       │
+  │(anth/   │     │(OAuth/  │     │(modal)   │
+  │openai)  │     │key)     │     │           │
+  └─────────┘     └──────────┘     └───────────┘
+```
+
+1. **Pick a provider.** Connected providers show a checkmark.
+2. **Pick a method.** Choose **OAuth** to use a subscription, or **API key** to paste a key.
+3. **Authenticate.** For OAuth, open the link and authorize; some providers ask you to paste a short code back. For API keys, enter the key in a modal.
+
+## Using subscriptions instead of API credits
+
+The reason to choose OAuth is cost. When you log in with **OAuth**, Kimaki authenticates the same way the native CLIs do, so your **subscription covers inference** and per-token costs show as zero.
+
+- **Anthropic** — log in with your **Claude Pro or Claude Max** subscription. Kimaki requests the inference scope and treats requests as Claude Code requests, so subscription usage applies.
+- **OpenAI / Codex** — log in with your **ChatGPT** subscription to use Codex models without per-token API billing.
+
+<Aside>
+<Tip>
+If you already authenticated OpenCode on this machine (for example with the OpenCode CLI), those credentials are reused. You may not need to `/login` at all.
+</Tip>
+</Aside>
+
+## Multiple accounts and rotation
+
+You can store **more than one OAuth account** per provider. When a run hits a rate limit or auth failure, Kimaki automatically **rotates to the next account** so your work keeps going.
+
+Manage the account pool from the CLI:
+
+```bash
+# List all stored Anthropic + OpenAI accounts (active one marked)
+kimaki multioauth list
+
+# Per-provider management
+kimaki multioauth anthropic list
+kimaki multioauth anthropic remove <index-or-email>
+
+kimaki multioauth openai list
+kimaki multioauth openai check     # test all accounts for usage limits
+kimaki multioauth openai remove <index-or-email>
+```
+
+## Choosing the model after login
+
+Once a provider is connected, pick the model:
+
+- **`/model`** — choose provider, model, and (if supported) a thinking-level variant. Store it per session, per channel, or globally.
+- **Agent files** — define a model + variant + permissions once and switch with a single `/<name>-agent` command. This is faster than the `/model` menus when you switch often.
+
+See [Model & Agent Switching](/docs/model-switching) for the full agent-file workflow.
+
+## API keys instead of subscriptions
+
+Prefer a plain API key? Choose **API key** in the `/login` method step and paste it. You can also set the model directly in your project's `opencode.json`:
+
+```json
+{
+  "model": "anthropic/claude-sonnet-4-20250514"
+}
+```
+
+Format is `provider/model-name`, for example `openai/gpt-5.3-codex` or `google/gemini-3-pro-preview`.

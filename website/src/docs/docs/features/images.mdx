@@ -1,0 +1,44 @@
+---
+title: Images
+description: Attach images to your messages and see images the agent produces, displayed inline in Discord.
+icon: lucide:image
+---
+
+Kimaki handles images in **both directions**: attach images to your message for the agent to look at, and see images the agent produces rendered inline in the thread.
+
+## Sending images to the agent
+
+Attach one or more images (or PDFs) to a Discord message. Kimaki downloads each one, resizes it if needed, and sends it to the session as inline content the model can actually see.
+
+```diagram
+  Discord attachment (png/jpg/pdf)
+         │ download + resize
+         ▼
+  inline image ──▶ OpenCode session ──▶ model reads it
+```
+
+This is great for **screenshots of bugs**, **design mockups**, **error dialogs**, or **diagrams** you want the agent to implement or debug.
+
+<Aside>
+<Note>
+Images are sent as inline content, so the agent does not need to use a file-reading tool to view them; it sees them as part of your message.
+</Note>
+</Aside>
+
+## Seeing images from the agent
+
+When the agent produces image files (screenshots, generated diagrams, rendered output), it can upload them back into the thread. Sending multiple files in one message makes Discord display them in a **grid**, so a set of screenshots shows up neatly together.
+
+The agent uploads files with the bundled CLI:
+
+```bash
+kimaki upload-to-discord --session <session-id> screenshot-1.png screenshot-2.png
+```
+
+## Common workflows
+
+- **Bug from a screenshot** — paste a screenshot of the broken UI and say "fix this".
+- **Implement a design** — attach a mockup and ask the agent to build it.
+- **Visual verification** — ask the agent to screenshot a running app (via a browser tool) and post the result back so you can confirm it on your phone.
+
+For exposing a live dev server to view in a real browser instead of static screenshots, see [Tunnels](/docs/tunnels).

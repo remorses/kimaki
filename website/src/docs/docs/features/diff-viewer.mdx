@@ -1,0 +1,39 @@
+---
+title: Diff Viewer
+description: Generate a shareable URL to review your changes in a real diff viewer from your phone or browser.
+icon: lucide:file-diff
+---
+
+The **`/diff`** command uploads your current git diff and gives you a **shareable URL** to a real, syntax-highlighted diff viewer. Review changes from your phone, your desktop browser, or send the link to a teammate.
+
+## Using it
+
+Run **`/diff`** in a thread or project channel. Kimaki:
+
+1. Runs the [critique](https://github.com/remorses/critique) CLI on the working directory.
+2. Uploads the diff and gets back a URL like `https://critique.work/v/<id>`.
+3. Replies in Discord with the link and an inline preview image.
+
+```diagram
+  /diff ──▶ critique --web ──▶ upload ──▶ https://critique.work/v/<id>
+                                                │
+                                                ▼
+                                   open on phone or desktop
+```
+
+Click the embed to open the full diff viewer in your browser. It works on mobile, which is the whole point: you can review what the agent changed without being at your machine.
+
+<Aside>
+<Note>
+Diffs are ephemeral and the URL is unguessable; only people you share the link with can see it. critique is open source.
+</Note>
+</Aside>
+
+## Common cases
+
+- **No changes** — if the working tree is clean, Kimaki replies "No changes to show".
+- **critique not installed** — Kimaki tells you it's unavailable. It ships with Kimaki in normal installs.
+
+## Why this beats raw diff output
+
+A code block in Discord is hard to read on a phone and has no syntax highlighting or file navigation. A diff URL gives you a proper viewer with per-file navigation and highlighting, so reviewing a large change is actually pleasant on a small screen.

@@ -1,0 +1,72 @@
+---
+title: Tool Permissions
+description: Approve or deny risky tool calls from Discord, grant extra directories, and lock down sessions.
+icon: lucide:shield-check
+---
+
+Kimaki surfaces OpenCode's **permission system** in Discord. When the agent tries something that needs approval, you get buttons in the thread. You can also pre-configure defaults and restrict individual sessions.
+
+## Approval buttons
+
+When the agent attempts a tool call that requires permission (a shell command, accessing files outside the project, etc.), Kimaki posts three buttons in the thread:
+
+```diagram
+   agent wants to run a command
+            │
+            ▼
+   ┌──────────┐  ┌────────────────┐  ┌────────┐
+   │  Accept  │  │ Accept Always  │  │  Deny  │
+   └──────────┘  └────────────────┘  └────────┘
+        │               │                │
+     run once      remember rule      reject + tell agent
+```
+
+- **Accept** — allow this one call.
+- **Accept Always** — allow and remember the rule for the session so similar calls don't ask again.
+- **Deny** — reject the call; the agent is told and continues.
+
+<Aside>
+<Note>
+OpenCode fixes a permission's scope when it asks. A reply can allow or deny, but it cannot widen the requested pattern.
+</Note>
+</Aside>
+
+## Granting extra directories with `/add-dir`
+
+By default a session can only touch its project directory. To let it access another folder, run **`/add-dir <directory>`**:
+
+```
+/add-dir ../shared-lib      grant access to a sibling directory
+/add-dir *                  grant access to all folders
+```
+
+The path is resolved against the current working directory (or worktree). If the session is busy, Kimaki briefly aborts and resumes it so the new permission takes effect.
+
+## Default permissions in opencode.json
+
+Set project-wide defaults in your `opencode.json`. See the [OpenCode Permissions docs](https://opencode.ai/docs/permissions/) for the full schema, pattern matching, and per-agent overrides.
+
+Agent files can also carry permissions, which is handy for an auto-allow agent that never stalls on prompts:
+
+```yaml
+---
+description: Build agent that never stalls on prompts
+mode: primary
+permission:
+  question: allow
+  plan_enter: allow
+---
+```
+
+## Locking down a single session
+
+When starting a session with `kimaki send`, restrict tools for **that session only** with repeatable `--permission` rules:
+
+```bash
+# Read-only review session
+kimaki send -c <channel-id> -p 'Review this code' \
+  --permission 'bash:deny' \
+  --permission 'edit:deny'
+```
+
+Rules are evaluated last-match-wins. This is ideal for CI, scheduled tasks, or sandboxed runs. See [CI & Automation](/docs/ci-automation) for the full `--permission` reference.

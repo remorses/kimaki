@@ -1,0 +1,55 @@
+---
+title: Managing Sessions
+description: Resume, fork, share, undo, compact, and inspect your coding sessions from Discord.
+icon: lucide:history
+---
+
+Every thread is a session, and Kimaki gives you a full set of commands to manage their lifecycle: pick up old ones, branch off, share, and clean up context.
+
+## Resuming and starting
+
+```diagram
+   /resume <session>  ──▶ continue a past session (autocomplete lists recent ones)
+   /new-session       ──▶ start a fresh session with a prompt, files, and agent
+   /last-sessions     ──▶ list the 20 most recently active sessions across all projects
+```
+
+- **`/resume <session>`** — reopen any earlier session; autocomplete suggests recent ones.
+- **`/new-session`** — start a new session, optionally with mentioned files and a chosen agent.
+- **`/last-sessions`** — a quick cross-project list of what you were last working on.
+
+## Forking
+
+Forking branches a session so you can explore without disturbing the original.
+
+- **`/fork`** — fork from a chosen earlier message and continue from that point.
+- **`/fork-subagent`** — pull a subagent's task out into its own thread to continue it directly.
+- **[`/btw`](/docs/btw)** — fork the whole context into a new thread to answer a side question in parallel.
+
+<Aside>
+<Tip>
+Use `/fork` to try an alternative approach from a known-good point. The original thread stays intact, so you can compare both.
+</Tip>
+</Aside>
+
+## Sharing and identifying
+
+- **`/share`** — generate a **public URL** for the session so anyone with the link can read it.
+- **`/session-id`** — show the session ID and an `opencode` command to attach to it from your terminal.
+- **[`/diff`](/docs/diff-viewer)** — share the current changes as a diff URL.
+
+## Context management
+
+Long sessions fill the model's context window. Keep them healthy:
+
+- **`/context-usage`** — show token usage and the percentage of the context window used.
+- **`/compact`** — summarize the conversation so far to free up context while keeping the gist.
+
+Kimaki also shows context usage automatically in the thread at roughly 10% increments (prefixed `⬦`), and at the end of each assistant turn in a footer like `kimakivoice ⋅ main ⋅ 2m 30s ⋅ 71% ⋅ claude-opus`.
+
+## Undo and redo
+
+- **`/undo`** — revert the last assistant message, including the file changes it made.
+- **`/redo`** — reapply the last undone message.
+
+These let you back out a change the agent made without manually reverting files.

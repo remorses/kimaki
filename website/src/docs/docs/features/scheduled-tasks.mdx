@@ -1,0 +1,82 @@
+---
+title: Scheduled Tasks
+description: Run the bot on a schedule, cron or a one-time future time, for digests, reminders, and recurring maintenance.
+icon: lucide:calendar-clock
+---
+
+Kimaki can run a prompt **on a schedule**: once at a future time, or repeatedly on a cron expression. This turns the bot into an autonomous worker that wakes up, does a job, and posts the result as a Discord thread you can reply to.
+
+## Scheduling with `--send-at`
+
+Add **`--send-at`** to any `kimaki send` command. It accepts a one-time UTC ISO timestamp (ending in `Z`) or a cron expression:
+
+```bash
+# One-time: run at a specific UTC time
+kimaki send --channel <channel-id> --prompt 'Review open PRs' \
+  --send-at '2026-03-01T09:00:00Z'
+
+# Recurring: every Monday at 9am UTC
+kimaki send --channel <channel-id> \
+  --prompt 'Run the test suite and summarize failures' \
+  --send-at '0 9 * * 1'
+```
+
+<Aside>
+<Warning>
+All scheduling is in **UTC**. One-time dates must end with `Z`, and cron expressions fire in UTC too. Convert from your local time before scheduling.
+</Warning>
+</Aside>
+
+## Flagship example: a morning email digest
+
+The pattern that makes scheduled tasks shine: a **morning email digest** you can act on from Discord.
+
+```diagram
+  cron 0 7 * * *
+       │
+       ▼
+  ┌────────┐     ┌──────────┐     ┌─────────┐
+  │read    │────▶ │post      │────▶ │you reply│
+  │inbox   │     │digest    │     │(mark)  │
+  └────────┘     └──────────┘     └─────────┘
+```
+
+Schedule a task that reads your inbox each morning with a CLI like **[Zele](https://github.com/remorses/zele)** (a multi-account email and calendar CLI) and posts a summary:
+
+```bash
+kimaki send --channel <channel-id> \
+  --prompt 'Use the zele CLI to read my unread emails. Post a concise digest grouped by sender and importance. List the message IDs so I can act on them.' \
+  --send-at '0 7 * * *'
+```
+
+When the digest lands as a thread, **reply to it** to resume the work: "mark the GitHub ones as read and unsubscribe from the newsletters." The agent runs the corresponding `zele` commands. The whole loop, read then act, happens from one Discord thread.
+
+## Notify-only reminders
+
+For a reminder that should **not** start an AI session, add `--notify-only`. It posts a thread you can reply to later:
+
+```bash
+kimaki send --session <session-id> \
+  --prompt 'Reminder: <@user-id> the staging API key created today expires 2026-06-01. Renew it before it breaks prod.' \
+  --send-at '2026-05-28T09:00:00Z' --notify-only
+```
+
+Make reminder prompts **detailed**: the future reader has no context, so include what, when, why, and the exact action needed.
+
+## Other recurring patterns
+
+- **Weekly QA** — run the full test suite, summarize failures, mention a user only if review is needed.
+- **Maintenance cron** — rotate secrets, check dependency updates, clean stale branches on a `0 9 1 * *` monthly schedule.
+- **Project memory** — have the task read and update a markdown file in the repo each run.
+
+All other `send` flags (`--notify-only`, `--worktree`, `--agent`, `--model`, `--user`) work with `--send-at`. The exception is `--wait`, which is incompatible since the task runs in the future.
+
+## Managing tasks
+
+```bash
+kimaki task list
+kimaki task edit <id> --prompt "new prompt" [--send-at "new schedule"]
+kimaki task delete <id>
+```
+
+The `/tasks` slash command lists scheduled tasks in Discord with cancel buttons. For the full `kimaki send` reference and CI usage, see [CI & Automation](/docs/ci-automation).

@@ -98,27 +98,16 @@ KIMAKI_BOT_TOKEN=xxx npx -y kimaki project add --app-id 987654321
 
 ## Scheduled Tasks
 
-Add `--send-at` to any `kimaki send` command to schedule it for later. Supports one-time ISO dates (must be UTC ending with `Z`) and recurring cron expressions:
+Add `--send-at` to any `kimaki send` command to schedule it for later, using a one-time UTC ISO date or a recurring cron expression:
 
 ```bash
-# One-time: run at a specific UTC time
-kimaki send --channel <channel-id> --prompt 'Review open PRs' \
-  --send-at '2026-03-01T09:00:00Z'
-
 # Recurring: every Monday at 9am UTC
 kimaki send --channel <channel-id> \
   --prompt 'Run weekly test suite and summarize failures' \
   --send-at '0 9 * * 1'
-
-# Schedule a reminder into an existing thread
-kimaki send --session <session-id> \
-  --prompt 'Reminder: <@user-id> check back on this thread' \
-  --send-at '2026-03-01T15:00:00Z' --notify-only
 ```
 
-All other `send` flags (`--notify-only`, `--worktree`, `--agent`, `--model`, `--user`) work with `--send-at`. The only exception is `--wait`, which is incompatible since the task runs in the future.
-
-Manage scheduled tasks with `kimaki task list` and `kimaki task delete <id>`.
+For the full scheduling workflow, including morning email digests, reminders, and recurring maintenance, see [Scheduled Tasks](/docs/scheduled-tasks).
 
 ## Per-Session Permissions
 

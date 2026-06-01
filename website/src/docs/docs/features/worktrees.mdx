@@ -1,0 +1,67 @@
+---
+title: Worktrees
+description: Move a session into an isolated git worktree mid-plan, then merge the commits back into your default branch.
+icon: lucide:git-branch
+---
+
+**Worktrees** let a session work in an **isolated folder** so it never touches your main checkout. Start with an idea in a thread, then move it into a worktree once you realize it should not change your main files. Merge the commits back later with one command.
+
+## The typical flow
+
+```diagram
+  thread: redesign sidebar
+       │ /new-worktree
+       ▼
+  ┌──────────────────┐     work in worktree
+  │worktree: opencode│────▶ commits accumulate
+  │kimaki-redesign   │
+  └────────┬─────────┘
+           │ /merge-worktree
+           ▼
+  rebase ──▶ fast-forward ──▶ done
+```
+
+## Creating a worktree
+
+Run **`/new-worktree`**:
+
+- **From a project channel**, pass a `name`. Kimaki creates a thread immediately (so you can start typing) and builds the worktree in the background. The branch is named `opencode/kimaki-<name>` and the thread is prefixed with `⬦ worktree:`.
+- **From an existing thread**, the `name` is optional; Kimaki derives it from the thread name.
+- **`base-branch`** is optional and defaults to `HEAD` (your current local HEAD), so you can branch from unpushed commits.
+
+<Aside>
+<Tip>
+Long auto-derived names get shortened by stripping vowels (e.g. `configurable-sidebar-width` becomes `cnfgrbl-sdbr-wdth`). Names you pass explicitly are kept as-is.
+</Tip>
+</Aside>
+
+## Why isolate work in a worktree
+
+- **Protect your main checkout.** Experimental or risky changes stay in a separate folder.
+- **Run things in parallel.** Different threads can each have their own worktree and branch.
+- **Keep a clean default branch** until you decide the work is good.
+
+## Merging back
+
+When the worktree work is ready, run **`/merge-worktree`** (optionally pass a `target-branch`; it defaults to the project's default branch):
+
+- It **rebases** the worktree commits onto the target and fast-forwards. All commits are **preserved**, nothing is squashed.
+- The worktree and target must have **no uncommitted changes**.
+- On success the `⬦ worktree:` prefix is removed from the thread title and Kimaki reports the merged commit count.
+
+## Conflict resolution by the agent
+
+If the rebase hits **conflicts**, Kimaki does not give up. It asks the AI model **in the thread** to resolve them: understand both sides, edit the conflicted files, `git add`, and `git rebase --continue`, repeating until the rebase finishes. Once the agent is done, run `/merge-worktree` again to complete the merge.
+
+```diagram
+  /merge-worktree ──▶ rebase ──▶ conflict?
+                                 │ yes
+                                 ▼
+                      agent resolves ──▶ run /merge-worktree again
+```
+
+<Aside>
+<Note>
+Worktrees created by Kimaki, by OpenCode, or manually all show up in `/worktrees` for the channel's project.
+</Note>
+</Aside>

@@ -1,0 +1,48 @@
+---
+title: Memory
+description: Persist learnings and context across sessions with a MEMORY.md file the agent reads and updates.
+icon: lucide:brain
+---
+
+Kimaki gives the agent a **persistent memory** through a `MEMORY.md` file in your project root. The agent reads it at session start and can update it, so hard-won context survives across sessions.
+
+## How MEMORY.md works
+
+```diagram
+   session starts ──▶ agent reads MEMORY.md ──▶ works with that context
+                                                      │
+                                  learns something worth keeping
+                                                      ▼
+                                       agent updates MEMORY.md ──▶ next session benefits
+```
+
+Put anything the agent should remember between sessions: architecture decisions, gotchas, naming conventions, where things live, commands that work. The next session picks up where the last one's knowledge left off, without you re-explaining.
+
+## What to keep in it
+
+- **Non-obvious learnings** that prevent repeated mistakes.
+- **Project conventions** (naming, file layout, preferred libraries).
+- **Commands and workflows** specific to the repo (test command, build steps).
+- **Decisions and their rationale**, so future sessions don't undo them.
+
+<Aside>
+<Tip>
+Keep entries concise: short titles and 2-3 sentences each. A long MEMORY.md is condensed into a line-numbered table of contents so the agent can jump to the relevant section instead of loading everything.
+</Tip>
+</Aside>
+
+## Context awareness reminders
+
+Kimaki also injects small **awareness reminders** into a session when relevant, so the agent stays oriented as things change mid-session:
+
+- **Branch / detached HEAD changes** (for example after switching branches).
+- **Working directory changes** (for example after [`/new-worktree`](/docs/worktrees) moves the session into a worktree).
+- A **MEMORY.md reminder** after a large reply, nudging the agent to record anything worth keeping.
+
+These keep the agent's understanding of its environment current without you having to spell it out.
+
+## Tips
+
+- Commit `MEMORY.md` to the repo so memory is shared across machines and teammates.
+- Ask the agent directly to "update MEMORY.md with what you just learned" at the end of a tricky session.
+- Pair it with [the queue](/docs/queue): queue "update MEMORY.md with the key takeaways" to run when a session finishes.

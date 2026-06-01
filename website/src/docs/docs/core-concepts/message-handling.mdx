@@ -1,0 +1,65 @@
+---
+title: Message Handling
+description: How Discord messages are delivered into an OpenCode session, and how Kimaki turns a message into an interrupt.
+icon: lucide:message-square
+---
+
+When you send a message to an active session, Kimaki has to decide **when** the agent sees it. This page explains the delivery model and the interrupt behavior that makes a mid-run message actually stop the agent.
+
+## The default: queue after the current step
+
+OpenCode runs in steps: it calls a tool, reads the result, calls another tool, and so on. When you send a message while a run is in progress, OpenCode **queues it to be delivered after the current step finishes**. The agent keeps doing what it's doing, then picks up your new message on the next step.
+
+```diagram
+  You send message
+        │
+        ▼
+  ┌──────────┐     step finishes     ┌──────────┐
+  │ tool call│ ────────────────────▶ │agent     │
+  │(running) │                      │reads msg │
+  └──────────┘                      └──────────┘
+```
+
+This is fine for quick steps. But if the current step is a **long-running command** (a build, a test suite, a `sleep`), your message could wait a long time before the agent ever sees it.
+
+## The interrupt: abort after ~3 seconds
+
+Kimaki adds an interrupt on top. If your message has not started being processed within about **3 seconds**, Kimaki **aborts the current step and force-delivers your message**, then resumes the session with it.
+
+```diagram
+  You send message during long run
+         │
+         ▼ timer: 3s
+  ┌──────────┐   fires   ┌────────┐  idle   ┌────────┐
+  │long step │ ──────▶ │abort  │ ──────▶ │resend│
+  │(build)   │         │      │         │msg  │
+  └──────────┘         └────────┘        └────────┘
+```
+
+The effect: **a message acts as an interrupt**. Instead of waiting behind a slow command, your new instruction takes over. This is exactly what you want when the agent is heading the wrong direction and you need to redirect it now.
+
+<Aside>
+<Note>
+The abort preserves your session's agent and model overrides. Kimaki resends the original message parts after the abort, so nothing about your session config is lost.
+</Note>
+</Aside>
+
+## Tuning the timeout
+
+The interrupt timeout defaults to **3000 ms**. Override it with an environment variable when starting Kimaki:
+
+```bash
+KIMAKI_INTERRUPT_STEP_TIMEOUT_MS=8000 npx -y kimaki@latest
+```
+
+Increase it if you want short tool calls to finish before your message interrupts. Decrease it for a snappier "stop now" feel.
+
+## When you want to wait instead of interrupt
+
+Sometimes you do **not** want to interrupt: you want to line up a follow-up for after the run completes. That's what [the queue](/docs/queue) is for. End your message with `. queue` (or use `/queue`) and it waits for the current run to finish instead of aborting it.
+
+| You want to...                              | Use            |
+|---------------------------------------------|----------------|
+| Redirect the agent right now                | a normal message (interrupts after ~3s) |
+| Add a follow-up for after the run finishes  | [`. queue` / `/queue`](/docs/queue) |
+| Ask a side question without disturbing the run | [`. btw` / `/btw`](/docs/btw) |
