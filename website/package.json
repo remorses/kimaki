@@ -22,7 +22,7 @@
     "lucide-react": "^1.16.0",
     "react": "^19.2.4",
     "react-dom": "^19.2.4",
-    "spiceflow": "1.26.0-rsc.1",
+    "spiceflow": "1.26.0-rsc.3",
     "three": "^0.184.0",
     "zod": "^4.4.3"
   },
