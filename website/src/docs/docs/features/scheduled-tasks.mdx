@@ -35,10 +35,10 @@ The pattern that makes scheduled tasks shine: a **morning email digest** you can
   cron 0 7 * * *
        │
        ▼
-  ┌────────┐     ┌──────────┐     ┌─────────┐
-  │read    │────▶ │post      │────▶ │you reply│
-  │inbox   │     │digest    │     │(mark)  │
-  └────────┘     └──────────┘     └─────────┘
+  ┌─────────┐      ┌──────────┐      ┌───────────┐
+  │ read    │ ───▶ │ post     │ ───▶ │ you reply │
+  │ inbox   │      │ digest   │      │ (mark)    │
+  └─────────┘      └──────────┘      └───────────┘
 ```
 
 Schedule a task that reads your inbox each morning with a CLI like **[Zele](https://github.com/remorses/zele)** (a multi-account email and calendar CLI) and posts a summary:

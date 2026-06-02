@@ -14,11 +14,11 @@ Run `/login` in any project channel. Kimaki walks you through a short flow:
   /login
     │
     ▼
-  ┌─────────┐     ┌──────────┐     ┌───────────┐
-  │provider │────▶ │method   │────▶ │auth       │
-  │(anth/   │     │(OAuth/  │     │(modal)   │
-  │openai)  │     │key)     │     │           │
-  └─────────┘     └──────────┘     └───────────┘
+  ┌──────────┐      ┌──────────┐      ┌──────────┐
+  │ provider │ ───▶ │  method  │ ───▶ │   auth   │
+  │ (anth/   │      │ (OAuth/  │      │ (modal)  │
+  │  openai) │      │  key)    │      │          │
+  └──────────┘      └──────────┘      └──────────┘
 ```
 
 1. **Pick a provider.** Connected providers show a checkmark.

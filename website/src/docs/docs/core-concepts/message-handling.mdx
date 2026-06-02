@@ -14,10 +14,10 @@ OpenCode runs in steps: it calls a tool, reads the result, calls another tool, a
   You send message
         │
         ▼
-  ┌──────────┐     step finishes     ┌──────────┐
-  │ tool call│ ────────────────────▶ │agent     │
-  │(running) │                      │reads msg │
-  └──────────┘                      └──────────┘
+  ┌──────────┐      step finishes      ┌──────────┐
+  │ tool call│ ──────────────────────▶ │agent     │
+  │(running) │                        │reads msg │
+  └──────────┘                        └──────────┘
 ```
 
 This is fine for quick steps. But if the current step is a **long-running command** (a build, a test suite, a `sleep`), your message could wait a long time before the agent ever sees it.
@@ -30,10 +30,10 @@ Kimaki adds an interrupt on top. If your message has not started being processed
   You send message during long run
          │
          ▼ timer: 3s
-  ┌──────────┐   fires   ┌────────┐  idle   ┌────────┐
-  │long step │ ──────▶ │abort  │ ──────▶ │resend│
-  │(build)   │         │      │         │msg  │
-  └──────────┘         └────────┘        └────────┘
+  ┌──────────┐  fires  ┌──────────┐ idle  ┌──────────┐
+  │long step │ ──────▶ │abort     │ ────▶ │resend    │
+  │(build)   │         │          │       │msg       │
+  └──────────┘         └──────────┘       └──────────┘
 ```
 
 The effect: **a message acts as an interrupt**. Instead of waiting behind a slow command, your new instruction takes over. This is exactly what you want when the agent is heading the wrong direction and you need to redirect it now.

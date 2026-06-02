@@ -7,15 +7,15 @@ icon: lucide:folder-tree
 Kimaki's whole design rests on one mapping: a Discord **channel is a project**, and a **thread is a coding session**. Understanding this makes everything else obvious.
 
 ```diagram
-  Discord                         Your machine
-  ┌─────────────────┐            ┌──────────────┐
-  │ server          │            │              │
-  │ #web-app ───────┼───────────┼──▶ /code/web │
-  │ ├─ login ───────┼───────────┼───▶ session A │
-  │ └─ dark ────────┼───────────┼───▶ session B │
-  │ #api ───────────┼───────────┼──▶ /code/api │
-  │ └─ limit ───────┼───────────┼───▶ session C │
-  └─────────────────┘            └──────────────┘
+  Discord                       Your machine
+  ┌─────────────────┐           ┌─────────────┐
+  │ server          │           │             │
+  │  #web-app       │  ───────▶ │ /code/web   │
+  │   ├─ login      │  ───────▶ │ session A   │
+  │   └─ dark       │  ───────▶ │ session B   │
+  │  #api           │  ───────▶ │ /code/api   │
+  │   └─ limit      │  ───────▶ │ session C   │
+  └─────────────────┘           └─────────────┘
 ```
 
 ## Why this matters
@@ -66,7 +66,7 @@ From then on, messages **in that thread** continue the same session. Messages **
        │
        │ another msg ────▶ creates "dark mode" ──▶ separate session
        │
-       └── thread "fix login"────▶ continues the same session
+       └─ thread "fix login" ──▶ continues the same session
 ```
 
 ## Resuming, forking, and searching
