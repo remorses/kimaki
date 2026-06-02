@@ -38,7 +38,7 @@ This separation is the whole point. Other Discord/iMessage agent tools cram **ev
   └──────────────────┘      │        ▲                                         │
         │ thread = session  │        │  reads, edits, runs commands            │
         ▼                   │        ▼  in the project directory               │
-  ⬥ agent replies  ◀────────┼──── AI agent (any model, your subscriptions)     │
+     agent replies  ◀───────┼──── AI agent (any model, your subscriptions)     │
   └──────────────────┘      └──────────────────────────────────────────────────┘
 ```
 
