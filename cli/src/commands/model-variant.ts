@@ -19,7 +19,6 @@ import {
 import crypto from 'node:crypto'
 import {
   setChannelModel,
-  setSessionModel,
   getThreadSession,
   setGlobalModel,
   getVariantCascade,
@@ -29,9 +28,10 @@ import { resolveTextChannel, getKimakiMetadata } from '../discord-utils.js'
 import {
   getCurrentModelInfo,
   ensureSessionPreferencesSnapshot,
+  applyToCurrentSession,
   type CurrentModelInfo,
 } from './model.js'
-import { getRuntime } from '../session-handler/thread-session-runtime.js'
+
 import { getThinkingValuesForModel } from '../thinking-utils.js'
 import { createLogger, LogPrefix } from '../logger.js'
 
@@ -414,26 +414,17 @@ async function applyVariant({
         })
         return
       }
-      await setSessionModel({
+      const retried = await applyToCurrentSession({
         sessionId: context.sessionId,
+        thread: context.thread,
         modelId,
         variant,
       })
+      const retryNote = retried ? '\n_Restarting current request with new variant..._' : ''
       logger.log(
         `Set variant ${variant ?? 'none'} for session ${context.sessionId} (model ${modelId})`,
       )
 
-      let retried = false
-      if (context.thread) {
-        const runtime = getRuntime(context.thread.id)
-        if (runtime) {
-          retried = await runtime.retryLastUserPrompt()
-        }
-      }
-
-      const retryNote = retried
-        ? '\n_Restarting current request with new variant..._'
-        : ''
       await interaction.editReply({
         content: `Variant set for this session:\n**${context.providerName}** / **${context.modelName}**${variantSuffix}\n\`${modelId}\`${retryNote}${agentTip}`,
         flags: MessageFlags.SuppressEmbeds,
@@ -446,12 +437,19 @@ async function applyVariant({
         modelId,
         variant,
       })
+      const retried = await applyToCurrentSession({
+        sessionId: context.sessionId,
+        thread: context.thread,
+        modelId,
+        variant,
+      })
+      const retryNote = retried ? '\n_Restarting current request with new variant..._' : ''
       logger.log(
         `Set global variant ${variant ?? 'none'} for app ${context.appId} and channel ${context.channelId} (model ${modelId})`,
       )
 
       await interaction.editReply({
-        content: `Variant set for this channel and as global default:\n**${context.providerName}** / **${context.modelName}**${variantSuffix}\n\`${modelId}\`\nAll channels will use this variant (unless they have their own override).${agentTip}`,
+        content: `Variant set for this channel and as global default:\n**${context.providerName}** / **${context.modelName}**${variantSuffix}\n\`${modelId}\`\nAll channels will use this variant (unless they have their own override).${retryNote}${agentTip}`,
         flags: MessageFlags.SuppressEmbeds,
         components: [],
       })
@@ -462,12 +460,19 @@ async function applyVariant({
         modelId,
         variant,
       })
+      const retried = await applyToCurrentSession({
+        sessionId: context.sessionId,
+        thread: context.thread,
+        modelId,
+        variant,
+      })
+      const retryNote = retried ? '\n_Restarting current request with new variant..._' : ''
       logger.log(
         `Set channel variant ${variant ?? 'none'} for channel ${context.channelId} (model ${modelId})`,
       )
 
       await interaction.editReply({
-        content: `Variant set for this channel:\n**${context.providerName}** / **${context.modelName}**${variantSuffix}\n\`${modelId}\`\nAll new sessions in this channel will use this variant.${agentTip}`,
+        content: `Variant set for this channel:\n**${context.providerName}** / **${context.modelName}**${variantSuffix}\n\`${modelId}\`\nAll new sessions in this channel will use this variant.${retryNote}${agentTip}`,
         flags: MessageFlags.SuppressEmbeds,
         components: [],
       })
