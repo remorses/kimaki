@@ -1,5 +1,17 @@
 # Changelog
 
+## 0.13.1
+
+1. **Fix session interrupts being silently dropped** — sending a new message while the bot was mid-run (e.g. during a long tool call) often failed to abort and replay the queued message. Two root causes: the plugin's `ctx.client` didn't make REST calls reliably (now builds its own SDK client from `ctx.serverUrl`), and abort confirmation now polls session status instead of waiting on events that sometimes never arrived.
+
+2. **Fix `/new-worktree` in existing threads forking to a separate thread** — running `/new-worktree` inside an active thread no longer switches the current thread in-place. The original thread keeps its session and checkout; a new thread gets the worktree, the forked session context, and the metadata for `/merge-worktree`.
+
+3. **Fix OpenAI voice transcription** — voice messages configured with an OpenAI API key work again. The deprecated `gpt-4o-audio-preview` model is replaced with the current `gpt-audio` chat model.
+
+4. **Fix kimaki shim aborting with `.env: not found`** — the relocatable shim at `~/.kimaki/bin/kimaki` no longer leaks `--env-file` flags from the bot's startup args. Running `kimaki` subcommands from directories without a `.env` file no longer crashes.
+
+5. **Upgrade `@opencode-ai/sdk` and `@opencode-ai/plugin` to 1.15.11** — adapts to the newer SDK event types (top-level `id` field on every event) and centralizes error message extraction across SDK response shapes.
+
 ## 0.13.0
 
 1. **New `--allow-mention` CLI flag** — control which Discord mention types the bot can trigger. Default is `users` only, which prevents the bot from pinging `@everyone`, `@here`, or roles. Repeatable flag to allow additional types:
