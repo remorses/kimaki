@@ -22,7 +22,7 @@ The reply shows the command, its exit code, and the output in a code block (trun
 
 ## Where it runs
 
-- **In a thread** with a [worktree](/docs/worktrees) that is ready, the command runs in the **worktree directory**.
+- **In a thread** with a [worktree](../features/worktrees) that is ready, the command runs in the **worktree directory**.
 - **Otherwise** it runs in the channel's **project directory**.
 
 This means `!` commands always run in the same place the agent is working.
@@ -43,4 +43,4 @@ While a worktree is still being created, `!` commands are skipped so they don't 
 - **`!ls`**, **`!cat package.json`** — inspect files without spending an agent turn.
 - **`!pnpm test`** — kick off a one-off command directly.
 
-For long-running servers you want to view remotely, use [Tunnels](/docs/tunnels) instead.
+For long-running servers you want to view remotely, use [Tunnels](../remote-access/tunnels) instead.

@@ -8,7 +8,7 @@ The **queue** lets you line up a message to be delivered **when the current run 
 
 ## Why queue instead of just sending
 
-A normal message during a run [acts as an interrupt](/docs/message-handling): after ~3 seconds Kimaki aborts the current step to deliver it. The queue is the opposite: it **waits politely** for the run to complete, then sends.
+A normal message during a run [acts as an interrupt](../core-concepts/message-handling): after ~3 seconds Kimaki aborts the current step to deliver it. The queue is the opposite: it **waits politely** for the run to complete, then sends.
 
 This is perfect for follow-ups that only make sense after the work is done:
 

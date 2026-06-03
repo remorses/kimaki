@@ -8,7 +8,7 @@ icon: lucide:split
 
 ## The problem it solves
 
-The agent is in the middle of a long task and you suddenly want to ask "wait, why did you choose X?" If you send that in the thread, it [interrupts](/docs/message-handling) the work. If you wait, you lose the moment.
+The agent is in the middle of a long task and you suddenly want to ask "wait, why did you choose X?" If you send that in the thread, it [interrupts](../core-concepts/message-handling) the work. If you wait, you lose the moment.
 
 **btw** splits the question off into its own thread that shares the same context but runs independently.
 
@@ -27,7 +27,7 @@ Two equivalent triggers:
 - **`/btw <prompt>`** — fork and ask the prompt.
 - **`. btw` suffix** — end a message with punctuation plus `btw`, for example `why this approach? btw`. Supported forms include `. btw`, `! btw`, a trailing `btw.`, or `btw` on its own final line.
 
-Unlike the [queue suffix](/docs/queue), the `btw` suffix **requires punctuation or a newline** before it, so `btw fix this` at the start of a message is not treated as a btw.
+Unlike the [queue suffix](../features/queue), the `btw` suffix **requires punctuation or a newline** before it, so `btw fix this` at the start of a message is not treated as a btw.
 
 ## What happens
 
@@ -49,6 +49,6 @@ The original thread is never paused or interrupted. btw runs as a separate sessi
 | Want to...                                         | Use            |
 |----------------------------------------------------|----------------|
 | Ask a side question in parallel, keep the run going | **btw**        |
-| Continue from a specific earlier message            | [`/fork`](/docs/commands) |
-| Add a follow-up for after the run finishes          | [the queue](/docs/queue) |
+| Continue from a specific earlier message            | [`/fork`](../reference/commands) |
+| Add a follow-up for after the run finishes          | [the queue](../features/queue) |
 | Redirect the agent right now                         | a normal message |

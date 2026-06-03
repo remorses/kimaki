@@ -56,10 +56,10 @@ Increase it if you want short tool calls to finish before your message interrupt
 
 ## When you want to wait instead of interrupt
 
-Sometimes you do **not** want to interrupt: you want to line up a follow-up for after the run completes. That's what [the queue](/docs/queue) is for. End your message with `. queue` (or use `/queue`) and it waits for the current run to finish instead of aborting it.
+Sometimes you do **not** want to interrupt: you want to line up a follow-up for after the run completes. That's what [the queue](../features/queue) is for. End your message with `. queue` (or use `/queue`) and it waits for the current run to finish instead of aborting it.
 
 | You want to...                              | Use            |
 |---------------------------------------------|----------------|
 | Redirect the agent right now                | a normal message (interrupts after ~3s) |
-| Add a follow-up for after the run finishes  | [`. queue` / `/queue`](/docs/queue) |
-| Ask a side question without disturbing the run | [`. btw` / `/btw`](/docs/btw) |
+| Add a follow-up for after the run finishes  | [`. queue` / `/queue`](../features/queue) |
+| Ask a side question without disturbing the run | [`. btw` / `/btw`](../features/btw) |
