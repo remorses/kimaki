@@ -1320,13 +1320,13 @@ export async function startDiscordBot({
 
   // Prevent discord.js from permanently killing the REST token on 401.
   // @discordjs/rest calls setToken(null) whenever it receives a 401 response.
-  // The gateway proxy returns 401 during transient DB stale periods, which
-  // permanently breaks every subsequent REST call. Blocking null restores
-  // self-healing: the 401 error still propagates, but the next call works
-  // once the proxy recovers.
+  // The gateway proxy now returns 503 for stale-DB rejections (not 401), but
+  // this guard stays as defense-in-depth for any other transient 401 source.
+  // Allows null through when Client.destroy() is running (it sets client.token
+  // = null before calling rest.setToken(null)).
   const originalSetToken = discordClient.rest.setToken.bind(discordClient.rest)
   discordClient.rest.setToken = (newToken: string) => {
-    if (!newToken) {
+    if (!newToken && discordClient.token !== null) {
       discordLogger.warn('[REST] Blocked token nullification from 401 response')
       return discordClient.rest
     }
