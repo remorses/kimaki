@@ -1027,10 +1027,26 @@ export async function startDiscordBot({
         forceQueue ? prompt : '',
       )
 
-      if (result.found) {
-        discordLogger.log(
-          `[MESSAGE_EDIT] ${result.removed ? 'Removed' : 'Updated'} queued message ${message.id} in thread ${channel.id}`,
-        )
+      if (result.found && channel.isThread()) {
+        const displayName =
+          message.member?.displayName ?? message.author.displayName
+        if (result.removed) {
+          discordLogger.log(
+            `[MESSAGE_EDIT] Removed queued message ${message.id} in thread ${channel.id}`,
+          )
+          await sendThreadMessage(
+            channel,
+            `⬦ **${displayName}** removed message from queue`,
+          )
+        } else {
+          discordLogger.log(
+            `[MESSAGE_EDIT] Updated queued message ${message.id} in thread ${channel.id}`,
+          )
+          await sendThreadMessage(
+            channel,
+            `⬦ **${displayName}** edited queued message`,
+          )
+        }
       }
     } catch (error) {
       discordLogger.error(

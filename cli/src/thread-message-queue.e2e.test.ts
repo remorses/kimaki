@@ -1444,12 +1444,11 @@ e2eTest('thread message queue ordering', () => {
       expect(await th.text()).toMatchInlineSnapshot(`
         "--- from: user (queue-tester)
         SLOW_BUSY_MARKER Reply with exactly: edit-queue-setup
-        --- from: assistant (TestBot)
-        *using deterministic-provider/deterministic-v2*
-        --- from: user (queue-tester)
         Reply with exactly: edited-queued. queue
         --- from: assistant (TestBot)
+        *using deterministic-provider/deterministic-v2*
         Queued at position 1
+        ⬦ **queue-tester** edited queued message
         ⬥ slow-busy-reply
         *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2*
         » **queue-tester:** Reply with exactly: edited-queued
@@ -1553,6 +1552,7 @@ e2eTest('thread message queue ordering', () => {
         Reply with exactly: will-be-removed
         --- from: assistant (TestBot)
         Queued at position 1
+        ⬦ **queue-tester** removed message from queue
         ⬥ slow-busy-reply
         *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2*"
       `)

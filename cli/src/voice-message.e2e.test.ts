@@ -970,7 +970,7 @@ e2eTest('voice message handling', () => {
         --- from: assistant (TestBot)
         🎤 Transcribing voice message...
         📝 **Transcribed message:** Queue this task for later
-        Queued at position 1
+        Queued at position 1. Edit your message to update it in queue
         ⬥ slow-response-done
         *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2*
         » **voice-tester:** Voice message transcription from Discord user:
