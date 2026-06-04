@@ -174,6 +174,7 @@ describe('queue drain after question select answer', () => {
         » **question-select-tester:** Reply with exactly: post-question-drain
         Queued message (position 1)
         [user selects dropdown: 0]
+        » **question-select-tester:** Alpha
         ⬥ ok
         *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2*"
       `)
@@ -313,6 +314,7 @@ describe('queue drain after question select answer', () => {
         [user interaction]
         Queued message (position 1)
         [user selects dropdown: 0]
+        » **question-select-tester:** Alpha
         ⬥ slow-response-started
         *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2*
         » **question-select-tester:** Reply with exactly: post-question-second

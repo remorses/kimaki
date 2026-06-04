@@ -171,6 +171,7 @@ describe('queue advanced: action buttons', () => {
         **Action Required**
         _Selected: Continue action-buttons flow_
         [user clicks button]
+        » **queue-action-tester:** Continue action-buttons flow
         ⬥ action-buttons-click-continued
         *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2*"
       `)

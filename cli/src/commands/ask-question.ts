@@ -284,6 +284,12 @@ export async function handleAskQuestionSelectMenu(
     components: [], // Remove the dropdown
   })
 
+  const username = interaction.user.globalName || interaction.user.username
+  await sendThreadMessage(
+    context.thread,
+    `» **${username}:** ${answeredText}`,
+  )
+
   // Check if all questions are answered
   if (context.answeredCount >= context.totalQuestions) {
     // All questions answered - send result back to session
