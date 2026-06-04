@@ -1318,6 +1318,21 @@ export async function startDiscordBot({
   const stopTaskRunner = startTaskRunner({ token })
   const stopRuntimeIdleSweeper = startRuntimeIdleSweeper()
 
+  // Prevent discord.js from permanently killing the REST token on 401.
+  // @discordjs/rest calls setToken(null) whenever it receives a 401 response.
+  // The gateway proxy returns 401 during transient DB stale periods, which
+  // permanently breaks every subsequent REST call. Blocking null restores
+  // self-healing: the 401 error still propagates, but the next call works
+  // once the proxy recovers.
+  const originalSetToken = discordClient.rest.setToken.bind(discordClient.rest)
+  discordClient.rest.setToken = (newToken: string) => {
+    if (!newToken) {
+      discordLogger.warn('[REST] Blocked token nullification from 401 response')
+      return discordClient.rest
+    }
+    return originalSetToken(newToken)
+  }
+
   const handleShutdown = async (signal: string, { skipExit = false } = {}) => {
     discordLogger.log(`Received ${signal}, cleaning up...`)
 
