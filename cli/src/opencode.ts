@@ -913,10 +913,19 @@ function getOrCreateClient({
       timeout: false,
     })
 
+  const serverPassword = process.env.OPENCODE_SERVER_PASSWORD
+  const serverUsername = process.env.OPENCODE_SERVER_USERNAME || 'opencode'
+  const authHeaders: Record<string, string> = {}
+  if (serverPassword) {
+    const encoded = Buffer.from(`${serverUsername}:${serverPassword}`).toString('base64')
+    authHeaders['Authorization'] = `Basic ${encoded}`
+  }
+
   const client = createOpencodeClient({
     baseUrl,
     directory,
     fetch: fetchWithTimeout as typeof fetch,
+    headers: authHeaders,
   })
   clientCache.set(directory, client)
   return client
