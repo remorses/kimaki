@@ -237,19 +237,25 @@ const interruptOpencodeSessionOnUserMessage: Plugin = async (ctx) => {
 
   return {
     async event({ event }) {
-      // When an assistant message starts processing a queued user message
-      // (parentID match), cancel its interrupt timer: the message began running
-      // normally within the timeout window, so there is nothing to interrupt.
+      // Clear timer even for errored assistant messages — the LLM processed it.
       if (event.type === 'message.updated' && event.properties.info.role === 'assistant') {
-        if (!event.properties.info.error) {
-          clearPending(event.properties.info.parentID)
-        }
+        clearPending(event.properties.info.parentID)
         return
       }
 
       if (event.type === 'session.deleted') {
         log('debug', 'session deleted, cleaning up', { sessionID: event.properties.info.id })
         cleanupSession(event.properties.info.id)
+      }
+
+      // Clear stale timers so they don't abort a later unrelated generation.
+      // Skip when an interrupt is in flight — abort sets the session idle
+      // synchronously, and cleaning up here would drop the pending replay.
+      if (event.type === 'session.idle') {
+        const idleSessionID = event.properties.sessionID
+        if (interrupting.has(idleSessionID)) return
+        log('debug', 'session idle, clearing pending timers', { sessionID: idleSessionID })
+        cleanupSession(idleSessionID)
       }
     },
 
