@@ -18,6 +18,7 @@ import {
 import { getProjectsDir } from './config.js'
 import { execAsync } from './worktrees.js'
 import { createLogger, LogPrefix } from './logger.js'
+import { getProjectEmoji } from './project-emojis.js'
 
 const logger = createLogger(LogPrefix.CHANNEL)
 
@@ -94,10 +95,13 @@ export async function createProjectChannels({
   channelName: string
 }> {
   const baseName = path.basename(projectDirectory)
-  const channelName = `${baseName}`
+  const sanitizedBase = `${baseName}`
     .toLowerCase()
     .replace(/[^a-z0-9-]/g, '-')
-    .slice(0, 100)
+  const emoji = getProjectEmoji(baseName)
+  const channelName = (
+    emoji ? `${emoji} ${sanitizedBase}` : sanitizedBase
+  ).slice(0, 100)
 
   const kimakiCategory = await ensureKimakiCategory(guild, botName)
 

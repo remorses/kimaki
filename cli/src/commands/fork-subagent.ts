@@ -13,12 +13,14 @@ import {
   getSessionEventSnapshot,
   getThreadSession,
   setThreadSession,
+  getChannelDirectory,
 } from '../database.js'
 import {
   resolveTextChannel,
   resolveWorkingDirectory,
   sendThreadMessage,
 } from '../discord-utils.js'
+import { prefixNameWithEmoji, projectEmojiForChannel } from '../project-emojis.js'
 import {
   collectSessionChunks,
   batchChunksForDiscord,
@@ -210,7 +212,10 @@ export async function handleForkSubagentSelectMenu(
 
   const forkedSession = forkResponse.data
   const forkedThread = await textChannel.threads.create({
-    name: `Fork: ${selectedSubagent?.description || selectedSubagent?.subagentType || 'subagent session'}`.slice(0, 100),
+    name: prefixNameWithEmoji(
+      `Fork: ${selectedSubagent?.description || selectedSubagent?.subagentType || 'subagent session'}`,
+      await projectEmojiForChannel(textChannel.id),
+    ).slice(0, 100),
     autoArchiveDuration: ThreadAutoArchiveDuration.OneDay,
     reason: `Forked subagent session ${selectedSessionId}`,
   })

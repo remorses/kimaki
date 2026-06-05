@@ -9,7 +9,7 @@ import {
   type ThreadChannel,
   MessageFlags,
 } from 'discord.js'
-import { getThreadSession, setThreadSession } from '../database.js'
+import { getThreadSession, setThreadSession, getChannelDirectory } from '../database.js'
 import {
   resolveWorkingDirectory,
   resolveTextChannel,
@@ -19,6 +19,7 @@ import { getOrCreateRuntime } from '../session-handler/thread-session-runtime.js
 import { createLogger, LogPrefix } from '../logger.js'
 import type { CommandContext } from './types.js'
 import { initializeOpencodeForDirectory } from '../opencode.js'
+import { prefixNameWithEmoji, projectEmojiForChannel } from '../project-emojis.js'
 
 const logger = createLogger(LogPrefix.FORK)
 
@@ -63,7 +64,10 @@ export async function forkSessionToBtwThread({
 
   const forkedSession = forkResponse.data
   const thread = await textChannel.threads.create({
-    name: `btw: ${prompt}`.slice(0, 100),
+    name: prefixNameWithEmoji(
+      `btw: ${prompt}`,
+      await projectEmojiForChannel(textChannel.id),
+    ).slice(0, 100),
     autoArchiveDuration: ThreadAutoArchiveDuration.OneDay,
     reason: `btw fork from session ${sessionId}`,
   })
