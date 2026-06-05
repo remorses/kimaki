@@ -1444,9 +1444,11 @@ e2eTest('thread message queue ordering', () => {
       expect(await th.text()).toMatchInlineSnapshot(`
         "--- from: user (queue-tester)
         SLOW_BUSY_MARKER Reply with exactly: edit-queue-setup
-        Reply with exactly: edited-queued. queue
         --- from: assistant (TestBot)
         *using deterministic-provider/deterministic-v2*
+        --- from: user (queue-tester)
+        Reply with exactly: edited-queued. queue
+        --- from: assistant (TestBot)
         Queued at position 1. Edit your message to update it in queue
         ⬦ **queue-tester** edited queued message
         ⬥ slow-busy-reply

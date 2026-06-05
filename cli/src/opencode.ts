@@ -30,6 +30,7 @@ import {
   type PermissionRuleset,
 } from '@opencode-ai/sdk/v2'
 
+import { restartGlobalEventListener } from './session-handler/global-event-listener.js'
 import {
   getDataDir,
   getLockPort,
@@ -1214,6 +1215,10 @@ export function getOpencodeServerPort(_directory?: string): number | null {
   return singleServer?.port ?? null
 }
 
+export function getOpencodeServerBaseUrl(): string | null {
+  return singleServer?.baseUrl ?? null
+}
+
 export function getOpencodeClient(directory: string): OpencodeClient | null {
   if (!singleServer) {
     return null
@@ -1302,6 +1307,10 @@ export async function stopOpencodeServer(): Promise<boolean> {
   singleServer = null
   clientCache.clear()
   serverRetryCount = 0
+  // Don't dispose the global listener here — it will reconnect when
+  // the server restarts. Only abort the current SSE connection so it
+  // doesn't hang on a dead server.
+  restartGlobalEventListener()
   await new Promise((resolve) => {
     setTimeout(resolve, 1000)
   })

@@ -90,13 +90,6 @@ export type ThreadRunState = {
   // Read by: runtime queue gating, hasQueue helpers, /queue command display.
   queueItems: QueuedMessage[]
 
-  // Listener lifetime controller — scoped to the entire runtime lifetime,
-  // NOT per-prompt. Only aborted on dispose() or fatal error. Run abort
-  // never kills the listener — the SSE event loop stays alive across runs
-  // so subsequent prompts reuse the same listener.
-  // Changes: created in constructor, aborted only on dispose.
-  listenerController: AbortController | undefined
-
   // Output dedup: tracks which part IDs have already been sent to Discord.
   // Prevents resending the same tool output or text part on SSE reconnect.
   // Lives at thread level because it accumulates
@@ -115,7 +108,6 @@ export function initialThreadState(): ThreadRunState {
     sessionUsername: undefined,
     sessionUserId: undefined,
     queueItems: [],
-    listenerController: undefined,
     sentPartIds: new Set(),
   }
 }

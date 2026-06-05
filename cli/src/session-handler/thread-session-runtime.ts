@@ -27,11 +27,14 @@ import {
   initializeOpencodeForDirectory,
   buildSessionPermissions,
   parsePermissionRules,
-  subscribeOpencodeServerLifecycle,
   writeInjectionGuardConfig,
   extractSdkErrorMessage,
 } from '../opencode.js'
 import { isAbortError } from '../utils.js'
+import {
+  registerEventListener,
+  unregisterEventListener,
+} from './global-event-listener.js'
 import { createLogger, LogPrefix } from '../logger.js'
 import {
   sendThreadMessage,
@@ -165,15 +168,6 @@ const shouldLogSessionEvents =
 // is not reactive state, just a lookup for resource handles).
 
 const runtimes = new Map<string, ThreadSessionRuntime>()
-
-subscribeOpencodeServerLifecycle((event) => {
-  if (event.type !== 'started') {
-    return
-  }
-  for (const runtime of runtimes.values()) {
-    runtime.handleSharedServerStarted({ port: event.port })
-  }
-})
 
 export function getRuntime(
   threadId: string,
@@ -623,12 +617,7 @@ export class ThreadSessionRuntime {
 
   // ── Resource handles (mechanisms, not domain state) ──
 
-  // Reentrancy guard for startEventListener (not domain state —
-  // just prevents calling the async loop twice).
-  private listenerLoopRunning = false
-
-  // Set to true by dispose(). Guards against queued work running after cleanup
-  // and lets dispatchAction/startEventListener bail out early.
+  // Set to true by dispose(). Guards against queued work running after cleanup.
   private disposed = false
 
   // Typing indicator scheduler handles.
@@ -677,6 +666,7 @@ export class ThreadSessionRuntime {
   private persistEventBufferDebounced: ReturnType<
     typeof createDebouncedProcessFlush
   >
+  private readonly sentPartIdsBootstrap: Promise<void>
 
   // Serialized action queue for per-thread runtime transitions.
   // Ingress and event handling both flow through this queue to keep ordering
@@ -699,10 +689,21 @@ export class ThreadSessionRuntime {
     this.channelId = opts.channelId
     this.appId = opts.appId
     this.thread = opts.thread
-    threadState.updateThread(this.threadId, (t) => ({
-      ...t,
-      listenerController: new AbortController(),
-    }))
+    this.sentPartIdsBootstrap = this.bootstrapSentPartIds().catch((error) => {
+      logger.warn(
+        `[PART BOOTSTRAP] Failed to load sent part ids for thread ${this.threadId}:`,
+        error,
+      )
+    })
+    // Register with the single global SSE listener. Events for this
+    // directory are demuxed and dispatched through our action queue.
+    registerEventListener(this.threadId, (event) => {
+      if (this.disposed) return
+      void this.dispatchAction(async () => {
+        await this.sentPartIdsBootstrap
+        await this.handleEvent(event)
+      })
+    })
     this.persistEventBufferDebounced = createDebouncedProcessFlush({
       waitMs: ThreadSessionRuntime.EVENT_BUFFER_DB_FLUSH_MS,
       callback: async () => {
@@ -742,16 +743,6 @@ export class ThreadSessionRuntime {
 
   getDerivedPhase(): 'idle' | 'running' {
     return this.isMainSessionBusy() ? 'running' : 'idle'
-  }
-
-  /** Whether the listener has been disposed. */
-  private get listenerAborted(): boolean {
-    return this.state?.listenerController?.signal.aborted ?? true
-  }
-
-  /** The listener AbortSignal, used to pass to SDK subscribe calls. */
-  private get listenerSignal(): AbortSignal | undefined {
-    return this.state?.listenerController?.signal
   }
 
   private getLastRuntimeActivityTimestamp({
@@ -993,12 +984,7 @@ export class ThreadSessionRuntime {
 
   dispose(): void {
     this.disposed = true
-    this.state?.listenerController?.abort()
-    // waitForEvent loops check listenerAborted and exit naturally.
-    threadState.updateThread(this.threadId, (t) => ({
-      ...t,
-      listenerController: undefined,
-    }))
+    unregisterEventListener(this.threadId)
     void this.persistEventBufferDebounced.dispose()
     this.stopTyping()
 
@@ -1018,30 +1004,6 @@ export class ThreadSessionRuntime {
     // Clean up all pending UI state for this thread (permissions, questions,
     // action buttons, file uploads, html actions).
     cleanupPendingUiForThread(this.thread.id)
-  }
-
-  handleSharedServerStarted({
-    port,
-  }: {
-    port: number
-  }): void {
-    if (!this.state?.sessionId) {
-      return
-    }
-    logger.log(
-      `[LISTENER] Refreshing listener for thread ${this.threadId} after shared server start on port ${port}`,
-    )
-    const currentController = this.state?.listenerController
-    if (!currentController) {
-      return
-    }
-    currentController.abort(new Error('Shared OpenCode server restarted'))
-    threadState.updateThread(this.threadId, (t) => ({
-      ...t,
-      listenerController: new AbortController(),
-    }))
-    this.listenerLoopRunning = false
-    void this.startEventListener()
   }
 
   private compactTextForEventBuffer(text: string): string {
@@ -1284,7 +1246,7 @@ export class ThreadSessionRuntime {
     const deadline = Date.now() + timeoutMs
 
     while (Date.now() < deadline) {
-      if (this.listenerAborted) {
+      if (this.disposed) {
         return undefined
       }
       const match = this.eventBuffer.find((entry) => {
@@ -1316,121 +1278,6 @@ export class ThreadSessionRuntime {
       }
       return { ...t, sentPartIds: newIds }
     })
-  }
-
-  // ── Event Listener Loop (§7.3) ──────────────────────────────
-  // Persistent event.subscribe loop with exponential backoff.
-  // Reconnects automatically on transient disconnects.
-  // Only killed when listenerController is aborted (dispose/fatal).
-  // Run abort never affects this loop.
-
-  async startEventListener(): Promise<void> {
-    if (this.listenerLoopRunning || this.disposed) {
-      return
-    }
-    this.listenerLoopRunning = true
-    // Bootstrap sentPartIds from DB so we don't re-send parts that
-    // were already sent in a previous runtime or before a reconnect.
-    await this.bootstrapSentPartIds()
-
-    let backoffMs = 500
-    const maxBackoffMs = 30_000
-
-    while (!this.listenerAborted) {
-      const signal = this.listenerSignal
-      if (!signal) {
-        return // disposed before we could subscribe
-      }
-      const client = getOpencodeClient(this.projectDirectory)
-      if (!client) {
-        // This is expected during shared-server transitions: the listener can
-        // outlive the current opencode process across cold start, explicit
-        // restart, shutdown, or crash recovery. stopOpencodeServer()/exit clears
-        // the cached per-directory clients immediately, so existing runtimes may
-        // observe a brief no-client window before initialize/restart publishes
-        // the next shared server and repopulates the client cache.
-        logger.warn(
-          `[LISTENER] No OpenCode client for thread ${this.threadId}, retrying in ${backoffMs}ms`,
-        )
-        await delay(backoffMs)
-        backoffMs = Math.min(backoffMs * 2, maxBackoffMs)
-        continue
-      }
-      const subscribeResult = await errore.tryAsync(() => {
-        return client.event.subscribe(
-          { directory: this.projectDirectory },
-          { signal },
-        )
-      })
-
-      if (subscribeResult instanceof Error) {
-        if (isAbortError(subscribeResult)) {
-          return // disposed
-        }
-        const subscribeError: Error = subscribeResult
-        logger.warn(
-          `[LISTENER] Subscribe failed for thread ${this.threadId}, retrying in ${backoffMs}ms:`,
-          subscribeError.message,
-        )
-        await delay(backoffMs)
-        backoffMs = Math.min(backoffMs * 2, maxBackoffMs)
-        continue
-      }
-
-      const events = subscribeResult.stream
-
-      logger.log(
-        `[LISTENER] Connected to event stream for thread ${this.threadId}`,
-      )
-
-      // Re-bootstrap sentPartIds on reconnect to prevent re-sending
-      // parts that arrived while we were disconnected.
-      await this.bootstrapSentPartIds()
-
-      let receivedAnyEvent = false
-      const iterResult = await errore.tryAsync(async () => {
-        for await (const event of events) {
-          receivedAnyEvent = true
-          // Each event is dispatched through the serialized action queue
-          // to prevent interleaving mutations from concurrent events.
-          await this.dispatchAction(() => {
-            return this.handleEvent(event)
-          })
-        }
-      })
-
-      // Only reset backoff when the stream was alive long enough to
-      // deliver at least one event. If it closes immediately the server
-      // is likely not ready; keep escalating backoff to avoid a tight
-      // reconnect loop (GitHub issue #126).
-      if (receivedAnyEvent) {
-        backoffMs = 500
-      }
-
-      if (iterResult instanceof Error) {
-        if (isAbortError(iterResult)) {
-          return // disposed
-        }
-        const iterError: Error = iterResult
-        logger.warn(
-          `[LISTENER] Stream broke for thread ${this.threadId}, reconnecting in ${backoffMs}ms:`,
-          iterError.message,
-        )
-        await delay(backoffMs)
-        backoffMs = Math.min(backoffMs * 2, maxBackoffMs)
-      } else {
-        // Stream completed normally (server closed the connection).
-        // This can happen when the opencode server restarts, the SSE
-        // endpoint times out, or there are no active sessions for this
-        // directory. Without a delay here the loop reconnects immediately,
-        // creating a tight infinite reconnect loop (GitHub issue #126).
-        logger.log(
-          `[LISTENER] Stream ended normally for thread ${this.threadId}, reconnecting in ${backoffMs}ms`,
-        )
-        await delay(backoffMs)
-        backoffMs = Math.min(backoffMs * 2, maxBackoffMs)
-      }
-    }
   }
 
   // ── Session Demux Guard ─────────────────────────────────────
@@ -1652,7 +1499,7 @@ export class ThreadSessionRuntime {
   }
 
   private shouldTypeNow(): boolean {
-    if (this.listenerAborted) {
+    if (this.disposed) {
       return false
     }
     if (this.hasPendingInteractiveUi()) {
@@ -2754,7 +2601,7 @@ export class ThreadSessionRuntime {
   }: {
     sessionId: string
   }): Promise<void> {
-    if (this.listenerAborted) {
+    if (this.disposed) {
       return
     }
     if (this.state?.sessionId !== sessionId) {
@@ -3043,14 +2890,6 @@ export class ThreadSessionRuntime {
         return
       }
 
-      // If listener startup happened before initializeOpencodeForDirectory(),
-      // startEventListener may have exited early with "No OpenCode client".
-      // Re-check after ensureSession so first promptAsync on a cold directory
-      // still has an active SSE listener for message parts.
-      if (!this.listenerLoopRunning) {
-        void this.startEventListener()
-      }
-
       // ── Resolve model + agent preferences (mirrors dispatchPrompt) ──
       const channelId = this.channelId
       const resolvedAppId = input.appId
@@ -3313,11 +3152,6 @@ export class ThreadSessionRuntime {
       result = !willDrainNow && position > 0
         ? { queued: true, position }
         : { queued: false }
-
-      // Ensure listener is running
-      if (!this.listenerLoopRunning && this.state?.sessionId) {
-        void this.startEventListener()
-      }
 
       if (this.hasPendingQuestionUi()) {
         this.maybeHandoffQueuedItemForPendingQuestion({
@@ -3750,13 +3584,6 @@ export class ThreadSessionRuntime {
       )
       await this.tryDrainQueue({ showIndicator: true })
       return
-    }
-
-    // Ensure listener is running now that we have a valid OpenCode client.
-    // The eager start in enqueueIncoming may have failed if the client
-    // wasn't initialized yet (fresh thread, first message).
-    if (!this.listenerLoopRunning) {
-      void this.startEventListener()
     }
 
     // ── Resolve model + agent preferences ─────────────────────
@@ -4567,7 +4394,7 @@ export class ThreadSessionRuntime {
       })
     }
 
-    if (this.listenerAborted) {
+    if (this.disposed) {
       logger.log(`[RETRY] Runtime disposed before retry for thread ${this.threadId}`)
       return false
     }

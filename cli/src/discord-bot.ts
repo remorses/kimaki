@@ -1341,7 +1341,7 @@ export async function startDiscordBot({
   // Allows null through when Client.destroy() is running (it sets client.token
   // = null before calling rest.setToken(null)).
   const originalSetToken = discordClient.rest.setToken.bind(discordClient.rest)
-  discordClient.rest.setToken = (newToken: string) => {
+  discordClient.rest.setToken = (newToken) => {
     if (!newToken && discordClient.token !== null) {
       discordLogger.warn('[REST] Blocked token nullification from 401 response')
       return discordClient.rest
