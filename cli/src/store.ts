@@ -94,6 +94,13 @@ export type KimakiState = {
   // Read by: discord-utils.ts hasKimakiBotPermission().
   allowAllUsers: boolean
 
+  // Permission button TTL in milliseconds. When a permission prompt is shown
+  // to the user, this is how long the buttons remain active before the
+  // permission is automatically rejected. Defaults to 10 minutes.
+  // Changes: set once at startup from --permission-timeout CLI flag.
+  // Read by: commands/permissions.ts showPermissionButtons().
+  permissionTimeoutMs: number
+
   // Whether background sync of external OpenCode sessions is enabled.
   // When true (default), sessions started from the OpenCode CLI or TUI
   // are mirrored into Discord threads so they can be browsed, searched,
@@ -155,6 +162,7 @@ export const store = createStore<KimakiState>(() => ({
   disabledSkills: [],
   allowedMentions: ['users'],
   allowAllUsers: false,
+  permissionTimeoutMs: 10 * 60 * 1000,
   syncEnabled: true,
   discordBaseUrl: 'https://discord.com',
   gatewayToken: null,
