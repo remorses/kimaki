@@ -131,6 +131,14 @@ The "Kimaki" role is the recommended approach for team access. Messages from use
 - **Use the "Kimaki" role** for team access.
 - **Send long prompts as file attachments.** Tap the plus icon and use "Send message as file" for longer prompts. Kimaki reads file attachments as your message.
 
+## Troubleshooting
+
+If sessions stop responding, fail to start, or the bot behaves unexpectedly, run `/restart-opencode-server` in any channel. This restarts the backend OpenCode server while keeping the bot connected to Discord. It fixes most transient issues.
+
+If the problem persists, or if the issue is with the bot itself (crashes, messages not picked up, threads not created), run `/upgrade-and-restart` to update Kimaki to the latest version and do a full restart.
+
+See the full [Troubleshooting guide](https://kimaki.dev/docs/guides/troubleshooting).
+
 ## Advanced Topics
 
 - [**Channels & Threads**](https://kimaki.dev/docs/core-concepts/channels-threads): the orchestration model in depth

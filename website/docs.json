@@ -85,6 +85,7 @@
         "group": "Guides",
         "icon": "lucide:book-open",
         "pages": [
+          "docs/guides/troubleshooting",
           "docs/guides/ci-automation",
           "docs/guides/advanced-setup",
           "docs/guides/programmatic-gateway"
