@@ -4244,7 +4244,7 @@ export class ThreadSessionRuntime {
         session = sessionResponse.data
       } else {
         logger.warn(
-          `[ENSURE SESSION] session.get returned no data for ${sessionId}`,
+          `[ENSURE SESSION] session.get returned no data for ${sessionId}, response=${JSON.stringify(sessionResponse)}`,
         )
       }
     }
@@ -4283,7 +4283,7 @@ export class ThreadSessionRuntime {
       session = createResult.data
       if (!session) {
         logger.warn(
-          `[ENSURE SESSION] session.create returned no data, threadId=${this.thread.id}, directory=${this.sdkDirectory}`,
+          `[ENSURE SESSION] session.create returned no data, threadId=${this.thread.id}, directory=${this.sdkDirectory}, response=${JSON.stringify(createResult)}`,
         )
       }
       // Insert DB row immediately so the external-sync poller sees
@@ -4303,7 +4303,7 @@ export class ThreadSessionRuntime {
 
     if (!session) {
       return new Error(
-        `Failed to create or get session: threadId=${this.thread.id}, channelId=${this.channelId}, directory=${directory}, sdkDirectory=${this.sdkDirectory}, existingSessionId=${sessionId ?? 'none'}, createdNewSession=${createdNewSession}`,
+        `Failed to create or get session: threadId=${this.thread.id}, channelId=${this.channelId}, directory=${directory}, sdkDirectory=${this.sdkDirectory}, existingSessionId=${sessionId ?? 'none'}, createdNewSession=${createdNewSession}. session.create returned empty data, check the [ENSURE SESSION] warn log above for the full response body`,
       )
     }
 
