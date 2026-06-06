@@ -71,6 +71,18 @@ import { computeSkillPermission } from './skill-filter.js'
 
 const opencodeLogger = createLogger(LogPrefix.OPENCODE)
 
+/**
+ * Build Basic auth headers from OPENCODE_SERVER_PASSWORD env var.
+ * Returns empty object when no password is set.
+ */
+export function getOpencodeServerAuthHeaders(): Record<string, string> {
+  const serverPassword = process.env.OPENCODE_SERVER_PASSWORD
+  if (!serverPassword) return {}
+  const username = process.env.OPENCODE_SERVER_USERNAME || 'opencode'
+  const encoded = Buffer.from(`${username}:${serverPassword}`).toString('base64')
+  return { Authorization: `Basic ${encoded}` }
+}
+
 // Tracks directories that have been initialized, to avoid repeated log spam
 // from the external sync polling loop.
 const initializedDirectories = new Set<string>()
@@ -918,19 +930,11 @@ function getOrCreateClient({
       timeout: false,
     })
 
-  const serverPassword = process.env.OPENCODE_SERVER_PASSWORD
-  const serverUsername = process.env.OPENCODE_SERVER_USERNAME || 'opencode'
-  const authHeaders: Record<string, string> = {}
-  if (serverPassword) {
-    const encoded = Buffer.from(`${serverUsername}:${serverPassword}`).toString('base64')
-    authHeaders['Authorization'] = `Basic ${encoded}`
-  }
-
   const client = createOpencodeClient({
     baseUrl,
     directory,
     fetch: fetchWithTimeout as typeof fetch,
-    headers: authHeaders,
+    headers: getOpencodeServerAuthHeaders(),
   })
   clientCache.set(directory, client)
   return client

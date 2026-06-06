@@ -31,6 +31,7 @@ import crypto from 'node:crypto'
 import {
   initializeOpencodeForDirectory,
   getOpencodeServerPort,
+  getOpencodeServerAuthHeaders,
 } from '../opencode.js'
 import { resolveTextChannel, getKimakiMetadata } from '../discord-utils.js'
 import { createLogger, LogPrefix } from '../logger.js'
@@ -1055,17 +1056,10 @@ async function startOAuthFlow(
     )
     authorizeUrl.searchParams.set('directory', ctx.dir)
 
-    // Include basic auth if OPENCODE_SERVER_PASSWORD is set,
-    // matching the opencode server's optional basicAuth middleware.
     const fetchHeaders: Record<string, string> = {
       'Content-Type': 'application/json',
       'x-opencode-directory': ctx.dir,
-    }
-    const serverPassword = process.env.OPENCODE_SERVER_PASSWORD
-    if (serverPassword) {
-      const username = process.env.OPENCODE_SERVER_USERNAME || 'opencode'
-      fetchHeaders['Authorization'] =
-        `Basic ${Buffer.from(`${username}:${serverPassword}`).toString('base64')}`
+      ...getOpencodeServerAuthHeaders(),
     }
 
     const authorizeRes = await fetch(authorizeUrl, {

@@ -12,6 +12,7 @@ import { createOpencodeClient, type OpencodeClient } from '@opencode-ai/sdk/v2'
 
 import { OpenCodeSdkError } from '../errors.js'
 import { createLogger, LogPrefix } from '../logger.js'
+import { getOpencodeServerAuthHeaders } from '../opencode.js'
 
 const logger = createLogger(LogPrefix.SESSION)
 
@@ -130,13 +131,7 @@ async function resolveBaseUrlGetter(): Promise<() => string | null> {
 }
 
 function createGlobalClient(baseUrl: string): OpencodeClient {
-  const headers: Record<string, string> = {}
-  const serverPassword = process.env.OPENCODE_SERVER_PASSWORD
-  if (serverPassword) {
-    const username = process.env.OPENCODE_SERVER_USERNAME || 'opencode'
-    headers['Authorization'] = `Basic ${Buffer.from(`${username}:${serverPassword}`).toString('base64')}`
-  }
-  return createOpencodeClient({ baseUrl, headers })
+  return createOpencodeClient({ baseUrl, headers: getOpencodeServerAuthHeaders() })
 }
 
 function dispatchEvent(globalEvent: GlobalEvent): void {
