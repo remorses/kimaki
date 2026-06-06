@@ -13,6 +13,7 @@ import {
 import crypto from 'node:crypto'
 import type { OpencodeClient, PermissionRequest } from '@opencode-ai/sdk/v2'
 import { getOpencodeClient } from '../opencode.js'
+import { getPermissionTimeoutMs } from '../config.js'
 import { NOTIFY_MESSAGE_FLAGS } from '../discord-utils.js'
 import { createLogger, LogPrefix } from '../logger.js'
 
@@ -110,7 +111,26 @@ type PendingPermissionContext = {
 
 // Store pending permission contexts by hash.
 // TTL prevents unbounded growth if user never clicks a permission button.
-const PERMISSION_CONTEXT_TTL_MS = 10 * 60 * 1000
+// Configurable via --permission-timeout-minutes CLI flag or KIMAKI_PERMISSION_TIMEOUT_MINUTES env var.
+function getTtlMs(): number {
+  const envRaw = process.env['KIMAKI_PERMISSION_TIMEOUT_MINUTES']
+  if (envRaw) {
+    const parsed = Number.parseInt(envRaw, 10)
+    if (Number.isFinite(parsed) && parsed > 0) {
+      return parsed * 60 * 1000
+    }
+  }
+  return getPermissionTimeoutMs()
+}
+
+function formatDuration(ms: number): string {
+  const minutes = Math.round(ms / 60_000)
+  if (minutes >= 1) {
+    return `${minutes} minute${minutes !== 1 ? 's' : ''}`
+  }
+  const seconds = Math.round(ms / 1_000)
+  return `${seconds} second${seconds !== 1 ? 's' : ''}`
+}
 export const pendingPermissionContexts = new Map<
   string,
   PendingPermissionContext
@@ -156,6 +176,7 @@ export async function showPermissionButtons({
     contextHash,
   }
 
+  const ttlMs = getTtlMs()
   pendingPermissionContexts.set(contextHash, context)
   // Auto-reject on TTL expiry so the OpenCode session doesn't hang forever
   // waiting for a permission reply that will never come. Uses atomic take
@@ -181,12 +202,13 @@ export async function showPermissionButtons({
       ).catch((error) => {
         logger.error('Failed to auto-reject expired permission:', error)
       })
+      const durationStr = formatDuration(ttlMs)
       updatePermissionMessage({
         context: ctx,
-        status: '_Permission expired after 10 minutes and was rejected._',
+        status: `_Permission expired after ${durationStr} and was rejected._`,
       })
     }
-  }, PERMISSION_CONTEXT_TTL_MS).unref()
+  }, ttlMs).unref()
 
   const patternStr = compactPermissionPatterns(permission.patterns).join(', ')
 

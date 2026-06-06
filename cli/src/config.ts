@@ -73,6 +73,15 @@ export function setProjectsDir(dir: string): void {
   store.setState({ projectsDir: resolvedDir })
 }
 
+/**
+ * Get the permission button timeout in milliseconds.
+ * How long permission buttons remain active before auto-rejecting.
+ * Defaults to 10 minutes (600000ms).
+ */
+export function getPermissionTimeoutMs(): number {
+  return store.getState().permissionTimeoutMs
+}
+
 export type { RegisteredUserCommand } from './store.js'
 
 const DEFAULT_LOCK_PORT = 29988

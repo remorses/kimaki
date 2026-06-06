@@ -83,6 +83,10 @@ cli
     'Allow all Discord users to start sessions without needing Kimaki role or admin permissions (no-kimaki role still blocks)',
   )
   .option(
+    '--permission-timeout-minutes <minutes>',
+    'Permission prompt timeout in minutes before auto-rejecting (default: 10)',
+  )
+  .option(
     '--disable-sync',
     'Disable background sync of external OpenCode sessions into Discord',
   )
@@ -135,6 +139,7 @@ cli
       mentionMode?: boolean
       noCritique?: boolean
       allowAllUsers?: boolean
+      permissionTimeoutMinutes?: string
       disableSync?: boolean
       autoRestart?: boolean
       noSentry?: boolean
@@ -240,6 +245,21 @@ cli
           }
         }
 
+
+        // --permission-timeout-minutes validation
+        const permissionTimeoutMs = (() => {
+          if (!options.permissionTimeoutMinutes) {
+            return undefined
+          }
+          const parsed = Number.parseInt(options.permissionTimeoutMinutes, 10)
+          if (!Number.isFinite(parsed) || parsed <= 0) {
+            cliLogger.error(
+              `Invalid permission timeout: ${options.permissionTimeoutMinutes}. Must be a positive number of minutes.`,
+            )
+            process.exit(EXIT_NO_RESTART)
+          }
+          return parsed * 60 * 1000
+        })()
         store.setState({
           ...(defaultVerbosity && {
             defaultVerbosity,
@@ -247,6 +267,7 @@ cli
           ...(options.mentionMode && { defaultMentionMode: true }),
           ...(options.noCritique && { critiqueEnabled: false }),
           ...(options.allowAllUsers && { allowAllUsers: true }),
+          ...(permissionTimeoutMs !== undefined && { permissionTimeoutMs }),
           ...(options.disableSync && { syncEnabled: false }),
           ...(enabledSkills.length > 0 && { enabledSkills }),
           ...(disabledSkills.length > 0 && { disabledSkills }),
@@ -267,6 +288,12 @@ cli
         if (options.allowAllUsers) {
           cliLogger.log(
             'Allow all users: any Discord member can start sessions (no-kimaki role still blocks)',
+          )
+        }
+
+        if (permissionTimeoutMs !== undefined) {
+          cliLogger.log(
+            `Permission timeout set to ${options.permissionTimeoutMinutes} minutes`,
           )
         }
 
