@@ -719,6 +719,12 @@ async function startSingleServer({
         },
       },
     },
+    // When a permission prompt times out and is auto-rejected, the model sees
+    // the rejection as a tool error and continues working (tries alternatives
+    // or explains it couldn't proceed) instead of the session going dead.
+    experimental: {
+      continue_loop_on_deny: true,
+    },
     skills: {
       paths: [path.resolve(__dirname, '..', 'skills')],
     },
