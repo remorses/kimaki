@@ -164,16 +164,6 @@ export const subagentRateLimitPlugin: Plugin = async ({ serverUrl, directory }) 
         }
       }
 
-      const eventSessionId = getEventSessionId(event)
-      if (!eventSessionId) {
-        return
-      }
-
-      if (event.type === 'session.deleted' || event.type === 'session.idle') {
-        subagentSessions.delete(eventSessionId)
-        return
-      }
-
       // Auto-reject permission requests for subagent sessions.
       // OpenCode's continue_loop_on_deny only works in the main processor
       // loop. Task/subtask permissions use Effect.orDie which turns rejections
@@ -181,9 +171,9 @@ export const subagentRateLimitPlugin: Plugin = async ({ serverUrl, directory }) 
       // task fails fast and returns to the parent, rather than hanging for
       // the full permission timeout waiting for a user who isn't watching.
       //
-      // The bus emits "permission.asked" at runtime, but the v1 SDK Event
-      // union only has "permission.updated" (stale type). Cast the comparison
-      // to match the actual runtime event type.
+      // This block runs BEFORE getEventSessionId() because the v1 SDK Event
+      // union doesn't include permission.asked, so getEventSessionId() returns
+      // undefined for these events and would early-return before we can act.
       const eventType = event.type as string
       if (eventType === 'permission.asked') {
         const perm = (event as any).properties as {
@@ -194,7 +184,7 @@ export const subagentRateLimitPlugin: Plugin = async ({ serverUrl, directory }) 
         }
         const subagent = subagentSessions.get(perm.sessionID)
         if (subagent) {
-          await client.permission.reply({
+          const replyResult = await client.permission.reply({
             requestID: perm.id,
             directory,
             reply: 'reject',
@@ -204,12 +194,25 @@ export const subagentRateLimitPlugin: Plugin = async ({ serverUrl, directory }) 
               'that you need a different approach.',
           }).catch((error) => {
             logger.warn(`Failed to auto-reject subagent permission: ${formatPluginErrorWithStack(error)}`)
+            return error
           })
-          logger.info(
-            `Auto-rejected permission ${perm.id} for subagent ${perm.sessionID} (${perm.permission}: ${perm.patterns.join(', ')})`,
-          )
+          if (!(replyResult instanceof Error)) {
+            logger.info(
+              `Auto-rejected permission ${perm.id} for subagent ${perm.sessionID} (${perm.permission}: ${perm.patterns.join(', ')})`,
+            )
+          }
           return
         }
+      }
+
+      const eventSessionId = getEventSessionId(event)
+      if (!eventSessionId) {
+        return
+      }
+
+      if (event.type === 'session.deleted' || event.type === 'session.idle') {
+        subagentSessions.delete(eventSessionId)
+        return
       }
 
       const rateLimitReason = extractRateLimitReason(event)

@@ -138,3 +138,7 @@ helpers exist: `formatWorktreeName` (verbatim, for user-provided names) and
 `formatAutoWorktreeName` (vowel-compressed if >20 chars, for auto-derived
 names from thread titles/prompts). Worktrees now live under
 `<kimakiDataDir>/worktrees/<8charProjectHash>/<basename>`.
+
+## v1 SDK plugin Event types are stale
+
+The v1 SDK `Event` union has `permission.updated` but the bus actually emits `permission.asked`. Plugin `event` hooks receive the real bus event types, not the v1 SDK names. Always cast `event.type as string` and compare against the actual runtime type when the v1 types don't have it.
