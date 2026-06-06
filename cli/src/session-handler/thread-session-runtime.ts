@@ -335,9 +335,7 @@ function getTimestampFromSnowflake(snowflake: string): number | undefined {
       return new Error('Invalid Discord snowflake')
     },
   )
-  if (snowflakeIdResult instanceof Error) {
-    return undefined
-  }
+  if (snowflakeIdResult instanceof Error) return undefined
   const timestampBigInt = (snowflakeIdResult >> 22n) + discordEpochMs
   const timestampMs = Number(timestampBigInt)
   if (!Number.isFinite(timestampMs) || timestampMs <= 0) {
@@ -3902,9 +3900,7 @@ export class ThreadSessionRuntime {
 
     if (promptResponse instanceof Error || promptResponse.error) {
       const errorMessage = (() => {
-        if (promptResponse instanceof Error) {
-          return promptResponse.message
-        }
+        if (promptResponse instanceof Error) return promptResponse.message
         return parseOpenCodeErrorMessage(promptResponse.error)
       })()
       const errorObject = promptResponse instanceof Error
@@ -3959,9 +3955,7 @@ export class ThreadSessionRuntime {
       sessionID: sessionId,
       permission: rules,
     }).catch((e: Error) => e)
-    if (updateResult instanceof Error) {
-      return updateResult
-    }
+    if (updateResult instanceof Error) return updateResult
     if (updateResult.error) {
       return new Error('OpenCode rejected permission update')
     }
@@ -4009,9 +4003,7 @@ export class ThreadSessionRuntime {
       originalRepoDirectory,
       channelId: this.channelId,
     })
-    if (getClientResult instanceof Error) {
-      return getClientResult
-    }
+    if (getClientResult instanceof Error) return getClientResult
     const getClient = getClientResult
 
     // Check thread state for existing session ID

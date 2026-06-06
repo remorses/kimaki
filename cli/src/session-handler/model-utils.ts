@@ -85,9 +85,7 @@ function getModelFromProjectConfig({
     }
     return parseModelString(parsed.model)
   })
-  if (result instanceof Error) {
-    return undefined
-  }
+  if (result instanceof Error) return undefined
   return result
 }
 
@@ -125,9 +123,7 @@ export async function getDefaultModel({
   | { providerID: string; modelID: string; source: DefaultModelSource }
   | undefined
 > {
-  if (getClient instanceof Error) {
-    return undefined
-  }
+  if (getClient instanceof Error) return undefined
 
   const configModel = getModelFromProjectConfig({ directory })
   if (configModel) {

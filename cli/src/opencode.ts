@@ -960,16 +960,12 @@ export async function initializeOpencodeForDirectory(
     },
     catch: () => new DirectoryNotAccessibleError({ directory }),
   })
-  if (accessCheck instanceof Error) {
-    return accessCheck
-  }
+  if (accessCheck instanceof Error) return accessCheck
 
   preferredStartupDirectory = directory
 
   const server = await ensureSingleServer({ directory })
-  if (server instanceof Error) {
-    return server
-  }
+  if (server instanceof Error) return server
 
   if (!initializedDirectories.has(directory)) {
     initializedDirectories.add(directory)
@@ -1344,8 +1340,6 @@ export async function restartOpencodeServer(): Promise<OpenCodeErrors | true> {
   serverRetryCount = 0
 
   const result = await ensureSingleServer()
-  if (result instanceof Error) {
-    return result
-  }
+  if (result instanceof Error) return result
   return true
 }

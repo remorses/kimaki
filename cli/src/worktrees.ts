@@ -137,9 +137,7 @@ export function parseGitmodulesFileContent(
     const sectionMatch = line.match(/^\[submodule\s+"([^"]+)"\]$/)
     if (sectionMatch?.[1]) {
       const flushError = flushCurrent()
-      if (flushError instanceof Error) {
-        return flushError
-      }
+      if (flushError instanceof Error) return flushError
 
       currentName = sectionMatch[1]
       currentPath = null
@@ -169,9 +167,7 @@ export function parseGitmodulesFileContent(
   }
 
   const flushError = flushCurrent()
-  if (flushError instanceof Error) {
-    return flushError
-  }
+  if (flushError instanceof Error) return flushError
 
   return configs
 }
@@ -198,9 +194,7 @@ async function readSubmoduleConfigs(
         cause: e,
       }),
     )
-  if (gitmodulesContent instanceof Error) {
-    return gitmodulesContent
-  }
+  if (gitmodulesContent instanceof Error) return gitmodulesContent
 
   const parsed = parseGitmodulesFileContent(gitmodulesContent)
   if (parsed instanceof Error) {
@@ -295,9 +289,7 @@ async function initializeSubmodulesWithLocalReferences({
   worktreeDirectory: string
 }): Promise<void | Error> {
   const submoduleConfigs = await readSubmoduleConfigs(worktreeDirectory)
-  if (submoduleConfigs instanceof Error) {
-    return submoduleConfigs
-  }
+  if (submoduleConfigs instanceof Error) return submoduleConfigs
   if (submoduleConfigs.length === 0) {
     return
   }
@@ -591,9 +583,7 @@ export async function createWorktreeWithSubmodules({
       cause: e,
     }),
   )
-  if (createResult instanceof Error) {
-    return createResult
-  }
+  if (createResult instanceof Error) return createResult
 
   // 2. Remove broken submodule stubs before init
   // git worktree creates stub directories with .git files pointing to incomplete gitdirs
@@ -698,9 +688,7 @@ export async function git(
     `git -C "${dir}" ${args}`,
     opts ? { timeout: opts.timeout } : undefined,
   ).catch((e) => new GitCommandError({ command: args, cause: e }))
-  if (result instanceof Error) {
-    return result
-  }
+  if (result instanceof Error) return result
   return result.stdout.trim()
 }
 
@@ -709,9 +697,7 @@ export async function getDefaultBranch(
   opts?: { timeout?: number },
 ): Promise<string> {
   const ref = await git(repoDir, 'symbolic-ref refs/remotes/origin/HEAD', opts)
-  if (ref instanceof Error) {
-    return 'main'
-  }
+  if (ref instanceof Error) return 'main'
   return ref.replace(/^refs\/remotes\/origin\//, '') || 'main'
 }
 
@@ -778,25 +764,19 @@ export async function isDirty(
   opts?: { timeout?: number },
 ): Promise<boolean> {
   const status = await git(dir, 'status --porcelain', opts)
-  if (status instanceof Error) {
-    return false
-  }
+  if (status instanceof Error) return false
   return status.length > 0
 }
 
 export async function isGitRepositoryRoot(directory: string): Promise<boolean> {
   const topLevel = await git(directory, 'rev-parse --show-toplevel')
-  if (topLevel instanceof Error) {
-    return false
-  }
+  if (topLevel instanceof Error) return false
   return path.resolve(topLevel) === path.resolve(directory)
 }
 
 async function getGitCommonDir(dir: string): Promise<GitCommandError | string> {
   const commonDir = await git(dir, 'rev-parse --git-common-dir')
-  if (commonDir instanceof Error) {
-    return commonDir
-  }
+  if (commonDir instanceof Error) return commonDir
   if (path.isAbsolute(commonDir)) {
     return commonDir
   }
@@ -820,13 +800,9 @@ async function isAncestor(
 
 async function isRebasedOnto(dir: string, target: string): Promise<boolean> {
   const mergeBase = await git(dir, `merge-base HEAD "${target}"`)
-  if (mergeBase instanceof Error) {
-    return false
-  }
+  if (mergeBase instanceof Error) return false
   const targetSha = await git(dir, `rev-parse "${target}"`)
-  if (targetSha instanceof Error) {
-    return false
-  }
+  if (targetSha instanceof Error) return false
   return mergeBase === targetSha
 }
 
@@ -855,9 +831,7 @@ async function isCheckedOutTargetDirty({
 async function isRebaseInProgress(dir: string): Promise<boolean> {
   for (const rebaseDir of ['rebase-merge', 'rebase-apply']) {
     const gitPath = await git(dir, `rev-parse --git-path ${rebaseDir}`)
-    if (gitPath instanceof Error) {
-      continue
-    }
+    if (gitPath instanceof Error) continue
     const resolvedPath = path.isAbsolute(gitPath)
       ? gitPath
       : path.resolve(dir, gitPath)
@@ -907,9 +881,7 @@ export async function mergeWorktree({
   if (branchResult instanceof Error) {
     tempBranch = `kimaki-merge-${Date.now()}`
     const createResult = await git(worktreeDir, `checkout -b "${tempBranch}"`)
-    if (createResult instanceof Error) {
-      return createResult
-    }
+    if (createResult instanceof Error) return createResult
     branchName = tempBranch
   } else {
     branchName = branchResult || worktreeName
@@ -1109,9 +1081,7 @@ export async function listBranchesByLastCommit({
     directory,
     `branch ${branchFlag} --sort=-committerdate --format=%(refname:short)`,
   )
-  if (result instanceof Error) {
-    return []
-  }
+  if (result instanceof Error) return []
 
   const lowerQuery = query?.toLowerCase() || ''
   return result
@@ -1148,9 +1118,7 @@ export async function validateBranchRef({
   ref: string
 }): Promise<string | Error> {
   const result = await git(directory, `check-ref-format --branch ${JSON.stringify(ref)}`)
-  if (result instanceof Error) {
-    return new Error(`Invalid branch name: ${ref}`)
-  }
+  if (result instanceof Error) return new Error(`Invalid branch name: ${ref}`)
   return result
 }
 
@@ -1174,9 +1142,7 @@ export async function validateWorktreeDirectory({
   }
 
   const result = await git(projectDirectory, 'worktree list --porcelain')
-  if (result instanceof Error) {
-    return new Error('Failed to list git worktrees', { cause: result })
-  }
+  if (result instanceof Error) return new Error('Failed to list git worktrees', { cause: result })
 
   const worktreePaths = result
     .split('\n')
@@ -1230,9 +1196,7 @@ export async function resolveSessionWorkingDirectory({
       cause: error,
     })
   })
-  if (stat instanceof Error) {
-    return stat
-  }
+  if (stat instanceof Error) return stat
   if (!stat.isDirectory()) {
     return new Error(`Path is not a directory: ${absoluteCandidate}`)
   }
@@ -1356,8 +1320,6 @@ export async function listGitWorktrees({
   const result = await git(projectDirectory, 'worktree list --porcelain', {
     timeout,
   })
-  if (result instanceof Error) {
-    return result
-  }
+  if (result instanceof Error) return result
   return parseGitWorktreeListPorcelain(result)
 }

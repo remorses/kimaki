@@ -86,9 +86,7 @@ async function executeThreadScheduledTask({
       })
     })
 
-  if (postResult instanceof Error) {
-    return postResult
-  }
+  if (postResult instanceof Error) return postResult
 }
 
 async function executeChannelScheduledTask({
@@ -134,9 +132,7 @@ async function executeChannelScheduledTask({
       })
     })
 
-  if (starterResult instanceof Error) {
-    return starterResult
-  }
+  if (starterResult instanceof Error) return starterResult
 
   const starterMessageId = parseMessageId(starterResult)
   if (starterMessageId instanceof Error) {
@@ -162,9 +158,7 @@ async function executeChannelScheduledTask({
       })
     })
 
-  if (threadResult instanceof Error) {
-    return threadResult
-  }
+  if (threadResult instanceof Error) return threadResult
 
   if (!payload.userId) {
     return
@@ -185,9 +179,7 @@ async function executeChannelScheduledTask({
         { cause: error },
       )
     })
-  if (addMemberResult instanceof Error) {
-    return addMemberResult
-  }
+  if (addMemberResult instanceof Error) return addMemberResult
 }
 
 async function executeScheduledTask({

@@ -297,9 +297,7 @@ async function findExistingWorktreePath({
 }): Promise<string | undefined | Error> {
   const listResult = await execAsync('git worktree list --porcelain', { cwd: projectDirectory })
     .catch((e) => new WorktreeError('Failed to list worktrees', { cause: e }))
-  if (listResult instanceof Error) {
-    return listResult
-  }
+  if (listResult instanceof Error) return listResult
 
   const lines = listResult.stdout.split('\n')
   let currentPath = ''
@@ -552,9 +550,7 @@ async function handleWorktreeInThread({
     rest: command.client.rest,
   })
     .then(async (result) => {
-      if (result instanceof Error) {
-        return
-      }
+      if (result instanceof Error) return
       const sourceSessionId = await getThreadSession(thread.id)
       if (!sourceSessionId) {
         await sendThreadMessage(

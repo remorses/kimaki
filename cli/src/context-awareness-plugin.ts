@@ -212,9 +212,7 @@ async function resolveGitState({
 
   const shaResult = await execAsync('git rev-parse --short HEAD', { cwd: directory })
     .catch((e: Error) => e)
-  if (shaResult instanceof Error) {
-    return null
-  }
+  if (shaResult instanceof Error) return null
 
   const shortSha = shaResult.stdout.trim()
   if (!shortSha) {

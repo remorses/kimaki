@@ -111,9 +111,7 @@ export function parseSendAtValue({
   }
 
   const utcDateResult = parseUtcSendAtDate({ value: trimmed, now })
-  if (utcDateResult instanceof Error) {
-    return utcDateResult
-  }
+  if (utcDateResult instanceof Error) return utcDateResult
   if (utcDateResult) {
     return {
       scheduleKind: 'at',
@@ -182,9 +180,7 @@ export function getNextCronRun({
       return new Error(`Invalid cron expression: ${cronExpr}`, { cause: error })
     },
   )
-  if (parsed instanceof Error) {
-    return parsed
-  }
+  if (parsed instanceof Error) return parsed
 
   const next = errore.try(
     () => {
@@ -196,9 +192,7 @@ export function getNextCronRun({
       })
     },
   )
-  if (next instanceof Error) {
-    return next
-  }
+  if (next instanceof Error) return next
 
   return next
 }
@@ -240,9 +234,7 @@ export function parseScheduledTaskPayload(
       return new Error('Task payload is not valid JSON', { cause: error })
     },
   )
-  if (parsed instanceof Error) {
-    return parsed
-  }
+  if (parsed instanceof Error) return parsed
   if (!isRecord(parsed)) {
     return new Error('Task payload must be an object')
   }

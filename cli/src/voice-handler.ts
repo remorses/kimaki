@@ -264,9 +264,7 @@ export async function setupVoiceHandling({
         if (!params.error) {
           return undefined
         }
-        if (params.error instanceof Error) {
-          return params.error.message
-        }
+        if (params.error instanceof Error) return params.error.message
         return String(params.error)
       })()
 

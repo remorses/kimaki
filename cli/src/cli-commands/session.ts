@@ -232,9 +232,7 @@ cli
         const dir = project.worktree
         cliLogger.log(`Trying project: ${dir}`)
         const otherClient = await initializeOpencodeForDirectory(dir)
-        if (otherClient instanceof Error) {
-          continue
-        }
+        if (otherClient instanceof Error) continue
         const otherMarkdown = new ShareMarkdown(otherClient())
         const otherResult = await otherMarkdown.generate({
           sessionID: sessionId,

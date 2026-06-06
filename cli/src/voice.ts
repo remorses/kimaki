@@ -534,17 +534,13 @@ export async function transcribeAudio({
     if (conversionStrategy === 'convert-ogg-to-wav') {
       voiceLogger.log(`Converting ${mediaType} to WAV for OpenAI compatibility`)
       const converted = await convertOggToWav(audioBuffer)
-      if (converted instanceof Error) {
-        return converted
-      }
+      if (converted instanceof Error) return converted
       finalAudioBase64 = converted.toString('base64')
       mediaType = 'audio/wav'
     } else if (conversionStrategy === 'convert-m4a-to-wav') {
       voiceLogger.log(`Converting ${mediaType} to WAV for OpenAI compatibility`)
       const converted = await convertM4aToWav(audioBuffer)
-      if (converted instanceof Error) {
-        return converted
-      }
+      if (converted instanceof Error) return converted
       finalAudioBase64 = converted.toString('base64')
       mediaType = 'audio/wav'
     } else if (conversionStrategy === 'unsupported') {

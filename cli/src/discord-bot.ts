@@ -930,9 +930,7 @@ export async function startDiscordBot({
             return projectDirectory
           }
           const result = await worktreePromise
-          if (result instanceof Error) {
-            return projectDirectory
-          }
+          if (result instanceof Error) return projectDirectory
           return result
         })()
 
@@ -1236,9 +1234,7 @@ export async function startDiscordBot({
           return projectDirectory
         }
         const result = await worktreePromise
-        if (result instanceof Error) {
-          return projectDirectory
-        }
+        if (result instanceof Error) return projectDirectory
         return result
       })()
 
