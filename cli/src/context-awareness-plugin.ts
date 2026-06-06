@@ -290,7 +290,9 @@ const contextAwarenessPlugin: Plugin = async ({ directory, serverUrl }) => {
 
   // Build our own v2 client. The plugin-provided ctx.client (v1) does not
   // reliably make REST calls from inside the plugin process.
-  const client: PluginClient = createPluginClient({ serverUrl, directory })
+  const fullClient = createPluginClient({ serverUrl, directory })
+  logger.bindClient(fullClient)
+  const client: PluginClient = fullClient
 
   // Single Map for all per-session state. One entry per session, one
   // delete on cleanup — no parallel Maps that can drift out of sync.

@@ -140,6 +140,7 @@ export const subagentRateLimitPlugin: Plugin = async ({ serverUrl, directory }) 
   // reliably make REST calls (session.abort silently no-ops) from inside the
   // plugin process. See plugin-opencode-client.ts.
   const client = createPluginClient({ serverUrl, directory })
+  logger.bindClient(client)
 
   const subagentSessions = new Map<string, {
     subagentType?: string
