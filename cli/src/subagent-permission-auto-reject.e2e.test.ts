@@ -55,6 +55,7 @@ describe('subagent permission auto-reject', () => {
       SUBAGENT_PERMISSION_AUTO_REJECT_MARKER
       --- from: assistant (TestBot)
       *using deterministic-provider/deterministic-v2*
+      ⬦ info: Aborting general so the parent task can recover: permission denied (external_directory: /Users/morse/*)
       ⬥ subagent-permission-auto-reject-done
       *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2*"
     `)
