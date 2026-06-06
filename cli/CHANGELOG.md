@@ -1,5 +1,33 @@
 # Changelog
 
+## 0.14.0
+
+1. **Configurable permission timeout with model continuation on deny** — new `--permission-timeout-minutes <minutes>` flag controls how long permission buttons stay active before auto-rejecting (defaults to 10 minutes). When a permission times out or the user clicks Deny, the model now sees it as a tool error and continues working (tries alternatives or explains what happened) instead of the session going dead silent. The timeout message also tells the model to mention the thread owner if the tool call is essential.
+
+   ```bash
+   kimaki --permission-timeout-minutes 30
+   ```
+
+   Closes #140
+
+2. **Single global SSE connection replaces per-thread listeners** — previously every Discord thread opened its own SSE connection to the opencode server. With 20+ idle threads, all connections disconnected and reconnected simultaneously, flooding logs with reconnect messages. Now a single `/global/event` connection broadcasts events to all thread runtimes, matching how the opencode TUI works. Fixes #126
+
+3. **Queue edit and removal notifications** — when a user edits a queued message in Discord, the thread now shows `⬦ **username** edited queued message`. If the edit removes the queue suffix, it shows `⬦ **username** removed message from queue`. The queue confirmation also tells users they can edit the message to update it.
+
+4. **User input indicators for buttons, dropdowns, and file uploads** — action button clicks, question dropdown answers, and file uploads now show the `» **username:** action` prefix in Discord threads, matching the existing pattern for queued messages and agent commands.
+
+5. **Fix `/model` and `/model-variant` not updating current session for global/channel scope** — selecting "global" or "channel" scope previously persisted the preference but the running session kept the old model until the next message. All three scopes now update the current session and restart the request with the new model.
+
+6. **Fix bot becoming permanently unresponsive after gateway proxy outages** — `@discordjs/rest` calls `setToken(null)` on any 401 response. When the gateway proxy returned transient 401s, this killed the REST token permanently and every subsequent API call failed. The fix blocks null token values so the bot recovers automatically when the proxy comes back.
+
+7. **Fix stale interrupt timers aborting unrelated generations** — the interrupt plugin now clears pending timers on errored assistant messages and on session idle events, preventing timers from surviving across turns and aborting later work.
+
+8. **Worktree base branch discovery in system message** — the agent now gets instructions for finding its worktree starting point via `git merge-base` and `git symbolic-ref`, useful for diffs and merge decisions.
+
+9. **Fix OpenCode server auth passthrough** — when `OPENCODE_SERVER_PASSWORD` is set (e.g. inherited from a parent OpenCode process), the SDK client now sends Basic auth headers so `session.promptAsync` and `event.subscribe` work correctly. Thanks @Dxee-e for #139!
+
+10. **Prevent `@username` pings in scheduled task prompts** — scheduled task prompts become Discord thread titles, so raw `@username` triggered real pings on every task run. The system message now instructs the model to use Discord user ID mentions instead.
+
 ## 0.13.1
 
 1. **Fix session interrupts being silently dropped** — sending a new message while the bot was mid-run (e.g. during a long tool call) often failed to abort and replay the queued message. Two root causes: the plugin's `ctx.client` didn't make REST calls reliably (now builds its own SDK client from `ctx.serverUrl`), and abort confirmation now polls session status instead of waiting on events that sometimes never arrived.
