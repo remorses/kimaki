@@ -327,14 +327,14 @@ function delay(ms: number): Promise<void> {
 
 function getTimestampFromSnowflake(snowflake: string): number | undefined {
   const discordEpochMs = 1_420_070_400_000n
-  const snowflakeIdResult = errore.try({
-    try: () => {
+  const snowflakeIdResult = errore.try(
+    () => {
       return BigInt(snowflake)
     },
-    catch: () => {
+    () => {
       return new Error('Invalid Discord snowflake')
     },
-  })
+  )
   if (snowflakeIdResult instanceof Error) {
     return undefined
   }
@@ -830,16 +830,16 @@ export class ThreadSessionRuntime {
     }
 
     const hydratedEvents: EventBufferEntry[] = rows.flatMap((row) => {
-      const eventResult = errore.try({
-        try: () => {
+      const eventResult = errore.try(
+        () => {
           return JSON.parse(row.event_json) as EventBufferEvent
         },
-        catch: (error) => {
+        (error) => {
           return new Error('Failed to parse persisted session event JSON', {
             cause: error,
           })
         },
-      })
+      )
       if (eventResult instanceof Error) {
         logger.warn(
           `[SESSION EVENT DB] Skipping invalid persisted event row for session ${sessionId}: ${eventResult.message}`,

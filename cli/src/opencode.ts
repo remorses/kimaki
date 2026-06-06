@@ -315,16 +315,16 @@ function killSingleServerProcessNow({
     return
   }
 
-  const killResult = errore.try({
-    try: () => {
+  const killResult = errore.try(
+    () => {
       serverProcess.kill('SIGTERM')
     },
-    catch: (error) => {
+    (error) => {
       return new Error('Failed to send SIGTERM to opencode server', {
         cause: error,
       })
     },
-  })
+  )
 
   if (killResult instanceof Error) {
     opencodeLogger.warn(
@@ -353,16 +353,16 @@ function killStartingServerProcessNow({
     return
   }
 
-  const killResult = errore.try({
-    try: () => {
+  const killResult = errore.try(
+    () => {
       serverProcess.kill('SIGTERM')
     },
-    catch: (error) => {
+    (error) => {
       return new Error('Failed to send SIGTERM to starting opencode server', {
         cause: error,
       })
     },
-  })
+  )
 
   if (killResult instanceof Error) {
     opencodeLogger.warn(
@@ -437,8 +437,8 @@ export function resolveOpencodeCommand(): string {
 
   const isWindows = process.platform === 'win32'
   const whichCmd = isWindows ? 'where' : 'which'
-  const result = errore.try({
-    try: () => {
+  const result = errore.try(
+    () => {
       const commandOutput = execFileSync(whichCmd, ['opencode'], {
         encoding: 'utf8',
         timeout: 5000,
@@ -452,8 +452,8 @@ export function resolveOpencodeCommand(): string {
       }
       throw new Error('opencode not found in PATH')
     },
-    catch: () => new Error('opencode not found in PATH'),
-  })
+    () => new Error('opencode not found in PATH'),
+  )
 
   if (result instanceof Error) {
     // Fall back to bare command name — spawn will fail with a clear error
@@ -1301,16 +1301,16 @@ export async function stopOpencodeServer(): Promise<boolean> {
     `Stopping opencode server (pid: ${server.process.pid}, port: ${server.port})`,
   )
   if (!server.process.killed) {
-    const killResult = errore.try({
-      try: () => {
+    const killResult = errore.try(
+      () => {
         server.process.kill('SIGTERM')
       },
-      catch: (error) => {
+      (error) => {
         return new Error('Failed to send SIGTERM to opencode server', {
           cause: error,
         })
       },
-    })
+    )
     if (killResult instanceof Error) {
       opencodeLogger.warn(killResult.message)
     }

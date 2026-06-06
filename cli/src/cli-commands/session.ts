@@ -539,16 +539,16 @@ cli
     }
 
     const parsedRows = rows.flatMap((row) => {
-      const parsed = errore.try({
-        try: () => {
+      const parsed = errore.try(
+        () => {
           return JSON.parse(row.event_json) as OpenCodeEvent
         },
-        catch: (error) => {
+        (error) => {
           return new Error('Failed to parse persisted event JSON', {
             cause: error,
           })
         },
-      })
+      )
       if (parsed instanceof Error) {
         cliLogger.warn(
           `Skipping invalid persisted event row ${row.id}: ${parsed.message}`,
