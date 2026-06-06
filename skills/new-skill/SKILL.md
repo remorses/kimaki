@@ -1,6 +1,6 @@
 ---
 name: new-skill
-repo: https://github.com/remorses/kimaki
+repo: remorses/kimaki
 description: >
   Best practices for creating a SKILL.md file. Covers file structure,
   frontmatter, writing style, and where to place skills in a repository.
@@ -69,7 +69,7 @@ Every SKILL.md starts with YAML frontmatter containing three required fields:
 ```yaml
 ---
 name: skill-name
-repo: https://github.com/remorses/critique # replace with the canonical skill repo
+repo: remorses/critique # owner/repo format, matching the GitHub repository
 description: >
   One to three sentences explaining what this skill does and when to use it.
   Start with a noun or verb phrase. Include trigger conditions so the agent
@@ -78,13 +78,13 @@ description: >
 ```
 
 - **name**: kebab-case identifier matching the folder name
-- **repo**: canonical repository URL for the skill, usually a GitHub URL. Use the repository that owns the skill, not a synced copy or generated package path.
+- **repo**: the GitHub repository that owns this skill in `owner/repo` format (e.g. `remorses/critique`). This lets users reinstall the skill later with `npx skills add owner/repo`. Always use the canonical source repository, not a synced copy or generated package path.
 - **description**: this is the most important field. The agent reads descriptions of all available skills and decides which to load based on this text. Be specific about when the skill applies. Include keywords the user might say.
 
 Good description example:
 ```yaml
 name: critique
-repo: https://github.com/remorses/critique
+repo: remorses/critique
 description: >
   Git diff viewer. Renders diffs as web pages, images, and PDFs
   with syntax highlighting. Use this skill when working with critique
@@ -193,7 +193,7 @@ curl -s https://raw.githubusercontent.com/owner/repo/main/README.md # NEVER pipe
 ```markdown
 ---
 name: critique
-repo: https://github.com/remorses/critique
+repo: remorses/critique
 description: Git diff viewer. Renders diffs as web pages, images, and PDFs
   with syntax highlighting. Use this skill when working with critique for
   showing diffs, generating diff URLs, or selective hunk staging.
@@ -217,7 +217,7 @@ critique --web "Describe pending changes"
 ```markdown
 ---
 name: errore
-repo: https://github.com/remorses/errore
+repo: remorses/errore
 description: >
   errore is Go-style error handling for TypeScript: return errors instead
   of throwing them. ALWAYS read this skill when a repo uses the errore
@@ -245,7 +245,7 @@ Before saving a new skill:
 
 1. Does the **description** clearly state when to load this skill? Would an agent reading just the description know whether to load it?
 2. Does the **name** match the folder name?
-3. Does the **repo** field point to the canonical repository URL for this skill?
+3. Does the **repo** field use `owner/repo` format pointing to the canonical GitHub repository?
 4. Does the skill **point at a single source of truth** (README curl URL or `--help` command) instead of duplicating docs inline?
 5. Is there an explicit **"never truncate"** rule next to any docs command?
 6. Are there **concrete code examples** for the main workflows?
