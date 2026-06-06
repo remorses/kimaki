@@ -1,4 +1,6 @@
-// OpenCode plugin that aborts task-created subagent sessions after rate limits.
+// OpenCode plugin that guards task-created subagent sessions:
+// - Auto-rejects permission requests so tasks don't hang waiting for user input
+// - Aborts subagent sessions after rate limits so the parent task can recover
 
 import type { Hooks, Plugin } from '@opencode-ai/plugin'
 
@@ -169,6 +171,35 @@ export const subagentRateLimitPlugin: Plugin = async ({ serverUrl, directory }) 
       if (event.type === 'session.deleted' || event.type === 'session.idle') {
         subagentSessions.delete(eventSessionId)
         return
+      }
+
+      // Auto-reject permission requests for subagent sessions.
+      // OpenCode's continue_loop_on_deny only works in the main processor
+      // loop. Task/subtask permissions use Effect.orDie which turns rejections
+      // into fatal defects, crashing the task. We reject immediately so the
+      // task fails fast and returns to the parent, rather than hanging for
+      // the full permission timeout waiting for a user who isn't watching.
+      if (event.type === 'permission.updated') {
+        const perm = event.properties
+        const subagent = subagentSessions.get(perm.sessionID)
+        if (subagent) {
+          await client.permission.reply({
+            requestID: perm.id,
+            directory,
+            reply: 'reject',
+            message:
+              'This task does not have interactive permission approval. ' +
+              'Work around this restriction or report to the parent task ' +
+              'that you need a different approach.',
+          }).catch((error) => {
+            logger.warn(`Failed to auto-reject subagent permission: ${formatPluginErrorWithStack(error)}`)
+          })
+          const patterns = Array.isArray(perm.pattern) ? perm.pattern.join(', ') : perm.pattern || ''
+          logger.info(
+            `Auto-rejected permission ${perm.id} for subagent ${perm.sessionID} (${perm.type}: ${patterns})`,
+          )
+          return
+        }
       }
 
       const rateLimitReason = extractRateLimitReason(event)
