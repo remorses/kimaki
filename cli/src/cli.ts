@@ -246,16 +246,18 @@ cli
         }
 
         // --permission-timeout-minutes validation
+        // Node setTimeout max is 2_147_483_647ms; larger values fire immediately.
+        const MAX_TIMEOUT_MINUTES = Math.floor(2_147_483_647 / 60_000)
         const permissionTimeoutMs = (() => {
           if (!options.permissionTimeoutMinutes) return undefined
-          const parsed = Number.parseInt(options.permissionTimeoutMinutes, 10)
-          if (!Number.isFinite(parsed) || parsed <= 0) {
+          const parsed = Number(options.permissionTimeoutMinutes)
+          if (!Number.isInteger(parsed) || parsed <= 0 || parsed > MAX_TIMEOUT_MINUTES) {
             cliLogger.error(
-              `Invalid permission timeout: ${options.permissionTimeoutMinutes}. Must be a positive number of minutes.`,
+              `Invalid permission timeout: ${options.permissionTimeoutMinutes}. Must be a positive whole number of minutes (max ${MAX_TIMEOUT_MINUTES}).`,
             )
             process.exit(EXIT_NO_RESTART)
           }
-          return parsed * 60 * 1000
+          return parsed * 60_000
         })()
 
         store.setState({
