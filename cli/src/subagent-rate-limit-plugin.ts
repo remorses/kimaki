@@ -180,8 +180,18 @@ export const subagentRateLimitPlugin: Plugin = async ({ serverUrl, directory }) 
       // into fatal defects, crashing the task. We reject immediately so the
       // task fails fast and returns to the parent, rather than hanging for
       // the full permission timeout waiting for a user who isn't watching.
-      if (event.type === 'permission.updated') {
-        const perm = event.properties
+      //
+      // The bus emits "permission.asked" at runtime, but the v1 SDK Event
+      // union only has "permission.updated" (stale type). Cast the comparison
+      // to match the actual runtime event type.
+      const eventType = event.type as string
+      if (eventType === 'permission.asked') {
+        const perm = event.properties as unknown as {
+          id: string
+          sessionID: string
+          permission: string
+          patterns: string[]
+        }
         const subagent = subagentSessions.get(perm.sessionID)
         if (subagent) {
           await client.permission.reply({
@@ -195,9 +205,8 @@ export const subagentRateLimitPlugin: Plugin = async ({ serverUrl, directory }) 
           }).catch((error) => {
             logger.warn(`Failed to auto-reject subagent permission: ${formatPluginErrorWithStack(error)}`)
           })
-          const patterns = Array.isArray(perm.pattern) ? perm.pattern.join(', ') : perm.pattern || ''
           logger.info(
-            `Auto-rejected permission ${perm.id} for subagent ${perm.sessionID} (${perm.type}: ${patterns})`,
+            `Auto-rejected permission ${perm.id} for subagent ${perm.sessionID} (${perm.permission}: ${perm.patterns.join(', ')})`,
           )
           return
         }
