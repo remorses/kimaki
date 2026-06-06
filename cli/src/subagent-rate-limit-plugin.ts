@@ -211,6 +211,9 @@ export const subagentRateLimitPlugin: Plugin = async ({ serverUrl, directory }) 
       await client.session.abort({ sessionID: sessionId, directory })
 
       if (followupPrompt) {
+        // Wait for the abort event to propagate before sending the followup
+        // prompt, otherwise OpenCode may not have finished processing the abort.
+        await new Promise<void>((resolve) => setTimeout(resolve, 200))
         await client.session.promptAsync({
           sessionID: sessionId,
           directory,
