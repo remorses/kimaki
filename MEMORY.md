@@ -141,4 +141,4 @@ names from thread titles/prompts). Worktrees now live under
 
 ## v1 SDK plugin Event types are stale
 
-The v1 SDK `Event` union has `permission.updated` but the bus actually emits `permission.asked`. Plugin `event` hooks receive the real bus event types, not the v1 SDK names. Always cast `event.type as string` and compare against the actual runtime type when the v1 types don't have it.
+The v1 SDK `Event` union has `permission.updated` but the bus actually emits `permission.asked`. Plugin `event` hooks receive the real bus event types, not the v1 SDK names. Cast `event.type as string` and compare against the actual runtime type. Also, `getEventSessionId()` won't handle unknown event types and returns `undefined`, so any code for stale-typed events must run before the `getEventSessionId()` early return.
