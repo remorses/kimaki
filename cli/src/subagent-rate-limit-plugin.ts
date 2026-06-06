@@ -4,6 +4,7 @@
 
 import type { Hooks, Plugin } from '@opencode-ai/plugin'
 import type { Event as V2Event } from '@opencode-ai/sdk/v2'
+import dedent from 'string-dedent'
 
 import {
   appendToastSessionMarker,
@@ -190,6 +191,56 @@ export const subagentRateLimitPlugin: Plugin = async ({ serverUrl, directory }) 
     })
   }
 
+  const abortSubagentSession = async ({
+    sessionId,
+    subagent,
+    reason,
+    followupPrompt,
+  }: {
+    sessionId: string
+    subagent: { subagentType?: string; aborting: boolean }
+    reason: string
+    followupPrompt?: string
+  }) => {
+    if (subagent.aborting) {
+      return
+    }
+
+    subagent.aborting = true
+    const abortResult = await (async () => {
+      await client.session.abort({ sessionID: sessionId, directory })
+
+      if (followupPrompt) {
+        await client.session.promptAsync({
+          sessionID: sessionId,
+          directory,
+          parts: [{ type: 'text', text: followupPrompt }],
+        })
+      }
+
+      await client.tui.showToast({
+        message: appendToastSessionMarker({
+          message: `Aborting ${subagent.subagentType || 'subagent'} so the parent task can recover: ${reason}`,
+          sessionId,
+        }),
+        variant: 'info',
+      }).catch(() => {
+        return
+      })
+
+      logger.info(`Aborted subagent ${sessionId}: ${reason}`)
+    })()
+      .catch((error) => {
+        return new Error('Subagent abort failed', { cause: error })
+      })
+
+    subagentSessions.delete(sessionId)
+    if (abortResult instanceof Error) {
+      logger.warn(`[subagent-rate-limit-plugin] ${formatPluginErrorWithStack(abortResult)}`)
+      void notifyError(abortResult, 'subagent plugin abort failed')
+    }
+  }
+
   return {
     event: async ({ event }) => {
       if (event.type === 'message.updated' && event.properties.info.role === 'user') {
@@ -245,8 +296,10 @@ export const subagentRateLimitPlugin: Plugin = async ({ serverUrl, directory }) 
       // OpenCode's continue_loop_on_deny only works in the main processor
       // loop. Task/subtask permissions use Effect.orDie which turns rejections
       // into fatal defects, crashing the task. We reject immediately so the
-      // task fails fast and returns to the parent, rather than hanging for
-      // the full permission timeout waiting for a user who isn't watching.
+      // task fails fast, then abort the child because denied task permissions
+      // can otherwise keep emitting repeated permission requests.
+      // TODO: remove the abort once OpenCode fixes task permission denial:
+      // https://github.com/anomalyco/opencode/issues/31108
       //
       // This block runs BEFORE getEventSessionId() because the v1 SDK Event
       // union doesn't include permission.asked, so getEventSessionId() returns
@@ -272,6 +325,20 @@ export const subagentRateLimitPlugin: Plugin = async ({ serverUrl, directory }) 
               `Auto-rejected permission ${perm.id} for subagent ${perm.sessionID} (${perm.permission}: ${perm.patterns.join(', ')})`,
             )
           }
+          await abortSubagentSession({
+            sessionId: perm.sessionID,
+            subagent,
+            reason: `permission denied (${perm.permission}: ${perm.patterns.join(', ')})`,
+            // TODO: remove this abort+followup workaround once OpenCode fixes
+            // task permission denial: https://github.com/anomalyco/opencode/issues/31108
+            followupPrompt: dedent`
+              The previous permission request was denied: ${perm.permission} for ${perm.patterns.join(', ')}.
+
+              Do not request that same permission again. Do not retry the same blocked tool call or path.
+              Continue another way that stays inside the allowed permissions.
+              If you cannot continue, end the task with a concise summary of what you completed and what is blocked.
+            `,
+          })
           return
         }
       }
@@ -292,41 +359,15 @@ export const subagentRateLimitPlugin: Plugin = async ({ serverUrl, directory }) 
       }
 
       const subagent = subagentSessions.get(eventSessionId)
-      if (!subagent || subagent.aborting) {
+      if (!subagent) {
         return
       }
 
-      subagent.aborting = true
-      const abortResult = await (async () => {
-          await client.session.abort({ sessionID: eventSessionId, directory })
-
-          await client.tui.showToast({
-            message: appendToastSessionMarker({
-              message: `Aborting ${subagent.subagentType || 'subagent'} after rate limit so the parent task can recover: ${rateLimitReason}`,
-              sessionId: eventSessionId,
-            }),
-            variant: 'info',
-          }).catch(() => {
-            return
-          })
-
-          logger.info(
-            `Aborted subagent ${eventSessionId} after rate limit`,
-          )
-        })()
-        .catch((error) => {
-          return new Error('Subagent rate-limit abort failed', {
-            cause: error,
-          })
-        })
-
-      subagentSessions.delete(eventSessionId)
-      if (!(abortResult instanceof Error)) {
-        return
-      }
-
-      logger.warn(`[subagent-rate-limit-plugin] ${formatPluginErrorWithStack(abortResult)}`)
-      void notifyError(abortResult, 'subagent rate-limit plugin abort failed')
+      await abortSubagentSession({
+        sessionId: eventSessionId,
+        subagent,
+        reason: `rate limit: ${rateLimitReason}`,
+      })
     },
   }
 }
