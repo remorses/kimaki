@@ -15,3 +15,5 @@ kimaki --permission-timeout-minutes 30
 so when a permission times out or the user clicks Deny, the model sees it as a tool error
 and continues working (tries alternatives or explains it couldn't proceed) instead of the
 session going dead silent. Previously, a denied permission would stop the entire agent loop.
+
+Closes #140
