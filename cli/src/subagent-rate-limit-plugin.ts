@@ -186,7 +186,7 @@ export const subagentRateLimitPlugin: Plugin = async ({ serverUrl, directory }) 
       // to match the actual runtime event type.
       const eventType = event.type as string
       if (eventType === 'permission.asked') {
-        const perm = event.properties as unknown as {
+        const perm = (event as any).properties as {
           id: string
           sessionID: string
           permission: string
