@@ -174,12 +174,18 @@ export async function showPermissionButtons({
       const requestIds = ctx.requestIds.length > 0
         ? ctx.requestIds
         : [ctx.permission.id]
+      const userId = ctx.thread.ownerId
+      const timeoutFeedback =
+        `Permission timed out — the user did not respond. ` +
+        `If this tool call is necessary for the core goal of this session, stop and mention the user with <@${userId}> asking them to grant permission. ` +
+        `If not, continue normally — work around it, skip the tool, or use an alternative approach.`
       await Promise.all(
         requestIds.map((requestId) => {
           return client.permission.reply({
             requestID: requestId,
             directory: ctx.permissionDirectory,
             reply: 'reject',
+            message: timeoutFeedback,
           })
         }),
       ).catch((error) => {
