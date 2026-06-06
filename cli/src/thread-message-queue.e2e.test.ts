@@ -1482,6 +1482,10 @@ e2eTest('thread message queue ordering', () => {
 
       const th = discord.thread(thread.id)
 
+      // Wait for the bot to start replying so the session is busy and
+      // the user message appears after the first bot message in the thread.
+      await th.waitForBotReply({ timeout: 4_000 })
+
       // 2. Queue a message with queue suffix while session is busy.
       const queuedMsg = await th.user(TEST_USER_ID).sendMessage({
         content: 'Reply with exactly: will-be-removed. queue',
