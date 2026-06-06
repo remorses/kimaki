@@ -39,7 +39,7 @@ import {
 } from './discord-utils.js'
 import { showApiKeyRequiredButton } from './commands/gemini-apikey.js'
 import { transcribeAudio, type TranscriptionResult } from './voice.js'
-import { FetchError } from './errors.js'
+import { DiscordOperationError, FetchError } from './errors.js'
 import { store } from './store.js'
 import {
   getVoiceAttachmentMatchReason,
@@ -666,7 +666,7 @@ export async function processVoiceAttachment({
     if (threadName) {
       const renamed = await Promise.race([
         thread.setName(threadName)
-          .catch((e: Error) => e),
+          .catch((e) => new DiscordOperationError({ operation: 'renameChannel', cause: e })),
         new Promise<null>((resolve) => {
           setTimeout(() => {
             resolve(null)

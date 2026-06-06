@@ -7,6 +7,7 @@ import {
   type ThreadChannel,
 } from 'discord.js'
 import type { CommandContext } from './types.js'
+import { OpenCodeSdkError } from '../errors.js'
 import { getThreadSession } from '../database.js'
 import { initializeOpencodeForDirectory } from '../opencode.js'
 import {
@@ -145,7 +146,7 @@ export async function handleContextUsageCommand({
     // Fetch model context limit from provider API
     let contextLimit: number | undefined
     const providersResult = await getClient().provider.list({ directory: workingDirectory })
-      .catch((e: Error) => e)
+      .catch((e) => new OpenCodeSdkError({ operation: 'provider.list', cause: e }))
     if (providersResult instanceof Error) {
       logger.error(
         '[CONTEXT-USAGE] Failed to fetch provider info:',

@@ -104,6 +104,25 @@ export class NoToolResponseError extends errore.createTaggedError({
 }) {}
 
 // ═══════════════════════════════════════════════════════════════════════════
+// BOUNDARY ERRORS - Wrapping external library exceptions at .catch() sites
+// ═══════════════════════════════════════════════════════════════════════════
+
+export class DiscordOperationError extends errore.createTaggedError({
+  name: 'DiscordOperationError',
+  message: 'Discord operation failed: $operation',
+}) {}
+
+export class OpenCodeSdkError extends errore.createTaggedError({
+  name: 'OpenCodeSdkError',
+  message: 'OpenCode SDK call failed: $operation',
+}) {}
+
+export class FilesystemOperationError extends errore.createTaggedError({
+  name: 'FilesystemOperationError',
+  message: 'Filesystem operation failed: $operation',
+}) {}
+
+// ═══════════════════════════════════════════════════════════════════════════
 // NETWORK ERRORS - Fetch and HTTP
 // ═══════════════════════════════════════════════════════════════════════════
 

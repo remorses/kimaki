@@ -2,6 +2,7 @@
 // Bridges Discord messages to OpenCode sessions, manages voice connections,
 // and orchestrates the main event loop for the Kimaki bot.
 
+import { DiscordOperationError } from './errors.js'
 import {
   initDatabase,
   closeDatabase,
@@ -486,7 +487,7 @@ export async function startDiscordBot({
       if (message.partial) {
         discordLogger.log(`Fetching partial message ${message.id}`)
         const fetched = await message.fetch()
-          .catch((e: Error) => e)
+          .catch((e) => new DiscordOperationError({ operation: 'fetchMessage', cause: e }))
         if (fetched instanceof Error) {
           discordLogger.log(
             `Failed to fetch partial message ${message.id}:`,

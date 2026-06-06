@@ -10,6 +10,7 @@ import {
   type Message,
 } from 'discord.js'
 import fs from 'node:fs'
+import { OpenCodeSdkError } from '../errors.js'
 import type { CommandContext } from './types.js'
 import {
   createPendingWorktree,
@@ -575,7 +576,7 @@ async function handleWorktreeInThread({
       const forkResponse = await getClient().session.fork({
         sessionID: sourceSessionId,
         directory: result,
-      }).catch((e: Error) => e)
+      }).catch((e) => new OpenCodeSdkError({ operation: 'session.fork', cause: e }))
       if (forkResponse instanceof Error) {
         logger.error('[NEW-WORKTREE] Failed to fork session into worktree:', forkResponse)
         void notifyError(forkResponse, 'Failed to fork session into worktree')
@@ -605,7 +606,7 @@ async function handleWorktreeInThread({
           directory: result,
           originalRepoDirectory: projectDirectory,
         }),
-      }).catch((e: Error) => e)
+      }).catch((e) => new OpenCodeSdkError({ operation: 'session.update', cause: e }))
       if (permissionResponse instanceof Error || permissionResponse.error) {
         const error = permissionResponse instanceof Error
           ? permissionResponse

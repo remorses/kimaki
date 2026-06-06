@@ -10,6 +10,7 @@
 import type { Event as OpenCodeEvent, GlobalEvent } from '@opencode-ai/sdk/v2'
 import { createOpencodeClient, type OpencodeClient } from '@opencode-ai/sdk/v2'
 
+import { OpenCodeSdkError } from '../errors.js'
 import { createLogger, LogPrefix } from '../logger.js'
 
 const logger = createLogger(LogPrefix.SESSION)
@@ -167,7 +168,7 @@ async function runEventLoop(): Promise<void> {
     const client = createGlobalClient(baseUrl)
 
     const subscribeResult = await client.global.event({ signal })
-      .catch((e: Error) => e)
+      .catch((e) => new OpenCodeSdkError({ operation: 'event.subscribe', cause: e }))
 
     if (subscribeResult instanceof Error) {
       if (isAbortError(subscribeResult)) {
@@ -195,7 +196,7 @@ async function runEventLoop(): Promise<void> {
         dispatchEvent(event)
       }
     })()
-      .catch((e: Error) => e)
+      .catch((e) => new OpenCodeSdkError({ operation: 'event.iterate', cause: e }))
 
     if (receivedAnyEvent) {
       backoffMs = 500

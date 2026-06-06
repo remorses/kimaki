@@ -22,6 +22,7 @@ import { discordApiUrl } from './discord-urls.js'
 import { Lexer } from 'marked'
 import { splitTablesFromMarkdown } from './format-tables.js'
 import { getChannelDirectory, getThreadWorktree } from './database.js'
+import { DiscordOperationError } from './errors.js'
 import { limitHeadingDepth } from './limit-heading-depth.js'
 import { unnestCodeBlocksFromLists } from './unnest-code-blocks.js'
 import { createLogger, LogPrefix } from './logger.js'
@@ -176,7 +177,7 @@ export async function reactToThread({
     // Fetch the thread to get its parent channel ID
     const threadResult = await (rest.get(Routes.channel(threadId)) as Promise<{
         parent_id?: string
-      }>).catch((e: Error) => e)
+      }>).catch((e) => new DiscordOperationError({ operation: 'fetchThreadStarter', cause: e }))
     if (threadResult instanceof Error) {
       discordLogger.warn(
         `Failed to fetch thread ${threadId}:`,
@@ -202,7 +203,7 @@ export async function reactToThread({
       threadId,
       encodeURIComponent(emoji),
     ),
-  ).catch((e: Error) => e)
+  ).catch((e) => new DiscordOperationError({ operation: 'addReaction', cause: e }))
   if (result instanceof Error) {
     discordLogger.warn(
       `Failed to react to thread ${threadId} with ${emoji}:`,
@@ -727,7 +728,7 @@ export async function resolveProjectDirectoryFromAutocomplete(
   // when the channel isn't cached at all (common with gateway-proxy).
   if (!cachedParentId) {
     const fetched = await interaction.client.channels.fetch(channelId)
-      .catch((e: Error) => e)
+      .catch((e) => new DiscordOperationError({ operation: 'fetchChannel', cause: e }))
     if (!(fetched instanceof Error) && fetched?.isThread() && fetched.parentId) {
       const parentConfig = await getChannelDirectory(fetched.parentId)
       if (parentConfig) {

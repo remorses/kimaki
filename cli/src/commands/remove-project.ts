@@ -8,6 +8,7 @@ import {
   deleteChannelDirectoriesByDirectory,
   getAllTextChannelDirectories,
 } from '../database.js'
+import { DiscordOperationError } from '../errors.js'
 import { createLogger, LogPrefix } from '../logger.js'
 import { abbreviatePath } from '../utils.js'
 
@@ -46,7 +47,7 @@ export async function handleRemoveProjectCommand({
       channel_type: string
     }>) {
       const channel = await guild.channels.fetch(channel_id)
-        .catch((e: Error) => e)
+        .catch((e) => new DiscordOperationError({ operation: 'fetchChannel', cause: e }))
 
       if (channel instanceof Error) {
         logger.error(`Failed to fetch channel ${channel_id}:`, channel)
@@ -118,7 +119,7 @@ export async function handleRemoveProjectAutocomplete({
 
     for (const { directory, channel_id } of allChannels) {
       const channel = await guild.channels.fetch(channel_id)
-        .catch((e: Error) => e)
+        .catch((e) => new DiscordOperationError({ operation: 'fetchChannel', cause: e }))
       if (channel instanceof Error) {
         // Channel not in this guild, skip
         continue

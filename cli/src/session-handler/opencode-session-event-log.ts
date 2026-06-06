@@ -7,6 +7,7 @@ import path from 'node:path'
 import type { Event as OpenCodeEvent } from '@opencode-ai/sdk/v2'
 
 import { getDataDir } from '../config.js'
+import { FilesystemOperationError } from '../errors.js'
 
 let eventLogDirPromise: Promise<string> | null = null
 let eventLogWriteDisabled = false
@@ -98,7 +99,7 @@ export async function appendOpencodeSessionEventLog(
   }
 
   const logDirResult = await resolveEventLogDirectory()
-    .catch((e: Error) => e)
+    .catch((e) => new FilesystemOperationError({ operation: 'resolveEventLogDir', cause: e }))
   if (logDirResult instanceof Error) {
     eventLogWriteDisabled = true
     return logDirResult
@@ -118,7 +119,7 @@ export async function appendOpencodeSessionEventLog(
   )}\n`
 
   const appendResult = await fs.promises.appendFile(logFilePath, line, 'utf8')
-    .catch((e: Error) => e)
+    .catch((e) => new FilesystemOperationError({ operation: 'appendEventLog', cause: e }))
   if (appendResult instanceof Error) {
     eventLogWriteDisabled = true
     return appendResult

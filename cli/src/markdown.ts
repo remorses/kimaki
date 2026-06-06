@@ -361,9 +361,9 @@ export async function getCompactSessionContext({
           const params = Object.entries(input)
             .map(([k, v]) => {
               const val =
-                typeof v === 'string'
-                  ? v.slice(0, 100)
-                  : JSON.stringify(v).slice(0, 100)
+                    typeof v === 'string'
+                      ? v.slice(0, 100)
+                      : (JSON.stringify(v) ?? String(v)).slice(0, 100)
               return `${k}=${normalize(val)}`
             })
             .join(', ')

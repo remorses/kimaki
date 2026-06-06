@@ -11,6 +11,7 @@ import {
   getChannelAgent,
 } from '../database.js'
 import { createLogger } from '../logger.js'
+import { OpenCodeSdkError } from '../errors.js'
 import { type initializeOpencodeForDirectory } from '../opencode.js'
 import { type AgentInfo } from '../system-message.js'
 
@@ -59,7 +60,7 @@ export async function resolveValidatedAgentPreference({
   }
 
   const agentsResponse = await getClient().app.agents({ directory })
-    .catch((e: Error) => e)
+    .catch((e) => new OpenCodeSdkError({ operation: 'app.agents', cause: e }))
   if (agentsResponse instanceof Error) {
     if (agentPreference) {
       throw new Error(`Failed to validate agent "${agentPreference}"`, {

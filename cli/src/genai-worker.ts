@@ -13,6 +13,7 @@ import type { Session } from '@google/genai'
 import { getTools } from './tools.js'
 import { mkdir } from 'node:fs/promises'
 import type { WorkerInMessage, WorkerOutMessage } from './worker-types.js'
+import { FilesystemOperationError } from './errors.js'
 import { createLogger, formatErrorWithStack, LogPrefix } from './logger.js'
 import { initSentry, notifyError } from './sentry.js'
 
@@ -150,7 +151,7 @@ async function createAssistantAudioLogStream(
   )
 
   const mkdirError = await mkdir(audioDir, { recursive: true })
-    .catch((e: Error) => e)
+    .catch((e) => new FilesystemOperationError({ operation: 'mkdir', cause: e }))
   if (mkdirError instanceof Error) {
     workerLogger.error(
       `Failed to create audio log directory:`,

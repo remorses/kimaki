@@ -16,6 +16,7 @@
 // plugin by OpenCode's plugin loader.
 
 import type { Plugin } from '@opencode-ai/plugin'
+import { FilesystemOperationError, OpenCodeSdkError } from './errors.js'
 import crypto from 'node:crypto'
 import {
   createPluginLogger,
@@ -197,7 +198,7 @@ async function resolveGitState({
   directory: string
 }): Promise<GitState | null> {
   const branchResult = await execAsync('git symbolic-ref --short HEAD', { cwd: directory })
-    .catch((e: Error) => e)
+    .catch((e) => new FilesystemOperationError({ operation: 'gitBranch', cause: e }))
   if (!(branchResult instanceof Error)) {
     const branch = branchResult.stdout.trim()
     if (branch) {
@@ -211,7 +212,7 @@ async function resolveGitState({
   }
 
   const shaResult = await execAsync('git rev-parse --short HEAD', { cwd: directory })
-    .catch((e: Error) => e)
+    .catch((e) => new FilesystemOperationError({ operation: 'gitRevParse', cause: e }))
   if (shaResult instanceof Error) return null
 
   const shortSha = shaResult.stdout.trim()
@@ -221,7 +222,7 @@ async function resolveGitState({
 
   const superprojectResult = await execAsync('git rev-parse --show-superproject-working-tree', {
     cwd: directory,
-  }).catch((e: Error) => e)
+  }).catch((e) => new FilesystemOperationError({ operation: 'gitSuperproject', cause: e }))
   const superproject =
     superprojectResult instanceof Error ? '' : superprojectResult.stdout.trim()
   if (superproject) {
@@ -262,7 +263,7 @@ async function resolveSessionDirectory({
 }> {
   const previousDirectory = state.resolvedDirectory
   const result = await client.session.get({ sessionID })
-    .catch((e: Error) => e)
+    .catch((e) => new OpenCodeSdkError({ operation: 'session.get', cause: e }))
   if (result instanceof Error || !result.data?.directory) {
     return {
       currentDirectory: previousDirectory || null,
@@ -356,7 +357,7 @@ const contextAwarenessPlugin: Plugin = async ({ directory, serverUrl }) => {
             sessionID,
             directory,
             limit: 20,
-          }).catch((e: Error) => e)
+          }).catch((e) => new OpenCodeSdkError({ operation: 'session.messages', cause: e }))
           const latestAssistantMessage =
             latestAssistantMessageResult instanceof Error
               ? undefined
