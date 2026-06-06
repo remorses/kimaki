@@ -3,6 +3,7 @@
 // - Aborts subagent sessions after rate limits so the parent task can recover
 
 import type { Hooks, Plugin } from '@opencode-ai/plugin'
+import type { Event as V2Event } from '@opencode-ai/sdk/v2'
 
 import {
   appendToastSessionMarker,
@@ -25,6 +26,14 @@ const RATE_LIMIT_TEXT_PATTERNS = [
 ] as const
 
 type PluginEvent = Parameters<NonNullable<Hooks['event']>>[0]['event']
+  | Extract<V2Event, { type: 'permission.asked' }>
+
+function getPermissionAskedEvent(event: PluginEvent) {
+  if (event.type !== 'permission.asked') {
+    return undefined
+  }
+  return event.properties
+}
 
 function isRateLimitText(text: string | undefined): boolean {
   if (!text) {
@@ -55,6 +64,22 @@ function getTaskChildSession(event: PluginEvent) {
   const subagentType = part.state.input?.subagent_type
   return {
     childSessionId,
+    subagentType: typeof subagentType === 'string' ? subagentType : undefined,
+  }
+}
+
+function getTaskLaunch(event: PluginEvent) {
+  if (event.type !== 'message.part.updated') {
+    return undefined
+  }
+
+  const part = event.properties.part
+  if (part.type !== 'tool' || part.tool !== 'task' || part.state.status !== 'running') {
+    return undefined
+  }
+
+  const subagentType = part.state.input?.subagent_type
+  return {
     subagentType: typeof subagentType === 'string' ? subagentType : undefined,
   }
 }
@@ -146,9 +171,49 @@ export const subagentRateLimitPlugin: Plugin = async ({ serverUrl, directory }) 
     subagentType?: string
     aborting: boolean
   }>()
+  let pendingTaskLaunch: { subagentType?: string } | undefined
+  let unclaimedSessionId: string | undefined
+
+  const trackSubagentSession = ({
+    sessionId,
+    subagentType,
+  }: {
+    sessionId: string
+    subagentType?: string
+  }) => {
+    if (subagentSessions.has(sessionId)) {
+      return
+    }
+    subagentSessions.set(sessionId, {
+      subagentType,
+      aborting: false,
+    })
+  }
 
   return {
     event: async ({ event }) => {
+      if (event.type === 'message.updated' && event.properties.info.role === 'user') {
+        if (unclaimedSessionId === event.properties.info.sessionID) {
+          unclaimedSessionId = undefined
+        }
+      }
+
+      const taskLaunch = getTaskLaunch(event)
+      if (taskLaunch) {
+        // OpenCode can emit the child session.created before the parent task
+        // part exposes metadata.sessionId, so pair the task with the newest
+        // session that has not produced a user message yet.
+        if (unclaimedSessionId) {
+          trackSubagentSession({
+            sessionId: unclaimedSessionId,
+            subagentType: taskLaunch.subagentType,
+          })
+          unclaimedSessionId = undefined
+        } else {
+          pendingTaskLaunch = { subagentType: taskLaunch.subagentType }
+        }
+      }
+
       const taskChild = getTaskChildSession(event)
       if (taskChild) {
         const existing = subagentSessions.get(taskChild.childSessionId)
@@ -164,6 +229,18 @@ export const subagentRateLimitPlugin: Plugin = async ({ serverUrl, directory }) 
         }
       }
 
+      if (event.type === 'session.created') {
+        if (pendingTaskLaunch) {
+          trackSubagentSession({
+            sessionId: event.properties.info.id,
+            subagentType: pendingTaskLaunch.subagentType,
+          })
+          pendingTaskLaunch = undefined
+        } else {
+          unclaimedSessionId = event.properties.info.id
+        }
+      }
+
       // Auto-reject permission requests for subagent sessions.
       // OpenCode's continue_loop_on_deny only works in the main processor
       // loop. Task/subtask permissions use Effect.orDie which turns rejections
@@ -174,14 +251,8 @@ export const subagentRateLimitPlugin: Plugin = async ({ serverUrl, directory }) 
       // This block runs BEFORE getEventSessionId() because the v1 SDK Event
       // union doesn't include permission.asked, so getEventSessionId() returns
       // undefined for these events and would early-return before we can act.
-      const eventType = event.type as string
-      if (eventType === 'permission.asked') {
-        const perm = (event as any).properties as {
-          id: string
-          sessionID: string
-          permission: string
-          patterns: string[]
-        }
+      const perm = getPermissionAskedEvent(event)
+      if (perm) {
         const subagent = subagentSessions.get(perm.sessionID)
         if (subagent) {
           const replyResult = await client.permission.reply({

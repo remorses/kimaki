@@ -67,11 +67,11 @@ importers:
         specifier: ^0.17.2
         version: 0.17.2
       '@opencode-ai/plugin':
-        specifier: ^1.15.11
-        version: 1.15.11
+        specifier: ^1.16.2
+        version: 1.16.2
       '@opencode-ai/sdk':
-        specifier: ^1.15.11
-        version: 1.15.11
+        specifier: ^1.16.2
+        version: 1.16.2
       '@parcel/watcher':
         specifier: ^2.5.6
         version: 2.5.6
@@ -104,7 +104,7 @@ importers:
         version: 12.0.0
       kitty-graphics-agent:
         specifier: ^0.0.5
-        version: 0.0.5(@opencode-ai/plugin@1.15.11)
+        version: 0.0.5(@opencode-ai/plugin@1.16.2)
       libsql:
         specifier: ^0.5.22
         version: 0.5.29
@@ -1880,8 +1880,25 @@ packages:
       '@opentui/solid':
         optional: true
 
+  '@opencode-ai/plugin@1.16.2':
+    resolution: {integrity: sha512-FaZhVXrbz93xsdGLCtarRDTeqFt8AkLfh8B34tFBj6G4HXVmKSgBwVXmtELKKC+08xMtawBC9hshiMbXryv6cg==}
+    peerDependencies:
+      '@opentui/core': '>=0.3.2'
+      '@opentui/keymap': '>=0.3.2'
+      '@opentui/solid': '>=0.3.2'
+    peerDependenciesMeta:
+      '@opentui/core':
+        optional: true
+      '@opentui/keymap':
+        optional: true
+      '@opentui/solid':
+        optional: true
+
   '@opencode-ai/sdk@1.15.11':
     resolution: {integrity: sha512-IyYyDVsO8SKbKbkSadHpDuYnYC+2vmEeLU+rW+rH2M54Sigq6l3gDHno16+U6SRut+lowbph7v/ry3WbV67V3w==}
+
+  '@opencode-ai/sdk@1.16.2':
+    resolution: {integrity: sha512-Z/xZ7q79dYeE0afqIk/yFEcRNGEQFcE+H8ssYivUiy+xGZ1mGwT72jpaQZKBwPn3JH4sRCu4KA2lcktBQfcOjg==}
 
   '@opentelemetry/api@1.9.1':
     resolution: {integrity: sha512-gLyJlPHPZYdAk1JENA9LeHejZe1Ti77/pTeFm/nMXmQH/HFZlcS/O2XJB+L8fkbrNSqhdtlvjBVjxwUYanNH5Q==}
@@ -3816,6 +3833,9 @@ packages:
   effect@4.0.0-beta.66:
     resolution: {integrity: sha512-4arEr62cziFa8BBVDUwJCJJmaVepXf/kRg7KtC0h8+bufngscrHbwWFhr9c+HonwOF+31U3iD3xUJmw9KzX7Dw==}
 
+  effect@4.0.0-beta.74:
+    resolution: {integrity: sha512-Yx+Kh12U+i2FmjwEfKs+ePFmpMd43RPD1oGqc/VraSS9bYzvF0Ff3PojwEFEVEewp8xc92Uxu28gTspU4qyvHA==}
+
   emoji-regex@8.0.0:
     resolution: {integrity: sha512-MSjYzcWNOA0ewAHpz0MxpYFvwg6yjy1NG3xteoqz644VCo/RPgnr1/GGt+ic3iJTzQ8Eu3TdM14SawnVUmGE6A==}
 
@@ -4294,6 +4314,10 @@ packages:
   ini@6.0.0:
     resolution: {integrity: sha512-IBTdIkzZNOpqm7q3dRqJvMaldXjDHWkEDfrwGEQTs5eaQMWV+djAhR+wahyNNMAa+qpbDUhBMVt4ZKNwpPm7xQ==}
     engines: {node: ^20.17.0 || >=22.9.0}
+
+  ini@7.0.0:
+    resolution: {integrity: sha512-ifK0CgjALofS5bkrcTy4RaQ9Vx2Knf/eLeIO+NaswQEpH1UblrtTSCIvN71qQDMq0PeQ/SSPojvEJp9vvvfr+w==}
+    engines: {node: ^22.22.2 || ^24.15.0 || >=26.0.0}
 
   inline-style-parser@0.2.7:
     resolution: {integrity: sha512-Nb2ctOyNR8DqQoR0OwRG95uNWIC0C1lCgf5Naz5H6Ji72KZ8OcFZLz2P5sNgwlyoJ8Yif11oMuYs5pBQa86csA==}
@@ -4951,6 +4975,9 @@ packages:
 
   msgpackr@1.11.12:
     resolution: {integrity: sha512-RBdJ1Un7yGlXWajrkxcSa93nvQ0w4zBf60c0yYv7YtBelP8H2FA7XsfBbMHtXKXUMUxH7zV3Zuozh+kUQWhHvg==}
+
+  msgpackr@2.0.2:
+    resolution: {integrity: sha512-c5hYOXFbP79Slh6Dzd2wzk+jnV7mX1UxfMYtilnY1NmalXPqG8DGb5cYCMBrW4AsH3zekBBZd4QrKz9NhtvYLQ==}
 
   multipasta@0.2.7:
     resolution: {integrity: sha512-KPA58d68KgGil15oDqXjkUBEBYc00XvbPj5/X+dyzeo/lWm9Nc25pQRlf1D+gv4OpK7NM0J1odrbu9JNNGvynA==}
@@ -7408,7 +7435,17 @@ snapshots:
       effect: 4.0.0-beta.66
       zod: 4.1.8
 
+  '@opencode-ai/plugin@1.16.2':
+    dependencies:
+      '@opencode-ai/sdk': 1.16.2
+      effect: 4.0.0-beta.74
+      zod: 4.1.8
+
   '@opencode-ai/sdk@1.15.11':
+    dependencies:
+      cross-spawn: 7.0.6
+
+  '@opencode-ai/sdk@1.16.2':
     dependencies:
       cross-spawn: 7.0.6
 
@@ -9202,6 +9239,19 @@ snapshots:
       uuid: 13.0.2
       yaml: 2.9.0
 
+  effect@4.0.0-beta.74:
+    dependencies:
+      '@standard-schema/spec': 1.1.0
+      fast-check: 4.8.0
+      find-my-way-ts: 0.1.6
+      ini: 7.0.0
+      kubernetes-types: 1.30.0
+      msgpackr: 2.0.2
+      multipasta: 0.2.7
+      toml: 4.1.1
+      uuid: 14.0.0
+      yaml: 2.9.0
+
   emoji-regex@8.0.0:
     optional: true
 
@@ -9832,6 +9882,8 @@ snapshots:
 
   ini@6.0.0: {}
 
+  ini@7.0.0: {}
+
   inline-style-parser@0.2.7: {}
 
   internmap@1.0.1: {}
@@ -9933,9 +9985,9 @@ snapshots:
 
   khroma@2.1.0: {}
 
-  kitty-graphics-agent@0.0.5(@opencode-ai/plugin@1.15.11):
+  kitty-graphics-agent@0.0.5(@opencode-ai/plugin@1.16.2):
     optionalDependencies:
-      '@opencode-ai/plugin': 1.15.11
+      '@opencode-ai/plugin': 1.16.2
 
   kleur@4.1.5: {}
 
@@ -10705,6 +10757,10 @@ snapshots:
     optional: true
 
   msgpackr@1.11.12:
+    optionalDependencies:
+      msgpackr-extract: 3.0.4
+
+  msgpackr@2.0.2:
     optionalDependencies:
       msgpackr-extract: 3.0.4
 
