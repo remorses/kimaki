@@ -4,8 +4,6 @@
 
 import type { Hooks, Plugin } from '@opencode-ai/plugin'
 import type { Event as V2Event } from '@opencode-ai/sdk/v2'
-import dedent from 'string-dedent'
-
 import {
   appendToastSessionMarker,
   createPluginLogger,
@@ -13,7 +11,7 @@ import {
   setPluginLogFilePath,
 } from './plugin-logger.js'
 import { createPluginClient } from './plugin-opencode-client.js'
-import { initSentry, notifyError } from './sentry.js'
+import { initSentry } from './sentry.js'
 
 const logger = createPluginLogger('SUBMODEL')
 
@@ -195,12 +193,10 @@ export const subagentRateLimitPlugin: Plugin = async ({ serverUrl, directory }) 
     sessionId,
     subagent,
     reason,
-    followupPrompt,
   }: {
     sessionId: string
     subagent: { subagentType?: string; aborting: boolean }
     reason: string
-    followupPrompt?: string
   }) => {
     if (subagent.aborting) {
       return
@@ -210,16 +206,10 @@ export const subagentRateLimitPlugin: Plugin = async ({ serverUrl, directory }) 
     const abortResult = await (async () => {
       await client.session.abort({ sessionID: sessionId, directory })
 
-      if (followupPrompt) {
-        // Wait for the abort event to propagate before sending the followup
-        // prompt, otherwise OpenCode may not have finished processing the abort.
-        await new Promise<void>((resolve) => setTimeout(resolve, 200))
-        await client.session.promptAsync({
-          sessionID: sessionId,
-          directory,
-          parts: [{ type: 'text', text: followupPrompt }],
-        })
-      }
+      // TODO: after aborting, send a followup prompt into the child session
+      // telling the model the permission was denied and to continue another way
+      // or end with a summary. promptAsync right after abort does not work
+      // reliably because the abort event hasn't propagated yet.
 
       await client.tui.showToast({
         message: appendToastSessionMarker({
@@ -240,7 +230,6 @@ export const subagentRateLimitPlugin: Plugin = async ({ serverUrl, directory }) 
     subagentSessions.delete(sessionId)
     if (abortResult instanceof Error) {
       logger.warn(`[subagent-rate-limit-plugin] ${formatPluginErrorWithStack(abortResult)}`)
-      void notifyError(abortResult, 'subagent plugin abort failed')
     }
   }
 
@@ -332,15 +321,6 @@ export const subagentRateLimitPlugin: Plugin = async ({ serverUrl, directory }) 
             sessionId: perm.sessionID,
             subagent,
             reason: `permission denied (${perm.permission}: ${perm.patterns.join(', ')})`,
-            // TODO: remove this abort+followup workaround once OpenCode fixes
-            // task permission denial: https://github.com/anomalyco/opencode/issues/31108
-            followupPrompt: dedent`
-              The previous permission request was denied: ${perm.permission} for ${perm.patterns.join(', ')}.
-
-              Do not request that same permission again. Do not retry the same blocked tool call or path.
-              Continue another way that stays inside the allowed permissions.
-              If you cannot continue, end the task with a concise summary of what you completed and what is blocked.
-            `,
           })
           return
         }
