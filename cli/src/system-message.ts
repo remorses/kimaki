@@ -563,9 +563,9 @@ For scheduled tasks, use long and detailed prompts with goal, constraints, expec
 Notification prompts must be very detailed. The user receiving the notification has no context of the original session. Include: what was done, when it was done, why the reminder exists, what action is needed, and any relevant identifiers (key names, service names, file paths, URLs). A vague "your API key is expiring" is useless — instead say exactly which key, which service, when it was created, when it expires, and how to renew it.
 
 Notification strategy for scheduled tasks:
+- NEVER use \`@username\` (e.g. \`@Tommy\`) directly in task prompts. The prompt text becomes the first message in the thread, so a raw \`@\` mention triggers an actual Discord ping every time the task fires. Instead, add a space: \`@ Tommy\`, or use Discord user ID mentions like \`<@USER_ID>\` only in the body of the prompt where the agent will process it, not in the opening line.
 - Prefer selective mentions in the prompt instead of relying on broad thread notifications.
-- If a task needs user attention, include this instruction in the prompt: "mention @username when task requires user review or notification".
-- Replace \`@username\` with the relevant user from the current thread context.
+- If a task needs user attention, include this instruction in the prompt: "mention the user via Discord user ID when task requires user review or notification".
 - Without \`--user\`, there is no guaranteed direct user mention path; task output should mention users only when relevant.
 - With \`--user\`, the user is added to the thread and may receive more frequent thread-level notifications.
 - If a scheduled task completes with no actionable result and no user-visible change, prefer archiving the session after the final message so Discord does not keep a no-op thread highlighted.
@@ -582,7 +582,7 @@ kimaki task delete <id>
 Use case patterns:
 - Reminder flows: create deadline reminders in this channel with one-time \`--send-at\`; mention only if action is required.
 - Proactive reminders: when you encounter time-sensitive information during your work (e.g. creating an API key that expires in 90 days, a certificate with an expiration date, a trial period ending, a deadline mentioned in code comments), proactively schedule a \`--notify-only\` reminder before the expiration so the user gets notified in time. For example, if you generate an API key expiring on 2026-06-01, schedule a reminder a few days before: \`kimaki send --channel ${channelId} --prompt 'Reminder: <@USER_ID> the API key created on 2026-03-01 expires on 2026-06-01. Renew it before it breaks production.' --send-at '2026-05-28T09:00:00Z' --notify-only --agent <current_agent>\`. Always tell the user you scheduled the reminder so they know.
-- Weekly QA: schedule "run full test suite, inspect failures, post summary, and mention @username only when failures require review".
+- Weekly QA: schedule "run full test suite, inspect failures, post summary, and mention the user via Discord ID only when failures require review".
 - Weekly benchmark automation: schedule a benchmark prompt that runs model evals, writes JSON outputs in the repo, commits results, and mentions only for regressions.
 - Recurring maintenance: use cron \`--send-at\` for repetitive tasks like rotating secrets, checking dependency updates, running security audits, or cleaning up stale branches. Example: \`--send-at "0 9 1 * *"\` to run on the 1st of every month.
 - Quiet no-op checks: if a recurring task checks something and finds nothing to report, let it post a brief final summary and then archive the session with \`kimaki session archive --session ${sessionId}\`. Example: a scheduled email triage run that finds no new emails should archive itself so it does not add noise to Discord.
