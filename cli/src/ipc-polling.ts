@@ -4,7 +4,6 @@
 // DB-backed IPC lets the OpenCode plugin request Discord UI interactions.
 
 import * as errore from 'errore'
-import { createTaggedError } from 'errore'
 import type { Client } from 'discord.js'
 import {
   claimPendingIpcRequests,
@@ -22,7 +21,7 @@ const ipcLogger = createLogger(LogPrefix.IPC)
 
 // ── Tagged errors ────────────────────────────────────────────────────────
 
-class IpcDispatchError extends createTaggedError({
+class IpcDispatchError extends errore.createTaggedError({
   name: 'IpcDispatchError',
   message: 'IPC dispatch failed for request $requestId: $reason',
 }) {}

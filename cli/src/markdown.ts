@@ -5,7 +5,6 @@
 
 import type { OpencodeClient } from '@opencode-ai/sdk/v2'
 import * as errore from 'errore'
-import { createTaggedError } from 'errore'
 import YAML from 'yaml'
 import { formatDateTime } from './utils.js'
 import { extractNonXmlContent } from './xml.js'
@@ -13,7 +12,7 @@ import { createLogger, LogPrefix } from './logger.js'
 import { SessionNotFoundError, MessagesNotFoundError } from './errors.js'
 
 // Generic error for unexpected exceptions in async operations
-class UnexpectedError extends createTaggedError({
+class UnexpectedError extends errore.createTaggedError({
   name: 'UnexpectedError',
 }) {}
 
