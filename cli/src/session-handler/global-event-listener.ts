@@ -130,7 +130,13 @@ async function resolveBaseUrlGetter(): Promise<() => string | null> {
 }
 
 function createGlobalClient(baseUrl: string): OpencodeClient {
-  return createOpencodeClient({ baseUrl })
+  const headers: Record<string, string> = {}
+  const serverPassword = process.env.OPENCODE_SERVER_PASSWORD
+  if (serverPassword) {
+    const username = process.env.OPENCODE_SERVER_USERNAME || 'opencode'
+    headers['Authorization'] = `Basic ${Buffer.from(`${username}:${serverPassword}`).toString('base64')}`
+  }
+  return createOpencodeClient({ baseUrl, headers })
 }
 
 function dispatchEvent(globalEvent: GlobalEvent): void {
