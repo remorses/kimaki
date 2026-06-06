@@ -220,8 +220,7 @@ export async function createWorktreeInBackground({
   baseBranch?: string
   rest: REST
 }): Promise<string | Error> {
-  return errore.tryAsync({
-    try: async () => {
+  return (async () => {
       logger.log(
         `Creating worktree "${worktreeName}" for project ${projectDirectory}${baseBranch ? ` from ${baseBranch}` : ''}`,
       )
@@ -283,11 +282,9 @@ export async function createWorktreeInBackground({
       await editChain
 
       return worktreeResult.directory
-    },
-    catch: (e) => {
-      logger.error('[WORKTREE] Unexpected error in createWorktreeInBackground:', e)
-      return new Error(`Worktree creation failed: ${e instanceof Error ? e.message : String(e)}`, { cause: e })
-    },
+  })().catch((e) => {
+    logger.error('[WORKTREE] Unexpected error in createWorktreeInBackground:', e)
+    return new Error(`Worktree creation failed: ${e instanceof Error ? e.message : String(e)}`, { cause: e })
   })
 }
 
@@ -298,12 +295,9 @@ async function findExistingWorktreePath({
   projectDirectory: string
   worktreeName: string
 }): Promise<string | undefined | Error> {
-  const listResult = await errore.tryAsync({
-    try: () =>
-      execAsync('git worktree list --porcelain', { cwd: projectDirectory }),
-    catch: (e) => new WorktreeError('Failed to list worktrees', { cause: e }),
-  })
-  if (errore.isError(listResult)) {
+  const listResult = await execAsync('git worktree list --porcelain', { cwd: projectDirectory })
+    .catch((e) => new WorktreeError('Failed to list worktrees', { cause: e }))
+  if (listResult instanceof Error) {
     return listResult
   }
 
@@ -410,8 +404,7 @@ export async function handleNewWorktreeCommand({
   }
 
   // Create thread immediately so user can start typing
-  const result = await errore.tryAsync({
-    try: async () => {
+  const result = await (async () => {
       const starterMessage = await channel.send({
         content: worktreeCreatingMessage(worktreeName),
         flags: SILENT_MESSAGE_FLAGS,
@@ -427,11 +420,9 @@ export async function handleNewWorktreeCommand({
       await thread.members.add(command.user.id)
 
       return { thread, starterMessage }
-    },
-    catch: (e) => new WorktreeError('Failed to create thread', { cause: e }),
-  })
+  })().catch((e) => new WorktreeError('Failed to create thread', { cause: e }))
 
-  if (errore.isError(result)) {
+  if (result instanceof Error) {
     logger.error('[NEW-WORKTREE] Error:', result.cause)
     await command.editReply(result.message)
     return
@@ -528,8 +519,7 @@ async function handleWorktreeInThread({
     return
   }
 
-  const threadResult = await errore.tryAsync({
-    try: async () => {
+  const threadResult = await (async () => {
       const worktreeThread = await textChannel.threads.create({
         name: `${WORKTREE_PREFIX}worktree: ${worktreeName}`.slice(0, 100),
         autoArchiveDuration: 1440,
@@ -541,9 +531,7 @@ async function handleWorktreeInThread({
         flags: SILENT_MESSAGE_FLAGS,
       })
       return { worktreeThread, statusMessage }
-    },
-    catch: (e) => new WorktreeError('Failed to create worktree thread', { cause: e }),
-  })
+  })().catch((e) => new WorktreeError('Failed to create worktree thread', { cause: e }))
   if (threadResult instanceof Error) {
     await command.editReply(threadResult.message)
     return
@@ -588,12 +576,10 @@ async function handleWorktreeInThread({
         return
       }
 
-      const forkResponse = await errore.tryAsync(() => {
-        return getClient().session.fork({
-          sessionID: sourceSessionId,
-          directory: result,
-        })
-      })
+      const forkResponse = await getClient().session.fork({
+        sessionID: sourceSessionId,
+        directory: result,
+      }).catch((e: Error) => e)
       if (forkResponse instanceof Error) {
         logger.error('[NEW-WORKTREE] Failed to fork session into worktree:', forkResponse)
         void notifyError(forkResponse, 'Failed to fork session into worktree')
@@ -616,16 +602,14 @@ async function handleWorktreeInThread({
         return
       }
 
-      const permissionResponse = await errore.tryAsync(() => {
-        return getClient().session.update({
-          sessionID: forkedSession.id,
+      const permissionResponse = await getClient().session.update({
+        sessionID: forkedSession.id,
+        directory: result,
+        permission: buildSessionPermissions({
           directory: result,
-          permission: buildSessionPermissions({
-            directory: result,
-            originalRepoDirectory: projectDirectory,
-          }),
-        })
-      })
+          originalRepoDirectory: projectDirectory,
+        }),
+      }).catch((e: Error) => e)
       if (permissionResponse instanceof Error || permissionResponse.error) {
         const error = permissionResponse instanceof Error
           ? permissionResponse

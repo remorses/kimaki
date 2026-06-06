@@ -500,10 +500,8 @@ async function waitForServer({
     endpoint.searchParams.set('directory', directory)
   }
   for (let i = 0; i < maxAttempts; i++) {
-    const response = await errore.tryAsync({
-      try: () => requestHealthcheck({ url: endpoint.toString() }),
-      catch: (e) => new FetchError({ url: endpoint.toString(), cause: e }),
-    })
+    const response = await requestHealthcheck({ url: endpoint.toString() })
+      .catch((e) => new FetchError({ url: endpoint.toString(), cause: e }))
     if (response instanceof Error) {
       // Connection refused or other transient errors - continue polling.
       // Use 100ms interval instead of 1s so we detect readiness faster.

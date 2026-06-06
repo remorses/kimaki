@@ -7,7 +7,7 @@ import crypto from 'node:crypto'
 import fs from 'node:fs'
 import path from 'node:path'
 import type { Plugin } from '@opencode-ai/plugin'
-import * as errore from 'errore'
+
 import {
   createPluginLogger,
   formatPluginErrorWithStack,
@@ -87,8 +87,7 @@ const memoryOverviewPlugin: Plugin = async ({ directory }) => {
 
   return {
     'chat.message': async (input, output) => {
-      const result = await errore.tryAsync({
-        try: async () => {
+      const result = await (async () => {
           const state = getOrCreateSessionState({ sessionID: input.sessionID })
           if (state.injected) {
             return
@@ -118,13 +117,12 @@ const memoryOverviewPlugin: Plugin = async ({ directory }) => {
             text: overviewText,
             synthetic: true,
           })
-        },
-        catch: (error) => {
+        })()
+        .catch((error) => {
           return new Error('memory overview chat.message hook failed', {
             cause: error,
           })
-        },
-      })
+        })
       if (!(result instanceof Error)) {
         return
       }
@@ -134,8 +132,7 @@ const memoryOverviewPlugin: Plugin = async ({ directory }) => {
       void notifyError(result, 'memory overview plugin chat.message hook failed')
     },
     event: async ({ event }) => {
-      const result = await errore.tryAsync({
-        try: async () => {
+      const result = await (async () => {
           if (event.type !== 'session.deleted') {
             return
           }
@@ -144,13 +141,12 @@ const memoryOverviewPlugin: Plugin = async ({ directory }) => {
             return
           }
           sessions.delete(id)
-        },
-        catch: (error) => {
+        })()
+        .catch((error) => {
           return new Error('memory overview event hook failed', {
             cause: error,
           })
-        },
-      })
+        })
       if (!(result instanceof Error)) {
         return
       }

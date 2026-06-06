@@ -1422,7 +1422,7 @@ export class ThreadSessionRuntime {
           resolve()
           return
         }
-        const result = await errore.tryAsync(action)
+        const result = await action().catch((e: Error) => e)
         if (result instanceof Error) {
           reject(result)
           return
@@ -1447,10 +1447,10 @@ export class ThreadSessionRuntime {
         if (!next) {
           continue
         }
-        // Each queued action already wraps itself with errore.tryAsync
+        // Each queued action already wraps itself with .catch()
         // and calls resolve/reject, so this should not throw. But if it
         // does, the try/finally ensures we don't deadlock.
-        const result = await errore.tryAsync(next)
+        const result = await next().catch((e: Error) => e)
         if (result instanceof Error) {
           logger.error('[ACTION QUEUE] Unexpected action failure:', result)
         }
@@ -1513,9 +1513,8 @@ export class ThreadSessionRuntime {
   }
 
   private async sendTypingPulse(): Promise<void> {
-    const result = await errore.tryAsync(() => {
-      return this.thread.sendTyping()
-    })
+    const result = await this.thread.sendTyping()
+      .catch((e: Error) => e)
     if (result instanceof Error) {
       discordLogger.log(`Failed to send typing: ${result}`)
     }
@@ -1689,9 +1688,8 @@ export class ThreadSessionRuntime {
       return { ...t, sentPartIds: newIds }
     })
 
-    const sendResult = await errore.tryAsync(() => {
-      return sendThreadMessage(this.thread, content)
-    })
+    const sendResult = await sendThreadMessage(this.thread, content)
+      .catch((e: Error) => e)
     if (sendResult instanceof Error) {
       threadState.updateThread(this.threadId, (t) => {
         const newIds = new Set(t.sentPartIds)
@@ -1812,9 +1810,8 @@ export class ThreadSessionRuntime {
     if (!client) {
       return
     }
-    const providersResponse = await errore.tryAsync(() => {
-      return client.provider.list({ directory: this.sdkDirectory })
-    })
+    const providersResponse = await client.provider.list({ directory: this.sdkDirectory })
+      .catch((e: Error) => e)
     if (providersResponse instanceof Error) {
       logger.error(
         'Failed to fetch provider info for context limit:',
@@ -1957,9 +1954,8 @@ export class ThreadSessionRuntime {
     }
     this.lastDisplayedContextPercentage = thresholdCrossed
     const chunk = `⬦ context usage ${currentPercentage}%`
-    const sendResult = await errore.tryAsync(() => {
-      return this.thread.send({ content: chunk, flags: SILENT_MESSAGE_FLAGS })
-    })
+    const sendResult = await this.thread.send({ content: chunk, flags: SILENT_MESSAGE_FLAGS })
+      .catch((e: Error) => e)
     if (sendResult instanceof Error) {
       discordLogger.error('Failed to send context usage notice:', sendResult)
     }
@@ -2022,9 +2018,8 @@ export class ThreadSessionRuntime {
               newIds.add(part.id)
               return { ...t, sentPartIds: newIds }
             })
-            const sendResult = await errore.tryAsync(() => {
-              return sendThreadMessage(this.thread, taskDisplay + '\n\n')
-            })
+            const sendResult = await sendThreadMessage(this.thread, taskDisplay + '\n\n')
+              .catch((e: Error) => e)
             if (sendResult instanceof Error) {
               threadState.updateThread(this.threadId, (t) => {
                 const newIds = new Set(t.sentPartIds)
@@ -2074,15 +2069,13 @@ export class ThreadSessionRuntime {
             )
             return
           }
-          const showResult = await errore.tryAsync(() => {
-            return showActionButtons({
-              thread: this.thread,
-              sessionId: request.sessionId,
-              directory: request.directory,
-              buttons: request.buttons,
-              silent: this.getQueueLength() > 0,
-            })
-          })
+          const showResult = await showActionButtons({
+            thread: this.thread,
+            sessionId: request.sessionId,
+            directory: request.directory,
+            buttons: request.buttons,
+            silent: this.getQueueLength() > 0,
+          }).catch((e: Error) => e)
           if (showResult instanceof Error) {
             logger.error(
               '[ACTION] Failed to show action buttons:',
@@ -2155,12 +2148,10 @@ export class ThreadSessionRuntime {
             return ` (${pct.toFixed(1)}%)`
           })()
           const chunk = `⬦ ${part.tool} returned ${formattedTokens} tokens${percentageSuffix}`
-          const largeOutputResult = await errore.tryAsync(() => {
-            return this.thread.send({
-              content: chunk,
-              flags: SILENT_MESSAGE_FLAGS,
-            })
-          })
+          const largeOutputResult = await this.thread.send({
+            content: chunk,
+            flags: SILENT_MESSAGE_FLAGS,
+          }).catch((e: Error) => e)
           if (largeOutputResult instanceof Error) {
             discordLogger.error('Failed to send large output notice:', largeOutputResult)
           }
@@ -2220,9 +2211,8 @@ export class ThreadSessionRuntime {
     if (!content.trim() || this.state?.sentPartIds.has(part.id)) {
       return
     }
-    const sendResult = await errore.tryAsync(() => {
-      return sendThreadMessage(this.thread, content + '\n\n')
-    })
+    const sendResult = await sendThreadMessage(this.thread, content + '\n\n')
+      .catch((e: Error) => e)
     if (sendResult instanceof Error) {
       discordLogger.error(
         `ERROR: Failed to send subtask part ${part.id}:`,
@@ -2676,9 +2666,8 @@ export class ThreadSessionRuntime {
     })()
 
     const chunk = `⬦ ${message} - retrying in ${duration} (attempt #${attempt})`
-    const retryResult = await errore.tryAsync(() => {
-      return this.thread.send({ content: chunk, flags: SILENT_MESSAGE_FLAGS })
-    })
+    const retryResult = await this.thread.send({ content: chunk, flags: SILENT_MESSAGE_FLAGS })
+      .catch((e: Error) => e)
     if (retryResult instanceof Error) {
       discordLogger.error('Failed to send retry notice:', retryResult)
     }
@@ -2740,13 +2729,12 @@ export class ThreadSessionRuntime {
     const RENAME_TIMEOUT_MS = 3000
     const timeoutSignal = AbortSignal.timeout(RENAME_TIMEOUT_MS)
     const renameResult = await Promise.race([
-      errore.tryAsync({
-        try: () => this.thread.setName(desiredName),
-        catch: (e) =>
+      this.thread.setName(desiredName)
+        .catch((e) =>
           new Error('Failed to rename thread from OpenCode title', {
             cause: e,
           }),
-      }),
+        ),
       new Promise<'timeout'>((resolve) => {
         timeoutSignal.addEventListener('abort', () => {
           resolve('timeout')
@@ -2819,9 +2807,8 @@ export class ThreadSessionRuntime {
       ? `${properties.title.trim()}: `
       : ''
     const chunk = `⬦ ${properties.variant}: ${titlePrefix}${toastMessage}`
-    const toastResult = await errore.tryAsync(() => {
-      return this.thread.send({ content: chunk, flags: SILENT_MESSAGE_FLAGS })
-    })
+    const toastResult = await this.thread.send({ content: chunk, flags: SILENT_MESSAGE_FLAGS })
+      .catch((e: Error) => e)
     if (toastResult instanceof Error) {
       discordLogger.error('Failed to send toast notice:', toastResult)
     }
@@ -2913,15 +2900,13 @@ export class ThreadSessionRuntime {
         force: createdNewSession,
       })
 
-      const agentResult = await errore.tryAsync(() => {
-        return resolveValidatedAgentPreference({
-          agent: input.agent,
-          sessionId: session.id,
-          channelId,
-          getClient,
-          directory: this.sdkDirectory,
-        })
-      })
+      const agentResult = await resolveValidatedAgentPreference({
+        agent: input.agent,
+        sessionId: session.id,
+        channelId,
+        getClient,
+        directory: this.sdkDirectory,
+      }).catch((e: Error) => e)
       if (agentResult instanceof Error) {
         await cleanupOnError(`Failed to resolve agent: ${agentResult.message}`)
         return
@@ -2930,7 +2915,7 @@ export class ThreadSessionRuntime {
       const availableAgents = agentResult.agents
 
       const [modelResult, preferredVariant] = await Promise.all([
-        errore.tryAsync(async () => {
+        (async () => {
           if (input.model) {
             const [providerID, ...modelParts] = input.model.split('/')
             const modelID = modelParts.join('/')
@@ -2950,7 +2935,7 @@ export class ThreadSessionRuntime {
             return undefined
           }
           return { providerID: modelInfo.providerID, modelID: modelInfo.modelID }
-        }),
+        })().catch((e: Error) => e),
         getVariantCascade({
           sessionId: session.id,
           channelId,
@@ -2974,9 +2959,8 @@ export class ThreadSessionRuntime {
         if (!preferredVariant) {
           return undefined
         }
-        const providersResponse = await errore.tryAsync(() => {
-          return getClient().provider.list({ directory: this.sdkDirectory })
-        })
+        const providersResponse = await getClient().provider.list({ directory: this.sdkDirectory })
+          .catch((e: Error) => e)
         if (providersResponse instanceof Error || !providersResponse.data) {
           return undefined
         }
@@ -3036,9 +3020,8 @@ export class ThreadSessionRuntime {
         if (!channelId) {
           return undefined
         }
-        const fetched = await errore.tryAsync(() => {
-          return this.thread.guild.channels.fetch(channelId)
-        })
+        const fetched = await this.thread.guild.channels.fetch(channelId)
+          .catch((e: Error) => e)
         if (fetched instanceof Error || !fetched) {
           return undefined
         }
@@ -3082,9 +3065,8 @@ export class ThreadSessionRuntime {
         ...(modelField ? { model: modelField } : {}),
         ...variantField,
       }
-      const promptResult = await errore.tryAsync(() => {
-        return getClient().session.promptAsync(request)
-      })
+      const promptResult = await getClient().session.promptAsync(request)
+        .catch((e: Error) => e)
       if (promptResult instanceof Error || promptResult.error) {
         const errorMessage = promptResult instanceof Error
           ? promptResult.message
@@ -3298,12 +3280,10 @@ export class ThreadSessionRuntime {
     logger.log(
       `[ABORT API] id=${abortId} reason=${reason} sessionId=${sessionId} start`,
     )
-    const abortResult = await errore.tryAsync(() => {
-      return client.session.abort({
-        sessionID: sessionId,
-        directory: this.sdkDirectory,
-      })
-    })
+    const abortResult = await client.session.abort({
+      sessionID: sessionId,
+      directory: this.sdkDirectory,
+    }).catch((e: Error) => e)
     if (!(abortResult instanceof Error)) {
       logger.log(
         `[ABORT API] id=${abortId} reason=${reason} sessionId=${sessionId} success durationMs=${Date.now() - startedAt}`,
@@ -3385,15 +3365,13 @@ export class ThreadSessionRuntime {
 
     let needsIdleWait = false
     const waitSinceTimestamp = Date.now()
-    const abortResult = await errore.tryAsync(() => {
-      return this.dispatchAction(async () => {
-        needsIdleWait = this.isMainSessionBusy()
-        const outcome = this.abortActiveRunInternal({ reason })
-        if (outcome.apiAbortPromise) {
-          void outcome.apiAbortPromise
-        }
-      })
-    })
+    const abortResult = await this.dispatchAction(async () => {
+      needsIdleWait = this.isMainSessionBusy()
+      const outcome = this.abortActiveRunInternal({ reason })
+      if (outcome.apiAbortPromise) {
+        void outcome.apiAbortPromise
+      }
+    }).catch((e: Error) => e)
     if (abortResult instanceof Error) {
       logger.error(`[ABORT WAIT] Failed to abort active run: ${abortResult.message}`)
       return
@@ -3609,15 +3587,13 @@ export class ThreadSessionRuntime {
       force: createdNewSession,
     })
 
-    const earlyAgentResult = await errore.tryAsync(() => {
-      return resolveValidatedAgentPreference({
-        agent: input.agent,
-        sessionId: session.id,
-        channelId,
-        getClient,
-        directory: this.sdkDirectory,
-      })
-    })
+    const earlyAgentResult = await resolveValidatedAgentPreference({
+      agent: input.agent,
+      sessionId: session.id,
+      channelId,
+      getClient,
+      directory: this.sdkDirectory,
+    }).catch((e: Error) => e)
     if (earlyAgentResult instanceof Error) {
       this.stopTyping()
       await sendThreadMessage(
@@ -3633,7 +3609,7 @@ export class ThreadSessionRuntime {
     const earlyAvailableAgents = earlyAgentResult.agents
 
     const [earlyModelResult, preferredVariant] = await Promise.all([
-      errore.tryAsync(async () => {
+      (async () => {
         if (input.model) {
           const [providerID, ...modelParts] = input.model.split('/')
           const modelID = modelParts.join('/')
@@ -3653,7 +3629,7 @@ export class ThreadSessionRuntime {
           return undefined
         }
         return { providerID: modelInfo.providerID, modelID: modelInfo.modelID }
-      }),
+      })().catch((e: Error) => e),
       getVariantCascade({
         sessionId: session.id,
         channelId,
@@ -3688,9 +3664,8 @@ export class ThreadSessionRuntime {
       if (!preferredVariant) {
         return undefined
       }
-      const providersResponse = await errore.tryAsync(() => {
-        return getClient().provider.list({ directory: this.sdkDirectory })
-      })
+      const providersResponse = await getClient().provider.list({ directory: this.sdkDirectory })
+        .catch((e: Error) => e)
       if (providersResponse instanceof Error || !providersResponse.data) {
         return undefined
       }
@@ -3751,9 +3726,8 @@ export class ThreadSessionRuntime {
       if (!channelId) {
         return undefined
       }
-      const fetched = await errore.tryAsync(() => {
-        return this.thread.guild.channels.fetch(channelId)
-      })
+      const fetched = await this.thread.guild.channels.fetch(channelId)
+        .catch((e: Error) => e)
       if (fetched instanceof Error || !fetched) {
         return undefined
       }
@@ -3820,21 +3794,19 @@ export class ThreadSessionRuntime {
         sourceThreadId: input.sourceThreadId,
         repliedMessage: input.repliedMessage,
       })
-      const commandResponse = await errore.tryAsync(() => {
-        return getClient().session.command(
-          {
-            sessionID: session.id,
+      const commandResponse = await getClient().session.command(
+        {
+          sessionID: session.id,
 
-            directory: this.sdkDirectory,
-            command: queuedCommand.name,
-            arguments: queuedCommand.arguments + (discordTag ? `\n${discordTag}` : ''),
-            agent: earlyAgentPreference,
-            model: `${earlyModelParam.providerID}/${earlyModelParam.modelID}`,
-            ...variantField,
-          },
-          { signal: commandSignal },
-        )
-      })
+          directory: this.sdkDirectory,
+          command: queuedCommand.name,
+          arguments: queuedCommand.arguments + (discordTag ? `\n${discordTag}` : ''),
+          agent: earlyAgentPreference,
+          model: `${earlyModelParam.providerID}/${earlyModelParam.modelID}`,
+          ...variantField,
+        },
+        { signal: commandSignal },
+      ).catch((e: Error) => e)
 
       if (commandResponse instanceof Error) {
         const timeoutReason = commandSignal.reason
@@ -3909,26 +3881,24 @@ export class ThreadSessionRuntime {
       return
     }
 
-    const promptResponse = await errore.tryAsync(() => {
-      return getClient().session.promptAsync({
-        sessionID: session.id,
-        directory: this.sdkDirectory,
-        parts,
-        system: getOpencodeSystemMessage({
-          sessionId: session.id,
-          channelId,
-          guildId: this.thread.guildId,
-          threadId: this.thread.id,
-          channelTopic,
-          agents: earlyAvailableAgents,
-          username: this.state?.sessionUsername || input.username,
-          userId: this.state?.sessionUserId || input.userId,
-        }),
-        model: earlyModelParam,
-        agent: earlyAgentPreference,
-        ...variantField,
-      })
-    })
+    const promptResponse = await getClient().session.promptAsync({
+      sessionID: session.id,
+      directory: this.sdkDirectory,
+      parts,
+      system: getOpencodeSystemMessage({
+        sessionId: session.id,
+        channelId,
+        guildId: this.thread.guildId,
+        threadId: this.thread.id,
+        channelTopic,
+        agents: earlyAvailableAgents,
+        username: this.state?.sessionUsername || input.username,
+        userId: this.state?.sessionUserId || input.userId,
+      }),
+      model: earlyModelParam,
+      agent: earlyAgentPreference,
+      ...variantField,
+    }).catch((e: Error) => e)
 
     if (promptResponse instanceof Error || promptResponse.error) {
       const errorMessage = (() => {
@@ -3985,12 +3955,10 @@ export class ThreadSessionRuntime {
       return null
     }
 
-    const updateResult = await errore.tryAsync(() => {
-      return client.session.update({
-        sessionID: sessionId,
-        permission: rules,
-      })
-    })
+    const updateResult = await client.session.update({
+      sessionID: sessionId,
+      permission: rules,
+    }).catch((e: Error) => e)
     if (updateResult instanceof Error) {
       return updateResult
     }
@@ -4057,12 +4025,10 @@ export class ThreadSessionRuntime {
     let createdNewSession = false
 
     if (sessionId) {
-      const sessionResponse = await errore.tryAsync(() => {
-        return getClient().session.get({
-          sessionID: sessionId,
-          directory: this.sdkDirectory,
-        })
-      })
+      const sessionResponse = await getClient().session.get({
+        sessionID: sessionId,
+        directory: this.sdkDirectory,
+      }).catch((e: Error) => e)
       if (sessionResponse instanceof Error) {
         logger.warn(
           `[ENSURE SESSION] Failed to get existing session ${sessionId}: ${sessionResponse.message}`,
@@ -4092,12 +4058,10 @@ export class ThreadSessionRuntime {
         ...parsePermissionRules(permissions ?? []),
       ]
       // Omit title so OpenCode auto-generates a summary from the conversation
-      const createResult = await errore.tryAsync(() => {
-        return getClient().session.create({
-          directory: this.sdkDirectory,
-          permission: sessionPermissions,
-        })
-      })
+      const createResult = await getClient().session.create({
+        directory: this.sdkDirectory,
+        permission: sessionPermissions,
+      }).catch((e: Error) => e)
       if (createResult instanceof Error) {
         logger.error(
           `[ENSURE SESSION] session.create failed: ${createResult.message}`,
@@ -4141,19 +4105,15 @@ export class ThreadSessionRuntime {
 
     // Store session start source for scheduled tasks
     if (createdNewSession && sessionStartScheduleKind) {
-      const sessionStartSourceResult = await errore.tryAsync({
-        try: () => {
-          return setSessionStartSource({
-            sessionId: session.id,
-            scheduleKind: sessionStartScheduleKind,
-            scheduledTaskId: sessionStartScheduledTaskId,
-          })
-        },
-        catch: (e) =>
-          new Error('Failed to persist scheduled session start source', {
-            cause: e,
-          }),
-      })
+      const sessionStartSourceResult = await setSessionStartSource({
+        sessionId: session.id,
+        scheduleKind: sessionStartScheduleKind,
+        scheduledTaskId: sessionStartScheduledTaskId,
+      }).catch((e) =>
+        new Error('Failed to persist scheduled session start source', {
+          cause: e,
+        }),
+      )
       if (sessionStartSourceResult instanceof Error) {
         logger.warn(
           `[SESSION START SOURCE] ${sessionStartSourceResult.message}`,
@@ -4190,13 +4150,11 @@ export class ThreadSessionRuntime {
     const agentLabel = agent && agent.toLowerCase() !== 'build'
       ? ` ⋅ ${agent}`
       : ''
-    const result = await errore.tryAsync(() => {
-      return sendThreadMessage(
-        this.thread,
-        `*using ${modelLabel}${agentLabel}*`,
-        { flags: SILENT_MESSAGE_FLAGS },
-      )
-    })
+    const result = await sendThreadMessage(
+      this.thread,
+      `*using ${modelLabel}${agentLabel}*`,
+      { flags: SILENT_MESSAGE_FLAGS },
+    ).catch((e: Error) => e)
     if (result instanceof Error) {
       logger.warn(`[SESSION INFO] Failed to send model info: ${result.message}`)
     }
@@ -4240,12 +4198,10 @@ export class ThreadSessionRuntime {
 
     // Run git branch and token fetch in parallel (fast, no external CLI)
     const [branchResult, contextResult] = await Promise.all([
-      errore.tryAsync(() => {
-        return execAsync('git symbolic-ref --short HEAD', {
-          cwd: this.sdkDirectory,
-        })
-      }),
-      errore.tryAsync(async () => {
+      execAsync('git symbolic-ref --short HEAD', {
+        cwd: this.sdkDirectory,
+      }).catch((e: Error) => e),
+      (async () => {
         if (!client || !sessionId) {
           return
         }
@@ -4253,18 +4209,14 @@ export class ThreadSessionRuntime {
         // Fetch final token count from API
         const [messagesResult, providersResult] = await Promise.all([
           tokensUsed === 0
-            ? errore.tryAsync(() => {
-                return client.session.messages({
-                  sessionID: sessionId,
-                  directory: this.sdkDirectory,
-                })
-              })
+            ? client.session.messages({
+                sessionID: sessionId,
+                directory: this.sdkDirectory,
+              }).catch((e: Error) => e)
             : null,
-          errore.tryAsync(() => {
-            return client.provider.list({
-              directory: this.sdkDirectory,
-            })
-          }),
+          client.provider.list({
+            directory: this.sdkDirectory,
+          }).catch((e: Error) => e),
         ])
 
         if (messagesResult && !(messagesResult instanceof Error)) {
@@ -4306,7 +4258,7 @@ export class ThreadSessionRuntime {
           )
           contextInfo = ` ⋅ ${percentage}%`
         }
-      }),
+      })().catch((e: Error) => e),
     ])
     const branchName =
       branchResult instanceof Error ? '' : branchResult.stdout.trim()
@@ -4367,17 +4319,15 @@ export class ThreadSessionRuntime {
     // 1. Abort active run.
     let needsIdleWait = false
     const waitSinceTimestamp = Date.now()
-    const abortResult = await errore.tryAsync(() => {
-      return this.dispatchAction(async () => {
-        needsIdleWait = this.isMainSessionBusy()
-        const outcome = this.abortActiveRunInternal({
-          reason: 'model-change',
-        })
-        if (outcome.apiAbortPromise) {
-          void outcome.apiAbortPromise
-        }
+    const abortResult = await this.dispatchAction(async () => {
+      needsIdleWait = this.isMainSessionBusy()
+      const outcome = this.abortActiveRunInternal({
+        reason: 'model-change',
       })
-    })
+      if (outcome.apiAbortPromise) {
+        void outcome.apiAbortPromise
+      }
+    }).catch((e: Error) => e)
     if (abortResult instanceof Error) {
       logger.error('[RETRY] Failed to abort active run before retry:', abortResult)
       return false

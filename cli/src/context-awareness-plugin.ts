@@ -17,7 +17,6 @@
 
 import type { Plugin } from '@opencode-ai/plugin'
 import crypto from 'node:crypto'
-import * as errore from 'errore'
 import {
   createPluginLogger,
   formatPluginErrorWithStack,
@@ -197,9 +196,8 @@ async function resolveGitState({
 }: {
   directory: string
 }): Promise<GitState | null> {
-  const branchResult = await errore.tryAsync(() => {
-    return execAsync('git symbolic-ref --short HEAD', { cwd: directory })
-  })
+  const branchResult = await execAsync('git symbolic-ref --short HEAD', { cwd: directory })
+    .catch((e: Error) => e)
   if (!(branchResult instanceof Error)) {
     const branch = branchResult.stdout.trim()
     if (branch) {
@@ -212,9 +210,8 @@ async function resolveGitState({
     }
   }
 
-  const shaResult = await errore.tryAsync(() => {
-    return execAsync('git rev-parse --short HEAD', { cwd: directory })
-  })
+  const shaResult = await execAsync('git rev-parse --short HEAD', { cwd: directory })
+    .catch((e: Error) => e)
   if (shaResult instanceof Error) {
     return null
   }
@@ -224,11 +221,9 @@ async function resolveGitState({
     return null
   }
 
-  const superprojectResult = await errore.tryAsync(() => {
-    return execAsync('git rev-parse --show-superproject-working-tree', {
-      cwd: directory,
-    })
-  })
+  const superprojectResult = await execAsync('git rev-parse --show-superproject-working-tree', {
+    cwd: directory,
+  }).catch((e: Error) => e)
   const superproject =
     superprojectResult instanceof Error ? '' : superprojectResult.stdout.trim()
   if (superproject) {
@@ -268,9 +263,8 @@ async function resolveSessionDirectory({
   previousDirectory: string | undefined
 }> {
   const previousDirectory = state.resolvedDirectory
-  const result = await errore.tryAsync(() => {
-    return client.session.get({ sessionID })
-  })
+  const result = await client.session.get({ sessionID })
+    .catch((e: Error) => e)
   if (result instanceof Error || !result.data?.directory) {
     return {
       currentDirectory: previousDirectory || null,
@@ -321,8 +315,7 @@ const contextAwarenessPlugin: Plugin = async ({ directory, serverUrl }) => {
 
   return {
     'chat.message': async (input, output) => {
-      const hookResult = await errore.tryAsync({
-        try: async () => {
+      const hookResult = await (async () => {
           const { sessionID } = input
           const state = getOrCreateSession(sessionID)
 
@@ -361,13 +354,11 @@ const contextAwarenessPlugin: Plugin = async ({ directory, serverUrl }) => {
 
           const messageID = first.messageID
 
-          const latestAssistantMessageResult = await errore.tryAsync(() => {
-            return client.session.messages({
-              sessionID,
-              directory,
-              limit: 20,
-            })
-          })
+          const latestAssistantMessageResult = await client.session.messages({
+            sessionID,
+            directory,
+            limit: 20,
+          }).catch((e: Error) => e)
           const latestAssistantMessage =
             latestAssistantMessageResult instanceof Error
               ? undefined
@@ -450,10 +441,8 @@ const contextAwarenessPlugin: Plugin = async ({ directory, serverUrl }) => {
               synthetic: true,
             })
           }
-        },
-        catch: (error) => {
-          return new Error('context-awareness chat.message hook failed', { cause: error })
-        },
+      })().catch((error) => {
+        return new Error('context-awareness chat.message hook failed', { cause: error })
       })
       if (hookResult instanceof Error) {
         logger.warn(
@@ -466,8 +455,7 @@ const contextAwarenessPlugin: Plugin = async ({ directory, serverUrl }) => {
     // Clean up per-session state when sessions are deleted.
     // Single delete instead of parallel Map/Set deletes.
     event: async ({ event }) => {
-      const cleanupResult = await errore.tryAsync({
-        try: async () => {
+      const cleanupResult = await (async () => {
           if (event.type !== 'session.deleted') {
             return
           }
@@ -476,10 +464,8 @@ const contextAwarenessPlugin: Plugin = async ({ directory, serverUrl }) => {
             return
           }
           sessions.delete(id)
-        },
-        catch: (error) => {
-          return new Error('context-awareness event hook failed', { cause: error })
-        },
+      })().catch((error) => {
+        return new Error('context-awareness event hook failed', { cause: error })
       })
       if (cleanupResult instanceof Error) {
         logger.warn(

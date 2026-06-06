@@ -20,7 +20,7 @@ import { createGoogleGenerativeAI } from '@ai-sdk/google'
 import { createOpenAI } from '@ai-sdk/openai'
 import { Readable } from 'node:stream'
 import prism from 'prism-media'
-import * as errore from 'errore'
+
 import { createLogger, LogPrefix } from './logger.js'
 import {
   ApiKeyMissingError,
@@ -407,15 +407,14 @@ async function runTranscriptionOnce({
     },
   }
 
-  // doGenerate returns PromiseLike, wrap in Promise.resolve for errore compatibility
-  const response = await errore.tryAsync({
-    try: () => Promise.resolve(model.doGenerate(options)),
-    catch: (e) =>
+  // doGenerate returns PromiseLike, wrap in Promise.resolve for .catch compatibility
+  const response = await Promise.resolve(model.doGenerate(options))
+    .catch((e) =>
       new TranscriptionError({
         reason: `API call failed: ${String(e)}`,
         cause: e,
       }),
-  })
+    )
 
   if (response instanceof TranscriptionError) {
     return response

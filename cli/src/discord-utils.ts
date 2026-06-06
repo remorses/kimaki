@@ -25,7 +25,6 @@ import { getChannelDirectory, getThreadWorktree } from './database.js'
 import { limitHeadingDepth } from './limit-heading-depth.js'
 import { unnestCodeBlocksFromLists } from './unnest-code-blocks.js'
 import { createLogger, LogPrefix } from './logger.js'
-import * as errore from 'errore'
 import { store } from './store.js'
 import mime from 'mime'
 import fs from 'node:fs'
@@ -175,11 +174,9 @@ export async function reactToThread({
       return channelId
     }
     // Fetch the thread to get its parent channel ID
-    const threadResult = await errore.tryAsync(() => {
-      return rest.get(Routes.channel(threadId)) as Promise<{
+    const threadResult = await (rest.get(Routes.channel(threadId)) as Promise<{
         parent_id?: string
-      }>
-    })
+      }>).catch((e: Error) => e)
     if (threadResult instanceof Error) {
       discordLogger.warn(
         `Failed to fetch thread ${threadId}:`,
@@ -199,15 +196,13 @@ export async function reactToThread({
 
   // React to the thread starter message in the parent channel.
   // Thread ID equals the starter message ID for threads created from messages.
-  const result = await errore.tryAsync(() => {
-    return rest.put(
-      Routes.channelMessageOwnReaction(
-        parentChannelId,
-        threadId,
-        encodeURIComponent(emoji),
-      ),
-    )
-  })
+  const result = await rest.put(
+    Routes.channelMessageOwnReaction(
+      parentChannelId,
+      threadId,
+      encodeURIComponent(emoji),
+    ),
+  ).catch((e: Error) => e)
   if (result instanceof Error) {
     discordLogger.warn(
       `Failed to react to thread ${threadId} with ${emoji}:`,
@@ -239,8 +234,7 @@ export async function archiveThread({
   })
 
   if (client && sessionId) {
-    const updateResult = await errore.tryAsync({
-      try: async () => {
+    const updateResult = await (async () => {
         const sessionResponse = await client.session.get({
           sessionID: sessionId,
         })
@@ -255,19 +249,13 @@ export async function archiveThread({
           sessionID: sessionId,
           title: newTitle,
         })
-      },
-      catch: (e) => new Error('Failed to update session title', { cause: e }),
-    })
+    })().catch((e) => new Error('Failed to update session title', { cause: e }))
     if (updateResult instanceof Error) {
       discordLogger.warn(`[archive-thread] ${updateResult.message}`)
     }
 
-    const abortResult = await errore.tryAsync({
-      try: async () => {
-        await client.session.abort({ sessionID: sessionId })
-      },
-      catch: (e) => new Error('Failed to abort session', { cause: e }),
-    })
+    const abortResult = await client.session.abort({ sessionID: sessionId })
+      .catch((e) => new Error('Failed to abort session', { cause: e }))
     if (abortResult instanceof Error) {
       discordLogger.warn(`[archive-thread] ${abortResult.message}`)
     }
@@ -738,10 +726,8 @@ export async function resolveProjectDirectoryFromAutocomplete(
   // Last resort: fetch the channel from Discord API to get parentId for threads
   // when the channel isn't cached at all (common with gateway-proxy).
   if (!cachedParentId) {
-    const fetched = await errore.tryAsync({
-      try: () => { return interaction.client.channels.fetch(channelId) },
-      catch: (e) => { return e },
-    })
+    const fetched = await interaction.client.channels.fetch(channelId)
+      .catch((e: Error) => e)
     if (!(fetched instanceof Error) && fetched?.isThread() && fetched.parentId) {
       const parentConfig = await getChannelDirectory(fetched.parentId)
       if (parentConfig) {

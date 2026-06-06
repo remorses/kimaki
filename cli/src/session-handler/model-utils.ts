@@ -138,9 +138,8 @@ export async function getDefaultModel({
   }
 
   // Fetch connected providers to validate any model we return
-  const providersResponse = await errore.tryAsync(() => {
-    return getClient().provider.list({ directory })
-  })
+  const providersResponse = await getClient().provider.list({ directory })
+    .catch((e: Error) => e)
   if (providersResponse instanceof Error) {
     sessionLogger.log(
       `[MODEL] Failed to fetch providers for default model:`,
@@ -163,9 +162,8 @@ export async function getDefaultModel({
   }
 
   // 1. Check OpenCode config.model setting (highest priority after user preference)
-  const configResponse = await errore.tryAsync(() => {
-    return getClient().config.get({ directory })
-  })
+  const configResponse = await getClient().config.get({ directory })
+    .catch((e: Error) => e)
   if (!(configResponse instanceof Error) && configResponse.data?.model) {
     const configModel = parseModelString(configResponse.data.model)
     if (configModel && isModelValid(configModel, connected, providers)) {

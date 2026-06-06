@@ -123,7 +123,7 @@ import {
 } from 'discord.js'
 import fs from 'node:fs'
 import path from 'node:path'
-import * as errore from 'errore'
+
 import dedent from 'string-dedent'
 import { createLogger, formatErrorWithStack, LogPrefix } from './logger.js'
 import { writeHeapSnapshot, startHeapMonitor } from './heap-monitor.js'
@@ -485,10 +485,8 @@ export async function startDiscordBot({
 
       if (message.partial) {
         discordLogger.log(`Fetching partial message ${message.id}`)
-        const fetched = await errore.tryAsync({
-          try: () => message.fetch(),
-          catch: (e) => e,
-        })
+        const fetched = await message.fetch()
+          .catch((e: Error) => e)
         if (fetched instanceof Error) {
           discordLogger.log(
             `Failed to fetch partial message ${message.id}:`,

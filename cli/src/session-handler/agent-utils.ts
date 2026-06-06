@@ -4,7 +4,7 @@
 // instead of throwing. This handles stale agent preferences from CLI send
 // commands or database references to agents that were removed from config.
 
-import * as errore from 'errore'
+
 import {
   getSessionAgent,
   getSessionModel,
@@ -58,9 +58,8 @@ export async function resolveValidatedAgentPreference({
     return { agentPreference: undefined, agents: [] }
   }
 
-  const agentsResponse = await errore.tryAsync(() => {
-    return getClient().app.agents({ directory })
-  })
+  const agentsResponse = await getClient().app.agents({ directory })
+    .catch((e: Error) => e)
   if (agentsResponse instanceof Error) {
     if (agentPreference) {
       throw new Error(`Failed to validate agent "${agentPreference}"`, {

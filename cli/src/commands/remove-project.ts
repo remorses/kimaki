@@ -1,7 +1,7 @@
 // /remove-project command - Remove Discord channels for a project.
 
 import path from 'node:path'
-import * as errore from 'errore'
+
 import type { CommandContext, AutocompleteContext } from './types.js'
 import {
   findChannelsByDirectory,
@@ -45,10 +45,8 @@ export async function handleRemoveProjectCommand({
       channel_id: string
       channel_type: string
     }>) {
-      const channel = await errore.tryAsync({
-        try: () => guild.channels.fetch(channel_id),
-        catch: (e) => e,
-      })
+      const channel = await guild.channels.fetch(channel_id)
+        .catch((e: Error) => e)
 
       if (channel instanceof Error) {
         logger.error(`Failed to fetch channel ${channel_id}:`, channel)
@@ -119,10 +117,8 @@ export async function handleRemoveProjectAutocomplete({
     const projectsInGuild: { directory: string; channelId: string }[] = []
 
     for (const { directory, channel_id } of allChannels) {
-      const channel = await errore.tryAsync({
-        try: () => guild.channels.fetch(channel_id),
-        catch: (e) => e,
-      })
+      const channel = await guild.channels.fetch(channel_id)
+        .catch((e: Error) => e)
       if (channel instanceof Error) {
         // Channel not in this guild, skip
         continue

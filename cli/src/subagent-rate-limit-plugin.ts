@@ -1,7 +1,7 @@
 // OpenCode plugin that aborts task-created subagent sessions after rate limits.
 
 import type { Hooks, Plugin } from '@opencode-ai/plugin'
-import * as errore from 'errore'
+
 import {
   appendToastSessionMarker,
   createPluginLogger,
@@ -182,8 +182,7 @@ export const subagentRateLimitPlugin: Plugin = async ({ serverUrl, directory }) 
       }
 
       subagent.aborting = true
-      const abortResult = await errore.tryAsync({
-        try: async () => {
+      const abortResult = await (async () => {
           await client.session.abort({ sessionID: eventSessionId, directory })
 
           await client.tui.showToast({
@@ -199,13 +198,12 @@ export const subagentRateLimitPlugin: Plugin = async ({ serverUrl, directory }) 
           logger.info(
             `Aborted subagent ${eventSessionId} after rate limit`,
           )
-        },
-        catch: (error) => {
+        })()
+        .catch((error) => {
           return new Error('Subagent rate-limit abort failed', {
             cause: error,
           })
-        },
-      })
+        })
 
       subagentSessions.delete(eventSessionId)
       if (!(abortResult instanceof Error)) {

@@ -42,9 +42,8 @@ async function fetchAvailableAgents(
   if (getClient instanceof Error) {
     return []
   }
-  const result = await errore.tryAsync(() => {
-    return getClient().app.agents({ directory })
-  })
+  const result = await getClient().app.agents({ directory })
+    .catch((e: Error) => e)
   if (result instanceof Error) {
     return []
   }
@@ -114,9 +113,8 @@ async function getRepliedMessageContext({
     return undefined
   }
 
-  const referencedMessage = await errore.tryAsync(() => {
-    return message.fetchReference()
-  })
+  const referencedMessage = await message.fetchReference()
+    .catch((e: Error) => e)
   if (referencedMessage instanceof Error) {
     logger.warn(
       `[INGRESS] Failed to fetch replied message ${message.reference.messageId} for ${message.id}: ${referencedMessage.message}`,

@@ -9,7 +9,7 @@
 
 import type { Event as OpenCodeEvent, GlobalEvent } from '@opencode-ai/sdk/v2'
 import { createOpencodeClient, type OpencodeClient } from '@opencode-ai/sdk/v2'
-import * as errore from 'errore'
+
 import { createLogger, LogPrefix } from '../logger.js'
 
 const logger = createLogger(LogPrefix.SESSION)
@@ -166,9 +166,8 @@ async function runEventLoop(): Promise<void> {
 
     const client = createGlobalClient(baseUrl)
 
-    const subscribeResult = await errore.tryAsync(() => {
-      return client.global.event({ signal })
-    })
+    const subscribeResult = await client.global.event({ signal })
+      .catch((e: Error) => e)
 
     if (subscribeResult instanceof Error) {
       if (isAbortError(subscribeResult)) {
@@ -190,12 +189,13 @@ async function runEventLoop(): Promise<void> {
     logger.log('[GLOBAL LISTENER] Connected to global event stream')
 
     let receivedAnyEvent = false
-    const iterResult = await errore.tryAsync(async () => {
+    const iterResult = await (async () => {
       for await (const event of events) {
         receivedAnyEvent = true
         dispatchEvent(event)
       }
-    })
+    })()
+      .catch((e: Error) => e)
 
     if (receivedAnyEvent) {
       backoffMs = 500

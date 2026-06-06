@@ -14,7 +14,7 @@ import {
   SILENT_MESSAGE_FLAGS,
 } from '../discord-utils.js'
 import { createLogger, LogPrefix } from '../logger.js'
-import * as errore from 'errore'
+
 
 const logger = createLogger(LogPrefix.SESSION)
 
@@ -144,9 +144,8 @@ export async function handleContextUsageCommand({
 
     // Fetch model context limit from provider API
     let contextLimit: number | undefined
-    const providersResult = await errore.tryAsync(() => {
-      return getClient().provider.list({ directory: workingDirectory })
-    })
+    const providersResult = await getClient().provider.list({ directory: workingDirectory })
+      .catch((e: Error) => e)
     if (providersResult instanceof Error) {
       logger.error(
         '[CONTEXT-USAGE] Failed to fetch provider info:',

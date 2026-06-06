@@ -5,7 +5,6 @@
 import crypto from 'node:crypto'
 import fs from 'node:fs'
 import path from 'node:path'
-import * as errore from 'errore'
 import { getDataDir } from './config.js'
 import { execAsync } from './exec-async.js'
 import { createLogger, LogPrefix } from './logger.js'
@@ -193,13 +192,12 @@ async function readSubmoduleConfigs(
     return []
   }
 
-  const gitmodulesContent = await errore.tryAsync({
-    try: () => fs.promises.readFile(gitmodulesPath, 'utf-8'),
-    catch: (e) =>
+  const gitmodulesContent = await fs.promises.readFile(gitmodulesPath, 'utf-8')
+    .catch((e) =>
       new Error(`Failed to read ${gitmodulesPath}`, {
         cause: e,
       }),
-  })
+    )
   if (gitmodulesContent instanceof Error) {
     return gitmodulesContent
   }
@@ -336,18 +334,15 @@ async function initializeSubmodulesWithLocalReferences({
   for (const planItem of submodulePlan) {
     const commandArgs = buildSubmoduleUpdateCommandArgs(planItem)
     const command = buildGitCommand(commandArgs)
-    const result = await errore.tryAsync({
-      try: () =>
-        execAsync(command, {
-          cwd: worktreeDirectory,
-          timeout: SUBMODULE_INIT_TIMEOUT_MS,
-        }),
-      catch: (e) =>
-        new Error(
-          `git ${commandArgs.join(' ')} failed for ${planItem.path}: ${formatCommandError(e)}`,
-          { cause: e },
-        ),
-    })
+    const result = await execAsync(command, {
+      cwd: worktreeDirectory,
+      timeout: SUBMODULE_INIT_TIMEOUT_MS,
+    }).catch((e) =>
+      new Error(
+        `git ${commandArgs.join(' ')} failed for ${planItem.path}: ${formatCommandError(e)}`,
+        { cause: e },
+      ),
+    )
     if (result instanceof Error) {
       // Non-fatal: broken .gitmodules entries (e.g. path listed but not in tree)
       // should not block worktree creation. Log and continue with remaining submodules.
@@ -461,11 +456,10 @@ async function validateSubmodulePointers(
         return
       }
 
-      const gitFileContentResult = await errore.tryAsync({
-        try: () => fs.promises.readFile(submoduleGitFile, 'utf-8'),
-        catch: (e) =>
+      const gitFileContentResult = await fs.promises.readFile(submoduleGitFile, 'utf-8')
+        .catch((e) =>
           new Error(`Failed to read .git for ${submodulePath}`, { cause: e }),
-      })
+        )
       if (gitFileContentResult instanceof Error) {
         validationIssues.push(
           `${submodulePath}: ${gitFileContentResult.message}`,
@@ -497,15 +491,12 @@ async function validateSubmodulePointers(
     }),
   )
 
-  const submoduleStatusResult = await errore.tryAsync({
-    try: () =>
-      execAsync('git submodule status --recursive', {
-        cwd: directory,
-        timeout: SUBMODULE_INIT_TIMEOUT_MS,
-      }),
-    catch: (e) =>
-      new Error('git submodule status --recursive failed', { cause: e }),
-  })
+  const submoduleStatusResult = await execAsync('git submodule status --recursive', {
+    cwd: directory,
+    timeout: SUBMODULE_INIT_TIMEOUT_MS,
+  }).catch((e) =>
+    new Error('git submodule status --recursive failed', { cause: e }),
+  )
   if (submoduleStatusResult instanceof Error) {
     validationIssues.push(submoduleStatusResult.message)
   }
@@ -592,17 +583,14 @@ export async function createWorktreeWithSubmodules({
   await fs.promises.mkdir(path.dirname(worktreeDir), { recursive: true })
 
   const createCommand = `git worktree add ${JSON.stringify(worktreeDir)} -B ${JSON.stringify(name)} ${JSON.stringify(targetRef)}`
-  const createResult = await errore.tryAsync({
-    try: () =>
-      execAsync(createCommand, {
-        cwd: directory,
-        timeout: SUBMODULE_INIT_TIMEOUT_MS,
-      }),
-    catch: (e) =>
-      new Error(`git worktree add failed: ${formatCommandError(e)}`, {
-        cause: e,
-      }),
-  })
+  const createResult = await execAsync(createCommand, {
+    cwd: directory,
+    timeout: SUBMODULE_INIT_TIMEOUT_MS,
+  }).catch((e) =>
+    new Error(`git worktree add failed: ${formatCommandError(e)}`, {
+      cause: e,
+    }),
+  )
   if (createResult instanceof Error) {
     return createResult
   }
@@ -706,14 +694,10 @@ export async function git(
   args: string,
   opts?: { timeout?: number },
 ): Promise<GitCommandError | string> {
-  const result = await errore.tryAsync({
-    try: () =>
-      execAsync(
-        `git -C "${dir}" ${args}`,
-        opts ? { timeout: opts.timeout } : undefined,
-      ),
-    catch: (e) => new GitCommandError({ command: args, cause: e }),
-  })
+  const result = await execAsync(
+    `git -C "${dir}" ${args}`,
+    opts ? { timeout: opts.timeout } : undefined,
+  ).catch((e) => new GitCommandError({ command: args, cause: e }))
   if (result instanceof Error) {
     return result
   }

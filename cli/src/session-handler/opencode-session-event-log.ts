@@ -5,7 +5,7 @@
 import fs from 'node:fs'
 import path from 'node:path'
 import type { Event as OpenCodeEvent } from '@opencode-ai/sdk/v2'
-import * as errore from 'errore'
+
 import { getDataDir } from '../config.js'
 
 let eventLogDirPromise: Promise<string> | null = null
@@ -97,9 +97,8 @@ export async function appendOpencodeSessionEventLog(
     return null
   }
 
-  const logDirResult = await errore.tryAsync(() => {
-    return resolveEventLogDirectory()
-  })
+  const logDirResult = await resolveEventLogDirectory()
+    .catch((e: Error) => e)
   if (logDirResult instanceof Error) {
     eventLogWriteDisabled = true
     return logDirResult
@@ -118,9 +117,8 @@ export async function appendOpencodeSessionEventLog(
     }),
   )}\n`
 
-  const appendResult = await errore.tryAsync(() => {
-    return fs.promises.appendFile(logFilePath, line, 'utf8')
-  })
+  const appendResult = await fs.promises.appendFile(logFilePath, line, 'utf8')
+    .catch((e: Error) => e)
   if (appendResult instanceof Error) {
     eventLogWriteDisabled = true
     return appendResult
