@@ -8,6 +8,7 @@
 // preserving arrival order without a separate threadIngressQueue.
 
 import type { Message, ThreadChannel } from 'discord.js'
+import { DiscordOperationError, OpenCodeSdkError } from './errors.js'
 import type { DiscordFileAttachment } from './message-formatting.js'
 import type { PreprocessResult } from './session-handler/thread-session-runtime.js'
 import type { AgentInfo, RepliedMessageContext } from './system-message.js'
@@ -42,9 +43,8 @@ async function fetchAvailableAgents(
   if (getClient instanceof Error) {
     return []
   }
-  const result = await errore.tryAsync(() => {
-    return getClient().app.agents({ directory })
-  })
+  const result = await getClient().app.agents({ directory })
+    .catch((e) => new OpenCodeSdkError({ operation: 'app.agents', cause: e }))
   if (result instanceof Error) {
     return []
   }
@@ -114,9 +114,8 @@ async function getRepliedMessageContext({
     return undefined
   }
 
-  const referencedMessage = await errore.tryAsync(() => {
-    return message.fetchReference()
-  })
+  const referencedMessage = await message.fetchReference()
+    .catch((e) => new DiscordOperationError({ operation: 'fetchReference', cause: e }))
   if (referencedMessage instanceof Error) {
     logger.warn(
       `[INGRESS] Failed to fetch replied message ${message.reference.messageId} for ${message.id}: ${referencedMessage.message}`,

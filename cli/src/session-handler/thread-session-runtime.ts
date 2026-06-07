@@ -27,11 +27,14 @@ import {
   initializeOpencodeForDirectory,
   buildSessionPermissions,
   parsePermissionRules,
-  subscribeOpencodeServerLifecycle,
   writeInjectionGuardConfig,
   extractSdkErrorMessage,
 } from '../opencode.js'
 import { isAbortError } from '../utils.js'
+import {
+  registerEventListener,
+  unregisterEventListener,
+} from './global-event-listener.js'
 import { createLogger, LogPrefix } from '../logger.js'
 import {
   sendThreadMessage,
@@ -135,6 +138,11 @@ import {
   matchThinkingValue,
 } from '../thinking-utils.js'
 import { execAsync } from '../worktrees.js'
+import {
+  DiscordOperationError,
+  OpenCodeSdkError,
+  FilesystemOperationError,
+} from '../errors.js'
 
 import { notifyError } from '../sentry.js'
 import { createDebouncedProcessFlush } from '../debounced-process-flush.js'
@@ -166,15 +174,6 @@ const shouldLogSessionEvents =
 
 const runtimes = new Map<string, ThreadSessionRuntime>()
 
-subscribeOpencodeServerLifecycle((event) => {
-  if (event.type !== 'started') {
-    return
-  }
-  for (const runtime of runtimes.values()) {
-    runtime.handleSharedServerStarted({ port: event.port })
-  }
-})
-
 export function getRuntime(
   threadId: string,
 ): ThreadSessionRuntime | undefined {
@@ -195,13 +194,10 @@ export function getOrCreateRuntime(
 ): ThreadSessionRuntime {
   const existing = runtimes.get(opts.threadId)
   if (existing) {
-    // Reconcile sdkDirectory: worktree threads transition from pending
-    // (projectDirectory) to ready (worktree path) after runtime creation.
     if (existing.sdkDirectory !== opts.sdkDirectory) {
-      existing.handleDirectoryChanged({
-        oldDirectory: existing.sdkDirectory,
-        newDirectory: opts.sdkDirectory,
-      })
+      logger.warn(
+        `[RUNTIME] Ignoring sdkDirectory change for existing thread ${opts.threadId}: ${existing.sdkDirectory} → ${opts.sdkDirectory}`,
+      )
     }
     return existing
   }
@@ -336,17 +332,15 @@ function delay(ms: number): Promise<void> {
 
 function getTimestampFromSnowflake(snowflake: string): number | undefined {
   const discordEpochMs = 1_420_070_400_000n
-  const snowflakeIdResult = errore.try({
-    try: () => {
+  const snowflakeIdResult = errore.try(
+    () => {
       return BigInt(snowflake)
     },
-    catch: () => {
+    () => {
       return new Error('Invalid Discord snowflake')
     },
-  })
-  if (snowflakeIdResult instanceof Error) {
-    return undefined
-  }
+  )
+  if (snowflakeIdResult instanceof Error) return undefined
   const timestampBigInt = (snowflakeIdResult >> 22n) + discordEpochMs
   const timestampMs = Number(timestampBigInt)
   if (!Number.isFinite(timestampMs) || timestampMs <= 0) {
@@ -619,22 +613,14 @@ function getWorktreePromptKey(worktree: WorktreeInfo | undefined): string | null
 export class ThreadSessionRuntime {
   readonly threadId: string
   readonly projectDirectory: string
-  // Mutable: worktree threads transition from pending (projectDirectory)
-  // to ready (worktree path) after creation. getOrCreateRuntime reconciles
-  // this on each call so dispatch always uses the current path.
-  sdkDirectory: string
+  readonly sdkDirectory: string
   readonly channelId: string | undefined
   readonly appId: string | undefined
   readonly thread: ThreadChannel
 
   // ── Resource handles (mechanisms, not domain state) ──
 
-  // Reentrancy guard for startEventListener (not domain state —
-  // just prevents calling the async loop twice).
-  private listenerLoopRunning = false
-
-  // Set to true by dispose(). Guards against queued work running after cleanup
-  // and lets dispatchAction/startEventListener bail out early.
+  // Set to true by dispose(). Guards against queued work running after cleanup.
   private disposed = false
 
   // Typing indicator scheduler handles.
@@ -683,6 +669,7 @@ export class ThreadSessionRuntime {
   private persistEventBufferDebounced: ReturnType<
     typeof createDebouncedProcessFlush
   >
+  private readonly sentPartIdsBootstrap: Promise<void>
 
   // Serialized action queue for per-thread runtime transitions.
   // Ingress and event handling both flow through this queue to keep ordering
@@ -705,10 +692,21 @@ export class ThreadSessionRuntime {
     this.channelId = opts.channelId
     this.appId = opts.appId
     this.thread = opts.thread
-    threadState.updateThread(this.threadId, (t) => ({
-      ...t,
-      listenerController: new AbortController(),
-    }))
+    this.sentPartIdsBootstrap = this.bootstrapSentPartIds().catch((error) => {
+      logger.warn(
+        `[PART BOOTSTRAP] Failed to load sent part ids for thread ${this.threadId}:`,
+        error,
+      )
+    })
+    // Register with the single global SSE listener. Events for this
+    // directory are demuxed and dispatched through our action queue.
+    registerEventListener(this.threadId, (event) => {
+      if (this.disposed) return
+      void this.dispatchAction(async () => {
+        await this.sentPartIdsBootstrap
+        await this.handleEvent(event)
+      })
+    })
     this.persistEventBufferDebounced = createDebouncedProcessFlush({
       waitMs: ThreadSessionRuntime.EVENT_BUFFER_DB_FLUSH_MS,
       callback: async () => {
@@ -748,16 +746,6 @@ export class ThreadSessionRuntime {
 
   getDerivedPhase(): 'idle' | 'running' {
     return this.isMainSessionBusy() ? 'running' : 'idle'
-  }
-
-  /** Whether the listener has been disposed. */
-  private get listenerAborted(): boolean {
-    return this.state?.listenerController?.signal.aborted ?? true
-  }
-
-  /** The listener AbortSignal, used to pass to SDK subscribe calls. */
-  private get listenerSignal(): AbortSignal | undefined {
-    return this.state?.listenerController?.signal
   }
 
   private getLastRuntimeActivityTimestamp({
@@ -845,16 +833,16 @@ export class ThreadSessionRuntime {
     }
 
     const hydratedEvents: EventBufferEntry[] = rows.flatMap((row) => {
-      const eventResult = errore.try({
-        try: () => {
+      const eventResult = errore.try(
+        () => {
           return JSON.parse(row.event_json) as EventBufferEvent
         },
-        catch: (error) => {
+        (error) => {
           return new Error('Failed to parse persisted session event JSON', {
             cause: error,
           })
         },
-      })
+      )
       if (eventResult instanceof Error) {
         logger.warn(
           `[SESSION EVENT DB] Skipping invalid persisted event row for session ${sessionId}: ${eventResult.message}`,
@@ -999,12 +987,7 @@ export class ThreadSessionRuntime {
 
   dispose(): void {
     this.disposed = true
-    this.state?.listenerController?.abort()
-    // waitForEvent loops check listenerAborted and exit naturally.
-    threadState.updateThread(this.threadId, (t) => ({
-      ...t,
-      listenerController: undefined,
-    }))
+    unregisterEventListener(this.threadId)
     void this.persistEventBufferDebounced.dispose()
     this.stopTyping()
 
@@ -1024,68 +1007,6 @@ export class ThreadSessionRuntime {
     // Clean up all pending UI state for this thread (permissions, questions,
     // action buttons, file uploads, html actions).
     cleanupPendingUiForThread(this.thread.id)
-  }
-
-  // Called when sdkDirectory changes (e.g. worktree becomes ready after
-  // /new-worktree in an existing thread). The event listener was subscribed
-  // to the old directory's Instance in opencode — events from the new
-  // directory's Instance won't reach it. We must reconnect the listener
-  // and clear the old session so ensureSession creates a fresh one under
-  // the new Instance.
-  handleDirectoryChanged({
-    oldDirectory,
-    newDirectory,
-  }: {
-    oldDirectory: string
-    newDirectory: string
-  }): void {
-    logger.log(
-      `[LISTENER] sdkDirectory changed for thread ${this.threadId}: ${oldDirectory} → ${newDirectory}`,
-    )
-    this.sdkDirectory = newDirectory
-
-    // Clear cached session — it was created under the old directory's
-    // opencode Instance and can't be reused from the new one.
-    threadState.updateThread(this.threadId, (t) => ({
-      ...t,
-      sessionId: undefined,
-    }))
-
-    // Restart event listener to subscribe under the new directory.
-    const currentController = this.state?.listenerController
-    if (currentController) {
-      currentController.abort(new Error('sdkDirectory changed'))
-      threadState.updateThread(this.threadId, (t) => ({
-        ...t,
-        listenerController: new AbortController(),
-      }))
-      this.listenerLoopRunning = false
-      void this.startEventListener()
-    }
-  }
-
-  handleSharedServerStarted({
-    port,
-  }: {
-    port: number
-  }): void {
-    if (!this.state?.sessionId) {
-      return
-    }
-    const currentController = this.state?.listenerController
-    if (!currentController) {
-      return
-    }
-    logger.log(
-      `[LISTENER] Refreshing listener for thread ${this.threadId} after shared server start on port ${port}`,
-    )
-    currentController.abort(new Error('Shared OpenCode server restarted'))
-    threadState.updateThread(this.threadId, (t) => ({
-      ...t,
-      listenerController: new AbortController(),
-    }))
-    this.listenerLoopRunning = false
-    void this.startEventListener()
   }
 
   private compactTextForEventBuffer(text: string): string {
@@ -1328,7 +1249,7 @@ export class ThreadSessionRuntime {
     const deadline = Date.now() + timeoutMs
 
     while (Date.now() < deadline) {
-      if (this.listenerAborted) {
+      if (this.disposed) {
         return undefined
       }
       const match = this.eventBuffer.find((entry) => {
@@ -1360,122 +1281,6 @@ export class ThreadSessionRuntime {
       }
       return { ...t, sentPartIds: newIds }
     })
-  }
-
-  // ── Event Listener Loop (§7.3) ──────────────────────────────
-  // Persistent event.subscribe loop with exponential backoff.
-  // Reconnects automatically on transient disconnects.
-  // Only killed when listenerController is aborted (dispose/fatal).
-  // Run abort never affects this loop.
-
-  async startEventListener(): Promise<void> {
-    if (this.listenerLoopRunning || this.disposed) {
-      return
-    }
-    this.listenerLoopRunning = true
-
-    // Bootstrap sentPartIds from DB so we don't re-send parts that
-    // were already sent in a previous runtime or before a reconnect.
-    await this.bootstrapSentPartIds()
-
-    let backoffMs = 500
-    const maxBackoffMs = 30_000
-
-    while (!this.listenerAborted) {
-      const signal = this.listenerSignal
-      if (!signal) {
-        return // disposed before we could subscribe
-      }
-      const client = getOpencodeClient(this.projectDirectory)
-      if (!client) {
-        // This is expected during shared-server transitions: the listener can
-        // outlive the current opencode process across cold start, explicit
-        // restart, shutdown, or crash recovery. stopOpencodeServer()/exit clears
-        // the cached per-directory clients immediately, so existing runtimes may
-        // observe a brief no-client window before initialize/restart publishes
-        // the next shared server and repopulates the client cache.
-        logger.warn(
-          `[LISTENER] No OpenCode client for thread ${this.threadId}, retrying in ${backoffMs}ms`,
-        )
-        await delay(backoffMs)
-        backoffMs = Math.min(backoffMs * 2, maxBackoffMs)
-        continue
-      }
-      const subscribeResult = await errore.tryAsync(() => {
-        return client.event.subscribe(
-          { directory: this.sdkDirectory },
-          { signal },
-        )
-      })
-
-      if (subscribeResult instanceof Error) {
-        if (isAbortError(subscribeResult)) {
-          return // disposed
-        }
-        const subscribeError: Error = subscribeResult
-        logger.warn(
-          `[LISTENER] Subscribe failed for thread ${this.threadId}, retrying in ${backoffMs}ms:`,
-          subscribeError.message,
-        )
-        await delay(backoffMs)
-        backoffMs = Math.min(backoffMs * 2, maxBackoffMs)
-        continue
-      }
-
-      const events = subscribeResult.stream
-
-      logger.log(
-        `[LISTENER] Connected to event stream for thread ${this.threadId}`,
-      )
-
-      // Re-bootstrap sentPartIds on reconnect to prevent re-sending
-      // parts that arrived while we were disconnected.
-      await this.bootstrapSentPartIds()
-
-      let receivedAnyEvent = false
-      const iterResult = await errore.tryAsync(async () => {
-        for await (const event of events) {
-          receivedAnyEvent = true
-          // Each event is dispatched through the serialized action queue
-          // to prevent interleaving mutations from concurrent events.
-          await this.dispatchAction(() => {
-            return this.handleEvent(event)
-          })
-        }
-      })
-
-      // Only reset backoff when the stream was alive long enough to
-      // deliver at least one event. If it closes immediately the server
-      // is likely not ready; keep escalating backoff to avoid a tight
-      // reconnect loop (GitHub issue #126).
-      if (receivedAnyEvent) {
-        backoffMs = 500
-      }
-
-      if (iterResult instanceof Error) {
-        if (isAbortError(iterResult)) {
-          return // disposed
-        }
-        const iterError: Error = iterResult
-        logger.warn(
-          `[LISTENER] Stream broke for thread ${this.threadId}, reconnecting in ${backoffMs}ms:`,
-          iterError.message,
-        )
-        await delay(backoffMs)
-        backoffMs = Math.min(backoffMs * 2, maxBackoffMs)
-      } else {
-        // Stream completed normally (server closed the connection).
-        // This can happen when the opencode server restarts, the SSE
-        // endpoint times out, or there are no active sessions for this
-        // directory. Without a delay here the loop reconnects immediately,
-        // creating a tight infinite reconnect loop (GitHub issue #126).
-        logger.log(
-          `[LISTENER] Stream ended normally for thread ${this.threadId}, reconnecting in ${backoffMs}ms`,
-        )
-        await delay(backoffMs)
-        backoffMs = Math.min(backoffMs * 2, maxBackoffMs)
-      }
-    }
   }
 
   // ── Session Demux Guard ─────────────────────────────────────
@@ -1620,7 +1425,7 @@ export class ThreadSessionRuntime {
           resolve()
           return
         }
-        const result = await errore.tryAsync(action)
+        const result = await action().catch((e) => new OpenCodeSdkError({ operation: 'dispatchAction', cause: e }))
         if (result instanceof Error) {
           reject(result)
           return
@@ -1645,10 +1450,10 @@ export class ThreadSessionRuntime {
         if (!next) {
           continue
         }
-        // Each queued action already wraps itself with errore.tryAsync
+        // Each queued action already wraps itself with .catch()
         // and calls resolve/reject, so this should not throw. But if it
         // does, the try/finally ensures we don't deadlock.
-        const result = await errore.tryAsync(next)
+        const result = await next().catch((e) => new OpenCodeSdkError({ operation: 'processAction', cause: e }))
         if (result instanceof Error) {
           logger.error('[ACTION QUEUE] Unexpected action failure:', result)
         }
@@ -1697,7 +1502,7 @@ export class ThreadSessionRuntime {
   }
 
   private shouldTypeNow(): boolean {
-    if (this.listenerAborted) {
+    if (this.disposed) {
       return false
     }
     if (this.hasPendingInteractiveUi()) {
@@ -1711,9 +1516,8 @@ export class ThreadSessionRuntime {
   }
 
   private async sendTypingPulse(): Promise<void> {
-    const result = await errore.tryAsync(() => {
-      return this.thread.sendTyping()
-    })
+    const result = await this.thread.sendTyping()
+      .catch((e) => new DiscordOperationError({ operation: 'sendTyping', cause: e }))
     if (result instanceof Error) {
       discordLogger.log(`Failed to send typing: ${result}`)
     }
@@ -1887,9 +1691,8 @@ export class ThreadSessionRuntime {
       return { ...t, sentPartIds: newIds }
     })
 
-    const sendResult = await errore.tryAsync(() => {
-      return sendThreadMessage(this.thread, content)
-    })
+    const sendResult = await sendThreadMessage(this.thread, content)
+      .catch((e) => new DiscordOperationError({ operation: 'sendMessage', cause: e }))
     if (sendResult instanceof Error) {
       threadState.updateThread(this.threadId, (t) => {
         const newIds = new Set(t.sentPartIds)
@@ -2010,9 +1813,8 @@ export class ThreadSessionRuntime {
     if (!client) {
       return
     }
-    const providersResponse = await errore.tryAsync(() => {
-      return client.provider.list({ directory: this.sdkDirectory })
-    })
+    const providersResponse = await client.provider.list({ directory: this.sdkDirectory })
+      .catch((e) => new OpenCodeSdkError({ operation: 'provider.list', cause: e }))
     if (providersResponse instanceof Error) {
       logger.error(
         'Failed to fetch provider info for context limit:',
@@ -2155,9 +1957,8 @@ export class ThreadSessionRuntime {
     }
     this.lastDisplayedContextPercentage = thresholdCrossed
     const chunk = `⬦ context usage ${currentPercentage}%`
-    const sendResult = await errore.tryAsync(() => {
-      return this.thread.send({ content: chunk, flags: SILENT_MESSAGE_FLAGS })
-    })
+    const sendResult = await this.thread.send({ content: chunk, flags: SILENT_MESSAGE_FLAGS })
+      .catch((e) => new DiscordOperationError({ operation: 'sendMessage', cause: e }))
     if (sendResult instanceof Error) {
       discordLogger.error('Failed to send context usage notice:', sendResult)
     }
@@ -2220,9 +2021,8 @@ export class ThreadSessionRuntime {
               newIds.add(part.id)
               return { ...t, sentPartIds: newIds }
             })
-            const sendResult = await errore.tryAsync(() => {
-              return sendThreadMessage(this.thread, taskDisplay + '\n\n')
-            })
+            const sendResult = await sendThreadMessage(this.thread, taskDisplay + '\n\n')
+              .catch((e) => new DiscordOperationError({ operation: 'sendMessage', cause: e }))
             if (sendResult instanceof Error) {
               threadState.updateThread(this.threadId, (t) => {
                 const newIds = new Set(t.sentPartIds)
@@ -2272,15 +2072,13 @@ export class ThreadSessionRuntime {
             )
             return
           }
-          const showResult = await errore.tryAsync(() => {
-            return showActionButtons({
-              thread: this.thread,
-              sessionId: request.sessionId,
-              directory: request.directory,
-              buttons: request.buttons,
-              silent: this.getQueueLength() > 0,
-            })
-          })
+          const showResult = await showActionButtons({
+            thread: this.thread,
+            sessionId: request.sessionId,
+            directory: request.directory,
+            buttons: request.buttons,
+            silent: this.getQueueLength() > 0,
+          }).catch((e) => new DiscordOperationError({ operation: 'showActionButtons', cause: e }))
           if (showResult instanceof Error) {
             logger.error(
               '[ACTION] Failed to show action buttons:',
@@ -2353,12 +2151,10 @@ export class ThreadSessionRuntime {
             return ` (${pct.toFixed(1)}%)`
           })()
           const chunk = `⬦ ${part.tool} returned ${formattedTokens} tokens${percentageSuffix}`
-          const largeOutputResult = await errore.tryAsync(() => {
-            return this.thread.send({
-              content: chunk,
-              flags: SILENT_MESSAGE_FLAGS,
-            })
-          })
+          const largeOutputResult = await this.thread.send({
+            content: chunk,
+            flags: SILENT_MESSAGE_FLAGS,
+          }).catch((e) => new DiscordOperationError({ operation: 'sendMessage', cause: e }))
           if (largeOutputResult instanceof Error) {
             discordLogger.error('Failed to send large output notice:', largeOutputResult)
           }
@@ -2418,9 +2214,8 @@ export class ThreadSessionRuntime {
     if (!content.trim() || this.state?.sentPartIds.has(part.id)) {
       return
     }
-    const sendResult = await errore.tryAsync(() => {
-      return sendThreadMessage(this.thread, content + '\n\n')
-    })
+    const sendResult = await sendThreadMessage(this.thread, content + '\n\n')
+      .catch((e) => new DiscordOperationError({ operation: 'sendMessage', cause: e }))
     if (sendResult instanceof Error) {
       discordLogger.error(
         `ERROR: Failed to send subtask part ${part.id}:`,
@@ -2799,7 +2594,7 @@ export class ThreadSessionRuntime {
   }: {
     sessionId: string
   }): Promise<void> {
-    if (this.listenerAborted) {
+    if (this.disposed) {
       return
     }
     if (this.state?.sessionId !== sessionId) {
@@ -2874,9 +2669,8 @@ export class ThreadSessionRuntime {
     })()
 
     const chunk = `⬦ ${message} - retrying in ${duration} (attempt #${attempt})`
-    const retryResult = await errore.tryAsync(() => {
-      return this.thread.send({ content: chunk, flags: SILENT_MESSAGE_FLAGS })
-    })
+    const retryResult = await this.thread.send({ content: chunk, flags: SILENT_MESSAGE_FLAGS })
+      .catch((e) => new DiscordOperationError({ operation: 'sendMessage', cause: e }))
     if (retryResult instanceof Error) {
       discordLogger.error('Failed to send retry notice:', retryResult)
     }
@@ -2938,13 +2732,12 @@ export class ThreadSessionRuntime {
     const RENAME_TIMEOUT_MS = 3000
     const timeoutSignal = AbortSignal.timeout(RENAME_TIMEOUT_MS)
     const renameResult = await Promise.race([
-      errore.tryAsync({
-        try: () => this.thread.setName(desiredName),
-        catch: (e) =>
+      this.thread.setName(desiredName)
+        .catch((e) =>
           new Error('Failed to rename thread from OpenCode title', {
             cause: e,
           }),
-      }),
+        ),
       new Promise<'timeout'>((resolve) => {
         timeoutSignal.addEventListener('abort', () => {
           resolve('timeout')
@@ -3017,9 +2810,8 @@ export class ThreadSessionRuntime {
       ? `${properties.title.trim()}: `
       : ''
     const chunk = `⬦ ${properties.variant}: ${titlePrefix}${toastMessage}`
-    const toastResult = await errore.tryAsync(() => {
-      return this.thread.send({ content: chunk, flags: SILENT_MESSAGE_FLAGS })
-    })
+    const toastResult = await this.thread.send({ content: chunk, flags: SILENT_MESSAGE_FLAGS })
+      .catch((e) => new DiscordOperationError({ operation: 'sendMessage', cause: e }))
     if (toastResult instanceof Error) {
       discordLogger.error('Failed to send toast notice:', toastResult)
     }
@@ -3088,14 +2880,6 @@ export class ThreadSessionRuntime {
         return
       }
 
-      // If listener startup happened before initializeOpencodeForDirectory(),
-      // startEventListener may have exited early with "No OpenCode client".
-      // Re-check after ensureSession so first promptAsync on a cold directory
-      // still has an active SSE listener for message parts.
-      if (!this.listenerLoopRunning) {
-        void this.startEventListener()
-      }
-
       // ── Resolve model + agent preferences (mirrors dispatchPrompt) ──
       const channelId = this.channelId
       const resolvedAppId = input.appId
@@ -3119,15 +2903,13 @@ export class ThreadSessionRuntime {
         force: createdNewSession,
       })
 
-      const agentResult = await errore.tryAsync(() => {
-        return resolveValidatedAgentPreference({
-          agent: input.agent,
-          sessionId: session.id,
-          channelId,
-          getClient,
-          directory: this.sdkDirectory,
-        })
-      })
+      const agentResult = await resolveValidatedAgentPreference({
+        agent: input.agent,
+        sessionId: session.id,
+        channelId,
+        getClient,
+        directory: this.sdkDirectory,
+      }).catch((e) => new OpenCodeSdkError({ operation: 'resolveAgent', cause: e }))
       if (agentResult instanceof Error) {
         await cleanupOnError(`Failed to resolve agent: ${agentResult.message}`)
         return
@@ -3136,7 +2918,7 @@ export class ThreadSessionRuntime {
       const availableAgents = agentResult.agents
 
       const [modelResult, preferredVariant] = await Promise.all([
-        errore.tryAsync(async () => {
+        (async () => {
           if (input.model) {
             const [providerID, ...modelParts] = input.model.split('/')
             const modelID = modelParts.join('/')
@@ -3156,7 +2938,7 @@ export class ThreadSessionRuntime {
             return undefined
           }
           return { providerID: modelInfo.providerID, modelID: modelInfo.modelID }
-        }),
+        })().catch((e) => new OpenCodeSdkError({ operation: 'resolveModelPreference', cause: e })),
         getVariantCascade({
           sessionId: session.id,
           channelId,
@@ -3180,9 +2962,8 @@ export class ThreadSessionRuntime {
         if (!preferredVariant) {
           return undefined
         }
-        const providersResponse = await errore.tryAsync(() => {
-          return getClient().provider.list({ directory: this.sdkDirectory })
-        })
+        const providersResponse = await getClient().provider.list({ directory: this.sdkDirectory })
+          .catch((e) => new OpenCodeSdkError({ operation: 'provider.list', cause: e }))
         if (providersResponse instanceof Error || !providersResponse.data) {
           return undefined
         }
@@ -3242,9 +3023,8 @@ export class ThreadSessionRuntime {
         if (!channelId) {
           return undefined
         }
-        const fetched = await errore.tryAsync(() => {
-          return this.thread.guild.channels.fetch(channelId)
-        })
+        const fetched = await this.thread.guild.channels.fetch(channelId)
+          .catch((e) => new DiscordOperationError({ operation: 'fetchChannel', cause: e }))
         if (fetched instanceof Error || !fetched) {
           return undefined
         }
@@ -3288,9 +3068,8 @@ export class ThreadSessionRuntime {
         ...(modelField ? { model: modelField } : {}),
         ...variantField,
       }
-      const promptResult = await errore.tryAsync(() => {
-        return getClient().session.promptAsync(request)
-      })
+      const promptResult = await getClient().session.promptAsync(request)
+        .catch((e) => new OpenCodeSdkError({ operation: 'session.promptAsync', cause: e }))
       if (promptResult instanceof Error || promptResult.error) {
         const errorMessage = promptResult instanceof Error
           ? promptResult.message
@@ -3358,11 +3137,6 @@ export class ThreadSessionRuntime {
       result = !willDrainNow && position > 0
         ? { queued: true, position }
         : { queued: false }
-
-      // Ensure listener is running
-      if (!this.listenerLoopRunning && this.state?.sessionId) {
-        void this.startEventListener()
-      }
 
       if (this.hasPendingQuestionUi()) {
         this.maybeHandoffQueuedItemForPendingQuestion({
@@ -3509,12 +3283,10 @@ export class ThreadSessionRuntime {
     logger.log(
       `[ABORT API] id=${abortId} reason=${reason} sessionId=${sessionId} start`,
     )
-    const abortResult = await errore.tryAsync(() => {
-      return client.session.abort({
-        sessionID: sessionId,
-        directory: this.sdkDirectory,
-      })
-    })
+    const abortResult = await client.session.abort({
+      sessionID: sessionId,
+      directory: this.sdkDirectory,
+    }).catch((e) => new OpenCodeSdkError({ operation: 'session.abort', cause: e }))
     if (!(abortResult instanceof Error)) {
       logger.log(
         `[ABORT API] id=${abortId} reason=${reason} sessionId=${sessionId} success durationMs=${Date.now() - startedAt}`,
@@ -3596,15 +3368,13 @@ export class ThreadSessionRuntime {
 
     let needsIdleWait = false
     const waitSinceTimestamp = Date.now()
-    const abortResult = await errore.tryAsync(() => {
-      return this.dispatchAction(async () => {
-        needsIdleWait = this.isMainSessionBusy()
-        const outcome = this.abortActiveRunInternal({ reason })
-        if (outcome.apiAbortPromise) {
-          void outcome.apiAbortPromise
-        }
-      })
-    })
+    const abortResult = await this.dispatchAction(async () => {
+      needsIdleWait = this.isMainSessionBusy()
+      const outcome = this.abortActiveRunInternal({ reason })
+      if (outcome.apiAbortPromise) {
+        void outcome.apiAbortPromise
+      }
+    }).catch((e) => new OpenCodeSdkError({ operation: 'abortSession', cause: e }))
     if (abortResult instanceof Error) {
       logger.error(`[ABORT WAIT] Failed to abort active run: ${abortResult.message}`)
       return
@@ -3797,13 +3567,6 @@ export class ThreadSessionRuntime {
       return
     }
 
-    // Ensure listener is running now that we have a valid OpenCode client.
-    // The eager start in enqueueIncoming may have failed if the client
-    // wasn't initialized yet (fresh thread, first message).
-    if (!this.listenerLoopRunning) {
-      void this.startEventListener()
-    }
-
     // ── Resolve model + agent preferences ─────────────────────
     const channelId = this.channelId
     const resolvedAppId = input.appId
@@ -3827,15 +3590,13 @@ export class ThreadSessionRuntime {
       force: createdNewSession,
     })
 
-    const earlyAgentResult = await errore.tryAsync(() => {
-      return resolveValidatedAgentPreference({
-        agent: input.agent,
-        sessionId: session.id,
-        channelId,
-        getClient,
-        directory: this.sdkDirectory,
-      })
-    })
+    const earlyAgentResult = await resolveValidatedAgentPreference({
+      agent: input.agent,
+      sessionId: session.id,
+      channelId,
+      getClient,
+      directory: this.sdkDirectory,
+    }).catch((e) => new OpenCodeSdkError({ operation: 'resolveAgent', cause: e }))
     if (earlyAgentResult instanceof Error) {
       this.stopTyping()
       await sendThreadMessage(
@@ -3851,7 +3612,7 @@ export class ThreadSessionRuntime {
     const earlyAvailableAgents = earlyAgentResult.agents
 
     const [earlyModelResult, preferredVariant] = await Promise.all([
-      errore.tryAsync(async () => {
+      (async () => {
         if (input.model) {
           const [providerID, ...modelParts] = input.model.split('/')
           const modelID = modelParts.join('/')
@@ -3871,7 +3632,7 @@ export class ThreadSessionRuntime {
           return undefined
         }
         return { providerID: modelInfo.providerID, modelID: modelInfo.modelID }
-      }),
+      })().catch((e) => new OpenCodeSdkError({ operation: 'resolveModelPreference', cause: e })),
       getVariantCascade({
         sessionId: session.id,
         channelId,
@@ -3906,9 +3667,8 @@ export class ThreadSessionRuntime {
       if (!preferredVariant) {
         return undefined
       }
-      const providersResponse = await errore.tryAsync(() => {
-        return getClient().provider.list({ directory: this.sdkDirectory })
-      })
+      const providersResponse = await getClient().provider.list({ directory: this.sdkDirectory })
+        .catch((e) => new OpenCodeSdkError({ operation: 'provider.list', cause: e }))
       if (providersResponse instanceof Error || !providersResponse.data) {
         return undefined
       }
@@ -3969,9 +3729,8 @@ export class ThreadSessionRuntime {
       if (!channelId) {
         return undefined
       }
-      const fetched = await errore.tryAsync(() => {
-        return this.thread.guild.channels.fetch(channelId)
-      })
+      const fetched = await this.thread.guild.channels.fetch(channelId)
+        .catch((e) => new DiscordOperationError({ operation: 'fetchChannel', cause: e }))
       if (fetched instanceof Error || !fetched) {
         return undefined
       }
@@ -4038,21 +3797,19 @@ export class ThreadSessionRuntime {
         sourceThreadId: input.sourceThreadId,
         repliedMessage: input.repliedMessage,
       })
-      const commandResponse = await errore.tryAsync(() => {
-        return getClient().session.command(
-          {
-            sessionID: session.id,
+      const commandResponse = await getClient().session.command(
+        {
+          sessionID: session.id,
 
-            directory: this.sdkDirectory,
-            command: queuedCommand.name,
-            arguments: queuedCommand.arguments + (discordTag ? `\n${discordTag}` : ''),
-            agent: earlyAgentPreference,
-            model: `${earlyModelParam.providerID}/${earlyModelParam.modelID}`,
-            ...variantField,
-          },
-          { signal: commandSignal },
-        )
-      })
+          directory: this.sdkDirectory,
+          command: queuedCommand.name,
+          arguments: queuedCommand.arguments + (discordTag ? `\n${discordTag}` : ''),
+          agent: earlyAgentPreference,
+          model: `${earlyModelParam.providerID}/${earlyModelParam.modelID}`,
+          ...variantField,
+        },
+        { signal: commandSignal },
+      ).catch((e) => new OpenCodeSdkError({ operation: 'session.command', cause: e }))
 
       if (commandResponse instanceof Error) {
         const timeoutReason = commandSignal.reason
@@ -4127,32 +3884,28 @@ export class ThreadSessionRuntime {
       return
     }
 
-    const promptResponse = await errore.tryAsync(() => {
-      return getClient().session.promptAsync({
-        sessionID: session.id,
-        directory: this.sdkDirectory,
-        parts,
-        system: getOpencodeSystemMessage({
-          sessionId: session.id,
-          channelId,
-          guildId: this.thread.guildId,
-          threadId: this.thread.id,
-          channelTopic,
-          agents: earlyAvailableAgents,
-          username: this.state?.sessionUsername || input.username,
-          userId: this.state?.sessionUserId || input.userId,
-        }),
-        model: earlyModelParam,
-        agent: earlyAgentPreference,
-        ...variantField,
-      })
-    })
+    const promptResponse = await getClient().session.promptAsync({
+      sessionID: session.id,
+      directory: this.sdkDirectory,
+      parts,
+      system: getOpencodeSystemMessage({
+        sessionId: session.id,
+        channelId,
+        guildId: this.thread.guildId,
+        threadId: this.thread.id,
+        channelTopic,
+        agents: earlyAvailableAgents,
+        username: this.state?.sessionUsername || input.username,
+        userId: this.state?.sessionUserId || input.userId,
+      }),
+      model: earlyModelParam,
+      agent: earlyAgentPreference,
+      ...variantField,
+    }).catch((e) => new OpenCodeSdkError({ operation: 'session.promptAsync', cause: e }))
 
     if (promptResponse instanceof Error || promptResponse.error) {
       const errorMessage = (() => {
-        if (promptResponse instanceof Error) {
-          return promptResponse.message
-        }
+        if (promptResponse instanceof Error) return promptResponse.message
         return parseOpenCodeErrorMessage(promptResponse.error)
       })()
       const errorObject = promptResponse instanceof Error
@@ -4203,15 +3956,11 @@ export class ThreadSessionRuntime {
       return null
     }
 
-    const updateResult = await errore.tryAsync(() => {
-      return client.session.update({
-        sessionID: sessionId,
-        permission: rules,
-      })
-    })
-    if (updateResult instanceof Error) {
-      return updateResult
-    }
+    const updateResult = await client.session.update({
+      sessionID: sessionId,
+      permission: rules,
+    }).catch((e) => new OpenCodeSdkError({ operation: 'session.update', cause: e }))
+    if (updateResult instanceof Error) return updateResult
     if (updateResult.error) {
       return new Error('OpenCode rejected permission update')
     }
@@ -4243,7 +3992,7 @@ export class ThreadSessionRuntime {
         createdNewSession: boolean
       }
   > {
-    const directory = this.projectDirectory
+    const directory = this.sdkDirectory
 
     // Resolve worktree info for server initialization
     const worktreeInfo = await getThreadWorktree(this.thread.id)
@@ -4259,9 +4008,7 @@ export class ThreadSessionRuntime {
       originalRepoDirectory,
       channelId: this.channelId,
     })
-    if (getClientResult instanceof Error) {
-      return getClientResult
-    }
+    if (getClientResult instanceof Error) return getClientResult
     const getClient = getClientResult
 
     // Check thread state for existing session ID
@@ -4275,12 +4022,10 @@ export class ThreadSessionRuntime {
     let createdNewSession = false
 
     if (sessionId) {
-      const sessionResponse = await errore.tryAsync(() => {
-        return getClient().session.get({
-          sessionID: sessionId,
-          directory: this.sdkDirectory,
-        })
-      })
+      const sessionResponse = await getClient().session.get({
+        sessionID: sessionId,
+        directory: this.sdkDirectory,
+      }).catch((e) => new OpenCodeSdkError({ operation: 'session.get', cause: e }))
       if (sessionResponse instanceof Error) {
         logger.warn(
           `[ENSURE SESSION] Failed to get existing session ${sessionId}: ${sessionResponse.message}`,
@@ -4289,7 +4034,7 @@ export class ThreadSessionRuntime {
         session = sessionResponse.data
       } else {
         logger.warn(
-          `[ENSURE SESSION] session.get returned no data for ${sessionId}`,
+          `[ENSURE SESSION] session.get returned no data for ${sessionId}, response=${JSON.stringify(sessionResponse)}`,
         )
       }
     }
@@ -4310,12 +4055,10 @@ export class ThreadSessionRuntime {
         ...parsePermissionRules(permissions ?? []),
       ]
       // Omit title so OpenCode auto-generates a summary from the conversation
-      const createResult = await errore.tryAsync(() => {
-        return getClient().session.create({
-          directory: this.sdkDirectory,
-          permission: sessionPermissions,
-        })
-      })
+      const createResult = await getClient().session.create({
+        directory: this.sdkDirectory,
+        permission: sessionPermissions,
+      }).catch((e) => new OpenCodeSdkError({ operation: 'session.create', cause: e }))
       if (createResult instanceof Error) {
         logger.error(
           `[ENSURE SESSION] session.create failed: ${createResult.message}`,
@@ -4328,7 +4071,7 @@ export class ThreadSessionRuntime {
       session = createResult.data
       if (!session) {
         logger.warn(
-          `[ENSURE SESSION] session.create returned no data, threadId=${this.thread.id}, directory=${this.sdkDirectory}`,
+          `[ENSURE SESSION] session.create returned no data, threadId=${this.thread.id}, directory=${this.sdkDirectory}, response=${JSON.stringify(createResult)}`,
         )
       }
       // Insert DB row immediately so the external-sync poller sees
@@ -4348,7 +4091,7 @@ export class ThreadSessionRuntime {
 
     if (!session) {
       return new Error(
-        `Failed to create or get session: threadId=${this.thread.id}, channelId=${this.channelId}, directory=${directory}, sdkDirectory=${this.sdkDirectory}, existingSessionId=${sessionId ?? 'none'}, createdNewSession=${createdNewSession}`,
+        `Failed to create or get session: threadId=${this.thread.id}, channelId=${this.channelId}, directory=${directory}, sdkDirectory=${this.sdkDirectory}, existingSessionId=${sessionId ?? 'none'}, createdNewSession=${createdNewSession}. session.create returned empty data, check the [ENSURE SESSION] warn log above for the full response body`,
       )
     }
 
@@ -4359,19 +4102,13 @@ export class ThreadSessionRuntime {
 
     // Store session start source for scheduled tasks
     if (createdNewSession && sessionStartScheduleKind) {
-      const sessionStartSourceResult = await errore.tryAsync({
-        try: () => {
-          return setSessionStartSource({
-            sessionId: session.id,
-            scheduleKind: sessionStartScheduleKind,
-            scheduledTaskId: sessionStartScheduledTaskId,
-          })
-        },
-        catch: (e) =>
-          new Error('Failed to persist scheduled session start source', {
-            cause: e,
-          }),
-      })
+      const sessionStartSourceResult = await setSessionStartSource({
+        sessionId: session.id,
+        scheduleKind: sessionStartScheduleKind,
+        scheduledTaskId: sessionStartScheduledTaskId,
+      }).catch((e) =>
+        new OpenCodeSdkError({ operation: 'setSessionStartSource', cause: e }),
+      )
       if (sessionStartSourceResult instanceof Error) {
         logger.warn(
           `[SESSION START SOURCE] ${sessionStartSourceResult.message}`,
@@ -4408,13 +4145,11 @@ export class ThreadSessionRuntime {
     const agentLabel = agent && agent.toLowerCase() !== 'build'
       ? ` ⋅ ${agent}`
       : ''
-    const result = await errore.tryAsync(() => {
-      return sendThreadMessage(
-        this.thread,
-        `*using ${modelLabel}${agentLabel}*`,
-        { flags: SILENT_MESSAGE_FLAGS },
-      )
-    })
+    const result = await sendThreadMessage(
+      this.thread,
+      `*using ${modelLabel}${agentLabel}*`,
+      { flags: SILENT_MESSAGE_FLAGS },
+    ).catch((e) => new DiscordOperationError({ operation: 'sendMessage', cause: e }))
     if (result instanceof Error) {
       logger.warn(`[SESSION INFO] Failed to send model info: ${result.message}`)
     }
@@ -4458,12 +4193,10 @@ export class ThreadSessionRuntime {
 
     // Run git branch and token fetch in parallel (fast, no external CLI)
     const [branchResult, contextResult] = await Promise.all([
-      errore.tryAsync(() => {
-        return execAsync('git symbolic-ref --short HEAD', {
-          cwd: this.sdkDirectory,
-        })
-      }),
-      errore.tryAsync(async () => {
+      execAsync('git symbolic-ref --short HEAD', {
+        cwd: this.sdkDirectory,
+      }).catch((e) => new FilesystemOperationError({ operation: 'gitBranch', cause: e })),
+      (async () => {
         if (!client || !sessionId) {
           return
         }
@@ -4471,18 +4204,14 @@ export class ThreadSessionRuntime {
         // Fetch final token count from API
         const [messagesResult, providersResult] = await Promise.all([
           tokensUsed === 0
-            ? errore.tryAsync(() => {
-                return client.session.messages({
-                  sessionID: sessionId,
-                  directory: this.sdkDirectory,
-                })
-              })
+            ? client.session.messages({
+                sessionID: sessionId,
+                directory: this.sdkDirectory,
+              }).catch((e) => new OpenCodeSdkError({ operation: 'session.messages', cause: e }))
             : null,
-          errore.tryAsync(() => {
-            return client.provider.list({
-              directory: this.sdkDirectory,
-            })
-          }),
+          client.provider.list({
+            directory: this.sdkDirectory,
+          }).catch((e) => new OpenCodeSdkError({ operation: 'provider.list', cause: e })),
         ])
 
         if (messagesResult && !(messagesResult instanceof Error)) {
@@ -4524,7 +4253,7 @@ export class ThreadSessionRuntime {
           )
           contextInfo = ` ⋅ ${percentage}%`
         }
-      }),
+      })().catch((e) => new OpenCodeSdkError({ operation: 'resolveModelPreference', cause: e })),
     ])
     const branchName =
       branchResult instanceof Error ? '' : branchResult.stdout.trim()
@@ -4585,17 +4314,15 @@ export class ThreadSessionRuntime {
     // 1. Abort active run.
     let needsIdleWait = false
     const waitSinceTimestamp = Date.now()
-    const abortResult = await errore.tryAsync(() => {
-      return this.dispatchAction(async () => {
-        needsIdleWait = this.isMainSessionBusy()
-        const outcome = this.abortActiveRunInternal({
-          reason: 'model-change',
-        })
-        if (outcome.apiAbortPromise) {
-          void outcome.apiAbortPromise
-        }
+    const abortResult = await this.dispatchAction(async () => {
+      needsIdleWait = this.isMainSessionBusy()
+      const outcome = this.abortActiveRunInternal({
+        reason: 'model-change',
       })
-    })
+      if (outcome.apiAbortPromise) {
+        void outcome.apiAbortPromise
+      }
+    }).catch((e) => new OpenCodeSdkError({ operation: 'abortSession', cause: e }))
     if (abortResult instanceof Error) {
       logger.error('[RETRY] Failed to abort active run before retry:', abortResult)
       return false
@@ -4612,7 +4339,7 @@ export class ThreadSessionRuntime {
       })
     }
 
-    if (this.listenerAborted) {
+    if (this.disposed) {
       logger.log(`[RETRY] Runtime disposed before retry for thread ${this.threadId}`)
       return false
     }

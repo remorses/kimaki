@@ -16,7 +16,7 @@ async function parseWithGoke(argv: string[]) {
     "cli.command('multioauth anthropic remove <indexOrEmail>', 'Remove stored Anthropic account')",
     "cli.command('multioauth openai list', 'List stored OpenAI accounts')",
     "cli.command('multioauth openai remove <indexOrEmail>', 'Remove stored OpenAI account')",
-    `const result = cli.parse(${JSON.stringify(argv)}, { run: false })`,
+    `const result = await cli.parse(${JSON.stringify(argv)}, { run: false })`,
     'process.stdout.write(JSON.stringify({ args: result.args, options: result.options }))',
   ].join(';')
 

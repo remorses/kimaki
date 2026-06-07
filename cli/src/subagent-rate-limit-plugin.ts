@@ -1,7 +1,9 @@
-// OpenCode plugin that aborts task-created subagent sessions after rate limits.
+// OpenCode plugin that guards task-created subagent sessions:
+// - Auto-rejects permission requests so tasks don't hang waiting for user input
+// - Aborts subagent sessions after rate limits so the parent task can recover
 
 import type { Hooks, Plugin } from '@opencode-ai/plugin'
-import * as errore from 'errore'
+
 import {
   appendToastSessionMarker,
   createPluginLogger,
@@ -138,6 +140,7 @@ export const subagentRateLimitPlugin: Plugin = async ({ serverUrl, directory }) 
   // reliably make REST calls (session.abort silently no-ops) from inside the
   // plugin process. See plugin-opencode-client.ts.
   const client = createPluginClient({ serverUrl, directory })
+  logger.bindClient(client)
 
   const subagentSessions = new Map<string, {
     subagentType?: string
@@ -158,6 +161,47 @@ export const subagentRateLimitPlugin: Plugin = async ({ serverUrl, directory }) 
             subagentType: taskChild.subagentType,
             aborting: false,
           })
+        }
+      }
+
+      // Auto-reject permission requests for subagent sessions.
+      // OpenCode's continue_loop_on_deny only works in the main processor
+      // loop. Task/subtask permissions use Effect.orDie which turns rejections
+      // into fatal defects, crashing the task. We reject immediately so the
+      // task fails fast and returns to the parent, rather than hanging for
+      // the full permission timeout waiting for a user who isn't watching.
+      //
+      // This block runs BEFORE getEventSessionId() because the v1 SDK Event
+      // union doesn't include permission.asked, so getEventSessionId() returns
+      // undefined for these events and would early-return before we can act.
+      const eventType = event.type as string
+      if (eventType === 'permission.asked') {
+        const perm = (event as any).properties as {
+          id: string
+          sessionID: string
+          permission: string
+          patterns: string[]
+        }
+        const subagent = subagentSessions.get(perm.sessionID)
+        if (subagent) {
+          const replyResult = await client.permission.reply({
+            requestID: perm.id,
+            directory,
+            reply: 'reject',
+            message:
+              'This task does not have interactive permission approval. ' +
+              'Work around this restriction or report to the parent task ' +
+              'that you need a different approach.',
+          }).catch((error) => {
+            logger.warn(`Failed to auto-reject subagent permission: ${formatPluginErrorWithStack(error)}`)
+            return error
+          })
+          if (!(replyResult instanceof Error)) {
+            logger.info(
+              `Auto-rejected permission ${perm.id} for subagent ${perm.sessionID} (${perm.permission}: ${perm.patterns.join(', ')})`,
+            )
+          }
+          return
         }
       }
 
@@ -182,8 +226,7 @@ export const subagentRateLimitPlugin: Plugin = async ({ serverUrl, directory }) 
       }
 
       subagent.aborting = true
-      const abortResult = await errore.tryAsync({
-        try: async () => {
+      const abortResult = await (async () => {
           await client.session.abort({ sessionID: eventSessionId, directory })
 
           await client.tui.showToast({
@@ -199,13 +242,12 @@ export const subagentRateLimitPlugin: Plugin = async ({ serverUrl, directory }) 
           logger.info(
             `Aborted subagent ${eventSessionId} after rate limit`,
           )
-        },
-        catch: (error) => {
+        })()
+        .catch((error) => {
           return new Error('Subagent rate-limit abort failed', {
             cause: error,
           })
-        },
-      })
+        })
 
       subagentSessions.delete(eventSessionId)
       if (!(abortResult instanceof Error)) {

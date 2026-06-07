@@ -88,12 +88,14 @@ describe('channel reference permissions', () => {
       --- from: assistant (TestBot)
       *using deterministic-provider/deterministic-v2*
       ⬥ reading referenced channel directory
+      ┣ read *allowed.txt*
       ⬥ channel-reference-read-done
       *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2*
       --- from: user (channel-reference-tester)
       Use <#200000000000001022> CHANNEL_REFERENCE_PERMISSION_MARKER followup
       --- from: assistant (TestBot)
       ⬥ reading referenced channel directory
+      ┣ read *allowed.txt*
       ⬥ channel-reference-read-done
       *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2*"
     `)

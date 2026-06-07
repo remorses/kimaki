@@ -440,7 +440,8 @@ e2eTest('queue advanced: footer emission', () => {
         --- from: assistant (TestBot)
         *using deterministic-provider/deterministic-v2*
         ⬥ running tool
-        ⬥ ok
+        ┣ bash _echo tool-call-footer-test_
+        ⬥ tool call completed
         *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2*"
       `)
 
@@ -510,6 +511,9 @@ e2eTest('queue advanced: footer emission', () => {
         --- from: assistant (TestBot)
         *using deterministic-provider/deterministic-v2*
         ⬥ investigating the issue
+        ┣ bash _echo search-done_
+        ┣ bash _echo read-done_
+        ┣ bash _echo fix-done_
         ⬥ all done, fixed 3 files
         *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2*"
       `)
@@ -582,8 +586,11 @@ e2eTest('queue advanced: footer emission', () => {
         --- from: assistant (TestBot)
         *using deterministic-provider/deterministic-v2*
         ⬥ chain step 1: reading config
+        ┣ bash _echo chain-step-1-output_
         ⬥ chain step 2: analyzing results
+        ┣ bash _echo chain-step-2-output_
         ⬥ chain step 3: applying fix
+        ┣ bash _echo chain-step-3-output_
         ⬥ chain complete: all 3 steps done
         *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2*"
       `)

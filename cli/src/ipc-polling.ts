@@ -4,7 +4,6 @@
 // DB-backed IPC lets the OpenCode plugin request Discord UI interactions.
 
 import * as errore from 'errore'
-import { createTaggedError } from 'errore'
 import type { Client } from 'discord.js'
 import {
   claimPendingIpcRequests,
@@ -22,7 +21,7 @@ const ipcLogger = createLogger(LogPrefix.IPC)
 
 // ── Tagged errors ────────────────────────────────────────────────────────
 
-class IpcDispatchError extends createTaggedError({
+class IpcDispatchError extends errore.createTaggedError({
   name: 'IpcDispatchError',
   message: 'IPC dispatch failed for request $requestId: $reason',
 }) {}
@@ -77,20 +76,20 @@ async function dispatchRequest({
 }) {
   switch (req.type) {
     case 'file_upload': {
-      const parsed = errore.try({
-        try: () =>
+      const parsed = errore.try(
+        () =>
           JSON.parse(req.payload) as {
             prompt?: string
             maxFiles?: number
             directory?: string
           },
-        catch: (e) =>
+        (e) =>
           new IpcDispatchError({
             requestId: req.id,
             reason: 'Invalid payload JSON',
             cause: e,
           }),
-      })
+      )
       if (parsed instanceof Error) {
         await completeIpcRequest({
           id: req.id,
@@ -162,16 +161,16 @@ async function dispatchRequest({
     }
 
     case 'action_buttons': {
-      const parsed = errore.try({
-        try: () =>
+      const parsed = errore.try(
+        () =>
           JSON.parse(req.payload) as { buttons?: unknown; directory?: string },
-        catch: (e) =>
+        (e) =>
           new IpcDispatchError({
             requestId: req.id,
             reason: 'Invalid payload JSON',
             cause: e,
           }),
-      })
+      )
       if (parsed instanceof Error) {
         await completeIpcRequest({
           id: req.id,

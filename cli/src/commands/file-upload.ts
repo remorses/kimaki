@@ -24,7 +24,7 @@ import fs from 'node:fs'
 import path from 'node:path'
 import { createLogger, LogPrefix } from '../logger.js'
 import { notifyError } from '../sentry.js'
-import { NOTIFY_MESSAGE_FLAGS } from '../discord-utils.js'
+import { NOTIFY_MESSAGE_FLAGS, sendThreadMessage } from '../discord-utils.js'
 
 const logger = createLogger(LogPrefix.FILE_UPLOAD)
 
@@ -320,6 +320,14 @@ export async function handleFileUploadModalSubmit(
     })()
 
     await interaction.editReply({ content: summary })
+
+    if (downloadedPaths.length > 0) {
+      const username = interaction.user.globalName || interaction.user.username
+      await sendThreadMessage(
+        context.thread,
+        `» **${username}:** Uploaded ${fileNames.join(', ')}`,
+      )
+    }
 
     resolveContext(context, downloadedPaths)
 

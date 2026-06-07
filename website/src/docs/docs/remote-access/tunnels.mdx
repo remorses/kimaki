@@ -1,0 +1,70 @@
+---
+title: Tunnels
+description: Expose a local dev server to a public URL so you can view it on your phone or another machine.
+icon: lucide:globe
+---
+
+The **`kimaki tunnel`** command exposes a local port as a public HTTPS URL. The user driving the bot from Discord is not at the terminal, so `localhost:3000` is useless to them; a tunnel gives them a real URL to open.
+
+## Basic usage
+
+Wrap your dev server command so the local port is detected automatically:
+
+```bash
+kimaki tunnel -- pnpm dev
+```
+
+Or tunnel an already-running service on a known port:
+
+```bash
+kimaki tunnel --port 3000
+```
+
+```diagram
+  pnpm dev ──▶ tunnel ──▶ https://<id>.kimaki.dev ──▶ open anywhere
+```
+
+## Passing the public URL to your app
+
+`kimaki tunnel` injects **`TRAFORO_URL`** into the child process. Wire your app to that variable so OAuth callbacks, webhook URLs, and absolute links use the public tunnel instead of localhost:
+
+```bash
+# Next.js
+kimaki tunnel -- sh -c 'APP_URL=$TRAFORO_URL exec pnpm dev'
+
+# better-auth
+kimaki tunnel -- sh -c 'BETTER_AUTH_URL=$TRAFORO_URL exec pnpm dev'
+
+# Vite
+kimaki tunnel -- sh -c 'VITE_BASE_URL=$TRAFORO_URL exec pnpm dev'
+```
+
+<Aside>
+<Tip>
+When launching a dev server through `kimaki tunnel -- ...`, the local port is auto-detected from the process output. Only pass `--port` if detection fails.
+</Tip>
+</Aside>
+
+## Options
+
+| Option | Description |
+|---|---|
+| `-p, --port <port>` | Local port to expose (optional when the command output reveals it) |
+| `-t, --tunnel-id [id]` | Custom tunnel ID (use only for services safe to expose publicly; default is random) |
+| `-h, --host [host]` | Local host (default: localhost) |
+| `-k, --kill` | Kill any existing process on the port before starting |
+
+<Aside>
+<Note>
+Use a **random** tunnel ID by default. Only pass `-t` to pick a stable, guessable ID when the service is safe to be publicly discoverable.
+</Note>
+</Aside>
+
+## Running it in the background
+
+Keep the tunnel + dev server alive across commands using a background session manager so you can read logs and grab the URL later:
+
+```bash
+tuistory launch "kimaki tunnel -- pnpm dev" -s myapp-dev
+tuistory read -s myapp-dev   # find the printed tunnel URL
+```

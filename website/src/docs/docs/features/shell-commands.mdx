@@ -1,0 +1,46 @@
+---
+title: Shell Commands
+description: Prefix a Discord message with ! to run a shell command directly in the project directory.
+icon: lucide:square-chevron-right
+---
+
+Prefix any Discord message with **`!`** to run it as a shell command in the project directory, no AI session involved. It's the fastest way to peek at state, run a quick script, or check git status.
+
+## Using the `!` prefix
+
+```diagram
+  "!git status" ──▶ strips "!" ──▶ runs in dir ──▶ output in code block
+```
+
+Type a message starting with `!`. Kimaki strips the `!`, runs the rest as a shell command, posts a `Running ...` placeholder, then edits it with the result:
+
+```
+!ls -la
+```
+
+The reply shows the command, its exit code, and the output in a code block (truncated if very long).
+
+## Where it runs
+
+- **In a thread** with a [worktree](../features/worktrees) that is ready, the command runs in the **worktree directory**.
+- **Otherwise** it runs in the channel's **project directory**.
+
+This means `!` commands always run in the same place the agent is working.
+
+<Aside>
+<Note>
+While a worktree is still being created, `!` commands are skipped so they don't accidentally run in the base directory.
+</Note>
+</Aside>
+
+## The slash command equivalent
+
+`/run-shell-command <command>` does exactly the same thing as the `!` prefix. The `!` prefix is just a shortcut.
+
+## What it's good for
+
+- **`!git status`**, **`!git log --oneline -5`** — quick git checks.
+- **`!ls`**, **`!cat package.json`** — inspect files without spending an agent turn.
+- **`!pnpm test`** — kick off a one-off command directly.
+
+For long-running servers you want to view remotely, use [Tunnels](../remote-access/tunnels) instead.

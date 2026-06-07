@@ -9,7 +9,7 @@ import type { Embed, Message, MessageSnapshot, Poll, TextChannel } from 'discord
 export type DiscordFileAttachment = FilePartInput & {
   sourceUrl?: string
 }
-import * as errore from 'errore'
+
 import { createLogger, LogPrefix } from './logger.js'
 import { FetchError } from './errors.js'
 import { processImage } from './image-utils.js'
@@ -272,10 +272,8 @@ export async function getTextAttachments(message: Message): Promise<string> {
 
   const textContents = await Promise.all(
     textAttachments.map(async (attachment) => {
-      const response = await errore.tryAsync({
-        try: () => fetch(attachment.url),
-        catch: (e) => new FetchError({ url: attachment.url, cause: e }),
-      })
+      const response = await fetch(attachment.url)
+        .catch((e) => new FetchError({ url: attachment.url, cause: e }))
       if (response instanceof Error) {
         return `<attachment filename="${attachment.name}" error="${response.message}" />`
       }
@@ -308,10 +306,8 @@ export async function getFileAttachments(
 
   const results = await Promise.all(
     fileAttachments.map(async (attachment) => {
-      const response = await errore.tryAsync({
-        try: () => fetch(attachment.url),
-        catch: (e) => new FetchError({ url: attachment.url, cause: e }),
-      })
+      const response = await fetch(attachment.url)
+        .catch((e) => new FetchError({ url: attachment.url, cause: e }))
       if (response instanceof Error) {
         logger.error(
           `Error downloading attachment ${attachment.name}:`,

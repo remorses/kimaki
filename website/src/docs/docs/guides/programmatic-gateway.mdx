@@ -26,9 +26,9 @@ When kimaki starts in gateway mode with piped stdout, it emits these events
 in order:
 
 ```diagram
-install_url  →  authorized  →  ready
-                    ↑
-                    │ (user clicks URL and authorizes)
+install_url  ──▶  authorized  ──▶  ready
+                       ▲
+                       │ (user clicks URL and authorizes)
 ```
 
 | Event | Payload | Description |

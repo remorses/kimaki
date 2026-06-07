@@ -17,6 +17,16 @@
 
 import { createOpencodeClient, type OpencodeClient } from '@opencode-ai/sdk/v2'
 
+// Inline auth header construction instead of importing from opencode.ts,
+// because opencode.ts pulls in the full server manager (spawn, store, etc.)
+// which is too heavy for plugin code running inside the opencode server process.
+function getAuthHeaders(): Record<string, string> {
+  const serverPassword = process.env.OPENCODE_SERVER_PASSWORD
+  if (!serverPassword) return {}
+  const username = process.env.OPENCODE_SERVER_USERNAME || 'opencode'
+  return { Authorization: `Basic ${Buffer.from(`${username}:${serverPassword}`).toString('base64')}` }
+}
+
 export function createPluginClient({
   serverUrl,
   directory,
@@ -27,6 +37,7 @@ export function createPluginClient({
   return createOpencodeClient({
     baseUrl: serverUrl.toString().replace(/\/$/, ''),
     directory,
+    headers: getAuthHeaders(),
   })
 }
 

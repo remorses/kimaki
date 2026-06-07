@@ -39,11 +39,11 @@ export function parseFrontmatter({
   const rawFrontmatter = markdown.slice(4, end)
   const body = markdown.slice(end + 5).trim()
 
-  const parsed = errore.try({
-    try: () => YAML.parse(rawFrontmatter),
-    catch: (cause) =>
+  const parsed = errore.try(
+    () => YAML.parse(rawFrontmatter),
+    (cause) =>
       new ForumFrontmatterParseError({ reason: 'yaml parse failed', cause }),
-  })
+  )
 
   if (parsed instanceof Error || !parsed || typeof parsed !== 'object') {
     return { frontmatter: {}, body }

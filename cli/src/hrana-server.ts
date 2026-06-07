@@ -269,15 +269,15 @@ export async function evictExistingInstance({ port }: { port: number }) {
   hranaLogger.log(
     `Evicting existing kimaki process (PID: ${targetPid}) on port ${port}`,
   )
-  const killResult = errore.try({
-    try: () => {
+  const killResult = errore.try(
+    () => {
       process.kill(targetPid, 'SIGTERM')
     },
-    catch: (e) =>
+    (e) =>
       new Error('Failed to send SIGTERM to existing kimaki process', {
         cause: e,
       }),
-  })
+  )
   if (killResult instanceof Error) {
     hranaLogger.log(`Failed to kill PID ${targetPid}: ${killResult.message}`)
     return

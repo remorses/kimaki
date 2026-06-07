@@ -1,0 +1,42 @@
+---
+title: Verbosity
+description: Control how much tool activity Kimaki shows in a thread, from full tool output down to text only.
+icon: lucide:eye
+---
+
+**Verbosity** controls how much of the agent's tool activity appears in a thread. Lower verbosity keeps threads readable; higher verbosity shows everything for debugging.
+
+## The three levels
+
+```diagram
+   tools_and_text      ──▶  shows everything: edits, reads, searches, bash, status
+   text_and_essential  ──▶  text + essential tools (edits, MCP); hides reads  (default)
+   text_only          ──▶  only the agent's text replies; hides all tools
+```
+
+| Level | What it shows |
+|---|---|
+| **Tools and text** (`tools_and_text`) | All output, including every tool execution and status message |
+| **Text and essential tools** (`text_and_essential_tools`) | Text plus essential tools (file edits, custom MCP tools). Hides reads and searches. **Default.** |
+| **Text only** (`text_only`) | Only text responses. Hides all tools and status messages. |
+
+The default, **text and essential tools**, is tuned so you see the edits and meaningful actions without the noise of every file read and grep.
+
+## Setting verbosity
+
+Run **`/verbosity`** in a channel and pick a level from the dropdown. The setting is a **per-channel override** of the global default and **applies immediately**, including to sessions that are already running.
+
+<Aside>
+<Note>
+Verbosity is stored per channel, so different projects can have different levels. The reply shows whether the current value is a channel override or the global default.
+</Note>
+</Aside>
+
+## What "essential tools" means
+
+At the default level, Kimaki shows tool parts that matter for following the work:
+
+- **File edits and writes** (prefixed `┣` or `◼︎` in the thread).
+- **Custom MCP tools** you've configured.
+
+It hides low-signal parts like file reads, searches, thinking, and non-side-effect bash. Bump to **tools and text** when you want to see exactly what the agent is doing step by step.

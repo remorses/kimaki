@@ -20,7 +20,7 @@ import { createGoogleGenerativeAI } from '@ai-sdk/google'
 import { createOpenAI } from '@ai-sdk/openai'
 import { Readable } from 'node:stream'
 import prism from 'prism-media'
-import * as errore from 'errore'
+
 import { createLogger, LogPrefix } from './logger.js'
 import {
   ApiKeyMissingError,
@@ -407,15 +407,14 @@ async function runTranscriptionOnce({
     },
   }
 
-  // doGenerate returns PromiseLike, wrap in Promise.resolve for errore compatibility
-  const response = await errore.tryAsync({
-    try: () => Promise.resolve(model.doGenerate(options)),
-    catch: (e) =>
+  // doGenerate returns PromiseLike, wrap in Promise.resolve for .catch compatibility
+  const response = await Promise.resolve(model.doGenerate(options))
+    .catch((e) =>
       new TranscriptionError({
         reason: `API call failed: ${String(e)}`,
         cause: e,
       }),
-  })
+    )
 
   if (response instanceof TranscriptionError) {
     return response
@@ -437,7 +436,8 @@ export type TranscriptionProvider = 'openai' | 'gemini'
  * context (prompt, session info, tool calling) for better word recognition.
  *
  * OpenAI: must use .chat() to get the Chat Completions API model, because the
- * default callable (Responses API) doesn't support audio file parts.
+ * default callable (Responses API) doesn't support audio file parts. Use the
+ * GA audio model instead of older gpt-4o audio preview snapshots.
  * Gemini: language models natively accept audio in chat.
  */
 export function createTranscriptionModel({
@@ -452,7 +452,7 @@ export function createTranscriptionModel({
 
   if (resolvedProvider === 'openai') {
     const openai = createOpenAI({ apiKey })
-    return openai.chat('gpt-4o-audio-preview')
+    return openai.chat('gpt-audio')
   }
 
   const google = createGoogleGenerativeAI({ apiKey })
@@ -534,17 +534,13 @@ export async function transcribeAudio({
     if (conversionStrategy === 'convert-ogg-to-wav') {
       voiceLogger.log(`Converting ${mediaType} to WAV for OpenAI compatibility`)
       const converted = await convertOggToWav(audioBuffer)
-      if (converted instanceof Error) {
-        return converted
-      }
+      if (converted instanceof Error) return converted
       finalAudioBase64 = converted.toString('base64')
       mediaType = 'audio/wav'
     } else if (conversionStrategy === 'convert-m4a-to-wav') {
       voiceLogger.log(`Converting ${mediaType} to WAV for OpenAI compatibility`)
       const converted = await convertM4aToWav(audioBuffer)
-      if (converted instanceof Error) {
-        return converted
-      }
+      if (converted instanceof Error) return converted
       finalAudioBase64 = converted.toString('base64')
       mediaType = 'audio/wav'
     } else if (conversionStrategy === 'unsupported') {

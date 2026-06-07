@@ -164,6 +164,64 @@ describe('session-normal-completion', () => {
     })).toBe(true)
   })
 
+  test('completion history survives later non-completed duplicate updates', () => {
+    const messageId = 'msg_duplicate_completion'
+    const duplicateEvents: EventBufferEntry[] = [
+      eventEntry({
+        type: 'message.updated',
+        properties: {
+          sessionID: sessionId,
+          info: {
+            id: messageId,
+            sessionID: sessionId,
+            role: 'assistant',
+            time: { created: 1, completed: 2 },
+            parentID: 'msg_user',
+            modelID: 'deterministic-v2',
+            providerID: 'deterministic-provider',
+            mode: 'build',
+            agent: 'build',
+            path: { cwd: '/test', root: '/test' },
+            cost: 0,
+            tokens: {
+              input: 1,
+              output: 1,
+              reasoning: 0,
+              cache: { read: 0, write: 0 },
+            },
+            finish: 'stop',
+          },
+        },
+      }),
+      eventEntry({
+        type: 'message.updated',
+        properties: {
+          sessionID: sessionId,
+          info: {
+            id: messageId,
+            sessionID: sessionId,
+            role: 'assistant',
+            time: { created: 1 },
+            parentID: 'msg_user',
+            modelID: 'deterministic-v2',
+            providerID: 'deterministic-provider',
+            mode: 'build',
+            agent: 'build',
+            path: { cwd: '/test', root: '/test' },
+            cost: 0,
+            finish: 'stop',
+          },
+        },
+      }),
+    ]
+
+    expect(hasAssistantMessageCompletedBefore({
+      events: duplicateEvents,
+      sessionId,
+      messageId,
+    })).toBe(true)
+  })
+
   test('getLatestRunInfo', () => {
     expect(getLatestRunInfo({ events, sessionId })).toEqual({
       model: 'deterministic-v2',

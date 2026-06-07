@@ -325,9 +325,7 @@ async function ensureExternalSessionThread({
       cause: error,
     })
   })
-  if (parentChannel instanceof Error) {
-    return parentChannel
-  }
+  if (parentChannel instanceof Error) return parentChannel
   if (!parentChannel || parentChannel.type !== ChannelType.GuildText) {
     return new Error(`Channel ${channelId} is not a text channel`)
   }
@@ -342,9 +340,7 @@ async function ensureExternalSessionThread({
       cause: error,
     })
   })
-  if (thread instanceof Error) {
-    return thread
-  }
+  if (thread instanceof Error) return thread
 
   await upsertThreadSession({
     threadId: thread.id,

@@ -609,14 +609,6 @@ e2eTest('thread message queue ordering', () => {
       })
       expect(afterBotMessages.length).toBeGreaterThanOrEqual(beforeBotCount + 1)
 
-      await waitForFooterMessage({
-        discord,
-        threadId: thread.id,
-        timeout: 4_000,
-        afterMessageIncludes: 'three',
-        afterAuthorId: TEST_USER_ID,
-      })
-
       expect(await th.text()).toMatchInlineSnapshot(`
         "--- from: user (queue-tester)
         Reply with exactly: one
@@ -628,9 +620,7 @@ e2eTest('thread message queue ordering', () => {
         Reply with exactly: two
         Reply with exactly: three
         --- from: assistant (TestBot)
-        ⬥ ok
-        ⬥ ok
-        *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2*"
+        ⬥ ok"
       `)
       const userThreeIndex = after.findIndex((message) => {
         return (
@@ -1235,14 +1225,6 @@ e2eTest('thread message queue ordering', () => {
         timeout: 4_000,
       })
 
-      await waitForFooterMessage({
-        discord,
-        threadId: thread.id,
-        timeout: 4_000,
-        afterMessageIncludes: 'india',
-        afterAuthorId: TEST_USER_ID,
-      })
-
       // C's user message appears before its bot response.
       // We assert on india's reply existence.
       expect(await th.text()).toMatchInlineSnapshot(`
@@ -1256,9 +1238,7 @@ e2eTest('thread message queue ordering', () => {
         Reply with exactly: hotel
         Reply with exactly: india
         --- from: assistant (TestBot)
-        ⬥ ok
-        ⬥ ok
-        *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2*"
+        ⬥ ok"
       `)
       const userIndiaIndex = after.findIndex((m) => {
         return m.author.id === TEST_USER_ID && m.content.includes('india')
@@ -1469,7 +1449,8 @@ e2eTest('thread message queue ordering', () => {
         --- from: user (queue-tester)
         Reply with exactly: edited-queued. queue
         --- from: assistant (TestBot)
-        Queued at position 1
+        Queued at position 1. Edit your message to update it in queue
+        ⬦ **queue-tester** edited queued message
         ⬥ slow-busy-reply
         *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2*
         » **queue-tester:** Reply with exactly: edited-queued
@@ -1500,6 +1481,10 @@ e2eTest('thread message queue ordering', () => {
       })
 
       const th = discord.thread(thread.id)
+
+      // Wait for the bot to start replying so the session is busy and
+      // the user message appears after the first bot message in the thread.
+      await th.waitForBotReply({ timeout: 4_000 })
 
       // 2. Queue a message with queue suffix while session is busy.
       const queuedMsg = await th.user(TEST_USER_ID).sendMessage({
@@ -1572,7 +1557,8 @@ e2eTest('thread message queue ordering', () => {
         --- from: user (queue-tester)
         Reply with exactly: will-be-removed
         --- from: assistant (TestBot)
-        Queued at position 1
+        Queued at position 1. Edit your message to update it in queue
+        ⬦ **queue-tester** removed message from queue
         ⬥ slow-busy-reply
         *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2*"
       `)

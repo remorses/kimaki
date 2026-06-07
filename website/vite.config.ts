@@ -15,4 +15,5 @@ export default defineConfig({
   resolve: {
     dedupe: ['spiceflow', 'spiceflow/react', 'react', 'react-dom', 'react/jsx-runtime', 'react/jsx-dev-runtime'],
   },
+
 })

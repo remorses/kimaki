@@ -5,6 +5,7 @@ import fs from 'node:fs'
 import path from 'node:path'
 import { xdgState } from 'xdg-basedir'
 import * as errore from 'errore'
+import { OpenCodeSdkError } from '../errors.js'
 import { type initializeOpencodeForDirectory } from '../opencode.js'
 import { createLogger, LogPrefix } from '../logger.js'
 import type { ScheduledTaskScheduleKind } from '../database.js'
@@ -85,9 +86,7 @@ function getModelFromProjectConfig({
     }
     return parseModelString(parsed.model)
   })
-  if (result instanceof Error) {
-    return undefined
-  }
+  if (result instanceof Error) return undefined
   return result
 }
 
@@ -125,9 +124,7 @@ export async function getDefaultModel({
   | { providerID: string; modelID: string; source: DefaultModelSource }
   | undefined
 > {
-  if (getClient instanceof Error) {
-    return undefined
-  }
+  if (getClient instanceof Error) return undefined
 
   const configModel = getModelFromProjectConfig({ directory })
   if (configModel) {
@@ -138,9 +135,8 @@ export async function getDefaultModel({
   }
 
   // Fetch connected providers to validate any model we return
-  const providersResponse = await errore.tryAsync(() => {
-    return getClient().provider.list({ directory })
-  })
+  const providersResponse = await getClient().provider.list({ directory })
+    .catch((e) => new OpenCodeSdkError({ operation: 'provider.list', cause: e }))
   if (providersResponse instanceof Error) {
     sessionLogger.log(
       `[MODEL] Failed to fetch providers for default model:`,
@@ -163,9 +159,8 @@ export async function getDefaultModel({
   }
 
   // 1. Check OpenCode config.model setting (highest priority after user preference)
-  const configResponse = await errore.tryAsync(() => {
-    return getClient().config.get({ directory })
-  })
+  const configResponse = await getClient().config.get({ directory })
+    .catch((e) => new OpenCodeSdkError({ operation: 'config.get', cause: e }))
   if (!(configResponse instanceof Error) && configResponse.data?.model) {
     const configModel = parseModelString(configResponse.data.model)
     if (configModel && isModelValid(configModel, connected, providers)) {

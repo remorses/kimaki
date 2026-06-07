@@ -5,7 +5,7 @@
 import { parentPort, threadId } from 'node:worker_threads'
 import { createWriteStream, type WriteStream } from 'node:fs'
 import path from 'node:path'
-import * as errore from 'errore'
+
 import { Resampler } from '@purinton/resampler'
 import * as prism from 'prism-media'
 import { startGenAiSession } from './genai.js'
@@ -13,6 +13,7 @@ import type { Session } from '@google/genai'
 import { getTools } from './tools.js'
 import { mkdir } from 'node:fs/promises'
 import type { WorkerInMessage, WorkerOutMessage } from './worker-types.js'
+import { FilesystemOperationError } from './errors.js'
 import { createLogger, formatErrorWithStack, LogPrefix } from './logger.js'
 import { initSentry, notifyError } from './sentry.js'
 
@@ -149,10 +150,8 @@ async function createAssistantAudioLogStream(
     channelId,
   )
 
-  const mkdirError = await errore.tryAsync({
-    try: () => mkdir(audioDir, { recursive: true }),
-    catch: (e) => e,
-  })
+  const mkdirError = await mkdir(audioDir, { recursive: true })
+    .catch((e) => new FilesystemOperationError({ operation: 'mkdir', cause: e }))
   if (mkdirError instanceof Error) {
     workerLogger.error(
       `Failed to create audio log directory:`,

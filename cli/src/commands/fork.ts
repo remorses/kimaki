@@ -65,16 +65,16 @@ function parsePersistedEventRows({
   rows: Array<{ event_json: string; timestamp: number; event_index: number; id: number }>
 }) {
   return rows.flatMap((row) => {
-    const parsed = errore.try({
-      try: () => {
+    const parsed = errore.try(
+      () => {
         return JSON.parse(row.event_json)
       },
-      catch: (error) => {
+      (error) => {
         return new Error('Failed to parse persisted event JSON', {
           cause: error,
         })
       },
-    })
+    )
     if (parsed instanceof Error) {
       forkLogger.warn(
         `[fork] Skipping invalid persisted event row ${row.id}: ${parsed.message}`,

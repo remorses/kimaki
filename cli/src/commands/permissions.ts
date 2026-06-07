@@ -54,13 +54,7 @@ async function resumeSessionIfIdleAfterPermission({
   return true
 }
 
-function wildcardMatch({
-  value,
-  pattern,
-}: {
-  value: string
-  pattern: string
-}): boolean {
+function wildcardMatch({ value, pattern }: { value: string; pattern: string }): boolean {
   let escapedPattern = pattern
     .replace(/[.+^${}()|[\]\\]/g, '\\$&')
     .replace(/\*/g, '.*')
@@ -111,30 +105,8 @@ type PendingPermissionContext = {
 
 // Store pending permission contexts by hash.
 // TTL prevents unbounded growth if user never clicks a permission button.
-// Configurable via --permission-timeout-minutes CLI flag or KIMAKI_PERMISSION_TIMEOUT_MINUTES env var.
-function getTtlMs(): number {
-  const envRaw = process.env['KIMAKI_PERMISSION_TIMEOUT_MINUTES']
-  if (envRaw) {
-    const parsed = Number.parseInt(envRaw, 10)
-    if (Number.isFinite(parsed) && parsed > 0) {
-      return parsed * 60 * 1000
-    }
-  }
-  return getPermissionTimeoutMs()
-}
-
-function formatDuration(ms: number): string {
-  const minutes = Math.round(ms / 60_000)
-  if (minutes >= 1) {
-    return `${minutes} minute${minutes !== 1 ? 's' : ''}`
-  }
-  const seconds = Math.round(ms / 1_000)
-  return `${seconds} second${seconds !== 1 ? 's' : ''}`
-}
-export const pendingPermissionContexts = new Map<
-  string,
-  PendingPermissionContext
->()
+// Configurable via --permission-timeout-minutes CLI flag (default: 10 minutes).
+export const pendingPermissionContexts = new Map<string, PendingPermissionContext>()
 
 // Atomic take: removes context from Map and returns it. Only the first caller
 // (TTL expiry or button click) wins, preventing duplicate permission replies.
@@ -181,6 +153,9 @@ export async function showPermissionButtons({
   // Auto-reject on TTL expiry so the OpenCode session doesn't hang forever
   // waiting for a permission reply that will never come. Uses atomic take
   // so only one of TTL-expiry or button-click can win.
+  // With continue_loop_on_deny enabled in opencode config, the model sees
+  // this as a tool error and continues (tries alternatives or explains).
+  const ttlMs = getPermissionTimeoutMs()
   setTimeout(async () => {
     const ctx = takePendingPermissionContext(contextHash)
     if (!ctx) {
@@ -188,24 +163,28 @@ export async function showPermissionButtons({
     }
     const client = getOpencodeClient(ctx.directory)
     if (client) {
-      const requestIds = ctx.requestIds.length > 0
-        ? ctx.requestIds
-        : [ctx.permission.id]
+      const requestIds = ctx.requestIds.length > 0 ? ctx.requestIds : [ctx.permission.id]
+      const userId = ctx.thread.ownerId
+      const timeoutFeedback =
+        `Permission timed out — the user did not respond. They are probably away and not watching the session. ` +
+        `If this tool call is necessary for the core goal of this session, stop and mention the user with <@${userId}> asking them to grant permission. ` +
+        `If not, continue normally — work around it, skip the tool, or use an alternative approach.`
       await Promise.all(
         requestIds.map((requestId) => {
           return client.permission.reply({
             requestID: requestId,
             directory: ctx.permissionDirectory,
             reply: 'reject',
+            message: timeoutFeedback,
           })
         }),
       ).catch((error) => {
         logger.error('Failed to auto-reject expired permission:', error)
       })
-      const durationStr = formatDuration(ttlMs)
+      const minutes = Math.round(ttlMs / 60_000)
       updatePermissionMessage({
         context: ctx,
-        status: `_Permission expired after ${durationStr} and was rejected._`,
+        status: `_Permission expired after ${minutes} minute${minutes !== 1 ? 's' : ''} and was rejected._`,
       })
     }
   }, ttlMs).unref()
@@ -314,9 +293,10 @@ export async function cancelPendingPermission(threadId: string): Promise<boolean
       continue
     }
 
-    const requestIds = pendingContext.requestIds.length > 0
-      ? pendingContext.requestIds
-      : [pendingContext.permission.id]
+    const requestIds =
+      pendingContext.requestIds.length > 0
+        ? pendingContext.requestIds
+        : [pendingContext.permission.id]
 
     const result = await Promise.all(
       requestIds.map((requestId) => {
@@ -326,13 +306,15 @@ export async function cancelPendingPermission(threadId: string): Promise<boolean
           reply: 'reject',
         })
       }),
-    ).then(() => {
-      return 'ok' as const
-    }).catch((error) => {
-      pendingPermissionContexts.set(pendingContext.contextHash, pendingContext)
-      logger.error('Failed to dismiss pending permission:', error)
-      return 'error' as const
-    })
+    )
+      .then(() => {
+        return 'ok' as const
+      })
+      .catch((error) => {
+        pendingPermissionContexts.set(pendingContext.contextHash, pendingContext)
+        logger.error('Failed to dismiss pending permission:', error)
+        return 'error' as const
+      })
 
     if (result === 'error') {
       continue
@@ -355,9 +337,7 @@ export async function cancelPendingPermission(threadId: string): Promise<boolean
 /**
  * Handle button click for permission.
  */
-export async function handlePermissionButton(
-  interaction: ButtonInteraction,
-): Promise<void> {
+export async function handlePermissionButton(interaction: ButtonInteraction): Promise<void> {
   const customId = interaction.customId
 
   // Extract action and hash from customId (e.g., "permission_once:abc123")
@@ -389,10 +369,7 @@ export async function handlePermissionButton(
     if (!permClient) {
       throw new Error('OpenCode server not found for directory')
     }
-    const requestIds =
-      context.requestIds.length > 0
-        ? context.requestIds
-        : [context.permission.id]
+    const requestIds = context.requestIds.length > 0 ? context.requestIds : [context.permission.id]
     await Promise.all(
       requestIds.map((requestId) => {
         return permClient.permission.reply({
@@ -436,9 +413,7 @@ export async function handlePermissionButton(
       status: resultText,
     })
 
-    logger.log(
-      `Permission ${context.permission.id} ${response} (${requestIds.length} request(s))`,
-    )
+    logger.log(`Permission ${context.permission.id} ${response} (${requestIds.length} request(s))`)
   } catch (error) {
     logger.error('Error handling permission:', error)
     await interaction.editReply({

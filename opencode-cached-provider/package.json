@@ -17,7 +17,7 @@
     "@libsql/client": "^0.17.2",
     "errore": "workspace:^",
     "eventsource-parser": "^3.0.6",
-    "spiceflow": "1.26.0-rsc.1"
+    "spiceflow": "1.26.0-rsc.3"
   },
   "devDependencies": {
     "@opencode-ai/sdk": "^1.15.11",

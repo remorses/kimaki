@@ -1,7 +1,6 @@
-// E2e test for worktree lifecycle: /new-worktree inside an existing thread,
-// then verify the session still works after sdkDirectory switches.
-// Validates that handleDirectoryChanged() reconnects the event listener
-// so events from the worktree Instance reach the runtime (PR #75 fix).
+// E2e test for worktree lifecycle: /new-worktree inside an existing thread
+// creates a separate worktree thread that reuses session context. Each thread
+// stays bound to one directory for its whole lifetime.
 //
 // Uses opencode-deterministic-provider (no real LLM calls).
 // Poll timeouts: 4s max, 100ms interval (except worktree creation which
@@ -29,6 +28,8 @@ import {
   setChannelDirectory,
   setChannelVerbosity,
   setChannelWorktreesEnabled,
+  getThreadSession,
+  getThreadWorktree,
   type VerbosityLevel,
 } from './database.js'
 import { startHranaServer, stopHranaServer } from './hrana-server.js'
@@ -40,7 +41,6 @@ import {
   chooseLockPort,
   cleanupTestSessions,
   waitForBotMessageContaining,
-  waitForBotReplyAfterUserMessage,
 } from './test-utils.js'
 import { execAsync } from './worktrees.js'
 
@@ -50,6 +50,14 @@ const NON_GIT_CHANNEL_ID = '200000000000000903'
 // Unique worktree name per run to avoid collisions with leftover worktrees
 const WORKTREE_SUFFIX = Date.now().toString(36).slice(-6)
 const WORKTREE_NAME = `wt-e2e-${WORKTREE_SUFFIX}`
+
+function normalizeWorktreeLifecycleText(text: string): string {
+  return text
+    .replaceAll(WORKTREE_NAME, 'WORKTREE_NAME')
+    .replace(/ses_[a-zA-Z0-9]+/g, 'ses_TEST')
+    .replace(/<#\d+>/g, '<#THREAD_ID>')
+    .replace(/`[^`\n]*\/worktrees\/[^`\n]*`/g, '`/tmp/worktrees/WORKTREE_NAME`')
+}
 
 function createRunDirectories() {
   const root = path.resolve(process.cwd(), 'tmp', 'worktree-lifecycle-e2e')
@@ -307,7 +315,7 @@ describe('worktree lifecycle', () => {
   }, 5_000)
 
   test(
-    'session responds after /new-worktree switches sdkDirectory in existing thread',
+    '/new-worktree in a session thread forks into a new worktree thread',
     async () => {
       // 1. Send a message to create a thread and establish a session
       await discord.channel(TEXT_CHANNEL_ID).user(TEST_USER_ID).sendMessage({
@@ -323,23 +331,26 @@ describe('worktree lifecycle', () => {
 
       const th = discord.thread(thread.id)
 
-      // Wait for first run to fully complete (footer appears)
+      // Wait for the first run to produce visible assistant output before
+      // running /new-worktree in the same thread.
       await waitForBotMessageContaining({
         discord,
         threadId: thread.id,
         userId: TEST_USER_ID,
-        text: '*project',
-        timeout: 4_000,
+        text: '⬥ ok',
+        afterUserMessageIncludes: 'before-worktree',
+        timeout: 10_000,
       })
 
-      // Capture runtime — should survive the directory switch
+      // Capture source runtime — it should stay bound to the base checkout.
       const runtimeBefore = getRuntime(thread.id)
       expect(runtimeBefore).toBeDefined()
       expect(runtimeBefore!.sdkDirectory).toBe(directories.projectDirectory)
+      const sessionBefore = await getThreadSession(thread.id)
+      expect(sessionBefore).toBeTruthy()
 
-      // 2. Run /new-worktree inside the thread (in-thread flow).
-      // This creates a pending worktree, then background creates the git worktree,
-      // then marks it ready. Next message will pick up the worktree directory.
+      // 2. Run /new-worktree inside the source thread.
+      // This should create a new worktree thread instead of switching this one.
       const { id: interactionId } = await th
         .user(TEST_USER_ID)
         .runSlashCommand({
@@ -352,68 +363,140 @@ describe('worktree lifecycle', () => {
         .channel(thread.id)
         .waitForInteractionAck({ interactionId, timeout: 4_000 })
 
-      // 3. Wait for worktree to become ready — the background creation
-      // edits the starter message to include the branch name.
+      const worktreeThread = await discord.channel(TEXT_CHANNEL_ID).waitForThread({
+        timeout: 4_000,
+        predicate: (t) => {
+          if (!t.name) {
+            return false
+          }
+          return t.id !== thread.id
+            && t.name.startsWith('⬦ worktree: opencode/kimaki-')
+            && t.name.includes(WORKTREE_NAME)
+        },
+      })
+      const worktreeTh = discord.thread(worktreeThread.id)
+
+      // 3. Wait for worktree to become ready in the new thread — the
+      // background creation edits the starter message to include the branch.
       // Git worktree creation involves real git operations, so allow more time.
       await waitForBotMessageContaining({
         discord,
-        threadId: thread.id,
+        threadId: worktreeThread.id,
         userId: TEST_USER_ID,
         text: 'Branch:',
         timeout: 10_000,
       })
 
-      // 4. Send a message after the worktree is ready.
-      // Without handleDirectoryChanged (PR #75), the event listener is still
-      // subscribed to the old project directory's Instance, so this message
-      // gets processed but the response events never reach the runtime.
-      await th.user(TEST_USER_ID).sendMessage({
-        content: 'Reply with exactly: after-worktree',
+      await waitForBotMessageContaining({
+        discord,
+        threadId: worktreeThread.id,
+        userId: TEST_USER_ID,
+        text: 'Reusing context from',
+        timeout: 10_000,
       })
 
-      // 5. Verify the bot actually responds — this is the core assertion.
-      // If the listener wasn't reconnected, this will time out.
-      await waitForBotReplyAfterUserMessage({
+      const sourceSessionAfterFork = await getThreadSession(thread.id)
+      expect(sourceSessionAfterFork).toBe(sessionBefore)
+      const worktreeSession = await getThreadSession(worktreeThread.id)
+      expect(worktreeSession).toBeTruthy()
+      expect(worktreeSession).not.toBe(sessionBefore)
+      await expect(getThreadWorktree(thread.id)).resolves.toBeUndefined()
+      const worktreeInfo = await getThreadWorktree(worktreeThread.id)
+      expect(worktreeInfo?.status).toBe('ready')
+      expect(worktreeInfo?.worktree_directory).toContain(WORKTREE_NAME)
+
+      const runtimeAfter = getRuntime(thread.id)
+      expect(runtimeAfter).toBe(runtimeBefore)
+      expect(runtimeAfter!.sdkDirectory).toBe(directories.projectDirectory)
+      const worktreeRuntime = getRuntime(worktreeThread.id)
+      expect(worktreeRuntime).toBeDefined()
+      expect(worktreeRuntime!.sdkDirectory).toContain(WORKTREE_NAME)
+      expect(worktreeRuntime!.sdkDirectory).toContain(
+        `${path.sep}worktrees${path.sep}`,
+      )
+
+      // 4. Send messages to both threads. The source continues in the base
+      // checkout, and the new thread runs in the worktree checkout.
+      await worktreeTh.user(TEST_USER_ID).sendMessage({
+        content: 'Reply with exactly: after-worktree-thread',
+      })
+      await th.user(TEST_USER_ID).sendMessage({
+        content: 'Reply with exactly: after-source-thread',
+      })
+
+      await waitForBotMessageContaining({
+        discord,
+        threadId: worktreeThread.id,
+        userId: TEST_USER_ID,
+        text: '⬥ ok',
+        afterUserMessageIncludes: 'after-worktree-thread',
+        timeout: 4_000,
+      })
+      await waitForBotMessageContaining({
         discord,
         threadId: thread.id,
         userId: TEST_USER_ID,
-        userMessageIncludes: 'after-worktree',
+        text: '⬥ ok',
+        afterUserMessageIncludes: 'after-source-thread',
         timeout: 4_000,
       })
 
-      // Wait for the footer to confirm full completion
+      // Wait for footers to confirm full completion in both threads.
+      await waitForBotMessageContaining({
+        discord,
+        threadId: worktreeThread.id,
+        userId: TEST_USER_ID,
+        text: 'deterministic-v2',
+        afterUserMessageIncludes: 'after-worktree-thread',
+        timeout: 4_000,
+      })
       await waitForBotMessageContaining({
         discord,
         threadId: thread.id,
         userId: TEST_USER_ID,
         text: 'deterministic-v2',
-        afterUserMessageIncludes: 'after-worktree',
+        afterUserMessageIncludes: 'after-source-thread',
         timeout: 4_000,
       })
 
-      // Runtime instance should be the same (not recreated)
-      const runtimeAfter = getRuntime(thread.id)
-      expect(runtimeAfter).toBe(runtimeBefore)
+      const sourceText = await th.text()
+      expect(normalizeWorktreeLifecycleText(sourceText)).toMatchInlineSnapshot(`
+        "--- from: user (worktree-tester)
+        Reply with exactly: before-worktree
+        --- from: assistant (TestBot)
+        *using deterministic-provider/deterministic-v2*
+        ⬥ ok
+        Creating worktree in <#THREAD_ID>
+        *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2*
+        --- from: user (worktree-tester)
+        Reply with exactly: after-source-thread
+        --- from: assistant (TestBot)
+        ⬥ ok
+        *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2*"
+      `)
+      expect(sourceText).toContain('Reply with exactly: before-worktree')
+      expect(sourceText).toContain('Reply with exactly: after-source-thread')
+      expect(sourceText).not.toContain('Worktree:')
+      expect((sourceText.match(/⬥ ok/g) || []).length).toBe(2)
 
-      // sdkDirectory should now point to the worktree path
-      expect(runtimeAfter!.sdkDirectory).not.toBe(directories.projectDirectory)
-      // Folder name drops the `opencode-kimaki-` prefix (branch name keeps it).
-      // See getManagedWorktreeDirectory in worktrees.ts.
-      expect(runtimeAfter!.sdkDirectory).toContain(WORKTREE_NAME)
-      expect(runtimeAfter!.sdkDirectory).toContain(
-        `${path.sep}worktrees${path.sep}`,
-      )
-
-      // Snapshot uses dynamic worktree name so we verify structure, not exact text
-      const text = await th.text()
-      expect(text).toContain('Reply with exactly: before-worktree')
-      expect(text).toContain('⬥ ok')
-      expect(text).toContain('Worktree:')
-      expect(text).toContain('Branch:')
-      expect(text).toContain('Reply with exactly: after-worktree')
-      // The second "⬥ ok" proves the bot responded after the worktree switch
-      const okCount = (text.match(/⬥ ok/g) || []).length
-      expect(okCount).toBe(2)
+      const worktreeText = await worktreeTh.text()
+      expect(normalizeWorktreeLifecycleText(worktreeText)).toMatchInlineSnapshot(`
+        "--- from: assistant (TestBot)
+        🌳 **Worktree: opencode/kimaki-WORKTREE_NAME**
+        📁 \`/tmp/worktrees/WORKTREE_NAME\`
+        🌿 Branch: \`opencode/kimaki-WORKTREE_NAME\`
+        Reusing context from <#THREAD_ID> in worktree session \`ses_TEST\`.
+        --- from: user (worktree-tester)
+        Reply with exactly: after-worktree-thread
+        --- from: assistant (TestBot)
+        ⬥ ok
+        *WORKTREE_NAME ⋅ opencode/kimaki-WORKTREE_NAME ⋅ Ns ⋅ N% ⋅ deterministic-v2*"
+      `)
+      expect(worktreeText).toContain('Worktree:')
+      expect(worktreeText).toContain('Branch:')
+      expect(worktreeText).toContain('Reusing context from')
+      expect(worktreeText).toContain('Reply with exactly: after-worktree-thread')
+      expect(worktreeText).toContain('⬥ ok')
     },
     30_000,
   )
@@ -434,11 +517,12 @@ describe('worktree lifecycle', () => {
 
       const th = discord.thread(thread.id)
 
-      await waitForBotReplyAfterUserMessage({
+      await waitForBotMessageContaining({
         discord,
         threadId: thread.id,
         userId: TEST_USER_ID,
-        userMessageIncludes: 'non-git-first',
+        text: '⬥ ok',
+        afterUserMessageIncludes: 'non-git-first',
         timeout: 4_000,
       })
 
@@ -470,10 +554,11 @@ describe('worktree lifecycle', () => {
         Reply with exactly: non-git-first
         --- from: assistant (TestBot)
         *using deterministic-provider/deterministic-v2*
+        ⬥ ok
         --- from: user (worktree-tester)
         Reply with exactly: non-git-second
         --- from: assistant (TestBot)
-        ⬥ ok
+        *non-git-project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2*
         ⬥ ok"
       `)
       expect(text).toContain('Reply with exactly: non-git-first')

@@ -39,7 +39,7 @@ import {
 } from './discord-utils.js'
 import { showApiKeyRequiredButton } from './commands/gemini-apikey.js'
 import { transcribeAudio, type TranscriptionResult } from './voice.js'
-import { FetchError } from './errors.js'
+import { DiscordOperationError, FetchError } from './errors.js'
 import { store } from './store.js'
 import {
   getVoiceAttachmentMatchReason,
@@ -264,9 +264,7 @@ export async function setupVoiceHandling({
         if (!params.error) {
           return undefined
         }
-        if (params.error instanceof Error) {
-          return params.error.message
-        }
+        if (params.error instanceof Error) return params.error.message
         return String(params.error)
       })()
 
@@ -539,13 +537,12 @@ export async function processVoiceAttachment({
     if (isNewThread) {
       const threadName = result.transcription.replace(/\s+/g, ' ').trim().slice(0, 80)
       if (threadName) {
-        const renameResult = await errore.tryAsync({
-          try: () => thread.setName(threadName),
-          catch: (e) =>
+        const renameResult = await thread.setName(threadName)
+          .catch((e) =>
             new Error('Failed to update thread name from deterministic transcription', {
               cause: e,
             }),
-        })
+          )
         if (renameResult instanceof Error) {
           voiceLogger.log(`Could not update thread name:`, renameResult.message)
         }
@@ -558,10 +555,8 @@ export async function processVoiceAttachment({
     return result
   }
 
-  const audioResponse = await errore.tryAsync({
-    try: () => fetch(audioAttachment.url),
-    catch: (e) => new FetchError({ url: audioAttachment.url, cause: e }),
-  })
+  const audioResponse = await fetch(audioAttachment.url)
+    .catch((e) => new FetchError({ url: audioAttachment.url, cause: e }))
   if (audioResponse instanceof Error) {
     voiceLogger.error(
       `Failed to download audio attachment:`,
@@ -670,10 +665,8 @@ export async function processVoiceAttachment({
     const threadName = text.replace(/\s+/g, ' ').trim().slice(0, 80)
     if (threadName) {
       const renamed = await Promise.race([
-        errore.tryAsync({
-          try: () => thread.setName(threadName),
-          catch: (e) => e,
-        }),
+        thread.setName(threadName)
+          .catch((e) => new DiscordOperationError({ operation: 'renameChannel', cause: e })),
         new Promise<null>((resolve) => {
           setTimeout(() => {
             resolve(null)

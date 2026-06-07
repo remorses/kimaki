@@ -960,6 +960,35 @@ async function showScopeMenu({
 }
 
 /**
+ * If a session is active, also update its model preference and retry.
+ * Returns true if the current request was restarted.
+ */
+export async function applyToCurrentSession({
+  sessionId,
+  thread,
+  modelId,
+  variant,
+}: {
+  sessionId?: string
+  thread?: ThreadChannel
+  modelId: string
+  variant?: string | null
+}): Promise<boolean> {
+  if (!sessionId) {
+    return false
+  }
+  await setSessionModel({ sessionId, modelId, variant })
+  if (!thread) {
+    return false
+  }
+  const runtime = getRuntime(thread.id)
+  if (!runtime) {
+    return false
+  }
+  return runtime.retryLastUserPrompt()
+}
+
+/**
  * Handle the scope select menu interaction.
  * Applies the model to either the channel or globally.
  */
@@ -1005,7 +1034,7 @@ export async function handleModelScopeSelectMenu(
   const variant = context.selectedVariant ?? null
   const variantSuffix = variant ? ` (${variant})` : ''
   const agentTip =
-    '\n_Tip: create [agent .md files](https://kimaki.dev/docs/model-switching) in .opencode/agent/ for one-command model switching_'
+    '\n_Tip: create [agent .md files](https://kimaki.dev/docs/getting-started/model-switching) in .opencode/agent/ for one-command model switching_'
 
   try {
     if (selectedScope === 'session') {
@@ -1018,22 +1047,17 @@ export async function handleModelScopeSelectMenu(
         })
         return
       }
-      await setSessionModel({ sessionId: context.sessionId, modelId, variant })
+      const retried = await applyToCurrentSession({
+        sessionId: context.sessionId,
+        thread: context.thread,
+        modelId,
+        variant,
+      })
+      const retryNote = retried ? '\n_Restarting current request with new model..._' : ''
       modelLogger.log(
         `Set model ${modelId}${variantSuffix} for session ${context.sessionId}`,
       )
 
-      let retried = false
-      if (context.thread) {
-        const runtime = getRuntime(context.thread.id)
-        if (runtime) {
-          retried = await runtime.retryLastUserPrompt()
-        }
-      }
-
-      const retryNote = retried
-        ? '\n_Restarting current request with new model..._'
-        : ''
       await interaction.editReply({
         content: `Model set for this session:\n**${context.providerName}** / **${modelDisplay}**${variantSuffix}\n\`${modelId}\`${retryNote}${agentTip}`,
         flags: MessageFlags.SuppressEmbeds,
@@ -1050,24 +1074,38 @@ export async function handleModelScopeSelectMenu(
       }
       await setGlobalModel({ appId: context.appId, modelId, variant })
       await setChannelModel({ channelId: context.channelId, modelId, variant })
+      const retried = await applyToCurrentSession({
+        sessionId: context.sessionId,
+        thread: context.thread,
+        modelId,
+        variant,
+      })
+      const retryNote = retried ? '\n_Restarting current request with new model..._' : ''
       modelLogger.log(
         `Set global model ${modelId}${variantSuffix} for app ${context.appId} and channel ${context.channelId}`,
       )
 
       await interaction.editReply({
-        content: `Model set for this channel and as global default:\n**${context.providerName}** / **${modelDisplay}**${variantSuffix}\n\`${modelId}\`\nAll channels will use this model (unless they have their own override).${agentTip}`,
+        content: `Model set for this channel and as global default:\n**${context.providerName}** / **${modelDisplay}**${variantSuffix}\n\`${modelId}\`\nAll channels will use this model (unless they have their own override).${retryNote}${agentTip}`,
         flags: MessageFlags.SuppressEmbeds,
         components: [],
       })
     } else {
       // channel scope
       await setChannelModel({ channelId: context.channelId, modelId, variant })
+      const retried = await applyToCurrentSession({
+        sessionId: context.sessionId,
+        thread: context.thread,
+        modelId,
+        variant,
+      })
+      const retryNote = retried ? '\n_Restarting current request with new model..._' : ''
       modelLogger.log(
         `Set model ${modelId}${variantSuffix} for channel ${context.channelId}`,
       )
 
       await interaction.editReply({
-        content: `Model preference set for this channel:\n**${context.providerName}** / **${modelDisplay}**${variantSuffix}\n\`${modelId}\`\nAll new sessions in this channel will use this model.${agentTip}`,
+        content: `Model preference set for this channel:\n**${context.providerName}** / **${modelDisplay}**${variantSuffix}\n\`${modelId}\`\nAll new sessions in this channel will use this model.${retryNote}${agentTip}`,
         flags: MessageFlags.SuppressEmbeds,
         components: [],
       })

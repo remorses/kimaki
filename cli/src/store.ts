@@ -95,9 +95,11 @@ export type KimakiState = {
   allowAllUsers: boolean
 
   // Permission button TTL in milliseconds. When a permission prompt is shown
-  // to the user, this is how long the buttons remain active before the
-  // permission is automatically rejected. Defaults to 10 minutes.
-  // Changes: set once at startup from --permission-timeout CLI flag.
+  // in Discord, buttons remain active for this duration before auto-rejecting.
+  // Defaults to 10 minutes. With continue_loop_on_deny enabled in the opencode
+  // config, a timeout rejection lets the model continue (try alternatives or
+  // explain it couldn't proceed) instead of killing the session.
+  // Changes: set once at startup from --permission-timeout-minutes CLI flag.
   // Read by: commands/permissions.ts showPermissionButtons().
   permissionTimeoutMs: number
 

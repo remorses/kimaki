@@ -30,6 +30,7 @@ import {
   type PermissionRuleset,
 } from '@opencode-ai/sdk/v2'
 
+import { restartGlobalEventListener } from './session-handler/global-event-listener.js'
 import {
   getDataDir,
   getLockPort,
@@ -69,6 +70,18 @@ import {
 import { computeSkillPermission } from './skill-filter.js'
 
 const opencodeLogger = createLogger(LogPrefix.OPENCODE)
+
+/**
+ * Build Basic auth headers from OPENCODE_SERVER_PASSWORD env var.
+ * Returns empty object when no password is set.
+ */
+export function getOpencodeServerAuthHeaders(): Record<string, string> {
+  const serverPassword = process.env.OPENCODE_SERVER_PASSWORD
+  if (!serverPassword) return {}
+  const username = process.env.OPENCODE_SERVER_USERNAME || 'opencode'
+  const encoded = Buffer.from(`${username}:${serverPassword}`).toString('base64')
+  return { Authorization: `Basic ${encoded}` }
+}
 
 // Tracks directories that have been initialized, to avoid repeated log spam
 // from the external sync polling loop.
@@ -314,16 +327,16 @@ function killSingleServerProcessNow({
     return
   }
 
-  const killResult = errore.try({
-    try: () => {
+  const killResult = errore.try(
+    () => {
       serverProcess.kill('SIGTERM')
     },
-    catch: (error) => {
+    (error) => {
       return new Error('Failed to send SIGTERM to opencode server', {
         cause: error,
       })
     },
-  })
+  )
 
   if (killResult instanceof Error) {
     opencodeLogger.warn(
@@ -352,16 +365,16 @@ function killStartingServerProcessNow({
     return
   }
 
-  const killResult = errore.try({
-    try: () => {
+  const killResult = errore.try(
+    () => {
       serverProcess.kill('SIGTERM')
     },
-    catch: (error) => {
+    (error) => {
       return new Error('Failed to send SIGTERM to starting opencode server', {
         cause: error,
       })
     },
-  })
+  )
 
   if (killResult instanceof Error) {
     opencodeLogger.warn(
@@ -436,8 +449,8 @@ export function resolveOpencodeCommand(): string {
 
   const isWindows = process.platform === 'win32'
   const whichCmd = isWindows ? 'where' : 'which'
-  const result = errore.try({
-    try: () => {
+  const result = errore.try(
+    () => {
       const commandOutput = execFileSync(whichCmd, ['opencode'], {
         encoding: 'utf8',
         timeout: 5000,
@@ -451,8 +464,8 @@ export function resolveOpencodeCommand(): string {
       }
       throw new Error('opencode not found in PATH')
     },
-    catch: () => new Error('opencode not found in PATH'),
-  })
+    () => new Error('opencode not found in PATH'),
+  )
 
   if (result instanceof Error) {
     // Fall back to bare command name — spawn will fail with a clear error
@@ -499,10 +512,8 @@ async function waitForServer({
     endpoint.searchParams.set('directory', directory)
   }
   for (let i = 0; i < maxAttempts; i++) {
-    const response = await errore.tryAsync({
-      try: () => requestHealthcheck({ url: endpoint.toString() }),
-      catch: (e) => new FetchError({ url: endpoint.toString(), cause: e }),
-    })
+    const response = await requestHealthcheck({ url: endpoint.toString() })
+      .catch((e) => new FetchError({ url: endpoint.toString(), cause: e }))
     if (response instanceof Error) {
       // Connection refused or other transient errors - continue polling.
       // Use 100ms interval instead of 1s so we detect readiness faster.
@@ -718,6 +729,12 @@ async function startSingleServer({
         },
       },
     },
+    // When a permission prompt times out and is auto-rejected, the model sees
+    // the rejection as a tool error and continues working (tries alternatives
+    // or explains it couldn't proceed) instead of the session going dead.
+    experimental: {
+      continue_loop_on_deny: true,
+    },
     skills: {
       paths: [path.resolve(__dirname, '..', 'skills')],
     },
@@ -917,6 +934,7 @@ function getOrCreateClient({
     baseUrl,
     directory,
     fetch: fetchWithTimeout as typeof fetch,
+    headers: getOpencodeServerAuthHeaders(),
   })
   clientCache.set(directory, client)
   return client
@@ -946,16 +964,12 @@ export async function initializeOpencodeForDirectory(
     },
     catch: () => new DirectoryNotAccessibleError({ directory }),
   })
-  if (accessCheck instanceof Error) {
-    return accessCheck
-  }
+  if (accessCheck instanceof Error) return accessCheck
 
   preferredStartupDirectory = directory
 
   const server = await ensureSingleServer({ directory })
-  if (server instanceof Error) {
-    return server
-  }
+  if (server instanceof Error) return server
 
   if (!initializedDirectories.has(directory)) {
     initializedDirectories.add(directory)
@@ -1214,6 +1228,10 @@ export function getOpencodeServerPort(_directory?: string): number | null {
   return singleServer?.port ?? null
 }
 
+export function getOpencodeServerBaseUrl(): string | null {
+  return singleServer?.baseUrl ?? null
+}
+
 export function getOpencodeClient(directory: string): OpencodeClient | null {
   if (!singleServer) {
     return null
@@ -1281,16 +1299,16 @@ export async function stopOpencodeServer(): Promise<boolean> {
     `Stopping opencode server (pid: ${server.process.pid}, port: ${server.port})`,
   )
   if (!server.process.killed) {
-    const killResult = errore.try({
-      try: () => {
+    const killResult = errore.try(
+      () => {
         server.process.kill('SIGTERM')
       },
-      catch: (error) => {
+      (error) => {
         return new Error('Failed to send SIGTERM to opencode server', {
           cause: error,
         })
       },
-    })
+    )
     if (killResult instanceof Error) {
       opencodeLogger.warn(killResult.message)
     }
@@ -1302,6 +1320,10 @@ export async function stopOpencodeServer(): Promise<boolean> {
   singleServer = null
   clientCache.clear()
   serverRetryCount = 0
+  // Don't dispose the global listener here — it will reconnect when
+  // the server restarts. Only abort the current SSE connection so it
+  // doesn't hang on a dead server.
+  restartGlobalEventListener()
   await new Promise((resolve) => {
     setTimeout(resolve, 1000)
   })
@@ -1322,8 +1344,6 @@ export async function restartOpencodeServer(): Promise<OpenCodeErrors | true> {
   serverRetryCount = 0
 
   const result = await ensureSingleServer()
-  if (result instanceof Error) {
-    return result
-  }
+  if (result instanceof Error) return result
   return true
 }

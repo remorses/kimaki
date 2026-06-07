@@ -81,6 +81,7 @@ const openaiRotationPlugin: Plugin = async ({ serverUrl, directory }) => {
   // Build our own v2 client. The plugin-provided ctx.client (v1) does not
   // reliably make REST calls from inside the plugin process.
   const client = createPluginClient({ serverUrl, directory })
+  log.bindClient(client)
   return {
     'chat.headers': async (input, output) => {
       if (input.model.providerID !== 'openai') return

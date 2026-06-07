@@ -1,0 +1,54 @@
+---
+title: Access Control
+description: Decide who can trigger Kimaki, block specific users, and require mentions in busy channels.
+icon: lucide:lock
+---
+
+Kimaki checks Discord permissions before processing **any** message, so only trusted people can run agents on your machine. You control access with roles and a per-channel mention mode.
+
+## Who can trigger Kimaki
+
+A user needs **one** of these to use the bot:
+
+- **Server Owner**
+- **Manage Server** permission
+- **Administrator** permission
+- the **"Kimaki" role** (case-insensitive)
+
+Messages from anyone without one of these are silently ignored.
+
+```diagram
+   message ──▶ has Owner / Manage Server / Admin / "Kimaki" role?
+                       │ yes                         │ no
+                       ▼                             ▼
+                 process message                 ignore silently
+```
+
+The **"Kimaki" role** is the recommended way to grant team access: create a role named `Kimaki` and assign it to trusted members. No elevated Discord permissions required.
+
+## Blocking users
+
+Create a role named **"no-kimaki"** (case-insensitive) to block specific users, **even server owners**. This is useful in shared servers to prevent accidental triggers from people who otherwise have admin rights.
+
+<Aside>
+<Tip>
+Use a dedicated Discord server for your agents. It keeps coding sessions isolated and gives you full control over who has the Kimaki role.
+</Tip>
+</Aside>
+
+## Letting other bots trigger Kimaki
+
+Other Discord bots are **ignored by default**. To build multi-agent orchestration where another bot drives Kimaki, assign the **"Kimaki" role to that bot**. Then its messages are treated like a trusted user's.
+
+## Mention mode for busy channels
+
+By default the bot responds to every message in a configured channel. In a busy or shared channel that can be noisy. Enable **mention mode** so the bot only starts a new session when it is **@mentioned**:
+
+```
+/toggle-mention-mode
+```
+
+- When **enabled**, only `@Kimaki ...` messages start new sessions in that channel.
+- Messages **inside existing threads are unaffected**; they always continue their session without a mention.
+
+Run the command again to toggle it back off.

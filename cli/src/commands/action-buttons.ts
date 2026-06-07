@@ -326,7 +326,13 @@ export async function handleActionButton(
     components: [],
   })
 
+  const username = interaction.user.globalName || interaction.user.username
   const prompt = `User clicked: ${button.label}`
+
+  await sendThreadMessage(
+    thread,
+    `» **${username}:** ${button.label}`,
+  )
 
   try {
     await sendClickedActionToModel({

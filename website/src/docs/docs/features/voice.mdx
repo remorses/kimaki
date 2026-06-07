@@ -1,0 +1,42 @@
+---
+title: Voice Messages
+description: Record a voice message in Discord and Kimaki transcribes it using your project's file tree for accuracy.
+icon: lucide:mic
+---
+
+Record a **voice message** in Discord and Kimaki transcribes it, then processes it as a normal prompt. Speaking is often faster than typing a long instruction, especially from your phone.
+
+## How it works
+
+```diagram
+  voice ──▶ transcription ──▶ "📝 Transcribed" ──▶ session
+              ▲
+              │ project file tree for accuracy
+```
+
+1. You record a voice note in the thread.
+2. Kimaki sends the audio to a transcription model.
+3. The transcribed text appears in the thread prefixed with **📝 Transcribed message:** and is sent to the agent.
+
+## Accuracy from your project file tree
+
+Transcription of code is hard: file names and function names are not normal words. Kimaki improves accuracy by feeding the **project's file tree** into the transcription prompt, so when you say a file path or a function name, the model recognizes it from your actual codebase.
+
+<Aside>
+<Tip>
+Say file and function names naturally. Because the transcriber sees your file list, "open thread session runtime" is far more likely to come back as `thread-session-runtime.ts`.
+</Tip>
+</Aside>
+
+## Models and setup
+
+Kimaki auto-detects the provider from the API key you configure for audio:
+
+- **OpenAI** key (starts with `sk-`) → uses `gpt-audio`.
+- **Gemini** key → uses `gemini-2.5-flash`.
+
+You'll be prompted for an audio API key during setup, or you can add one later from Discord when you first send a voice message.
+
+## Sending audio back
+
+Kimaki can also speak: when you ask for audio of some text, the agent can generate speech with `kimaki tts` and post it to the thread. See the [Commands reference](../reference/commands) for the `tts` and `upload-to-discord` CLI subcommands.

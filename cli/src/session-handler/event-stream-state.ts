@@ -238,7 +238,9 @@ export function hasAssistantMessageCompletedBefore({
     if (info.sessionID !== sessionId || info.role !== 'assistant' || info.id !== messageId) {
       continue
     }
-    return typeof info.time.completed === 'number'
+    if (typeof info.time.completed === 'number') {
+      return true
+    }
   }
   return false
 }

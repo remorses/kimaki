@@ -9,12 +9,7 @@ import fs from 'node:fs'
 import { fileURLToPath } from 'node:url'
 import { createLogger, formatErrorWithStack, initLogFile, LogPrefix } from './logger.js'
 import { initSentry } from './sentry.js'
-import {
-  setDataDir,
-  setProjectsDir,
-  getDataDir,
-  getProjectsDir,
-} from './config.js'
+import { setDataDir, setProjectsDir, getDataDir, getProjectsDir } from './config.js'
 import { getCurrentVersion } from './upgrade.js'
 import { store } from './store.js'
 import multioauthCommands from './commands/multioauth.js'
@@ -26,11 +21,7 @@ import sendCommands from './cli-commands/send.js'
 import sessionCommands from './cli-commands/session.js'
 import taskCommands from './cli-commands/task.js'
 import userCommands from './cli-commands/user.js'
-import {
-  EXIT_NO_RESTART,
-  printDiscordInstallUrlAndExit,
-  run,
-} from './cli-runner.js'
+import { EXIT_NO_RESTART, printDiscordInstallUrlAndExit, run } from './cli-runner.js'
 
 const cliLogger = createLogger(LogPrefix.CLI)
 const cli = goke('kimaki')
@@ -41,14 +32,8 @@ process.title = 'kimaki'
 cli
   .command('', 'Set up and run the Kimaki Discord bot')
   .option('--restart-onboarding', 'Prompt for new credentials even if saved')
-  .option(
-    '--add-channels',
-    'Select OpenCode projects to create Discord channels before starting',
-  )
-  .option(
-    '--data-dir <path>',
-    'Data directory for config and database (default: ~/.kimaki)',
-  )
+  .option('--add-channels', 'Select OpenCode projects to create Discord channels before starting')
+  .option('--data-dir <path>', 'Data directory for config and database (default: ~/.kimaki)')
   .option(
     '--projects-dir <path>',
     'Directory where new projects are created (default: <data-dir>/projects)',
@@ -58,26 +43,14 @@ cli
     '--use-worktrees',
     'Create git worktrees for all new sessions started from channel messages',
   )
-  .option(
-    '--enable-voice-channels',
-    'Create voice channels for projects (disabled by default)',
-  )
+  .option('--enable-voice-channels', 'Create voice channels for projects (disabled by default)')
   .option(
     '--verbosity <level>',
     'Default verbosity for all channels (tools_and_text, text_and_essential_tools, or text_only)',
   )
-  .option(
-    '--mention-mode',
-    'Bot only responds when @mentioned (default for all channels)',
-  )
-  .option(
-    '--no-critique',
-    'Disable automatic diff upload to critique.work in system prompts',
-  )
-  .option(
-    '--auto-restart',
-    'Automatically restart the bot on crash or OOM kill',
-  )
+  .option('--mention-mode', 'Bot only responds when @mentioned (default for all channels)')
+  .option('--no-critique', 'Disable automatic diff upload to critique.work in system prompts')
+  .option('--auto-restart', 'Automatically restart the bot on crash or OOM kill')
   .option(
     '--allow-all-users',
     'Allow all Discord users to start sessions without needing Kimaki role or admin permissions (no-kimaki role still blocks)',
@@ -86,10 +59,7 @@ cli
     '--permission-timeout-minutes <minutes>',
     'Permission prompt timeout in minutes before auto-rejecting (default: 10)',
   )
-  .option(
-    '--disable-sync',
-    'Disable background sync of external OpenCode sessions into Discord',
-  )
+  .option('--disable-sync', 'Disable background sync of external OpenCode sessions into Discord')
   .option('--no-sentry', 'Disable Sentry error reporting')
   .option(
     '--gateway',
@@ -158,8 +128,8 @@ cli
       if (process.env.KIMAKI_OPENCODE_PROCESS && !usesDifferentLockPort) {
         cliLogger.error(
           'Cannot run `kimaki` inside an OpenCode session — it would kill the already-running bot process.\n' +
-          'Only one kimaki bot can run at a time (they share a lock port).\n' +
-          'Set KIMAKI_LOCK_PORT to a different port for an isolated dev process, or use `kimaki send`, `kimaki session`, and other subcommands instead.',
+            'Only one kimaki bot can run at a time (they share a lock port).\n' +
+            'Set KIMAKI_LOCK_PORT to a different port for an isolated dev process, or use `kimaki send`, `kimaki session`, and other subcommands instead.',
         )
         process.exit(EXIT_NO_RESTART)
       }
@@ -245,20 +215,19 @@ cli
           }
         }
 
-
         // --permission-timeout-minutes validation
+        // Node setTimeout max is 2_147_483_647ms; larger values fire immediately.
+        const MAX_TIMEOUT_MINUTES = Math.floor(2_147_483_647 / 60_000)
         const permissionTimeoutMs = (() => {
-          if (!options.permissionTimeoutMinutes) {
-            return undefined
-          }
-          const parsed = Number.parseInt(options.permissionTimeoutMinutes, 10)
-          if (!Number.isFinite(parsed) || parsed <= 0) {
+          if (!options.permissionTimeoutMinutes) return undefined
+          const parsed = Number(options.permissionTimeoutMinutes)
+          if (!Number.isInteger(parsed) || parsed <= 0 || parsed > MAX_TIMEOUT_MINUTES) {
             cliLogger.error(
-              `Invalid permission timeout: ${options.permissionTimeoutMinutes}. Must be a positive number of minutes.`,
+              `Invalid permission timeout: ${options.permissionTimeoutMinutes}. Must be a positive whole number of minutes (max ${MAX_TIMEOUT_MINUTES}).`,
             )
             process.exit(EXIT_NO_RESTART)
           }
-          return parsed * 60 * 1000
+          return parsed * 60_000
         })()
         store.setState({
           ...(defaultVerbosity && {
@@ -280,9 +249,7 @@ cli
           )
         }
         if (disabledSkills.length > 0) {
-          cliLogger.log(
-            `Skill blacklist enabled: [${disabledSkills.join(', ')}] will be hidden`,
-          )
+          cliLogger.log(`Skill blacklist enabled: [${disabledSkills.join(', ')}] will be hidden`)
         }
 
         if (options.allowAllUsers) {
@@ -290,25 +257,22 @@ cli
             'Allow all users: any Discord member can start sessions (no-kimaki role still blocks)',
           )
         }
+        if (permissionTimeoutMs !== undefined) {
+          cliLogger.log(`Permission timeout set to ${options.permissionTimeoutMinutes} minutes`)
+        }
 
         if (permissionTimeoutMs !== undefined) {
-          cliLogger.log(
-            `Permission timeout set to ${options.permissionTimeoutMinutes} minutes`,
-          )
+          cliLogger.log(`Permission timeout set to ${options.permissionTimeoutMinutes} minutes`)
         }
 
         if (options.verbosity) {
           cliLogger.log(`Default verbosity: ${options.verbosity}`)
         }
         if (options.mentionMode) {
-          cliLogger.log(
-            'Default mention mode: enabled (bot only responds when @mentioned)',
-          )
+          cliLogger.log('Default mention mode: enabled (bot only responds when @mentioned)')
         }
         if (options.noCritique) {
-          cliLogger.log(
-            'Critique disabled: diffs will not be auto-uploaded to critique.work',
-          )
+          cliLogger.log('Critique disabled: diffs will not be auto-uploaded to critique.work')
         }
         if (options.disableSync) {
           cliLogger.log(

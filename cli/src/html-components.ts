@@ -83,9 +83,7 @@ function parseRenderableNodes({
       }
 
       const buttonRenderable = parseButtonElement({ element })
-      if (buttonRenderable instanceof Error) {
-        return buttonRenderable
-      }
+      if (buttonRenderable instanceof Error) return buttonRenderable
 
       renderables.push(buttonRenderable)
       continue
@@ -121,9 +119,7 @@ function parseButtonElement({
   const variant = normalizeButtonVariant({
     value: element.attribs.variant,
   })
-  if (variant instanceof Error) {
-    return variant
-  }
+  if (variant instanceof Error) return variant
 
   return {
     type: 'button',
