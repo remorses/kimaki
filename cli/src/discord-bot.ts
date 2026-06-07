@@ -373,6 +373,14 @@ export async function startDiscordBot({
     )
   })
 
+  // discord.js retries gateway reconnection indefinitely. If the gateway is
+  // unreachable for an extended period (network outage, proxy down, etc.) the
+  // bot becomes a zombie — alive but unable to receive events. After this many
+  // consecutive failed attempts we force-exit so bin.ts can restart fresh.
+  // Normal transient disconnects recover within a handful of attempts; 50 means
+  // several minutes of sustained failure (discord.js uses exponential backoff).
+  const MAX_RECONNECT_ATTEMPTS = 50
+
   discordClient.on(Events.ShardReconnecting, (shardId) => {
     // discord.js strips the close code before emitting this event.
     // We log whatever context we captured from preceding ShardError events.
@@ -389,6 +397,14 @@ export async function startDiscordBot({
     discordLogger.warn(
       `[GATEWAY] Shard ${shardId} reconnecting: ${parts.join(', ')}`,
     )
+
+    if (state.attempts >= MAX_RECONNECT_ATTEMPTS) {
+      discordLogger.error(
+        `[GATEWAY] Shard ${shardId} exceeded ${MAX_RECONNECT_ATTEMPTS} reconnect attempts, force-exiting for auto-restart`,
+      )
+      // Exit with non-zero code so bin.ts auto-restart wrapper spawns a fresh process.
+      process.exit(1)
+    }
   })
 
   discordClient.on(Events.ShardResume, (shardId, replayedEvents) => {
