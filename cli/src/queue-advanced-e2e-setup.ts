@@ -336,119 +336,7 @@ export function createDeterministicMatchers(): DeterministicMatcher[] {
     },
   }
 
-  const subagentPermissionTaskMatcher: DeterministicMatcher = {
-    id: 'subagent-permission-auto-reject-task',
-    priority: 112,
-    when: {
-      lastMessageRole: 'user',
-      latestUserTextIncludes: 'SUBAGENT_PERMISSION_AUTO_REJECT_MARKER',
-    },
-    then: {
-      parts: [
-        { type: 'stream-start', warnings: [] },
-        {
-          type: 'tool-call',
-          toolCallId: 'subagent-permission-task-call',
-          toolName: 'task',
-          input: JSON.stringify({
-            description: 'probe subagent permission rejection',
-            subagent_type: 'general',
-            prompt:
-              'SUBAGENT_PERMISSION_CHILD_MARKER. Read /Users/morse/.zprofile with the read tool, then reply exactly: child-permission-finished.',
-          }),
-        },
-        {
-          type: 'finish',
-          finishReason: 'tool-calls',
-          usage: { inputTokens: 1, outputTokens: 1, totalTokens: 2 },
-        },
-      ],
-    },
-  }
 
-  const subagentPermissionChildMatcher: DeterministicMatcher = {
-    id: 'subagent-permission-auto-reject-child',
-    priority: 112,
-    when: {
-      lastMessageRole: 'user',
-      latestUserTextIncludes: 'SUBAGENT_PERMISSION_CHILD_MARKER',
-    },
-    then: {
-      parts: [
-        { type: 'stream-start', warnings: [] },
-        { type: 'text-start', id: 'subagent-permission-child-start' },
-        {
-          type: 'text-delta',
-          id: 'subagent-permission-child-start',
-          delta: 'subagent requesting external read permission',
-        },
-        { type: 'text-end', id: 'subagent-permission-child-start' },
-        {
-          type: 'tool-call',
-          toolCallId: 'subagent-permission-read-call',
-          toolName: 'read',
-          input: JSON.stringify({ filePath: '/Users/morse/.zprofile' }),
-        },
-        {
-          type: 'finish',
-          finishReason: 'tool-calls',
-          usage: { inputTokens: 1, outputTokens: 1, totalTokens: 2 },
-        },
-      ],
-    },
-  }
-
-  const subagentPermissionChildFollowupMatcher: DeterministicMatcher = {
-    id: 'subagent-permission-auto-reject-child-followup',
-    priority: 112,
-    when: {
-      lastMessageRole: 'tool',
-      latestUserTextIncludes: 'SUBAGENT_PERMISSION_CHILD_MARKER',
-    },
-    then: {
-      parts: [
-        { type: 'stream-start', warnings: [] },
-        { type: 'text-start', id: 'subagent-permission-child-followup' },
-        {
-          type: 'text-delta',
-          id: 'subagent-permission-child-followup',
-          delta: 'child-permission-finished',
-        },
-        { type: 'text-end', id: 'subagent-permission-child-followup' },
-        {
-          type: 'finish',
-          finishReason: 'stop',
-          usage: { inputTokens: 1, outputTokens: 1, totalTokens: 2 },
-        },
-      ],
-    },
-  }
-
-  const subagentPermissionParentFollowupMatcher: DeterministicMatcher = {
-    id: 'subagent-permission-auto-reject-parent-followup',
-    priority: 112,
-    when: {
-      lastMessageRole: 'tool',
-      latestUserTextIncludes: 'SUBAGENT_PERMISSION_AUTO_REJECT_MARKER',
-    },
-    then: {
-      parts: [
-        { type: 'stream-start', warnings: [] },
-        { type: 'text-start', id: 'subagent-permission-parent-followup' },
-        {
-          type: 'text-delta',
-          id: 'subagent-permission-parent-followup',
-          delta: 'subagent-permission-auto-reject-done',
-        },
-        { type: 'text-end', id: 'subagent-permission-parent-followup' },
-        {
-          type: 'finish',
-          finishReason: 'stop',
-          usage: { inputTokens: 1, outputTokens: 1, totalTokens: 2 },
-        },
-      ],
-    },
-  }
 
   const actionButtonClickFollowupMatcher: DeterministicMatcher = {
     id: 'action-button-click-followup',
@@ -876,10 +764,7 @@ export function createDeterministicMatchers(): DeterministicMatcher[] {
     permissionTypingFollowupMatcher,
     channelReferencePermissionMatcher,
     channelReferencePermissionFollowupMatcher,
-    subagentPermissionTaskMatcher,
-    subagentPermissionChildMatcher,
-    subagentPermissionChildFollowupMatcher,
-    subagentPermissionParentFollowupMatcher,
+
     multiToolMatcher,
     multiToolFollowupMatcher,
     undoFileMatcher,

@@ -65,7 +65,6 @@ import {
   addPermissionRequestToContext,
   arePatternsCoveredBy,
   pendingPermissionContexts,
-  updatePermissionMessage,
 } from '../commands/permissions.js'
 import {
   showAskUserQuestionDropdowns,
@@ -2485,27 +2484,8 @@ export class ThreadSessionRuntime {
     if (!pending) {
       return
     }
-    // Get the permission context before deleting it — needed to update the
-    // Discord message when a plugin (e.g. subagent-rate-limit-plugin) auto-
-    // rejected the permission instead of the user clicking a button.
-    const permissionContext = pendingPermissionContexts.get(pending.contextHash)
     pendingPermissionContexts.delete(pending.contextHash)
     threadPermissions.delete(properties.requestID)
-
-    if (permissionContext?.messageId) {
-      const statusText = properties.reply === 'reject'
-        ? '❌ Permission **auto-rejected**'
-        : properties.reply === 'once'
-          ? '✅ Permission **accepted**'
-          : properties.reply === 'always'
-            ? '✅ Permission **accepted** (auto-approve similar requests)'
-            : `_Permission replied: ${properties.reply}_`
-      updatePermissionMessage({
-        context: permissionContext,
-        status: statusText,
-      })
-    }
-
     if (threadPermissions.size === 0) {
       pendingPermissions.delete(this.thread.id)
     }
