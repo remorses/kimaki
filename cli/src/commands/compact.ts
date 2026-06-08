@@ -83,7 +83,7 @@ export async function handleCompactCommand({
     return
   }
 
-  const client = getOpencodeClient(projectDirectory)
+  const client = getOpencodeClient(workingDirectory)
   if (!client) {
     await command.reply({
       content: 'Failed to get OpenCode client',

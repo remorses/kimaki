@@ -9,7 +9,7 @@ import {
 import type { CommandContext } from './types.js'
 import { OpenCodeSdkError } from '../errors.js'
 import { getThreadSession } from '../database.js'
-import { initializeOpencodeForDirectory } from '../opencode.js'
+import { getOpencodeClient, initializeOpencodeForDirectory } from '../opencode.js'
 import {
   resolveWorkingDirectory,
   SILENT_MESSAGE_FLAGS,
@@ -85,10 +85,19 @@ export async function handleContextUsageCommand({
     return
   }
 
-  const getClient = await initializeOpencodeForDirectory(projectDirectory)
-  if (getClient instanceof Error) {
+  const serverResult = await initializeOpencodeForDirectory(projectDirectory)
+  if (serverResult instanceof Error) {
     await command.reply({
-      content: `Failed to get context usage: ${getClient.message}`,
+      content: `Failed to get context usage: ${serverResult.message}`,
+      flags: MessageFlags.Ephemeral | SILENT_MESSAGE_FLAGS,
+    })
+    return
+  }
+
+  const client = getOpencodeClient(workingDirectory)
+  if (!client) {
+    await command.reply({
+      content: 'Failed to get OpenCode client',
       flags: MessageFlags.Ephemeral | SILENT_MESSAGE_FLAGS,
     })
     return
@@ -97,7 +106,7 @@ export async function handleContextUsageCommand({
   await command.deferReply({ flags: SILENT_MESSAGE_FLAGS })
 
   try {
-    const messagesResponse = await getClient().session.messages({
+    const messagesResponse = await client.session.messages({
       sessionID: sessionId,
       directory: workingDirectory,
     })
@@ -145,7 +154,7 @@ export async function handleContextUsageCommand({
 
     // Fetch model context limit from provider API
     let contextLimit: number | undefined
-    const providersResult = await getClient().provider.list({ directory: workingDirectory })
+    const providersResult = await client.provider.list({ directory: workingDirectory })
       .catch((e) => new OpenCodeSdkError({ operation: 'provider.list', cause: e }))
     if (providersResult instanceof Error) {
       logger.error(
