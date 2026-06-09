@@ -715,9 +715,11 @@ cli
       }
 
       const client = serverResult()
+      // Don't pass directory — the server resolves sessions by ID regardless
+      // of the x-opencode-directory header, matching archiveThread's pattern.
+      // This avoids issues when --cwd was used (session directory != project directory).
       const abortResult = await client.session.abort({
         sessionID: sessionId,
-        directory,
       }).catch((e) => new Error('Failed to abort session', { cause: e }))
       if (abortResult instanceof Error) {
         cliLogger.error(abortResult.message)

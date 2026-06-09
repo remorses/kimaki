@@ -474,8 +474,8 @@ cli
             `Prompt sent to thread: ${threadData.name}\n${sessionLine}\nURL: ${threadUrl}`,
             '✅ Message Sent',
           )
-          if (existingSessionId) cliLogger.log(`Session: ${existingSessionId}`)
-          cliLogger.log(threadUrl)
+          if (existingSessionId) process.stdout.write(`Session: ${existingSessionId}\n`)
+          process.stdout.write(`${threadUrl}\n`)
 
           if (options.wait) {
             const { waitAndOutputSession } = await import('../wait-session.js')
@@ -655,7 +655,10 @@ cli
           newSessionId = await waitForSessionId({
             threadId: threadData.id,
             timeoutMs: 15_000,
-          }).catch(() => undefined)
+          }).catch((e) => {
+            cliLogger.warn(`Could not resolve session ID: ${e instanceof Error ? e.message : String(e)}`)
+            return undefined
+          })
         }
 
         const worktreeNote = worktreeName
@@ -670,8 +673,8 @@ cli
 
         note(successMessage, '✅ Thread Created')
 
-        if (newSessionId) cliLogger.log(`Session: ${newSessionId}`)
-        cliLogger.log(threadUrl)
+        if (newSessionId) process.stdout.write(`Session: ${newSessionId}\n`)
+        process.stdout.write(`${threadUrl}\n`)
 
         if (options.wait) {
           const { waitAndOutputSession } = await import('../wait-session.js')
