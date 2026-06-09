@@ -454,6 +454,18 @@ export async function getThreadIdBySessionId(sessionId: string) {
   return (await db.query.thread_sessions.findFirst({ where: { session_id: sessionId } }))?.thread_id
 }
 
+export async function getAllThreadIds() {
+  const db = await getDb()
+  const rows = await db.query.thread_sessions.findMany({ columns: { thread_id: true } })
+  return rows.map((row) => row.thread_id)
+}
+
+export async function getThreadCreatedAt(threadId: string) {
+  const db = await getDb()
+  const row = await db.query.thread_sessions.findFirst({ where: { thread_id: threadId }, columns: { created_at: true } })
+  return row?.created_at ?? null
+}
+
 export async function getAllThreadSessionIds() {
   const db = await getDb()
   const rows = await db.query.thread_sessions.findMany({ columns: { session_id: true } })

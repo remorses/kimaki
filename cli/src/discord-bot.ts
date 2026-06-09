@@ -85,6 +85,7 @@ import { markDiscordGatewayReady, stopHranaServer } from './hrana-server.js'
 import { notifyError } from './sentry.js'
 import { flushDebouncedProcessCallbacks } from './debounced-process-flush.js'
 import { startRuntimeIdleSweeper } from './runtime-idle-sweeper.js'
+import { startThreadCleanupSweeper } from './thread-cleanup-sweeper.js'
 import { store } from './store.js'
 import {
   startExternalOpencodeSessionSync,
@@ -1328,6 +1329,7 @@ export async function startDiscordBot({
   startHeapMonitor()
   const stopTaskRunner = startTaskRunner({ token })
   const stopRuntimeIdleSweeper = startRuntimeIdleSweeper()
+  const stopThreadCleanupSweeper = startThreadCleanupSweeper({ discordClient })
 
   // Prevent discord.js from permanently killing the REST token on 401.
   // @discordjs/rest calls setToken(null) whenever it receives a 401 response.
@@ -1355,6 +1357,7 @@ export async function startDiscordBot({
 
     try {
       await stopRuntimeIdleSweeper()
+      await stopThreadCleanupSweeper()
       await stopTaskRunner()
 
       await flushDebouncedProcessCallbacks().catch((error) => {
