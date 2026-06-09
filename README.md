@@ -44,7 +44,7 @@ This separation is the whole point. Other Discord/iMessage agent tools cram **ev
 
 Think of it as texting your codebase: you describe what you want, the agent does it, and the conversation lives in a thread you can return to.
 
-## Built by Tommy
+## Battle tested every day
 
 I'm Tommy, the creator of Kimaki. I do **all of my development** through it: every project, every session, straight from Discord. I built Kimaki because I wanted one place to start agents, watch them work, jump between projects, and pick things back up from my phone. It is the tool I actually use every day.
 
