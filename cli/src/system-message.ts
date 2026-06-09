@@ -458,6 +458,15 @@ kimaki session archive --session ${sessionId}
 
 Only do this when the user explicitly asks to close or archive the thread, and only after your final message.
 
+## aborting a session
+
+If you made a mistake with \`kimaki send\` (wrong prompt, wrong channel, mangled heredoc), abort the session immediately using the session ID printed in the output:
+
+kimaki session abort <session_id>
+
+This stops the AI from processing but keeps the thread visible in Discord.
+Different from \`kimaki session archive\` which hides the thread.
+
 ## discord user mentions
 
 Prefer Discord user IDs for mentions. Discord bots cannot ping by @name; use \`<@userId>\` in message text or pass the ID to \`--user\`.

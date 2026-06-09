@@ -468,10 +468,13 @@ cli
           })
 
           const threadUrl = `https://discord.com/channels/${threadData.guild_id}/${threadData.id}`
+          const existingSessionId = sessionId || await getThreadSession(targetThreadId)
+          const sessionLine = existingSessionId ? `Session: ${existingSessionId}\n` : ''
           note(
-            `Prompt sent to thread: ${threadData.name}\n\nURL: ${threadUrl}`,
+            `Prompt sent to thread: ${threadData.name}\n${sessionLine}\nURL: ${threadUrl}`,
             '✅ Message Sent',
           )
+          if (existingSessionId) cliLogger.log(`Session: ${existingSessionId}`)
           cliLogger.log(threadUrl)
 
           if (options.wait) {
@@ -643,17 +646,31 @@ cli
 
         const threadUrl = `https://discord.com/channels/${channelData.guild_id}/${threadData.id}`
 
+        // Poll for session ID if the bot is expected to auto-start (not --notify-only).
+        // The bot picks up the thread and creates a session asynchronously;
+        // we wait briefly so the caller can reference the session immediately.
+        let newSessionId: string | undefined
+        if (!notifyOnly) {
+          const { waitForSessionId } = await import('../wait-session.js')
+          newSessionId = await waitForSessionId({
+            threadId: threadData.id,
+            timeoutMs: 15_000,
+          }).catch(() => undefined)
+        }
+
         const worktreeNote = worktreeName
           ? `\nWorktree: ${worktreeName} (will be created by bot)`
           : resolvedCwd
             ? `\nWorking directory: ${resolvedCwd}`
             : ''
+        const sessionLine = newSessionId ? `\nSession: ${newSessionId}` : ''
         const successMessage = notifyOnly
           ? `Thread: ${threadData.name}\nDirectory: ${projectDirectory}\n\nNotification created. Reply to start a session.\n\nURL: ${threadUrl}`
-          : `Thread: ${threadData.name}\nDirectory: ${projectDirectory}${worktreeNote}\n\nThe running bot will pick this up and start the session.\n\nURL: ${threadUrl}`
+          : `Thread: ${threadData.name}\nDirectory: ${projectDirectory}${worktreeNote}${sessionLine}\n\nThe running bot will pick this up and start the session.\n\nURL: ${threadUrl}`
 
         note(successMessage, '✅ Thread Created')
 
+        if (newSessionId) cliLogger.log(`Session: ${newSessionId}`)
         cliLogger.log(threadUrl)
 
         if (options.wait) {
