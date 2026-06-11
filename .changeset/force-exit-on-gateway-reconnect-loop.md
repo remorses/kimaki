@@ -2,4 +2,4 @@
 'kimaki': patch
 ---
 
-Force-exit the process after 50 consecutive failed Discord gateway reconnect attempts instead of retrying forever. The `bin.ts` auto-restart wrapper then starts a fresh process, which is more likely to recover than a zombie bot stuck in an infinite reconnection loop.
+Self-restart the process after 50 consecutive failed Discord gateway reconnect attempts instead of retrying forever. Uses the same spawn-and-exit pattern as SIGUSR2, so it works whether or not the `bin.ts` auto-restart wrapper is the parent process (e.g. when started directly via `tsx src/cli`).

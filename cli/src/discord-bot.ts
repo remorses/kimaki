@@ -376,7 +376,7 @@ export async function startDiscordBot({
   // discord.js retries gateway reconnection indefinitely. If the gateway is
   // unreachable for an extended period (network outage, proxy down, etc.) the
   // bot becomes a zombie — alive but unable to receive events. After this many
-  // consecutive failed attempts we force-exit so bin.ts can restart fresh.
+  // consecutive failed attempts we self-restart (cleanup + spawn fresh process).
   // Normal transient disconnects recover within a handful of attempts; 50 means
   // several minutes of sustained failure (discord.js uses exponential backoff).
   const MAX_RECONNECT_ATTEMPTS = 50
@@ -400,10 +400,12 @@ export async function startDiscordBot({
 
     if (state.attempts >= MAX_RECONNECT_ATTEMPTS) {
       discordLogger.error(
-        `[GATEWAY] Shard ${shardId} exceeded ${MAX_RECONNECT_ATTEMPTS} reconnect attempts, force-exiting for auto-restart`,
+        `[GATEWAY] Shard ${shardId} exceeded ${MAX_RECONNECT_ATTEMPTS} reconnect attempts, self-restarting`,
       )
-      // Exit with non-zero code so bin.ts auto-restart wrapper spawns a fresh process.
-      process.exit(1)
+      // Self-restart: cleanup then spawn a fresh process. This works whether
+      // the bin.ts wrapper is present or not (unlike process.exit(1) which
+      // only restarts when the wrapper is the parent).
+      void selfRestart('gateway-reconnect-limit')
     }
   })
 
@@ -1457,12 +1459,15 @@ export async function startDiscordBot({
     })
   })
 
-  process.on('SIGUSR2', async () => {
-    discordLogger.log('Received SIGUSR2, restarting after cleanup...')
+  // Self-restart: cleanup, spawn a fresh process, then exit.
+  // Used by SIGUSR2 and by the gateway reconnect limit. Works whether or
+  // not the bin.ts wrapper is the parent process.
+  async function selfRestart(reason: string) {
+    discordLogger.log(`Self-restarting (reason: ${reason})...`)
     try {
-      await handleShutdown('SIGUSR2', { skipExit: true })
+      await handleShutdown(reason, { skipExit: true })
     } catch (error) {
-      voiceLogger.error('[SIGUSR2] Error during shutdown:', error)
+      voiceLogger.error(`[${reason}] Error during shutdown:`, error)
     }
     const { spawn } = await import('node:child_process')
     // Strip __KIMAKI_CHILD so the new process goes through the respawn wrapper in bin.js.
@@ -1477,6 +1482,11 @@ export async function startDiscordBot({
       env,
     }).unref()
     process.exit(0)
+  }
+
+  process.on('SIGUSR2', () => {
+    discordLogger.log('Received SIGUSR2, restarting after cleanup...')
+    void selfRestart('SIGUSR2')
   })
 
   process.on('uncaughtException', (error) => {
