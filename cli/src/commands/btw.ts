@@ -89,7 +89,12 @@ export async function forkSessionToBtwThread({
   const wrappedPrompt = [
     `The user asked a side question while you were working on another task.`,
     `This is a forked session whose ONLY goal is to answer this question.`,
-    `Do NOT continue, resume, or reference the previous task. Only answer the question below.\n`,
+    `Do NOT continue, resume, or reference the previous task. Only answer the question below.`,
+    ``,
+    `Parent session: ${sessionId} (thread <#${sourceThread.id}>)`,
+    `If the user asks you to send a message or follow-up to the parent session, use:`,
+    `  kimaki send --session ${sessionId} --prompt 'your message here'`,
+    ``,
     prompt,
   ].join('\n')
 
