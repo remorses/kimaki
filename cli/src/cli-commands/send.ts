@@ -623,6 +623,18 @@ cli
           rest,
         })
 
+        // For notify-only on non-project channels, just post the message without
+        // creating a thread. There's no session to start, so a thread is unnecessary.
+        if (notifyOnly && !channelConfig) {
+          const messageUrl = `https://discord.com/channels/${channelData.guild_id}/${channelId}/${starterMessage.id}`
+          note(
+            `Channel: #${channelData.name}\n\nMessage sent.\n\nURL: ${messageUrl}`,
+            '✅ Message Sent',
+          )
+          process.stdout.write(`${messageUrl}\n`)
+          process.exit(0)
+        }
+
         cliLogger.log('Creating thread...')
 
         const threadData = (await rest.post(

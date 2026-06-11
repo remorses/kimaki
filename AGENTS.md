@@ -236,6 +236,8 @@ kimaki send --channel 1514563453493313548 --prompt "$(cat /tmp/kimaki-release.md
 
 the notification message should use the version as a heading 1 title (e.g. `# v1.2.3`), followed by the same rich content as the gh release: descriptions, code examples, migration steps, before/after comparisons, etc. keep it detailed and user-facing, identical quality to a gh release body.
 
+when `--notify-only` targets a non-project channel, the message is posted directly without creating a thread. for project channels, a thread is still created so users can reply to start a session.
+
 ## github issues
 
 never suggest installing kimaki from git (e.g. `npm i -g remorses/kimaki#main`). it does not work because the package needs a build step. always point users to the next npm release instead.
