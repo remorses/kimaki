@@ -21,6 +21,14 @@ import type { ThreadStartMarker } from '../system-message.js'
 import { buildOpencodeEventLogLine } from '../session-handler/opencode-session-event-log.js'
 import { createDiscordRest } from '../discord-urls.js'
 import { archiveThread, uploadFilesToDiscord, stripMentions } from '../discord-utils.js'
+import {
+  getProjectEmoji,
+  setProjectEmoji,
+  removeProjectEmoji,
+  listProjectEmojis,
+  prefixNameWithEmoji,
+  hasProjectEmojiPrefix,
+} from '../project-emojis.js'
 import { setDataDir, setProjectsDir, getDataDir, getProjectsDir } from '../config.js'
 import { execAsync, validateWorktreeDirectory } from '../worktrees.js'
 import { upgrade, getCurrentVersion } from '../upgrade.js'
@@ -502,6 +510,234 @@ cli
 
     cliLogger.log(channelUrl)
     process.exit(0)
+  })
+
+cli
+  .command(
+    'project emoji add <name> <emoji>',
+    'Set the prefix emoji used for channels and threads of a project',
+  )
+  .action((name: string, emoji: string) => {
+    setProjectEmoji(name, emoji)
+    note(
+      `Set ${name} -> ${emoji}\n\nFile: ${listProjectEmojis.length > 0 ? '' : ''}Saved to project-emojis.json in the kimaki data dir.`,
+      '✅ Emoji Saved',
+    )
+    cliLogger.log(`kimaki project emoji list`)
+  })
+
+cli
+  .command(
+    'project emoji remove <name>',
+    'Remove the prefix emoji for a project',
+  )
+  .action((name: string) => {
+    const removed = removeProjectEmoji(name)
+    if (!removed) {
+      cliLogger.error(`No emoji configured for project: ${name}`)
+      process.exit(EXIT_NO_RESTART)
+    }
+    note(`Removed emoji for ${name}`, '✅ Emoji Removed')
+  })
+
+cli
+  .command('project emoji list', 'List all configured project prefix emojis')
+  .action(() => {
+    const map = listProjectEmojis()
+    const entries = Object.entries(map)
+    if (entries.length === 0) {
+      note(
+        'No project emojis configured. Use `kimaki project emoji add <name> <emoji>`.',
+        'Project Emojis',
+      )
+      process.exit(0)
+    }
+    const lines = entries
+      .sort(([a], [b]) => a.localeCompare(b))
+      .map(([name, emoji]) => `  ${emoji}  ${name}`)
+      .join('\n')
+    note(`${lines}\n\nTotal: ${entries.length}`, 'Project Emojis')
+  })
+
+cli
+  .command(
+    'project apply-prefixes',
+    'Retroactively rename existing project channels and threads using the configured emoji map',
+  )
+  .action(async () => {
+    await initDatabase()
+    const map = listProjectEmojis()
+    const entries = Object.entries(map)
+    if (entries.length === 0) {
+      note(
+        'No project emojis configured. Use `kimaki project emoji add <name> <emoji>`.',
+        'Nothing to do',
+      )
+      process.exit(0)
+    }
+
+    const botRow = await getBotTokenWithMode()
+    if (!botRow) {
+      cliLogger.error('No bot configured. Run `kimaki` first.')
+      process.exit(EXIT_NO_RESTART)
+    }
+    const { token: botToken } = botRow
+    const rest = createDiscordRest(botToken)
+
+    const db = await getDb()
+    const textChannels = await db.query.channel_directories.findMany({
+      where: { channel_type: 'text' },
+    })
+    const voiceChannels = await db.query.channel_directories.findMany({
+      where: { channel_type: 'voice' },
+    })
+
+    const renameChannel = async ({
+      channelId,
+      kind,
+      emoji,
+    }: {
+      channelId: string
+      kind: 'text' | 'voice'
+      emoji: string
+    }) => {
+      const data = (await rest.get(Routes.channel(channelId))) as {
+        id: string
+        name: string
+        guild_id: string
+      }
+      if (hasProjectEmojiPrefix(data.name, emoji)) {
+        return { skipped: true, name: data.name, guildId: data.guild_id }
+      }
+      const newName = prefixNameWithEmoji(data.name, emoji).slice(0, 100)
+      await rest.patch(Routes.channel(channelId), {
+        body: { name: newName },
+      })
+      return {
+        skipped: false,
+        name: newName,
+        previous: data.name,
+        guildId: data.guild_id,
+      }
+    }
+
+    const renameThread = async ({
+      threadId,
+      emoji,
+    }: {
+      threadId: string
+      emoji: string
+    }) => {
+      const data = (await rest.get(Routes.channel(threadId))) as {
+        id: string
+        name: string
+        type: number
+      }
+      if (!isThreadChannelType(data.type)) {
+        return { skipped: true, name: data.name }
+      }
+      if (hasProjectEmojiPrefix(data.name, emoji)) {
+        return { skipped: true, name: data.name }
+      }
+      const newName = prefixNameWithEmoji(data.name, emoji).slice(0, 100)
+      await rest.patch(Routes.channel(threadId), {
+        body: { name: newName },
+      })
+      return { skipped: false, name: newName, previous: data.name }
+    }
+
+    const fetchActiveThreadIds = async ({
+      textChannelId,
+      guildId,
+    }: {
+      textChannelId: string
+      guildId: string
+    }) => {
+      try {
+        const data = (await rest.get(
+          Routes.guildActiveThreads(guildId),
+        )) as {
+          threads: Array<{ id: string; parent_id?: string; type: number }>
+        }
+        return data.threads
+          .filter((t) => t.parent_id === textChannelId)
+          .map((t) => t.id)
+      } catch (error) {
+        cliLogger.debug(
+          `Failed to list active threads for ${textChannelId}:`,
+          error instanceof Error ? error.stack : String(error),
+        )
+        return []
+      }
+    }
+
+    const summary: string[] = []
+    let renamed = 0
+    let skipped = 0
+
+    for (const [projectName, emoji] of entries) {
+      const textForProject = textChannels.filter(
+        (c) => path.basename(c.directory) === projectName,
+      )
+      if (textForProject.length === 0) {
+        summary.push(`⏭ ${projectName}  no registered text channel`)
+        continue
+      }
+      const voiceForProject = voiceChannels.filter(
+        (c) => path.basename(c.directory) === projectName,
+      )
+
+      for (const textChannel of textForProject) {
+        const result = await renameChannel({
+          channelId: textChannel.channel_id,
+          kind: 'text',
+          emoji,
+        })
+        if (result.skipped) {
+          skipped++
+        } else {
+          renamed++
+          summary.push(
+            `✏️ #${result.previous} -> #${result.name}`,
+          )
+        }
+
+        const threadIds = await fetchActiveThreadIds({
+          textChannelId: textChannel.channel_id,
+          guildId: result.guildId,
+        })
+        for (const threadId of threadIds) {
+          const threadResult = await renameThread({ threadId, emoji })
+          if (threadResult.skipped) {
+            skipped++
+          } else {
+            renamed++
+            summary.push(
+              `  ↳ thread ${threadResult.previous} -> ${threadResult.name}`,
+            )
+          }
+        }
+      }
+
+      for (const voiceChannel of voiceForProject) {
+        const result = await renameChannel({
+          channelId: voiceChannel.channel_id,
+          kind: 'voice',
+          emoji,
+        })
+        if (result.skipped) {
+          skipped++
+        } else {
+          renamed++
+          summary.push(`🔊 voice #${result.previous} -> #${result.name}`)
+        }
+      }
+    }
+
+    note(
+      `${summary.length === 0 ? 'No changes needed.' : summary.join('\n')}\n\nRenamed: ${renamed}\nSkipped (already prefixed): ${skipped}\n\nActive threads only — archived threads are not renamed.`,
+      '✅ Apply Prefixes',
+    )
   })
 
 

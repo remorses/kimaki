@@ -21,6 +21,7 @@ import type { ThreadStartMarker } from '../system-message.js'
 import { buildOpencodeEventLogLine } from '../session-handler/opencode-session-event-log.js'
 import { createDiscordRest } from '../discord-urls.js'
 import { archiveThread, uploadFilesToDiscord, stripMentions } from '../discord-utils.js'
+import { getProjectEmoji, prefixNameWithEmoji } from '../project-emojis.js'
 import { setDataDir, setProjectsDir, getDataDir, getProjectsDir } from '../config.js'
 import { execAsync, resolveSessionWorkingDirectory } from '../worktrees.js'
 import { upgrade, getCurrentVersion } from '../upgrade.js'
@@ -541,6 +542,7 @@ cli
 
         // Compute thread name and worktree name early (needed for embed)
         const cleanPrompt = stripMentions(prompt)
+        const projectEmoji = getProjectEmoji(projectDirectory)
         const baseThreadName =
           name ||
           (cleanPrompt.length > 80
@@ -553,9 +555,16 @@ cli
             ? formatWorktreeName(options.worktree)
             : formatAutoWorktreeName(baseThreadName)
           : undefined
-        const threadName = worktreeName
+        // Project emoji always prefixes the visible thread name. The worktree
+        // prefix is inserted between the emoji and the thread name so the
+        // thread reads as `<emoji> <🌳worktree> actual task name`.
+        const worktreePrefixed = worktreeName
           ? `${WORKTREE_PREFIX}${baseThreadName}`
           : baseThreadName
+        const threadName = prefixNameWithEmoji(
+          worktreePrefixed,
+          projectEmoji,
+        )
 
         if (parsedSchedule) {
           const payload: ScheduledTaskPayload = {

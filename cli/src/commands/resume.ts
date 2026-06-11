@@ -20,6 +20,7 @@ import {
   resolveProjectDirectoryFromAutocomplete,
   NOTIFY_MESSAGE_FLAGS,
 } from '../discord-utils.js'
+import { prefixNameWithEmoji, projectEmojiForChannel } from '../project-emojis.js'
 import { collectSessionChunks, batchChunksForDiscord } from '../message-formatting.js'
 import { createLogger, LogPrefix } from '../logger.js'
 import * as errore from 'errore'
@@ -88,7 +89,10 @@ export async function handleResumeCommand({
     const sessionTitle = sessionResponse.data.title
 
     const thread = await channel.threads.create({
-      name: `Resume: ${sessionTitle}`.slice(0, 100),
+      name: prefixNameWithEmoji(
+        `Resume: ${sessionTitle}`,
+        await projectEmojiForChannel(channel.id),
+      ).slice(0, 100),
       autoArchiveDuration: ThreadAutoArchiveDuration.OneDay,
       reason: `Resuming session ${sessionId}`,
     })

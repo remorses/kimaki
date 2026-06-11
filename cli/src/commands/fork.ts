@@ -14,6 +14,7 @@ import {
   getThreadSession,
   setThreadSession,
   setPartMessagesBatch,
+  getChannelDirectory,
 } from '../database.js'
 import { initializeOpencodeForDirectory } from '../opencode.js'
 import {
@@ -21,6 +22,7 @@ import {
   resolveTextChannel,
   sendThreadMessage,
 } from '../discord-utils.js'
+import { prefixNameWithEmoji, projectEmojiForChannel } from '../project-emojis.js'
 import {
   collectSessionChunks,
   batchChunksForDiscord,
@@ -323,7 +325,10 @@ export async function handleForkSelectMenu(
     }
 
     const thread = await textChannel.threads.create({
-      name: `Fork: ${forkedSession.title}`.slice(0, 100),
+      name: prefixNameWithEmoji(
+        `Fork: ${forkedSession.title}`,
+        await projectEmojiForChannel(textChannel.id),
+      ).slice(0, 100),
       autoArchiveDuration: ThreadAutoArchiveDuration.OneDay,
       reason: `Forked from session ${sessionId}`,
     })

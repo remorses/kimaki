@@ -18,8 +18,14 @@ import {
   listTrackedTextChannels,
   setPartMessagesBatch,
   upsertThreadSession,
+  getChannelDirectory,
 } from './database.js'
 import { sendThreadMessage } from './discord-utils.js'
+import {
+  getProjectEmoji,
+  prefixNameWithEmoji,
+  projectEmojiForChannel,
+} from './project-emojis.js'
 import { createLogger, LogPrefix } from './logger.js'
 import {
   formatPart,
@@ -330,7 +336,12 @@ async function ensureExternalSessionThread({
     return new Error(`Channel ${channelId} is not a text channel`)
   }
 
-  const threadName = 'Sync: ' + getSessionThreadName({ sessionTitle, messages })
+  const projectDir = (await getChannelDirectory(channelId))?.directory
+  const projectEmoji = projectDir ? getProjectEmoji(projectDir) : null
+  const threadName = prefixNameWithEmoji(
+    'Sync: ' + getSessionThreadName({ sessionTitle, messages }),
+    projectEmoji,
+  )
   const thread = await (parentChannel).threads.create({
     name: threadName.slice(0, 100),
     autoArchiveDuration: ThreadAutoArchiveDuration.OneDay,
