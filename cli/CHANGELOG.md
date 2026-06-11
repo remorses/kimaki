@@ -1,5 +1,43 @@
 # Changelog
 
+## 0.15.0
+
+1. **New `kimaki session abort` command** — stop a running session without archiving the thread. The thread stays visible in Discord so you can inspect what happened. A "Session aborted via CLI" message is posted in the thread.
+
+   ```bash
+   kimaki send --channel 123 --prompt 'wrong stuff'
+   # Output:
+   # Session: ses_abc123
+   # https://discord.com/channels/...
+
+   kimaki session abort ses_abc123
+   ```
+
+2. **`kimaki send` now prints the session ID** — alongside the thread URL. For new threads, the CLI polls the database for up to 15 seconds waiting for the bot to create the session. For existing threads, the session ID is looked up immediately.
+
+3. **Allow `--agent` and `--model` with `--thread`/`--session` in `kimaki send`** — previously the CLI rejected these flags for existing threads with "Incompatible options with --thread/--session". Now they are accepted and included in the thread prompt marker so the bot picks them up. Fixes #146
+
+   ```bash
+   kimaki send --thread 123456 --prompt 'fix the bug' --agent plan
+   kimaki send --session ses_abc --prompt 'run tests' --model anthropic/claude-sonnet-4-20250514
+   ```
+
+4. **Allow `kimaki send --notify-only` to target any Discord channel** — previously every channel had to have a project directory mapping. Now `--notify-only` on a non-project channel posts the message directly without creating a thread. Scheduled tasks (`--send-at`) also work.
+
+5. **Auto-reject permission requests in subagent sessions** — permission prompts from Task/subtask agents are now automatically denied instead of showing buttons that nobody clicks. This prevents subagent sessions from hanging indefinitely on permission prompts.
+
+6. **Filter disabled skills from Discord slash command registration** — `--disable-skill` and `--enable-skill` flags now also prevent the corresponding skill commands from being registered as Discord slash commands, freeing up slots for commands the user actually wants. Fixes #145
+
+7. **Parallelize `/btw` and `/new-worktree` commands** — session lookup, opencode init, and parent channel resolve now run concurrently in both commands, reducing latency.
+
+8. **Pass parent session ID into `/btw`-forked sessions** — the agent in a forked session can now send messages back to the parent session using `kimaki send --session <parent_id>`.
+
+9. **Clickable source thread links in fork/btw messages** — `/fork` now includes a clickable `<#threadId>` link to the source thread in the "Forked session created" message.
+
+10. **Self-restart on gateway reconnect limit** — after 50 consecutive failed Discord gateway reconnect attempts, the process self-restarts using the same spawn-and-exit pattern as SIGUSR2 instead of retrying forever.
+
+11. **Fix stale permission buttons when plugin auto-rejects** — permission buttons from previous prompts are now dismissed when the plugin auto-rejects.
+
 ## 0.14.0
 
 1. **Configurable permission timeout with model continuation on deny** — new `--permission-timeout-minutes <minutes>` flag controls how long permission buttons stay active before auto-rejecting (defaults to 10 minutes). When a permission times out or the user clicks Deny, the model now sees it as a tool error and continues working (tries alternatives or explains what happened) instead of the session going dead silent. The timeout message also tells the model to mention the thread owner if the tool call is essential.
