@@ -223,6 +223,19 @@ do NOT add simple prisma query wrappers to database.ts. if a query is a straight
 
 prisma version in package.json MUST be pinned. no ^. this makes sure the generated prisma code is compatible with the prisma client used in the npm package
 
+## post-publish release notification
+
+after every publish, once the `gh release create` step is done:
+
+1. write the gh release body content to `/tmp/kimaki-release.md` so it can be reused quickly without regenerating it
+2. send a notification to the **#updates** channel (`1514563453493313548`) with a markdown summary of the release:
+
+```bash
+kimaki send --channel 1514563453493313548 --prompt "$(cat /tmp/kimaki-release.md)" --notify-only --user '535922349652836367'
+```
+
+the notification message should use the version as a heading 1 title (e.g. `# v1.2.3`), followed by the same rich content as the gh release: descriptions, code examples, migration steps, before/after comparisons, etc. keep it detailed and user-facing, identical quality to a gh release body.
+
 ## github issues
 
 never suggest installing kimaki from git (e.g. `npm i -g remorses/kimaki#main`). it does not work because the package needs a build step. always point users to the next npm release instead.
