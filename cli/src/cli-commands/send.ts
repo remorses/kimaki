@@ -217,12 +217,7 @@ cli
           if (options.user) {
             incompatibleFlags.push('--user')
           }
-          if (!sendAt && options.agent) {
-            incompatibleFlags.push('--agent')
-          }
-          if (!sendAt && options.model) {
-            incompatibleFlags.push('--model')
-          }
+
           if (incompatibleFlags.length > 0) {
             cliLogger.error(
               `Incompatible options with --thread/--session: ${incompatibleFlags.join(', ')}`,
@@ -444,6 +439,8 @@ cli
 
           const threadPromptMarker: ThreadStartMarker = {
             start: true,
+            ...(options.agent && { agent: options.agent }),
+            ...(options.model && { model: options.model }),
             ...(options.permission?.length ? { permissions: options.permission } : {}),
             ...(options.injectionGuard?.length ? { injectionGuardPatterns: options.injectionGuard } : {}),
           }
