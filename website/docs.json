@@ -114,6 +114,18 @@
           "docs/legal/terms"
         ]
       }
+    ],
+    "anchors": [
+      {
+        "anchor": "GitHub",
+        "href": "https://github.com/remorses/kimaki",
+        "icon": "lucide:github"
+      },
+      {
+        "anchor": "Changelog",
+        "href": "https://github.com/remorses/kimaki/releases",
+        "icon": "lucide:scroll-text"
+      }
     ]
   },
   "redirects": [
