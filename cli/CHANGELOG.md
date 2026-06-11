@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.16.0
+
+1. **Gateway mode re-enabled in onboarding wizard** — the "Gateway (pre-built Kimaki bot)" option is available again when running `kimaki` for the first time. Discord raised the privileged intent threshold from 100 servers to 10,000 users on June 10, 2026, so the shared bot no longer needs verification.
+
+2. **Long `--notify-only` messages are split instead of attached as files** — when `kimaki send --notify-only` has a prompt over 2000 characters, the content is now split into multiple Discord messages using the same markdown-aware splitter used in threads. Previously it was sent as a `.md` file attachment, making the content harder to read directly in the channel.
+
 ## 0.15.0
 
 1. **New `kimaki session abort` command** — stop a running session without archiving the thread. The thread stays visible in Discord so you can inspect what happened. A "Session aborted via CLI" message is posted in the thread.
