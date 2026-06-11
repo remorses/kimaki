@@ -1462,7 +1462,15 @@ export async function startDiscordBot({
   // Self-restart: cleanup, spawn a fresh process, then exit.
   // Used by SIGUSR2 and by the gateway reconnect limit. Works whether or
   // not the bin.ts wrapper is the parent process.
+  // Guarded so concurrent calls (e.g. multiple shards hitting the limit,
+  // or SIGUSR2 arriving during cleanup) don't spawn duplicate processes.
+  let selfRestarting = false
   async function selfRestart(reason: string) {
+    if (selfRestarting) {
+      discordLogger.log(`Self-restart already in progress, ignoring duplicate reason: ${reason}`)
+      return
+    }
+    selfRestarting = true
     discordLogger.log(`Self-restarting (reason: ${reason})...`)
     try {
       await handleShutdown(reason, { skipExit: true })
