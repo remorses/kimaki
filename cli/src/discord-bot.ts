@@ -1459,11 +1459,7 @@ export async function startDiscordBot({
     })
   })
 
-  // Self-restart: cleanup, spawn a fresh process, then exit.
-  // Used by SIGUSR2 and by the gateway reconnect limit. Works whether or
-  // not the bin.ts wrapper is the parent process.
-  // Guarded so concurrent calls (e.g. multiple shards hitting the limit,
-  // or SIGUSR2 arriving during cleanup) don't spawn duplicate processes.
+  // Self-restart: prefer bin.ts wrapper (keeps Ctrl+C), fall back to detached spawn.
   let selfRestarting = false
   async function selfRestart(reason: string) {
     if (selfRestarting) {
@@ -1477,10 +1473,13 @@ export async function startDiscordBot({
     } catch (error) {
       voiceLogger.error(`[${reason}] Error during shutdown:`, error)
     }
+
+    if (process.env.__KIMAKI_CHILD) {
+      discordLogger.log('Wrapper detected, exiting for wrapper restart')
+      process.exit(1)
+    }
+
     const { spawn } = await import('node:child_process')
-    // Strip __KIMAKI_CHILD so the new process goes through the respawn wrapper in bin.js.
-    // V8 heap flags are already in process.execArgv from the initial spawn, and bin.ts
-    // will re-inject them if missing, so no need to add them here.
     const env = { ...process.env }
     delete env.__KIMAKI_CHILD
     spawn(process.argv[0]!, [...process.execArgv, ...process.argv.slice(1)], {
