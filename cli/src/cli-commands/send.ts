@@ -621,6 +621,7 @@ cli
           botToken,
           embeds: autoStartEmbed,
           rest,
+          splitInsteadOfAttach: notifyOnly,
         })
 
         // For notify-only on non-project channels, just post the message without

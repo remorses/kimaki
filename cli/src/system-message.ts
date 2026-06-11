@@ -649,7 +649,7 @@ When you are approaching the **context window limit** or the user explicitly ask
 kimaki send --channel ${channelId} --prompt 'Continuing from previous session: <summary of current task and state>' --agent <current_agent>${userArg}
 \`\`\`
 
-The command automatically handles long prompts (over 2000 chars) by sending them as file attachments.
+The command automatically handles long prompts (over 2000 chars) by sending them as file attachments. With \`--notify-only\`, long prompts are split into multiple messages instead so the content is directly visible.
 
 Use this for handoff when:
 - User asks to "handoff", "continue in new thread", or "start fresh session"
