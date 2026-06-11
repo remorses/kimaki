@@ -25,6 +25,8 @@ import {
   getAllThreadIds,
   getThreadWorktree,
   getThreadCreatedAt,
+  getCleanupPromptedAt,
+  setCleanupPromptedAt,
   deleteThreadWorktree,
 } from './database.js'
 import { git, isDirty, getDefaultBranch, deleteWorktree } from './worktrees.js'
@@ -36,12 +38,13 @@ const cleanupLogger = createLogger('CLEANUP')
 const TWO_DAYS_MS = 2 * 24 * 60 * 60 * 1000
 const SWEEP_INTERVAL_MS = 24 * 60 * 60 * 1000
 const CLEANUP_ACTION_TTL_MS = 7 * 24 * 60 * 60 * 1000
+const REPROMPT_COOLDOWN_MS = 7 * 24 * 60 * 60 * 1000
 
 export function startThreadCleanupSweeper({
   discordClient,
   sweepIntervalMs = SWEEP_INTERVAL_MS,
 }: {
-  discordClient: Client<true>
+  discordClient: Client
   sweepIntervalMs?: number
 }): () => Promise<void> {
   let stopped = false
@@ -113,6 +116,9 @@ async function evaluateThreadForCleanup({
   rest: REST
 }): Promise<void> {
   if (hasPendingCleanupAction(threadId)) return
+
+  const lastPrompted = await getCleanupPromptedAt(threadId)
+  if (lastPrompted && Date.now() - lastPrompted.getTime() < REPROMPT_COOLDOWN_MS) return
 
   const worktree = await getThreadWorktree(threadId)
 
@@ -193,11 +199,19 @@ async function evaluateWorktreeThread({
         await rest.patch(Routes.channel(threadId), {
           body: { archived: true },
         })
+        await interaction.editReply({
+          content: 'Worktree cleaned up and thread archived.',
+          components: [],
+        })
       } catch (archiveError) {
         cleanupLogger.warn(
           `Failed to archive thread ${threadId} after cleanup:`,
           formatErrorWithStack(archiveError),
         )
+        await interaction.editReply({
+          content: 'Worktree cleaned up but failed to archive thread.',
+          components: [],
+        })
       }
     },
   })
@@ -234,6 +248,7 @@ async function evaluateWorktreeThread({
         components: [row],
       },
     })
+    await setCleanupPromptedAt(threadId, new Date())
     cleanupLogger.log(`Sent cleanup prompt for worktree thread ${threadId}`)
   } catch {
     cleanupLogger.log(`Could not send cleanup prompt for thread ${threadId} (may be archived)`)
@@ -295,14 +310,18 @@ async function evaluateNormalThread({
         await rest.patch(Routes.channel(threadId), {
           body: { archived: true },
         })
+        await interaction.editReply({
+          content: 'Thread archived.',
+          components: [],
+        })
       } catch (archiveError) {
         cleanupLogger.warn(
           `Failed to archive thread ${threadId}:`,
           formatErrorWithStack(archiveError),
         )
-        await interaction.followUp({
+        await interaction.editReply({
           content: 'Failed to archive thread.',
-          flags: 64,
+          components: [],
         })
       }
     },
@@ -314,7 +333,7 @@ async function evaluateNormalThread({
     ttlMs: CLEANUP_ACTION_TTL_MS,
     run: async ({ interaction }) => {
       await interaction.editReply({
-        content: 'Archive dismissed.',
+        content: 'Prompt dismissed.',
         components: [],
       })
     },
@@ -339,6 +358,7 @@ async function evaluateNormalThread({
         components: [row],
       },
     })
+    await setCleanupPromptedAt(threadId, new Date())
     cleanupLogger.log(`Sent archive prompt for inactive thread ${threadId}`)
   } catch {
     cleanupLogger.log(`Could not send archive prompt for thread ${threadId} (may be archived)`)

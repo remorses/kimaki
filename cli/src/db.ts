@@ -49,7 +49,6 @@ export function getDb(): Promise<KimakiDb> {
   return initPromise
 }
 
-
 function getDbUrl(): string {
   if (process.env.KIMAKI_DB_URL) {
     return process.env.KIMAKI_DB_URL
@@ -76,10 +75,7 @@ async function initializeDb(): Promise<KimakiDb> {
     try {
       fs.mkdirSync(dataDir, { recursive: true })
     } catch (e) {
-      dbLogger.error(
-        `Failed to create data directory ${dataDir}:`,
-        (e as Error).message,
-      )
+      dbLogger.error(`Failed to create data directory ${dataDir}:`, (e as Error).message)
     }
   }
 
@@ -111,13 +107,7 @@ async function initializeDb(): Promise<KimakiDb> {
   return db
 }
 
-async function migrateSchema({
-  db,
-  client,
-}: {
-  db: KimakiDb
-  client: Client
-}): Promise<void> {
+async function migrateSchema({ db, client }: { db: KimakiDb; client: Client }): Promise<void> {
   const schemaPath = path.join(__dirname, '../src/schema.sql')
   const sql = fs.readFileSync(schemaPath, 'utf-8')
   const statements = sql
@@ -129,17 +119,10 @@ async function migrateSchema({
         .join('\n')
         .trim(),
     )
-    .filter(
-      (s) =>
-        s.length > 0 &&
-        !/^CREATE\s+TABLE\s+["']?sqlite_sequence["']?\s*\(/i.test(s),
-    )
+    .filter((s) => s.length > 0 && !/^CREATE\s+TABLE\s+["']?sqlite_sequence["']?\s*\(/i.test(s))
     .map((s) =>
       s
-        .replace(
-          /^CREATE\s+UNIQUE\s+INDEX\b(?!\s+IF)/i,
-          'CREATE UNIQUE INDEX IF NOT EXISTS',
-        )
+        .replace(/^CREATE\s+UNIQUE\s+INDEX\b(?!\s+IF)/i, 'CREATE UNIQUE INDEX IF NOT EXISTS')
         .replace(/^CREATE\s+INDEX\b(?!\s+IF)/i, 'CREATE INDEX IF NOT EXISTS'),
     )
   for (const statement of statements) {
@@ -158,6 +141,7 @@ async function migrateSchema({
     'ALTER TABLE bot_tokens ADD COLUMN last_used_at DATETIME',
     "ALTER TABLE thread_sessions ADD COLUMN source TEXT DEFAULT 'kimaki'",
     'ALTER TABLE thread_sessions ADD COLUMN last_synced_name TEXT',
+    'ALTER TABLE thread_sessions ADD COLUMN cleanup_prompted_at DATETIME',
   ]
   for (const stmt of alterStatements) {
     await client.execute(stmt).catch(() => undefined)
@@ -183,18 +167,21 @@ async function migrateSchema({
     await client.execute(stmt).catch(() => undefined)
   }
 
-  const botRows = await db.query.bot_tokens.findMany({
-    columns: {
-      app_id: true,
-      client_id: true,
-      client_secret: true,
-    },
-  }).catch(() => [])
+  const botRows = await db.query.bot_tokens
+    .findMany({
+      columns: {
+        app_id: true,
+        client_id: true,
+        client_secret: true,
+      },
+    })
+    .catch(() => [])
   for (const botRow of botRows) {
     if (botRow.client_id && botRow.client_secret) {
       continue
     }
-    await db.update(schema.bot_tokens)
+    await db
+      .update(schema.bot_tokens)
       .set({
         client_id: crypto.randomUUID(),
         client_secret: crypto.randomBytes(32).toString('hex'),

@@ -168,6 +168,7 @@ CREATE TABLE IF NOT EXISTS `thread_sessions` (
 	`session_id` text NOT NULL,
 	`source` text DEFAULT 'kimaki' NOT NULL,
 	`last_synced_name` text,
+	`cleanup_prompted_at` datetime,
 	`created_at` datetime DEFAULT CURRENT_TIMESTAMP
 );
 
