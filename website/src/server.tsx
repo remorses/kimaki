@@ -61,8 +61,15 @@ export const app = new Spiceflow()
       <html lang="en">
         <Head>
           <Head.Meta name="viewport" content="width=device-width, initial-scale=1" />
+          <Head.Link
+            href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&display=swap"
+            rel="stylesheet"
+          />
         </Head>
-        <body className="min-h-screen bg-stone-50 text-stone-900 antialiased">
+        <body
+          className="min-h-screen bg-white text-neutral-900 antialiased"
+          style={{ fontFamily: "'Inter', system-ui, sans-serif" }}
+        >
           {children}
         </body>
       </html>
@@ -104,37 +111,42 @@ export const app = new Spiceflow()
           />
         </Head>
 
-        <main className="flex min-h-screen items-center justify-center px-6 py-12">
-          <section className="flex w-full max-w-xl flex-col gap-8 rounded-[32px] border border-stone-200 bg-white p-8 shadow-sm md:p-12">
-            <div className="flex flex-col gap-4 text-center">
-              <div className="mx-auto flex size-20 items-center justify-center rounded-full bg-emerald-100 text-4xl text-emerald-700">
-                <span aria-hidden="true">✓</span>
-              </div>
-              <div className="flex flex-col gap-3">
-                <p className="text-sm font-medium uppercase tracking-[0.18em] text-stone-500">
-                  Kimaki
-                </p>
-                <h1 className="text-balance text-4xl font-semibold tracking-tight text-stone-950 md:text-5xl">
-                  Bot installed successfully
-                </h1>
-                <p className="text-pretty text-base leading-7 text-stone-600 md:text-lg">
-                  You can close this tab and return to the terminal to finish the
-                  setup.
-                </p>
-              </div>
+        <main className="flex min-h-screen flex-col items-center justify-center px-6">
+          <div className="flex flex-col items-center gap-6 text-center">
+            <svg
+              width="48"
+              height="48"
+              viewBox="0 0 48 48"
+              fill="none"
+              aria-hidden="true"
+            >
+              <circle cx="24" cy="24" r="24" fill="#171717" />
+              <path
+                d="M16 24.5L21.5 30L32 19"
+                stroke="white"
+                stroke-width="2.5"
+                stroke-linecap="round"
+                stroke-linejoin="round"
+              />
+            </svg>
+
+            <div className="flex flex-col gap-2">
+              <h1
+                className="text-balance text-2xl font-semibold tracking-tight text-neutral-950"
+                style={{ letterSpacing: '-0.025em' }}
+              >
+                Bot installed successfully
+              </h1>
+              <p className="text-balance text-sm leading-relaxed text-neutral-500">
+                You can close this tab and return to the terminal to finish
+                setup.
+              </p>
             </div>
 
             {guildId ? (
-              <div className="flex flex-col gap-3 rounded-2xl border border-stone-200 bg-stone-50 p-4 text-center">
-                <p className="text-sm uppercase tracking-[0.16em] text-stone-500">
-                  Connected workspace
-                </p>
-                <p className="mx-auto rounded-xl border border-stone-200 bg-white px-4 py-2 font-mono text-sm text-stone-700">
-                  {guildId}
-                </p>
-              </div>
+              <p className="font-mono text-xs text-neutral-400">{guildId}</p>
             ) : null}
-          </section>
+          </div>
         </main>
       </>
     )
