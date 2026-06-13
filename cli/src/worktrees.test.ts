@@ -12,6 +12,7 @@ import {
   mergeWorktree,
   parseGitmodulesFileContent,
   parseGitWorktreeListPorcelain,
+  recoverWorktreeFromInfo,
   resolveSessionWorkingDirectory,
 } from './worktrees.js'
 import { TargetDirtyWorktreeError } from './errors.js'
@@ -24,13 +25,7 @@ import { setDataDir } from './config.js'
 
 const GIT_TIMEOUT_MS = 60_000
 
-async function git({
-  cwd,
-  args,
-}: {
-  cwd: string
-  args: string[]
-}): Promise<string> {
+async function git({ cwd, args }: { cwd: string; args: string[] }): Promise<string> {
   const command = `git ${args
     .map((arg) => {
       return JSON.stringify(arg)
@@ -82,10 +77,7 @@ describe('worktrees', () => {
     const plan = buildSubmoduleReferencePlan({
       sourceDirectory,
       submodulePaths: ['errore', 'gateway-proxy', 'traforo'],
-      existingSourceSubmoduleDirectories: new Set([
-        '/repo/errore',
-        '/repo/gateway-proxy',
-      ]),
+      existingSourceSubmoduleDirectories: new Set(['/repo/errore', '/repo/gateway-proxy']),
     })
 
     expect(plan).toMatchInlineSnapshot(`
@@ -155,14 +147,7 @@ describe('worktrees', () => {
 
       await git({
         cwd: parentRepo,
-        args: [
-          '-c',
-          'protocol.file.allow=always',
-          'submodule',
-          'add',
-          submoduleRemote,
-          'errore',
-        ],
+        args: ['-c', 'protocol.file.allow=always', 'submodule', 'add', submoduleRemote, 'errore'],
       })
       await git({ cwd: parentRepo, args: ['commit', '-am', 'add submodule at v1'] })
 
@@ -350,35 +335,35 @@ describe('worktrees', () => {
   })
 
   test('shortenWorktreeSlug leaves short slugs alone', () => {
-    expect(shortenWorktreeSlug('short-name')).toMatchInlineSnapshot(
-      `"short-name"`,
-    )
+    expect(shortenWorktreeSlug('short-name')).toMatchInlineSnapshot(`"short-name"`)
     expect(shortenWorktreeSlug('exactly-twenty-chars')).toMatchInlineSnapshot(
       `"exactly-twenty-chars"`,
     )
   })
 
   test('shortenWorktreeSlug strips vowels from long slugs', () => {
-    expect(
-      shortenWorktreeSlug('configurable-sidebar-width-by-component'),
-    ).toMatchInlineSnapshot(`"cnfgrbl-sdbr-wdth-by-cmpnnt"`)
-    expect(
-      shortenWorktreeSlug('add-dark-mode-toggle-to-settings-page'),
-    ).toMatchInlineSnapshot(`"add-drk-md-tggl-t-sttngs-pg"`)
+    expect(shortenWorktreeSlug('configurable-sidebar-width-by-component')).toMatchInlineSnapshot(
+      `"cnfgrbl-sdbr-wdth-by-cmpnnt"`,
+    )
+    expect(shortenWorktreeSlug('add-dark-mode-toggle-to-settings-page')).toMatchInlineSnapshot(
+      `"add-drk-md-tggl-t-sttngs-pg"`,
+    )
   })
 
   test('formatWorktreeName keeps user-provided slugs verbatim', () => {
-    expect(
-      formatWorktreeName('Configurable sidebar width by component'),
-    ).toMatchInlineSnapshot(`"opencode/kimaki-configurable-sidebar-width-by-component"`)
+    expect(formatWorktreeName('Configurable sidebar width by component')).toMatchInlineSnapshot(
+      `"opencode/kimaki-configurable-sidebar-width-by-component"`,
+    )
     expect(formatWorktreeName('my-feature')).toMatchInlineSnapshot(`"opencode/kimaki-my-feature"`)
   })
 
   test('formatAutoWorktreeName compresses long auto-derived slugs', () => {
-    expect(
-      formatAutoWorktreeName('Configurable sidebar width by component'),
-    ).toMatchInlineSnapshot(`"opencode/kimaki-cnfgrbl-sdbr-wdth-by-cmpnnt"`)
-    expect(formatAutoWorktreeName('my-feature')).toMatchInlineSnapshot(`"opencode/kimaki-my-feature"`)
+    expect(formatAutoWorktreeName('Configurable sidebar width by component')).toMatchInlineSnapshot(
+      `"opencode/kimaki-cnfgrbl-sdbr-wdth-by-cmpnnt"`,
+    )
+    expect(formatAutoWorktreeName('my-feature')).toMatchInlineSnapshot(
+      `"opencode/kimaki-my-feature"`,
+    )
   })
 
   test('getManagedWorktreeDirectory writes under kimaki data dir and strips prefix', () => {
@@ -483,11 +468,7 @@ describe('worktrees', () => {
         cwd: projectDirectory,
         args: ['config', 'user.name', 'Kimaki Tests'],
       })
-      fs.writeFileSync(
-        path.join(projectDirectory, 'README.md'),
-        'project\n',
-        'utf-8',
-      )
+      fs.writeFileSync(path.join(projectDirectory, 'README.md'), 'project\n', 'utf-8')
       await git({ cwd: projectDirectory, args: ['add', 'README.md'] })
       await git({ cwd: projectDirectory, args: ['commit', '-m', 'init'] })
       await git({
@@ -534,9 +515,7 @@ describe('worktrees', () => {
       expect(result).toBeInstanceOf(Error)
       const message = result instanceof Error ? result.message : ''
       expect(
-        message
-          .replace(projectDirectory, '<project>')
-          .replace(siblingDirectory, '<sibling>'),
+        message.replace(projectDirectory, '<project>').replace(siblingDirectory, '<sibling>'),
       ).toMatchInlineSnapshot(
         `"Working directory must be inside <project> or a git worktree of it: <sibling>"`,
       )
@@ -653,13 +632,102 @@ describe('parseGitWorktreeListPorcelain', () => {
   })
 
   test('returns empty array when only main worktree exists', () => {
-    const output = [
-      'worktree /Users/me/project',
-      'HEAD abc123',
-      'branch refs/heads/main',
-      '',
-    ].join('\n')
+    const output = ['worktree /Users/me/project', 'HEAD abc123', 'branch refs/heads/main', ''].join(
+      '\n',
+    )
 
     expect(parseGitWorktreeListPorcelain(output)).toMatchInlineSnapshot(`[]`)
+  })
+})
+
+describe('recoverWorktreeFromInfo', () => {
+  test('returns dir-exists when worktree directory is present', async () => {
+    const sandbox = createTestRoot()
+    try {
+      // Init a git repo as the "project"
+      await git({ cwd: sandbox, args: ['init'] })
+      await git({ cwd: sandbox, args: ['config', 'user.email', 'test@test.com'] })
+      await git({ cwd: sandbox, args: ['config', 'user.name', 'Test'] })
+      fs.writeFileSync(path.join(sandbox, 'readme.md'), 'project')
+      await git({ cwd: sandbox, args: ['add', '.'] })
+      await git({ cwd: sandbox, args: ['commit', '-m', 'init'] })
+
+      // Create a branch for the worktree and switch back to main so we can add it
+      await git({ cwd: sandbox, args: ['checkout', '-b', 'opencode/kimaki-test-worktree'] })
+      await git({ cwd: sandbox, args: ['checkout', 'main'] })
+
+      const worktreeDir = path.join(sandbox, '..', 'kimaki-test-worktree')
+      await git({
+        cwd: sandbox,
+        args: ['worktree', 'add', worktreeDir, 'opencode/kimaki-test-worktree'],
+      })
+
+      const result = await recoverWorktreeFromInfo({
+        projectDirectory: sandbox,
+        worktreeName: 'opencode/kimaki-test-worktree',
+        worktreeDirectory: worktreeDir,
+      })
+
+      expect(result).toEqual({ recovered: false, reason: 'dir-exists' })
+    } finally {
+      fs.rmSync(sandbox, { recursive: true, force: true })
+    }
+  })
+
+  test('returns branch-missing when branch does not exist', async () => {
+    const sandbox = createTestRoot()
+    try {
+      // Init a git repo
+      await git({ cwd: sandbox, args: ['init'] })
+      await git({ cwd: sandbox, args: ['config', 'user.email', 'test@test.com'] })
+      await git({ cwd: sandbox, args: ['config', 'user.name', 'Test'] })
+      fs.writeFileSync(path.join(sandbox, 'readme.md'), 'project')
+      await git({ cwd: sandbox, args: ['add', '.'] })
+      await git({ cwd: sandbox, args: ['commit', '-m', 'init'] })
+
+      const result = await recoverWorktreeFromInfo({
+        projectDirectory: sandbox,
+        worktreeName: 'opencode/kimaki-nonexistent-branch',
+        worktreeDirectory: path.join(sandbox, '..', 'nonexistent-worktree'),
+      })
+
+      if (result.recovered) {
+        throw new Error('Expected recovery to fail')
+      }
+      expect(result.reason).toBe('branch-missing')
+    } finally {
+      fs.rmSync(sandbox, { recursive: true, force: true })
+    }
+  })
+
+  test('returns project-missing when project directory is gone', async () => {
+    const result = await recoverWorktreeFromInfo({
+      projectDirectory: '/tmp/nonexistent-project-directory-12345',
+      worktreeName: 'opencode/kimaki-test',
+      worktreeDirectory: '/tmp/nonexistent-worktree-12345',
+    })
+
+    expect(result).toEqual({ recovered: false, reason: 'project-missing' })
+  })
+
+  test('returns branch-missing when project is not a git repo', async () => {
+    const sandbox = createTestRoot()
+    try {
+      // Create a directory that is NOT a git repo
+      fs.mkdirSync(path.join(sandbox, 'not-a-repo'), { recursive: true })
+
+      const result = await recoverWorktreeFromInfo({
+        projectDirectory: path.join(sandbox, 'not-a-repo'),
+        worktreeName: 'opencode/kimaki-test',
+        worktreeDirectory: path.join(sandbox, 'nonexistent-worktree'),
+      })
+
+      if (result.recovered) {
+        throw new Error('Expected recovery to fail')
+      }
+      expect(result.reason).toBe('branch-missing')
+    } finally {
+      fs.rmSync(sandbox, { recursive: true, force: true })
+    }
   })
 })
