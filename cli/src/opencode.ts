@@ -735,6 +735,26 @@ async function startSingleServer({
     experimental: {
       continue_loop_on_deny: true,
     },
+    provider: {
+      xai: {
+        models: {
+          'grok-composer-2.5-fast': {
+            name: 'Grok Composer 2.5 Fast',
+            attachment: true,
+            tool_call: true,
+            limit: {
+              context: 256000,
+              output: 256000,
+            },
+            cost: {
+              input: 0.50,
+              output: 2.50,
+              cache_read: 0.20,
+            },
+          },
+        },
+      },
+    },
     skills: {
       paths: [path.resolve(__dirname, '..', 'skills')],
     },
