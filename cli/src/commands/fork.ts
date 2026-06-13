@@ -335,13 +335,14 @@ export async function handleForkSelectMenu(
     // Add user to thread so it appears in their sidebar
     await thread.members.add(interaction.user.id)
 
+    const sourceThreadLink = `<#${threadChannel.id}>`
     sessionLogger.log(
-      `Created forked session ${forkedSession.id} in thread ${thread.id}`,
+      `Created forked session ${forkedSession.id} in thread ${thread.id} from source thread ${threadChannel.id} (session ${sessionId})`,
     )
 
     await sendThreadMessage(
       thread,
-      `**Forked session created!**\nFrom: \`${sessionId}\`\nNew session: \`${forkedSession.id}\``,
+      `**Forked session created!**\nFrom: ${sourceThreadLink} (\`${sessionId}\`)\nNew session: \`${forkedSession.id}\``,
     )
 
     // Fetch and display the last assistant messages from the forked session

@@ -8,7 +8,7 @@ import {
 } from 'discord.js'
 import type { CommandContext } from './types.js'
 import { getThreadSession } from '../database.js'
-import { initializeOpencodeForDirectory } from '../opencode.js'
+import { getOpencodeClient, initializeOpencodeForDirectory } from '../opencode.js'
 import {
   resolveWorkingDirectory,
   SILENT_MESSAGE_FLAGS,
@@ -57,7 +57,7 @@ export async function handleAbortCommand({
     return
   }
 
-  const { projectDirectory } = resolved
+  const { projectDirectory, workingDirectory } = resolved
 
   const sessionId = await getThreadSession(channel.id)
 
@@ -72,13 +72,16 @@ export async function handleAbortCommand({
     runtime.abortActiveRun('user-requested')
   } else {
     // No runtime but session exists — fall back to direct API abort
-    const getClient = await initializeOpencodeForDirectory(projectDirectory)
-    if (getClient instanceof Error) {
-      await command.editReply(`Failed to abort: ${getClient.message}`)
+    const serverResult = await initializeOpencodeForDirectory(projectDirectory)
+    if (serverResult instanceof Error) {
+      await command.editReply(`Failed to abort: ${serverResult.message}`)
       return
     }
     try {
-      await getClient().session.abort({ sessionID: sessionId })
+      const client = getOpencodeClient(workingDirectory)
+      if (client) {
+        await client.session.abort({ sessionID: sessionId, directory: workingDirectory })
+      }
     } catch (error) {
       logger.error('[ABORT] API abort failed:', error)
     }

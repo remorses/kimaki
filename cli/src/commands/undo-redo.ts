@@ -9,7 +9,7 @@ import {
 import type { OpencodeClient } from '@opencode-ai/sdk/v2'
 import type { CommandContext } from './types.js'
 import { getThreadSession } from '../database.js'
-import { initializeOpencodeForDirectory } from '../opencode.js'
+import { getOpencodeClient, initializeOpencodeForDirectory } from '../opencode.js'
 import {
   resolveWorkingDirectory,
   SILENT_MESSAGE_FLAGS,
@@ -96,14 +96,18 @@ export async function handleUndoCommand({
 
   await command.deferReply()
 
-  const getClient = await initializeOpencodeForDirectory(projectDirectory)
-  if (getClient instanceof Error) {
-    await command.editReply(`Failed to undo: ${getClient.message}`)
+  const serverResult = await initializeOpencodeForDirectory(projectDirectory)
+  if (serverResult instanceof Error) {
+    await command.editReply(`Failed to undo: ${serverResult.message}`)
     return
   }
 
   try {
-    const client = getClient()
+    const client = getOpencodeClient(workingDirectory)
+    if (!client) {
+      await command.editReply('Failed to get OpenCode client')
+      return
+    }
     // Fetch session to check existing revert state
     const sessionResponse = await client.session.get({
       sessionID: sessionId,
@@ -277,14 +281,18 @@ export async function handleRedoCommand({
 
   await command.deferReply()
 
-  const getClient = await initializeOpencodeForDirectory(projectDirectory)
-  if (getClient instanceof Error) {
-    await command.editReply(`Failed to redo: ${getClient.message}`)
+  const serverResult = await initializeOpencodeForDirectory(projectDirectory)
+  if (serverResult instanceof Error) {
+    await command.editReply(`Failed to redo: ${serverResult.message}`)
     return
   }
 
   try {
-    const client = getClient()
+    const client = getOpencodeClient(workingDirectory)
+    if (!client) {
+      await command.editReply('Failed to get OpenCode client')
+      return
+    }
 
     // Fetch session to check existing revert state
     const sessionResponse = await client.session.get({

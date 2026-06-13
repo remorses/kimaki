@@ -226,12 +226,6 @@ export async function createWorktreeInBackground({
       return new Error(errorMsg)
     }
 
-    await createPendingWorktree({
-      threadId: thread.id,
-      worktreeName,
-      projectDirectory,
-    })
-
     // Serialize status message edits so onProgress can't overwrite the
     // final success/error edit even if Discord's API is slow.
     let editChain: Promise<void> = Promise.resolve()
@@ -242,6 +236,14 @@ export async function createWorktreeInBackground({
         })
         .catch(() => {})
     }
+
+    // DB pending entry must complete before git creation so error paths
+    // (setWorktreeError) can find the row reliably
+    await createPendingWorktree({
+      threadId: thread.id,
+      worktreeName,
+      projectDirectory,
+    })
 
     const worktreeResult = await createWorktreeWithSubmodules({
       directory: projectDirectory,
@@ -261,19 +263,18 @@ export async function createWorktreeInBackground({
       return worktreeResult
     }
 
-    // Success - update database and edit starter message
+    // DB ready update is critical; reaction is best-effort
     await setWorktreeReady({
       threadId: thread.id,
       worktreeDirectory: worktreeResult.directory,
     })
 
-    // React with tree emoji to mark as worktree thread
-    await reactToThread({
+    void reactToThread({
       rest,
       threadId: thread.id,
       channelId: thread.parentId || undefined,
       emoji: '🌳',
-    })
+    }).catch(() => {})
 
     editStatus(
       `🌳 **Worktree: ${worktreeName}**\n` +
@@ -281,7 +282,6 @@ export async function createWorktreeInBackground({
         `🌿 Branch: \`${worktreeResult.branch}\``,
     )
     await editChain
-
     return worktreeResult.directory
   })().catch((e) => {
     logger.error('[WORKTREE] Unexpected error in createWorktreeInBackground:', e)
@@ -366,19 +366,15 @@ export async function handleNewWorktreeCommand({ command, appId }: CommandContex
     return
   }
 
-  const baseBranch = await resolveRequestedWorktreeBaseRef({
-    projectDirectory,
-    rawBaseBranch,
-  })
+  // Parallelize: base branch validation and existing worktree check are independent
+  const [baseBranch, existingWorktree] = await Promise.all([
+    resolveRequestedWorktreeBaseRef({ projectDirectory, rawBaseBranch }),
+    findExistingWorktreePath({ projectDirectory, worktreeName }),
+  ])
   if (baseBranch instanceof Error) {
     await command.editReply(`Invalid base branch: \`${rawBaseBranch}\``)
     return
   }
-
-  const existingWorktree = await findExistingWorktreePath({
-    projectDirectory,
-    worktreeName,
-  })
   if (errore.isError(existingWorktree)) {
     await command.editReply(existingWorktree.message)
     return
@@ -403,8 +399,11 @@ export async function handleNewWorktreeCommand({ command, appId }: CommandContex
       reason: 'Worktree session',
     })
 
-    // Add user to thread so it appears in their sidebar
-    await thread.members.add(command.user.id)
+    // Parallelize: member add and editReply are independent
+    await Promise.all([
+      thread.members.add(command.user.id),
+      command.editReply(`Creating worktree in ${thread.toString()}`),
+    ])
 
     return { thread, starterMessage }
   })().catch((e) => new WorktreeError('Failed to create thread', { cause: e }))
@@ -416,8 +415,6 @@ export async function handleNewWorktreeCommand({ command, appId }: CommandContex
   }
 
   const { thread, starterMessage } = result
-
-  await command.editReply(`Creating worktree in ${thread.toString()}`)
 
   // Create worktree in background (don't await)
   void createWorktreeInBackground({
@@ -472,19 +469,18 @@ async function handleWorktreeInThread({
     return
   }
 
-  const baseBranch = await resolveRequestedWorktreeBaseRef({
-    projectDirectory,
-    rawBaseBranch,
-  })
+  // Parallelize: base branch validation, existing worktree check, and parent channel
+  // resolve are all independent. resolveTextChannel fetches the parent from Discord
+  // cache/API which can overlap with the git operations.
+  const [baseBranch, existingWorktreePath, textChannel] = await Promise.all([
+    resolveRequestedWorktreeBaseRef({ projectDirectory, rawBaseBranch }),
+    findExistingWorktreePath({ projectDirectory, worktreeName }),
+    resolveTextChannel(thread),
+  ])
   if (baseBranch instanceof Error) {
     await command.editReply(`Invalid base branch: \`${rawBaseBranch}\``)
     return
   }
-
-  const existingWorktreePath = await findExistingWorktreePath({
-    projectDirectory,
-    worktreeName,
-  })
   if (errore.isError(existingWorktreePath)) {
     await command.editReply(existingWorktreePath.message)
     return
@@ -495,8 +491,6 @@ async function handleWorktreeInThread({
     )
     return
   }
-
-  const textChannel = await resolveTextChannel(thread)
   if (!textChannel) {
     await command.editReply('Could not resolve parent text channel')
     return
@@ -508,11 +502,14 @@ async function handleWorktreeInThread({
       autoArchiveDuration: 1440,
       reason: `Worktree fork from thread ${thread.id}`,
     })
-    await worktreeThread.members.add(command.user.id)
-    const statusMessage = await worktreeThread.send({
-      content: worktreeCreatingMessage(worktreeName),
-      flags: SILENT_MESSAGE_FLAGS,
-    })
+    // Parallelize: member add and status message send are independent
+    const [, statusMessage] = await Promise.all([
+      worktreeThread.members.add(command.user.id),
+      worktreeThread.send({
+        content: worktreeCreatingMessage(worktreeName),
+        flags: SILENT_MESSAGE_FLAGS,
+      }),
+    ])
     return { worktreeThread, statusMessage }
   })().catch((e) => new WorktreeError('Failed to create worktree thread', { cause: e }))
   if (threadResult instanceof Error) {
@@ -522,7 +519,8 @@ async function handleWorktreeInThread({
 
   const { worktreeThread, statusMessage } = threadResult
 
-  await command.editReply(`Creating worktree in ${worktreeThread.toString()}`)
+  // Fire-and-forget: don't block background worktree creation on editReply
+  void command.editReply(`Creating worktree in ${worktreeThread.toString()}`).catch(() => {})
 
   void createWorktreeInBackground({
     thread: worktreeThread,

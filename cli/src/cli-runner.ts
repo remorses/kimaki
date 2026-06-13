@@ -172,12 +172,17 @@ export async function sendDiscordMessageWithOptionalAttachment({
   botToken,
   embeds,
   rest,
+  splitInsteadOfAttach,
 }: {
   channelId: string
   prompt: string
   botToken: string
   embeds?: Array<{ color: number; footer: { text: string } }>
   rest: REST
+  /** When true, long messages are split into multiple Discord messages instead of
+   *  being attached as a file. Useful for notify-only messages where the content
+   *  should be directly visible in the channel. */
+  splitInsteadOfAttach?: boolean
 }): Promise<{ id: string }> {
   const discordMaxLength = 2000
   if (prompt.length <= discordMaxLength) {
@@ -188,6 +193,32 @@ export async function sendDiscordMessageWithOptionalAttachment({
         allowed_mentions: { parse: store.getState().allowedMentions },
       },
     })) as { id: string }
+  }
+
+  if (splitInsteadOfAttach) {
+    const { splitMarkdownForDiscord } = await import('./discord-utils.js')
+    const chunks = splitMarkdownForDiscord({
+      content: prompt,
+      maxLength: discordMaxLength,
+    })
+    let firstMessage: { id: string } | undefined
+    for (let chunk of chunks) {
+      if (!chunk?.trim()) continue
+      // Safety net: hard-truncate if splitting still produced an oversized chunk
+      if (chunk.length > discordMaxLength) {
+        chunk = chunk.slice(0, discordMaxLength - 4) + '...'
+      }
+      const message = (await rest.post(Routes.channelMessages(channelId), {
+        body: {
+          content: chunk,
+          // Only attach embeds to the first message
+          ...(firstMessage ? {} : { embeds }),
+          allowed_mentions: { parse: store.getState().allowedMentions },
+        },
+      })) as { id: string }
+      if (!firstMessage) firstMessage = message
+    }
+    return firstMessage!
   }
 
   const preview = prompt.slice(0, 100).replace(/\n/g, ' ')
@@ -1109,8 +1140,7 @@ export async function resolveCredentials({
           options: [
             {
               value: 'gateway' as const,
-              disabled: true,
-              label: 'Gateway (pre-built Kimaki bot, currently disabled because of Discord verification process. will be re-enabled soon)',
+              label: 'Gateway (pre-built Kimaki bot, no setup needed)',
             },
             {
               value: 'self_hosted' as const,

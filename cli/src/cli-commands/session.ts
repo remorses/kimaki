@@ -691,6 +691,67 @@ cli
 
 cli
   .command(
+    'session abort <sessionId>',
+    'Abort a running session without archiving the thread',
+  )
+  .action(async (sessionId) => {
+    try {
+      await initDatabase()
+
+      const { token: botToken } = await resolveBotCredentials()
+      const rest = createDiscordRest(botToken)
+
+      // Try to resolve the project directory for the OpenCode abort call
+      const directory = await resolveSessionDirectoryFromDatabase({ sessionId })
+      if (directory instanceof Error) {
+        cliLogger.error(directory.message)
+        process.exit(EXIT_NO_RESTART)
+      }
+
+      const serverResult = await initializeOpencodeForDirectory(directory)
+      if (serverResult instanceof Error) {
+        cliLogger.error(`Failed to initialize OpenCode: ${serverResult.message}`)
+        process.exit(EXIT_NO_RESTART)
+      }
+
+      const client = serverResult()
+      // Don't pass directory — the server resolves sessions by ID regardless
+      // of the x-opencode-directory header, matching archiveThread's pattern.
+      // This avoids issues when --cwd was used (session directory != project directory).
+      const abortResult = await client.session.abort({
+        sessionID: sessionId,
+      }).catch((e) => new Error('Failed to abort session', { cause: e }))
+      if (abortResult instanceof Error) {
+        cliLogger.error(abortResult.message)
+        process.exit(EXIT_NO_RESTART)
+      }
+
+      // Post a message in the Discord thread so it's clear why the session stopped
+      const threadId = await getThreadIdBySessionId(sessionId)
+      if (threadId) {
+        await rest.post(Routes.channelMessages(threadId), {
+          body: { content: 'Session aborted via CLI' },
+        }).catch((e) => {
+          cliLogger.warn(`Could not post abort message to thread: ${e instanceof Error ? e.message : String(e)}`)
+        })
+      }
+
+      note(
+        `Aborted session: ${sessionId}${threadId ? `\nThread ID: ${threadId}` : ''}`,
+        '✅ Aborted',
+      )
+      process.exit(0)
+    } catch (error) {
+      cliLogger.error(
+        'Error:',
+        error instanceof Error ? error.stack : String(error),
+      )
+      process.exit(EXIT_NO_RESTART)
+    }
+  })
+
+cli
+  .command(
     'session discord-url <sessionId>',
     'Print the Discord thread URL for a session',
   )

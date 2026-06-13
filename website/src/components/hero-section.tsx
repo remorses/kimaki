@@ -32,13 +32,13 @@ export function HeroSection() {
       <VideoBackgroundShader
         src='/assets/hero-bg.mp4'
         className='absolute inset-0 w-full h-full'
-        canvasClassName='dark:opacity-60 opacity-40'
-        dotColor='#5865F2'
+        canvasClassName=''
+        dotColor='#8da4ff'
         dotSize={6}
         minDotSize={1}
         dotMargin={1}
         animSpeed={3}
-        gamma={0.8}
+        gamma={0.5}
         enableMask={false}
         fluidStrength={0.2}
         fluidCurl={80}
@@ -67,11 +67,6 @@ export function HeroSection() {
               on Discord.
             </span>
           </h1>
-          <p className='text-foreground/50 text-sm sm:text-base tracking-wide mt-3 sm:mt-4 max-w-2xl'>
-            Send a message in Discord, an AI agent edits code on your machine.
-            <br className='hidden sm:block' /> One command to set up, works with
-            any project.
-          </p>
           <InstallCommand />
           <div className='flex items-center gap-5 mt-4'>
             <a

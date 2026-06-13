@@ -37,54 +37,64 @@ export async function forkSessionToBtwThread({
   username: string
   appId: string | undefined
 }): Promise<{ thread: ThreadChannel; forkedSessionId: string } | Error> {
-  const sessionId = await getThreadSession(sourceThread.id)
+  // Parallelize: session lookup + opencode init + parent channel resolve are independent
+  const [sessionId, getClientResult, textChannel] = await Promise.all([
+    getThreadSession(sourceThread.id),
+    initializeOpencodeForDirectory(projectDirectory),
+    resolveTextChannel(sourceThread),
+  ])
+
   if (!sessionId) {
     return new Error('No active session in this thread')
   }
-
-  const getClient = await initializeOpencodeForDirectory(projectDirectory)
-  if (getClient instanceof Error) {
-    return new Error(`Failed to fork session: ${getClient.message}`, {
-      cause: getClient,
+  if (getClientResult instanceof Error) {
+    return new Error(`Failed to fork session: ${getClientResult.message}`, {
+      cause: getClientResult,
     })
   }
-
-  const forkResponse = await getClient().session.fork({
-    sessionID: sessionId,
-  })
-  if (!forkResponse.data) {
-    return new Error('Failed to fork session')
-  }
-
-  const textChannel = await resolveTextChannel(sourceThread)
   if (!textChannel) {
     return new Error('Could not resolve parent text channel')
   }
 
+  // Fork must succeed before creating the Discord thread to avoid orphan threads
+  const forkResponse = await getClientResult().session.fork({ sessionID: sessionId })
+  if (!forkResponse.data) {
+    return new Error('Failed to fork session')
+  }
   const forkedSession = forkResponse.data
+
   const thread = await textChannel.threads.create({
     name: `btw: ${prompt}`.slice(0, 100),
     autoArchiveDuration: ThreadAutoArchiveDuration.OneDay,
     reason: `btw fork from session ${sessionId}`,
   })
 
+  // DB mapping must complete before user-visible actions so the thread is routable
   await setThreadSession(thread.id, forkedSession.id)
-  await thread.members.add(userId)
+
+  // Parallelize: member add and status message are independent best-effort actions
+  const sourceThreadLink = `<#${sourceThread.id}>`
+  await Promise.all([
+    thread.members.add(userId).catch(() => {}),
+    sendThreadMessage(
+      thread,
+      `Reusing context from ${sourceThreadLink} to answer prompt...\n${prompt}`,
+    ),
+  ])
 
   logger.log(
-    `Created btw fork session ${forkedSession.id} in thread ${thread.id} from ${sessionId}`,
-  )
-
-  const sourceThreadLink = `<#${sourceThread.id}>`
-  await sendThreadMessage(
-    thread,
-    `Reusing context from ${sourceThreadLink} to answer prompt...\n${prompt}`,
+    `Created btw fork session ${forkedSession.id} in thread ${thread.id} from source thread ${sourceThread.id} (session ${sessionId})`,
   )
 
   const wrappedPrompt = [
     `The user asked a side question while you were working on another task.`,
     `This is a forked session whose ONLY goal is to answer this question.`,
-    `Do NOT continue, resume, or reference the previous task. Only answer the question below.\n`,
+    `Do NOT continue, resume, or reference the previous task. Only answer the question below.`,
+    ``,
+    `Parent session: ${sessionId} (thread <#${sourceThread.id}>)`,
+    `If the user asks you to send a message or follow-up to the parent session, use:`,
+    `  kimaki send --session ${sessionId} --prompt 'your message here'`,
+    ``,
     prompt,
   ].join('\n')
 

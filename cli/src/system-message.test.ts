@@ -113,6 +113,15 @@ describe('system-message', () => {
 
       Only do this when the user explicitly asks to close or archive the thread, and only after your final message.
 
+      ## aborting a session
+
+      If you made a mistake with \`kimaki send\` (wrong prompt, wrong channel, mangled heredoc), abort the session immediately using the session ID printed in the output:
+
+      kimaki session abort <session_id>
+
+      This stops the AI from processing but keeps the thread visible in Discord.
+      Different from \`kimaki session archive\` which hides the thread.
+
       ## discord user mentions
 
       Prefer Discord user IDs for mentions. Discord bots cannot ping by @name; use \`<@userId>\` in message text or pass the ID to \`--user\`.
@@ -297,7 +306,7 @@ describe('system-message', () => {
       kimaki send --channel chan_123 --prompt 'Continuing from previous session: <summary of current task and state>' --agent <current_agent> --user '<discord-user-id>'
       \`\`\`
 
-      The command automatically handles long prompts (over 2000 chars) by sending them as file attachments.
+      The command automatically handles long prompts (over 2000 chars) by sending them as file attachments. With \`--notify-only\`, long prompts are split into multiple messages instead so the content is directly visible.
 
       Use this for handoff when:
       - User asks to "handoff", "continue in new thread", or "start fresh session"

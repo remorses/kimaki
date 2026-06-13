@@ -127,7 +127,6 @@ export const pendingPermissions = new Map<
       permission: PermissionRequest
       messageId: string
       directory: string
-      permissionDirectory: string
       contextHash: string
       dedupeKey: string
     }
@@ -297,7 +296,7 @@ function cleanupPendingUiForThread(threadId: string): void {
             requestIds.map((requestId) => {
               return client.permission.reply({
                 requestID: requestId,
-                directory: ctx.permissionDirectory,
+                directory: ctx.directory,
                 reply: 'reject',
               })
             }),
@@ -1809,7 +1808,7 @@ export class ThreadSessionRuntime {
     if (this.modelContextLimit && this.modelContextLimitKey === key) {
       return
     }
-    const client = getOpencodeClient(this.projectDirectory)
+    const client = getOpencodeClient(this.sdkDirectory)
     if (!client) {
       return
     }
@@ -2382,7 +2381,7 @@ export class ThreadSessionRuntime {
 
     const dedupeKey = buildPermissionDedupeKey({
       permission,
-      directory: this.projectDirectory,
+      directory: this.sdkDirectory,
     })
     const threadPermissions = pendingPermissions.get(this.thread.id)
     const existingPending = threadPermissions
@@ -2390,7 +2389,7 @@ export class ThreadSessionRuntime {
           if (pending.dedupeKey === dedupeKey) {
             return true
           }
-          if (pending.directory !== this.projectDirectory) {
+          if (pending.directory !== this.sdkDirectory) {
             return false
           }
           if (pending.permission.permission !== permission.permission) {
@@ -2414,8 +2413,7 @@ export class ThreadSessionRuntime {
       pendingPermissions.get(this.thread.id)!.set(permission.id, {
         permission,
         messageId: existingPending.messageId,
-        directory: this.projectDirectory,
-        permissionDirectory: existingPending.permissionDirectory,
+        directory: this.sdkDirectory,
         contextHash: existingPending.contextHash,
         dedupeKey,
       })
@@ -2440,8 +2438,7 @@ export class ThreadSessionRuntime {
     const { messageId, contextHash } = await showPermissionButtons({
       thread: this.thread,
       permission,
-      directory: this.projectDirectory,
-      permissionDirectory: this.sdkDirectory,
+      directory: this.sdkDirectory,
       subtaskLabel,
     })
 
@@ -2451,8 +2448,7 @@ export class ThreadSessionRuntime {
     pendingPermissions.get(this.thread.id)!.set(permission.id, {
       permission,
       messageId,
-      directory: this.projectDirectory,
-      permissionDirectory: this.sdkDirectory,
+      directory: this.sdkDirectory,
       contextHash,
       dedupeKey,
     })
@@ -2515,7 +2511,7 @@ export class ThreadSessionRuntime {
         await showAskUserQuestionDropdowns({
           thread: this.thread,
           sessionId,
-          directory: this.projectDirectory,
+          directory: this.sdkDirectory,
           requestId: questionRequest.id,
           input: { questions: questionRequest.questions },
           silent: this.getQueueLength() > 0,
@@ -3271,7 +3267,7 @@ export class ThreadSessionRuntime {
     reason: string
     sessionId: string
   }): Promise<void> {
-    const client = getOpencodeClient(this.projectDirectory)
+    const client = getOpencodeClient(this.sdkDirectory)
     if (!client) {
       logger.log(
         `[ABORT API] id=${abortId} reason=${reason} sessionId=${sessionId} skipped=no-client`,
@@ -4189,7 +4185,7 @@ export class ThreadSessionRuntime {
     let contextInfo = ''
     const folderName = path.basename(this.sdkDirectory)
 
-    const client = getOpencodeClient(this.projectDirectory)
+    const client = getOpencodeClient(this.sdkDirectory)
 
     // Run git branch and token fetch in parallel (fast, no external CLI)
     const [branchResult, contextResult] = await Promise.all([

@@ -199,7 +199,7 @@ export async function handleAddDirCommand({
     return
   }
 
-  const client = getOpencodeClient(resolvedDirectories.projectDirectory)
+  const client = getOpencodeClient(resolvedDirectories.workingDirectory)
   if (!client) {
     await command.editReply('Failed to get OpenCode client')
     return

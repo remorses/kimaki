@@ -217,12 +217,7 @@ cli
           if (options.user) {
             incompatibleFlags.push('--user')
           }
-          if (!sendAt && options.agent) {
-            incompatibleFlags.push('--agent')
-          }
-          if (!sendAt && options.model) {
-            incompatibleFlags.push('--model')
-          }
+
           if (incompatibleFlags.length > 0) {
             cliLogger.error(
               `Incompatible options with --thread/--session: ${incompatibleFlags.join(', ')}`,
@@ -444,6 +439,8 @@ cli
 
           const threadPromptMarker: ThreadStartMarker = {
             start: true,
+            ...(options.agent && { agent: options.agent }),
+            ...(options.model && { model: options.model }),
             ...(options.permission?.length ? { permissions: options.permission } : {}),
             ...(options.injectionGuard?.length ? { injectionGuardPatterns: options.injectionGuard } : {}),
           }
@@ -468,11 +465,14 @@ cli
           })
 
           const threadUrl = `https://discord.com/channels/${threadData.guild_id}/${threadData.id}`
+          const existingSessionId = sessionId || await getThreadSession(targetThreadId)
+          const sessionLine = existingSessionId ? `Session: ${existingSessionId}\n` : ''
           note(
-            `Prompt sent to thread: ${threadData.name}\n\nURL: ${threadUrl}`,
+            `Prompt sent to thread: ${threadData.name}\n${sessionLine}\nURL: ${threadUrl}`,
             '✅ Message Sent',
           )
-          cliLogger.log(threadUrl)
+          if (existingSessionId) process.stdout.write(`Session: ${existingSessionId}\n`)
+          process.stdout.write(`${threadUrl}\n`)
 
           if (options.wait) {
             const { waitAndOutputSession } = await import('../wait-session.js')
@@ -502,20 +502,22 @@ cli
 
         const channelConfig = await getChannelDirectory(channelData.id)
 
-        if (!channelConfig) {
+        if (!channelConfig && !notifyOnly) {
           cliLogger.log('Channel not configured')
           throw new Error(
             `Channel #${channelData.name} is not configured with a project directory. Run the bot first to sync channel data.`,
           )
         }
 
-        const projectDirectory = channelConfig.directory
+        const projectDirectory = channelConfig?.directory
 
         // Validate --cwd is inside the project or an existing git worktree.
         let resolvedCwd: string | undefined
         if (options.cwd) {
+          // projectDirectory is guaranteed here: --cwd is incompatible with --notify-only,
+          // and non-notify sends already require channelConfig above.
           const cwdResult = await resolveSessionWorkingDirectory({
-            projectDirectory,
+            projectDirectory: projectDirectory!,
             candidatePath: options.cwd,
           })
           if (cwdResult instanceof Error) {
@@ -619,7 +621,20 @@ cli
           botToken,
           embeds: autoStartEmbed,
           rest,
+          splitInsteadOfAttach: notifyOnly,
         })
+
+        // For notify-only on non-project channels, just post the message without
+        // creating a thread. There's no session to start, so a thread is unnecessary.
+        if (notifyOnly && !channelConfig) {
+          const messageUrl = `https://discord.com/channels/${channelData.guild_id}/${channelId}/${starterMessage.id}`
+          note(
+            `Channel: #${channelData.name}\n\nMessage sent.\n\nURL: ${messageUrl}`,
+            '✅ Message Sent',
+          )
+          process.stdout.write(`${messageUrl}\n`)
+          process.exit(0)
+        }
 
         cliLogger.log('Creating thread...')
 
@@ -643,24 +658,44 @@ cli
 
         const threadUrl = `https://discord.com/channels/${channelData.guild_id}/${threadData.id}`
 
+        // Poll for session ID if the bot is expected to auto-start (not --notify-only).
+        // The bot picks up the thread and creates a session asynchronously;
+        // we wait briefly so the caller can reference the session immediately.
+        let newSessionId: string | undefined
+        if (!notifyOnly) {
+          const { waitForSessionId } = await import('../wait-session.js')
+          newSessionId = await waitForSessionId({
+            threadId: threadData.id,
+            timeoutMs: 15_000,
+          }).catch((e) => {
+            cliLogger.warn(`Could not resolve session ID: ${e instanceof Error ? e.message : String(e)}`)
+            return undefined
+          })
+        }
+
         const worktreeNote = worktreeName
           ? `\nWorktree: ${worktreeName} (will be created by bot)`
           : resolvedCwd
             ? `\nWorking directory: ${resolvedCwd}`
             : ''
+        const sessionLine = newSessionId ? `\nSession: ${newSessionId}` : ''
+        const directoryLine = projectDirectory ? `\nDirectory: ${projectDirectory}` : ''
         const successMessage = notifyOnly
-          ? `Thread: ${threadData.name}\nDirectory: ${projectDirectory}\n\nNotification created. Reply to start a session.\n\nURL: ${threadUrl}`
-          : `Thread: ${threadData.name}\nDirectory: ${projectDirectory}${worktreeNote}\n\nThe running bot will pick this up and start the session.\n\nURL: ${threadUrl}`
+          ? `Thread: ${threadData.name}${directoryLine}\n\nNotification created. Reply to start a session.\n\nURL: ${threadUrl}`
+          : `Thread: ${threadData.name}${directoryLine}${worktreeNote}${sessionLine}\n\nThe running bot will pick this up and start the session.\n\nURL: ${threadUrl}`
 
         note(successMessage, '✅ Thread Created')
 
-        cliLogger.log(threadUrl)
+        if (newSessionId) process.stdout.write(`Session: ${newSessionId}\n`)
+        process.stdout.write(`${threadUrl}\n`)
 
         if (options.wait) {
+          // projectDirectory is guaranteed here: --wait is incompatible with --notify-only,
+          // and non-notify sends already require channelConfig above.
           const { waitAndOutputSession } = await import('../wait-session.js')
           await waitAndOutputSession({
             threadId: threadData.id,
-            projectDirectory,
+            projectDirectory: projectDirectory!,
             waitStartedAtMs,
           })
         }
