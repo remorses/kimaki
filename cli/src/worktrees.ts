@@ -172,9 +172,7 @@ export function parseGitmodulesFileContent(
   return configs
 }
 
-async function readSubmoduleConfigs(
-  directory: string,
-): Promise<GitSubmoduleConfig[] | Error> {
+async function readSubmoduleConfigs(directory: string): Promise<GitSubmoduleConfig[] | Error> {
   const gitmodulesPath = path.join(directory, '.gitmodules')
   const gitmodulesExists = await fs.promises
     .access(gitmodulesPath)
@@ -188,12 +186,12 @@ async function readSubmoduleConfigs(
     return []
   }
 
-  const gitmodulesContent = await fs.promises.readFile(gitmodulesPath, 'utf-8')
-    .catch((e) =>
+  const gitmodulesContent = await fs.promises.readFile(gitmodulesPath, 'utf-8').catch(
+    (e) =>
       new Error(`Failed to read ${gitmodulesPath}`, {
         cause: e,
       }),
-    )
+  )
   if (gitmodulesContent instanceof Error) return gitmodulesContent
 
   const parsed = parseGitmodulesFileContent(gitmodulesContent)
@@ -329,18 +327,17 @@ async function initializeSubmodulesWithLocalReferences({
     const result = await execAsync(command, {
       cwd: worktreeDirectory,
       timeout: SUBMODULE_INIT_TIMEOUT_MS,
-    }).catch((e) =>
-      new Error(
-        `git ${commandArgs.join(' ')} failed for ${planItem.path}: ${formatCommandError(e)}`,
-        { cause: e },
-      ),
+    }).catch(
+      (e) =>
+        new Error(
+          `git ${commandArgs.join(' ')} failed for ${planItem.path}: ${formatCommandError(e)}`,
+          { cause: e },
+        ),
     )
     if (result instanceof Error) {
       // Non-fatal: broken .gitmodules entries (e.g. path listed but not in tree)
       // should not block worktree creation. Log and continue with remaining submodules.
-      logger.warn(
-        `Skipping submodule ${planItem.path}: ${result.message}`,
-      )
+      logger.warn(`Skipping submodule ${planItem.path}: ${result.message}`)
     }
   }
 }
@@ -420,9 +417,7 @@ function parseSubmoduleGitdir(gitFileContent: string): string | Error {
   return gitdir
 }
 
-async function validateSubmodulePointers(
-  directory: string,
-): Promise<void | Error> {
+async function validateSubmodulePointers(directory: string): Promise<void | Error> {
   const submodulePaths = await getSubmodulePaths(directory)
   if (submodulePaths.length === 0) {
     return
@@ -448,14 +443,11 @@ async function validateSubmodulePointers(
         return
       }
 
-      const gitFileContentResult = await fs.promises.readFile(submoduleGitFile, 'utf-8')
-        .catch((e) =>
-          new Error(`Failed to read .git for ${submodulePath}`, { cause: e }),
-        )
+      const gitFileContentResult = await fs.promises
+        .readFile(submoduleGitFile, 'utf-8')
+        .catch((e) => new Error(`Failed to read .git for ${submodulePath}`, { cause: e }))
       if (gitFileContentResult instanceof Error) {
-        validationIssues.push(
-          `${submodulePath}: ${gitFileContentResult.message}`,
-        )
+        validationIssues.push(`${submodulePath}: ${gitFileContentResult.message}`)
         return
       }
 
@@ -476,9 +468,7 @@ async function validateSubmodulePointers(
           return false
         })
       if (!headExists) {
-        validationIssues.push(
-          `${submodulePath}: gitdir missing HEAD (${resolvedGitdir})`,
-        )
+        validationIssues.push(`${submodulePath}: gitdir missing HEAD (${resolvedGitdir})`)
       }
     }),
   )
@@ -486,9 +476,7 @@ async function validateSubmodulePointers(
   const submoduleStatusResult = await execAsync('git submodule status --recursive', {
     cwd: directory,
     timeout: SUBMODULE_INIT_TIMEOUT_MS,
-  }).catch((e) =>
-    new Error('git submodule status --recursive failed', { cause: e }),
-  )
+  }).catch((e) => new Error('git submodule status --recursive failed', { cause: e }))
   if (submoduleStatusResult instanceof Error) {
     validationIssues.push(submoduleStatusResult.message)
   }
@@ -497,9 +485,7 @@ async function validateSubmodulePointers(
     return
   }
 
-  return new Error(
-    `Submodule validation failed: ${validationIssues.join('; ')}`,
-  )
+  return new Error(`Submodule validation failed: ${validationIssues.join('; ')}`)
 }
 
 type WorktreeResult = {
@@ -507,9 +493,7 @@ type WorktreeResult = {
   branch: string
 }
 
-async function resolveDefaultWorktreeTarget(
-  directory: string,
-): Promise<string> {
+async function resolveDefaultWorktreeTarget(directory: string): Promise<string> {
   return 'HEAD'
 }
 
@@ -536,14 +520,8 @@ export function getManagedWorktreeDirectory({
   directory: string
   name: string
 }): string {
-  const projectHash = crypto
-    .createHash('sha1')
-    .update(directory)
-    .digest('hex')
-    .slice(0, 8)
-  const withoutPrefix = name
-    .replace(/^opencode\/kimaki-/, '')
-    .replaceAll('/', '-')
+  const projectHash = crypto.createHash('sha1').update(directory).digest('hex').slice(0, 8)
+  const withoutPrefix = name.replace(/^opencode\/kimaki-/, '').replaceAll('/', '-')
   return path.join(getDataDir(), 'worktrees', projectHash, withoutPrefix)
 }
 
@@ -578,10 +556,11 @@ export async function createWorktreeWithSubmodules({
   const createResult = await execAsync(createCommand, {
     cwd: directory,
     timeout: SUBMODULE_INIT_TIMEOUT_MS,
-  }).catch((e) =>
-    new Error(`git worktree add failed: ${formatCommandError(e)}`, {
-      cause: e,
-    }),
+  }).catch(
+    (e) =>
+      new Error(`git worktree add failed: ${formatCommandError(e)}`, {
+        cause: e,
+      }),
   )
   if (createResult instanceof Error) return createResult
 
@@ -593,9 +572,7 @@ export async function createWorktreeWithSubmodules({
   // For each submodule we use git's built-in --reference mechanism when the
   // source checkout already has that submodule cloned. This preserves commit
   // pinning while allowing local-only submodule commits to resolve reliably.
-  logger.log(
-    `Initializing submodules in ${worktreeDir} (timeout=${SUBMODULE_INIT_TIMEOUT_MS}ms)`,
-  )
+  logger.log(`Initializing submodules in ${worktreeDir} (timeout=${SUBMODULE_INIT_TIMEOUT_MS}ms)`)
   const submoduleInitResult = await initializeSubmodulesWithLocalReferences({
     sourceDirectory: directory,
     worktreeDirectory: worktreeDir,
@@ -679,6 +656,96 @@ export type MergeSuccess = {
   shortSha: string
 }
 
+export type RecoverWorktreeResult =
+  | {
+      recovered: false
+      reason:
+        | 'no-worktree-entry'
+        | 'dir-exists'
+        | 'project-missing'
+        | 'branch-missing'
+        | 'creation-failed'
+      error?: Error
+    }
+  | { recovered: true; worktreeDirectory: string; worktreeName: string }
+
+/**
+ * Recover a worktree by looking up the stored info from the database.
+ * This is the public API called by session runtime and commands.
+ */
+export async function recoverWorktreeDirectory({
+  threadId,
+}: {
+  threadId: string
+}): Promise<RecoverWorktreeResult> {
+  const { getThreadWorktree, setWorktreeReady, setWorktreeError } = await import('./database.js')
+
+  const worktreeInfo = await getThreadWorktree(threadId)
+  if (!worktreeInfo || worktreeInfo.status !== 'ready' || !worktreeInfo.worktree_directory) {
+    return { recovered: false, reason: 'no-worktree-entry' }
+  }
+
+  const result = await recoverWorktreeFromInfo({
+    projectDirectory: worktreeInfo.project_directory,
+    worktreeName: worktreeInfo.worktree_name,
+    worktreeDirectory: worktreeInfo.worktree_directory,
+  })
+
+  if (result.recovered) {
+    await setWorktreeReady({ threadId, worktreeDirectory: result.worktreeDirectory })
+  } else if (result.reason === 'creation-failed' && result.error) {
+    await setWorktreeError({ threadId, errorMessage: result.error.message })
+  }
+
+  return result
+}
+
+/**
+ * Attempt to recreate a missing worktree directory from git.
+ * Takes worktree info directly (no DB dependency) — testable in unit tests.
+ */
+export async function recoverWorktreeFromInfo({
+  projectDirectory,
+  worktreeName,
+  worktreeDirectory,
+}: {
+  projectDirectory: string
+  worktreeName: string
+  worktreeDirectory: string
+}): Promise<RecoverWorktreeResult> {
+  // If directory already exists, no recovery needed
+  if (fs.existsSync(worktreeDirectory)) {
+    return { recovered: false, reason: 'dir-exists' }
+  }
+
+  // If project directory is gone, can't recover
+  if (!fs.existsSync(projectDirectory)) {
+    return { recovered: false, reason: 'project-missing' }
+  }
+
+  // Check if the git branch still exists
+  const branchCheck = await git(projectDirectory, `rev-parse --verify ${worktreeName}`)
+  if (branchCheck instanceof Error) {
+    return { recovered: false, reason: 'branch-missing', error: branchCheck }
+  }
+
+  // Recreate the worktree
+  const result = await createWorktreeWithSubmodules({
+    directory: projectDirectory,
+    name: worktreeName,
+  })
+
+  if (result instanceof Error) {
+    return { recovered: false, reason: 'creation-failed', error: result }
+  }
+
+  const recoveredDir = getManagedWorktreeDirectory({
+    directory: projectDirectory,
+    name: worktreeName,
+  })
+  return { recovered: true, worktreeDirectory: recoveredDir, worktreeName }
+}
+
 export async function git(
   dir: string,
   args: string,
@@ -724,8 +791,7 @@ export async function deleteWorktree({
   // Retry with --force which bypasses this guard. This is safe because
   // canDeleteWorktree already verified the worktree is clean and merged.
   if (removeResult instanceof Error) {
-    const stderr =
-      (removeResult.cause as { stderr?: string } | undefined)?.stderr ?? ''
+    const stderr = (removeResult.cause as { stderr?: string } | undefined)?.stderr ?? ''
     if (stderr.includes('containing submodules')) {
       removeResult = await git(
         projectDirectory,
@@ -759,10 +825,7 @@ export async function deleteWorktree({
   }
 }
 
-export async function isDirty(
-  dir: string,
-  opts?: { timeout?: number },
-): Promise<boolean> {
+export async function isDirty(dir: string, opts?: { timeout?: number }): Promise<boolean> {
   const status = await git(dir, 'status --porcelain', opts)
   if (status instanceof Error) return false
   return status.length > 0
@@ -783,17 +846,15 @@ async function getGitCommonDir(dir: string): Promise<GitCommandError | string> {
   return path.resolve(dir, commonDir)
 }
 
-async function isAncestor(
-  {
-    dir,
-    ref1,
-    ref2,
-  }: {
-    dir: string
-    ref1: string
-    ref2: string
-  },
-): Promise<boolean> {
+async function isAncestor({
+  dir,
+  ref1,
+  ref2,
+}: {
+  dir: string
+  ref1: string
+  ref2: string
+}): Promise<boolean> {
   const result = await git(dir, `merge-base --is-ancestor "${ref1}" "${ref2}"`)
   return !(result instanceof Error)
 }
@@ -832,9 +893,7 @@ async function isRebaseInProgress(dir: string): Promise<boolean> {
   for (const rebaseDir of ['rebase-merge', 'rebase-apply']) {
     const gitPath = await git(dir, `rev-parse --git-path ${rebaseDir}`)
     if (gitPath instanceof Error) continue
-    const resolvedPath = path.isAbsolute(gitPath)
-      ? gitPath
-      : path.resolve(dir, gitPath)
+    const resolvedPath = path.isAbsolute(gitPath) ? gitPath : path.resolve(dir, gitPath)
     const exists = await fs.promises
       .access(resolvedPath)
       .then(() => {
@@ -903,10 +962,7 @@ export async function mergeWorktree({
       )
     }
 
-    const deleteTempBranchResult = await git(
-      worktreeDir,
-      `branch -D "${tempBranch}"`,
-    )
+    const deleteTempBranchResult = await git(worktreeDir, `branch -D "${tempBranch}"`)
     if (deleteTempBranchResult instanceof Error) {
       logger.warn(
         `[MERGE CLEANUP] Failed to delete temp branch ${tempBranch}: ${deleteTempBranchResult.message}`,
@@ -937,17 +993,10 @@ export async function mergeWorktree({
   // half; we keep it implicit here.
   const alreadyRebased = await isRebasedOnto(worktreeDir, defaultBranch)
 
-  const mergeBaseResult = await git(
-    worktreeDir,
-    `merge-base HEAD "${defaultBranch}"`,
-  )
-  const mergeBase =
-    mergeBaseResult instanceof Error ? defaultBranch : mergeBaseResult
+  const mergeBaseResult = await git(worktreeDir, `merge-base HEAD "${defaultBranch}"`)
+  const mergeBase = mergeBaseResult instanceof Error ? defaultBranch : mergeBaseResult
 
-  const commitCountResult = await git(
-    worktreeDir,
-    `rev-list --count "${mergeBase}..HEAD"`,
-  )
+  const commitCountResult = await git(worktreeDir, `rev-list --count "${mergeBase}..HEAD"`)
   if (commitCountResult instanceof Error) {
     await cleanupTempBranch()
     return commitCountResult
@@ -1039,10 +1088,7 @@ export async function mergeWorktree({
   }
 
   if (branchName !== worktreeName && worktreeName) {
-    const deleteWorktreeBranchResult = await git(
-      worktreeDir,
-      `branch -D "${worktreeName}"`,
-    )
+    const deleteWorktreeBranchResult = await git(worktreeDir, `branch -D "${worktreeName}"`)
     if (deleteWorktreeBranchResult instanceof Error) {
       logger.warn(
         `[MERGE CLEANUP] Failed to delete worktree branch ${worktreeName}: ${deleteWorktreeBranchResult.message}`,
@@ -1154,9 +1200,7 @@ export async function validateWorktreeDirectory({
     })
 
   if (!worktreePaths.includes(absoluteCandidate)) {
-    return new Error(
-      `Directory is not a git worktree of ${projectDirectory}: ${absoluteCandidate}`,
-    )
+    return new Error(`Directory is not a git worktree of ${projectDirectory}: ${absoluteCandidate}`)
   }
 
   return absoluteCandidate
@@ -1175,10 +1219,7 @@ function isSameOrInsideDirectory({
   candidateDirectory: string
 }) {
   const relativePath = path.relative(parentDirectory, candidateDirectory)
-  return (
-    relativePath === '' ||
-    (!relativePath.startsWith('..') && !path.isAbsolute(relativePath))
-  )
+  return relativePath === '' || (!relativePath.startsWith('..') && !path.isAbsolute(relativePath))
 }
 
 export async function resolveSessionWorkingDirectory({
@@ -1260,9 +1301,7 @@ function flushGitWorktreeEntry(current: PartialGitWorktree): GitWorktree | null 
 
 // Parse `git worktree list --porcelain` output into structured entries.
 // Skips the first entry (the main checkout) since that's the project root.
-export function parseGitWorktreeListPorcelain(
-  output: string,
-): GitWorktree[] {
+export function parseGitWorktreeListPorcelain(output: string): GitWorktree[] {
   const entries: GitWorktree[] = []
   let current: PartialGitWorktree = {}
 

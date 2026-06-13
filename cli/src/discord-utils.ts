@@ -22,6 +22,7 @@ import { discordApiUrl } from './discord-urls.js'
 import { Lexer } from 'marked'
 import { splitTablesFromMarkdown } from './format-tables.js'
 import { getChannelDirectory, getThreadWorktree } from './database.js'
+import { recoverWorktreeDirectory } from './worktrees.js'
 import { DiscordOperationError } from './errors.js'
 import { limitHeadingDepth } from './limit-heading-depth.js'
 import { unnestCodeBlocksFromLists } from './unnest-code-blocks.js'
@@ -96,9 +97,7 @@ export function hasKimakiAdminPermission(
   return isOwner || isAdmin || canManageServer || hasKimakiRole
 }
 
-export async function resolveGuildMessageMember(
-  message: Message,
-): Promise<GuildMemberType | null> {
+export async function resolveGuildMessageMember(message: Message): Promise<GuildMemberType | null> {
   if (!message.guild) return null
   if (message.member) return message.member
 
@@ -106,9 +105,7 @@ export async function resolveGuildMessageMember(
     .fetch(message.author.id)
     .catch((e) => new Error('Failed to fetch guild member', { cause: e }))
   if (fetchedMember instanceof Error) {
-    discordLogger.warn(
-      `[PERMISSION] Denying message ${message.id}: ${fetchedMember.message}`,
-    )
+    discordLogger.warn(`[PERMISSION] Denying message ${message.id}: ${fetchedMember.message}`)
     return null
   }
 
@@ -148,9 +145,7 @@ export function hasNoKimakiRole(member: GuildMemberType | null): boolean {
   if (!member?.roles?.cache) {
     return false
   }
-  return member.roles.cache.some(
-    (role) => role.name.toLowerCase() === 'no-kimaki',
-  )
+  return member.roles.cache.some((role) => role.name.toLowerCase() === 'no-kimaki')
 }
 
 /**
@@ -175,40 +170,30 @@ export async function reactToThread({
       return channelId
     }
     // Fetch the thread to get its parent channel ID
-    const threadResult = await (rest.get(Routes.channel(threadId)) as Promise<{
+    const threadResult = await (
+      rest.get(Routes.channel(threadId)) as Promise<{
         parent_id?: string
-      }>).catch((e) => new DiscordOperationError({ operation: 'fetchThreadStarter', cause: e }))
+      }>
+    ).catch((e) => new DiscordOperationError({ operation: 'fetchThreadStarter', cause: e }))
     if (threadResult instanceof Error) {
-      discordLogger.warn(
-        `Failed to fetch thread ${threadId}:`,
-        threadResult.message,
-      )
+      discordLogger.warn(`Failed to fetch thread ${threadId}:`, threadResult.message)
       return null
     }
     return threadResult.parent_id || null
   })()
 
   if (!parentChannelId) {
-    discordLogger.warn(
-      `Could not resolve parent channel for thread ${threadId}`,
-    )
+    discordLogger.warn(`Could not resolve parent channel for thread ${threadId}`)
     return
   }
 
   // React to the thread starter message in the parent channel.
   // Thread ID equals the starter message ID for threads created from messages.
-  const result = await rest.put(
-    Routes.channelMessageOwnReaction(
-      parentChannelId,
-      threadId,
-      encodeURIComponent(emoji),
-    ),
-  ).catch((e) => new DiscordOperationError({ operation: 'addReaction', cause: e }))
+  const result = await rest
+    .put(Routes.channelMessageOwnReaction(parentChannelId, threadId, encodeURIComponent(emoji)))
+    .catch((e) => new DiscordOperationError({ operation: 'addReaction', cause: e }))
   if (result instanceof Error) {
-    discordLogger.warn(
-      `Failed to react to thread ${threadId} with ${emoji}:`,
-      result.message,
-    )
+    discordLogger.warn(`Failed to react to thread ${threadId} with ${emoji}:`, result.message)
   }
 }
 
@@ -236,26 +221,25 @@ export async function archiveThread({
 
   if (client && sessionId) {
     const updateResult = await (async () => {
-        const sessionResponse = await client.session.get({
-          sessionID: sessionId,
-        })
-        if (!sessionResponse.data) {
-          return
-        }
-        const currentTitle = sessionResponse.data.title || ''
-        const newTitle = currentTitle.startsWith('📁')
-          ? currentTitle
-          : `📁 ${currentTitle}`.trim()
-        await client.session.update({
-          sessionID: sessionId,
-          title: newTitle,
-        })
+      const sessionResponse = await client.session.get({
+        sessionID: sessionId,
+      })
+      if (!sessionResponse.data) {
+        return
+      }
+      const currentTitle = sessionResponse.data.title || ''
+      const newTitle = currentTitle.startsWith('📁') ? currentTitle : `📁 ${currentTitle}`.trim()
+      await client.session.update({
+        sessionID: sessionId,
+        title: newTitle,
+      })
     })().catch((e) => new Error('Failed to update session title', { cause: e }))
     if (updateResult instanceof Error) {
       discordLogger.warn(`[archive-thread] ${updateResult.message}`)
     }
 
-    const abortResult = await client.session.abort({ sessionID: sessionId })
+    const abortResult = await client.session
+      .abort({ sessionID: sessionId })
       .catch((e) => new Error('Failed to abort session', { cause: e }))
     if (abortResult instanceof Error) {
       discordLogger.warn(`[archive-thread] ${abortResult.message}`)
@@ -397,11 +381,7 @@ export function splitMarkdownForDiscord({
   let currentLang: string | null = null
 
   // helper to split a long line into smaller pieces at word boundaries or hard breaks
-  const splitLongLine = (
-    text: string,
-    available: number,
-    inCode: boolean,
-  ): string[] => {
+  const splitLongLine = (text: string, available: number, inCode: boolean): string[] => {
     const pieces: string[] = []
     let remaining = text
 
@@ -433,16 +413,11 @@ export function splitMarkdownForDiscord({
         : 0
     // When opening fence starts a fresh chunk, its size is in openingFenceSize.
     // Otherwise count it normally so the overflow check doesn't miss the fence text.
-    const lineLength =
-      line.isOpeningFence && currentChunk.length === 0 ? 0 : line.text.length
+    const lineLength = line.isOpeningFence && currentChunk.length === 0 ? 0 : line.text.length
     const activeFenceOverhead =
       currentLang !== null || openingFenceSize > 0 ? closingFence.length : 0
     const wouldExceed =
-      currentChunk.length +
-        openingFenceSize +
-        lineLength +
-        activeFenceOverhead >
-      maxLength
+      currentChunk.length + openingFenceSize + lineLength + activeFenceOverhead > maxLength
 
     if (wouldExceed) {
       // handle case where single line is longer than maxLength
@@ -461,16 +436,9 @@ export function splitMarkdownForDiscord({
           ? ('```' + line.lang + '\n').length + '```\n'.length
           : 0
         // ensure at least 10 chars available, even if maxLength is very small
-        const availablePerChunk = Math.max(
-          10,
-          maxLength - codeBlockOverhead - 50,
-        )
+        const availablePerChunk = Math.max(10, maxLength - codeBlockOverhead - 50)
 
-        const pieces = splitLongLine(
-          line.text,
-          availablePerChunk,
-          line.inCodeBlock,
-        )
+        const pieces = splitLongLine(line.text, availablePerChunk, line.inCodeBlock)
 
         for (let i = 0; i < pieces.length; i++) {
           const piece = pieces[i]!
@@ -512,25 +480,13 @@ export function splitMarkdownForDiscord({
       } else {
         // currentChunk is empty but line still exceeds - shouldn't happen after above check
         const openingFence = line.inCodeBlock || line.isOpeningFence
-        const openingFenceSize = openingFence
-          ? ('```' + line.lang + '\n').length
-          : 0
-        if (
-          line.text.length + openingFenceSize + activeFenceOverhead >
-          maxLength
-        ) {
+        const openingFenceSize = openingFence ? ('```' + line.lang + '\n').length : 0
+        if (line.text.length + openingFenceSize + activeFenceOverhead > maxLength) {
           const fencedOverhead = openingFence
             ? ('```' + line.lang + '\n').length + closingFence.length
             : 0
-          const availablePerChunk = Math.max(
-            10,
-            maxLength - fencedOverhead - 50,
-          )
-          const pieces = splitLongLine(
-            line.text,
-            availablePerChunk,
-            line.inCodeBlock,
-          )
+          const availablePerChunk = Math.max(10, maxLength - fencedOverhead - 50)
+          const pieces = splitLongLine(line.text, availablePerChunk, line.inCodeBlock)
           for (const piece of pieces) {
             if (openingFence) {
               chunks.push('```' + line.lang + '\n' + piece + closingFence)
@@ -615,9 +571,7 @@ export async function sendThreadMessage(
     })
 
     if (chunks.length > 1) {
-      discordLogger.log(
-        `MESSAGE: Splitting ${text.length} chars into ${chunks.length} messages`,
-      )
+      discordLogger.log(`MESSAGE: Splitting ${text.length} chars into ${chunks.length} messages`)
     }
 
     for (let chunk of chunks) {
@@ -670,9 +624,7 @@ export function escapeDiscordFormatting(text: string): string {
   return text.replace(/```/g, '\\`\\`\\`').replace(/````/g, '\\`\\`\\`\\`')
 }
 
-export async function getKimakiMetadata(
-  textChannel: TextChannel | null,
-): Promise<{
+export async function getKimakiMetadata(textChannel: TextChannel | null): Promise<{
   projectDirectory?: string
 }> {
   if (!textChannel) {
@@ -727,7 +679,8 @@ export async function resolveProjectDirectoryFromAutocomplete(
   // Last resort: fetch the channel from Discord API to get parentId for threads
   // when the channel isn't cached at all (common with gateway-proxy).
   if (!cachedParentId) {
-    const fetched = await interaction.client.channels.fetch(channelId)
+    const fetched = await interaction.client.channels
+      .fetch(channelId)
       .catch((e) => new DiscordOperationError({ operation: 'fetchChannel', cause: e }))
     if (!(fetched instanceof Error) && fetched?.isThread() && fetched.parentId) {
       const parentConfig = await getChannelDirectory(fetched.parentId)
@@ -777,7 +730,14 @@ export async function resolveWorkingDirectory({
   if (isThread) {
     const worktreeInfo = await getThreadWorktree(channel.id)
     if (worktreeInfo?.status === 'ready' && worktreeInfo.worktree_directory) {
-      workingDirectory = worktreeInfo.worktree_directory
+      // Auto-recover missing worktree directory
+      const recovery = await recoverWorktreeDirectory({ threadId: channel.id })
+      if (recovery.recovered) {
+        workingDirectory = recovery.worktreeDirectory
+      } else {
+        // Use the stored directory - will fail if missing, but that's the existing behavior
+        workingDirectory = worktreeInfo.worktree_directory
+      }
     }
   }
 
@@ -817,23 +777,16 @@ export async function uploadFilesToDiscord({
   files.forEach((file, index) => {
     const buffer = fs.readFileSync(file)
     const mimeType = mime.getType(file) || 'application/octet-stream'
-    formData.append(
-      `files[${index}]`,
-      new Blob([buffer], { type: mimeType }),
-      path.basename(file),
-    )
+    formData.append(`files[${index}]`, new Blob([buffer], { type: mimeType }), path.basename(file))
   })
 
-  const response = await fetch(
-    discordApiUrl(`/channels/${threadId}/messages`),
-    {
-      method: 'POST',
-      headers: {
-        Authorization: `Bot ${botToken}`,
-      },
-      body: formData,
+  const response = await fetch(discordApiUrl(`/channels/${threadId}/messages`), {
+    method: 'POST',
+    headers: {
+      Authorization: `Bot ${botToken}`,
     },
-  )
+    body: formData,
+  })
 
   if (!response.ok) {
     const error = await response.text()
