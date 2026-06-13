@@ -25,6 +25,7 @@ import {
   RebaseConflictError,
   DirtyWorktreeError,
   TargetDirtyWorktreeError,
+  NothingToMergeError,
 } from '../errors.js'
 
 const logger = createLogger(LogPrefix.WORKTREE)
@@ -157,6 +158,12 @@ export async function handleMergeWorktreeCommand({
       await command.editReply(
         'Merge failed: uncommitted changes in main. Commit changes in the main worktree first, then run `/merge-worktree` again.',
       )
+      return
+    }
+
+    if (result instanceof NothingToMergeError) {
+      void removeWorktreePrefixFromTitle(thread)
+      await command.editReply(`Merge failed: ${result.message}`)
       return
     }
 
