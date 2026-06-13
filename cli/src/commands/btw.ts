@@ -19,6 +19,7 @@ import { getOrCreateRuntime } from '../session-handler/thread-session-runtime.js
 import { createLogger, LogPrefix } from '../logger.js'
 import type { CommandContext } from './types.js'
 import { initializeOpencodeForDirectory } from '../opencode.js'
+import { copyCurrentSessionModel } from './model.js'
 
 const logger = createLogger(LogPrefix.FORK)
 
@@ -62,6 +63,16 @@ export async function forkSessionToBtwThread({
     return new Error('Failed to fork session')
   }
   const forkedSession = forkResponse.data
+  const channelId = sourceThread.parentId || sourceThread.id
+
+  await copyCurrentSessionModel({
+    sourceSessionId: sessionId,
+    targetSessionId: forkedSession.id,
+    channelId,
+    appId,
+    getClient: getClientResult,
+    directory: projectDirectory,
+  })
 
   const thread = await textChannel.threads.create({
     name: `btw: ${prompt}`.slice(0, 100),

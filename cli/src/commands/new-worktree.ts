@@ -43,6 +43,7 @@ import {
 import { WORKTREE_PREFIX } from './merge-worktree.js'
 import type { AutocompleteContext } from './types.js'
 import * as errore from 'errore'
+import { copyCurrentSessionModel } from './model.js'
 
 const logger = createLogger(LogPrefix.WORKTREE)
 const DEFAULT_WORKTREE_BASE_REF = 'HEAD'
@@ -597,6 +598,15 @@ async function handleWorktreeInThread({
         )
         return
       }
+
+      await copyCurrentSessionModel({
+        sourceSessionId,
+        targetSessionId: forkedSession.id,
+        channelId: parent.id,
+        appId,
+        getClient,
+        directory: projectDirectory,
+      })
 
       const permissionResponse = await getClient().session.update({
         sessionID: forkedSession.id,
