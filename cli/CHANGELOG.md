@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.17.0
+
+1. **xAI Grok Composer 2.5 Fast model available by default** — the `grok-composer-2.5-fast` model from xAI is now registered in Kimaki's default opencode config, so all users can select it via `/model` without manual configuration. 256k context, 256k output, supports attachments and tool calls.
+
+2. **Forked sessions preserve the source model** — when `/btw` forks a side-question thread or `/new-worktree` creates a worktree from an existing thread, the new session now uses the same model as the source session instead of falling back to the default.
+
+3. **Clear worktree marker on empty merge** — `/merge-worktree` now removes the worktree marker from a thread title when there are no commits to merge (branch is already up to date), instead of leaving it marked as unmerged.
+
+4. **Improved `/btw` fork behavior** — forked sessions no longer proactively suggest sending messages back to the parent session. The agent only does so when the user explicitly asks.
+
 ## 0.16.0
 
 1. **Gateway mode re-enabled in onboarding wizard** — the "Gateway (pre-built Kimaki bot)" option is available again when running `kimaki` for the first time. Discord raised the privileged intent threshold from 100 servers to 10,000 users on June 10, 2026, so the shared bot no longer needs verification.
