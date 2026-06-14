@@ -419,11 +419,11 @@ importers:
   opencode-injection-guard:
     devDependencies:
       '@opencode-ai/plugin':
-        specifier: ^1.15.11
-        version: 1.16.2
+        specifier: ^1.4.6
+        version: 1.15.11
       '@opencode-ai/sdk':
-        specifier: ^1.15.11
-        version: 1.16.2
+        specifier: ^1.4.6
+        version: 1.15.11
       '@types/node':
         specifier: ^22.0.0
         version: 22.19.7
