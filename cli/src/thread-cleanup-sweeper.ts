@@ -39,6 +39,7 @@ const TWO_DAYS_MS = 2 * 24 * 60 * 60 * 1000
 const SWEEP_INTERVAL_MS = 24 * 60 * 60 * 1000
 const CLEANUP_ACTION_TTL_MS = 7 * 24 * 60 * 60 * 1000
 const REPROMPT_COOLDOWN_MS = 7 * 24 * 60 * 60 * 1000
+const NEVER_REPROMPT_AT = new Date('9999-12-31T00:00:00Z')
 
 export function startThreadCleanupSweeper({
   discordClient,
@@ -120,12 +121,32 @@ async function evaluateThreadForCleanup({
   const lastPrompted = await getCleanupPromptedAt(threadId)
   if (lastPrompted && Date.now() - lastPrompted.getTime() < REPROMPT_COOLDOWN_MS) return
 
+  if (await isThreadArchived({ rest, threadId })) {
+    await setCleanupPromptedAt(threadId, NEVER_REPROMPT_AT).catch(() => undefined)
+    return
+  }
+
   const worktree = await getThreadWorktree(threadId)
 
   if (worktree) {
     await evaluateWorktreeThread({ threadId, worktree, rest })
   } else {
     await evaluateNormalThread({ threadId, rest })
+  }
+}
+
+async function isThreadArchived({
+  rest,
+  threadId,
+}: {
+  rest: REST
+  threadId: string
+}): Promise<boolean> {
+  try {
+    const channel = (await rest.get(Routes.channel(threadId))) as { archived?: boolean } | null
+    return Boolean(channel?.archived)
+  } catch {
+    return false
   }
 }
 
@@ -194,6 +215,7 @@ async function evaluateWorktreeThread({
       }
 
       await deleteThreadWorktree(threadId)
+      await setCleanupPromptedAt(threadId, NEVER_REPROMPT_AT).catch(() => undefined)
 
       try {
         await rest.patch(Routes.channel(threadId), {
@@ -221,6 +243,7 @@ async function evaluateWorktreeThread({
     threadId,
     ttlMs: CLEANUP_ACTION_TTL_MS,
     run: async ({ interaction }) => {
+      await setCleanupPromptedAt(threadId, NEVER_REPROMPT_AT).catch(() => undefined)
       await interaction.editReply({
         content: dirExists ? 'Worktree cleanup dismissed.' : 'Archive dismissed.',
         components: [],
@@ -310,6 +333,7 @@ async function evaluateNormalThread({
         await rest.patch(Routes.channel(threadId), {
           body: { archived: true },
         })
+        await setCleanupPromptedAt(threadId, NEVER_REPROMPT_AT).catch(() => undefined)
         await interaction.editReply({
           content: 'Thread archived.',
           components: [],
@@ -332,6 +356,7 @@ async function evaluateNormalThread({
     threadId,
     ttlMs: CLEANUP_ACTION_TTL_MS,
     run: async ({ interaction }) => {
+      await setCleanupPromptedAt(threadId, NEVER_REPROMPT_AT).catch(() => undefined)
       await interaction.editReply({
         content: 'Prompt dismissed.',
         components: [],
