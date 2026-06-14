@@ -165,6 +165,9 @@ async function evaluateWorktreeThread({
 }): Promise<void> {
   if (!worktree.worktree_directory) return
 
+  const createdAt = await getThreadCreatedAt(threadId)
+  if (createdAt && Date.now() - createdAt.getTime() < TWO_DAYS_MS) return
+
   const worktreeDir = worktree.worktree_directory
   const projectDir = worktree.project_directory
 
