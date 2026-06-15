@@ -2069,6 +2069,39 @@ export class ThreadSessionRuntime {
       return
     }
 
+    // Show task tool errors that are normally suppressed by formatPart
+    if (
+      part.type === 'tool' &&
+      part.state.status === 'error' &&
+      part.tool === 'task' &&
+      this.state?.sentPartIds.has(part.id)
+    ) {
+      const description =
+        typeof part.state.input?.description === 'string' ? part.state.input.description : ''
+      const agent =
+        typeof part.state.input?.subagent_type === 'string'
+          ? part.state.input.subagent_type
+          : 'task'
+      const errorMessage = typeof part.state.error === 'string' ? part.state.error : 'Unknown error'
+      const content = description
+        ? `⨯ ${agent} **${description}** ${errorMessage}`
+        : `⨯ ${agent} **${errorMessage}**`
+      const verbosity = await this.getVerbosity()
+      if (verbosity === 'text_only') {
+        return
+      }
+      if (verbosity === 'text_and_essential_tools' && !isEssentialToolPart(part)) {
+        return
+      }
+      const sendResult = await sendThreadMessage(this.thread, content, {
+        flags: NOTIFY_MESSAGE_FLAGS,
+      }).catch((e) => new DiscordOperationError({ operation: 'sendMessage', cause: e }))
+      if (sendResult instanceof Error) {
+        discordLogger.error(`ERROR: Failed to send task error part ${part.id}:`, sendResult)
+      }
+      return
+    }
+
     if (part.type === 'step-finish') {
       await this.flushBufferedParts({
         messageID: part.messageID,
