@@ -528,13 +528,17 @@ async function renderWorktreesReply({
     return [textDisplay]
   })
 
-  // Reserve 1 component for a truncation notice so the notice itself
-  // doesn't push us over the 40-component limit.
-  const { components, truncated } = truncateComponents(allComponents, { reserveCost: 1 })
+  // Reserve budget for a truncation notice (1 component + its text length)
+  // so appending the notice doesn't push us over either Discord limit.
+  const truncatedNoticeContent = `*Some worktrees were not shown due to Discord's component limit. Use \`git worktree list\` for the full list.*`
+  const { components, truncated } = truncateComponents(allComponents, {
+    reserveCost: 1,
+    reserveTextSize: truncatedNoticeContent.length,
+  })
   if (truncated) {
     const truncatedNotice: APITextDisplayComponent = {
       type: ComponentType.TextDisplay,
-      content: `*Some worktrees were not shown due to Discord's component limit. Use \`git worktree list\` for the full list.*`,
+      content: truncatedNoticeContent,
     }
     components.push(truncatedNotice)
   }

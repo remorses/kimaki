@@ -116,17 +116,19 @@ export function countComponentCost(
 // - 4000 chars total displayable text
 // When a Container alone exceeds the budget, its children are truncated instead
 // of dropping the entire Container (which would show nothing).
-// reserveCost holds back component budget for caller-appended components.
+// reserveCost / reserveTextSize hold back budget for caller-appended components.
 // maxComponents / maxTextSize override defaults (useful for testing).
 export function truncateComponents(
   components: APIMessageTopLevelComponent[],
   {
     reserveCost = 0,
+    reserveTextSize = 0,
     maxComponents = MAX_COMPONENTS,
     maxTextSize = MAX_TEXT_SIZE,
-  }: { reserveCost?: number; maxComponents?: number; maxTextSize?: number } = {},
+  }: { reserveCost?: number; reserveTextSize?: number; maxComponents?: number; maxTextSize?: number } = {},
 ): { components: APIMessageTopLevelComponent[]; truncated: boolean } {
   const componentBudget = maxComponents - reserveCost
+  const textBudget = maxTextSize - reserveTextSize
   let totalCost = 0
   let totalText = 0
   const result: APIMessageTopLevelComponent[] = []
@@ -135,7 +137,7 @@ export function truncateComponents(
     const cost = countComponentCost(component)
     const text = componentTextSize(component as { type: number })
 
-    if (totalCost + cost <= componentBudget && totalText + text <= maxTextSize) {
+    if (totalCost + cost <= componentBudget && totalText + text <= textBudget) {
       result.push(component)
       totalCost += cost
       totalText += text
@@ -146,7 +148,7 @@ export function truncateComponents(
     // to fill the remaining budget instead of dropping the whole thing.
     if (component.type === ComponentType.Container) {
       const remainingComponentBudget = componentBudget - totalCost - 1
-      const remainingTextBudget = maxTextSize - totalText
+      const remainingTextBudget = textBudget - totalText
       if (remainingComponentBudget > 0 && remainingTextBudget > 0) {
         const truncatedChildren = truncateContainerChildren(
           component.components,
@@ -199,15 +201,17 @@ function truncateContainerChildren(
 // Split children into groups delimited by Separator components.
 // Separators are prepended to the following group (they sit between rows).
 // First group has no leading separator.
+// Drops separator-only groups and strips leading separators from the first group
+// to handle edge cases (children starting/ending with separators, consecutive separators).
 function groupBySeparator(
   children: APIComponentInContainer[],
 ): APIComponentInContainer[][] {
-  const groups: APIComponentInContainer[][] = []
+  const rawGroups: APIComponentInContainer[][] = []
   let current: APIComponentInContainer[] = []
 
   for (const child of children) {
     if (child.type === ComponentType.Separator && current.length > 0) {
-      groups.push(current)
+      rawGroups.push(current)
       current = [child]
       continue
     }
@@ -215,10 +219,20 @@ function groupBySeparator(
   }
 
   if (current.length > 0) {
-    groups.push(current)
+    rawGroups.push(current)
   }
 
-  return groups
+  // Clean up: strip leading separators from first group, drop separator-only groups
+  return rawGroups
+    .map((group, index) => {
+      if (index === 0) {
+        return group.filter((child) => child.type !== ComponentType.Separator)
+      }
+      return group
+    })
+    .filter((group) => {
+      return group.some((child) => child.type !== ComponentType.Separator)
+    })
 }
 
 /**
