@@ -60,6 +60,17 @@ type CalloutDescriptor = {
 // or as a TextDisplay plus an Action Row holding one or more buttons.
 export const MAX_COMPONENTS = 40
 
+// Count cost of a single child inside a Container.
+// ActionRow with N buttons = 1 + N, everything else = 1.
+function childComponentCost(
+  child: APIComponentInContainer,
+): number {
+  if ('components' in child && Array.isArray(child.components)) {
+    return 1 + child.components.length
+  }
+  return 1
+}
+
 // Count total component cost of a top-level component including nested children.
 // Discord counts every component toward the 40-component budget:
 // Container(3 children) = 4, ActionRow(2 buttons) = 3, TextDisplay = 1.
@@ -69,11 +80,7 @@ export function countComponentCost(
   if (component.type === ComponentType.Container) {
     let cost = 1
     for (const child of component.components) {
-      if ('components' in child && Array.isArray(child.components)) {
-        cost += 1 + child.components.length
-      } else {
-        cost += 1
-      }
+      cost += childComponentCost(child)
     }
     return cost
   }
@@ -84,24 +91,69 @@ export function countComponentCost(
 }
 
 // Truncate an array of top-level components to stay within the 40-component limit.
-// reserveCost holds back budget for components the caller will append after truncation
-// (e.g. a "truncated" notice). Returns the truncated array and whether anything was dropped.
+// When a Container alone exceeds the budget, its children are truncated instead
+// of dropping the entire Container (which would show nothing).
+// reserveCost holds back budget for components the caller will append after
+// truncation (e.g. a "truncated" notice).
+// maxComponents overrides the default 40-component limit (useful for testing).
 export function truncateComponents(
   components: APIMessageTopLevelComponent[],
-  { reserveCost = 0 }: { reserveCost?: number } = {},
+  { reserveCost = 0, maxComponents = MAX_COMPONENTS }: { reserveCost?: number; maxComponents?: number } = {},
 ): { components: APIMessageTopLevelComponent[]; truncated: boolean } {
-  const budget = MAX_COMPONENTS - reserveCost
+  const budget = maxComponents - reserveCost
   let totalCost = 0
   const result: APIMessageTopLevelComponent[] = []
+
   for (const component of components) {
     const cost = countComponentCost(component)
-    if (totalCost + cost > budget) {
-      return { components: result, truncated: true }
+
+    if (totalCost + cost <= budget) {
+      result.push(component)
+      totalCost += cost
+      continue
     }
-    result.push(component)
-    totalCost += cost
+
+    // The component doesn't fit. If it's a Container, truncate its children
+    // to fill the remaining budget instead of dropping the whole thing.
+    if (component.type === ComponentType.Container) {
+      const remainingBudget = budget - totalCost - 1 // 1 for the Container itself
+      if (remainingBudget > 0) {
+        const truncatedChildren = truncateContainerChildren(
+          component.components,
+          remainingBudget,
+        )
+        if (truncatedChildren.length > 0) {
+          result.push({
+            ...component,
+            components: truncatedChildren,
+          })
+        }
+      }
+    }
+
+    return { components: result, truncated: true }
   }
+
   return { components: result, truncated: false }
+}
+
+// Truncate a Container's children array to fit within a component budget.
+// Keeps children in order, never splits an ActionRow (includes it whole or not).
+function truncateContainerChildren(
+  children: APIComponentInContainer[],
+  budget: number,
+): APIComponentInContainer[] {
+  let cost = 0
+  const result: APIComponentInContainer[] = []
+  for (const child of children) {
+    const childCost = childComponentCost(child)
+    if (cost + childCost > budget) {
+      break
+    }
+    result.push(child)
+    cost += childCost
+  }
+  return result
 }
 
 /**
