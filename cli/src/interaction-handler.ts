@@ -672,9 +672,14 @@ export function registerInteractionHandler({
         try {
           if (interaction.isRepliable() && !interaction.replied) {
             if (interaction.deferred) {
-              // For component interactions that used deferUpdate(), editReply
-              // would overwrite the original message. Use followUp instead.
-              if (interaction.isMessageComponent()) {
+              // Component interactions that used deferUpdate() set ephemeral
+              // to null. For those, followUp is correct (editReply would
+              // overwrite the original message). For deferReply() interactions
+              // (ephemeral is true/false), editReply resolves the pending reply.
+              const usedDeferUpdate =
+                interaction.isMessageComponent() &&
+                interaction.ephemeral === null
+              if (usedDeferUpdate) {
                 await interaction.followUp({
                   content: 'An error occurred processing this interaction.',
                   flags: MessageFlags.Ephemeral,

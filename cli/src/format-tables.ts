@@ -137,23 +137,52 @@ export function truncateComponents(
   return { components: result, truncated: false }
 }
 
-// Truncate a Container's children array to fit within a component budget.
-// Keeps children in order, never splits an ActionRow (includes it whole or not).
+// Truncate a Container's children by separator-delimited row groups.
+// A row group is everything between separators (e.g. [TextDisplay, ActionRow]).
+// Either the full group fits or it's excluded — no trailing separators or
+// partial rows (like a TextDisplay without its ActionRow button).
 function truncateContainerChildren(
   children: APIComponentInContainer[],
   budget: number,
 ): APIComponentInContainer[] {
+  const groups = groupBySeparator(children)
   let cost = 0
   const result: APIComponentInContainer[] = []
-  for (const child of children) {
-    const childCost = childComponentCost(child)
-    if (cost + childCost > budget) {
+
+  for (const group of groups) {
+    const groupCost = group.reduce((sum, child) => sum + childComponentCost(child), 0)
+    if (cost + groupCost > budget) {
       break
     }
-    result.push(child)
-    cost += childCost
+    result.push(...group)
+    cost += groupCost
   }
   return result
+}
+
+// Split children into groups delimited by Separator components.
+// Separators are prepended to the following group (they sit between rows).
+// First group has no leading separator.
+function groupBySeparator(
+  children: APIComponentInContainer[],
+): APIComponentInContainer[][] {
+  const groups: APIComponentInContainer[][] = []
+  let current: APIComponentInContainer[] = []
+
+  for (const child of children) {
+    if (child.type === ComponentType.Separator && current.length > 0) {
+      groups.push(current)
+      current = [child]
+      continue
+    }
+    current.push(child)
+  }
+
+  if (current.length > 0) {
+    groups.push(current)
+  }
+
+  return groups
 }
 
 /**
