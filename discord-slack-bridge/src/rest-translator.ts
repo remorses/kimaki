@@ -690,6 +690,7 @@ export async function listGuildRoles({
       id: group.id,
       name: group.name,
       color: 0,
+      colors: { primary_color: 0, secondary_color: null, tertiary_color: null },
       hoist: false,
       icon: null,
       unicode_emoji: null,
