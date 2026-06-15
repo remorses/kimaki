@@ -670,15 +670,26 @@ export function registerInteractionHandler({
         )
         void notifyError(error, 'Interaction handler error')
         try {
-          if (
-            interaction.isRepliable() &&
-            !interaction.replied &&
-            !interaction.deferred
-          ) {
-            await interaction.reply({
-              content: 'An error occurred processing this command.',
-              flags: MessageFlags.Ephemeral,
-            })
+          if (interaction.isRepliable() && !interaction.replied) {
+            if (interaction.deferred) {
+              // For component interactions that used deferUpdate(), editReply
+              // would overwrite the original message. Use followUp instead.
+              if (interaction.isMessageComponent()) {
+                await interaction.followUp({
+                  content: 'An error occurred processing this interaction.',
+                  flags: MessageFlags.Ephemeral,
+                })
+              } else {
+                await interaction.editReply({
+                  content: 'An error occurred processing this command.',
+                })
+              }
+            } else {
+              await interaction.reply({
+                content: 'An error occurred processing this command.',
+                flags: MessageFlags.Ephemeral,
+              })
+            }
           }
         } catch (replyError) {
           interactionLogger.error(

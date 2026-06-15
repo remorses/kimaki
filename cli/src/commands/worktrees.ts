@@ -22,7 +22,7 @@ import {
   type ThreadWorktree,
 } from '../database.js'
 import { getDb } from '../db.js'
-import { splitTablesFromMarkdown } from '../format-tables.js'
+import { splitTablesFromMarkdown, truncateComponents } from '../format-tables.js'
 import {
   buildHtmlActionCustomId,
   cancelHtmlActionsForOwner,
@@ -514,7 +514,7 @@ async function renderWorktreesReply({
     },
   })
 
-  const components: APIMessageTopLevelComponent[] = segments.flatMap((segment) => {
+  const allComponents: APIMessageTopLevelComponent[] = segments.flatMap((segment) => {
     if (segment.type === 'components') {
       return segment.components
     }
@@ -525,6 +525,17 @@ async function renderWorktreesReply({
     }
     return [textDisplay]
   })
+
+  // Reserve 1 component for a truncation notice so the notice itself
+  // doesn't push us over the 40-component limit.
+  const { components, truncated } = truncateComponents(allComponents, { reserveCost: 1 })
+  if (truncated) {
+    const truncatedNotice: APITextDisplayComponent = {
+      type: ComponentType.TextDisplay,
+      content: `*Some worktrees were not shown due to Discord's component limit. Use \`git worktree list\` for the full list.*`,
+    }
+    components.push(truncatedNotice)
+  }
 
   await editReply({
     components,

@@ -58,7 +58,51 @@ type CalloutDescriptor = {
 // Max 40 components per message (nested components count toward the limit).
 // Row cost is dynamic now because a table row can render as a plain TextDisplay
 // or as a TextDisplay plus an Action Row holding one or more buttons.
-const MAX_COMPONENTS = 40
+export const MAX_COMPONENTS = 40
+
+// Count total component cost of a top-level component including nested children.
+// Discord counts every component toward the 40-component budget:
+// Container(3 children) = 4, ActionRow(2 buttons) = 3, TextDisplay = 1.
+export function countComponentCost(
+  component: APIMessageTopLevelComponent,
+): number {
+  if (component.type === ComponentType.Container) {
+    let cost = 1
+    for (const child of component.components) {
+      if ('components' in child && Array.isArray(child.components)) {
+        cost += 1 + child.components.length
+      } else {
+        cost += 1
+      }
+    }
+    return cost
+  }
+  if ('components' in component && Array.isArray(component.components)) {
+    return 1 + component.components.length
+  }
+  return 1
+}
+
+// Truncate an array of top-level components to stay within the 40-component limit.
+// reserveCost holds back budget for components the caller will append after truncation
+// (e.g. a "truncated" notice). Returns the truncated array and whether anything was dropped.
+export function truncateComponents(
+  components: APIMessageTopLevelComponent[],
+  { reserveCost = 0 }: { reserveCost?: number } = {},
+): { components: APIMessageTopLevelComponent[]; truncated: boolean } {
+  const budget = MAX_COMPONENTS - reserveCost
+  let totalCost = 0
+  const result: APIMessageTopLevelComponent[] = []
+  for (const component of components) {
+    const cost = countComponentCost(component)
+    if (totalCost + cost > budget) {
+      return { components: result, truncated: true }
+    }
+    result.push(component)
+    totalCost += cost
+  }
+  return { components: result, truncated: false }
+}
 
 /**
  * Split markdown into text and table component segments.
