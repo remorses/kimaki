@@ -1430,7 +1430,9 @@ export async function run({
   ])
 
 
-  void backgroundUpgradeKimaki()
+  if (store.getState().autoUpgradeEnabled) {
+    void backgroundUpgradeKimaki()
+  }
 
   // Start in-process Hrana server before database init. Required for the bot
   // process because it serves as both the DB server and the single-instance

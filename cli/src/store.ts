@@ -103,6 +103,13 @@ export type KimakiState = {
   // Read by: commands/permissions.ts showPermissionButtons().
   permissionTimeoutMs: number
 
+  // Whether background auto-upgrade of kimaki is enabled on startup.
+  // When true (default), kimaki checks npm for a newer version and installs
+  // it in the background. Set to false via --no-auto-upgrade CLI flag.
+  // Changes: set once at startup.
+  // Read by: cli-runner.ts run() before calling backgroundUpgradeKimaki().
+  autoUpgradeEnabled: boolean
+
   // Whether background sync of external OpenCode sessions is enabled.
   // When true (default), sessions started from the OpenCode CLI or TUI
   // are mirrored into Discord threads so they can be browsed, searched,
@@ -165,6 +172,7 @@ export const store = createStore<KimakiState>(() => ({
   allowedMentions: ['users'],
   allowAllUsers: false,
   permissionTimeoutMs: 10 * 60 * 1000,
+  autoUpgradeEnabled: true,
   syncEnabled: true,
   discordBaseUrl: 'https://discord.com',
   gatewayToken: null,
