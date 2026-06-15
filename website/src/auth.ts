@@ -66,6 +66,22 @@ function getGuildIdFromRequestUrl({
   return guildId
 }
 
+// Request header used to pass guild_id from the route handler to the
+// hooks.after callback within the same request. The route handler
+// extracts guild_id from the Discord callback URL before better-auth
+// processes it, and injects it as a header so hooks.after has a
+// synchronous, in-request fallback (no KV eventual consistency risk).
+export const GUILD_ID_HEADER = 'x-kimaki-discord-guild-id'
+
+// KV key for storing onboarding errors so the CLI can show them
+// instead of polling forever.
+const ONBOARDING_ERROR_KV_PREFIX = 'onboarding-error:'
+const ONBOARDING_KV_TTL_SECONDS = 600
+
+export function onboardingErrorKvKey(clientId: string): string {
+  return `${ONBOARDING_ERROR_KV_PREFIX}${clientId}`
+}
+
 export function createAuth({ env, baseURL }: { env: Env; baseURL: string }) {
   const prisma = createPrisma(env.HYPERDRIVE.connectionString)
 
@@ -79,6 +95,11 @@ export function createAuth({ env, baseURL }: { env: Env; baseURL: string }) {
         clientSecret: env.DISCORD_CLIENT_SECRET,
         scope: ['bot', 'applications.commands'],
         permissions: DISCORD_BOT_PERMISSIONS,
+        // Force consent screen every time. The default 'none' can cause
+        // Discord to skip the bot authorization step for returning users,
+        // omitting guild_id from the callback URL — which silently breaks
+        // the gateway_clients upsert and leaves the CLI polling forever.
+        prompt: 'consent',
         getUserInfo: async (token) => {
           const accessToken = token.accessToken
           if (!accessToken) {
@@ -121,25 +142,57 @@ export function createAuth({ env, baseURL }: { env: Env; baseURL: string }) {
           return
         }
 
-        const guildId = getGuildIdFromRequestUrl({ context: ctx })
+        // Persist an error so the CLI polling endpoint can return it
+        // instead of a bare 404, AND redirect the browser to the
+        // install-success page with the error visible.
+        async function failOnboarding(clientId: string, message: string) {
+          await env.GATEWAY_CLIENT_KV.put(
+            onboardingErrorKvKey(clientId),
+            JSON.stringify({ error: message, timestamp: Date.now() }),
+            { expirationTtl: ONBOARDING_KV_TTL_SECONDS },
+          ).catch(() => {})
+          const errorUrl = new URL('/install-success', baseURL)
+          errorUrl.searchParams.set('error', message)
+          return new Response(null, {
+            status: 302,
+            headers: { Location: errorUrl.toString() },
+          })
+        }
+
+        // 1. Try guild_id from the callback URL query params (Discord
+        //    includes it for advanced bot authorization flows).
+        let guildId = getGuildIdFromRequestUrl({ context: ctx })
+
+        // 2. Fallback: read guild_id from the request header injected
+        //    by the route handler in server.tsx before better-auth
+        //    processed the callback. Synchronous, no KV consistency risk.
         if (!guildId) {
-          console.warn('better-auth callback: missing guild_id callback parameter')
-          return
+          guildId = ctx.request?.headers?.get(GUILD_ID_HEADER) ?? undefined
         }
 
         const state = await getOAuthState()
         const kimakiClientId = state?.clientId as string | undefined
         const kimakiClientSecret = state?.clientSecret as string | undefined
         if (!kimakiClientId || !kimakiClientSecret) {
-          console.warn('better-auth callback: no clientId/clientSecret in OAuth state')
+          // Not a gateway onboarding flow (regular login), skip silently.
           return
         }
+
+        if (!guildId) {
+          return failOnboarding(
+            kimakiClientId,
+            'Discord did not return guild_id in the callback. Try authorizing again and make sure to select a server.',
+          )
+        }
+
         const reachableUrl = state?.reachableUrl as string | undefined
 
         const userId = ctx.context.newSession?.user?.id
         if (!userId) {
-          console.warn('better-auth callback: missing user in new session')
-          return
+          return failOnboarding(
+            kimakiClientId,
+            'User session was not created during authorization. Try again.',
+          )
         }
 
         const upsertResult = await upsertGatewayClientAndRefreshKv({
@@ -152,8 +205,11 @@ export function createAuth({ env, baseURL }: { env: Env; baseURL: string }) {
           reachableUrl,
         })
         if (upsertResult instanceof Error) {
-          console.error(upsertResult)
-          return
+          console.error('gateway onboarding upsert failed:', upsertResult)
+          return failOnboarding(
+            kimakiClientId,
+            'Kimaki could not save the bot installation. Please try again.',
+          )
         }
 
         // If the CLI passed a custom callback URL (--gateway-callback-url),

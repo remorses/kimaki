@@ -1215,6 +1215,7 @@ export async function resolveCredentials({
 
     let guildId: string | undefined
     let installerDiscordUserId: string | undefined
+    let onboardingError: string | undefined
     for (let attempt = 0; attempt < 100; attempt++) {
       await new Promise((resolve) => {
         setTimeout(resolve, 3000)
@@ -1230,7 +1231,7 @@ export async function resolveCredentials({
           s?.message(
             `Still waiting... If you don't see any servers, create one first (+ button in Discord sidebar), then reopen the URL above`,
           )
-        } else if (attempt === 150) {
+        } else if (attempt === 75) {
           s?.message(
             `Still waiting... Reopen the install URL if you closed it:\n${oauthUrl}`,
           )
@@ -1249,6 +1250,17 @@ export async function resolveCredentials({
             installerDiscordUserId = data.discord_user_id
             break
           }
+        } else if (resp.status === 404) {
+          // Check if the server returned a specific onboarding error
+          // (e.g. guild_id missing from Discord callback)
+          const data = (await resp.json().catch(() => null)) as {
+            error?: string
+            onboarding_error?: boolean
+          } | null
+          if (data?.onboarding_error && data.error) {
+            onboardingError = data.error
+            break
+          }
         }
       } catch {
         // Network error, retry
@@ -1256,14 +1268,15 @@ export async function resolveCredentials({
     }
 
     if (!guildId) {
+      const errorMsg = onboardingError
+        ? `Authorization failed: ${onboardingError}`
+        : 'Bot authorization timed out after 5 minutes. Please try again.'
       if (isInteractive) {
-        s?.stop('Authorization timed out')
+        s?.stop(onboardingError ? 'Authorization failed' : 'Authorization timed out')
       } else {
-        emitJsonEvent({ type: 'error', message: 'Authorization timed out after 5 minutes' })
+        emitJsonEvent({ type: 'error', message: errorMsg })
       }
-      cliLogger.error(
-        'Bot authorization timed out after 5 minutes. Please try again.',
-      )
+      cliLogger.error(errorMsg)
       process.exit(EXIT_NO_RESTART)
     }
 

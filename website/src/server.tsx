@@ -19,7 +19,7 @@ import {
   setTeamClientIdsInKv,
   upsertGatewayClientAndRefreshKv,
 } from './gateway-client-kv.js'
-import { createAuth, parseAllowedCallbackUrl } from './auth.js'
+import { createAuth, GUILD_ID_HEADER, onboardingErrorKvKey, parseAllowedCallbackUrl } from './auth.js'
 import { SlackBridgeDO } from './slack-bridge-do.js'
 import { SlackInstallPage } from './slack-install-page.js'
 import type { Env } from './env.js'
@@ -100,6 +100,52 @@ export const app = new Spiceflow()
       url.searchParams.get('guild_id') ??
       url.searchParams.get('team_id') ??
       undefined
+    const error = url.searchParams.get('error') ?? undefined
+
+    if (error) {
+      return (
+        <>
+          <Head>
+            <Head.Title>Kimaki - Setup Error</Head.Title>
+          </Head>
+
+          <main className="flex min-h-screen flex-col items-center justify-center px-6">
+            <div className="flex flex-col items-center gap-6 text-center" style={{ maxWidth: '28rem' }}>
+              <svg
+                width="48"
+                height="48"
+                viewBox="0 0 48 48"
+                fill="none"
+                aria-hidden="true"
+              >
+                <circle cx="24" cy="24" r="24" fill="#dc2626" />
+                <path
+                  d="M18 18L30 30M30 18L18 30"
+                  stroke="white"
+                  stroke-width="2.5"
+                  stroke-linecap="round"
+                />
+              </svg>
+
+              <div className="flex flex-col gap-2">
+                <h1
+                  className="text-balance text-2xl font-semibold tracking-tight text-neutral-950"
+                  style={{ letterSpacing: '-0.025em' }}
+                >
+                  Setup failed
+                </h1>
+                <p className="text-balance text-sm leading-relaxed text-red-600">
+                  {error}
+                </p>
+                <p className="text-balance text-sm leading-relaxed text-neutral-500" style={{ marginTop: '0.5rem' }}>
+                  Return to the terminal and try running the setup again.
+                </p>
+              </div>
+            </div>
+          </main>
+        </>
+      )
+    }
 
     return (
       <>
@@ -732,7 +778,22 @@ export const app = new Spiceflow()
     method: 'GET',
     path: '/api/auth/*',
     async handler({ request, state }) {
-      const baseURL = new URL(request.url).origin
+      const url = new URL(request.url)
+
+      // For Discord OAuth callbacks, inject guild_id as a request
+      // header so the hooks.after handler has a synchronous fallback
+      // if guild_id is not visible in ctx.request.url. better-auth's
+      // callback handler parses only known OAuth2 fields from the
+      // query string, so guild_id (a Discord-specific extra param)
+      // could be lost by the time hooks.after runs.
+      if (url.pathname.endsWith('/callback/discord')) {
+        const guildId = url.searchParams.get('guild_id')
+        if (guildId) {
+          request.headers.set(GUILD_ID_HEADER, guildId)
+        }
+      }
+
+      const baseURL = url.origin
       const auth = createAuth({ env: state.env, baseURL })
       return auth.handler(request)
     },
@@ -794,6 +855,19 @@ export const app = new Spiceflow()
       }
 
       if (!row) {
+        // Check if there's a stored error from a failed callback attempt
+        // so the CLI can show it instead of just "Still waiting..."
+        const storedError = await state.env.GATEWAY_CLIENT_KV.get(
+          onboardingErrorKvKey(clientId),
+        ).catch(() => null)
+        if (storedError) {
+          const parsed = JSON.parse(storedError) as { error: string }
+          return new Response(
+            JSON.stringify({ error: parsed.error, onboarding_error: true }),
+            { status: 404, headers: { 'Content-Type': 'application/json' } },
+          )
+        }
+
         return new Response(JSON.stringify({ error: 'Not found' }), {
           status: 404,
           headers: { 'Content-Type': 'application/json' },
