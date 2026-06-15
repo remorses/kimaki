@@ -7,6 +7,7 @@
 // run internals.
 
 import crypto from 'node:crypto'
+import fs from 'node:fs'
 import { ChannelType, type ThreadChannel } from 'discord.js'
 import type {
   Event as OpenCodeEvent,
@@ -3929,6 +3930,48 @@ export class ThreadSessionRuntime {
         logger.warn(
           `[ENSURE SESSION] session.get returned no data for ${sessionId}, response=${JSON.stringify(sessionResponse)}`,
         )
+      }
+    }
+
+    // Check if existing session has a stale worktree path
+    if (session && worktreeInfo?.status === 'ready' && worktreeInfo.worktree_directory) {
+      const isOldPathFormat = worktreeInfo.worktree_directory.includes(
+        '/.local/share/opencode/worktree/',
+      )
+      const dirExists = fs.existsSync(worktreeInfo.worktree_directory)
+
+      if (isOldPathFormat || !dirExists) {
+        // Stale worktree path - abort existing session and recreate
+        logger.log(
+          `[ENSURE SESSION] Existing session ${session.id} has stale worktree path: ${worktreeInfo.worktree_directory} (oldFormat=${isOldPathFormat}, dirExists=${dirExists})`,
+        )
+
+        // Abort the existing session
+        const abortResult = await getClient()
+          .session.abort({ sessionID: session.id, directory })
+          .catch((e) => new OpenCodeSdkError({ operation: 'session.abort', cause: e }))
+
+        if (abortResult instanceof Error) {
+          logger.warn(`[ENSURE SESSION] session.abort failed: ${abortResult.message}`)
+        } else {
+          logger.log(`[ENSURE SESSION] Aborted stale session ${session.id}`)
+        }
+
+        // Run recovery to recreate worktree at new path
+        const { recoverWorktreeDirectory } = await import('../worktrees.js')
+        const recovery = await recoverWorktreeDirectory({ threadId: this.thread.id })
+        if (recovery.recovered) {
+          logger.log(
+            `[ENSURE SESSION] Worktree recovered to new path: ${recovery.worktreeDirectory}`,
+          )
+        } else {
+          logger.warn(
+            `[ENSURE SESSION] Worktree recovery failed: ${recovery.reason}${recovery.error ? ' - ' + recovery.error.message : ''}`,
+          )
+        }
+
+        // Clear session so a new one is created
+        session = undefined
       }
     }
 

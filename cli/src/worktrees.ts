@@ -713,8 +713,12 @@ export async function recoverWorktreeFromInfo({
   worktreeName: string
   worktreeDirectory: string
 }): Promise<RecoverWorktreeResult> {
-  // If directory already exists, no recovery needed
-  if (fs.existsSync(worktreeDirectory)) {
+  // Detect old path format (~/.local/share/opencode/worktree/...) and treat as missing
+  // The recovery will recreate at the new path (~/.kimaki/worktrees/...)
+  const isOldPathFormat = worktreeDirectory.includes('/.local/share/opencode/worktree/')
+
+  // If directory already exists and is NOT old format, no recovery needed
+  if (!isOldPathFormat && fs.existsSync(worktreeDirectory)) {
     return { recovered: false, reason: 'dir-exists' }
   }
 
