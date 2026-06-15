@@ -131,27 +131,33 @@ export function appIdFromToken(token: string): string | undefined {
 // but don't run the interactive wizard.
 // In gateway mode, also sets store.discordBaseUrl so REST calls
 // are routed through the gateway-proxy REST endpoint.
+//
+// Priority: KIMAKI_BOT_TOKEN env var takes precedence over saved DB
+// credentials. This lets CI and cross-instance commands override the
+// local bot identity. If the env token looks like a gateway credential
+// (clientId:clientSecret), the gateway proxy REST URL is set automatically.
 export async function resolveBotCredentials({ appIdOverride }: { appIdOverride?: string } = {}): Promise<{
   token: string
   appId: string | undefined
 }> {
-  // DB first: getBotTokenWithMode() sets store.discordBaseUrl which is
-  // required in gateway mode so REST calls route through the proxy.
-  // Without this, inherited KIMAKI_BOT_TOKEN (a gateway credential like
-  // clientId:clientSecret) would be sent directly to discord.com → 401.
+  const envToken = process.env.KIMAKI_BOT_TOKEN
+  if (envToken) {
+    const isGatewayToken = envToken.includes(':')
+    if (isGatewayToken) {
+      // Gateway tokens need REST calls routed through the proxy, not discord.com
+      store.setState({ discordBaseUrl: KIMAKI_GATEWAY_PROXY_REST_BASE_URL })
+    }
+    const appId = appIdOverride || appIdFromToken(envToken)
+    return { token: envToken, appId }
+  }
+
+  // Fall back to saved credentials in the database
   const botRow = await getBotTokenWithMode().catch((e) => {
     cliLogger.error('Database error:', e instanceof Error ? e.message : String(e))
     return null
   })
   if (botRow) {
     return { token: botRow.token, appId: appIdOverride || botRow.appId }
-  }
-
-  // Fall back to env var for CI/headless deployments with no database
-  const envToken = process.env.KIMAKI_BOT_TOKEN
-  if (envToken) {
-    const appId = appIdOverride || appIdFromToken(envToken)
-    return { token: envToken, appId }
   }
 
   cliLogger.error('No bot token found. Set KIMAKI_BOT_TOKEN env var or run `kimaki` first to set up.')
