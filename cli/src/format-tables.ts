@@ -60,6 +60,9 @@ type CalloutDescriptor = {
 // or as a TextDisplay plus an Action Row holding one or more buttons.
 export const MAX_COMPONENTS = 40
 
+// Discord caps total displayable text across all components at 4000 chars.
+export const MAX_TEXT_SIZE = 4000
+
 // Count cost of a single child inside a Container.
 // ActionRow with N buttons = 1 + N, everything else = 1.
 function childComponentCost(
@@ -69,6 +72,24 @@ function childComponentCost(
     return 1 + child.components.length
   }
   return 1
+}
+
+// Count displayable text size of a component tree.
+// Discord counts all text content (TextDisplay, button labels) toward a 4000-char limit.
+function componentTextSize(component: { type: number; [key: string]: unknown }): number {
+  let size = 0
+  if ('content' in component && typeof component.content === 'string') {
+    size += component.content.length
+  }
+  if ('label' in component && typeof component.label === 'string') {
+    size += component.label.length
+  }
+  if ('components' in component && Array.isArray(component.components)) {
+    for (const child of component.components) {
+      size += componentTextSize(child as { type: number })
+    }
+  }
+  return size
 }
 
 // Count total component cost of a top-level component including nested children.
@@ -90,37 +111,47 @@ export function countComponentCost(
   return 1
 }
 
-// Truncate an array of top-level components to stay within the 40-component limit.
+// Truncate an array of top-level components to stay within Discord limits:
+// - 40 total components (nested children count)
+// - 4000 chars total displayable text
 // When a Container alone exceeds the budget, its children are truncated instead
 // of dropping the entire Container (which would show nothing).
-// reserveCost holds back budget for components the caller will append after
-// truncation (e.g. a "truncated" notice).
-// maxComponents overrides the default 40-component limit (useful for testing).
+// reserveCost holds back component budget for caller-appended components.
+// maxComponents / maxTextSize override defaults (useful for testing).
 export function truncateComponents(
   components: APIMessageTopLevelComponent[],
-  { reserveCost = 0, maxComponents = MAX_COMPONENTS }: { reserveCost?: number; maxComponents?: number } = {},
+  {
+    reserveCost = 0,
+    maxComponents = MAX_COMPONENTS,
+    maxTextSize = MAX_TEXT_SIZE,
+  }: { reserveCost?: number; maxComponents?: number; maxTextSize?: number } = {},
 ): { components: APIMessageTopLevelComponent[]; truncated: boolean } {
-  const budget = maxComponents - reserveCost
+  const componentBudget = maxComponents - reserveCost
   let totalCost = 0
+  let totalText = 0
   const result: APIMessageTopLevelComponent[] = []
 
   for (const component of components) {
     const cost = countComponentCost(component)
+    const text = componentTextSize(component as { type: number })
 
-    if (totalCost + cost <= budget) {
+    if (totalCost + cost <= componentBudget && totalText + text <= maxTextSize) {
       result.push(component)
       totalCost += cost
+      totalText += text
       continue
     }
 
     // The component doesn't fit. If it's a Container, truncate its children
     // to fill the remaining budget instead of dropping the whole thing.
     if (component.type === ComponentType.Container) {
-      const remainingBudget = budget - totalCost - 1 // 1 for the Container itself
-      if (remainingBudget > 0) {
+      const remainingComponentBudget = componentBudget - totalCost - 1
+      const remainingTextBudget = maxTextSize - totalText
+      if (remainingComponentBudget > 0 && remainingTextBudget > 0) {
         const truncatedChildren = truncateContainerChildren(
           component.components,
-          remainingBudget,
+          remainingComponentBudget,
+          remainingTextBudget,
         )
         if (truncatedChildren.length > 0) {
           result.push({
@@ -141,21 +172,26 @@ export function truncateComponents(
 // A row group is everything between separators (e.g. [TextDisplay, ActionRow]).
 // Either the full group fits or it's excluded — no trailing separators or
 // partial rows (like a TextDisplay without its ActionRow button).
+// Enforces both component count and text size budgets.
 function truncateContainerChildren(
   children: APIComponentInContainer[],
-  budget: number,
+  componentBudget: number,
+  textBudget: number,
 ): APIComponentInContainer[] {
   const groups = groupBySeparator(children)
   let cost = 0
+  let text = 0
   const result: APIComponentInContainer[] = []
 
   for (const group of groups) {
     const groupCost = group.reduce((sum, child) => sum + childComponentCost(child), 0)
-    if (cost + groupCost > budget) {
+    const groupText = group.reduce((sum, child) => sum + componentTextSize(child as { type: number }), 0)
+    if (cost + groupCost > componentBudget || text + groupText > textBudget) {
       break
     }
     result.push(...group)
     cost += groupCost
+    text += groupText
   }
   return result
 }

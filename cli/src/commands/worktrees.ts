@@ -214,7 +214,9 @@ function buildWorktreeTable({
       return parts.join(', ')
     })()
     const created = row.createdAt ? formatTimeAgo(row.createdAt) : '-'
-    const folder = row.directory
+    // Show only the last 2 path segments to keep text size under Discord's
+    // 4000-char displayable text limit. Full paths are too long.
+    const folder = `…/${path.basename(path.dirname(row.directory))}/${path.basename(row.directory)}`
     const action = buildActionCell({ row, gitStatus: gs })
     return `| ${sourceCell} | ${name} | ${status} | ${created} | ${folder} | ${action} |`
   })

@@ -716,4 +716,46 @@ describe('truncateComponents', () => {
     const totalCost = components.reduce((sum, c) => sum + countComponentCost(c), 0)
     expect(totalCost).toBeLessThanOrEqual(10)
   })
+
+  test('truncates when text size exceeds limit even if component count fits', () => {
+    // Build a table with long folder paths to simulate real /worktrees output
+    const header = '| Name | Folder |'
+    const sep = '|---|---|'
+    const rows = Array.from({ length: 10 }, (_, i) => {
+      // Each row has ~120 chars of text content
+      const longPath = `/Users/morse/.kimaki/worktrees/abcd1234/very-long-branch-name-${i}-feature`
+      return `| worktree-${i} | ${longPath} |`
+    }).join('\n')
+    const markdown = `${header}\n${sep}\n${rows}`
+    const segments = splitTablesFromMarkdown(markdown)
+    const allComponents = segments.flatMap((s) => {
+      return s.type === 'components' ? s.components : []
+    })
+
+    // Component count is fine (10 rows + 9 separators + 1 container = 20),
+    // but set text limit low to force text-based truncation
+    const { components, truncated } = truncateComponents(allComponents, {
+      maxComponents: 40,
+      maxTextSize: 500,
+    })
+    expect(truncated).toBe(true)
+    expect(components).toHaveLength(1)
+
+    // Verify total text is under the limit
+    const container = components[0]!
+    expect(container.type).toBe(ComponentType.Container)
+    if (container.type !== ComponentType.Container) throw new Error('unreachable')
+
+    const totalText = container.components.reduce((sum, child) => {
+      if ('content' in child && typeof child.content === 'string') {
+        return sum + child.content.length
+      }
+      return sum
+    }, 0)
+    expect(totalText).toBeLessThanOrEqual(500)
+    // Should have fewer than 10 rows
+    const textDisplays = container.components.filter((c) => c.type === ComponentType.TextDisplay)
+    expect(textDisplays.length).toBeLessThan(10)
+    expect(textDisplays.length).toBeGreaterThan(0)
+  })
 })
