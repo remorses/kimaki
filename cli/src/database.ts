@@ -498,8 +498,95 @@ export async function getSessionEventSnapshot({ sessionId }: { sessionId: string
   return db.query.session_events.findMany({
     where: { session_id: sessionId },
     orderBy: { timestamp: 'asc', event_index: 'asc', id: 'asc' },
-    limit: 1000,
+    limit: 5000,
   })
+}
+
+export type SessionRecallResult = {
+  message_id: string
+  role: string
+  text: string
+  timestamp: number
+  snippet: string
+}
+
+export async function searchSessionArchive({
+  sessionId,
+  query,
+  role,
+  limit = 10,
+}: {
+  sessionId: string
+  query: string
+  role?: string
+  limit?: number
+}): Promise<SessionRecallResult[]> {
+  const db = await getDb()
+  const escapedQuery = query.replace(/'/g, "''")
+  const escapedSession = sessionId.replace(/'/g, "''")
+
+  const roleFilter = role
+    ? `AND COALESCE(r.msg_role, 'unknown') = '${role.replace(/'/g, "''")}'`
+    : ''
+
+  const sqlQuery = orm.sql`
+    WITH text_parts AS (
+      SELECT
+        se.id,
+        json_extract(se.event_json, '${orm.raw('$.properties.part.text')}') AS part_text,
+        json_extract(se.event_json, '${orm.raw('$.properties.part.messageID')}') AS message_id,
+        json_extract(se.event_json, '${orm.raw('$.properties.part.sessionID')}') AS part_session_id,
+        se.timestamp
+      FROM session_events se
+      WHERE se.session_id = ${escapedSession}
+        AND json_extract(se.event_json, '${orm.raw('$.type')}') = 'message.part.updated'
+        AND json_extract(se.event_json, '${orm.raw('$.properties.part.type')}') = 'text'
+    ),
+    roles AS (
+      SELECT
+        json_extract(msg.event_json, '${orm.raw('$.properties.info.id')}') AS msg_id,
+        json_extract(msg.event_json, '${orm.raw('$.properties.info.role')}') AS msg_role
+      FROM session_events msg
+      WHERE msg.session_id = ${escapedSession}
+        AND json_extract(msg.event_json, '${orm.raw('$.type')}') = 'message.updated'
+        AND json_extract(msg.event_json, '${orm.raw('$.properties.info.role')}') IS NOT NULL
+    )
+    SELECT
+      tp.message_id,
+      COALESCE(r.msg_role, 'unknown') AS role,
+      tp.part_text AS text,
+      tp.timestamp,
+      CASE
+        WHEN length(tp.part_text) > 300 THEN substr(tp.part_text, 1, 300) || '...'
+        ELSE tp.part_text
+      END AS snippet
+    FROM text_parts tp
+    LEFT JOIN roles r ON r.msg_id = tp.message_id
+    WHERE tp.part_text LIKE ${'%' + escapedQuery + '%'}
+      AND tp.part_text IS NOT NULL
+      AND length(tp.part_text) > 0
+      ${orm.raw(roleFilter)}
+    ORDER BY tp.timestamp DESC
+    LIMIT ${Math.min(limit, 50)}
+  `
+
+  const rows = await db.all(sqlQuery) as Array<{
+    message_id: string | null
+    role: string
+    text: string | null
+    timestamp: number
+    snippet: string | null
+  }>
+
+  return rows
+    .filter((row): row is typeof row & { text: string } => !!row.text && row.text.length > 0)
+    .map((row) => ({
+      message_id: row.message_id || '',
+      role: row.role,
+      text: row.text,
+      timestamp: Number(row.timestamp),
+      snippet: row.snippet || '',
+    }))
 }
 
 export async function getPartMessageIds(threadId: string) {
