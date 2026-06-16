@@ -7,7 +7,6 @@ import fs from 'node:fs'
 import { OpenCodeSdkError } from '../errors.js'
 import type { CommandContext } from './types.js'
 import {
-  createPendingWorktree,
   setWorktreeReady,
   setWorktreeError,
   getChannelDirectory,
@@ -34,7 +33,6 @@ import { buildSessionPermissions, initializeOpencodeForDirectory } from '../open
 import { WORKTREE_PREFIX } from './merge-worktree.js'
 import type { AutocompleteContext } from './types.js'
 import * as errore from 'errore'
-import { copyCurrentSessionModel } from './model.js'
 
 const logger = createLogger(LogPrefix.WORKTREE)
 const DEFAULT_WORKTREE_BASE_REF = 'HEAD'
@@ -214,50 +212,19 @@ export async function createWorktreeInBackground({
       `Creating worktree "${worktreeName}" for project ${projectDirectory}${baseBranch ? ` from ${baseBranch}` : ''}`,
     )
 
-
     const worktreeResult = await createWorktreeWithSubmodules({
       directory: projectDirectory,
       name: worktreeName,
       baseBranch,
-      onProgress: (phase) => {
-        editStatus(`🌳 **Worktree: ${worktreeName}**\n${phase}`)
-      },
     })
 
-if (worktreeResult instanceof Error) {
+    if (worktreeResult instanceof Error) {
       const errorMsg = worktreeResult.message
       logger.error('[WORKTREE] Creation failed:', worktreeResult)
       await setWorktreeError({ threadId: thread.id, errorMessage: errorMsg })
-      editStatus(`🌳 **Worktree: ${worktreeName}**\n❌ ${errorMsg}`)
-    await editChain
-    return worktreeResult
-    }
-
-      // DB ready update is critical; reaction is best-effort
-      await setWorktreeReady({
-        threadId: thread.id,
-        worktreeDirectory: worktreeResult.directory,
-      })
-
-      void reactToThread({
-        rest,
-        threadId: thread.id,
-        channelId: thread.parentId || undefined,
-        emoji: '🌳',
-      }).catch(() => {})
-
-      editStatus(
-        `🌳 **Worktree: ${worktreeName}**\n` +
-          `📁 \`${worktreeResult.directory}\`\n` +
-          `🌿 Branch: \`${worktreeResult.branch}\``,
-      )
-
-    await editChain
-    return worktreeResult.directory      await editChain
       return worktreeResult
     }
 
-    // DB ready update is critical; reaction is best-effort
     await setWorktreeReady({
       threadId: thread.id,
       worktreeDirectory: worktreeResult.directory,
@@ -270,12 +237,6 @@ if (worktreeResult instanceof Error) {
       emoji: '🌳',
     }).catch(() => {})
 
-    editStatus(
-      `🌳 **Worktree: ${worktreeName}**\n` +
-        `📁 \`${worktreeResult.directory}\`\n` +
-        `🌿 Branch: \`${worktreeResult.branch}\``,
-    )
-    await editChain
     return worktreeResult.directory
   })().catch((e) => {
     logger.error('[WORKTREE] Unexpected error in createWorktreeInBackground:', e)
@@ -288,6 +249,32 @@ if (worktreeResult instanceof Error) {
 async function findExistingWorktreePath({
   projectDirectory,
   worktreeName,
+}: {
+  projectDirectory: string
+  worktreeName: string
+}): Promise<string | undefined | Error> {
+  const listResult = await execAsync('git worktree list --porcelain', {
+    cwd: projectDirectory,
+  }).catch((e) => new WorktreeError('Failed to list worktrees', { cause: e }))
+  if (listResult instanceof Error) return listResult
+
+  const lines = listResult.stdout.split('\n')
+  let currentPath = ''
+  const branchRef = `refs/heads/${worktreeName}`
+
+  for (const line of lines) {
+    if (line.startsWith('worktree ')) {
+      currentPath = line.slice('worktree '.length)
+      continue
+    }
+    if (line.startsWith('branch ') && line.slice('branch '.length) === branchRef) {
+      return currentPath || undefined
+    }
+  }
+
+  return undefined
+}
+
 export async function handleNewWorktreeCommand({ command, appId }: CommandContext): Promise<void> {
   await command.deferReply()
 
@@ -549,6 +536,9 @@ async function handleWorktreeInThread({
         return
       }
 
+      const permissionResponse = await getClient()
+        .session.update({
+          sessionID: forkedSession.id,
           directory: result,
           permission: buildSessionPermissions({
             directory: result,
