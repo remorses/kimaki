@@ -505,12 +505,17 @@ async function validateSubmodulePointers(
 type WorktreeResult = {
   directory: string
   branch: string
+  baseBranch: string
 }
 
 async function resolveDefaultWorktreeTarget(
   directory: string,
 ): Promise<string> {
-  return 'HEAD'
+  const branch = await getDefaultBranch(directory)
+  await git(directory, `fetch origin ${branch}`, { timeout: 30_000 }).catch(
+    () => {},
+  )
+  return `origin/${branch}`
 }
 
 /**
@@ -636,7 +641,7 @@ export async function createWorktreeWithSubmodules({
     })
   }
 
-  return { directory: worktreeDir, branch: name }
+  return { directory: worktreeDir, branch: name, baseBranch: targetRef }
 }
 
 // ─── Worktree merge ──────────────────────────────────────────────────────────

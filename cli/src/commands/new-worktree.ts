@@ -280,7 +280,8 @@ export async function createWorktreeInBackground({
       editStatus(
         `🌳 **Worktree: ${worktreeName}**\n` +
           `📁 \`${worktreeResult.directory}\`\n` +
-          `🌿 Branch: \`${worktreeResult.branch}\``,
+          `🌿 Branch: \`${worktreeResult.branch}\`\n` +
+          `🔀 Base: \`${worktreeResult.baseBranch}\``,
       )
       await editChain
 
