@@ -109,7 +109,7 @@ function hasPendingCleanupAction(threadId: string): boolean {
   return false
 }
 
-async function evaluateThreadForCleanup({
+export async function evaluateThreadForCleanup({
   threadId,
   rest,
 }: {
@@ -274,7 +274,6 @@ async function evaluateWorktreeThread({
         components: [row],
       },
     })
-    await setCleanupPromptedAt(threadId, new Date())
     cleanupLogger.log(`Sent cleanup prompt for worktree thread ${threadId}`)
   } catch {
     cleanupLogger.log(`Could not send cleanup prompt for thread ${threadId} (may be archived)`)
@@ -386,7 +385,6 @@ async function evaluateNormalThread({
         components: [row],
       },
     })
-    await setCleanupPromptedAt(threadId, new Date())
     cleanupLogger.log(`Sent archive prompt for inactive thread ${threadId}`)
   } catch {
     cleanupLogger.log(`Could not send archive prompt for thread ${threadId} (may be archived)`)

@@ -3,19 +3,12 @@
 // Imported by both cli.ts (startup registration) and restart-opencode-server.ts
 // (post-restart re-registration).
 
-import {
-  type REST,
-  Routes,
-  SlashCommandBuilder,
-} from 'discord.js'
+import { type REST, Routes, SlashCommandBuilder } from 'discord.js'
 import type { Command as OpencodeCommand } from '@opencode-ai/sdk/v2'
 import { createDiscordRest } from './discord-urls.js'
 import { createLogger, LogPrefix } from './logger.js'
 import { store, type RegisteredUserCommand } from './store.js'
-import {
-  sanitizeAgentName,
-  buildQuickAgentCommandDescription,
-} from './commands/agent.js'
+import { sanitizeAgentName, buildQuickAgentCommandDescription } from './commands/agent.js'
 import { isSkillAllowed } from './skill-filter.js'
 
 const cliLogger = createLogger(LogPrefix.CLI)
@@ -30,9 +23,7 @@ export type AgentInfo = {
   hidden?: boolean
 }
 
-function getDiscordCommandSuffix(
-  command: OpencodeCommand,
-): '-cmd' | '-skill' | '-mcp-prompt' {
+function getDiscordCommandSuffix(command: OpencodeCommand): '-cmd' | '-skill' | '-mcp-prompt' {
   if (command.source === 'skill') {
     return '-skill'
   }
@@ -42,13 +33,7 @@ function getDiscordCommandSuffix(
   return '-cmd'
 }
 
-async function clearGlobalCommands({
-  rest,
-  appId,
-}: {
-  rest: REST
-  appId: string
-}) {
+async function clearGlobalCommands({ rest, appId }: { rest: REST; appId: string }) {
   try {
     await rest.put(Routes.applicationCommands(appId), { body: [] })
     cliLogger.info('COMMANDS: Cleared global slash commands')
@@ -128,13 +113,17 @@ export async function registerCommands({
     new SlashCommandBuilder()
       .setName('new-worktree')
       .setDescription(
-        truncateCommandDescription('Create a git worktree from the current HEAD by default. Optionally pick a base branch.'),
+        truncateCommandDescription(
+          'Create a git worktree from the current HEAD by default. Optionally pick a base branch.',
+        ),
       )
       .addStringOption((option) => {
         option
           .setName('name')
           .setDescription(
-            truncateCommandDescription('Name for worktree (optional in threads - uses thread name)'),
+            truncateCommandDescription(
+              'Name for worktree (optional in threads - uses thread name)',
+            ),
           )
           .setRequired(false)
 
@@ -144,7 +133,9 @@ export async function registerCommands({
         option
           .setName('base-branch')
           .setDescription(
-            truncateCommandDescription('Branch to create the worktree from (default: current HEAD)'),
+            truncateCommandDescription(
+              'Branch to create the worktree from (default: current HEAD)',
+            ),
           )
           .setRequired(false)
           .setAutocomplete(true)
@@ -156,7 +147,9 @@ export async function registerCommands({
     new SlashCommandBuilder()
       .setName('merge-worktree')
       .setDescription(
-        truncateCommandDescription('Squash-merge worktree into default branch. Aborts if main has uncommitted changes.'),
+        truncateCommandDescription(
+          'Squash-merge worktree into default branch. Aborts if main has uncommitted changes.',
+        ),
       )
       .addStringOption((option) => {
         option
@@ -174,7 +167,9 @@ export async function registerCommands({
     new SlashCommandBuilder()
       .setName('toggle-worktrees')
       .setDescription(
-        truncateCommandDescription('Toggle automatic git worktree creation for new sessions in this channel'),
+        truncateCommandDescription(
+          'Toggle automatic git worktree creation for new sessions in this channel',
+        ),
       )
       .setDMPermission(false)
       .toJSON(),
@@ -185,7 +180,9 @@ export async function registerCommands({
       .toJSON(),
     new SlashCommandBuilder()
       .setName('last-sessions')
-      .setDescription(truncateCommandDescription('List the 20 most recently active sessions across all projects'))
+      .setDescription(
+        truncateCommandDescription('List the 20 most recently active sessions across all projects'),
+      )
       .setDMPermission(false)
       .toJSON(),
     new SlashCommandBuilder()
@@ -204,13 +201,17 @@ export async function registerCommands({
     new SlashCommandBuilder()
       .setName('add-project')
       .setDescription(
-        truncateCommandDescription('Create Discord channels for a project. Use `npx kimaki project add` for unlisted projects'),
+        truncateCommandDescription(
+          'Create Discord channels for a project. Use `npx kimaki project add` for unlisted projects',
+        ),
       )
       .addStringOption((option) => {
         option
           .setName('project')
           .setDescription(
-            truncateCommandDescription('Recent OpenCode projects. Use `npx kimaki project add` if not listed'),
+            truncateCommandDescription(
+              'Recent OpenCode projects. Use `npx kimaki project add` if not listed',
+            ),
           )
           .setRequired(true)
           .setAutocomplete(true)
@@ -236,7 +237,9 @@ export async function registerCommands({
     new SlashCommandBuilder()
       .setName('create-new-project')
       .setDescription(
-        truncateCommandDescription('Create a new project folder, initialize git, and start a session'),
+        truncateCommandDescription(
+          'Create a new project folder, initialize git, and start a session',
+        ),
       )
       .addStringOption((option) => {
         option
@@ -251,12 +254,18 @@ export async function registerCommands({
     new SlashCommandBuilder()
       .setName('add-dir')
       .setDescription(
-        truncateCommandDescription('Allow the current session to access an extra directory or * for all folders'),
+        truncateCommandDescription(
+          'Allow the current session to access an extra directory or * for all folders',
+        ),
       )
       .addStringOption((option) => {
         option
           .setName('directory')
-          .setDescription(truncateCommandDescription('Directory to allow, resolved from the current worktree. Use * for all folders'))
+          .setDescription(
+            truncateCommandDescription(
+              'Directory to allow, resolved from the current worktree. Use * for all folders',
+            ),
+          )
           .setRequired(false)
 
         return option
@@ -265,13 +274,17 @@ export async function registerCommands({
       .toJSON(),
     new SlashCommandBuilder()
       .setName('abort')
-      .setDescription(truncateCommandDescription('Abort the current OpenCode request in this thread'))
+      .setDescription(
+        truncateCommandDescription('Abort the current OpenCode request in this thread'),
+      )
       .setDMPermission(false)
       .toJSON(),
     new SlashCommandBuilder()
       .setName('compact')
       .setDescription(
-        truncateCommandDescription('Compact the session context by summarizing conversation history'),
+        truncateCommandDescription(
+          'Compact the session context by summarizing conversation history',
+        ),
       )
       .setDMPermission(false)
       .toJSON(),
@@ -298,7 +311,11 @@ export async function registerCommands({
       .toJSON(),
     new SlashCommandBuilder()
       .setName('btw')
-      .setDescription(truncateCommandDescription('Ask something without polluting or blocking the current session'))
+      .setDescription(
+        truncateCommandDescription(
+          'Ask something without polluting or blocking the current session',
+        ),
+      )
       .addStringOption((option) => {
         option
           .setName('prompt')
@@ -310,13 +327,17 @@ export async function registerCommands({
       .toJSON(),
     new SlashCommandBuilder()
       .setName('model')
-      .setDescription(truncateCommandDescription('Set the preferred model for this channel or session'))
+      .setDescription(
+        truncateCommandDescription('Set the preferred model for this channel or session'),
+      )
       .setDMPermission(false)
       .toJSON(),
     new SlashCommandBuilder()
       .setName('model-variant')
       .setDescription(
-        truncateCommandDescription('Change thinking level for current model. Tied to the model; lost when you switch models'),
+        truncateCommandDescription(
+          'Change thinking level for current model. Tied to the model; lost when you switch models',
+        ),
       )
       .setDMPermission(false)
       .toJSON(),
@@ -328,19 +349,25 @@ export async function registerCommands({
     new SlashCommandBuilder()
       .setName('login')
       .setDescription(
-        truncateCommandDescription('Authenticate with an AI provider (OAuth or API key). Use this instead of /connect'),
+        truncateCommandDescription(
+          'Authenticate with an AI provider (OAuth or API key). Use this instead of /connect',
+        ),
       )
       .setDMPermission(false)
       .toJSON(),
     new SlashCommandBuilder()
       .setName('agent')
-      .setDescription(truncateCommandDescription('Set the preferred agent for this channel or session'))
+      .setDescription(
+        truncateCommandDescription('Set the preferred agent for this channel or session'),
+      )
       .setDMPermission(false)
       .toJSON(),
     new SlashCommandBuilder()
       .setName('queue')
       .setDescription(
-        truncateCommandDescription('Queue a message to be sent after the current response finishes'),
+        truncateCommandDescription(
+          'Queue a message to be sent after the current response finishes',
+        ),
       )
       .addStringOption((option) => {
         option
@@ -370,7 +397,9 @@ export async function registerCommands({
     new SlashCommandBuilder()
       .setName('queue-command')
       .setDescription(
-        truncateCommandDescription('Queue a user command to run after the current response finishes'),
+        truncateCommandDescription(
+          'Queue a user command to run after the current response finishes',
+        ),
       )
       .addStringOption((option) => {
         option
@@ -391,7 +420,9 @@ export async function registerCommands({
       .toJSON(),
     new SlashCommandBuilder()
       .setName('undo')
-      .setDescription(truncateCommandDescription('Undo the last assistant message (revert file changes)'))
+      .setDescription(
+        truncateCommandDescription('Undo the last assistant message (revert file changes)'),
+      )
       .setDMPermission(false)
       .toJSON(),
     new SlashCommandBuilder()
@@ -414,7 +445,9 @@ export async function registerCommands({
     new SlashCommandBuilder()
       .setName('run-shell-command')
       .setDescription(
-        truncateCommandDescription('Run a shell command in the project directory. Tip: prefix messages with ! as shortcut'),
+        truncateCommandDescription(
+          'Run a shell command in the project directory. Tip: prefix messages with ! as shortcut',
+        ),
       )
       .addStringOption((option) => {
         option
@@ -428,14 +461,18 @@ export async function registerCommands({
     new SlashCommandBuilder()
       .setName('context-usage')
       .setDescription(
-        truncateCommandDescription('Show token usage and context window percentage for this session'),
+        truncateCommandDescription(
+          'Show token usage and context window percentage for this session',
+        ),
       )
       .setDMPermission(false)
       .toJSON(),
     new SlashCommandBuilder()
       .setName('session-id')
       .setDescription(
-        truncateCommandDescription('Show current session ID and opencode attach command for this thread'),
+        truncateCommandDescription(
+          'Show current session ID and opencode attach command for this thread',
+        ),
       )
       .setDMPermission(false)
       .toJSON(),
@@ -450,7 +487,9 @@ export async function registerCommands({
     new SlashCommandBuilder()
       .setName('transcription-key')
       .setDescription(
-        truncateCommandDescription('Set API key for voice message transcription (OpenAI or Gemini)'),
+        truncateCommandDescription(
+          'Set API key for voice message transcription (OpenAI or Gemini)',
+        ),
       )
       .setDMPermission(false)
       .toJSON(),
@@ -461,7 +500,11 @@ export async function registerCommands({
       .toJSON(),
     new SlashCommandBuilder()
       .setName('screenshare')
-      .setDescription(truncateCommandDescription('Start screen sharing via VNC tunnel (auto-stops after 30 minutes)'))
+      .setDescription(
+        truncateCommandDescription(
+          'Start screen sharing via VNC tunnel (auto-stops after 30 minutes)',
+        ),
+      )
       .setDMPermission(false)
       .toJSON(),
     new SlashCommandBuilder()
@@ -472,7 +515,16 @@ export async function registerCommands({
     new SlashCommandBuilder()
       .setName('vscode')
       .setDescription(
-        truncateCommandDescription('Open VS Code in the browser for this project or worktree (auto-stops after 30 minutes)'),
+        truncateCommandDescription(
+          'Open VS Code in the browser for this project or worktree (auto-stops after 30 minutes)',
+        ),
+      )
+      .setDMPermission(false)
+      .toJSON(),
+    new SlashCommandBuilder()
+      .setName('archive-thread')
+      .setDescription(
+        truncateCommandDescription('Manually trigger the cleanup evaluation for this thread'),
       )
       .setDMPermission(false)
       .toJSON(),
@@ -510,10 +562,7 @@ export async function registerCommands({
         .setDescription(truncateCommandDescription(description))
         .setDMPermission(false)
         .addStringOption((opt) =>
-          opt
-            .setName('prompt')
-            .setDescription('Send a prompt with this agent')
-            .setRequired(false),
+          opt.setName('prompt').setDescription('Send a prompt with this agent').setRequired(false),
         )
         .toJSON(),
     )
@@ -538,7 +587,10 @@ export async function registerCommands({
     }
 
     // Skip skills that are denied by the skill filter flags
-    if (cmd.source === 'skill' && !isSkillAllowed({ name: cmd.name, enabledSkills, disabledSkills })) {
+    if (
+      cmd.source === 'skill' &&
+      !isSkillAllowed({ name: cmd.name, enabledSkills, disabledSkills })
+    ) {
       continue
     }
 
@@ -612,16 +664,11 @@ export async function registerCommands({
     // any not present in the body. No local diffing needed.
     const results = await Promise.allSettled(
       uniqueGuildIds.map(async (guildId) => {
-        const response = await rest.put(
-          Routes.applicationGuildCommands(appId, guildId),
-          {
-            body: commands,
-          },
-        )
+        const response = await rest.put(Routes.applicationGuildCommands(appId, guildId), {
+          body: commands,
+        })
 
-        const registeredCount = Array.isArray(response)
-          ? response.length
-          : commands.length
+        const registeredCount = Array.isArray(response) ? response.length : commands.length
 
         return { guildId, registeredCount }
       }),
@@ -635,10 +682,7 @@ export async function registerCommands({
 
         return {
           guildId: uniqueGuildIds[index],
-          error:
-            result.reason instanceof Error
-              ? result.reason.message
-              : String(result.reason),
+          error: result.reason instanceof Error ? result.reason.message : String(result.reason),
         }
       })
       .filter((value): value is { guildId: string; error: string } => {
@@ -651,9 +695,7 @@ export async function registerCommands({
           `COMMANDS: Failed to register slash commands for guild ${failure.guildId}: ${failure.error}`,
         )
       })
-      throw new Error(
-        `Failed to register slash commands for ${failedGuilds.length} guild(s)`,
-      )
+      throw new Error(`Failed to register slash commands for ${failedGuilds.length} guild(s)`)
     }
 
     const successfulGuilds = results.length
@@ -678,9 +720,7 @@ export async function registerCommands({
       `COMMANDS: Successfully registered ${registeredCommandCount} slash commands for ${successfulGuilds} guild(s)`,
     )
   } catch (error) {
-    cliLogger.error(
-      'COMMANDS: Failed to register slash commands: ' + String(error),
-    )
+    cliLogger.error('COMMANDS: Failed to register slash commands: ' + String(error))
     throw error
   }
 }
