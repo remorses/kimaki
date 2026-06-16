@@ -8,6 +8,7 @@ import path from 'node:path'
 import { getDataDir } from './config.js'
 import { execAsync } from './exec-async.js'
 import { createLogger, LogPrefix } from './logger.js'
+import { deleteThreadWorktree, getThreadWorktree } from './database.js'
 
 export { execAsync } from './exec-async.js'
 
@@ -1160,6 +1161,61 @@ export async function validateWorktreeDirectory({
   }
 
   return absoluteCandidate
+}
+
+/**
+ * Recovers a worktree directory that has an old path format or is missing.
+ * Detects old paths like ~/.local/share/opencode/worktree/... and recreates
+ * the worktree with the new path format.
+ */
+export async function recoverWorktreeDirectory({
+  threadId,
+}: {
+  threadId: string
+}): Promise<{ recovered: boolean; reason?: string } | Error> {
+  const worktreeInfo = await getThreadWorktree(threadId)
+  if (!worktreeInfo || worktreeInfo.status !== 'ready' || !worktreeInfo.worktree_directory) {
+    return { recovered: false, reason: 'no-worktree' }
+  }
+
+  const worktreeDirectory = worktreeInfo.worktree_directory
+  const projectDirectory = worktreeInfo.project_directory
+
+  // Detect old path format (~/.local/share/opencode/worktree/...) and treat as missing
+  const isOldPathFormat = worktreeDirectory.includes('/.local/share/opencode/worktree/')
+
+  // If directory already exists and is NOT old format, no recovery needed
+  if (!isOldPathFormat && fs.existsSync(worktreeDirectory)) {
+    return { recovered: false, reason: 'dir-exists' }
+  }
+
+  // Directory is missing or has old path format - need to recover
+  logger.log(
+    `[RECOVER WORKTREE] Worktree directory needs recovery: ${worktreeDirectory} (oldFormat=${isOldPathFormat}, exists=${fs.existsSync(worktreeDirectory)})`,
+  )
+
+  // Delete the stale worktree entry from DB
+  await deleteThreadWorktree(threadId)
+
+  // Recreate the worktree using the worktree name from DB
+  const worktreeName = worktreeInfo.worktree_name
+  if (!worktreeName) {
+    return new Error('Cannot recover worktree: missing worktree_name in database')
+  }
+
+  // Create a new worktree with the correct path
+  const createResult = await createWorktreeWithSubmodules({
+    directory: projectDirectory,
+    name: worktreeName,
+  })
+
+  if (createResult instanceof Error) {
+    logger.error(`[RECOVER WORKTREE] Failed to recreate worktree: ${createResult.message}`)
+    return createResult
+  }
+
+  logger.log(`[RECOVER WORKTREE] Successfully recovered worktree: ${createResult.directory}`)
+  return { recovered: true, reason: 'recreated' }
 }
 
 export type SessionWorkingDirectory = {
