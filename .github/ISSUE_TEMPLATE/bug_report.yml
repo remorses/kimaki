@@ -1,0 +1,51 @@
+name: Bug report
+description: Report a bug or unexpected behavior in Kimaki.
+labels: ["bug"]
+body:
+  - type: textarea
+    id: description
+    attributes:
+      label: What happened?
+      description: Describe the bug clearly. What did you expect vs what actually happened?
+    validations:
+      required: true
+
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+      description: Minimal steps to trigger the bug.
+      placeholder: |
+        1. Run `kimaki ...`
+        2. Send a message in Discord
+        3. ...
+    validations:
+      required: true
+
+  - type: textarea
+    id: logs
+    attributes:
+      label: Kimaki logs
+      description: |
+        Paste relevant logs from `~/.kimaki/kimaki.log`. Wrap them in a code block.
+        You can also attach the full log file if it's large.
+      render: shell
+    validations:
+      required: true
+
+  - type: input
+    id: version
+    attributes:
+      label: Kimaki version
+      description: Output of `kimaki --version`.
+      placeholder: "1.2.3"
+    validations:
+      required: true
+
+  - type: input
+    id: os
+    attributes:
+      label: Operating system
+      description: e.g. macOS 15.2, Ubuntu 24.04, Windows 11
+    validations:
+      required: false

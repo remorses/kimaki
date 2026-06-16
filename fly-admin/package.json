@@ -1,0 +1,59 @@
+{
+  "name": "@fly.io/sdk",
+  "version": "0.1.2",
+  "description": "TypeScript client for the Fly Machines REST and GraphQL APIs. Vendored fork of supabase/fly-admin with native fetch, exec, releaseLease, and metadata support.",
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    "./package.json": "./package.json",
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    },
+    "./src": {
+      "types": "./src/index.ts",
+      "default": "./src/index.ts"
+    },
+    "./src/*": {
+      "types": "./src/*.ts",
+      "default": "./src/*.ts"
+    }
+  },
+  "files": [
+    "src",
+    "dist",
+    "README.md"
+  ],
+  "publishConfig": {
+    "access": "public"
+  },
+  "scripts": {
+    "build": "tsc",
+    "prepublishOnly": "pnpm build"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/remorses/kimaki",
+    "directory": "fly-admin"
+  },
+  "homepage": "https://github.com/remorses/kimaki/tree/main/fly-admin",
+  "bugs": {
+    "url": "https://github.com/remorses/kimaki/issues"
+  },
+  "keywords": [
+    "fly",
+    "fly.io",
+    "machines",
+    "api",
+    "client"
+  ],
+  "license": "MIT",
+  "devDependencies": {
+    "@types/node": "^22.0.0",
+    "typescript": "^5.9.2"
+  },
+  "dependencies": {
+    "errore": "workspace:^"
+  }
+}

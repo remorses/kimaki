@@ -9,7 +9,7 @@ prompt: |
   sessions. Covers: proxy caching behavior (cache hits vs misses),
   streamChunkDelayMs only affecting cache hits, why tests should be run
   twice on failure, content-aware polling vs count-based polling, and
-  timeout guidelines. Based on @discord/src/thread-message-queue.e2e.test.ts
+  timeout guidelines. Based on @cli/src/thread-message-queue.e2e.test.ts
   and the debugging sessions that led to the fixes in commit 64a1f59.
 ---
 

@@ -14,13 +14,13 @@
     "test": "vitest --run"
   },
   "dependencies": {
-    "@libsql/client": "^0.15.15",
+    "@libsql/client": "^0.17.2",
     "errore": "workspace:^",
     "eventsource-parser": "^3.0.6",
-    "spiceflow": "^1.17.12"
+    "spiceflow": "1.26.0-rsc.3"
   },
   "devDependencies": {
-    "@opencode-ai/sdk": "^1.2.15",
+    "@opencode-ai/sdk": "^1.15.11",
     "@types/node": "^24.3.0",
     "typescript": "^5.9.2",
     "vitest": "^3.2.4"

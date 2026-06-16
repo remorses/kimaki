@@ -1,0 +1,29 @@
+name: Feature request
+description: Suggest a new feature or improvement.
+labels: ["enhancement"]
+body:
+  - type: textarea
+    id: description
+    attributes:
+      label: What do you want?
+      description: Describe the feature concisely. What problem does it solve?
+    validations:
+      required: true
+
+  - type: textarea
+    id: api
+    attributes:
+      label: Proposed API or behavior
+      description: |
+        How should this work from the user's perspective? Show example commands,
+        Discord interactions, or config snippets if applicable.
+    validations:
+      required: false
+
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives considered
+      description: Any workarounds you've tried or other approaches you considered.
+    validations:
+      required: false

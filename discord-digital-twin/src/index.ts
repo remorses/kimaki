@@ -18,6 +18,7 @@ import type {
   APIEmbed,
   APIAttachment,
   APIInteraction,
+  APIMessageReference,
 } from 'discord-api-types/v10'
 import { createPrismaClient, type PrismaClient } from './db.js'
 import { generateSnowflake } from './snowflake.js'
@@ -37,6 +38,15 @@ import {
   messageToAPI,
   isoTimestamp,
 } from './serializers.js'
+
+const MAX_VITEST_WAIT_TIMEOUT_MS = 10_000
+
+function normalizeWaitTimeout(timeout: number): number {
+  if (process.env['KIMAKI_VITEST'] === '1') {
+    return Math.min(timeout, MAX_VITEST_WAIT_TIMEOUT_MS)
+  }
+  return timeout
+}
 
 export type DigitalDiscordChannelOption = {
   id?: string
@@ -288,12 +298,14 @@ export class DigitalDiscord {
     content,
     embeds,
     attachments,
+    messageReference,
   }: {
     channelId: string
     userId: string
     content: string
     embeds?: APIEmbed[]
     attachments?: APIAttachment[]
+    messageReference?: APIMessageReference
   }): Promise<APIMessage> {
     if (!this.server) {
       throw new Error('Server not started')
@@ -307,6 +319,9 @@ export class DigitalDiscord {
         content,
         embeds: JSON.stringify(embeds ?? []),
         attachments: JSON.stringify(attachments ?? []),
+        messageReference: messageReference
+          ? JSON.stringify(messageReference)
+          : null,
       },
     })
     await this.prisma.channel.update({
@@ -340,6 +355,60 @@ export class DigitalDiscord {
       member ?? undefined,
     )
     this.server.gateway.broadcastMessageCreate(apiMessage, guildId ?? '')
+    return apiMessage
+  }
+
+  async simulateUserMessageEdit({
+    messageId,
+    channelId,
+    content,
+  }: {
+    messageId: string
+    channelId: string
+    content: string
+  }): Promise<APIMessage> {
+    if (!this.server) {
+      throw new Error('Server not started')
+    }
+    const existing = await this.prisma.message.findUnique({
+      where: { id: messageId },
+    })
+    if (!existing) {
+      throw new Error(`Message ${messageId} not found`)
+    }
+    if (existing.channelId !== channelId) {
+      throw new Error(`Message ${messageId} is not in channel ${channelId}`)
+    }
+    await this.prisma.message.update({
+      where: { id: messageId },
+      data: { content, editedTimestamp: new Date() },
+    })
+    const dbMessage = await this.prisma.message.findUniqueOrThrow({
+      where: { id: messageId },
+    })
+    const author = await this.prisma.user.findUniqueOrThrow({
+      where: { id: dbMessage.authorId },
+    })
+    const channel = await this.prisma.channel.findUnique({
+      where: { id: channelId },
+    })
+    const guildId = channel?.guildId ?? undefined
+    const member = guildId
+      ? await this.prisma.guildMember.findUnique({
+          where: { guildId_userId: { guildId, userId: dbMessage.authorId } },
+          include: { user: true },
+        })
+      : null
+    const apiMessage = messageToAPI(
+      dbMessage,
+      author,
+      guildId,
+      member ?? undefined,
+    )
+    this.server.gateway.broadcast(GatewayDispatchEvents.MessageUpdate, {
+      ...apiMessage,
+      guild_id: guildId ?? '',
+    })
     return apiMessage
   }
 
@@ -658,7 +727,7 @@ export class DigitalDiscord {
 
     const sql = fs.readFileSync(schemaPath, 'utf-8')
 
-    // Same parsing approach as discord/src/db.ts migrateSchema():
+    // Same parsing approach as cli/src/db.ts migrateSchema():
     // 1. Split on semicolons into statements
     // 2. Strip per-line SQL comments within each statement
     // 3. Filter out empty and sqlite_sequence statements
@@ -1018,8 +1087,9 @@ export class ChannelScope {
     timeout?: number
     afterTimestamp?: number
   } = {}): Promise<DigitalDiscordTypingEvent> {
+    const effectiveTimeout = normalizeWaitTimeout(timeout)
     const start = Date.now()
-    while (Date.now() - start < timeout) {
+    while (Date.now() - start < effectiveTimeout) {
       const event = this.getTypingEvents().find((entry) => {
         return entry.timestamp > afterTimestamp
       })
@@ -1044,9 +1114,10 @@ export class ChannelScope {
     idleMs?: number
     afterTimestamp?: number
   } = {}): Promise<void> {
+    const effectiveTimeout = normalizeWaitTimeout(timeout)
     const start = Date.now()
     const baselineTimestamp = afterTimestamp ?? start
-    while (Date.now() - start < timeout) {
+    while (Date.now() - start < effectiveTimeout) {
       const latestTypingTimestamp = this.getTypingEvents()
         .filter((entry) => {
           return entry.timestamp >= baselineTimestamp
@@ -1105,8 +1176,9 @@ export class ChannelScope {
     timeout?: number
     predicate?: DigitalDiscordMessagePredicate
   } = {}): Promise<APIMessage> {
+    const effectiveTimeout = normalizeWaitTimeout(timeout)
     const start = Date.now()
-    while (Date.now() - start < timeout) {
+    while (Date.now() - start < effectiveTimeout) {
       const messages = await this.getMessages()
       const matchedMessage = [...messages]
         .reverse()
@@ -1144,8 +1216,9 @@ export class ChannelScope {
     timeout?: number
     predicate?: DigitalDiscordThreadPredicate
   } = {}): Promise<APIChannel> {
+    const effectiveTimeout = normalizeWaitTimeout(timeout)
     const start = Date.now()
-    while (Date.now() - start < timeout) {
+    while (Date.now() - start < effectiveTimeout) {
       const threads = await this.getThreads()
       const matchedThreads = predicate
         ? threads.filter((thread) => {
@@ -1197,8 +1270,9 @@ export class ChannelScope {
     messageId: string | null
     acknowledged: boolean
   }> {
+    const effectiveTimeout = normalizeWaitTimeout(timeout)
     const start = Date.now()
-    while (Date.now() - start < timeout) {
+    while (Date.now() - start < effectiveTimeout) {
       const response =
         await this.discord.prisma.interactionResponse.findUnique({
           where: { interactionId },
@@ -1241,10 +1315,12 @@ export class ScopedUserActor {
     content,
     embeds,
     attachments,
+    messageReference,
   }: {
     content: string
     embeds?: APIEmbed[]
     attachments?: APIAttachment[]
+    messageReference?: APIMessageReference
   }) {
     return this.discord.simulateUserMessage({
       channelId: this.channelId,
@@ -1252,6 +1328,7 @@ export class ScopedUserActor {
       content,
       embeds,
       attachments,
+      messageReference,
     })
   }
 
@@ -1274,6 +1351,20 @@ export class ScopedUserActor {
           proxy_url: 'https://fake-cdn.discord.test/voice-message.ogg',
         },
       ],
+    })
+  }
+
+  async editMessage({
+    messageId,
+    content,
+  }: {
+    messageId: string
+    content: string
+  }) {
+    return this.discord.simulateUserMessageEdit({
+      messageId,
+      channelId: this.channelId,
+      content,
     })
   }
 

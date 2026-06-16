@@ -1,0 +1,75 @@
+---
+title: The Queue
+description: Queue a message to send when the current run finishes, something plain OpenCode cannot do.
+icon: lucide:list-plus
+---
+
+The **queue** lets you line up a message to be delivered **when the current run finishes**, instead of interrupting it. Plain OpenCode has no way to do this; Kimaki tracks the queue itself.
+
+## Why queue instead of just sending
+
+A normal message during a run [acts as an interrupt](../core-concepts/message-handling): after ~3 seconds Kimaki aborts the current step to deliver it. The queue is the opposite: it **waits politely** for the run to complete, then sends.
+
+This is perfect for follow-ups that only make sense after the work is done:
+
+- **"Review what you just did"** — queue a review request for a second pass.
+- **"Commit at the end"** — queue a commit instruction so it runs once the feature is finished.
+- **Ask another agent to check the work** — queue a handoff message for the end of the run.
+
+## Queueing a message
+
+Two ways to queue, both identical in effect:
+
+```diagram
+  /queue <message>     ──▶ explicit command
+  message... . queue   ──▶ suffix shortcut
+```
+
+- **`/queue <message>`** — queues the given text.
+- **`. queue` suffix** — end any message with a punctuation mark plus `queue` and it gets queued automatically. Supported forms include `. queue`, `! queue`, `? queue`, a trailing `queue.`, or `queue` on its own final line.
+
+If the session is **busy**, the message waits and Kimaki replies with its queue position. If the session is already **idle**, it dispatches immediately.
+
+<Aside>
+<Tip>
+The suffix is stripped before the prompt reaches the agent, so `fix the test. queue` is sent as `fix the test`.
+</Tip>
+</Aside>
+
+## Editing a queued message
+
+This is the part people love: **edit the Discord message you queued and the queue updates automatically**.
+
+- Change the text → the queued prompt is updated to the new content.
+- Remove the `queue` suffix → the item is **dropped from the queue** entirely.
+
+No need to clear and re-add. Just edit in place while it's still waiting.
+
+## When a queued message is sent
+
+Once the run finishes, Kimaki dispatches the queued message and shows it in the thread as:
+
+```
+» Tommy: commit everything with a descriptive message
+```
+
+The `»` marker only appears when the message actually had to wait behind a running request. If it dispatched immediately (idle session), it's sent without the marker.
+
+## Queueing a command
+
+You can queue a registered slash command, not just text:
+
+```
+/queue-command <command> [arguments]
+```
+
+This validates that the command exists and queues it. When sent, it shows as `» Tommy: /command-name`.
+
+## Clearing the queue
+
+```
+/clear-queue              clear all queued messages
+/clear-queue <position>   remove only the message at that position
+```
+
+With no argument it empties the queue and reports how many were removed. With a position it removes just that one entry.

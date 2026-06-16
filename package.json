@@ -2,11 +2,10 @@
   "name": "root",
   "private": true,
   "scripts": {
-    "test": "NODE_ENV=test pnpm --filter discord run vitest",
+    "prepare": "pnpm -r --filter errore --filter libsqlproxy --filter opencode-injection-guard --filter traforo --filter fly-admin --filter profano --filter sigillo --filter discord-slack-bridge run build",
+    "test": "NODE_ENV=test pnpm --filter kimaki run vitest",
     "dev": "pnpm --filter kimaki dev",
-    "agents.md": "agentsdotmd ./KIMAKI_AGENTS.md core.md typescript.md pnpm.md sentry.md vitest.md gitchamber.md changelog.md docs-writing.md cac.md shadcn.md tailwind.md spiceflow.md vercel-ai-sdk.md playwright.md zod.md",
-    "kimaki": "pnpm --filter kimaki play",
-    "format": "prettier --write ."
+    "kimaki": "pnpm --filter kimaki play"
   },
   "devDependencies": {
     "oxfmt": "^0.24.0",
@@ -21,13 +20,16 @@
   "author": "remorses <beats.by.morse@gmail.com>",
   "license": "",
   "dependencies": {
-    "@opencode-ai/sdk": "^1.2.15",
+    "@opencode-ai/sdk": "^1.15.11",
     "string-dedent": "^3.0.2",
     "tiny-jsonc": "^1.0.2"
   },
   "pnpm": {
     "onlyBuiltDependencies": [
       "@discordjs/opus"
-    ]
+    ],
+    "overrides": {
+      "spiceflow": "1.26.0-rsc.3"
+    }
   }
 }

@@ -5,13 +5,17 @@
 
 import type { SlackBridgeDO } from './slack-bridge-do.js'
 
-export type HonoBindings = {
+
+export type Env = {
   HYPERDRIVE: { connectionString: string }
+  GATEWAY_CLIENT_KV: KVNamespace
   DISCORD_CLIENT_ID: string
   DISCORD_CLIENT_SECRET: string
+  SLACK_CLIENT_ID: string
+  SLACK_CLIENT_SECRET: string
   AUTH_SECRET: string
   SLACK_BOT_TOKEN: string
   SLACK_SIGNING_SECRET: string
   SLACK_WORKSPACE_ID: string
-  SLACK_BRIDGE: DurableObjectNamespace<SlackBridgeDO>
+  SLACK_GATEWAY: DurableObjectNamespace<SlackBridgeDO>
 }

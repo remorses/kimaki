@@ -1,0 +1,92 @@
+---
+title: Troubleshooting
+description: How to fix common transient issues with Kimaki.
+icon: lucide:wrench
+---
+
+Most Kimaki issues are transient and caused by the underlying OpenCode server getting into a bad state. The single most effective fix is **restarting the OpenCode server**.
+
+## `/restart-opencode-server`
+
+This is the first thing to try when something goes wrong. Run it in any channel or thread.
+
+**What it fixes:**
+
+- Sessions not responding or stuck
+- New sessions failing to start
+- Auth state not refreshing after `/login`
+- Slash commands not appearing or missing new agents
+- Plugins not loading after config changes
+- OpenCode server crashes or hangs
+
+**What it does:**
+
+1. Aborts any in-progress sessions in the current channel
+2. Restarts the shared OpenCode server process
+3. Re-registers all Discord slash commands (built-in, user commands, agents)
+
+Other channels reconnect automatically through the listener backoff loop once the server comes back up.
+
+> [!NOTE]
+> This restarts the **OpenCode server**, not the Kimaki bot itself. Your bot stays connected to Discord the entire time. Only the backend that runs AI sessions is restarted.
+
+## `/upgrade-and-restart`
+
+If `/restart-opencode-server` does not fix the issue, the problem is likely in Kimaki itself rather than the OpenCode server. Run `/upgrade-and-restart` to update Kimaki to the latest npm release and restart the bot process entirely. This replaces the running code with the newest version, fixing bugs in message handling, Discord event routing, session lifecycle, command registration, and anything else in the bot layer.
+
+**What it fixes (on top of `/restart-opencode-server`):**
+
+- Bot crashes or unhandled exceptions
+- Discord event handling bugs (messages not being picked up, interactions failing)
+- Session lifecycle issues (threads not created, footers stuck, typing indicator stuck)
+- Command registration failures
+- Memory leaks or degraded performance over long runs
+- Any bug that was fixed in a newer Kimaki release
+
+You can also upgrade from the terminal:
+
+```bash
+kimaki upgrade
+```
+
+## Common symptoms and fixes
+
+| Symptom | Fix |
+|---|---|
+| Session stuck, bot not responding | `/restart-opencode-server` |
+| "Failed to create session" errors | `/restart-opencode-server` |
+| Model change not taking effect | `/restart-opencode-server` |
+| Missing slash commands after config change | `/restart-opencode-server` |
+| Auth expired or provider errors after `/login` | `/restart-opencode-server` |
+| Bot crashes or throws unhandled errors | `/upgrade-and-restart` |
+| Threads not being created or messages ignored | `/upgrade-and-restart` |
+| Typing indicator stuck, footers missing | `/upgrade-and-restart` |
+| Issue persists after `/restart-opencode-server` | `/upgrade-and-restart` |
+| Bot completely offline | Check the terminal where `kimaki` is running |
+
+## Debugging with logs
+
+If the issue persists after a restart, check the log file:
+
+```bash
+# default location
+cat ~/.kimaki/kimaki.log
+```
+
+The log file is reset on every bot startup, so it only contains logs from the current run. Look for error lines near the bottom for the most recent failures.
+
+## Restarting the bot process
+
+In rare cases where the bot itself is unresponsive (not just OpenCode), you can restart the entire process:
+
+**From the terminal:**
+
+```bash
+# find the process
+ps aux | grep kimaki
+
+# send restart signal
+kill -SIGUSR2 <PID>
+```
+
+The bot waits 1 second and restarts with the same arguments. Your Discord connection is briefly interrupted but reconnects automatically.

@@ -27,9 +27,13 @@ import {
   type GatewayClientSnapshot,
   type GatewaySocketTransport,
 } from 'discord-slack-bridge/src/gateway-session-manager'
-import type { HonoBindings } from './env.js'
+import {
+  resolveGatewayClientFromCacheOrDb,
+} from './gateway-client-kv.js'
+import type { Env } from './env.js'
 
 type BridgeRpcRequest = {
+  clientId: string
   url: string
   path: string
   method: string
@@ -59,12 +63,13 @@ type RuntimeState = {
     handle: (request: Request) => Promise<Response>
   }
   gatewaySessionManager: GatewaySessionManager
+  setPublicGatewayUrl: (url: string) => void
 }
 
-export class SlackBridgeDO extends DurableObject<HonoBindings> {
+export class SlackBridgeDO extends DurableObject<Env> {
   private runtimePromise?: Promise<RuntimeState>
 
-  constructor(ctx: DurableObjectState, env: HonoBindings) {
+  constructor(ctx: DurableObjectState, env: Env) {
     super(ctx, env)
     this.ctx.setWebSocketAutoResponse(
       new WebSocketRequestResponsePair('ping', 'pong'),
@@ -77,7 +82,7 @@ export class SlackBridgeDO extends DurableObject<HonoBindings> {
   async fetch(request: Request): Promise<Response> {
     const url = new URL(request.url)
 
-    if (url.pathname === '/gateway' || url.pathname.startsWith('/gateway/')) {
+    if (url.pathname === '/slack/gateway' || url.pathname.startsWith('/slack/gateway/')) {
       return this.handleGatewayUpgrade(request)
     }
 
@@ -88,7 +93,10 @@ export class SlackBridgeDO extends DurableObject<HonoBindings> {
     request: BridgeRpcRequest,
   ): Promise<BridgeRpcResponse> {
     try {
-      const runtime = await this.getRuntime()
+      const runtime = await this.getRuntime({ clientId: request.clientId })
+      runtime.setPublicGatewayUrl(
+        buildGatewayWebSocketUrlFromRequestUrl(request.url),
+      )
       const response = await runtime.app.handle(toRequest(request))
       return serializeResponse(response)
     } catch (cause) {
@@ -107,7 +115,10 @@ export class SlackBridgeDO extends DurableObject<HonoBindings> {
     request: BridgeRpcRequest,
   ): Promise<BridgeRpcResponse> {
     try {
-      const runtime = await this.getRuntime()
+      const runtime = await this.getRuntime({ clientId: request.clientId })
+      runtime.setPublicGatewayUrl(
+        buildGatewayWebSocketUrlFromRequestUrl(request.url),
+      )
       const response = await runtime.app.handle(toRequest(request))
       return serializeResponse(response)
     } catch (cause) {
@@ -127,7 +138,12 @@ export class SlackBridgeDO extends DurableObject<HonoBindings> {
       return Response.json({ error: 'Expected websocket upgrade' }, { status: 426 })
     }
 
-    const runtime = await this.getRuntime()
+    const requestClientId = new URL(request.url).searchParams.get('clientId')
+      ?? undefined
+    const runtime = await this.getRuntime({ clientId: requestClientId })
+    runtime.setPublicGatewayUrl(
+      buildGatewayWebSocketUrlFromRequestUrl(request.url),
+    )
     const pair = new WebSocketPair()
     const client = pair[0]
     const server = pair[1]
@@ -167,7 +183,7 @@ export class SlackBridgeDO extends DurableObject<HonoBindings> {
       return
     }
 
-    const runtime = await this.getRuntime()
+    const runtime = await this.getRuntime({})
     const rawMessage =
       typeof message === 'string' ? message : new TextDecoder().decode(message)
     await runtime.gatewaySessionManager.handleRawMessage({
@@ -195,7 +211,7 @@ export class SlackBridgeDO extends DurableObject<HonoBindings> {
     if (!(attachment?.role === 'gateway' && attachment.gatewayClientId)) {
       return
     }
-    const runtime = await this.getRuntime()
+    const runtime = await this.getRuntime({})
     runtime.gatewaySessionManager.removeClient(attachment.gatewayClientId)
   }
 
@@ -204,19 +220,50 @@ export class SlackBridgeDO extends DurableObject<HonoBindings> {
     if (!(attachment?.role === 'gateway' && attachment.gatewayClientId)) {
       return
     }
-    const runtime = await this.getRuntime()
+    const runtime = await this.getRuntime({})
     runtime.gatewaySessionManager.removeClient(attachment.gatewayClientId)
   }
 
-  private async getRuntime(): Promise<RuntimeState> {
+  private async getRuntime({
+    clientId,
+  }: {
+    clientId?: string
+  }): Promise<RuntimeState> {
     if (!this.runtimePromise) {
-      this.runtimePromise = this.createRuntime()
+      this.runtimePromise = this.createRuntime({ clientId })
     }
     return this.runtimePromise
   }
 
-  private async createRuntime(): Promise<RuntimeState> {
-    const slack = new WebClient(this.env.SLACK_BOT_TOKEN)
+  private async createRuntime({
+    clientId,
+  }: {
+    clientId?: string
+  }): Promise<RuntimeState> {
+    if (!clientId) {
+      throw new Error('Missing clientId while creating Slack bridge runtime')
+    }
+
+    const gatewayClient = await resolveGatewayClientFromCacheOrDb({
+      clientId,
+      env: this.env,
+    })
+    if (gatewayClient instanceof Error) {
+      throw gatewayClient
+    }
+    if (!gatewayClient) {
+      throw new Error(`Unknown gateway client: ${clientId}`)
+    }
+
+    const slackBotToken = gatewayClient.bot_token
+      ?? (this.env.SLACK_WORKSPACE_ID === gatewayClient.guild_id
+        ? this.env.SLACK_BOT_TOKEN
+        : null)
+    if (!slackBotToken) {
+      throw new Error(`Missing Slack bot token for team ${gatewayClient.guild_id}`)
+    }
+
+    const slack = new WebClient(slackBotToken)
     const authResult = await slack.auth.test()
     const botUserId = authResult.user_id
     if (!botUserId) {
@@ -224,25 +271,66 @@ export class SlackBridgeDO extends DurableObject<HonoBindings> {
     }
     const botUsername = authResult.user ?? 'kimaki'
 
+    let publicGatewayUrl = 'wss://slack-gateway.kimaki.dev/slack/gateway'
+
     const gatewaySessionManager = new GatewaySessionManager({
       loadState: async () => {
         return loadGatewayState({
           slack,
-          workspaceId: this.env.SLACK_WORKSPACE_ID,
+          workspaceId: gatewayClient.guild_id,
           botUserId,
           botUsername,
         })
       },
-      expectedToken: this.env.SLACK_BOT_TOKEN,
-      workspaceId: this.env.SLACK_WORKSPACE_ID,
-      authorize: async () => {
+      expectedToken: slackBotToken,
+      workspaceId: gatewayClient.guild_id,
+      authorize: async (context) => {
+        const teamId = context.teamId
+        if (context.kind === 'webhook-action' || context.kind === 'webhook-event') {
+          if (!teamId || teamId !== gatewayClient.guild_id) {
+            return { allow: false }
+          }
+          return {
+            allow: true,
+            clientId,
+            authorizedTeamIds: [gatewayClient.guild_id],
+          }
+        }
+
+        const token = context.token
+        const parsedToken = parseGatewayToken(token)
+        if (!parsedToken) {
+          return { allow: false }
+        }
+
+        if (parsedToken.clientId !== clientId) {
+          return { allow: false }
+        }
+
+        const latestGatewayClient = await resolveGatewayClientFromCacheOrDb({
+          clientId,
+          env: this.env,
+        })
+        if (latestGatewayClient instanceof Error || !latestGatewayClient) {
+          return { allow: false }
+        }
+
+        if (latestGatewayClient.secret !== parsedToken.secret) {
+          return { allow: false }
+        }
+
+        if (teamId && teamId !== latestGatewayClient.guild_id) {
+          return { allow: false }
+        }
+
         return {
           allow: true,
-          authorizedTeamIds: [this.env.SLACK_WORKSPACE_ID],
+          clientId,
+          authorizedTeamIds: [latestGatewayClient.guild_id],
         }
       },
       gatewayUrlProvider: () => {
-        return 'wss://preview.kimaki.xyz/api/slack-bridge/gateway'
+        return publicGatewayUrl
       },
     })
 
@@ -250,11 +338,10 @@ export class SlackBridgeDO extends DurableObject<HonoBindings> {
       slack,
       botUserId,
       botUsername,
-      botToken: this.env.SLACK_BOT_TOKEN,
+      botToken: slackBotToken,
       signingSecret: this.env.SLACK_SIGNING_SECRET,
-      workspaceId: this.env.SLACK_WORKSPACE_ID,
+      workspaceId: gatewayClient.guild_id,
       port: 0,
-      gatewayUrlOverride: 'wss://preview.kimaki.xyz/api/slack-bridge/gateway',
     })
 
     bridgeApp.setGateway({
@@ -274,6 +361,9 @@ export class SlackBridgeDO extends DurableObject<HonoBindings> {
     return {
       app: bridgeApp.app,
       gatewaySessionManager,
+      setPublicGatewayUrl: (url) => {
+        publicGatewayUrl = url
+      },
     }
   }
 
@@ -519,11 +609,37 @@ async function serializeResponse(response: Response): Promise<BridgeRpcResponse>
   }
 }
 
+function buildGatewayWebSocketUrlFromRequestUrl(requestUrl: string): string {
+  const baseUrl = new URL(requestUrl)
+  const protocol = baseUrl.protocol === 'https:' ? 'wss:' : 'ws:'
+  return new URL('/slack/gateway', `${protocol}//${baseUrl.host}`).toString()
+}
+
+function parseGatewayToken(
+  token: string | undefined,
+): {
+  clientId: string
+  secret: string
+} | undefined {
+  if (!token) {
+    return undefined
+  }
+  const [clientId, secret, ...rest] = token.split(':')
+  if (rest.length > 0) {
+    return undefined
+  }
+  if (!clientId || !secret) {
+    return undefined
+  }
+  return { clientId, secret }
+}
+
 function isBridgeRpcRequest(value: unknown): value is BridgeRpcRequest {
   if (!isRecord(value)) {
     return false
   }
   if (
+    typeof value.clientId !== 'string' ||
     typeof value.url !== 'string' ||
     typeof value.path !== 'string' ||
     typeof value.method !== 'string' ||

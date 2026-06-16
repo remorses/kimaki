@@ -19,7 +19,7 @@ It is responsible for:
 
 Always call `createPrisma(connectionString)` and `createAuth({ env, baseURL })` inside each request handler. Never cache the result in a module-level variable.
 
-**Always pass `c.env.HYPERDRIVE.connectionString`** to `createPrisma()`. The Hyperdrive binding provides pooled connections that cut latency from ~950ms to ~300ms. Without it, every request pays the full TCP+TLS+auth cost to PlanetScale.
+**Always pass `state.env.HYPERDRIVE.connectionString`** to `createPrisma()`. The Hyperdrive binding provides pooled connections that cut latency from ~950ms to ~300ms. Without it, every request pays the full TCP+TLS+auth cost to PlanetScale.
 
 ```ts
 // WRONG — will hang intermittently
@@ -27,14 +27,15 @@ import { createPrisma } from 'db/src/prisma.js'
 const prisma = createPrisma() // module-level = singleton = broken
 
 // WRONG — works but ~950ms per request (no pooling)
-async function handleRequest(c: Context) {
+async function handleRequest() {
   const prisma = createPrisma()
   // ...
 }
 
 // CORRECT — fresh client per request, Hyperdrive pooled (~300ms)
-async function handleRequest(c: Context<{ Bindings: HonoBindings }>) {
-  const prisma = createPrisma(c.env.HYPERDRIVE.connectionString)
+// Inside a spiceflow route handler:
+async handler({ state }) {
+  const prisma = createPrisma(state.env.HYPERDRIVE.connectionString)
   // ...
 }
 ```
@@ -143,9 +144,6 @@ Related issues:
 The `/v10` entry re-exports gateway, payloads, rest, rpc, and utils modules
 (~204 KiB unminified) even if you only need one constant. Hardcode constants
 or import from specific subpaths like `discord-api-types/payloads/v10/permissions`.
-
-**react / react-dom** — never use React SSR in this worker. The success page
-uses plain HTML template strings. react-dom server adds ~531 KiB unminified.
 
 **Prisma compilerBuild** — `db/schema.prisma` sets `compilerBuild = "small"`.
 This is the single biggest size win: WASM drops from 3.6 MiB to 1.8 MiB.

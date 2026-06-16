@@ -79,6 +79,7 @@ export function roleToAPI(role: Role): APIRole {
     flags: role.flags ? RoleFlags.InPrompt : noFlags<RoleFlags>(),
     icon: undefined,
     unicode_emoji: undefined,
+    colors: undefined as unknown as APIRole['colors'],
   }
 }
 

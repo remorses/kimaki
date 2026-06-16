@@ -4,7 +4,7 @@
 
 ## Package purpose
 
-This package exists to let Kimaki (from the `discord` package) run on Slack in
+This package exists to let Kimaki (from the `cli` package) run on Slack in
 the future with minimal behavior differences. The adapter translates Discord
 Gateway and REST semantics to Slack APIs so Kimaki can keep the same runtime
 model:
@@ -18,7 +18,7 @@ to how it behaves in Discord, with this bridge handling protocol translation.
 
 ## Canonical references
 
-- Bridge behavior spec: `docs/discord-slack-bridge-spec.md`
+- Bridge behavior spec: `slop/discord-slack-bridge-spec.md`
 - Bridge implementation:
   - `discord-slack-bridge/src/server.ts`
   - `discord-slack-bridge/src/event-translator.ts`
@@ -33,6 +33,13 @@ to how it behaves in Discord, with this bridge handling protocol translation.
   - `opensrc/repos/github.com/slackapi/node-slack-sdk/packages/web-api/src/types/request/reactions.ts`
   - `opensrc/repos/github.com/slackapi/node-slack-sdk/packages/web-api/src/types/request/files.ts`
   - `opensrc/repos/github.com/slackapi/node-slack-sdk/packages/web-api/src/types/request/views.ts`
+
+## Echo bot integration smoke checks
+
+- Use `discord-slack-bridge/scripts/echo-bot.ts` to verify end-to-end Slack + gateway behavior.
+- For deployed gateway testing, run `pnpm echo-bot --gateway` from `discord-slack-bridge/`.
+- This validates Discord REST + Gateway routing through `slack-gateway.kimaki.dev` and Slack webhook/interactivity handling at `/slack/events`.
+- Important: this requires real user interaction in Slack. The script only starts the bridge client and registers commands; someone must send messages, run slash commands, and click interactive components in Slack to exercise Events + Interactivity webhooks end-to-end.
 
 ## Non-negotiable typing rules
 
@@ -159,4 +166,40 @@ compatibility. `resolveSlackTarget` also handles legacy `THR_` IDs.
 
 - After bridge changes, always run:
   - `cd discord-slack-bridge && pnpm typecheck && pnpm test --run`
-  - `cd discord && pnpm tsc`
+  - `cd cli && pnpm tsc`
+
+## Website KV auth cache architecture (Slack gateway)
+
+The website worker now does auth/routing cache in Cloudflare KV instead of
+isolate memory or Worker Cache API for Slack gateway traffic.
+
+- KV key `gateway-client:v1:<clientId>` stores one gateway client auth record
+  (same fields as `gateway_clients` row shape used by runtime auth checks).
+- KV key `team-client-ids:v1:<teamId>` stores `{ clientIds: string[] }` used by
+  Slack webhook fanout routing.
+- OAuth callback write-through updates both DB and KV so a new install is
+  immediately routable/authenticated without waiting for a miss.
+- On KV miss, worker reads DB and repopulates KV (read-through behavior).
+
+### KV + database interaction contract
+
+- `gateway_clients` in Postgres is the source of truth.
+- KV is a short-lived acceleration layer only; never rely on KV alone for
+  correctness.
+- OAuth callback and any future mapping writers should use the shared
+  `upsertGatewayClientAndRefreshKv(...)` helper in
+  `website/src/gateway-client-kv.ts` so write behavior stays consistent.
+- That helper writes the client row cache key and invalidates the team fanout
+  list key. Team fanout list is rebuilt lazily from DB on next miss.
+- For auth checks, the DO/runtime should resolve client data via KV first, then
+  DB fallback (`resolveGatewayClientFromCacheOrDb(...)`) and repopulate KV.
+- If DB and KV disagree, DB wins and KV should be overwritten by the latest DB
+  row.
+
+Revalidation and revocation behavior:
+
+- KV entries use short TTLs and expire automatically.
+- Expired/missing entries force DB revalidation on next request.
+- This is intentional so revoking a client secret, banning a user, or removing
+  team access in DB propagates after TTL without requiring explicit cache purge.
+- Do not increase TTLs aggressively; short TTL is part of the security model.

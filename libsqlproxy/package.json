@@ -1,0 +1,60 @@
+{
+  "name": "libsqlproxy",
+  "version": "0.1.0",
+  "description": "Runtime-agnostic Hrana v2 HTTP server for SQLite. Expose any SQLite database (Cloudflare Durable Objects, libsql, better-sqlite3) via the libSQL remote protocol.",
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    "./package.json": "./package.json",
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    },
+    "./src": {
+      "types": "./src/index.ts",
+      "default": "./src/index.ts"
+    },
+    "./src/*": {
+      "types": "./src/*.ts",
+      "default": "./src/*.ts"
+    }
+  },
+  "files": [
+    "src",
+    "dist",
+    "README.md"
+  ],
+  "publishConfig": {
+    "access": "public"
+  },
+  "scripts": {
+    "build": "rm -rf dist *.tsbuildinfo && tsc",
+    "prepublishOnly": "pnpm build",
+    "test": "vitest"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/remorses/kimaki",
+    "directory": "libsqlproxy"
+  },
+  "homepage": "https://github.com/remorses/kimaki/tree/main/libsqlproxy",
+  "bugs": {
+    "url": "https://github.com/remorses/kimaki/issues"
+  },
+  "keywords": [
+    "libsql",
+    "hrana",
+    "sqlite",
+    "proxy",
+    "durable-objects",
+    "cloudflare",
+    "database"
+  ],
+  "license": "MIT",
+  "devDependencies": {
+    "@types/node": "^22.0.0",
+    "typescript": "^5.9.2",
+    "vitest": "^3.2.4"
+  }
+}

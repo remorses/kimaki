@@ -1,33 +1,33 @@
-<!-- This AGENTS.md file is generated. Look for an agents.md package.json script to see what files to update instead. -->
+after every change always run tsc inside cli to validate your changes. try to never use as any
 
-after every change always run tsc inside discord to validate your changes. try to never use as any
+always load the `changesets` skill before fixing bugs or adding features. User-facing fixes and features usually need a `.changeset/*.md` entry, and the skill explains package selection, issue references, descriptive filenames, and `.changeset/readme.md` expectations.
 
 do not use spawnSync. use our util execAsync. which uses spawn under the hood
 
-the important package in this repo is discord. it contains the discord bot code.
+the important package in this repo is cli. it contains the discord bot code.
 
-after making important changes to queueing or message handling always run the full test suite inside discord to make sure our changes did not break anything. also run with -u and see snapshots updates in git diff if needed. `pnpm test -u --run`
+after making important changes to queueing or message handling always run the full test suite inside cli to make sure our changes did not break anything. also run with -u and see snapshots updates in git diff if needed. `pnpm test -u --run`
 
 # repo architecture
 
 kimaki is a monorepo with three main packages that communicate via a shared Postgres database hosted on PlanetScale.
 
 ```
-┌─────────────────────────────────────────────────────────────┐
-│  User's machine                                             │
-│  discord/ (TypeScript CLI + Discord bot)                    │
-│  ├── src/cli.ts        main CLI, onboarding wizard          │
-│  ├── src/discord-bot.ts  event loop, session routing        │
-│  └── SQLite (~/.kimaki/discord-sessions.db)                 │
-│         local state: bot tokens, channels, threads, models  │
-└────────┬──────────────────────────┬─────────────────────────┘
-         │ REST + WebSocket         │ polls /api/onboarding/status
-         │ (clientId:secret)        │ during first-time setup
-         ▼                          ▼
-┌─────────────────────┐   ┌──────────────────────────────────┐
+┌───────────────────────────────────────────────────────────────┐
+│  User's machine                                               │
+│  cli/ (TypeScript CLI + Discord bot)                          │
+│  ├── src/cli.ts        main CLI, onboarding wizard            │
+│  ├── src/discord-bot.ts  event loop, session routing          │
+│  └── SQLite (~/.kimaki/discord-sessions.db)                   │
+│         local state: bot tokens, channels, threads, models    │
+└─────────┬────────────────────────────┬───────────────────────┘
+          │ REST + WebSocket           │ polls /api/onboarding/status
+          │ (clientId:secret)          │ during first-time setup
+          ▼                            ▼
+┌──────────────────────┐   ┌──────────────────────────────────┐
 │  gateway-proxy/      │   │  website/                        │
 │  (Rust, fly.io)      │   │  (Cloudflare Worker, Hono)       │
-│                      │   │  https://kimaki.xyz           │
+│                      │   │  https://kimaki.dev          │
 │  Sits between the    │   │                                  │
 │  CLI and Discord.    │   │  GET /oauth/callback              │
 │  One shared bot for  │   │    → upserts gateway_clients row │
@@ -45,20 +45,20 @@ kimaki is a monorepo with three main packages that communicate via a shared Post
 └──────────┬───────────┘              │
            │                          │
            ▼                          ▼
-┌──────────────────────────────────────────────────────────────┐
-│  Shared Postgres (PlanetScale)                               │
-│  db/schema.prisma                                            │
-│                                                              │
-│  gateway_clients table:                                      │
-│    client_id  TEXT   ── identifies the kimaki user            │
-│    secret     TEXT   ── authenticates gateway connections     │
-│    guild_id   TEXT   ── guild the user installed the bot in   │
-│    @@id([client_id, guild_id])                               │
-│                                                              │
-│  Written by: website (on OAuth callback)                     │
-│  Read by: gateway-proxy (polls every 1s via db_config.rs)    │
-│  Read by: website (onboarding status check)                  │
-└──────────────────────────────────────────────────────────────┘
+┌───────────────────────────────────────────────────────────────┐
+│  Shared Postgres (PlanetScale)                                │
+│  db/schema.prisma                                             │
+│                                                               │
+│  gateway_clients table:                                       │
+│    client_id  TEXT   ── identifies the kimaki user             │
+│    secret     TEXT   ── authenticates gateway connections      │
+│    guild_id   TEXT   ── guild the user installed the bot in    │
+│    @@id([client_id, guild_id])                                │
+│                                                               │
+│  Written by: website (on OAuth callback)                      │
+│  Read by: gateway-proxy (polls every 1s via db_config.rs)     │
+│  Read by: website (onboarding status check)                   │
+└───────────────────────────────────────────────────────────────┘
 ```
 
 ## gateway-proxy (Rust)
@@ -77,7 +77,7 @@ key files:
 
 auth flow: client sends IDENTIFY with token `client_id:client_secret` → proxy validates against the CLIENTS map (from DB) → returns `SessionPrincipal::Client(id)` + `authorized_guilds` → only forwards events for those guilds.
 
-gateway REST rule for discord package code: when running with `client_id:secret`
+gateway REST rule for cli package code: when running with `client_id:secret`
 through gateway-proxy, Discord REST calls must be guild-scoped or explicitly
 allowlisted by the proxy (`/gateway/bot`, `/users/@me`, etc). avoid global
 application routes like `/applications/{app_id}/commands`; use
@@ -96,10 +96,10 @@ multi-tenant REST safety invariant:
 
 ## gateway onboarding flow (gateway mode)
 
-the gateway mode onboarding (in `discord/src/cli.ts`, the `run()` function) works as follows:
+the gateway mode onboarding (in `cli/src/cli.ts`, the `run()` function) works as follows:
 
 1. CLI generates `clientId` (UUID) + `clientSecret` (32-byte hex)
-2. builds Discord OAuth URL with `state=JSON({clientId, clientSecret})` and `redirect_uri=https://kimaki.xyz/api/auth/callback/discord`
+2. builds Discord OAuth URL with `state=JSON({clientId, clientSecret})` and `redirect_uri=https://kimaki.dev/api/auth/callback/discord`
 3. opens browser to the Discord install URL
 4. user authorizes the shared Kimaki bot in their server
 5. Discord redirects to `website/src/routes/oauth-callback.tsx` with `guild_id` + `state` — website upserts `gateway_clients` row in Postgres
@@ -111,7 +111,7 @@ use `--gateway` to force gateway mode even if self-hosted credentials are alread
 
 ## db package
 
-`db` is a devDependency of `discord`. this means discord can only import **types** from `db`, not runtime values. use `import type { ... } from 'db/...'` in discord code. website has `db` as a normal dependency so it can import runtime values (functions, classes, etc.).
+`db` is a devDependency of `cli`. this means cli can only import **types** from `db`, not runtime values. use `import type { ... } from 'db/...'` in cli code. website has `db` as a normal dependency so it can import runtime values (functions, classes, etc.).
 
 ## opencode SDK
 
@@ -178,25 +178,73 @@ if we added new fields on the schema then we would also need to update db.ts wit
 
 ## prisma
 
-we use prisma to write type safe queries. the database schema is defined in `discord/schema.prisma`.
+we use prisma to write type safe queries. the database schema is defined in `cli/schema.prisma`.
 
-`discord/src/schema.sql` is **generated** from the prisma schema - never edit it directly. to regenerate it after modifying schema.prisma:
+`cli/src/schema.sql` is **generated** from the prisma schema — never edit it directly. to regenerate it after modifying schema.prisma:
 
 ```bash
-cd discord && pnpm generate
+cd cli && pnpm generate
 ```
 
-this runs `prisma generate` (for the client) and `pnpm generate:sql` (which creates a temp sqlite db and extracts the schema).
+this runs `prisma generate` (for the client) and `pnpm generate:sql` (which creates a temp sqlite db, pushes the prisma schema, and extracts the CREATE TABLE statements). the resulting `schema.sql` uses `CREATE TABLE IF NOT EXISTS`, so it creates tables for new users automatically on startup.
+
+### how schema changes work
+
+**new tables**: schema.sql handles them automatically. `CREATE TABLE IF NOT EXISTS` runs on every startup via `migrateSchema()` in `db.ts`, so new tables appear without any manual migration.
+
+**new columns on existing tables**: schema.sql won't add columns to tables that already exist (`IF NOT EXISTS` skips the whole CREATE). add a migration in `db.ts` `migrateSchema()` using:
+
+```ts
+try {
+  await prisma.$executeRawUnsafe(
+    'ALTER TABLE table_name ADD COLUMN column_name TEXT',
+  )
+} catch {
+  // Column already exists
+}
+```
+
+this is the only migration pattern needed. ALTER TABLE ADD COLUMN silently fails if the column exists. never recreate tables to change column types or nullability — it's too complex and risky for a user-facing sqlite database.
+
+**workflow for adding a new column:**
+
+1. add the field to `cli/schema.prisma`
+2. run `pnpm generate` inside cli folder (regenerates prisma client + schema.sql)
+3. add `ALTER TABLE ... ADD COLUMN` in `db.ts` `migrateSchema()` with try/catch
+4. schema.sql handles new installs, the ALTER handles existing installs
 
 when adding new tables:
 
-1. add the model to `discord/schema.prisma`
-2. run `pnpm generate` inside discord folder
+1. add the model to `cli/schema.prisma`
+2. run `pnpm generate` inside cli folder
 3. add getter/setter functions in `database.ts` only if the query is complex or reused in many places
 
 do NOT add simple prisma query wrappers to database.ts. if a query is a straightforward `findMany`, `findUnique`, `create`, etc. with no complex logic, inline the prisma call directly at the call site. database.ts is not a repository layer — it only exists for queries that are genuinely complex (multi-step transactions, migrations) or called from 3+ places. when in doubt, inline it.
 
 prisma version in package.json MUST be pinned. no ^. this makes sure the generated prisma code is compatible with the prisma client used in the npm package
+
+## post-publish release notification
+
+after every publish, once the `gh release create` step is done:
+
+1. write the gh release body content to `/tmp/kimaki-release.md` so it can be reused quickly without regenerating it
+2. send a notification to the **#changelog** channel (`1514563453493313548`) in the Kimaki Discord Server with a markdown summary of the release.
+
+the #changelog channel is in a different guild than the local bot's authorized guild, so you must use the demo bot's gateway token via sigillo. the kimaki sigillo project (org: npm) has a `KIMAKI_BOT_TOKEN` secret in the `dev` environment containing the demo bot's `clientId:clientSecret`.
+
+```bash
+sigillo run -c dev -- kimaki send --channel 1514563453493313548 --prompt "$(cat /tmp/kimaki-release.md)" --notify-only --user '535922349652836367'
+```
+
+run this from the kimakivoice repo root (where sigillo is set up). the `KIMAKI_BOT_TOKEN` env var takes priority over local DB credentials when set, so the send command will authenticate as the demo bot through the gateway proxy.
+
+the notification message should use the version as a heading 1 title (e.g. `# v1.2.3`), followed by the same rich content as the gh release: descriptions, code examples, migration steps, before/after comparisons, etc. keep it detailed and user-facing, identical quality to a gh release body.
+
+when `--notify-only` targets a non-project channel, the message is posted directly without creating a thread. for project channels, a thread is still created so users can reply to start a session.
+
+## github issues
+
+never suggest installing kimaki from git (e.g. `npm i -g remorses/kimaki#main`). it does not work because the package needs a build step. always point users to the next npm release instead.
 
 ## libsql in-memory gotcha
 
@@ -205,6 +253,8 @@ when using `@prisma/adapter-libsql` with `file::memory:`, always use `file::memo
 ## errore
 
 errore is a submodule. should always be in main. make sure it is never in detached state.
+
+when pulling submodules and they jump to a new commit, commit that submodule pointer update right away before doing other work. otherwise critique diffs later will include the noisy submodule jump along with the real changes.
 
 it is a package for using errors as values in ts.
 
@@ -231,10 +281,6 @@ user messages do not automatically make the bot appear typing again. do not show
 do not remove the typing interval to fix stuck typing; instead fix lifecycle bugs by clearing both the active interval and any scheduled restart timeout when a session ends, aborts, or pauses for permission/question prompts.
 
 when adding delayed typing restarts (for example after `step-finish`), always guard them with session closed/aborted checks so they cannot restart typing after cleanup.
-
-## AGENTS.md
-
-AGENTS.md is generated. only edit KIMAKI_AGENTS.md instead. pnpm agents.md will generate the file again.
 
 ## discord object shapes
 
@@ -306,22 +352,22 @@ signal summary:
 - `SIGUSR1`: write heap snapshot to disk
 - `SIGUSR2`: graceful restart (existing)
 
-the implementation is in `discord/src/heap-monitor.ts`.
+the implementation is in `cli/src/heap-monitor.ts`.
 
 ## cpu profiling tests
 
-set `VITEST_CPU_PROF=1` to generate `.cpuprofile` files when running vitest. profiles land in `discord/tmp/cpu-profiles/`. always run a single test file to avoid hanging the machine — the config forces `maxForks: 1` when profiling.
+set `VITEST_CPU_PROF=1` to generate `.cpuprofile` files when running vitest. profiles land in `cli/tmp/cpu-profiles/`. always run a single test file to avoid hanging the machine — the config forces `maxForks: 1` when profiling.
 
 ```bash
 # run one test file with profiling
-cd discord
+cd cli
 VITEST_CPU_PROF=1 pnpm test --run src/some-file.e2e.test.ts
 ```
 
-to get a top-down self-time report without opening a browser, use profano (a workspace package in `profano/`):
+to get a top-down self-time report without opening a browser, use profano:
 
 ```bash
-node ../profano/dist/cli.js tmp/cpu-profiles/CPU.*.cpuprofile
+bunx profano tmp/cpu-profiles/CPU.*.cpuprofile
 ```
 
 for an interactive flame chart in the browser, use cpupro:
@@ -350,7 +396,7 @@ for live user-session debugging (without restarting with env vars), export the p
 
 `kimaki session export-events-jsonl --session <session_id> --out ./tmp/session-events.jsonl`
 
-use this when debugging session-state regressions (for example footer appearing after abort). the exported jsonl can be copied into `discord/src/session-handler/event-stream-fixtures/` and used to add/update `event-stream-state.test.ts` coverage for pure derivation helpers.
+use this when debugging session-state regressions (for example footer appearing after abort). the exported jsonl can be copied into `cli/src/session-handler/event-stream-fixtures/` and used to add/update `event-stream-state.test.ts` coverage for pure derivation helpers.
 
 runtime note: `ThreadSessionRuntime` keeps the last 1000 opencode events in memory per thread (`eventBuffer`) for event-sourcing derivation and waiters. the buffer stores a compacted event shape to avoid memory spikes.
 
@@ -387,11 +433,19 @@ jq -r '[.timestamp, .event.type] | @tsv' ~/.kimaki/opencode-session-events/ses_x
 
 for checkout validation requests, prefer non-recursive checks unless the user asks otherwise.
 
+## kimaki command shim (`~/.kimaki/bin/kimaki`)
+
+`ensureKimakiCommandShim()` in `cli/src/opencode-command.ts` generates a shell script at `~/.kimaki/bin/kimaki` (or `kimaki.cmd` on Windows) every time the bot starts. it captures `process.execPath`, `process.execArgv`, and `process.argv[1]` into an `exec` one-liner so the shim always mirrors the current process.
+
+the shim directory is prepended to `PATH` in the env passed to the opencode server process (`cli/src/opencode.ts`). this lets AI agent sessions run `kimaki send`, `kimaki upload-to-discord`, `kimaki tunnel`, etc. as regular shell commands via the bash tool, regardless of how kimaki was installed (npx, global install, local dev).
+
+in local dev the shim contains tsx loader flags (`--require` / `--import`) because the bot was launched with tsx against the raw `.ts` entry point. in production (npm package) there are no tsx flags and the entry script is the compiled `bin.js`. the shim just reflects however the current process was started; there is no special-casing.
+
 ## opencode plugin and env vars
 
-the opencode plugin (`discord/src/opencode-plugin.ts`) runs inside the **opencode server process**, not the kimaki bot process. this means `config.ts` state (like `getDataDir()`, etc.) is not available there.
+the opencode plugin (`cli/src/kimaki-opencode-plugin.ts`) runs inside the **opencode server process**, not the kimaki bot process. this means `config.ts` state (like `getDataDir()`, etc.) is not available there.
 
-**CRITICAL: never export utility functions from `opencode-plugin.ts`.** opencode's plugin loader calls every exported function in the module as a plugin initializer. if you export a helper like `condenseMemoryMd(content: string)`, it will be called with a PluginInput object instead of a string and crash. only the plugin entrypoint function should be exported. move any utilities to separate files (e.g. `condense-memory.ts`) and import them.
+**CRITICAL: never export utility functions from `kimaki-opencode-plugin.ts`.** opencode's plugin loader calls every exported function in the module as a plugin initializer. if you export a helper like `condenseMemoryMd(content: string)`, it will be called with a PluginInput object instead of a string and crash. only the plugin entrypoint function should be exported. move any utilities to separate files (e.g. `condense-memory.ts`) and import them.
 
 we should architecture our opencode plugins as many separate plugins to make them readable and easy to understand. every export will be interpreted as a different plugin.
 
@@ -404,9 +458,13 @@ the plugin does NOT receive `KIMAKI_BOT_TOKEN`. discord REST operations (user li
 
 when adding new bot-side config that the plugin needs, add it as a `KIMAKI_*` env var in `opencode.ts` spawn env and read `process.env.KIMAKI_*` in the plugin. never import config.ts getters in the plugin.
 
+**NEVER use `console.log`, `console.error`, or any `console.*` in plugin code.** opencode captures plugin stdout/stderr and it pollutes the opencode server output, breaking structured logging. plugins must be silent — fail gracefully and return null/undefined on errors instead of logging.
+
+OpenCode plugin files must also avoid importing `cli/src/logger.ts`. That logger pulls in `@clack/prompts` / `picocolors`, which can fail under the plugin loader's ESM/CJS interop. For plugin code, use a separate plugin-safe logger module that only appends to the kimaki log file and never writes to stdout/stderr.
+
 ## skills folder
 
-skills is a symlink to discord/skills. this is a folder of skills for kimaki. loaded by all kimaki users. some skills are synced from github repos. see discord/scripts/sync-skills.ts. so never manually update them. instead if need to updaste them start kimaki threads on those project, found via kimaki cli.
+skills lives at the repository root in `skills/`. build and publish scripts copy it into `cli/skills/` so the npm package still ships the bundled skills. some skills are synced from github repos. see cli/scripts/sync-skills.ts. so never manually update synced copies. instead if need to update them start kimaki threads on those project, found via kimaki cli.
 
 ## discord-digital-twin e2e style
 
@@ -451,12 +509,16 @@ opencode uses the event subscription (sdk call `event.subscribe`) as single sour
 
 prefer event sourcing over mirrored mutable run state.
 
+always read the `event-sourcing-state` skill before updating code in `cli/src/session-handler/thread-session-runtime.ts`.
+
 why this is preferred:
 
 - one source of truth: the event stream. no duplicated "phase" or "current run" state that can desync.
 - easier debugging: read the jsonl stream and replay decisions from history.
 - easier testing: derivation logic is pure and deterministic with fixture inputs.
 - fewer race bugs: state is derived from observed events, not guessed from local transitions.
+
+when the user mentions a specific kimaki session while reporting a bug, always export its jsonl first with `kimaki session export-events-jsonl --session <id> --out ./tmp/<id>.jsonl` and inspect that stream before guessing about runtime state.
 
 write derivation as pure functions that accept events and return computed state.
 prefer existing derivation helpers from `event-stream-state.ts` (for example
@@ -498,7 +560,7 @@ with fixture jsonl streams and inline snapshots.
 
 if mutable state is really needed, centralize it.
 
-- use `discord/src/store.ts` for global shared state so every read/write path is visible.
+- use `cli/src/store.ts` for global shared state so every read/write path is visible.
 - keep global state at a minimum. every new field multiplies the number of possible app states and increases bug surface.
 - prefer deriving values from events/existing state instead of storing mirrored flags.
 - if state is local-only, keep it local and encapsulated (for example a local `let count = 0` in one function/loop). do not promote temporary local state to global store.
@@ -537,7 +599,7 @@ discord.js has a startTyping method. this method will show a typing indicator in
 `discord-slack-bridge/` is a package that lets discord.js bots (like kimaki)
 control a Slack workspace without code changes. it translates Discord REST
 calls to Slack Web API calls and Slack webhook events to Discord Gateway
-dispatches. see `docs/discord-slack-bridge-spec.md` for the full spec.
+dispatches. see `slop/discord-slack-bridge-spec.md` for the full spec.
 
 key design: stateless ID mapping (no database). thread IDs encoded as
 `THR_{channel}_{ts}`, message IDs as `MSG_{channel}_{ts}`.
@@ -598,525 +660,3 @@ when working on the slack bridge, consult these docs:
 **slack mrkdwn format:**
 - Slack uses `*bold*` (not `**bold**`), `~strike~` (not `~~strike~~`), `<url|text>` (not `[text](url)`)
 - Full reference: https://api.slack.com/reference/surfaces/formatting
-
-# core guidelines
-
-when summarizing changes at the end of the message, be super short, a few words and in bullet points, use bold text to highlight important keywords. use markdown.
-
-please ask questions and confirm assumptions before generating complex architecture code.
-
-NEVER run commands with & at the end to run them in the background. this is leaky and harmful! instead ask me to run commands in the background using tmux if needed.
-
-NEVER commit yourself unless asked to do so. I will commit the code myself.
-
-NEVER use git to revert files to previous state if you did not create those files yourself! there can be user changes in files you touched, if you revert those changes the user will be very upset!
-
-## files
-
-always use kebab case for new filenames. never use uppercase letters in filenames
-
-never write temporary files to /tmp. instead write them to a local ./tmp folder instead. make sure it is in .gitignore too
-
-## see files in the repo
-
-use `git ls-files | tree --fromfile` to see files in the repo. this command will ignore files ignored by git
-
-## handling unexpected file contents after a read or write
-
-if you find code that was not there since the last time you read the file it means the user or another agent edited the file. do not revert the changes that were added. instead keep them and integrate them with your new changes
-
-IMPORTANT: NEVER commit your changes unless clearly and specifically asked to!
-
-## opening me files in zed to show me a specific portion of code
-
-you can open files when i ask me "open in zed the line where ..." using the command `zed path/to/file:line`
-
-# typescript
-
-- ALWAYS use normal imports instead of dynamic imports, unless there is an issue with es module only packages and you are in a commonjs package (this is rare).
-- when throwing errors always use clause instead of error inside message: `new Error("wrapping error", { cause: e })` instead of `new Error(\`wrapping error ${e}\`)`
-
-- use a single object argument instead of multiple positional args: use object arguments for new typescript functions if the function would accept more than one argument, so it is more readable, ({a,b,c}) instead of (a,b,c). this way you can use the object as a sort of named argument feature, where order of arguments does not matter and it's easier to discover parameters.
-
-- always add the {} block body in arrow functions: arrow functions should never be written as `onClick={(x) => setState('')}`. NEVER. instead you should ALWAYS write `onClick={() => {setState('')}}`. this way it's easy to add new statements in the arrow function without refactoring it.
-
-- in array operations .map, .filter, .reduce and .flatMap are preferred over .forEach and for of loops. For example prefer doing `.push(...array.map(x => x.items))` over mutating array variables inside for loops. Always think of how to turn for loops into expressions using .map, .filter or .flatMap if you ever are about to write a for loop.
-
-- if you encounter typescript errors like "undefined | T is not assignable to T" after .filter(Boolean) operations: use a guarded function instead of Boolean: `.filter(isTruthy)`. implemented as `function isTruthy<T>(value: T): value is NonNullable<T> { return Boolean(value) }`
-
-- minimize useless comments: do not add useless comments if the code is self descriptive. only add comments if requested or if this was a change that i asked for, meaning it is not obvious code and needs some inline documentation. if a comment is required because the part of the code was result of difficult back and forth with me, keep it very short.
-
-- ALWAYS add all information encapsulated in my prompt to comments: when my prompt is super detailed and in depth, all this information should be added to comments in your code. this is because if the prompt is very detailed it must be the fruit of a lot of research. all this information would be lost if you don't put it in the code. next LLM calls would misinterpret the code and miss context.
-
-- NEVER write comments that reference changes between previous and old code generated between iterations of our conversation. do that in prompt instead. comments should be used for information of the current code. code that is deleted does not matter.
-
-- use early returns (and breaks in loops): do not nest code too much. follow the go best practice of if statements: avoid else, nest as little as possible, use top level ifs. minimize nesting. instead of doing `if (x) { if (b) {} }` you should do `if (x && b) {};` for example. you can always convert multiple nested ifs or elses into many linear ifs at one nesting level. use the @think tool for this if necessary.
-
-- typecheck after updating code: after any change to typescript code ALWAYS run the `pnpm typecheck` script of that package, or if there is no typecheck script run `pnpm tsc` yourself
-
-- do not use any: you must NEVER use any. if you find yourself using `as any` or `:any`, use the @think tool to think hard if there are types you can import instead. do even a search in the project for what the type could be. any should be used as a last resort.
-
-- NEVER do `(x as any).field` or `'field' in x` before checking if the code compiles first without it. the code probably doesn't need any or the in check. even if it does not compile, use think tool first! before adding (x as any).something, ALWAYS read the .d.ts to understand the types
-
-- do not declare uninitialized variables that are defined later in the flow. instead use an IIFE with returns. this way there is less state. also define the type of the variable before the iife. here is an example:
-
-- use || over in: avoid 'x' in obj checks. prefer doing `obj?.x || ''` over doing `'x' in obj ? obj.x : ''`. only use the in operator if that field causes problems in typescript checks because typescript thinks the field is missing, as a last resort.
-
-- when creating urls from a path and a base url, prefer using `new URL(path, baseUrl).toString()` instead of normal string interpolation. use type-safe react-router `href` or spiceflow `this.safePath` (available inside routes) if possible
-
-- for node built-in imports, never import singular exported names. instead do `import fs from 'node:fs'`, same for path, os, etc.
-
-- NEVER start the development server with pnpm dev yourself. there is no reason to do so, even with &
-
-- When creating classes do not add setters and getters for a simple private field. instead make the field public directly so user can get it or set it himself without abstractions on top
-
-- if you encounter typescript lint errors for an npm package, read the node_modules/package/\*.d.ts files to understand the typescript types of the package. if you cannot understand them, ask me to help you with it.
-
-- NEVER silently suppress errors in catch {} blocks if they contain more than one function call
-```ts
-// BAD. DO NOT DO THIS
-let favicon: string | undefined;
-if (docsConfig?.favicon) {
-  if (typeof docsConfig.favicon === "string") {
-    favicon = docsConfig.favicon;
-  } else if (docsConfig.favicon?.light) {
-    // Use light favicon as default, could be enhanced with theme detection
-    favicon = docsConfig.favicon.light;
-  }
-}
-// DO THIS. use an iife. Immediately Invoked Function Expression
-const favicon: string = (() => {
-  if (!docsConfig?.favicon) {
-    return "";
-  }
-  if (typeof docsConfig.favicon === "string") {
-    return docsConfig.favicon;
-  }
-  if (docsConfig.favicon?.light) {
-    // Use light favicon as default, could be enhanced with theme detection
-    return docsConfig.favicon.light;
-  }
-  return "";
-})();
-// if you already know the type use it:
-const favicon: string = () => {
-  // ...
-};
-```
-
-- when a package has to import files from another packages in the workspace never add a new tsconfig path, instead add that package as a workspace dependency using `pnpm i "package@workspace:*"`
-
-NEVER use require. always esm imports
-
-always try to use non-relative imports. each package has an absolute import with the package name, you can find it in the tsconfig.json paths section. for example, paths inside website can be imported from website. notice these paths also need to include the src directory.
-
-this is preferable to other aliases like @/ because i can easily move the code from one package to another without changing the import paths. this way you can even move a file and import paths do not change much.
-
-always specify the type when creating arrays, especially for empty arrays. if you don't, typescript will infer the type as `never[]`, which can cause type errors when adding elements later.
-
-**Example:**
-
-```ts
-// BAD: Type will be never[]
-const items = [];
-
-// GOOD: Specify the expected type
-const items: string[] = [];
-const numbers: number[] = [];
-const users: User[] = [];
-```
-
-remember to always add the explicit type to avoid unexpected type inference.
-
-- when using nodejs APIs like fs always import the module and not the named exports. I prefer hacing nodejs APIs accessed on the module namspace like fs, os, path, etc.
-
-DO `import fs from 'fs'; fs.writeFileSync(...)`
-DO NOT `import { writeFileSync } from 'fs';`
-
-- NEVER pass a string to abortController.abort(). instead if you want to pass a reason always pass an Error instance. like `controller.abort(new Error('reason'))`. This way catch blocks receive an Error instance and not something else.
-
-# package manager: pnpm with workspace
-
-this project uses pnpm workspaces to manage dependencies. important scripts are in the root package.json or various packages' package.json
-
-try to run commands inside the package folder that you are working on. for example you should never run `pnpm test` from the root
-
-if you need to install packages always use pnpm
-
-instead of adding packages directly in package.json use `pnpm install package` inside the right workspace folder. NEVER manually add a package by updating package.json
-
-## updating a package
-
-when i ask you to update a package always run `pnpm update -r packagename`. to update to latest also add --latest
-
-Do not do `pnpm add packagename` to update a package. only to add a missing one. otherwise other packages versions will get out of sync.
-
-## fixing duplicate pnpm dependencies
-
-sometimes typescript will fail if there are 2 duplicate packages in the workspace node_modules. this can happen in pnpm if a package is used in 2 different places (even if inside a node_module package, transitive dependency) with a different set of versions for a peer dependency
-
-for example if better-auth depends on zod peer dep and zod is in different versions in 2 dependency subtrees
-
-to identify if a pnpm package is duplicated, search for the string " packagename@" inside `pnpm-lock.yaml`, notice the space in the search string. then if the result returns multiple instances with a different set of peer deps inside the round brackets, it means that this package is being duplicated. here is an example of a package getting duplicated:
-
-```
-
-  better-auth@1.3.6(react-dom@19.1.1(react@19.1.1))(react@19.1.1)(zod@3.25.76):
-    dependencies:
-      '@better-auth/utils': 0.2.6
-      '@better-fetch/fetch': 1.1.18
-      '@noble/ciphers': 0.6.0
-      '@noble/hashes': 1.8.0
-      '@simplewebauthn/browser': 13.1.2
-      '@simplewebauthn/server': 13.1.2
-      better-call: 1.0.13
-      defu: 6.1.4
-      jose: 5.10.0
-      kysely: 0.28.5
-      nanostores: 0.11.4
-      zod: 3.25.76
-    optionalDependencies:
-      react: 19.1.1
-      react-dom: 19.1.1(react@19.1.1)
-
-  better-auth@1.3.6(react-dom@19.1.1(react@19.1.1))(react@19.1.1)(zod@4.0.17):
-    dependencies:
-      '@better-auth/utils': 0.2.6
-      '@better-fetch/fetch': 1.1.18
-      '@noble/ciphers': 0.6.0
-      '@noble/hashes': 1.8.0
-      '@simplewebauthn/browser': 13.1.2
-      '@simplewebauthn/server': 13.1.2
-      better-call: 1.0.13
-      defu: 6.1.4
-      jose: 5.10.0
-      kysely: 0.28.5
-      nanostores: 0.11.4
-      zod: 4.0.17
-    optionalDependencies:
-      react: 19.1.1
-      react-dom: 19.1.1(react@19.1.1)
-
-```
-
-as you can see, better-auth is listed twice with different sets of peer deps. in this case it's because of zod being in version 3 and 4 in two subtrees of our workspace dependencies.
-
-as a first step, try running `pnpm dedupe better-auth` with your package name and see if there is still the problem.
-
-below i will describe how to generally deduplicate a package. i will use zod as an example. it works with any dependency found in the previous step.
-
-to deduplicate the package, we have to make sure we only have 1 version of zod installed in your workspace. DO NOT use overrides for this. instead, fix the problem by manually updating the dependencies that are forcing the older version of zod in the dependency tree.
-
-to do so, we first have to run the command `pnpm -r why zod@3.25.76` to see the reason the older zod version is installed. in this case, the result is something like this:
-
-```
-
-website /Users/morse/Documents/GitHub/holocron/website (PRIVATE)
-
-dependencies:
-@better-auth/stripe 1.2.10
-├─┬ better-auth 1.3.6
-│ └── zod 3.25.76 peer
-└── zod 3.25.76
-db link:../db
-└─┬ docs-website link:../docs-website
-  ├─┬ fumadocs-docgen 2.0.1
-  │ └── zod 3.25.76
-  ├─┬ fumadocs-openapi link:../fumadocs/packages/openapi
-  │ └─┬ @modelcontextprotocol/sdk 1.17.3
-  │   ├── zod 3.25.76
-  │   └─┬ zod-to-json-schema 3.24.6
-  │     └── zod 3.25.76 peer
-  └─┬ searchapi link:../searchapi
-    └─┬ agents 0.0.109
-      ├─┬ @modelcontextprotocol/sdk 1.17.3
-      │ ├── zod 3.25.76
-      │ └─┬ zod-to-json-schema 3.24.6
-      │   └── zod 3.25.76 peer
-      └─┬ ai 4.3.19
-        ├─┬ @ai-sdk/provider-utils 2.2.8
-        │ └── zod 3.25.76 peer
-        └─┬ @ai-sdk/react 1.2.12
-          ├─┬ @ai-sdk/provider-utils 2.2.8
-          │ └── zod 3.25.76 peer
-          └─┬ @ai-sdk/ui-utils 1.2.11
-            └─┬ @ai-sdk/provider-utils 2.2.8
-              └── zod 3.25.76 peer
-```
-
-here we can see zod 3 is installed because of @modelcontextprotocol/sdk, @better-auth/stripe and agents packages. to fix the problem, we can run
-
-```
-pnpm update -r --latest  @modelcontextprotocol/sdk @better-auth/stripe agents
-```
-
-this way, if these packages include the newer version of the dependency, zod will be deduplicated automatically.
-
-in this case, we could have only updated @better-auth/stripe to fix the issue too, that's because @better-auth/stripe is the one that has better-auth as a peer dep. but finding what is the exact problematic package is difficult, so it is easier to just update all packages you notice that we depend on directly in our workspace package.json files.
-
-if after doing this we still have duplicate packages, you will have to ask the user for help. you can try deleting the node_modules and restarting the approach, but it rarely helps.
-
-# sentry
-
-this project uses sentry to notify about unexpected errors.
-
-the website folder will have a src/lib/errors.ts file with an exported function `notifyError(error: Error, contextMessage: string)`.
-
-you should ALWAYS use notifyError in these cases:
-
-- create a new spiceflow api app, put notifyError in the onError callback with context message including the api route path
-- suppressing an error for operations that can fail. instead of doing console.error(error) you should instead call notifyError
-- wrapping a promise with cloudflare `waitUntil`. add a .catch and a notifyError so errors are tracked
-
-this function will add the error in sentry so that the developer is able to track users' errors
-
-## errors.ts file
-
-if a package is missing the errors.ts file, here is the template for adding one.
-
-notice that
-
-- dsn should be replaced by the user with the right one. ask to do so
-- use the sentries npm package, this handles correctly every environment like Bun, Node, Browser, etc
-
-```tsx
-import { captureException, flush, init } from "sentries";
-
-init({
-  dsn: "https://e702f9c3dff49fd1aa16500c6056d0f7@o4509638447005696.ingest.de.sentry.io/4509638454476880",
-  integrations: [],
-  tracesSampleRate: 0.01,
-  profilesSampleRate: 0.01,
-  beforeSend(event) {
-    if (process.env.NODE_ENV === "development") {
-      return null;
-    }
-    if (process.env.BYTECODE_RUN) {
-      return null;
-    }
-    if (event?.["name"] === "AbortError") {
-      return null;
-    }
-
-    return event;
-  },
-});
-
-export async function notifyError(error: any, msg?: string) {
-  console.error(msg, error);
-  captureException(error, { extra: { msg } });
-  await flush(1000);
-}
-
-export class AppError extends Error {
-  constructor(message: string) {
-    super(message);
-    this.name = "AppError";
-  }
-}
-```
-
-## app error
-
-every time you throw a user-readable error you should use AppError instead of Error
-
-AppError messages will be forwarded to the user as is. normal Error instances instead could have their messages obfuscated
-
-# testing
-
-.toMatchInlineSnapshot is the preferred way to write tests. leave them empty the first time, update them with -u. check git diff for the test file every time you update them with -u
-
-never use timeouts longer than 5 seconds for expects and other statements timeouts. increase timeouts for tests if required, up to 1 minute
-
-do not create dumb tests that test nothing. do not write tests if there is not already a test file or describe block for that function or module.
-
-if the inputs for the tests is an array of repetitive fields and long content, generate this input data programmatically instead of hardcoding everything. only hardcode the important parts and generate other repetitive fields in a .map or .reduce
-
-tests should validate complex and non-obvious logic. if a test looks like a placeholder, do not add it.
-
-use vitest or bun test to run tests. tests should be run from the current package directory and not root. try using the test script instead of vitest directly. additional vitest flags can be added at the end, like --run to disable watch mode or -u to update snapshots.
-
-to understand how the code you are writing works, you should add inline snapshots in the test files with expect().toMatchInlineSnapshot(), then run the test with `pnpm test -u --run` or `pnpm vitest -u --run` to update the snapshot in the file, then read the file again to inspect the result. if the result is not expected, update the code and repeat until the snapshot matches your expectations. never write the inline snapshots in test files yourself. just leave them empty and run `pnpm test -u --run` to update them.
-
-> always call `pnpm vitest` or `pnpm test` with `--run` or they will hang forever waiting for changes!
-> ALWAYS read back the test if you use the `-u` option to make sure the inline snapshots are as you expect.
-
-- NEVER write the snapshots content yourself in `toMatchInlineSnapshot`. instead leave it as is and call `pnpm test -u` to fill in snapshots content. the first time you call `toMatchInlineSnapshot()` you can leave it empty
-
-- when updating implementation and `toMatchInlineSnapshot` should change, DO NOT remove the inline snapshots yourself, just run `pnpm test -u` instead! This will replace contents of the snapshots without wasting time doing it yourself.
-
-- for very long snapshots you should use `toMatchFileSnapshot(filename)` instead of `toMatchInlineSnapshot()`. put the snapshot files in a snapshots/ directory and use the appropriate extension for the file based on the content
-
-never test client react components. only React and browser independent code. 
-
-most tests should be simple calls to functions with some expect calls, no mocks. test files should be called the same as the file where the tested function is being exported from.
-
-NEVER use mocks. the database does not need to be mocked, just use it. simply do not test functions that mutate the database if not asked.
-
-tests should strive to be as simple as possible. the best test is a simple `.toMatchInlineSnapshot()` call. these can be easily evaluated by reading the test file after the run passing the -u option. you can clearly see from the inline snapshot if the function behaves as expected or not.
-
-try to use only describe and test in your tests. do not use beforeAll, before, etc if not strictly required.
-
-NEVER write tests for react components or react hooks. NEVER write tests for react components. you will be fired if you do.
-
-sometimes tests work directly on database data, using prisma. to run these tests you have to use the package.json script, which will call `doppler run -- vitest` or similar. never run doppler cli yourself as you could delete or update production data. tests generally use a staging database instead.
-
-never write tests yourself that call prisma or interact with database or emails. for these, ask the user to write them for you.
-
-github.md
-changelogs.md
-# writing docs
-
-when generating a .md or .mdx file to document things, always add a frontmatter with title and description. also add a prompt field with the exact prompt used to generate the doc. use @ to reference files and urls and provide any context necessary to be able to recreate this file from scratch using a model. if you used urls also reference them. reference all files you had to read to create the doc. use yaml | syntax to add this prompt and never go over the column width of 80
-goke.md
-# styling
-
-- always use tailwind for styling. prefer using simple styles using flex and gap. margins should be avoided, instead use flexbox gaps, grid gaps, or separate spacing divs.
-
-- use shadcn theme colors instead of tailwind default colors. this way there is no need to add `dark:` variants most of the time.
-
-- `flex flex-col gap-3` is preferred over `space-y-3`. same for the x direction.
-
-- try to keep styles as simple as possible, for breakpoints too.
-
-- to join many classes together use the `cn('class-1', 'class-2')` utility instead of `${}` or other methods. this utility is usually used in shadcn-compatible projects and mine is exported from `website/src/lib/cn` usually. prefer doing `cn(bool && 'class')` instead of `cn(bool ? 'class' : '')`
-
-- prefer `size-4` over `w-4 h-4`
-
-## components
-
-this project uses shadcn components placed in the website/src/components/ui folder. never add a new shadcn component yourself by writing code. instead use the shadcn cli installed locally.
-
-try to reuse these available components when you can, for example for buttons, tooltips, scroll areas, etc.
-
-## reusing shadcn components
-
-when creating a new React component or adding jsx before creating your own buttons or other elements first check the files inside `src/components/ui` and `src/components` to see what is already available. So you can reuse things like Button and Tooltip components instead of creating your own.
-
-# tailwind v4
-
-this project uses tailwind v4. this new tailwind version does not use tailwind.config.js. instead it does all configuration in css files.
-
-read https://tailwindcss.com/docs/upgrade-guide to understand the updates landed in tailwind v4 if you do not have tailwind v4 in your training context. ignore the parts that talk about running the upgrade cli. this project already uses tailwind v4 so no need to upgrade anything.
-
-## spacing should use multiples of 4
-
-for margin, padding, gaps, widths and heights it is preferable to use multiples of 4 of the tailwind spacing scale. for example p-4 or gap-4
-
-4 is equal to 16px which is the default font size of the page. this way every spacing is a multiple of the height and width of a default letter.
-
-user interfaces are mostly text so using the letter width and height as a base unit makes it easier to reason about the layout and sizes.
-
-use grow instead of flex-1.
-
-# spiceflow
-
-before writing or updating spiceflow related code always execute this command to get Spiceflow full documentation: `curl -s https://gitchamber.com/repos/remorses/spiceflow/main/files/README.md`
-
-spiceflow is an API library similar to hono, it allows you to write api servers using whatwg requests and responses
-
-use zod to create schemas and types that need to be used for tool inputs or spiceflow API routes.
-
-## calling the server from the clientE
-
-you can obtain a type safe client for the API using `createSpiceflowClient` from `spiceflow/client`
-
-for simple routes that only have one interaction in the page, for example a form page, you should use react-router forms and actions to interact with the server.
-
-but when you do interactions from a component that can be rendered from multiple routes, or simply is not implemented inside a route page, you should use spiceflow client instead.
-
-> ALWAYS use the fetch tool to get the latest docs if you need to implement a new route in a spiceflow API app server or need to add a new rpc call with a spiceflow api client!
-
-spiceflow has support for client-side type-safe rpc. use this client when you need to interact with the server from the client, for example for a settings save deep inside a component. here is example usage of it
-
-> SUPER IMPORTANT! if you add a new route to a spiceflow app, use the spiceflow app state like `userId` to add authorization to the route. if there is no state then you can use functions like `getSession({request})` or similar.
-> make sure the current userId has access to the fetched or updated rows. this can be done by checking that the parent row or current row has a relation with the current userId. for example `prisma.site.findFirst({where: {users: {some: {userId }}}})`
-
-> IMPORTANT! spiceflow api client cannot be called server side to call a route! In that case instead you MUST call the server functions used in the route directly, otherwise the server would do fetch requests that would fail!
-
-always use `const {data, error} = await apiClient...` when calling spiceflow rpc. if data is already declared, give it a different name with `const {data: data2, error} = await apiClient...`. this pattern of destructuring is preferred for all apis that return data and error object fields.
-
-## getting spiceflow docs
-
-spiceflow is a little-known api framework. if you add server routes to a file that includes spiceflow in the name or you are using the apiClient rpc, you always need to fetch the spiceflow docs first, using the @fetch tool on https://getspiceflow.com/
-
-this url returns a single long documentation that covers your use case. always fetch this document so you know how to use spiceflow. spiceflow is different from hono and other api frameworks, that's why you should ALWAYS fetch the docs first before using it
-
-## using spiceflow client in published public workspace packages
-
-usually you can just import the App type from the server workspace to create the client with createSpiceflowClient
-
-if you want to use the spiceflow client in a published package instead we will use the pattern of generating .d.ts and copying these in the workspace package, this way the package does not need to depend on unpublished private server package.
-
-example:
-
-```json
-{
-  "scripts": {
-    "gen-client": "export DIR=../plugin-mcp/src/generated/ && cd ../website && tsc --incremental && cd ../plugin-mcp && rm -rf $DIR && mkdir -p $DIR && cp ../website/dist/src/lib/api-client.* $DIR"
-  }
-}
-```
-
-notice that if you add a route in the spiceflow server you will need to run `pnpm --filter website gen-client` to update the apiClient inside cli.
-
-# ai sdk
-
-i use the vercel ai sdk to interact with LLMs, also known as the npm package `ai`. never use the openai sdk or provider-specific sdks, always use the vercel ai sdk, npm package `ai`. streamText is preferred over generateText, unless the model used is very small and fast and the current code doesn't care about streaming tokens or showing a preview to the user. `streamObject` is also preferred over generateObject.
-
-ALWAYS fetch the latest docs for the ai sdk using this url with curl:
-https://gitchamber.com/repos/vercel/ai/main/files
-
-use gitchamber to read the .md files using curl
-
-you can swap out the topic with text you want to search docs for. you can also limit the total results returned with the param token to limit the tokens that will be added to the context window
-# playwright
-
-you can control the browser using the playwright mcp tools. these tools let you control the browser to get information or accomplish actions
-
-if i ask you to test something in the browser, know that the website dev server is already running at http://localhost:7664 for website and :7777 for docs-website (but docs-website needs to use the website domain specifically, for example name-hash.localhost:7777)
-# zod
-
-when you need to create a complex type that comes from a prisma table, do not create a new schema that tries to recreate the prisma table structure. instead just use `z.any() as ZodType<PrismaTable>)` to get type safety but leave any in the schema. this gets most of the benefits of zod without having to define a new zod schema that can easily go out of sync.
-
-## converting zod schema to jsonschema
-
-you MUST use the built in zod v4 toJSONSchema and not the npm package `zod-to-json-schema` which is outdated and does not support zod v4.
-
-```ts
-import { toJSONSchema } from "zod";
-
-const mySchema = z.object({
-  id: z.string().uuid(),
-  name: z.string().min(3).max(100),
-  age: z.number().min(0).optional(),
-});
-
-const jsonSchema = toJSONSchema(mySchema, {
-  removeAdditionalStrategy: "strict",
-});
-```
-
-
-<!-- opensrc:start -->
-
-## Source Code Reference
-
-Source code for dependencies is available in `opensrc/` for deeper understanding of implementation details.
-
-See `opensrc/sources.json` for the list of available packages and their versions.
-
-Use this source code when you need to understand how a package works internally, not just its types/interface.
-
-### Fetching Additional Source Code
-
-To fetch source code for a package or repository you need to understand, run:
-
-```bash
-npx opensrc <package>           # npm package (e.g., npx opensrc zod)
-npx opensrc pypi:<package>      # Python package (e.g., npx opensrc pypi:requests)
-npx opensrc crates:<package>    # Rust crate (e.g., npx opensrc crates:serde)
-npx opensrc <owner>/<repo>      # GitHub repo (e.g., npx opensrc vercel/ai)
-```
-
-<!-- opensrc:end -->

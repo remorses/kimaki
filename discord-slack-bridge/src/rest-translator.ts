@@ -10,6 +10,7 @@ import type {
   ConversationsCreateArguments,
   ConversationsHistoryArguments,
   ConversationsInfoArguments,
+  ConversationsJoinArguments,
   ConversationsListArguments,
   ConversationsRenameArguments,
   ConversationsRepliesArguments,
@@ -135,7 +136,11 @@ export async function postMessage({
     unfurl_links: false,
     unfurl_media: false,
   } satisfies ChatPostMessageArguments
-  const result = await slack.chat.postMessage(postArgs)
+  const result = await postMessageWithJoinRetry({
+    slack,
+    postArgs,
+    channel,
+  })
   const messageTs = result.ts
   if (!messageTs) {
     throw new Error('Slack chat.postMessage response missing ts')
@@ -685,6 +690,7 @@ export async function listGuildRoles({
       id: group.id,
       name: group.name,
       color: 0,
+      colors: { primary_color: 0, secondary_color: null, tertiary_color: null },
       hoist: false,
       icon: null,
       unicode_emoji: null,
@@ -917,7 +923,11 @@ export async function createThread({
     channel: parentChannelId,
     text: body.name,
   } satisfies ChatPostMessageArguments
-  const result = await slack.chat.postMessage(createThreadArgs)
+  const result = await postMessageWithJoinRetry({
+    slack,
+    postArgs: createThreadArgs,
+    channel: parentChannelId,
+  })
   const threadTs = result.ts
   if (!threadTs) {
     throw new Error('Slack chat.postMessage response missing ts for thread creation')
@@ -995,6 +1005,42 @@ export async function createThreadFromMessage({
       locked: false,
     },
   }
+}
+
+async function postMessageWithJoinRetry({
+  slack,
+  postArgs,
+  channel,
+}: {
+  slack: WebClient
+  postArgs: ChatPostMessageArguments
+  channel: string
+}) {
+  try {
+    return await slack.chat.postMessage(postArgs)
+  } catch (cause) {
+    if (!isNotInChannelError(cause)) {
+      throw cause
+    }
+
+    const joinArgs = {
+      channel,
+    } satisfies ConversationsJoinArguments
+    // Slack returns `not_in_channel` if the bot has permission but is not a
+    // member of the target conversation yet. Joining and retrying mirrors
+    // Discord's bot behavior where posting is allowed once the bot is present
+    // in the channel. For private channels without an invite, join will fail
+    // and we surface that error instead of silently swallowing it.
+    await slack.conversations.join(joinArgs)
+    return slack.chat.postMessage(postArgs)
+  }
+}
+
+function isNotInChannelError(error: unknown): boolean {
+  if (!(error instanceof Error)) {
+    return false
+  }
+  return error.message.includes('not_in_channel')
 }
 
 export async function listThreadMembers({

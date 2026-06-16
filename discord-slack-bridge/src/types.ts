@@ -15,10 +15,6 @@ export interface SlackBridgeConfig {
   gatewayUrlOverride?: string
   /** Optional public base URL used to derive REST/Gateway/Webhook URLs. */
   publicBaseUrl?: string
-  /** Optional explicit REST URL override (without /v10 suffix). */
-  restUrlOverride?: string
-  /** Optional explicit webhook URL override (/slack/events endpoint). */
-  webhookUrlOverride?: string
   /** Optional authorization callback for REST/Gateway and Slack inbound payloads. */
   authorize?: BridgeAuthorizeCallback
   /** Override Slack API base URL (for testing with slack-digital-twin) */

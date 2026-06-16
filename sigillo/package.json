@@ -1,0 +1,54 @@
+{
+  "name": "sigillo",
+  "version": "0.0.1",
+  "description": "Secrets and environment variable management",
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "bin": "dist/cli.js",
+  "exports": {
+    "./package.json": "./package.json",
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    },
+    "./src": {
+      "types": "./src/index.ts",
+      "default": "./src/index.ts"
+    },
+    "./src/*": {
+      "types": "./src/*.ts",
+      "default": "./src/*.ts"
+    }
+  },
+  "files": [
+    "src",
+    "dist",
+    "README.md"
+  ],
+  "scripts": {
+    "build": "rm -rf dist *.tsbuildinfo && tsc && chmod +x dist/cli.js",
+    "prepublishOnly": "pnpm build"
+  },
+  "keywords": [
+    "secrets",
+    "env",
+    "environment",
+    "variables",
+    "doppler",
+    "vault",
+    "config"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/remorses/kimaki",
+    "directory": "sigillo"
+  },
+  "homepage": "https://github.com/remorses/kimaki/tree/main/sigillo",
+  "bugs": "https://github.com/remorses/kimaki/issues",
+  "license": "MIT",
+  "devDependencies": {
+    "@types/node": "^22.0.0",
+    "typescript": "^5.7.0"
+  }
+}

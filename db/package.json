@@ -3,6 +3,29 @@
   "version": "0.0.0",
   "private": true,
   "type": "module",
+  "exports": {
+    "./package.json": "./package.json",
+    "./src": {
+      "types": "./src/prisma-node.ts",
+      "workerd": {
+        "types": "./src/prisma-cloudflare.ts",
+        "default": "./src/prisma-cloudflare.ts"
+      },
+      "default": "./src/prisma-node.ts"
+    },
+    "./src/*": {
+      "types": "./src/*.ts",
+      "default": "./src/*.ts"
+    },
+    "./src/prisma.js": {
+      "types": "./src/prisma-node.ts",
+      "workerd": {
+        "types": "./src/prisma-cloudflare.ts",
+        "default": "./src/prisma-cloudflare.ts"
+      },
+      "default": "./src/prisma-node.ts"
+    }
+  },
   "scripts": {
     "studio": "doppler run -- prisma studio",
     "push": "doppler run -c dev --command 'prisma db push --url $DATABASE_URL && pnpm tsc'",

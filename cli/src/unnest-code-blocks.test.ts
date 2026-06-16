@@ -1,0 +1,713 @@
+import { test, expect } from 'vitest'
+import { unnestCodeBlocksFromLists } from './unnest-code-blocks.js'
+
+// Discord markdown quirks (as of 2026-02):
+// - Fenced code blocks nested inside list indentation often don't render at all.
+//   (Discord effectively wants fences at the start of the line.)
+// - If a list line is accidentally concatenated with the next list marker or a fence,
+//   e.g. `**Title**- bullet` or `Text:```ts`, Discord won't parse it as a list/code block.
+// These tests lock down that `unnestCodeBlocksFromLists()` produces Discord-friendly output.
+
+test('basic - single item with code block', () => {
+  const input = `- Item 1
+  \`\`\`js
+  const x = 1
+  \`\`\``
+  const result = unnestCodeBlocksFromLists(input)
+  expect(result).toMatchInlineSnapshot(`
+    "- Item 1
+
+    \`\`\`js
+    const x = 1
+    \`\`\`"
+  `)
+})
+
+test('multiple items - code in middle item only', () => {
+  const input = `- Item 1
+- Item 2
+  \`\`\`js
+  const x = 1
+  \`\`\`
+- Item 3`
+  const result = unnestCodeBlocksFromLists(input)
+  expect(result).toMatchInlineSnapshot(`
+    "- Item 1
+    - Item 2
+
+    \`\`\`js
+    const x = 1
+    \`\`\`
+    - Item 3"
+  `)
+})
+
+test('multiple code blocks in one item', () => {
+  const input = `- Item with two code blocks
+  \`\`\`js
+  const a = 1
+  \`\`\`
+  \`\`\`python
+  b = 2
+  \`\`\``
+  const result = unnestCodeBlocksFromLists(input)
+  expect(result).toMatchInlineSnapshot(`
+    "- Item with two code blocks
+
+    \`\`\`js
+    const a = 1
+    \`\`\`
+    \`\`\`python
+    b = 2
+    \`\`\`"
+  `)
+})
+
+test('nested list with code', () => {
+  const input = `- Item 1
+  - Nested item
+    \`\`\`js
+    const x = 1
+    \`\`\`
+- Item 2`
+  const result = unnestCodeBlocksFromLists(input)
+  expect(result).toMatchInlineSnapshot(`
+    "- Item 1
+    - Nested item
+
+    \`\`\`js
+    const x = 1
+    \`\`\`
+    - Item 2"
+  `)
+})
+
+test('ordered list preserves numbering', () => {
+  const input = `1. First item
+   \`\`\`js
+   const a = 1
+   \`\`\`
+2. Second item
+3. Third item`
+  const result = unnestCodeBlocksFromLists(input)
+  expect(result).toMatchInlineSnapshot(`
+    "1. First item
+
+    \`\`\`js
+    const a = 1
+    \`\`\`
+    2. Second item
+    3. Third item"
+  `)
+})
+
+test('list without code blocks unchanged', () => {
+  const input = `- Item 1
+- Item 2
+- Item 3`
+  const result = unnestCodeBlocksFromLists(input)
+  expect(result).toMatchInlineSnapshot(`
+    "- Item 1
+    - Item 2
+    - Item 3"
+  `)
+})
+
+test('mixed - some items have code, some dont', () => {
+  const input = `- Normal item
+- Item with code
+  \`\`\`js
+  const x = 1
+  \`\`\`
+- Another normal item
+- Another with code
+  \`\`\`python
+  y = 2
+  \`\`\``
+  const result = unnestCodeBlocksFromLists(input)
+  expect(result).toMatchInlineSnapshot(`
+    "- Normal item
+    - Item with code
+
+    \`\`\`js
+    const x = 1
+    \`\`\`
+    - Another normal item
+    - Another with code
+
+    \`\`\`python
+    y = 2
+    \`\`\`"
+  `)
+})
+
+test('text before and after code in same item', () => {
+  const input = `- Start text
+  \`\`\`js
+  const x = 1
+  \`\`\`
+  End text`
+  const result = unnestCodeBlocksFromLists(input)
+  expect(result).toMatchInlineSnapshot(`
+    "- Start text
+
+    \`\`\`js
+    const x = 1
+    \`\`\`
+    - End text"
+  `)
+})
+
+test('preserves content outside lists', () => {
+  const input = `# Heading
+
+Some paragraph text.
+
+- List item
+  \`\`\`js
+  const x = 1
+  \`\`\`
+
+More text after.`
+  const result = unnestCodeBlocksFromLists(input)
+  expect(result).toMatchInlineSnapshot(`
+    "# Heading
+
+    Some paragraph text.
+
+    - List item
+
+    \`\`\`js
+    const x = 1
+    \`\`\`
+
+    More text after."
+  `)
+})
+
+test('code block at root level unchanged', () => {
+  const input = `\`\`\`js
+const x = 1
+\`\`\``
+  const result = unnestCodeBlocksFromLists(input)
+  expect(result).toMatchInlineSnapshot(`
+    "\`\`\`js
+    const x = 1
+    \`\`\`"
+  `)
+})
+
+test('handles code block without language', () => {
+  const input = `- Item
+  \`\`\`
+  plain code
+  \`\`\``
+  const result = unnestCodeBlocksFromLists(input)
+  expect(result).toMatchInlineSnapshot(`
+    "- Item
+
+    \`\`\`
+    plain code
+    \`\`\`"
+  `)
+})
+
+test('handles empty list item with code', () => {
+  const input = `- \`\`\`js
+  const x = 1
+  \`\`\``
+  const result = unnestCodeBlocksFromLists(input)
+  expect(result).toMatchInlineSnapshot(`
+    "\`\`\`js
+    const x = 1
+    \`\`\`"
+  `)
+})
+
+test('numbered list with text after code block', () => {
+  const input = `1. First item
+   \`\`\`js
+   const a = 1
+   \`\`\`
+   Text after the code
+2. Second item`
+  const result = unnestCodeBlocksFromLists(input)
+  expect(result).toMatchInlineSnapshot(`
+    "1. First item
+
+    \`\`\`js
+    const a = 1
+    \`\`\`
+    - Text after the code
+    2. Second item"
+  `)
+})
+
+test('numbered list with multiple code blocks and text between', () => {
+  const input = `1. First item
+   \`\`\`js
+   const a = 1
+   \`\`\`
+   Middle text
+   \`\`\`python
+   b = 2
+   \`\`\`
+   Final text
+2. Second item`
+  const result = unnestCodeBlocksFromLists(input)
+  expect(result).toMatchInlineSnapshot(`
+    "1. First item
+
+    \`\`\`js
+    const a = 1
+    \`\`\`
+    - Middle text
+
+    \`\`\`python
+    b = 2
+    \`\`\`
+    - Final text
+    2. Second item"
+  `)
+})
+
+test('unordered list with multiple code blocks and text between', () => {
+  const input = `- First item
+  \`\`\`js
+  const a = 1
+  \`\`\`
+  Middle text
+  \`\`\`python
+  b = 2
+  \`\`\`
+  Final text
+- Second item`
+  const result = unnestCodeBlocksFromLists(input)
+  expect(result).toMatchInlineSnapshot(`
+    "- First item
+
+    \`\`\`js
+    const a = 1
+    \`\`\`
+    - Middle text
+
+    \`\`\`python
+    b = 2
+    \`\`\`
+    - Final text
+    - Second item"
+  `)
+})
+
+test('numbered list starting from 5', () => {
+  const input = `5. Fifth item
+   \`\`\`js
+   code
+   \`\`\`
+   Text after
+6. Sixth item`
+  const result = unnestCodeBlocksFromLists(input)
+  expect(result).toMatchInlineSnapshot(`
+    "5. Fifth item
+
+    \`\`\`js
+    code
+    \`\`\`
+    - Text after
+    6. Sixth item"
+  `)
+})
+
+test('deeply nested list with code', () => {
+  const input = `- Level 1
+  - Level 2
+    - Level 3
+      \`\`\`js
+      deep code
+      \`\`\`
+      Text after deep code
+    - Another level 3
+  - Back to level 2`
+  const result = unnestCodeBlocksFromLists(input)
+  expect(result).toMatchInlineSnapshot(`
+    "- Level 1
+    - Level 2
+    - Level 3
+
+    \`\`\`js
+    deep code
+    \`\`\`
+    - Text after deep code
+    - Another level 3
+    - Back to level 2"
+  `)
+})
+
+test('nested numbered list inside unordered with code', () => {
+  const input = `- Unordered item
+  1. Nested numbered
+     \`\`\`js
+     code
+     \`\`\`
+     Text after
+  2. Second nested
+- Another unordered`
+  const result = unnestCodeBlocksFromLists(input)
+  expect(result).toMatchInlineSnapshot(`
+    "- Unordered item
+    1. Nested numbered
+
+    \`\`\`js
+    code
+    \`\`\`
+    - Text after
+    2. Second nested
+    - Another unordered"
+  `)
+})
+
+test('code block at end of numbered item no text after', () => {
+  const input = `1. First with text
+   \`\`\`js
+   code here
+   \`\`\`
+2. Second item
+3. Third item`
+  const result = unnestCodeBlocksFromLists(input)
+  expect(result).toMatchInlineSnapshot(`
+    "1. First with text
+
+    \`\`\`js
+    code here
+    \`\`\`
+    2. Second item
+    3. Third item"
+  `)
+})
+
+test('multiple items each with code and text after', () => {
+  const input = `1. First
+   \`\`\`js
+   code1
+   \`\`\`
+   After first
+2. Second
+   \`\`\`python
+   code2
+   \`\`\`
+   After second
+3. Third no code`
+  const result = unnestCodeBlocksFromLists(input)
+  expect(result).toMatchInlineSnapshot(`
+    "1. First
+
+    \`\`\`js
+    code1
+    \`\`\`
+    - After first
+    2. Second
+
+    \`\`\`python
+    code2
+    \`\`\`
+    - After second
+    3. Third no code"
+  `)
+})
+
+test('code block immediately after list marker', () => {
+  const input = `1. \`\`\`js
+   immediate code
+   \`\`\`
+2. Normal item`
+  const result = unnestCodeBlocksFromLists(input)
+  expect(result).toMatchInlineSnapshot(`
+    "\`\`\`js
+    immediate code
+    \`\`\`
+    2. Normal item"
+  `)
+})
+
+test('code block with filename metadata', () => {
+  const input = `- Item with code
+  \`\`\`tsx filename=example.tsx
+  const x = 1
+  \`\`\``
+  const result = unnestCodeBlocksFromLists(input)
+  expect(result).toMatchInlineSnapshot(`
+    "- Item with code
+
+    \`\`\`tsx filename=example.tsx
+    const x = 1
+    \`\`\`"
+  `)
+})
+
+test('numbered list with filename metadata code block', () => {
+  const input = `1. First item
+   \`\`\`tsx filename=app.tsx
+   export default function App() {}
+   \`\`\`
+2. Second item`
+  const result = unnestCodeBlocksFromLists(input)
+  expect(result).toMatchInlineSnapshot(`
+    "1. First item
+
+    \`\`\`tsx filename=app.tsx
+    export default function App() {}
+    \`\`\`
+    2. Second item"
+  `)
+})
+
+test('inline fence in list item stays inline (discord formatting issue)', () => {
+  const input = `- File: playwriter/src/aria-snapshot.ts
+- Add helper function (~line 477, after isTextRole):\`\`\`ts
+function isSubstringOfAny(needle: string, haystack: Set<string>): boolean {
+  for (const str of haystack) {
+    if (str.includes(needle)) {
+      return true
+    }
+  }
+  return false
+}
+\`\`\``
+  const result = unnestCodeBlocksFromLists(input)
+  expect(result).toMatchInlineSnapshot(`
+    "- File: playwriter/src/aria-snapshot.ts
+    - Add helper function (~line 477, after isTextRole):\`\`\`ts
+    function isSubstringOfAny(needle: string, haystack: Set<string>): boolean {
+      for (const str of haystack) {
+        if (str.includes(needle)) {
+          return true
+        }
+      }
+      return false
+    }
+    \`\`\`"
+  `)
+})
+
+test('numbered list with ) delimiter and code block after continuation text', () => {
+  const input = `What to test (no mocks, real processes):
+
+1) **"Older client must not kill newer server"**
+- Start a tiny HTTP server on an ephemeral port that serves \`/version\` as something **higher than** our current version.
+- Run \`ensureRelayServer({ restartOnVersionMismatch: true })\` pointed at that port.
+- Assert:
+  - the server is **still listening** afterward (port not killed)
+  - no relay is spawned / no kill attempted
+This directly exercises:
+\`\`\`ts
+if (serverVersion !== null && compareVersions(serverVersion, VERSION) > 0) return
+\`\`\`
+
+2) **"Newer client may restart older server (when allowed)"**
+- Start a tiny HTTP server that returns a **lower** \`/version\`.
+- Call \`ensureRelayServer({ restartOnVersionMismatch: true })\`.
+- Assert the old server gets killed (port frees).`
+  const result = unnestCodeBlocksFromLists(input)
+
+  expect('\n' + result).toMatchInlineSnapshot(`
+    "
+    What to test (no mocks, real processes):
+
+    1) **"Older client must not kill newer server"**
+    - Start a tiny HTTP server on an ephemeral port that serves \`/version\` as something **higher than** our current version.
+    - Run \`ensureRelayServer({ restartOnVersionMismatch: true })\` pointed at that port.
+    - Assert:
+      - the server is **still listening** afterward (port not killed)
+      - no relay is spawned / no kill attempted
+    This directly exercises:
+    \`\`\`ts
+    if (serverVersion !== null && compareVersions(serverVersion, VERSION) > 0) return
+    \`\`\`
+
+    2) **"Newer client may restart older server (when allowed)"**
+    - Start a tiny HTTP server that returns a **lower** \`/version\`.
+    - Call \`ensureRelayServer({ restartOnVersionMismatch: true })\`.
+    - Assert the old server gets killed (port frees)."
+  `)
+
+  // Desired Discord formatting:
+  // - Preserve newline between the "1) ..." line and the nested "- Start..." list
+  // - Keep fenced code blocks on their own lines (not glued to surrounding text)
+  expect(result).toContain('1) **"Older client must not kill newer server"**\n')
+  expect(result).toContain('\n- Start a tiny HTTP server')
+  expect(result).toContain('\nThis directly exercises:\n')
+  expect(result).toMatch(/\n```ts\n[\s\S]*\n```\n/)
+
+  // Regression: these are the two failure modes seen in the session message
+  expect(result).not.toContain(
+    '**"Older client must not kill newer server"**- Start',
+  )
+  expect(result).not.toContain('exercises:```')
+})
+
+test('unordered list with blank line before fenced code block', () => {
+  const input = `- Item with spacing
+
+  \`\`\`ts
+  const x = 1
+  \`\`\`
+- Next item`
+  const result = unnestCodeBlocksFromLists(input)
+  expect('\n' + result).toMatchInlineSnapshot(`
+    "
+    - Item with spacing
+
+    \`\`\`ts
+    const x = 1
+    \`\`\`
+    - Next item"
+  `)
+})
+
+test('ordered list item containing fenced code and trailing paragraph', () => {
+  const input = `1) Item title
+   \`\`\`js
+   console.log('hi')
+   \`\`\`
+   trailing text
+2) Second item`
+  const result = unnestCodeBlocksFromLists(input)
+  expect('\n' + result).toMatchInlineSnapshot(`
+    "
+    1. Item title
+
+    \`\`\`js
+    console.log('hi')
+    \`\`\`
+    - trailing text
+    2) Second item"
+  `)
+})
+
+test('two top-level lists back-to-back (ensure newline between them)', () => {
+  const input = `- a
+- b
+1) c
+- d`
+  const result = unnestCodeBlocksFromLists(input)
+  expect('\n' + result).toMatchInlineSnapshot(`
+    "
+    - a
+    - b
+    1) c
+    - d"
+  `)
+})
+
+test('top-level list followed by top-level fenced code then paragraph', () => {
+  const input = `- Item
+\`\`\`ts
+type X = { a: 1 }
+\`\`\`
+After.`
+  const result = unnestCodeBlocksFromLists(input)
+  expect('\n' + result).toMatchInlineSnapshot(`
+    "
+    - Item
+    \`\`\`ts
+    type X = { a: 1 }
+    \`\`\`
+    After."
+  `)
+})
+
+test('task list item with fenced code', () => {
+  const input = `- [ ] Do thing
+  \`\`\`sh
+  echo hi
+  \`\`\``
+  const result = unnestCodeBlocksFromLists(input)
+  expect('\n' + result).toMatchInlineSnapshot(`
+    "
+    - [ ] Do thing
+
+    \`\`\`sh
+    echo hi
+    \`\`\`"
+  `)
+})
+
+test('checked task list item keeps a single checkbox marker', () => {
+  const input = `- [x] Ship fix
+  \`\`\`ts
+  console.log('done')
+  \`\`\``
+  const result = unnestCodeBlocksFromLists(input)
+  expect('\n' + result).toMatchInlineSnapshot(`
+    "
+    - [x] Ship fix
+
+    \`\`\`ts
+    console.log('done')
+    \`\`\`"
+  `)
+})
+
+test('task list item with trailing text keeps one checkbox marker after hoisting code', () => {
+  const input = `- [ ] Do thing
+  \`\`\`sh
+  echo hi
+  \`\`\`
+  then report back`
+  const result = unnestCodeBlocksFromLists(input)
+  expect('\n' + result).toMatchInlineSnapshot(`
+    "
+    - [ ] Do thing
+
+    \`\`\`sh
+    echo hi
+    \`\`\`
+    - then report back"
+  `)
+})
+
+test('fenced code block indented more than list marker', () => {
+  const input = `- Item
+    \`\`\`ts
+    const x = 1
+    \`\`\`
+- Next`
+  const result = unnestCodeBlocksFromLists(input)
+  expect('\n' + result).toMatchInlineSnapshot(`
+    "
+    - Item
+
+    \`\`\`ts
+    const x = 1
+    \`\`\`
+    - Next"
+  `)
+})
+
+test('ordered list with multiple paragraphs and code', () => {
+  const input = `1) Title
+   First paragraph.
+
+   Second paragraph.
+
+   \`\`\`ts
+   const x = 1
+   \`\`\`
+
+   After code.
+2) Next`
+  const result = unnestCodeBlocksFromLists(input)
+  expect('\n' + result).toMatchInlineSnapshot(`
+    "
+    1. Title
+    First paragraph.
+
+    Second paragraph.
+
+    \`\`\`ts
+    const x = 1
+    \`\`\`
+    - After code.
+    2) Next"
+  `)
+})

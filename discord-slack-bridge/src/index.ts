@@ -15,6 +15,7 @@ export {
 export { mrkdwnToMarkdown, markdownToMrkdwn } from './format-converter.js'
 export { componentsToBlocks } from './component-converter.js'
 export { uploadAttachmentsToSlack } from './file-upload.js'
+export { getTeamIdForWebhookEvent } from './webhook-team-id.js'
 export {
   appendTypingEvent,
   createTypingCoordinator,

@@ -1,0 +1,148 @@
+{
+  "$schema": "https://unpkg.com/@holocron.so/vite/src/schema.json",
+  "name": "Kimaki",
+  "description": "Iron Man's Jarvis for coding agents, inside Discord",
+  "favicon": "/logo.jpeg",
+  "colors": {
+    "primary": "#5865F2"
+  },
+  "appearance": {
+    "default": "system"
+  },
+  "icons": {
+    "library": "lucide"
+  },
+  "navbar": {
+    "links": [
+      {
+        "type": "github",
+        "href": "https://github.com/remorses/kimaki"
+      },
+      {
+        "type": "discord",
+        "href": "https://discord.gg/qz3hapKcMM"
+      }
+    ]
+  },
+  "navigation": {
+    "groups": [
+      {
+        "group": "Getting Started",
+        "icon": "lucide:rocket",
+        "pages": [
+          "index",
+          "docs/getting-started/subscriptions",
+          "docs/getting-started/model-switching",
+          "docs/getting-started/background-sync"
+        ]
+      },
+      {
+        "group": "Core Concepts",
+        "icon": "lucide:compass",
+        "pages": [
+          "docs/core-concepts/channels-threads",
+          "docs/core-concepts/message-handling",
+          "docs/core-concepts/sessions"
+        ]
+      },
+      {
+        "group": "Features",
+        "icon": "lucide:sparkles",
+        "pages": [
+          "docs/features/queue",
+          "docs/features/btw",
+          "docs/features/worktrees",
+          "docs/features/diff-viewer",
+          "docs/features/scheduled-tasks",
+          "docs/features/voice",
+          "docs/features/images",
+          "docs/features/opencode-commands",
+          "docs/features/shell-commands"
+        ]
+      },
+      {
+        "group": "Remote Access",
+        "icon": "lucide:monitor-smartphone",
+        "pages": [
+          "docs/remote-access/vscode",
+          "docs/remote-access/tunnels",
+          "docs/remote-access/screen-sharing"
+        ]
+      },
+      {
+        "group": "Configuration",
+        "icon": "lucide:settings",
+        "pages": [
+          "docs/configuration/access-control",
+          "docs/configuration/permissions",
+          "docs/configuration/verbosity",
+          "docs/configuration/memory",
+          "docs/configuration/mcp",
+          "docs/configuration/projects"
+        ]
+      },
+      {
+        "group": "Guides",
+        "icon": "lucide:book-open",
+        "pages": [
+          "docs/guides/troubleshooting",
+          "docs/guides/ci-automation",
+          "docs/guides/advanced-setup",
+          "docs/guides/programmatic-gateway"
+        ]
+      },
+      {
+        "group": "Plugins",
+        "icon": "lucide:plug",
+        "pages": [
+          "docs/plugins/abort-on-x"
+        ]
+      },
+      {
+        "group": "Reference",
+        "icon": "lucide:database",
+        "pages": [
+          "docs/reference/commands",
+          "docs/reference/internals"
+        ]
+      },
+      {
+        "group": "Legal",
+        "icon": "lucide:scale",
+        "pages": [
+          "docs/legal/privacy",
+          "docs/legal/terms"
+        ]
+      }
+    ],
+    "anchors": [
+      {
+        "anchor": "GitHub",
+        "href": "https://github.com/remorses/kimaki",
+        "icon": "lucide:github"
+      },
+      {
+        "anchor": "Changelog",
+        "href": "https://github.com/remorses/kimaki/releases",
+        "icon": "lucide:scroll-text"
+      }
+    ]
+  },
+  "redirects": [
+    { "source": "/docs/model-switching", "destination": "/docs/getting-started/model-switching" },
+    { "source": "/docs/advanced-setup", "destination": "/docs/guides/advanced-setup" },
+    { "source": "/docs/ci-automation", "destination": "/docs/guides/ci-automation" },
+    { "source": "/docs/internals", "destination": "/docs/reference/internals" },
+    { "source": "/docs/screen-sharing", "destination": "/docs/remote-access/screen-sharing" }
+  ],
+  "knownPaths": [
+    "/discord-install",
+    "/install-success",
+    "/api/*",
+    "/health",
+    "/slack-install",
+    "/slack-install/*",
+    "/slack/*"
+  ],
+  "decorativeLines": "none"
+}

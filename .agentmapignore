@@ -1,0 +1,22 @@
+# Exclude low-signal generated, scratch, and reference folders from agentmap.
+opensrc/**
+betterstack/**
+slop/**
+plans/**
+discord/**
+discord-digital-twin/**
+discord-slack-bridge/**
+slack-digital-twin/**
+fly-admin/**
+libsqlproxy/**
+errore/**
+traforo/**
+gateway-proxy/**
+opencode-injection-guard/**
+opencode-deterministic-provider/**
+profano/**
+usecomputer/**
+tmp/**
+cli/src/**/*.e2e.test.ts
+cli/src/session-handler/event-stream-fixtures/**
+cli/src/forum-sync/**

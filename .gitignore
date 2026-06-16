@@ -12,9 +12,10 @@ useraudio
 *.wav
 discord-audio-logs
 tmp
+/cli/skills
 
 # opensrc - source code for packages
-opensrc/
+/opensrc
 __snapshots__
 traforo/dist/
 skills/jitter/dist/
@@ -22,3 +23,8 @@ bin-local.sh
 kimaki.log
 app.log
 generated
+.zig-cache
+zig-out
+website/.wrangler/
+.wrangler
+betterstack

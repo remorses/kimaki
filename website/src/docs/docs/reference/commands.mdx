@@ -1,0 +1,142 @@
+---
+title: Commands Reference
+description: Every Kimaki slash command and CLI subcommand in one place.
+icon: lucide:slash
+---
+
+A complete reference of Kimaki's **Discord slash commands** and **CLI subcommands**, ordered by how often you'll reach for them. For deep dives, follow the links.
+
+## Session slash commands
+
+| Command | Description |
+|---|---|
+| `/resume <session>` | Resume a previous session ([docs](../core-concepts/sessions)) |
+| `/abort` | Stop the current running session |
+| `/new-session <prompt>` | Start a new session with a prompt, files, and agent |
+| `/btw <prompt>` | Fork context into a new thread for a side question ([docs](../features/btw)) |
+| `/fork` | Fork the session from a previous message ([docs](../core-concepts/sessions)) |
+| `/fork-subagent` | Fork a subagent task into its own thread |
+| `/last-sessions` | List the 20 most recently active sessions |
+| `/share` | Generate a public URL for the session |
+| `/session-id` | Show the session ID and an attach command |
+| `/compact` | Summarize and compact the session context |
+| `/context-usage` | Show token usage and context window percentage |
+| `/undo` | Undo the last assistant message (revert file changes) |
+| `/redo` | Redo the last undone message |
+
+## Model & agent slash commands
+
+| Command | Description |
+|---|---|
+| `/model` | Change the model for this channel or session ([docs](../getting-started/model-switching)) |
+| `/agent` | Change the agent for this channel or session |
+| `/<name>-agent` | Instantly switch to a named agent file |
+| `/login` | Authenticate a provider via OAuth or API key ([docs](../getting-started/subscriptions)) |
+| `/model-variant` | Change the thinking-level variant for the current model |
+| `/unset-model-override` | Remove model overrides and use the default |
+| `/verbosity` | Set how much tool output is shown ([docs](../configuration/verbosity)) |
+
+## Queue slash commands
+
+| Command | Description |
+|---|---|
+| `/queue <message>` | Queue a message for after the current run ([docs](../features/queue)) |
+| `/queue-command <command>` | Queue a registered command |
+| `/clear-queue [position]` | Clear all queued messages, or one by position |
+
+## Project & worktree slash commands
+
+| Command | Description |
+|---|---|
+| `/add-project <project>` | Create channels for an existing project ([docs](../configuration/projects)) |
+| `/create-new-project <name>` | Create a new project folder and start a session |
+| `/remove-project <project>` | Remove channels for a project |
+| `/new-worktree <name>` | Move the session into an isolated git worktree ([docs](../features/worktrees)) |
+| `/merge-worktree` | Merge the worktree branch into the default branch |
+| `/worktrees` | List all worktrees for the channel's project |
+| `/toggle-worktrees` | Toggle automatic worktree creation for new sessions |
+
+## Access & permissions slash commands
+
+| Command | Description |
+|---|---|
+| `/add-dir <directory>` | Grant the session access to an extra directory ([docs](../configuration/permissions)) |
+| `/toggle-mention-mode` | Only respond to @mentions in this channel ([docs](../configuration/access-control)) |
+| `/mcp` | List and toggle MCP servers for the project ([docs](../configuration/mcp)) |
+| `/transcription-key` | Set the API key used for voice transcription ([docs](../features/voice)) |
+
+## Remote access slash commands
+
+| Command | Description |
+|---|---|
+| `/vscode` | Open the project in browser VS Code ([docs](../remote-access/vscode)) |
+| `/screenshare` | Share your screen via VNC tunnel ([docs](../remote-access/screen-sharing)) |
+| `/screenshare-stop` | Stop screen sharing |
+| `/diff` | Generate a shareable diff URL ([docs](../features/diff-viewer)) |
+| `/run-shell-command <command>` | Run a shell command in the project dir ([docs](../features/shell-commands)) |
+
+## Maintenance slash commands
+
+| Command | Description |
+|---|---|
+| `/tasks` | List scheduled tasks with cancel buttons ([docs](../features/scheduled-tasks)) |
+| `/restart-opencode-server` | Restart the OpenCode server and re-register commands ([docs](../guides/troubleshooting)) |
+| `/upgrade-and-restart` | Upgrade Kimaki to the latest version and restart |
+
+Your OpenCode commands, skills, and MCP prompts are also registered automatically as `/<name>-cmd`, `/<name>-skill`, and `/<name>-mcp-prompt`. See [OpenCode Commands](../features/opencode-commands).
+
+## Message shortcuts
+
+| Shortcut | Effect |
+|---|---|
+| `!<command>` | Run a shell command in the project dir ([docs](../features/shell-commands)) |
+| `... . queue` | Queue the message for after the current run ([docs](../features/queue)) |
+| `... . btw` | Fork context to answer a side question ([docs](../features/btw)) |
+| voice note | Transcribed and sent as a prompt ([docs](../features/voice)) |
+| image / PDF attachment | Sent to the agent as inline content ([docs](../features/images)) |
+
+## CLI subcommands
+
+```bash
+# Start the bot (interactive setup on first run)
+npx -y kimaki@latest
+
+# Projects
+kimaki project add [directory]
+kimaki project list
+kimaki project create <name>
+
+# Start or continue sessions programmatically
+kimaki send --channel <channel-id> --prompt 'your prompt'
+kimaki send --thread <thread-id> --prompt 'follow-up'
+kimaki send --channel <channel-id> --prompt '...' --send-at '0 9 * * 1'
+
+# Scheduled tasks
+kimaki task list
+kimaki task edit <id> --prompt 'new prompt'
+kimaki task delete <id>
+
+# Sessions
+kimaki session list
+kimaki session search 'query'
+kimaki session read <session-id>
+
+# OAuth account pools
+kimaki multioauth list
+kimaki multioauth anthropic list
+kimaki multioauth openai check
+
+# Bot presence
+kimaki bot status set <text>
+kimaki bot status clear
+kimaki discord-install-url
+
+# Tooling
+kimaki tunnel -- pnpm dev
+kimaki upload-to-discord --session <id> <file...>
+kimaki tts 'text' -o out.mp3
+kimaki sqlitedb
+kimaki upgrade
+```
+
+See [CI & Automation](../guides/ci-automation) for the full `kimaki send` flag reference and scheduling options.
